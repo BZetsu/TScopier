@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Clock, ChevronRight, Info } from 'lucide-react'
+import { Clock, ChevronRight, Info, Plus } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
-import type { Signal, Trade } from '../../types/database'
+import type { BrokerAccount, Signal, Trade } from '../../types/database'
 
 interface DashboardStats {
   accounts: number
@@ -36,6 +36,7 @@ export function DashboardPage() {
     copierHealth: 'Stable',
   })
   const [copierLogs, setCopierLogs] = useState<Signal[]>([])
+  const [linkedAccounts, setLinkedAccounts] = useState<BrokerAccount[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -48,7 +49,7 @@ export function DashboardPage() {
     today.setHours(0, 0, 0, 0)
 
     const [brokerRes, channelsRes, tradesRes, todaySignalsRes, logsRes] = await Promise.all([
-      supabase.from('broker_accounts').select('*').eq('user_id', user!.id).eq('is_active', true).maybeSingle(),
+      supabase.from('broker_accounts').select('*').eq('user_id', user!.id),
       supabase.from('telegram_channels').select('id').eq('user_id', user!.id).eq('is_active', true),
       supabase.from('trades').select('*').eq('user_id', user!.id),
       supabase.from('signals').select('status').eq('user_id', user!.id).gte('created_at', today.toISOString()),
@@ -63,10 +64,12 @@ export function DashboardPage() {
     const openPnl = openTrades.reduce((sum, t) => sum + (t.profit ?? 0), 0)
     const won = closedTrades.filter(t => (t.profit ?? 0) > 0).length
     const lost = closedTrades.filter(t => (t.profit ?? 0) < 0).length
-    const broker = brokerRes.data
+    const brokerAccounts = (brokerRes.data ?? []) as BrokerAccount[]
+    const activeBrokerCount = brokerAccounts.filter(account => account.is_active).length
     setCopierLogs((logsRes.data ?? []) as Signal[])
+    setLinkedAccounts(brokerAccounts)
     setStats({
-      accounts: broker ? 1 : 0,
+      accounts: activeBrokerCount,
       portfolioValue: 0,
       tradesTaken: closedTrades.length,
       tradesWon: won,
@@ -76,7 +79,7 @@ export function DashboardPage() {
       openTrades: openTrades.length,
       tradesCopiedToday: copiedToday,
       activeChannels: channelsRes.data?.length ?? 0,
-      copierHealth: broker ? 'Stable' : 'Offline',
+      copierHealth: activeBrokerCount > 0 ? 'Stable' : 'Offline',
     })
     setLoading(false)
   }
@@ -240,6 +243,57 @@ export function DashboardPage() {
           )}
         </div>
       </div>
+
+      {/* Linked Accounts */}
+      <div className="mt-6 bg-white rounded-xl border border-neutral-100 shadow-card">
+        <div className="px-5 py-4 border-b border-neutral-100 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Clock className="w-4 h-4 text-teal-500" />
+            <div>
+              <p className="text-sm font-semibold text-neutral-900">Linked Accounts</p>
+              <p className="text-xs text-neutral-400">Connected broker accounts used by copier</p>
+            </div>
+          </div>
+          <button
+            onClick={() => navigate('/account-config')}
+            className="flex items-center gap-1.5 px-3 py-1.5 border border-teal-500 text-teal-600 rounded-lg text-xs font-medium hover:bg-teal-50 transition-colors"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            Add
+          </button>
+        </div>
+
+        <div className="grid grid-cols-8 gap-2 px-5 py-3 border-b border-neutral-100 text-xs font-medium text-neutral-400">
+          <span>Account</span>
+          <span>Broker</span>
+          <span>Balance</span>
+          <span>PnL</span>
+          <span>ROI</span>
+          <span>WinRate</span>
+          <span>DD</span>
+          <span className="text-right">Status</span>
+        </div>
+
+        {loading ? (
+          <div className="divide-y divide-neutral-50">
+            {[...Array(3)].map((_, i) => (
+              <div key={i} className="px-5 py-3 flex gap-4">
+                {[...Array(8)].map((_, j) => (
+                  <div key={j} className="h-4 bg-neutral-100 rounded animate-pulse flex-1" />
+                ))}
+              </div>
+            ))}
+          </div>
+        ) : linkedAccounts.length === 0 ? (
+          <div className="px-5 py-8 text-sm text-neutral-400">No linked accounts yet.</div>
+        ) : (
+          <div className="divide-y divide-neutral-50">
+            {linkedAccounts.map(account => (
+              <LinkedAccountRow key={account.id} account={account} />
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   )
 }
@@ -295,6 +349,32 @@ function LogRow({ signal }: { signal: Signal }) {
         {action ?? '—'}
       </span>
       <span className="text-xs text-neutral-400 text-right">—</span>
+    </div>
+  )
+}
+
+function LinkedAccountRow({ account }: { account: BrokerAccount }) {
+  const statusClass = account.is_active
+    ? 'text-teal-600 border-teal-200 bg-teal-50'
+    : 'text-warning-600 border-warning-200 bg-warning-50'
+
+  return (
+    <div className="grid grid-cols-8 gap-2 px-5 py-3 items-center hover:bg-neutral-50 transition-colors">
+      <div className="flex flex-col">
+        <span className="text-sm font-semibold text-neutral-900">{account.metaapi_account_id || account.label}</span>
+        <span className="text-[11px] font-medium text-primary-600 uppercase">{account.platform}</span>
+      </div>
+      <span className="text-sm font-medium text-neutral-900">{account.label || '—'}</span>
+      <span className="text-sm font-medium text-neutral-900">$0.00</span>
+      <span className="text-sm font-semibold text-teal-600">+0.00</span>
+      <span className="text-sm font-semibold text-teal-600">0.0%</span>
+      <span className="text-sm font-semibold text-neutral-900">0%</span>
+      <span className="text-sm font-semibold text-neutral-900">0.0%</span>
+      <div className="flex justify-end">
+        <span className={`inline-flex items-center px-2.5 py-1 rounded-lg border text-xs font-semibold ${statusClass}`}>
+          {account.is_active ? 'Active' : 'Warning'}
+        </span>
+      </div>
     </div>
   )
 }
