@@ -211,7 +211,7 @@ export function AccountConfigPage() {
         <div className="flex items-center justify-between mb-3">
           <div>
             <h2 className="text-base font-semibold text-neutral-900">Trading Accounts</h2>
-            <p className="text-xs text-neutral-400 mt-0.5">Connect your MT5/MT4 broker accounts. We manage the MetaAPI connection on your behalf.</p>
+            <p className="text-xs text-neutral-400 mt-0.5">Connect your broker accounts.</p>
           </div>
           <Button size="sm" onClick={() => setShowPlatformModal(true)}>
             <Plus className="w-3.5 h-3.5" />
