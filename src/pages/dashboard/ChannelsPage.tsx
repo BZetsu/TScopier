@@ -1,0 +1,257 @@
+import { useEffect, useState } from 'react'
+import { Plus, Radio, Trash2, Settings } from 'lucide-react'
+import { supabase } from '../../lib/supabase'
+import { useAuth } from '../../context/AuthContext'
+import { Card } from '../../components/ui/Card'
+import { Badge } from '../../components/ui/Badge'
+import { Toggle } from '../../components/ui/Toggle'
+import { Button } from '../../components/ui/Button'
+import { Input } from '../../components/ui/Input'
+import type { TelegramChannel } from '../../types/database'
+
+export function ChannelsPage() {
+  const { user } = useAuth()
+  const [channels, setChannels] = useState<TelegramChannel[]>([])
+  const [loading, setLoading] = useState(true)
+  const [showAdd, setShowAdd] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [newChannel, setNewChannel] = useState({ channel_id: '', channel_username: '', display_name: '' })
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (!user) return
+    loadChannels()
+  }, [user])
+
+  const loadChannels = async () => {
+    const { data } = await supabase
+      .from('telegram_channels')
+      .select('*')
+      .eq('user_id', user!.id)
+      .order('created_at', { ascending: false })
+    setChannels(data ?? [])
+    setLoading(false)
+  }
+
+  const toggleChannel = async (id: string, is_active: boolean) => {
+    setChannels(prev => prev.map(c => c.id === id ? { ...c, is_active } : c))
+    await supabase.from('telegram_channels').update({ is_active }).eq('id', id)
+  }
+
+  const deleteChannel = async (id: string) => {
+    setChannels(prev => prev.filter(c => c.id !== id))
+    await supabase.from('telegram_channels').delete().eq('id', id)
+  }
+
+  const addChannel = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError('')
+    if (!newChannel.display_name.trim()) {
+      setError('Channel name is required')
+      return
+    }
+
+    setSaving(true)
+    const { data, error: dbErr } = await supabase
+      .from('telegram_channels')
+      .insert({
+        user_id: user!.id,
+        channel_id: newChannel.channel_id.trim() || newChannel.channel_username.trim(),
+        channel_username: newChannel.channel_username.trim().replace(/^@/, ''),
+        display_name: newChannel.display_name.trim(),
+        is_active: true,
+      })
+      .select('*')
+      .single()
+
+    setSaving(false)
+
+    if (dbErr) {
+      setError(dbErr.message)
+      return
+    }
+
+    setChannels(prev => [data, ...prev])
+    setNewChannel({ channel_id: '', channel_username: '', display_name: '' })
+    setShowAdd(false)
+  }
+
+  const updateSettings = async (id: string, updates: Partial<TelegramChannel>) => {
+    await supabase.from('telegram_channels').update(updates).eq('id', id)
+    setChannels(prev => prev.map(c => c.id === id ? { ...c, ...updates } : c))
+    setEditingId(null)
+  }
+
+  return (
+    <div className="p-6 lg:p-8 max-w-3xl mx-auto">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-semibold text-neutral-900">Channels</h1>
+          <p className="text-sm text-neutral-500 mt-0.5">Manage which Telegram channels you're monitoring</p>
+        </div>
+        <Button onClick={() => setShowAdd(true)} size="sm">
+          <Plus className="w-3.5 h-3.5" />
+          Add channel
+        </Button>
+      </div>
+
+      {showAdd && (
+        <Card className="mb-4">
+          <h2 className="text-sm font-semibold text-neutral-900 mb-4">Add channel manually</h2>
+          {error && (
+            <div className="mb-3 px-3 py-2 bg-error-50 border border-error-200 rounded-lg text-sm text-error-700">
+              {error}
+            </div>
+          )}
+          <form onSubmit={addChannel} className="space-y-3">
+            <Input
+              label="Channel name"
+              placeholder="e.g. Gold Signals Pro"
+              value={newChannel.display_name}
+              onChange={e => setNewChannel(p => ({ ...p, display_name: e.target.value }))}
+              required
+            />
+            <Input
+              label="Username (optional)"
+              placeholder="@channelname"
+              value={newChannel.channel_username}
+              onChange={e => setNewChannel(p => ({ ...p, channel_username: e.target.value }))}
+            />
+            <Input
+              label="Channel ID (optional)"
+              placeholder="Telegram channel ID"
+              value={newChannel.channel_id}
+              onChange={e => setNewChannel(p => ({ ...p, channel_id: e.target.value }))}
+              hint="Leave blank to use username"
+            />
+            <div className="flex gap-2 pt-1">
+              <Button type="submit" loading={saving} size="sm">Add channel</Button>
+              <Button type="button" variant="ghost" size="sm" onClick={() => setShowAdd(false)}>Cancel</Button>
+            </div>
+          </form>
+        </Card>
+      )}
+
+      {loading ? (
+        <div className="space-y-3">
+          {[...Array(3)].map((_, i) => (
+            <div key={i} className="h-16 bg-white rounded-xl border border-neutral-200 animate-pulse" />
+          ))}
+        </div>
+      ) : channels.length === 0 ? (
+        <Card>
+          <div className="text-center py-8">
+            <Radio className="w-10 h-10 mx-auto mb-3 text-neutral-200" />
+            <p className="text-neutral-500 text-sm font-medium">No channels yet</p>
+            <p className="text-neutral-400 text-xs mt-1">Add a signal channel to start monitoring</p>
+          </div>
+        </Card>
+      ) : (
+        <div className="space-y-2">
+          {channels.map(channel => (
+            <ChannelCard
+              key={channel.id}
+              channel={channel}
+              isEditing={editingId === channel.id}
+              onToggle={is_active => toggleChannel(channel.id, is_active)}
+              onDelete={() => deleteChannel(channel.id)}
+              onEditToggle={() => setEditingId(editingId === channel.id ? null : channel.id)}
+              onSave={updates => updateSettings(channel.id, updates)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ChannelCard({
+  channel,
+  isEditing,
+  onToggle,
+  onDelete,
+  onEditToggle,
+  onSave,
+}: {
+  channel: TelegramChannel
+  isEditing: boolean
+  onToggle: (v: boolean) => void
+  onDelete: () => void
+  onEditToggle: () => void
+  onSave: (updates: Partial<TelegramChannel>) => void
+}) {
+  const [lotSize, setLotSize] = useState(channel.lot_size_override?.toString() ?? '')
+  const [pipTolerance, setPipTolerance] = useState(channel.pip_tolerance_override?.toString() ?? '')
+
+  return (
+    <Card padding="none">
+      <div className="px-4 py-3.5 flex items-center gap-3">
+        <div className="w-9 h-9 bg-primary-50 rounded-lg flex items-center justify-center flex-shrink-0">
+          <Radio className="w-4 h-4 text-primary-600" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-medium text-neutral-900 truncate">{channel.display_name}</p>
+            {!channel.is_active && <Badge variant="neutral" size="sm">Paused</Badge>}
+          </div>
+          {channel.channel_username && (
+            <p className="text-xs text-neutral-400">@{channel.channel_username}</p>
+          )}
+        </div>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <Toggle checked={channel.is_active} onChange={onToggle} />
+          <button
+            onClick={onEditToggle}
+            className="p-1.5 rounded-lg text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 transition-colors"
+          >
+            <Settings className="w-4 h-4" />
+          </button>
+          <button
+            onClick={onDelete}
+            className="p-1.5 rounded-lg text-neutral-400 hover:text-error-600 hover:bg-error-50 transition-colors"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+
+      {isEditing && (
+        <div className="px-4 pb-4 border-t border-neutral-100 pt-3">
+          <p className="text-xs font-medium text-neutral-500 mb-3">Per-channel overrides</p>
+          <div className="grid grid-cols-2 gap-3">
+            <Input
+              label="Lot size override"
+              type="number"
+              min="0.01"
+              step="0.01"
+              placeholder="Use broker default"
+              value={lotSize}
+              onChange={e => setLotSize(e.target.value)}
+            />
+            <Input
+              label="Pip tolerance override"
+              type="number"
+              min="1"
+              placeholder="Use broker default"
+              value={pipTolerance}
+              onChange={e => setPipTolerance(e.target.value)}
+            />
+          </div>
+          <div className="flex gap-2 mt-3">
+            <Button
+              size="sm"
+              onClick={() => onSave({
+                lot_size_override: lotSize ? parseFloat(lotSize) : null,
+                pip_tolerance_override: pipTolerance ? parseInt(pipTolerance) : null,
+              })}
+            >
+              Save
+            </Button>
+            <Button size="sm" variant="ghost" onClick={onEditToggle}>Cancel</Button>
+          </div>
+        </div>
+      )}
+    </Card>
+  )
+}
