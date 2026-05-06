@@ -36,7 +36,7 @@ const navSections: NavSection[] = [
     ],
   },
   {
-    label: 'TC ANALYZER',
+    label: 'SIGNAL ANALYZER',
     items: [
       { to: '/performance', icon: BarChart2, label: 'Performance' },
       { to: '/portfolio', icon: Briefcase, label: 'Portfolio' },
