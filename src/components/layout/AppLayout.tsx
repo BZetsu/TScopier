@@ -1,5 +1,5 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
-import { LayoutDashboard, Settings, History, Zap, LayoutTemplate, ScrollText, Newspaper, Calendar, TrendingUp, GitBranch, ChartBar as BarChart2, Briefcase, ChartPie as PieChart, Search, Bell, ChevronDown, LogOut } from 'lucide-react'
+import { LayoutDashboard, Settings, History, Send, LayoutTemplate, ScrollText, Newspaper, Calendar, TrendingUp, GitBranch, ChartBar as BarChart2, Briefcase, ChartPie as PieChart, Search, Bell, ChevronDown, LogOut, ChartNoAxesColumn } from 'lucide-react'
 import tscopierLogo from '/tscopierlogo.png'
 import clsx from 'clsx'
 import { useAuth } from '../../context/AuthContext'
@@ -19,11 +19,12 @@ const navSections: NavSection[] = [
     ],
   },
   {
-    label: 'SIGNAL COPIER',
+    label: 'SIGNALS',
     items: [
-      { to: '/copier-engine', icon: Zap, label: 'Copier Engine' },
-      { to: '/copier-templates', icon: LayoutTemplate, label: 'Signal Backtest' },
+      { to: '/copier-engine', icon: Send, label: 'Channels' },
+      { to: '/copier-templates', icon: LayoutTemplate, label: 'Backtest' },
       { to: '/copier-logs', icon: ScrollText, label: 'Copier Logs' },
+      { to: '/signal-history', icon: ChartNoAxesColumn, label: 'History' },
     ],
   },
   {

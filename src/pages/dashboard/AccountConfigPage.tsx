@@ -38,10 +38,8 @@ const emptyForm: BrokerForm = {
   pip_tolerance: '20',
 }
 
-const EDGE_FN = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/telegram-auth`
-
 export function AccountConfigPage() {
-  const { user, session } = useAuth()
+  const { user } = useAuth()
   const [brokers, setBrokers] = useState<BrokerAccount[]>([])
   const [tgSession, setTgSession] = useState<TelegramSession | null>(null)
   const [showPlatformModal, setShowPlatformModal] = useState(false)
@@ -51,14 +49,6 @@ export function AccountConfigPage() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
 
-  // Telegram link state
-  const [tgStage, setTgStage] = useState<'idle' | 'phone' | 'code' | 'linked'>('idle')
-  const [tgPhone, setTgPhone] = useState('')
-  const [tgCode, setTgCode] = useState('')
-  const [tgPassword, setTgPassword] = useState('')
-  const [tgLoading, setTgLoading] = useState(false)
-  const [tgError, setTgError] = useState('')
-  const [requiresPassword, setRequiresPassword] = useState(false)
 
   useEffect(() => {
     if (!user) return
@@ -123,61 +113,9 @@ export function AccountConfigPage() {
     await supabase.from('broker_accounts').update({ is_active }).eq('id', id)
   }
 
-  // Telegram flow
-  const authHeaders = {
-    'Authorization': `Bearer ${session?.access_token}`,
-    'Content-Type': 'application/json',
-  }
-
-  const sendCode = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setTgError('')
-    setTgLoading(true)
-    try {
-      const res = await fetch(EDGE_FN, {
-        method: 'POST',
-        headers: authHeaders,
-        body: JSON.stringify({ action: 'send_code', phone: tgPhone }),
-      })
-      const data = await res.json()
-      if (!res.ok || data.error) { setTgError(data.error || 'Failed to send code'); return }
-      setTgStage('code')
-    } catch { setTgError('Network error') }
-    finally { setTgLoading(false) }
-  }
-
-  const verifyCode = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setTgError('')
-    setTgLoading(true)
-    try {
-      const res = await fetch(EDGE_FN, {
-        method: 'POST',
-        headers: authHeaders,
-        body: JSON.stringify({
-          action: 'verify_code',
-          phone: tgPhone,
-          code: tgCode,
-          password: requiresPassword ? tgPassword : undefined,
-        }),
-      })
-      const data = await res.json()
-      if (!res.ok || data.error) {
-        if (data.requires_password) { setRequiresPassword(true); setTgError('Enter your Telegram 2FA password.'); return }
-        setTgError(data.error || 'Verification failed')
-        return
-      }
-      // Worker persisted the telegram_sessions row; just refresh local state.
-      await loadData()
-      setTgStage('linked')
-    } catch { setTgError('Network error') }
-    finally { setTgLoading(false) }
-  }
-
   const disconnectTelegram = async () => {
     await supabase.from('telegram_sessions').delete().eq('user_id', user!.id)
     setTgSession(null)
-    setTgStage('idle')
   }
 
   if (loading) {
@@ -319,8 +257,8 @@ export function AccountConfigPage() {
                 </Button>
               </div>
             </div>
-          ) : tgStage === 'idle' ? (
-            <div className="flex items-center justify-between">
+          ) : (
+            <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 rounded-lg bg-neutral-100 flex items-center justify-center">
                   <AlertCircle className="w-5 h-5 text-neutral-400" />
@@ -330,65 +268,12 @@ export function AccountConfigPage() {
                   <p className="text-xs text-neutral-400">Required to read signal channels</p>
                 </div>
               </div>
-              <Button size="sm" onClick={() => setTgStage('phone')}>Connect Telegram</Button>
-            </div>
-          ) : (
-            <div>
-              <div className="flex items-center gap-2 mb-4">
-                <div className="w-7 h-7 rounded-full bg-primary-100 flex items-center justify-center text-primary-700 text-xs font-semibold">TG</div>
-                <p className="text-sm font-semibold text-neutral-900">
-                  {tgStage === 'phone' ? 'Enter your phone number' : 'Enter verification code'}
-                </p>
-              </div>
-
-              {tgError && (
-                <div className="mb-3 px-3 py-2 bg-error-50 border border-error-200 rounded-lg text-sm text-error-700">{tgError}</div>
-              )}
-
-              {tgStage === 'phone' ? (
-                <form onSubmit={sendCode} className="space-y-3">
-                  <Input
-                    label="Phone number"
-                    type="tel"
-                    placeholder="+1 234 567 8900"
-                    value={tgPhone}
-                    onChange={e => setTgPhone(e.target.value)}
-                    hint="Include country code"
-                    required
-                    autoFocus
-                  />
-                  <div className="flex gap-2">
-                    <Button type="submit" loading={tgLoading} size="sm">Send code</Button>
-                    <Button type="button" variant="ghost" size="sm" onClick={() => setTgStage('idle')}>Cancel</Button>
-                  </div>
-                </form>
-              ) : (
-                <form onSubmit={verifyCode} className="space-y-3">
-                  <Input
-                    label="Verification code"
-                    placeholder="12345"
-                    value={tgCode}
-                    onChange={e => setTgCode(e.target.value)}
-                    hint={`Sent to ${tgPhone}`}
-                    required
-                    autoFocus
-                  />
-                  {requiresPassword && (
-                    <Input
-                      label="2FA password"
-                      type="password"
-                      placeholder="Your Telegram password"
-                      value={tgPassword}
-                      onChange={e => setTgPassword(e.target.value)}
-                      required
-                    />
-                  )}
-                  <div className="flex gap-2">
-                    <Button type="submit" loading={tgLoading} size="sm">Verify</Button>
-                    <Button type="button" variant="ghost" size="sm" onClick={() => { setTgStage('phone'); setTgError('') }}>Back</Button>
-                  </div>
-                </form>
-              )}
+              <a
+                href="/copier-engine"
+                className="inline-flex items-center justify-center rounded-lg px-3 py-2 text-sm font-medium bg-primary-600 text-white hover:bg-primary-700 transition-colors"
+              >
+                Connect in Channels
+              </a>
             </div>
           )}
         </Card>

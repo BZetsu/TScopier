@@ -18,6 +18,7 @@ import { IntegrationsPage } from './pages/dashboard/IntegrationsPage'
 import { PerformancePage } from './pages/dashboard/PerformancePage'
 import { PortfolioPage } from './pages/dashboard/PortfolioPage'
 import { AnalysisHubPage } from './pages/dashboard/AnalysisHubPage'
+import { SignalHistoryPage } from './pages/dashboard/SignalHistoryPage'
 
 export default function App() {
   return (
@@ -44,6 +45,7 @@ export default function App() {
             <Route path="/copier-engine" element={<CopierEnginePage />} />
             <Route path="/copier-templates" element={<CopierTemplatesPage />} />
             <Route path="/copier-logs" element={<CopierLogsPage />} />
+            <Route path="/signal-history" element={<SignalHistoryPage />} />
             <Route path="/market-news" element={<MarketNewsPage />} />
             <Route path="/economic-calendar" element={<EconomicCalendarPage />} />
             <Route path="/sentiments" element={<SentimentsPage />} />

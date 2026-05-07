@@ -54,6 +54,30 @@ interface MessageLike {
   replyTo?: unknown
 }
 
+function toChannelIdVariants(raw: string): string[] {
+  const value = (raw ?? '').trim()
+  if (!value) return []
+
+  const out = new Set<string>([value])
+  const n = Number(value)
+  if (!Number.isFinite(n)) return [...out]
+
+  const abs = String(Math.abs(Math.trunc(n)))
+  out.add(abs)
+
+  if (value.startsWith('-100')) {
+    out.add(value.slice(4))
+  } else if (!value.startsWith('-')) {
+    // Telegram often represents channel peers as -100<id> in updates,
+    // while dialogs/list results can expose plain positive ids.
+    out.add(`-100${value}`)
+  } else {
+    out.add(`-100${abs}`)
+  }
+
+  return [...out]
+}
+
 export class UserListener {
   private client: TelegramClient
   private userId: string
@@ -161,7 +185,11 @@ export class UserListener {
       .eq('is_active', true)
     const lookup = new Map<string, ChannelRow>()
     for (const row of (rows ?? []) as ChannelRow[]) {
-      if (row.channel_id) lookup.set(row.channel_id, row)
+      if (row.channel_id) {
+        for (const v of toChannelIdVariants(row.channel_id)) {
+          lookup.set(v, row)
+        }
+      }
       if (row.channel_username) lookup.set(row.channel_username.toLowerCase(), row)
     }
     for (const key of added) {
@@ -195,7 +223,13 @@ export class UserListener {
         console.error(`[userListener] handleMessage error for ${this.userId}:`, err)
       })
     }
-    const builder = new NewMessage({ chats: [...next], incoming: true })
+    // NOTE:
+    // Passing `chats:` here depends on Telegram/gramjs resolving each chat
+    // identifier exactly as expected. In practice, channel ids can vary in
+    // representation (e.g. -100 prefix / raw ids), and a mismatch can result
+    // in silently missing all updates. We subscribe to all incoming messages
+    // and apply strict user/channel filtering in handleMessage() instead.
+    const builder = new NewMessage({ incoming: true })
     this.client.addEventHandler(handler, builder)
     this.currentHandler = handler
     this.currentEventBuilder = builder
@@ -228,7 +262,9 @@ export class UserListener {
 
     const next = new Set<string>()
     for (const ch of data ?? []) {
-      if (ch.channel_id) next.add(ch.channel_id)
+      if (ch.channel_id) {
+        for (const v of toChannelIdVariants(ch.channel_id)) next.add(v)
+      }
       if (ch.channel_username) next.add(ch.channel_username.toLowerCase())
     }
     return next
@@ -283,25 +319,54 @@ export class UserListener {
 
     const chatRaw = chat as unknown as { id?: unknown; username?: string }
     const chatId = String(chatRaw.id ?? '')
+    const chatIdVariants = toChannelIdVariants(chatId)
     const chatUsername = (chatRaw.username ?? '').toLowerCase()
 
     // Defense in depth — gramjs already filters via `chats:` but verify
     // in case our subscription set is stale between refreshes.
     const isMonitored =
-      this.monitoredChannels.has(chatId) ||
+      chatIdVariants.some(v => this.monitoredChannels.has(v)) ||
       (!!chatUsername && this.monitoredChannels.has(chatUsername))
     if (!isMonitored) return
 
-    const { data: channelRow } = await this.supabase
-      .from('telegram_channels')
-      .select('id, channel_id, channel_username, last_seen_message_id')
-      .eq('user_id', this.userId)
-      .or(`channel_id.eq.${chatId},channel_username.eq.${chatUsername}`)
-      .maybeSingle()
+    console.log(
+      `[userListener] message candidate user=${this.userId} chatId=${chatId} variants=${chatIdVariants.join(',')} username=${chatUsername || '-'} msgId=${String(message.id)}`,
+    )
 
-    if (!channelRow) return
+    // Prefer channel_id matching across normalized variants, fallback to username.
+    let channelRow: ChannelRow | null = null
+    if (chatIdVariants.length > 0) {
+      const idRes = await this.supabase
+        .from('telegram_channels')
+        .select('id, channel_id, channel_username, last_seen_message_id')
+        .eq('user_id', this.userId)
+        .eq('is_active', true)
+        .in('channel_id', chatIdVariants)
+        .limit(1)
+        .maybeSingle()
+      channelRow = (idRes.data as ChannelRow | null) ?? null
+    }
 
-    await this.logSignal(channelRow as ChannelRow, {
+    if (!channelRow && chatUsername) {
+      const usernameRes = await this.supabase
+        .from('telegram_channels')
+        .select('id, channel_id, channel_username, last_seen_message_id')
+        .eq('user_id', this.userId)
+        .eq('is_active', true)
+        .eq('channel_username', chatUsername)
+        .limit(1)
+        .maybeSingle()
+      channelRow = (usernameRes.data as ChannelRow | null) ?? null
+    }
+
+    if (!channelRow) {
+      console.warn(
+        `[userListener] monitored message could not map to telegram_channels row user=${this.userId} chatId=${chatId} username=${chatUsername || '-'} variants=${chatIdVariants.join(',')}`,
+      )
+      return
+    }
+
+    await this.logSignal(channelRow, {
       id: message.id,
       text: message.text ?? message.message,
       replyTo: message.replyTo,
@@ -344,7 +409,16 @@ export class UserListener {
 
     await this.bumpLastSeen(channelRow.id, messageId)
 
-    if (!signalRow) return false // duplicate — skip parse-signal
+    if (!signalRow) {
+      console.log(
+        `[userListener] duplicate message ignored user=${this.userId} channelRow=${channelRow.id} messageId=${messageId}`,
+      )
+      return false // duplicate — skip parse-signal
+    }
+
+    console.log(
+      `[userListener] signal inserted user=${this.userId} signalId=${signalRow.id} channelRow=${channelRow.id} messageId=${messageId}`,
+    )
 
     if (PARSE_SIGNAL_URL) {
       fetch(PARSE_SIGNAL_URL, {

@@ -15,6 +15,29 @@ const SAFETY_POLL_INTERVAL_MS = 60000;
 const SESSION_PERSIST_INTERVAL_MS = 30 * 60000;
 const CATCHUP_BACKPRESSURE_MS = 250;
 const CATCHUP_PER_CHANNEL_CAP = 200;
+function toChannelIdVariants(raw) {
+    const value = (raw ?? '').trim();
+    if (!value)
+        return [];
+    const out = new Set([value]);
+    const n = Number(value);
+    if (!Number.isFinite(n))
+        return [...out];
+    const abs = String(Math.abs(Math.trunc(n)));
+    out.add(abs);
+    if (value.startsWith('-100')) {
+        out.add(value.slice(4));
+    }
+    else if (!value.startsWith('-')) {
+        // Telegram often represents channel peers as -100<id> in updates,
+        // while dialogs/list results can expose plain positive ids.
+        out.add(`-100${value}`);
+    }
+    else {
+        out.add(`-100${abs}`);
+    }
+    return [...out];
+}
 class UserListener {
     constructor(userId, sessionString, supabase, adoptedClient) {
         this.monitoredChannels = new Set();
@@ -104,8 +127,11 @@ class UserListener {
             .eq('is_active', true);
         const lookup = new Map();
         for (const row of (rows ?? [])) {
-            if (row.channel_id)
-                lookup.set(row.channel_id, row);
+            if (row.channel_id) {
+                for (const v of toChannelIdVariants(row.channel_id)) {
+                    lookup.set(v, row);
+                }
+            }
             if (row.channel_username)
                 lookup.set(row.channel_username.toLowerCase(), row);
         }
@@ -135,7 +161,13 @@ class UserListener {
                 console.error(`[userListener] handleMessage error for ${this.userId}:`, err);
             });
         };
-        const builder = new events_1.NewMessage({ chats: [...next], incoming: true });
+        // NOTE:
+        // Passing `chats:` here depends on Telegram/gramjs resolving each chat
+        // identifier exactly as expected. In practice, channel ids can vary in
+        // representation (e.g. -100 prefix / raw ids), and a mismatch can result
+        // in silently missing all updates. We subscribe to all incoming messages
+        // and apply strict user/channel filtering in handleMessage() instead.
+        const builder = new events_1.NewMessage({ incoming: true });
         this.client.addEventHandler(handler, builder);
         this.currentHandler = handler;
         this.currentEventBuilder = builder;
@@ -168,8 +200,10 @@ class UserListener {
             .eq('is_active', true);
         const next = new Set();
         for (const ch of data ?? []) {
-            if (ch.channel_id)
-                next.add(ch.channel_id);
+            if (ch.channel_id) {
+                for (const v of toChannelIdVariants(ch.channel_id))
+                    next.add(v);
+            }
             if (ch.channel_username)
                 next.add(ch.channel_username.toLowerCase());
         }
@@ -217,21 +251,43 @@ class UserListener {
             return;
         const chatRaw = chat;
         const chatId = String(chatRaw.id ?? '');
+        const chatIdVariants = toChannelIdVariants(chatId);
         const chatUsername = (chatRaw.username ?? '').toLowerCase();
         // Defense in depth — gramjs already filters via `chats:` but verify
         // in case our subscription set is stale between refreshes.
-        const isMonitored = this.monitoredChannels.has(chatId) ||
+        const isMonitored = chatIdVariants.some(v => this.monitoredChannels.has(v)) ||
             (!!chatUsername && this.monitoredChannels.has(chatUsername));
         if (!isMonitored)
             return;
-        const { data: channelRow } = await this.supabase
-            .from('telegram_channels')
-            .select('id, channel_id, channel_username, last_seen_message_id')
-            .eq('user_id', this.userId)
-            .or(`channel_id.eq.${chatId},channel_username.eq.${chatUsername}`)
-            .maybeSingle();
-        if (!channelRow)
+        console.log(`[userListener] message candidate user=${this.userId} chatId=${chatId} variants=${chatIdVariants.join(',')} username=${chatUsername || '-'} msgId=${String(message.id)}`);
+        // Prefer channel_id matching across normalized variants, fallback to username.
+        let channelRow = null;
+        if (chatIdVariants.length > 0) {
+            const idRes = await this.supabase
+                .from('telegram_channels')
+                .select('id, channel_id, channel_username, last_seen_message_id')
+                .eq('user_id', this.userId)
+                .eq('is_active', true)
+                .in('channel_id', chatIdVariants)
+                .limit(1)
+                .maybeSingle();
+            channelRow = idRes.data ?? null;
+        }
+        if (!channelRow && chatUsername) {
+            const usernameRes = await this.supabase
+                .from('telegram_channels')
+                .select('id, channel_id, channel_username, last_seen_message_id')
+                .eq('user_id', this.userId)
+                .eq('is_active', true)
+                .eq('channel_username', chatUsername)
+                .limit(1)
+                .maybeSingle();
+            channelRow = usernameRes.data ?? null;
+        }
+        if (!channelRow) {
+            console.warn(`[userListener] monitored message could not map to telegram_channels row user=${this.userId} chatId=${chatId} username=${chatUsername || '-'} variants=${chatIdVariants.join(',')}`);
             return;
+        }
         await this.logSignal(channelRow, {
             id: message.id,
             text: message.text ?? message.message,
@@ -267,8 +323,11 @@ class UserListener {
             return false;
         }
         await this.bumpLastSeen(channelRow.id, messageId);
-        if (!signalRow)
+        if (!signalRow) {
+            console.log(`[userListener] duplicate message ignored user=${this.userId} channelRow=${channelRow.id} messageId=${messageId}`);
             return false; // duplicate — skip parse-signal
+        }
+        console.log(`[userListener] signal inserted user=${this.userId} signalId=${signalRow.id} channelRow=${channelRow.id} messageId=${messageId}`);
         if (PARSE_SIGNAL_URL) {
             fetch(PARSE_SIGNAL_URL, {
                 method: 'POST',
