@@ -167,7 +167,9 @@ class UserListener {
         // representation (e.g. -100 prefix / raw ids), and a mismatch can result
         // in silently missing all updates. We subscribe to all incoming messages
         // and apply strict user/channel filtering in handleMessage() instead.
-        const builder = new events_1.NewMessage({ incoming: true });
+        // Important: do not use `incoming: true` here — channel posts are not
+        // always classified as "incoming", which can cause silent drops.
+        const builder = new events_1.NewMessage({});
         this.client.addEventHandler(handler, builder);
         this.currentHandler = handler;
         this.currentEventBuilder = builder;
@@ -246,15 +248,10 @@ class UserListener {
         const message = event.message;
         if (!message)
             return;
-        const chat = await message.getChat();
-        if (!chat)
+        const { chatId, chatIdVariants, chatUsername } = await this.resolveChatIdentity(event);
+        if (!chatId && !chatUsername)
             return;
-        const chatRaw = chat;
-        const chatId = String(chatRaw.id ?? '');
-        const chatIdVariants = toChannelIdVariants(chatId);
-        const chatUsername = (chatRaw.username ?? '').toLowerCase();
-        // Defense in depth — gramjs already filters via `chats:` but verify
-        // in case our subscription set is stale between refreshes.
+        // We subscribe broadly and filter by our own monitored set.
         const isMonitored = chatIdVariants.some(v => this.monitoredChannels.has(v)) ||
             (!!chatUsername && this.monitoredChannels.has(chatUsername));
         if (!isMonitored)
@@ -293,6 +290,32 @@ class UserListener {
             text: message.text ?? message.message,
             replyTo: message.replyTo,
         });
+    }
+    /**
+     * Resolve chat identity for an update without depending solely on
+     * getChat(), which can fail transiently when gramjs entity cache is cold.
+     */
+    async resolveChatIdentity(event) {
+        const fallbackId = event.chatId != null ? String(event.chatId) : '';
+        let chatId = fallbackId;
+        let chatUsername = '';
+        try {
+            const chat = await event.message?.getChat();
+            if (chat) {
+                const chatRaw = chat;
+                if (chatRaw.id != null)
+                    chatId = String(chatRaw.id);
+                chatUsername = (chatRaw.username ?? '').toLowerCase();
+            }
+        }
+        catch {
+            // Fallback to event.chatId if entity lookup fails.
+        }
+        return {
+            chatId,
+            chatIdVariants: toChannelIdVariants(chatId),
+            chatUsername,
+        };
     }
     /**
      * Single insert path used by both live events (handleMessage) and
