@@ -1,36 +1,37 @@
 import 'dotenv/config'
 import { createClient } from '@supabase/supabase-js'
 import { UserSessionManager } from './sessionManager'
+import { AuthService } from './authService'
+import { startHttpServer } from './httpServer'
 
 const supabase = createClient(
   process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
+  process.env.SUPABASE_SERVICE_ROLE_KEY!,
 )
 
 const sessionManager = new UserSessionManager(supabase)
+const authService = new AuthService(supabase, sessionManager)
+const httpServer = startHttpServer(authService, sessionManager)
 
 async function main() {
   console.log('[worker] TSCopier AI worker starting...')
 
   await sessionManager.loadAll()
 
-  // Poll for new/changed sessions every 30 seconds
   setInterval(async () => {
     await sessionManager.syncSessions()
   }, 30_000)
 
-  // Keep process alive
-  process.on('SIGTERM', async () => {
-    console.log('[worker] Shutting down...')
+  const shutdown = async (signal: string) => {
+    console.log(`[worker] ${signal} received, shutting down...`)
+    httpServer.close()
+    authService.shutdown()
     await sessionManager.disconnectAll()
     process.exit(0)
-  })
+  }
 
-  process.on('SIGINT', async () => {
-    console.log('[worker] Shutting down...')
-    await sessionManager.disconnectAll()
-    process.exit(0)
-  })
+  process.on('SIGTERM', () => { shutdown('SIGTERM').catch(() => process.exit(1)) })
+  process.on('SIGINT',  () => { shutdown('SIGINT').catch(() => process.exit(1)) })
 }
 
 main().catch(err => {

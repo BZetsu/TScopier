@@ -4,6 +4,7 @@ import { Clock, ChevronRight, Info, Plus } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import type { BrokerAccount, Signal, Trade } from '../../types/database'
+import { AddAccountModal } from '../../components/ui/AddAccountModal'
 
 interface DashboardStats {
   accounts: number
@@ -37,6 +38,7 @@ export function DashboardPage() {
   })
   const [copierLogs, setCopierLogs] = useState<Signal[]>([])
   const [linkedAccounts, setLinkedAccounts] = useState<BrokerAccount[]>([])
+  const [showPlatformModal, setShowPlatformModal] = useState(false)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -255,7 +257,7 @@ export function DashboardPage() {
             </div>
           </div>
           <button
-            onClick={() => navigate('/account-config')}
+            onClick={() => setShowPlatformModal(true)}
             className="flex items-center gap-1.5 px-3 py-1.5 border border-teal-500 text-teal-600 rounded-lg text-xs font-medium hover:bg-teal-50 transition-colors"
           >
             <Plus className="w-3.5 h-3.5" />
@@ -294,6 +296,15 @@ export function DashboardPage() {
           </div>
         )}
       </div>
+
+      <AddAccountModal
+        open={showPlatformModal}
+        onClose={() => setShowPlatformModal(false)}
+        onSelect={() => {
+          setShowPlatformModal(false)
+          navigate('/account-config')
+        }}
+      />
     </div>
   )
 }

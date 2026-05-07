@@ -56,8 +56,6 @@ export function AccountConfigPage() {
   const [tgPhone, setTgPhone] = useState('')
   const [tgCode, setTgCode] = useState('')
   const [tgPassword, setTgPassword] = useState('')
-  const [tgPhoneCodeHash, setTgPhoneCodeHash] = useState('')
-  const [tgSessionString, setTgSessionString] = useState('')
   const [tgLoading, setTgLoading] = useState(false)
   const [tgError, setTgError] = useState('')
   const [requiresPassword, setRequiresPassword] = useState(false)
@@ -143,8 +141,6 @@ export function AccountConfigPage() {
       })
       const data = await res.json()
       if (!res.ok || data.error) { setTgError(data.error || 'Failed to send code'); return }
-      setTgPhoneCodeHash(data.phone_code_hash)
-      setTgSessionString(data.session_string ?? '')
       setTgStage('code')
     } catch { setTgError('Network error') }
     finally { setTgLoading(false) }
@@ -162,8 +158,6 @@ export function AccountConfigPage() {
           action: 'verify_code',
           phone: tgPhone,
           code: tgCode,
-          phone_code_hash: tgPhoneCodeHash,
-          session_string: tgSessionString,
           password: requiresPassword ? tgPassword : undefined,
         }),
       })
@@ -173,12 +167,7 @@ export function AccountConfigPage() {
         setTgError(data.error || 'Verification failed')
         return
       }
-      await supabase.from('telegram_sessions').upsert({
-        user_id: user!.id,
-        session_string: data.session_string,
-        phone_number: tgPhone,
-        is_active: true,
-      }, { onConflict: 'user_id' })
+      // Worker persisted the telegram_sessions row; just refresh local state.
       await loadData()
       setTgStage('linked')
     } catch { setTgError('Network error') }

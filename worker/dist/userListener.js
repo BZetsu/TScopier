@@ -1,0 +1,478 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.UserListener = void 0;
+const events_1 = require("telegram/events");
+const tl_1 = require("telegram/tl");
+const telegramClient_1 = require("./telegramClient");
+const PARSE_SIGNAL_URL = process.env.PARSE_SIGNAL_URL ?? '';
+const PARSE_SIGNAL_KEY = process.env.PARSE_SIGNAL_KEY ?? '';
+/** Min seconds between client.connect() and first getDialogs on a fresh session. */
+const COLD_FANOUT_DELAY_MS = 8000;
+const DIALOG_CACHE_TTL_MS = 60000;
+const WATCHDOG_INTERVAL_MS = 30000;
+const WATCHDOG_FAILURE_THRESHOLD = 2;
+const SAFETY_POLL_INTERVAL_MS = 60000;
+const SESSION_PERSIST_INTERVAL_MS = 30 * 60000;
+const CATCHUP_BACKPRESSURE_MS = 250;
+const CATCHUP_PER_CHANNEL_CAP = 200;
+class UserListener {
+    constructor(userId, sessionString, supabase, adoptedClient) {
+        this.monitoredChannels = new Set();
+        this.currentHandler = null;
+        this.currentEventBuilder = null;
+        this.startedAt = 0;
+        this.dialogsCache = null;
+        this.dialogsCacheAt = 0;
+        this.safetyPollTimer = null;
+        this.watchdogTimer = null;
+        this.sessionPersistTimer = null;
+        this.catchUpInFlight = false;
+        this.isConnected = false;
+        this.lastEventAt = 0;
+        this.lastReconnectAt = 0;
+        this.consecutiveProbeFailures = 0;
+        this.userId = userId;
+        this.supabase = supabase;
+        this.client = adoptedClient ?? (0, telegramClient_1.buildClient)(sessionString);
+        this.lastSavedSession = sessionString;
+    }
+    // ── lifecycle ─────────────────────────────────────────────────────────
+    async start(opts = {}) {
+        if (!opts.alreadyConnected) {
+            await this.client.connect();
+        }
+        this.isConnected = true;
+        this.startedAt = Date.now();
+        this.lastEventAt = Date.now();
+        await this.refreshChannelSubscription();
+        await this.runCatchUp();
+        this.startWatchdog();
+        this.startSafetyPoll();
+        this.startSessionPersist();
+    }
+    async stop() {
+        try {
+            this.stopTimer('watchdogTimer');
+            this.stopTimer('safetyPollTimer');
+            this.stopTimer('sessionPersistTimer');
+            this.removeCurrentHandler();
+            await this.persistSessionIfChanged();
+            await this.client.disconnect();
+        }
+        catch {
+            // ignore disconnect errors
+        }
+        finally {
+            this.isConnected = false;
+        }
+    }
+    stopTimer(field) {
+        const t = this[field];
+        if (t) {
+            clearInterval(t);
+            this[field] = null;
+        }
+    }
+    getStatus() {
+        return {
+            user_id: this.userId,
+            connected: this.isConnected,
+            last_event_at: this.lastEventAt,
+            last_reconnect_at: this.lastReconnectAt,
+            monitored_channels: this.monitoredChannels.size,
+            consecutive_probe_failures: this.consecutiveProbeFailures,
+        };
+    }
+    // ── channel subscription ──────────────────────────────────────────────
+    /**
+     * Public hook for the session manager's Realtime subscription. Called
+     * whenever telegram_channels changes for this user. Refreshes the
+     * NewMessage filter and runs catch-up for any newly added channels.
+     */
+    async onChannelsChanged() {
+        const previous = new Set(this.monitoredChannels);
+        await this.refreshChannelSubscription();
+        const added = [...this.monitoredChannels].filter(c => !previous.has(c));
+        if (added.length === 0)
+            return;
+        // Catch up only the newly added channels — full catchUp would re-scan
+        // every channel and is wasteful when the user just toggled one on.
+        const { data: rows } = await this.supabase
+            .from('telegram_channels')
+            .select('id, channel_id, channel_username, last_seen_message_id')
+            .eq('user_id', this.userId)
+            .eq('is_active', true);
+        const lookup = new Map();
+        for (const row of (rows ?? [])) {
+            if (row.channel_id)
+                lookup.set(row.channel_id, row);
+            if (row.channel_username)
+                lookup.set(row.channel_username.toLowerCase(), row);
+        }
+        for (const key of added) {
+            const row = lookup.get(key);
+            if (row)
+                await this.catchUpChannel(row).catch(err => console.error(`[userListener] catchUp (added) failed for ${row.id}:`, err));
+        }
+    }
+    /**
+     * Read the active channel set for this user and (re)subscribe the
+     * NewMessage handler scoped to those chats only. Listening globally
+     * (NewMessage({})) and filtering in JS is one of the userbot
+     * fingerprints Telegram flags on cold accounts.
+     */
+    async refreshChannelSubscription() {
+        const next = await this.loadChannels();
+        if (this.currentHandler && this.setsEqual(next, this.monitoredChannels)) {
+            return;
+        }
+        this.removeCurrentHandler();
+        this.monitoredChannels = next;
+        if (next.size === 0)
+            return;
+        const handler = (event) => {
+            this.handleMessage(event).catch(err => {
+                console.error(`[userListener] handleMessage error for ${this.userId}:`, err);
+            });
+        };
+        const builder = new events_1.NewMessage({ chats: [...next], incoming: true });
+        this.client.addEventHandler(handler, builder);
+        this.currentHandler = handler;
+        this.currentEventBuilder = builder;
+    }
+    removeCurrentHandler() {
+        if (this.currentHandler && this.currentEventBuilder) {
+            try {
+                this.client.removeEventHandler(this.currentHandler, this.currentEventBuilder);
+            }
+            catch {
+                // ignore
+            }
+        }
+        this.currentHandler = null;
+        this.currentEventBuilder = null;
+    }
+    setsEqual(a, b) {
+        if (a.size !== b.size)
+            return false;
+        for (const v of a)
+            if (!b.has(v))
+                return false;
+        return true;
+    }
+    async loadChannels() {
+        const { data } = await this.supabase
+            .from('telegram_channels')
+            .select('channel_id, channel_username')
+            .eq('user_id', this.userId)
+            .eq('is_active', true);
+        const next = new Set();
+        for (const ch of data ?? []) {
+            if (ch.channel_id)
+                next.add(ch.channel_id);
+            if (ch.channel_username)
+                next.add(ch.channel_username.toLowerCase());
+        }
+        return next;
+    }
+    // ── public dialog listing for onboarding UI ───────────────────────────
+    /**
+     * Return user's channels/groups. Delays the first call after start to
+     * avoid cold-session fan-out, pages with a small limit, and caches the
+     * result briefly so onboarding UI re-renders don't re-hit Telegram.
+     */
+    async listChannels() {
+        const elapsed = Date.now() - this.startedAt;
+        if (elapsed >= 0 && elapsed < COLD_FANOUT_DELAY_MS) {
+            await new Promise(r => setTimeout(r, COLD_FANOUT_DELAY_MS - elapsed));
+        }
+        if (this.dialogsCache && (Date.now() - this.dialogsCacheAt) < DIALOG_CACHE_TTL_MS) {
+            return this.dialogsCache;
+        }
+        const dialogs = await this.client.getDialogs({ limit: 20 });
+        const channels = dialogs
+            .filter(d => d.isChannel || d.isGroup)
+            .map(d => {
+            const entity = (d.entity ?? {});
+            return {
+                id: String(d.id ?? ''),
+                title: d.title ?? 'Unknown',
+                username: entity.username ?? '',
+                members_count: entity.participantsCount ?? 0,
+            };
+        })
+            .filter(c => !!c.id);
+        this.dialogsCache = channels;
+        this.dialogsCacheAt = Date.now();
+        return channels;
+    }
+    // ── live message handling ─────────────────────────────────────────────
+    async handleMessage(event) {
+        this.lastEventAt = Date.now();
+        const message = event.message;
+        if (!message)
+            return;
+        const chat = await message.getChat();
+        if (!chat)
+            return;
+        const chatRaw = chat;
+        const chatId = String(chatRaw.id ?? '');
+        const chatUsername = (chatRaw.username ?? '').toLowerCase();
+        // Defense in depth — gramjs already filters via `chats:` but verify
+        // in case our subscription set is stale between refreshes.
+        const isMonitored = this.monitoredChannels.has(chatId) ||
+            (!!chatUsername && this.monitoredChannels.has(chatUsername));
+        if (!isMonitored)
+            return;
+        const { data: channelRow } = await this.supabase
+            .from('telegram_channels')
+            .select('id, channel_id, channel_username, last_seen_message_id')
+            .eq('user_id', this.userId)
+            .or(`channel_id.eq.${chatId},channel_username.eq.${chatUsername}`)
+            .maybeSingle();
+        if (!channelRow)
+            return;
+        await this.logSignal(channelRow, {
+            id: message.id,
+            text: message.text ?? message.message,
+            replyTo: message.replyTo,
+        });
+    }
+    /**
+     * Single insert path used by both live events (handleMessage) and
+     * catch-up (catchUpChannel). Idempotent via the unique partial index
+     * on signals(user_id, telegram_message_id) — a row that already exists
+     * is left untouched and parse-signal is not re-fired.
+     */
+    async logSignal(channelRow, message) {
+        const messageId = String(message.id);
+        const rawMessage = (message.text ?? message.message ?? '');
+        const isReply = !!message.replyTo;
+        const { data: signalRow, error: insertErr } = await this.supabase
+            .from('signals')
+            .upsert({
+            user_id: this.userId,
+            channel_id: channelRow.id,
+            raw_message: rawMessage,
+            raw_image_url: null,
+            status: 'pending',
+            telegram_message_id: messageId,
+            is_modification: isReply,
+            parent_signal_id: null,
+        }, { onConflict: 'user_id,telegram_message_id', ignoreDuplicates: true })
+            .select('id')
+            .maybeSingle();
+        if (insertErr) {
+            console.error(`[userListener] logSignal upsert failed for ${this.userId}:`, insertErr.message);
+            return false;
+        }
+        await this.bumpLastSeen(channelRow.id, messageId);
+        if (!signalRow)
+            return false; // duplicate — skip parse-signal
+        if (PARSE_SIGNAL_URL) {
+            fetch(PARSE_SIGNAL_URL, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${PARSE_SIGNAL_KEY}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ signal_id: signalRow.id }),
+            }).catch(err => {
+                console.error(`[userListener] parse-signal call failed for signal ${signalRow.id}:`, err.message);
+            });
+        }
+        return true;
+    }
+    async bumpLastSeen(channelRowId, messageId) {
+        const num = Number(messageId);
+        if (!Number.isFinite(num))
+            return;
+        // Only advance the high-water mark forwards.
+        await this.supabase
+            .from('telegram_channels')
+            .update({
+            last_seen_message_id: num,
+            last_seen_at: new Date().toISOString(),
+        })
+            .eq('id', channelRowId)
+            .or(`last_seen_message_id.is.null,last_seen_message_id.lt.${num}`);
+    }
+    // ── catch-up after connect/reconnect ──────────────────────────────────
+    async runCatchUp() {
+        if (this.catchUpInFlight)
+            return;
+        this.catchUpInFlight = true;
+        try {
+            const { data: rows } = await this.supabase
+                .from('telegram_channels')
+                .select('id, channel_id, channel_username, last_seen_message_id')
+                .eq('user_id', this.userId)
+                .eq('is_active', true);
+            for (const row of (rows ?? [])) {
+                await this.catchUpChannel(row).catch(err => console.error(`[userListener] catchUp failed for channel ${row.id}:`, err));
+            }
+        }
+        finally {
+            this.catchUpInFlight = false;
+        }
+    }
+    async catchUpChannel(row) {
+        let peer;
+        try {
+            peer = await this.client.getInputEntity(row.channel_username || row.channel_id);
+        }
+        catch (err) {
+            // Entity cache miss (common right after fresh connect for channels
+            // we've never seen via dialogs). The next live message will
+            // populate the cache; subsequent reconnects can catch up then.
+            console.warn(`[userListener] getInputEntity miss for channel ${row.id}; skipping catch-up this round`);
+            return;
+        }
+        const minIdRaw = row.last_seen_message_id;
+        const minId = minIdRaw == null ? 0 : Number(minIdRaw);
+        if (minId === 0) {
+            // Seed-only on first-ever listen — do not backfill historical messages.
+            // Without this, a user picking a 5-year-old signal channel would
+            // import its entire history.
+            try {
+                const latest = await this.client.getMessages(peer, { limit: 1 });
+                if (latest[0])
+                    await this.bumpLastSeen(row.id, String(latest[0].id));
+            }
+            catch (err) {
+                console.warn(`[userListener] seed last_seen failed for channel ${row.id}:`, err);
+            }
+            return;
+        }
+        const collected = [];
+        let offsetId = 0;
+        const batchSize = 50;
+        while (collected.length < CATCHUP_PER_CHANNEL_CAP) {
+            let batch;
+            try {
+                batch = (await this.client.getMessages(peer, {
+                    limit: batchSize,
+                    offsetId,
+                    minId,
+                }));
+            }
+            catch (err) {
+                console.error(`[userListener] getMessages failed for channel ${row.id}:`, err);
+                break;
+            }
+            if (!batch.length)
+                break;
+            for (const m of batch)
+                collected.push(m);
+            offsetId = Number(batch[batch.length - 1].id);
+            if (batch.length < batchSize)
+                break;
+            await new Promise(r => setTimeout(r, CATCHUP_BACKPRESSURE_MS));
+        }
+        // gramjs returns newest-first; insert oldest-first so last_seen
+        // monotonically advances and parse-signal sees signals in order.
+        collected.sort((a, b) => Number(a.id) - Number(b.id));
+        for (const m of collected) {
+            await this.logSignal(row, m);
+        }
+    }
+    // ── watchdog ──────────────────────────────────────────────────────────
+    startWatchdog() {
+        if (this.watchdogTimer)
+            return;
+        this.watchdogTimer = setInterval(() => {
+            this.runWatchdog().catch(err => console.error(`[userListener] watchdog tick error for ${this.userId}:`, err));
+        }, WATCHDOG_INTERVAL_MS);
+        this.watchdogTimer.unref?.();
+    }
+    /**
+     * Probe MTProto with a cheap authenticated call. gramjs's autoReconnect
+     * usually saves us on TCP drops, but does not catch "zombie" sockets
+     * (NAT / load-balancer half-open) where the client thinks it's
+     * connected and silently stops receiving updates. The probe forces a
+     * round-trip; consecutive failures trigger a hard reconnect.
+     */
+    async runWatchdog() {
+        try {
+            await (0, telegramClient_1.tgInvoke)(this.client, new tl_1.Api.updates.GetState());
+            this.consecutiveProbeFailures = 0;
+            this.lastEventAt = this.lastEventAt || Date.now();
+        }
+        catch (err) {
+            this.consecutiveProbeFailures++;
+            console.warn(`[watchdog] probe failed (${this.consecutiveProbeFailures}/${WATCHDOG_FAILURE_THRESHOLD}) for ${this.userId}:`, err instanceof Error ? err.message : String(err));
+            if (this.consecutiveProbeFailures >= WATCHDOG_FAILURE_THRESHOLD) {
+                await this.forceReconnect();
+            }
+        }
+    }
+    async forceReconnect() {
+        console.log(`[userListener] force reconnect for ${this.userId}`);
+        this.lastReconnectAt = Date.now();
+        this.consecutiveProbeFailures = 0;
+        this.isConnected = false;
+        try {
+            await this.client.disconnect();
+        }
+        catch { /* ignore */ }
+        try {
+            await this.client.connect();
+            this.isConnected = true;
+        }
+        catch (err) {
+            console.error(`[userListener] reconnect failed for ${this.userId}:`, err);
+            return;
+        }
+        // Rebind handler — the previous one was attached to the disconnected
+        // session and may not survive the reconnect cleanly.
+        this.removeCurrentHandler();
+        this.monitoredChannels.clear();
+        await this.refreshChannelSubscription();
+        await this.runCatchUp();
+    }
+    // ── safety poll (Realtime drop fallback) ──────────────────────────────
+    startSafetyPoll() {
+        if (this.safetyPollTimer)
+            return;
+        this.safetyPollTimer = setInterval(() => {
+            this.refreshChannelSubscription().catch(err => console.error(`[userListener] safety poll error for ${this.userId}:`, err));
+        }, SAFETY_POLL_INTERVAL_MS);
+        this.safetyPollTimer.unref?.();
+    }
+    // ── session string rotation ───────────────────────────────────────────
+    startSessionPersist() {
+        if (this.sessionPersistTimer)
+            return;
+        this.sessionPersistTimer = setInterval(() => {
+            this.persistSessionIfChanged().catch(err => console.error(`[userListener] session persist error for ${this.userId}:`, err));
+        }, SESSION_PERSIST_INTERVAL_MS);
+        this.sessionPersistTimer.unref?.();
+    }
+    /**
+     * gramjs occasionally rotates auth_key state inside the session. If we
+     * crash without persisting the new state, the next start re-handshakes
+     * from a stale snapshot which can look suspicious to Telegram. Persist
+     * on a 30-min cadence and on graceful shutdown.
+     */
+    async persistSessionIfChanged() {
+        let current;
+        try {
+            current = this.client.session.save();
+        }
+        catch {
+            return;
+        }
+        if (!current || current === this.lastSavedSession)
+            return;
+        const { error } = await this.supabase
+            .from('telegram_sessions')
+            .update({ session_string: current })
+            .eq('user_id', this.userId);
+        if (error) {
+            console.error(`[userListener] session_string update failed for ${this.userId}:`, error.message);
+            return;
+        }
+        this.lastSavedSession = current;
+    }
+}
+exports.UserListener = UserListener;

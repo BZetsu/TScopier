@@ -1,0 +1,34 @@
+# Single-instance supervisor for the TSCopier Telegram worker.
+#
+# IMPORTANT: only run ONE replica per Telegram session. If two workers run
+# with the same telegram_sessions.session_string, Telegram will log one of
+# them out (AUTH_KEY_DUPLICATED), creating a message gap and a ban-risk
+# signal. The combination of `container_name` and `restart: always` makes
+# Docker reject a second `docker compose up` on the same host.
+
+services:
+  worker:
+    build: .
+    image: tscopier-worker:latest
+    container_name: tscopier-worker
+    restart: always
+    env_file: .env
+    ports:
+      - "8080:8080"
+    healthcheck:
+      # /health returns 200 only when every listener is connected and has
+      # received an event within the last 5 minutes (or has just started).
+      # Docker will mark the container "unhealthy" after 3 consecutive
+      # failures; combined with `restart: always` an orchestrator that
+      # respects health (Swarm / Docker Engine + autoheal sidecar) will
+      # recreate it automatically.
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"

@@ -1,11 +1,11 @@
 import { useState } from 'react'
 import { useAuth } from '../../../context/AuthContext'
-import { supabase } from '../../../lib/supabase'
 import { Card } from '../../../components/ui/Card'
 import { Input } from '../../../components/ui/Input'
 import { Button } from '../../../components/ui/Button'
+import { ShieldCheck, TriangleAlert as AlertTriangle } from 'lucide-react'
 
-type Stage = 'phone' | 'code' | 'done'
+type Stage = 'phone' | 'code' | 'confirm_2fa' | 'done'
 
 interface Props {
   onDone: (sessionId: string) => void
@@ -19,7 +19,8 @@ export function TelegramLinkStep({ onDone }: Props) {
   const [phone, setPhone] = useState('')
   const [code, setCode] = useState('')
   const [password, setPassword] = useState('')
-  const [phoneCodeHash, setPhoneCodeHash] = useState('')
+  const [sessionRowId, setSessionRowId] = useState<string | null>(null)
+  const [twoFaConfirmed, setTwoFaConfirmed] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [requiresPassword, setRequiresPassword] = useState(false)
@@ -47,7 +48,6 @@ export function TelegramLinkStep({ onDone }: Props) {
         return
       }
 
-      setPhoneCodeHash(data.phone_code_hash)
       setStage('code')
     } catch {
       setError('Network error. Please try again.')
@@ -69,7 +69,6 @@ export function TelegramLinkStep({ onDone }: Props) {
           action: 'verify_code',
           phone,
           code,
-          phone_code_hash: phoneCodeHash,
           password: requiresPassword ? password : undefined,
         }),
       })
@@ -86,30 +85,20 @@ export function TelegramLinkStep({ onDone }: Props) {
         return
       }
 
-      // Save session to Supabase
-      const { data: sessionRow, error: dbErr } = await supabase
-        .from('telegram_sessions')
-        .upsert({
-          user_id: (await supabase.auth.getUser()).data.user!.id,
-          session_string: data.session_string,
-          phone_number: phone,
-          is_active: true,
-        }, { onConflict: 'user_id' })
-        .select('id')
-        .single()
-
-      if (dbErr) {
-        setError(dbErr.message)
-        return
-      }
-
-      setStage('done')
-      onDone(sessionRow.id)
+      // Worker persisted the session row; we just hold the id for handoff.
+      setSessionRowId(data.session_id ?? null)
+      setStage('confirm_2fa')
     } catch {
       setError('Network error. Please try again.')
     } finally {
       setLoading(false)
     }
+  }
+
+  const finishLink = () => {
+    if (!twoFaConfirmed) return
+    setStage('done')
+    if (sessionRowId) onDone(sessionRowId)
   }
 
   if (stage === 'done') {
@@ -128,6 +117,51 @@ export function TelegramLinkStep({ onDone }: Props) {
     )
   }
 
+  if (stage === 'confirm_2fa') {
+    return (
+      <Card>
+        <div className="mb-5">
+          <div className="flex items-center gap-2 mb-1">
+            <ShieldCheck className="w-5 h-5 text-teal-600" />
+            <h2 className="text-lg font-semibold text-neutral-900">Secure your Telegram account</h2>
+          </div>
+          <p className="text-sm text-neutral-500">
+            Accounts without a Two-Step Verification password are auto-flagged by Telegram much faster.
+            Set one in the Telegram app before you continue, then confirm below.
+          </p>
+        </div>
+
+        <ol className="space-y-2.5 text-sm text-neutral-700 mb-5 list-decimal list-inside">
+          <li>Open the Telegram app on your phone.</li>
+          <li>Go to <span className="font-medium">Settings → Privacy and Security → Two-Step Verification</span>.</li>
+          <li>Set a password and a recovery email.</li>
+        </ol>
+
+        <label className="flex items-start gap-2.5 p-3 border border-neutral-200 rounded-lg cursor-pointer hover:bg-neutral-50 transition-colors">
+          <input
+            type="checkbox"
+            checked={twoFaConfirmed}
+            onChange={e => setTwoFaConfirmed(e.target.checked)}
+            className="mt-0.5 w-4 h-4 rounded border-neutral-300 text-teal-600 focus:ring-teal-500"
+          />
+          <span className="text-sm text-neutral-700">
+            I have set a Two-Step Verification password on this Telegram account.
+          </span>
+        </label>
+
+        <Button
+          type="button"
+          onClick={finishLink}
+          disabled={!twoFaConfirmed}
+          className="w-full mt-5"
+          size="lg"
+        >
+          Continue
+        </Button>
+      </Card>
+    )
+  }
+
   return (
     <Card>
       <div className="mb-5">
@@ -136,6 +170,14 @@ export function TelegramLinkStep({ onDone }: Props) {
           {stage === 'phone'
             ? 'Enter your phone number to receive a verification code.'
             : 'Enter the code Telegram sent you.'}
+        </p>
+      </div>
+
+      <div className="mb-4 px-3 py-2.5 bg-warning-50 border border-warning-200 rounded-lg flex items-start gap-2.5">
+        <AlertTriangle className="w-4 h-4 text-warning-600 flex-shrink-0 mt-0.5" />
+        <p className="text-xs text-warning-700 leading-relaxed">
+          Use a phone number that has been active in the official Telegram app for at least 7 days.
+          Brand-new numbers connected via API are very likely to be banned by Telegram.
         </p>
       </div>
 

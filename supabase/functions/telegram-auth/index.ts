@@ -1,8 +1,20 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { createClient } from "npm:@supabase/supabase-js@2"
-import { TelegramClient } from "npm:telegram@2"
-import { StringSession } from "npm:telegram/sessions/index.js"
-import { Api } from "npm:telegram/tl/index.js"
+
+/**
+ * Thin proxy in front of the worker's MTProto auth API.
+ *
+ * Why this is no longer an MTProto client itself:
+ *   The previous version connected to Telegram directly from the Supabase
+ *   Edge runtime. Each call (send_code / verify_code / list_channels) opened
+ *   and closed a fresh TelegramClient from a Supabase egress IP, which was
+ *   then handed off to the worker on a different cloud IP. That IP/DC churn
+ *   is the strongest "userbot from datacenter" signal Telegram's anti-spam
+ *   uses, and was the immediate cause of the previous account ban.
+ *
+ *   The worker is now the single owner of every MTProto socket. This edge
+ *   function only authenticates the Supabase user and forwards the request.
+ */
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -10,8 +22,14 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
 }
 
-const API_ID = parseInt(Deno.env.get("TELEGRAM_API_ID") ?? "0")
-const API_HASH = Deno.env.get("TELEGRAM_API_HASH") ?? ""
+const WORKER_URL = (Deno.env.get("WORKER_URL") ?? "").replace(/\/$/, "")
+const WORKER_INTERNAL_TOKEN = Deno.env.get("WORKER_INTERNAL_TOKEN") ?? ""
+
+const ROUTES: Record<string, string> = {
+  send_code: "/auth/send_code",
+  verify_code: "/auth/verify_code",
+  list_channels: "/auth/list_channels",
+}
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
@@ -35,130 +53,40 @@ Deno.serve(async (req: Request) => {
       return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders })
     }
 
-    const body = await req.json()
-    const { action } = body
-
-    if (action === "send_code") {
-      const { phone } = body
-      if (!phone) {
-        return Response.json({ error: "Phone number required" }, { status: 400, headers: corsHeaders })
-      }
-
-      const session = new StringSession("")
-      const client = new TelegramClient(session, API_ID, API_HASH, { connectionRetries: 3 })
-      await client.connect()
-
-      const result = await client.invoke(
-        new Api.auth.SendCode({
-          phoneNumber: phone,
-          apiId: API_ID,
-          apiHash: API_HASH,
-          settings: new Api.CodeSettings({}),
-        })
-      )
-
-      // Save session string so verify_code can reuse the same DC connection
-      const sessionString = client.session.save() as unknown as string
-      await client.disconnect()
-
+    if (!WORKER_URL || !WORKER_INTERNAL_TOKEN) {
+      console.error("telegram-auth: WORKER_URL or WORKER_INTERNAL_TOKEN not configured")
       return Response.json(
-        { phone_code_hash: result.phoneCodeHash, session_string: sessionString },
-        { headers: corsHeaders }
+        { error: "Telegram service is not configured. Contact support." },
+        { status: 503, headers: corsHeaders },
       )
     }
 
-    if (action === "verify_code") {
-      const { phone, code, phone_code_hash, session_string: savedSession, password } = body
-      if (!phone || !code || !phone_code_hash) {
-        return Response.json({ error: "Phone, code, and phone_code_hash required" }, { status: 400, headers: corsHeaders })
-      }
-
-      // Reuse the session from send_code to stay on the same DC — prevents PHONE_CODE_EXPIRED
-      const session = new StringSession(savedSession ?? "")
-      const client = new TelegramClient(session, API_ID, API_HASH, { connectionRetries: 3 })
-      await client.connect()
-
-      try {
-        if (password) {
-          // Second pass: 2FA password provided — sign in with code first, then handle the SRP check
-          try {
-            await client.invoke(
-              new Api.auth.SignIn({
-                phoneNumber: phone,
-                phoneCodeHash: phone_code_hash,
-                phoneCode: code,
-              })
-            )
-          } catch (signInErr: unknown) {
-            const msg = signInErr instanceof Error ? signInErr.message : String(signInErr)
-            if (!msg.includes("SESSION_PASSWORD_NEEDED")) throw signInErr
-          }
-          const srpResult = await client.invoke(new Api.account.GetPassword({}))
-          const { computeCheck } = await import("npm:telegram/Password.js")
-          const srpCheck = await computeCheck(srpResult, password)
-          await client.invoke(new Api.auth.CheckPassword({ password: srpCheck }))
-        } else {
-          await client.invoke(
-            new Api.auth.SignIn({
-              phoneNumber: phone,
-              phoneCodeHash: phone_code_hash,
-              phoneCode: code,
-            })
-          )
-        }
-      } catch (err: unknown) {
-        const errorMessage = err instanceof Error ? err.message : String(err)
-        if (errorMessage.includes("SESSION_PASSWORD_NEEDED")) {
-          await client.disconnect()
-          return Response.json({ error: "Two-step verification required", requires_password: true }, { status: 400, headers: corsHeaders })
-        }
-        await client.disconnect()
-        return Response.json({ error: errorMessage }, { status: 400, headers: corsHeaders })
-      }
-
-      const sessionString = client.session.save() as unknown as string
-      await client.disconnect()
-
-      return Response.json({ session_string: sessionString }, { headers: corsHeaders })
+    const body = await req.json().catch(() => ({})) as Record<string, unknown>
+    const action = String(body.action ?? "")
+    const path = ROUTES[action]
+    if (!path) {
+      return Response.json({ error: "Unknown action" }, { status: 400, headers: corsHeaders })
     }
 
-    if (action === "list_channels") {
-      // Load user's session from DB
-      const { data: sessionRow } = await supabase
-        .from("telegram_sessions")
-        .select("session_string")
-        .eq("user_id", user.id)
-        .maybeSingle()
+    const { action: _omit, phone_code_hash: _omitHash, session_string: _omitSession, ...rest } = body
 
-      if (!sessionRow?.session_string) {
-        return Response.json({ error: "No Telegram session found" }, { status: 400, headers: corsHeaders })
-      }
+    const workerRes = await fetch(`${WORKER_URL}${path}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-internal-token": WORKER_INTERNAL_TOKEN,
+      },
+      body: JSON.stringify({ user_id: user.id, ...rest }),
+    })
 
-      const session = new StringSession(sessionRow.session_string)
-      const client = new TelegramClient(session, API_ID, API_HASH, { connectionRetries: 3 })
-      await client.connect()
-
-      const dialogs = await client.getDialogs({ limit: 100 })
-      const channels = dialogs
-        .filter(d => d.isChannel || d.isGroup)
-        .map(d => ({
-          id: String(d.id),
-          title: d.title ?? "Unknown",
-          username: (d.entity as { username?: string })?.username ?? "",
-          members_count: (d.entity as { participantsCount?: number })?.participantsCount ?? 0,
-        }))
-        .filter(c => c.id)
-
-      await client.disconnect()
-
-      return Response.json({ channels }, { headers: corsHeaders })
-    }
-
-    return Response.json({ error: "Unknown action" }, { status: 400, headers: corsHeaders })
-
+    const text = await workerRes.text()
+    return new Response(text, {
+      status: workerRes.status,
+      headers: { ...corsHeaders, "content-type": "application/json" },
+    })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Internal server error"
-    console.error("telegram-auth error:", message)
+    console.error("telegram-auth proxy error:", message)
     return Response.json({ error: message }, { status: 500, headers: corsHeaders })
   }
 })
