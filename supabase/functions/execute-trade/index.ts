@@ -112,6 +112,9 @@ Deno.serve(async (req: Request) => {
 
     const body = await req.json()
     const { signal_id, parsed } = body as { signal_id: string; parsed: ParsedSignal }
+    // #region agent log
+    fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7e177e'},body:JSON.stringify({sessionId:'7e177e',runId:'run1',hypothesisId:'H4',location:'supabase/functions/execute-trade/index.ts:103',message:'execute-trade invoked',data:{hasSignalId:!!signal_id,action:parsed?.action ?? null,hasSymbol:!!parsed?.symbol},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
 
     if (!signal_id || !parsed) {
       return Response.json({ error: "signal_id and parsed required" }, { status: 400, headers: corsHeaders })
@@ -199,6 +202,9 @@ Deno.serve(async (req: Request) => {
         expirationType: "GTC",
         placedType: "Signal",
       })
+      // #region agent log
+      fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7e177e'},body:JSON.stringify({sessionId:'7e177e',runId:'run1',hypothesisId:'H5',location:'supabase/functions/execute-trade/index.ts:209',message:'ordersend success',data:{signalId:signal_id,resultType:typeof result},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       const orderTicket = pickTicket(result)
       await logExecution(supabase, {
         user_id: signal.user_id,
@@ -245,6 +251,9 @@ Deno.serve(async (req: Request) => {
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Internal server error"
     console.error("execute-trade error:", message)
+    // #region agent log
+    fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7e177e'},body:JSON.stringify({sessionId:'7e177e',runId:'run1',hypothesisId:'H5',location:'supabase/functions/execute-trade/index.ts:243',message:'execute-trade caught error',data:{error:message},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     try {
       const body = await req.clone().json().catch(() => ({})) as { signal_id?: string }
       if (body.signal_id) {

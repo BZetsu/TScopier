@@ -492,8 +492,14 @@ export class UserListener {
     console.log(
       `[userListener] signal inserted user=${this.userId} signalId=${signalRow.id} channelRow=${channelRow.id} messageId=${messageId}`,
     )
+    // #region agent log
+    fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7e177e'},body:JSON.stringify({sessionId:'7e177e',runId:'run1',hypothesisId:'H1',location:'worker/src/userListener.ts:422',message:'signal inserted before parse trigger',data:{userId:this.userId,signalId:signalRow.id,channelRowId:channelRow.id,messageId},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
 
     if (PARSE_SIGNAL_URL) {
+      // #region agent log
+      fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7e177e'},body:JSON.stringify({sessionId:'7e177e',runId:'run1',hypothesisId:'H2',location:'worker/src/userListener.ts:426',message:'parse trigger dispatch',data:{signalId:signalRow.id,hasParseUrl:!!PARSE_SIGNAL_URL,hasParseKey:!!PARSE_SIGNAL_KEY},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       fetch(PARSE_SIGNAL_URL, {
         method: 'POST',
         headers: {
@@ -501,8 +507,15 @@ export class UserListener {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ signal_id: signalRow.id }),
+      }).then(async (res) => {
+        // #region agent log
+        fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7e177e'},body:JSON.stringify({sessionId:'7e177e',runId:'run1',hypothesisId:'H2',location:'worker/src/userListener.ts:434',message:'parse trigger response',data:{signalId:signalRow.id,status:res.status,ok:res.ok},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
       }).catch(err => {
         console.error(`[userListener] parse-signal call failed for signal ${signalRow.id}:`, err.message)
+        // #region agent log
+        fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7e177e'},body:JSON.stringify({sessionId:'7e177e',runId:'run1',hypothesisId:'H2',location:'worker/src/userListener.ts:438',message:'parse trigger failed',data:{signalId:signalRow.id,error:err?.message ?? 'unknown'},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
       })
     }
 

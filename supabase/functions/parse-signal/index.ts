@@ -93,6 +93,9 @@ Deno.serve(async (req: Request) => {
 
     const body = await req.json()
     const { signal_id } = body
+    // #region agent log
+    fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7e177e'},body:JSON.stringify({sessionId:'7e177e',runId:'run1',hypothesisId:'H3',location:'supabase/functions/parse-signal/index.ts:97',message:'parse-signal invoked',data:{hasSignalId:!!signal_id},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
 
     if (!signal_id) {
       return Response.json({ error: "signal_id required" }, { status: 400, headers: corsHeaders })
@@ -133,6 +136,9 @@ Deno.serve(async (req: Request) => {
       EdgeRuntime.waitUntil(
         (async () => {
           try {
+            // #region agent log
+            fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7e177e'},body:JSON.stringify({sessionId:'7e177e',runId:'run1',hypothesisId:'H3',location:'supabase/functions/parse-signal/index.ts:138',message:'execute-trade dispatch',data:{signalId:signal_id,action:parsed.action,confidence:parsed.confidence},timestamp:Date.now()})}).catch(()=>{});
+            // #endregion
             const execRes = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/execute-trade`, {
               method: "POST",
               headers: {
@@ -143,6 +149,9 @@ Deno.serve(async (req: Request) => {
             })
             if (!execRes.ok) {
               const raw = await execRes.text()
+              // #region agent log
+              fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7e177e'},body:JSON.stringify({sessionId:'7e177e',runId:'run1',hypothesisId:'H3',location:'supabase/functions/parse-signal/index.ts:149',message:'execute-trade non-2xx',data:{signalId:signal_id,status:execRes.status,body:raw.slice(0,300)},timestamp:Date.now()})}).catch(()=>{});
+              // #endregion
               const reason = `Execute trade failed (${execRes.status}): ${raw.slice(0, 300)}`
               await supabase.from("signals").update({ status: "failed", skip_reason: reason }).eq("id", signal_id)
               console.error("parse-signal execute-trade failed:", reason)
