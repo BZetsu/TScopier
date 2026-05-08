@@ -10,7 +10,12 @@ const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? ''
 const PARSE_SIGNAL_URL = process.env.PARSE_SIGNAL_URL ?? (
   SUPABASE_URL ? `${SUPABASE_URL.replace(/\/$/, '')}/functions/v1/parse-signal` : ''
 )
-const PARSE_SIGNAL_KEY = process.env.PARSE_SIGNAL_KEY ?? SUPABASE_SERVICE_ROLE_KEY
+const RAW_PARSE_SIGNAL_KEY = process.env.PARSE_SIGNAL_KEY ?? ''
+const isJwt = (v: string) => v.split('.').length === 3
+const PARSE_SIGNAL_AUTH_KEY = isJwt(RAW_PARSE_SIGNAL_KEY)
+  ? RAW_PARSE_SIGNAL_KEY
+  : SUPABASE_SERVICE_ROLE_KEY
+const PARSE_SIGNAL_API_KEY = SUPABASE_SERVICE_ROLE_KEY
 
 /** Min seconds between client.connect() and first getDialogs on a fresh session. */
 const COLD_FANOUT_DELAY_MS = 8000
@@ -504,17 +509,19 @@ export class UserListener {
         status: 'attempt',
         request_payload: {
           parse_signal_url: PARSE_SIGNAL_URL,
-          has_parse_key: !!PARSE_SIGNAL_KEY,
+          has_parse_auth_key: !!PARSE_SIGNAL_AUTH_KEY,
+          parse_auth_source: isJwt(RAW_PARSE_SIGNAL_KEY) ? 'PARSE_SIGNAL_KEY(jwt)' : 'SUPABASE_SERVICE_ROLE_KEY(fallback)',
           signal_id: signalRow.id,
         },
       })
       // #region agent log
-      fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7e177e'},body:JSON.stringify({sessionId:'7e177e',runId:'run1',hypothesisId:'H2',location:'worker/src/userListener.ts:426',message:'parse trigger dispatch',data:{signalId:signalRow.id,hasParseUrl:!!PARSE_SIGNAL_URL,hasParseKey:!!PARSE_SIGNAL_KEY},timestamp:Date.now()})}).catch(()=>{});
+      fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7e177e'},body:JSON.stringify({sessionId:'7e177e',runId:'run1',hypothesisId:'H2',location:'worker/src/userListener.ts:426',message:'parse trigger dispatch',data:{signalId:signalRow.id,hasParseUrl:!!PARSE_SIGNAL_URL,hasParseAuthKey:!!PARSE_SIGNAL_AUTH_KEY},timestamp:Date.now()})}).catch(()=>{});
       // #endregion
       fetch(PARSE_SIGNAL_URL, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${PARSE_SIGNAL_KEY}`,
+          'Authorization': `Bearer ${PARSE_SIGNAL_AUTH_KEY}`,
+          'apikey': PARSE_SIGNAL_API_KEY,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ signal_id: signalRow.id }),

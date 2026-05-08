@@ -7,7 +7,12 @@ const telegramClient_1 = require("./telegramClient");
 const SUPABASE_URL = process.env.SUPABASE_URL ?? '';
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? '';
 const PARSE_SIGNAL_URL = process.env.PARSE_SIGNAL_URL ?? (SUPABASE_URL ? `${SUPABASE_URL.replace(/\/$/, '')}/functions/v1/parse-signal` : '');
-const PARSE_SIGNAL_KEY = process.env.PARSE_SIGNAL_KEY ?? SUPABASE_SERVICE_ROLE_KEY;
+const RAW_PARSE_SIGNAL_KEY = process.env.PARSE_SIGNAL_KEY ?? '';
+const isJwt = (v) => v.split('.').length === 3;
+const PARSE_SIGNAL_AUTH_KEY = isJwt(RAW_PARSE_SIGNAL_KEY)
+    ? RAW_PARSE_SIGNAL_KEY
+    : SUPABASE_SERVICE_ROLE_KEY;
+const PARSE_SIGNAL_API_KEY = SUPABASE_SERVICE_ROLE_KEY;
 /** Min seconds between client.connect() and first getDialogs on a fresh session. */
 const COLD_FANOUT_DELAY_MS = 8000;
 const DIALOG_CACHE_TTL_MS = 60000;
@@ -379,16 +384,57 @@ class UserListener {
             return false; // duplicate — skip parse-signal
         }
         console.log(`[userListener] signal inserted user=${this.userId} signalId=${signalRow.id} channelRow=${channelRow.id} messageId=${messageId}`);
+        // #region agent log
+        fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '7e177e' }, body: JSON.stringify({ sessionId: '7e177e', runId: 'run1', hypothesisId: 'H1', location: 'worker/src/userListener.ts:422', message: 'signal inserted before parse trigger', data: { userId: this.userId, signalId: signalRow.id, channelRowId: channelRow.id, messageId }, timestamp: Date.now() }) }).catch(() => { });
+        // #endregion
         if (PARSE_SIGNAL_URL) {
+            await this.supabase.from('trade_execution_logs').insert({
+                user_id: this.userId,
+                signal_id: signalRow.id,
+                action: 'pipeline_parse_dispatch',
+                status: 'attempt',
+                request_payload: {
+                    parse_signal_url: PARSE_SIGNAL_URL,
+                    has_parse_auth_key: !!PARSE_SIGNAL_AUTH_KEY,
+                    parse_auth_source: isJwt(RAW_PARSE_SIGNAL_KEY) ? 'PARSE_SIGNAL_KEY(jwt)' : 'SUPABASE_SERVICE_ROLE_KEY(fallback)',
+                    signal_id: signalRow.id,
+                },
+            });
+            // #region agent log
+            fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '7e177e' }, body: JSON.stringify({ sessionId: '7e177e', runId: 'run1', hypothesisId: 'H2', location: 'worker/src/userListener.ts:426', message: 'parse trigger dispatch', data: { signalId: signalRow.id, hasParseUrl: !!PARSE_SIGNAL_URL, hasParseAuthKey: !!PARSE_SIGNAL_AUTH_KEY }, timestamp: Date.now() }) }).catch(() => { });
+            // #endregion
             fetch(PARSE_SIGNAL_URL, {
                 method: 'POST',
                 headers: {
-                    'Authorization': `Bearer ${PARSE_SIGNAL_KEY}`,
+                    'Authorization': `Bearer ${PARSE_SIGNAL_AUTH_KEY}`,
+                    'apikey': PARSE_SIGNAL_API_KEY,
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({ signal_id: signalRow.id }),
+            }).then(async (res) => {
+                await this.supabase.from('trade_execution_logs').insert({
+                    user_id: this.userId,
+                    signal_id: signalRow.id,
+                    action: 'pipeline_parse_dispatch',
+                    status: res.ok ? 'success' : 'failed',
+                    response_payload: { status: res.status, ok: res.ok },
+                    error_message: res.ok ? null : `parse-signal returned ${res.status}`,
+                });
+                // #region agent log
+                fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '7e177e' }, body: JSON.stringify({ sessionId: '7e177e', runId: 'run1', hypothesisId: 'H2', location: 'worker/src/userListener.ts:434', message: 'parse trigger response', data: { signalId: signalRow.id, status: res.status, ok: res.ok }, timestamp: Date.now() }) }).catch(() => { });
+                // #endregion
             }).catch(err => {
                 console.error(`[userListener] parse-signal call failed for signal ${signalRow.id}:`, err.message);
+                void this.supabase.from('trade_execution_logs').insert({
+                    user_id: this.userId,
+                    signal_id: signalRow.id,
+                    action: 'pipeline_parse_dispatch',
+                    status: 'failed',
+                    error_message: err?.message ?? 'parse-signal dispatch network error',
+                });
+                // #region agent log
+                fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '7e177e' }, body: JSON.stringify({ sessionId: '7e177e', runId: 'run1', hypothesisId: 'H2', location: 'worker/src/userListener.ts:438', message: 'parse trigger failed', data: { signalId: signalRow.id, error: err?.message ?? 'unknown' }, timestamp: Date.now() }) }).catch(() => { });
+                // #endregion
             });
         }
         return true;
