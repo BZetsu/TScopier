@@ -7,34 +7,60 @@ import { Badge } from '../../components/ui/Badge'
 import type { Trade } from '../../types/database'
 
 type Filter = 'all' | 'open' | 'closed'
+type LiveTrade = Omit<Trade, 'user_id' | 'signal_id' | 'metaapi_order_id' | 'created_at' | 'broker_account_id' | 'closed_at'> & {
+  opened_at: string
+}
 
 export function TradesPage() {
   const { user } = useAuth()
-  const [trades, setTrades] = useState<Trade[]>([])
+  const [trades, setTrades] = useState<LiveTrade[]>([])
   const [filter, setFilter] = useState<Filter>('all')
   const [loading, setLoading] = useState(true)
+  const EDGE_TRADES = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/metatrader-trades`
+  const AUTO_REFRESH_MS = 15000
 
   useEffect(() => {
     if (!user) return
     loadTrades()
   }, [user, filter])
 
-  const loadTrades = async () => {
-    setLoading(true)
-    let query = supabase
-      .from('trades')
-      .select('*')
-      .eq('user_id', user!.id)
-      .order('created_at', { ascending: false })
-      .limit(50)
+  useEffect(() => {
+    if (!user) return
+    const interval = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') return
+      void loadTrades({ silent: true })
+    }, AUTO_REFRESH_MS)
+    return () => window.clearInterval(interval)
+  }, [user, filter])
 
-    if (filter !== 'all') {
-      query = query.eq('status', filter)
+  const loadTrades = async ({ silent = false }: { silent?: boolean } = {}) => {
+    if (!silent) setLoading(true)
+    try {
+      const token = (await supabase.auth.getSession()).data.session?.access_token
+      if (!token) {
+        setTrades([])
+        if (!silent) setLoading(false)
+        return
+      }
+      const res = await fetch(EDGE_TRADES, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ filter }),
+      })
+      const data = await res.json()
+      if (!res.ok || data.error) {
+        setTrades([])
+      } else {
+        setTrades((data.trades ?? []) as LiveTrade[])
+      }
+    } catch {
+      setTrades([])
+    } finally {
+      if (!silent) setLoading(false)
     }
-
-    const { data } = await query
-    setTrades(data ?? [])
-    setLoading(false)
   }
 
   const filters: { value: Filter; label: string }[] = [
@@ -68,21 +94,11 @@ export function TradesPage() {
       </div>
 
       <Card padding="none">
-        {/* Table header */}
-        <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr] gap-4 px-6 py-3 border-b border-neutral-100 text-xs font-medium text-neutral-500 uppercase tracking-wide">
-          <span>Symbol / Direction</span>
-          <span>Entry</span>
-          <span>SL / TP</span>
-          <span>Lot</span>
-          <span>P&L</span>
-          <span>Status</span>
-        </div>
-
         {loading ? (
           <div className="divide-y divide-neutral-100">
             {[...Array(5)].map((_, i) => (
               <div key={i} className="px-6 py-4 flex gap-4">
-                {[...Array(6)].map((_, j) => (
+                {[...Array(9)].map((__, j) => (
                   <div key={j} className="h-4 bg-neutral-100 rounded animate-pulse flex-1" />
                 ))}
               </div>
@@ -95,8 +111,36 @@ export function TradesPage() {
             <p className="text-xs text-neutral-300 mt-1">Trades will appear here once signals are executed</p>
           </div>
         ) : (
-          <div className="divide-y divide-neutral-100">
-            {trades.map(trade => <TradeRow key={trade.id} trade={trade} />)}
+          <div className="overflow-x-auto">
+            <table className="w-full table-fixed">
+              <colgroup>
+                <col className="w-[14%]" />
+                <col className="w-[12%]" />
+                <col className="w-[10%]" />
+                <col className="w-[10%]" />
+                <col className="w-[10%]" />
+                <col className="w-[9%]" />
+                <col className="w-[11%]" />
+                <col className="w-[16%]" />
+                <col className="w-[8%]" />
+              </colgroup>
+              <thead>
+                <tr className="border-b border-neutral-100 text-xs font-medium text-neutral-500 uppercase tracking-wide">
+                  <th className="px-6 py-3 text-center">Symbol</th>
+                  <th className="px-2 py-3 text-center">Direction</th>
+                  <th className="px-2 py-3 text-center">Entry</th>
+                  <th className="px-2 py-3 text-center">SL</th>
+                  <th className="px-2 py-3 text-center">TP</th>
+                  <th className="px-2 py-3 text-center">Lot Size</th>
+                  <th className="px-2 py-3 text-center">PnL</th>
+                  <th className="px-2 py-3 text-center">Date/Time</th>
+                  <th className="px-6 py-3 text-center">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-neutral-100">
+                {trades.map(trade => <TradeRow key={trade.id} trade={trade} />)}
+              </tbody>
+            </table>
           </div>
         )}
       </Card>
@@ -104,7 +148,7 @@ export function TradesPage() {
   )
 }
 
-function TradeRow({ trade }: { trade: Trade }) {
+function TradeRow({ trade }: { trade: LiveTrade }) {
   const isBuy = trade.direction === 'buy'
   const profit = trade.profit
 
@@ -118,41 +162,46 @@ function TradeRow({ trade }: { trade: Trade }) {
   const status = statusConfig[trade.status] ?? { variant: 'neutral', label: trade.status }
 
   return (
-    <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr] gap-4 px-6 py-3.5 items-center hover:bg-neutral-50 transition-colors">
-      <div className="flex items-center gap-2.5">
-        <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 ${
-          isBuy ? 'bg-success-50 text-success-600' : 'bg-error-50 text-error-600'
-        }`}>
+    <tr className="hover:bg-neutral-50 transition-colors">
+      <td className="px-6 py-3.5 text-sm font-semibold text-neutral-900 text-center">{trade.symbol}</td>
+      <td className={`px-2 py-3.5 text-sm font-medium text-center ${isBuy ? 'text-success-600' : 'text-error-600'}`}>
+        <span className="inline-flex items-center justify-center gap-1 w-full">
           {isBuy ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
-        </div>
-        <div>
-          <p className="text-sm font-semibold text-neutral-900">{trade.symbol}</p>
-          <p className={`text-xs font-medium uppercase ${isBuy ? 'text-success-600' : 'text-error-600'}`}>
-            {trade.direction}
-          </p>
-        </div>
-      </div>
-      <span className="text-sm text-neutral-700 font-mono">
-        {trade.entry_price?.toFixed(5) ?? '—'}
-      </span>
-      <div>
-        <p className="text-xs text-neutral-500 font-mono">SL: {trade.sl?.toFixed(5) ?? '—'}</p>
-        <p className="text-xs text-neutral-500 font-mono">TP: {trade.tp?.toFixed(5) ?? '—'}</p>
-      </div>
-      <span className="text-sm text-neutral-700">{trade.lot_size}</span>
-      <span className={`text-sm font-medium font-mono ${
+          {isBuy ? 'Buy' : 'Sell'}
+        </span>
+      </td>
+      <td className="px-2 py-3.5 text-sm text-neutral-700  text-center tabular-nums">{trade.entry_price?.toFixed(5) ?? '—'}</td>
+      <td className="px-2 py-3.5 text-sm text-neutral-700 text-center tabular-nums">{trade.sl?.toFixed(5) ?? '—'}</td>
+      <td className="px-2 py-3.5 text-sm text-neutral-700 text-center tabular-nums">{trade.tp?.toFixed(5) ?? '—'}</td>
+      <td className="px-2 py-3.5 text-sm text-neutral-700 text-center tabular-nums">{trade.lot_size ?? '—'}</td>
+      <td className={`px-2 py-3.5 text-sm font-medium text-center tabular-nums ${
         profit === null ? 'text-neutral-400' :
         profit > 0 ? 'text-success-600' :
         profit < 0 ? 'text-error-600' : 'text-neutral-500'
       }`}>
         {profit === null ? '—' : (
-          <span className="flex items-center gap-1">
+          <span className="inline-flex items-center justify-center gap-1 w-full">
             {profit > 0 ? <TrendingUp className="w-3 h-3" /> : profit < 0 ? <TrendingDown className="w-3 h-3" /> : <Minus className="w-3 h-3" />}
             {profit > 0 ? '+' : ''}{profit.toFixed(2)}
           </span>
         )}
-      </span>
-      <Badge variant={status.variant} size="sm">{status.label}</Badge>
-    </div>
+      </td>
+      <td className="px-2 py-3.5 text-xs text-neutral-500 whitespace-nowrap text-center">
+        {trade.opened_at
+          ? new Date(trade.opened_at).toLocaleString([], {
+              day: '2-digit',
+              month: 'short',
+              year: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit',
+            })
+          : '—'}
+      </td>
+      <td className="px-6 py-3.5 text-center">
+        <span className="inline-flex justify-center w-full">
+          <Badge variant={status.variant} size="sm">{status.label}</Badge>
+        </span>
+      </td>
+    </tr>
   )
 }

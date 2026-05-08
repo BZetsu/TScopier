@@ -7,7 +7,7 @@ import { Badge } from '../../components/ui/Badge'
 import { Toggle } from '../../components/ui/Toggle'
 import { Button } from '../../components/ui/Button'
 import { Input } from '../../components/ui/Input'
-import type { TelegramChannel, BrokerAccount } from '../../types/database'
+import type { TelegramChannel } from '../../types/database'
 
 function getTelegramAvatarUrl(username?: string): string | null {
   if (!username) return null
@@ -41,7 +41,6 @@ export function CopierEnginePage() {
   const { user, session } = useAuth()
   const [channels, setChannels] = useState<TelegramChannel[]>([])
   const [tgChannels, setTgChannels] = useState<{ id: string; title: string; username: string; members_count: number }[]>([])
-  const [brokers, setBrokers] = useState<BrokerAccount[]>([])
   const [loading, setLoading] = useState(true)
   const [loadingTg, setLoadingTg] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
@@ -66,13 +65,11 @@ export function CopierEnginePage() {
   }, [user])
 
   const loadData = async () => {
-    const [channelsRes, brokersRes, sessionRes] = await Promise.all([
+    const [channelsRes, sessionRes] = await Promise.all([
       supabase.from('telegram_channels').select('*').eq('user_id', user!.id).order('created_at', { ascending: false }),
-      supabase.from('broker_accounts').select('*').eq('user_id', user!.id).eq('is_active', true),
       supabase.from('telegram_sessions').select('id').eq('user_id', user!.id).maybeSingle(),
     ])
     setChannels((channelsRes.data ?? []) as TelegramChannel[])
-    setBrokers((brokersRes.data ?? []) as BrokerAccount[])
     const hasSession = !!sessionRes.data
     setHasTgSession(hasSession)
     setTgStage(hasSession ? 'linked' : 'idle')

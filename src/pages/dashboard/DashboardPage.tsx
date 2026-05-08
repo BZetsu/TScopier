@@ -23,6 +23,8 @@ interface DashboardStats {
 export function DashboardPage() {
   const { user } = useAuth()
   const navigate = useNavigate()
+  const EDGE_ACCOUNT_SUMMARY = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/metatrader-account-summary`
+  const EDGE_BROKER_TRADES = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/metatrader-trades`
   const [stats, setStats] = useState<DashboardStats>({
     accounts: 0,
     portfolioValue: 0,
@@ -38,15 +40,69 @@ export function DashboardPage() {
   })
   const [copierLogs, setCopierLogs] = useState<Signal[]>([])
   const [linkedAccounts, setLinkedAccounts] = useState<BrokerAccount[]>([])
+  const [linkedAccountBalances, setLinkedAccountBalances] = useState<Record<string, { balance?: number; equity?: number; currency?: string; broker?: string; account_type?: 'Live' | 'Demo'; open_pnl?: number; open_trades?: number }>>({})
   const [showPlatformModal, setShowPlatformModal] = useState(false)
   const [loading, setLoading] = useState(true)
+  const AUTO_REFRESH_MS = 15000
+  const DASHBOARD_CACHE_PREFIX = 'dashboard_cache_v1'
 
   useEffect(() => {
     if (!user) return
-    loadDashboard()
+    const cacheKey = `${DASHBOARD_CACHE_PREFIX}:${user.id}`
+    const cached = sessionStorage.getItem(cacheKey)
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached) as {
+          stats?: DashboardStats
+          copierLogs?: Signal[]
+          linkedAccounts?: BrokerAccount[]
+          linkedAccountBalances?: Record<string, { balance?: number; equity?: number; currency?: string; broker?: string; account_type?: 'Live' | 'Demo'; open_pnl?: number; open_trades?: number }>
+        }
+        if (parsed.stats) setStats(parsed.stats)
+        if (parsed.copierLogs) setCopierLogs(parsed.copierLogs)
+        if (parsed.linkedAccounts) setLinkedAccounts(parsed.linkedAccounts)
+        if (parsed.linkedAccountBalances) setLinkedAccountBalances(parsed.linkedAccountBalances)
+        setLoading(false)
+        void loadDashboard({ silent: true })
+        return
+      } catch {
+        // Ignore malformed cache and do a normal load below.
+      }
+    }
+    void loadDashboard()
   }, [user])
 
-  const loadDashboard = async () => {
+  useEffect(() => {
+    if (!user) return
+
+    let cancelled = false
+    const tick = async () => {
+      if (cancelled) return
+      // Reduce unnecessary API calls when tab is not visible.
+      if (document.visibilityState !== 'visible') return
+      await loadDashboard({ silent: true })
+    }
+
+    const interval = window.setInterval(() => {
+      void tick()
+    }, AUTO_REFRESH_MS)
+
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        void tick()
+      }
+    }
+    document.addEventListener('visibilitychange', onVisible)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [user])
+
+  const loadDashboard = async ({ silent = false }: { silent?: boolean } = {}) => {
+    if (!silent) setLoading(true)
     const today = new Date()
     today.setHours(0, 0, 0, 0)
 
@@ -63,27 +119,115 @@ export function DashboardPage() {
     const closedTrades = allTrades.filter(t => t.status === 'closed')
     const todaySignals = (todaySignalsRes.data ?? []) as { status: string }[]
     const copiedToday = todaySignals.filter(s => s.status === 'executed').length
-    const openPnl = openTrades.reduce((sum, t) => sum + (t.profit ?? 0), 0)
+    const openPnlFromTrades = openTrades.reduce((sum, t) => sum + (t.profit ?? 0), 0)
     const won = closedTrades.filter(t => (t.profit ?? 0) > 0).length
     const lost = closedTrades.filter(t => (t.profit ?? 0) < 0).length
     const brokerAccounts = (brokerRes.data ?? []) as BrokerAccount[]
     const activeBrokerCount = brokerAccounts.filter(account => account.is_active).length
+    const token = (await supabase.auth.getSession()).data.session?.access_token
+    const balanceEntries = await Promise.all(
+      brokerAccounts.map(async (account) => {
+        if (!token) return [account.id, {}] as const
+        try {
+          const res = await fetch(EDGE_ACCOUNT_SUMMARY, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ broker_account_id: account.id }),
+          })
+          const data = await res.json()
+          if (!res.ok || !data?.summary) return [account.id, {}] as const
+          const s = data.summary as Record<string, unknown>
+          const balance = Number(s.balance ?? s.Balance)
+          const equity = Number(s.equity ?? s.Equity)
+          const currency = String(s.currency ?? s.Currency ?? '')
+          const broker = String(s.broker ?? s.Broker ?? '')
+          const accountTypeRaw = String(s.account_type ?? s.accountType ?? s.AccountType ?? '').toLowerCase()
+          const open_pnl_num = Number(s.open_pnl ?? s.openProfit ?? s.OpenProfit ?? s.floatingProfit ?? s.FloatingProfit)
+          const open_trades_num = Number(s.open_trades ?? s.openTrades ?? s.OpenTrades)
+          const account_type = accountTypeRaw === 'demo' ? 'Demo' : accountTypeRaw === 'live' ? 'Live' : undefined
+          return [account.id, {
+            balance: Number.isFinite(balance) ? balance : undefined,
+            equity: Number.isFinite(equity) ? equity : undefined,
+            currency: currency || undefined,
+            broker: broker || undefined,
+            account_type,
+            open_pnl: Number.isFinite(open_pnl_num) ? open_pnl_num : undefined,
+            open_trades: Number.isFinite(open_trades_num) ? open_trades_num : undefined,
+          }] as const
+        } catch {
+          return [account.id, {}] as const
+        }
+      })
+    )
+    const balanceMap = Object.fromEntries(balanceEntries) as Record<string, { balance?: number; equity?: number; currency?: string; broker?: string; account_type?: 'Live' | 'Demo'; open_pnl?: number; open_trades?: number }>
+    const totalPortfolioValue = brokerAccounts.reduce((sum, account) => {
+      const acct = balanceMap[account.id]
+      return sum + (acct?.equity ?? acct?.balance ?? 0)
+    }, 0)
+    const totalLiveOpenPnl = brokerAccounts.reduce((sum, account) => {
+      const acct = balanceMap[account.id]
+      return sum + (acct?.open_pnl ?? 0)
+    }, 0)
+    const totalLiveOpenTradesFromSummary = brokerAccounts.reduce((sum, account) => {
+      const acct = balanceMap[account.id]
+      return sum + (acct?.open_trades ?? 0)
+    }, 0)
+    const hasAnyBrokerOpenPnl = brokerAccounts.some(account => balanceMap[account.id]?.open_pnl != null)
+    const hasAnyBrokerOpenTradesFromSummary = brokerAccounts.some(account => balanceMap[account.id]?.open_trades != null)
+
+    let liveOpenTradesCount: number | null = null
+    if (token) {
+      try {
+        const openTradesRes = await fetch(EDGE_BROKER_TRADES, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ filter: 'open' }),
+        })
+        const openTradesData = await openTradesRes.json()
+        if (openTradesRes.ok && Array.isArray(openTradesData?.trades)) {
+          liveOpenTradesCount = openTradesData.trades.length
+        }
+      } catch {
+        // fallback below
+      }
+    }
+
+    const resolvedOpenTradesCount =
+      liveOpenTradesCount ??
+      (hasAnyBrokerOpenTradesFromSummary ? totalLiveOpenTradesFromSummary : openTrades.length)
     setCopierLogs((logsRes.data ?? []) as Signal[])
     setLinkedAccounts(brokerAccounts)
-    setStats({
+    setLinkedAccountBalances(balanceMap)
+    const nextStats: DashboardStats = {
       accounts: activeBrokerCount,
-      portfolioValue: 0,
+      portfolioValue: totalPortfolioValue,
       tradesTaken: closedTrades.length,
       tradesWon: won,
       tradesLost: lost,
-      openPnl,
-      openPositions: openTrades.length,
-      openTrades: openTrades.length,
+      openPnl: hasAnyBrokerOpenPnl ? totalLiveOpenPnl : openPnlFromTrades,
+      openPositions: resolvedOpenTradesCount,
+      openTrades: resolvedOpenTradesCount,
       tradesCopiedToday: copiedToday,
       activeChannels: channelsRes.data?.length ?? 0,
       copierHealth: activeBrokerCount > 0 ? 'Stable' : 'Offline',
-    })
-    setLoading(false)
+    }
+    setStats(nextStats)
+    if (user) {
+      const cacheKey = `${DASHBOARD_CACHE_PREFIX}:${user.id}`
+      sessionStorage.setItem(cacheKey, JSON.stringify({
+        stats: nextStats,
+        copierLogs: (logsRes.data ?? []) as Signal[],
+        linkedAccounts: brokerAccounts,
+        linkedAccountBalances: balanceMap,
+      }))
+    }
+    if (!silent) setLoading(false)
   }
 
   return (
@@ -104,8 +248,8 @@ export function DashboardPage() {
             subColor="text-neutral-400"
           />
           <StatBlock
-            label="Portfolio Value"
-            value={loading ? '—' : `$${stats.portfolioValue.toFixed(2)}`}
+            label="Total Balance"
+            value={loading ? '—' : `$${stats.portfolioValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
             sub={loading ? '' : `0% compared to $0.00, Yesterday`}
             subColor="text-neutral-400"
           />
@@ -119,6 +263,15 @@ export function DashboardPage() {
             label="Open PnL"
             value={loading ? '—' : `$${stats.openPnl.toFixed(2)}`}
             sub={loading ? '' : `${stats.openPositions} open positions`}
+            valueColor={
+              loading
+                ? 'text-neutral-900'
+                : stats.openPnl > 0
+                  ? 'text-teal-600'
+                  : stats.openPnl < 0
+                    ? 'text-error-600'
+                    : 'text-neutral-900'
+            }
             subColor={stats.openPnl >= 0 ? 'text-neutral-400' : 'text-error-500'}
           />
         </div>
@@ -171,7 +324,7 @@ export function DashboardPage() {
                 value={loading ? '—' : String(stats.activeChannels)}
               />
               <OverviewStat
-                label="Masters Connected"
+                label="Trading Accounts Connected"
                 value={loading ? '—' : String(stats.accounts)}
               />
               <OverviewStat
@@ -265,9 +418,10 @@ export function DashboardPage() {
           </button>
         </div>
 
-        <div className="grid grid-cols-8 gap-2 px-5 py-3 border-b border-neutral-100 text-xs font-medium text-neutral-400">
+        <div className="grid grid-cols-9 gap-2 px-5 py-3 border-b border-neutral-100 text-xs font-medium text-neutral-400">
           <span>Account</span>
           <span>Broker</span>
+          <span>Account Type</span>
           <span>Balance</span>
           <span>PnL</span>
           <span>ROI</span>
@@ -280,7 +434,7 @@ export function DashboardPage() {
           <div className="divide-y divide-neutral-50">
             {[...Array(3)].map((_, i) => (
               <div key={i} className="px-5 py-3 flex gap-4">
-                {[...Array(8)].map((_, j) => (
+                {[...Array(9)].map((_, j) => (
                   <div key={j} className="h-4 bg-neutral-100 rounded animate-pulse flex-1" />
                 ))}
               </div>
@@ -291,7 +445,7 @@ export function DashboardPage() {
         ) : (
           <div className="divide-y divide-neutral-50">
             {linkedAccounts.map(account => (
-              <LinkedAccountRow key={account.id} account={account} />
+              <LinkedAccountRow key={account.id} account={account} accountSummary={linkedAccountBalances[account.id]} />
             ))}
           </div>
         )}
@@ -309,16 +463,17 @@ export function DashboardPage() {
   )
 }
 
-function StatBlock({ label, value, sub, subColor }: {
+function StatBlock({ label, value, sub, subColor, valueColor = 'text-neutral-900' }: {
   label: string
   value: string
   sub: string
   subColor: string
+  valueColor?: string
 }) {
   return (
     <div className="px-6 py-5">
       <p className="text-sm text-neutral-500 mb-2">{label}</p>
-      <p className="text-3xl font-semibold text-neutral-900 mb-1.5">{value}</p>
+      <p className={`text-3xl font-semibold mb-1.5 ${valueColor}`}>{value}</p>
       <p className={`text-xs ${subColor}`}>{sub}</p>
     </div>
   )
@@ -364,20 +519,35 @@ function LogRow({ signal }: { signal: Signal }) {
   )
 }
 
-function LinkedAccountRow({ account }: { account: BrokerAccount }) {
+function LinkedAccountRow({
+  account,
+  accountSummary,
+}: {
+  account: BrokerAccount
+  accountSummary?: { balance?: number; equity?: number; currency?: string; broker?: string; account_type?: 'Live' | 'Demo'; open_pnl?: number }
+}) {
   const statusClass = account.is_active
     ? 'text-teal-600 border-teal-200 bg-teal-50'
     : 'text-warning-600 border-warning-200 bg-warning-50'
+  const balanceText = accountSummary?.balance != null
+    ? `${accountSummary.currency ?? '$'} ${accountSummary.balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    : '$0.00'
+  const pnl = accountSummary?.open_pnl ?? ((accountSummary?.equity ?? 0) - (accountSummary?.balance ?? 0))
+  const pnlColor = pnl >= 0 ? 'text-teal-600' : 'text-error-600'
+  const pnlText = `${accountSummary?.currency ?? '$'} ${Math.abs(pnl).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  const brokerText = accountSummary?.broker || '—'
+  const accountType = accountSummary?.account_type || '—'
 
   return (
-    <div className="grid grid-cols-8 gap-2 px-5 py-3 items-center hover:bg-neutral-50 transition-colors">
+    <div className="grid grid-cols-9 gap-2 px-5 py-3 items-center hover:bg-neutral-50 transition-colors">
       <div className="flex flex-col">
-        <span className="text-sm font-semibold text-neutral-900">{account.metaapi_account_id || account.label}</span>
+        <span className="text-sm font-semibold text-neutral-900">{account.label || 'Unnamed account'}</span>
         <span className="text-[11px] font-medium text-primary-600 uppercase">{account.platform}</span>
       </div>
-      <span className="text-sm font-medium text-neutral-900">{account.label || '—'}</span>
-      <span className="text-sm font-medium text-neutral-900">$0.00</span>
-      <span className="text-sm font-semibold text-teal-600">+0.00</span>
+      <span className="text-sm font-medium text-neutral-900">{brokerText}</span>
+      <span className="text-sm font-medium text-neutral-900">{accountType}</span>
+      <span className="text-sm font-medium text-neutral-900">{balanceText}</span>
+      <span className={`text-sm font-semibold ${pnlColor}`}>{pnl >= 0 ? '+' : '-'}{pnlText}</span>
       <span className="text-sm font-semibold text-teal-600">0.0%</span>
       <span className="text-sm font-semibold text-neutral-900">0%</span>
       <span className="text-sm font-semibold text-neutral-900">0.0%</span>
