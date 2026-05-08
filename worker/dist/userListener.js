@@ -4,8 +4,10 @@ exports.UserListener = void 0;
 const events_1 = require("telegram/events");
 const tl_1 = require("telegram/tl");
 const telegramClient_1 = require("./telegramClient");
-const PARSE_SIGNAL_URL = process.env.PARSE_SIGNAL_URL ?? '';
-const PARSE_SIGNAL_KEY = process.env.PARSE_SIGNAL_KEY ?? '';
+const SUPABASE_URL = process.env.SUPABASE_URL ?? '';
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? '';
+const PARSE_SIGNAL_URL = process.env.PARSE_SIGNAL_URL ?? (SUPABASE_URL ? `${SUPABASE_URL.replace(/\/$/, '')}/functions/v1/parse-signal` : '');
+const PARSE_SIGNAL_KEY = process.env.PARSE_SIGNAL_KEY ?? SUPABASE_SERVICE_ROLE_KEY;
 /** Min seconds between client.connect() and first getDialogs on a fresh session. */
 const COLD_FANOUT_DELAY_MS = 8000;
 const DIALOG_CACHE_TTL_MS = 60000;
