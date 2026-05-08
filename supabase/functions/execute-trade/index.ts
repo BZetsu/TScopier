@@ -24,6 +24,35 @@ interface ParsedSignal {
 
 type QueryValue = string | number | boolean | null | undefined
 
+async function logExecution(
+  supabase: ReturnType<typeof createClient>,
+  payload: {
+    user_id: string
+    signal_id: string
+    broker_account_id?: string | null
+    action: string
+    status: "attempt" | "success" | "failed"
+    request_payload?: Record<string, unknown> | null
+    response_payload?: unknown
+    error_message?: string | null
+  },
+) {
+  try {
+    await supabase.from("trade_execution_logs").insert({
+      user_id: payload.user_id,
+      signal_id: payload.signal_id,
+      broker_account_id: payload.broker_account_id ?? null,
+      action: payload.action,
+      status: payload.status,
+      request_payload: payload.request_payload ?? null,
+      response_payload: payload.response_payload ?? null,
+      error_message: payload.error_message ?? null,
+    })
+  } catch {
+    // Logging should never block execution path.
+  }
+}
+
 async function mtGet(path: string, params: Record<string, QueryValue>) {
   const url = new URL(`${METATRADERAPI_BASE}${path}`)
   for (const [k, v] of Object.entries(params)) {
@@ -130,6 +159,20 @@ Deno.serve(async (req: Request) => {
     if (parsed.lot_size) lotSize = parsed.lot_size
 
     const accountId = brokerAccount.metaapi_account_id as string
+    const requestPayload: Record<string, unknown> = {
+      signal_id,
+      parsed,
+      account_id: accountId,
+      broker_account_id: brokerAccount.id,
+    }
+    await logExecution(supabase, {
+      user_id: signal.user_id,
+      signal_id,
+      broker_account_id: brokerAccount.id,
+      action: parsed.action,
+      status: "attempt",
+      request_payload: requestPayload,
+    })
 
     // Simplified baseline: only execute entry signals for now.
     if (parsed.action === "buy" || parsed.action === "sell") {
@@ -157,6 +200,15 @@ Deno.serve(async (req: Request) => {
         placedType: "Signal",
       })
       const orderTicket = pickTicket(result)
+      await logExecution(supabase, {
+        user_id: signal.user_id,
+        signal_id,
+        broker_account_id: brokerAccount.id,
+        action: parsed.action,
+        status: "success",
+        request_payload: requestPayload,
+        response_payload: result as Record<string, unknown>,
+      })
 
       // Save trade record
       const { data: tradeRow } = await supabase
@@ -193,6 +245,31 @@ Deno.serve(async (req: Request) => {
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Internal server error"
     console.error("execute-trade error:", message)
+    try {
+      const body = await req.clone().json().catch(() => ({})) as { signal_id?: string }
+      if (body.signal_id) {
+        const supabase = createClient(
+          Deno.env.get("SUPABASE_URL")!,
+          Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+        )
+        const { data: s } = await supabase.from("signals").select("user_id").eq("id", body.signal_id).maybeSingle()
+        await supabase
+          .from("signals")
+          .update({ status: "failed", skip_reason: message })
+          .eq("id", body.signal_id)
+        if (s?.user_id) {
+          await logExecution(supabase, {
+            user_id: s.user_id as string,
+            signal_id: body.signal_id,
+            action: "unknown",
+            status: "failed",
+            error_message: message,
+          })
+        }
+      }
+    } catch {
+      // no-op
+    }
     return Response.json({ error: message }, { status: 500, headers: corsHeaders })
   }
 })

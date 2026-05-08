@@ -131,14 +131,28 @@ Deno.serve(async (req: Request) => {
     if (parsed.action !== "ignore" && parsed.confidence >= 0.7) {
       // Fire-and-forget trade execution
       EdgeRuntime.waitUntil(
-        fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/execute-trade`, {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ signal_id, parsed }),
-        })
+        (async () => {
+          try {
+            const execRes = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/execute-trade`, {
+              method: "POST",
+              headers: {
+                "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({ signal_id, parsed }),
+            })
+            if (!execRes.ok) {
+              const raw = await execRes.text()
+              const reason = `Execute trade failed (${execRes.status}): ${raw.slice(0, 300)}`
+              await supabase.from("signals").update({ status: "failed", skip_reason: reason }).eq("id", signal_id)
+              console.error("parse-signal execute-trade failed:", reason)
+            }
+          } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : "execute-trade network error"
+            await supabase.from("signals").update({ status: "failed", skip_reason: msg }).eq("id", signal_id)
+            console.error("parse-signal execute-trade error:", msg)
+          }
+        })()
       )
     }
 
