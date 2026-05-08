@@ -497,6 +497,17 @@ export class UserListener {
     // #endregion
 
     if (PARSE_SIGNAL_URL) {
+      await this.supabase.from('trade_execution_logs').insert({
+        user_id: this.userId,
+        signal_id: signalRow.id,
+        action: 'pipeline_parse_dispatch',
+        status: 'attempt',
+        request_payload: {
+          parse_signal_url: PARSE_SIGNAL_URL,
+          has_parse_key: !!PARSE_SIGNAL_KEY,
+          signal_id: signalRow.id,
+        },
+      })
       // #region agent log
       fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7e177e'},body:JSON.stringify({sessionId:'7e177e',runId:'run1',hypothesisId:'H2',location:'worker/src/userListener.ts:426',message:'parse trigger dispatch',data:{signalId:signalRow.id,hasParseUrl:!!PARSE_SIGNAL_URL,hasParseKey:!!PARSE_SIGNAL_KEY},timestamp:Date.now()})}).catch(()=>{});
       // #endregion
@@ -508,11 +519,26 @@ export class UserListener {
         },
         body: JSON.stringify({ signal_id: signalRow.id }),
       }).then(async (res) => {
+        await this.supabase.from('trade_execution_logs').insert({
+          user_id: this.userId,
+          signal_id: signalRow.id,
+          action: 'pipeline_parse_dispatch',
+          status: res.ok ? 'success' : 'failed',
+          response_payload: { status: res.status, ok: res.ok },
+          error_message: res.ok ? null : `parse-signal returned ${res.status}`,
+        })
         // #region agent log
         fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7e177e'},body:JSON.stringify({sessionId:'7e177e',runId:'run1',hypothesisId:'H2',location:'worker/src/userListener.ts:434',message:'parse trigger response',data:{signalId:signalRow.id,status:res.status,ok:res.ok},timestamp:Date.now()})}).catch(()=>{});
         // #endregion
       }).catch(err => {
         console.error(`[userListener] parse-signal call failed for signal ${signalRow.id}:`, err.message)
+        void this.supabase.from('trade_execution_logs').insert({
+          user_id: this.userId,
+          signal_id: signalRow.id,
+          action: 'pipeline_parse_dispatch',
+          status: 'failed',
+          error_message: err?.message ?? 'parse-signal dispatch network error',
+        })
         // #region agent log
         fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7e177e'},body:JSON.stringify({sessionId:'7e177e',runId:'run1',hypothesisId:'H2',location:'worker/src/userListener.ts:438',message:'parse trigger failed',data:{signalId:signalRow.id,error:err?.message ?? 'unknown'},timestamp:Date.now()})}).catch(()=>{});
         // #endregion
