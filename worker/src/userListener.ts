@@ -60,6 +60,39 @@ interface ChatIdentity {
   chatUsername: string
 }
 
+function looksLikeTradingSignal(text: string, isReply: boolean): boolean {
+  const normalized = text
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  if (!normalized) return false
+
+  // Common instrument patterns: EURUSD, XAUUSD, BTCUSDT, US30, etc.
+  const hasInstrument =
+    /\b[a-z]{6,7}\b/.test(normalized) ||
+    /\b(xauusd|xagusd|us30|nas100|spx500|ger40|uk100|btcusdt|ethusdt)\b/.test(normalized)
+
+  const hasDirectionOrAction =
+    /\b(buy|sell|long|short|close|tp|take profit|sl|stop loss|breakeven|be)\b/.test(normalized)
+
+  const hasPriceContext =
+    /\b\d{1,5}(?:\.\d{1,5})\b/.test(normalized) ||
+    /\b(entry|zone|between|above|below|now)\b/.test(normalized)
+
+  const hasTradeStructure =
+    /\b(tp\s*\d*|sl|entry|signal|setup)\b/.test(normalized)
+
+  // Reply updates like "move SL to ..." are often signal modifications.
+  if (isReply && /\b(move|set|update|adjust|tp|sl|breakeven|be|close)\b/.test(normalized)) {
+    return true
+  }
+
+  // Require stronger evidence than a single keyword to reduce false positives.
+  const score = Number(hasDirectionOrAction) + Number(hasInstrument) + Number(hasPriceContext) + Number(hasTradeStructure)
+  return score >= 2
+}
+
 function toChannelIdVariants(raw: string): string[] {
   const value = (raw ?? '').trim()
   if (!value) return []
@@ -412,6 +445,13 @@ export class UserListener {
     const messageId = String(message.id)
     const rawMessage = (message.text ?? message.message ?? '') as string
     const isReply = !!message.replyTo
+
+    if (!looksLikeTradingSignal(rawMessage, isReply)) {
+      console.log(
+        `[userListener] skipped non-signal user=${this.userId} channelRow=${channelRow.id} messageId=${messageId}`,
+      )
+      return false
+    }
 
     const { data: signalRow, error: insertErr } = await this.supabase
       .from('signals')

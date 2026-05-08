@@ -9,6 +9,34 @@ import { Button } from '../../components/ui/Button'
 import { Input } from '../../components/ui/Input'
 import type { TelegramChannel, BrokerAccount } from '../../types/database'
 
+function getTelegramAvatarUrl(username?: string): string | null {
+  if (!username) return null
+  return `https://t.me/i/userpic/320/${username}.jpg`
+}
+
+function TgChannelAvatar({ title, username }: { title: string; username?: string }) {
+  const [imageFailed, setImageFailed] = useState(false)
+  const avatarUrl = getTelegramAvatarUrl(username)
+  const initials = title.trim().slice(0, 2).toUpperCase() || 'TG'
+
+  return (
+    <div className="w-8 h-8 rounded-lg bg-primary-50 text-primary-600 flex items-center justify-center flex-shrink-0 overflow-hidden">
+      {avatarUrl && !imageFailed ? (
+        <img
+          src={avatarUrl}
+          alt={`${title} avatar`}
+          className="w-full h-full object-cover"
+          loading="lazy"
+          referrerPolicy="no-referrer"
+          onError={() => setImageFailed(true)}
+        />
+      ) : (
+        <span className="text-[11px] font-semibold">{initials}</span>
+      )}
+    </div>
+  )
+}
+
 export function CopierEnginePage() {
   const { user, session } = useAuth()
   const [channels, setChannels] = useState<TelegramChannel[]>([])
@@ -351,9 +379,7 @@ export function CopierEnginePage() {
                 const alreadyAdded = channels.some(c => c.channel_id === ch.id)
                 return (
                   <div key={ch.id} className="px-5 py-3 flex items-center gap-3 hover:bg-neutral-50 transition-colors">
-                    <div className="w-8 h-8 rounded-lg bg-primary-50 flex items-center justify-center flex-shrink-0">
-                      <Radio className="w-4 h-4 text-primary-500" />
-                    </div>
+                    <TgChannelAvatar title={ch.title} username={ch.username} />
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-neutral-900 truncate">{ch.title}</p>
                       {ch.username && <p className="text-xs text-neutral-400">@{ch.username}</p>}
