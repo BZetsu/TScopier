@@ -1,13 +1,14 @@
 /**
+ * Optional few-shot appendix (disabled unless env OPENAI_SIGNAL_USE_FEW_SHOTS=true).
  * Paste representative Telegram signal messages your channels send.
  *
  * - Used only when the LLM parses a message (fast deterministic paths skip this).
  * - Separate different styles with a line containing only --- (three dashes).
  * - Use dummy prices/volumes where needed; never store API keys or full account IDs.
- * - Length is capped at SIGNAL_FORMAT_CORPUS_MAX_CHARS when sent (see parse-signal).
+ * - Length is capped at SIGNAL_FORMAT_CORPUS_MAX_CHARS when sent (only if OPENAI_SIGNAL_USE_FEW_SHOTS=true).
  */
 
-export const SIGNAL_FORMAT_CORPUS_MAX_CHARS = 14_000
+export const SIGNAL_FORMAT_CORPUS_MAX_CHARS = 3_000
 
 export const SIGNAL_FORMAT_CORPUS = `
 --- Example: concise gold market ---

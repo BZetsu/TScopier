@@ -2,6 +2,12 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { createClient } from "npm:@supabase/supabase-js@2"
 import { type ParsedSignal as ExecParsed, runExecuteTradeFromPayload } from "../_shared/trade_execution.ts"
 import { formatCorpusForSystemPrompt } from "./signal_formats_corpus.ts"
+import { SIGNAL_INSTRUCTION_DOCTRINE } from "./signal_instruction_doctrine.ts"
+import {
+  extractTradableSymbolFromMessage,
+  parseDeterministicManagement,
+  parseSimpleSignal,
+} from "./management_fastpath.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -12,6 +18,7 @@ const corsHeaders = {
 const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY") ?? ""
 /** Override via `OPENAI_SIGNAL_MODEL` or `OPENAI_MODEL` (faster models reduce LLM latency). */
 const OPENAI_SIGNAL_MODEL = Deno.env.get("OPENAI_SIGNAL_MODEL") ?? Deno.env.get("OPENAI_MODEL") ?? "gpt-4o-mini"
+const OPENAI_SIGNAL_USE_FEW_SHOTS = Deno.env.get("OPENAI_SIGNAL_USE_FEW_SHOTS") === "true"
 
 const SYSTEM_PROMPT = `You are a financial trade signal parser. Extract structured trade instructions from Telegram messages.
 
@@ -45,8 +52,11 @@ Rules:
 - if the message contains a slash pair ("EUR/USD"), normalize to EURUSD-style
 `
 
-/** System prompt for OpenAI only; includes optional examples from signal_formats_corpus.ts */
-const SYSTEM_PROMPT_FOR_LLM = SYSTEM_PROMPT + formatCorpusForSystemPrompt()
+function buildLlmSystemPrompt(): string {
+  let out = SYSTEM_PROMPT + "\n\n" + SIGNAL_INSTRUCTION_DOCTRINE
+  if (OPENAI_SIGNAL_USE_FEW_SHOTS) out += formatCorpusForSystemPrompt()
+  return out
+}
 
 interface ParsedSignal {
   action: string
@@ -126,131 +136,6 @@ function toExecParsed(p: ParsedSignal): ExecParsed {
   }
 }
 
-/** Extract first known instrument ticker from Telegram text (any action). Order: explicit codes → slashes → slang. */
-function extractTradableSymbolFromMessage(raw: string): string | null {
-  if (!raw || typeof raw !== "string") return null
-  const u = raw.toUpperCase().replace(/\s+/g, " ")
-
-  const slash = raw.match(/\b([A-Z]{3,})\s*\/\s*([A-Z]{3,})\b/i)
-  if (slash) return (slash[1] + slash[2]).toUpperCase()
-
-  const explicit = u.match(
-    /\b(BTCUSD|BTCUSDT|BTCEUR|ETHUSD|ETHUSDT|EURUSD|GBPUSD|USDJPY|AUDUSD|NZDUSD|USDCAD|USDCHF|XAUUSD|XAGUSD|US30|US500|NAS100|GER40|UK100|SPX500|USTEC)\b/,
-  )
-  if (explicit) return explicit[1]
-
-  if (/\bBITCOIN\b|\bBTC\b/.test(u) && /\bEUR\b/.test(u) && !/\bUSD\b|\bUSDT\b|\bPERP\b/.test(u)) return "BTCEUR"
-  if (/\bBITCOIN\b|\bBTC\b/.test(u)) return /\bUSDT\b/.test(u) ? "BTCUSDT" : "BTCUSD"
-  if (/\bETHER(EUM)?\b|\bETH\b/.test(u)) return /\bUSDT\b/.test(u) ? "ETHUSDT" : "ETHUSD"
-  if (/\b(XAUUSD|XAU\b|GOLD)\b/.test(u)) return "XAUUSD"
-  if (/\bSILVER\b|\bXAG\b|\bXAGUSD\b/.test(u)) return "XAGUSD"
-
-  const bogusSix = new Set([
-    "CLOSED", "CLOSES", "SIGNAL", "MARKET", "SILVER", "GOLDEN", "MASTER", "PUBLIC", "TRADER", "BROKER",
-    "MARGIN", "POSITION", "TRADES", "ORDERS",
-  ])
-  const six = u.match(/\b([A-Z]{6})\b/)
-  if (six && !bogusSix.has(six[1])) {
-    return six[1]
-  }
-  return null
-}
-
-const ENTRY_KW = /\b(buy|sell|long|short)\b/i
-const MGMT_CLOSE = /\b(close\s*(all)?|flatten|kill\s*zones?|exit\s*(trade|position|long|short))\b|\b(close|closed)\s+((my|the|this)\s+)?((running|active|open)\s+)?(trade|position|btc|gold)/i
-
-function parseDeterministicManagement(message: string): ParsedSignal | null {
-  const t = message.replace(/\s+/g, " ").trim()
-  if (!t) return null
-  const tl = t.toLowerCase()
-
-  const sym = extractTradableSymbolFromMessage(t)
-  let action: ParsedSignal["action"] | null = null
-  let confidence = 0.92
-
-  if (MGMT_CLOSE.test(t)) action = "close"
-  else if (/\bbreakeven|break\s*even\b/i.test(t) || /\bmoved?\s+(sl\s+)?to\s+(be|entry|entr(y)?\s?price)|\b(be|bk)\s*now\b/i.test(t)) action = "breakeven"
-  else if (/\bpartial\b|\bc\s*half\b|close\s+50%|close\s+half/i.test(t)) action = "partial_profit"
-  else if (
-    /\b(set|move|adjust|bring)\s+(sl|tp|stop\s*loss|take\s*profit)\b|\b(stop\s*loss|take\s*profit)\s*(to|=)\s*[\d.]+/i
-      .test(t)
-  ) action = "modify"
-
-  if (!action) return null
-  const looksEntry = ENTRY_KW.test(t) &&
-    /\b(buy|sell)\s+(now|btc|bitcoin|gold|xau)|market\s+(buy|sell)/i.test(t)
-  // Avoid swallowing urgent market entries ("Sell now btc") if word "exit" typo — rare skip
-  if (action === "close" && /\b(stop\s*sell|sell\s*stops?)\s+now\b/i.test(tl)) return null
-
-  if (action === "close" && looksEntry && /\b(and|&)+\s*(gold|btc)\b/i.test(tl)) {
-    confidence = 0.88 // ambiguous
-  }
-
-  const slMatch = t.match(/\b(?:sl|stop\s*loss)\s*[:=]?\s*(\d+(?:\.\d+)?)/i)
-  const sl = slMatch ? Number(slMatch[1]) : null
-  const tpMatches = [...t.matchAll(/\b(?:tp\d*|take\s*profit)\s*[:=]?\s*(\d+(?:\.\d+)?)/gi)]
-  const tp = tpMatches.map((m) => Number(m[1])).filter((n) => Number.isFinite(n))
-
-  return {
-    action,
-    symbol: sym,
-    entry_price: null,
-    entry_zone_low: null,
-    entry_zone_high: null,
-    sl,
-    tp,
-    lot_size: null,
-    confidence,
-    raw_instruction: message,
-  }
-}
-
-/** Fast path: market-ish entries for common assets (gold, btc, …), not gold-only global default. */
-function parseSimpleSignal(message: string): ParsedSignal | null {
-  const text = message.toLowerCase().replace(/\s+/g, " ").trim()
-  if (!text) return null
-
-  if (/\b(close|flatten|exit\s+trade|breakeven|break\s+even|partial|move\s+(sl|tp))\b/i.test(text)) return null
-
-  const isBuy = /\b(buy|long)\b/.test(text)
-  const isSell = /\b(sell|short)\b/.test(text)
-  const isNow = /\b(now|instant|market|mkt\b)\b/.test(text)
-  const atMarketLike = /\b(at\s+market|@\s*market)\b/i.test(message)
-
-  if (!isNow && !atMarketLike) return null
-  if (isBuy === isSell) return null
-
-  const instrument = extractTradableSymbolFromMessage(message)
-  if (!instrument) return null
-
-  // Require commodity/pair-ish context unless we matched a precise 6-letter code
-  const hasInstrumentContext =
-    /\b(gold|xau|xauusd|btc|bitcoin|btcusd|btcusdt|eth|ethereum|silver|eur|gbp)\b/i.test(text) ||
-    /\bEUR\/USD|EURUSD|GBPUSD|USDJPY|XAUUSD|BTCUSD|BTCUSDT\b/i.test(message) ||
-    /\b(us30|nas100|ger40|uk100|ustec|spx500)\b/i.test(text) ||
-    /^[A-Z]{4,}$/i.test(instrument.trim())
-
-  if (!hasInstrumentContext) return null
-
-  const slMatch = text.match(/\b(?:sl|stop\s*loss)\s*[:=]?\s*(\d+(?:\.\d+)?)/i)
-  const sl = slMatch ? Number(slMatch[1]) : null
-  const tpMatches = [...text.matchAll(/\b(?:tp\d*|take\s*profit)\s*[:=]?\s*(\d+(?:\.\d+)?)/gi)]
-  const tp = tpMatches.map((m) => Number(m[1])).filter((n) => Number.isFinite(n))
-
-  return {
-    action: isBuy ? "buy" : "sell",
-    symbol: instrument,
-    entry_price: null,
-    entry_zone_low: null,
-    entry_zone_high: null,
-    sl,
-    tp,
-    lot_size: null,
-    confidence: 0.99,
-    raw_instruction: message,
-  }
-}
-
 /** Fix LLM hallucination (e.g. XAUUSD on BTC CLOSE) using raw Telegram text. */
 function applyRawSymbolRepair(parsed: ParsedSignal, rawMsg: string): ParsedSignal {
   const extracted = extractTradableSymbolFromMessage(rawMsg)
@@ -297,6 +182,13 @@ function compactChannelProfile(row: Record<string, unknown>): string {
     const summaryBody = sum.length > 600 ? sum.slice(0, 600) + "..." : sum
     parts.push("summary=" + summaryBody)
   }
+  const meta = row.meta && typeof row.meta === "object" ? row.meta as Record<string, unknown> : null
+  if (meta?.style_guide && typeof meta.style_guide === "string") {
+    const sg = meta.style_guide.trim()
+    if (sg) {
+      parts.push("channel_style_guide=" + (sg.length > 900 ? sg.slice(0, 900) + "..." : sg))
+    }
+  }
   return parts.join("; ")
 }
 
@@ -316,7 +208,7 @@ async function parseWithOpenAI(message: string, channelHints: string | null): Pr
     body: JSON.stringify({
       model: OPENAI_SIGNAL_MODEL,
       messages: [
-        { role: "system", content: SYSTEM_PROMPT_FOR_LLM },
+        { role: "system", content: buildLlmSystemPrompt() },
         { role: "user", content: userContent },
       ],
       temperature: 0,
@@ -380,7 +272,7 @@ Deno.serve(async (req: Request) => {
       const { data: prof } = await supabase
         .from("channel_signal_profiles")
         .select(
-          "signal_type, tp_style, sl_style, entry_type, most_traded_asset, estimated_tp_pips, estimated_sl_pips, analysis_summary",
+          "signal_type, tp_style, sl_style, entry_type, most_traded_asset, estimated_tp_pips, estimated_sl_pips, analysis_summary, meta",
         )
         .eq("channel_id", signal.channel_id)
         .maybeSingle()
