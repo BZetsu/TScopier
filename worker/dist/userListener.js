@@ -290,8 +290,8 @@ class UserListener {
             throw new Error(error.message);
         if (!row)
             throw new Error('Channel not found');
-        const imported = await this.backfillChannelFromDate(row, lookbackDays);
-        return { imported };
+        const messages = await this.backfillChannelFromDate(row, lookbackDays);
+        return { imported: messages.length, messages };
     }
     // ── live message handling ─────────────────────────────────────────────
     async handleMessage(event) {
@@ -629,13 +629,19 @@ class UserListener {
             await new Promise(r => setTimeout(r, CATCHUP_BACKPRESSURE_MS));
         }
         collected.sort((a, b) => Number(a.id) - Number(b.id));
-        let inserted = 0;
+        const out = [];
         for (const m of collected) {
-            const ok = await this.logSignal(row, m);
-            if (ok)
-                inserted++;
+            const raw = String(m.text ?? m.message ?? '').trim();
+            if (!raw)
+                continue;
+            const isReply = !!m.replyTo;
+            if (!looksLikeTradingSignal(raw, isReply))
+                continue;
+            out.push(raw);
+            if (out.length >= 300)
+                break;
         }
-        return inserted;
+        return out;
     }
     // ── watchdog ──────────────────────────────────────────────────────────
     startWatchdog() {

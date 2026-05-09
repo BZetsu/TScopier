@@ -362,7 +362,7 @@ export class UserListener {
    * Fetches and stores matching messages for the last N days even when
    * last_seen_message_id is still empty (seed-only mode).
    */
-  async backfillChannelHistory(channelRowId: string, days: number): Promise<{ imported: number }> {
+  async backfillChannelHistory(channelRowId: string, days: number): Promise<{ imported: number; messages: string[] }> {
     const lookbackDays = Math.max(1, Math.min(90, Number(days || 30)))
     const { data: row, error } = await this.supabase
       .from('telegram_channels')
@@ -374,8 +374,8 @@ export class UserListener {
     if (error) throw new Error(error.message)
     if (!row) throw new Error('Channel not found')
 
-    const imported = await this.backfillChannelFromDate(row as ChannelRow, lookbackDays)
-    return { imported }
+    const messages = await this.backfillChannelFromDate(row as ChannelRow, lookbackDays)
+    return { imported: messages.length, messages }
   }
 
   // ── live message handling ─────────────────────────────────────────────
@@ -681,7 +681,7 @@ export class UserListener {
     }
   }
 
-  private async backfillChannelFromDate(row: ChannelRow, days: number): Promise<number> {
+  private async backfillChannelFromDate(row: ChannelRow, days: number): Promise<string[]> {
     let peer: unknown
     try {
       peer = await this.client.getInputEntity(row.channel_username || row.channel_id)
@@ -743,12 +743,16 @@ export class UserListener {
     }
 
     collected.sort((a, b) => Number(a.id) - Number(b.id))
-    let inserted = 0
+    const out: string[] = []
     for (const m of collected) {
-      const ok = await this.logSignal(row, m)
-      if (ok) inserted++
+      const raw = String(m.text ?? m.message ?? '').trim()
+      if (!raw) continue
+      const isReply = !!m.replyTo
+      if (!looksLikeTradingSignal(raw, isReply)) continue
+      out.push(raw)
+      if (out.length >= 300) break
     }
-    return inserted
+    return out
   }
 
   // ── watchdog ──────────────────────────────────────────────────────────

@@ -45,6 +45,8 @@ export function CopierEnginePage() {
   const { user, session } = useAuth()
   const [channels, setChannels] = useState<TelegramChannel[]>([])
   const [channelProfiles, setChannelProfiles] = useState<Record<string, ChannelSignalProfile>>({})
+  const [analyzingChannels, setAnalyzingChannels] = useState<Set<string>>(new Set())
+  const [analysisProgress, setAnalysisProgress] = useState<Record<string, number>>({})
   const [tgChannels, setTgChannels] = useState<{ id: string; title: string; username: string; members_count: number }[]>([])
   const [loading, setLoading] = useState(true)
   const [loadingTg, setLoadingTg] = useState(false)
@@ -101,10 +103,18 @@ export function CopierEnginePage() {
 
   const analyzeChannelProfile = async (channelId: string) => {
     if (!session?.access_token) return
+    setAnalyzingChannels(prev => {
+      const next = new Set(prev)
+      next.add(channelId)
+      return next
+    })
+    setAnalysisProgress(prev => ({ ...prev, [channelId]: 0 }))
     try {
+      setAnalysisProgress(prev => ({ ...prev, [channelId]: 10 }))
+      let historicalMessages: string[] = []
       // Backfill last 30 days from Telegram before profiling so insights
       // are not limited to only recently ingested messages.
-      await fetch(EDGE_FN, {
+      const backfillRes = await fetch(EDGE_FN, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${session.access_token}`,
@@ -112,21 +122,42 @@ export function CopierEnginePage() {
         },
         body: JSON.stringify({ action: 'backfill_channel_history', channel_row_id: channelId, days: 30 }),
       }).catch(() => null)
+      if (backfillRes) {
+        const backfillData = await backfillRes.json().catch(() => null)
+        if (backfillRes.ok && Array.isArray(backfillData?.messages)) {
+          historicalMessages = backfillData.messages as string[]
+        }
+      }
 
+      setAnalysisProgress(prev => ({ ...prev, [channelId]: 60 }))
       const res = await fetch(EDGE_ANALYZE_PROFILE, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${session.access_token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ channel_id: channelId, lookback_days: 30 }),
+        body: JSON.stringify({ channel_id: channelId, lookback_days: 30, historical_messages: historicalMessages }),
       })
+      setAnalysisProgress(prev => ({ ...prev, [channelId]: 85 }))
       const data = await res.json()
       if (!res.ok || !data?.profile) return
       const profile = data.profile as ChannelSignalProfile
       setChannelProfiles(prev => ({ ...prev, [channelId]: profile }))
+      setAnalysisProgress(prev => ({ ...prev, [channelId]: 100 }))
+      await new Promise(resolve => setTimeout(resolve, 500))
     } catch {
       // non-blocking background enrichment
+    } finally {
+      setAnalyzingChannels(prev => {
+        const next = new Set(prev)
+        next.delete(channelId)
+        return next
+      })
+      setAnalysisProgress(prev => {
+        const next = { ...prev }
+        delete next[channelId]
+        return next
+      })
     }
   }
 
@@ -498,6 +529,8 @@ export function CopierEnginePage() {
               key={channel.id}
               channel={channel}
               profile={channelProfiles[channel.id]}
+              isAnalyzing={analyzingChannels.has(channel.id)}
+              analysisProgress={analysisProgress[channel.id] ?? 0}
               onToggle={v => toggleChannel(channel.id, v)}
               onDelete={() => deleteChannel(channel.id)}
             />
@@ -509,10 +542,12 @@ export function CopierEnginePage() {
 }
 
 function ChannelRow({
-  channel, profile, onToggle, onDelete,
+  channel, profile, isAnalyzing, analysisProgress, onToggle, onDelete,
 }: {
   channel: TelegramChannel
   profile?: ChannelSignalProfile
+  isAnalyzing: boolean
+  analysisProgress: number
   onToggle: (v: boolean) => void
   onDelete: () => void
 }) {
@@ -530,8 +565,20 @@ function ChannelRow({
           {channel.channel_username && <p className="text-xs text-neutral-400 mt-0.5">@{channel.channel_username}</p>}
           <div className="mt-2 rounded-lg border border-neutral-100 bg-neutral-50 px-3 py-2">
             <p className="text-[11px] font-semibold tracking-wide text-neutral-500 uppercase">Channel Insights</p>
-            {!profile ? (
-              <p className="text-xs text-neutral-400 mt-1">No insights yet. Click Analyze 30d to generate profile.</p>
+            {isAnalyzing ? (
+              <div className="mt-1.5">
+                <p className="text-xs text-neutral-500 mb-1.5">
+                  Analyzing Signals for the last 30 days... {Math.max(0, Math.min(100, Math.round(analysisProgress)))}%
+                </p>
+                <div className="h-2 w-full overflow-hidden rounded-full bg-neutral-200">
+                  <div
+                    className="h-full rounded-full bg-primary-500 transition-all duration-300"
+                    style={{ width: `${Math.max(0, Math.min(100, analysisProgress))}%` }}
+                  />
+                </div>
+              </div>
+            ) : !profile ? (
+              <p className="text-xs text-neutral-400 mt-1">No insights yet. Insights will be generated automatically when this channel is added.</p>
             ) : (
               <>
                 <div className="flex flex-wrap gap-1.5 mt-1.5">

@@ -271,6 +271,9 @@ Deno.serve(async (req: Request) => {
     const body = await req.json()
     const channelId = String(body?.channel_id ?? "")
     const lookbackDays = Math.max(1, Math.min(90, Number(body?.lookback_days ?? 30)))
+    const historicalMessages = Array.isArray(body?.historical_messages)
+      ? (body.historical_messages as unknown[]).filter((m): m is string => typeof m === "string").slice(0, 300)
+      : []
     if (!channelId) return Response.json({ error: "channel_id required" }, { status: 400, headers: corsHeaders })
 
     const { data: channel } = await supabase
@@ -292,8 +295,13 @@ Deno.serve(async (req: Request) => {
       .limit(500)
 
     const rows = (signals ?? []) as Array<{ raw_message: string; parsed_data: unknown }>
-    const heuristic = heuristicProfile(rows)
-    const aiPatch = await aiEnhanceProfile(heuristic, rows)
+    const historyRows = historicalMessages.map((raw_message) => ({
+      raw_message,
+      parsed_data: parseFromRawMessage(raw_message),
+    }))
+    const mergedRows = [...historyRows, ...rows]
+    const heuristic = heuristicProfile(mergedRows)
+    const aiPatch = await aiEnhanceProfile(heuristic, mergedRows)
     const finalProfile: ChannelProfile = {
       ...heuristic,
       ...aiPatch,
