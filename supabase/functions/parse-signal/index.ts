@@ -212,7 +212,7 @@ async function parseWithOpenAI(message: string, channelHints: string | null): Pr
         { role: "user", content: userContent },
       ],
       temperature: 0,
-      max_tokens: 220,
+      max_tokens: 384,
     }),
   })
 
@@ -221,7 +221,8 @@ async function parseWithOpenAI(message: string, channelHints: string | null): Pr
   }
 
   const data = await res.json()
-  const content = data.choices?.[0]?.message?.content ?? ""
+  let content = data.choices?.[0]?.message?.content ?? ""
+  content = content.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "").trim()
 
   try {
     return JSON.parse(content)

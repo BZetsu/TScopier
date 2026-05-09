@@ -44,3 +44,13 @@ Deno.test("entry: Buy now with symbol", () => {
   assertEquals(p?.action, "buy")
   assertEquals(p?.symbol, "BTCUSD")
 })
+
+Deno.test("entry: BUY BTCUSD + SL/TP must be buy not modify", () => {
+  const msg =
+    `SIGNAL ALERT\n\nBUY BTCUSD 96500\n\n🔴SL: 96480\n🤑TP1: 96520`
+  const p = parseDeterministicManagement(msg)
+  assertEquals(p?.action, "buy")
+  assertEquals(p?.symbol, "BTCUSD")
+  assertEquals(p?.sl, 96480)
+  assertEquals(p?.tp.includes(96520), true)
+})
