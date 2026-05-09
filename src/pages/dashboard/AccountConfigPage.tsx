@@ -48,6 +48,30 @@ interface ChannelOption {
   display_name: string
   channel_username: string
   is_active: boolean
+  created_at: string
+}
+
+/** First-added channel (oldest created_at); stable tie-break on id. */
+function normalizeSignalChannelIds(b: BrokerAccount | undefined): string[] {
+  const raw = b?.signal_channel_ids
+  if (!raw) return []
+  if (Array.isArray(raw)) return raw.map(String).filter(Boolean)
+  return []
+}
+
+function getOldestChannel(channels: ChannelOption[]): ChannelOption | undefined {
+  if (!channels.length) return undefined
+  return [...channels].reduce((oldest, ch) => {
+    const t = Date.parse(ch.created_at)
+    const ot = Date.parse(oldest.created_at)
+    const tOk = Number.isFinite(t)
+    const oOk = Number.isFinite(ot)
+    if (!tOk && !oOk) return ch.id < oldest.id ? ch : oldest
+    if (!tOk) return oldest
+    if (!oOk) return ch
+    if (t !== ot) return t < ot ? ch : oldest
+    return ch.id < oldest.id ? ch : oldest
+  })
 }
 
 interface AccountConfigDraft {
@@ -86,9 +110,9 @@ export function AccountConfigPage() {
   const [brokerSummaries, setBrokerSummaries] = useState<Record<string, { balance?: number; equity?: number; currency?: string }>>({})
   const [brokerSummaryErrors, setBrokerSummaryErrors] = useState<Record<string, string>>({})
   const [channelOptions, setChannelOptions] = useState<ChannelOption[]>([])
-  const [accountConfigs, setAccountConfigs] = useState<Record<string, AccountConfigDraft>>({})
   const [configAccount, setConfigAccount] = useState<BrokerAccount | null>(null)
   const [configDraft, setConfigDraft] = useState<AccountConfigDraft>({ mode: 'ai', channelIds: [] })
+  const [configSaving, setConfigSaving] = useState(false)
   const [showPlatformModal, setShowPlatformModal] = useState(false)
   const [showAddBroker, setShowAddBroker] = useState(false)
   const [form, setForm] = useState<BrokerForm>(emptyForm)
@@ -125,7 +149,7 @@ export function AccountConfigPage() {
   const loadData = async () => {
     const [brokersRes, channelsRes] = await Promise.all([
       supabase.from('broker_accounts').select('*').eq('user_id', user!.id).order('created_at'),
-      supabase.from('telegram_channels').select('id,display_name,channel_username,is_active').eq('user_id', user!.id).eq('is_active', true).order('created_at', { ascending: false }),
+      supabase.from('telegram_channels').select('id,display_name,channel_username,is_active,created_at').eq('user_id', user!.id).eq('is_active', true).order('created_at', { ascending: false }),
     ])
     const nextBrokers = (brokersRes.data ?? []) as BrokerAccount[]
     setBrokers(nextBrokers)
@@ -135,9 +159,22 @@ export function AccountConfigPage() {
   }
 
   const openConfigureModal = (broker: BrokerAccount) => {
-    const existing = accountConfigs[broker.id]
-    setConfigAccount(broker)
-    setConfigDraft(existing ?? { mode: 'ai', channelIds: [] })
+    const fresh = brokers.find(b => b.id === broker.id) ?? broker
+    const persistedIds = normalizeSignalChannelIds(fresh)
+    const oldestId = getOldestChannel(channelOptions)?.id
+    let channelIds: string[]
+    if (channelOptions.length === 1 && channelOptions[0]) {
+      channelIds = [channelOptions[0].id]
+    } else if (channelOptions.length > 1) {
+      channelIds = persistedIds.length > 0 ? persistedIds : (oldestId ? [oldestId] : [])
+    } else {
+      channelIds = persistedIds
+    }
+    setConfigAccount(fresh)
+    setConfigDraft({
+      mode: fresh.copier_mode === 'manual' ? 'manual' : 'ai',
+      channelIds,
+    })
   }
 
   const closeConfigureModal = () => {
@@ -153,23 +190,59 @@ export function AccountConfigPage() {
     }))
   }
 
-  const saveConfigureModal = () => {
-    if (!configAccount) return
-    setAccountConfigs(prev => ({
-      ...prev,
-      [configAccount.id]: configDraft,
-    }))
+  const saveConfigureModal = async () => {
+    if (!configAccount || !user) return
+    let channelIds = configDraft.channelIds
+    if (channelOptions.length === 1 && channelOptions[0]) {
+      channelIds = [channelOptions[0].id]
+    } else if (channelOptions.length > 1 && channelIds.length === 0) {
+      const oldest = getOldestChannel(channelOptions)
+      if (oldest) channelIds = [oldest.id]
+    }
+
+    setConfigSaving(true)
+    setError('')
+    const { data, error: upErr } = await supabase
+      .from('broker_accounts')
+      .update({
+        copier_mode: configDraft.mode === 'manual' ? 'manual' : 'ai',
+        signal_channel_ids: channelIds,
+      })
+      .eq('id', configAccount.id)
+      .eq('user_id', user.id)
+      .select('*')
+      .single()
+    setConfigSaving(false)
+
+    if (upErr) {
+      setError(upErr.message)
+      return
+    }
+
+    if (data) {
+      setBrokers(prev => prev.map(b => (b.id === configAccount.id ? (data as BrokerAccount) : b)))
+    }
     closeConfigureModal()
   }
 
   const getBrokerSignalChannelsLabel = (brokerId: string) => {
-    const selectedIds = accountConfigs[brokerId]?.channelIds ?? []
-    if (!selectedIds.length) return 'None selected'
+    if (channelOptions.length === 0) return 'None selected'
+    const oldest = getOldestChannel(channelOptions)
+    if (channelOptions.length === 1) {
+      const name = oldest?.display_name?.trim()
+      return name || 'Signal channel'
+    }
+    const brokerRow = brokers.find(b => b.id === brokerId)
+    const persistedIds = normalizeSignalChannelIds(brokerRow)
+    const idsToShow =
+      persistedIds.length > 0 ? persistedIds : (oldest?.id ? [oldest.id] : [])
     const labels = channelOptions
-      .filter(ch => selectedIds.includes(ch.id))
+      .filter(ch => idsToShow.includes(ch.id))
       .map(ch => ch.display_name)
       .filter(Boolean)
-    return labels.length ? labels.join(', ') : 'None selected'
+    if (labels.length) return labels.join(', ')
+    const fallback = oldest?.display_name?.trim()
+    return fallback || 'None selected'
   }
 
   const set = (field: keyof BrokerForm, value: string) =>
@@ -308,6 +381,9 @@ export function AccountConfigPage() {
         platform: form.platform,
         metaapi_account_id: `${form.broker_server.trim()}|${form.account_number.trim()}`,
         broker_server: form.broker_server.trim(),
+        copier_mode: 'ai',
+        signal_channel_ids: [],
+        ai_settings: {},
         default_lot_size: DEFAULT_LOT_SIZE,
         pip_tolerance: DEFAULT_PIP_TOLERANCE,
         is_active: true,
@@ -356,11 +432,6 @@ export function AccountConfigPage() {
         return next
       })
       setBrokerSummaryErrors(prev => {
-        const next = { ...prev }
-        delete next[id]
-        return next
-      })
-      setAccountConfigs(prev => {
         const next = { ...prev }
         delete next[id]
         return next
@@ -644,35 +715,39 @@ export function AccountConfigPage() {
                 </div>
               </div>
 
-              <div className="rounded-xl border border-neutral-200 p-4">
-                <div className="flex items-center justify-between mb-3">
-                  <p className="text-sm font-semibold text-neutral-900">Signal Channels</p>
-                  <p className="text-xs text-neutral-500">{configDraft.channelIds.length} selected</p>
-                </div>
-                {channelOptions.length === 0 ? (
-                  <p className="text-sm text-neutral-500">
-                    No connected channels found. <Link to="/copier-engine" className="text-primary-600 underline">Connect channels here</Link>.
-                  </p>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                    {channelOptions.map(channel => (
-                      <label key={channel.id} className="flex items-center gap-2 rounded-lg border border-neutral-200 px-3 py-2 cursor-pointer hover:bg-neutral-50">
-                        <input
-                          type="checkbox"
-                          checked={configDraft.channelIds.includes(channel.id)}
-                          onChange={() => toggleDraftChannel(channel.id)}
-                        />
-                        <div className="min-w-0">
-                          <p className="text-sm text-neutral-800 truncate">{channel.display_name}</p>
-                          {channel.channel_username && (
-                            <p className="text-xs text-neutral-500 truncate">@{channel.channel_username}</p>
-                          )}
-                        </div>
-                      </label>
-                    ))}
+              {(channelOptions.length === 0 || channelOptions.length > 1) && (
+                <div className="rounded-xl border border-neutral-200 p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <p className="text-sm font-semibold text-neutral-900">Signal Channels</p>
+                    {channelOptions.length > 1 && (
+                      <p className="text-xs text-neutral-500">{configDraft.channelIds.length} selected</p>
+                    )}
                   </div>
-                )}
-              </div>
+                  {channelOptions.length === 0 ? (
+                    <p className="text-sm text-neutral-500">
+                      No connected channels found. <Link to="/copier-engine" className="text-primary-600 underline">Connect channels here</Link>.
+                    </p>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      {channelOptions.map(channel => (
+                        <label key={channel.id} className="flex items-center gap-2 rounded-lg border border-neutral-200 px-3 py-2 cursor-pointer hover:bg-neutral-50">
+                          <input
+                            type="checkbox"
+                            checked={configDraft.channelIds.includes(channel.id)}
+                            onChange={() => toggleDraftChannel(channel.id)}
+                          />
+                          <div className="min-w-0">
+                            <p className="text-sm text-neutral-800 truncate">{channel.display_name}</p>
+                            {channel.channel_username && (
+                              <p className="text-xs text-neutral-500 truncate">@{channel.channel_username}</p>
+                            )}
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {configDraft.mode === 'ai' ? (
                 <div className="rounded-xl border border-neutral-200 p-4 space-y-3">
@@ -721,8 +796,8 @@ export function AccountConfigPage() {
             </div>
 
             <div className="px-6 py-4 border-t border-neutral-100 flex items-center justify-end gap-2">
-              <Button variant="ghost" onClick={closeConfigureModal}>Cancel</Button>
-              <Button onClick={saveConfigureModal}>Save</Button>
+              <Button variant="ghost" onClick={closeConfigureModal} disabled={configSaving}>Cancel</Button>
+              <Button loading={configSaving} onClick={() => void saveConfigureModal()}>Save</Button>
             </div>
           </div>
         </div>

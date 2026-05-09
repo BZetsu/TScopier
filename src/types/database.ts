@@ -37,6 +37,14 @@ export interface Database {
   }
 }
 
+export interface AiBrokerSettings {
+  risk_percent_per_trade?: number
+  min_lot?: number
+  max_lot?: number
+  reference_equity?: number
+  fallback_lot?: number | null
+}
+
 export interface BrokerAccount {
   id: string
   user_id: string
@@ -46,6 +54,11 @@ export interface BrokerAccount {
   /** MT server hostname as entered when linking (used to infer broker label). */
   broker_server?: string | null
   is_active: boolean
+  /** AI uses balance-scaled sizing; Manual uses defaults unless signal specifies lots. */
+  copier_mode?: 'ai' | 'manual'
+  /** Subscribed telegram_channels row ids; empty/absent = legacy "all channels". */
+  signal_channel_ids?: string[] | null
+  ai_settings?: Json | null
   default_lot_size: number
   pip_tolerance: number
   max_trades_per_zone: number
