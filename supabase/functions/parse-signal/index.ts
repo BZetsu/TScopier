@@ -26,6 +26,7 @@ Return ONLY a JSON object with this exact shape (no markdown, no explanation):
 }
 
 Rules:
+- If optional channel context is appended to the user message (behavior hints for this Telegram source), weigh it as soft guidance — do not refuse to parse if it conflicts with the visible message text.
 - If the message contains no trading instruction, set action to "ignore"
 - For zone entries like "buy between 1.1200 and 1.1220", set entry_zone_low and entry_zone_high
 - For "Set SL to X" or "Move TP to Y" messages, set action to "modify"
@@ -33,7 +34,11 @@ Rules:
 - For "Set breakeven" messages, set action to "breakeven"
 - tp is always an array (can have multiple targets)
 - confidence reflects how certain you are this is a real trade signal (0 = not a trade, 1 = clear trade)
-- symbol should be the forex pair or instrument (e.g. EURUSD, XAUUSD, US30)`
+- symbol should be the forex pair or instrument (e.g. EURUSD, XAUUSD, US30, BTCUS)
+- if the message contains a broker or server hint, use it to determine the symbol
+- if the message contains a symbol, use it to determine the broker or server
+- if the message contains a broker or server hint and a symbol, use the symbol
+`
 
 interface ParsedSignal {
   action: string
@@ -84,7 +89,36 @@ function parseSimpleSignal(message: string): ParsedSignal | null {
   }
 }
 
-async function parseWithOpenAI(message: string): Promise<ParsedSignal> {
+function compactChannelProfile(row: Record<string, unknown>): string {
+  const parts: string[] = []
+  const push = (k: string, v: unknown) => {
+    if (v === null || v === undefined || v === "") return
+    const s = String(v).trim()
+    if (!s || s === "unknown") return
+    parts.push(k + "=" + s)
+  }
+  push("signal_type", row.signal_type)
+  push("tp_style", row.tp_style)
+  push("sl_style", row.sl_style)
+  push("entry_type", row.entry_type)
+  push("asset", row.most_traded_asset)
+  if (row.estimated_tp_pips != null) push("est_tp_pips", row.estimated_tp_pips)
+  if (row.estimated_sl_pips != null) push("est_sl_pips", row.estimated_sl_pips)
+  if (typeof row.analysis_summary === "string" && row.analysis_summary.trim()) {
+    const sum = row.analysis_summary.trim()
+    const summaryBody = sum.length > 600 ? sum.slice(0, 600) + "..." : sum
+    parts.push("summary=" + summaryBody)
+  }
+  return parts.join("; ")
+}
+
+async function parseWithOpenAI(message: string, channelHints: string | null): Promise<ParsedSignal> {
+  const userContent = channelHints
+    ? "Channel context (from prior analysis of this source; may be incomplete):\n" +
+      channelHints +
+      "\n\n---\nMessage to parse:\n" +
+      message
+    : message
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -95,7 +129,7 @@ async function parseWithOpenAI(message: string): Promise<ParsedSignal> {
       model: "gpt-4o-mini",
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: message },
+        { role: "user", content: userContent },
       ],
       temperature: 0,
       max_tokens: 400,
@@ -148,8 +182,26 @@ Deno.serve(async (req: Request) => {
       return Response.json({ error: "Signal not found" }, { status: 404, headers: corsHeaders })
     }
 
+    // Optional channel profile hints (read-only; missing row is fine).
+    let channelHints: string | null = null
+    if (signal.channel_id) {
+      const { data: prof } = await supabase
+        .from("channel_signal_profiles")
+        .select(
+          "signal_type, tp_style, sl_style, entry_type, most_traded_asset, estimated_tp_pips, estimated_sl_pips, analysis_summary",
+        )
+        .eq("channel_id", signal.channel_id)
+        .maybeSingle()
+      if (prof && typeof prof === "object") {
+        const hint = compactChannelProfile(prof as Record<string, unknown>)
+        if (hint) channelHints = hint
+      }
+    }
+
     // Parse message (deterministic fast-path first, then LLM fallback).
-    const parsed = parseSimpleSignal(signal.raw_message) ?? await parseWithOpenAI(signal.raw_message)
+    const parsed =
+      parseSimpleSignal(signal.raw_message)
+      ?? await parseWithOpenAI(signal.raw_message, channelHints)
 
     // Update signal with parsed data
     const newStatus = parsed.action === "ignore" ? "skipped" : "parsed"

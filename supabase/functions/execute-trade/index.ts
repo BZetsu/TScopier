@@ -22,6 +22,212 @@ interface ParsedSignal {
   confidence: number
 }
 
+type JsonRecord = Record<string, unknown>
+type BrokerRow = JsonRecord & {
+  id: string
+  user_id: string
+  metaapi_account_id: string
+  default_lot_size: number
+  pip_tolerance: number
+  copier_mode?: string | null
+  signal_channel_ids?: string[] | null
+  ai_settings?: unknown
+}
+
+function brokerEligibleForSignal(broker: Pick<BrokerRow, "signal_channel_ids">, channelId: string | null): boolean {
+  const raw = broker.signal_channel_ids
+  const ids = Array.isArray(raw) ? raw.map(String) : []
+  if (ids.length === 0) return true
+  if (!channelId) return true
+  return ids.includes(channelId)
+}
+
+function normalizeAiSettings(raw: unknown): {
+  risk_percent_per_trade: number
+  min_lot: number
+  max_lot: number
+  reference_equity: number
+  fallback_lot: number | null
+} {
+  const j = (raw && typeof raw === "object") ? raw as JsonRecord : {}
+  return {
+    risk_percent_per_trade: Math.min(10, Math.max(0.05, Number(j.risk_percent_per_trade ?? 1) || 1)),
+    min_lot: Math.max(0.001, Number(j.min_lot ?? 0.01) || 0.01),
+    max_lot: Math.min(100, Math.max(0.01, Number(j.max_lot ?? 5) || 5)),
+    reference_equity: Math.max(100, Number(j.reference_equity ?? 10000) || 10000),
+    fallback_lot: j.fallback_lot != null && Number.isFinite(Number(j.fallback_lot)) ? Number(j.fallback_lot) : null,
+  }
+}
+
+function clampLot(n: number, min: number, max: number): number {
+  if (!Number.isFinite(n) || n <= 0) return min
+  return Math.min(max, Math.max(min, n))
+}
+
+async function fetchAccountBalance(accountId: string): Promise<number | null> {
+  const from = "2024-01-01T00:00:00"
+  const paths: [string, Record<string, QueryValue>][] = [
+    ["/AccountSummary", { id: accountId }],
+    ["/Account", { id: accountId }],
+    ["/TradeStats", { id: accountId, from }],
+  ]
+  for (const [path, params] of paths) {
+    try {
+      const raw = await mtGet(path, params)
+      if (!raw || typeof raw !== "object") continue
+      const p = raw as Record<string, unknown>
+      const summary = (p.summary && typeof p.summary === "object") ? p.summary as Record<string, unknown> : {}
+      const bal = Number(p.balance ?? p.Balance ?? summary.balance ?? summary.Balance)
+      if (Number.isFinite(bal) && bal >= 0) return bal
+    } catch {
+      // try next
+    }
+  }
+  return null
+}
+
+async function resolveLotAndPips(
+  supabase: ReturnType<typeof createClient>,
+  brokerAccount: BrokerRow,
+  signal: { channel_id: string | null },
+  parsed: ParsedSignal,
+): Promise<{ lotSize: number; pipTolerance: number; sizingLog: JsonRecord }> {
+  let pipTolerance = Number(brokerAccount.pip_tolerance ?? 20)
+  const defaultLot = Number(brokerAccount.default_lot_size ?? 0.01)
+  let lotSize = defaultLot
+
+  if (signal.channel_id) {
+    const { data: channel } = await supabase
+      .from("telegram_channels")
+      .select("pip_tolerance_override, lot_size_override")
+      .eq("id", signal.channel_id)
+      .maybeSingle()
+
+    const ch = channel as { pip_tolerance_override?: number | null; lot_size_override?: number | null } | null
+    if (ch?.pip_tolerance_override) pipTolerance = Number(ch.pip_tolerance_override)
+    if (ch?.lot_size_override) lotSize = Number(ch.lot_size_override)
+  }
+
+  const parsedLot = parsed.lot_size != null ? Number(parsed.lot_size) : null
+  if (Number.isFinite(parsedLot!) && parsedLot! > 0) {
+    return { lotSize: parsedLot!, pipTolerance, sizingLog: { source: "parsed_signal_lot", parsed_lot: parsedLot } }
+  }
+
+  const mode = String(brokerAccount.copier_mode ?? "ai").toLowerCase()
+  const ai = normalizeAiSettings(brokerAccount.ai_settings)
+
+  if (mode === "manual") {
+    lotSize = clampLot(defaultLot, ai.min_lot, ai.max_lot)
+    return { lotSize, pipTolerance, sizingLog: { source: "manual_mode", default_lot: defaultLot } }
+  }
+
+  const metaId = String(brokerAccount.metaapi_account_id ?? "")
+  const balance = metaId ? await fetchAccountBalance(metaId) : null
+  let lot = defaultLot * ((balance != null && balance > 0) ? (balance / ai.reference_equity) : 1)
+  lot = clampLot(lot, ai.min_lot, ai.max_lot)
+
+  const entry = parsed.entry_price ?? parsed.entry_zone_low ?? parsed.entry_zone_high
+  const sl = parsed.sl
+  if (balance != null && balance > 0 && entry != null && sl != null && Number.isFinite(entry) && Number.isFinite(sl)) {
+    const dist = Math.abs(Number(entry) - Number(sl))
+    if (dist > 1e-8) {
+      const riskUsd = balance * (ai.risk_percent_per_trade / 100)
+      const heuristicLots = riskUsd / (dist * 80)
+      lot = clampLot(heuristicLots, ai.min_lot, ai.max_lot)
+    }
+  }
+
+  if (!Number.isFinite(lot) || lot <= 0) {
+    lot = ai.fallback_lot != null ? ai.fallback_lot : defaultLot
+  }
+  lotSize = clampLot(lot, ai.min_lot, ai.max_lot)
+
+  return {
+    lotSize,
+    pipTolerance,
+    sizingLog: {
+      source: "ai_money_management",
+      balance_snapshot: balance,
+      reference_equity: ai.reference_equity,
+      risk_percent_per_trade: ai.risk_percent_per_trade,
+      min_lot: ai.min_lot,
+      max_lot: ai.max_lot,
+    },
+  }
+}
+
+async function findMatchingOpenTrade(
+  supabase: ReturnType<typeof createClient>,
+  userId: string,
+  brokerAccountId: string,
+  symbol: string | null,
+  direction: string | null,
+): Promise<{
+    id: string
+    metaapi_order_id: string | null
+    symbol: string
+    direction: string
+    entry_price: number | null
+    lot_size: number
+    sl: number | null
+    tp: number | null
+  } | null> {
+  if (!symbol) return null
+  const upper = symbol.toUpperCase().replace(/\s/g, "")
+
+  let query = supabase
+    .from("trades")
+    .select("id, metaapi_order_id, symbol, direction, entry_price, lot_size, sl, tp, opened_at")
+    .eq("user_id", userId)
+    .eq("broker_account_id", brokerAccountId)
+    .eq("status", "open")
+
+  if (direction === "buy" || direction === "sell") {
+    query = query.eq("direction", direction)
+  }
+
+  const { data: rows } = await query.order("opened_at", { ascending: false }).limit(40)
+  if (!rows?.length) return null
+  const scored = rows.map((t) => {
+    const ts = String(t.symbol ?? "").toUpperCase().replace(/\s/g, "")
+    const exact = ts === upper ? 2 : ts.includes(upper) || upper.includes(ts) ? 1 : 0
+    return { t, score: exact }
+  }).filter((x) => x.score > 0)
+  scored.sort((a, b) => b.score - a.score)
+  const pick = scored[0]?.t
+  return pick ?? null
+}
+
+async function mtOrderModify(
+  accountId: string,
+  ticket: string | number,
+  stoploss: number,
+  takeprofit: number,
+): Promise<unknown> {
+  return await mtGetAny(
+    ["/OrderModify", "/OrdersModify"],
+    { id: accountId, ticket, stoploss, takeprofit },
+  )
+}
+
+async function mtOrderClose(
+  accountId: string,
+  ticket: string | number,
+  volume?: number,
+): Promise<unknown> {
+  const params: Record<string, QueryValue> = {
+    id: accountId,
+    ticket,
+  }
+  if (volume != null && Number.isFinite(volume) && volume > 0) {
+    params.volume = volume
+  }
+  return await mtGetAny(
+    ["/OrderClose", "/ClosePosition", "/PositionsClose"],
+    params,
+  )
+}
+
 type QueryValue = string | number | boolean | null | undefined
 
 async function logExecution(
@@ -289,6 +495,224 @@ async function orderSendWithFallback(
   return await mtGet("/OrderSend", retry2Params)
 }
 
+/** Per-broker execution. Signals table is updated only by the caller after aggregating results. */
+async function executeOneBroker(
+  supabase: ReturnType<typeof createClient>,
+  signal: { user_id: string; channel_id: string | null },
+  signalId: string,
+  parsed: ParsedSignal,
+  brokerAccount: BrokerRow,
+): Promise<{ ok: boolean; error?: string; trade_id?: string | null }> {
+  const accountId = String(brokerAccount.metaapi_account_id ?? "")
+  if (!accountId) {
+    return { ok: false, error: "Missing MetaAPI account id" }
+  }
+
+  const { lotSize, pipTolerance, sizingLog } = await resolveLotAndPips(
+    supabase,
+    brokerAccount,
+    { channel_id: signal.channel_id },
+    parsed,
+  )
+  const requestPayload: Record<string, unknown> = {
+    signal_id: signalId,
+    parsed,
+    account_id: accountId,
+    broker_account_id: brokerAccount.id,
+    sizing: sizingLog,
+  }
+
+  await logExecution(supabase, {
+    user_id: signal.user_id,
+    signal_id: signalId,
+    broker_account_id: brokerAccount.id,
+    action: parsed.action,
+    status: "attempt",
+    request_payload: requestPayload,
+  })
+
+  const logFail = async (msg: string, response?: unknown) => {
+    await logExecution(supabase, {
+      user_id: signal.user_id,
+      signal_id: signalId,
+      broker_account_id: brokerAccount.id,
+      action: parsed.action,
+      status: "failed",
+      request_payload: requestPayload,
+      response_payload: response ?? null,
+      error_message: msg,
+    })
+  }
+
+  const logOk = async (response: unknown, extra?: Record<string, unknown>) => {
+    await logExecution(supabase, {
+      user_id: signal.user_id,
+      signal_id: signalId,
+      broker_account_id: brokerAccount.id,
+      action: parsed.action,
+      status: "success",
+      request_payload: extra ? { ...requestPayload, ...extra } : requestPayload,
+      response_payload: response,
+    })
+  }
+
+  try {
+    if (parsed.action === "buy" || parsed.action === "sell") {
+      if (!parsed.symbol) {
+        await logFail("No symbol detected")
+        return { ok: false, error: "No symbol detected" }
+      }
+      const result = await orderSendWithFallback(accountId, parsed, lotSize, pipTolerance, signalId)
+      const normalized = normalizeProviderResult(result)
+      const orderTicket = normalized.ticket
+      const ticketAsNum = Number(orderTicket)
+      const hasValidTicket = orderTicket != null && Number.isFinite(ticketAsNum) && ticketAsNum > 0
+      if (!hasValidTicket) {
+        const reason =
+          `OrderSend returned no valid ticket. code=${normalized.code ?? "null"} state=${normalized.state ?? "null"} message=${normalized.message ?? "null"}`
+        await logFail(reason, result)
+        return { ok: false, error: reason }
+      }
+      await logOk(result)
+      const { data: tradeRow } = await supabase
+        .from("trades")
+        .insert({
+          user_id: signal.user_id,
+          signal_id: signalId,
+          broker_account_id: brokerAccount.id,
+          metaapi_order_id: orderTicket,
+          symbol: parsed.symbol,
+          direction: parsed.action,
+          entry_price: parsed.entry_price ?? parsed.entry_zone_low ?? null,
+          sl: parsed.sl,
+          tp: parsed.tp?.[0] ?? null,
+          lot_size: lotSize,
+          status: "open",
+          opened_at: new Date().toISOString(),
+        })
+        .select("id")
+        .single()
+      return { ok: true, trade_id: tradeRow?.id ?? null }
+    }
+
+    // Management actions: correlate to an open position on this broker.
+    // channel_id filter already applied when selecting broker rows; empty signal_channel_ids = legacy "all channels".
+    const trade = await findMatchingOpenTrade(
+      supabase,
+      signal.user_id,
+      brokerAccount.id,
+      parsed.symbol,
+      null,
+    )
+    if (!trade?.metaapi_order_id) {
+      const msg = "No matching open trade for management action"
+      await logFail(msg)
+      return { ok: false, error: msg }
+    }
+    const ticket = trade.metaapi_order_id
+
+    if (parsed.action === "close") {
+      const result = await mtOrderClose(accountId, ticket)
+      await logOk(result)
+      await supabase
+        .from("trades")
+        .update({
+          status: "closed",
+          closed_at: new Date().toISOString(),
+        })
+        .eq("id", trade.id)
+      return { ok: true, trade_id: trade.id }
+    }
+
+    if (parsed.action === "breakeven") {
+      const entry = trade.entry_price != null ? Number(trade.entry_price) : null
+      if (entry == null || !Number.isFinite(entry)) {
+        const msg = "Breakeven requires entry price on open trade record"
+        await logFail(msg)
+        return { ok: false, error: msg }
+      }
+      const newSl = entry
+      const tpForMt = parsed.tp?.[0] != null ? Number(parsed.tp[0]) : Number(trade.tp ?? 0)
+      const result = await mtOrderModify(accountId, ticket, newSl, tpForMt)
+      await logOk(result)
+      await supabase
+        .from("trades")
+        .update({
+          sl: newSl,
+          tp: parsed.tp?.[0] != null ? Number(parsed.tp[0]) : trade.tp,
+          status: "modified",
+        })
+        .eq("id", trade.id)
+      return { ok: true, trade_id: trade.id }
+    }
+
+    if (parsed.action === "partial_profit") {
+      const currentLot = Number(trade.lot_size)
+      if (!Number.isFinite(currentLot) || currentLot <= 0.02) {
+        const msg = "Position too small or invalid for partial close"
+        await logFail(msg)
+        return { ok: false, error: msg }
+      }
+      const partialVol = Math.min(
+        Math.max(0.01, Math.floor((currentLot / 2) * 100) / 100),
+        currentLot - 0.01,
+      )
+      const result = await mtOrderClose(accountId, ticket, partialVol)
+      await logOk(result, { partial_volume: partialVol })
+      const remainder = Math.max(0, currentLot - partialVol)
+      const closed = remainder < 0.02
+      await supabase
+        .from("trades")
+        .update({
+          lot_size: closed ? 0 : remainder,
+          status: closed ? "closed" : "open",
+          closed_at: closed ? new Date().toISOString() : null,
+        })
+        .eq("id", trade.id)
+      return { ok: true, trade_id: trade.id }
+    }
+
+    if (parsed.action === "modify") {
+      const hasParsedSl = parsed.sl != null && Number.isFinite(Number(parsed.sl))
+      const hasParsedTp = parsed.tp?.length && parsed.tp[0] != null && Number.isFinite(Number(parsed.tp[0]))
+      if (!hasParsedSl && !hasParsedTp && trade.sl == null && trade.tp == null) {
+        const msg = "Modify requires SL and/or TP in signal or on trade record"
+        await logFail(msg)
+        return { ok: false, error: msg }
+      }
+      const newSl = hasParsedSl ? Number(parsed.sl) : Number(trade.sl ?? 0)
+      const newTp = hasParsedTp ? Number(parsed.tp![0]) : Number(trade.tp ?? 0)
+      const result = await mtOrderModify(accountId, ticket, newSl, newTp)
+      await logOk(result)
+      await supabase
+        .from("trades")
+        .update({
+          sl: hasParsedSl ? newSl : trade.sl,
+          tp: hasParsedTp ? newTp : trade.tp,
+          status: "modified",
+        })
+        .eq("id", trade.id)
+      return { ok: true, trade_id: trade.id }
+    }
+
+    const msg = `Unsupported action: ${parsed.action}`
+    await logFail(msg)
+    return { ok: false, error: msg }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err)
+    await logExecution(supabase, {
+      user_id: signal.user_id,
+      signal_id: signalId,
+      broker_account_id: brokerAccount.id,
+      action: parsed.action,
+      status: "failed",
+      request_payload: requestPayload,
+      error_message: message,
+    })
+    return { ok: false, error: message }
+  }
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 200, headers: corsHeaders })
@@ -325,131 +749,74 @@ Deno.serve(async (req: Request) => {
       return Response.json({ error: "Signal not found" }, { status: 404, headers: corsHeaders })
     }
 
-    // Load broker account
-    const { data: brokerAccount } = await supabase
+    const channelId = signal.channel_id as string | null
+
+    const { data: brokerRows } = await supabase
       .from("broker_accounts")
       .select("*")
       .eq("user_id", signal.user_id)
       .eq("is_active", true)
-      .maybeSingle()
 
-    if (!brokerAccount) {
-      await supabase.from("signals").update({ status: "skipped", skip_reason: "No active broker account" }).eq("id", signal_id)
-      return Response.json({ skipped: true, reason: "No active broker account" }, { headers: corsHeaders })
-    }
+    const eligible = (brokerRows ?? []).filter((b) =>
+      brokerEligibleForSignal(b as BrokerRow, channelId)
+    ) as BrokerRow[]
 
-    // Load channel-level overrides
-    let pipTolerance = brokerAccount.pip_tolerance
-    let lotSize = brokerAccount.default_lot_size
-
-    if (signal.channel_id) {
-      const { data: channel } = await supabase
-        .from("telegram_channels")
-        .select("pip_tolerance_override, lot_size_override")
-        .eq("id", signal.channel_id)
-        .maybeSingle()
-
-      if (channel?.pip_tolerance_override) pipTolerance = channel.pip_tolerance_override
-      if (channel?.lot_size_override) lotSize = channel.lot_size_override
-    }
-
-    if (parsed.lot_size) lotSize = parsed.lot_size
-
-    const accountId = brokerAccount.metaapi_account_id as string
-    const requestPayload: Record<string, unknown> = {
-      signal_id,
-      parsed,
-      account_id: accountId,
-      broker_account_id: brokerAccount.id,
-    }
-    await logExecution(supabase, {
-      user_id: signal.user_id,
-      signal_id,
-      broker_account_id: brokerAccount.id,
-      action: parsed.action,
-      status: "attempt",
-      request_payload: requestPayload,
-    })
-
-    // Simplified baseline: only execute entry signals for now.
-    if (parsed.action === "buy" || parsed.action === "sell") {
-      if (!parsed.symbol) {
-        await supabase.from("signals").update({ status: "skipped", skip_reason: "No symbol detected" }).eq("id", signal_id)
-        return Response.json({ skipped: true, reason: "No symbol detected" }, { headers: corsHeaders })
-      }
-
-      const result = await orderSendWithFallback(
-        accountId,
-        parsed,
-        lotSize,
-        pipTolerance,
-        signal_id,
+    if (!eligible.length) {
+      await supabase
+        .from("signals")
+        .update({
+          status: "skipped",
+          skip_reason: "No active broker account subscribed to this signal channel",
+        })
+        .eq("id", signal_id)
+      return Response.json(
+        { skipped: true, reason: "No eligible broker account for this channel" },
+        { headers: corsHeaders },
       )
-      const normalized = normalizeProviderResult(result)
-      const orderTicket = normalized.ticket
-      const ticketAsNum = Number(orderTicket)
-      const hasValidTicket = orderTicket != null && Number.isFinite(ticketAsNum) && ticketAsNum > 0
-
-      if (!hasValidTicket) {
-        const reason = `OrderSend returned no valid ticket. code=${normalized.code ?? 'null'} state=${normalized.state ?? 'null'} message=${normalized.message ?? 'null'}`
-        await logExecution(supabase, {
-          user_id: signal.user_id,
-          signal_id,
-          broker_account_id: brokerAccount.id,
-          action: parsed.action,
-          status: "failed",
-          request_payload: requestPayload,
-          response_payload: result,
-          error_message: reason,
-        })
-        await supabase.from("signals").update({ status: "failed", skip_reason: reason }).eq("id", signal_id)
-        return Response.json({ error: reason, provider: result }, { status: 400, headers: corsHeaders })
-      }
-
-      // #region agent log
-      fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7e177e'},body:JSON.stringify({sessionId:'7e177e',runId:'run2',hypothesisId:'H9',location:'supabase/functions/execute-trade/index.ts:236',message:'ordersend accepted valid ticket',data:{signalId:signal_id,ticket:orderTicket,code:normalized.code,state:normalized.state},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
-      await logExecution(supabase, {
-        user_id: signal.user_id,
-        signal_id,
-        broker_account_id: brokerAccount.id,
-        action: parsed.action,
-        status: "success",
-        request_payload: requestPayload,
-        response_payload: result as Record<string, unknown>,
-      })
-
-      // Save trade record
-      const { data: tradeRow } = await supabase
-        .from("trades")
-        .insert({
-          user_id: signal.user_id,
-          signal_id,
-          broker_account_id: brokerAccount.id,
-          metaapi_order_id: orderTicket,
-          symbol: parsed.symbol,
-          direction: parsed.action,
-          entry_price: parsed.entry_price ?? parsed.entry_zone_low ?? null,
-          sl: parsed.sl,
-          tp: parsed.tp?.[0] ?? null,
-          lot_size: lotSize,
-          status: "open",
-          opened_at: new Date().toISOString(),
-        })
-        .select("id")
-        .single()
-
-      await supabase.from("signals").update({ status: "executed" }).eq("id", signal_id)
-
-      return Response.json({ executed: true, trade_id: tradeRow?.id }, { headers: corsHeaders })
     }
 
-    // Non-entry actions intentionally skipped in simplified mode.
+    // Option A: execute on every eligible broker (true multi-account copier).
+    const results: { broker_account_id: string; ok: boolean; error?: string; trade_id?: string | null }[] = []
+    for (const brokerAccount of eligible) {
+      const r = await executeOneBroker(
+        supabase,
+        { user_id: signal.user_id as string, channel_id: channelId },
+        signal_id,
+        parsed,
+        brokerAccount,
+      )
+      results.push({
+        broker_account_id: brokerAccount.id,
+        ok: r.ok,
+        error: r.error,
+        trade_id: r.trade_id,
+      })
+    }
+
+    const anyOk = results.some((x) => x.ok)
+    const failMsgs = results.filter((x) => !x.ok).map((x) => x.error ?? "unknown").join("; ")
+
+    if (!anyOk) {
+      const reason = failMsgs || "All broker executions failed"
+      await supabase.from("signals").update({ status: "failed", skip_reason: reason }).eq("id", signal_id)
+      return Response.json({ error: reason, results }, { status: 400, headers: corsHeaders })
+    }
+
     await supabase
       .from("signals")
-      .update({ status: "skipped", skip_reason: `Action not executed in simplified mode: ${parsed.action}` })
+      .update({
+        status: "executed",
+        skip_reason: results.some((x) => !x.ok)
+          ? `Partial: ${results.filter((x) => !x.ok).length} broker(s) failed`
+          : null,
+      })
       .eq("id", signal_id)
-    return Response.json({ skipped: true }, { headers: corsHeaders })
+
+    // #region agent log
+    fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7e177e'},body:JSON.stringify({sessionId:'7e177e',runId:'run2',hypothesisId:'H9',location:'supabase/functions/execute-trade/index.ts:aggregate',message:'execute-trade brokers done',data:{signalId:signal_id,eligible:eligible.length,anyOk,failCount:results.filter(x=>!x.ok).length},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
+
+    return Response.json({ executed: true, results }, { headers: corsHeaders })
 
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Internal server error"

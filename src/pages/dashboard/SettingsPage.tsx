@@ -69,8 +69,7 @@ export function SettingsPage() {
     setError('')
     setSaving(true)
 
-    const payload = {
-      user_id: user!.id,
+    const base = {
       label: form.label || `${form.platform} Account`,
       platform: form.platform,
       metaapi_account_id: form.metaapi_account_id.trim(),
@@ -81,8 +80,14 @@ export function SettingsPage() {
     }
 
     const { error: dbErr } = broker
-      ? await supabase.from('broker_accounts').update(payload).eq('id', broker.id)
-      : await supabase.from('broker_accounts').insert(payload)
+      ? await supabase.from('broker_accounts').update(base).eq('id', broker.id)
+      : await supabase.from('broker_accounts').insert({
+        user_id: user!.id,
+        ...base,
+        copier_mode: 'ai' as const,
+        signal_channel_ids: [] as string[],
+        ai_settings: {} as Record<string, never>,
+      })
 
     setSaving(false)
 
