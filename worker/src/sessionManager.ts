@@ -133,6 +133,26 @@ export class UserSessionManager {
     return listener.listChannels()
   }
 
+  async backfillChannelHistory(userId: string, channelRowId: string, days: number) {
+    let listener = this.listeners.get(userId)
+    if (!listener) {
+      const { data: sess, error } = await this.supabase
+        .from('telegram_sessions')
+        .select('session_string, is_active')
+        .eq('user_id', userId)
+        .maybeSingle()
+
+      if (error) throw new Error(`Failed to load session: ${error.message}`)
+      if (!sess?.session_string) throw new Error('No Telegram session for this user')
+      if (!sess.is_active) throw new Error('Telegram session is paused')
+
+      await this.startListener(userId, sess.session_string)
+      listener = this.listeners.get(userId)
+    }
+    if (!listener) throw new Error('Failed to start listener for user')
+    return listener.backfillChannelHistory(channelRowId, days)
+  }
+
   private async startListener(userId: string, sessionString: string) {
     if (this.listeners.has(userId)) return
 

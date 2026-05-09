@@ -29,6 +29,7 @@ const ROUTES: Record<string, string> = {
   send_code: "/auth/send_code",
   verify_code: "/auth/verify_code",
   list_channels: "/auth/list_channels",
+  backfill_channel_history: "/auth/backfill_channel_history",
 }
 
 Deno.serve(async (req: Request) => {

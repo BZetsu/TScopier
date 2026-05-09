@@ -10,6 +10,8 @@ interface Body {
   phone?: string
   code?: string
   password?: string
+  channel_row_id?: string
+  days?: number
   // legacy fields ignored — the worker holds state across calls now
   phone_code_hash?: string
   session_string?: string
@@ -24,6 +26,7 @@ interface Body {
  *  POST /auth/send_code     { user_id, phone }
  *  POST /auth/verify_code   { user_id, code, password? }
  *  POST /auth/list_channels { user_id }
+ *  POST /auth/backfill_channel_history { user_id, channel_row_id, days? }
  */
 export function startHttpServer(
   authService: AuthService,
@@ -83,6 +86,23 @@ export function startHttpServer(
           return sendJson(res, 200, { channels })
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : 'Failed to list channels'
+          return sendJson(res, 400, { error: msg })
+        }
+      }
+
+      if (url === '/auth/backfill_channel_history') {
+        if (!body.user_id || !body.channel_row_id) {
+          return sendJson(res, 400, { error: 'user_id and channel_row_id are required' })
+        }
+        try {
+          const result = await sessionManager.backfillChannelHistory(
+            body.user_id,
+            body.channel_row_id,
+            Number(body.days ?? 30),
+          )
+          return sendJson(res, 200, result)
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : 'Failed to backfill channel history'
           return sendJson(res, 400, { error: msg })
         }
       }

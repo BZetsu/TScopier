@@ -6,8 +6,8 @@ import { Input } from '../../components/ui/Input'
 import { Select } from '../../components/ui/Select'
 import { Button } from '../../components/ui/Button'
 import { Badge } from '../../components/ui/Badge'
-import type { BrokerAccount, TelegramSession } from '../../types/database'
-import { CircleCheck as CheckCircle, CircleAlert as AlertCircle, Plus, Trash2, Server } from 'lucide-react'
+import type { BrokerAccount } from '../../types/database'
+import { Plus, Trash2, Server } from 'lucide-react'
 import { AddAccountModal } from '../../components/ui/AddAccountModal'
 
 const PLATFORMS = [
@@ -48,7 +48,6 @@ export function AccountConfigPage() {
   const [brokers, setBrokers] = useState<BrokerAccount[]>([])
   const [brokerSummaries, setBrokerSummaries] = useState<Record<string, { balance?: number; equity?: number; currency?: string }>>({})
   const [brokerSummaryErrors, setBrokerSummaryErrors] = useState<Record<string, string>>({})
-  const [tgSession, setTgSession] = useState<TelegramSession | null>(null)
   const [showPlatformModal, setShowPlatformModal] = useState(false)
   const [showAddBroker, setShowAddBroker] = useState(false)
   const [form, setForm] = useState<BrokerForm>(emptyForm)
@@ -80,13 +79,11 @@ export function AccountConfigPage() {
   }, [showAddBroker, form.platform, form.broker_server])
 
   const loadData = async () => {
-    const [brokersRes, sessionRes] = await Promise.all([
+    const [brokersRes] = await Promise.all([
       supabase.from('broker_accounts').select('*').eq('user_id', user!.id).order('created_at'),
-      supabase.from('telegram_sessions').select('*').eq('user_id', user!.id).maybeSingle(),
     ])
     const nextBrokers = (brokersRes.data ?? []) as BrokerAccount[]
     setBrokers(nextBrokers)
-    setTgSession(sessionRes.data as TelegramSession | null)
     void loadBrokerSummaries(nextBrokers)
     setLoading(false)
   }
@@ -252,11 +249,6 @@ export function AccountConfigPage() {
     await supabase.from('broker_accounts').update({ is_active }).eq('id', id)
   }
 
-  const disconnectTelegram = async () => {
-    await supabase.from('telegram_sessions').delete().eq('user_id', user!.id)
-    setTgSession(null)
-  }
-
   if (loading) {
     return (
       <div className="p-6 lg:p-8 max-w-3xl mx-auto space-y-4">
@@ -268,8 +260,8 @@ export function AccountConfigPage() {
   return (
     <div className="p-6 lg:p-8 max-w-3xl mx-auto">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-neutral-900">Connections</h1>
-        <p className="text-sm text-neutral-500 mt-0.5">Connect your trading accounts and Telegram to start copying signals</p>
+        <h1 className="text-2xl font-bold text-neutral-900">Account Configuration</h1>
+        <p className="text-sm text-neutral-500 mt-0.5">Configure your trading accounts</p>
       </div>
 
       {/* ── Broker Accounts ── */}
@@ -438,54 +430,6 @@ export function AccountConfigPage() {
           setShowAddBroker(true)
         }}
       />
-
-      {/* ── Telegram ── */}
-      <section>
-        <div className="mb-3">
-          <h2 className="text-base font-semibold text-neutral-900">Telegram Connection</h2>
-          <p className="text-xs text-neutral-400 mt-0.5">Link your Telegram account to monitor signal channels in real time.</p>
-        </div>
-
-        <Card>
-          {tgSession ? (
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-lg bg-primary-50 flex items-center justify-center">
-                  <CheckCircle className="w-5 h-5 text-primary-600" />
-                </div>
-                <div>
-                  <p className="text-sm font-medium text-neutral-900">Telegram linked</p>
-                  <p className="text-xs text-neutral-400">{tgSession.phone_number}</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <Badge variant="success" size="sm">Active</Badge>
-                <Button variant="ghost" size="sm" onClick={disconnectTelegram} className="text-error-600 hover:bg-error-50 hover:text-error-700">
-                  Disconnect
-                </Button>
-              </div>
-            </div>
-          ) : (
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-lg bg-neutral-100 flex items-center justify-center">
-                  <AlertCircle className="w-5 h-5 text-neutral-400" />
-                </div>
-                <div>
-                  <p className="text-sm font-medium text-neutral-900">Telegram not connected</p>
-                  <p className="text-xs text-neutral-400">Required to read signal channels</p>
-                </div>
-              </div>
-              <a
-                href="/copier-engine"
-                className="inline-flex items-center justify-center rounded-lg px-3 py-2 text-sm font-medium bg-primary-600 text-white hover:bg-primary-700 transition-colors"
-              >
-                Connect in Channels
-              </a>
-            </div>
-          )}
-        </Card>
-      </section>
     </div>
   )
 }

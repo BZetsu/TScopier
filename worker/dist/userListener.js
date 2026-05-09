@@ -22,6 +22,7 @@ const SAFETY_POLL_INTERVAL_MS = 60000;
 const SESSION_PERSIST_INTERVAL_MS = 30 * 60000;
 const CATCHUP_BACKPRESSURE_MS = 250;
 const CATCHUP_PER_CHANNEL_CAP = 200;
+const BACKFILL_PER_CHANNEL_CAP = 1000;
 function looksLikeTradingSignal(text, isReply) {
     const normalized = text
         .toLowerCase()
@@ -271,6 +272,27 @@ class UserListener {
         this.dialogsCacheAt = Date.now();
         return channels;
     }
+    /**
+     * Explicit historical import used by channel insights profiling.
+     * Fetches and stores matching messages for the last N days even when
+     * last_seen_message_id is still empty (seed-only mode).
+     */
+    async backfillChannelHistory(channelRowId, days) {
+        const lookbackDays = Math.max(1, Math.min(90, Number(days || 30)));
+        const { data: row, error } = await this.supabase
+            .from('telegram_channels')
+            .select('id, channel_id, channel_username, last_seen_message_id')
+            .eq('user_id', this.userId)
+            .eq('id', channelRowId)
+            .eq('is_active', true)
+            .maybeSingle();
+        if (error)
+            throw new Error(error.message);
+        if (!row)
+            throw new Error('Channel not found');
+        const imported = await this.backfillChannelFromDate(row, lookbackDays);
+        return { imported };
+    }
     // ── live message handling ─────────────────────────────────────────────
     async handleMessage(event) {
         this.lastEventAt = Date.now();
@@ -403,15 +425,19 @@ class UserListener {
             // #region agent log
             fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '7e177e' }, body: JSON.stringify({ sessionId: '7e177e', runId: 'run1', hypothesisId: 'H2', location: 'worker/src/userListener.ts:426', message: 'parse trigger dispatch', data: { signalId: signalRow.id, hasParseUrl: !!PARSE_SIGNAL_URL, hasParseAuthKey: !!PARSE_SIGNAL_AUTH_KEY }, timestamp: Date.now() }) }).catch(() => { });
             // #endregion
-            fetch(PARSE_SIGNAL_URL, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${PARSE_SIGNAL_AUTH_KEY}`,
-                    'apikey': PARSE_SIGNAL_API_KEY,
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ signal_id: signalRow.id }),
-            }).then(async (res) => {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort('parse-timeout'), 10000);
+            try {
+                const res = await fetch(PARSE_SIGNAL_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${PARSE_SIGNAL_AUTH_KEY}`,
+                        'apikey': PARSE_SIGNAL_API_KEY,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ signal_id: signalRow.id }),
+                    signal: controller.signal,
+                });
                 await this.supabase.from('trade_execution_logs').insert({
                     user_id: this.userId,
                     signal_id: signalRow.id,
@@ -423,19 +449,24 @@ class UserListener {
                 // #region agent log
                 fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '7e177e' }, body: JSON.stringify({ sessionId: '7e177e', runId: 'run1', hypothesisId: 'H2', location: 'worker/src/userListener.ts:434', message: 'parse trigger response', data: { signalId: signalRow.id, status: res.status, ok: res.ok }, timestamp: Date.now() }) }).catch(() => { });
                 // #endregion
-            }).catch(err => {
-                console.error(`[userListener] parse-signal call failed for signal ${signalRow.id}:`, err.message);
-                void this.supabase.from('trade_execution_logs').insert({
+            }
+            catch (err) {
+                const errMsg = err instanceof Error ? err.message : String(err);
+                console.error(`[userListener] parse-signal call failed for signal ${signalRow.id}:`, errMsg);
+                await this.supabase.from('trade_execution_logs').insert({
                     user_id: this.userId,
                     signal_id: signalRow.id,
                     action: 'pipeline_parse_dispatch',
                     status: 'failed',
-                    error_message: err?.message ?? 'parse-signal dispatch network error',
+                    error_message: errMsg,
                 });
                 // #region agent log
-                fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '7e177e' }, body: JSON.stringify({ sessionId: '7e177e', runId: 'run1', hypothesisId: 'H2', location: 'worker/src/userListener.ts:438', message: 'parse trigger failed', data: { signalId: signalRow.id, error: err?.message ?? 'unknown' }, timestamp: Date.now() }) }).catch(() => { });
+                fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '7e177e' }, body: JSON.stringify({ sessionId: '7e177e', runId: 'run1', hypothesisId: 'H2', location: 'worker/src/userListener.ts:438', message: 'parse trigger failed', data: { signalId: signalRow.id, error: errMsg }, timestamp: Date.now() }) }).catch(() => { });
                 // #endregion
-            });
+            }
+            finally {
+                clearTimeout(timeout);
+            }
         }
         return true;
     }
@@ -531,6 +562,80 @@ class UserListener {
         for (const m of collected) {
             await this.logSignal(row, m);
         }
+    }
+    async backfillChannelFromDate(row, days) {
+        let peer;
+        try {
+            peer = await this.client.getInputEntity(row.channel_username || row.channel_id);
+        }
+        catch {
+            throw new Error('Failed to resolve Telegram channel entity');
+        }
+        const sinceEpochSec = Math.floor((Date.now() - days * 24 * 60 * 60 * 1000) / 1000);
+        const collected = [];
+        let offsetId = 0;
+        const batchSize = 100;
+        while (collected.length < BACKFILL_PER_CHANNEL_CAP) {
+            let batch;
+            try {
+                batch = (await this.client.getMessages(peer, {
+                    limit: batchSize,
+                    offsetId,
+                }));
+            }
+            catch {
+                break;
+            }
+            if (!batch.length)
+                break;
+            for (const m of batch) {
+                const dateRaw = m.date;
+                const msgEpochSec = (() => {
+                    if (typeof dateRaw === 'number')
+                        return dateRaw;
+                    if (dateRaw instanceof Date)
+                        return Math.floor(dateRaw.getTime() / 1000);
+                    if (typeof dateRaw === 'string') {
+                        const t = Date.parse(dateRaw);
+                        return Number.isFinite(t) ? Math.floor(t / 1000) : 0;
+                    }
+                    return 0;
+                })();
+                if (msgEpochSec && msgEpochSec < sinceEpochSec) {
+                    // We've reached older-than-lookback history.
+                    offsetId = Number(batch[batch.length - 1].id);
+                    break;
+                }
+                collected.push(m);
+            }
+            offsetId = Number(batch[batch.length - 1].id);
+            if (batch.length < batchSize)
+                break;
+            const oldest = batch[batch.length - 1];
+            const oldestEpochSec = (() => {
+                const dateRaw = oldest?.date;
+                if (typeof dateRaw === 'number')
+                    return dateRaw;
+                if (dateRaw instanceof Date)
+                    return Math.floor(dateRaw.getTime() / 1000);
+                if (typeof dateRaw === 'string') {
+                    const t = Date.parse(dateRaw);
+                    return Number.isFinite(t) ? Math.floor(t / 1000) : 0;
+                }
+                return 0;
+            })();
+            if (oldestEpochSec && oldestEpochSec < sinceEpochSec)
+                break;
+            await new Promise(r => setTimeout(r, CATCHUP_BACKPRESSURE_MS));
+        }
+        collected.sort((a, b) => Number(a.id) - Number(b.id));
+        let inserted = 0;
+        for (const m of collected) {
+            const ok = await this.logSignal(row, m);
+            if (ok)
+                inserted++;
+        }
+        return inserted;
     }
     // ── watchdog ──────────────────────────────────────────────────────────
     startWatchdog() {

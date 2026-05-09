@@ -18,6 +18,11 @@ export interface Database {
         Insert: Omit<TelegramChannel, 'id' | 'created_at' | 'updated_at'>
         Update: Partial<Omit<TelegramChannel, 'id' | 'created_at' | 'updated_at'>>
       }
+      channel_signal_profiles: {
+        Row: ChannelSignalProfile
+        Insert: Omit<ChannelSignalProfile, 'id' | 'created_at' | 'updated_at' | 'analyzed_at'>
+        Update: Partial<Omit<ChannelSignalProfile, 'id' | 'created_at'>>
+      }
       signals: {
         Row: Signal
         Insert: Omit<Signal, 'id' | 'created_at'>
@@ -82,6 +87,26 @@ export interface Signal {
   is_modification: boolean
   parent_signal_id: string | null
   created_at: string
+}
+
+export interface ChannelSignalProfile {
+  id: string
+  user_id: string
+  channel_id: string
+  lookback_days: number
+  sample_size: number
+  signal_type: string
+  tp_style: string
+  sl_style: string
+  entry_type: string
+  most_traded_asset: string | null
+  estimated_tp_pips: number | null
+  estimated_sl_pips: number | null
+  analysis_summary: string | null
+  meta: Json
+  analyzed_at: string
+  created_at: string
+  updated_at: string
 }
 
 export interface Trade {

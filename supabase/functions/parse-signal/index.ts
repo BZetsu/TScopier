@@ -60,14 +60,24 @@ function parseSimpleSignal(message: string): ParsedSignal | null {
   if (!isGold || !isNow) return null
   if (isBuy === isSell) return null
 
+  // Extract SL (e.g. "sl 3300", "stop loss: 3300")
+  const slMatch = text.match(/\b(?:sl|stop\s*loss)\s*[:=]?\s*(\d+(?:\.\d+)?)/i)
+  const sl = slMatch ? Number(slMatch[1]) : null
+
+  // Extract TP values supporting: "tp 3350", "tp1 3350 tp2 3360", "take profit 3350"
+  const tpMatches = [...text.matchAll(/\b(?:tp\d*|take\s*profit)\s*[:=]?\s*(\d+(?:\.\d+)?)/gi)]
+  const tp = tpMatches
+    .map(m => Number(m[1]))
+    .filter(n => Number.isFinite(n))
+
   return {
     action: isBuy ? "buy" : "sell",
     symbol: "XAUUSD",
     entry_price: null,
     entry_zone_low: null,
     entry_zone_high: null,
-    sl: null,
-    tp: [],
+    sl,
+    tp,
     lot_size: null,
     confidence: 0.99,
     raw_instruction: message,

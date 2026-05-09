@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Radio, Trash2, Settings, RefreshCw, CircleAlert as AlertCircle } from 'lucide-react'
+import { Radio, Trash2, RefreshCw, CircleAlert as AlertCircle } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import { Card } from '../../components/ui/Card'
@@ -7,7 +7,7 @@ import { Badge } from '../../components/ui/Badge'
 import { Toggle } from '../../components/ui/Toggle'
 import { Button } from '../../components/ui/Button'
 import { Input } from '../../components/ui/Input'
-import type { TelegramChannel } from '../../types/database'
+import type { ChannelSignalProfile, TelegramChannel } from '../../types/database'
 
 function getTelegramAvatarUrl(username?: string): string | null {
   if (!username) return null
@@ -17,7 +17,6 @@ function getTelegramAvatarUrl(username?: string): string | null {
 function TgChannelAvatar({ title, username }: { title: string; username?: string }) {
   const [imageFailed, setImageFailed] = useState(false)
   const avatarUrl = getTelegramAvatarUrl(username)
-  const initials = title.trim().slice(0, 2).toUpperCase() || 'TG'
 
   return (
     <div className="w-8 h-8 rounded-lg bg-primary-50 text-primary-600 flex items-center justify-center flex-shrink-0 overflow-hidden">
@@ -31,7 +30,12 @@ function TgChannelAvatar({ title, username }: { title: string; username?: string
           onError={() => setImageFailed(true)}
         />
       ) : (
-        <span className="text-[11px] font-semibold">{initials}</span>
+        <img
+          src="/Telegram.svg"
+          alt="Telegram"
+          className="w-5 h-5 object-contain"
+          loading="lazy"
+        />
       )}
     </div>
   )
@@ -40,11 +44,11 @@ function TgChannelAvatar({ title, username }: { title: string; username?: string
 export function CopierEnginePage() {
   const { user, session } = useAuth()
   const [channels, setChannels] = useState<TelegramChannel[]>([])
+  const [channelProfiles, setChannelProfiles] = useState<Record<string, ChannelSignalProfile>>({})
   const [tgChannels, setTgChannels] = useState<{ id: string; title: string; username: string; members_count: number }[]>([])
   const [loading, setLoading] = useState(true)
   const [loadingTg, setLoadingTg] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
-  const [editingId, setEditingId] = useState<string | null>(null)
   const [newChannel, setNewChannel] = useState({ channel_id: '', channel_username: '', display_name: '' })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -58,6 +62,7 @@ export function CopierEnginePage() {
   const [requiresPassword, setRequiresPassword] = useState(false)
 
   const EDGE_FN = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/telegram-auth`
+  const EDGE_ANALYZE_PROFILE = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/analyze-channel-profile`
 
   useEffect(() => {
     if (!user) return
@@ -70,11 +75,59 @@ export function CopierEnginePage() {
       supabase.from('telegram_sessions').select('id').eq('user_id', user!.id).maybeSingle(),
     ])
     setChannels((channelsRes.data ?? []) as TelegramChannel[])
+    const channelRows = (channelsRes.data ?? []) as TelegramChannel[]
+    void loadChannelProfiles(channelRows.map(c => c.id))
     const hasSession = !!sessionRes.data
     setHasTgSession(hasSession)
     setTgStage(hasSession ? 'linked' : 'idle')
     setLoading(false)
     if (hasSession) fetchTgChannels()
+  }
+
+  const loadChannelProfiles = async (channelIds: string[]) => {
+    if (!channelIds.length) {
+      setChannelProfiles({})
+      return
+    }
+    const { data } = await supabase
+      .from('channel_signal_profiles')
+      .select('*')
+      .in('channel_id', channelIds)
+    const rows = (data ?? []) as ChannelSignalProfile[]
+    const next: Record<string, ChannelSignalProfile> = {}
+    for (const row of rows) next[row.channel_id] = row
+    setChannelProfiles(next)
+  }
+
+  const analyzeChannelProfile = async (channelId: string) => {
+    if (!session?.access_token) return
+    try {
+      // Backfill last 30 days from Telegram before profiling so insights
+      // are not limited to only recently ingested messages.
+      await fetch(EDGE_FN, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ action: 'backfill_channel_history', channel_row_id: channelId, days: 30 }),
+      }).catch(() => null)
+
+      const res = await fetch(EDGE_ANALYZE_PROFILE, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ channel_id: channelId, lookback_days: 30 }),
+      })
+      const data = await res.json()
+      if (!res.ok || !data?.profile) return
+      const profile = data.profile as ChannelSignalProfile
+      setChannelProfiles(prev => ({ ...prev, [channelId]: profile }))
+    } catch {
+      // non-blocking background enrichment
+    }
   }
 
   const fetchTgChannels = async () => {
@@ -127,9 +180,11 @@ export function CopierEnginePage() {
       .single()
     setSaving(false)
     if (dbErr) { setError(dbErr.message); return }
-    setChannels(prev => [data as TelegramChannel, ...prev])
+    const inserted = data as TelegramChannel
+    setChannels(prev => [inserted, ...prev])
     setNewChannel({ channel_id: '', channel_username: '', display_name: '' })
     setShowAdd(false)
+    void analyzeChannelProfile(inserted.id)
   }
 
   const addFromTg = async (ch: { id: string; title: string; username: string }) => {
@@ -150,17 +205,13 @@ export function CopierEnginePage() {
       return
     }
     if (!dbErr && data) {
+      const upserted = data as TelegramChannel
       setChannels(prev => {
         const exists = prev.find(c => c.channel_id === ch.id)
-        return exists ? prev.map(c => c.channel_id === ch.id ? data as TelegramChannel : c) : [data as TelegramChannel, ...prev]
+        return exists ? prev.map(c => c.channel_id === ch.id ? upserted : c) : [upserted, ...prev]
       })
+      void analyzeChannelProfile(upserted.id)
     }
-  }
-
-  const updateSettings = async (id: string, updates: Partial<TelegramChannel>) => {
-    await supabase.from('telegram_channels').update(updates).eq('id', id)
-    setChannels(prev => prev.map(c => c.id === id ? { ...c, ...updates } : c))
-    setEditingId(null)
   }
 
   const sendCode = async (e: React.FormEvent) => {
@@ -271,7 +322,14 @@ export function CopierEnginePage() {
       {!hasTgSession && tgStage !== 'idle' && (
         <Card className="mb-4">
           <div className="flex items-center gap-2 mb-4">
-            <div className="w-7 h-7 rounded-full bg-primary-100 flex items-center justify-center text-primary-700 text-xs font-semibold">TG</div>
+            <div className="w-7 h-7 rounded-full bg-primary-100 flex items-center justify-center overflow-hidden">
+              <img
+                src="/Telegram.svg"
+                alt="Telegram"
+                className="w-4 h-4 object-contain"
+                loading="lazy"
+              />
+            </div>
             <p className="text-sm font-semibold text-neutral-900">
               {tgStage === 'phone' ? 'Connect Telegram: enter your phone number' : 'Connect Telegram: enter verification code'}
             </p>
@@ -439,11 +497,9 @@ export function CopierEnginePage() {
             <ChannelRow
               key={channel.id}
               channel={channel}
-              isEditing={editingId === channel.id}
+              profile={channelProfiles[channel.id]}
               onToggle={v => toggleChannel(channel.id, v)}
               onDelete={() => deleteChannel(channel.id)}
-              onEditToggle={() => setEditingId(editingId === channel.id ? null : channel.id)}
-              onSave={u => updateSettings(channel.id, u)}
             />
           ))}
         </div>
@@ -453,18 +509,13 @@ export function CopierEnginePage() {
 }
 
 function ChannelRow({
-  channel, isEditing, onToggle, onDelete, onEditToggle, onSave,
+  channel, profile, onToggle, onDelete,
 }: {
   channel: TelegramChannel
-  isEditing: boolean
+  profile?: ChannelSignalProfile
   onToggle: (v: boolean) => void
   onDelete: () => void
-  onEditToggle: () => void
-  onSave: (u: Partial<TelegramChannel>) => void
 }) {
-  const [lotSize, setLotSize] = useState(channel.lot_size_override?.toString() ?? '')
-  const [pipTolerance, setPipTolerance] = useState(channel.pip_tolerance_override?.toString() ?? '')
-
   return (
     <div className="bg-white rounded-xl border border-neutral-100 shadow-card overflow-hidden">
       <div className="px-4 py-3.5 flex items-center gap-3">
@@ -475,35 +526,39 @@ function ChannelRow({
           <div className="flex items-center gap-2 flex-wrap">
             <p className="text-sm font-medium text-neutral-900">{channel.display_name}</p>
             {!channel.is_active && <Badge variant="neutral" size="sm">Paused</Badge>}
-            {channel.lot_size_override && <Badge variant="primary" size="sm">Lot: {channel.lot_size_override}</Badge>}
-            {channel.pip_tolerance_override && <Badge variant="neutral" size="sm">Pips: {channel.pip_tolerance_override}</Badge>}
           </div>
           {channel.channel_username && <p className="text-xs text-neutral-400 mt-0.5">@{channel.channel_username}</p>}
+          <div className="mt-2 rounded-lg border border-neutral-100 bg-neutral-50 px-3 py-2">
+            <p className="text-[11px] font-semibold tracking-wide text-neutral-500 uppercase">Channel Insights</p>
+            {!profile ? (
+              <p className="text-xs text-neutral-400 mt-1">No insights yet. Click Analyze 30d to generate profile.</p>
+            ) : (
+              <>
+                <div className="flex flex-wrap gap-1.5 mt-1.5">
+                  <Badge variant="neutral" size="sm">Type: {profile.signal_type}</Badge>
+                  <Badge variant="neutral" size="sm">Entry: {profile.entry_type}</Badge>
+                  <Badge variant="neutral" size="sm">TP: {profile.tp_style}</Badge>
+                  <Badge variant="neutral" size="sm">SL: {profile.sl_style}</Badge>
+                </div>
+                <p className="text-xs text-neutral-500 mt-1.5">
+                  {profile.most_traded_asset ? `Most traded asset: ${profile.most_traded_asset}` : 'Most traded asset: —'}
+                  {profile.estimated_tp_pips != null ? ` · Avg TP: ${Number(profile.estimated_tp_pips).toFixed(1)} pips` : ''}
+                  {profile.estimated_sl_pips != null ? ` · Avg SL: ${Number(profile.estimated_sl_pips).toFixed(1)} pips` : ''}
+                </p>
+                {profile.analysis_summary && (
+                  <p className="text-[11px] text-neutral-400 mt-0.5">{profile.analysis_summary}</p>
+                )}
+              </>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
           <Toggle checked={channel.is_active} onChange={onToggle} />
-          <button onClick={onEditToggle} className="p-1.5 rounded-lg text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 transition-colors">
-            <Settings className="w-4 h-4" />
-          </button>
           <button onClick={onDelete} className="p-1.5 rounded-lg text-neutral-400 hover:text-error-600 hover:bg-error-50 transition-colors">
             <Trash2 className="w-4 h-4" />
           </button>
         </div>
       </div>
-
-      {isEditing && (
-        <div className="px-4 pb-4 border-t border-neutral-100 pt-3">
-          <p className="text-xs font-medium text-neutral-500 mb-3">Per-channel overrides</p>
-          <div className="grid grid-cols-2 gap-3">
-            <Input label="Lot size override" type="number" min="0.01" step="0.01" placeholder="Use broker default" value={lotSize} onChange={e => setLotSize(e.target.value)} />
-            <Input label="Pip tolerance override" type="number" min="1" placeholder="Use broker default" value={pipTolerance} onChange={e => setPipTolerance(e.target.value)} />
-          </div>
-          <div className="flex gap-2 mt-3">
-            <Button size="sm" onClick={() => onSave({ lot_size_override: lotSize ? parseFloat(lotSize) : null, pip_tolerance_override: pipTolerance ? parseInt(pipTolerance) : null })}>Save</Button>
-            <Button size="sm" variant="ghost" onClick={onEditToggle}>Cancel</Button>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

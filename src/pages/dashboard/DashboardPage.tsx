@@ -18,6 +18,22 @@ interface DashboardStats {
   tradesCopiedToday: number
   activeChannels: number
   copierHealth: 'Stable' | 'Degraded' | 'Offline'
+  totalSignals: number
+  yesterdayTotalSignals: number
+  totalVolume: number
+  yesterdayTotalVolume: number
+  totalProfitLoss: number
+  yesterdayTotalProfitLoss: number
+  bestTradeProfit: number | null
+  yesterdayBestTradeProfit: number | null
+  worstTradeProfit: number | null
+  yesterdayWorstTradeProfit: number | null
+  todayProfit: number
+  yesterdayProfit: number
+  mostProfitableChannel: string
+  yesterdayMostProfitableChannel: string
+  mostTradedAsset: string
+  yesterdayMostTradedAsset: string
 }
 
 export function DashboardPage() {
@@ -37,6 +53,22 @@ export function DashboardPage() {
     tradesCopiedToday: 0,
     activeChannels: 0,
     copierHealth: 'Stable',
+    totalSignals: 0,
+    yesterdayTotalSignals: 0,
+    totalVolume: 0,
+    yesterdayTotalVolume: 0,
+    totalProfitLoss: 0,
+    yesterdayTotalProfitLoss: 0,
+    bestTradeProfit: null,
+    yesterdayBestTradeProfit: null,
+    worstTradeProfit: null,
+    yesterdayWorstTradeProfit: null,
+    todayProfit: 0,
+    yesterdayProfit: 0,
+    mostProfitableChannel: '—',
+    yesterdayMostProfitableChannel: '—',
+    mostTradedAsset: '—',
+    yesterdayMostTradedAsset: '—',
   })
   const [copierLogs, setCopierLogs] = useState<Signal[]>([])
   const [linkedAccounts, setLinkedAccounts] = useState<BrokerAccount[]>([])
@@ -45,6 +77,15 @@ export function DashboardPage() {
   const [loading, setLoading] = useState(true)
   const AUTO_REFRESH_MS = 15000
   const DASHBOARD_CACHE_PREFIX = 'dashboard_cache_v1'
+  const formatMoney = (value: number | null | undefined) =>
+    `$${(Number.isFinite(value as number) ? Number(value) : 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  const formatNumber = (value: number | null | undefined) =>
+    (Number.isFinite(value as number) ? Number(value) : 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  const formatVsYesterdayNumber = (todayValue: number | null | undefined, yesterdayValue: number | null | undefined) =>
+    `vs yesterday: ${formatNumber(yesterdayValue)} (${((Number.isFinite(todayValue as number) ? Number(todayValue) : 0) - (Number.isFinite(yesterdayValue as number) ? Number(yesterdayValue) : 0)) >= 0 ? '+' : ''}${formatNumber((Number.isFinite(todayValue as number) ? Number(todayValue) : 0) - (Number.isFinite(yesterdayValue as number) ? Number(yesterdayValue) : 0))})`
+  const formatVsYesterdayMoney = (todayValue: number | null | undefined, yesterdayValue: number | null | undefined) =>
+    `vs yesterday: ${formatMoney(yesterdayValue)} (${((Number.isFinite(todayValue as number) ? Number(todayValue) : 0) - (Number.isFinite(yesterdayValue as number) ? Number(yesterdayValue) : 0)) >= 0 ? '+' : ''}${formatMoney((Number.isFinite(todayValue as number) ? Number(todayValue) : 0) - (Number.isFinite(yesterdayValue as number) ? Number(yesterdayValue) : 0))})`
+  const formatVsYesterdayText = (yesterdayValue: string) => `vs yesterday: ${yesterdayValue || '—'}`
 
   useEffect(() => {
     if (!user) return
@@ -58,7 +99,9 @@ export function DashboardPage() {
           linkedAccounts?: BrokerAccount[]
           linkedAccountBalances?: Record<string, { balance?: number; equity?: number; currency?: string; broker?: string; account_type?: 'Live' | 'Demo'; open_pnl?: number; open_trades?: number }>
         }
-        if (parsed.stats) setStats(parsed.stats)
+        if (parsed.stats) {
+          setStats(prev => ({ ...prev, ...parsed.stats }))
+        }
         if (parsed.copierLogs) setCopierLogs(parsed.copierLogs)
         if (parsed.linkedAccounts) setLinkedAccounts(parsed.linkedAccounts)
         if (parsed.linkedAccountBalances) setLinkedAccountBalances(parsed.linkedAccountBalances)
@@ -103,15 +146,23 @@ export function DashboardPage() {
 
   const loadDashboard = async ({ silent = false }: { silent?: boolean } = {}) => {
     if (!silent) setLoading(true)
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
+    const now = new Date()
+    const todayStart = new Date(now)
+    todayStart.setHours(0, 0, 0, 0)
+    const tomorrowStart = new Date(todayStart)
+    tomorrowStart.setDate(tomorrowStart.getDate() + 1)
+    const yesterdayStart = new Date(todayStart)
+    yesterdayStart.setDate(yesterdayStart.getDate() - 1)
 
-    const [brokerRes, channelsRes, tradesRes, todaySignalsRes, logsRes] = await Promise.all([
+    const [brokerRes, channelsRes, tradesRes, todaySignalsRes, yesterdaySignalsRes, logsRes, allSignalsRes, channelsMetaRes] = await Promise.all([
       supabase.from('broker_accounts').select('*').eq('user_id', user!.id),
       supabase.from('telegram_channels').select('id').eq('user_id', user!.id).eq('is_active', true),
       supabase.from('trades').select('*').eq('user_id', user!.id),
-      supabase.from('signals').select('status').eq('user_id', user!.id).gte('created_at', today.toISOString()),
+      supabase.from('signals').select('status').eq('user_id', user!.id).gte('created_at', todayStart.toISOString()).lt('created_at', tomorrowStart.toISOString()),
+      supabase.from('signals').select('status').eq('user_id', user!.id).gte('created_at', yesterdayStart.toISOString()).lt('created_at', todayStart.toISOString()),
       supabase.from('signals').select('*').eq('user_id', user!.id).order('created_at', { ascending: false }).limit(10),
+      supabase.from('signals').select('id,channel_id').eq('user_id', user!.id),
+      supabase.from('telegram_channels').select('id,display_name').eq('user_id', user!.id),
     ])
 
     const allTrades = (tradesRes.data ?? []) as Trade[]
@@ -120,6 +171,109 @@ export function DashboardPage() {
     const todaySignals = (todaySignalsRes.data ?? []) as { status: string }[]
     const copiedToday = todaySignals.filter(s => s.status === 'executed').length
     const openPnlFromTrades = openTrades.reduce((sum, t) => sum + (t.profit ?? 0), 0)
+    const isInRange = (dateString: string | null | undefined, start: Date, end: Date) => {
+      if (!dateString) return false
+      const ts = new Date(dateString).getTime()
+      return Number.isFinite(ts) && ts >= start.getTime() && ts < end.getTime()
+    }
+    const tradesToday = allTrades.filter(t => isInRange(t.opened_at, todayStart, tomorrowStart))
+    const tradesYesterday = allTrades.filter(t => isInRange(t.opened_at, yesterdayStart, todayStart))
+    const totalProfitLoss = tradesToday.reduce((sum, t) => sum + (t.profit ?? 0), 0)
+    const yesterdayTotalProfitLoss = tradesYesterday.reduce((sum, t) => sum + (t.profit ?? 0), 0)
+    const totalVolume = tradesToday.reduce((sum, t) => sum + (t.lot_size ?? 0), 0)
+    const yesterdayTotalVolume = tradesYesterday.reduce((sum, t) => sum + (t.lot_size ?? 0), 0)
+    const profitableTradesToday = tradesToday.filter(t => typeof t.profit === 'number' && Number.isFinite(t.profit))
+    const profitableTradesYesterday = tradesYesterday.filter(t => typeof t.profit === 'number' && Number.isFinite(t.profit))
+    const bestTradeProfit = profitableTradesToday.length ? Math.max(...profitableTradesToday.map(t => t.profit ?? 0)) : null
+    const yesterdayBestTradeProfit = profitableTradesYesterday.length ? Math.max(...profitableTradesYesterday.map(t => t.profit ?? 0)) : null
+    const worstTradeProfit = profitableTradesToday.length ? Math.min(...profitableTradesToday.map(t => t.profit ?? 0)) : null
+    const yesterdayWorstTradeProfit = profitableTradesYesterday.length ? Math.min(...profitableTradesYesterday.map(t => t.profit ?? 0)) : null
+    const todayProfit = allTrades
+      .filter(t => isInRange(t.closed_at, todayStart, tomorrowStart))
+      .reduce((sum, t) => sum + (t.profit ?? 0), 0)
+    const yesterdayProfit = allTrades
+      .filter(t => isInRange(t.closed_at, yesterdayStart, todayStart))
+      .reduce((sum, t) => sum + (t.profit ?? 0), 0)
+    const mostTradedAsset = (() => {
+      const counts = new Map<string, number>()
+      for (const trade of tradesToday) {
+        if (!trade.symbol) continue
+        counts.set(trade.symbol, (counts.get(trade.symbol) ?? 0) + 1)
+      }
+      let winner = '—'
+      let max = 0
+      for (const [symbol, count] of counts.entries()) {
+        if (count > max) {
+          winner = symbol
+          max = count
+        }
+      }
+      return winner
+    })()
+    const yesterdayMostTradedAsset = (() => {
+      const counts = new Map<string, number>()
+      for (const trade of tradesYesterday) {
+        if (!trade.symbol) continue
+        counts.set(trade.symbol, (counts.get(trade.symbol) ?? 0) + 1)
+      }
+      let winner = '—'
+      let max = 0
+      for (const [symbol, count] of counts.entries()) {
+        if (count > max) {
+          winner = symbol
+          max = count
+        }
+      }
+      return winner
+    })()
+    const mostProfitableChannel = (() => {
+      const signals = (allSignalsRes.data ?? []) as Array<{ id: string; channel_id: string | null }>
+      const channels = (channelsMetaRes.data ?? []) as Array<{ id: string; display_name: string }>
+      const signalToChannel = new Map<string, string | null>()
+      for (const s of signals) signalToChannel.set(s.id, s.channel_id)
+      const channelNameById = new Map<string, string>()
+      for (const c of channels) channelNameById.set(c.id, c.display_name || 'Unnamed channel')
+      const pnlByChannel = new Map<string, number>()
+      for (const trade of tradesToday) {
+        if (!trade.signal_id) continue
+        const channelId = signalToChannel.get(trade.signal_id)
+        if (!channelId) continue
+        pnlByChannel.set(channelId, (pnlByChannel.get(channelId) ?? 0) + (trade.profit ?? 0))
+      }
+      let winnerName = '—'
+      let winnerPnl = Number.NEGATIVE_INFINITY
+      for (const [channelId, pnl] of pnlByChannel.entries()) {
+        if (pnl > winnerPnl) {
+          winnerPnl = pnl
+          winnerName = channelNameById.get(channelId) ?? 'Unknown channel'
+        }
+      }
+      return winnerName
+    })()
+    const yesterdayMostProfitableChannel = (() => {
+      const signals = (allSignalsRes.data ?? []) as Array<{ id: string; channel_id: string | null }>
+      const channels = (channelsMetaRes.data ?? []) as Array<{ id: string; display_name: string }>
+      const signalToChannel = new Map<string, string | null>()
+      for (const s of signals) signalToChannel.set(s.id, s.channel_id)
+      const channelNameById = new Map<string, string>()
+      for (const c of channels) channelNameById.set(c.id, c.display_name || 'Unnamed channel')
+      const pnlByChannel = new Map<string, number>()
+      for (const trade of tradesYesterday) {
+        if (!trade.signal_id) continue
+        const channelId = signalToChannel.get(trade.signal_id)
+        if (!channelId) continue
+        pnlByChannel.set(channelId, (pnlByChannel.get(channelId) ?? 0) + (trade.profit ?? 0))
+      }
+      let winnerName = '—'
+      let winnerPnl = Number.NEGATIVE_INFINITY
+      for (const [channelId, pnl] of pnlByChannel.entries()) {
+        if (pnl > winnerPnl) {
+          winnerPnl = pnl
+          winnerName = channelNameById.get(channelId) ?? 'Unknown channel'
+        }
+      }
+      return winnerName
+    })()
     const won = closedTrades.filter(t => (t.profit ?? 0) > 0).length
     const lost = closedTrades.filter(t => (t.profit ?? 0) < 0).length
     const brokerAccounts = (brokerRes.data ?? []) as BrokerAccount[]
@@ -216,6 +370,22 @@ export function DashboardPage() {
       tradesCopiedToday: copiedToday,
       activeChannels: channelsRes.data?.length ?? 0,
       copierHealth: activeBrokerCount > 0 ? 'Stable' : 'Offline',
+      totalSignals: (todaySignalsRes.data ?? []).length,
+      yesterdayTotalSignals: (yesterdaySignalsRes.data ?? []).length,
+      totalVolume,
+      yesterdayTotalVolume,
+      totalProfitLoss,
+      yesterdayTotalProfitLoss,
+      bestTradeProfit,
+      yesterdayBestTradeProfit,
+      worstTradeProfit,
+      yesterdayWorstTradeProfit,
+      todayProfit,
+      yesterdayProfit,
+      mostProfitableChannel,
+      yesterdayMostProfitableChannel,
+      mostTradedAsset,
+      yesterdayMostTradedAsset,
     }
     setStats(nextStats)
     if (user) {
@@ -242,15 +412,15 @@ export function DashboardPage() {
       <div className="bg-white rounded-xl border border-neutral-100 shadow-card mb-6">
         <div className="grid grid-cols-4 divide-x divide-neutral-100">
           <StatBlock
-            label="Accounts"
-            value={loading ? '—' : String(stats.accounts)}
-            sub={loading ? '' : `0% compared to 0, Yesterday`}
+            label="Total Balance"
+            value={loading ? '—' : `$${stats.portfolioValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+            sub={loading ? '' : `Across ${stats.accounts} connected account${stats.accounts === 1 ? '' : 's'}`}
             subColor="text-neutral-400"
           />
           <StatBlock
-            label="Total Balance"
-            value={loading ? '—' : `$${stats.portfolioValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-            sub={loading ? '' : `0% compared to $0.00, Yesterday`}
+            label="Active Trades"
+            value={loading ? '—' : String(stats.openTrades)}
+            sub={loading ? '' : `${stats.openPositions} open positions`}
             subColor="text-neutral-400"
           />
           <StatBlock
@@ -274,6 +444,24 @@ export function DashboardPage() {
             }
             subColor={stats.openPnl >= 0 ? 'text-neutral-400' : 'text-error-500'}
           />
+        </div>
+      </div>
+
+      {/* Today's performance */}
+      <div className="bg-white rounded-xl border border-neutral-100 shadow-card mb-6">
+        <div className="px-5 py-4 border-b border-neutral-100">
+          <p className="text-sm font-semibold text-neutral-900">Today&apos;s performance</p>
+          <p className="text-xs text-neutral-400">Daily performance snapshot with comparison to yesterday</p>
+        </div>
+        <div className="p-5 grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <OverviewStat label="Total Profit & Loss" value={loading ? '—' : formatMoney(stats.totalProfitLoss)} sub={loading ? '' : formatVsYesterdayMoney(stats.totalProfitLoss, stats.yesterdayTotalProfitLoss)} />
+          <OverviewStat label="Total Volume" value={loading ? '—' : formatNumber(stats.totalVolume)} sub={loading ? '' : formatVsYesterdayNumber(stats.totalVolume, stats.yesterdayTotalVolume)} />
+          <OverviewStat label="Best Trade" value={loading ? '—' : (stats.bestTradeProfit == null ? '—' : formatMoney(stats.bestTradeProfit))} sub={loading ? '' : `vs yesterday: ${stats.yesterdayBestTradeProfit == null ? '—' : formatMoney(stats.yesterdayBestTradeProfit)}`} />
+          <OverviewStat label="Worst Trade" value={loading ? '—' : (stats.worstTradeProfit == null ? '—' : formatMoney(stats.worstTradeProfit))} sub={loading ? '' : `vs yesterday: ${stats.yesterdayWorstTradeProfit == null ? '—' : formatMoney(stats.yesterdayWorstTradeProfit)}`} />
+          <OverviewStat label="Today Profit" value={loading ? '—' : formatMoney(stats.todayProfit)} sub={loading ? '' : formatVsYesterdayMoney(stats.todayProfit, stats.yesterdayProfit)} />
+          <OverviewStat label="Most Profitable Channel" value={loading ? '—' : stats.mostProfitableChannel} sub={loading ? '' : formatVsYesterdayText(stats.yesterdayMostProfitableChannel)} />
+          <OverviewStat label="Most Traded Asset" value={loading ? '—' : stats.mostTradedAsset} sub={loading ? '' : formatVsYesterdayText(stats.yesterdayMostTradedAsset)} />
+          <OverviewStat label="Total Signals" value={loading ? '—' : String(stats.totalSignals)} sub={loading ? '' : formatVsYesterdayNumber(stats.totalSignals, stats.yesterdayTotalSignals)} />
         </div>
       </div>
 
@@ -479,11 +667,12 @@ function StatBlock({ label, value, sub, subColor, valueColor = 'text-neutral-900
   )
 }
 
-function OverviewStat({ label, value }: { label: string; value: string }) {
+function OverviewStat({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
     <div>
       <p className="text-xs text-neutral-500 mb-1">{label}</p>
       <p className="text-2xl font-semibold text-neutral-900">{value}</p>
+      {sub ? <p className="text-xs text-neutral-400 mt-1">{sub}</p> : null}
     </div>
   )
 }

@@ -77,6 +77,97 @@ async function mtGet(path: string, params: Record<string, QueryValue>) {
   return data
 }
 
+async function mtGetAny(paths: string[], params: Record<string, QueryValue>) {
+  let lastError: unknown = null
+  for (const path of paths) {
+    try {
+      return await mtGet(path, params)
+    } catch (err) {
+      lastError = err
+    }
+  }
+  throw (lastError instanceof Error ? lastError : new Error("All provider endpoints failed"))
+}
+
+function extractSymbolsFromPayload(payload: unknown): string[] {
+  const out = new Set<string>()
+  const push = (v: unknown) => {
+    if (typeof v !== "string") return
+    const s = v.trim()
+    if (s) out.add(s)
+  }
+  const walk = (node: unknown) => {
+    if (!node) return
+    if (Array.isArray(node)) {
+      for (const item of node) walk(item)
+      return
+    }
+    if (typeof node !== "object") return
+    const obj = node as Record<string, unknown>
+    push(obj.symbol)
+    push(obj.Symbol)
+    push(obj.name)
+    push(obj.Name)
+    push(obj.path)
+    push(obj.Path)
+  }
+  walk(payload)
+  if (typeof payload === "object" && payload) {
+    const r = payload as Record<string, unknown>
+    walk(r.data)
+    walk(r.result)
+    walk(r.items)
+    walk(r.symbols)
+    walk(r.list)
+  }
+  return Array.from(out)
+}
+
+async function resolveTradableSymbol(accountId: string, requestedSymbol: string): Promise<string> {
+  const requested = requestedSymbol.trim()
+  const requestedUpper = requested.toUpperCase()
+  if (!requested) return requestedSymbol
+  try {
+    const payload = await mtGetAny(
+      ["/Symbols", "/GetSymbols", "/SymbolList", "/MarketWatchSymbols"],
+      { id: accountId },
+    )
+    const symbols = extractSymbolsFromPayload(payload)
+    if (!symbols.length) return requestedSymbol
+
+    const exact = symbols.find((s) => s.toUpperCase() === requestedUpper)
+    if (exact) return exact
+
+    // Common broker suffix/prefix forms (e.g. XAUUSDm, XAUUSD.pro).
+    const prefixedOrSuffixed = symbols.find((s) => {
+      const u = s.toUpperCase()
+      return u.startsWith(requestedUpper) || u.endsWith(requestedUpper)
+    })
+    if (prefixedOrSuffixed) return prefixedOrSuffixed
+
+    return requestedSymbol
+  } catch {
+    return requestedSymbol
+  }
+}
+
+async function getMarketExecutionPrice(accountId: string, symbol: string, action: "buy" | "sell"): Promise<number | null> {
+  try {
+    const tick = await mtGetAny(
+      ["/SymbolInfoTick", "/GetSymbolInfoTick", "/TickInfo"],
+      { id: accountId, symbol },
+    )
+    if (!tick || typeof tick !== "object") return null
+    const t = tick as Record<string, unknown>
+    const bid = Number(t.bid ?? t.Bid ?? t.bidPrice ?? t.BidPrice)
+    const ask = Number(t.ask ?? t.Ask ?? t.askPrice ?? t.AskPrice)
+    const candidate = action === "buy" ? ask : bid
+    return Number.isFinite(candidate) && candidate > 0 ? candidate : null
+  } catch {
+    return null
+  }
+}
+
 function pickTicket(result: unknown): string | null {
   if (!result || typeof result !== "object") return null
   const r = result as Record<string, unknown>
@@ -111,6 +202,91 @@ function operationFor(action: string, signalPrice: number | null): string {
   if (action === "buy") return signalPrice != null ? "BuyLimit" : "Buy"
   if (action === "sell") return signalPrice != null ? "SellLimit" : "Sell"
   return "Buy"
+}
+
+function isInvalidPriceResult(result: unknown): boolean {
+  const normalized = normalizeProviderResult(result)
+  const parts = [normalized.code, normalized.state, normalized.message].filter(Boolean).join(" ")
+  return /invalid[_\s-]?price/i.test(parts)
+}
+
+async function orderSendWithFallback(
+  accountId: string,
+  parsed: ParsedSignal,
+  lotSize: number,
+  pipTolerance: number,
+  signalId: string,
+) {
+  const signalPrice = parsed.entry_price ?? parsed.entry_zone_low ?? parsed.entry_zone_high
+  const resolvedSymbol = parsed.symbol ? await resolveTradableSymbol(accountId, parsed.symbol) : parsed.symbol
+  const baseOperation = operationFor(parsed.action, signalPrice)
+  const isLimit = baseOperation === "BuyLimit" || baseOperation === "SellLimit"
+  const marketOperation = parsed.action === "buy" ? "Buy" : "Sell"
+  const marketPrice = resolvedSymbol
+    ? await getMarketExecutionPrice(accountId, resolvedSymbol, parsed.action === "buy" ? "buy" : "sell")
+    : null
+
+  const baseParams: Record<string, QueryValue> = {
+    id: accountId,
+    symbol: resolvedSymbol,
+    operation: baseOperation,
+    volume: lotSize,
+    slippage: pipTolerance ?? 0,
+    stoploss: parsed.sl ?? 0,
+    takeprofit: parsed.tp?.[0] ?? 0,
+    comment: `TSCopier signal ${signalId}`,
+    expertID: 0,
+    stopLimitPrice: 0,
+    expirationType: "GTC",
+    placedType: "Signal",
+  }
+
+  // First attempt:
+  // - limit orders: include entry price
+  // - market orders: prefer live bid/ask when available
+  const firstParams = isLimit
+    ? { ...baseParams, price: signalPrice ?? 0 }
+    : (marketPrice != null ? { ...baseParams, price: marketPrice } : { ...baseParams })
+  const firstResult = await mtGet("/OrderSend", firstParams)
+  if (!isInvalidPriceResult(firstResult)) {
+    return firstResult
+  }
+
+  // Retry #1 for INVALID_PRICE:
+  // switch order type and keep SL/TP.
+  const retry1Params: Record<string, QueryValue> = isLimit
+    ? {
+      ...baseParams,
+      operation: marketOperation,
+      ...(marketPrice != null ? { price: marketPrice } : {}),
+    }
+    : {
+      ...baseParams,
+      operation: parsed.action === "buy" ? "BuyLimit" : "SellLimit",
+      price: signalPrice ?? 0,
+    }
+  const retry1Result = await mtGet("/OrderSend", retry1Params)
+  if (!isInvalidPriceResult(retry1Result)) {
+    return retry1Result
+  }
+
+  // Retry #2 for stubborn broker constraints:
+  // send pure market order without explicit price and without SL/TP,
+  // then caller can still treat missing ticket as failure.
+  const retry2Params: Record<string, QueryValue> = {
+    id: accountId,
+    symbol: parsed.symbol,
+    operation: marketOperation,
+    volume: lotSize,
+    ...(marketPrice != null ? { price: marketPrice } : {}),
+    slippage: pipTolerance ?? 0,
+    comment: `TSCopier signal ${signalId}`,
+    expertID: 0,
+    stopLimitPrice: 0,
+    expirationType: "GTC",
+    placedType: "Signal",
+  }
+  return await mtGet("/OrderSend", retry2Params)
 }
 
 Deno.serve(async (req: Request) => {
@@ -202,24 +378,13 @@ Deno.serve(async (req: Request) => {
         return Response.json({ skipped: true, reason: "No symbol detected" }, { headers: corsHeaders })
       }
 
-      const signalPrice = parsed.entry_price ?? parsed.entry_zone_low ?? parsed.entry_zone_high
-      const operation = operationFor(parsed.action, signalPrice)
-
-      const result = await mtGet("/OrderSend", {
-        id: accountId,
-        symbol: parsed.symbol,
-        operation,
-        volume: lotSize,
-        price: signalPrice ?? 0,
-        slippage: pipTolerance ?? 0,
-        stoploss: parsed.sl ?? 0,
-        takeprofit: parsed.tp?.[0] ?? 0,
-        comment: `TSCopier signal ${signal_id}`,
-        expertID: 0,
-        stopLimitPrice: 0,
-        expirationType: "GTC",
-        placedType: "Signal",
-      })
+      const result = await orderSendWithFallback(
+        accountId,
+        parsed,
+        lotSize,
+        pipTolerance,
+        signal_id,
+      )
       const normalized = normalizeProviderResult(result)
       const orderTicket = normalized.ticket
       const ticketAsNum = Number(orderTicket)
