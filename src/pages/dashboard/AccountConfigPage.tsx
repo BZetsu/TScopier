@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import { Card } from '../../components/ui/Card'
@@ -7,7 +8,7 @@ import { Select } from '../../components/ui/Select'
 import { Button } from '../../components/ui/Button'
 import { Badge } from '../../components/ui/Badge'
 import type { BrokerAccount } from '../../types/database'
-import { Plus, Trash2, Server } from 'lucide-react'
+import { Plus, Trash2, Server, DollarSign, Eye, Activity, GitBranch } from 'lucide-react'
 import { AddAccountModal } from '../../components/ui/AddAccountModal'
 
 const PLATFORMS = [
@@ -43,11 +44,52 @@ interface BrokerSummaryResult {
   error?: string
 }
 
+interface ChannelOption {
+  id: string
+  display_name: string
+  channel_username: string
+  is_active: boolean
+}
+
+interface AccountConfigDraft {
+  mode: 'ai' | 'manual'
+  channelIds: string[]
+}
+
+function getPlatformIconPath(platform: string): string | null {
+  const key = platform.trim()
+  if (!key) return null
+  return `/${key}.png`
+}
+
+function PlatformIcon({ platform }: { platform: string }) {
+  const [failed, setFailed] = useState(false)
+  const iconPath = getPlatformIconPath(platform)
+
+  if (!iconPath || failed) {
+    return <Server className="w-4 h-4 text-primary-600" />
+  }
+
+  return (
+    <img
+      src={iconPath}
+      alt={`${platform} icon`}
+      className="w-8 h-8 object-contain"
+      loading="lazy"
+      onError={() => setFailed(true)}
+    />
+  )
+}
+
 export function AccountConfigPage() {
   const { user } = useAuth()
   const [brokers, setBrokers] = useState<BrokerAccount[]>([])
   const [brokerSummaries, setBrokerSummaries] = useState<Record<string, { balance?: number; equity?: number; currency?: string }>>({})
   const [brokerSummaryErrors, setBrokerSummaryErrors] = useState<Record<string, string>>({})
+  const [channelOptions, setChannelOptions] = useState<ChannelOption[]>([])
+  const [accountConfigs, setAccountConfigs] = useState<Record<string, AccountConfigDraft>>({})
+  const [configAccount, setConfigAccount] = useState<BrokerAccount | null>(null)
+  const [configDraft, setConfigDraft] = useState<AccountConfigDraft>({ mode: 'ai', channelIds: [] })
   const [showPlatformModal, setShowPlatformModal] = useState(false)
   const [showAddBroker, setShowAddBroker] = useState(false)
   const [form, setForm] = useState<BrokerForm>(emptyForm)
@@ -79,13 +121,53 @@ export function AccountConfigPage() {
   }, [showAddBroker, form.platform, form.broker_server])
 
   const loadData = async () => {
-    const [brokersRes] = await Promise.all([
+    const [brokersRes, channelsRes] = await Promise.all([
       supabase.from('broker_accounts').select('*').eq('user_id', user!.id).order('created_at'),
+      supabase.from('telegram_channels').select('id,display_name,channel_username,is_active').eq('user_id', user!.id).eq('is_active', true).order('created_at', { ascending: false }),
     ])
     const nextBrokers = (brokersRes.data ?? []) as BrokerAccount[]
     setBrokers(nextBrokers)
+    setChannelOptions((channelsRes.data ?? []) as ChannelOption[])
     void loadBrokerSummaries(nextBrokers)
     setLoading(false)
+  }
+
+  const openConfigureModal = (broker: BrokerAccount) => {
+    const existing = accountConfigs[broker.id]
+    setConfigAccount(broker)
+    setConfigDraft(existing ?? { mode: 'ai', channelIds: [] })
+  }
+
+  const closeConfigureModal = () => {
+    setConfigAccount(null)
+  }
+
+  const toggleDraftChannel = (channelId: string) => {
+    setConfigDraft(prev => ({
+      ...prev,
+      channelIds: prev.channelIds.includes(channelId)
+        ? prev.channelIds.filter(id => id !== channelId)
+        : [...prev.channelIds, channelId],
+    }))
+  }
+
+  const saveConfigureModal = () => {
+    if (!configAccount) return
+    setAccountConfigs(prev => ({
+      ...prev,
+      [configAccount.id]: configDraft,
+    }))
+    closeConfigureModal()
+  }
+
+  const getBrokerSignalChannelsLabel = (brokerId: string) => {
+    const selectedIds = accountConfigs[brokerId]?.channelIds ?? []
+    if (!selectedIds.length) return 'None selected'
+    const labels = channelOptions
+      .filter(ch => selectedIds.includes(ch.id))
+      .map(ch => ch.display_name)
+      .filter(Boolean)
+    return labels.length ? labels.join(', ') : 'None selected'
   }
 
   const set = (field: keyof BrokerForm, value: string) =>
@@ -244,11 +326,6 @@ export function AccountConfigPage() {
     await supabase.from('broker_accounts').delete().eq('id', id)
   }
 
-  const toggleBroker = async (id: string, is_active: boolean) => {
-    setBrokers(prev => prev.map(b => b.id === id ? { ...b, is_active } : b))
-    await supabase.from('broker_accounts').update({ is_active }).eq('id', id)
-  }
-
   if (loading) {
     return (
       <div className="p-6 lg:p-8 max-w-3xl mx-auto space-y-4">
@@ -260,7 +337,7 @@ export function AccountConfigPage() {
   return (
     <div className="p-6 lg:p-8 max-w-3xl mx-auto">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-neutral-900">Account Configuration</h1>
+        <h1 className="text-2xl font-bold text-neutral-900">Account & Configuration</h1>
         <p className="text-sm text-neutral-500 mt-0.5">Configure your trading accounts</p>
       </div>
 
@@ -366,7 +443,7 @@ export function AccountConfigPage() {
               <Card key={broker.id} padding="sm">
                 <div className="flex items-center gap-3">
                   <div className="w-9 h-9 bg-primary-50 rounded-lg flex items-center justify-center flex-shrink-0">
-                    <Server className="w-4 h-4 text-primary-600" />
+                    <PlatformIcon platform={broker.platform} />
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
@@ -376,8 +453,11 @@ export function AccountConfigPage() {
                       </Badge>
                       <Badge variant="neutral" size="sm">{broker.platform}</Badge>
                     </div>
-                    <p className="text-xs text-neutral-400 mt-0.5">
+                    {/* <p className="text-xs text-neutral-400 mt-0.5">
                       Lot: {broker.default_lot_size} · Pip tolerance: {broker.pip_tolerance}
+                    </p> */}
+                    <p className="text-xs text-neutral-500 mt-0.5">
+                      <span className="font-medium text-neutral-700">Signal Channels:</span> {getBrokerSignalChannelsLabel(broker.id)}
                     </p>
                     {(brokerSummaries[broker.id]?.balance != null || brokerSummaries[broker.id]?.equity != null) && (
                       <p className="text-xs text-neutral-500 mt-0.5">
@@ -402,10 +482,10 @@ export function AccountConfigPage() {
                   </div>
                   <div className="flex items-center gap-1 flex-shrink-0">
                     <button
-                      onClick={() => toggleBroker(broker.id, !broker.is_active)}
+                      onClick={() => openConfigureModal(broker)}
                       className="px-3 py-1.5 text-xs font-medium border border-neutral-200 rounded-lg text-neutral-600 hover:bg-neutral-50 transition-colors"
                     >
-                      {broker.is_active ? 'Pause' : 'Resume'}
+                      Configure
                     </button>
                     <button
                       onClick={() => deleteBroker(broker.id)}
@@ -430,6 +510,127 @@ export function AccountConfigPage() {
           setShowAddBroker(true)
         }}
       />
+
+      {configAccount && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-5xl max-h-[88vh] overflow-y-auto rounded-2xl bg-white shadow-xl border border-neutral-200">
+            <div className="px-6 py-4 border-b border-neutral-100 flex items-center justify-between">
+              <div>
+                <h3 className="text-lg font-semibold text-neutral-900">Configure Account</h3>
+                <p className="text-sm text-neutral-500 mt-0.5">
+                  {configAccount.label} · {configAccount.platform}
+                </p>
+              </div>
+              <button
+                onClick={closeConfigureModal}
+                className="px-3 py-1.5 text-sm text-neutral-500 hover:text-neutral-700"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="px-6 py-5 space-y-6">
+              <div>
+                <p className="text-sm font-medium text-neutral-800 mb-2">Configuration Mode</p>
+                <div className="inline-flex rounded-lg border border-neutral-200 bg-neutral-50 p-1">
+                  <button
+                    onClick={() => setConfigDraft(prev => ({ ...prev, mode: 'ai' }))}
+                    className={`px-4 py-2 text-sm rounded-md transition-colors ${configDraft.mode === 'ai' ? 'bg-primary-600 text-white' : 'text-neutral-600 hover:bg-neutral-100'}`}
+                  >
+                    AI Expert Mode
+                  </button>
+                  <button
+                    onClick={() => setConfigDraft(prev => ({ ...prev, mode: 'manual' }))}
+                    className={`px-4 py-2 text-sm rounded-md transition-colors ${configDraft.mode === 'manual' ? 'bg-primary-600 text-white' : 'text-neutral-600 hover:bg-neutral-100'}`}
+                  >
+                    Manual
+                  </button>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-neutral-200 p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-sm font-semibold text-neutral-900">Signal Channels</p>
+                  <p className="text-xs text-neutral-500">{configDraft.channelIds.length} selected</p>
+                </div>
+                {channelOptions.length === 0 ? (
+                  <p className="text-sm text-neutral-500">
+                    No connected channels found. <Link to="/copier-engine" className="text-primary-600 underline">Connect channels here</Link>.
+                  </p>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                    {channelOptions.map(channel => (
+                      <label key={channel.id} className="flex items-center gap-2 rounded-lg border border-neutral-200 px-3 py-2 cursor-pointer hover:bg-neutral-50">
+                        <input
+                          type="checkbox"
+                          checked={configDraft.channelIds.includes(channel.id)}
+                          onChange={() => toggleDraftChannel(channel.id)}
+                        />
+                        <div className="min-w-0">
+                          <p className="text-sm text-neutral-800 truncate">{channel.display_name}</p>
+                          {channel.channel_username && (
+                            <p className="text-xs text-neutral-500 truncate">@{channel.channel_username}</p>
+                          )}
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {configDraft.mode === 'ai' ? (
+                <div className="rounded-xl border border-neutral-200 p-4 space-y-3">
+                  <p className="text-sm font-semibold text-neutral-900">AI Configuration</p>
+                  <p className="text-sm text-neutral-600">
+                    AI expert mode is designed to behave like a human expert trader: dynamic lot sizing by balance, maximum lots per signal,
+                    range entry handling, TP-based management, and channel instruction interpretation.
+                  </p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="rounded-lg bg-neutral-50 border border-neutral-200 p-3">
+                      <p className="text-xs font-medium text-neutral-700 mb-1 flex items-center gap-1.5">
+                        <DollarSign className="w-3.5 h-3.5 text-primary-600" />
+                        Money Management
+                      </p>
+                      <p className="text-xs text-neutral-500">Balance-aware lot sizing, risk controls, and per-signal lot limits.</p>
+                    </div>
+                    <div className="rounded-lg bg-neutral-50 border border-neutral-200 p-3">
+                      <p className="text-xs font-medium text-neutral-700 mb-1 flex items-center gap-1.5">
+                        <Eye className="w-3.5 h-3.5 text-primary-600" />
+                        Signal Interpretation
+                      </p>
+                      <p className="text-xs text-neutral-500">Handles no-entry, single-entry, range-entry, and delayed TP/SL updates.</p>
+                    </div>
+                    <div className="rounded-lg bg-neutral-50 border border-neutral-200 p-3">
+                      <p className="text-xs font-medium text-neutral-700 mb-1 flex items-center gap-1.5">
+                        <Activity className="w-3.5 h-3.5 text-primary-600" />
+                        Trade Management
+                      </p>
+                      <p className="text-xs text-neutral-500">Supports partials, break-even logic, and channel commands like close/secure profits.</p>
+                    </div>
+                    <div className="rounded-lg bg-neutral-50 border border-neutral-200 p-3">
+                      <p className="text-xs font-medium text-neutral-700 mb-1 flex items-center gap-1.5">
+                        <GitBranch className="w-3.5 h-3.5 text-primary-600" />
+                        Modification Detection
+                      </p>
+                      <p className="text-xs text-neutral-500">Distinguishes new entries from follow-up modification instructions.</p>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-neutral-200 p-4">
+                  <p className="text-sm font-semibold text-neutral-900">Manual Configuration</p>
+                  <p className="text-sm text-neutral-500 mt-1">Manual configuration options will be added in the next phase.</p>
+                </div>
+              )}
+            </div>
+
+            <div className="px-6 py-4 border-t border-neutral-100 flex items-center justify-end gap-2">
+              <Button variant="ghost" onClick={closeConfigureModal}>Cancel</Button>
+              <Button onClick={saveConfigureModal}>Save</Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Clock, ChevronRight, Info, Plus } from 'lucide-react'
+import { Clock, ChevronRight, ChevronDown, Info, Plus } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import type { BrokerAccount, Signal, Trade } from '../../types/database'
@@ -34,6 +34,16 @@ interface DashboardStats {
   yesterdayMostProfitableChannel: string
   mostTradedAsset: string
   yesterdayMostTradedAsset: string
+}
+
+interface AiExpertLogRow {
+  id: string
+  created_at: string
+  action: string
+  status: string
+  request_payload: Record<string, unknown> | null
+  response_payload: Record<string, unknown> | null
+  error_message: string | null
 }
 
 export function DashboardPage() {
@@ -71,10 +81,12 @@ export function DashboardPage() {
     yesterdayMostTradedAsset: '—',
   })
   const [copierLogs, setCopierLogs] = useState<Signal[]>([])
+  const [aiExpertLogs, setAiExpertLogs] = useState<AiExpertLogRow[]>([])
   const [linkedAccounts, setLinkedAccounts] = useState<BrokerAccount[]>([])
   const [linkedAccountBalances, setLinkedAccountBalances] = useState<Record<string, { balance?: number; equity?: number; currency?: string; broker?: string; account_type?: 'Live' | 'Demo'; open_pnl?: number; open_trades?: number }>>({})
   const [showPlatformModal, setShowPlatformModal] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [showExpandedStats, setShowExpandedStats] = useState(false)
   const AUTO_REFRESH_MS = 15000
   const DASHBOARD_CACHE_PREFIX = 'dashboard_cache_v1'
   const formatMoney = (value: number | null | undefined) =>
@@ -154,7 +166,7 @@ export function DashboardPage() {
     const yesterdayStart = new Date(todayStart)
     yesterdayStart.setDate(yesterdayStart.getDate() - 1)
 
-    const [brokerRes, channelsRes, tradesRes, todaySignalsRes, yesterdaySignalsRes, logsRes, allSignalsRes, channelsMetaRes] = await Promise.all([
+    const [brokerRes, channelsRes, tradesRes, todaySignalsRes, yesterdaySignalsRes, logsRes, allSignalsRes, channelsMetaRes, aiLogsRes] = await Promise.all([
       supabase.from('broker_accounts').select('*').eq('user_id', user!.id),
       supabase.from('telegram_channels').select('id').eq('user_id', user!.id).eq('is_active', true),
       supabase.from('trades').select('*').eq('user_id', user!.id),
@@ -163,6 +175,7 @@ export function DashboardPage() {
       supabase.from('signals').select('*').eq('user_id', user!.id).order('created_at', { ascending: false }).limit(10),
       supabase.from('signals').select('id,channel_id').eq('user_id', user!.id),
       supabase.from('telegram_channels').select('id,display_name').eq('user_id', user!.id),
+      supabase.from('trade_execution_logs').select('id,created_at,action,status,request_payload,response_payload,error_message').eq('user_id', user!.id).order('created_at', { ascending: false }).limit(12),
     ])
 
     const allTrades = (tradesRes.data ?? []) as Trade[]
@@ -356,6 +369,7 @@ export function DashboardPage() {
       liveOpenTradesCount ??
       (hasAnyBrokerOpenTradesFromSummary ? totalLiveOpenTradesFromSummary : openTrades.length)
     setCopierLogs((logsRes.data ?? []) as Signal[])
+    setAiExpertLogs((aiLogsRes.data ?? []) as AiExpertLogRow[])
     setLinkedAccounts(brokerAccounts)
     setLinkedAccountBalances(balanceMap)
     const nextStats: DashboardStats = {
@@ -445,6 +459,39 @@ export function DashboardPage() {
             subColor={stats.openPnl >= 0 ? 'text-neutral-400' : 'text-error-500'}
           />
         </div>
+        <div className="border-t border-neutral-100 px-5 py-3">
+          <button
+            onClick={() => setShowExpandedStats(prev => !prev)}
+            className="w-full flex items-center justify-between text-xs font-medium text-neutral-600 hover:text-neutral-800 transition-colors"
+          >
+            <span>More Stats</span>
+            <ChevronDown className={`w-4 h-4 transition-transform ${showExpandedStats ? 'rotate-180' : 'rotate-0'}`} />
+          </button>
+        </div>
+        {showExpandedStats && (
+          <div className="border-t border-neutral-100 p-5 grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <OverviewStat
+              label="Active Signal Channels"
+              value={loading ? '—' : String(stats.activeChannels)}
+              sub={loading ? '' : 'Connected Telegram channels'}
+            />
+            <OverviewStat
+              label="Open Trades"
+              value={loading ? '—' : String(stats.openTrades)}
+              sub={loading ? '' : 'Currently active broker positions'}
+            />
+            <OverviewStat
+              label="Trading Accounts Connected"
+              value={loading ? '—' : String(stats.accounts)}
+              sub={loading ? '' : 'Active linked accounts'}
+            />
+            <OverviewStat
+              label="Trades Copied Today"
+              value={loading ? '—' : String(stats.tradesCopiedToday)}
+              sub={loading ? '' : 'Executed from channel signals'}
+            />
+          </div>
+        )}
       </div>
 
       {/* Today's performance */}
@@ -465,14 +512,16 @@ export function DashboardPage() {
         </div>
       </div>
 
+      
+
       {/* Lower panels */}
       <div className="grid grid-cols-2 gap-6">
-        {/* Copier Overview */}
+        {/* AI Expert Log */}
         <div className="bg-white rounded-xl border border-neutral-100 shadow-card">
           <div className="px-5 py-4 border-b border-neutral-100 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Clock className="w-4 h-4 text-teal-500" />
-              <span className="text-sm font-semibold text-neutral-900">Copier Overview</span>
+              <span className="text-sm font-semibold text-neutral-900">AI Expert Log</span>
               <button className="text-neutral-300 hover:text-neutral-500">
                 <Info className="w-3.5 h-3.5" />
               </button>
@@ -481,50 +530,27 @@ export function DashboardPage() {
               onClick={() => navigate('/copier-engine')}
               className="flex items-center gap-1.5 px-3 py-1.5 border border-teal-500 text-teal-600 rounded-lg text-xs font-medium hover:bg-teal-50 transition-colors"
             >
-              Manage
+              Channels
               <ChevronRight className="w-3 h-3" />
             </button>
           </div>
 
-          <div className="p-5 space-y-5">
-            {/* Copier Status */}
-            <div className="flex items-center justify-between p-4 bg-neutral-50 rounded-xl">
-              <span className="text-sm text-neutral-600 font-medium">Copier Status</span>
-              <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-medium ${
-                stats.copierHealth === 'Stable'
-                  ? 'bg-teal-50 border-teal-200 text-teal-700'
-                  : stats.copierHealth === 'Degraded'
-                  ? 'bg-warning-50 border-warning-200 text-warning-700'
-                  : 'bg-error-50 border-error-200 text-error-700'
-              }`}>
-                <span className={`w-1.5 h-1.5 rounded-full ${
-                  stats.copierHealth === 'Stable' ? 'bg-teal-500' :
-                  stats.copierHealth === 'Degraded' ? 'bg-warning-500' : 'bg-error-500'
-                }`} />
-                {loading ? '—' : stats.copierHealth}
-              </div>
+          {loading ? (
+            <div className="divide-y divide-neutral-50">
+              {[...Array(5)].map((_, i) => (
+                <div key={i} className="px-5 py-3">
+                  <div className="h-4 bg-neutral-100 rounded animate-pulse w-3/4 mb-1.5" />
+                  <div className="h-3 bg-neutral-100 rounded animate-pulse w-1/3" />
+                </div>
+              ))}
             </div>
-
-            {/* Grid stats */}
-            <div className="grid grid-cols-2 gap-4">
-              <OverviewStat
-                label="Active Signal Channels"
-                value={loading ? '—' : String(stats.activeChannels)}
-              />
-              <OverviewStat
-                label="Trading Accounts Connected"
-                value={loading ? '—' : String(stats.accounts)}
-              />
-              <OverviewStat
-                label="Open Trades"
-                value={loading ? '—' : String(stats.openTrades)}
-              />
-              <OverviewStat
-                label="Trades Copied Today"
-                value={loading ? '—' : String(stats.tradesCopiedToday)}
-              />
+          ) : aiExpertLogs.length === 0 ? (
+            <div className="px-5 py-10 text-sm text-neutral-400">No AI trade process logs yet.</div>
+          ) : (
+            <div className="divide-y divide-neutral-50 max-h-96 overflow-y-auto">
+              {aiExpertLogs.map(row => <AiExpertLogItem key={row.id} row={row} />)}
             </div>
-          </div>
+          )}
         </div>
 
         {/* Copier Logs */}
@@ -673,6 +699,44 @@ function OverviewStat({ label, value, sub }: { label: string; value: string; sub
       <p className="text-xs text-neutral-500 mb-1">{label}</p>
       <p className="text-2xl font-semibold text-neutral-900">{value}</p>
       {sub ? <p className="text-xs text-neutral-400 mt-1">{sub}</p> : null}
+    </div>
+  )
+}
+
+function AiExpertLogItem({ row }: { row: AiExpertLogRow }) {
+  const payload = (row.request_payload ?? {}) as Record<string, unknown>
+  const response = (row.response_payload ?? {}) as Record<string, unknown>
+  const parsed = (payload.parsed ?? {}) as Record<string, unknown>
+  const symbol = String(parsed.symbol ?? payload.symbol ?? response.symbol ?? 'trade')
+  const action = String(parsed.action ?? row.action ?? 'action').toLowerCase()
+  const lot = Number(parsed.lot_size ?? response.volume ?? payload.volume)
+  const entry = Number(parsed.entry_price ?? response.price ?? payload.price)
+  const tp = Array.isArray(parsed.tp) ? Number(parsed.tp[0]) : Number(parsed.tp)
+  const sl = Number(parsed.sl)
+  const hasLot = Number.isFinite(lot) && lot > 0
+  const hasEntry = Number.isFinite(entry) && entry > 0
+  const hasTp = Number.isFinite(tp) && tp > 0
+  const hasSl = Number.isFinite(sl) && sl > 0
+
+  const message = (() => {
+    if (row.action === 'pipeline_parse_dispatch') {
+      return row.status === 'success'
+        ? `AI interpreted a new signal for ${symbol}.`
+        : `AI signal parsing failed for ${symbol}.`
+    }
+    if (row.status === 'success' && (action === 'buy' || action === 'sell')) {
+      return `Opened a ${hasLot ? lot.toFixed(2) : 'new'} ${action.toUpperCase()} position on ${symbol}${hasEntry ? ` @ ${entry}` : ''}${hasTp || hasSl ? ` (${hasTp ? `TP1 ${tp}` : ''}${hasTp && hasSl ? ', ' : ''}${hasSl ? `SL ${sl}` : ''})` : ''}.`
+    }
+    if (row.status === 'failed') {
+      return `Failed to execute ${action.toUpperCase()} on ${symbol}${row.error_message ? `: ${row.error_message}` : '.'}`
+    }
+    return `Processed ${action.toUpperCase()} workflow for ${symbol}.`
+  })()
+
+  return (
+    <div className="px-5 py-3">
+      <p className="text-sm text-neutral-800">{message}</p>
+      <p className="text-[11px] text-neutral-400 mt-1">{new Date(row.created_at).toLocaleString()}</p>
     </div>
   )
 }

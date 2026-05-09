@@ -14,7 +14,7 @@ const navSections: NavSection[] = [
     label: 'GENERAL',
     items: [
       { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-      { to: '/account-configuration', icon: Settings, label: 'Account Configuration' },
+      { to: '/account-configuration', icon: Settings, label: 'Account & Configuration' },
       { to: '/account-trades', icon: History, label: 'Account Trades' },
     ],
   },

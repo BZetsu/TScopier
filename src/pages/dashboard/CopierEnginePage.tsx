@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Radio, Trash2, RefreshCw, CircleAlert as AlertCircle } from 'lucide-react'
+import { Radio, Trash2, RefreshCw, CircleAlert as AlertCircle, ChevronDown } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import { Card } from '../../components/ui/Card'
@@ -50,6 +50,7 @@ export function CopierEnginePage() {
   const [tgChannels, setTgChannels] = useState<{ id: string; title: string; username: string; members_count: number }[]>([])
   const [loading, setLoading] = useState(true)
   const [loadingTg, setLoadingTg] = useState(false)
+  const [tgChannelsCollapsed, setTgChannelsCollapsed] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
   const [newChannel, setNewChannel] = useState({ channel_id: '', channel_username: '', display_name: '' })
   const [saving, setSaving] = useState(false)
@@ -426,6 +427,15 @@ export function CopierEnginePage() {
               <Badge variant="success" size="sm">Connected</Badge>
             </div>
             <div className="flex items-center gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setTgChannelsCollapsed(prev => !prev)}
+                className="text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700"
+              >
+                <ChevronDown className={`w-3.5 h-3.5 transition-transform ${tgChannelsCollapsed ? '-rotate-90' : 'rotate-0'}`} />
+                {tgChannelsCollapsed ? 'Expand' : 'Collapse'}
+              </Button>
               <Button variant="ghost" size="sm" onClick={disconnectTelegram} className="text-error-600 hover:bg-error-50 hover:text-error-700">
                 <AlertCircle className="w-3.5 h-3.5" />
                 Disconnect
@@ -435,7 +445,7 @@ export function CopierEnginePage() {
             )}
             </div>
           </div>
-          {loadingTg ? (
+          {!tgChannelsCollapsed && (loadingTg ? (
             <div className="divide-y divide-neutral-50">
               {[...Array(4)].map((_, i) => (
                 <div key={i} className="px-5 py-3 flex items-center gap-3">
@@ -488,7 +498,7 @@ export function CopierEnginePage() {
                 )
               })}
             </div>
-          )}
+          ))}
         </Card>
       )}
 
@@ -564,7 +574,7 @@ function ChannelRow({
           </div>
           {channel.channel_username && <p className="text-xs text-neutral-400 mt-0.5">@{channel.channel_username}</p>}
           <div className="mt-2 rounded-lg border border-neutral-100 bg-neutral-50 px-3 py-2">
-            <p className="text-[11px] font-semibold tracking-wide text-neutral-500 uppercase">Channel Insights</p>
+            <p className="text-[11px] font-semibold tracking-wide text-neutral-500 uppercase">AI Analysis</p>
             {isAnalyzing ? (
               <div className="mt-1.5">
                 <p className="text-xs text-neutral-500 mb-1.5">
@@ -587,11 +597,6 @@ function ChannelRow({
                   <Badge variant="neutral" size="sm">TP: {profile.tp_style}</Badge>
                   <Badge variant="neutral" size="sm">SL: {profile.sl_style}</Badge>
                 </div>
-                <p className="text-xs text-neutral-500 mt-1.5">
-                  {profile.most_traded_asset ? `Most traded asset: ${profile.most_traded_asset}` : 'Most traded asset: —'}
-                  {profile.estimated_tp_pips != null ? ` · Avg TP: ${Number(profile.estimated_tp_pips).toFixed(1)} pips` : ''}
-                  {profile.estimated_sl_pips != null ? ` · Avg SL: ${Number(profile.estimated_sl_pips).toFixed(1)} pips` : ''}
-                </p>
                 {profile.analysis_summary && (
                   <p className="text-[11px] text-neutral-400 mt-0.5">{profile.analysis_summary}</p>
                 )}

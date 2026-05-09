@@ -33,6 +33,39 @@ type ChannelProfile = {
   meta: Record<string, unknown>
 }
 
+const FX_QUOTES = new Set(["USD", "EUR", "GBP", "JPY", "CHF", "AUD", "NZD", "CAD"])
+const KNOWN_SYMBOL_ALIASES: Record<string, string> = {
+  GOLD: "XAUUSD",
+  XAU: "XAUUSD",
+  SILVER: "XAGUSD",
+  XAG: "XAGUSD",
+  BTC: "BTCUSDT",
+  ETH: "ETHUSDT",
+}
+
+function normalizeAssetSymbol(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  const token = raw.toUpperCase().replace(/[^A-Z0-9]/g, "")
+  if (!token) return null
+
+  if (KNOWN_SYMBOL_ALIASES[token]) return KNOWN_SYMBOL_ALIASES[token]
+
+  if (/^(XAUUSD|XAGUSD|US30|NAS100|SPX500|GER40|UK100|BTCUSDT|ETHUSDT)$/.test(token)) {
+    return token
+  }
+
+  // Forex pairs only when quote is a valid FX quote currency.
+  if (/^[A-Z]{6}$/.test(token)) {
+    const base = token.slice(0, 3)
+    const quote = token.slice(3, 6)
+    if (FX_QUOTES.has(base) && FX_QUOTES.has(quote) && base !== quote) {
+      return token
+    }
+  }
+
+  return null
+}
+
 function parseFromRawMessage(message: string): ParsedSignal {
   const text = (message ?? "").trim()
   const lower = text.toLowerCase()
@@ -42,8 +75,8 @@ function parseFromRawMessage(message: string): ParsedSignal {
         : /\bclose\b/i.test(lower) ? "close"
           : /\bsl|stop\s*loss|tp|take\s*profit\b/i.test(lower) ? "modify"
             : "unknown"
-  const symbolMatch = text.match(/\b(XAUUSD|XAGUSD|[A-Z]{6}|US30|NAS100|SPX500|GER40|BTCUSDT|ETHUSDT)\b/i)
-  const symbol = symbolMatch ? symbolMatch[1].toUpperCase() : null
+  const symbolMatch = text.match(/\b(XAUUSD|XAGUSD|US30|NAS100|SPX500|GER40|UK100|BTCUSDT|ETHUSDT|[A-Z]{6}|GOLD|SILVER|XAU|XAG|BTC|ETH)\b/i)
+  const symbol = normalizeAssetSymbol(symbolMatch ? symbolMatch[1] : null)
   const entryMatch = text.match(/(?:@|entry)\s*[:=]?\s*(\d+(?:\.\d+)?)/i)
   const rangeMatch = text.match(/(\d+(?:\.\d+)?)\s*[-–]\s*(\d+(?:\.\d+)?)/)
   const slMatch = text.match(/\b(?:sl|stop\s*loss)\s*[:=]?\s*(\d+(?:\.\d+)?)/i)
@@ -78,6 +111,14 @@ function average(values: number[]): number | null {
   return Number((total / values.length).toFixed(4))
 }
 
+function median(values: number[]): number | null {
+  if (!values.length) return null
+  const sorted = [...values].sort((a, b) => a - b)
+  const mid = Math.floor(sorted.length / 2)
+  if (sorted.length % 2 === 1) return Number(sorted[mid].toFixed(4))
+  return Number(((sorted[mid - 1] + sorted[mid]) / 2).toFixed(4))
+}
+
 function heuristicProfile(rows: Array<{ raw_message: string; parsed_data: unknown }>): ChannelProfile {
   const actionCounts = new Map<string, number>()
   const symbolCounts = new Map<string, number>()
@@ -86,7 +127,9 @@ function heuristicProfile(rows: Array<{ raw_message: string; parsed_data: unknow
   let singleTp = 0
   let multiTp = 0
   let slPresent = 0
-  const tpPips: number[] = []
+  const tp1Pips: number[] = []
+  const tp2Pips: number[] = []
+  const tp3Pips: number[] = []
   const slPips: number[] = []
 
   for (const row of rows) {
@@ -94,8 +137,9 @@ function heuristicProfile(rows: Array<{ raw_message: string; parsed_data: unknow
     const action = (parsed.action ?? "unknown").toLowerCase()
     actionCounts.set(action, (actionCounts.get(action) ?? 0) + 1)
 
-    if (parsed.symbol) {
-      const sym = parsed.symbol.toUpperCase()
+    const normalizedSymbol = normalizeAssetSymbol(parsed.symbol ?? null)
+    if (normalizedSymbol) {
+      const sym = normalizedSymbol
       symbolCounts.set(sym, (symbolCounts.get(sym) ?? 0) + 1)
     }
 
@@ -116,12 +160,20 @@ function heuristicProfile(rows: Array<{ raw_message: string; parsed_data: unknow
 
     const anchorEntry = entry ?? (zoneLow != null && zoneHigh != null ? (zoneLow + zoneHigh) / 2 : null)
     if (anchorEntry != null && tp.length) {
-      const p = pipSize(parsed.symbol ?? null, anchorEntry)
-      const firstTpPips = Math.abs(tp[0] - anchorEntry) / p
-      if (Number.isFinite(firstTpPips)) tpPips.push(firstTpPips)
+      const p = pipSize(normalizedSymbol, anchorEntry)
+      const tp1 = Math.abs(tp[0] - anchorEntry) / p
+      if (Number.isFinite(tp1)) tp1Pips.push(tp1)
+      if (tp.length > 1) {
+        const tp2 = Math.abs(tp[1] - anchorEntry) / p
+        if (Number.isFinite(tp2)) tp2Pips.push(tp2)
+      }
+      if (tp.length > 2) {
+        const tp3 = Math.abs(tp[2] - anchorEntry) / p
+        if (Number.isFinite(tp3)) tp3Pips.push(tp3)
+      }
     }
     if (anchorEntry != null && sl != null) {
-      const p = pipSize(parsed.symbol ?? null, anchorEntry)
+      const p = pipSize(normalizedSymbol, anchorEntry)
       const slDist = Math.abs(anchorEntry - sl) / p
       if (Number.isFinite(slDist)) slPips.push(slDist)
     }
@@ -175,7 +227,7 @@ function heuristicProfile(rows: Array<{ raw_message: string; parsed_data: unknow
     sl_style: slStyle,
     entry_type: entryType,
     most_traded_asset: topSymbol,
-    estimated_tp_pips: average(tpPips),
+    estimated_tp_pips: average(tp1Pips),
     estimated_sl_pips: average(slPips),
     analysis_summary: `Analyzed ${sampleSize} signal messages from last 30 days.`,
     sample_size: sampleSize,
@@ -185,6 +237,21 @@ function heuristicProfile(rows: Array<{ raw_message: string; parsed_data: unknow
       entry_counts: entryCounts,
       tp_counts: { no_tp: noTp, single_tp: singleTp, multi_tp: multiTp },
       sl_present_count: slPresent,
+      pip_distance: {
+        // Keep both mean and median to reduce distortion from outlier calls.
+        tp1_avg_pips: average(tp1Pips),
+        tp1_median_pips: median(tp1Pips),
+        tp1_sample: tp1Pips.length,
+        tp2_avg_pips: average(tp2Pips),
+        tp2_median_pips: median(tp2Pips),
+        tp2_sample: tp2Pips.length,
+        tp3_avg_pips: average(tp3Pips),
+        tp3_median_pips: median(tp3Pips),
+        tp3_sample: tp3Pips.length,
+        sl_avg_pips: average(slPips),
+        sl_median_pips: median(slPips),
+        sl_sample: slPips.length,
+      },
     },
   }
 }
