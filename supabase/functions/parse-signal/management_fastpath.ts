@@ -131,6 +131,55 @@ function isModifyIntent(t: string): boolean {
   return false
 }
 
+/**
+ * New entry cards: BUY/SELL + instrument + SL/TP lines often matched `modify` incorrectly.
+ * Run this before classify-as-modify in parseDeterministicManagement.
+ */
+function tryStructuredEntry(t: string, tl: string): FastpathParsed | null {
+  if (isCloseIntent(t)) return null
+  // Handled elsewhere in the caller
+  if (/\bpartial\b|\bc\s*half\b|close\s+50%|close\s+half\b|secure\s+\d+\s*%/i.test(t)) return null
+  if (
+    /\bbreakeven|break\s*even\b/i.test(t) || /\bmoved?\s+(sl\s+)?to\s+(be|entry|entr(y)?\s?price)|\b(be|bk)\s*now\b/i.test(t)
+  ) return null
+
+  const isBuy = /\b(buy|long)\b/i.test(t)
+  const isSell = /\b(sell|short)\b/i.test(t)
+  if (!isBuy && !isSell) return null
+  if (isBuy && isSell) return null
+
+  const sym = extractTradableSymbolFromMessage(t)
+  if (!sym) return null
+
+  // Pure management line (no explicit entry side intent in the snippet)
+  const trimmedStart = t.replace(/^\uFEFF?\s+/u, "").trimStart()
+  if (
+    /^(set|move|adjust|update|change)\s+(?:the\s+)?(?:sl|tp|stop\s*loss|take\s*profit)\b/i.test(trimmedStart) ||
+    /^(tp\d*|sl|stop\s*loss)\s*[@:=]/i.test(trimmedStart)
+  ) return null
+
+  const hasInstant = /\b(now|instant|market|mkt\b|signal\s*alert|at\s+market|@\s*market)\b/i.test(tl)
+
+  const sl = extractSlFromText(t)
+  const tp = extractTpLevelsFromText(t)
+  const hasLevels = sl != null || tp.length > 0
+
+  if (!hasInstant && !hasLevels) return null
+
+  return {
+    action: isBuy ? "buy" : "sell",
+    symbol: sym,
+    entry_price: null,
+    entry_zone_low: null,
+    entry_zone_high: null,
+    sl,
+    tp,
+    lot_size: null,
+    confidence: 0.95,
+    raw_instruction: t,
+  }
+}
+
 export function parseDeterministicManagement(message: string): FastpathParsed | null {
   const t = message.replace(/\s+/g, " ").trim()
   if (!t) return null
@@ -148,10 +197,14 @@ export function parseDeterministicManagement(message: string): FastpathParsed | 
     /\bbreakeven|break\s*even\b/i.test(t) || /\bmoved?\s+(sl\s+)?to\s+(be|entry|entr(y)?\s?price)|\b(be|bk)\s*now\b/i.test(t)
   ) {
     action = "breakeven"
-  } else if (isModifyIntent(t)) {
-    action = "modify"
-  } else if (isCloseIntent(t)) {
-    action = "close"
+  } else {
+    const entryParsed = tryStructuredEntry(t, tl)
+    if (entryParsed) return entryParsed
+  }
+
+  if (!action) {
+    if (isModifyIntent(t)) action = "modify"
+    else if (isCloseIntent(t)) action = "close"
   }
 
   if (!action) return null
