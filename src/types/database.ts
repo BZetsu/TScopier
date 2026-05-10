@@ -56,8 +56,10 @@ export interface BrokerAccount {
   is_active: boolean
   /** AI uses balance-scaled sizing; Manual uses defaults unless signal specifies lots. */
   copier_mode?: 'ai' | 'manual'
-  /** Subscribed telegram_channels row ids; empty/absent = legacy "all channels". */
+  /** Subscribed telegram_channels row ids; only enforced when enforce_signal_channel_filter is true. */
   signal_channel_ids?: string[] | null
+  /** When false (default), all connected Telegram channels copy to this broker. */
+  enforce_signal_channel_filter?: boolean | null
   ai_settings?: Json | null
   default_lot_size: number
   pip_tolerance: number

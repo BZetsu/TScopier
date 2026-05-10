@@ -94,6 +94,7 @@ export function BrokerConnectStep({ onDone }: Props) {
         broker_server: form.broker_server.trim(),
         copier_mode: 'ai',
         signal_channel_ids: [],
+        enforce_signal_channel_filter: false,
         ai_settings: {},
         default_lot_size: parseFloat(form.default_lot_size) || 0.01,
         pip_tolerance: parseInt(form.pip_tolerance) || 20,

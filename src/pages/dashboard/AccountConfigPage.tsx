@@ -161,12 +161,14 @@ export function AccountConfigPage() {
   const openConfigureModal = (broker: BrokerAccount) => {
     const fresh = brokers.find(b => b.id === broker.id) ?? broker
     const persistedIds = normalizeSignalChannelIds(fresh)
-    const oldestId = getOldestChannel(channelOptions)?.id
+    const restricts = fresh.enforce_signal_channel_filter === true
     let channelIds: string[]
     if (channelOptions.length === 1 && channelOptions[0]) {
       channelIds = [channelOptions[0].id]
     } else if (channelOptions.length > 1) {
-      channelIds = persistedIds.length > 0 ? persistedIds : (oldestId ? [oldestId] : [])
+      // When not restricting, treat as all channels selected in the UI.
+      channelIds =
+        restricts && persistedIds.length > 0 ? persistedIds : channelOptions.map(c => c.id)
     } else {
       channelIds = persistedIds
     }
@@ -192,21 +194,33 @@ export function AccountConfigPage() {
 
   const saveConfigureModal = async () => {
     if (!configAccount || !user) return
+    setError('')
     let channelIds = configDraft.channelIds
-    if (channelOptions.length === 1 && channelOptions[0]) {
-      channelIds = [channelOptions[0].id]
-    } else if (channelOptions.length > 1 && channelIds.length === 0) {
-      const oldest = getOldestChannel(channelOptions)
-      if (oldest) channelIds = [oldest.id]
+    let restrictChannels = false
+    // One Telegram channel: persist {} — matches "copy all" semantics and avoids locking to UUID only.
+    if (channelOptions.length === 1) {
+      channelIds = []
+      restrictChannels = false
+    } else if (channelOptions.length > 1) {
+      if (channelIds.length === 0) {
+        setError('Select at least one signal channel.')
+        return
+      }
+      if (channelIds.length === channelOptions.length) {
+        channelIds = []
+        restrictChannels = false
+      } else {
+        restrictChannels = true
+      }
     }
 
     setConfigSaving(true)
-    setError('')
     const { data, error: upErr } = await supabase
       .from('broker_accounts')
       .update({
         copier_mode: configDraft.mode === 'manual' ? 'manual' : 'ai',
         signal_channel_ids: channelIds,
+        enforce_signal_channel_filter: restrictChannels,
       })
       .eq('id', configAccount.id)
       .eq('user_id', user.id)
@@ -234,15 +248,16 @@ export function AccountConfigPage() {
     }
     const brokerRow = brokers.find(b => b.id === brokerId)
     const persistedIds = normalizeSignalChannelIds(brokerRow)
-    const idsToShow =
-      persistedIds.length > 0 ? persistedIds : (oldest?.id ? [oldest.id] : [])
+    const restricts = brokerRow?.enforce_signal_channel_filter === true
+    if (!restricts || persistedIds.length === 0) {
+      return 'All signal channels'
+    }
     const labels = channelOptions
-      .filter(ch => idsToShow.includes(ch.id))
+      .filter(ch => persistedIds.includes(ch.id))
       .map(ch => ch.display_name)
       .filter(Boolean)
     if (labels.length) return labels.join(', ')
-    const fallback = oldest?.display_name?.trim()
-    return fallback || 'None selected'
+    return 'None selected'
   }
 
   const set = (field: keyof BrokerForm, value: string) =>
@@ -383,6 +398,7 @@ export function AccountConfigPage() {
         broker_server: form.broker_server.trim(),
         copier_mode: 'ai',
         signal_channel_ids: [],
+        enforce_signal_channel_filter: false,
         ai_settings: {},
         default_lot_size: DEFAULT_LOT_SIZE,
         pip_tolerance: DEFAULT_PIP_TOLERANCE,
@@ -728,6 +744,10 @@ export function AccountConfigPage() {
                       No connected channels found. <Link to="/copier-engine" className="text-primary-600 underline">Connect channels here</Link>.
                     </p>
                   ) : (
+                    <>
+                    <p className="text-xs text-neutral-500 mb-3">
+                      All channels selected (default) copies every connected Telegram channel. Uncheck one or more to restrict this broker — only then is the filter enforced.
+                    </p>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                       {channelOptions.map(channel => (
                         <label key={channel.id} className="flex items-center gap-2 rounded-lg border border-neutral-200 px-3 py-2 cursor-pointer hover:bg-neutral-50">
@@ -745,6 +765,7 @@ export function AccountConfigPage() {
                         </label>
                       ))}
                     </div>
+                    </>
                   )}
                 </div>
               )}

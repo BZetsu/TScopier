@@ -73,8 +73,9 @@ export function CopierLogsPage() {
 
       <Card padding="none">
         {/* Header */}
-        <div className="grid grid-cols-[1.5fr_1fr_1fr_1.5fr_1fr_1fr] gap-3 px-5 py-3 border-b border-neutral-100 text-xs font-semibold text-neutral-400 uppercase tracking-wide">
+        <div className="grid grid-cols-[1.5fr_1.2fr_1fr_1.2fr_1fr_1fr_auto] gap-3 px-5 py-3 border-b border-neutral-100 text-xs font-semibold text-neutral-400 uppercase tracking-wide">
           <span>Status</span>
+          <span>Reason</span>
           <span>Channel</span>
           <span>Symbol</span>
           <span>Message</span>
@@ -85,8 +86,8 @@ export function CopierLogsPage() {
         {loading ? (
           <div className="divide-y divide-neutral-50">
             {[...Array(6)].map((_, i) => (
-              <div key={i} className="px-5 py-3.5 grid grid-cols-6 gap-3">
-                {[...Array(6)].map((_, j) => (
+              <div key={i} className="px-5 py-3.5 grid grid-cols-7 gap-3">
+                {[...Array(7)].map((_, j) => (
                   <div key={j} className="h-4 bg-neutral-100 rounded animate-pulse" />
                 ))}
               </div>
@@ -111,8 +112,16 @@ export function CopierLogsPage() {
               const s = statusConfig[signal.status] ?? { variant: 'neutral' as const, label: signal.status }
 
               return (
-                <div key={signal.id} className="grid grid-cols-[1.5fr_1fr_1fr_1.5fr_1fr_1fr] gap-3 px-5 py-3.5 items-center hover:bg-neutral-50 transition-colors">
+                <div key={signal.id} className="grid grid-cols-[1.5fr_1.2fr_1fr_1.2fr_1fr_1fr_auto] gap-3 px-5 py-3.5 items-center hover:bg-neutral-50 transition-colors">
                   <Badge variant={s.variant} size="sm">{s.label}</Badge>
+                  <span
+                    className="text-xs text-neutral-500 truncate"
+                    title={signal.skip_reason ?? ''}
+                  >
+                    {signal.skip_reason
+                      ? (signal.skip_reason.length > 42 ? signal.skip_reason.slice(0, 42) + '…' : signal.skip_reason)
+                      : '—'}
+                  </span>
                   <span className="text-xs text-neutral-400 truncate">—</span>
                   <span className="text-sm font-medium text-neutral-900">{symbol}</span>
                   <span className="text-xs text-neutral-500 truncate" title={signal.raw_message}>

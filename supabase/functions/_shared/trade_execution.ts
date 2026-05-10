@@ -31,6 +31,7 @@ type BrokerRow = JsonRecord & {
   pip_tolerance: number
   copier_mode?: string | null
   signal_channel_ids?: string[] | null
+  enforce_signal_channel_filter?: boolean | null
   ai_settings?: unknown
 }
 
@@ -57,7 +58,11 @@ function normalizeSubscriberChannelIds(raw: unknown): string[] {
   return []
 }
 
-function brokerEligibleForSignal(broker: Pick<BrokerRow, "signal_channel_ids">, channelId: string | null): boolean {
+function brokerEligibleForSignal(
+  broker: Pick<BrokerRow, "signal_channel_ids" | "enforce_signal_channel_filter">,
+  channelId: string | null,
+): boolean {
+  if (broker.enforce_signal_channel_filter !== true) return true
   const ids = normalizeSubscriberChannelIds(broker.signal_channel_ids)
   if (ids.length === 0) return true
   // Product choice: signals without DB channel linkage still mirror to all brokers (same as unrestricted list).
@@ -1032,6 +1037,9 @@ Deno.serve(async (req: Request) => {
     ) as BrokerRow[]
 
     if (!eligible.length) {
+      const skipDetail =
+        `[signal channel_id=${channelId ?? "null"}] No active broker is allowed to copy this channel. ` +
+        "Open Account & configuration: either clear Telegram channel restrictions (copy all connected channels) or include this channel in the allowed list."
       await supabase
         .from("signals")
         .update({
@@ -1039,8 +1047,21 @@ Deno.serve(async (req: Request) => {
           skip_reason: "No active broker account subscribed to this signal channel",
         })
         .eq("id", signal_id)
+      await logExecution(supabase, {
+        user_id: signal.user_id as string,
+        signal_id,
+        broker_account_id: null,
+        action: parsed.action,
+        status: "failed",
+        request_payload: {
+          reason: "no_eligible_broker",
+          channel_id: channelId,
+          active_broker_count: (brokerRows ?? []).length,
+        },
+        error_message: skipDetail,
+      })
       return Response.json(
-        { skipped: true, reason: "No eligible broker account for this channel" },
+        { skipped: true, reason: "No eligible broker account for this channel", detail: skipDetail },
         { headers: corsHeaders },
       )
     }

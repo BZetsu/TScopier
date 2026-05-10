@@ -86,6 +86,7 @@ export function SettingsPage() {
         ...base,
         copier_mode: 'ai' as const,
         signal_channel_ids: [] as string[],
+        enforce_signal_channel_filter: false,
         ai_settings: {} as Record<string, never>,
       })
 

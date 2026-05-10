@@ -854,8 +854,8 @@ function AiExpertLogItem({ row }: { row: AiExpertLogRow }) {
   const message = (() => {
     if (row.action === 'pipeline_parse_dispatch') {
       return row.status === 'success'
-        ? `AI interpreted a new signal for ${symbol}.`
-        : `AI signal parsing failed for ${symbol}.`
+        ? `Parser reached for ${symbol} (HTTP OK — check Copier logs for the actual parse result).`
+        : `Could not reach parse-signal for ${symbol}${row.error_message ? `: ${row.error_message}` : '.'}`
     }
     if (row.status === 'success' && (action === 'buy' || action === 'sell')) {
       return `Opened a ${hasLot ? lot.toFixed(2) : 'new'} ${action.toUpperCase()} position on ${symbol}${hasEntry ? ` @ ${entry}` : ''}${hasTp || hasSl ? ` (${hasTp ? `TP1 ${tp}` : ''}${hasTp && hasSl ? ', ' : ''}${hasSl ? `SL ${sl}` : ''})` : ''}.`
