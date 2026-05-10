@@ -79,8 +79,8 @@ function parseFromRawMessage(message: string): ParsedSignal {
   const symbol = normalizeAssetSymbol(symbolMatch ? symbolMatch[1] : null)
   const entryMatch = text.match(/(?:@|entry)\s*[:=]?\s*(\d+(?:\.\d+)?)/i)
   const rangeMatch = text.match(/(\d+(?:\.\d+)?)\s*[-–]\s*(\d+(?:\.\d+)?)/)
-  const slMatch = text.match(/\b(?:sl|stop\s*loss)\s*[:=@]?\s*(?:to|at)?\s*(\d+(?:\.\d+)?)/i)
-  const tpMatches = [...text.matchAll(/\b(?:tp\d*|take\s*profit)\s*[:=@]?\s*(\d+(?:\.\d+)?)/gi)]
+  const slMatch = text.match(/\b(?:sl|stop\s*loss)\s*[:=]?\s*(\d+(?:\.\d+)?)/i)
+  const tpMatches = [...text.matchAll(/\b(?:tp\d*|take\s*profit)\s*[:=]?\s*(\d+(?:\.\d+)?)/gi)]
   return {
     action,
     symbol,
@@ -117,27 +117,6 @@ function median(values: number[]): number | null {
   const mid = Math.floor(sorted.length / 2)
   if (sorted.length % 2 === 1) return Number(sorted[mid].toFixed(4))
   return Number(((sorted[mid - 1] + sorted[mid]) / 2).toFixed(4))
-}
-
-/** Compact raw snippets for parse-signal channel_style_guide (fallback when AI omits style_guide). */
-function buildHeuristicStyleGuide(rows: Array<{ raw_message: string }>): string | undefined {
-  const snippets: string[] = []
-  const seen = new Set<string>()
-  for (const r of rows) {
-    const m = (r.raw_message ?? "").trim()
-    if (!m || m.length > 520) continue
-    if (
-      !/\b(close\s+all|close\s+now|flatten|(?:tp|sl)\s*[@=:]|take\s*profit|stop\s*loss|breakeven|partial|buy\s+now|sell\s+now|adjust\s+sl|set\s+tp)\b/i
-        .test(m)
-    ) continue
-    const key = m.slice(0, 120)
-    if (seen.has(key)) continue
-    seen.add(key)
-    snippets.push(m.length > 240 ? m.slice(0, 240) + "…" : m)
-    if (snippets.length >= 12) break
-  }
-  if (!snippets.length) return undefined
-  return "Sample lines from this channel (parser context):\n" + snippets.join("\n---\n")
 }
 
 function heuristicProfile(rows: Array<{ raw_message: string; parsed_data: unknown }>): ChannelProfile {
@@ -277,12 +256,10 @@ function heuristicProfile(rows: Array<{ raw_message: string; parsed_data: unknow
   }
 }
 
-type AiEnhanceResult = { profilePatch: Partial<ChannelProfile>; style_guide?: string }
-
 async function aiEnhanceProfile(
   profile: ChannelProfile,
   rows: Array<{ raw_message: string; parsed_data: unknown }>,
-): Promise<AiEnhanceResult | null> {
+): Promise<Partial<ChannelProfile> | null> {
   if (!OPENAI_API_KEY || !rows.length) return null
   const sample = rows.slice(0, 40).map((r) => ({
     raw_message: r.raw_message,
@@ -295,16 +272,14 @@ Return strict JSON only with keys:
   "tp_style": string,
   "sl_style": string,
   "entry_type": string,
-  "analysis_summary": string,
-  "style_guide": string
+  "analysis_summary": string
 }
 Use these categories when possible:
 - signal_type: "entry_signals" | "management_only" | "entry_and_management" | "mixed" | "unknown"
 - tp_style: "tp1_tp2_tp3" | "single_tp" | "mixed" | "no_tp"
 - sl_style: "fixed_sl" | "mixed_sl_usage" | "no_sl"
 - entry_type: "no_entry_price" | "single" | "range" | "mixed"
-Keep analysis_summary concise (max 220 chars).
-style_guide: max 800 chars, bullet list describing how this channel phrases entries, TP/SL updates, closes, partials, breakeven (exact phrases and patterns to help a downstream JSON parser). No investment advice.`
+Keep summary concise (max 220 chars).`
 
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -315,7 +290,7 @@ style_guide: max 800 chars, bullet list describing how this channel phrases entr
     body: JSON.stringify({
       model: "gpt-4o-mini",
       temperature: 0,
-      max_tokens: 480,
+      max_tokens: 220,
       messages: [
         { role: "system", content: prompt },
         {
@@ -332,17 +307,13 @@ style_guide: max 800 chars, bullet list describing how this channel phrases entr
   const data = await res.json()
   const content = data?.choices?.[0]?.message?.content ?? ""
   try {
-    const parsed = JSON.parse(content) as Record<string, unknown>
-    const styleRaw = typeof parsed.style_guide === "string" ? parsed.style_guide.trim().slice(0, 850) : undefined
+    const parsed = JSON.parse(content)
     return {
-      profilePatch: {
-        signal_type: typeof parsed.signal_type === "string" ? parsed.signal_type : undefined,
-        tp_style: typeof parsed.tp_style === "string" ? parsed.tp_style : undefined,
-        sl_style: typeof parsed.sl_style === "string" ? parsed.sl_style : undefined,
-        entry_type: typeof parsed.entry_type === "string" ? parsed.entry_type : undefined,
-        analysis_summary: typeof parsed.analysis_summary === "string" ? parsed.analysis_summary : undefined,
-      },
-      style_guide: styleRaw || undefined,
+      signal_type: typeof parsed.signal_type === "string" ? parsed.signal_type : undefined,
+      tp_style: typeof parsed.tp_style === "string" ? parsed.tp_style : undefined,
+      sl_style: typeof parsed.sl_style === "string" ? parsed.sl_style : undefined,
+      entry_type: typeof parsed.entry_type === "string" ? parsed.entry_type : undefined,
+      analysis_summary: typeof parsed.analysis_summary === "string" ? parsed.analysis_summary : undefined,
     }
   } catch {
     return null
@@ -397,13 +368,7 @@ Deno.serve(async (req: Request) => {
     }))
     const mergedRows = [...historyRows, ...rows]
     const heuristic = heuristicProfile(mergedRows)
-    const heuristicGuide = buildHeuristicStyleGuide(mergedRows)
-    const aiEnhance = await aiEnhanceProfile(heuristic, mergedRows)
-    const aiPatch = aiEnhance?.profilePatch ?? {}
-    const mergedStyleGuide = (aiEnhance?.style_guide?.trim())
-      ? aiEnhance.style_guide.trim()
-      : (heuristicGuide ?? "")
-    const styleGuideFinal = mergedStyleGuide ? mergedStyleGuide.slice(0, 2500) : undefined
+    const aiPatch = await aiEnhanceProfile(heuristic, mergedRows)
     const finalProfile: ChannelProfile = {
       ...heuristic,
       ...aiPatch,
@@ -413,9 +378,8 @@ Deno.serve(async (req: Request) => {
       estimated_sl_pips: heuristic.estimated_sl_pips,
       meta: {
         ...heuristic.meta,
-        ai_enhanced: Boolean(aiEnhance),
+        ai_enhanced: Boolean(aiPatch),
         lookback_days: lookbackDays,
-        style_guide: styleGuideFinal,
       },
     }
 

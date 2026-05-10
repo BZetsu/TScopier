@@ -1,13 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { createClient } from "npm:@supabase/supabase-js@2"
-import { type ParsedSignal as ExecParsed, runExecuteTradeFromPayload } from "../_shared/trade_execution.ts"
-import { formatCorpusForSystemPrompt } from "./signal_formats_corpus.ts"
-import { SIGNAL_INSTRUCTION_DOCTRINE } from "./signal_instruction_doctrine.ts"
-import {
-  extractTradableSymbolFromMessage,
-  parseDeterministicManagement,
-  parseSimpleSignal,
-} from "./management_fastpath.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -16,9 +8,6 @@ const corsHeaders = {
 }
 
 const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY") ?? ""
-/** Override via `OPENAI_SIGNAL_MODEL` or `OPENAI_MODEL` (faster models reduce LLM latency). */
-const OPENAI_SIGNAL_MODEL = Deno.env.get("OPENAI_SIGNAL_MODEL") ?? Deno.env.get("OPENAI_MODEL") ?? "gpt-4o-mini"
-const OPENAI_SIGNAL_USE_FEW_SHOTS = Deno.env.get("OPENAI_SIGNAL_USE_FEW_SHOTS") === "true"
 
 const SYSTEM_PROMPT = `You are a financial trade signal parser. Extract structured trade instructions from Telegram messages.
 
@@ -51,12 +40,6 @@ Rules:
 - if the message contains a broker or server hint, use it to refine the symbol
 - if the message contains a slash pair ("EUR/USD"), normalize to EURUSD-style
 `
-
-function buildLlmSystemPrompt(): string {
-  let out = SYSTEM_PROMPT + "\n\n" + SIGNAL_INSTRUCTION_DOCTRINE
-  if (OPENAI_SIGNAL_USE_FEW_SHOTS) out += formatCorpusForSystemPrompt()
-  return out
-}
 
 interface ParsedSignal {
   action: string
@@ -122,17 +105,128 @@ function normalizeParsedFromModel(raw: unknown, fallbackText: string): ParsedSig
   }
 }
 
-function toExecParsed(p: ParsedSignal): ExecParsed {
+/** Extract first known instrument ticker from Telegram text (any action). Order: explicit codes → slashes → slang. */
+function extractTradableSymbolFromMessage(raw: string): string | null {
+  if (!raw || typeof raw !== "string") return null
+  const u = raw.toUpperCase().replace(/\s+/g, " ")
+
+  const slash = raw.match(/\b([A-Z]{3,})\s*\/\s*([A-Z]{3,})\b/i)
+  if (slash) return (slash[1] + slash[2]).toUpperCase()
+
+  const explicit = u.match(
+    /\b(BTCUSD|BTCUSDT|BTCEUR|ETHUSD|ETHUSDT|EURUSD|GBPUSD|USDJPY|AUDUSD|NZDUSD|USDCAD|USDCHF|XAUUSD|XAGUSD|US30|US500|NAS100|GER40|UK100|SPX500|USTEC)\b/,
+  )
+  if (explicit) return explicit[1]
+
+  if (/\bBITCOIN\b|\bBTC\b/.test(u) && /\bEUR\b/.test(u) && !/\bUSD\b|\bUSDT\b|\bPERP\b/.test(u)) return "BTCEUR"
+  if (/\bBITCOIN\b|\bBTC\b/.test(u)) return /\bUSDT\b/.test(u) ? "BTCUSDT" : "BTCUSD"
+  if (/\bETHER(EUM)?\b|\bETH\b/.test(u)) return /\bUSDT\b/.test(u) ? "ETHUSDT" : "ETHUSD"
+  if (/\b(XAUUSD|XAU\b|GOLD)\b/.test(u)) return "XAUUSD"
+  if (/\bSILVER\b|\bXAG\b|\bXAGUSD\b/.test(u)) return "XAGUSD"
+
+  const bogusSix = new Set([
+    "CLOSED", "CLOSES", "SIGNAL", "MARKET", "SILVER", "GOLDEN", "MASTER", "PUBLIC", "TRADER", "BROKER",
+    "MARGIN", "POSITION", "TRADES", "ORDERS",
+  ])
+  const six = u.match(/\b([A-Z]{6})\b/)
+  if (six && !bogusSix.has(six[1])) {
+    return six[1]
+  }
+  return null
+}
+
+const ENTRY_KW = /\b(buy|sell|long|short)\b/i
+const MGMT_CLOSE = /\b(close\s*(all)?|flatten|kill\s*zones?|exit\s*(trade|position|long|short))\b|\b(close|closed)\s+((my|the|this)\s+)?((running|active|open)\s+)?(trade|position|btc|gold)/i
+
+function parseDeterministicManagement(message: string): ParsedSignal | null {
+  const t = message.replace(/\s+/g, " ").trim()
+  if (!t) return null
+  const tl = t.toLowerCase()
+
+  const sym = extractTradableSymbolFromMessage(t)
+  let action: ParsedSignal["action"] | null = null
+  let confidence = 0.92
+
+  if (MGMT_CLOSE.test(t)) action = "close"
+  else if (/\bbreakeven|break\s*even\b/i.test(t) || /\bmoved?\s+(sl\s+)?to\s+(be|entry|entr(y)?\s?price)|\b(be|bk)\s*now\b/i.test(t)) action = "breakeven"
+  else if (/\bpartial\b|\bc\s*half\b|close\s+50%|close\s+half/i.test(t)) action = "partial_profit"
+  else if (
+    /\b(set|move|adjust|bring)\s+(sl|tp|stop\s*loss|take\s*profit)\b|\b(stop\s*loss|take\s*profit)\s*(to|=)\s*[\d.]+/i
+      .test(t)
+  ) action = "modify"
+
+  if (!action) return null
+  const looksEntry = ENTRY_KW.test(t) &&
+    /\b(buy|sell)\s+(now|btc|bitcoin|gold|xau)|market\s+(buy|sell)/i.test(t)
+  // Avoid swallowing urgent market entries ("Sell now btc") if word "exit" typo — rare skip
+  if (action === "close" && /\b(stop\s*sell|sell\s*stops?)\s+now\b/i.test(tl)) return null
+
+  if (action === "close" && looksEntry && /\b(and|&)+\s*(gold|btc)\b/i.test(tl)) {
+    confidence = 0.88 // ambiguous
+  }
+
+  const slMatch = t.match(/\b(?:sl|stop\s*loss)\s*[:=]?\s*(\d+(?:\.\d+)?)/i)
+  const sl = slMatch ? Number(slMatch[1]) : null
+  const tpMatches = [...t.matchAll(/\b(?:tp\d*|take\s*profit)\s*[:=]?\s*(\d+(?:\.\d+)?)/gi)]
+  const tp = tpMatches.map((m) => Number(m[1])).filter((n) => Number.isFinite(n))
+
   return {
-    action: p.action,
-    symbol: p.symbol,
-    entry_price: p.entry_price,
-    entry_zone_low: p.entry_zone_low,
-    entry_zone_high: p.entry_zone_high,
-    sl: p.sl,
-    tp: p.tp,
-    lot_size: p.lot_size,
-    confidence: p.confidence,
+    action,
+    symbol: sym,
+    entry_price: null,
+    entry_zone_low: null,
+    entry_zone_high: null,
+    sl,
+    tp,
+    lot_size: null,
+    confidence,
+    raw_instruction: message,
+  }
+}
+
+/** Fast path: market-ish entries for common assets (gold, btc, …), not gold-only global default. */
+function parseSimpleSignal(message: string): ParsedSignal | null {
+  const text = message.toLowerCase().replace(/\s+/g, " ").trim()
+  if (!text) return null
+
+  if (/\b(close|flatten|exit\s+trade|breakeven|break\s+even|partial|move\s+(sl|tp))\b/i.test(text)) return null
+
+  const isBuy = /\b(buy|long)\b/.test(text)
+  const isSell = /\b(sell|short)\b/.test(text)
+  const isNow = /\b(now|instant|market|mkt\b)\b/.test(text)
+  const atMarketLike = /\b(at\s+market|@\s*market)\b/i.test(message)
+
+  if (!isNow && !atMarketLike) return null
+  if (isBuy === isSell) return null
+
+  const instrument = extractTradableSymbolFromMessage(message)
+  if (!instrument) return null
+
+  // Require commodity/pair-ish context unless we matched a precise 6-letter code
+  const hasInstrumentContext =
+    /\b(gold|xau|xauusd|btc|bitcoin|btcusd|btcusdt|eth|ethereum|silver|eur|gbp)\b/i.test(text) ||
+    /\bEUR\/USD|EURUSD|GBPUSD|USDJPY|XAUUSD|BTCUSD|BTCUSDT\b/i.test(message) ||
+    /\b(us30|nas100|ger40|uk100|ustec|spx500)\b/i.test(text) ||
+    /^[A-Z]{4,}$/i.test(instrument.trim())
+
+  if (!hasInstrumentContext) return null
+
+  const slMatch = text.match(/\b(?:sl|stop\s*loss)\s*[:=]?\s*(\d+(?:\.\d+)?)/i)
+  const sl = slMatch ? Number(slMatch[1]) : null
+  const tpMatches = [...text.matchAll(/\b(?:tp\d*|take\s*profit)\s*[:=]?\s*(\d+(?:\.\d+)?)/gi)]
+  const tp = tpMatches.map((m) => Number(m[1])).filter((n) => Number.isFinite(n))
+
+  return {
+    action: isBuy ? "buy" : "sell",
+    symbol: instrument,
+    entry_price: null,
+    entry_zone_low: null,
+    entry_zone_high: null,
+    sl,
+    tp,
+    lot_size: null,
+    confidence: 0.99,
+    raw_instruction: message,
   }
 }
 
@@ -182,13 +276,6 @@ function compactChannelProfile(row: Record<string, unknown>): string {
     const summaryBody = sum.length > 600 ? sum.slice(0, 600) + "..." : sum
     parts.push("summary=" + summaryBody)
   }
-  const meta = row.meta && typeof row.meta === "object" ? row.meta as Record<string, unknown> : null
-  if (meta?.style_guide && typeof meta.style_guide === "string") {
-    const sg = meta.style_guide.trim()
-    if (sg) {
-      parts.push("channel_style_guide=" + (sg.length > 900 ? sg.slice(0, 900) + "..." : sg))
-    }
-  }
   return parts.join("; ")
 }
 
@@ -206,13 +293,13 @@ async function parseWithOpenAI(message: string, channelHints: string | null): Pr
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: OPENAI_SIGNAL_MODEL,
+      model: "gpt-4o-mini",
       messages: [
-        { role: "system", content: buildLlmSystemPrompt() },
+        { role: "system", content: SYSTEM_PROMPT },
         { role: "user", content: userContent },
       ],
       temperature: 0,
-      max_tokens: 384,
+      max_tokens: 400,
     }),
   })
 
@@ -221,8 +308,7 @@ async function parseWithOpenAI(message: string, channelHints: string | null): Pr
   }
 
   const data = await res.json()
-  let content = data.choices?.[0]?.message?.content ?? ""
-  content = content.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "").trim()
+  const content = data.choices?.[0]?.message?.content ?? ""
 
   try {
     return JSON.parse(content)
@@ -263,17 +349,13 @@ Deno.serve(async (req: Request) => {
       return Response.json({ error: "Signal not found" }, { status: 404, headers: corsHeaders })
     }
 
-    // Skip channel profile lookup when deterministic parsers win — saves ~50–200ms and removes OpenAI blocker.
-    const quickParse =
-      parseDeterministicManagement(signal.raw_message)
-      ?? parseSimpleSignal(signal.raw_message)
-
+    // Optional channel profile hints (read-only; missing row is fine).
     let channelHints: string | null = null
-    if (!quickParse && signal.channel_id) {
+    if (signal.channel_id) {
       const { data: prof } = await supabase
         .from("channel_signal_profiles")
         .select(
-          "signal_type, tp_style, sl_style, entry_type, most_traded_asset, estimated_tp_pips, estimated_sl_pips, analysis_summary, meta",
+          "signal_type, tp_style, sl_style, entry_type, most_traded_asset, estimated_tp_pips, estimated_sl_pips, analysis_summary",
         )
         .eq("channel_id", signal.channel_id)
         .maybeSingle()
@@ -285,7 +367,8 @@ Deno.serve(async (req: Request) => {
 
     // Parse message: management + multi-asset deterministic paths first, then LLM.
     const rawParsed =
-      quickParse
+      parseDeterministicManagement(signal.raw_message)
+      ?? parseSimpleSignal(signal.raw_message)
       ?? await parseWithOpenAI(signal.raw_message, channelHints)
     const parsed = applyRawSymbolRepair(
       normalizeParsedFromModel(rawParsed, signal.raw_message),
@@ -307,27 +390,36 @@ Deno.serve(async (req: Request) => {
       return Response.json({ error: updateErr.message }, { status: 500, headers: corsHeaders })
     }
 
-    // If valid trade signal, trigger execution (same isolate as parse — avoids a second Edge Function cold start).
+    // If valid trade signal, trigger execution
     if (parsed.action !== "ignore" && parsed.confidence >= 0.7) {
+      // Fire-and-forget trade execution
       EdgeRuntime.waitUntil(
         (async () => {
           try {
             // #region agent log
-            fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7e177e'},body:JSON.stringify({sessionId:'7e177e',runId:'run1',hypothesisId:'H3',location:'supabase/functions/parse-signal/index.ts:inline-exec',message:'inline execute-trade dispatch',data:{signalId:signal_id,action:parsed.action,confidence:parsed.confidence},timestamp:Date.now()})}).catch(()=>{});
+            fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7e177e'},body:JSON.stringify({sessionId:'7e177e',runId:'run1',hypothesisId:'H3',location:'supabase/functions/parse-signal/index.ts:138',message:'execute-trade dispatch',data:{signalId:signal_id,action:parsed.action,confidence:parsed.confidence},timestamp:Date.now()})}).catch(()=>{});
             // #endregion
-            const execRes = await runExecuteTradeFromPayload({ signal_id, parsed: toExecParsed(parsed) })
+            const secret = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
+            const execRes = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/execute-trade`, {
+              method: "POST",
+              headers: {
+                // sb_secret_* is not a JWT; use apikey (Bearer triggers INVALID_JWT_FORMAT on the gateway).
+                "apikey": secret,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({ signal_id, parsed }),
+            })
             if (!execRes.ok) {
               const raw = await execRes.text()
-              if (execRes.status === 503) {
-                await supabase.from("signals").update({
-                  status: "failed",
-                  skip_reason: `Execute trade failed (503): ${raw.slice(0, 240)}`,
-                }).eq("id", signal_id)
-              }
-              console.error("parse-signal inline execute failed:", execRes.status, raw.slice(0, 300))
+              // #region agent log
+              fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7e177e'},body:JSON.stringify({sessionId:'7e177e',runId:'run1',hypothesisId:'H3',location:'supabase/functions/parse-signal/index.ts:149',message:'execute-trade non-2xx',data:{signalId:signal_id,status:execRes.status,body:raw.slice(0,300)},timestamp:Date.now()})}).catch(()=>{});
+              // #endregion
+              const reason = `Execute trade failed (${execRes.status}): ${raw.slice(0, 300)}`
+              await supabase.from("signals").update({ status: "failed", skip_reason: reason }).eq("id", signal_id)
+              console.error("parse-signal execute-trade failed:", reason)
             }
           } catch (e: unknown) {
-            const msg = e instanceof Error ? e.message : "execute-trade error"
+            const msg = e instanceof Error ? e.message : "execute-trade network error"
             await supabase.from("signals").update({ status: "failed", skip_reason: msg }).eq("id", signal_id)
             console.error("parse-signal execute-trade error:", msg)
           }

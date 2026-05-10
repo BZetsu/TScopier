@@ -426,7 +426,9 @@ class UserListener {
             fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '7e177e' }, body: JSON.stringify({ sessionId: '7e177e', runId: 'run1', hypothesisId: 'H2', location: 'worker/src/userListener.ts:426', message: 'parse trigger dispatch', data: { signalId: signalRow.id, hasParseUrl: !!PARSE_SIGNAL_URL, hasParseAuthKey: !!PARSE_SIGNAL_AUTH_KEY }, timestamp: Date.now() }) }).catch(() => { });
             // #endregion
             const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort('parse-timeout'), 10000);
+            // parse-signal may await MetaTrader broker round-trips inline; keep below typical worker HTTP client limits (~120s).
+            const parseTimeoutMs = Math.max(10000, Number(process.env.PARSE_SIGNAL_TIMEOUT_MS ?? 120000) || 120000);
+            const timeout = setTimeout(() => controller.abort('parse-timeout'), parseTimeoutMs);
             try {
                 const res = await fetch(PARSE_SIGNAL_URL, {
                     method: 'POST',

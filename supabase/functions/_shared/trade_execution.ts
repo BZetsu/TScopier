@@ -1,7 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { createClient } from "npm:@supabase/supabase-js@2"
 
-export const corsHeaders = {
+const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
@@ -10,7 +10,7 @@ export const corsHeaders = {
 const METATRADERAPI_KEY = Deno.env.get("METATRADERAPI_KEY") ?? ""
 const METATRADERAPI_BASE = (Deno.env.get("METATRADERAPI_BASE_URL") ?? "https://api.metatraderapi.dev").replace(/\/$/, "")
 
-export interface ParsedSignal {
+interface ParsedSignal {
   action: string
   symbol: string | null
   entry_price: number | null
@@ -965,15 +965,25 @@ async function executeOneBroker(
   }
 }
 
-export function isMetatraderConfigured(): boolean {
-  return Boolean(METATRADERAPI_KEY)
+/** With verify_jwt=false on this function: require service role secret (new keys use apikey header, not Bearer). */
+function authorizeExecuteCaller(req: Request): boolean {
+  const svc = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
+  if (!svc) return false
+  const apikey = req.headers.get("apikey") ?? ""
+  const auth = req.headers.get("authorization") ?? ""
+  const bearer = auth.replace(/^\s*Bearer\s+/i, "").trim()
+  return apikey === svc || bearer === svc
 }
 
-/** Core trade pipeline (also invoked from parse-signal to avoid a second Edge Function cold start). */
-export async function runExecuteTradeFromPayload(payload: {
-  signal_id: string
-  parsed: ParsedSignal
-}): Promise<Response> {
+Deno.serve(async (req: Request) => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { status: 200, headers: corsHeaders })
+  }
+
+  if (!authorizeExecuteCaller(req)) {
+    return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders })
+  }
+
   try {
     if (!METATRADERAPI_KEY) {
       return Response.json({ error: "METATRADERAPI_KEY is not configured" }, { status: 503, headers: corsHeaders })
@@ -984,7 +994,8 @@ export async function runExecuteTradeFromPayload(payload: {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     )
 
-    const { signal_id, parsed } = payload
+    const body = await req.json()
+    const { signal_id, parsed } = body as { signal_id: string; parsed: ParsedSignal }
     // #region agent log
     fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7e177e'},body:JSON.stringify({sessionId:'7e177e',runId:'run1',hypothesisId:'H4',location:'supabase/functions/execute-trade/index.ts:103',message:'execute-trade invoked',data:{hasSignalId:!!signal_id,action:parsed?.action ?? null,hasSymbol:!!parsed?.symbol},timestamp:Date.now()})}).catch(()=>{});
     // #endregion
@@ -1084,20 +1095,21 @@ export async function runExecuteTradeFromPayload(payload: {
     fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7e177e'},body:JSON.stringify({sessionId:'7e177e',runId:'run1',hypothesisId:'H5',location:'supabase/functions/execute-trade/index.ts:243',message:'execute-trade caught error',data:{error:message},timestamp:Date.now()})}).catch(()=>{});
     // #endregion
     try {
-      if (payload.signal_id) {
-        const sb = createClient(
+      const body = await req.clone().json().catch(() => ({})) as { signal_id?: string }
+      if (body.signal_id) {
+        const supabase = createClient(
           Deno.env.get("SUPABASE_URL")!,
           Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
         )
-        const { data: s } = await sb.from("signals").select("user_id").eq("id", payload.signal_id).maybeSingle()
-        await sb
+        const { data: s } = await supabase.from("signals").select("user_id").eq("id", body.signal_id).maybeSingle()
+        await supabase
           .from("signals")
           .update({ status: "failed", skip_reason: message })
-          .eq("id", payload.signal_id)
+          .eq("id", body.signal_id)
         if (s?.user_id) {
-          await logExecution(sb, {
+          await logExecution(supabase, {
             user_id: s.user_id as string,
-            signal_id: payload.signal_id,
+            signal_id: body.signal_id,
             action: "unknown",
             status: "failed",
             error_message: message,
@@ -1109,4 +1121,4 @@ export async function runExecuteTradeFromPayload(payload: {
     }
     return Response.json({ error: message }, { status: 500, headers: corsHeaders })
   }
-}
+})
