@@ -55,6 +55,44 @@ interface AiExpertLogRow {
 
 const MANAGEMENT_LOG_ACTIONS = new Set(['close', 'breakeven', 'partial_profit', 'modify'])
 
+/** MT/API `volume` is often not in contract lots for crypto; reject absurd scalars so we don't show e.g. 2e6 instead of 0.02. */
+function isPlausibleRetailLot(n: number): boolean {
+  return Number.isFinite(n) && n > 0 && n < 1_000_000
+}
+
+/** Prefer lots recorded by execute-trade (`volume_executed`); never prefer raw provider volume when it looks like units not lots. */
+function lotSizeForExpertLogDisplay(row: AiExpertLogRow): number | null {
+  const payload = (row.request_payload ?? {}) as Record<string, unknown>
+  const parsed = (payload.parsed ?? {}) as Record<string, unknown>
+  const response = (row.response_payload ?? {}) as Record<string, unknown>
+  const sizing = (payload.sizing ?? {}) as Record<string, unknown>
+
+  const volExec = Number(payload.volume_executed)
+  if (Number.isFinite(volExec) && volExec > 0) return volExec
+
+  const parsedLot = Number(parsed.lot_size)
+  if (Number.isFinite(parsedLot) && parsedLot > 0 && isPlausibleRetailLot(parsedLot)) return parsedLot
+
+  const sizingParsed = Number(sizing.parsed_lot)
+  if (Number.isFinite(sizingParsed) && sizingParsed > 0 && isPlausibleRetailLot(sizingParsed)) return sizingParsed
+
+  const pv = Number(payload.volume)
+  if (Number.isFinite(pv) && pv > 0 && isPlausibleRetailLot(pv)) return pv
+
+  const rv = Number(response.volume ?? response.Volume)
+  if (Number.isFinite(rv) && rv > 0 && isPlausibleRetailLot(rv)) return rv
+
+  if (Number.isFinite(parsedLot) && parsedLot > 0) return parsedLot
+
+  return null
+}
+
+function formatLotSizeForMessage(lots: number): string {
+  if (!Number.isFinite(lots) || lots <= 0) return ''
+  const n = lots >= 1 ? Number(lots.toFixed(2)) : Number.parseFloat(lots.toFixed(8))
+  return String(n)
+}
+
 function cleanSymbolLabel(v: unknown): string | null {
   const s = typeof v === 'string' ? v.trim() : ''
   if (!s || s === 'null' || s === 'undefined' || s === 'trade') return null
@@ -842,11 +880,11 @@ function AiExpertLogItem({ row }: { row: AiExpertLogRow }) {
   const parsed = (payload.parsed ?? {}) as Record<string, unknown>
   const symbol = symbolForExpertLog(row)
   const action = String(parsed.action ?? row.action ?? 'action').toLowerCase()
-  const lot = Number(parsed.lot_size ?? response.volume ?? payload.volume)
+  const lot = lotSizeForExpertLogDisplay(row)
   const entry = Number(parsed.entry_price ?? response.price ?? payload.price)
   const tp = Array.isArray(parsed.tp) ? Number(parsed.tp[0]) : Number(parsed.tp)
   const sl = Number(parsed.sl)
-  const hasLot = Number.isFinite(lot) && lot > 0
+  const hasLot = lot != null && Number.isFinite(lot) && lot > 0
   const hasEntry = Number.isFinite(entry) && entry > 0
   const hasTp = Number.isFinite(tp) && tp > 0
   const hasSl = Number.isFinite(sl) && sl > 0
@@ -858,7 +896,8 @@ function AiExpertLogItem({ row }: { row: AiExpertLogRow }) {
         : `Could not reach parse-signal for ${symbol}${row.error_message ? `: ${row.error_message}` : '.'}`
     }
     if (row.status === 'success' && (action === 'buy' || action === 'sell')) {
-      return `Opened a ${hasLot ? lot.toFixed(2) : 'new'} ${action.toUpperCase()} position on ${symbol}${hasEntry ? ` @ ${entry}` : ''}${hasTp || hasSl ? ` (${hasTp ? `TP1 ${tp}` : ''}${hasTp && hasSl ? ', ' : ''}${hasSl ? `SL ${sl}` : ''})` : ''}.`
+      const lotStr = hasLot && lot != null ? formatLotSizeForMessage(lot) : ''
+      return `Opened a ${lotStr ? `${lotStr} ` : 'new '}${action.toUpperCase()} position on ${symbol}${hasEntry ? ` @ ${entry}` : ''}${hasTp || hasSl ? ` (${hasTp ? `TP1 ${tp}` : ''}${hasTp && hasSl ? ', ' : ''}${hasSl ? `SL ${sl}` : ''})` : ''}.`
     }
     if (row.status === 'failed') {
       return `Failed to execute ${action.toUpperCase()} on ${symbol}${row.error_message ? `: ${row.error_message}` : '.'}`
