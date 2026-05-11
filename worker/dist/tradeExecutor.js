@@ -20,15 +20,35 @@ function isMtUuid(s) {
         return false;
     return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 }
+/**
+ * Parse the (free-form) "Symbol To Trade" field into a list of allowed symbols.
+ * Accepts comma, semicolon, or whitespace separators so users can type
+ * `XAUUSD, BTCUSD` or `XAUUSD BTCUSD` interchangeably.
+ */
+function parseSymbolToTradeList(value) {
+    if (!value || !value.trim())
+        return [];
+    return value
+        .split(/[,;\s]+/)
+        .map(s => s.trim().toUpperCase())
+        .filter(s => s.length > 0);
+}
 function applySymbolMapping(raw, broker) {
     const m = (broker.manual_settings ?? {});
     const upper = raw.toUpperCase();
     const mapped = (m.symbol_mapping?.[upper] ?? upper).toUpperCase();
     const prefix = (m.symbol_prefix ?? '').toUpperCase();
     const suffix = (m.symbol_suffix ?? '').toUpperCase();
-    if (m.symbol_to_trade && m.symbol_to_trade.trim())
-        return m.symbol_to_trade.trim().toUpperCase();
-    return `${prefix}${mapped}${suffix}`;
+    const allowed = parseSymbolToTradeList(m.symbol_to_trade);
+    // Single entry → treat as a hard override (force every signal to this instrument).
+    // Multiple entries → whitelist mode (only signals matching one of these symbols pass through).
+    if (allowed.length === 1) {
+        return { symbol: allowed[0], whitelist: [] };
+    }
+    return {
+        symbol: `${prefix}${mapped}${suffix}`,
+        whitelist: allowed,
+    };
 }
 function isExcluded(symbol, broker) {
     const m = (broker.manual_settings ?? {});
@@ -340,11 +360,24 @@ class TradeExecutor {
         if (!this.api)
             return;
         const uuid = broker.metaapi_account_id;
-        const requestedSymbol = applySymbolMapping(parsed.symbol, broker);
+        const mapping = applySymbolMapping(parsed.symbol, broker);
+        // Whitelist mode: when the user listed multiple symbols, only let signals
+        // matching one of them through. Skip the signal otherwise.
+        if (mapping.whitelist.length > 0) {
+            const sig = (parsed.symbol ?? '').toUpperCase();
+            if (!mapping.whitelist.includes(sig)) {
+                await this.logSendSkipped(signal, broker, 'symbol_not_in_whitelist', {
+                    signal_symbol: parsed.symbol ?? null,
+                    allowed: mapping.whitelist,
+                });
+                return;
+            }
+        }
+        const requestedSymbol = mapping.symbol;
         if (isExcluded(requestedSymbol, broker))
             return;
         // Resolve to the broker's actual instrument name (e.g. BTCUSD → BTCUSDm).
-        // Falls back to the requested symbol when /Symbols is unavailable.
+        // Falls back to the requested symbol when /Symbols is unavailable or has no match.
         const symbol = await this.resolveBrokerSymbol(uuid, requestedSymbol);
         if (symbol.toUpperCase() !== requestedSymbol.toUpperCase()) {
             console.log(`[tradeExecutor] symbol resolved broker=${broker.id} ${requestedSymbol} → ${symbol}`);
