@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Plus, Trash2, Server, Activity, GitBranch, Eye, DollarSign,
-  RefreshCw, Plug, SlidersHorizontal, Radio, Target, TrendingUp, Filter, Wallet,
+  SlidersHorizontal, Radio, Target, TrendingUp, Filter, Wallet,
+  ArrowLeftRight,
 } from 'lucide-react'
 import clsx from 'clsx'
 import { supabase } from '../../lib/supabase'
@@ -168,18 +169,28 @@ function PlatformIcon({ platform }: { platform: string }) {
   )
 }
 
-type ConfigTabId = 'connection' | 'mode' | 'channels' | 'risk' | 'stops' | 'trailing' | 'filters'
+type ConfigTabId = 'mode' | 'channels'
+type ManualSubTabId = 'symbol_routing' | 'risk' | 'stops' | 'trailing' | 'filters'
 
 interface TabDef {
   id: ConfigTabId
   label: string
-  icon: typeof Plug
+  icon: typeof SlidersHorizontal
+}
+
+interface ManualSubTabDef {
+  id: ManualSubTabId
+  label: string
+  icon: typeof SlidersHorizontal
 }
 
 const ALL_TABS: TabDef[] = [
-  { id: 'connection', label: 'Connection', icon: Plug },
   { id: 'mode', label: 'Mode', icon: SlidersHorizontal },
   { id: 'channels', label: 'Channels', icon: Radio },
+]
+
+const MANUAL_SUB_TABS: ManualSubTabDef[] = [
+  { id: 'symbol_routing', label: 'Symbol Routing', icon: ArrowLeftRight },
   { id: 'risk', label: 'Risk & Sizing', icon: Wallet },
   { id: 'stops', label: 'Stops & Targets', icon: Target },
   { id: 'trailing', label: 'Trailing', icon: TrendingUp },
@@ -196,10 +207,10 @@ export function AccountConfigPage() {
     channelIds: [],
     manualSettings: { ...DEFAULT_MANUAL_SETTINGS },
   })
-  const [activeTab, setActiveTab] = useState<ConfigTabId>('connection')
+  const [activeTab, setActiveTab] = useState<ConfigTabId>('mode')
+  const [activeManualSubTab, setActiveManualSubTab] = useState<ManualSubTabId>('symbol_routing')
   const [symbolMappingText, setSymbolMappingText] = useState('')
   const [configSaving, setConfigSaving] = useState(false)
-  const [summaryRefreshing, setSummaryRefreshing] = useState(false)
   const [showPlatformModal, setShowPlatformModal] = useState(false)
   const [showAddBroker, setShowAddBroker] = useState(false)
   const [form, setForm] = useState<BrokerForm>(emptyForm)
@@ -244,7 +255,8 @@ export function AccountConfigPage() {
       channelIds = persistedIds
     }
     setConfigAccount(fresh)
-    setActiveTab('connection')
+    setActiveTab('mode')
+    setActiveManualSubTab('symbol_routing')
     const manualSettings = normalizeManualSettings(fresh.manual_settings)
     setConfigDraft({
       mode: fresh.copier_mode === 'manual' ? 'manual' : 'ai',
@@ -349,45 +361,6 @@ export function AccountConfigPage() {
     closeConfigureModal()
   }
 
-  const refreshSummary = async () => {
-    if (!configAccount) return
-    setSummaryRefreshing(true)
-    setError('')
-    try {
-      const { summary } = await metatraderApi.summary(configAccount.id)
-      const patch = {
-        last_balance: summary?.balance ?? null,
-        last_equity: summary?.equity ?? null,
-        last_currency: summary?.currency ?? null,
-        last_synced_at: new Date().toISOString(),
-        connection_status: 'connected' as const,
-      }
-      setBrokers(prev => prev.map(b => b.id === configAccount.id ? { ...b, ...patch } : b))
-      setConfigAccount(prev => prev ? { ...prev, ...patch } : prev)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to refresh balance')
-    } finally {
-      setSummaryRefreshing(false)
-    }
-  }
-
-  const checkConnection = async () => {
-    if (!configAccount) return
-    setSummaryRefreshing(true)
-    setError('')
-    try {
-      await metatraderApi.check(configAccount.id)
-      setBrokers(prev => prev.map(b => b.id === configAccount.id ? { ...b, connection_status: 'connected' } : b))
-      setConfigAccount(prev => prev ? { ...prev, connection_status: 'connected' } : prev)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Connection check failed')
-      setBrokers(prev => prev.map(b => b.id === configAccount.id ? { ...b, connection_status: 'error' } : b))
-      setConfigAccount(prev => prev ? { ...prev, connection_status: 'error' } : prev)
-    } finally {
-      setSummaryRefreshing(false)
-    }
-  }
-
   // ── Channel summary helper for cards ───────────────────────────────────
 
   const getBrokerSignalChannelsLabel = (brokerId: string) => {
@@ -434,10 +407,42 @@ export function AccountConfigPage() {
       setBrokers(prev => [...prev, broker])
       setForm(emptyForm)
       setShowAddBroker(false)
+      // If the register endpoint couldn't pull a summary inside its short
+      // request window (MT5 sometimes needs a few extra seconds for the
+      // session to come up), keep tailing for it client-side so the card
+      // is populated without the user having to click Refresh.
+      if (broker?.id && (broker.last_balance == null && broker.last_equity == null)) {
+        void tailRefreshBrokerSummary(broker.id)
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to connect account')
     } finally {
       setSaving(false)
+    }
+  }
+
+  /** Poll AccountSummary for a freshly-registered broker until numbers arrive or we give up. */
+  const tailRefreshBrokerSummary = async (brokerId: string) => {
+    const delays = [1500, 2500, 4000, 6000, 8000]
+    for (const delay of delays) {
+      await new Promise(r => setTimeout(r, delay))
+      try {
+        const { summary } = await metatraderApi.summary(brokerId)
+        if (summary && (summary.balance != null || summary.equity != null || summary.currency)) {
+          const patch = {
+            last_balance: summary.balance ?? null,
+            last_equity: summary.equity ?? null,
+            last_currency: summary.currency ?? null,
+            last_synced_at: new Date().toISOString(),
+            connection_status: 'connected' as const,
+          }
+          setBrokers(prev => prev.map(b => b.id === brokerId ? { ...b, ...patch } : b))
+          setConfigAccount(prev => prev && prev.id === brokerId ? { ...prev, ...patch } : prev)
+          return
+        }
+      } catch {
+        // Keep trying — the MT5 server may still be authenticating.
+      }
     }
   }
 
@@ -457,12 +462,7 @@ export function AccountConfigPage() {
     }
   }
 
-  const tabs = useMemo<TabDef[]>(() => {
-    if (configDraft.mode === 'ai') {
-      return ALL_TABS.filter(t => t.id === 'connection' || t.id === 'mode' || t.id === 'channels')
-    }
-    return ALL_TABS
-  }, [configDraft.mode])
+  const tabs = ALL_TABS
 
   // ── Loading ────────────────────────────────────────────────────────────
 
@@ -701,7 +701,7 @@ export function AccountConfigPage() {
 
       {configAccount && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-          <div className="w-full max-w-5xl max-h-[88vh] flex flex-col rounded-2xl bg-white shadow-xl border border-neutral-200 overflow-hidden">
+          <div className="w-full max-w-5xl h-[88vh] flex flex-col rounded-2xl bg-white shadow-xl border border-neutral-200 overflow-hidden">
             <div className="px-6 py-4 border-b border-neutral-100 flex items-center justify-between">
               <div>
                 <h3 className="text-lg font-semibold text-neutral-900">Configure Account</h3>
@@ -747,19 +747,10 @@ export function AccountConfigPage() {
                   <div className="mb-4 px-3 py-2 bg-error-50 border border-error-200 rounded-lg text-sm text-error-700">{error}</div>
                 )}
 
-                {activeTab === 'connection' && (
-                  <ConnectionTab
-                    broker={configAccount}
-                    refreshing={summaryRefreshing}
-                    onRefresh={refreshSummary}
-                    onCheck={checkConnection}
-                  />
-                )}
-
                 {activeTab === 'mode' && (
                   <div className="space-y-5">
                     <div>
-                      <p className="text-sm font-medium text-neutral-800 mb-2">Configuration mode</p>
+                      <p className="text-sm font-medium text-neutral-800 mb-2">Configure mode</p>
                       <div className="inline-flex rounded-lg border border-neutral-200 bg-neutral-50 p-1">
                         <button
                           onClick={() => setConfigDraft(prev => ({ ...prev, mode: 'ai' }))}
@@ -791,41 +782,233 @@ export function AccountConfigPage() {
                         </div>
                       </div>
                     ) : (
-                      <div className="rounded-xl border border-neutral-200 p-4 space-y-4">
-                        <p className="text-sm font-semibold text-neutral-900">Symbol routing</p>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                          <div>
-                            <p className="text-xs text-neutral-600 mb-1">Symbol Mapping (one per line: FROM=TO)</p>
-                            <textarea
-                              className="w-full min-h-[90px] rounded-md border border-neutral-200 px-3 py-2 text-sm"
-                              placeholder={`GOLD=XAUUSD\nUSOIL=WTIOIL\nBTC=BTCUSD`}
-                              value={symbolMappingText}
-                              onChange={(e) => {
-                                const raw = e.target.value
-                                setSymbolMappingText(raw)
-                                const next: Record<string, string> = {}
-                                for (const line of raw.split('\n')) {
-                                  const [a, b] = line.split('=').map(s => s.trim())
-                                  if (a && b) next[a.toUpperCase()] = b.toUpperCase()
-                                }
-                                setManual({ symbol_mapping: next })
-                              }}
-                            />
-                            <p className="mt-1 text-[11px] text-neutral-500">
-                              Examples: <span className="font-mono">GOLD=XAUUSD</span>, <span className="font-mono">USOIL=WTIOIL</span>
-                            </p>
-                          </div>
-                          <div className="grid grid-cols-2 gap-2">
-                            <Input label="Symbol Prefix" value={configDraft.manualSettings.symbol_prefix ?? ''} onChange={e => setManual({ symbol_prefix: e.target.value })} />
-                            <Input label="Symbol Suffix" value={configDraft.manualSettings.symbol_suffix ?? ''} onChange={e => setManual({ symbol_suffix: e.target.value })} />
-                            <Input label="Symbol To Trade" value={configDraft.manualSettings.symbol_to_trade ?? ''} onChange={e => setManual({ symbol_to_trade: e.target.value })} />
-                            <Input
-                              label="Symbols to Exclude (comma)"
-                              value={(configDraft.manualSettings.symbols_exclude ?? []).join(',')}
-                              onChange={e => setManual({ symbols_exclude: e.target.value.split(',').map(x => x.trim().toUpperCase()).filter(Boolean) })}
-                            />
-                          </div>
+                      <div className="space-y-4">
+                        <p className="text-sm font-semibold text-neutral-900">Manual</p>
+                        <div className="flex flex-wrap items-center gap-1 border-b border-neutral-100">
+                          {MANUAL_SUB_TABS.map(sub => {
+                            const SubIcon = sub.icon
+                            const active = sub.id === activeManualSubTab
+                            return (
+                              <button
+                                key={sub.id}
+                                type="button"
+                                onClick={() => setActiveManualSubTab(sub.id)}
+                                className={clsx(
+                                  'flex items-center gap-1.5 px-3 py-2 text-sm transition-colors border-b-2 -mb-px',
+                                  active
+                                    ? 'border-primary-600 text-primary-700'
+                                    : 'border-transparent text-neutral-500 hover:text-neutral-800',
+                                )}
+                              >
+                                <SubIcon className={clsx('w-3.5 h-3.5', active ? 'text-primary-600' : 'text-neutral-400')} />
+                                {sub.label}
+                              </button>
+                            )
+                          })}
                         </div>
+
+                        {activeManualSubTab === 'symbol_routing' && (
+                          <div className="rounded-xl border border-neutral-200 p-4 space-y-4">
+                            <p className="text-sm font-semibold text-neutral-900">Symbol routing</p>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                              <div>
+                                <p className="text-xs text-neutral-600 mb-1">Symbol Mapping (one per line: FROM=TO)</p>
+                                <textarea
+                                  className="w-full min-h-[90px] rounded-md border border-neutral-200 px-3 py-2 text-sm"
+                                  placeholder={`GOLD=XAUUSD\nUSOIL=WTIOIL\nBTC=BTCUSD`}
+                                  value={symbolMappingText}
+                                  onChange={(e) => {
+                                    const raw = e.target.value
+                                    setSymbolMappingText(raw)
+                                    const next: Record<string, string> = {}
+                                    for (const line of raw.split('\n')) {
+                                      const [a, b] = line.split('=').map(s => s.trim())
+                                      if (a && b) next[a.toUpperCase()] = b.toUpperCase()
+                                    }
+                                    setManual({ symbol_mapping: next })
+                                  }}
+                                />
+                                <p className="mt-1 text-[11px] text-neutral-500">
+                                  Examples: <span className="font-mono">GOLD=XAUUSD</span>, <span className="font-mono">USOIL=WTIOIL</span>
+                                </p>
+                              </div>
+                              <div className="grid grid-cols-2 gap-2">
+                                <Input label="Symbol Prefix" value={configDraft.manualSettings.symbol_prefix ?? ''} onChange={e => setManual({ symbol_prefix: e.target.value })} />
+                                <Input label="Symbol Suffix" value={configDraft.manualSettings.symbol_suffix ?? ''} onChange={e => setManual({ symbol_suffix: e.target.value })} />
+                                <Input label="Symbol To Trade" value={configDraft.manualSettings.symbol_to_trade ?? ''} onChange={e => setManual({ symbol_to_trade: e.target.value })} />
+                                <Input
+                                  label="Symbols to Exclude (comma)"
+                                  value={(configDraft.manualSettings.symbols_exclude ?? []).join(',')}
+                                  onChange={e => setManual({ symbols_exclude: e.target.value.split(',').map(x => x.trim().toUpperCase()).filter(Boolean) })}
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {activeManualSubTab === 'risk' && (
+                          <div className="space-y-4">
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                              <Select
+                                label="Risk Mode"
+                                value={configDraft.manualSettings.risk_mode ?? 'fixed_lot'}
+                                onChange={e => setManual({ risk_mode: e.target.value as ManualSettings['risk_mode'] })}
+                                options={[
+                                  { value: 'fixed_lot', label: 'Fixed Lot' },
+                                  { value: 'dynamic_balance_percent', label: 'Dynamic (% Balance)' },
+                                ]}
+                              />
+                              {configDraft.manualSettings.risk_mode === 'dynamic_balance_percent' ? (
+                                <Input label="% Balance per trade" type="number" value={String(configDraft.manualSettings.dynamic_balance_percent ?? 1)} onChange={e => setManual({ dynamic_balance_percent: Number(e.target.value) })} />
+                              ) : (
+                                <Input label="Fixed Lot" type="number" value={String(configDraft.manualSettings.fixed_lot ?? 0.01)} onChange={e => setManual({ fixed_lot: Number(e.target.value) })} />
+                              )}
+                              <Select
+                                label="Trade Style"
+                                value={configDraft.manualSettings.trade_style ?? 'single'}
+                                onChange={e => setManual({ trade_style: e.target.value as ManualSettings['trade_style'] })}
+                                options={[
+                                  { value: 'single', label: 'Single Trade' },
+                                  { value: 'multi', label: 'Multi Trades' },
+                                ]}
+                              />
+                            </div>
+
+                            <div className="rounded-lg border border-neutral-200 p-3">
+                              <div className="flex items-center justify-between mb-2">
+                                <p className="text-sm font-medium text-neutral-800">TP Lot Sizes</p>
+                                <Button variant="ghost" size="sm" onClick={addTpLotRow}>Add TP</Button>
+                              </div>
+                              <div className="space-y-2">
+                                {(configDraft.manualSettings.tp_lots ?? DEFAULT_MANUAL_TP_LOTS).map((row, idx) => (
+                                  <div key={`${row.label}-${idx}`} className="grid grid-cols-12 gap-2 items-center">
+                                    <input className="col-span-4 rounded-md border border-neutral-200 px-2 py-1.5 text-sm" value={row.label} onChange={e => updateTpLotRow(idx, { label: e.target.value })} />
+                                    <input className="col-span-3 rounded-md border border-neutral-200 px-2 py-1.5 text-sm" type="number" value={row.lot} onChange={e => updateTpLotRow(idx, { lot: Number(e.target.value) })} />
+                                    <label className="col-span-3 text-xs text-neutral-700 flex items-center gap-2">
+                                      <input type="checkbox" checked={row.enabled} onChange={e => updateTpLotRow(idx, { enabled: e.target.checked })} />
+                                      Enabled
+                                    </label>
+                                    <Button className="col-span-2" variant="ghost" size="sm" onClick={() => removeTpLotRow(idx)}>Remove</Button>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                              <Select label="Range Trading" value={configDraft.manualSettings.range_trading ? 'yes' : 'no'} onChange={e => setManual({ range_trading: e.target.value === 'yes' })} options={[{ value: 'no', label: 'No' }, { value: 'yes', label: 'Yes' }]} />
+                              {configDraft.manualSettings.range_trading && (
+                                <Input label="Range Total Lot" type="number" value={String(configDraft.manualSettings.range_total_lot ?? 0.03)} onChange={e => setManual({ range_total_lot: Number(e.target.value) })} />
+                              )}
+                              <Select label="Reverse Signal" value={configDraft.manualSettings.reverse_signal ? 'yes' : 'no'} onChange={e => setManual({ reverse_signal: e.target.value === 'yes' })} options={[{ value: 'no', label: 'No' }, { value: 'yes', label: 'Yes' }]} />
+                            </div>
+                          </div>
+                        )}
+
+                        {activeManualSubTab === 'stops' && (
+                          <div className="space-y-4">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                              <label className="text-sm text-neutral-700 flex items-center gap-2"><input type="checkbox" checked={configDraft.manualSettings.use_predefined_sl_pips === true} onChange={e => setManual({ use_predefined_sl_pips: e.target.checked })} />Use Predefined SL Pips</label>
+                              {configDraft.manualSettings.use_predefined_sl_pips && (
+                                <Input label="Predefined SL Pips" type="number" value={String(configDraft.manualSettings.predefined_sl_pips ?? 30)} onChange={e => setManual({ predefined_sl_pips: Number(e.target.value) })} />
+                              )}
+                              <label className="text-sm text-neutral-700 flex items-center gap-2"><input type="checkbox" checked={configDraft.manualSettings.use_predefined_tp_pips === true} onChange={e => setManual({ use_predefined_tp_pips: e.target.checked })} />Use Predefined TPs</label>
+                              {configDraft.manualSettings.use_predefined_tp_pips && (
+                                <Input label="Predefined TP Pips (comma)" value={(configDraft.manualSettings.predefined_tp_pips ?? []).join(',')} onChange={e => setManual({ predefined_tp_pips: e.target.value.split(',').map(n => Number(n.trim())).filter(Number.isFinite) })} />
+                              )}
+                              <label className="text-sm text-neutral-700 flex items-center gap-2"><input type="checkbox" checked={configDraft.manualSettings.rr_for_sl_enabled === true} onChange={e => setManual({ rr_for_sl_enabled: e.target.checked })} />Enable R:R for SL</label>
+                              {configDraft.manualSettings.rr_for_sl_enabled && (
+                                <Input label="SL R:R" type="number" value={String(configDraft.manualSettings.rr_for_sl ?? 1)} onChange={e => setManual({ rr_for_sl: Number(e.target.value) })} />
+                              )}
+                              <label className="text-sm text-neutral-700 flex items-center gap-2"><input type="checkbox" checked={configDraft.manualSettings.rr_for_tps_enabled === true} onChange={e => setManual({ rr_for_tps_enabled: e.target.checked })} />Enable R:R for TPs</label>
+                              {configDraft.manualSettings.rr_for_tps_enabled && (
+                                <Input label="TP R:R values (comma)" value={(configDraft.manualSettings.rr_for_tps ?? []).join(',')} onChange={e => setManual({ rr_for_tps: e.target.value.split(',').map(n => Number(n.trim())).filter(Number.isFinite) })} />
+                              )}
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                              <Input label="Pending Expiry (hours 1-24)" type="number" value={String(configDraft.manualSettings.pending_expiry_hours ?? 1)} onChange={e => setManual({ pending_expiry_hours: Number(e.target.value) })} />
+                              <Select label="Add New Trades to Existing" value={configDraft.manualSettings.add_new_trades_to_existing ? 'yes' : 'no'} onChange={e => setManual({ add_new_trades_to_existing: e.target.value === 'yes' })} options={[{ value: 'yes', label: 'Yes' }, { value: 'no', label: 'No' }]} />
+                              <Select label="Close on Opposite Signal" value={configDraft.manualSettings.close_on_opposite_signal ? 'yes' : 'no'} onChange={e => setManual({ close_on_opposite_signal: e.target.value === 'yes' })} options={[{ value: 'no', label: 'No' }, { value: 'yes', label: 'Yes' }]} />
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                              <Select label="Move SL to Entry After" value={configDraft.manualSettings.move_sl_to_entry_after_mode ?? 'none'} onChange={e => setManual({ move_sl_to_entry_after_mode: e.target.value as ManualSettings['move_sl_to_entry_after_mode'] })} options={[{ value: 'none', label: 'None' }, { value: 'pips', label: 'Pips' }, { value: 'rr', label: 'RR' }, { value: 'money', label: 'Money' }, { value: 'tp_hit', label: 'TP Hit' }]} />
+                              {configDraft.manualSettings.move_sl_to_entry_after_mode !== 'none' && (
+                                <Input label="Move SL Trigger Value" type="number" value={String(configDraft.manualSettings.move_sl_to_entry_after_value ?? 10)} onChange={e => setManual({ move_sl_to_entry_after_value: Number(e.target.value) })} />
+                              )}
+                              {configDraft.manualSettings.move_sl_to_entry_after_mode !== 'none' && (
+                                <Select label="Move SL Type" value={configDraft.manualSettings.move_sl_to_entry_type ?? 'sl_only'} onChange={e => setManual({ move_sl_to_entry_type: e.target.value as ManualSettings['move_sl_to_entry_type'] })} options={[{ value: 'sl_only', label: 'Move SL only' }, { value: 'sl_and_close_half', label: 'Move SL and close half' }]} />
+                              )}
+                              <Input label="Breakeven Offset (pips)" type="number" value={String(configDraft.manualSettings.breakeven_offset_pips ?? 10)} onChange={e => setManual({ breakeven_offset_pips: Number(e.target.value) })} />
+                              <Input label="Partial Close (%)" type="number" value={String(configDraft.manualSettings.partial_close_percent ?? 25)} onChange={e => setManual({ partial_close_percent: Number(e.target.value) })} />
+                              <Input label="Half Close (%)" type="number" value={String(configDraft.manualSettings.half_close_percent ?? 50)} onChange={e => setManual({ half_close_percent: Number(e.target.value) })} />
+                            </div>
+                          </div>
+                        )}
+
+                        {activeManualSubTab === 'trailing' && (
+                          <div className="space-y-4">
+                            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                              <Select label="Trailing SL" value={configDraft.manualSettings.trailing_enabled ? 'yes' : 'no'} onChange={e => setManual({ trailing_enabled: e.target.value === 'yes' })} options={[{ value: 'no', label: 'No' }, { value: 'yes', label: 'Yes' }]} />
+                              <Input label="Trail Start (pips)" type="number" value={String(configDraft.manualSettings.trailing_start_pips ?? 20)} onChange={e => setManual({ trailing_start_pips: Number(e.target.value) })} />
+                              <Input label="Trail Step (pips)" type="number" value={String(configDraft.manualSettings.trailing_step_pips ?? 5)} onChange={e => setManual({ trailing_step_pips: Number(e.target.value) })} />
+                              <Input label="Trail Distance (pips)" type="number" value={String(configDraft.manualSettings.trailing_distance_pips ?? 10)} onChange={e => setManual({ trailing_distance_pips: Number(e.target.value) })} />
+                            </div>
+                          </div>
+                        )}
+
+                        {activeManualSubTab === 'filters' && (
+                          <div className="space-y-4">
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                              <Select label="Time Filter" value={configDraft.manualSettings.time_filter_enabled ? 'yes' : 'no'} onChange={e => setManual({ time_filter_enabled: e.target.value === 'yes' })} options={[{ value: 'no', label: 'No' }, { value: 'yes', label: 'Yes' }]} />
+                              {configDraft.manualSettings.time_filter_enabled && (
+                                <Input label="Start Time" type="time" value={configDraft.manualSettings.trade_start_time ?? '00:00'} onChange={e => setManual({ trade_start_time: e.target.value })} />
+                              )}
+                              {configDraft.manualSettings.time_filter_enabled && (
+                                <Input label="End Time" type="time" value={configDraft.manualSettings.trade_end_time ?? '23:59'} onChange={e => setManual({ trade_end_time: e.target.value })} />
+                              )}
+                              <Select label="Days Filter" value={configDraft.manualSettings.days_filter_enabled ? 'yes' : 'no'} onChange={e => setManual({ days_filter_enabled: e.target.value === 'yes' })} options={[{ value: 'no', label: 'No' }, { value: 'yes', label: 'Yes' }]} />
+                            </div>
+                            {configDraft.manualSettings.days_filter_enabled && (
+                              <div>
+                                <p className="text-xs text-neutral-600 mb-1">Days of the week</p>
+                                <div className="flex flex-wrap gap-3">
+                                  {[
+                                    { label: 'Sunday', value: 0 },
+                                    { label: 'Monday', value: 1 },
+                                    { label: 'Tuesday', value: 2 },
+                                    { label: 'Wednesday', value: 3 },
+                                    { label: 'Thursday', value: 4 },
+                                    { label: 'Friday', value: 5 },
+                                    { label: 'Saturday', value: 6 },
+                                  ].map((d) => (
+                                    <label key={d.value} className="text-sm text-neutral-700 flex items-center gap-2">
+                                      <input
+                                        type="checkbox"
+                                        checked={(configDraft.manualSettings.trade_days ?? [1, 2, 3, 4, 5]).includes(d.value)}
+                                        onChange={(e) => {
+                                          const prev = configDraft.manualSettings.trade_days ?? [1, 2, 3, 4, 5]
+                                          const next = e.target.checked ? [...new Set([...prev, d.value])] : prev.filter((x) => x !== d.value)
+                                          setManual({ trade_days: next })
+                                        }}
+                                      />
+                                      {d.label}
+                                    </label>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                              <Select label="Allow High Impact News" value={configDraft.manualSettings.allow_high_impact_news ? 'yes' : 'no'} onChange={e => setManual({ allow_high_impact_news: e.target.value === 'yes' })} options={[{ value: 'no', label: 'No' }, { value: 'yes', label: 'Yes' }]} />
+                              {configDraft.manualSettings.allow_high_impact_news && (
+                                <Input label="Close Before News (min)" type="number" value={String(configDraft.manualSettings.close_before_news_minutes ?? 10)} onChange={e => setManual({ close_before_news_minutes: Number(e.target.value) })} />
+                              )}
+                              {configDraft.manualSettings.allow_high_impact_news && (
+                                <Input label="Resume After News (min)" type="number" value={String(configDraft.manualSettings.resume_after_news_minutes ?? 10)} onChange={e => setManual({ resume_after_news_minutes: Number(e.target.value) })} />
+                              )}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -872,169 +1055,6 @@ export function AccountConfigPage() {
                   </div>
                 )}
 
-                {activeTab === 'risk' && configDraft.mode === 'manual' && (
-                  <div className="space-y-4">
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                      <Select
-                        label="Risk Mode"
-                        value={configDraft.manualSettings.risk_mode ?? 'fixed_lot'}
-                        onChange={e => setManual({ risk_mode: e.target.value as ManualSettings['risk_mode'] })}
-                        options={[
-                          { value: 'fixed_lot', label: 'Fixed Lot' },
-                          { value: 'dynamic_balance_percent', label: 'Dynamic (% Balance)' },
-                        ]}
-                      />
-                      {configDraft.manualSettings.risk_mode === 'dynamic_balance_percent' ? (
-                        <Input label="% Balance per trade" type="number" value={String(configDraft.manualSettings.dynamic_balance_percent ?? 1)} onChange={e => setManual({ dynamic_balance_percent: Number(e.target.value) })} />
-                      ) : (
-                        <Input label="Fixed Lot" type="number" value={String(configDraft.manualSettings.fixed_lot ?? 0.01)} onChange={e => setManual({ fixed_lot: Number(e.target.value) })} />
-                      )}
-                      <Select
-                        label="Trade Style"
-                        value={configDraft.manualSettings.trade_style ?? 'single'}
-                        onChange={e => setManual({ trade_style: e.target.value as ManualSettings['trade_style'] })}
-                        options={[
-                          { value: 'single', label: 'Single Trade' },
-                          { value: 'multi', label: 'Multi Trades' },
-                        ]}
-                      />
-                    </div>
-
-                    <div className="rounded-lg border border-neutral-200 p-3">
-                      <div className="flex items-center justify-between mb-2">
-                        <p className="text-sm font-medium text-neutral-800">TP Lot Sizes</p>
-                        <Button variant="ghost" size="sm" onClick={addTpLotRow}>Add TP</Button>
-                      </div>
-                      <div className="space-y-2">
-                        {(configDraft.manualSettings.tp_lots ?? DEFAULT_MANUAL_TP_LOTS).map((row, idx) => (
-                          <div key={`${row.label}-${idx}`} className="grid grid-cols-12 gap-2 items-center">
-                            <input className="col-span-4 rounded-md border border-neutral-200 px-2 py-1.5 text-sm" value={row.label} onChange={e => updateTpLotRow(idx, { label: e.target.value })} />
-                            <input className="col-span-3 rounded-md border border-neutral-200 px-2 py-1.5 text-sm" type="number" value={row.lot} onChange={e => updateTpLotRow(idx, { lot: Number(e.target.value) })} />
-                            <label className="col-span-3 text-xs text-neutral-700 flex items-center gap-2">
-                              <input type="checkbox" checked={row.enabled} onChange={e => updateTpLotRow(idx, { enabled: e.target.checked })} />
-                              Enabled
-                            </label>
-                            <Button className="col-span-2" variant="ghost" size="sm" onClick={() => removeTpLotRow(idx)}>Remove</Button>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                      <Select label="Range Trading" value={configDraft.manualSettings.range_trading ? 'yes' : 'no'} onChange={e => setManual({ range_trading: e.target.value === 'yes' })} options={[{ value: 'no', label: 'No' }, { value: 'yes', label: 'Yes' }]} />
-                      {configDraft.manualSettings.range_trading && (
-                        <Input label="Range Total Lot" type="number" value={String(configDraft.manualSettings.range_total_lot ?? 0.03)} onChange={e => setManual({ range_total_lot: Number(e.target.value) })} />
-                      )}
-                      <Select label="Reverse Signal" value={configDraft.manualSettings.reverse_signal ? 'yes' : 'no'} onChange={e => setManual({ reverse_signal: e.target.value === 'yes' })} options={[{ value: 'no', label: 'No' }, { value: 'yes', label: 'Yes' }]} />
-                    </div>
-                  </div>
-                )}
-
-                {activeTab === 'stops' && configDraft.mode === 'manual' && (
-                  <div className="space-y-4">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      <label className="text-sm text-neutral-700 flex items-center gap-2"><input type="checkbox" checked={configDraft.manualSettings.use_predefined_sl_pips === true} onChange={e => setManual({ use_predefined_sl_pips: e.target.checked })} />Use Predefined SL Pips</label>
-                      {configDraft.manualSettings.use_predefined_sl_pips && (
-                        <Input label="Predefined SL Pips" type="number" value={String(configDraft.manualSettings.predefined_sl_pips ?? 30)} onChange={e => setManual({ predefined_sl_pips: Number(e.target.value) })} />
-                      )}
-                      <label className="text-sm text-neutral-700 flex items-center gap-2"><input type="checkbox" checked={configDraft.manualSettings.use_predefined_tp_pips === true} onChange={e => setManual({ use_predefined_tp_pips: e.target.checked })} />Use Predefined TPs</label>
-                      {configDraft.manualSettings.use_predefined_tp_pips && (
-                        <Input label="Predefined TP Pips (comma)" value={(configDraft.manualSettings.predefined_tp_pips ?? []).join(',')} onChange={e => setManual({ predefined_tp_pips: e.target.value.split(',').map(n => Number(n.trim())).filter(Number.isFinite) })} />
-                      )}
-                      <label className="text-sm text-neutral-700 flex items-center gap-2"><input type="checkbox" checked={configDraft.manualSettings.rr_for_sl_enabled === true} onChange={e => setManual({ rr_for_sl_enabled: e.target.checked })} />Enable R:R for SL</label>
-                      {configDraft.manualSettings.rr_for_sl_enabled && (
-                        <Input label="SL R:R" type="number" value={String(configDraft.manualSettings.rr_for_sl ?? 1)} onChange={e => setManual({ rr_for_sl: Number(e.target.value) })} />
-                      )}
-                      <label className="text-sm text-neutral-700 flex items-center gap-2"><input type="checkbox" checked={configDraft.manualSettings.rr_for_tps_enabled === true} onChange={e => setManual({ rr_for_tps_enabled: e.target.checked })} />Enable R:R for TPs</label>
-                      {configDraft.manualSettings.rr_for_tps_enabled && (
-                        <Input label="TP R:R values (comma)" value={(configDraft.manualSettings.rr_for_tps ?? []).join(',')} onChange={e => setManual({ rr_for_tps: e.target.value.split(',').map(n => Number(n.trim())).filter(Number.isFinite) })} />
-                      )}
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                      <Input label="Pending Expiry (hours 1-24)" type="number" value={String(configDraft.manualSettings.pending_expiry_hours ?? 1)} onChange={e => setManual({ pending_expiry_hours: Number(e.target.value) })} />
-                      <Select label="Add New Trades to Existing" value={configDraft.manualSettings.add_new_trades_to_existing ? 'yes' : 'no'} onChange={e => setManual({ add_new_trades_to_existing: e.target.value === 'yes' })} options={[{ value: 'yes', label: 'Yes' }, { value: 'no', label: 'No' }]} />
-                      <Select label="Close on Opposite Signal" value={configDraft.manualSettings.close_on_opposite_signal ? 'yes' : 'no'} onChange={e => setManual({ close_on_opposite_signal: e.target.value === 'yes' })} options={[{ value: 'no', label: 'No' }, { value: 'yes', label: 'Yes' }]} />
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                      <Select label="Move SL to Entry After" value={configDraft.manualSettings.move_sl_to_entry_after_mode ?? 'none'} onChange={e => setManual({ move_sl_to_entry_after_mode: e.target.value as ManualSettings['move_sl_to_entry_after_mode'] })} options={[{ value: 'none', label: 'None' }, { value: 'pips', label: 'Pips' }, { value: 'rr', label: 'RR' }, { value: 'money', label: 'Money' }, { value: 'tp_hit', label: 'TP Hit' }]} />
-                      {configDraft.manualSettings.move_sl_to_entry_after_mode !== 'none' && (
-                        <Input label="Move SL Trigger Value" type="number" value={String(configDraft.manualSettings.move_sl_to_entry_after_value ?? 10)} onChange={e => setManual({ move_sl_to_entry_after_value: Number(e.target.value) })} />
-                      )}
-                      {configDraft.manualSettings.move_sl_to_entry_after_mode !== 'none' && (
-                        <Select label="Move SL Type" value={configDraft.manualSettings.move_sl_to_entry_type ?? 'sl_only'} onChange={e => setManual({ move_sl_to_entry_type: e.target.value as ManualSettings['move_sl_to_entry_type'] })} options={[{ value: 'sl_only', label: 'Move SL only' }, { value: 'sl_and_close_half', label: 'Move SL and close half' }]} />
-                      )}
-                      <Input label="Breakeven Offset (pips)" type="number" value={String(configDraft.manualSettings.breakeven_offset_pips ?? 10)} onChange={e => setManual({ breakeven_offset_pips: Number(e.target.value) })} />
-                      <Input label="Partial Close (%)" type="number" value={String(configDraft.manualSettings.partial_close_percent ?? 25)} onChange={e => setManual({ partial_close_percent: Number(e.target.value) })} />
-                      <Input label="Half Close (%)" type="number" value={String(configDraft.manualSettings.half_close_percent ?? 50)} onChange={e => setManual({ half_close_percent: Number(e.target.value) })} />
-                    </div>
-                  </div>
-                )}
-
-                {activeTab === 'trailing' && configDraft.mode === 'manual' && (
-                  <div className="space-y-4">
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                      <Select label="Trailing SL" value={configDraft.manualSettings.trailing_enabled ? 'yes' : 'no'} onChange={e => setManual({ trailing_enabled: e.target.value === 'yes' })} options={[{ value: 'no', label: 'No' }, { value: 'yes', label: 'Yes' }]} />
-                      <Input label="Trail Start (pips)" type="number" value={String(configDraft.manualSettings.trailing_start_pips ?? 20)} onChange={e => setManual({ trailing_start_pips: Number(e.target.value) })} />
-                      <Input label="Trail Step (pips)" type="number" value={String(configDraft.manualSettings.trailing_step_pips ?? 5)} onChange={e => setManual({ trailing_step_pips: Number(e.target.value) })} />
-                      <Input label="Trail Distance (pips)" type="number" value={String(configDraft.manualSettings.trailing_distance_pips ?? 10)} onChange={e => setManual({ trailing_distance_pips: Number(e.target.value) })} />
-                    </div>
-                  </div>
-                )}
-
-                {activeTab === 'filters' && configDraft.mode === 'manual' && (
-                  <div className="space-y-4">
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                      <Select label="Time Filter" value={configDraft.manualSettings.time_filter_enabled ? 'yes' : 'no'} onChange={e => setManual({ time_filter_enabled: e.target.value === 'yes' })} options={[{ value: 'no', label: 'No' }, { value: 'yes', label: 'Yes' }]} />
-                      {configDraft.manualSettings.time_filter_enabled && (
-                        <Input label="Start Time" type="time" value={configDraft.manualSettings.trade_start_time ?? '00:00'} onChange={e => setManual({ trade_start_time: e.target.value })} />
-                      )}
-                      {configDraft.manualSettings.time_filter_enabled && (
-                        <Input label="End Time" type="time" value={configDraft.manualSettings.trade_end_time ?? '23:59'} onChange={e => setManual({ trade_end_time: e.target.value })} />
-                      )}
-                      <Select label="Days Filter" value={configDraft.manualSettings.days_filter_enabled ? 'yes' : 'no'} onChange={e => setManual({ days_filter_enabled: e.target.value === 'yes' })} options={[{ value: 'no', label: 'No' }, { value: 'yes', label: 'Yes' }]} />
-                    </div>
-                    {configDraft.manualSettings.days_filter_enabled && (
-                      <div>
-                        <p className="text-xs text-neutral-600 mb-1">Days of the week</p>
-                        <div className="flex flex-wrap gap-3">
-                          {[
-                            { label: 'Sunday', value: 0 },
-                            { label: 'Monday', value: 1 },
-                            { label: 'Tuesday', value: 2 },
-                            { label: 'Wednesday', value: 3 },
-                            { label: 'Thursday', value: 4 },
-                            { label: 'Friday', value: 5 },
-                            { label: 'Saturday', value: 6 },
-                          ].map((d) => (
-                            <label key={d.value} className="text-sm text-neutral-700 flex items-center gap-2">
-                              <input
-                                type="checkbox"
-                                checked={(configDraft.manualSettings.trade_days ?? [1, 2, 3, 4, 5]).includes(d.value)}
-                                onChange={(e) => {
-                                  const prev = configDraft.manualSettings.trade_days ?? [1, 2, 3, 4, 5]
-                                  const next = e.target.checked ? [...new Set([...prev, d.value])] : prev.filter((x) => x !== d.value)
-                                  setManual({ trade_days: next })
-                                }}
-                              />
-                              {d.label}
-                            </label>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                      <Select label="Allow High Impact News" value={configDraft.manualSettings.allow_high_impact_news ? 'yes' : 'no'} onChange={e => setManual({ allow_high_impact_news: e.target.value === 'yes' })} options={[{ value: 'no', label: 'No' }, { value: 'yes', label: 'Yes' }]} />
-                      {configDraft.manualSettings.allow_high_impact_news && (
-                        <Input label="Close Before News (min)" type="number" value={String(configDraft.manualSettings.close_before_news_minutes ?? 10)} onChange={e => setManual({ close_before_news_minutes: Number(e.target.value) })} />
-                      )}
-                      {configDraft.manualSettings.allow_high_impact_news && (
-                        <Input label="Resume After News (min)" type="number" value={String(configDraft.manualSettings.resume_after_news_minutes ?? 10)} onChange={e => setManual({ resume_after_news_minutes: Number(e.target.value) })} />
-                      )}
-                    </div>
-                  </div>
-                )}
               </div>
             </div>
 
@@ -1051,86 +1071,7 @@ export function AccountConfigPage() {
 
 // ── Tab subcomponents ────────────────────────────────────────────────────
 
-function ConnectionTab({
-  broker,
-  refreshing,
-  onRefresh,
-  onCheck,
-}: {
-  broker: BrokerAccount
-  refreshing: boolean
-  onRefresh: () => void
-  onCheck: () => void
-}) {
-  const brokerLabel = broker.broker_name
-    || inferBrokerLabelFromServer(broker.broker_server ?? null)
-    || '—'
-  const synced = broker.last_synced_at ? new Date(broker.last_synced_at) : null
-  return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <ReadonlyField label="Broker" value={brokerLabel} />
-        <ReadonlyField label="Platform" value={broker.platform} />
-        <ReadonlyField label="Server" value={broker.broker_server ?? '—'} />
-        <ReadonlyField label="MT login" value={broker.account_login ?? '—'} />
-        <ReadonlyField label="API account UUID" value={broker.metaapi_account_id || '—'} mono />
-        <ReadonlyField
-          label="Status"
-          value={broker.connection_status === 'connected' ? 'Connected'
-            : broker.connection_status === 'error' ? 'Error'
-            : 'Pending'}
-        />
-      </div>
-
-      <div className="rounded-xl border border-neutral-200 p-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm font-semibold text-neutral-900">Live account</p>
-            <p className="text-xs text-neutral-500 mt-0.5">
-              {synced ? `Last refreshed ${synced.toLocaleString()}` : 'Not refreshed yet'}
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" size="sm" onClick={onCheck} disabled={refreshing}>
-              Check connection
-            </Button>
-            <Button size="sm" onClick={onRefresh} loading={refreshing}>
-              <RefreshCw className="w-3.5 h-3.5" />
-              Refresh balance
-            </Button>
-          </div>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
-          <Stat label="Balance" value={fmtMoney(broker.last_balance, broker.last_currency)} />
-          <Stat label="Equity" value={fmtMoney(broker.last_equity, broker.last_currency)} />
-          <Stat label="Currency" value={broker.last_currency ?? '—'} />
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function ReadonlyField({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
-  return (
-    <div>
-      <p className="text-xs text-neutral-500 mb-1">{label}</p>
-      <p className={clsx('text-sm text-neutral-900 px-3 py-2 rounded-md border border-neutral-200 bg-neutral-50 truncate', mono && 'font-mono')}>
-        {value}
-      </p>
-    </div>
-  )
-}
-
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-lg bg-neutral-50 border border-neutral-200 p-3">
-      <p className="text-xs text-neutral-500">{label}</p>
-      <p className="text-sm font-semibold text-neutral-900 mt-1">{value}</p>
-    </div>
-  )
-}
-
-function FeatureBullet({ icon: Icon, title, body }: { icon: typeof Plug; title: string; body: string }) {
+function FeatureBullet({ icon: Icon, title, body }: { icon: typeof DollarSign; title: string; body: string }) {
   return (
     <div className="rounded-lg bg-neutral-50 border border-neutral-200 p-3">
       <p className="text-xs font-medium text-neutral-700 mb-1 flex items-center gap-1.5">
@@ -1142,7 +1083,3 @@ function FeatureBullet({ icon: Icon, title, body }: { icon: typeof Plug; title: 
   )
 }
 
-function fmtMoney(value: number | null | undefined, currency?: string | null): string {
-  if (value == null) return '—'
-  return `${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency ?? ''}`.trim()
-}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Clock, ChevronRight, ChevronDown, Info, Plus } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
@@ -6,10 +6,12 @@ import { useAuth } from '../../context/AuthContext'
 import type { BrokerAccount, Signal, Trade } from '../../types/database'
 import { inferBrokerLabelFromServer, resolveMtServerCandidate } from '../../lib/brokerFromServer'
 import { AddAccountModal } from '../../components/ui/AddAccountModal'
+import { metatraderApi, type MtTrade } from '../../lib/metatraderapi'
 
 interface DashboardStats {
   accounts: number
   portfolioValue: number
+  totalEquity: number
   tradesTaken: number
   tradesWon: number
   tradesLost: number
@@ -218,6 +220,7 @@ export function DashboardPage() {
   const [stats, setStats] = useState<DashboardStats>({
     accounts: 0,
     portfolioValue: 0,
+    totalEquity: 0,
     tradesTaken: 0,
     tradesWon: 0,
     tradesLost: 0,
@@ -253,7 +256,20 @@ export function DashboardPage() {
   const [showExpandedStats, setShowExpandedStats] = useState(false)
   const [showExpandedPerformance, setShowExpandedPerformance] = useState(false)
   const AUTO_REFRESH_MS = 15000
-  const DASHBOARD_CACHE_PREFIX = 'dashboard_cache_v2'
+  const BROKER_SUMMARY_REFRESH_MS = 30000
+  const MT_TRADES_REFRESH_MS = 30000
+  const DASHBOARD_CACHE_PREFIX = 'dashboard_cache_v4'
+  const lastBrokerRefreshRef = useRef<number>(0)
+  const lastMtTradesRefreshRef = useRef<number>(0)
+  /** Last successful MT trades response, kept across renders so stats survive throttled refresh windows. */
+  const mtTradesRef = useRef<MtTrade[] | null>(null)
+  /**
+   * Last known MT live values per broker id, kept across `loadDashboard` calls so
+   * the auto-refresh tick (15s) doesn't bounce stats back to DB defaults while
+   * `refreshBrokerSummaries` is between throttled runs (30s). Without this the
+   * Active Trades stat fluctuates 0/1 between ticks.
+   */
+  const liveBrokerStateRef = useRef<Record<string, { open_pnl?: number; open_trades?: number }>>({})
   const formatMoney = (value: number | null | undefined) =>
     `$${(Number.isFinite(value as number) ? Number(value) : 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
   const formatNumber = (value: number | null | undefined) =>
@@ -281,7 +297,18 @@ export function DashboardPage() {
         }
         if (parsed.copierLogs) setCopierLogs(parsed.copierLogs)
         if (parsed.linkedAccounts) setLinkedAccounts(parsed.linkedAccounts)
-        if (parsed.linkedAccountBalances) setLinkedAccountBalances(parsed.linkedAccountBalances)
+        if (parsed.linkedAccountBalances) {
+          setLinkedAccountBalances(parsed.linkedAccountBalances)
+          // Seed sticky-live cache so the very next loadDashboard doesn't flicker
+          // back to DB-derived defaults before the first /AccountSummary refresh.
+          for (const [id, v] of Object.entries(parsed.linkedAccountBalances)) {
+            if (!v) continue
+            liveBrokerStateRef.current[id] = {
+              open_pnl: typeof v.open_pnl === 'number' ? v.open_pnl : liveBrokerStateRef.current[id]?.open_pnl,
+              open_trades: typeof v.open_trades === 'number' ? v.open_trades : liveBrokerStateRef.current[id]?.open_trades,
+            }
+          }
+        }
         setLoading(false)
         void loadDashboard({ silent: true })
         return
@@ -371,8 +398,41 @@ export function DashboardPage() {
       const ts = new Date(dateString).getTime()
       return Number.isFinite(ts) && ts >= start.getTime() && ts < end.getTime()
     }
-    const tradesToday = allTrades.filter(t => isInRange(t.opened_at, todayStart, tomorrowStart))
-    const tradesYesterday = allTrades.filter(t => isInRange(t.opened_at, yesterdayStart, todayStart))
+
+    // Prefer live MT trades when we have a cached snapshot; otherwise use the
+    // local `trades` table. The live snapshot is refreshed in the background.
+    const mtTrades = mtTradesRef.current
+    const useMtTrades = Array.isArray(mtTrades) && mtTrades.length > 0
+    type WindowedTrade = {
+      symbol: string
+      profit: number | null
+      lot_size: number
+      status: 'open' | 'closed'
+      opened_at: string | null
+      closed_at: string | null
+    }
+    const dbWindowed: WindowedTrade[] = allTrades.map(t => ({
+      symbol: t.symbol ?? '',
+      profit: typeof t.profit === 'number' ? t.profit : null,
+      lot_size: t.lot_size ?? 0,
+      status: t.status === 'closed' ? 'closed' : 'open',
+      opened_at: t.opened_at ?? null,
+      closed_at: t.closed_at ?? null,
+    }))
+    const mtWindowed: WindowedTrade[] = useMtTrades
+      ? mtTrades!.map(t => ({
+          symbol: t.symbol,
+          profit: t.profit,
+          lot_size: t.lot_size,
+          status: t.status,
+          opened_at: t.opened_at,
+          closed_at: t.closed_at,
+        }))
+      : []
+    const sourceTrades: WindowedTrade[] = useMtTrades ? mtWindowed : dbWindowed
+
+    const tradesToday = sourceTrades.filter(t => isInRange(t.opened_at, todayStart, tomorrowStart))
+    const tradesYesterday = sourceTrades.filter(t => isInRange(t.opened_at, yesterdayStart, todayStart))
     const totalProfitLoss = tradesToday.reduce((sum, t) => sum + (t.profit ?? 0), 0)
     const yesterdayTotalProfitLoss = tradesYesterday.reduce((sum, t) => sum + (t.profit ?? 0), 0)
     const totalVolume = tradesToday.reduce((sum, t) => sum + (t.lot_size ?? 0), 0)
@@ -383,11 +443,11 @@ export function DashboardPage() {
     const yesterdayBestTradeProfit = profitableTradesYesterday.length ? Math.max(...profitableTradesYesterday.map(t => t.profit ?? 0)) : null
     const worstTradeProfit = profitableTradesToday.length ? Math.min(...profitableTradesToday.map(t => t.profit ?? 0)) : null
     const yesterdayWorstTradeProfit = profitableTradesYesterday.length ? Math.min(...profitableTradesYesterday.map(t => t.profit ?? 0)) : null
-    const todayProfit = allTrades
-      .filter(t => isInRange(t.closed_at, todayStart, tomorrowStart))
+    const todayProfit = sourceTrades
+      .filter(t => t.status === 'closed' && isInRange(t.closed_at, todayStart, tomorrowStart))
       .reduce((sum, t) => sum + (t.profit ?? 0), 0)
-    const yesterdayProfit = allTrades
-      .filter(t => isInRange(t.closed_at, yesterdayStart, todayStart))
+    const yesterdayProfit = sourceTrades
+      .filter(t => t.status === 'closed' && isInRange(t.closed_at, yesterdayStart, todayStart))
       .reduce((sum, t) => sum + (t.profit ?? 0), 0)
     const mostTradedAsset = (() => {
       const counts = new Map<string, number>()
@@ -421,6 +481,11 @@ export function DashboardPage() {
       }
       return winner
     })()
+    // Channel correlation requires our DB `trades` (which carries `signal_id`).
+    // MT-sourced trades have no signal linkage, so we keep using the DB rows
+    // for this single metric even when MT is the primary source above.
+    const dbTradesToday = allTrades.filter(t => isInRange(t.opened_at, todayStart, tomorrowStart))
+    const dbTradesYesterday = allTrades.filter(t => isInRange(t.opened_at, yesterdayStart, todayStart))
     const mostProfitableChannel = (() => {
       const signals = (allSignalsRes.data ?? []) as Array<{ id: string; channel_id: string | null }>
       const channels = (channelsMetaRes.data ?? []) as Array<{ id: string; display_name: string }>
@@ -429,7 +494,7 @@ export function DashboardPage() {
       const channelNameById = new Map<string, string>()
       for (const c of channels) channelNameById.set(c.id, c.display_name || 'Unnamed channel')
       const pnlByChannel = new Map<string, number>()
-      for (const trade of tradesToday) {
+      for (const trade of dbTradesToday) {
         if (!trade.signal_id) continue
         const channelId = signalToChannel.get(trade.signal_id)
         if (!channelId) continue
@@ -453,7 +518,7 @@ export function DashboardPage() {
       const channelNameById = new Map<string, string>()
       for (const c of channels) channelNameById.set(c.id, c.display_name || 'Unnamed channel')
       const pnlByChannel = new Map<string, number>()
-      for (const trade of tradesYesterday) {
+      for (const trade of dbTradesYesterday) {
         if (!trade.signal_id) continue
         const channelId = signalToChannel.get(trade.signal_id)
         if (!channelId) continue
@@ -473,9 +538,39 @@ export function DashboardPage() {
     const lost = closedTrades.filter(t => (t.profit ?? 0) < 0).length
     const brokerAccounts = (brokerRes.data ?? []) as BrokerAccount[]
     const activeBrokerCount = brokerAccounts.filter(account => account.is_active).length
-    const balanceEntries = brokerAccounts.map((account) => [account.id, {}] as const)
-    const balanceMap = Object.fromEntries(balanceEntries) as Record<string, { balance?: number; equity?: number; currency?: string; broker?: string; mt_server_hint?: string; account_type?: 'Live' | 'Demo'; open_pnl?: number; open_trades?: number }>
+    // Seed the balance map from the cached columns the worker / edge function
+    // wrote on AccountSummary. This is what makes the page render instantly
+    // without waiting for a live MetatraderAPI roundtrip on every page load.
+    const balanceMap = Object.fromEntries(
+      brokerAccounts.map((account) => {
+        // Best-effort Open PnL on first paint: MT reports equity = balance + floating P/L,
+        // so until the live /AccountSummary refresh lands we approximate from cached fields.
+        const cachedOpenPnl =
+          account.last_equity != null && account.last_balance != null
+            ? account.last_equity - account.last_balance
+            : undefined
+        // Re-apply the last MT live values we've already fetched this session so
+        // the stat doesn't bounce between throttled refresh windows.
+        const sticky = liveBrokerStateRef.current[account.id]
+        return [
+          account.id,
+          {
+            balance: account.last_balance ?? undefined,
+            equity: account.last_equity ?? undefined,
+            currency: account.last_currency ?? undefined,
+            broker: account.broker_name ?? undefined,
+            mt_server_hint: account.broker_server ?? undefined,
+            open_pnl: sticky?.open_pnl ?? cachedOpenPnl,
+            open_trades: sticky?.open_trades,
+          },
+        ]
+      }),
+    ) as Record<string, { balance?: number; equity?: number; currency?: string; broker?: string; mt_server_hint?: string; account_type?: 'Live' | 'Demo'; open_pnl?: number; open_trades?: number }>
     const totalPortfolioValue = brokerAccounts.reduce((sum, account) => {
+      const acct = balanceMap[account.id]
+      return sum + (acct?.balance ?? 0)
+    }, 0)
+    const totalEquityValue = brokerAccounts.reduce((sum, account) => {
       const acct = balanceMap[account.id]
       return sum + (acct?.equity ?? acct?.balance ?? 0)
     }, 0)
@@ -499,6 +594,7 @@ export function DashboardPage() {
     const nextStats: DashboardStats = {
       accounts: activeBrokerCount,
       portfolioValue: totalPortfolioValue,
+      totalEquity: totalEquityValue,
       tradesTaken: closedTrades.length,
       tradesWon: won,
       tradesLost: lost,
@@ -536,6 +632,196 @@ export function DashboardPage() {
       }))
     }
     if (!silent) setLoading(false)
+    // Kick off live balance + trade refreshes in the background; both throttled internally.
+    void refreshBrokerSummaries(brokerAccounts, balanceMap)
+    void refreshMtTrades(brokerAccounts)
+  }
+
+  /**
+   * Pull live trades (open + recent closed) from MetatraderAPI for every linked
+   * broker and recompute the performance stats from them. Throttled to one call
+   * per MT_TRADES_REFRESH_MS so the 15s auto-tick doesn't hammer the edge fn.
+   */
+  const refreshMtTrades = async (brokerAccounts?: BrokerAccount[]) => {
+    const now = Date.now()
+    if (now - lastMtTradesRefreshRef.current < MT_TRADES_REFRESH_MS) return
+    const sourceAccounts = brokerAccounts ?? linkedAccounts
+    const hasMtBroker = sourceAccounts.some((b) => {
+      const uuid = (b.metaapi_account_id ?? '').trim()
+      return b.is_active && uuid.length > 0 && !uuid.includes('|')
+    })
+    if (!hasMtBroker) return
+    lastMtTradesRefreshRef.current = now
+
+    let trades: MtTrade[]
+    try {
+      const res = await metatraderApi.trades({ scope: 'all' })
+      trades = res.trades ?? []
+    } catch {
+      return
+    }
+    mtTradesRef.current = trades
+    if (trades.length === 0) return
+
+    const today0 = new Date()
+    today0.setHours(0, 0, 0, 0)
+    const tomorrow0 = new Date(today0)
+    tomorrow0.setDate(tomorrow0.getDate() + 1)
+    const yesterday0 = new Date(today0)
+    yesterday0.setDate(yesterday0.getDate() - 1)
+    const inRange = (iso: string | null, start: Date, end: Date) => {
+      if (!iso) return false
+      const ts = new Date(iso).getTime()
+      return Number.isFinite(ts) && ts >= start.getTime() && ts < end.getTime()
+    }
+
+    const today = trades.filter(t => inRange(t.opened_at, today0, tomorrow0))
+    const yesterday = trades.filter(t => inRange(t.opened_at, yesterday0, today0))
+    const closedToday = trades.filter(t => t.status === 'closed' && inRange(t.closed_at, today0, tomorrow0))
+    const closedYesterday = trades.filter(t => t.status === 'closed' && inRange(t.closed_at, yesterday0, today0))
+    const profitsToday = today.filter(t => typeof t.profit === 'number')
+    const profitsYesterday = yesterday.filter(t => typeof t.profit === 'number')
+    const topSymbol = (rows: typeof today): string => {
+      const counts = new Map<string, number>()
+      for (const r of rows) if (r.symbol) counts.set(r.symbol, (counts.get(r.symbol) ?? 0) + 1)
+      let best = '—'
+      let max = 0
+      for (const [s, c] of counts.entries()) if (c > max) { best = s; max = c }
+      return best
+    }
+
+    setStats(prev => ({
+      ...prev,
+      totalProfitLoss: today.reduce((sum, t) => sum + (t.profit ?? 0), 0),
+      yesterdayTotalProfitLoss: yesterday.reduce((sum, t) => sum + (t.profit ?? 0), 0),
+      totalVolume: today.reduce((sum, t) => sum + (t.lot_size ?? 0), 0),
+      yesterdayTotalVolume: yesterday.reduce((sum, t) => sum + (t.lot_size ?? 0), 0),
+      bestTradeProfit: profitsToday.length ? Math.max(...profitsToday.map(t => t.profit ?? 0)) : null,
+      yesterdayBestTradeProfit: profitsYesterday.length ? Math.max(...profitsYesterday.map(t => t.profit ?? 0)) : null,
+      worstTradeProfit: profitsToday.length ? Math.min(...profitsToday.map(t => t.profit ?? 0)) : null,
+      yesterdayWorstTradeProfit: profitsYesterday.length ? Math.min(...profitsYesterday.map(t => t.profit ?? 0)) : null,
+      todayProfit: closedToday.reduce((sum, t) => sum + (t.profit ?? 0), 0),
+      yesterdayProfit: closedYesterday.reduce((sum, t) => sum + (t.profit ?? 0), 0),
+      mostTradedAsset: topSymbol(today),
+      yesterdayMostTradedAsset: topSymbol(yesterday),
+    }))
+  }
+
+  /**
+   * Pull live balance/equity from MetatraderAPI for every connected broker and
+   * merge the results into local state. Throttled so the auto-refresh ticker
+   * doesn't hammer the edge function — at most once per BROKER_SUMMARY_REFRESH_MS.
+   */
+  const refreshBrokerSummaries = async (
+    brokerAccounts?: BrokerAccount[],
+    balanceSeed?: Record<string, { balance?: number; equity?: number; currency?: string; broker?: string; mt_server_hint?: string; account_type?: 'Live' | 'Demo'; open_pnl?: number; open_trades?: number }>,
+  ) => {
+    const now = Date.now()
+    if (now - lastBrokerRefreshRef.current < BROKER_SUMMARY_REFRESH_MS) return
+    lastBrokerRefreshRef.current = now
+
+    const sourceAccounts = brokerAccounts ?? linkedAccounts
+    const mtBrokers = sourceAccounts.filter((b) => {
+      const uuid = (b.metaapi_account_id ?? '').trim()
+      // Skip legacy / not-yet-linked rows that don't have a MetatraderAPI uuid.
+      return b.is_active && uuid.length > 0 && !uuid.includes('|')
+    })
+    if (mtBrokers.length === 0) return
+
+    const results = await Promise.all(
+      mtBrokers.map(async (b) => {
+        try {
+          const { summary, open_positions } = await metatraderApi.summary(b.id)
+          return { id: b.id, summary, open_positions, error: null as Error | null }
+        } catch (err) {
+          return { id: b.id, summary: null, open_positions: null as number | null, error: err instanceof Error ? err : new Error('summary failed') }
+        }
+      }),
+    )
+
+    const successes = results.filter(r => r.summary)
+    if (successes.length === 0) return
+
+    const prevBalances = balanceSeed ?? linkedAccountBalances
+    const nextBalances = { ...prevBalances }
+    for (const r of successes) {
+      const s = r.summary!
+      const nextBalance = s.balance ?? nextBalances[r.id]?.balance
+      const nextEquity = s.equity ?? nextBalances[r.id]?.equity
+      const liveProfit =
+        s.profit != null
+          ? s.profit
+          : (nextBalance != null && nextEquity != null ? nextEquity - nextBalance : nextBalances[r.id]?.open_pnl)
+      const liveOpenTrades = typeof r.open_positions === 'number'
+        ? r.open_positions
+        : nextBalances[r.id]?.open_trades
+      nextBalances[r.id] = {
+        ...(nextBalances[r.id] ?? {}),
+        balance: nextBalance,
+        equity: nextEquity,
+        currency: s.currency ?? nextBalances[r.id]?.currency,
+        open_pnl: liveProfit,
+        open_trades: liveOpenTrades,
+      }
+      // Persist live values across throttled refreshes / loadDashboard ticks.
+      liveBrokerStateRef.current[r.id] = {
+        open_pnl: typeof liveProfit === 'number' ? liveProfit : liveBrokerStateRef.current[r.id]?.open_pnl,
+        open_trades: typeof liveOpenTrades === 'number' ? liveOpenTrades : liveBrokerStateRef.current[r.id]?.open_trades,
+      }
+    }
+    setLinkedAccountBalances(nextBalances)
+
+    const sawOpenPosCount = successes.some(r => typeof r.open_positions === 'number')
+    const mtOpenTotal = mtBrokers.reduce((sum, b) => {
+      const v = nextBalances[b.id]?.open_trades
+      return sum + (typeof v === 'number' && Number.isFinite(v) ? v : 0)
+    }, 0)
+
+    // Recompute portfolio value (pure balance), equity, and open PnL from the freshest snapshot.
+    setStats(prev => {
+      let portfolioValue = 0
+      let totalEquity = 0
+      let openPnl = 0
+      let sawLivePnl = false
+      for (const account of sourceAccounts) {
+        const live = successes.find(r => r.id === account.id)?.summary
+        const equity = live?.equity ?? account.last_equity ?? account.last_balance ?? 0
+        const balance = live?.balance ?? account.last_balance ?? 0
+        portfolioValue += balance || 0
+        totalEquity += equity || balance || 0
+        if (live) {
+          const profit = live.profit ?? (live.equity != null && live.balance != null ? live.equity - live.balance : null)
+          if (profit != null && Number.isFinite(profit)) {
+            openPnl += profit
+            sawLivePnl = true
+          }
+        }
+      }
+      return {
+        ...prev,
+        portfolioValue,
+        totalEquity,
+        openPnl: sawLivePnl ? openPnl : prev.openPnl,
+        ...(sawOpenPosCount ? { openPositions: mtOpenTotal, openTrades: mtOpenTotal } : {}),
+      }
+    })
+
+    // Persist the freshly-fetched values back to the broker row state so the
+    // session cache (and any subsequent re-render) keeps the live numbers.
+    setLinkedAccounts(prev =>
+      prev.map(b => {
+        const live = successes.find(r => r.id === b.id)?.summary
+        if (!live) return b
+        return {
+          ...b,
+          last_balance: live.balance ?? b.last_balance ?? null,
+          last_equity: live.equity ?? b.last_equity ?? null,
+          last_currency: live.currency ?? b.last_currency ?? null,
+          last_synced_at: new Date().toISOString(),
+          connection_status: 'connected',
+        }
+      }),
+    )
   }
 
   return (
@@ -556,10 +842,10 @@ export function DashboardPage() {
             subColor="text-neutral-400"
           />
           <StatBlock
-            label="Active Trades"
-            value={loading ? '—' : String(stats.openTrades)}
-            sub={loading ? '' : `${stats.openPositions} open positions`}
-            subColor="text-neutral-400"
+            label="Equity"
+            value={loading ? '—' : `$${stats.totalEquity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+            sub={loading ? '' : `Balance ${(stats.openPnl >= 0 ? '+' : '-')}$${Math.abs(stats.openPnl).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} floating P/L`}
+            subColor={stats.openPnl >= 0 ? 'text-neutral-400' : 'text-error-500'}
           />
           <StatBlock
             label="Trades Taken"
@@ -931,12 +1217,17 @@ function LinkedAccountRow({
   const statusClass = account.is_active
     ? 'text-teal-600 border-teal-200 bg-teal-50'
     : 'text-warning-600 border-warning-200 bg-warning-50'
-  const balanceText = accountSummary?.balance != null
-    ? `${accountSummary.currency ?? '$'} ${accountSummary.balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-    : '$0.00'
-  const pnl = accountSummary?.open_pnl ?? ((accountSummary?.equity ?? 0) - (accountSummary?.balance ?? 0))
+  const balance = accountSummary?.balance ?? account.last_balance ?? null
+  const equity = accountSummary?.equity ?? account.last_equity ?? null
+  const currencyRaw = (accountSummary?.currency ?? account.last_currency ?? '').trim()
+  const currencyPrefix = !currencyRaw || currencyRaw.toUpperCase() === 'USD' ? '$' : `${currencyRaw} `
+  const balanceText = balance != null
+    ? `${currencyPrefix}${balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    : '—'
+  const hasBoth = balance != null && equity != null
+  const pnl = accountSummary?.open_pnl ?? (hasBoth ? (equity! - balance!) : 0)
   const pnlColor = pnl >= 0 ? 'text-teal-600' : 'text-error-600'
-  const pnlText = `${accountSummary?.currency ?? '$'} ${Math.abs(pnl).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  const pnlText = `${currencyPrefix}${Math.abs(pnl).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
   const apiRaw = (accountSummary?.broker ?? '').trim()
   const fromApi = inferBrokerLabelFromServer(apiRaw) || apiRaw
   const server = resolveMtServerCandidate(account, accountSummary?.mt_server_hint)

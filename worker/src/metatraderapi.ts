@@ -163,6 +163,10 @@ export class MetatraderApiClient {
     return body as T
   }
 
+  openedOrders(id: string): Promise<unknown[]> {
+    return this.get<unknown[]>('/OpenedOrders', { id })
+  }
+
   accountSummary(id: string): Promise<AccountSummary> {
     return this.get<AccountSummary>('/AccountSummary', { id })
   }

@@ -53,6 +53,9 @@ export interface AccountSummary {
   freeMargin?: number
   marginLevel?: number
   leverage?: number
+  /** Floating P/L across open positions, as reported by MT. */
+  profit?: number
+  credit?: number
 }
 
 export const metatraderApi = {
@@ -70,10 +73,10 @@ export const metatraderApi = {
     })
   },
 
-  summary(brokerId: string): Promise<{ summary: AccountSummary }> {
+  summary(brokerId: string): Promise<{ summary: AccountSummary; open_positions: number | null }> {
     return call({
       body: { action: 'summary', broker_id: brokerId },
-      expect: (b) => b as { summary: AccountSummary },
+      expect: (b) => b as { summary: AccountSummary; open_positions: number | null },
     })
   },
 
@@ -83,4 +86,42 @@ export const metatraderApi = {
       expect: (b) => b as { result: string },
     })
   },
+
+  trades(args: { brokerId?: string; scope?: 'all' | 'open' | 'closed' } = {}): Promise<{ trades: MtTrade[]; debug?: { raw_sample_keys: string[]; raw_sample: Record<string, unknown> } }> {
+    return call({
+      body: {
+        action: 'trades',
+        broker_id: args.brokerId ?? '',
+        scope: args.scope ?? 'all',
+      },
+      expect: (b) => b as { trades: MtTrade[]; debug?: { raw_sample_keys: string[]; raw_sample: Record<string, unknown> } },
+    })
+  },
+}
+
+export interface MtTrade {
+  id: string
+  broker_id: string
+  broker_label: string
+  broker_name: string | null
+  ticket: number
+  symbol: string
+  /** Normalized direction. 'buy' or 'sell' for tradeable orders, '' for non-trade entries (e.g. balance). */
+  direction: 'buy' | 'sell' | ''
+  /** Human-readable order type label, e.g. 'Buy', 'Sell', 'Buy Limit', 'Sell Stop', 'Balance'. */
+  type: string
+  lot_size: number
+  entry_price: number | null
+  sl: number | null
+  tp: number | null
+  close_price: number | null
+  profit: number | null
+  swap: number | null
+  commission: number | null
+  comment: string | null
+  magic: number | null
+  opened_at: string | null
+  closed_at: string | null
+  state: string | null
+  status: 'open' | 'closed'
 }

@@ -53,8 +53,10 @@ function inferBrokerLabel(server: string): string {
 /**
  * Account lifecycle for MetatraderAPI. Trade execution is NOT here — it lives in the
  * worker process for minimum latency. This function only runs for the rare UI-driven
- * register / delete / refresh balance / check connection calls.
+ * register / delete / refresh balance / check connection calls, plus the trades read
+ * for the Trades page.
  */
+const BUILD_TAG = "broker-metatrader@trades-v1"
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 200, headers: corsHeaders })
 
@@ -103,9 +105,23 @@ Deno.serve(async (req: Request) => {
       const uuid = reg.id
       if (!uuid) return bad(502, "MetatraderAPI did not return an account id")
 
-      // Best-effort: pull balance immediately so the UI shows live numbers on first render.
+      // After RegisterAccount the MT5 session needs a moment to authenticate
+      // before /AccountSummary returns real numbers. CheckConnect both
+      // waits for the connection and triggers a reconnect if needed, and
+      // we retry the summary a few times with backoff in case the first
+      // call lands before the broker server replies with account state.
       let summary: Awaited<ReturnType<typeof client.accountSummary>> | null = null
-      try { summary = await client.accountSummary(uuid) } catch { summary = null }
+      try { await client.checkConnect(uuid) } catch { /* swallow */ }
+      for (let i = 0; i < 5; i++) {
+        try {
+          const s = await client.accountSummary(uuid)
+          if (s && (s.balance != null || s.equity != null || s.currency)) {
+            summary = s
+            break
+          }
+        } catch { /* swallow and retry */ }
+        await new Promise(r => setTimeout(r, 600 + i * 400))
+      }
 
       const insertPayload = {
         user_id: userId,
@@ -202,7 +218,31 @@ Deno.serve(async (req: Request) => {
       if (!uuid || uuid.includes("|")) return bad(400, "Broker is not linked to MetatraderAPI yet")
 
       try {
-        const summary = await client.accountSummary(uuid)
+        // Reconnect if needed before reading account state; falls through silently.
+        try { await client.checkConnect(uuid) } catch { /* swallow */ }
+        let summary: Awaited<ReturnType<typeof client.accountSummary>> | null = null
+        let lastErr: unknown = null
+        for (let i = 0; i < 3; i++) {
+          try {
+            const s = await client.accountSummary(uuid)
+            if (s && (s.balance != null || s.equity != null || s.currency)) {
+              summary = s
+              break
+            }
+          } catch (err) { lastErr = err }
+          await new Promise(r => setTimeout(r, 400 + i * 400))
+        }
+        if (!summary) {
+          if (lastErr instanceof MetatraderApiError) throw lastErr
+          throw new Error("AccountSummary returned no data")
+        }
+        let openPositions: number | null = null
+        try {
+          const orders = await client.openedOrders(uuid)
+          openPositions = Array.isArray(orders) ? orders.length : 0
+        } catch {
+          openPositions = null
+        }
         await supabase
           .from("broker_accounts")
           .update({
@@ -214,7 +254,7 @@ Deno.serve(async (req: Request) => {
           })
           .eq("id", brokerId)
           .eq("user_id", userId)
-        return Response.json({ ok: true, summary }, { headers: corsHeaders })
+        return Response.json({ ok: true, summary, open_positions: openPositions }, { headers: corsHeaders })
       } catch (e) {
         await supabase
           .from("broker_accounts")
@@ -260,7 +300,183 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    return bad(400, `Unknown action: ${action}`)
+    if (action === "trades") {
+      const brokerId = String((body as Record<string, unknown>).broker_id ?? "").trim()
+      const scope = String((body as Record<string, unknown>).scope ?? "all").toLowerCase()
+      const wantOpen = scope === "all" || scope === "open"
+      const wantClosed = scope === "all" || scope === "closed"
+
+      let brokers: { id: string; label: string; metaapi_account_id: string; broker_name: string | null }[] = []
+      if (brokerId) {
+        const { data } = await supabase
+          .from("broker_accounts")
+          .select("id,label,metaapi_account_id,broker_name")
+          .eq("id", brokerId)
+          .eq("user_id", userId)
+          .maybeSingle()
+        if (!data) return bad(404, "Broker account not found")
+        brokers = [data as typeof brokers[number]]
+      } else {
+        const { data } = await supabase
+          .from("broker_accounts")
+          .select("id,label,metaapi_account_id,broker_name")
+          .eq("user_id", userId)
+        brokers = ((data ?? []) as typeof brokers)
+      }
+
+      type RawOrder = Record<string, unknown>
+
+      const num = (v: unknown): number | null => {
+        if (v === null || v === undefined) return null
+        const n = Number(v)
+        return Number.isFinite(n) ? n : null
+      }
+
+      const pick = (order: RawOrder, ...keys: string[]): unknown => {
+        for (const k of keys) {
+          if (order[k] !== undefined && order[k] !== null) return order[k]
+        }
+        return undefined
+      }
+
+      // MT order code → direction + label. Used for both MT4-style 'cmd' and MT5 'OrderType' enums.
+      // MT4 CMD: 0=BUY, 1=SELL, 2=BUYLIMIT, 3=SELLLIMIT, 4=BUYSTOP, 5=SELLSTOP, 6=BALANCE.
+      // MT5 OrderType: 0=BUY, 1=SELL, 2=BUYLIMIT, 3=SELLLIMIT, 4=BUYSTOP, 5=SELLSTOP, 6=BUYSTOPLIMIT, 7=SELLSTOPLIMIT, 8=CLOSEBY.
+      const codeMap: Record<number, { direction: "buy" | "sell" | ""; label: string }> = {
+        0: { direction: "buy", label: "Buy" },
+        1: { direction: "sell", label: "Sell" },
+        2: { direction: "buy", label: "Buy Limit" },
+        3: { direction: "sell", label: "Sell Limit" },
+        4: { direction: "buy", label: "Buy Stop" },
+        5: { direction: "sell", label: "Sell Stop" },
+        6: { direction: "buy", label: "Buy Stop Limit" },
+        7: { direction: "sell", label: "Sell Stop Limit" },
+        8: { direction: "", label: "Close By" },
+      }
+
+      const fromString = (raw: string): { direction: "buy" | "sell" | ""; label: string } | null => {
+        const cleaned = raw.replace(/^(OrderType_|DealType_|DEAL_TYPE_|ORDER_TYPE_)/i, "").trim()
+        if (!cleaned) return null
+        const lower = cleaned.toLowerCase()
+        const direction: "buy" | "sell" | "" =
+          lower.startsWith("buy") ? "buy" : lower.startsWith("sell") ? "sell" : ""
+        const label = cleaned.replace(/([a-z])([A-Z])/g, "$1 $2")
+        return { direction, label }
+      }
+
+      const resolveDirection = (order: RawOrder): { direction: "buy" | "sell" | ""; type_label: string } => {
+        // Try every known string-typed field name first.
+        const stringCandidate = pick(
+          order,
+          "type", "Type",
+          "orderType", "OrderType",
+          "dealType", "DealType",
+          "cmdString",
+        )
+        if (typeof stringCandidate === "string" && stringCandidate.trim()) {
+          const parsed = fromString(stringCandidate)
+          if (parsed) return { direction: parsed.direction, type_label: parsed.label }
+        }
+        // Then try numeric-typed fields and any nested 'ex.cmd'.
+        const ex = order.ex as Record<string, unknown> | undefined
+        const numericCandidate = pick(
+          order,
+          "type", "Type",
+          "orderType", "OrderType",
+          "dealType", "DealType",
+          "cmd", "Cmd",
+        )
+        const numericFromEx = ex ? pick(ex, "cmd", "Cmd", "OrderType", "orderType") : undefined
+        const candidate =
+          typeof numericCandidate === "number"
+            ? numericCandidate
+            : typeof numericFromEx === "number"
+              ? numericFromEx
+              : undefined
+        if (typeof candidate === "number" && codeMap[candidate]) {
+          const m = codeMap[candidate]
+          return { direction: m.direction, type_label: m.label }
+        }
+        return { direction: "", type_label: "" }
+      }
+
+      const normalize = (
+        order: RawOrder,
+        broker: typeof brokers[number],
+        status: "open" | "closed",
+      ) => {
+        const ticket = Number(pick(order, "ticket", "Ticket") ?? 0)
+        const { direction, type_label } = resolveDirection(order)
+        const openTime = pick(order, "openTime", "OpenTime") as string | undefined
+        const closeTime = pick(order, "closeTime", "CloseTime") as string | undefined
+        return {
+          id: `${broker.id}:${ticket}`,
+          broker_id: broker.id,
+          broker_label: broker.label,
+          broker_name: broker.broker_name,
+          ticket,
+          symbol: String(pick(order, "symbol", "Symbol") ?? ""),
+          direction,
+          type: type_label,
+          lot_size: num(pick(order, "lots", "Lots", "volume", "Volume")) ?? 0,
+          entry_price: num(pick(order, "openPrice", "OpenPrice", "price")),
+          sl: num(pick(order, "stopLoss", "StopLoss", "sl")),
+          tp: num(pick(order, "takeProfit", "TakeProfit", "tp")),
+          close_price: num(pick(order, "closePrice", "ClosePrice")),
+          profit: num(pick(order, "profit", "Profit")),
+          swap: num(pick(order, "swap", "Swap")),
+          commission: num(pick(order, "commission", "Commission")),
+          comment: (pick(order, "comment", "Comment") as string | undefined) ?? null,
+          magic: num(pick(order, "magicNumber", "MagicNumber", "magic", "Magic", "expertId", "ExpertId")),
+          opened_at: openTime ?? null,
+          closed_at: closeTime ?? null,
+          state: (pick(order, "state", "State") as string | undefined) ?? null,
+          status,
+        }
+      }
+
+      let firstRawSample: RawOrder | null = null
+      const tradesByBroker = await Promise.all(
+        brokers.map(async (b) => {
+          const uuid = String(b.metaapi_account_id ?? "").trim()
+          if (!uuid || uuid.includes("|")) return [] as ReturnType<typeof normalize>[]
+          const [openedRes, closedRes] = await Promise.allSettled([
+            wantOpen ? client.openedOrders(uuid) : Promise.resolve([] as unknown[]),
+            wantClosed ? client.closedOrders(uuid) : Promise.resolve([] as unknown[]),
+          ])
+          const out: ReturnType<typeof normalize>[] = []
+          if (openedRes.status === "fulfilled" && Array.isArray(openedRes.value)) {
+            for (const o of openedRes.value as RawOrder[]) {
+              if (!firstRawSample) firstRawSample = o
+              out.push(normalize(o, b, "open"))
+            }
+          }
+          if (closedRes.status === "fulfilled" && Array.isArray(closedRes.value)) {
+            for (const o of closedRes.value as RawOrder[]) {
+              if (!firstRawSample) firstRawSample = o
+              out.push(normalize(o, b, "closed"))
+            }
+          }
+          return out
+        }),
+      )
+      const trades = tradesByBroker.flat().sort((a, b) => {
+        const at = a.status === "closed" ? (a.closed_at ?? a.opened_at) : a.opened_at
+        const bt = b.status === "closed" ? (b.closed_at ?? b.opened_at) : b.opened_at
+        const av = at ? Date.parse(at) : 0
+        const bv = bt ? Date.parse(bt) : 0
+        return bv - av
+      })
+      // When at least one trade is missing direction, echo back the raw shape so the
+      // client can show the diagnostic and we can extend the parser if needed.
+      const hasMissingDirection = trades.some((t) => !t.direction)
+      const debug = hasMissingDirection && firstRawSample
+        ? { raw_sample_keys: Object.keys(firstRawSample), raw_sample: firstRawSample }
+        : undefined
+      return Response.json({ ok: true, trades, debug }, { headers: corsHeaders })
+    }
+
+    return bad(400, `Unknown action: ${action} (${BUILD_TAG})`)
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "Internal server error"
     const status = e instanceof MetatraderApiError ? e.status : 500

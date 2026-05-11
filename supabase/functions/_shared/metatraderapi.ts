@@ -110,6 +110,16 @@ export class MetatraderApiClient {
   accountSummary(id: string): Promise<AccountSummary> {
     return this.get<AccountSummary>("/AccountSummary", { id })
   }
+
+  /** Market + pending orders currently open on the account (see docs: GET /OpenedOrders). */
+  openedOrders(id: string): Promise<unknown[]> {
+    return this.get<unknown[]>("/OpenedOrders", { id })
+  }
+
+  /** Last 100 closed orders from the current MT session (see docs: GET /ClosedOrders). */
+  closedOrders(id: string): Promise<unknown[]> {
+    return this.get<unknown[]>("/ClosedOrders", { id })
+  }
 }
 
 export function makeClientFromEnv(env: { get(name: string): string | undefined }): MetatraderApiClient {
