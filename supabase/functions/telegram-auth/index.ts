@@ -22,7 +22,15 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
 }
 
-const WORKER_URL = (Deno.env.get("WORKER_URL") ?? "").replace(/\/$/, "")
+/** Base URL of the Railway worker (public). Accepts with or without https:// — fetch requires a scheme. */
+function normalizeWorkerBaseUrl(raw: string): string {
+  const trimmed = raw.trim().replace(/\/+$/, "")
+  if (!trimmed) return ""
+  if (/^https?:\/\//i.test(trimmed)) return trimmed
+  return `https://${trimmed}`
+}
+
+const WORKER_URL = normalizeWorkerBaseUrl(Deno.env.get("WORKER_URL") ?? "")
 const WORKER_INTERNAL_TOKEN = Deno.env.get("WORKER_INTERNAL_TOKEN") ?? ""
 
 const ROUTES: Record<string, string> = {

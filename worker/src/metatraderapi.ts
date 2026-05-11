@@ -77,6 +77,76 @@ export interface OrderResult {
   comment?: string
 }
 
+function num(v: unknown): number | undefined {
+  if (v === null || v === undefined) return undefined
+  const n = typeof v === 'number' ? v : Number(v)
+  return Number.isFinite(n) ? n : undefined
+}
+
+function nestedTicket(o: Record<string, unknown>, key: string): unknown {
+  const nest = o[key]
+  if (nest == null || typeof nest !== 'object') return undefined
+  const n = nest as Record<string, unknown>
+  return n.ticket ?? n.Ticket ?? n.order ?? n.Order
+}
+
+/**
+ * MetatraderAPI JSON often follows protobuf names: PascalCase on the `Order`
+ * object, and `OrderSendReply` wraps the order as `{ result: { ... }, error }`.
+ * Normalize to our camelCase `OrderResult` so callers always see `ticket`.
+ */
+export function normalizeOrderResponse(body: unknown): OrderResult {
+  if (body == null || typeof body !== 'object') {
+    return { ticket: NaN }
+  }
+  const root = body as Record<string, unknown>
+
+  // OrderSendReply / OrderModifyReply / OrderCloseReply: { result: Order, error?: ... }
+  let o: Record<string, unknown> = root
+  if ('result' in root && root.result != null && typeof root.result === 'object') {
+    o = root.result as Record<string, unknown>
+  }
+
+  const ticketRaw =
+    o.ticket ??
+    o.Ticket ??
+    o.orderId ??
+    o.OrderId ??
+    nestedTicket(o, 'deal') ??
+    nestedTicket(o, 'Deal') ??
+    nestedTicket(o, 'DealInternalIn') ??
+    nestedTicket(o, 'ex')
+  const ticket = typeof ticketRaw === 'number' ? ticketRaw : Number(ticketRaw)
+
+  return {
+    ticket: Number.isFinite(ticket) ? ticket : NaN,
+    openPrice: num(o.openPrice ?? o.OpenPrice),
+    stopLoss: num(o.stopLoss ?? o.StopLoss),
+    takeProfit: num(o.takeProfit ?? o.TakeProfit),
+    lots: num(o.lots ?? o.Lots ?? o.volume ?? o.Volume),
+    symbol: typeof o.symbol === 'string' ? o.symbol : typeof o.Symbol === 'string' ? o.Symbol : undefined,
+    orderType: typeof o.orderType === 'string' ? o.orderType : typeof o.OrderType === 'string' ? String(o.OrderType) : undefined,
+    state: typeof o.state === 'string' ? o.state : typeof o.State === 'string' ? String(o.State) : undefined,
+    closePrice: num(o.closePrice ?? o.ClosePrice),
+    profit: num(o.profit ?? o.Profit),
+    swap: num(o.swap ?? o.Swap),
+    commission: num(o.commission ?? o.Commission),
+    fee: num(o.fee ?? o.Fee),
+    comment: typeof o.comment === 'string' ? o.comment : typeof o.Comment === 'string' ? o.Comment : undefined,
+  }
+}
+
+function assertNoApiError(body: unknown): void {
+  if (body == null || typeof body !== 'object') return
+  const err = (body as Record<string, unknown>).error
+  if (err == null || err === false) return
+  if (typeof err !== 'object') return
+  const e = err as Record<string, unknown>
+  const msg = String(e.message ?? e.Message ?? '').trim()
+  if (!msg || msg === 'null' || msg === 'undefined') return
+  throw new MetatraderApiError(msg, 200, e.code != null ? String(e.code) : undefined)
+}
+
 export interface AccountSummary {
   balance?: number
   credit?: number
@@ -179,8 +249,8 @@ export class MetatraderApiClient {
     return this.get<SymbolParams>('/SymbolParams', { id, symbol })
   }
 
-  orderSend(id: string, args: OrderSendArgs): Promise<OrderResult> {
-    return this.get<OrderResult>('/OrderSend', {
+  async orderSend(id: string, args: OrderSendArgs): Promise<OrderResult> {
+    const raw = await this.get<unknown>('/OrderSend', {
       id,
       symbol: args.symbol,
       operation: args.operation,
@@ -194,10 +264,17 @@ export class MetatraderApiClient {
       expiration: args.expiration,
       expirationType: args.expirationType,
     })
+    assertNoApiError(raw)
+    const out = normalizeOrderResponse(raw)
+    if (!Number.isFinite(out.ticket) || out.ticket <= 0) {
+      const preview = typeof raw === 'object' && raw !== null ? JSON.stringify(raw).slice(0, 500) : String(raw)
+      throw new MetatraderApiError(`OrderSend returned no ticket (response: ${preview})`, 200)
+    }
+    return out
   }
 
-  orderModify(id: string, args: OrderModifyArgs): Promise<OrderResult> {
-    return this.get<OrderResult>('/OrderModify', {
+  async orderModify(id: string, args: OrderModifyArgs): Promise<OrderResult> {
+    const raw = await this.get<unknown>('/OrderModify', {
       id,
       ticket: args.ticket,
       stoploss: args.stoploss ?? 0,
@@ -206,16 +283,20 @@ export class MetatraderApiClient {
       expiration: args.expiration,
       expirationType: args.expirationType,
     })
+    assertNoApiError(raw)
+    return normalizeOrderResponse(raw)
   }
 
-  orderClose(id: string, args: OrderCloseArgs): Promise<OrderResult> {
-    return this.get<OrderResult>('/OrderClose', {
+  async orderClose(id: string, args: OrderCloseArgs): Promise<OrderResult> {
+    const raw = await this.get<unknown>('/OrderClose', {
       id,
       ticket: args.ticket,
       lots: args.lots ?? 0,
       price: args.price ?? 0,
       slippage: args.slippage ?? 20,
     })
+    assertNoApiError(raw)
+    return normalizeOrderResponse(raw)
   }
 }
 
