@@ -529,7 +529,9 @@ async function fetchLatestOpenTradeForChannel(
   brokerAccountId: string,
   channelId: string,
 ): Promise<OpenTradeRow | null> {
-  const recentSignals = 400
+  // Keep a wide window so symbol-less management commands (e.g. "CLOSE FULL")
+  // can still correlate long-running positions whose entry signal is older.
+  const recentSignals = 5000
   const { data: sigRows } = await supabase
     .from("signals")
     .select("id")
@@ -562,7 +564,8 @@ async function fetchOpenTradesForChannel(
   channelId: string,
   direction: string | null,
 ): Promise<OpenTradeRow[]> {
-  const recentSignals = 500
+  // Use the same wide channel history window as management correlation.
+  const recentSignals = 5000
   const { data: sigRows } = await supabase
     .from("signals")
     .select("id")
