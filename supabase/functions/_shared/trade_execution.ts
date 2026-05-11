@@ -1270,18 +1270,20 @@ async function executeOneBroker(
   const mode = String(brokerAccount.copier_mode ?? "ai").toLowerCase()
   const manual = normalizeManualSettings(brokerAccount.manual_settings)
   let effectiveParsed: ParsedSignal = { ...parsed, tp: [...(parsed.tp ?? [])] }
+  const isEntryAction = effectiveParsed.action === "buy" || effectiveParsed.action === "sell"
   if (mode === "manual") {
-    if (!inManualTradingWindow(manual)) return { ok: false, error: "Blocked by manual time/day filters" }
-    if (manual.reverse_signal) {
+    // Manual filters/overrides gate entries only; management commands must always be allowed.
+    if (isEntryAction && !inManualTradingWindow(manual)) return { ok: false, error: "Blocked by manual time/day filters" }
+    if (isEntryAction && manual.reverse_signal) {
       if (effectiveParsed.action === "buy") effectiveParsed.action = "sell"
       else if (effectiveParsed.action === "sell") effectiveParsed.action = "buy"
     }
     const routed = applyManualSymbolRouting(effectiveParsed.symbol, manual)
-    if ((effectiveParsed.action === "buy" || effectiveParsed.action === "sell") && !routed) {
+    if (isEntryAction && !routed) {
       return { ok: false, error: "Symbol excluded or unresolved by manual symbol routing" }
     }
-    if (routed) effectiveParsed.symbol = routed
-    if (manual.use_predefined_tp_pips && manual.predefined_tp_pips.length > 0) {
+    if (isEntryAction && routed) effectiveParsed.symbol = routed
+    if (isEntryAction && manual.use_predefined_tp_pips && manual.predefined_tp_pips.length > 0) {
       const anchor = Number(effectiveParsed.entry_price ?? effectiveParsed.entry_zone_low ?? 0)
       if (Number.isFinite(anchor) && anchor > 0) {
         const dir = effectiveParsed.action === "sell" ? -1 : 1
