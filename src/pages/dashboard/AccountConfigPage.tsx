@@ -835,7 +835,18 @@ export function AccountConfigPage() {
                               <div className="grid grid-cols-2 gap-2">
                                 <Input label="Symbol Prefix" value={configDraft.manualSettings.symbol_prefix ?? ''} onChange={e => setManual({ symbol_prefix: e.target.value })} />
                                 <Input label="Symbol Suffix" value={configDraft.manualSettings.symbol_suffix ?? ''} onChange={e => setManual({ symbol_suffix: e.target.value })} />
-                                <Input label="Symbol To Trade" value={configDraft.manualSettings.symbol_to_trade ?? ''} onChange={e => setManual({ symbol_to_trade: e.target.value })} />
+                                <div className="col-span-2">
+                                  <Input
+                                    label="Symbols to Trade (whitelist)"
+                                    placeholder="Leave empty for all. Single = override. Multiple = whitelist."
+                                    value={configDraft.manualSettings.symbol_to_trade ?? ''}
+                                    onChange={e => setManual({ symbol_to_trade: e.target.value })}
+                                  />
+                                  <p className="text-xs text-slate-500 mt-1">
+                                    Empty = trade every signal. One symbol (e.g. <span className="font-mono">XAUUSD</span>) = force every signal to that instrument.
+                                    Multiple (e.g. <span className="font-mono">XAUUSD, BTCUSD</span>) = only trade signals matching one of these symbols.
+                                  </p>
+                                </div>
                                 <Input
                                   label="Symbols to Exclude (comma)"
                                   value={(configDraft.manualSettings.symbols_exclude ?? []).join(',')}
