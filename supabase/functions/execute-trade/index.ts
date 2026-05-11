@@ -17,8 +17,13 @@ function authorize(req: Request): boolean {
 }
 
 /**
- * Legacy endpoint kept for worker compatibility. Broker execution was removed;
- * instructions are parsed in `parse-signal` only and stored on `signals.parsed_data`.
+ * DEPRECATED — superseded by the worker's TradeExecutor, which calls
+ * MetatraderAPI directly with HTTP keep-alive for the lowest latency.
+ *
+ * Kept only as a fallback HTTP endpoint for callers that still post
+ * here. It logs an `execute_trade_stub` entry and exits without trading.
+ * Once no callers remain, this function and the `management_jobs` queue
+ * migration can be removed.
  */
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {

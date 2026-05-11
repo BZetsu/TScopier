@@ -1,5 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
+import {
+  Plus, Trash2, Server, Activity, GitBranch, Eye, DollarSign,
+  RefreshCw, Plug, SlidersHorizontal, Radio, Target, TrendingUp, Filter, Wallet,
+} from 'lucide-react'
+import clsx from 'clsx'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import { Card } from '../../components/ui/Card'
@@ -7,21 +12,23 @@ import { Input } from '../../components/ui/Input'
 import { Select } from '../../components/ui/Select'
 import { Button } from '../../components/ui/Button'
 import { Badge } from '../../components/ui/Badge'
-import type { BrokerAccount, ManualSettings, ManualTpLot } from '../../types/database'
-import { Plus, Trash2, Server, DollarSign, Eye, Activity, GitBranch } from 'lucide-react'
 import { AddAccountModal } from '../../components/ui/AddAccountModal'
+import { BrokerServerSelect } from '../../components/ui/BrokerServerSelect'
+import { metatraderApi } from '../../lib/metatraderapi'
+import { inferBrokerLabelFromServer } from '../../lib/brokerFromServer'
+import type { BrokerAccount, ManualSettings, ManualTpLot } from '../../types/database'
 
-const PLATFORMS = [
-  { value: 'MT5', label: 'MetaTrader 5 (MT5)' },
-  { value: 'MT4', label: 'MetaTrader 4 (MT4)' },
-  { value: 'cTrader', label: 'cTrader' },
-  { value: 'DXTrade', label: 'DXTrade' },
-  { value: 'TradeLocker', label: 'TradeLocker' },
-]
+interface ChannelOption {
+  id: string
+  display_name: string
+  channel_username: string
+  is_active: boolean
+  created_at: string
+}
 
 interface BrokerForm {
   label: string
-  platform: string
+  platform: 'MT4' | 'MT5'
   account_number: string
   account_password: string
   broker_server: string
@@ -35,18 +42,6 @@ const emptyForm: BrokerForm = {
   broker_server: '',
 }
 
-const DEFAULT_LOT_SIZE = 0.01
-const DEFAULT_PIP_TOLERANCE = 20
-
-interface ChannelOption {
-  id: string
-  display_name: string
-  channel_username: string
-  is_active: boolean
-  created_at: string
-}
-
-/** First-added channel (oldest created_at); stable tie-break on id. */
 function normalizeSignalChannelIds(b: BrokerAccount | undefined): string[] {
   const raw = b?.signal_channel_ids
   if (!raw) return []
@@ -80,7 +75,6 @@ const DEFAULT_MANUAL_TP_LOTS: ManualTpLot[] = [
   { label: 'TP2', lot: 0.01, enabled: true },
   { label: 'TP3', lot: 0.01, enabled: true },
 ]
-
 
 const DEFAULT_MANUAL_SETTINGS: ManualSettings = {
   schema_version: 1,
@@ -162,11 +156,7 @@ function getPlatformIconPath(platform: string): string | null {
 function PlatformIcon({ platform }: { platform: string }) {
   const [failed, setFailed] = useState(false)
   const iconPath = getPlatformIconPath(platform)
-
-  if (!iconPath || failed) {
-    return <Server className="w-4 h-4 text-primary-600" />
-  }
-
+  if (!iconPath || failed) return <Server className="w-4 h-4 text-primary-600" />
   return (
     <img
       src={iconPath}
@@ -178,11 +168,27 @@ function PlatformIcon({ platform }: { platform: string }) {
   )
 }
 
+type ConfigTabId = 'connection' | 'mode' | 'channels' | 'risk' | 'stops' | 'trailing' | 'filters'
+
+interface TabDef {
+  id: ConfigTabId
+  label: string
+  icon: typeof Plug
+}
+
+const ALL_TABS: TabDef[] = [
+  { id: 'connection', label: 'Connection', icon: Plug },
+  { id: 'mode', label: 'Mode', icon: SlidersHorizontal },
+  { id: 'channels', label: 'Channels', icon: Radio },
+  { id: 'risk', label: 'Risk & Sizing', icon: Wallet },
+  { id: 'stops', label: 'Stops & Targets', icon: Target },
+  { id: 'trailing', label: 'Trailing', icon: TrendingUp },
+  { id: 'filters', label: 'Filters', icon: Filter },
+]
+
 export function AccountConfigPage() {
   const { user } = useAuth()
   const [brokers, setBrokers] = useState<BrokerAccount[]>([])
-  const [brokerSummaries, setBrokerSummaries] = useState<Record<string, { balance?: number; equity?: number; currency?: string }>>({})
-  const [brokerSummaryErrors, setBrokerSummaryErrors] = useState<Record<string, string>>({})
   const [channelOptions, setChannelOptions] = useState<ChannelOption[]>([])
   const [configAccount, setConfigAccount] = useState<BrokerAccount | null>(null)
   const [configDraft, setConfigDraft] = useState<AccountConfigDraft>({
@@ -190,47 +196,40 @@ export function AccountConfigPage() {
     channelIds: [],
     manualSettings: { ...DEFAULT_MANUAL_SETTINGS },
   })
+  const [activeTab, setActiveTab] = useState<ConfigTabId>('connection')
   const [symbolMappingText, setSymbolMappingText] = useState('')
   const [configSaving, setConfigSaving] = useState(false)
+  const [summaryRefreshing, setSummaryRefreshing] = useState(false)
   const [showPlatformModal, setShowPlatformModal] = useState(false)
   const [showAddBroker, setShowAddBroker] = useState(false)
   const [form, setForm] = useState<BrokerForm>(emptyForm)
   const [saving, setSaving] = useState(false)
-  const [serverSuggestions, setServerSuggestions] = useState<string[]>([])
-  const [loadingSuggestions, setLoadingSuggestions] = useState(false)
-  const [showSuggestions, setShowSuggestions] = useState(false)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [brokerPendingDelete, setBrokerPendingDelete] = useState<BrokerAccount | null>(null)
   const [deleteInProgress, setDeleteInProgress] = useState(false)
 
-
   useEffect(() => {
     if (!user) return
-    loadData()
+    void loadData()
   }, [user])
-
-  useEffect(() => {
-    if (!showAddBroker) return
-    if (form.platform !== 'MT4' && form.platform !== 'MT5') return
-    const q = form.broker_server.trim()
-    const timeout = window.setTimeout(() => {
-      void loadServerSuggestions(q, form.platform)
-    }, 180)
-    return () => window.clearTimeout(timeout)
-  }, [showAddBroker, form.platform, form.broker_server])
 
   const loadData = async () => {
     const [brokersRes, channelsRes] = await Promise.all([
       supabase.from('broker_accounts').select('*').eq('user_id', user!.id).order('created_at'),
-      supabase.from('telegram_channels').select('id,display_name,channel_username,is_active,created_at').eq('user_id', user!.id).eq('is_active', true).order('created_at', { ascending: false }),
+      supabase
+        .from('telegram_channels')
+        .select('id,display_name,channel_username,is_active,created_at')
+        .eq('user_id', user!.id)
+        .eq('is_active', true)
+        .order('created_at', { ascending: false }),
     ])
-    const nextBrokers = (brokersRes.data ?? []) as BrokerAccount[]
-    setBrokers(nextBrokers)
+    setBrokers((brokersRes.data ?? []) as BrokerAccount[])
     setChannelOptions((channelsRes.data ?? []) as ChannelOption[])
-    void loadBrokerSummaries(nextBrokers)
     setLoading(false)
   }
+
+  // ── Configure modal ────────────────────────────────────────────────────
 
   const openConfigureModal = (broker: BrokerAccount) => {
     const fresh = brokers.find(b => b.id === broker.id) ?? broker
@@ -240,13 +239,12 @@ export function AccountConfigPage() {
     if (channelOptions.length === 1 && channelOptions[0]) {
       channelIds = [channelOptions[0].id]
     } else if (channelOptions.length > 1) {
-      // When not restricting, treat as all channels selected in the UI.
-      channelIds =
-        restricts && persistedIds.length > 0 ? persistedIds : channelOptions.map(c => c.id)
+      channelIds = restricts && persistedIds.length > 0 ? persistedIds : channelOptions.map(c => c.id)
     } else {
       channelIds = persistedIds
     }
     setConfigAccount(fresh)
+    setActiveTab('connection')
     const manualSettings = normalizeManualSettings(fresh.manual_settings)
     setConfigDraft({
       mode: fresh.copier_mode === 'manual' ? 'manual' : 'ai',
@@ -263,6 +261,7 @@ export function AccountConfigPage() {
   const closeConfigureModal = () => {
     setConfigAccount(null)
     setSymbolMappingText('')
+    setError('')
   }
 
   const toggleDraftChannel = (channelId: string) => {
@@ -277,10 +276,7 @@ export function AccountConfigPage() {
   const setManual = (patch: Partial<ManualSettings>) => {
     setConfigDraft(prev => ({
       ...prev,
-      manualSettings: {
-        ...prev.manualSettings,
-        ...patch,
-      },
+      manualSettings: { ...prev.manualSettings, ...patch },
     }))
   }
 
@@ -314,7 +310,6 @@ export function AccountConfigPage() {
     setError('')
     let channelIds = configDraft.channelIds
     let restrictChannels = false
-    // One Telegram channel: persist {} — matches "copy all" semantics and avoids locking to UUID only.
     if (channelOptions.length === 1) {
       channelIds = []
       restrictChannels = false
@@ -346,16 +341,54 @@ export function AccountConfigPage() {
       .single()
     setConfigSaving(false)
 
-    if (upErr) {
-      setError(upErr.message)
-      return
-    }
+    if (upErr) { setError(upErr.message); return }
 
     if (data) {
       setBrokers(prev => prev.map(b => (b.id === configAccount.id ? (data as BrokerAccount) : b)))
     }
     closeConfigureModal()
   }
+
+  const refreshSummary = async () => {
+    if (!configAccount) return
+    setSummaryRefreshing(true)
+    setError('')
+    try {
+      const { summary } = await metatraderApi.summary(configAccount.id)
+      const patch = {
+        last_balance: summary?.balance ?? null,
+        last_equity: summary?.equity ?? null,
+        last_currency: summary?.currency ?? null,
+        last_synced_at: new Date().toISOString(),
+        connection_status: 'connected' as const,
+      }
+      setBrokers(prev => prev.map(b => b.id === configAccount.id ? { ...b, ...patch } : b))
+      setConfigAccount(prev => prev ? { ...prev, ...patch } : prev)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to refresh balance')
+    } finally {
+      setSummaryRefreshing(false)
+    }
+  }
+
+  const checkConnection = async () => {
+    if (!configAccount) return
+    setSummaryRefreshing(true)
+    setError('')
+    try {
+      await metatraderApi.check(configAccount.id)
+      setBrokers(prev => prev.map(b => b.id === configAccount.id ? { ...b, connection_status: 'connected' } : b))
+      setConfigAccount(prev => prev ? { ...prev, connection_status: 'connected' } : prev)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Connection check failed')
+      setBrokers(prev => prev.map(b => b.id === configAccount.id ? { ...b, connection_status: 'error' } : b))
+      setConfigAccount(prev => prev ? { ...prev, connection_status: 'error' } : prev)
+    } finally {
+      setSummaryRefreshing(false)
+    }
+  }
+
+  // ── Channel summary helper for cards ───────────────────────────────────
 
   const getBrokerSignalChannelsLabel = (brokerId: string) => {
     if (channelOptions.length === 0) return 'None selected'
@@ -367,9 +400,7 @@ export function AccountConfigPage() {
     const brokerRow = brokers.find(b => b.id === brokerId)
     const persistedIds = normalizeSignalChannelIds(brokerRow)
     const restricts = brokerRow?.enforce_signal_channel_filter === true
-    if (!restricts || persistedIds.length === 0) {
-      return 'All signal channels'
-    }
+    if (!restricts || persistedIds.length === 0) return 'All signal channels'
     const labels = channelOptions
       .filter(ch => persistedIds.includes(ch.id))
       .map(ch => ch.display_name)
@@ -378,100 +409,62 @@ export function AccountConfigPage() {
     return 'None selected'
   }
 
+  // ── Add account flow ───────────────────────────────────────────────────
+
   const set = (field: keyof BrokerForm, value: string) =>
     setForm(prev => ({ ...prev, [field]: value }))
-
-  const loadBrokerSummaries = async (rows: BrokerAccount[]) => {
-    const summaryMap: Record<string, { balance?: number; equity?: number; currency?: string }> = {}
-    for (const b of rows) summaryMap[b.id] = {}
-    setBrokerSummaries(summaryMap)
-    setBrokerSummaryErrors({})
-  }
-
-  const loadServerSuggestions = async (_q: string, _platform: string) => {
-    setServerSuggestions([])
-    setLoadingSuggestions(false)
-  }
 
   const addBroker = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
-    if (!form.account_number.trim() || !form.broker_server.trim()) {
-      setError('Account number and server are required')
+    if (!form.account_number.trim() || !form.broker_server.trim() || !form.account_password) {
+      setError('Account number, password, and server are required')
       return
     }
 
     setSaving(true)
-
-    const { data, error: dbErr } = await supabase
-      .from('broker_accounts')
-      .insert({
-        user_id: user!.id,
-        label: form.label || `${form.platform} – ${form.account_number}`,
-        platform: form.platform,
-        metaapi_account_id: `${form.broker_server.trim()}|${form.account_number.trim()}`,
-        broker_server: form.broker_server.trim(),
-        copier_mode: 'ai',
-        signal_channel_ids: [],
-        enforce_signal_channel_filter: false,
-        ai_settings: {},
-        manual_settings: DEFAULT_MANUAL_SETTINGS,
-        default_lot_size: DEFAULT_LOT_SIZE,
-        pip_tolerance: DEFAULT_PIP_TOLERANCE,
-        is_active: true,
-        max_trades_per_zone: 1,
-      })
-      .select('*')
-      .single()
-
-    setSaving(false)
-    if (dbErr) { setError(dbErr.message); return }
-
-    setBrokers(prev => [...prev, data as BrokerAccount])
-    setForm(emptyForm)
-    setShowAddBroker(false)
-  }
-
-  const deleteBroker = async (id: string): Promise<boolean> => {
-    setError('')
-    const previous = brokers
-    setBrokers(prev => prev.filter(b => b.id !== id))
     try {
-      const { error: delErr } = await supabase
-        .from('broker_accounts')
-        .delete()
-        .eq('id', id)
-        .eq('user_id', user!.id)
-      if (delErr) {
-        setBrokers(previous)
-        setError(delErr.message)
-        return false
-      }
-      setBrokerSummaries(prev => {
-        const next = { ...prev }
-        delete next[id]
-        return next
+      const { broker } = await metatraderApi.register({
+        platform: form.platform,
+        server: form.broker_server.trim(),
+        login: form.account_number.trim(),
+        password: form.account_password,
+        label: form.label.trim() || undefined,
       })
-      setBrokerSummaryErrors(prev => {
-        const next = { ...prev }
-        delete next[id]
-        return next
-      })
-      return true
-    } catch {
-      setBrokers(previous)
-      setError('Failed to delete broker account')
-      return false
+      setBrokers(prev => [...prev, broker])
+      setForm(emptyForm)
+      setShowAddBroker(false)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to connect account')
+    } finally {
+      setSaving(false)
     }
   }
 
   const confirmDeleteBroker = async () => {
     if (!brokerPendingDelete) return
     setDeleteInProgress(true)
-    const ok = await deleteBroker(brokerPendingDelete.id)
-    setDeleteInProgress(false)
-    if (ok) setBrokerPendingDelete(null)
+    setError('')
+    const id = brokerPendingDelete.id
+    try {
+      await metatraderApi.remove(id)
+      setBrokers(prev => prev.filter(b => b.id !== id))
+      setBrokerPendingDelete(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete broker')
+    } finally {
+      setDeleteInProgress(false)
+    }
   }
+
+  const tabs = useMemo<TabDef[]>(() => {
+    if (configDraft.mode === 'ai') {
+      return ALL_TABS.filter(t => t.id === 'connection' || t.id === 'mode' || t.id === 'channels')
+    }
+    return ALL_TABS
+  }, [configDraft.mode])
+
+  // ── Loading ────────────────────────────────────────────────────────────
 
   if (loading) {
     return (
@@ -484,8 +477,8 @@ export function AccountConfigPage() {
   return (
     <div className="p-6 lg:p-8 max-w-3xl mx-auto">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-neutral-900">Account & Configuration</h1>
-        <p className="text-sm text-neutral-500 mt-0.5">Configure your trading accounts</p>
+        <h1 className="text-2xl font-bold text-neutral-900">Account &amp; Configuration</h1>
+        <p className="text-sm text-neutral-500 mt-0.5">Connect MetaTrader accounts and tune how each one copies signals.</p>
       </div>
 
       {/* ── Broker Accounts ── */}
@@ -493,7 +486,7 @@ export function AccountConfigPage() {
         <div className="flex items-center justify-between mb-3">
           <div>
             <h2 className="text-base font-semibold text-neutral-900">Trading Accounts</h2>
-            <p className="text-xs text-neutral-400 mt-0.5">Connect your broker accounts.</p>
+            <p className="text-xs text-neutral-400 mt-0.5">Connect your broker accounts via MetatraderAPI.</p>
           </div>
           <Button size="sm" onClick={() => setShowPlatformModal(true)}>
             <Plus className="w-3.5 h-3.5" />
@@ -503,72 +496,68 @@ export function AccountConfigPage() {
 
         {showAddBroker && (
           <Card className="mb-3">
-            <h3 className="text-sm font-semibold text-neutral-900 mb-4">New broker account</h3>
+            <h3 className="text-sm font-semibold text-neutral-900 mb-4">
+              Connect a new {form.platform} account
+            </h3>
             {error && (
               <div className="mb-3 px-3 py-2 bg-error-50 border border-error-200 rounded-lg text-sm text-error-700">{error}</div>
             )}
             <form onSubmit={addBroker} className="space-y-3">
               <div className="grid grid-cols-2 gap-3">
-                <Select label="Platform" options={PLATFORMS} value={form.platform} onChange={e => set('platform', e.target.value)} />
-                <Input label="Account label (optional)" placeholder="e.g. Live MT5" value={form.label} onChange={e => set('label', e.target.value)} />
+                <Input
+                  label="Account label (optional)"
+                  placeholder={`e.g. Live ${form.platform}`}
+                  value={form.label}
+                  onChange={e => set('label', e.target.value)}
+                />
+                <Select
+                  label="Platform"
+                  value={form.platform}
+                  onChange={e => set('platform', e.target.value as 'MT4' | 'MT5')}
+                  options={[
+                    { value: 'MT5', label: 'MetaTrader 5 (MT5)' },
+                    { value: 'MT4', label: 'MetaTrader 4 (MT4)' },
+                  ]}
+                />
               </div>
+
+              <BrokerServerSelect
+                platform={form.platform}
+                value={form.broker_server}
+                onChange={(v) => set('broker_server', v)}
+                hint="Start typing to filter by broker (IC Markets, Exness, FTMO, …) or server name."
+                required
+              />
+
               <div className="grid grid-cols-2 gap-3">
                 <Input
-                  label="Account number"
+                  label="MT login"
                   placeholder="Trading account number"
                   value={form.account_number}
                   onChange={e => set('account_number', e.target.value)}
                   required
                 />
                 <Input
-                  label="Account password"
+                  label="Password"
                   type="password"
                   placeholder="Trading account password"
                   value={form.account_password}
                   onChange={e => set('account_password', e.target.value)}
+                  hint="Sent to MetatraderAPI only. Never stored."
                   required
                 />
               </div>
-              <div className="relative">
-                <Input
-                  label="Broker server"
-                  placeholder={loadingSuggestions ? 'Searching server suggestions...' : 'e.g. ICMarketsSC-MT5-2'}
-                  value={form.broker_server}
-                  onChange={e => {
-                    set('broker_server', e.target.value)
-                    setShowSuggestions(true)
-                  }}
-                  onFocus={() => setShowSuggestions(true)}
-                  onBlur={() => window.setTimeout(() => setShowSuggestions(false), 120)}
-                  hint="Type to see suggestions. Unknown server is still allowed."
-                  required
-                />
-                {showSuggestions && serverSuggestions.length > 0 && (
-                  <div className="absolute z-20 top-[72px] left-0 right-0 bg-white border border-neutral-200 rounded-lg shadow-lg max-h-56 overflow-y-auto">
-                    {serverSuggestions.map(server => (
-                      <button
-                        key={server}
-                        type="button"
-                        onMouseDown={() => {
-                          set('broker_server', server)
-                          setShowSuggestions(false)
-                        }}
-                        className="w-full text-left px-3 py-2 text-sm text-neutral-700 hover:bg-neutral-50"
-                      >
-                        {server}
-                      </button>
-                    ))}
-                  </div>
-                )}
-                {showSuggestions && !loadingSuggestions && form.broker_server.trim() && serverSuggestions.length === 0 && (
-                  <div className="absolute z-20 top-[72px] left-0 right-0 bg-white border border-neutral-200 rounded-lg shadow-lg px-3 py-2 text-xs text-neutral-500">
-                    No suggestion match. You can still use this server.
-                  </div>
-                )}
-              </div>
+
               <div className="flex gap-2 pt-1">
-                <Button type="submit" loading={saving} size="sm">Save account</Button>
-                <Button type="button" variant="ghost" size="sm" onClick={() => { setShowAddBroker(false); setForm(emptyForm); setError('') }}>Cancel</Button>
+                <Button type="submit" loading={saving} size="sm">Connect account</Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => { setShowAddBroker(false); setForm(emptyForm); setError('') }}
+                >
+                  Cancel
+                </Button>
               </div>
             </form>
           </Card>
@@ -582,66 +571,72 @@ export function AccountConfigPage() {
           </div>
         ) : (
           <div className="space-y-2">
-            {brokers.map(broker => (
-              <Card key={broker.id} padding="sm">
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 bg-primary-50 rounded-lg flex items-center justify-center flex-shrink-0">
-                    <PlatformIcon platform={broker.platform} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <p className="text-sm font-medium text-neutral-900">{broker.label}</p>
-                      <Badge variant={broker.is_active ? 'success' : 'neutral'} size="sm">
-                        {broker.is_active ? 'Active' : 'Paused'}
-                      </Badge>
-                      <Badge variant="neutral" size="sm">{broker.platform}</Badge>
+            {brokers.map(broker => {
+              const statusVariant: 'success' | 'neutral' | 'error' =
+                broker.connection_status === 'connected' ? 'success'
+                : broker.connection_status === 'error' ? 'error'
+                : broker.is_active ? 'success' : 'neutral'
+              const statusLabel = broker.connection_status === 'connected' ? 'Connected'
+                : broker.connection_status === 'error' ? 'Error'
+                : broker.is_active ? 'Active' : 'Paused'
+              const brokerLabel = broker.broker_name
+                || inferBrokerLabelFromServer(broker.broker_server ?? null)
+                || broker.broker_server
+                || ''
+              return (
+                <Card key={broker.id} padding="sm">
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 bg-primary-50 rounded-lg flex items-center justify-center flex-shrink-0">
+                      <PlatformIcon platform={broker.platform} />
                     </div>
-                    {/* <p className="text-xs text-neutral-400 mt-0.5">
-                      Lot: {broker.default_lot_size} · Pip tolerance: {broker.pip_tolerance}
-                    </p> */}
-                    <p className="text-xs text-neutral-500 mt-0.5">
-                      <span className="font-medium text-neutral-700">Signal Channels:</span> {getBrokerSignalChannelsLabel(broker.id)}
-                    </p>
-                    {(brokerSummaries[broker.id]?.balance != null || brokerSummaries[broker.id]?.equity != null) && (
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="text-sm font-medium text-neutral-900">{broker.label}</p>
+                        <Badge variant={statusVariant} size="sm">{statusLabel}</Badge>
+                        <Badge variant="neutral" size="sm">{broker.platform}</Badge>
+                        {brokerLabel && (
+                          <Badge variant="neutral" size="sm">{brokerLabel}</Badge>
+                        )}
+                      </div>
                       <p className="text-xs text-neutral-500 mt-0.5">
-                        {brokerSummaries[broker.id]?.balance != null && (
-                          <span>
-                            Balance: {brokerSummaries[broker.id]?.balance?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {brokerSummaries[broker.id]?.currency ?? ''}
-                          </span>
-                        )}
-                        {brokerSummaries[broker.id]?.balance != null && brokerSummaries[broker.id]?.equity != null && ' · '}
-                        {brokerSummaries[broker.id]?.equity != null && (
-                          <span>
-                            Equity: {brokerSummaries[broker.id]?.equity?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {brokerSummaries[broker.id]?.currency ?? ''}
-                          </span>
-                        )}
+                        <span className="font-medium text-neutral-700">Login:</span> {broker.account_login || '—'}
+                        {broker.broker_server && (<><span className="mx-1.5">·</span><span className="font-medium text-neutral-700">Server:</span> {broker.broker_server}</>)}
                       </p>
-                    )}
-                    {!(brokerSummaries[broker.id]?.balance != null || brokerSummaries[broker.id]?.equity != null) && brokerSummaryErrors[broker.id] && (
-                      <p className="text-xs text-warning-600 mt-0.5">
-                        Balance unavailable
+                      <p className="text-xs text-neutral-500 mt-0.5">
+                        <span className="font-medium text-neutral-700">Signal Channels:</span> {getBrokerSignalChannelsLabel(broker.id)}
                       </p>
-                    )}
+                      {(broker.last_balance != null || broker.last_equity != null) && (
+                        <p className="text-xs text-neutral-500 mt-0.5">
+                          {broker.last_balance != null && (
+                            <span>Balance: {broker.last_balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {broker.last_currency ?? ''}</span>
+                          )}
+                          {broker.last_balance != null && broker.last_equity != null && ' · '}
+                          {broker.last_equity != null && (
+                            <span>Equity: {broker.last_equity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {broker.last_currency ?? ''}</span>
+                          )}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      <button
+                        onClick={() => openConfigureModal(broker)}
+                        className="px-3 py-1.5 text-xs font-medium border border-neutral-200 rounded-lg text-neutral-600 hover:bg-neutral-50 transition-colors"
+                      >
+                        Configure
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setError(''); setBrokerPendingDelete(broker) }}
+                        className="p-1.5 rounded-lg text-neutral-400 hover:text-error-600 hover:bg-error-50 transition-colors"
+                        aria-label={`Remove ${broker.label}`}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-1 flex-shrink-0">
-                    <button
-                      onClick={() => openConfigureModal(broker)}
-                      className="px-3 py-1.5 text-xs font-medium border border-neutral-200 rounded-lg text-neutral-600 hover:bg-neutral-50 transition-colors"
-                    >
-                      Configure
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => { setError(''); setBrokerPendingDelete(broker) }}
-                      className="p-1.5 rounded-lg text-neutral-400 hover:text-error-600 hover:bg-error-50 transition-colors"
-                      aria-label={`Remove ${broker.label}`}
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              </Card>
-            ))}
+                </Card>
+              )
+            })}
           </div>
         )}
       </section>
@@ -650,7 +645,12 @@ export function AccountConfigPage() {
         open={showPlatformModal}
         onClose={() => setShowPlatformModal(false)}
         onSelect={(platform) => {
-          setForm(prev => ({ ...prev, platform }))
+          if (platform !== 'MT4' && platform !== 'MT5') {
+            setError(`${platform} integration is coming soon. Pick MT4 or MT5 for now.`)
+            setShowPlatformModal(false)
+            return
+          }
+          setForm(prev => ({ ...prev, platform: platform as 'MT4' | 'MT5' }))
           setShowPlatformModal(false)
           setShowAddBroker(true)
         }}
@@ -669,7 +669,7 @@ export function AccountConfigPage() {
                 Remove trading account?
               </h3>
               <p className="text-sm text-neutral-500 mt-1">
-                This disconnects <span className="font-medium text-neutral-800">{brokerPendingDelete.label}</span> from the copier. This cannot be undone.
+                This disconnects <span className="font-medium text-neutral-800">{brokerPendingDelete.label}</span> from MetatraderAPI and the copier. This cannot be undone.
               </p>
             </div>
             {error && (
@@ -701,7 +701,7 @@ export function AccountConfigPage() {
 
       {configAccount && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-          <div className="w-full max-w-5xl max-h-[88vh] overflow-y-auto rounded-2xl bg-white shadow-xl border border-neutral-200">
+          <div className="w-full max-w-5xl max-h-[88vh] flex flex-col rounded-2xl bg-white shadow-xl border border-neutral-200 overflow-hidden">
             <div className="px-6 py-4 border-b border-neutral-100 flex items-center justify-between">
               <div>
                 <h3 className="text-lg font-semibold text-neutral-900">Configure Account</h3>
@@ -717,251 +717,286 @@ export function AccountConfigPage() {
               </button>
             </div>
 
-            <div className="px-6 py-5 space-y-6">
-              <div>
-                <p className="text-sm font-medium text-neutral-800 mb-2">Configuration Mode</p>
-                <div className="inline-flex rounded-lg border border-neutral-200 bg-neutral-50 p-1">
-                  <button
-                    onClick={() => setConfigDraft(prev => ({ ...prev, mode: 'ai' }))}
-                    className={`px-4 py-2 text-sm rounded-md transition-colors ${configDraft.mode === 'ai' ? 'bg-primary-600 text-white' : 'text-neutral-600 hover:bg-neutral-100'}`}
-                  >
-                    AI Expert Mode
-                  </button>
-                  <button
-                    onClick={() => setConfigDraft(prev => ({ ...prev, mode: 'manual' }))}
-                    className={`px-4 py-2 text-sm rounded-md transition-colors ${configDraft.mode === 'manual' ? 'bg-primary-600 text-white' : 'text-neutral-600 hover:bg-neutral-100'}`}
-                  >
-                    Manual
-                  </button>
-                </div>
-              </div>
+            <div className="flex flex-1 min-h-0">
+              {/* Side tabs */}
+              <nav className="w-52 border-r border-neutral-100 bg-neutral-50 p-3 space-y-0.5 overflow-y-auto">
+                {tabs.map(tab => {
+                  const Icon = tab.icon
+                  const active = tab.id === activeTab
+                  return (
+                    <button
+                      key={tab.id}
+                      onClick={() => setActiveTab(tab.id)}
+                      className={clsx(
+                        'w-full flex items-center gap-2 text-left px-3 py-2 rounded-lg text-sm transition-colors',
+                        active
+                          ? 'bg-white text-primary-700 shadow-sm border border-primary-100'
+                          : 'text-neutral-600 hover:bg-white hover:text-neutral-900',
+                      )}
+                    >
+                      <Icon className={clsx('w-4 h-4', active ? 'text-primary-600' : 'text-neutral-400')} />
+                      {tab.label}
+                    </button>
+                  )
+                })}
+              </nav>
 
-              {(channelOptions.length === 0 || channelOptions.length > 1) && (
-                <div className="rounded-xl border border-neutral-200 p-4">
-                  <div className="flex items-center justify-between mb-3">
-                    <p className="text-sm font-semibold text-neutral-900">Signal Channels</p>
-                    {channelOptions.length > 1 && (
-                      <p className="text-xs text-neutral-500">{configDraft.channelIds.length} selected</p>
-                    )}
-                  </div>
-                  {channelOptions.length === 0 ? (
-                    <p className="text-sm text-neutral-500">
-                      No connected channels found. <Link to="/copier-engine" className="text-primary-600 underline">Connect channels here</Link>.
-                    </p>
-                  ) : (
-                    <>
-                    <p className="text-xs text-neutral-500 mb-3">
-                      All channels selected (default) copies every connected Telegram channel. Uncheck one or more to restrict this broker — only then is the filter enforced.
-                    </p>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                      {channelOptions.map(channel => (
-                        <label key={channel.id} className="flex items-center gap-2 rounded-lg border border-neutral-200 px-3 py-2 cursor-pointer hover:bg-neutral-50">
-                          <input
-                            type="checkbox"
-                            checked={configDraft.channelIds.includes(channel.id)}
-                            onChange={() => toggleDraftChannel(channel.id)}
-                          />
-                          <div className="min-w-0">
-                            <p className="text-sm text-neutral-800 truncate">{channel.display_name}</p>
-                            {channel.channel_username && (
-                              <p className="text-xs text-neutral-500 truncate">@{channel.channel_username}</p>
-                            )}
-                          </div>
-                        </label>
-                      ))}
-                    </div>
-                    </>
-                  )}
-                </div>
-              )}
+              {/* Tab body */}
+              <div className="flex-1 overflow-y-auto px-6 py-5">
+                {error && (
+                  <div className="mb-4 px-3 py-2 bg-error-50 border border-error-200 rounded-lg text-sm text-error-700">{error}</div>
+                )}
 
-              {configDraft.mode === 'ai' ? (
-                <div className="rounded-xl border border-neutral-200 p-4 space-y-3">
-                  <p className="text-sm font-semibold text-neutral-900">AI Configuration</p>
-                  <p className="text-sm text-neutral-600">
-                  AI expert mode is designed to behave like a human expert trader: dynamic lot sizing by balance, maximum lots per signal,
-                  range entry handling, TP-based management, and channel instruction interpretation.
-                  </p>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div className="rounded-lg bg-neutral-50 border border-neutral-200 p-3">
-                      <p className="text-xs font-medium text-neutral-700 mb-1 flex items-center gap-1.5">
-                        <DollarSign className="w-3.5 h-3.5 text-primary-600" />
-                        Money Management
-                      </p>
-                      <p className="text-xs text-neutral-500" title="Forex SL distance can refine linear lots when price context is small.">
-                        Linear sizing by default; optional margin mode; broker min lot floor; forex SL-distance refinement when applicable.
-                      </p>
-                    </div>
-                    <div className="rounded-lg bg-neutral-50 border border-neutral-200 p-3">
-                      <p className="text-xs font-medium text-neutral-700 mb-1 flex items-center gap-1.5">
-                        <Eye className="w-3.5 h-3.5 text-primary-600" />
-                        Signal Interpretation
-                      </p>
-                      <p className="text-xs text-neutral-500">Handles no-entry, single-entry, range-entry, and delayed TP/SL updates.</p>
-                    </div>
-                    <div className="rounded-lg bg-neutral-50 border border-neutral-200 p-3">
-                      <p className="text-xs font-medium text-neutral-700 mb-1 flex items-center gap-1.5">
-                        <Activity className="w-3.5 h-3.5 text-primary-600" />
-                        Trade Management
-                      </p>
-                      <p className="text-xs text-neutral-500">Supports partials, break-even logic, and channel commands like close/secure profits.</p>
-                    </div>
-                    <div className="rounded-lg bg-neutral-50 border border-neutral-200 p-3">
-                      <p className="text-xs font-medium text-neutral-700 mb-1 flex items-center gap-1.5">
-                        <GitBranch className="w-3.5 h-3.5 text-primary-600" />
-                        Modification Detection
-                      </p>
-                      <p className="text-xs text-neutral-500">Distinguishes new entries from follow-up modification instructions.</p>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="rounded-xl border border-neutral-200 p-4 space-y-4">
-                  <p className="text-sm font-semibold text-neutral-900">Manual Configuration</p>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {activeTab === 'connection' && (
+                  <ConnectionTab
+                    broker={configAccount}
+                    refreshing={summaryRefreshing}
+                    onRefresh={refreshSummary}
+                    onCheck={checkConnection}
+                  />
+                )}
+
+                {activeTab === 'mode' && (
+                  <div className="space-y-5">
                     <div>
-                      <p className="text-xs text-neutral-600 mb-1">Symbol Mapping (one per line: FROM=TO)</p>
-                      <textarea
-                        className="w-full min-h-[90px] rounded-md border border-neutral-200 px-3 py-2 text-sm"
-                        placeholder={`GOLD=XAUUSD\nUSOIL=WTIOIL\nBTC=BTCUSD`}
-                        value={symbolMappingText}
-                        onChange={(e) => {
-                          const raw = e.target.value
-                          setSymbolMappingText(raw)
-                          const next: Record<string, string> = {}
-                          for (const line of raw.split('\n')) {
-                            const [a, b] = line.split('=').map(s => s.trim())
-                            if (a && b) next[a.toUpperCase()] = b.toUpperCase()
-                          }
-                          setManual({ symbol_mapping: next })
-                        }}
-                      />
-                      <p className="mt-1 text-[11px] text-neutral-500">
-                        Examples: <span className="font-mono">GOLD=XAUUSD</span>, <span className="font-mono">USOIL=WTIOIL</span>
-                      </p>
+                      <p className="text-sm font-medium text-neutral-800 mb-2">Configuration mode</p>
+                      <div className="inline-flex rounded-lg border border-neutral-200 bg-neutral-50 p-1">
+                        <button
+                          onClick={() => setConfigDraft(prev => ({ ...prev, mode: 'ai' }))}
+                          className={`px-4 py-2 text-sm rounded-md transition-colors ${configDraft.mode === 'ai' ? 'bg-primary-600 text-white' : 'text-neutral-600 hover:bg-neutral-100'}`}
+                        >
+                          AI Expert Mode
+                        </button>
+                        <button
+                          onClick={() => setConfigDraft(prev => ({ ...prev, mode: 'manual' }))}
+                          className={`px-4 py-2 text-sm rounded-md transition-colors ${configDraft.mode === 'manual' ? 'bg-primary-600 text-white' : 'text-neutral-600 hover:bg-neutral-100'}`}
+                        >
+                          Manual
+                        </button>
+                      </div>
                     </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <Input label="Symbol Prefix" value={configDraft.manualSettings.symbol_prefix ?? ''} onChange={e => setManual({ symbol_prefix: e.target.value })} />
-                      <Input label="Symbol Suffix" value={configDraft.manualSettings.symbol_suffix ?? ''} onChange={e => setManual({ symbol_suffix: e.target.value })} />
-                      <Input label="Symbol To Trade" value={configDraft.manualSettings.symbol_to_trade ?? ''} onChange={e => setManual({ symbol_to_trade: e.target.value })} />
-                      <Input
-                        label="Symbols to Exclude (comma)"
-                        value={(configDraft.manualSettings.symbols_exclude ?? []).join(',')}
-                        onChange={e => setManual({ symbols_exclude: e.target.value.split(',').map(x => x.trim().toUpperCase()).filter(Boolean) })}
-                      />
-                    </div>
-                  </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <Select
-                      label="Risk Mode"
-                      value={configDraft.manualSettings.risk_mode ?? 'fixed_lot'}
-                      onChange={e => setManual({ risk_mode: e.target.value as ManualSettings['risk_mode'] })}
-                      options={[
-                        { value: 'fixed_lot', label: 'Fixed Lot' },
-                        { value: 'dynamic_balance_percent', label: 'Dynamic (% Balance)' },
-                      ]}
-                    />
-                    {configDraft.manualSettings.risk_mode === 'dynamic_balance_percent' ? (
-                      <Input label="% Balance per trade" type="number" value={String(configDraft.manualSettings.dynamic_balance_percent ?? 1)} onChange={e => setManual({ dynamic_balance_percent: Number(e.target.value) })} />
-                    ) : (
-                      <Input label="Fixed Lot" type="number" value={String(configDraft.manualSettings.fixed_lot ?? 0.01)} onChange={e => setManual({ fixed_lot: Number(e.target.value) })} />
-                    )}
-                    <Select
-                      label="Trade Style"
-                      value={configDraft.manualSettings.trade_style ?? 'single'}
-                      onChange={e => setManual({ trade_style: e.target.value as ManualSettings['trade_style'] })}
-                      options={[
-                        { value: 'single', label: 'Single Trade' },
-                        { value: 'multi', label: 'Multi Trades' },
-                      ]}
-                    />
-                  </div>
-
-                  <div className="rounded-lg border border-neutral-200 p-3">
-                    <div className="flex items-center justify-between mb-2">
-                      <p className="text-sm font-medium text-neutral-800">TP Lot Sizes</p>
-                      <Button variant="ghost" onClick={addTpLotRow}>Add TP</Button>
-                    </div>
-                    <div className="space-y-2">
-                      {(configDraft.manualSettings.tp_lots ?? DEFAULT_MANUAL_TP_LOTS).map((row, idx) => (
-                        <div key={`${row.label}-${idx}`} className="grid grid-cols-12 gap-2 items-center">
-                          <input className="col-span-4 rounded-md border border-neutral-200 px-2 py-1.5 text-sm" value={row.label} onChange={e => updateTpLotRow(idx, { label: e.target.value })} />
-                          <input className="col-span-3 rounded-md border border-neutral-200 px-2 py-1.5 text-sm" type="number" value={row.lot} onChange={e => updateTpLotRow(idx, { lot: Number(e.target.value) })} />
-                          <label className="col-span-3 text-xs text-neutral-700 flex items-center gap-2">
-                            <input type="checkbox" checked={row.enabled} onChange={e => updateTpLotRow(idx, { enabled: e.target.checked })} />
-                            Enabled
-                          </label>
-                          <Button className="col-span-2" variant="ghost" onClick={() => removeTpLotRow(idx)}>Remove</Button>
+                    {configDraft.mode === 'ai' ? (
+                      <div className="rounded-xl border border-neutral-200 p-4 space-y-3">
+                        <p className="text-sm font-semibold text-neutral-900">AI configuration</p>
+                        <p className="text-sm text-neutral-600">
+                          AI Expert mode behaves like a human expert trader: dynamic lot sizing by balance, range entry handling,
+                          TP-based management, and channel instruction interpretation.
+                        </p>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          <FeatureBullet icon={DollarSign} title="Money management" body="Linear sizing by default; optional margin mode; broker min-lot floor; forex SL-distance refinement." />
+                          <FeatureBullet icon={Eye} title="Signal interpretation" body="Handles no-entry, single-entry, range-entry, and delayed TP/SL updates." />
+                          <FeatureBullet icon={Activity} title="Trade management" body="Supports partials, break-even, and channel commands like close/secure profits." />
+                          <FeatureBullet icon={GitBranch} title="Modification detection" body="Distinguishes new entries from follow-up modification instructions." />
                         </div>
-                      ))}
+                      </div>
+                    ) : (
+                      <div className="rounded-xl border border-neutral-200 p-4 space-y-4">
+                        <p className="text-sm font-semibold text-neutral-900">Symbol routing</p>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          <div>
+                            <p className="text-xs text-neutral-600 mb-1">Symbol Mapping (one per line: FROM=TO)</p>
+                            <textarea
+                              className="w-full min-h-[90px] rounded-md border border-neutral-200 px-3 py-2 text-sm"
+                              placeholder={`GOLD=XAUUSD\nUSOIL=WTIOIL\nBTC=BTCUSD`}
+                              value={symbolMappingText}
+                              onChange={(e) => {
+                                const raw = e.target.value
+                                setSymbolMappingText(raw)
+                                const next: Record<string, string> = {}
+                                for (const line of raw.split('\n')) {
+                                  const [a, b] = line.split('=').map(s => s.trim())
+                                  if (a && b) next[a.toUpperCase()] = b.toUpperCase()
+                                }
+                                setManual({ symbol_mapping: next })
+                              }}
+                            />
+                            <p className="mt-1 text-[11px] text-neutral-500">
+                              Examples: <span className="font-mono">GOLD=XAUUSD</span>, <span className="font-mono">USOIL=WTIOIL</span>
+                            </p>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <Input label="Symbol Prefix" value={configDraft.manualSettings.symbol_prefix ?? ''} onChange={e => setManual({ symbol_prefix: e.target.value })} />
+                            <Input label="Symbol Suffix" value={configDraft.manualSettings.symbol_suffix ?? ''} onChange={e => setManual({ symbol_suffix: e.target.value })} />
+                            <Input label="Symbol To Trade" value={configDraft.manualSettings.symbol_to_trade ?? ''} onChange={e => setManual({ symbol_to_trade: e.target.value })} />
+                            <Input
+                              label="Symbols to Exclude (comma)"
+                              value={(configDraft.manualSettings.symbols_exclude ?? []).join(',')}
+                              onChange={e => setManual({ symbols_exclude: e.target.value.split(',').map(x => x.trim().toUpperCase()).filter(Boolean) })}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {activeTab === 'channels' && (
+                  <div className="space-y-3">
+                    {channelOptions.length === 0 ? (
+                      <p className="text-sm text-neutral-500">
+                        No connected channels found. <Link to="/copier-engine" className="text-primary-600 underline">Connect channels here</Link>.
+                      </p>
+                    ) : channelOptions.length === 1 ? (
+                      <p className="text-sm text-neutral-600">
+                        One Telegram channel is connected — this broker copies from it automatically.
+                      </p>
+                    ) : (
+                      <>
+                        <div className="flex items-center justify-between">
+                          <p className="text-sm font-semibold text-neutral-900">Signal channels</p>
+                          <p className="text-xs text-neutral-500">{configDraft.channelIds.length} selected</p>
+                        </div>
+                        <p className="text-xs text-neutral-500">
+                          All channels selected (default) copies every connected Telegram channel. Uncheck one or more to restrict this broker.
+                        </p>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                          {channelOptions.map(channel => (
+                            <label key={channel.id} className="flex items-center gap-2 rounded-lg border border-neutral-200 px-3 py-2 cursor-pointer hover:bg-neutral-50">
+                              <input
+                                type="checkbox"
+                                checked={configDraft.channelIds.includes(channel.id)}
+                                onChange={() => toggleDraftChannel(channel.id)}
+                              />
+                              <div className="min-w-0">
+                                <p className="text-sm text-neutral-800 truncate">{channel.display_name}</p>
+                                {channel.channel_username && (
+                                  <p className="text-xs text-neutral-500 truncate">@{channel.channel_username}</p>
+                                )}
+                              </div>
+                            </label>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {activeTab === 'risk' && configDraft.mode === 'manual' && (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <Select
+                        label="Risk Mode"
+                        value={configDraft.manualSettings.risk_mode ?? 'fixed_lot'}
+                        onChange={e => setManual({ risk_mode: e.target.value as ManualSettings['risk_mode'] })}
+                        options={[
+                          { value: 'fixed_lot', label: 'Fixed Lot' },
+                          { value: 'dynamic_balance_percent', label: 'Dynamic (% Balance)' },
+                        ]}
+                      />
+                      {configDraft.manualSettings.risk_mode === 'dynamic_balance_percent' ? (
+                        <Input label="% Balance per trade" type="number" value={String(configDraft.manualSettings.dynamic_balance_percent ?? 1)} onChange={e => setManual({ dynamic_balance_percent: Number(e.target.value) })} />
+                      ) : (
+                        <Input label="Fixed Lot" type="number" value={String(configDraft.manualSettings.fixed_lot ?? 0.01)} onChange={e => setManual({ fixed_lot: Number(e.target.value) })} />
+                      )}
+                      <Select
+                        label="Trade Style"
+                        value={configDraft.manualSettings.trade_style ?? 'single'}
+                        onChange={e => setManual({ trade_style: e.target.value as ManualSettings['trade_style'] })}
+                        options={[
+                          { value: 'single', label: 'Single Trade' },
+                          { value: 'multi', label: 'Multi Trades' },
+                        ]}
+                      />
+                    </div>
+
+                    <div className="rounded-lg border border-neutral-200 p-3">
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="text-sm font-medium text-neutral-800">TP Lot Sizes</p>
+                        <Button variant="ghost" size="sm" onClick={addTpLotRow}>Add TP</Button>
+                      </div>
+                      <div className="space-y-2">
+                        {(configDraft.manualSettings.tp_lots ?? DEFAULT_MANUAL_TP_LOTS).map((row, idx) => (
+                          <div key={`${row.label}-${idx}`} className="grid grid-cols-12 gap-2 items-center">
+                            <input className="col-span-4 rounded-md border border-neutral-200 px-2 py-1.5 text-sm" value={row.label} onChange={e => updateTpLotRow(idx, { label: e.target.value })} />
+                            <input className="col-span-3 rounded-md border border-neutral-200 px-2 py-1.5 text-sm" type="number" value={row.lot} onChange={e => updateTpLotRow(idx, { lot: Number(e.target.value) })} />
+                            <label className="col-span-3 text-xs text-neutral-700 flex items-center gap-2">
+                              <input type="checkbox" checked={row.enabled} onChange={e => updateTpLotRow(idx, { enabled: e.target.checked })} />
+                              Enabled
+                            </label>
+                            <Button className="col-span-2" variant="ghost" size="sm" onClick={() => removeTpLotRow(idx)}>Remove</Button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <Select label="Range Trading" value={configDraft.manualSettings.range_trading ? 'yes' : 'no'} onChange={e => setManual({ range_trading: e.target.value === 'yes' })} options={[{ value: 'no', label: 'No' }, { value: 'yes', label: 'Yes' }]} />
+                      {configDraft.manualSettings.range_trading && (
+                        <Input label="Range Total Lot" type="number" value={String(configDraft.manualSettings.range_total_lot ?? 0.03)} onChange={e => setManual({ range_total_lot: Number(e.target.value) })} />
+                      )}
+                      <Select label="Reverse Signal" value={configDraft.manualSettings.reverse_signal ? 'yes' : 'no'} onChange={e => setManual({ reverse_signal: e.target.value === 'yes' })} options={[{ value: 'no', label: 'No' }, { value: 'yes', label: 'Yes' }]} />
                     </div>
                   </div>
+                )}
 
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <Select label="Range Trading" value={configDraft.manualSettings.range_trading ? 'yes' : 'no'} onChange={e => setManual({ range_trading: e.target.value === 'yes' })} options={[{ value: 'no', label: 'No' }, { value: 'yes', label: 'Yes' }]} />
-                    {configDraft.manualSettings.range_trading && (
-                      <Input label="Range Total Lot" type="number" value={String(configDraft.manualSettings.range_total_lot ?? 0.03)} onChange={e => setManual({ range_total_lot: Number(e.target.value) })} />
-                    )}
-                    <Select label="Reverse Signal" value={configDraft.manualSettings.reverse_signal ? 'yes' : 'no'} onChange={e => setManual({ reverse_signal: e.target.value === 'yes' })} options={[{ value: 'no', label: 'No' }, { value: 'yes', label: 'Yes' }]} />
+                {activeTab === 'stops' && configDraft.mode === 'manual' && (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <label className="text-sm text-neutral-700 flex items-center gap-2"><input type="checkbox" checked={configDraft.manualSettings.use_predefined_sl_pips === true} onChange={e => setManual({ use_predefined_sl_pips: e.target.checked })} />Use Predefined SL Pips</label>
+                      {configDraft.manualSettings.use_predefined_sl_pips && (
+                        <Input label="Predefined SL Pips" type="number" value={String(configDraft.manualSettings.predefined_sl_pips ?? 30)} onChange={e => setManual({ predefined_sl_pips: Number(e.target.value) })} />
+                      )}
+                      <label className="text-sm text-neutral-700 flex items-center gap-2"><input type="checkbox" checked={configDraft.manualSettings.use_predefined_tp_pips === true} onChange={e => setManual({ use_predefined_tp_pips: e.target.checked })} />Use Predefined TPs</label>
+                      {configDraft.manualSettings.use_predefined_tp_pips && (
+                        <Input label="Predefined TP Pips (comma)" value={(configDraft.manualSettings.predefined_tp_pips ?? []).join(',')} onChange={e => setManual({ predefined_tp_pips: e.target.value.split(',').map(n => Number(n.trim())).filter(Number.isFinite) })} />
+                      )}
+                      <label className="text-sm text-neutral-700 flex items-center gap-2"><input type="checkbox" checked={configDraft.manualSettings.rr_for_sl_enabled === true} onChange={e => setManual({ rr_for_sl_enabled: e.target.checked })} />Enable R:R for SL</label>
+                      {configDraft.manualSettings.rr_for_sl_enabled && (
+                        <Input label="SL R:R" type="number" value={String(configDraft.manualSettings.rr_for_sl ?? 1)} onChange={e => setManual({ rr_for_sl: Number(e.target.value) })} />
+                      )}
+                      <label className="text-sm text-neutral-700 flex items-center gap-2"><input type="checkbox" checked={configDraft.manualSettings.rr_for_tps_enabled === true} onChange={e => setManual({ rr_for_tps_enabled: e.target.checked })} />Enable R:R for TPs</label>
+                      {configDraft.manualSettings.rr_for_tps_enabled && (
+                        <Input label="TP R:R values (comma)" value={(configDraft.manualSettings.rr_for_tps ?? []).join(',')} onChange={e => setManual({ rr_for_tps: e.target.value.split(',').map(n => Number(n.trim())).filter(Number.isFinite) })} />
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <Input label="Pending Expiry (hours 1-24)" type="number" value={String(configDraft.manualSettings.pending_expiry_hours ?? 1)} onChange={e => setManual({ pending_expiry_hours: Number(e.target.value) })} />
+                      <Select label="Add New Trades to Existing" value={configDraft.manualSettings.add_new_trades_to_existing ? 'yes' : 'no'} onChange={e => setManual({ add_new_trades_to_existing: e.target.value === 'yes' })} options={[{ value: 'yes', label: 'Yes' }, { value: 'no', label: 'No' }]} />
+                      <Select label="Close on Opposite Signal" value={configDraft.manualSettings.close_on_opposite_signal ? 'yes' : 'no'} onChange={e => setManual({ close_on_opposite_signal: e.target.value === 'yes' })} options={[{ value: 'no', label: 'No' }, { value: 'yes', label: 'Yes' }]} />
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <Select label="Move SL to Entry After" value={configDraft.manualSettings.move_sl_to_entry_after_mode ?? 'none'} onChange={e => setManual({ move_sl_to_entry_after_mode: e.target.value as ManualSettings['move_sl_to_entry_after_mode'] })} options={[{ value: 'none', label: 'None' }, { value: 'pips', label: 'Pips' }, { value: 'rr', label: 'RR' }, { value: 'money', label: 'Money' }, { value: 'tp_hit', label: 'TP Hit' }]} />
+                      {configDraft.manualSettings.move_sl_to_entry_after_mode !== 'none' && (
+                        <Input label="Move SL Trigger Value" type="number" value={String(configDraft.manualSettings.move_sl_to_entry_after_value ?? 10)} onChange={e => setManual({ move_sl_to_entry_after_value: Number(e.target.value) })} />
+                      )}
+                      {configDraft.manualSettings.move_sl_to_entry_after_mode !== 'none' && (
+                        <Select label="Move SL Type" value={configDraft.manualSettings.move_sl_to_entry_type ?? 'sl_only'} onChange={e => setManual({ move_sl_to_entry_type: e.target.value as ManualSettings['move_sl_to_entry_type'] })} options={[{ value: 'sl_only', label: 'Move SL only' }, { value: 'sl_and_close_half', label: 'Move SL and close half' }]} />
+                      )}
+                      <Input label="Breakeven Offset (pips)" type="number" value={String(configDraft.manualSettings.breakeven_offset_pips ?? 10)} onChange={e => setManual({ breakeven_offset_pips: Number(e.target.value) })} />
+                      <Input label="Partial Close (%)" type="number" value={String(configDraft.manualSettings.partial_close_percent ?? 25)} onChange={e => setManual({ partial_close_percent: Number(e.target.value) })} />
+                      <Input label="Half Close (%)" type="number" value={String(configDraft.manualSettings.half_close_percent ?? 50)} onChange={e => setManual({ half_close_percent: Number(e.target.value) })} />
+                    </div>
                   </div>
+                )}
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <label className="text-sm text-neutral-700 flex items-center gap-2"><input type="checkbox" checked={configDraft.manualSettings.use_predefined_sl_pips === true} onChange={e => setManual({ use_predefined_sl_pips: e.target.checked })} />Use Predefined SL Pips</label>
-                    {configDraft.manualSettings.use_predefined_sl_pips && (
-                      <Input label="Predefined SL Pips" type="number" value={String(configDraft.manualSettings.predefined_sl_pips ?? 30)} onChange={e => setManual({ predefined_sl_pips: Number(e.target.value) })} />
-                    )}
-                    <label className="text-sm text-neutral-700 flex items-center gap-2"><input type="checkbox" checked={configDraft.manualSettings.use_predefined_tp_pips === true} onChange={e => setManual({ use_predefined_tp_pips: e.target.checked })} />Use Predefined TPs</label>
-                    {configDraft.manualSettings.use_predefined_tp_pips && (
-                      <Input label="Predefined TP Pips (comma)" value={(configDraft.manualSettings.predefined_tp_pips ?? []).join(',')} onChange={e => setManual({ predefined_tp_pips: e.target.value.split(',').map(n => Number(n.trim())).filter(Number.isFinite) })} />
-                    )}
-                    <label className="text-sm text-neutral-700 flex items-center gap-2"><input type="checkbox" checked={configDraft.manualSettings.rr_for_sl_enabled === true} onChange={e => setManual({ rr_for_sl_enabled: e.target.checked })} />Enable R:R for SL</label>
-                    {configDraft.manualSettings.rr_for_sl_enabled && (
-                      <Input label="SL R:R" type="number" value={String(configDraft.manualSettings.rr_for_sl ?? 1)} onChange={e => setManual({ rr_for_sl: Number(e.target.value) })} />
-                    )}
-                    <label className="text-sm text-neutral-700 flex items-center gap-2"><input type="checkbox" checked={configDraft.manualSettings.rr_for_tps_enabled === true} onChange={e => setManual({ rr_for_tps_enabled: e.target.checked })} />Enable R:R for TPs</label>
-                    {configDraft.manualSettings.rr_for_tps_enabled && (
-                      <Input label="TP R:R values (comma)" value={(configDraft.manualSettings.rr_for_tps ?? []).join(',')} onChange={e => setManual({ rr_for_tps: e.target.value.split(',').map(n => Number(n.trim())).filter(Number.isFinite) })} />
-                    )}
+                {activeTab === 'trailing' && configDraft.mode === 'manual' && (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                      <Select label="Trailing SL" value={configDraft.manualSettings.trailing_enabled ? 'yes' : 'no'} onChange={e => setManual({ trailing_enabled: e.target.value === 'yes' })} options={[{ value: 'no', label: 'No' }, { value: 'yes', label: 'Yes' }]} />
+                      <Input label="Trail Start (pips)" type="number" value={String(configDraft.manualSettings.trailing_start_pips ?? 20)} onChange={e => setManual({ trailing_start_pips: Number(e.target.value) })} />
+                      <Input label="Trail Step (pips)" type="number" value={String(configDraft.manualSettings.trailing_step_pips ?? 5)} onChange={e => setManual({ trailing_step_pips: Number(e.target.value) })} />
+                      <Input label="Trail Distance (pips)" type="number" value={String(configDraft.manualSettings.trailing_distance_pips ?? 10)} onChange={e => setManual({ trailing_distance_pips: Number(e.target.value) })} />
+                    </div>
                   </div>
+                )}
 
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <Input label="Pending Expiry (hours 1-24)" type="number" value={String(configDraft.manualSettings.pending_expiry_hours ?? 1)} onChange={e => setManual({ pending_expiry_hours: Number(e.target.value) })} />
-                    <Select label="Add New Trades to Existing" value={configDraft.manualSettings.add_new_trades_to_existing ? 'yes' : 'no'} onChange={e => setManual({ add_new_trades_to_existing: e.target.value === 'yes' })} options={[{ value: 'yes', label: 'Yes' }, { value: 'no', label: 'No' }]} />
-                    <Select label="Close on Opposite Signal" value={configDraft.manualSettings.close_on_opposite_signal ? 'yes' : 'no'} onChange={e => setManual({ close_on_opposite_signal: e.target.value === 'yes' })} options={[{ value: 'no', label: 'No' }, { value: 'yes', label: 'Yes' }]} />
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <Select label="Move SL to Entry After" value={configDraft.manualSettings.move_sl_to_entry_after_mode ?? 'none'} onChange={e => setManual({ move_sl_to_entry_after_mode: e.target.value as ManualSettings['move_sl_to_entry_after_mode'] })} options={[{ value: 'none', label: 'None' }, { value: 'pips', label: 'Pips' }, { value: 'rr', label: 'RR' }, { value: 'money', label: 'Money' }, { value: 'tp_hit', label: 'TP Hit' }]} />
-                    {configDraft.manualSettings.move_sl_to_entry_after_mode !== 'none' && (
-                      <Input label="Move SL Trigger Value" type="number" value={String(configDraft.manualSettings.move_sl_to_entry_after_value ?? 10)} onChange={e => setManual({ move_sl_to_entry_after_value: Number(e.target.value) })} />
-                    )}
-                    {configDraft.manualSettings.move_sl_to_entry_after_mode !== 'none' && (
-                      <Select label="Move SL Type" value={configDraft.manualSettings.move_sl_to_entry_type ?? 'sl_only'} onChange={e => setManual({ move_sl_to_entry_type: e.target.value as ManualSettings['move_sl_to_entry_type'] })} options={[{ value: 'sl_only', label: 'Move SL only' }, { value: 'sl_and_close_half', label: 'Move SL and close half' }]} />
-                    )}
-                    <Input label="Breakeven Offset (pips)" type="number" value={String(configDraft.manualSettings.breakeven_offset_pips ?? 10)} onChange={e => setManual({ breakeven_offset_pips: Number(e.target.value) })} />
-                    <Input label="Partial Close (%)" type="number" value={String(configDraft.manualSettings.partial_close_percent ?? 25)} onChange={e => setManual({ partial_close_percent: Number(e.target.value) })} />
-                    <Input label="Half Close (%)" type="number" value={String(configDraft.manualSettings.half_close_percent ?? 50)} onChange={e => setManual({ half_close_percent: Number(e.target.value) })} />
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                    <Select label="Trailing SL" value={configDraft.manualSettings.trailing_enabled ? 'yes' : 'no'} onChange={e => setManual({ trailing_enabled: e.target.value === 'yes' })} options={[{ value: 'no', label: 'No' }, { value: 'yes', label: 'Yes' }]} />
-                    <Input label="Trail Start (pips)" type="number" value={String(configDraft.manualSettings.trailing_start_pips ?? 20)} onChange={e => setManual({ trailing_start_pips: Number(e.target.value) })} />
-                    <Input label="Trail Step (pips)" type="number" value={String(configDraft.manualSettings.trailing_step_pips ?? 5)} onChange={e => setManual({ trailing_step_pips: Number(e.target.value) })} />
-                    <Input label="Trail Distance (pips)" type="number" value={String(configDraft.manualSettings.trailing_distance_pips ?? 10)} onChange={e => setManual({ trailing_distance_pips: Number(e.target.value) })} />
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <Select label="Time Filter" value={configDraft.manualSettings.time_filter_enabled ? 'yes' : 'no'} onChange={e => setManual({ time_filter_enabled: e.target.value === 'yes' })} options={[{ value: 'no', label: 'No' }, { value: 'yes', label: 'Yes' }]} />
-                    {configDraft.manualSettings.time_filter_enabled && (
-                      <Input label="Start Time" type="time" value={configDraft.manualSettings.trade_start_time ?? '00:00'} onChange={e => setManual({ trade_start_time: e.target.value })} />
-                    )}
-                    {configDraft.manualSettings.time_filter_enabled && (
-                      <Input label="End Time" type="time" value={configDraft.manualSettings.trade_end_time ?? '23:59'} onChange={e => setManual({ trade_end_time: e.target.value })} />
-                    )}
-                    <Select label="Days Filter" value={configDraft.manualSettings.days_filter_enabled ? 'yes' : 'no'} onChange={e => setManual({ days_filter_enabled: e.target.value === 'yes' })} options={[{ value: 'no', label: 'No' }, { value: 'yes', label: 'Yes' }]} />
+                {activeTab === 'filters' && configDraft.mode === 'manual' && (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <Select label="Time Filter" value={configDraft.manualSettings.time_filter_enabled ? 'yes' : 'no'} onChange={e => setManual({ time_filter_enabled: e.target.value === 'yes' })} options={[{ value: 'no', label: 'No' }, { value: 'yes', label: 'Yes' }]} />
+                      {configDraft.manualSettings.time_filter_enabled && (
+                        <Input label="Start Time" type="time" value={configDraft.manualSettings.trade_start_time ?? '00:00'} onChange={e => setManual({ trade_start_time: e.target.value })} />
+                      )}
+                      {configDraft.manualSettings.time_filter_enabled && (
+                        <Input label="End Time" type="time" value={configDraft.manualSettings.trade_end_time ?? '23:59'} onChange={e => setManual({ trade_end_time: e.target.value })} />
+                      )}
+                      <Select label="Days Filter" value={configDraft.manualSettings.days_filter_enabled ? 'yes' : 'no'} onChange={e => setManual({ days_filter_enabled: e.target.value === 'yes' })} options={[{ value: 'no', label: 'No' }, { value: 'yes', label: 'Yes' }]} />
+                    </div>
                     {configDraft.manualSettings.days_filter_enabled && (
-                      <div className="md:col-span-2">
+                      <div>
                         <p className="text-xs text-neutral-600 mb-1">Days of the week</p>
                         <div className="flex flex-wrap gap-3">
                           {[
@@ -989,17 +1024,18 @@ export function AccountConfigPage() {
                         </div>
                       </div>
                     )}
-                    <Select label="Allow High Impact News" value={configDraft.manualSettings.allow_high_impact_news ? 'yes' : 'no'} onChange={e => setManual({ allow_high_impact_news: e.target.value === 'yes' })} options={[{ value: 'no', label: 'No' }, { value: 'yes', label: 'Yes' }]} />
-                    {configDraft.manualSettings.allow_high_impact_news && (
-                      <Input label="Close Before News (min)" type="number" value={String(configDraft.manualSettings.close_before_news_minutes ?? 10)} onChange={e => setManual({ close_before_news_minutes: Number(e.target.value) })} />
-                    )}
-                    {configDraft.manualSettings.allow_high_impact_news && (
-                      <Input label="Resume After News (min)" type="number" value={String(configDraft.manualSettings.resume_after_news_minutes ?? 10)} onChange={e => setManual({ resume_after_news_minutes: Number(e.target.value) })} />
-                    )}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <Select label="Allow High Impact News" value={configDraft.manualSettings.allow_high_impact_news ? 'yes' : 'no'} onChange={e => setManual({ allow_high_impact_news: e.target.value === 'yes' })} options={[{ value: 'no', label: 'No' }, { value: 'yes', label: 'Yes' }]} />
+                      {configDraft.manualSettings.allow_high_impact_news && (
+                        <Input label="Close Before News (min)" type="number" value={String(configDraft.manualSettings.close_before_news_minutes ?? 10)} onChange={e => setManual({ close_before_news_minutes: Number(e.target.value) })} />
+                      )}
+                      {configDraft.manualSettings.allow_high_impact_news && (
+                        <Input label="Resume After News (min)" type="number" value={String(configDraft.manualSettings.resume_after_news_minutes ?? 10)} onChange={e => setManual({ resume_after_news_minutes: Number(e.target.value) })} />
+                      )}
+                    </div>
                   </div>
-
-                </div>
-              )}
+                )}
+              </div>
             </div>
 
             <div className="px-6 py-4 border-t border-neutral-100 flex items-center justify-end gap-2">
@@ -1011,4 +1047,102 @@ export function AccountConfigPage() {
       )}
     </div>
   )
+}
+
+// ── Tab subcomponents ────────────────────────────────────────────────────
+
+function ConnectionTab({
+  broker,
+  refreshing,
+  onRefresh,
+  onCheck,
+}: {
+  broker: BrokerAccount
+  refreshing: boolean
+  onRefresh: () => void
+  onCheck: () => void
+}) {
+  const brokerLabel = broker.broker_name
+    || inferBrokerLabelFromServer(broker.broker_server ?? null)
+    || '—'
+  const synced = broker.last_synced_at ? new Date(broker.last_synced_at) : null
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <ReadonlyField label="Broker" value={brokerLabel} />
+        <ReadonlyField label="Platform" value={broker.platform} />
+        <ReadonlyField label="Server" value={broker.broker_server ?? '—'} />
+        <ReadonlyField label="MT login" value={broker.account_login ?? '—'} />
+        <ReadonlyField label="API account UUID" value={broker.metaapi_account_id || '—'} mono />
+        <ReadonlyField
+          label="Status"
+          value={broker.connection_status === 'connected' ? 'Connected'
+            : broker.connection_status === 'error' ? 'Error'
+            : 'Pending'}
+        />
+      </div>
+
+      <div className="rounded-xl border border-neutral-200 p-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm font-semibold text-neutral-900">Live account</p>
+            <p className="text-xs text-neutral-500 mt-0.5">
+              {synced ? `Last refreshed ${synced.toLocaleString()}` : 'Not refreshed yet'}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="sm" onClick={onCheck} disabled={refreshing}>
+              Check connection
+            </Button>
+            <Button size="sm" onClick={onRefresh} loading={refreshing}>
+              <RefreshCw className="w-3.5 h-3.5" />
+              Refresh balance
+            </Button>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
+          <Stat label="Balance" value={fmtMoney(broker.last_balance, broker.last_currency)} />
+          <Stat label="Equity" value={fmtMoney(broker.last_equity, broker.last_currency)} />
+          <Stat label="Currency" value={broker.last_currency ?? '—'} />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ReadonlyField({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div>
+      <p className="text-xs text-neutral-500 mb-1">{label}</p>
+      <p className={clsx('text-sm text-neutral-900 px-3 py-2 rounded-md border border-neutral-200 bg-neutral-50 truncate', mono && 'font-mono')}>
+        {value}
+      </p>
+    </div>
+  )
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg bg-neutral-50 border border-neutral-200 p-3">
+      <p className="text-xs text-neutral-500">{label}</p>
+      <p className="text-sm font-semibold text-neutral-900 mt-1">{value}</p>
+    </div>
+  )
+}
+
+function FeatureBullet({ icon: Icon, title, body }: { icon: typeof Plug; title: string; body: string }) {
+  return (
+    <div className="rounded-lg bg-neutral-50 border border-neutral-200 p-3">
+      <p className="text-xs font-medium text-neutral-700 mb-1 flex items-center gap-1.5">
+        <Icon className="w-3.5 h-3.5 text-primary-600" />
+        {title}
+      </p>
+      <p className="text-xs text-neutral-500">{body}</p>
+    </div>
+  )
+}
+
+function fmtMoney(value: number | null | undefined, currency?: string | null): string {
+  if (value == null) return '—'
+  return `${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency ?? ''}`.trim()
 }

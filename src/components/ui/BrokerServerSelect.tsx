@@ -1,0 +1,126 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+import clsx from 'clsx'
+import { ChevronDown, Server } from 'lucide-react'
+import {
+  loadBrokerServers,
+  filterBrokerGroups,
+  type BrokerServerGroup,
+} from '../../lib/brokerServers'
+
+interface BrokerServerSelectProps {
+  platform: 'MT4' | 'MT5'
+  value: string
+  onChange: (value: string) => void
+  label?: string
+  hint?: string
+  required?: boolean
+}
+
+/**
+ * Typeahead for MT server names backed by the `mt_servers` table.
+ * Servers are loaded once per platform, grouped by broker, and filtered locally.
+ * Free-text entry is always allowed: unknown servers fall through to onChange.
+ */
+export function BrokerServerSelect({
+  platform,
+  value,
+  onChange,
+  label = 'Broker server',
+  hint,
+  required,
+}: BrokerServerSelectProps) {
+  const [groups, setGroups] = useState<BrokerServerGroup[]>([])
+  const [loading, setLoading] = useState(false)
+  const [open, setOpen] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    loadBrokerServers(platform)
+      .then(data => { if (!cancelled) setGroups(data) })
+      .catch(() => { if (!cancelled) setGroups([]) })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [platform])
+
+  useEffect(() => {
+    const onDoc = (e: MouseEvent) => {
+      if (!containerRef.current) return
+      if (!containerRef.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onDoc)
+    return () => document.removeEventListener('mousedown', onDoc)
+  }, [])
+
+  const visibleGroups = useMemo(() => filterBrokerGroups(groups, value), [groups, value])
+  const totalServers = useMemo(() => groups.reduce((n, g) => n + g.servers.length, 0), [groups])
+
+  return (
+    <div className="flex flex-col gap-1.5" ref={containerRef}>
+      {label && (
+        <label className="text-sm font-medium text-neutral-700">
+          {label}
+          {required && <span className="text-error-500"> *</span>}
+        </label>
+      )}
+      <div className="relative">
+        <input
+          type="text"
+          value={value}
+          required={required}
+          onChange={e => { onChange(e.target.value); setOpen(true) }}
+          onFocus={() => setOpen(true)}
+          placeholder={loading ? 'Loading servers…' : `Search ${totalServers} ${platform} servers…`}
+          className="w-full px-3 py-2 pr-9 text-sm rounded-lg border border-neutral-200 bg-white text-neutral-900 placeholder:text-neutral-400 hover:border-neutral-300 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+        />
+        <button
+          type="button"
+          tabIndex={-1}
+          onClick={() => setOpen(o => !o)}
+          className="absolute inset-y-0 right-0 flex items-center px-2 text-neutral-400 hover:text-neutral-600"
+        >
+          <ChevronDown className={clsx('w-4 h-4 transition-transform', open && 'rotate-180')} />
+        </button>
+
+        {open && (
+          <div className="absolute z-30 mt-1 w-full max-h-72 overflow-y-auto rounded-lg border border-neutral-200 bg-white shadow-lg">
+            {loading ? (
+              <div className="px-3 py-2 text-sm text-neutral-500">Loading…</div>
+            ) : visibleGroups.length === 0 ? (
+              <div className="px-3 py-2 text-sm text-neutral-500">
+                No matching server. You can still use "{value || '—'}" as a free-text server.
+              </div>
+            ) : (
+              visibleGroups.map(group => (
+                <div key={group.broker_label} className="py-1">
+                  <div className="px-3 pt-1.5 pb-0.5 text-[11px] uppercase tracking-wide text-neutral-400 font-medium flex items-center gap-1.5">
+                    <Server className="w-3 h-3" />
+                    {group.broker_label}
+                  </div>
+                  {group.servers.slice(0, 50).map(server => (
+                    <button
+                      key={server.id}
+                      type="button"
+                      onMouseDown={() => {
+                        onChange(server.server_name)
+                        setOpen(false)
+                      }}
+                      className={clsx(
+                        'w-full text-left px-3 py-1.5 text-sm hover:bg-neutral-50',
+                        server.server_name === value && 'bg-primary-50 text-primary-700',
+                      )}
+                    >
+                      {server.server_name}
+                    </button>
+                  ))}
+                </div>
+              ))
+            )}
+          </div>
+        )}
+      </div>
+      {hint && <p className="text-xs text-neutral-500">{hint}</p>}
+    </div>
+  )
+}

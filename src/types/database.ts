@@ -161,9 +161,21 @@ export interface BrokerAccount {
   user_id: string
   label: string
   platform: string
+  /** MetatraderAPI account UUID returned by /RegisterAccount. */
   metaapi_account_id: string
-  /** MT server hostname as entered when linking (used to infer broker label). */
+  /** MT login number, kept separate from the UUID for display. */
+  account_login?: string | null
+  /** Human-readable broker name (e.g. "IC Markets"). */
+  broker_name?: string | null
+  /** MT server hostname as entered when linking (e.g. ICMarketsSC-MT5-2). */
   broker_server?: string | null
+  /** Last known status from MetatraderAPI register/check. */
+  connection_status?: 'pending' | 'connected' | 'error' | null
+  /** Cached AccountSummary values for fast UI render. */
+  last_balance?: number | null
+  last_equity?: number | null
+  last_currency?: string | null
+  last_synced_at?: string | null
   is_active: boolean
   /** AI uses balance-scaled sizing; Manual uses defaults unless signal specifies lots. */
   copier_mode?: 'ai' | 'manual'
@@ -271,6 +283,14 @@ export interface Trade {
   closed_at: string | null
   profit: number | null
   created_at: string
+}
+
+export interface MtServer {
+  id: string
+  server_name: string
+  platform: 'MT4' | 'MT5' | 'ANY'
+  broker_label: string | null
+  is_active: boolean
 }
 
 export type ParsedSignal = {

@@ -1,0 +1,86 @@
+import { supabase } from './supabase'
+import type { BrokerAccount } from '../types/database'
+
+interface CallOpts<T> {
+  body: Record<string, unknown>
+  expect?: (body: unknown) => T
+}
+
+async function call<T = unknown>(opts: CallOpts<T>): Promise<T> {
+  const session = (await supabase.auth.getSession()).data.session
+  const token = session?.access_token
+  if (!token) throw new Error('Not signed in')
+
+  const url = (import.meta.env.VITE_SUPABASE_URL as string) + '/functions/v1/broker-metatrader'
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+      apikey: import.meta.env.VITE_SUPABASE_ANON_KEY as string,
+    },
+    body: JSON.stringify(opts.body),
+  })
+
+  const text = await res.text()
+  let body: unknown = null
+  if (text) {
+    try { body = JSON.parse(text) } catch { body = text }
+  }
+  if (!res.ok) {
+    const msg = (body && typeof body === 'object' && 'error' in (body as Record<string, unknown>))
+      ? String((body as Record<string, unknown>).error)
+      : text || `HTTP ${res.status}`
+    throw new Error(msg)
+  }
+  return (opts.expect ? opts.expect(body) : (body as T))
+}
+
+export interface RegisterArgs {
+  platform: 'MT4' | 'MT5'
+  server: string
+  login: string
+  password: string
+  label?: string
+  signal_channel_ids?: string[]
+}
+
+export interface AccountSummary {
+  balance?: number
+  equity?: number
+  currency?: string
+  margin?: number
+  freeMargin?: number
+  marginLevel?: number
+  leverage?: number
+}
+
+export const metatraderApi = {
+  register(args: RegisterArgs): Promise<{ broker: BrokerAccount; summary: AccountSummary | null }> {
+    return call({
+      body: { action: 'register', ...args },
+      expect: (b) => b as { broker: BrokerAccount; summary: AccountSummary | null },
+    })
+  },
+
+  remove(brokerId: string): Promise<{ ok: true }> {
+    return call({
+      body: { action: 'delete', broker_id: brokerId },
+      expect: (b) => b as { ok: true },
+    })
+  },
+
+  summary(brokerId: string): Promise<{ summary: AccountSummary }> {
+    return call({
+      body: { action: 'summary', broker_id: brokerId },
+      expect: (b) => b as { summary: AccountSummary },
+    })
+  },
+
+  check(brokerId: string): Promise<{ result: string }> {
+    return call({
+      body: { action: 'check', broker_id: brokerId },
+      expect: (b) => b as { result: string },
+    })
+  },
+}
