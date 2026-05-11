@@ -13,6 +13,11 @@ export interface Database {
         Insert: Omit<TelegramSession, 'id' | 'created_at' | 'updated_at'>
         Update: Partial<Omit<TelegramSession, 'id' | 'created_at' | 'updated_at'>>
       }
+      telegram_auth_pending: {
+        Row: TelegramAuthPending
+        Insert: TelegramAuthPending
+        Update: Partial<TelegramAuthPending>
+      }
       telegram_channels: {
         Row: TelegramChannel
         Insert: Omit<TelegramChannel, 'id' | 'created_at' | 'updated_at'>
@@ -181,6 +186,14 @@ export interface TelegramSession {
   is_active: boolean
   created_at: string
   updated_at: string
+}
+
+/** Worker-only row for Telegram login between send_code and verify_code. */
+export interface TelegramAuthPending {
+  user_id: string
+  phone: string
+  phone_code_hash: string
+  expires_at: string
 }
 
 export interface TelegramChannel {
