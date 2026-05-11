@@ -807,7 +807,11 @@ Deno.serve(async (req: Request) => {
                   "apikey": secret,
                   "Content-Type": "application/json",
                 },
-                body: JSON.stringify({ signal_id, parsed }),
+                body: JSON.stringify({
+                  signal_id,
+                  parsed,
+                  parent_signal_id: (signal as { parent_signal_id?: string | null }).parent_signal_id ?? null,
+                }),
               })
               const raw = await execRes.text()
               let body: { executed?: boolean; results?: Array<{ ok?: boolean }> } | null = null
@@ -826,7 +830,10 @@ Deno.serve(async (req: Request) => {
                     signal_id,
                     channel_id: signal.channel_id ?? null,
                     action: parsed.action,
-                    parsed_data: parsed,
+                    parsed_data: {
+                      ...parsed,
+                      parent_signal_id: (signal as { parent_signal_id?: string | null }).parent_signal_id ?? null,
+                    },
                     status: "pending",
                     attempts: 0,
                     max_attempts: 6,
@@ -844,7 +851,10 @@ Deno.serve(async (req: Request) => {
                     signal_id,
                     channel_id: signal.channel_id ?? null,
                     action: parsed.action,
-                    parsed_data: parsed,
+                    parsed_data: {
+                      ...parsed,
+                      parent_signal_id: (signal as { parent_signal_id?: string | null }).parent_signal_id ?? null,
+                    },
                     status: "pending",
                     attempts: 0,
                     max_attempts: 6,

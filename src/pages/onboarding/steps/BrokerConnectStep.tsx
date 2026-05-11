@@ -119,7 +119,7 @@ export function BrokerConnectStep({ onDone }: Props) {
       <div className="mb-5">
         <h2 className="text-lg font-semibold text-neutral-900">Connect your broker</h2>
         <p className="text-sm text-neutral-500 mt-1">
-          Link your trading account via MetaAPI. Find your Account ID in your MetaAPI dashboard.
+          Link your MT account through the trading bridge (REST). Use the bridge account ID from your provider after registration.
         </p>
       </div>
 

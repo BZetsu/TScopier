@@ -27,6 +27,7 @@ const SESSION_PERSIST_INTERVAL_MS = 30 * 60_000
 const CATCHUP_BACKPRESSURE_MS = 250
 const CATCHUP_PER_CHANNEL_CAP = 200
 const BACKFILL_PER_CHANNEL_CAP = 1000
+const REPLY_CHAIN_SWEEP_MS = 60_000
 
 export interface ChannelInfo {
   id: string
@@ -68,6 +69,16 @@ interface ChatIdentity {
   chatId: string
   chatIdVariants: string[]
   chatUsername: string
+}
+
+/** Telegram / gramjs: extract numeric reply target message id when present. */
+function extractReplyToMsgId(replyTo: unknown): string | null {
+  if (replyTo == null || typeof replyTo !== 'object') return null
+  const r = replyTo as { replyToMsgId?: unknown; reply_to_msg_id?: unknown }
+  const v = r.replyToMsgId ?? r.reply_to_msg_id
+  if (v == null) return null
+  const s = String(v).trim()
+  return s ? s : null
 }
 
 function looksLikeTradingSignal(text: string, isReply: boolean): boolean {
@@ -140,6 +151,7 @@ export class UserListener {
   private safetyPollTimer: NodeJS.Timeout | null = null
   private watchdogTimer: NodeJS.Timeout | null = null
   private sessionPersistTimer: NodeJS.Timeout | null = null
+  private replyChainSweepTimer: NodeJS.Timeout | null = null
   private catchUpInFlight = false
   private isConnected = false
   private lastEventAt = 0
@@ -175,6 +187,7 @@ export class UserListener {
     this.startWatchdog()
     this.startSafetyPoll()
     this.startSessionPersist()
+    this.startReplyChainSweep()
   }
 
   async stop() {
@@ -182,6 +195,7 @@ export class UserListener {
       this.stopTimer('watchdogTimer')
       this.stopTimer('safetyPollTimer')
       this.stopTimer('sessionPersistTimer')
+      this.stopTimer('replyChainSweepTimer')
       this.removeCurrentHandler()
       await this.persistSessionIfChanged()
       await this.client.disconnect()
@@ -192,7 +206,7 @@ export class UserListener {
     }
   }
 
-  private stopTimer(field: 'watchdogTimer' | 'safetyPollTimer' | 'sessionPersistTimer') {
+  private stopTimer(field: 'watchdogTimer' | 'safetyPollTimer' | 'sessionPersistTimer' | 'replyChainSweepTimer') {
     const t = this[field]
     if (t) {
       clearInterval(t)
@@ -476,6 +490,11 @@ export class UserListener {
     const messageId = String(message.id)
     const rawMessage = (message.text ?? message.message ?? '') as string
     const isReply = !!message.replyTo
+    const replyToMessageId = extractReplyToMsgId(message.replyTo)
+    let parentSignalId: string | null = null
+    if (replyToMessageId) {
+      parentSignalId = await this.resolveParentSignalIdForReply(channelRow.id, replyToMessageId)
+    }
 
     if (!looksLikeTradingSignal(rawMessage, isReply)) {
       console.log(
@@ -495,7 +514,8 @@ export class UserListener {
           status: 'pending',
           telegram_message_id: messageId,
           is_modification: isReply,
-          parent_signal_id: null,
+          parent_signal_id: parentSignalId,
+          reply_to_message_id: replyToMessageId,
         },
         { onConflict: 'user_id,telegram_message_id', ignoreDuplicates: true },
       )
@@ -515,6 +535,17 @@ export class UserListener {
       )
       return false // duplicate — skip parse-signal
     }
+
+    if (replyToMessageId && !parentSignalId) {
+      const lateParent = await this.resolveParentSignalIdForReply(channelRow.id, replyToMessageId)
+      if (lateParent) {
+        await this.supabase
+          .from('signals')
+          .update({ parent_signal_id: lateParent })
+          .eq('id', signalRow.id)
+      }
+    }
+    await this.relinkReplyOrphansAfterParentInsert(channelRow.id, messageId, signalRow.id)
 
     console.log(
       `[userListener] signal inserted user=${this.userId} signalId=${signalRow.id} channelRow=${channelRow.id} messageId=${messageId}`,
@@ -582,6 +613,72 @@ export class UserListener {
     }
 
     return true
+  }
+
+  /** Resolve `signals.id` of the parent message in this channel (telegram_channels row id). */
+  private async resolveParentSignalIdForReply(
+    channelRowId: string,
+    replyToMessageId: string,
+  ): Promise<string | null> {
+    const { data } = await this.supabase
+      .from('signals')
+      .select('id')
+      .eq('user_id', this.userId)
+      .eq('channel_id', channelRowId)
+      .eq('telegram_message_id', replyToMessageId)
+      .maybeSingle()
+    return (data as { id?: string } | null)?.id ?? null
+  }
+
+  /** Link orphan replies that pointed at this Telegram message id before the parent row existed. */
+  private async relinkReplyOrphansAfterParentInsert(
+    channelRowId: string,
+    parentTelegramMessageId: string,
+    parentSignalUuid: string,
+  ): Promise<void> {
+    await this.supabase
+      .from('signals')
+      .update({ parent_signal_id: parentSignalUuid })
+      .eq('user_id', this.userId)
+      .eq('channel_id', channelRowId)
+      .eq('reply_to_message_id', parentTelegramMessageId)
+      .is('parent_signal_id', null)
+  }
+
+  private startReplyChainSweep() {
+    if (this.replyChainSweepTimer) return
+    this.replyChainSweepTimer = setInterval(() => {
+      this.runReplyChainSweep().catch(err =>
+        console.error(`[userListener] reply-chain sweep error for ${this.userId}:`, err),
+      )
+    }, REPLY_CHAIN_SWEEP_MS)
+    this.replyChainSweepTimer.unref?.()
+  }
+
+  /** Re-resolve `parent_signal_id` for recent replies (parent may have arrived later). */
+  private async runReplyChainSweep() {
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+    const { data: orphans, error } = await this.supabase
+      .from('signals')
+      .select('id, channel_id, reply_to_message_id')
+      .eq('user_id', this.userId)
+      .not('reply_to_message_id', 'is', null)
+      .is('parent_signal_id', null)
+      .gte('created_at', since)
+      .limit(80)
+    if (error || !orphans?.length) return
+
+    for (const row of orphans as { id: string; channel_id: string; reply_to_message_id: string }[]) {
+      const rid = row.reply_to_message_id?.trim()
+      if (!rid || !row.channel_id) continue
+      const parentId = await this.resolveParentSignalIdForReply(row.channel_id, rid)
+      if (parentId) {
+        await this.supabase
+          .from('signals')
+          .update({ parent_signal_id: parentId })
+          .eq('id', row.id)
+      }
+    }
   }
 
   private async bumpLastSeen(channelRowId: string, messageId: string) {
@@ -810,6 +907,7 @@ export class UserListener {
     this.monitoredChannels.clear()
     await this.refreshChannelSubscription()
     await this.runCatchUp()
+    await this.runReplyChainSweep()
   }
 
   // ── safety poll (Realtime drop fallback) ──────────────────────────────

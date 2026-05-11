@@ -207,6 +207,8 @@ export interface Signal {
   status: string
   skip_reason: string | null
   telegram_message_id: string | null
+  /** Telegram reply_to target message id (same channel). */
+  reply_to_message_id?: string | null
   is_modification: boolean
   parent_signal_id: string | null
   created_at: string

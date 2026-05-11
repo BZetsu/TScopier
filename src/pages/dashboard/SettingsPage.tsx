@@ -185,7 +185,7 @@ export function SettingsPage() {
             onChange={e => set('platform', e.target.value)}
           />
           <Input
-            label="MetaAPI Account ID"
+            label="MT bridge account ID"
             placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
             value={form.metaapi_account_id}
             onChange={e => set('metaapi_account_id', e.target.value)}

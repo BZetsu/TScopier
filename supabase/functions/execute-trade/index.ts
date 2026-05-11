@@ -468,7 +468,13 @@ type OpenTradeRow = {
   tp_step_policy?: Record<string, unknown> | null
   next_tp_index?: number | null
   opened_at?: string | null
+  status?: string | null
 }
+
+type ManagementCorrelationResult =
+  | { kind: "resolved"; trade: OpenTradeRow; resolution: string }
+  | { kind: "blocked"; reason: string }
+  | null
 
 async function loadOpenTradeRows(
   supabase: ReturnType<typeof createClient>,
@@ -667,9 +673,51 @@ function detectTpHitStage(rawInstruction: string): 1 | 2 | 3 | null {
   return null
 }
 
+/** Walk signal parent chain until we find a trade row for this broker (reply-thread correlation). */
+async function resolveOpenTradeByParentChain(
+  supabase: ReturnType<typeof createClient>,
+  userId: string,
+  brokerAccountId: string,
+  rootSignalId: string,
+): Promise<{ trade: OpenTradeRow; resolution: string } | null> {
+  let cur: string | null = rootSignalId.trim()
+  if (!cur) return null
+  for (let depth = 0; depth < 8 && cur; depth++) {
+    const { data: tradeRow } = await supabase
+      .from("trades")
+      .select(
+        "id, signal_id, telegram_channel_id, metaapi_order_id, symbol, direction, entry_price, lot_size, sl, tp, tp_levels, tp_open, tp_step_policy, next_tp_index, opened_at, status",
+      )
+      .eq("user_id", userId)
+      .eq("broker_account_id", brokerAccountId)
+      .eq("signal_id", cur)
+      .order("opened_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (tradeRow) {
+      const st = String((tradeRow as { status?: string }).status ?? "").toLowerCase()
+      const ticket = (tradeRow as OpenTradeRow).metaapi_order_id
+      if (st === "open" && ticket) {
+        return {
+          trade: tradeRow as OpenTradeRow,
+          resolution: `parent_signal_chain_depth_${depth}`,
+        }
+      }
+      return null
+    }
+    const { data: sig } = await supabase
+      .from("signals")
+      .select("parent_signal_id")
+      .eq("id", cur)
+      .maybeSingle()
+    cur = (sig?.parent_signal_id as string | null) ?? null
+  }
+  return null
+}
+
 /**
- * CLOSE/modify/etc.: plausible symbol → match; else latest open from same Telegram channel;
- * else sole open on broker; else most recently opened open (follow-up instructions without symbol).
+ * CLOSE/modify/etc.: reply parent chain (strict) → plausible symbol → same-channel open →
+ * sole open → latest open on broker.
  */
 async function resolveOpenTradeForManagement(
   supabase: ReturnType<typeof createClient>,
@@ -677,23 +725,31 @@ async function resolveOpenTradeForManagement(
   brokerAccountId: string,
   parsedSymbol: string | null,
   channelId: string | null,
-): Promise<{ trade: OpenTradeRow; resolution: string } | null> {
+  parentSignalId: string | null,
+): Promise<ManagementCorrelationResult> {
+  const parent = parentSignalId?.trim() ?? null
+  if (parent) {
+    const byChain = await resolveOpenTradeByParentChain(supabase, userId, brokerAccountId, parent)
+    if (byChain) return { kind: "resolved", trade: byChain.trade, resolution: byChain.resolution }
+    return { kind: "blocked", reason: "parent_trade_closed_or_missing" }
+  }
+
   const rows = await loadOpenTradeRows(supabase, userId, brokerAccountId, null)
   if (!rows.length) return null
 
   const symForMatch = effectiveSymbolForManagementMatch(parsedSymbol)
   const bySymbol = pickTradeByParsedSymbol(rows, symForMatch)
-  if (bySymbol) return { trade: bySymbol, resolution: "symbol_match" }
+  if (bySymbol) return { kind: "resolved", trade: bySymbol, resolution: "symbol_match" }
 
   if (channelId) {
     const byChannel = await fetchLatestOpenTradeForChannel(supabase, userId, brokerAccountId, channelId)
     if (byChannel?.metaapi_order_id) {
-      return { trade: byChannel, resolution: "latest_open_same_telegram_channel" }
+      return { kind: "resolved", trade: byChannel, resolution: "latest_open_same_telegram_channel" }
     }
   }
 
   if (rows.length === 1) {
-    return { trade: rows[0], resolution: "single_open_position_fallback" }
+    return { kind: "resolved", trade: rows[0], resolution: "single_open_position_fallback" }
   }
 
   const sorted = [...rows].sort((a, b) => {
@@ -704,7 +760,7 @@ async function resolveOpenTradeForManagement(
   })
   const latest = sorted[0]
   if (latest?.metaapi_order_id) {
-    return { trade: latest, resolution: "latest_open_on_broker_fallback" }
+    return { kind: "resolved", trade: latest, resolution: "latest_open_on_broker_fallback" }
   }
 
   return null
@@ -1294,14 +1350,14 @@ async function orderSendWithFallback(
 /** Per-broker execution. Signals table is updated only by the caller after aggregating results. */
 async function executeOneBroker(
   supabase: ReturnType<typeof createClient>,
-  signal: { user_id: string; channel_id: string | null },
+  signal: { user_id: string; channel_id: string | null; parent_signal_id?: string | null },
   signalId: string,
   parsed: ParsedSignal,
   brokerAccount: BrokerRow,
 ): Promise<{ ok: boolean; error?: string; trade_id?: string | null }> {
   const accountId = String(brokerAccount.metaapi_account_id ?? "")
   if (!accountId) {
-    return { ok: false, error: "Missing MetaAPI account id" }
+    return { ok: false, error: "Missing MT bridge account id (broker_accounts link id)" }
   }
 
   const mode = String(brokerAccount.copier_mode ?? "ai").toLowerCase()
@@ -1512,7 +1568,7 @@ async function executeOneBroker(
       return { ok: true, trade_id: tradeRow?.id ?? null }
     }
 
-    // Management actions: symbol → same-channel open → single open → latest open on broker.
+    // Management actions: reply parent chain → symbol → same-channel open → fallbacks.
     const symForMatch = effectiveSymbolForManagementMatch(effectiveParsed.symbol)
     const resolvedMg = await resolveOpenTradeForManagement(
       supabase,
@@ -1520,8 +1576,13 @@ async function executeOneBroker(
       brokerAccount.id,
       effectiveParsed.symbol,
       signal.channel_id,
+      signal.parent_signal_id ?? null,
     )
-    if (!resolvedMg?.trade?.metaapi_order_id) {
+    if (resolvedMg?.kind === "blocked") {
+      await logFail(resolvedMg.reason)
+      return { ok: false, error: resolvedMg.reason }
+    }
+    if (resolvedMg?.kind !== "resolved" || !resolvedMg.trade.metaapi_order_id) {
       const msg = symForMatch
         ? `No matching open trade for management action (${symForMatch}) — no open Copier position on this broker`
         : "No matching open trade for management action — no open Copier position on this broker for this channel"
@@ -1537,6 +1598,7 @@ async function executeOneBroker(
       parsed_symbol: effectiveParsed.symbol ?? null,
       symbol_used_for_match: symForMatch ?? null,
       telegram_channel_id: signal.channel_id ?? null,
+      parent_signal_id: signal.parent_signal_id ?? null,
     }
 
     if (effectiveParsed.action === "close") {
@@ -1750,8 +1812,20 @@ Deno.serve(async (req: Request) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     )
 
-    const body = await req.json()
-    const { signal_id, parsed } = body as { signal_id: string; parsed: ParsedSignal }
+    const body = await req.json() as {
+      signal_id: string
+      parsed: ParsedSignal & { parent_signal_id?: string | null }
+      parent_signal_id?: string | null
+    }
+    const { signal_id, parsed: rawParsed } = body
+    const parentFromBody = typeof body.parent_signal_id === "string" ? body.parent_signal_id : null
+    const parentFromParsed = typeof rawParsed.parent_signal_id === "string"
+      ? rawParsed.parent_signal_id
+      : null
+    const { parent_signal_id: _stripParent, ...parsedFields } = rawParsed as ParsedSignal & {
+      parent_signal_id?: string | null
+    }
+    const parsed = parsedFields as ParsedSignal
     // #region agent log
     fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7e177e'},body:JSON.stringify({sessionId:'7e177e',runId:'run1',hypothesisId:'H4',location:'supabase/functions/execute-trade/index.ts:103',message:'execute-trade invoked',data:{hasSignalId:!!signal_id,action:parsed?.action ?? null,hasSymbol:!!parsed?.symbol},timestamp:Date.now()})}).catch(()=>{});
     // #endregion
@@ -1776,6 +1850,8 @@ Deno.serve(async (req: Request) => {
     }
 
     const channelId = signal.channel_id as string | null
+    const effectiveParentSignalId =
+      parentFromBody ?? parentFromParsed ?? (signal.parent_signal_id as string | null) ?? null
 
     const { data: brokerRows } = await supabase
       .from("broker_accounts")
@@ -1822,7 +1898,11 @@ Deno.serve(async (req: Request) => {
     for (const brokerAccount of eligible) {
       const r = await executeOneBroker(
         supabase,
-        { user_id: signal.user_id as string, channel_id: channelId },
+        {
+          user_id: signal.user_id as string,
+          channel_id: channelId,
+          parent_signal_id: effectiveParentSignalId,
+        },
         signal_id,
         parsed,
         brokerAccount,

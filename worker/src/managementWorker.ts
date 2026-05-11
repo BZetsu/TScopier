@@ -97,6 +97,9 @@ export class ManagementWorker {
     const maxAttempts = Number(claim.max_attempts ?? job.max_attempts ?? 6)
 
     try {
+      const pd = job.parsed_data as Record<string, unknown>
+      const parentFromJob = typeof pd.parent_signal_id === 'string' ? pd.parent_signal_id : null
+      const { parent_signal_id: _omit, ...parsedRest } = pd
       const res = await fetch(EXECUTE_TRADE_URL, {
         method: 'POST',
         headers: {
@@ -105,7 +108,8 @@ export class ManagementWorker {
         },
         body: JSON.stringify({
           signal_id: job.signal_id,
-          parsed: job.parsed_data,
+          parsed: parsedRest,
+          parent_signal_id: parentFromJob,
         }),
       })
 
