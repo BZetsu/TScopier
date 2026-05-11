@@ -758,12 +758,15 @@ async function resolveOpenTradeForManagement(
 async function mtOrderModify(
   accountId: string,
   ticket: string | number,
-  stoploss: number,
-  takeprofit: number,
+  stoploss?: number,
+  takeprofit?: number,
 ): Promise<unknown> {
+  const params: Record<string, QueryValue> = { id: accountId, ticket }
+  if (stoploss !== undefined && Number.isFinite(stoploss)) params.stoploss = stoploss
+  if (takeprofit !== undefined && Number.isFinite(takeprofit)) params.takeprofit = takeprofit
   return await mtGetAny(
     ["/OrderModify", "/OrdersModify"],
-    { id: accountId, ticket, stoploss, takeprofit },
+    params,
   )
 }
 
@@ -1712,25 +1715,62 @@ async function executeOneBroker(
 
     if (effectiveParsed.action === "modify") {
       const hasParsedSl = effectiveParsed.sl != null && Number.isFinite(Number(effectiveParsed.sl))
-      const tpLevels = getTpLevels(effectiveParsed, trade)
-      const tpOpen = /\b(open\s*tp|without\s*tp|no\s*tp|runner|let\s+it\s+run)\b/i.test(String(effectiveParsed.raw_instruction ?? "")) || trade.tp_open === true
-      const hasParsedTp = tpOpen || tpLevels.length > 0
+      const tpLevelsMsg = Array.isArray(effectiveParsed.tp) && effectiveParsed.tp.length
+        ? effectiveParsed.tp.map((x) => Number(x)).filter((n) => Number.isFinite(n))
+        : []
+      const tpOpenMsg = /\b(open\s*tp|without\s*tp|no\s*tp|runner|let\s+it\s+run)\b/i.test(
+        String(effectiveParsed.raw_instruction ?? ""),
+      )
+      const hasParsedTp = tpOpenMsg || tpLevelsMsg.length > 0
       if (!hasParsedSl && !hasParsedTp && trade.sl == null && trade.tp == null) {
         const msg = "Modify requires SL and/or TP in signal or on trade record"
         await logFail(msg)
         return { ok: false, error: msg }
       }
-      const newSl = hasParsedSl ? Number(effectiveParsed.sl) : Number(trade.sl ?? 0)
-      const newTp = hasParsedTp ? (tpOpen ? 0 : finalTpFromLevels(tpLevels)) : Number(trade.tp ?? 0)
-      const result = await mtOrderModify(accountId, ticket, newSl, newTp)
-      await logOk(result)
+
+      let stoploss: number | undefined
+      if (hasParsedSl) stoploss = Number(effectiveParsed.sl)
+      else if (trade.sl != null && Number.isFinite(Number(trade.sl))) stoploss = Number(trade.sl)
+
+      let takeprofit: number | undefined
+      if (hasParsedTp) {
+        takeprofit = tpOpenMsg ? 0 : finalTpFromLevels(tpLevelsMsg)
+      } else {
+        if (trade.tp != null && Number.isFinite(Number(trade.tp))) takeprofit = Number(trade.tp)
+        else if (Array.isArray(trade.tp_levels) && trade.tp_levels.length) {
+          const lv = trade.tp_levels.map((x) => Number(x)).filter((n) => Number.isFinite(n))
+          if (lv.length) takeprofit = finalTpFromLevels(lv)
+        }
+      }
+
+      if (stoploss === undefined && takeprofit === undefined) {
+        const msg = "Modify has no SL/TP values to send to the broker (check parsed price and trade record)"
+        await logFail(msg)
+        return { ok: false, error: msg }
+      }
+
+      const result = await mtOrderModify(accountId, ticket, stoploss, takeprofit)
+      await logOk(result, {
+        modify_stoploss: stoploss ?? null,
+        modify_takeprofit: takeprofit ?? null,
+        modify_has_parsed_sl: hasParsedSl,
+        modify_has_parsed_tp: hasParsedTp,
+      })
+
+      const nextSl = hasParsedSl ? Number(effectiveParsed.sl) : trade.sl
+      const nextTp = hasParsedTp ? (tpOpenMsg ? null : finalTpFromLevels(tpLevelsMsg)) : trade.tp
+      const nextTpLevels = hasParsedTp
+        ? (tpLevelsMsg.length ? tpLevelsMsg : (tpOpenMsg ? null : trade.tp_levels ?? null))
+        : trade.tp_levels ?? null
+      const nextTpOpen = hasParsedTp ? tpOpenMsg : trade.tp_open ?? false
+
       await supabase
         .from("trades")
         .update({
-          sl: hasParsedSl ? newSl : trade.sl,
-          tp: hasParsedTp ? (tpOpen ? null : newTp) : trade.tp,
-          tp_levels: hasParsedTp ? tpLevels : trade.tp_levels ?? null,
-          tp_open: hasParsedTp ? tpOpen : trade.tp_open ?? false,
+          sl: nextSl,
+          tp: nextTp,
+          tp_levels: nextTpLevels,
+          tp_open: nextTpOpen,
           status: "modified",
         })
         .eq("id", trade.id)

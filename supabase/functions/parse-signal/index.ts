@@ -449,8 +449,23 @@ function parseDeterministicManagement(
     confidence = 0.88 // ambiguous
   }
 
-  const slMatch = t.match(/\b(?:sl|stop\s*loss)\s*[:=]?\s*(\d+(?:\.\d+)?)/i)
-  const sl = slMatch ? Number(slMatch[1]) : extractPriceByLabels(t, splitKeywordAliases(channelKeywords.signal.sl, delim))
+  const slPriceLabels = [
+    ...splitKeywordAliases(channelKeywords.signal.sl, delim),
+    ...splitKeywordAliases(channelKeywords.update.set_sl, delim),
+    ...splitKeywordAliases(channelKeywords.update.adjust_sl, delim),
+  ]
+  const slMatchStandard = t.match(/\b(?:sl|stop\s*loss)\s*[:=]?\s*(\d+(?:\.\d+)?)/i)
+  const slMatchTo = t.match(/\b(?:sl|stop\s*loss)\s+to\s+(\d+(?:\.\d+)?)/i)
+  let sl: number | null = null
+  if (slMatchStandard?.[1]) {
+    const n = Number(slMatchStandard[1])
+    if (Number.isFinite(n)) sl = n
+  }
+  if (sl == null && slMatchTo?.[1]) {
+    const n = Number(slMatchTo[1])
+    if (Number.isFinite(n)) sl = n
+  }
+  if (sl == null) sl = extractPriceByLabels(t, slPriceLabels)
   const extraTp = [
     ...(lexicon?.tp_aliases ?? []),
     ...(lexicon?.target_aliases ?? []),
