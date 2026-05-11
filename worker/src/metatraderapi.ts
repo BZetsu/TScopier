@@ -138,13 +138,28 @@ export function normalizeOrderResponse(body: unknown): OrderResult {
 
 function assertNoApiError(body: unknown): void {
   if (body == null || typeof body !== 'object') return
-  const err = (body as Record<string, unknown>).error
-  if (err == null || err === false) return
-  if (typeof err !== 'object') return
-  const e = err as Record<string, unknown>
-  const msg = String(e.message ?? e.Message ?? '').trim()
-  if (!msg || msg === 'null' || msg === 'undefined') return
-  throw new MetatraderApiError(msg, 200, e.code != null ? String(e.code) : undefined)
+  const root = body as Record<string, unknown>
+
+  // Shape A: { error: { message, code } }
+  const err = root.error
+  if (err && typeof err === 'object') {
+    const e = err as Record<string, unknown>
+    const m = String(e.message ?? e.Message ?? '').trim()
+    if (m && m !== 'null' && m !== 'undefined') {
+      throw new MetatraderApiError(m, 200, e.code != null ? String(e.code) : undefined)
+    }
+  }
+
+  // Shape B: top-level { message, code, stackTrace } (no `error` wrapper, no `result`).
+  // This is what mt5rest returns for things like "Symbol not found".
+  if (!('result' in root) && !('ticket' in root) && !('Ticket' in root)) {
+    const m = root.message ?? root.Message
+    const code = root.code ?? root.Code
+    if (typeof m === 'string' && m.trim()) {
+      // Treat code 'OK' / 'DONE' with a message as still-an-error when there's no order payload.
+      throw new MetatraderApiError(m.trim(), 200, code != null ? String(code) : undefined)
+    }
+  }
 }
 
 export interface AccountSummary {
@@ -247,6 +262,11 @@ export class MetatraderApiClient {
 
   symbolParams(id: string, symbol: string): Promise<SymbolParams> {
     return this.get<SymbolParams>('/SymbolParams', { id, symbol })
+  }
+
+  /** Returns the broker's full instrument list. Some servers return string[], others SymbolInfo[]. */
+  symbols(id: string): Promise<unknown[]> {
+    return this.get<unknown[]>('/Symbols', { id })
   }
 
   async orderSend(id: string, args: OrderSendArgs): Promise<OrderResult> {

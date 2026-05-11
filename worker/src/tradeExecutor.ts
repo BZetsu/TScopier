@@ -74,7 +74,16 @@ interface SymbolCacheEntry {
   loadedAt: number
 }
 
+interface SymbolListCacheEntry {
+  /** Uppercase set of valid symbol names for fast O(1) lookups. */
+  set: Set<string>
+  /** Original list of names (case preserved) so we can return the broker's canonical casing. */
+  list: string[]
+  loadedAt: number
+}
+
 const SYMBOL_CACHE_TTL_MS = 10 * 60_000
+const SYMBOL_LIST_TTL_MS = 30 * 60_000
 
 function isMtUuid(s: string | null | undefined): boolean {
   if (!s) return false
@@ -182,6 +191,8 @@ export class TradeExecutor {
   private brokersById = new Map<string, BrokerRow>()
   private inflight = new Set<string>()
   private symbolCache = new Map<string, SymbolCacheEntry>()
+  /** Per-broker `/Symbols` cache used to map signal symbols (e.g. BTCUSD) to broker variants (BTCUSDm). */
+  private symbolListCache = new Map<string, SymbolListCacheEntry>()
   /** Cached channel rows keyed by `telegram_channels.id` — refreshed on demand. */
   private channelKeywordsCache = new Map<string, { keywords: ChannelKeywords | null; loadedAt: number }>()
   private api: MetatraderApiClient | null
@@ -424,8 +435,15 @@ export class TradeExecutor {
   ): Promise<void> {
     if (!this.api) return
     const uuid = broker.metaapi_account_id!
-    const symbol = applySymbolMapping(parsed.symbol!, broker)
-    if (isExcluded(symbol, broker)) return
+    const requestedSymbol = applySymbolMapping(parsed.symbol!, broker)
+    if (isExcluded(requestedSymbol, broker)) return
+
+    // Resolve to the broker's actual instrument name (e.g. BTCUSD → BTCUSDm).
+    // Falls back to the requested symbol when /Symbols is unavailable.
+    const symbol = await this.resolveBrokerSymbol(uuid, requestedSymbol)
+    if (symbol.toUpperCase() !== requestedSymbol.toUpperCase()) {
+      console.log(`[tradeExecutor] symbol resolved broker=${broker.id} ${requestedSymbol} → ${symbol}`)
+    }
 
     const params = await this.getSymbolParams(uuid, symbol).catch(() => null)
     const baseLot = roundLot(computeLot(broker, parsed), params)
@@ -676,5 +694,80 @@ export class TradeExecutor {
     } catch {
       return null
     }
+  }
+
+  /** Load (and cache) the broker's full symbol list. Returns null if unavailable. */
+  private async getSymbolList(uuid: string): Promise<SymbolListCacheEntry | null> {
+    const cached = this.symbolListCache.get(uuid)
+    if (cached && (Date.now() - cached.loadedAt) < SYMBOL_LIST_TTL_MS) return cached
+    if (!this.api) return null
+    try {
+      const raw = await this.api.symbols(uuid)
+      const list: string[] = []
+      const set = new Set<string>()
+      if (Array.isArray(raw)) {
+        for (const item of raw) {
+          let name: string | null = null
+          if (typeof item === 'string') name = item
+          else if (item && typeof item === 'object') {
+            const o = item as Record<string, unknown>
+            const n = o.symbolName ?? o.SymbolName ?? o.symbol ?? o.Symbol ?? o.name ?? o.Name
+            if (typeof n === 'string') name = n
+          }
+          if (name && name.trim()) {
+            list.push(name)
+            set.add(name.toUpperCase())
+          }
+        }
+      }
+      if (!list.length) return null
+      const entry: SymbolListCacheEntry = { set, list, loadedAt: Date.now() }
+      this.symbolListCache.set(uuid, entry)
+      return entry
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * Map a generic symbol (e.g. 'BTCUSD') to the exact instrument name the broker
+   * exposes (e.g. 'BTCUSDm', 'BTCUSD.r', 'BTCUSD_i'). Strategy:
+   *   1. Honour an explicit manual mapping when one exists for this symbol.
+   *   2. Fall back to fuzzy matching against `/Symbols` using common broker suffixes
+   *      and prefix/suffix substitution. Picks the shortest match (closest variant).
+   */
+  private async resolveBrokerSymbol(uuid: string, requested: string): Promise<string> {
+    const target = requested.toUpperCase()
+    const inventory = await this.getSymbolList(uuid)
+    if (!inventory) return requested
+
+    if (inventory.set.has(target)) {
+      const exact = inventory.list.find(s => s.toUpperCase() === target)
+      return exact ?? requested
+    }
+
+    const SUFFIXES = ['', 'M', '.M', 'M.RAW', '.RAW', '.PRO', '.R', '_R', '.I', '_I', '.C', '_C', '.S', '_S', '.X', '_X', '#', '+']
+    const PREFIXES = ['', '#', '_']
+    const candidates: string[] = []
+    for (const p of PREFIXES) for (const s of SUFFIXES) {
+      const c = `${p}${target}${s}`
+      if (c !== target && inventory.set.has(c)) candidates.push(c)
+    }
+    if (candidates.length) {
+      candidates.sort((a, b) => a.length - b.length)
+      const winner = candidates[0]
+      const exact = inventory.list.find(s => s.toUpperCase() === winner)
+      return exact ?? winner
+    }
+
+    // Last resort: any instrument that CONTAINS the requested ticker (e.g. "XAUUSDpro").
+    const contains = inventory.list.filter(s => s.toUpperCase().includes(target))
+    if (contains.length === 1) return contains[0]
+    if (contains.length > 1) {
+      contains.sort((a, b) => a.length - b.length)
+      return contains[0]
+    }
+
+    return requested
   }
 }
