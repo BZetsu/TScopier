@@ -96,6 +96,10 @@ function detectOpenTp(message: string): boolean {
   return /\b(open\s*tp|without\s*tp|no\s*tp|runner|let\s+it\s+run|leave\s+runner)\b/i.test(t)
 }
 
+function isManagementAction(action: string): boolean {
+  return new Set(["close", "breakeven", "partial_profit", "partial_breakeven", "modify"]).has(String(action ?? "").toLowerCase())
+}
+
 /** Coerce LLM / fast-path output so execute-trade always gets consistent types and confidence. */
 function normalizeParsedFromModel(raw: unknown, fallbackText: string): ParsedSignal {
   const j = raw && typeof raw === "object" ? raw as Record<string, unknown> : {}
@@ -178,7 +182,7 @@ function extractTradableSymbolFromMessage(raw: string): string | null {
 
   const bogusSix = new Set([
     "CLOSED", "CLOSES", "SIGNAL", "MARKET", "SILVER", "GOLDEN", "MASTER", "PUBLIC", "TRADER", "BROKER",
-    "MARGIN", "POSITION", "TRADES", "ORDERS",
+    "MARGIN", "POSITION", "TRADES", "ORDERS", "ADJUST", "UPDATE", "MODIFY", "CHANGE", "TARGET", "STOPLO",
   ])
   const six = u.match(/\b([A-Z]{6})\b/)
   if (six && !bogusSix.has(six[1])) {
@@ -306,8 +310,11 @@ function applyRawSymbolRepair(parsed: ParsedSignal, rawMsg: string): ParsedSigna
   const extracted = extractTradableSymbolFromMessage(rawMsg)
 
   const cur = parsed.symbol?.toUpperCase().replace(/\s/g, "") ?? ""
+  const curMentioned = cur ? new RegExp(`\\b${cur}\\b`, "i").test(rawMsg.replace(/\s+/g, "")) : false
   const goldHints = /\b(gold|xau|xauusd)\b/i.test(rawMsg)
   const btcHints = /\b(btc|bitcoin|btcusd|btcusdt)\b/i.test(rawMsg)
+  const hasAnySymbolHint = /([A-Z]{3,}\/[A-Z]{3,})|\b([A-Z]{6}|XAUUSD|XAGUSD|BTCUSD|BTCUSDT|ETHUSD|ETHUSDT)\b|(\bgold\b|\bxau\b|\bbtc\b|\bbitcoin\b|\beth\b|\bether)\b/i
+    .test(rawMsg)
   const mgmt = new Set(["close", "breakeven", "partial_profit", "partial_breakeven", "modify"]).has(parsed.action)
 
   if (mgmt) {
@@ -315,6 +322,8 @@ function applyRawSymbolRepair(parsed: ParsedSignal, rawMsg: string): ParsedSigna
       return { ...parsed, symbol: extracted ?? null }
     }
     if (extracted) return { ...parsed, symbol: extracted }
+    // No symbol in management text: prefer null so executor correlates to same-channel open trade.
+    if (!hasAnySymbolHint && !curMentioned) return { ...parsed, symbol: null }
     if (cur === "XAUUSD" && !goldHints) return { ...parsed, symbol: null }
     return parsed
   }
@@ -509,41 +518,66 @@ Deno.serve(async (req: Request) => {
 
     EdgeRuntime.waitUntil(upsertLexiconUnknownTokens(supabase, signal, lexicon))
 
-    // If valid trade signal, trigger execution
+    // If valid trade signal, trigger execution (entries) or enqueue management job.
     if (parsed.action !== "ignore" && parsed.confidence >= 0.7) {
-      // Fire-and-forget trade execution
-      EdgeRuntime.waitUntil(
-        (async () => {
-          try {
-            // #region agent log
-            fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7e177e'},body:JSON.stringify({sessionId:'7e177e',runId:'run1',hypothesisId:'H3',location:'supabase/functions/parse-signal/index.ts:138',message:'execute-trade dispatch',data:{signalId:signal_id,action:parsed.action,confidence:parsed.confidence},timestamp:Date.now()})}).catch(()=>{});
-            // #endregion
-            const secret = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
-            const execRes = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/execute-trade`, {
-              method: "POST",
-              headers: {
-                // sb_secret_* is not a JWT; use apikey (Bearer triggers INVALID_JWT_FORMAT on the gateway).
-                "apikey": secret,
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({ signal_id, parsed }),
-            })
-            if (!execRes.ok) {
-              const raw = await execRes.text()
-              // #region agent log
-              fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7e177e'},body:JSON.stringify({sessionId:'7e177e',runId:'run1',hypothesisId:'H3',location:'supabase/functions/parse-signal/index.ts:149',message:'execute-trade non-2xx',data:{signalId:signal_id,status:execRes.status,body:raw.slice(0,300)},timestamp:Date.now()})}).catch(()=>{});
-              // #endregion
-              const reason = `Execute trade failed (${execRes.status}): ${raw.slice(0, 300)}`
-              await supabase.from("signals").update({ status: "failed", skip_reason: reason }).eq("id", signal_id)
-              console.error("parse-signal execute-trade failed:", reason)
+      if (isManagementAction(parsed.action)) {
+        EdgeRuntime.waitUntil(
+          (async () => {
+            try {
+              await supabase
+                .from("management_jobs")
+                .upsert({
+                  user_id: signal.user_id,
+                  signal_id,
+                  channel_id: signal.channel_id ?? null,
+                  action: parsed.action,
+                  parsed_data: parsed,
+                  status: "pending",
+                  attempts: 0,
+                  max_attempts: 6,
+                  next_run_at: new Date().toISOString(),
+                  updated_at: new Date().toISOString(),
+                }, { onConflict: "signal_id" })
+            } catch (e) {
+              console.error("parse-signal enqueue management job error:", e)
             }
-          } catch (e: unknown) {
-            const msg = e instanceof Error ? e.message : "execute-trade network error"
-            await supabase.from("signals").update({ status: "failed", skip_reason: msg }).eq("id", signal_id)
-            console.error("parse-signal execute-trade error:", msg)
-          }
-        })()
-      )
+          })(),
+        )
+      } else {
+        // Fire-and-forget trade execution for entry signals.
+        EdgeRuntime.waitUntil(
+          (async () => {
+            try {
+              // #region agent log
+              fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7e177e'},body:JSON.stringify({sessionId:'7e177e',runId:'run1',hypothesisId:'H3',location:'supabase/functions/parse-signal/index.ts:138',message:'execute-trade dispatch',data:{signalId:signal_id,action:parsed.action,confidence:parsed.confidence},timestamp:Date.now()})}).catch(()=>{});
+              // #endregion
+              const secret = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
+              const execRes = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/execute-trade`, {
+                method: "POST",
+                headers: {
+                  // sb_secret_* is not a JWT; use apikey (Bearer triggers INVALID_JWT_FORMAT on the gateway).
+                  "apikey": secret,
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ signal_id, parsed }),
+              })
+              if (!execRes.ok) {
+                const raw = await execRes.text()
+                // #region agent log
+                fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7e177e'},body:JSON.stringify({sessionId:'7e177e',runId:'run1',hypothesisId:'H3',location:'supabase/functions/parse-signal/index.ts:149',message:'execute-trade non-2xx',data:{signalId:signal_id,status:execRes.status,body:raw.slice(0,300)},timestamp:Date.now()})}).catch(()=>{});
+                // #endregion
+                const reason = `Execute trade failed (${execRes.status}): ${raw.slice(0, 300)}`
+                await supabase.from("signals").update({ status: "failed", skip_reason: reason }).eq("id", signal_id)
+                console.error("parse-signal execute-trade failed:", reason)
+              }
+            } catch (e: unknown) {
+              const msg = e instanceof Error ? e.message : "execute-trade network error"
+              await supabase.from("signals").update({ status: "failed", skip_reason: msg }).eq("id", signal_id)
+              console.error("parse-signal execute-trade error:", msg)
+            }
+          })()
+        )
+      }
     }
 
     return Response.json({ parsed, status: newStatus }, { headers: corsHeaders })
