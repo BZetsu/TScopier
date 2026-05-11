@@ -798,22 +798,62 @@ Deno.serve(async (req: Request) => {
         EdgeRuntime.waitUntil(
           (async () => {
             try {
-              await supabase
-                .from("management_jobs")
-                .upsert({
-                  user_id: signal.user_id,
-                  signal_id,
-                  channel_id: signal.channel_id ?? null,
-                  action: parsed.action,
-                  parsed_data: parsed,
-                  status: "pending",
-                  attempts: 0,
-                  max_attempts: 6,
-                  next_run_at: new Date().toISOString(),
-                  updated_at: new Date().toISOString(),
-                }, { onConflict: "signal_id" })
+              const secret = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
+              // Execute management actions immediately first. If this no-ops/fails,
+              // enqueue to management_jobs for retry/backoff processing.
+              const execRes = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/execute-trade`, {
+                method: "POST",
+                headers: {
+                  "apikey": secret,
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ signal_id, parsed }),
+              })
+              const raw = await execRes.text()
+              let body: { executed?: boolean; results?: Array<{ ok?: boolean }> } | null = null
+              try {
+                body = raw ? JSON.parse(raw) as { executed?: boolean; results?: Array<{ ok?: boolean }> } : null
+              } catch {
+                body = null
+              }
+              const anyBrokerOk = Array.isArray(body?.results) && body!.results!.some((x) => x?.ok === true)
+              const executed = execRes.ok && (body?.executed === true || anyBrokerOk)
+              if (!executed) {
+                await supabase
+                  .from("management_jobs")
+                  .upsert({
+                    user_id: signal.user_id,
+                    signal_id,
+                    channel_id: signal.channel_id ?? null,
+                    action: parsed.action,
+                    parsed_data: parsed,
+                    status: "pending",
+                    attempts: 0,
+                    max_attempts: 6,
+                    next_run_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString(),
+                  }, { onConflict: "signal_id" })
+              }
             } catch (e) {
-              console.error("parse-signal enqueue management job error:", e)
+              console.error("parse-signal management immediate dispatch error:", e)
+              try {
+                await supabase
+                  .from("management_jobs")
+                  .upsert({
+                    user_id: signal.user_id,
+                    signal_id,
+                    channel_id: signal.channel_id ?? null,
+                    action: parsed.action,
+                    parsed_data: parsed,
+                    status: "pending",
+                    attempts: 0,
+                    max_attempts: 6,
+                    next_run_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString(),
+                  }, { onConflict: "signal_id" })
+              } catch (inner) {
+                console.error("parse-signal enqueue management job fallback error:", inner)
+              }
             }
           })(),
         )
