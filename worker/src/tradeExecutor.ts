@@ -71,6 +71,8 @@ interface SymbolCacheEntry {
   minLot: number
   maxLot: number
   lotStep: number
+  /** Broker-reported min SL/TP distance from market, in MT points (0 = no enforcement). */
+  stopsLevel: number
   loadedAt: number
 }
 
@@ -204,6 +206,56 @@ function roundLot(volume: number, params: SymbolCacheEntry | null): number {
   const max = params.maxLot || 100
   const rounded = Math.max(min, Math.min(max, Math.round(volume / step) * step))
   return +rounded.toFixed(2)
+}
+
+/** Buy-side ops want SL below / TP above the reference price; Sell-side is reversed. */
+function isBuySideOp(op: string): boolean {
+  return op === 'Buy' || op === 'BuyLimit' || op === 'BuyStop' || op === 'BuyStopLimit'
+}
+
+/**
+ * Push SL/TP outside the broker's minimum stops distance so MT5 can't reject the
+ * payload with "Invalid stops in the request". Uses `args.price` (the planner's
+ * intended fill/entry) as the reference — for market orders this is a best-effort
+ * proxy for the actual fill price, but it matches what every common copier does.
+ * Returns the (possibly mutated) order plus a human-readable list of adjustments.
+ */
+function clampOrderStops(
+  args: OrderSendArgs,
+  params: SymbolCacheEntry | null,
+): { args: OrderSendArgs; adjustments: string[] } {
+  const adjustments: string[] = []
+  if (!params) return { args, adjustments }
+  const point = Number(params.point) || 0
+  const stopsLevel = Number(params.stopsLevel) || 0
+  if (point <= 0) return { args, adjustments }
+
+  // +2 points of safety so we sit just outside the broker's threshold rather
+  // than exactly on it (some brokers reject equal-to-threshold as well).
+  const minDist = (stopsLevel + 2) * point
+  const ref = Number(args.price) || 0
+  if (ref <= 0 || minDist <= 0) return { args, adjustments }
+
+  const digits = Math.max(0, Math.min(8, Number(params.digits) || 5))
+  const round = (v: number): number => Number(v.toFixed(digits))
+  const isBuy = isBuySideOp(String(args.operation))
+
+  let sl = Number(args.stoploss) || 0
+  let tp = Number(args.takeprofit) || 0
+  const original = { sl, tp }
+
+  if (isBuy) {
+    if (sl > 0 && ref - sl < minDist) sl = round(ref - minDist)
+    if (tp > 0 && tp - ref < minDist) tp = round(ref + minDist)
+  } else {
+    if (sl > 0 && sl - ref < minDist) sl = round(ref + minDist)
+    if (tp > 0 && ref - tp < minDist) tp = round(ref - minDist)
+  }
+
+  if (sl !== original.sl) adjustments.push(`sl ${original.sl} → ${sl}`)
+  if (tp !== original.tp) adjustments.push(`tp ${original.tp} → ${tp}`)
+  if (adjustments.length === 0) return { args, adjustments }
+  return { args: { ...args, stoploss: sl, takeprofit: tp }, adjustments }
 }
 
 function channelMatches(broker: BrokerRow, channelId: string | null): boolean {
@@ -538,6 +590,7 @@ export class TradeExecutor {
           digits: params?.digits ?? 5,
           minLot: params?.minLot ?? 0.01,
           lotStep: params?.lotStep ?? 0.01,
+          stopsLevel: params?.stopsLevel ?? 0,
           defaultLot: Number(broker.default_lot_size ?? 0.01),
           lastBalance: broker.last_balance ?? null,
         },
@@ -603,8 +656,21 @@ export class TradeExecutor {
       )
     }
 
-    // Round volumes per the live SymbolParams before sending.
-    const ordersToSend = capped.map(o => ({ ...o, volume: roundLot(o.volume, params) }))
+    // Round volumes and clamp SL/TP outside the broker's stops_level zone
+    // before sending. The clamp uses the order's intended fill price; for
+    // market orders this approximates the live market and prevents "Invalid
+    // stops" rejections when the channel's TP/SL is too tight (common on
+    // XAUUSD where stops_level is often 100+ points ≈ $1).
+    const ordersToSend = capped.map(o => {
+      const volumeRounded = { ...o, volume: roundLot(o.volume, params) }
+      const { args, adjustments } = clampOrderStops(volumeRounded, params)
+      if (adjustments.length > 0) {
+        console.warn(
+          `[tradeExecutor] stops clamped signal=${signal.id} broker=${broker.id} symbol=${args.symbol} op=${args.operation}: ${adjustments.join(', ')}`,
+        )
+      }
+      return args
+    })
 
     await Promise.allSettled(
       ordersToSend.map(async (args, idx) => {
@@ -769,6 +835,7 @@ export class TradeExecutor {
         minLot: Number(p.groupParams?.minLot ?? 0.01),
         maxLot: Number(p.groupParams?.maxLot ?? 100),
         lotStep: Number(p.groupParams?.lotStep ?? 0.01),
+        stopsLevel: Math.max(0, Number(p.symbol?.stopsLevel ?? 0) || 0),
         loadedAt: Date.now(),
       }
       this.symbolCache.set(key, entry)

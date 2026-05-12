@@ -109,6 +109,8 @@ export interface PlannerContext {
   minLot: number
   /** Broker-reported lot step for this symbol (e.g. 0.01). */
   lotStep: number
+  /** Broker-reported min SL/TP distance from market, in MT points (0 = no enforcement). */
+  stopsLevel?: number
   /** Default lot size as a final fallback. */
   defaultLot: number
   /** Last known balance for `dynamic_balance_percent` sizing. */
@@ -354,8 +356,15 @@ export function planManualOrders(args: {
     // Signal already carries its own pending entry — skip the range branch.
     rangeFallbackReason = 'range_trading_skip_pending_signal'
   } else if (rangeOn) {
+    // Reject when the configured pip step would land Limit prices inside the
+    // broker's stops zone (broker would reject every pending with "Invalid stops").
+    const stopsLevel = Number(ctx.stopsLevel ?? 0) || 0
+    const stepInPriceUnits = stepPips * pip
+    const minStepUnits = stopsLevel > 0 ? (stopsLevel + 2) * ctx.point : 0
     if (stepPips <= 0 || distPips <= 0) {
       rangeFallbackReason = 'range_trading_invalid'
+    } else if (minStepUnits > 0 && stepInPriceUnits < minStepUnits) {
+      rangeFallbackReason = 'range_trading_step_below_stops_level'
     } else {
       const reservedLegs = Math.round((totalLegs * rangePct) / 100)
       const maxByDistance = Math.floor(distPips / stepPips)
