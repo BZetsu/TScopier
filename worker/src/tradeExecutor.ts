@@ -283,6 +283,12 @@ function clampOrderStops(
 interface Leg {
   args: OrderSendArgs
   idx: number
+  /**
+   * Set on CWE-eligible immediates so the post-OrderSend `trades.cwe_close_price`
+   * INSERT carries the worker-managed close threshold. NULL when the leg is
+   * not part of the close-worse-entries basket.
+   */
+  cweClosePrice?: number | null
 }
 
 /**
@@ -769,8 +775,18 @@ export class TradeExecutor {
       }
     }
 
-    // Apply Close-Worse-Entries TP override to the first N immediates + first
-    // N shallowest virtual pendings. The single override price is shared.
+    // Apply Close-Worse-Entries to the first N immediates + first N shallowest
+    // virtual pendings. As of May-12 this is a *worker-managed* close: the
+    // broker never sees the threshold as a takeprofit (which produced
+    // "Invalid stops" rejections whenever the basket was already in profit or
+    // inside the stops/freeze zone). Instead we:
+    //   1. Set takeprofit = 0 on the CWE-tagged leg's broker order so only
+    //      the SL rides (the bucket TP is intentionally dropped — the user
+    //      wants these worse entries to be exited by CWE, not by TP1/TP2/TP3).
+    //   2. Stamp `cweClosePrice` on the leg / pending so the post-INSERT path
+    //      writes it into `trades.cwe_close_price` / `range_pending_legs.cwe_close_price`.
+    //   3. The new `cweCloseMonitor` polls /Quote and fires /OrderClose on
+    //      every CWE-tagged open trade once the threshold is crossed.
     const overrideTp = computeCweTp(plan, anchor, params)
     if (overrideTp != null && plan.closeWorseEntries) {
       const nImm = Math.max(0, Math.min(legs.length, plan.closeWorseEntries.immediates))
@@ -779,9 +795,10 @@ export class TradeExecutor {
           ...legs[i]!,
           args: {
             ...legs[i]!.args,
-            takeprofit: overrideTp,
+            takeprofit: 0,
             comment: `${legs[i]!.args.comment ?? ''}.cw`,
           },
+          cweClosePrice: overrideTp,
         }
       }
       const nVirt = Math.max(0, Math.min(virtualPendings.length, plan.closeWorseEntries.extraPendings))
@@ -789,8 +806,9 @@ export class TradeExecutor {
       for (let i = 0; i < nVirt; i++) {
         virtualPendings[i] = {
           ...virtualPendings[i]!,
-          takeprofit: overrideTp,
+          takeprofit: null,
           comment: `${virtualPendings[i]!.comment}.cw`,
+          cweClosePrice: overrideTp,
         }
       }
     }
@@ -809,7 +827,7 @@ export class TradeExecutor {
         + ` style=${manual.trade_style ?? 'single'} legs=${legs.length + virtualPendings.length}`
         + ` (immediate=${legs.length}, virtual_pending=${virtualPendings.length})`
         + ` rangeOn=${manual.range_trading === true} cwOn=${!!plan.closeWorseEntries}`
-        + (overrideTp != null ? ` cwTp=${overrideTp}` : '')
+        + (overrideTp != null ? ` cweClose=${overrideTp}` : '')
         + ` pip=${plan.pip ?? 'n/a'}`
         + (pipValue != null ? ` pipValue=${pipValue.toFixed(4)}${quoteCcy ? '_' + quoteCcy : ''}/lot` : '')
         + (contractSize != null ? ` contractSize=${contractSize}` : '')
@@ -869,6 +887,11 @@ export class TradeExecutor {
             expert_id: v.expertID ?? null,
             expires_at: expiresAt,
             status: 'pending',
+            // CWE-tagged pendings carry the close threshold so the
+            // virtualPendingMonitor can propagate it onto the trades row
+            // when the leg fires. Non-CWE pendings stay null and keep
+            // their bucket TP / SL behavior untouched.
+            cwe_close_price: v.cweClosePrice ?? null,
           })
         }
         if (insertRows.length > 0) {
@@ -956,6 +979,10 @@ export class TradeExecutor {
           lot_size: result.lots ?? args.volume,
           status: args.operation.includes('Limit') || args.operation.includes('Stop') ? 'pending' : 'open',
           opened_at: new Date().toISOString(),
+          // Worker-managed Close-Worse-Entries threshold (see cweCloseMonitor).
+          // Only the first N immediate legs have this; non-CWE legs leave it null
+          // and ride their bucket TP / SL normally.
+          cwe_close_price: leg.cweClosePrice ?? null,
         })
 
         await this.supabase.from('trade_execution_logs').insert({

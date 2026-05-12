@@ -159,14 +159,39 @@ export interface VirtualPendingLeg {
   expertID?: number
   /** Hours-to-live; the executor converts this to an absolute `expires_at` at INSERT time. */
   expiryHours?: number
+  /**
+   * Worker-managed close threshold for the Close-Worse-Entries policy.
+   * The planner leaves this undefined; the executor stamps it on the first
+   * N shallowest pendings (where N = `closeWorseEntries.extraPendings`)
+   * once the live anchor is resolved. When set:
+   *   - The pending is filed with `takeprofit = 0` (no broker TP).
+   *   - On fire, the resulting `trades` row inherits `cwe_close_price`
+   *     so the `cweCloseMonitor` will close it the moment the bid (buy)
+   *     or ask (sell) crosses the threshold.
+   *   - Sibling immediates and CWE pendings share the same value, so the
+   *     whole worse-entries basket closes together.
+   */
+  cweClosePrice?: number | null
 }
 
 /**
- * Close-Worse-Entries policy. The planner emits this so the executor can apply
- * the TP override AFTER the live anchor (signal entry → /Quote) is resolved.
- * The rule: pick a single trigger price `overrideTp = anchor ± cwePips × pip`
- * and set every CWE-eligible leg's `takeprofit` to that level. "CWE-eligible" =
- * all immediate legs + the N shallowest virtual pendings.
+ * Close-Worse-Entries policy. The planner emits this so the executor can
+ * compute the close trigger AFTER the live anchor (signal entry → /Quote)
+ * is resolved.
+ *
+ * The rule (as of May-12 worker-managed-close redesign): pick a single
+ * trigger price `cweClosePrice = anchor ± cwePips × pip` and stamp it on
+ * every CWE-eligible leg. "CWE-eligible" = all immediate legs + the N
+ * shallowest virtual pendings.
+ *
+ * Unlike the previous implementation we do **not** put that price on the
+ * broker as a `takeprofit` — the executor sets `takeprofit = 0` on these
+ * legs and persists the close threshold to `trades.cwe_close_price`
+ * (and `range_pending_legs.cwe_close_price` for pendings). The
+ * `cweCloseMonitor` polls /Quote and issues /OrderClose as soon as the
+ * threshold is crossed, which sidesteps the "Invalid stops" rejections
+ * that broker-side TPs produced when the basket was already in profit
+ * or inside the stops/freeze zone.
  */
 export interface PlannerCloseWorseEntries {
   /** Number of immediate legs (all of which get the override TP). */
@@ -321,23 +346,31 @@ export interface ComputeCwOverrideTpArgs {
 }
 
 /**
- * Compute the single CWE override TP price (`anchor ± cwePips × pip`) clamped
- * outside the broker's stops/freeze zone. Returns `null` when CWE is off or
- * the inputs aren't sufficient. The executor applies this same value to the
- * first `policy.immediates` immediate orders AND the first `policy.extraPendings`
- * virtual pendings (sorted by stepIdx ascending) before sending / persisting.
+ * Compute the single CWE close-threshold price (`anchor ± cwePips × pip`).
+ * Returns `null` when CWE is off or the inputs aren't sufficient.
+ *
+ * The executor stamps this value on the `cwe_close_price` column of every
+ * CWE-eligible row — the first `policy.immediates` immediate orders (via
+ * `trades.cwe_close_price`) AND the first `policy.extraPendings` virtual
+ * pendings sorted by `stepIdx` ascending (via `range_pending_legs.cwe_close_price`).
+ *
+ * Note: unlike the previous broker-TP implementation we deliberately do
+ * NOT clamp this against the broker's stops/freeze zone. The price is
+ * only ever compared to a live quote inside `cweCloseMonitor` — it is
+ * never sent to the broker as a TP, so the stops_level / freeze_level
+ * constraints don't apply. Clamping it here would silently shift the
+ * close trigger further from the anchor than the user asked for.
+ *
+ * `minStopDistance` is accepted for API compatibility with callers that
+ * still pass it but is intentionally ignored.
  */
 export function computeCwOverrideTp(args: ComputeCwOverrideTpArgs): number | null {
-  const { policy, anchor, isBuy, pip, digits, minStopDistance } = args
+  const { policy, anchor, isBuy, pip, digits } = args
   if (!policy || policy.pipsFromAnchor <= 0) return null
   if (!Number.isFinite(anchor) || anchor <= 0) return null
 
   const dir = isBuy ? 1 : -1
-  let tp = anchor + dir * policy.pipsFromAnchor * pip
-  if (minStopDistance > 0) {
-    if (isBuy) tp = Math.max(tp, anchor + minStopDistance)
-    else tp = Math.min(tp, anchor - minStopDistance)
-  }
+  const tp = anchor + dir * policy.pipsFromAnchor * pip
   const d = Math.max(0, Math.min(8, Math.floor(digits)))
   return Number(tp.toFixed(d))
 }
@@ -722,12 +755,16 @@ export function planManualOrders(args: {
   // ── 11. Close-worse-entries policy (executor applies post-anchor) ───────
   // Per user spec: "when trade is in X pip in profit from the worse (earliest)
   // entry, close those trades; keep the best entry trades." That's a SINGLE
-  // trigger price = `anchor + X pips`, applied as the takeprofit on all
-  // immediates plus the N shallowest virtual pendings. The deeper virtuals keep
-  // their percent-row TPs and ride for the bigger targets. We don't compute the
-  // override here because the planner anchor may be null (market signals on
-  // XAUUSD often arrive without entry_price); the executor will resolve a live
-  // anchor via /Quote and then call `computeCwOverrideTp`.
+  // trigger price = `anchor + X pips`, stamped on all immediates plus the N
+  // shallowest virtual pendings. The deeper virtuals keep their percent-row TPs
+  // and ride for the bigger targets.
+  //
+  // As of May-12 the trigger is enforced by the worker (`cweCloseMonitor`),
+  // NOT by a broker-side takeprofit — see the doc on `computeCwOverrideTp`.
+  // We don't compute the actual close price here because the planner anchor
+  // may be null (market signals on XAUUSD often arrive without entry_price);
+  // the executor will resolve a live anchor via /Quote and then call
+  // `computeCwOverrideTp` and stamp `cwe_close_price` on the row.
   let closeWorseEntries: PlannerCloseWorseEntries | undefined
   if (effectiveRangeLegs > 0 && manual.close_worse_entries === true) {
     const cwPips = Math.max(0, Number(manual.close_worse_entries_pips ?? 0))

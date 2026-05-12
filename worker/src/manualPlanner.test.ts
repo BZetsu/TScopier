@@ -102,13 +102,17 @@ test('computeCwOverrideTp: buy → anchor + pips × pip', () => {
   assert.equal(out, 1853)
 })
 
-test('computeCwOverrideTp: respects stops/freeze floor', () => {
-  // 30 pips on EURUSD 5-digit = 0.003 price units, but broker requires 0.005.
+test('computeCwOverrideTp: ignores broker stops/freeze floor (worker-managed close)', () => {
+  // 30 pips on EURUSD 5-digit = 0.003 price units. Previously this was
+  // clamped to 0.005 because the value was being sent as a broker TP.
+  // Post May-12 redesign the threshold is only ever compared against a
+  // live quote inside cweCloseMonitor — never sent as a TP — so clamping
+  // would silently shift the close trigger further than the user asked.
   const policy: PlannerCloseWorseEntries = { immediates: 1, extraPendings: 0, pipsFromAnchor: 30 }
   const out = computeCwOverrideTp({
     policy, anchor: 1.10000, isBuy: true, pip: 0.0001, digits: 5, minStopDistance: 0.005,
   })
-  assert.equal(out, 1.105)
+  assert.equal(out, 1.103)
 })
 
 test('computeCwOverrideTp: sell direction inverts override', () => {

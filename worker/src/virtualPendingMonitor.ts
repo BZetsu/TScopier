@@ -48,6 +48,14 @@ interface PendingRow {
   expert_id: number | null
   expires_at: string | null
   status: string
+  /**
+   * Close-Worse-Entries threshold inherited from the planner via the
+   * executor's INSERT. When non-null the leg is part of the worse-entries
+   * basket: the broker order goes out with NO takeprofit (only the SL
+   * rides) and the resulting `trades` row carries this value so
+   * `cweCloseMonitor` will close the position when the live quote crosses.
+   */
+  cwe_close_price: number | null
 }
 
 interface SymbolCacheEntry {
@@ -268,13 +276,20 @@ export class VirtualPendingMonitor {
     // Build a MARKET order. We DO NOT send `price` for Buy/Sell — the broker
     // fills at the current bid/ask. Stops were precomputed at planning time
     // against the live anchor; SL/TP from the original ladder stand.
+    //
+    // CWE-tagged legs (cwe_close_price != null) intentionally ship with
+    // takeprofit = 0 — the close threshold is enforced post-fill by
+    // cweCloseMonitor, not by the broker. Honouring the persisted
+    // `takeprofit` here would re-introduce the "Invalid stops" rejections
+    // that motivated this redesign (a TP on a buy that's already in profit
+    // is on the wrong side of the market and the broker refuses).
     const args: OrderSendArgs = {
       symbol: leg.symbol,
       operation: leg.is_buy ? 'Buy' : 'Sell',
       volume: leg.volume,
       slippage: leg.slippage ?? 20,
       stoploss: leg.stoploss ?? 0,
-      takeprofit: leg.takeprofit ?? 0,
+      takeprofit: leg.cwe_close_price != null ? 0 : (leg.takeprofit ?? 0),
       comment: leg.comment ?? `TSCopier:rg${leg.step_idx}`,
       expertID: leg.expert_id ?? 909090,
     }
@@ -335,6 +350,10 @@ export class VirtualPendingMonitor {
         lot_size: result.lots ?? args.volume,
         status: 'open',
         opened_at: new Date().toISOString(),
+        // Carry the CWE threshold forward so cweCloseMonitor watches the
+        // newly-filled leg alongside its sibling immediates. Null for
+        // non-CWE pendings.
+        cwe_close_price: leg.cwe_close_price,
       })
       await this.supabase.from('trade_execution_logs').insert({
         user_id: leg.user_id,

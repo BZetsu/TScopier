@@ -1248,10 +1248,12 @@ export function AccountConfigPage() {
                                         />
                                       </div>
                                       <p className="text-xs text-neutral-600">
-                                        When price moves +X pips beyond the worse (earliest) entry, all
-                                        immediates plus the N shallowest pendings close at that same trigger
-                                        price. Deeper pendings keep their percent-row TPs and ride for the
-                                        bigger targets.
+                                        When price moves +X pips beyond the worse (earliest) entry, the
+                                        worker auto-closes all immediates plus the N shallowest pendings
+                                        via /OrderClose. No broker-side TP is set on these legs (only the
+                                        SL rides) — this avoids "Invalid stops" rejections when the basket
+                                        is already in profit. Deeper pendings keep their percent-row TPs
+                                        and ride for the bigger targets.
                                       </p>
                                       {configDraft.manualSettings.close_worse_entries && (
                                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
