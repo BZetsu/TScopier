@@ -57,6 +57,8 @@ export interface AiBrokerSettings {
 export interface ManualTpLot {
   label: string
   lot: number
+  /** Multi Trades: percent of the total leg count that should target this TP level (e.g. 50 = 50%). */
+  percent?: number
   enabled: boolean
 }
 
@@ -120,6 +122,10 @@ export interface ManualSettings {
   fixed_lot?: number
   dynamic_balance_percent?: number
   tp_lots?: ManualTpLot[]
+  /** Multi Trades: per-leg size as a percent of the resolved fixed lot (default 5). */
+  multi_trade_leg_percent?: number
+  /** Multi Trades: hard cap on the number of legs the planner can emit (default 100). */
+  multi_trade_max_legs?: number
   trade_style?: 'single' | 'multi'
   range_trading?: boolean
   range_total_lot?: number

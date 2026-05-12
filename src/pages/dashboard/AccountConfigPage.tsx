@@ -72,9 +72,9 @@ interface AccountConfigDraft {
 }
 
 const DEFAULT_MANUAL_TP_LOTS: ManualTpLot[] = [
-  { label: 'TP1', lot: 0.01, enabled: true },
-  { label: 'TP2', lot: 0.01, enabled: true },
-  { label: 'TP3', lot: 0.01, enabled: true },
+  { label: 'TP1', lot: 0.01, percent: 50, enabled: true },
+  { label: 'TP2', lot: 0.01, percent: 30, enabled: true },
+  { label: 'TP3', lot: 0.01, percent: 20, enabled: true },
 ]
 
 const DEFAULT_MANUAL_SETTINGS: ManualSettings = {
@@ -88,6 +88,8 @@ const DEFAULT_MANUAL_SETTINGS: ManualSettings = {
   fixed_lot: 0.01,
   dynamic_balance_percent: 1,
   tp_lots: DEFAULT_MANUAL_TP_LOTS,
+  multi_trade_leg_percent: 5,
+  multi_trade_max_legs: 100,
   trade_style: 'single',
   range_trading: false,
   range_total_lot: 0.03,
@@ -130,15 +132,27 @@ function normalizeManualSettings(raw: unknown): ManualSettings {
   const tpLotsRaw = Array.isArray(j.tp_lots) ? j.tp_lots : DEFAULT_MANUAL_TP_LOTS
   const tpLots = tpLotsRaw.map((x, i) => {
     const row = (x && typeof x === 'object') ? x as Record<string, unknown> : {}
+    const pct = Number(row.percent)
     return {
       label: String(row.label ?? `TP${i + 1}`),
       lot: Number(row.lot ?? 0.01) || 0.01,
+      percent: Number.isFinite(pct) && pct > 0 ? pct : 0,
       enabled: row.enabled !== false,
     } as ManualTpLot
   })
+  const legPctRaw = Number(j.multi_trade_leg_percent)
+  const legPct = Number.isFinite(legPctRaw) && legPctRaw > 0 ? Math.min(100, legPctRaw) : DEFAULT_MANUAL_SETTINGS.multi_trade_leg_percent
+  const maxLegsRaw = Number(j.multi_trade_max_legs)
+  const maxLegs = Number.isFinite(maxLegsRaw) && maxLegsRaw > 0 ? Math.min(500, Math.floor(maxLegsRaw)) : DEFAULT_MANUAL_SETTINGS.multi_trade_max_legs
+
+  const merged = { ...DEFAULT_MANUAL_SETTINGS, ...(j as ManualSettings) }
+  // Drop the legacy `multi_tp_volume_mode` key if it sneaks in from older DB rows.
+  delete (merged as Record<string, unknown>).multi_tp_volume_mode
+
   return {
-    ...DEFAULT_MANUAL_SETTINGS,
-    ...j as ManualSettings,
+    ...merged,
+    multi_trade_leg_percent: legPct,
+    multi_trade_max_legs: maxLegs,
     symbol_mapping: Object.fromEntries(Object.entries(map).map(([k, v]) => [String(k).toUpperCase(), String(v).toUpperCase()])),
     symbols_exclude: Array.isArray(j.symbols_exclude) ? j.symbols_exclude.map(String).map(s => s.toUpperCase()) : [],
     tp_lots: tpLots,
@@ -303,7 +317,7 @@ export function AccountConfigPage() {
   const addTpLotRow = () => {
     setConfigDraft(prev => {
       const rows = [...(prev.manualSettings.tp_lots ?? DEFAULT_MANUAL_TP_LOTS)]
-      rows.push({ label: `TP${rows.length + 1}`, lot: 0.01, enabled: true })
+      rows.push({ label: `TP${rows.length + 1}`, lot: 0.01, percent: 0, enabled: true })
       return { ...prev, manualSettings: { ...prev.manualSettings, tp_lots: rows } }
     })
   }
@@ -837,7 +851,7 @@ export function AccountConfigPage() {
                                 <Input label="Symbol Suffix" value={configDraft.manualSettings.symbol_suffix ?? ''} onChange={e => setManual({ symbol_suffix: e.target.value })} />
                                 <div className="col-span-2">
                                   <Input
-                                    label="Symbols to Trade (whitelist)"
+                                    label="Symbols to Trade"
                                     placeholder="Leave empty for all. Single = override. Multiple = whitelist."
                                     value={configDraft.manualSettings.symbol_to_trade ?? ''}
                                     onChange={e => setManual({ symbol_to_trade: e.target.value })}
@@ -885,18 +899,74 @@ export function AccountConfigPage() {
                               />
                             </div>
 
-                            <div className="rounded-lg border border-neutral-200 p-3">
-                              <div className="flex items-center justify-between mb-2">
-                                <p className="text-sm font-medium text-neutral-800">TP Lot Sizes</p>
+                            {configDraft.manualSettings.trade_style === 'multi' && (
+                              <div className="rounded-lg border border-neutral-200 p-3 space-y-3">
+                                <p className="text-xs text-neutral-600">
+                                  <strong>Multi Trades</strong> splits your fixed lot into many smaller orders
+                                  (e.g. <span className="font-mono">1.0 lot @ 5%/leg = 20 trades of 0.05</span>).
+                                  Legs are distributed across the signal's TPs using the percent rows below.
+                                  If the per-leg size falls below the broker's symbol minimum, the planner
+                                  falls back to a single full-size trade and logs the reason.
+                                </p>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                  <Input
+                                    label="Per-leg size (% of fixed lot)"
+                                    type="number"
+                                    min={0.1}
+                                    max={100}
+                                    step={0.5}
+                                    value={String(configDraft.manualSettings.multi_trade_leg_percent ?? 5)}
+                                    onChange={e => setManual({ multi_trade_leg_percent: Number(e.target.value) })}
+                                  />
+                                  <Input
+                                    label="Max legs (safety cap)"
+                                    type="number"
+                                    min={1}
+                                    max={500}
+                                    step={1}
+                                    value={String(configDraft.manualSettings.multi_trade_max_legs ?? 100)}
+                                    onChange={e => setManual({ multi_trade_max_legs: Number(e.target.value) })}
+                                  />
+                                </div>
+                              </div>
+                            )}
+
+                            <div className="rounded-lg border border-neutral-200 p-3 space-y-3">
+                              <div className="flex items-center justify-between">
+                                <p className="text-sm font-medium text-neutral-800">TP distribution (% of legs)</p>
                                 <Button variant="ghost" size="sm" onClick={addTpLotRow}>Add TP</Button>
                               </div>
+                              <p className="text-xs text-neutral-600">
+                                Each row maps to a TP level from the signal. In <strong>Multi Trades</strong>,
+                                the percentages decide what share of the small legs target each TP
+                                (e.g. 50 / 30 / 20 with 20 legs places 10 / 6 / 4 at TP1 / TP2 / TP3).
+                                In <strong>Single Trade</strong>, only the first TP is used.
+                              </p>
                               <div className="space-y-2">
                                 {(configDraft.manualSettings.tp_lots ?? DEFAULT_MANUAL_TP_LOTS).map((row, idx) => (
                                   <div key={`${row.label}-${idx}`} className="grid grid-cols-12 gap-2 items-center">
-                                    <input className="col-span-4 rounded-md border border-neutral-200 px-2 py-1.5 text-sm" value={row.label} onChange={e => updateTpLotRow(idx, { label: e.target.value })} />
-                                    <input className="col-span-3 rounded-md border border-neutral-200 px-2 py-1.5 text-sm" type="number" value={row.lot} onChange={e => updateTpLotRow(idx, { lot: Number(e.target.value) })} />
-                                    <label className="col-span-3 text-xs text-neutral-700 flex items-center gap-2">
-                                      <input type="checkbox" checked={row.enabled} onChange={e => updateTpLotRow(idx, { enabled: e.target.checked })} />
+                                    <input
+                                      className="col-span-4 rounded-md border border-neutral-200 px-2 py-1.5 text-sm"
+                                      value={row.label}
+                                      onChange={e => updateTpLotRow(idx, { label: e.target.value })}
+                                    />
+                                    <input
+                                      className="col-span-3 rounded-md border border-neutral-200 px-2 py-1.5 text-sm"
+                                      type="number"
+                                      min={0}
+                                      max={100}
+                                      step={1}
+                                      title="Percent of legs that target this TP"
+                                      value={row.percent ?? ''}
+                                      onChange={e => updateTpLotRow(idx, { percent: Number(e.target.value) })}
+                                    />
+                                    <span className="col-span-1 text-xs text-neutral-500 text-center">%</span>
+                                    <label className="col-span-2 text-xs text-neutral-700 flex items-center gap-2">
+                                      <input
+                                        type="checkbox"
+                                        checked={row.enabled}
+                                        onChange={e => updateTpLotRow(idx, { enabled: e.target.checked })}
+                                      />
                                       Enabled
                                     </label>
                                     <Button className="col-span-2" variant="ghost" size="sm" onClick={() => removeTpLotRow(idx)}>Remove</Button>

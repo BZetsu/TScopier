@@ -111,9 +111,8 @@ function planManualOrders(args) {
         const d = Math.max(0, Math.min(8, Number.isFinite(ctx.digits) ? ctx.digits : 5));
         return Number(v.toFixed(d));
     };
-    // ── 5. Multi-TP fan-out ─────────────────────────────────────────────────
+    // ── 5. Multi-Trade lot splitting ────────────────────────────────────────
     const tradeStyle = manual.trade_style === 'multi' ? 'multi' : 'single';
-    const enabledTpLots = (manual.tp_lots ?? []).filter(t => t && t.enabled && Number.isFinite(t.lot) && t.lot > 0);
     const orderBase = {
         symbol: resolvedSymbol,
         operation,
@@ -131,31 +130,110 @@ function planManualOrders(args) {
             expirationFields.expirationType = 'Specified';
         }
     }
+    const minLot = Number.isFinite(ctx.minLot) && ctx.minLot > 0 ? ctx.minLot : 0.01;
+    const lotStep = Number.isFinite(ctx.lotStep) && ctx.lotStep > 0 ? ctx.lotStep : 0.01;
+    // Work in integer "lot-step units" to dodge floating-point drift on things like
+    // 14 × 0.07 = 0.9800000000000001 (which would otherwise eat a 0.01 remainder).
+    const FP_EPS = 1e-9;
+    const toUnits = (v) => {
+        if (!Number.isFinite(v) || v <= 0)
+            return 0;
+        return Math.max(0, Math.floor(v / lotStep + FP_EPS));
+    };
+    const unitsToLot = (u) => Number((u * lotStep).toFixed(8));
+    const buildSingleOrder = (fallbackReason) => ({
+        orders: [{
+                ...orderBase,
+                volume: manualLot,
+                stoploss: roundPrice(finalSl),
+                takeprofit: roundPrice(finalTps[0] ?? null),
+                ...expirationFields,
+            }],
+        delay_ms,
+        ...(fallbackReason ? { fallback_reason: fallbackReason } : {}),
+    });
+    if (tradeStyle !== 'multi') {
+        return buildSingleOrder();
+    }
+    const legPct = Math.max(0.1, Math.min(100, Number(manual.multi_trade_leg_percent ?? 5)));
+    const maxLegs = Math.max(1, Math.min(500, Math.floor(Number(manual.multi_trade_max_legs ?? 100))));
+    const manualUnits = toUnits(manualLot);
+    const targetUnits = toUnits(manualLot * (legPct / 100));
+    const minUnits = Math.max(1, Math.round(minLot / lotStep));
+    if (targetUnits < minUnits) {
+        return buildSingleOrder('multi_trade_fallback_min_lot');
+    }
+    if (manualUnits < minUnits) {
+        // Even a full-size order can't clear the broker minimum — let the caller drop it.
+        return { orders: [], skip_reason: 'lot_below_symbol_min', delay_ms };
+    }
+    const totalLegs = Math.max(1, Math.min(maxLegs, Math.floor(manualUnits / targetUnits)));
+    const targetLeg = unitsToLot(targetUnits);
+    // Distribute legs across TP rows by percent. With no TPs in the signal we
+    // collapse to one bucket so legs still emit (broker TP = 0).
+    const enabledRows = (manual.tp_lots ?? []).filter(r => r && r.enabled);
+    const bucketCount = finalTps.length > 0
+        ? Math.max(1, Math.min(enabledRows.length || 1, finalTps.length))
+        : 1;
+    const bucketRows = (enabledRows.length ? enabledRows : [{ label: 'TP1', lot: 0, percent: 100, enabled: true }])
+        .slice(0, bucketCount);
+    const rawWeights = bucketRows.map(r => {
+        const p = Number(r.percent);
+        return Number.isFinite(p) && p > 0 ? p : 0;
+    });
+    const fallbackWeights = rawWeights.every(w => w === 0) ? bucketRows.map(() => 1) : rawWeights;
+    const sumW = fallbackWeights.reduce((a, b) => a + b, 0) || bucketRows.length;
+    const counts = fallbackWeights.map(w => Math.round((totalLegs * w) / sumW));
+    // Fold rounding error so the bucket counts sum to totalLegs exactly.
+    let drift = totalLegs - counts.reduce((a, b) => a + b, 0);
+    let idx = counts.length - 1;
+    while (drift !== 0 && counts.length > 0) {
+        if (drift > 0) {
+            counts[idx] += 1;
+            drift -= 1;
+        }
+        else if (counts[idx] > 0) {
+            counts[idx] -= 1;
+            drift += 1;
+        }
+        idx = (idx - 1 + counts.length) % counts.length;
+        if (drift < 0 && counts.every(c => c === 0))
+            break;
+    }
     const orders = [];
-    if (tradeStyle === 'multi' && enabledTpLots.length && finalTps.length) {
-        // Pair each enabled tp_lots entry with a TP price by index, falling back to the last TP if we run out.
-        for (let i = 0; i < enabledTpLots.length; i++) {
-            const tpLot = enabledTpLots[i];
-            const tpPrice = finalTps[i] ?? finalTps[finalTps.length - 1];
+    for (let b = 0; b < bucketRows.length; b++) {
+        const tpPrice = finalTps.length > 0
+            ? (finalTps[b] ?? finalTps[finalTps.length - 1] ?? null)
+            : null;
+        for (let k = 0; k < (counts[b] ?? 0); k++) {
             orders.push({
                 ...orderBase,
-                volume: tpLot.lot,
+                volume: targetLeg,
                 stoploss: roundPrice(finalSl),
                 takeprofit: roundPrice(tpPrice),
                 ...expirationFields,
-                comment: `${commentPrefix}:tp${i + 1}`,
+                comment: `${commentPrefix}:tp${b + 1}.${k + 1}`,
             });
         }
     }
-    else {
-        const tpPrice = finalTps[0] ?? null;
+    // Soak up any leftover that still clears minLot into one extra leg at the last bucket.
+    const remainderUnits = manualUnits - totalLegs * targetUnits;
+    if (remainderUnits >= minUnits && orders.length < maxLegs) {
+        const tpPrice = finalTps.length > 0
+            ? (finalTps[bucketRows.length - 1] ?? finalTps[finalTps.length - 1] ?? null)
+            : null;
         orders.push({
             ...orderBase,
-            volume: manualLot,
+            volume: unitsToLot(remainderUnits),
             stoploss: roundPrice(finalSl),
             takeprofit: roundPrice(tpPrice),
             ...expirationFields,
+            comment: `${commentPrefix}:tp${bucketRows.length}.rem`,
         });
+    }
+    if (orders.length === 0) {
+        // Defensive: counts collapsed to all-zero (shouldn't happen given the math above).
+        return buildSingleOrder('multi_trade_fallback_zero_legs');
     }
     return { orders, delay_ms };
 }

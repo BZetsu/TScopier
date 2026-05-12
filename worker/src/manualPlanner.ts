@@ -12,9 +12,12 @@ import type { MtOperation, OrderSendArgs } from './metatraderapi'
  *   2. Reverse signal — flips buy↔sell when `manual_settings.reverse_signal` is on.
  *   3. Stops & Targets — fills in / overrides parsed SL & TPs from the predefined
  *      pip values; falls back to risk:reward derivation when only one side is known.
- *   4. Multi-TP fan-out — when `trade_style === 'multi'`, splits the order across
- *      every enabled `tp_lots[]` entry so each TP level is a separate position with
- *      its own lot allocation and `takeprofit`.
+ *   4. Multi-Trade lot splitting — when `trade_style === 'multi'`, splits `manualLot`
+ *      into many smaller positions of `targetLeg = manualLot × multi_trade_leg_percent / 100`
+ *      (rounded down to the broker's `lotStep`). The resulting legs are distributed across
+ *      the signal's TP levels using the percent rows in `tp_lots[]` (e.g. 50/30/20 of 20 legs
+ *      = 10/6/4 at TP1/TP2/TP3). Falls back to a single full-size trade when `targetLeg`
+ *      drops below the broker's `minLot`.
  *   5. Pending-order expiration — sets `expiration` + `expirationType` from
  *      `pending_expiry_hours` on Limit/Stop operations.
  *   6. Channel `tp_in_pips` / `sl_in_pips` — when the channel sends raw pip distances
@@ -39,6 +42,7 @@ export interface ParsedSignal {
 export interface ManualTpLot {
   label: string
   lot: number
+  percent?: number
   enabled: boolean
 }
 
@@ -52,6 +56,8 @@ export interface ManualSettings {
   fixed_lot?: number
   dynamic_balance_percent?: number
   tp_lots?: ManualTpLot[]
+  multi_trade_leg_percent?: number
+  multi_trade_max_legs?: number
   trade_style?: 'single' | 'multi'
   range_trading?: boolean
   range_total_lot?: number
@@ -93,6 +99,10 @@ export interface PlannerContext {
   point: number
   /** Number of decimal places to keep on prices when rounding. */
   digits: number
+  /** Broker-reported minimum lot for this symbol (e.g. 0.01). */
+  minLot: number
+  /** Broker-reported lot step for this symbol (e.g. 0.01). */
+  lotStep: number
   /** Default lot size as a final fallback. */
   defaultLot: number
   /** Last known balance for `dynamic_balance_percent` sizing. */
@@ -106,6 +116,9 @@ export interface PlannerResult {
   orders: OrderSendArgs[]
   /** Reason for an empty plan, suitable for logging. */
   skip_reason?: string
+  /** Non-fatal note when the planner had to soften its strategy (e.g. multi-trade
+   *  fell back to a single position because the per-leg target was below minLot). */
+  fallback_reason?: string
   /** Delay (ms) to wait before sending, derived from channel_keywords.additional.delay_msec. */
   delay_ms: number
 }
@@ -247,9 +260,8 @@ export function planManualOrders(args: {
     return Number(v.toFixed(d))
   }
 
-  // ── 5. Multi-TP fan-out ─────────────────────────────────────────────────
+  // ── 5. Multi-Trade lot splitting ────────────────────────────────────────
   const tradeStyle = manual.trade_style === 'multi' ? 'multi' : 'single'
-  const enabledTpLots = (manual.tp_lots ?? []).filter(t => t && t.enabled && Number.isFinite(t.lot) && t.lot > 0)
 
   const orderBase = {
     symbol: resolvedSymbol,
@@ -270,30 +282,119 @@ export function planManualOrders(args: {
     }
   }
 
-  const orders: OrderSendArgs[] = []
-  if (tradeStyle === 'multi' && enabledTpLots.length && finalTps.length) {
-    // Pair each enabled tp_lots entry with a TP price by index, falling back to the last TP if we run out.
-    for (let i = 0; i < enabledTpLots.length; i++) {
-      const tpLot = enabledTpLots[i]
-      const tpPrice = finalTps[i] ?? finalTps[finalTps.length - 1]
-      orders.push({
-        ...orderBase,
-        volume: tpLot.lot,
-        stoploss: roundPrice(finalSl),
-        takeprofit: roundPrice(tpPrice),
-        ...expirationFields,
-        comment: `${commentPrefix}:tp${i + 1}`,
-      })
-    }
-  } else {
-    const tpPrice = finalTps[0] ?? null
-    orders.push({
+  const minLot = Number.isFinite(ctx.minLot) && ctx.minLot > 0 ? ctx.minLot : 0.01
+  const lotStep = Number.isFinite(ctx.lotStep) && ctx.lotStep > 0 ? ctx.lotStep : 0.01
+  // Work in integer "lot-step units" to dodge floating-point drift on things like
+  // 14 × 0.07 = 0.9800000000000001 (which would otherwise eat a 0.01 remainder).
+  const FP_EPS = 1e-9
+  const toUnits = (v: number): number => {
+    if (!Number.isFinite(v) || v <= 0) return 0
+    return Math.max(0, Math.floor(v / lotStep + FP_EPS))
+  }
+  const unitsToLot = (u: number): number => Number((u * lotStep).toFixed(8))
+
+  const buildSingleOrder = (fallbackReason?: string): PlannerResult => ({
+    orders: [{
       ...orderBase,
       volume: manualLot,
       stoploss: roundPrice(finalSl),
+      takeprofit: roundPrice(finalTps[0] ?? null),
+      ...expirationFields,
+    }],
+    delay_ms,
+    ...(fallbackReason ? { fallback_reason: fallbackReason } : {}),
+  })
+
+  if (tradeStyle !== 'multi') {
+    return buildSingleOrder()
+  }
+
+  const legPct = Math.max(0.1, Math.min(100, Number(manual.multi_trade_leg_percent ?? 5)))
+  const maxLegs = Math.max(1, Math.min(500, Math.floor(Number(manual.multi_trade_max_legs ?? 100))))
+
+  const manualUnits = toUnits(manualLot)
+  const targetUnits = toUnits(manualLot * (legPct / 100))
+  const minUnits = Math.max(1, Math.round(minLot / lotStep))
+
+  if (targetUnits < minUnits) {
+    return buildSingleOrder('multi_trade_fallback_min_lot')
+  }
+  if (manualUnits < minUnits) {
+    // Even a full-size order can't clear the broker minimum — let the caller drop it.
+    return { orders: [], skip_reason: 'lot_below_symbol_min', delay_ms }
+  }
+
+  const totalLegs = Math.max(1, Math.min(maxLegs, Math.floor(manualUnits / targetUnits)))
+  const targetLeg = unitsToLot(targetUnits)
+
+  // Distribute legs across TP rows by percent. With no TPs in the signal we
+  // collapse to one bucket so legs still emit (broker TP = 0).
+  const enabledRows = (manual.tp_lots ?? []).filter(r => r && r.enabled)
+  const bucketCount = finalTps.length > 0
+    ? Math.max(1, Math.min(enabledRows.length || 1, finalTps.length))
+    : 1
+  const bucketRows = (enabledRows.length ? enabledRows : [{ label: 'TP1', lot: 0, percent: 100, enabled: true }])
+    .slice(0, bucketCount)
+
+  const rawWeights = bucketRows.map(r => {
+    const p = Number(r.percent)
+    return Number.isFinite(p) && p > 0 ? p : 0
+  })
+  const fallbackWeights = rawWeights.every(w => w === 0) ? bucketRows.map(() => 1) : rawWeights
+  const sumW = fallbackWeights.reduce((a, b) => a + b, 0) || bucketRows.length
+
+  const counts = fallbackWeights.map(w => Math.round((totalLegs * w) / sumW))
+  // Fold rounding error so the bucket counts sum to totalLegs exactly.
+  let drift = totalLegs - counts.reduce((a, b) => a + b, 0)
+  let idx = counts.length - 1
+  while (drift !== 0 && counts.length > 0) {
+    if (drift > 0) {
+      counts[idx]! += 1
+      drift -= 1
+    } else if (counts[idx]! > 0) {
+      counts[idx]! -= 1
+      drift += 1
+    }
+    idx = (idx - 1 + counts.length) % counts.length
+    if (drift < 0 && counts.every(c => c === 0)) break
+  }
+
+  const orders: OrderSendArgs[] = []
+  for (let b = 0; b < bucketRows.length; b++) {
+    const tpPrice = finalTps.length > 0
+      ? (finalTps[b] ?? finalTps[finalTps.length - 1] ?? null)
+      : null
+    for (let k = 0; k < (counts[b] ?? 0); k++) {
+      orders.push({
+        ...orderBase,
+        volume: targetLeg,
+        stoploss: roundPrice(finalSl),
+        takeprofit: roundPrice(tpPrice),
+        ...expirationFields,
+        comment: `${commentPrefix}:tp${b + 1}.${k + 1}`,
+      })
+    }
+  }
+
+  // Soak up any leftover that still clears minLot into one extra leg at the last bucket.
+  const remainderUnits = manualUnits - totalLegs * targetUnits
+  if (remainderUnits >= minUnits && orders.length < maxLegs) {
+    const tpPrice = finalTps.length > 0
+      ? (finalTps[bucketRows.length - 1] ?? finalTps[finalTps.length - 1] ?? null)
+      : null
+    orders.push({
+      ...orderBase,
+      volume: unitsToLot(remainderUnits),
+      stoploss: roundPrice(finalSl),
       takeprofit: roundPrice(tpPrice),
       ...expirationFields,
+      comment: `${commentPrefix}:tp${bucketRows.length}.rem`,
     })
+  }
+
+  if (orders.length === 0) {
+    // Defensive: counts collapsed to all-zero (shouldn't happen given the math above).
+    return buildSingleOrder('multi_trade_fallback_zero_legs')
   }
 
   return { orders, delay_ms }

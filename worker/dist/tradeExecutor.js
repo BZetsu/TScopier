@@ -422,6 +422,8 @@ class TradeExecutor {
                 ctx: {
                     point: params?.point ?? 0.00001,
                     digits: params?.digits ?? 5,
+                    minLot: params?.minLot ?? 0.01,
+                    lotStep: params?.lotStep ?? 0.01,
                     defaultLot: Number(broker.default_lot_size ?? 0.01),
                     lastBalance: broker.last_balance ?? null,
                 },
@@ -450,11 +452,41 @@ class TradeExecutor {
             await this.logSendSkipped(signal, broker, plan.skip_reason ?? 'filtered', { symbol });
             return;
         }
+        if (plan.fallback_reason) {
+            // Non-fatal: the planner had to soften its strategy (e.g. multi → single because
+            // the per-leg target was below minLot). Surface the reason for the trades UI.
+            try {
+                await this.supabase.from('trade_execution_logs').insert({
+                    user_id: signal.user_id,
+                    signal_id: signal.id,
+                    broker_account_id: broker.id,
+                    action: 'plan_fallback',
+                    status: 'info',
+                    request_payload: {
+                        reason: plan.fallback_reason,
+                        manual_lot: baseLot,
+                        target_leg: +(baseLot * ((Number(manual.multi_trade_leg_percent ?? 5)) / 100)).toFixed(4),
+                        min_lot: params?.minLot ?? null,
+                        lot_step: params?.lotStep ?? null,
+                        symbol,
+                    },
+                });
+            }
+            catch {
+                // Logging failure is non-fatal.
+            }
+        }
         if (plan.delay_ms > 0) {
             await new Promise(resolve => setTimeout(resolve, Math.min(plan.delay_ms, 30000)));
         }
+        // Hard cap legs to prevent a runaway config from spamming OrderSend.
+        const legCap = Math.max(1, Math.min(500, Math.floor(Number(manual.multi_trade_max_legs ?? 100))));
+        const capped = plan.orders.slice(0, legCap);
+        if (capped.length < plan.orders.length) {
+            console.warn(`[tradeExecutor] capped legs ${plan.orders.length} → ${capped.length} signal=${signal.id} broker=${broker.id}`);
+        }
         // Round volumes per the live SymbolParams before sending.
-        const ordersToSend = plan.orders.map(o => ({ ...o, volume: roundLot(o.volume, params) }));
+        const ordersToSend = capped.map(o => ({ ...o, volume: roundLot(o.volume, params) }));
         await Promise.allSettled(ordersToSend.map(async (args, idx) => {
             const t0 = Date.now();
             try {
