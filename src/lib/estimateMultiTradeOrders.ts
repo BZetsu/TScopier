@@ -29,6 +29,12 @@ export interface EstimateMultiTradeOrderResult {
  * When `range.enabled`, returns the immediate/pending split mirroring the planner's
  * `reservedLegs = round(baseLegs * percent / 100)` and `pending = min(reserved, floor(distance / step))`
  * logic. In range mode no remainder leg is emitted, so `totalOrders = immediate + pending`.
+ *
+ * Pip semantics: the counts here are pip-agnostic — both `range.stepPips` and
+ * `range.distancePips` are in the same unit so `floor(distance / step)` is correct
+ * regardless of how the worker resolves "pip" to a price increment. The
+ * worker-side resolution lives in `worker/src/pipMath.ts` (mirrored in
+ * `src/lib/pipMath.ts` for any UI hints that need it).
  */
 export function estimateMultiTradeOrderCount(args: {
   manualLot: number

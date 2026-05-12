@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.MetatraderApiClient = exports.MetatraderApiError = void 0;
+exports.orderOperationRequiresPrice = orderOperationRequiresPrice;
 exports.normalizeOrderResponse = normalizeOrderResponse;
 exports.getMetatraderApi = getMetatraderApi;
 const undici_1 = require("undici");
@@ -19,6 +20,15 @@ const KEEP_ALIVE_AGENT = new undici_1.Agent({
     connections: 32,
     pipelining: 1,
 });
+/** Pending / stop entry types require a positive limit/stop price on OrderSend. */
+function orderOperationRequiresPrice(operation) {
+    return (operation === 'BuyLimit'
+        || operation === 'SellLimit'
+        || operation === 'BuyStop'
+        || operation === 'SellStop'
+        || operation === 'BuyStopLimit'
+        || operation === 'SellStopLimit');
+}
 function num(v) {
     if (v === null || v === undefined)
         return undefined;
@@ -170,13 +180,41 @@ class MetatraderApiClient {
     symbols(id) {
         return this.get('/Symbols', { id });
     }
+    /**
+     * Live bid/ask quote for a symbol. The MetatraderAPI proto names the fields
+     * Bid/Ask/Time in PascalCase; some server builds also return camelCase. Normalise
+     * both shapes here so callers always see `{ symbol, bid, ask, time }`.
+     */
+    async quote(id, symbol) {
+        const raw = await this.get('/Quote', { id, symbol });
+        assertNoApiError(raw);
+        const root = (raw && typeof raw === 'object') ? raw : {};
+        const r = (root.result && typeof root.result === 'object') ? root.result : root;
+        const bid = num(r.bid ?? r.Bid);
+        const ask = num(r.ask ?? r.Ask);
+        const time = typeof r.time === 'string' ? r.time : typeof r.Time === 'string' ? r.Time : undefined;
+        if (bid == null || ask == null || bid <= 0 || ask <= 0) {
+            throw new MetatraderApiError(`Quote: invalid bid/ask for ${symbol} (bid=${String(r.Bid ?? r.bid)} ask=${String(r.Ask ?? r.ask)})`, 200);
+        }
+        return {
+            symbol: typeof r.symbol === 'string' ? r.symbol : typeof r.Symbol === 'string' ? r.Symbol : symbol,
+            bid,
+            ask,
+            time,
+        };
+    }
     async orderSend(id, args) {
+        const op = String(args.operation);
+        const px = Number(args.price);
+        if (orderOperationRequiresPrice(op) && (!Number.isFinite(px) || px <= 0)) {
+            throw new MetatraderApiError(`OrderSend: ${op} requires a positive price (got ${String(args.price)}); refusing to send price=0 to MetatraderAPI`, 400);
+        }
         const raw = await this.get('/OrderSend', {
             id,
             symbol: args.symbol,
             operation: args.operation,
             volume: args.volume,
-            price: args.price ?? 0,
+            price: Number.isFinite(px) ? px : 0,
             slippage: args.slippage ?? 20,
             stoploss: args.stoploss ?? 0,
             takeprofit: args.takeprofit ?? 0,

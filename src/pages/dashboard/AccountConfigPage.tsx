@@ -1122,11 +1122,12 @@ export function AccountConfigPage() {
                                   />
                                 </div>
                                 <p className="text-xs text-neutral-600">
-                                  Reserve a share of the planned legs as pending Limit orders stepped away from entry by
-                                  a fixed pip interval (averaging-down). Stop-loss and TP distribution mirror the
-                                  immediate legs. If <strong>distance ÷ step</strong> caps the count, the effective
-                                  pending total is reduced — total opened orders can fall short of the immediate-only
-                                  count by design.
+                                  Reserve a share of the planned legs as pending Limit orders stepped away from the
+                                  live anchor by a fixed pip interval (averaging-down). When the signal carries no
+                                  entry price, the worker fetches a live <strong>/Quote</strong> bid/ask and anchors
+                                  the ladder there. Stop-loss and TP distribution mirror the immediate legs. If
+                                  <strong> distance &divide; step </strong> caps the count, the effective pending
+                                  total is reduced.
                                 </p>
                                 {configDraft.manualSettings.range_trading && (
                                   <>
@@ -1147,8 +1148,8 @@ export function AccountConfigPage() {
                                         type="number"
                                         min={1}
                                         step={1}
-                                        placeholder="10 (XAUUSD)"
-                                        hint="Distance between pendings. ≥10 on XAUUSD, ≥2 on FX."
+                                        placeholder="10"
+                                        hint="Pips between pendings. 10 pips ≈ $1.00 on XAUUSD, 0.0010 on EURUSD, 0.10 on USDJPY."
                                         value={String(configDraft.manualSettings.range_step_pips ?? 10)}
                                         onChange={e => setManual({ range_step_pips: Math.max(1, Number(e.target.value) || 1) })}
                                       />
@@ -1157,8 +1158,8 @@ export function AccountConfigPage() {
                                         type="number"
                                         min={1}
                                         step={1}
-                                        placeholder="100 (XAUUSD)"
-                                        hint="Total pip span from entry. Should be ≥ 5× step."
+                                        placeholder="100"
+                                        hint="Total pip span from entry. Recommend ≥ 5× step so the ladder isn't capped."
                                         value={String(configDraft.manualSettings.range_distance_pips ?? 100)}
                                         onChange={e => setManual({ range_distance_pips: Math.max(1, Number(e.target.value) || 1) })}
                                       />
@@ -1173,8 +1174,10 @@ export function AccountConfigPage() {
                                         />
                                       </div>
                                       <p className="text-xs text-neutral-600">
-                                        Immediates close at +X pips from their own entry. The deepest pendings keep
-                                        the percent-row TPs and ride for the bigger targets.
+                                        When price moves +X pips beyond the worse (earliest) entry, all
+                                        immediates plus the N shallowest pendings close at that same trigger
+                                        price. Deeper pendings keep their percent-row TPs and ride for the
+                                        bigger targets.
                                       </p>
                                       {configDraft.manualSettings.close_worse_entries && (
                                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -1183,8 +1186,8 @@ export function AccountConfigPage() {
                                             type="number"
                                             min={1}
                                             step={1}
-                                            placeholder="30 (XAUUSD)"
-                                            hint="TP buffer per leg. ≥30 on XAUUSD, ≥5 on FX to clear broker stops_level."
+                                            placeholder="30"
+                                            hint="Pip profit from the worse entry. 30 pips ≈ $3.00 on XAUUSD, 0.0030 on EURUSD."
                                             value={String(configDraft.manualSettings.close_worse_entries_pips ?? 30)}
                                             onChange={e => setManual({ close_worse_entries_pips: Math.max(1, Number(e.target.value) || 1) })}
                                           />
@@ -1195,7 +1198,7 @@ export function AccountConfigPage() {
                                             max={multiTradePreview.pending ?? 0}
                                             step={1}
                                             placeholder="0"
-                                            hint={`Max ${multiTradePreview.pending ?? 0} (current pending count).`}
+                                            hint={`Max ${multiTradePreview.pending ?? 0} (current pending count). 0 = immediates only.`}
                                             value={String(configDraft.manualSettings.close_worse_extra_pendings ?? 0)}
                                             onChange={e => {
                                               const max = multiTradePreview.pending ?? 0

@@ -1,4 +1,5 @@
 import type { MtOperation, OrderSendArgs } from './metatraderapi'
+import { smartPipSize } from './pipMath'
 
 /**
  * Manual-mode order planner.
@@ -111,6 +112,12 @@ export interface PlannerContext {
   lotStep: number
   /** Broker-reported min SL/TP distance from market, in MT points (0 = no enforcement). */
   stopsLevel?: number
+  /**
+   * Broker-reported freeze distance in MT points. Pending orders cannot be
+   * modified inside this band. Treated as a second floor alongside `stopsLevel`
+   * when clamping SL/TP/CWE override prices. 0 = no enforcement.
+   */
+  freezeLevel?: number
   /** Default lot size as a final fallback. */
   defaultLot: number
   /** Last known balance for `dynamic_balance_percent` sizing. */
@@ -120,7 +127,8 @@ export interface PlannerContext {
 }
 
 export interface PlannerRangeMeta {
-  /** 1-based step index for this leg (used to compute `price = anchor ± stepIdx × stepPriceOffset`). */
+  /** 1-based step index for this leg (1 = shallowest, N = deepest). Used to compute
+   *  `price = anchor + (isBuy ? -1 : +1) × stepIdx × stepPriceOffset` at execution. */
   stepIdx: number
   /** Price offset per step (`effectiveStepPips × pip`). */
   stepPriceOffset: number
@@ -128,14 +136,51 @@ export interface PlannerRangeMeta {
   isBuy: boolean
 }
 
+/**
+ * Close-Worse-Entries policy. The planner emits this so the executor can apply
+ * the TP override AFTER the live anchor (signal entry → /Quote → first fill) is
+ * resolved. The rule: pick a single trigger price `overrideTp = anchor ± cwePips × pip`
+ * and set every CWE-eligible leg's `takeprofit` to that level. "CWE-eligible" =
+ * all immediate legs + the N shallowest pendings.
+ */
+export interface PlannerCloseWorseEntries {
+  /** Number of immediate legs (all of which get the override TP). */
+  immediates: number
+  /** How many additional shallowest pendings also get the override TP (0 = immediates only). */
+  extraPendings: number
+  /** Pip distance from the anchor to the override TP. */
+  pipsFromAnchor: number
+}
+
+/**
+ * Anchor used to derive pending prices. `value` may be null when the planner
+ * couldn't determine an entry from the parsed signal — in that case the
+ * executor resolves the anchor at runtime via /Quote (preferred) or the first
+ * immediate fill (fallback).
+ */
+export interface PlannerAnchor {
+  /** `signal` when the parsed signal carried an explicit entry; `unknown` when not. */
+  source: 'signal' | 'unknown'
+  value: number | null
+}
+
 export interface PlannerResult {
-  /** Concrete OrderSend payloads to issue. Empty array means "drop this signal". */
+  /** Concrete OrderSend payloads to issue. Empty array means "drop this signal".
+   *  Range pendings carry `price: null` — the executor fills in the final price
+   *  using `anchor + (isBuy ? -1 : +1) × stepIdx × stepPriceOffset`. */
   orders: OrderSendArgs[]
   /** Per-leg range metadata. Aligned with `orders` by index; entries are undefined
-   *  for non-range immediate legs. When present, the executor must re-price the
-   *  leg using the first immediate fill's actual `openPrice` as the anchor:
-   *  `args.price = anchor + (isBuy ? -1 : +1) × stepIdx × stepPriceOffset`. */
+   *  for non-range immediate legs. */
   rangeMeta?: Array<PlannerRangeMeta | undefined>
+  /** Anchor candidate from the parsed signal; may be null when the signal didn't include one. */
+  anchor?: PlannerAnchor
+  /** Smart-pip size for this signal (so the executor can derive prices/CWE without
+   *  recomputing classifySymbol/smartPipSize). */
+  pip?: number
+  /** True if this is a buy ladder (immediates Buy / pendings BuyLimit). */
+  isBuy?: boolean
+  /** Close-Worse-Entries policy; absent when CWE is off or there are no range legs. */
+  closeWorseEntries?: PlannerCloseWorseEntries
   /** Reason for an empty plan, suitable for logging. */
   skip_reason?: string
   /** Non-fatal note when the planner had to soften its strategy (e.g. multi-trade
@@ -145,12 +190,139 @@ export interface PlannerResult {
   delay_ms: number
 }
 
-/** MT pip size convention: 5/3-digit FX quotes treat one pip as 10 points; the rest treat one pip == point. */
-function pipSize(point: number, digits: number): number {
-  if (!Number.isFinite(point) || point <= 0) return 0.0001
-  if (digits === 3 || digits === 5) return point * 10
-  return point
+// ── Pure helpers (exported for tests + executor) ──────────────────────────
+
+export interface PlanRangeSplitArgs {
+  /** Total legs the multi-trade planner wants to issue. */
+  totalLegs: number
+  /** True if the signal already carries its own pending entry (Limit/Stop). */
+  baseIsPendingSignal: boolean
+  rangeOn: boolean
+  /** Share of total legs reserved for pending Limit orders (0..100). */
+  rangePct: number
+  /** Configured pip distance between consecutive pendings. */
+  stepPips: number
+  /** Total pip span the range covers from the anchor. */
+  distPips: number
+  /** Smart-pip size in price units. */
+  pip: number
+  /** Broker stop/freeze floor distance in price units (already includes the +2 safety). */
+  minStepPriceUnits: number
+  /** True when the planner has an entry anchor available from the signal. */
+  hasSignalAnchor: boolean
 }
+
+export interface PlanRangeSplitResult {
+  /** How many of the total legs fire immediately (at the anchor). */
+  immediateLegs: number
+  /** How many pendings to emit (after distance / step capping). */
+  pendingLegs: number
+  /** The step in pips actually used (may be auto-expanded from `stepPips`). */
+  effectiveStepPips: number
+  /** Price offset per step (`effectiveStepPips × pip`). */
+  stepPriceOffset: number
+  /** Non-fatal note when the planner had to soften the range strategy. */
+  fallbackReason?: string
+}
+
+/**
+ * Decide how many of the planned legs go out as immediates vs. range pendings.
+ * Pure function so the split can be unit-tested and reused by the UI estimator
+ * down the line.
+ */
+export function planRangeSplit(args: PlanRangeSplitArgs): PlanRangeSplitResult {
+  const { totalLegs, baseIsPendingSignal, rangeOn, rangePct, stepPips, distPips, pip, minStepPriceUnits, hasSignalAnchor } = args
+  const safe = (n: number) => Number.isFinite(n) && n > 0
+  const baseResult: PlanRangeSplitResult = {
+    immediateLegs: totalLegs,
+    pendingLegs: 0,
+    effectiveStepPips: stepPips,
+    stepPriceOffset: 0,
+  }
+  if (!rangeOn) return baseResult
+  if (baseIsPendingSignal) return { ...baseResult, fallbackReason: 'range_trading_skip_pending_signal' }
+  if (!safe(stepPips) || !safe(distPips)) {
+    return { ...baseResult, fallbackReason: 'range_trading_invalid' }
+  }
+
+  let effectiveStepPips = stepPips
+  let fallbackReason: string | undefined
+  if (minStepPriceUnits > 0 && pip > 0 && stepPips * pip < minStepPriceUnits) {
+    effectiveStepPips = Math.max(stepPips, Math.ceil(minStepPriceUnits / pip))
+    fallbackReason = 'range_trading_step_auto_expanded'
+  }
+  const stepPriceOffset = effectiveStepPips * pip
+
+  const reservedLegs = Math.round((totalLegs * rangePct) / 100)
+  const maxByDistance = Math.floor(distPips / effectiveStepPips)
+  const effective = Math.min(reservedLegs, maxByDistance)
+  if (effective <= 0) {
+    if (reservedLegs > 0) {
+      return { ...baseResult, effectiveStepPips, stepPriceOffset, fallbackReason: 'range_trading_invalid' }
+    }
+    return { ...baseResult, effectiveStepPips, stepPriceOffset, fallbackReason }
+  }
+
+  const immediateLegs = Math.max(0, totalLegs - reservedLegs)
+  // Executor needs SOMETHING to anchor against. If the signal has no entry and
+  // we have no immediates, the executor still has /Quote as a fallback, so we
+  // proceed and rely on the runtime anchor. We only drop the range when there
+  // is literally no path to an anchor (no signal entry AND no immediate fills),
+  // which the executor will detect explicitly.
+  return { immediateLegs, pendingLegs: effective, effectiveStepPips, stepPriceOffset, fallbackReason: fallbackReason ?? (!hasSignalAnchor && immediateLegs === 0 ? 'range_trading_anchor_runtime_only' : undefined) }
+}
+
+export interface ApplyCloseWorseEntriesArgs {
+  orders: OrderSendArgs[]
+  policy: PlannerCloseWorseEntries
+  anchor: number
+  isBuy: boolean
+  pip: number
+  digits: number
+  /** Broker stops/freeze floor distance in price units (already + safety). */
+  minStopDistance: number
+}
+
+/**
+ * Apply the CWE TP override against a resolved anchor. The override is a
+ * single trigger price `anchor ± cwePips × pip` shared by every CWE-eligible
+ * leg (immediates + the N shallowest pendings, which the planner has already
+ * sorted as the first N entries of `orders`). Returns a new array — `orders`
+ * is not mutated.
+ */
+export function applyCloseWorseEntries(args: ApplyCloseWorseEntriesArgs): OrderSendArgs[] {
+  const { orders, policy, anchor, isBuy, pip, digits, minStopDistance } = args
+  if (!policy || policy.pipsFromAnchor <= 0 || !Number.isFinite(anchor) || anchor <= 0) {
+    return orders
+  }
+  const overrideUpTo = Math.max(0, Math.min(orders.length, policy.immediates + policy.extraPendings))
+  if (overrideUpTo === 0) return orders
+
+  const dir = isBuy ? 1 : -1
+  let overrideTp = anchor + dir * policy.pipsFromAnchor * pip
+  if (minStopDistance > 0) {
+    if (isBuy) overrideTp = Math.max(overrideTp, anchor + minStopDistance)
+    else overrideTp = Math.min(overrideTp, anchor - minStopDistance)
+  }
+  const d = Math.max(0, Math.min(8, Math.floor(digits)))
+  const rounded = Number(overrideTp.toFixed(d))
+
+  const out = orders.slice()
+  for (let k = 0; k < overrideUpTo; k++) {
+    out[k] = {
+      ...out[k]!,
+      takeprofit: rounded,
+      comment: `${out[k]!.comment ?? ''}.cw`,
+    }
+  }
+  return out
+}
+
+// Pip math now lives in ./pipMath. The old `pipSize(point, digits)` helper has
+// been replaced by `smartPipSize(symbol, point, digits)` which classifies the
+// instrument (FX vs metal vs index vs crypto vs other) before picking the
+// pip multiplier. This is what fixes "10 pips on XAUUSD" being interpreted as
+// $0.10 (inside stops_level) instead of $1.00.
 
 function withinTimeWindow(start: string, end: string, now: Date): boolean {
   // Times are HH:MM strings in the user's local browser TZ. We approximate by
@@ -234,7 +406,7 @@ export function planManualOrders(args: {
   const entryAnchor = entryOk ? entry : null
 
   // ── 4. SL/TP derivation ─────────────────────────────────────────────────
-  const pip = pipSize(ctx.point, ctx.digits)
+  const pip = smartPipSize(resolvedSymbol, ctx.point, ctx.digits)
   const slInPips = channelKeywords?.additional?.sl_in_pips === true
   const tpInPips = channelKeywords?.additional?.tp_in_pips === true
 
@@ -294,7 +466,9 @@ export function planManualOrders(args: {
   //   per-order, but doing it here ensures every derived order (immediate,
   //   range pending, close-worse-entries override) inherits a safe baseline.
   const stopsLevel = Number(ctx.stopsLevel ?? 0) || 0
-  const minStopDist = stopsLevel > 0 ? (stopsLevel + 2) * ctx.point : 0
+  const freezeLevel = Number(ctx.freezeLevel ?? 0) || 0
+  const safeLevel = Math.max(stopsLevel, freezeLevel)
+  const minStopDist = safeLevel > 0 ? (safeLevel + 2) * ctx.point : 0
   const clampToStops = (price: number | null, isTp: boolean, ref: number | null): number | null => {
     if (price == null || !Number.isFinite(price) || ref == null || ref <= 0 || minStopDist <= 0) {
       return price
@@ -381,57 +555,27 @@ export function planManualOrders(args: {
   const targetLeg = unitsToLot(targetUnits)
 
   // ── 6. Range Trading split ──────────────────────────────────────────────
-  // When on, a configurable share of the planned legs is reserved as pending
-  // Limit orders stepping away from entry by `range_step_pips`, bounded by
-  // `range_distance_pips`. Immediates fire at entry; pendings fill as price
-  // moves into the range. The effective leg count can shrink when the
-  // distance / step cap bites — by design, per the user spec.
-  const rangeOn = manual.range_trading === true
+  // Delegates to the exported `planRangeSplit` helper so the immediate/pending
+  // math stays pure and testable. The planner only decides COUNTS here; pending
+  // PRICES are computed at the executor against the live anchor (signal entry
+  // → /Quote bid/ask → first-fill openPrice).
   const baseIsPendingSignal = operation.includes('Limit') || operation.includes('Stop')
-  const rangePct = Math.max(0, Math.min(100, Number(manual.range_percent ?? 0)))
-  const stepPips = Math.max(0, Number(manual.range_step_pips ?? 0))
-  const distPips = Math.max(0, Number(manual.range_distance_pips ?? 0))
-
-  let immediateLegs = totalLegs
-  let effectiveRangeLegs = 0
-  let effectiveStepPips = stepPips
-  let rangeFallbackReason: string | undefined
-
-  if (rangeOn && baseIsPendingSignal) {
-    // Signal already carries its own pending entry — skip the range branch.
-    rangeFallbackReason = 'range_trading_skip_pending_signal'
-  } else if (rangeOn) {
-    if (stepPips <= 0 || distPips <= 0) {
-      rangeFallbackReason = 'range_trading_invalid'
-    } else {
-      // If the configured pip step would land Limit prices inside the broker's
-      // stops zone (e.g. 2 pips on XAUUSD where stops_level ≈ $1), grow the
-      // step to the broker minimum instead of silently dropping the feature.
-      const stopsLevel = Number(ctx.stopsLevel ?? 0) || 0
-      const minStepUnits = stopsLevel > 0 ? (stopsLevel + 2) * ctx.point : 0
-      if (minStepUnits > 0 && pip > 0 && stepPips * pip < minStepUnits) {
-        effectiveStepPips = Math.max(stepPips, Math.ceil(minStepUnits / pip))
-        rangeFallbackReason = 'range_trading_step_auto_expanded'
-      }
-      const reservedLegs = Math.round((totalLegs * rangePct) / 100)
-      const maxByDistance = Math.floor(distPips / effectiveStepPips)
-      const effective = Math.min(reservedLegs, maxByDistance)
-      if (effective <= 0) {
-        // Reserved 0 is intentional (user picked 0%); cap-to-0 is misconfig.
-        if (reservedLegs > 0) rangeFallbackReason = 'range_trading_invalid'
-      } else {
-        effectiveRangeLegs = effective
-        immediateLegs = Math.max(0, totalLegs - reservedLegs)
-        // If we have no signal entry AND no immediates, the executor has no anchor
-        // to price the pendings against — drop the range mode.
-        if (!entryOk && immediateLegs === 0) {
-          rangeFallbackReason = 'range_trading_no_anchor_available'
-          effectiveRangeLegs = 0
-          immediateLegs = totalLegs
-        }
-      }
-    }
-  }
+  const split = planRangeSplit({
+    totalLegs,
+    baseIsPendingSignal,
+    rangeOn: manual.range_trading === true,
+    rangePct: Math.max(0, Math.min(100, Number(manual.range_percent ?? 0))),
+    stepPips: Math.max(0, Number(manual.range_step_pips ?? 0)),
+    distPips: Math.max(0, Number(manual.range_distance_pips ?? 0)),
+    pip,
+    minStepPriceUnits: minStopDist,
+    hasSignalAnchor: entryAnchor != null,
+  })
+  const immediateLegs = split.immediateLegs
+  const effectiveRangeLegs = split.pendingLegs
+  const effectiveStepPips = split.effectiveStepPips
+  const stepPriceOffset = split.stepPriceOffset
+  const rangeFallbackReason = split.fallbackReason
 
   // ── 7. TP bucket setup (shared by immediate + range distributions) ──────
   const enabledRows = (manual.tp_lots ?? []).filter(r => r && r.enabled)
@@ -499,12 +643,11 @@ export function planManualOrders(args: {
   }
 
   // ── 9. Emit range pendings ──────────────────────────────────────────────
-  // Pendings always carry an expiration if `pending_expiry_hours` is set,
-  // independent of whether the immediate leg path was already a pending.
-  // The executor will re-price each pending to `actualFillPrice ± stepIdx ×
-  // stepPriceOffset` once the first immediate fills; we compute an entry-
-  // anchored fallback price here for the rare case where pendings ship before
-  // any fill is observed.
+  // The planner does NOT decide pending PRICES anymore — that's the executor's
+  // job once it has resolved a live anchor (signal entry → /Quote → first-fill
+  // openPrice). We emit `price: null` and attach `rangeMeta` so the executor
+  // can compute `price = anchor + (isBuy ? -1 : +1) × stepIdx × stepPriceOffset`.
+  // Pendings always carry an expiration if `pending_expiry_hours` is set.
   if (effectiveRangeLegs > 0) {
     const pendingOp: MtOperation = isBuy ? 'BuyLimit' : 'SellLimit'
     const pendingExpiration: { expiration?: string; expirationType?: OrderSendArgs['expirationType'] } = {}
@@ -515,19 +658,15 @@ export function planManualOrders(args: {
       pendingExpiration.expirationType = 'Specified'
     }
 
-    const stepPriceOffset = effectiveStepPips * pip
     let stepIdx = 1
     for (let b = 0; b < bucketRows.length; b++) {
       const tpPrice = tpForBucket(b)
       for (let k = 0; k < (rangeCounts[b] ?? 0); k++) {
-        const fallbackLegPrice = entryAnchor != null
-          ? (isBuy ? entryAnchor - stepIdx * stepPriceOffset : entryAnchor + stepIdx * stepPriceOffset)
-          : 0
         orders.push({
           ...orderBase,
           operation: pendingOp,
           volume: targetLeg,
-          price: roundPrice(fallbackLegPrice),
+          price: null,
           stoploss: roundPrice(finalSl),
           takeprofit: roundPrice(tpPrice),
           ...pendingExpiration,
@@ -558,13 +697,16 @@ export function planManualOrders(args: {
     }
   }
 
-  // ── 11. Close-worse-entries override (range-only) ───────────────────────
-  // All immediates plus the first N shallowest pendings get a tight TP at
-  // `legEntry ± close_worse_entries_pips * pip`, so they take a small profit
-  // while the deeper (best-priced) range legs ride for the percent-row TPs.
-  // The override TP is also clamped against `entry` and the broker's
-  // stops_level so the broker can't reject it — important on XAUUSD where
-  // 1 "pip" is only $0.01 and stops_level often sits at ~$1.
+  // ── 11. Close-worse-entries policy (executor applies post-anchor) ───────
+  // Per user spec: "when trade is in X pip in profit from the worse (earliest)
+  // entry, close those trades; keep the best entry trades." That's a SINGLE
+  // trigger price = `anchor + X pips`, applied as the takeprofit on all
+  // immediates plus the N shallowest pendings. The deeper pendings keep their
+  // percent-row TPs and ride for the bigger targets. We don't compute the
+  // override here because the planner anchor may be null (market signals on
+  // XAUUSD often arrive without entry_price); the executor will resolve a live
+  // anchor via /Quote and then call `applyCloseWorseEntries`.
+  let closeWorseEntries: PlannerCloseWorseEntries | undefined
   if (effectiveRangeLegs > 0 && manual.close_worse_entries === true) {
     const cwPips = Math.max(0, Number(manual.close_worse_entries_pips ?? 0))
     if (cwPips > 0) {
@@ -572,24 +714,10 @@ export function planManualOrders(args: {
         0,
         Math.min(effectiveRangeLegs, Math.floor(Number(manual.close_worse_extra_pendings ?? 0))),
       )
-      const dir = isBuy ? 1 : -1
-      const overrideUpTo = immediateLegs + extraPendings
-      const entryRef = entryAnchor
-      for (let k = 0; k < orders.length && k < overrideUpTo; k++) {
-        const rawLegPrice = Number(orders[k]!.price) || 0
-        const legPrice = rawLegPrice > 0 ? rawLegPrice : (entryRef ?? 0)
-        if (legPrice <= 0) continue
-        let overriddenTp = legPrice + dir * cwPips * pip
-        // Keep the override on the correct side of entry by at least stops_level.
-        if (entryRef != null && minStopDist > 0) {
-          if (isBuy) overriddenTp = Math.max(overriddenTp, entryRef + minStopDist)
-          else overriddenTp = Math.min(overriddenTp, entryRef - minStopDist)
-        }
-        orders[k] = {
-          ...orders[k]!,
-          takeprofit: roundPrice(overriddenTp),
-          comment: `${orders[k]!.comment ?? ''}.cw`,
-        }
+      closeWorseEntries = {
+        immediates: immediateLegs,
+        extraPendings,
+        pipsFromAnchor: cwPips,
       }
     }
   }
@@ -602,6 +730,10 @@ export function planManualOrders(args: {
   return {
     orders,
     rangeMeta,
+    anchor: { source: entryAnchor != null ? 'signal' : 'unknown', value: entryAnchor },
+    pip,
+    isBuy,
+    ...(closeWorseEntries ? { closeWorseEntries } : {}),
     delay_ms,
     ...(rangeFallbackReason ? { fallback_reason: rangeFallbackReason } : {}),
   }

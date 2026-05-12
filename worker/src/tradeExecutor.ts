@@ -7,6 +7,7 @@ import {
   SymbolParams,
 } from './metatraderapi'
 import {
+  applyCloseWorseEntries,
   planManualOrders,
   type ChannelKeywords,
   type ManualSettings,
@@ -75,6 +76,12 @@ interface SymbolCacheEntry {
   lotStep: number
   /** Broker-reported min SL/TP distance from market, in MT points (0 = no enforcement). */
   stopsLevel: number
+  /**
+   * Broker-reported freeze distance, in MT points. Pending orders inside this band
+   * cannot be modified or closed; treated as another floor on the "safe" SL/TP
+   * distance alongside `stopsLevel`. 0 = no enforcement.
+   */
+  freezeLevel: number
   loadedAt: number
 }
 
@@ -218,9 +225,11 @@ function isBuySideOp(op: string): boolean {
 /**
  * Push SL/TP outside the broker's minimum stops distance so MT5 can't reject the
  * payload with "Invalid stops in the request". Uses `args.price` (the planner's
- * intended fill/entry) as the reference — for market orders this is a best-effort
- * proxy for the actual fill price, but it matches what every common copier does.
- * Returns the (possibly mutated) order plus a human-readable list of adjustments.
+ * intended fill/entry, or the executor-resolved anchor for range pendings) as
+ * the reference. Honors both `stopsLevel` (the SL/TP minimum) and `freezeLevel`
+ * (the in-zone modification ban) — we take the larger of the two so neither
+ * server-side check can reject the payload. Returns the (possibly mutated)
+ * order plus a human-readable list of adjustments.
  */
 function clampOrderStops(
   args: OrderSendArgs,
@@ -230,11 +239,13 @@ function clampOrderStops(
   if (!params) return { args, adjustments }
   const point = Number(params.point) || 0
   const stopsLevel = Number(params.stopsLevel) || 0
+  const freezeLevel = Number(params.freezeLevel) || 0
   if (point <= 0) return { args, adjustments }
 
   // +2 points of safety so we sit just outside the broker's threshold rather
   // than exactly on it (some brokers reject equal-to-threshold as well).
-  const minDist = (stopsLevel + 2) * point
+  const minLevel = Math.max(stopsLevel, freezeLevel)
+  const minDist = (minLevel + 2) * point
   const ref = Number(args.price) || 0
   if (ref <= 0 || minDist <= 0) return { args, adjustments }
 
@@ -258,6 +269,61 @@ function clampOrderStops(
   if (tp !== original.tp) adjustments.push(`tp ${original.tp} → ${tp}`)
   if (adjustments.length === 0) return { args, adjustments }
   return { args: { ...args, stoploss: sl, takeprofit: tp }, adjustments }
+}
+
+interface Leg {
+  args: OrderSendArgs
+  meta?: PlannerRangeMeta
+  idx: number
+}
+
+/**
+ * Resolve final prices for every leg against the live `anchor`:
+ *   • Immediate legs: keep `price` as-is (planner already set it to the anchor).
+ *   • Range pendings: `price = anchor + (isBuy ? -1 : +1) × stepIdx × stepPriceOffset`.
+ *   • Then apply the planner's Close-Worse-Entries policy (single trigger TP
+ *     shared by all immediates + N shallowest pendings).
+ *
+ * When `anchor` is missing or invalid this is a no-op — the caller will drop
+ * any leg that still has `price <= 0`. Pure: doesn't mutate the input legs.
+ */
+function resolveLegPrices(
+  legs: Leg[],
+  anchor: number | null,
+  plan: PlannerResult,
+  params: SymbolCacheEntry | null,
+): Leg[] {
+  if (anchor == null || !Number.isFinite(anchor) || anchor <= 0) return legs
+  const digits = Math.max(0, Math.min(8, Number(params?.digits) || 5))
+  const roundPx = (v: number): number => Number(v.toFixed(digits))
+
+  const repriced = legs.map(leg => {
+    if (!leg.meta) return leg
+    const offset = leg.meta.stepIdx * leg.meta.stepPriceOffset
+    const price = leg.meta.isBuy ? anchor - offset : anchor + offset
+    return { ...leg, args: { ...leg.args, price: roundPx(price) } }
+  })
+
+  if (!plan.closeWorseEntries || plan.pip == null || plan.isBuy == null) {
+    return repriced
+  }
+
+  const point = Number(params?.point) || 0
+  const stopsLevel = Number(params?.stopsLevel) || 0
+  const freezeLevel = Number(params?.freezeLevel) || 0
+  const safe = Math.max(stopsLevel, freezeLevel)
+  const minStopDistance = safe > 0 && point > 0 ? (safe + 2) * point : 0
+
+  const adjustedArgs = applyCloseWorseEntries({
+    orders: repriced.map(l => l.args),
+    policy: plan.closeWorseEntries,
+    anchor,
+    isBuy: plan.isBuy,
+    pip: plan.pip,
+    digits,
+    minStopDistance,
+  })
+  return repriced.map((l, i) => ({ ...l, args: adjustedArgs[i]! }))
 }
 
 function channelMatches(broker: BrokerRow, channelId: string | null): boolean {
@@ -593,6 +659,7 @@ export class TradeExecutor {
           minLot: params?.minLot ?? 0.01,
           lotStep: params?.lotStep ?? 0.01,
           stopsLevel: params?.stopsLevel ?? 0,
+          freezeLevel: params?.freezeLevel ?? 0,
           defaultLot: Number(broker.default_lot_size ?? 0.01),
           lastBalance: broker.last_balance ?? null,
         },
@@ -643,31 +710,13 @@ export class TradeExecutor {
             min_lot: params?.minLot ?? null,
             lot_step: params?.lotStep ?? null,
             stops_level: params?.stopsLevel ?? null,
+            freeze_level: params?.freezeLevel ?? null,
             symbol,
           } as unknown as Record<string, unknown>,
         })
       } catch {
         // Logging failure is non-fatal.
       }
-    }
-
-    if (isManual) {
-      // One-line plan summary so it's obvious whether Range Trading / Close-worse-entries
-      // actually applied. Helps debug "settings not applying" reports.
-      const ops = plan.orders.map(o => String(o.operation))
-      const immediates = ops.filter(o => o === 'Buy' || o === 'Sell').length
-      const pendings = ops.length - immediates
-      const cwOn = manual.range_trading === true
-        && manual.close_worse_entries === true
-        && (Number(manual.close_worse_entries_pips ?? 0) || 0) > 0
-        && pendings > 0
-      console.log(
-        `[tradeExecutor] manual plan signal=${signal.id} broker=${broker.id} symbol=${symbol}`
-        + ` style=${manual.trade_style ?? 'single'} legs=${plan.orders.length}`
-        + ` (immediate=${immediates}, pending=${pendings})`
-        + ` rangeOn=${manual.range_trading === true} cwOn=${cwOn}`
-        + (plan.fallback_reason ? ` fallback=${plan.fallback_reason}` : ''),
-      )
     }
 
     if (plan.delay_ms > 0) {
@@ -683,25 +732,95 @@ export class TradeExecutor {
       )
     }
 
-    // Round volumes first; we'll clamp SL/TP per-leg right before send (after
-    // any range re-pricing) so SL/TP stay correct relative to each pending's
-    // actual Limit price, not the planner's placeholder.
+    // Build legs with rounded volumes. Pending prices are still null at this
+    // point — resolveLegPrices() fills them in once the anchor is known.
     const volumeRounded = capped.map(o => ({ ...o, volume: roundLot(o.volume, params) }))
+    let legs: Leg[] = volumeRounded.map((args, idx) => ({ args, meta: cappedMeta[idx], idx }))
 
-    // Split into immediate (market) legs vs. range pendings. Range pendings
-    // get their `price` rewritten to `actualFillPrice ± stepIdx × stepPriceOffset`
-    // once the first immediate fills, per the user's "use active entry + step
-    // pips" model.
-    type Leg = { args: OrderSendArgs; meta?: PlannerRangeMeta; idx: number }
-    const legs: Leg[] = volumeRounded.map((args, idx) => ({ args, meta: cappedMeta[idx], idx }))
-    const immediateLegs = legs.filter(l => !l.meta)
-    const pendingLegs = legs.filter(l => !!l.meta)
+    // ── Anchor resolution ────────────────────────────────────────────────
+    // Priority: parsed signal entry → live /Quote (Ask for buy, Bid for sell).
+    // We no longer wait on the first immediate fill for the anchor — that race
+    // delayed pendings by 200–500ms and broke when the very first immediate
+    // failed. /Quote is a ~50–150ms GET that gives a deterministic anchor for
+    // BOTH immediates and pendings before either is sent.
+    const needsAnchor = cappedMeta.some(m => !!m)
+    let anchor: number | null = plan.anchor?.value ?? null
+    let anchorSource: 'signal' | 'quote' | 'unknown' = plan.anchor?.source ?? 'unknown'
+    if (needsAnchor && (anchor == null || anchor <= 0) && this.api) {
+      try {
+        const q = await this.api.quote(uuid, symbol)
+        anchor = plan.isBuy === false ? q.bid : q.ask
+        anchorSource = 'quote'
+        console.log(
+          `[tradeExecutor] quote anchor signal=${signal.id} broker=${broker.id} symbol=${symbol} bid=${q.bid} ask=${q.ask} anchor=${anchor}`,
+        )
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        console.warn(
+          `[tradeExecutor] /Quote failed for ${symbol} signal=${signal.id} broker=${broker.id}: ${msg}`,
+        )
+      }
+    }
 
-    const totalCount = legs.length
-    const digits = Math.max(0, Math.min(8, Number(params?.digits) || 5))
-    const roundPx = (v: number): number => Number(v.toFixed(digits))
+    // Resolve pending prices + apply Close-Worse-Entries against the anchor.
+    legs = resolveLegPrices(legs, anchor, plan, params)
 
-    const sendLeg = async (leg: Leg): Promise<{ ok: boolean; openPrice?: number }> => {
+    if (isManual) {
+      // One-line plan summary so it's obvious whether Range Trading / CWE are
+      // actually firing, and at which anchor. Helps debug "settings not applying".
+      const point = Number(params?.point) || 0
+      const stopsLevel = Number(params?.stopsLevel) || 0
+      const freezeLevel = Number(params?.freezeLevel) || 0
+      const immediates = legs.filter(l => !l.meta).length
+      const pendings = legs.length - immediates
+      console.log(
+        `[tradeExecutor] manual plan signal=${signal.id} broker=${broker.id} symbol=${symbol}`
+        + ` style=${manual.trade_style ?? 'single'} legs=${legs.length}`
+        + ` (immediate=${immediates}, pending=${pendings})`
+        + ` rangeOn=${manual.range_trading === true} cwOn=${!!plan.closeWorseEntries}`
+        + ` pip=${plan.pip ?? 'n/a'} anchorSource=${anchorSource} anchor=${anchor ?? 'n/a'}`
+        + ` stops_level=${stopsLevel} freeze_level=${freezeLevel} point=${point}`
+        + (plan.fallback_reason ? ` fallback=${plan.fallback_reason}` : ''),
+      )
+    }
+
+    // Drop pendings that still don't have a valid price (no anchor available).
+    // Immediate legs always carry the anchor as their price already; pendings
+    // were `null` from the planner and only become valid after resolveLegPrices.
+    const validLegs: Leg[] = []
+    const safe = Math.max(Number(params?.stopsLevel) || 0, Number(params?.freezeLevel) || 0)
+    const zoneHi = anchor != null && safe > 0 ? anchor + (safe + 2) * (params?.point ?? 0) : null
+    const zoneLo = anchor != null && safe > 0 ? anchor - (safe + 2) * (params?.point ?? 0) : null
+    for (const leg of legs) {
+      const px = Number(leg.args.price)
+      if (leg.meta && (!Number.isFinite(px) || px <= 0)) {
+        console.warn(
+          `[tradeExecutor] dropped pending leg ${leg.idx + 1}/${legs.length} signal=${signal.id} stepIdx=${leg.meta.stepIdx}: no anchor available`,
+        )
+        continue
+      }
+      // Reject pendings that landed inside the broker's stops/freeze zone even
+      // after step auto-expansion — broker will refuse them with "Invalid stops".
+      if (leg.meta && zoneHi != null && zoneLo != null && px > zoneLo && px < zoneHi) {
+        console.warn(
+          `[tradeExecutor] dropped pending leg ${leg.idx + 1}/${legs.length} signal=${signal.id} stepIdx=${leg.meta.stepIdx}`
+          + ` price=${px} inside broker stops_zone=[${zoneLo}, ${zoneHi}]`,
+        )
+        continue
+      }
+      validLegs.push(leg)
+    }
+
+    if (validLegs.length === 0) {
+      console.warn(
+        `[tradeExecutor] no valid legs after anchor resolution signal=${signal.id} broker=${broker.id} symbol=${symbol}`,
+      )
+      return
+    }
+
+    const totalCount = validLegs.length
+
+    const sendLeg = async (leg: Leg): Promise<void> => {
       let args = leg.args
       // Final SL/TP clamp using the actual limit/market price as the reference.
       const clamped = clampOrderStops(args, params)
@@ -744,8 +863,6 @@ export class TradeExecutor {
           request_payload: args as unknown as Record<string, unknown>,
           response_payload: { ticket: result.ticket, latency_ms: latencyMs, leg: leg.idx + 1, total: totalCount },
         })
-        const openPx = Number(result.openPrice)
-        return { ok: true, openPrice: Number.isFinite(openPx) && openPx > 0 ? openPx : undefined }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
         console.error(
@@ -761,77 +878,12 @@ export class TradeExecutor {
           request_payload: args as unknown as Record<string, unknown>,
           error_message: msg,
         })
-        return { ok: false }
       }
     }
 
-    // Fire all immediates in parallel.
-    const immediatePromises = immediateLegs.map(leg => sendLeg(leg))
-
-    // Wait for the first successful fill so we can use its actual `openPrice`
-    // as the anchor for range pendings. If no immediates exist, fall back to
-    // each pending's planner-computed entry-anchored price.
-    let anchorPrice: number | null = null
-    if (pendingLegs.length > 0 && immediatePromises.length > 0) {
-      anchorPrice = await new Promise<number | null>(resolve => {
-        let pendingCount = immediatePromises.length
-        let settled = false
-        for (const p of immediatePromises) {
-          p.then(r => {
-            if (settled) return
-            if (r.ok && r.openPrice != null && r.openPrice > 0) {
-              settled = true
-              resolve(r.openPrice)
-              return
-            }
-            pendingCount -= 1
-            if (pendingCount === 0 && !settled) {
-              settled = true
-              resolve(null)
-            }
-          }).catch(() => {
-            if (settled) return
-            pendingCount -= 1
-            if (pendingCount === 0 && !settled) {
-              settled = true
-              resolve(null)
-            }
-          })
-        }
-      })
-      if (anchorPrice != null) {
-        console.log(
-          `[tradeExecutor] range anchor signal=${signal.id} broker=${broker.id} symbol=${symbol} anchorPrice=${anchorPrice}`,
-        )
-      } else {
-        console.warn(
-          `[tradeExecutor] range anchor unavailable signal=${signal.id} broker=${broker.id} symbol=${symbol}: all immediates failed; using entry-anchored fallback price`,
-        )
-      }
-    }
-
-    // Re-price pendings against the live anchor (or fall back).
-    for (const leg of pendingLegs) {
-      const meta = leg.meta!
-      if (anchorPrice != null) {
-        const offset = meta.stepIdx * meta.stepPriceOffset
-        const newPrice = meta.isBuy ? anchorPrice - offset : anchorPrice + offset
-        leg.args = { ...leg.args, price: roundPx(newPrice) }
-      }
-      // If anchor missing but planner already set a positive price, keep it.
-      if (!leg.args.price || leg.args.price <= 0) {
-        console.warn(
-          `[tradeExecutor] dropping pending leg ${leg.idx + 1}/${totalCount} signal=${signal.id}: no valid anchor or fallback price (stepIdx=${meta.stepIdx})`,
-        )
-      }
-    }
-
-    // Fire pendings (skip the ones with no valid price after re-anchoring).
-    const pendingPromises = pendingLegs
-      .filter(l => Number(l.args.price) > 0)
-      .map(leg => sendLeg(leg))
-
-    await Promise.allSettled([...immediatePromises, ...pendingPromises])
+    // All legs go out together — pendings are no longer gated on the first
+    // immediate fill, so the trade fan-out finishes in one round-trip.
+    await Promise.allSettled(validLegs.map(sendLeg))
   }
 
   private async logSendSkipped(
@@ -943,6 +995,7 @@ export class TradeExecutor {
         maxLot: Number(p.groupParams?.maxLot ?? 100),
         lotStep: Number(p.groupParams?.lotStep ?? 0.01),
         stopsLevel: Math.max(0, Number(p.symbol?.stopsLevel ?? 0) || 0),
+        freezeLevel: Math.max(0, Number(p.symbol?.freezeLevel ?? 0) || 0),
         loadedAt: Date.now(),
       }
       this.symbolCache.set(key, entry)

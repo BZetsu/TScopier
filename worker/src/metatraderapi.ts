@@ -193,12 +193,21 @@ export interface SymbolParams {
     point?: number
     contractSize?: number
     stopsLevel?: number
+    freezeLevel?: number
   }
   groupParams?: {
     minLot?: number
     maxLot?: number
     lotStep?: number
   }
+}
+
+/** Live quote (bid/ask) snapshot for a symbol. */
+export interface QuoteResult {
+  symbol: string
+  bid: number
+  ask: number
+  time?: string
 }
 
 export class MetatraderApiError extends Error {
@@ -279,6 +288,33 @@ export class MetatraderApiClient {
   /** Returns the broker's full instrument list. Some servers return string[], others SymbolInfo[]. */
   symbols(id: string): Promise<unknown[]> {
     return this.get<unknown[]>('/Symbols', { id })
+  }
+
+  /**
+   * Live bid/ask quote for a symbol. The MetatraderAPI proto names the fields
+   * Bid/Ask/Time in PascalCase; some server builds also return camelCase. Normalise
+   * both shapes here so callers always see `{ symbol, bid, ask, time }`.
+   */
+  async quote(id: string, symbol: string): Promise<QuoteResult> {
+    const raw = await this.get<unknown>('/Quote', { id, symbol })
+    assertNoApiError(raw)
+    const root = (raw && typeof raw === 'object') ? raw as Record<string, unknown> : {}
+    const r = (root.result && typeof root.result === 'object') ? root.result as Record<string, unknown> : root
+    const bid = num(r.bid ?? r.Bid)
+    const ask = num(r.ask ?? r.Ask)
+    const time = typeof r.time === 'string' ? r.time : typeof r.Time === 'string' ? r.Time : undefined
+    if (bid == null || ask == null || bid <= 0 || ask <= 0) {
+      throw new MetatraderApiError(
+        `Quote: invalid bid/ask for ${symbol} (bid=${String(r.Bid ?? r.bid)} ask=${String(r.Ask ?? r.ask)})`,
+        200,
+      )
+    }
+    return {
+      symbol: typeof r.symbol === 'string' ? r.symbol : typeof r.Symbol === 'string' ? r.Symbol : symbol,
+      bid,
+      ask,
+      time,
+    }
   }
 
   async orderSend(id: string, args: OrderSendArgs): Promise<OrderResult> {
