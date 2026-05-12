@@ -1040,9 +1040,15 @@ export class TradeExecutor {
   private async applyManagement(signal: SignalRow, parsed: ParsedSignal, brokers: BrokerRow[]): Promise<void> {
     if (!this.api) return
     if (!signal.parent_signal_id) return
+    // Pull the existing sl/tp/entry_price so a one-sided management command
+    // ("Adjust SL to 4500") can preserve the OTHER side. MetatraderAPI's
+    // /OrderModify treats stoploss=0 / takeprofit=0 as "remove the level",
+    // and our client always serializes both fields — so without these
+    // saved values an SL-only modify silently wipes the TP, and a
+    // breakeven move silently wipes the TP too.
     const { data: trades } = await this.supabase
       .from('trades')
-      .select('id,broker_account_id,metaapi_order_id,symbol,lot_size,status')
+      .select('id,broker_account_id,metaapi_order_id,symbol,lot_size,status,sl,tp,entry_price')
       .eq('signal_id', signal.parent_signal_id)
     const rows = (trades ?? []) as {
       id: string
@@ -1051,11 +1057,32 @@ export class TradeExecutor {
       symbol: string
       lot_size: number
       status: string
+      sl: number | null
+      tp: number | null
+      entry_price: number | null
     }[]
     if (!rows.length) return
 
     const byBroker = new Map(brokers.map(b => [b.id, b]))
     const action = String(parsed.action).toLowerCase()
+
+    // Coerce a DB numeric to "what /OrderModify wants for this side".
+    // null / NaN / 0 → 0 (no level on broker, same as current state).
+    const sanitizeLevel = (v: number | null | undefined): number => {
+      const n = typeof v === 'number' ? v : Number(v ?? 0)
+      return Number.isFinite(n) && n > 0 ? n : 0
+    }
+    // A signal "contains" an SL / TP value only when the parser actually
+    // populated it. parsed.sl = null and parsed.tp = null (or []) both mean
+    // "the signal did not mention this side, leave it as-is". We never
+    // infer "remove the level" from missing data — that requires an
+    // explicit close/cancel action upstream.
+    const hasNewSl = typeof parsed.sl === 'number' && Number.isFinite(parsed.sl) && parsed.sl > 0
+    const hasNewTp = Array.isArray(parsed.tp)
+      && parsed.tp.length > 0
+      && typeof parsed.tp[0] === 'number'
+      && Number.isFinite(parsed.tp[0])
+      && (parsed.tp[0] as number) > 0
 
     await Promise.allSettled(rows.map(async trade => {
       const broker = byBroker.get(trade.broker_account_id)
@@ -1075,19 +1102,38 @@ export class TradeExecutor {
           const lots = +(trade.lot_size * fraction).toFixed(2)
           await this.api!.orderClose(uuid, { ticket, lots })
         } else if (action === 'breakeven') {
-          const { data: t } = await this.supabase.from('trades').select('entry_price').eq('id', trade.id).maybeSingle()
-          const entry = Number((t as { entry_price?: number } | null)?.entry_price ?? 0)
-          if (entry > 0) await this.api!.orderModify(uuid, { ticket, stoploss: entry })
+          const entry = sanitizeLevel(trade.entry_price)
+          if (entry > 0) {
+            // Preserve the existing TP. Without this, breakeven silently
+            // wiped the take-profit because /OrderModify's takeprofit
+            // defaults to 0.
+            await this.api!.orderModify(uuid, {
+              ticket,
+              stoploss: entry,
+              takeprofit: sanitizeLevel(trade.tp),
+            })
+            await this.supabase.from('trades').update({ sl: entry }).eq('id', trade.id)
+          }
         } else if (action === 'modify') {
+          // Use the signal's value when it spelled one out, otherwise carry
+          // the trade row's persisted level through. This is what lets
+          // "Adjust SL to 4500" keep the existing TP intact (and vice versa).
+          const newSl = hasNewSl ? (parsed.sl as number) : sanitizeLevel(trade.sl)
+          const newTp = hasNewTp ? (parsed.tp![0] as number) : sanitizeLevel(trade.tp)
           await this.api!.orderModify(uuid, {
             ticket,
-            stoploss: parsed.sl ?? 0,
-            takeprofit: parsed.tp?.[0] ?? 0,
+            stoploss: newSl,
+            takeprofit: newTp,
           })
-          await this.supabase.from('trades').update({
-            sl: parsed.sl ?? null,
-            tp: parsed.tp?.[0] ?? null,
-          }).eq('id', trade.id)
+          // Only persist the columns we actually changed. Skipping the
+          // unchanged side keeps the row honest if the broker rejects one
+          // but accepts the other (which we'd hear about via the catch).
+          const dbPatch: Record<string, number | null> = {}
+          if (hasNewSl) dbPatch.sl = parsed.sl as number
+          if (hasNewTp) dbPatch.tp = parsed.tp![0] as number
+          if (Object.keys(dbPatch).length > 0) {
+            await this.supabase.from('trades').update(dbPatch).eq('id', trade.id)
+          }
         }
         await this.supabase.from('trade_execution_logs').insert({
           user_id: signal.user_id,
