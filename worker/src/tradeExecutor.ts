@@ -11,6 +11,8 @@ import {
   type ChannelKeywords,
   type ManualSettings,
   type ParsedSignal as PlannerParsedSignal,
+  type PlannerResult,
+  type PlannerRangeMeta,
 } from './manualPlanner'
 
 /**
@@ -563,7 +565,7 @@ export class TradeExecutor {
     // Build the order list. In AI mode we keep the original single-order shape;
     // manual mode delegates to the planner so filters / multi-TP / pip-derived
     // SL & TP / pending expiry / reverse all apply consistently.
-    let plan: { orders: OrderSendArgs[]; skip_reason?: string; fallback_reason?: string; delay_ms: number }
+    let plan: PlannerResult
     if (isManual) {
       const plannerParsed: PlannerParsedSignal = {
         action: parsed.action,
@@ -674,81 +676,162 @@ export class TradeExecutor {
 
     // Hard cap: planner already respects 500; this is a final guard rail.
     const capped = plan.orders.slice(0, 500)
+    const cappedMeta: Array<PlannerRangeMeta | undefined> = (plan.rangeMeta ?? []).slice(0, 500)
     if (capped.length < plan.orders.length) {
       console.warn(
         `[tradeExecutor] capped legs ${plan.orders.length} → ${capped.length} signal=${signal.id} broker=${broker.id}`,
       )
     }
 
-    // Round volumes and clamp SL/TP outside the broker's stops_level zone
-    // before sending. The clamp uses the order's intended fill price; for
-    // market orders this approximates the live market and prevents "Invalid
-    // stops" rejections when the channel's TP/SL is too tight (common on
-    // XAUUSD where stops_level is often 100+ points ≈ $1).
-    const ordersToSend = capped.map(o => {
-      const volumeRounded = { ...o, volume: roundLot(o.volume, params) }
-      const { args, adjustments } = clampOrderStops(volumeRounded, params)
-      if (adjustments.length > 0) {
+    // Round volumes first; we'll clamp SL/TP per-leg right before send (after
+    // any range re-pricing) so SL/TP stay correct relative to each pending's
+    // actual Limit price, not the planner's placeholder.
+    const volumeRounded = capped.map(o => ({ ...o, volume: roundLot(o.volume, params) }))
+
+    // Split into immediate (market) legs vs. range pendings. Range pendings
+    // get their `price` rewritten to `actualFillPrice ± stepIdx × stepPriceOffset`
+    // once the first immediate fills, per the user's "use active entry + step
+    // pips" model.
+    type Leg = { args: OrderSendArgs; meta?: PlannerRangeMeta; idx: number }
+    const legs: Leg[] = volumeRounded.map((args, idx) => ({ args, meta: cappedMeta[idx], idx }))
+    const immediateLegs = legs.filter(l => !l.meta)
+    const pendingLegs = legs.filter(l => !!l.meta)
+
+    const totalCount = legs.length
+    const digits = Math.max(0, Math.min(8, Number(params?.digits) || 5))
+    const roundPx = (v: number): number => Number(v.toFixed(digits))
+
+    const sendLeg = async (leg: Leg): Promise<{ ok: boolean; openPrice?: number }> => {
+      let args = leg.args
+      // Final SL/TP clamp using the actual limit/market price as the reference.
+      const clamped = clampOrderStops(args, params)
+      if (clamped.adjustments.length > 0) {
         console.warn(
-          `[tradeExecutor] stops clamped signal=${signal.id} broker=${broker.id} symbol=${args.symbol} op=${args.operation}: ${adjustments.join(', ')}`,
+          `[tradeExecutor] stops clamped signal=${signal.id} broker=${broker.id} symbol=${args.symbol} op=${args.operation}: ${clamped.adjustments.join(', ')}`,
         )
       }
-      return args
-    })
+      args = clamped.args
+      const t0 = Date.now()
+      try {
+        const result = await this.api!.orderSend(uuid, args)
+        const latencyMs = Date.now() - t0
+        console.log(
+          `[tradeExecutor] OrderSend ok signal=${signal.id} broker=${broker.id} ticket=${result.ticket} leg=${leg.idx + 1}/${totalCount} price=${args.price ?? 0} ${latencyMs}ms`,
+        )
 
-    await Promise.allSettled(
-      ordersToSend.map(async (args, idx) => {
-        const t0 = Date.now()
-        try {
-          const result = await this.api!.orderSend(uuid, args)
-          const latencyMs = Date.now() - t0
-          console.log(
-            `[tradeExecutor] OrderSend ok signal=${signal.id} broker=${broker.id} ticket=${result.ticket} leg=${idx + 1}/${ordersToSend.length} ${latencyMs}ms`,
-          )
+        await this.supabase.from('trades').insert({
+          user_id: signal.user_id,
+          signal_id: signal.id,
+          telegram_channel_id: signal.channel_id,
+          broker_account_id: broker.id,
+          metaapi_order_id: result.ticket != null ? String(result.ticket) : null,
+          symbol: args.symbol,
+          direction: args.operation.toLowerCase().includes('sell') ? 'sell' : 'buy',
+          entry_price: result.openPrice ?? args.price ?? null,
+          sl: result.stopLoss ?? args.stoploss ?? null,
+          tp: result.takeProfit ?? args.takeprofit ?? null,
+          lot_size: result.lots ?? args.volume,
+          status: args.operation.includes('Limit') || args.operation.includes('Stop') ? 'pending' : 'open',
+          opened_at: new Date().toISOString(),
+        })
 
-          await this.supabase.from('trades').insert({
-            user_id: signal.user_id,
-            signal_id: signal.id,
-            telegram_channel_id: signal.channel_id,
-            broker_account_id: broker.id,
-            metaapi_order_id: result.ticket != null ? String(result.ticket) : null,
-            symbol: args.symbol,
-            direction: args.operation.toLowerCase().includes('sell') ? 'sell' : 'buy',
-            entry_price: result.openPrice ?? args.price ?? null,
-            sl: result.stopLoss ?? args.stoploss ?? null,
-            tp: result.takeProfit ?? args.takeprofit ?? null,
-            lot_size: result.lots ?? args.volume,
-            status: args.operation.includes('Limit') || args.operation.includes('Stop') ? 'pending' : 'open',
-            opened_at: new Date().toISOString(),
-          })
+        await this.supabase.from('trade_execution_logs').insert({
+          user_id: signal.user_id,
+          signal_id: signal.id,
+          broker_account_id: broker.id,
+          action: 'order_send',
+          status: 'success',
+          request_payload: args as unknown as Record<string, unknown>,
+          response_payload: { ticket: result.ticket, latency_ms: latencyMs, leg: leg.idx + 1, total: totalCount },
+        })
+        const openPx = Number(result.openPrice)
+        return { ok: true, openPrice: Number.isFinite(openPx) && openPx > 0 ? openPx : undefined }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        console.error(
+          `[tradeExecutor] OrderSend failed signal=${signal.id} broker=${broker.id} leg=${leg.idx + 1}/${totalCount} op=${args.operation} price=${args.price ?? 0}:`,
+          msg,
+        )
+        await this.supabase.from('trade_execution_logs').insert({
+          user_id: signal.user_id,
+          signal_id: signal.id,
+          broker_account_id: broker.id,
+          action: 'order_send',
+          status: 'failed',
+          request_payload: args as unknown as Record<string, unknown>,
+          error_message: msg,
+        })
+        return { ok: false }
+      }
+    }
 
-          await this.supabase.from('trade_execution_logs').insert({
-            user_id: signal.user_id,
-            signal_id: signal.id,
-            broker_account_id: broker.id,
-            action: 'order_send',
-            status: 'success',
-            request_payload: args as unknown as Record<string, unknown>,
-            response_payload: { ticket: result.ticket, latency_ms: latencyMs, leg: idx + 1, total: ordersToSend.length },
-          })
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err)
-          console.error(
-            `[tradeExecutor] OrderSend failed signal=${signal.id} broker=${broker.id} leg=${idx + 1}/${ordersToSend.length}:`,
-            msg,
-          )
-          await this.supabase.from('trade_execution_logs').insert({
-            user_id: signal.user_id,
-            signal_id: signal.id,
-            broker_account_id: broker.id,
-            action: 'order_send',
-            status: 'failed',
-            request_payload: args as unknown as Record<string, unknown>,
-            error_message: msg,
+    // Fire all immediates in parallel.
+    const immediatePromises = immediateLegs.map(leg => sendLeg(leg))
+
+    // Wait for the first successful fill so we can use its actual `openPrice`
+    // as the anchor for range pendings. If no immediates exist, fall back to
+    // each pending's planner-computed entry-anchored price.
+    let anchorPrice: number | null = null
+    if (pendingLegs.length > 0 && immediatePromises.length > 0) {
+      anchorPrice = await new Promise<number | null>(resolve => {
+        let pendingCount = immediatePromises.length
+        let settled = false
+        for (const p of immediatePromises) {
+          p.then(r => {
+            if (settled) return
+            if (r.ok && r.openPrice != null && r.openPrice > 0) {
+              settled = true
+              resolve(r.openPrice)
+              return
+            }
+            pendingCount -= 1
+            if (pendingCount === 0 && !settled) {
+              settled = true
+              resolve(null)
+            }
+          }).catch(() => {
+            if (settled) return
+            pendingCount -= 1
+            if (pendingCount === 0 && !settled) {
+              settled = true
+              resolve(null)
+            }
           })
         }
-      }),
-    )
+      })
+      if (anchorPrice != null) {
+        console.log(
+          `[tradeExecutor] range anchor signal=${signal.id} broker=${broker.id} symbol=${symbol} anchorPrice=${anchorPrice}`,
+        )
+      } else {
+        console.warn(
+          `[tradeExecutor] range anchor unavailable signal=${signal.id} broker=${broker.id} symbol=${symbol}: all immediates failed; using entry-anchored fallback price`,
+        )
+      }
+    }
+
+    // Re-price pendings against the live anchor (or fall back).
+    for (const leg of pendingLegs) {
+      const meta = leg.meta!
+      if (anchorPrice != null) {
+        const offset = meta.stepIdx * meta.stepPriceOffset
+        const newPrice = meta.isBuy ? anchorPrice - offset : anchorPrice + offset
+        leg.args = { ...leg.args, price: roundPx(newPrice) }
+      }
+      // If anchor missing but planner already set a positive price, keep it.
+      if (!leg.args.price || leg.args.price <= 0) {
+        console.warn(
+          `[tradeExecutor] dropping pending leg ${leg.idx + 1}/${totalCount} signal=${signal.id}: no valid anchor or fallback price (stepIdx=${meta.stepIdx})`,
+        )
+      }
+    }
+
+    // Fire pendings (skip the ones with no valid price after re-anchoring).
+    const pendingPromises = pendingLegs
+      .filter(l => Number(l.args.price) > 0)
+      .map(leg => sendLeg(leg))
+
+    await Promise.allSettled([...immediatePromises, ...pendingPromises])
   }
 
   private async logSendSkipped(

@@ -119,9 +119,23 @@ export interface PlannerContext {
   now?: Date
 }
 
+export interface PlannerRangeMeta {
+  /** 1-based step index for this leg (used to compute `price = anchor ± stepIdx × stepPriceOffset`). */
+  stepIdx: number
+  /** Price offset per step (`effectiveStepPips × pip`). */
+  stepPriceOffset: number
+  /** True if the parent immediate leg is a Buy (so the pending steps DOWN from the anchor). */
+  isBuy: boolean
+}
+
 export interface PlannerResult {
   /** Concrete OrderSend payloads to issue. Empty array means "drop this signal". */
   orders: OrderSendArgs[]
+  /** Per-leg range metadata. Aligned with `orders` by index; entries are undefined
+   *  for non-range immediate legs. When present, the executor must re-price the
+   *  leg using the first immediate fill's actual `openPrice` as the anchor:
+   *  `args.price = anchor + (isBuy ? -1 : +1) × stepIdx × stepPriceOffset`. */
+  rangeMeta?: Array<PlannerRangeMeta | undefined>
   /** Reason for an empty plan, suitable for logging. */
   skip_reason?: string
   /** Non-fatal note when the planner had to soften its strategy (e.g. multi-trade
@@ -387,11 +401,7 @@ export function planManualOrders(args: {
     // Signal already carries its own pending entry — skip the range branch.
     rangeFallbackReason = 'range_trading_skip_pending_signal'
   } else if (rangeOn) {
-    if (!entryOk) {
-      // Need a finite entry anchor to price BuyLimit/SellLimit legs; otherwise
-      // MetatraderAPI would receive price=0 and ignore / reject the pendings.
-      rangeFallbackReason = 'range_trading_no_valid_entry'
-    } else if (stepPips <= 0 || distPips <= 0) {
+    if (stepPips <= 0 || distPips <= 0) {
       rangeFallbackReason = 'range_trading_invalid'
     } else {
       // If the configured pip step would land Limit prices inside the broker's
@@ -412,6 +422,13 @@ export function planManualOrders(args: {
       } else {
         effectiveRangeLegs = effective
         immediateLegs = Math.max(0, totalLegs - reservedLegs)
+        // If we have no signal entry AND no immediates, the executor has no anchor
+        // to price the pendings against — drop the range mode.
+        if (!entryOk && immediateLegs === 0) {
+          rangeFallbackReason = 'range_trading_no_anchor_available'
+          effectiveRangeLegs = 0
+          immediateLegs = totalLegs
+        }
       }
     }
   }
@@ -465,6 +482,7 @@ export function planManualOrders(args: {
 
   // ── 8. Emit immediate legs ──────────────────────────────────────────────
   const orders: OrderSendArgs[] = []
+  const rangeMeta: Array<PlannerRangeMeta | undefined> = []
   for (let b = 0; b < bucketRows.length; b++) {
     const tpPrice = tpForBucket(b)
     for (let k = 0; k < (immediateCounts[b] ?? 0); k++) {
@@ -476,13 +494,18 @@ export function planManualOrders(args: {
         ...expirationFields,
         comment: `${commentPrefix}:tp${b + 1}.${k + 1}`,
       })
+      rangeMeta.push(undefined)
     }
   }
 
   // ── 9. Emit range pendings ──────────────────────────────────────────────
   // Pendings always carry an expiration if `pending_expiry_hours` is set,
   // independent of whether the immediate leg path was already a pending.
-  if (effectiveRangeLegs > 0 && entryAnchor != null) {
+  // The executor will re-price each pending to `actualFillPrice ± stepIdx ×
+  // stepPriceOffset` once the first immediate fills; we compute an entry-
+  // anchored fallback price here for the rare case where pendings ship before
+  // any fill is observed.
+  if (effectiveRangeLegs > 0) {
     const pendingOp: MtOperation = isBuy ? 'BuyLimit' : 'SellLimit'
     const pendingExpiration: { expiration?: string; expirationType?: OrderSendArgs['expirationType'] } = {}
     const pendHours = Number(manual.pending_expiry_hours ?? 0)
@@ -492,23 +515,25 @@ export function planManualOrders(args: {
       pendingExpiration.expirationType = 'Specified'
     }
 
+    const stepPriceOffset = effectiveStepPips * pip
     let stepIdx = 1
     for (let b = 0; b < bucketRows.length; b++) {
       const tpPrice = tpForBucket(b)
       for (let k = 0; k < (rangeCounts[b] ?? 0); k++) {
-        const legPrice = isBuy
-          ? entryAnchor - stepIdx * effectiveStepPips * pip
-          : entryAnchor + stepIdx * effectiveStepPips * pip
+        const fallbackLegPrice = entryAnchor != null
+          ? (isBuy ? entryAnchor - stepIdx * stepPriceOffset : entryAnchor + stepIdx * stepPriceOffset)
+          : 0
         orders.push({
           ...orderBase,
           operation: pendingOp,
           volume: targetLeg,
-          price: roundPrice(legPrice),
+          price: roundPrice(fallbackLegPrice),
           stoploss: roundPrice(finalSl),
           takeprofit: roundPrice(tpPrice),
           ...pendingExpiration,
           comment: `${commentPrefix}:rg${stepIdx}.tp${b + 1}`,
         })
+        rangeMeta.push({ stepIdx, stepPriceOffset, isBuy })
         stepIdx += 1
       }
     }
@@ -529,6 +554,7 @@ export function planManualOrders(args: {
         ...expirationFields,
         comment: `${commentPrefix}:tp${bucketRows.length}.rem`,
       })
+      rangeMeta.push(undefined)
     }
   }
 
@@ -575,6 +601,7 @@ export function planManualOrders(args: {
 
   return {
     orders,
+    rangeMeta,
     delay_ms,
     ...(rangeFallbackReason ? { fallback_reason: rangeFallbackReason } : {}),
   }
