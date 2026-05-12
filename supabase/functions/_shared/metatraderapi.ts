@@ -124,7 +124,8 @@ export class MetatraderApiClient {
   /** Live bid/ask for one symbol. Used by the virtual-pending sweep to decide whether
    *  a row's trigger has been crossed. */
   async quote(id: string, symbol: string): Promise<{ bid: number; ask: number }> {
-    const raw = await this.get<unknown>("/Quote", { id, symbol })
+    // Upstream endpoint is `/GetQuote` — `/Quote` returns 404.
+    const raw = await this.get<unknown>("/GetQuote", { id, symbol })
     const root = (raw && typeof raw === "object") ? raw as Record<string, unknown> : {}
     const r = (root.result && typeof root.result === "object") ? root.result as Record<string, unknown> : root
     const num = (v: unknown): number => {

@@ -296,7 +296,11 @@ export class MetatraderApiClient {
    * both shapes here so callers always see `{ symbol, bid, ask, time }`.
    */
   async quote(id: string, symbol: string): Promise<QuoteResult> {
-    const raw = await this.get<unknown>('/Quote', { id, symbol })
+    // Endpoint name in the API2Trade / metatraderapi.dev REST surface is
+    // `/GetQuote` (not `/Quote`). Calling `/Quote` returns HTTP 404 and breaks
+    // anchor resolution for averaging-down ladders that don't carry an
+    // explicit signal entry price.
+    const raw = await this.get<unknown>('/GetQuote', { id, symbol })
     assertNoApiError(raw)
     const root = (raw && typeof raw === 'object') ? raw as Record<string, unknown> : {}
     const r = (root.result && typeof root.result === 'object') ? root.result as Record<string, unknown> : root
