@@ -1125,7 +1125,21 @@ export class TradeExecutor {
       tp: number | null
       entry_price: number | null
     }[]
-    if (!rows.length) return
+    if (!rows.length) {
+      // Child management rows never get `trades.signal_id = child.id`, so the
+      // periodic sweep cannot distinguish "already applied" from "never run".
+      // Without flipping status off `parsed`, the same "Close half" message is
+      // re-processed every 15s (and on every realtime UPDATE), applying the
+      // partial over and over until the position is flat.
+      try {
+        await this.supabase
+          .from('signals')
+          .update({ status: 'skipped', skip_reason: 'mgmt_no_parent_trades' })
+          .eq('id', signal.id)
+          .eq('status', 'parsed')
+      } catch { /* best-effort */ }
+      return
+    }
 
     const byBroker = new Map(brokers.map(b => [b.id, b]))
     const action = String(parsed.action).toLowerCase()
@@ -1165,6 +1179,19 @@ export class TradeExecutor {
             : 0.5
           const lots = +(trade.lot_size * fraction).toFixed(2)
           await this.api!.orderClose(uuid, { ticket, lots })
+          // Keep the row aligned with what we asked the broker to close so any
+          // future management math (or a delayed retry) does not re-use the
+          // pre-partial lot size.
+          const remaining = Math.max(0, +(trade.lot_size - lots).toFixed(2))
+          if (remaining < 0.0001) {
+            await this.supabase.from('trades').update({
+              status: 'closed',
+              closed_at: new Date().toISOString(),
+              lot_size: 0,
+            }).eq('id', trade.id)
+          } else {
+            await this.supabase.from('trades').update({ lot_size: remaining }).eq('id', trade.id)
+          }
         } else if (action === 'breakeven') {
           const entry = sanitizeLevel(trade.entry_price)
           if (entry > 0) {
@@ -1220,6 +1247,23 @@ export class TradeExecutor {
         })
       }
     }))
+
+    // Management messages do not insert `trades` with `signal_id = this row`,
+    // so `sweep()` never skips them via the "trade already exists" guard.
+    // Flip off `parsed` after one dispatch so we never double-apply the same
+    // Close half / breakeven / modify intent on every 15s tick.
+    try {
+      const { error: sigErr } = await this.supabase
+        .from('signals')
+        .update({ status: 'executed' })
+        .eq('id', signal.id)
+        .eq('status', 'parsed')
+      if (sigErr) {
+        console.warn(`[tradeExecutor] mgmt signal finalize failed id=${signal.id}: ${sigErr.message}`)
+      }
+    } catch {
+      // best-effort
+    }
   }
 
   /**
