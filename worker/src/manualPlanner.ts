@@ -263,6 +263,15 @@ export interface PlanRangeSplitResult {
  * Decide how many of the planned legs go out as immediates vs. range pendings.
  * Pure function so the split can be unit-tested and reused by the UI estimator
  * down the line.
+ *
+ * **Step does NOT shrink the pending count.** Pending count is purely
+ * `round(totalLegs × rangePct / 100)`. The `step` is the pip spacing the
+ * planner uses to place each pending. `distPips` is an advisory target span
+ * the user expects the ladder to reach — it's validated as > 0 so the user
+ * has to set SOMETHING in range mode, but it no longer caps the count.
+ * (Previously the count was capped at `floor(distPips / step)`, which meant
+ * raising the step shrank Total Open Trades — surprising UX feedback from
+ * May 12.)
  */
 export function planRangeSplit(args: PlanRangeSplitArgs): PlanRangeSplitResult {
   const { totalLegs, baseIsPendingSignal, rangeOn, rangePct, stepPips, distPips, pip, minStepPriceUnits, hasSignalAnchor } = args
@@ -287,13 +296,8 @@ export function planRangeSplit(args: PlanRangeSplitArgs): PlanRangeSplitResult {
   }
   const stepPriceOffset = effectiveStepPips * pip
 
-  const reservedLegs = Math.round((totalLegs * rangePct) / 100)
-  const maxByDistance = Math.floor(distPips / effectiveStepPips)
-  const effective = Math.min(reservedLegs, maxByDistance)
-  if (effective <= 0) {
-    if (reservedLegs > 0) {
-      return { ...baseResult, effectiveStepPips, stepPriceOffset, fallbackReason: 'range_trading_invalid' }
-    }
+  const reservedLegs = Math.max(0, Math.round((totalLegs * rangePct) / 100))
+  if (reservedLegs <= 0) {
     return { ...baseResult, effectiveStepPips, stepPriceOffset, fallbackReason }
   }
 
@@ -303,7 +307,7 @@ export function planRangeSplit(args: PlanRangeSplitArgs): PlanRangeSplitResult {
   // proceed and rely on the runtime anchor. We only drop the range when there
   // is literally no path to an anchor (no signal entry AND no immediate fills),
   // which the executor will detect explicitly.
-  return { immediateLegs, pendingLegs: effective, effectiveStepPips, stepPriceOffset, fallbackReason: fallbackReason ?? (!hasSignalAnchor && immediateLegs === 0 ? 'range_trading_anchor_runtime_only' : undefined) }
+  return { immediateLegs, pendingLegs: reservedLegs, effectiveStepPips, stepPriceOffset, fallbackReason: fallbackReason ?? (!hasSignalAnchor && immediateLegs === 0 ? 'range_trading_anchor_runtime_only' : undefined) }
 }
 
 export interface ComputeCwOverrideTpArgs {

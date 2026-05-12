@@ -1159,8 +1159,11 @@ export function AccountConfigPage() {
                                       {configDraft.manualSettings.risk_mode === 'dynamic_balance_percent' && (
                                         <> With Dynamic (% Balance) risk, the resolved lot at runtime can differ from Fixed Lot.</>
                                       )}
-                                      {multiTradePreview.pendingCapped && (
-                                        <> Reserved more pending than the distance/step allows — pending count capped at {multiTradePreview.pending}.</>
+                                      {configDraft.manualSettings.range_trading
+                                        && multiTradePreview.effectiveDistancePips != null
+                                        && (multiTradePreview.pending ?? 0) > 0
+                                        && Math.abs(multiTradePreview.effectiveDistancePips - (Number(configDraft.manualSettings.range_distance_pips ?? 0) || 0)) >= 1 && (
+                                        <> Ladder span = {multiTradePreview.pending} × {Number(configDraft.manualSettings.range_step_pips ?? 0) || 0}p = {multiTradePreview.effectiveDistancePips}p (configured distance {Number(configDraft.manualSettings.range_distance_pips ?? 0) || 0}p is advisory).</>
                                       )}
                                       {configDraft.manualSettings.range_trading && configDraft.manualSettings.close_worse_entries && (multiTradePreview.immediate ?? 0) + Math.min(
                                         Number(configDraft.manualSettings.close_worse_extra_pendings ?? 0) || 0,
@@ -1229,7 +1232,7 @@ export function AccountConfigPage() {
                                         placeholder="100"
                                         hint={
                                           formatPipHint(Number(configDraft.manualSettings.range_distance_pips ?? 100) || 0)
-                                          ?? "Total pip span from entry. Recommend ≥ 5× step so the ladder isn't capped."
+                                          ?? "Advisory target span. Actual ladder reach = pending count × step (Total Open Trades is not capped by this)."
                                         }
                                         value={String(configDraft.manualSettings.range_distance_pips ?? 100)}
                                         onChange={e => setManual({ range_distance_pips: Math.max(1, Number(e.target.value) || 1) })}

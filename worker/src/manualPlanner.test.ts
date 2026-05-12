@@ -50,10 +50,29 @@ test('planRangeSplit: 50% × 20 legs → 10 pendings @ 10 pip step', () => {
   assert.equal(r.fallbackReason, undefined)
 })
 
-test('planRangeSplit: distance caps pending count', () => {
-  const r = planRangeSplit({ ...baseSplit, distPips: 30 }) // 30 / 10 = 3
-  assert.equal(r.pendingLegs, 3)
+test('planRangeSplit: distance does NOT cap pending count (May-12 UX fix)', () => {
+  // Even when step × pending (10 × 10 = 100) overshoots the configured
+  // distance (30), the count stays at 10. The user explicitly asked that
+  // Total Open Trades remain stable when Step is adjusted; distance is
+  // now an advisory target, not a cap.
+  const r = planRangeSplit({ ...baseSplit, distPips: 30 })
+  assert.equal(r.pendingLegs, 10)
   assert.equal(r.immediateLegs, 10)
+  // And step itself is preserved (user controls placement spacing).
+  assert.equal(r.effectiveStepPips, 10)
+})
+
+test('planRangeSplit: step changes spacing but not count', () => {
+  // Same baseLegs=20, range_percent=50 → 10 pendings regardless of step.
+  const small = planRangeSplit({ ...baseSplit, stepPips: 5 })
+  const big = planRangeSplit({ ...baseSplit, stepPips: 25 })
+  assert.equal(small.pendingLegs, 10)
+  assert.equal(big.pendingLegs, 10)
+  assert.equal(small.immediateLegs, 10)
+  assert.equal(big.immediateLegs, 10)
+  // Spacing differs:
+  assert.equal(small.effectiveStepPips, 5)
+  assert.equal(big.effectiveStepPips, 25)
 })
 
 test('planRangeSplit: auto-expands step when below broker minimum', () => {
@@ -66,9 +85,11 @@ test('planRangeSplit: auto-expands step when below broker minimum', () => {
 
 test('planRangeSplit: no signal anchor + no immediates → runtime-only fallback', () => {
   // 100% range = 0 immediates; without a signal anchor the executor must resolve via /Quote.
+  // After the May-12 fix, distance no longer caps the pending count, so all 20
+  // baseLegs land in the pending bucket.
   const r = planRangeSplit({ ...baseSplit, rangePct: 100, hasSignalAnchor: false })
   assert.equal(r.immediateLegs, 0)
-  assert.equal(r.pendingLegs, 10)
+  assert.equal(r.pendingLegs, 20)
   assert.equal(r.fallbackReason, 'range_trading_anchor_runtime_only')
 })
 
