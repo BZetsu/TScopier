@@ -80,6 +80,11 @@ export class VirtualPendingMonitor {
   private symbolCache = new Map<string, SymbolCacheEntry>()
   private hostId: string
   private ticking = false
+  /** Heartbeat counter: when there ARE pending rows but none triggered, we
+   *  still log one line every N ticks so it's obvious the monitor is alive
+   *  and how far the live quote sits from the nearest trigger. */
+  private quietTicks = 0
+  private firstTickLogged = false
 
   constructor(private readonly supabase: SupabaseClient) {
     this.api = getMetatraderApi()
@@ -159,7 +164,16 @@ export class VirtualPendingMonitor {
       return
     }
     const rows = (data ?? []) as PendingRow[]
-    if (!rows.length) return
+    if (!this.firstTickLogged) {
+      this.firstTickLogged = true
+      console.log(`[virtualPendingMonitor] first tick ok pending_rows=${rows.length}`)
+    }
+    if (!rows.length) {
+      // Reset the quiet-tick counter — next time rows appear, the heartbeat
+      // restarts from zero so the first non-empty tick always logs.
+      this.quietTicks = 0
+      return
+    }
 
     // Group by (account, symbol) so we issue at most ONE /Quote per group.
     const groups = new Map<string, PendingRow[]>()
@@ -173,6 +187,9 @@ export class VirtualPendingMonitor {
     let triggeredTotal = 0
     let firedOkTotal = 0
     let firedErrTotal = 0
+    /** Per-group: cheapest distance between live quote and any leg's trigger.
+     *  Lets the heartbeat log show "you're $0.40 from your nearest trigger". */
+    const distances: Array<{ symbol: string; bid: number; ask: number; gapPriceUnits: number; legs: number }> = []
 
     await Promise.all(Array.from(groups.entries()).map(async ([key, legs]) => {
       const [uuid, symbol] = key.split('|')
@@ -185,19 +202,41 @@ export class VirtualPendingMonitor {
         console.warn(`[virtualPendingMonitor] /Quote failed for ${symbol} (account=${uuid}): ${msg}`)
         return
       }
+      // How far is the nearest trigger? Useful diagnostic when nothing fires.
+      let nearestGap = Number.POSITIVE_INFINITY
       for (const leg of legs) {
+        const ref = leg.is_buy ? q.bid : q.ask
+        // For buys: positive gap means bid still ABOVE trigger (waiting for drop).
+        // For sells: positive gap means ask still BELOW trigger (waiting for rise).
+        const gap = leg.is_buy ? ref - leg.trigger_price : leg.trigger_price - ref
+        if (Number.isFinite(gap) && gap < nearestGap) nearestGap = gap
         if (!isTriggered(leg.is_buy, leg.trigger_price, q.bid, q.ask)) continue
         triggeredTotal += 1
         const ok = await this.fireLeg(leg, q.bid, q.ask)
         if (ok) firedOkTotal += 1
         else firedErrTotal += 1
       }
+      distances.push({ symbol, bid: q.bid, ask: q.ask, gapPriceUnits: nearestGap, legs: legs.length })
     }))
 
     if (triggeredTotal > 0) {
       console.log(
         `[virtualPendingMonitor] tick rows=${rows.length} groups=${groups.size} triggered=${triggeredTotal} fired=${firedOkTotal}_ok ${firedErrTotal}_err`,
       )
+      this.quietTicks = 0
+    } else {
+      // Heartbeat: log every ~30s (20 ticks × 1.5s) when there's work waiting
+      // but no triggers crossing — makes "monitor is alive, just not hitting"
+      // visible vs. "monitor is dead".
+      this.quietTicks += 1
+      if (this.quietTicks % 20 === 1) {
+        const summary = distances
+          .map(d => `${d.symbol} bid=${d.bid} ask=${d.ask} nearest_gap=${Number.isFinite(d.gapPriceUnits) ? d.gapPriceUnits.toFixed(5) : 'n/a'} (${d.legs} legs)`)
+          .join('; ')
+        console.log(
+          `[virtualPendingMonitor] heartbeat rows=${rows.length} groups=${groups.size} no triggers crossed yet — ${summary}`,
+        )
+      }
     }
   }
 
