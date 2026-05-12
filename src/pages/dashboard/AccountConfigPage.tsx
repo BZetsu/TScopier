@@ -94,10 +94,10 @@ const DEFAULT_MANUAL_SETTINGS: ManualSettings = {
   trade_style: 'single',
   range_trading: false,
   range_percent: 50,
-  range_step_pips: 2,
-  range_distance_pips: 20,
+  range_step_pips: 10,
+  range_distance_pips: 100,
   close_worse_entries: false,
-  close_worse_entries_pips: 20,
+  close_worse_entries_pips: 30,
   close_worse_extra_pendings: 0,
   reverse_signal: false,
   use_predefined_sl_pips: false,
@@ -213,10 +213,10 @@ function normalizeManualSettings(raw: unknown): ManualSettings {
     return Number.isFinite(v) ? v : fallback
   }
   const rangePercent = Math.max(0, Math.min(100, readNumber('range_percent', DEFAULT_MANUAL_SETTINGS.range_percent ?? 50)))
-  const rangeStepPips = Math.max(0, readNumber('range_step_pips', DEFAULT_MANUAL_SETTINGS.range_step_pips ?? 2))
-  const rangeDistancePips = Math.max(0, readNumber('range_distance_pips', DEFAULT_MANUAL_SETTINGS.range_distance_pips ?? 20))
+  const rangeStepPips = Math.max(0, readNumber('range_step_pips', DEFAULT_MANUAL_SETTINGS.range_step_pips ?? 10))
+  const rangeDistancePips = Math.max(0, readNumber('range_distance_pips', DEFAULT_MANUAL_SETTINGS.range_distance_pips ?? 100))
   const closeWorseEntries = (j as Record<string, unknown>).close_worse_entries === true
-  const closeWorseEntriesPips = Math.max(0, readNumber('close_worse_entries_pips', DEFAULT_MANUAL_SETTINGS.close_worse_entries_pips ?? 20))
+  const closeWorseEntriesPips = Math.max(0, readNumber('close_worse_entries_pips', DEFAULT_MANUAL_SETTINGS.close_worse_entries_pips ?? 30))
   const closeWorseExtraPendings = Math.max(0, Math.floor(readNumber('close_worse_extra_pendings', DEFAULT_MANUAL_SETTINGS.close_worse_extra_pendings ?? 0)))
 
   // Manual control: keep whatever the user saved. Only seed an equal split when
@@ -1137,24 +1137,30 @@ export function AccountConfigPage() {
                                         min={0}
                                         max={100}
                                         step={1}
+                                        placeholder="50"
+                                        hint="Share of total legs reserved as pendings."
                                         value={String(configDraft.manualSettings.range_percent ?? 50)}
                                         onChange={e => setManual({ range_percent: Math.max(0, Math.min(100, Number(e.target.value) || 0)) })}
                                       />
                                       <Input
                                         label="Step (pips per pending)"
                                         type="number"
-                                        min={0.1}
-                                        step={0.1}
-                                        value={String(configDraft.manualSettings.range_step_pips ?? 2)}
-                                        onChange={e => setManual({ range_step_pips: Math.max(0, Number(e.target.value) || 0) })}
+                                        min={1}
+                                        step={1}
+                                        placeholder="10 (XAUUSD)"
+                                        hint="Distance between pendings. ≥10 on XAUUSD, ≥2 on FX."
+                                        value={String(configDraft.manualSettings.range_step_pips ?? 10)}
+                                        onChange={e => setManual({ range_step_pips: Math.max(1, Number(e.target.value) || 1) })}
                                       />
                                       <Input
                                         label="Range distance (pips from entry)"
                                         type="number"
-                                        min={0}
+                                        min={1}
                                         step={1}
-                                        value={String(configDraft.manualSettings.range_distance_pips ?? 20)}
-                                        onChange={e => setManual({ range_distance_pips: Math.max(0, Number(e.target.value) || 0) })}
+                                        placeholder="100 (XAUUSD)"
+                                        hint="Total pip span from entry. Should be ≥ 5× step."
+                                        value={String(configDraft.manualSettings.range_distance_pips ?? 100)}
+                                        onChange={e => setManual({ range_distance_pips: Math.max(1, Number(e.target.value) || 1) })}
                                       />
                                     </div>
 
@@ -1175,10 +1181,12 @@ export function AccountConfigPage() {
                                           <Input
                                             label="Close profits from worse entry (pips)"
                                             type="number"
-                                            min={0.1}
-                                            step={0.1}
-                                            value={String(configDraft.manualSettings.close_worse_entries_pips ?? 20)}
-                                            onChange={e => setManual({ close_worse_entries_pips: Math.max(0, Number(e.target.value) || 0) })}
+                                            min={1}
+                                            step={1}
+                                            placeholder="30 (XAUUSD)"
+                                            hint="TP buffer per leg. ≥30 on XAUUSD, ≥5 on FX to clear broker stops_level."
+                                            value={String(configDraft.manualSettings.close_worse_entries_pips ?? 30)}
+                                            onChange={e => setManual({ close_worse_entries_pips: Math.max(1, Number(e.target.value) || 1) })}
                                           />
                                           <Input
                                             label="Also close N shallowest pendings"
@@ -1186,6 +1194,8 @@ export function AccountConfigPage() {
                                             min={0}
                                             max={multiTradePreview.pending ?? 0}
                                             step={1}
+                                            placeholder="0"
+                                            hint={`Max ${multiTradePreview.pending ?? 0} (current pending count).`}
                                             value={String(configDraft.manualSettings.close_worse_extra_pendings ?? 0)}
                                             onChange={e => {
                                               const max = multiTradePreview.pending ?? 0

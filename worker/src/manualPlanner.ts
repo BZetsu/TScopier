@@ -268,6 +268,31 @@ export function planManualOrders(args: {
     return Number(v.toFixed(d))
   }
 
+  // ── 4b. Clamp SL/TP outside the broker's stops_level band, using `entry`
+  //   as the market proxy. Without this, signals that quote tight TPs (e.g.
+  //   XAUUSD TP only 20 "pips" = $0.20 away on a 2-digit broker) get rejected
+  //   with "Invalid stops in the request". The tradeExecutor clamp also runs
+  //   per-order, but doing it here ensures every derived order (immediate,
+  //   range pending, close-worse-entries override) inherits a safe baseline.
+  const stopsLevel = Number(ctx.stopsLevel ?? 0) || 0
+  const minStopDist = stopsLevel > 0 ? (stopsLevel + 2) * ctx.point : 0
+  const clampToStops = (price: number | null, isTp: boolean, ref: number | null): number | null => {
+    if (price == null || !Number.isFinite(price) || ref == null || ref <= 0 || minStopDist <= 0) {
+      return price
+    }
+    const wantAbove = isTp ? isBuy : !isBuy
+    if (wantAbove) {
+      const floorPrice = ref + minStopDist
+      return price < floorPrice ? Number(floorPrice.toFixed(ctx.digits)) : price
+    }
+    const ceilPrice = ref - minStopDist
+    return price > ceilPrice ? Number(ceilPrice.toFixed(ctx.digits)) : price
+  }
+  if (entry != null && minStopDist > 0) {
+    finalSl = clampToStops(finalSl, false, entry)
+    finalTps = finalTps.map(tp => clampToStops(tp, true, entry) ?? tp)
+  }
+
   // ── 5. Multi-Trade lot splitting ────────────────────────────────────────
   const tradeStyle = manual.trade_style === 'multi' ? 'multi' : 'single'
 
@@ -502,6 +527,9 @@ export function planManualOrders(args: {
   // All immediates plus the first N shallowest pendings get a tight TP at
   // `legEntry ± close_worse_entries_pips * pip`, so they take a small profit
   // while the deeper (best-priced) range legs ride for the percent-row TPs.
+  // The override TP is also clamped against `entry` and the broker's
+  // stops_level so the broker can't reject it — important on XAUUSD where
+  // 1 "pip" is only $0.01 and stops_level often sits at ~$1.
   if (effectiveRangeLegs > 0 && manual.close_worse_entries === true) {
     const cwPips = Math.max(0, Number(manual.close_worse_entries_pips ?? 0))
     if (cwPips > 0) {
@@ -511,13 +539,20 @@ export function planManualOrders(args: {
       )
       const dir = isBuy ? 1 : -1
       const overrideUpTo = immediateLegs + extraPendings
-      const fallbackEntry = roundPrice(entry ?? 0)
+      const entryRef = (entry != null && entry > 0) ? entry : null
       for (let k = 0; k < orders.length && k < overrideUpTo; k++) {
-        const legPrice = orders[k]!.price ?? fallbackEntry
-        const overriddenTp = roundPrice(legPrice + dir * cwPips * pip)
+        const rawLegPrice = Number(orders[k]!.price) || 0
+        const legPrice = rawLegPrice > 0 ? rawLegPrice : (entryRef ?? 0)
+        if (legPrice <= 0) continue
+        let overriddenTp = legPrice + dir * cwPips * pip
+        // Keep the override on the correct side of entry by at least stops_level.
+        if (entryRef != null && minStopDist > 0) {
+          if (isBuy) overriddenTp = Math.max(overriddenTp, entryRef + minStopDist)
+          else overriddenTp = Math.min(overriddenTp, entryRef - minStopDist)
+        }
         orders[k] = {
           ...orders[k]!,
-          takeprofit: overriddenTp,
+          takeprofit: roundPrice(overriddenTp),
           comment: `${orders[k]!.comment ?? ''}.cw`,
         }
       }
