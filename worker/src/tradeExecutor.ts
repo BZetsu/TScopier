@@ -10,6 +10,7 @@ import {
 import {
   clampPendingExpiryHours,
   computeCwOverrideTp,
+  parsedHasExplicitEntryAnchor,
   planManualOrders,
   type ChannelKeywords,
   type ManualSettings,
@@ -181,24 +182,10 @@ function isExcluded(symbol: string, broker: BrokerRow): boolean {
 
 function operationFor(action: string, signal: ParsedSignal): MtOperation | null {
   const a = action.toLowerCase()
-  const hasEntry = signal.entry_price != null
+  const hasEntry = parsedHasExplicitEntryAnchor(signal)
   if (a === 'buy') return hasEntry ? 'BuyLimit' : 'Buy'
   if (a === 'sell') return hasEntry ? 'SellLimit' : 'Sell'
   return null
-}
-
-/** Parsed signal has a usable entry anchor for strict-entry vs market logic. */
-function hasSignalEntryAnchorForStrict(parsed: ParsedSignal): boolean {
-  if (parsed.entry_price != null) {
-    const n = Number(parsed.entry_price)
-    return Number.isFinite(n) && n > 0
-  }
-  if (parsed.entry_zone_low != null && parsed.entry_zone_high != null) {
-    const lo = Number(parsed.entry_zone_low)
-    const hi = Number(parsed.entry_zone_high)
-    return Number.isFinite(lo) && Number.isFinite(hi) && lo > 0 && hi > 0
-  }
-  return false
 }
 
 function isManagementAction(action: string): boolean {
@@ -1304,7 +1291,7 @@ export class TradeExecutor {
       this.api
       && isManual
       && manual.use_signal_entry_price === true
-      && hasSignalEntryAnchorForStrict(parsed)
+      && parsedHasExplicitEntryAnchor(parsed)
     ) {
       try {
         strictEntryPrefetch = await this.api.quote(uuid, symbol)

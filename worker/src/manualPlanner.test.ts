@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import {
   clampPendingExpiryHours,
   computeCwOverrideTp,
+  parsedHasExplicitEntryAnchor,
   planManualOrders,
   planRangeSplit,
   planSinglePartialTps,
@@ -509,6 +510,33 @@ test('planSinglePartialTps: bad manualLot returns null brokerTp + reason', () =>
   assert.equal(r.brokerTp, null)
   assert.equal(r.partials.length, 0)
   assert.equal(r.fallbackReason, 'partial_tp_invalid_lot')
+})
+
+test('parsedHasExplicitEntryAnchor: false for bare action, true for price or zone', () => {
+  assert.equal(parsedHasExplicitEntryAnchor({ ...baseParsed, entry_price: null, entry_zone_low: null, entry_zone_high: null }), false)
+  assert.equal(parsedHasExplicitEntryAnchor({ ...baseParsed, entry_price: 4500, entry_zone_low: null, entry_zone_high: null }), true)
+  assert.equal(parsedHasExplicitEntryAnchor({ ...baseParsed, entry_price: null, entry_zone_low: 1, entry_zone_high: 2 }), true)
+})
+
+test('planManualOrders: use_signal_entry_price ignored without explicit entry (no live quote)', () => {
+  const plan = planManualOrders({
+    parsed: { ...baseParsed, entry_price: null, entry_zone_low: null, entry_zone_high: null },
+    resolvedSymbol: 'XAUUSD',
+    baseOperation: 'Buy',
+    manual: {
+      ...baseManual,
+      trade_style: 'single',
+      range_trading: false,
+      use_signal_entry_price: true,
+      signal_entry_pip_tolerance: 10,
+    },
+    channelKeywords: null,
+    manualLot: 1.0,
+    ctx: { ...baseCtx, liveBid: undefined, liveAsk: undefined },
+    commentPrefix: 'TSCopier:abc',
+  })
+  assert.equal(plan.orders.length, 1)
+  assert.equal(plan.orders[0]!.operation, 'Buy')
 })
 
 test('clampPendingExpiryHours: clamps high values to 24', () => {

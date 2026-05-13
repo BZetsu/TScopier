@@ -637,10 +637,32 @@ function parseEntryFromKeywords(
       entry_zone_high = Math.max(a, b)
     }
   } else {
-    const entryMatch = text.match(/\b(?:entry|buy|sell)\s+@?\s*(\d+(?:\.\d+)?)\b/i)
-    if (entryMatch?.[1]) {
-      const n = Number(entryMatch[1])
-      if (Number.isFinite(n)) entry_price = n
+    let entry_price: number | null = null
+    const entryLabel = text.match(/\bentry\s*(?:price)?\s*[:=]\s*(\d+(?:\.\d+)?)\b/i)
+    if (entryLabel?.[1]) {
+      const n = Number(entryLabel[1])
+      if (Number.isFinite(n) && n > 0) entry_price = n
+    }
+    if (entry_price == null) {
+      const atPx = text.match(/@\s*(\d+(?:\.\d+)?)\b/)
+      if (atPx?.[1]) {
+        const n = Number(atPx[1])
+        if (Number.isFinite(n) && n > 0) entry_price = n
+      }
+    }
+    if (entry_price == null) {
+      const buySellAt = text.match(/\b(?:buy|sell)\s+at\s+(\d+(?:\.\d+)?)\b/i)
+      if (buySellAt?.[1]) {
+        const n = Number(buySellAt[1])
+        if (Number.isFinite(n) && n > 0) entry_price = n
+      }
+    }
+    if (entry_price == null) {
+      const entryWord = text.match(/\bentry\s+(\d+(?:\.\d+)?)\b/i)
+      if (entryWord?.[1]) {
+        const n = Number(entryWord[1])
+        if (Number.isFinite(n) && n > 0) entry_price = n
+      }
     }
   }
 

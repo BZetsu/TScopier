@@ -25,6 +25,8 @@ import { pipCalculator, type PipQuote } from './pipCalculator'
  *   6. Channel `tp_in_pips` / `sl_in_pips` — when the channel sends raw pip distances
  *      instead of prices, converts them to absolute SL/TP using the entry price.
  *   7. Channel `prefer_entry` — chooses the first or last price from an entry zone.
+ *   8. `use_signal_entry_price` — market vs limit only when the parse includes an explicit
+ *      entry price or zone; bare market calls skip strict quote gating.
  */
 
 export interface ParsedSignal {
@@ -580,6 +582,25 @@ export function clampPendingExpiryHours(raw: unknown): number {
   return Math.max(1, Math.min(24, Math.floor(n)))
 }
 
+/**
+ * True when the parsed signal includes an explicit entry **price** or **zone**
+ * (not a bare market “buy now”). Used with `use_signal_entry_price` so strict
+ * market-vs-limit logic and quote prefetch only run when the message actually
+ * specifies where to work the entry.
+ */
+export function parsedHasExplicitEntryAnchor(parsed: ParsedSignal): boolean {
+  if (parsed.entry_price != null) {
+    const n = Number(parsed.entry_price)
+    return Number.isFinite(n) && n > 0
+  }
+  if (parsed.entry_zone_low != null && parsed.entry_zone_high != null) {
+    const lo = Number(parsed.entry_zone_low)
+    const hi = Number(parsed.entry_zone_high)
+    return Number.isFinite(lo) && Number.isFinite(hi) && lo > 0 && hi > 0
+  }
+  return false
+}
+
 /** Build the order plan. Returns an empty plan with skip_reason when filtered out. */
 export function planManualOrders(args: {
   parsed: ParsedSignal
@@ -731,12 +752,13 @@ export function planManualOrders(args: {
   }
 
   // ── 4c. Signal entry strictness: market vs limit execution ─────────────
-  // `opSplit` drives range-split semantics (pending-shaped signals skip virtual range).
-  // `opExec` is what we actually send: market when quote is still inside tolerance.
+  // Only when the parse includes an explicit entry price or zone — bare
+  // "buy now" / market calls keep `opExec` aligned with `opSplit` (no quote gate).
   let opExec: MtOperation = opSplit
   const tolPips = Number(manual.signal_entry_pip_tolerance ?? 10)
   if (
     manual.use_signal_entry_price === true
+    && parsedHasExplicitEntryAnchor(parsed)
     && entryAnchor != null
     && pip > 0
     && Number.isFinite(tolPips)
