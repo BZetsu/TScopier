@@ -566,6 +566,38 @@ class TradeExecutor {
         }));
     }
     /**
+     * Persist virtual ladder rows. Batch `upsert` can fail against a partial unique
+     * index if PostgREST's conflict target does not match Postgres; fall back to
+     * per-row `insert` and treat duplicate-key as success (idempotent retries).
+     */
+    async persistRangePendingLegRows(rows, context) {
+        if (!rows.length)
+            return { ok: true };
+        let { error } = await this.supabase.from('range_pending_legs').upsert(rows, {
+            onConflict: 'signal_id,broker_account_id,symbol,step_idx',
+            ignoreDuplicates: true,
+        });
+        if (!error)
+            return { ok: true };
+        const msg0 = error.message ?? String(error);
+        console.warn(`[tradeExecutor] range_pending_legs upsert failed (${context}), trying per-row: ${msg0}`);
+        let lastError = msg0;
+        let anyHardFailure = false;
+        for (const row of rows) {
+            const { error: e } = await this.supabase.from('range_pending_legs').insert([row]);
+            if (!e)
+                continue;
+            const m = e.message ?? String(e);
+            lastError = m;
+            const code = e.code;
+            if (code === '23505' || /duplicate key|unique constraint/i.test(m))
+                continue;
+            anyHardFailure = true;
+            console.warn(`[tradeExecutor] range_pending_legs insert failed (${context}) step=${String(row.step_idx)}: ${m}`);
+        }
+        return { ok: !anyHardFailure, lastError: anyHardFailure ? lastError : undefined };
+    }
+    /**
      * Manual mode: when enabled, close every open trade on this symbol that faces
      * the opposite way from the **channel** buy/sell (before reverse / planner flip).
      */
@@ -648,8 +680,10 @@ class TradeExecutor {
     }
     /**
      * When `add_new_trades_to_existing` is on, apply a same-direction follow-up
-     * (reply chain or recent time window) as SL/TP refresh on all open legs of
-     * the basket (`signal_id` family), preserving multi-trade TP distribution.
+     * (Telegram reply chain to the anchor message, or recent time window **with**
+     * `parent_signal_id` linking this row to the anchor basket) as SL/TP refresh
+     * on all open legs of the basket (`signal_id` family), preserving multi-trade
+     * TP distribution.
      */
     async tryMergeSignalIntoExistingOpenTrade(args) {
         const { signal, parsed, op, broker, channelKeywords, baseLot, params, symbol, uuid, strictEntryPrefetch } = args;
@@ -670,7 +704,7 @@ class TradeExecutor {
         try {
             const { data: fullSig } = await this.supabase
                 .from('signals')
-                .select('created_at, reply_to_message_id, telegram_message_id')
+                .select('created_at, reply_to_message_id, telegram_message_id, parent_signal_id')
                 .eq('id', signal.id)
                 .maybeSingle();
             const row = fullSig;
@@ -680,6 +714,7 @@ class TradeExecutor {
                     created_at: signal.created_at ?? row.created_at,
                     reply_to_message_id: signal.reply_to_message_id ?? row.reply_to_message_id ?? null,
                     telegram_message_id: signal.telegram_message_id ?? row.telegram_message_id ?? null,
+                    parent_signal_id: signal.parent_signal_id ?? row.parent_signal_id ?? null,
                 };
             }
         }
@@ -718,7 +753,11 @@ class TradeExecutor {
         const tradeOpen = new Date(newest.opened_at).getTime();
         const dt = sigTime - tradeOpen;
         const withinWindow = dt >= -120000 && dt <= MERGE_SIGNAL_LINK_WINDOW_MS;
-        if (!replyOk && !withinWindow)
+        const parentLinksAnchor = String(mergeSignal.parent_signal_id ?? '') === anchorSignalId;
+        // Avoid treating unrelated "fresh" channel posts as merge targets when an
+        // unrelated basket is still open within the time window.
+        const canMergeByLink = replyOk || (withinWindow && parentLinksAnchor);
+        if (!canMergeByLink)
             return { handled: false };
         // Planner / predefined SL-TP need an entry anchor. Re-use the live trade's fill when the new parse has none.
         const rpe0 = (0, manualPlanner_1.resolvedParsedEntryPrice)(parsed);
@@ -944,12 +983,9 @@ class TradeExecutor {
                     });
                 }
                 if (insertRows.length > 0) {
-                    const { error: insertErr } = await this.supabase.from('range_pending_legs').upsert(insertRows, {
-                        onConflict: 'signal_id,broker_account_id,symbol,step_idx',
-                        ignoreDuplicates: true,
-                    });
-                    if (insertErr) {
-                        console.error(`[tradeExecutor] merge range_pending_legs UPSERT failed signal=${signal.id}: ${insertErr.message}`);
+                    const persist = await this.persistRangePendingLegRows(insertRows, `merge signal=${signal.id} anchor=${anchorSignalId}`);
+                    if (!persist.ok) {
+                        console.error(`[tradeExecutor] merge range_pending_legs persist failed signal=${signal.id}: ${persist.lastError ?? 'unknown'}`);
                         mergeFailed = true;
                     }
                     else {
@@ -995,6 +1031,7 @@ class TradeExecutor {
                     virtual_pendings: virtualPendings.length,
                     reply_chain: replyOk,
                     within_time_window: withinWindow,
+                    parent_links_anchor: parentLinksAnchor,
                 },
             });
         }
@@ -1406,14 +1443,9 @@ class TradeExecutor {
                     });
                 }
                 if (insertRows.length > 0) {
-                    const { error: insertErr } = await this.supabase
-                        .from('range_pending_legs')
-                        .upsert(insertRows, {
-                        onConflict: 'signal_id,broker_account_id,symbol,step_idx',
-                        ignoreDuplicates: true,
-                    });
-                    if (insertErr) {
-                        console.error(`[tradeExecutor] range_pending_legs UPSERT failed signal=${signal.id} broker=${broker.id}: ${insertErr.message}`);
+                    const persist = await this.persistRangePendingLegRows(insertRows, `standard signal=${signal.id} broker=${broker.id}`);
+                    if (!persist.ok) {
+                        console.error(`[tradeExecutor] range_pending_legs persist failed signal=${signal.id} broker=${broker.id}: ${persist.lastError ?? 'unknown'}`);
                         try {
                             await this.supabase.from('trade_execution_logs').insert({
                                 user_id: signal.user_id,
@@ -1422,7 +1454,7 @@ class TradeExecutor {
                                 action: 'virtual_pending_failed',
                                 status: 'failed',
                                 request_payload: { rows: insertRows.length, anchor, anchorSource },
-                                error_message: insertErr.message,
+                                error_message: persist.lastError ?? 'unknown',
                             });
                         }
                         catch { /* logging is best-effort */ }
