@@ -1813,14 +1813,13 @@ export class TradeExecutor {
         .delete()
         .eq('signal_id', signal.id)
         .eq('broker_account_id', broker.id)
-        .eq('symbol', symbol)
       if (stripErr) {
         console.warn(
           `[tradeExecutor] strip orphan virtual pendings failed signal=${signal.id} broker=${broker.id}: ${stripErr.message}`,
         )
       } else {
         console.warn(
-          `[tradeExecutor] stripped virtual pendings (zero successful immediates) signal=${signal.id} broker=${broker.id} symbol=${symbol}`,
+          `[tradeExecutor] stripped virtual pendings (zero successful immediates) signal=${signal.id} broker=${broker.id}`,
         )
       }
     }

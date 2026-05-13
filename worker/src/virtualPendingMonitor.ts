@@ -512,8 +512,11 @@ export class VirtualPendingMonitor {
   }
 
   /**
-   * A virtual pending leg is stale once a prior trade lifecycle exists for the same
-   * (signal, broker, symbol) but all such trades are now closed.
+   * A virtual pending leg is stale once there are no open/pending `trades` for
+   * the same (signal_id, broker_account_id). We intentionally do **not** filter
+   * by `symbol` here: `trades.symbol` is often broker-resolved (e.g. XAUUSDm)
+   * while `range_pending_legs.symbol` may differ, which previously let "flat"
+   * baskets look still live and re-fire deeper rungs.
    */
   private async getStaleLegReason(leg: PendingRow): Promise<string | null> {
     const { data, error } = await this.supabase
@@ -521,7 +524,6 @@ export class VirtualPendingMonitor {
       .select('status')
       .eq('signal_id', leg.signal_id)
       .eq('broker_account_id', leg.broker_account_id)
-      .eq('symbol', leg.symbol)
       .limit(200)
     if (error) {
       console.warn(`[virtualPendingMonitor] stale-check failed leg=${leg.id}: ${error.message}`)

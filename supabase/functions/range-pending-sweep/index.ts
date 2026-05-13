@@ -349,7 +349,6 @@ async function getStaleLegReason(
     .select("status")
     .eq("signal_id", leg.signal_id)
     .eq("broker_account_id", leg.broker_account_id)
-    .eq("symbol", leg.symbol)
     .limit(200)
   if (error) {
     console.warn(`[range-pending-sweep] stale-check failed leg=${leg.id}: ${error.message}`)
