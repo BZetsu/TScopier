@@ -528,11 +528,10 @@ class TradeExecutor {
             try {
                 const { data: cancelled, error: cancelErr } = await this.supabase
                     .from('range_pending_legs')
-                    .update({ status: 'cancelled', error_message: reason })
+                    .delete()
                     .eq('signal_id', scope.signalId)
                     .eq('broker_account_id', scope.brokerAccountId)
                     .eq('symbol', scope.symbol)
-                    .in('status', ['pending', 'claimed'])
                     .select('id');
                 if (cancelErr) {
                     console.warn(`[tradeExecutor] range_pending_legs cancel failed signal=${scope.signalId} broker=${scope.brokerAccountId} symbol=${scope.symbol}: ${cancelErr.message}`);
