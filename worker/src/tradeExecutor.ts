@@ -78,6 +78,11 @@ interface RangePendingCancelScope {
   symbol: string
 }
 
+/** Merge path ran (cancel + re-insert virtuals under anchor); caller must not fall through to standard sendOrder. */
+type MergeOutcome =
+  | { handled: false }
+  | { handled: true; success: boolean }
+
 interface BrokerRow {
   id: string
   user_id: string
@@ -847,17 +852,17 @@ export class TradeExecutor {
     symbol: string
     uuid: string
     strictEntryPrefetch: { bid: number; ask: number } | null
-  }): Promise<boolean> {
+  }): Promise<MergeOutcome> {
     const { signal, parsed, op, broker, channelKeywords, baseLot, params, symbol, uuid, strictEntryPrefetch } = args
-    if (!this.api) return false
+    if (!this.api) return { handled: false }
     const manual = (broker.manual_settings ?? {}) as ManualSettings
-    if (manual.add_new_trades_to_existing !== true) return false
+    if (manual.add_new_trades_to_existing !== true) return { handled: false }
     if (manual.use_signal_entry_price === true && !parsedHasExplicitEntryAnchor(parsed)) {
-      return false
+      return { handled: false }
     }
 
     const a = String(parsed.action ?? '').toLowerCase()
-    if (a !== 'buy' && a !== 'sell') return false
+    if (a !== 'buy' && a !== 'sell') return { handled: false }
     const direction = a === 'buy' ? 'buy' : 'sell'
 
     // Realtime payloads may omit `created_at` / reply fields — load authoritative row for merge linking.
@@ -894,17 +899,17 @@ export class TradeExecutor {
       .eq('direction', direction)
       .order('opened_at', { ascending: false })
       .limit(64)
-    if (openErr || !openDesc?.length) return false
+    if (openErr || !openDesc?.length) return { handled: false }
 
     type OpenLeg = (typeof openDesc)[0]
     const newest = openDesc[0] as OpenLeg
     const anchorSignalId = newest.signal_id
-    if (!anchorSignalId) return false
+    if (!anchorSignalId) return { handled: false }
 
     const familyTrades = (openDesc as OpenLeg[])
       .filter(t => t.signal_id === anchorSignalId)
       .sort((a, b) => new Date(a.opened_at).getTime() - new Date(b.opened_at).getTime())
-    if (!familyTrades.length) return false
+    if (!familyTrades.length) return { handled: false }
 
     const { data: origSig } = await this.supabase
       .from('signals')
@@ -919,7 +924,7 @@ export class TradeExecutor {
     const tradeOpen = new Date(newest.opened_at).getTime()
     const dt = sigTime - tradeOpen
     const withinWindow = dt >= -120_000 && dt <= MERGE_SIGNAL_LINK_WINDOW_MS
-    if (!replyOk && !withinWindow) return false
+    if (!replyOk && !withinWindow) return { handled: false }
 
     // Planner / predefined SL-TP need an entry anchor. Re-use the live trade's fill when the new parse has none.
     const rpe0 = resolvedParsedEntryPrice(parsed)
@@ -949,7 +954,7 @@ export class TradeExecutor {
         plannerParsed.entry_price = direction === 'buy' ? q.ask : q.bid
       } catch {
         console.warn(`[tradeExecutor] merge skipped: no entry anchor signal=${signal.id} symbol=${symbol}`)
-        return false
+        return { handled: false }
       }
     }
 
@@ -982,10 +987,10 @@ export class TradeExecutor {
       slippage: 20,
     })
 
-    if (plan.skip_reason || plan.orders.length === 0) return false
+    if (plan.skip_reason || plan.orders.length === 0) return { handled: false }
 
     const marketOrders = plan.orders.filter(o => o.operation === 'Buy' || o.operation === 'Sell')
-    if (!marketOrders.length) return false
+    if (!marketOrders.length) return { handled: false }
 
     let virtualPendings = (plan.virtualPendings ?? []).slice(0, 500)
 
@@ -1158,10 +1163,13 @@ export class TradeExecutor {
           })
         }
         if (insertRows.length > 0) {
-          const { error: insertErr } = await this.supabase.from('range_pending_legs').insert(insertRows)
+          const { error: insertErr } = await this.supabase.from('range_pending_legs').upsert(insertRows, {
+            onConflict: 'signal_id,broker_account_id,symbol,step_idx',
+            ignoreDuplicates: true,
+          })
           if (insertErr) {
             console.error(
-              `[tradeExecutor] merge range_pending_legs INSERT failed signal=${signal.id}: ${insertErr.message}`,
+              `[tradeExecutor] merge range_pending_legs UPSERT failed signal=${signal.id}: ${insertErr.message}`,
             )
             mergeFailed = true
           } else {
@@ -1217,18 +1225,18 @@ export class TradeExecutor {
       // best-effort
     }
 
-    if (mergeFailed) return false
-
-    try {
-      await this.supabase
-        .from('signals')
-        .update({ status: 'executed' })
-        .eq('id', signal.id)
-        .eq('status', 'parsed')
-    } catch {
-      // best-effort
+    if (!mergeFailed) {
+      try {
+        await this.supabase
+          .from('signals')
+          .update({ status: 'executed' })
+          .eq('id', signal.id)
+          .eq('status', 'parsed')
+      } catch {
+        // best-effort
+      }
     }
-    return true
+    return { handled: true, success: !mergeFailed }
   }
 
   private async sweepExpiredTscopierBrokerPendings(): Promise<void> {
@@ -1339,7 +1347,7 @@ export class TradeExecutor {
     }
 
     if (isManual && manual.add_new_trades_to_existing === true) {
-      const merged = await this.tryMergeSignalIntoExistingOpenTrade({
+      const mergeOutcome = await this.tryMergeSignalIntoExistingOpenTrade({
         signal,
         parsed,
         op,
@@ -1351,7 +1359,9 @@ export class TradeExecutor {
         uuid,
         strictEntryPrefetch,
       })
-      if (merged) return { openedOrMerged: true }
+      if (mergeOutcome.handled) {
+        return { openedOrMerged: mergeOutcome.success }
+      }
     }
 
     // Stop here when the user opted out of stacking trades on the same symbol.
@@ -1577,11 +1587,32 @@ export class TradeExecutor {
       )
     }
 
+    // Idempotency: same `signals` row can be re-dispatched (Realtime, sweep).
+    // If we already materialized virtual pendings for this broker, do not
+    // insert again or re-send immediates (would double range lots).
+    if (isManual) {
+      const { count: existingPendCount, error: pendCountErr } = await this.supabase
+        .from('range_pending_legs')
+        .select('id', { count: 'exact', head: true })
+        .eq('signal_id', signal.id)
+        .eq('broker_account_id', broker.id)
+      if (pendCountErr) {
+        console.warn(
+          `[tradeExecutor] range_pending_legs idempotency count failed signal=${signal.id} broker=${broker.id}: ${pendCountErr.message}`,
+        )
+      } else if ((existingPendCount ?? 0) > 0) {
+        console.warn(
+          `[tradeExecutor] skip duplicate dispatch: range_pending_legs already exist signal=${signal.id} broker=${broker.id}`,
+        )
+        return { openedOrMerged: true }
+      }
+    }
+
     // ── Materialize virtual pendings into range_pending_legs ───────────────
     // Persisted with a computed `trigger_price`; the worker monitor + edge
     // sweep race to fire each one as a MARKET OrderSend when /Quote crosses
-    // the trigger. We INSERT in bulk so all rows hit Postgres in one round-trip
-    // and the worker monitor can pick them up on its very next tick.
+    // the trigger. UPSERT with ignoreDuplicates leans on the partial unique
+    // index (see migration 20260513140000_range_pending_unique_active_step).
     if (virtualPendings.length > 0) {
       if (anchor == null || !Number.isFinite(anchor) || anchor <= 0) {
         console.warn(
@@ -1637,10 +1668,13 @@ export class TradeExecutor {
         if (insertRows.length > 0) {
           const { error: insertErr } = await this.supabase
             .from('range_pending_legs')
-            .insert(insertRows)
+            .upsert(insertRows, {
+              onConflict: 'signal_id,broker_account_id,symbol,step_idx',
+              ignoreDuplicates: true,
+            })
           if (insertErr) {
             console.error(
-              `[tradeExecutor] range_pending_legs INSERT failed signal=${signal.id} broker=${broker.id}: ${insertErr.message}`,
+              `[tradeExecutor] range_pending_legs UPSERT failed signal=${signal.id} broker=${broker.id}: ${insertErr.message}`,
             )
             try {
               await this.supabase.from('trade_execution_logs').insert({
