@@ -108,6 +108,38 @@ Deno.serve(async (_req: Request) => {
       const ref = leg.is_buy ? q.bid : q.ask
       const hit = leg.is_buy ? ref <= leg.trigger_price : ref >= leg.trigger_price
       if (!hit) continue
+      const staleEarly = await getStaleLegReason(sb, leg)
+      if (staleEarly) {
+        const { data: dropped } = await sb
+          .from("range_pending_legs")
+          .update({ status: "cancelled", error_message: staleEarly })
+          .eq("id", leg.id)
+          .eq("status", "pending")
+          .select("id")
+          .maybeSingle()
+        if (dropped) {
+          try {
+            await sb.from("trade_execution_logs").insert({
+              user_id: leg.user_id,
+              signal_id: leg.signal_id,
+              broker_account_id: leg.broker_account_id,
+              action: "virtual_pending_cancelled",
+              status: "info",
+              request_payload: {
+                leg_id: leg.id,
+                step_idx: leg.step_idx,
+                symbol: leg.symbol,
+                reason: staleEarly,
+                phase: "pre_claim_stale",
+                claimed_by: CLAIMED_BY,
+              },
+            })
+          } catch {
+            /* best-effort */
+          }
+        }
+        continue
+      }
       triggered += 1
       const ok = await fireLeg(sb, api, leg, q.bid, q.ask)
       if (ok) firedOk += 1

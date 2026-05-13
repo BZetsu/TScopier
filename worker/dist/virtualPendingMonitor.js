@@ -157,6 +157,40 @@ class VirtualPendingMonitor {
                     nearestGap = gap;
                 if (!isTriggered(leg.is_buy, leg.trigger_price, q.bid, q.ask))
                     continue;
+                // Drop orphans before CAS claim: stale used to run only after `claimed`,
+                // leaving a window where price could re-fire after the basket was flat.
+                const staleEarly = await this.getStaleLegReason(leg);
+                if (staleEarly) {
+                    const { data: dropped } = await this.supabase
+                        .from('range_pending_legs')
+                        .update({ status: 'cancelled', error_message: staleEarly })
+                        .eq('id', leg.id)
+                        .eq('status', 'pending')
+                        .select('id')
+                        .maybeSingle();
+                    if (dropped) {
+                        try {
+                            await this.supabase.from('trade_execution_logs').insert({
+                                user_id: leg.user_id,
+                                signal_id: leg.signal_id,
+                                broker_account_id: leg.broker_account_id,
+                                action: 'virtual_pending_cancelled',
+                                status: 'info',
+                                request_payload: {
+                                    leg_id: leg.id,
+                                    step_idx: leg.step_idx,
+                                    symbol: leg.symbol,
+                                    reason: staleEarly,
+                                    phase: 'pre_claim_stale',
+                                },
+                            });
+                        }
+                        catch {
+                            /* logging is best-effort */
+                        }
+                    }
+                    continue;
+                }
                 triggeredTotal += 1;
                 const ok = await this.fireLeg(leg, q.bid, q.ask);
                 if (ok)
