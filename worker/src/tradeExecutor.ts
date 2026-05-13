@@ -22,6 +22,13 @@ import {
   type PlannerResult,
   type VirtualPendingLeg,
 } from './manualPlanner'
+import type { UserSessionManager } from './sessionManager'
+
+/** When true (default), channel-attached signals only execute if MTProto is connected in this process. */
+function telegramLiveTradeGateEnabled(): boolean {
+  const v = String(process.env.WORKER_REQUIRE_TELEGRAM_LIVE_FOR_TRADES ?? 'true').toLowerCase()
+  return v !== '0' && v !== 'false' && v !== 'no'
+}
 
 /** Per-broker summary so `handleSignal` can flip `signals.status` when every account skips entry-strict. */
 type SendOrderOutcome = {
@@ -414,7 +421,10 @@ export class TradeExecutor {
   private channelKeywordsCache = new Map<string, { keywords: ChannelKeywords | null; loadedAt: number }>()
   private api: MetatraderApiClient | null
 
-  constructor(private readonly supabase: SupabaseClient) {
+  constructor(
+    private readonly supabase: SupabaseClient,
+    private readonly sessionManager?: UserSessionManager,
+  ) {
     this.api = getMetatraderApi()
     if (!this.api) {
       console.warn('[tradeExecutor] METATRADERAPI_KEY missing — trade execution disabled.')
@@ -587,6 +597,16 @@ export class TradeExecutor {
   private async handleSignal(row: SignalRow) {
     if (!this.api) return
     if (this.inflight.has(row.id)) return
+    if (telegramLiveTradeGateEnabled() && row.channel_id) {
+      if (!this.sessionManager?.canExecuteTelegramCopierTrades(row.user_id)) {
+        if (String(process.env.WORKER_LOG_TELEGRAM_TRADE_GATE ?? '').toLowerCase() === 'true') {
+          console.log(
+            `[tradeExecutor] skip signal ${row.id} (user ${row.user_id}): telegram listener not live for channel-backed copier`,
+          )
+        }
+        return
+      }
+    }
     this.inflight.add(row.id)
     try {
       const parsed = row.parsed_data

@@ -158,6 +158,10 @@ class UserListener {
             this[field] = null;
         }
     }
+    /** True while MTProto is up after connect/reconnect (false during disconnect/reconnect). */
+    isTelegramConnected() {
+        return this.isConnected;
+    }
     getStatus() {
         return {
             user_id: this.userId,

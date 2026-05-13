@@ -3,6 +3,11 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.TradeExecutor = void 0;
 const metatraderapi_1 = require("./metatraderapi");
 const manualPlanner_1 = require("./manualPlanner");
+/** When true (default), channel-attached signals only execute if MTProto is connected in this process. */
+function telegramLiveTradeGateEnabled() {
+    const v = String(process.env.WORKER_REQUIRE_TELEGRAM_LIVE_FOR_TRADES ?? 'true').toLowerCase();
+    return v !== '0' && v !== 'false' && v !== 'no';
+}
 /**
  * Direct trade-execution path. Listens to `signals` Realtime, fans out to every
  * active broker for the signal's owner, and calls MetatraderAPI directly. The
@@ -236,8 +241,9 @@ function brokerOrderOpenMs(o) {
     return null;
 }
 class TradeExecutor {
-    constructor(supabase) {
+    constructor(supabase, sessionManager) {
         this.supabase = supabase;
+        this.sessionManager = sessionManager;
         this.timer = null;
         /** Cancels TSCopier broker pendings past `pending_expiry_hours` (1–24) when env enabled. */
         this.brokerPendingSweepTimer = null;
@@ -418,6 +424,14 @@ class TradeExecutor {
             return;
         if (this.inflight.has(row.id))
             return;
+        if (telegramLiveTradeGateEnabled() && row.channel_id) {
+            if (!this.sessionManager?.canExecuteTelegramCopierTrades(row.user_id)) {
+                if (String(process.env.WORKER_LOG_TELEGRAM_TRADE_GATE ?? '').toLowerCase() === 'true') {
+                    console.log(`[tradeExecutor] skip signal ${row.id} (user ${row.user_id}): telegram listener not live for channel-backed copier`);
+                }
+                return;
+            }
+        }
         this.inflight.add(row.id);
         try {
             const parsed = row.parsed_data;
