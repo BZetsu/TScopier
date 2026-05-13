@@ -23,7 +23,10 @@ function buildClient(sessionString = '') {
     return new telegram_1.TelegramClient(new sessions_1.StringSession(sessionString), exports.API_ID, exports.API_HASH, {
         connectionRetries: 5,
         retryDelay: 4000,
-        autoReconnect: true,
+        // Manual recovery lives in UserListener.runWatchdog / forceReconnect.
+        // Leaving autoReconnect on races with explicit disconnect+connect and is a
+        // common trigger for Telegram AUTH_KEY_DUPLICATED after worker restarts.
+        autoReconnect: false,
         useWSS: true,
         deviceModel: 'Desktop',
         systemVersion: 'Windows 10',

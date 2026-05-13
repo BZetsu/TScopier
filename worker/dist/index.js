@@ -45,6 +45,9 @@ async function main() {
         cweCloseMonitor.stop();
         partialTpMonitor.stop();
         await sessionManager.disconnectAll();
+        // Let MTProto sockets finish closing so the next deploy does not overlap
+        // the same auth key on Telegram (AUTH_KEY_DUPLICATED).
+        await new Promise(r => setTimeout(r, Math.min(10000, Number(process.env.TELEGRAM_SHUTDOWN_DRAIN_MS ?? 1500))));
         process.exit(0);
     };
     process.on('SIGTERM', () => { shutdown('SIGTERM').catch(() => process.exit(1)); });

@@ -24,7 +24,10 @@ export function buildClient(sessionString: string = ''): TelegramClient {
     {
       connectionRetries: 5,
       retryDelay: 4000,
-      autoReconnect: true,
+      // Manual recovery lives in UserListener.runWatchdog / forceReconnect.
+      // Leaving autoReconnect on races with explicit disconnect+connect and is a
+      // common trigger for Telegram AUTH_KEY_DUPLICATED after worker restarts.
+      autoReconnect: false,
       useWSS: true,
       deviceModel: 'Desktop',
       systemVersion: 'Windows 10',

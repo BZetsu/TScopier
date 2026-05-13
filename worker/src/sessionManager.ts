@@ -24,7 +24,12 @@ export class UserSessionManager {
 
     console.log(`[sessionManager] Loading ${sessions?.length ?? 0} sessions`)
 
+    const staggerMs = Math.max(0, Math.min(30_000, Number(process.env.TELEGRAM_MULTI_SESSION_STAGGER_MS ?? 600)))
+    let i = 0
     for (const session of sessions ?? []) {
+      if (i++ > 0 && staggerMs > 0) {
+        await new Promise(r => setTimeout(r, staggerMs))
+      }
       await this.startListener(session.user_id, session.session_string)
     }
 

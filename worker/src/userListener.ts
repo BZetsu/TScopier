@@ -29,6 +29,20 @@ const CATCHUP_PER_CHANNEL_CAP = 200
 const BACKFILL_PER_CHANNEL_CAP = 1000
 const REPLY_CHAIN_SWEEP_MS = 60_000
 
+/** Telegram returns this when the same auth key is online twice (deploy overlap, double connect). */
+function isAuthKeyDuplicated(err: unknown): boolean {
+  const m = err instanceof Error ? err.message : String(err)
+  return m.includes('AUTH_KEY_DUPLICATED')
+}
+
+function reconnectCooldownMs(): number {
+  return Math.max(500, Math.min(120_000, Number(process.env.TELEGRAM_RECONNECT_COOLDOWN_MS ?? 3500)))
+}
+
+function startConnectJitterMaxMs(): number {
+  return Math.max(0, Math.min(30_000, Number(process.env.TELEGRAM_START_JITTER_MAX_MS ?? 2000)))
+}
+
 export interface ChannelInfo {
   id: string
   title: string
@@ -175,6 +189,11 @@ export class UserListener {
 
   async start(opts: StartOptions = {}) {
     if (!opts.alreadyConnected) {
+      const jm = startConnectJitterMaxMs()
+      if (jm > 0) {
+        const jitter = Math.floor(Math.random() * (jm + 1))
+        if (jitter > 0) await new Promise(r => setTimeout(r, jitter))
+      }
       await this.client.connect()
     }
     this.isConnected = true
@@ -865,11 +884,10 @@ export class UserListener {
   }
 
   /**
-   * Probe MTProto with a cheap authenticated call. gramjs's autoReconnect
-   * usually saves us on TCP drops, but does not catch "zombie" sockets
-   * (NAT / load-balancer half-open) where the client thinks it's
-   * connected and silently stops receiving updates. The probe forces a
-   * round-trip; consecutive failures trigger a hard reconnect.
+   * Probe MTProto with a cheap authenticated call. With library autoReconnect
+   * disabled (see `buildClient`), TCP drops and zombie sockets are handled here:
+   * the probe forces a round-trip; consecutive failures trigger an explicit
+   * disconnect + cooldown + reconnect in `forceReconnect`.
    */
   private async runWatchdog() {
     try {
@@ -893,13 +911,28 @@ export class UserListener {
     this.lastReconnectAt = Date.now()
     this.consecutiveProbeFailures = 0
     this.isConnected = false
+    const cooldown = reconnectCooldownMs()
     try { await this.client.disconnect() } catch { /* ignore */ }
+    await new Promise(r => setTimeout(r, cooldown))
     try {
       await this.client.connect()
       this.isConnected = true
     } catch (err) {
       console.error(`[userListener] reconnect failed for ${this.userId}:`, err)
-      return
+      if (!isAuthKeyDuplicated(err)) return
+      console.warn(
+        `[userListener] AUTH_KEY_DUPLICATED for ${this.userId} — waiting 15s then one retry`
+        + ' (overlapping worker instance or session still closing on Telegram)',
+      )
+      try { await this.client.disconnect() } catch { /* ignore */ }
+      await new Promise(r => setTimeout(r, 15_000))
+      try {
+        await this.client.connect()
+        this.isConnected = true
+      } catch (err2) {
+        console.error(`[userListener] reconnect retry failed for ${this.userId}:`, err2)
+        return
+      }
     }
     // Rebind handler — the previous one was attached to the disconnected
     // session and may not survive the reconnect cleanly.
