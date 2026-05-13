@@ -233,6 +233,11 @@ export class UserListener {
     }
   }
 
+  /** True while MTProto is up after connect/reconnect (false during disconnect/reconnect). */
+  isTelegramConnected(): boolean {
+    return this.isConnected
+  }
+
   getStatus(): ListenerStatus {
     return {
       user_id: this.userId,

@@ -96,6 +96,17 @@ export class UserSessionManager {
     return this.listeners.has(userId)
   }
 
+  /**
+   * Channel-attached copier signals should only execute when this worker holds
+   * a live MTProto session for the user; otherwise parsed rows (Realtime/sweep)
+   * can still fire orders while Telegram is down or on another host.
+   */
+  canExecuteTelegramCopierTrades(userId: string): boolean {
+    const listener = this.listeners.get(userId)
+    if (!listener) return false
+    return listener.isTelegramConnected()
+  }
+
   getStatus(): ListenerStatus[] {
     const out: ListenerStatus[] = []
     for (const [, listener] of this.listeners) {
