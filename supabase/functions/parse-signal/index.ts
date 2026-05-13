@@ -637,7 +637,6 @@ function parseEntryFromKeywords(
       entry_zone_high = Math.max(a, b)
     }
   } else {
-    let entry_price: number | null = null
     const entryLabel = text.match(/\bentry\s*(?:price)?\s*[:=]\s*(\d+(?:\.\d+)?)\b/i)
     if (entryLabel?.[1]) {
       const n = Number(entryLabel[1])
@@ -662,6 +661,13 @@ function parseEntryFromKeywords(
       if (entryWord?.[1]) {
         const n = Number(entryWord[1])
         if (Number.isFinite(n) && n > 0) entry_price = n
+      }
+    }
+    if (entry_price == null) {
+      const entryLabels = splitKeywordAliases(channelKeywords.signal.entry_point, delim)
+      const fromKw = extractPriceByLabels(text, entryLabels)
+      if (fromKw != null && Number.isFinite(fromKw) && fromKw > 0) {
+        entry_price = fromKw
       }
     }
   }
