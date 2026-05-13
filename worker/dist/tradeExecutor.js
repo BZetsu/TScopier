@@ -3,6 +3,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.TradeExecutor = void 0;
 const metatraderapi_1 = require("./metatraderapi");
 const manualPlanner_1 = require("./manualPlanner");
+const rangePendingLegPersist_1 = require("./rangePendingLegPersist");
+const signalMergeLink_1 = require("./signalMergeLink");
 /** When true (default), channel-attached signals only execute if MTProto is connected in this process. */
 function telegramLiveTradeGateEnabled() {
     const v = String(process.env.WORKER_REQUIRE_TELEGRAM_LIVE_FOR_TRADES ?? 'true').toLowerCase();
@@ -17,8 +19,6 @@ function telegramLiveTradeGateEnabled() {
 const PARSED_STATUSES = new Set(['parsed']);
 const SYMBOL_CACHE_TTL_MS = 10 * 60000;
 const SYMBOL_LIST_TTL_MS = 30 * 60000;
-/** Follow-up signal merge: same-side update allowed within this window of the open trade's `opened_at`. */
-const MERGE_SIGNAL_LINK_WINDOW_MS = 4 * 60 * 60000;
 function isMtUuid(s) {
     if (!s)
         return false;
@@ -519,6 +519,116 @@ class TradeExecutor {
             return false;
         }
     }
+    /**
+     * Walk `signals.parent_signal_id` from the merge row's immediate parent upward.
+     * True if `anchorSignalId` appears (multi-hop Telegram reply threads where
+     * `parent_signal_id` points at an intermediate signal, not the basket anchor).
+     */
+    async parentSignalIdChainContainsAnchor(startParentId, anchorSignalId) {
+        const anchor = String(anchorSignalId).trim();
+        if (!anchor)
+            return false;
+        let cur = startParentId != null && String(startParentId).trim() ? String(startParentId).trim() : null;
+        const seen = new Set();
+        const maxDepth = 32;
+        for (let depth = 0; depth < maxDepth && cur; depth++) {
+            if (cur === anchor)
+                return true;
+            if (seen.has(cur))
+                break;
+            seen.add(cur);
+            try {
+                const { data } = await this.supabase
+                    .from('signals')
+                    .select('parent_signal_id')
+                    .eq('id', cur)
+                    .maybeSingle();
+                const raw = data?.parent_signal_id;
+                cur = raw != null && String(raw).trim() ? String(raw).trim() : null;
+            }
+            catch {
+                break;
+            }
+        }
+        return false;
+    }
+    /**
+     * Resolve which `signals.id` owns open `trades` for management and implicit merge.
+     * Walks `parent_signal_id` upward first; falls back to same-channel + symbol disambiguation.
+     */
+    async resolveBasketAnchorSignalIdForOpenTrades(args) {
+        const { userId, brokerAccountIds, channelId, parentSignalId, symbolHint } = args;
+        if (!brokerAccountIds.length)
+            return null;
+        const chainIds = [];
+        let cur = parentSignalId != null && String(parentSignalId).trim() ? String(parentSignalId).trim() : null;
+        const seenWalk = new Set();
+        for (let d = 0; d < 32 && cur; d++) {
+            if (seenWalk.has(cur))
+                break;
+            seenWalk.add(cur);
+            chainIds.push(cur);
+            try {
+                const { data } = await this.supabase
+                    .from('signals')
+                    .select('parent_signal_id')
+                    .eq('id', cur)
+                    .maybeSingle();
+                const raw = data?.parent_signal_id;
+                cur = raw != null && String(raw).trim() ? String(raw).trim() : null;
+            }
+            catch {
+                break;
+            }
+        }
+        if (chainIds.length) {
+            const { data: hit } = await this.supabase
+                .from('trades')
+                .select('signal_id')
+                .eq('user_id', userId)
+                .in('broker_account_id', brokerAccountIds)
+                .eq('status', 'open')
+                .in('signal_id', chainIds)
+                .limit(80);
+            const uniq = new Set((hit ?? []).map((r) => r.signal_id));
+            if (uniq.size === 1)
+                return [...uniq][0];
+            if (uniq.size > 1) {
+                console.warn(`[tradeExecutor] resolveBasketAnchor: multiple anchors in parent chain user=${userId} chain=${chainIds.length}`);
+                return null;
+            }
+        }
+        if (!channelId)
+            return null;
+        const symUp = symbolHint ? symbolHint.trim().toUpperCase() : '';
+        const { data: openRows } = await this.supabase
+            .from('trades')
+            .select('signal_id, symbol')
+            .eq('user_id', userId)
+            .in('broker_account_id', brokerAccountIds)
+            .eq('status', 'open')
+            .limit(200);
+        let cand = (openRows ?? []);
+        if (symUp)
+            cand = cand.filter(t => String(t.symbol ?? '').toUpperCase() === symUp);
+        const candSigIds = [...new Set(cand.map(t => t.signal_id))];
+        if (!candSigIds.length)
+            return null;
+        const { data: sigRows } = await this.supabase
+            .from('signals')
+            .select('id, channel_id')
+            .in('id', candSigIds);
+        const inChannel = new Set((sigRows ?? [])
+            .filter((s) => s.channel_id === channelId)
+            .map((s) => s.id));
+        const anchors = [...new Set(cand.filter(t => inChannel.has(t.signal_id)).map(t => t.signal_id))];
+        if (anchors.length === 1)
+            return anchors[0];
+        if (anchors.length > 1) {
+            console.warn(`[tradeExecutor] resolveBasketAnchor: ambiguous channel+symbol open baskets user=${userId} channel=${channelId}`);
+        }
+        return null;
+    }
     async cancelRangePendingLegsForScopes(userId, logSignalId, scopes, reason) {
         const uniq = new Map();
         for (const s of scopes) {
@@ -589,8 +699,7 @@ class TradeExecutor {
                 continue;
             const m = e.message ?? String(e);
             lastError = m;
-            const code = e.code;
-            if (code === '23505' || /duplicate key|unique constraint/i.test(m))
+            if ((0, rangePendingLegPersist_1.isPostgresDuplicateKeyError)(e))
                 continue;
             anyHardFailure = true;
             console.warn(`[tradeExecutor] range_pending_legs insert failed (${context}) step=${String(row.step_idx)}: ${m}`);
@@ -680,10 +789,9 @@ class TradeExecutor {
     }
     /**
      * When `add_new_trades_to_existing` is on, apply a same-direction follow-up
-     * (Telegram reply chain to the anchor message, or recent time window **with**
-     * `parent_signal_id` linking this row to the anchor basket) as SL/TP refresh
-     * on all open legs of the basket (`signal_id` family), preserving multi-trade
-     * TP distribution.
+     * (Telegram reply to the anchor entry, reply to a thread whose parent chain
+     * reaches the anchor, or time window with direct `parent_signal_id` → anchor)
+     * as SL/TP refresh on all open legs of the basket (`signal_id` family).
      */
     async tryMergeSignalIntoExistingOpenTrade(args) {
         const { signal, parsed, op, broker, channelKeywords, baseLot, params, symbol, uuid, strictEntryPrefetch } = args;
@@ -704,7 +812,7 @@ class TradeExecutor {
         try {
             const { data: fullSig } = await this.supabase
                 .from('signals')
-                .select('created_at, reply_to_message_id, telegram_message_id, parent_signal_id')
+                .select('created_at, reply_to_message_id, telegram_message_id, parent_signal_id, channel_id')
                 .eq('id', signal.id)
                 .maybeSingle();
             const row = fullSig;
@@ -715,6 +823,7 @@ class TradeExecutor {
                     reply_to_message_id: signal.reply_to_message_id ?? row.reply_to_message_id ?? null,
                     telegram_message_id: signal.telegram_message_id ?? row.telegram_message_id ?? null,
                     parent_signal_id: signal.parent_signal_id ?? row.parent_signal_id ?? null,
+                    channel_id: signal.channel_id ?? row.channel_id ?? null,
                 };
             }
         }
@@ -743,22 +852,44 @@ class TradeExecutor {
             return { handled: false };
         const { data: origSig } = await this.supabase
             .from('signals')
-            .select('telegram_message_id')
+            .select('telegram_message_id, channel_id')
             .eq('id', anchorSignalId)
             .maybeSingle();
         const origTg = String(origSig?.telegram_message_id ?? '').trim();
+        const anchorChannelId = String(origSig?.channel_id ?? '').trim() || null;
         const replyTo = String(mergeSignal.reply_to_message_id ?? '').trim();
         const replyOk = Boolean(replyTo && origTg && replyTo === origTg);
         const sigTime = mergeSignal.created_at ? new Date(mergeSignal.created_at).getTime() : Date.now();
         const tradeOpen = new Date(newest.opened_at).getTime();
-        const dt = sigTime - tradeOpen;
-        const withinWindow = dt >= -120000 && dt <= MERGE_SIGNAL_LINK_WINDOW_MS;
-        const parentLinksAnchor = String(mergeSignal.parent_signal_id ?? '') === anchorSignalId;
-        // Avoid treating unrelated "fresh" channel posts as merge targets when an
-        // unrelated basket is still open within the time window.
-        const canMergeByLink = replyOk || (withinWindow && parentLinksAnchor);
-        if (!canMergeByLink)
+        const dt = (0, signalMergeLink_1.mergeSignalTimeDeltaMs)({ signalCreatedAtMs: sigTime, newestTradeOpenedAtMs: tradeOpen });
+        const withinWindow = (0, signalMergeLink_1.isWithinMergeSignalTimeWindow)(dt);
+        const parentLinksAnchor = (0, signalMergeLink_1.parentSignalLinksAnchor)(mergeSignal.parent_signal_id, anchorSignalId);
+        const hasReplyToTelegram = Boolean(replyTo);
+        let ancestorChainContainsAnchor = false;
+        if (hasReplyToTelegram && !parentLinksAnchor) {
+            ancestorChainContainsAnchor = await this.parentSignalIdChainContainsAnchor(mergeSignal.parent_signal_id, anchorSignalId);
+        }
+        const threadLinksAnchor = (0, signalMergeLink_1.computeThreadLinksAnchor)({
+            parentLinksAnchor,
+            hasReplyToTelegram,
+            ancestorChainContainsAnchor,
+        });
+        const mergeCh = String(mergeSignal.channel_id ?? '').trim() || null;
+        const implicitBundleWithinTightWindow = (0, signalMergeLink_1.implicitBundleTimeOk)(dt, signalMergeLink_1.MERGE_IMPLICIT_CHANNEL_BUNDLE_MS);
+        const implicitSameChannelBundle = Boolean(mergeCh &&
+            anchorChannelId &&
+            mergeCh === anchorChannelId &&
+            !replyOk &&
+            !threadLinksAnchor);
+        if (!(0, signalMergeLink_1.isMergeFollowUpLinked)({
+            replyOk,
+            withinWindow,
+            threadLinksAnchor,
+            implicitBundleWithinTightWindow,
+            implicitSameChannelBundle,
+        })) {
             return { handled: false };
+        }
         // Planner / predefined SL-TP need an entry anchor. Re-use the live trade's fill when the new parse has none.
         const rpe0 = (0, manualPlanner_1.resolvedParsedEntryPrice)(parsed);
         const rzo0 = (0, manualPlanner_1.resolvedParsedEntryZone)(parsed);
@@ -1032,6 +1163,13 @@ class TradeExecutor {
                     reply_chain: replyOk,
                     within_time_window: withinWindow,
                     parent_links_anchor: parentLinksAnchor,
+                    has_reply_to_telegram: hasReplyToTelegram,
+                    ancestor_chain_contains_anchor: ancestorChainContainsAnchor,
+                    thread_links_anchor: threadLinksAnchor,
+                    implicit_bundle_within_tight_window: implicitBundleWithinTightWindow,
+                    implicit_same_channel_bundle: implicitSameChannelBundle,
+                    implicit_bundle_dt_ms: dt,
+                    merge_implicit_tight_window_ms: signalMergeLink_1.MERGE_IMPLICIT_CHANNEL_BUNDLE_MS,
                 },
             });
         }
@@ -1627,6 +1765,42 @@ class TradeExecutor {
             return;
         if (!signal.parent_signal_id)
             return;
+        const brokerAccountIds = brokers.map(b => b.id);
+        let symbolHint = parsed.symbol != null && String(parsed.symbol).trim()
+            ? String(parsed.symbol).trim()
+            : null;
+        try {
+            const { data: ps } = await this.supabase
+                .from('signals')
+                .select('parsed_data')
+                .eq('id', signal.parent_signal_id)
+                .maybeSingle();
+            const p = ps?.parsed_data;
+            const fromParent = p?.symbol != null && String(p.symbol).trim() ? String(p.symbol).trim() : null;
+            if (fromParent)
+                symbolHint = fromParent;
+        }
+        catch {
+            // best-effort
+        }
+        const basketAnchorId = await this.resolveBasketAnchorSignalIdForOpenTrades({
+            userId: signal.user_id,
+            brokerAccountIds,
+            channelId: signal.channel_id,
+            parentSignalId: signal.parent_signal_id,
+            symbolHint,
+        });
+        if (!basketAnchorId) {
+            try {
+                await this.supabase
+                    .from('signals')
+                    .update({ status: 'skipped', skip_reason: 'mgmt_no_parent_trades' })
+                    .eq('id', signal.id)
+                    .eq('status', 'parsed');
+            }
+            catch { /* best-effort */ }
+            return;
+        }
         // Pull the existing sl/tp/entry_price so a one-sided management command
         // ("Adjust SL to 4500") can preserve the OTHER side. MetatraderAPI's
         // /OrderModify treats stoploss=0 / takeprofit=0 as "remove the level",
@@ -1636,7 +1810,7 @@ class TradeExecutor {
         const { data: trades } = await this.supabase
             .from('trades')
             .select('id,broker_account_id,metaapi_order_id,symbol,lot_size,status,sl,tp,entry_price')
-            .eq('signal_id', signal.parent_signal_id);
+            .eq('signal_id', basketAnchorId);
         const rows = (trades ?? []);
         if (!rows.length) {
             // Child management rows never get `trades.signal_id = child.id`, so the
@@ -1687,7 +1861,7 @@ class TradeExecutor {
                     await this.api.orderClose(uuid, { ticket });
                     await this.supabase.from('trades').update({ status: 'closed', closed_at: new Date().toISOString() }).eq('id', trade.id);
                     cancelledPendingScopes.add(JSON.stringify({
-                        signalId: signal.parent_signal_id,
+                        signalId: basketAnchorId,
                         brokerAccountId: trade.broker_account_id,
                         symbol: trade.symbol,
                     }));
@@ -1756,7 +1930,12 @@ class TradeExecutor {
                     broker_account_id: broker.id,
                     action: `mgmt_${action}`,
                     status: 'success',
-                    request_payload: { ticket, action },
+                    request_payload: {
+                        ticket,
+                        action,
+                        basket_anchor_signal_id: basketAnchorId,
+                        mgmt_parent_signal_id: signal.parent_signal_id,
+                    },
                 });
             }
             catch (err) {
@@ -1767,7 +1946,12 @@ class TradeExecutor {
                     broker_account_id: broker.id,
                     action: `mgmt_${action}`,
                     status: 'failed',
-                    request_payload: { ticket, action },
+                    request_payload: {
+                        ticket,
+                        action,
+                        basket_anchor_signal_id: basketAnchorId,
+                        mgmt_parent_signal_id: signal.parent_signal_id,
+                    },
                     error_message: msg,
                 });
             }
