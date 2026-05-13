@@ -438,11 +438,11 @@ class UserListener {
             console.error(`[userListener] logSignal upsert failed for ${this.userId}:`, insertErr.message);
             return false;
         }
-        await this.bumpLastSeen(channelRow.id, messageId);
         if (!signalRow) {
             console.log(`[userListener] duplicate message ignored user=${this.userId} channelRow=${channelRow.id} messageId=${messageId}`);
             return false; // duplicate — skip parse-signal
         }
+        await this.bumpLastSeen(channelRow.id, messageId);
         if (replyToMessageId && !parentSignalId) {
             const lateParent = await this.resolveParentSignalIdForReply(channelRow.id, replyToMessageId);
             if (lateParent) {
@@ -620,6 +620,10 @@ class UserListener {
         }
         const minIdRaw = row.last_seen_message_id;
         const minId = minIdRaw == null ? 0 : Number(minIdRaw);
+        if (!Number.isFinite(minId) || minId < 0) {
+            console.warn(`[userListener] invalid last_seen for channel ${row.id}; skipping catch-up`);
+            return;
+        }
         if (minId === 0) {
             // Seed-only on first-ever listen — do not backfill historical messages.
             // Without this, a user picking a 5-year-old signal channel would
@@ -663,6 +667,13 @@ class UserListener {
         // monotonically advances and parse-signal sees signals in order.
         collected.sort((a, b) => Number(a.id) - Number(b.id));
         for (const m of collected) {
+            const mid = Number(m.id);
+            if (!Number.isFinite(mid))
+                continue;
+            // Never re-queue messages at or below the persisted high-water mark
+            // (belt-and-suspenders on top of gramjs minId filtering).
+            if (mid <= minId)
+                continue;
             await this.logSignal(row, m);
         }
     }
@@ -815,7 +826,12 @@ class UserListener {
         this.removeCurrentHandler();
         this.monitoredChannels.clear();
         await this.refreshChannelSubscription();
-        await this.runCatchUp();
+        // Do NOT run history catch-up here: `runCatchUp` walks Telegram history and
+        // calls `logSignal` for each candidate, which can re-dispatch parse/trade
+        // for messages the worker already processed (duplicate handling + last_seen
+        // edge cases). Mid-session reconnects should rely on live `NewMessage`
+        // updates + Telegram's own gap recovery. Full catch-up only runs from
+        // `start()` after a cold boot.
         await this.runReplyChainSweep();
     }
     // ── safety poll (Realtime drop fallback) ──────────────────────────────
