@@ -441,6 +441,12 @@ function planManualOrders(args) {
     if (signalEntryPriceStrictEnabled(manual) && parsedHasExplicitEntryAnchor(parsed) && entryAnchor != null) {
         opExec = isBuy ? 'Buy' : 'Sell';
     }
+    else if (manual.trade_style !== 'multi' && !signalEntryPriceStrictEnabled(manual)) {
+        // "Use Signal Entry Price" off + single trade: always market execute at the broker's
+        // current price. Do not send BuyLimit/SellLimit + expiration — MT / MetaTraderAPI often
+        // rejects those expiration payloads ("Invalid order expiration date") even when entry exists.
+        opExec = isBuy ? 'Buy' : 'Sell';
+    }
     // ── 5. Multi-Trade lot splitting ────────────────────────────────────────
     const tradeStyle = manual.trade_style === 'multi' ? 'multi' : 'single';
     const isMarketExec = opExec === 'Buy' || opExec === 'Sell';

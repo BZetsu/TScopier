@@ -362,6 +362,31 @@ test('planManualOrders: strict entry + entry-shaped signal still skips range (op
   assert.equal(plan.virtualPendings, undefined)
 })
 
+test('planManualOrders: single trade + use_signal_entry_price off uses Buy/Sell at market (no pending expiration)', () => {
+  const plan = planManualOrders({
+    parsed: { ...baseParsed, entry_price: 2650 },
+    resolvedSymbol: 'XAUUSD',
+    baseOperation: 'BuyLimit',
+    manual: {
+      ...baseManual,
+      trade_style: 'single',
+      range_trading: false,
+      use_signal_entry_price: false,
+    },
+    channelKeywords: null,
+    manualLot: 1.0,
+    ctx: baseCtx,
+    commentPrefix: 'TSCopier:abc',
+  })
+  assert.equal(plan.orders.length, 1)
+  assert.equal(plan.orders[0]!.operation, 'Buy')
+  assert.equal(plan.orders[0]!.price, 0)
+  assert.equal(plan.strictEntry, undefined)
+  const o = plan.orders[0] as { expiration?: string; expirationType?: string }
+  assert.equal(o.expiration, undefined)
+  assert.equal(o.expirationType, undefined)
+})
+
 // ── planSinglePartialTps ───────────────────────────────────────────────────
 // The pure helper that turns the user's percent rows (50 / 30 / 20) into a
 // concrete partial-close schedule for single-mode trades. Verifies that the
