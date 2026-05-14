@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SKIP_REASON_SIGNAL_ENTRY_REQUIRED = void 0;
+exports.signalEntryPriceStrictEnabled = signalEntryPriceStrictEnabled;
 exports.strictSignalEntryQuoteAllowsImmediate = strictSignalEntryQuoteAllowsImmediate;
 exports.lastPositiveParsedTpPrice = lastPositiveParsedTpPrice;
 exports.planSinglePartialTps = planSinglePartialTps;
@@ -13,6 +14,10 @@ exports.resolvedParsedEntryZone = resolvedParsedEntryZone;
 exports.parsedHasExplicitEntryAnchor = parsedHasExplicitEntryAnchor;
 exports.planManualOrders = planManualOrders;
 const pipCalculator_1 = require("./pipCalculator");
+/** True when planner/executor should apply strict signal-entry routing (single trade only). */
+function signalEntryPriceStrictEnabled(manual) {
+    return manual.use_signal_entry_price === true && manual.trade_style !== 'multi';
+}
 /**
  * True when the live quote is already at or better than the signal entry for immediate
  * execution (buy: ask ≤ entry; sell: bid ≥ entry). Used by the executor after a post-delay /Quote.
@@ -298,10 +303,10 @@ function resolvedParsedEntryZone(parsed) {
 }
 /**
  * True when the parsed signal includes an explicit entry **price** or **zone**
- * (not a bare market “buy now”). Used with `use_signal_entry_price` so planning
+ * (not a bare market “buy now”). Used with strict signal entry so planning
  * only runs when the message specifies an entry anchor. Fill timing vs live
  * quote is enforced in the executor via {@link PlannerResult.strictEntry} and
- * virtual pendings.
+ * broker pending rows.
  */
 function parsedHasExplicitEntryAnchor(parsed) {
     if (resolvedParsedEntryPrice(parsed) != null)
@@ -309,7 +314,7 @@ function parsedHasExplicitEntryAnchor(parsed) {
     const z = resolvedParsedEntryZone(parsed);
     return z != null && z.lo > 0 && z.hi > 0;
 }
-/** Planner / executor skip when `use_signal_entry_price` is on but the parse has no entry anchor. */
+/** Planner / executor skip when strict signal entry is on but the parse has no entry anchor. */
 exports.SKIP_REASON_SIGNAL_ENTRY_REQUIRED = 'signal_entry_price_requires_explicit_entry';
 /** Build the order plan. Returns an empty plan with skip_reason when filtered out. */
 function planManualOrders(args) {
@@ -328,7 +333,7 @@ function planManualOrders(args) {
             return { orders: [], skip_reason: 'filtered_time', delay_ms };
         }
     }
-    if (manual.use_signal_entry_price === true && !parsedHasExplicitEntryAnchor(parsed)) {
+    if (signalEntryPriceStrictEnabled(manual) && !parsedHasExplicitEntryAnchor(parsed)) {
         return { orders: [], skip_reason: exports.SKIP_REASON_SIGNAL_ENTRY_REQUIRED, delay_ms };
     }
     // ── 2. Resolve entry price (with channel prefer_entry on zones) ─────────
@@ -431,9 +436,9 @@ function planManualOrders(args) {
         finalTps = finalTps.map(tp => clampToStops(tp, true, entryAnchor) ?? tp);
     }
     // ── 4c. Signal entry strictness: always market-shaped orders; executor gates vs live quote ──
-    // Bare "buy now" signals are filtered in section 1 when `use_signal_entry_price` is on.
+    // Bare "buy now" signals are filtered in section 1 when strict signal entry is on.
     let opExec = opSplit;
-    if (manual.use_signal_entry_price === true && parsedHasExplicitEntryAnchor(parsed) && entryAnchor != null) {
+    if (signalEntryPriceStrictEnabled(manual) && parsedHasExplicitEntryAnchor(parsed) && entryAnchor != null) {
         opExec = isBuy ? 'Buy' : 'Sell';
     }
     // ── 5. Multi-Trade lot splitting ────────────────────────────────────────
@@ -446,7 +451,7 @@ function planManualOrders(args) {
     if (!isMarketExec) {
         orderPrice = roundedEntry;
     }
-    else if (manual.use_signal_entry_price === true && roundedEntry > 0) {
+    else if (signalEntryPriceStrictEnabled(manual) && roundedEntry > 0) {
         // With strict signal entry, always send the parsed anchor on the wire so
         // MetatraderAPI / MT see the intended reference price (and our stop clamp
         // uses the same ref for market legs).
@@ -469,7 +474,7 @@ function planManualOrders(args) {
             expirationFields.expirationType = 'Specified';
         }
     }
-    const strictEntry = manual.use_signal_entry_price === true && parsedHasExplicitEntryAnchor(parsed) && roundedEntry > 0
+    const strictEntry = signalEntryPriceStrictEnabled(manual) && parsedHasExplicitEntryAnchor(parsed) && roundedEntry > 0
         ? { entryPrice: roundedEntry, isBuy }
         : undefined;
     const minLot = Number.isFinite(ctx.minLot) && ctx.minLot > 0 ? ctx.minLot : 0.01;
@@ -499,7 +504,8 @@ function planManualOrders(args) {
             finalTps,
             bucketRows: enabledForSingle,
         });
-        const brokerTp = partialPlan.brokerTp ?? finalTps[0] ?? null;
+        const brokerTp = partialPlan.brokerTp
+            ?? (finalTps.length >= 2 ? (finalTps[finalTps.length - 1] ?? null) : (finalTps[0] ?? null));
         const combinedFallback = fallbackReason ?? partialPlan.fallbackReason;
         return {
             orders: [{

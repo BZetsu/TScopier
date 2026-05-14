@@ -9,6 +9,8 @@ import {
   planSinglePartialTps,
   resolvedParsedEntryPrice,
   reverseSignalGateSatisfied,
+  signalEntryPriceStrictEnabled,
+  SKIP_REASON_SIGNAL_ENTRY_REQUIRED,
   strictSignalEntryQuoteAllowsImmediate,
   type ManualSettings,
   type ParsedSignal,
@@ -346,6 +348,8 @@ test('planManualOrders: strict entry + entry-shaped signal still skips range (op
     baseOperation: 'BuyLimit',
     manual: {
       ...baseManual,
+      trade_style: 'single',
+      range_trading: false,
       use_signal_entry_price: true,
       signal_entry_pip_tolerance: tol,
     },
@@ -511,6 +515,46 @@ test('planManualOrders: use_signal_entry_price skips plan without explicit entry
   })
   assert.equal(plan.orders.length, 0)
   assert.equal(plan.skip_reason, 'signal_entry_price_requires_explicit_entry')
+})
+
+test('planManualOrders: multi + use_signal_entry_price does not require explicit entry', () => {
+  const plan = planManualOrders({
+    parsed: { ...baseParsed, entry_price: null, entry_zone_low: null, entry_zone_high: null },
+    resolvedSymbol: 'XAUUSD',
+    baseOperation: 'Buy',
+    manual: {
+      ...baseManual,
+      trade_style: 'multi',
+      range_trading: false,
+      use_signal_entry_price: true,
+    },
+    channelKeywords: null,
+    manualLot: 1.0,
+    ctx: baseCtx,
+    commentPrefix: 'TSCopier:abc',
+  })
+  assert.notEqual(plan.skip_reason, SKIP_REASON_SIGNAL_ENTRY_REQUIRED)
+  assert.equal(plan.strictEntry, undefined)
+  assert.ok(plan.orders.length > 0)
+})
+
+test('signalEntryPriceStrictEnabled: false when trade_style is multi', () => {
+  assert.equal(
+    signalEntryPriceStrictEnabled({
+      ...baseManual,
+      trade_style: 'multi',
+      use_signal_entry_price: true,
+    }),
+    false,
+  )
+  assert.equal(
+    signalEntryPriceStrictEnabled({
+      ...baseManual,
+      trade_style: 'single',
+      use_signal_entry_price: true,
+    }),
+    true,
+  )
 })
 
 test('clampPendingExpiryHours: clamps high values to 24', () => {

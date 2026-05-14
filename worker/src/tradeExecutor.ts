@@ -14,6 +14,7 @@ import {
   planManualOrders,
   resolvedParsedEntryPrice,
   resolvedParsedEntryZone,
+  signalEntryPriceStrictEnabled,
   SKIP_REASON_SIGNAL_ENTRY_REQUIRED,
   strictSignalEntryQuoteAllowsImmediate,
   lastPositiveParsedTpPrice,
@@ -1090,7 +1091,7 @@ export class TradeExecutor {
     if (!this.api) return { handled: false }
     const manual = (broker.manual_settings ?? {}) as ManualSettings
     if (manual.add_new_trades_to_existing !== true) return { handled: false }
-    if (manual.use_signal_entry_price === true && !parsedHasExplicitEntryAnchor(parsed)) {
+    if (signalEntryPriceStrictEnabled(manual) && !parsedHasExplicitEntryAnchor(parsed)) {
       return { handled: false }
     }
 
@@ -1269,7 +1270,7 @@ export class TradeExecutor {
 
     // Same strict-entry live quote rule as `sendOrder`: merge refresh only when the
     // market is already at or better than the signal entry (no virtual deferral here).
-    if (manual.use_signal_entry_price === true && plan.strictEntry && this.api) {
+    if (signalEntryPriceStrictEnabled(manual) && plan.strictEntry && this.api) {
       const se = plan.strictEntry
       try {
         const q = strictEntryPrefetch ?? await this.api.quote(uuid, symbol)
@@ -1624,7 +1625,7 @@ export class TradeExecutor {
     if (
       this.api
       && isManual
-      && manual.use_signal_entry_price === true
+      && signalEntryPriceStrictEnabled(manual)
       && parsedHasExplicitEntryAnchor(parsed)
     ) {
       try {

@@ -1286,13 +1286,54 @@ export function AccountConfigPage() {
                               <Select
                                 label="Trade Style"
                                 value={configDraft.manualSettings.trade_style ?? 'single'}
-                                onChange={e => setManual({ trade_style: e.target.value as ManualSettings['trade_style'] })}
+                                onChange={e => {
+                                  const v = e.target.value as ManualSettings['trade_style']
+                                  if (v === 'multi') {
+                                    setManual({ trade_style: v, use_signal_entry_price: false })
+                                  } else {
+                                    setManual({ trade_style: v })
+                                  }
+                                }}
                                 options={[
                                   { value: 'single', label: 'Single Trade' },
                                   { value: 'multi', label: 'Multi Trades' },
                                 ]}
                               />
                             </div>
+
+                            {configDraft.manualSettings.trade_style !== 'multi' && (
+                              <div className="rounded-lg border border-neutral-200 p-3 space-y-3">
+                                <p className="text-sm font-medium text-neutral-800">Signal entry execution</p>
+                                <p className="text-xs text-neutral-500">
+                                  <strong>Use Signal Entry Price</strong> applies only in <strong>Single Trade</strong> mode. When enabled, the signal must include an explicit parsed entry (price, zone, @ price, or labels like &quot;Entry Price:&quot;). After any channel delay, the worker compares the <strong>live</strong> quote to that entry: <strong>Buy</strong> fills at market only when ask is at or below the entry; otherwise it places a <strong>buy limit</strong> at the entry. <strong>Sell</strong> is the inverse. The broker take-profit targets the <strong>last</strong> parsed TP when you have several targets, with optional partial closes from your TP ladder. Copier tracks each strict-entry pending so fills sync to your trade list; pendings are cancelled when the basket is flat. Bare &quot;buy now&quot; messages with no entry are skipped.
+                                </p>
+                                <div className="rounded-md border border-neutral-200 overflow-hidden">
+                                  <div className="flex items-center justify-between gap-3 bg-white px-3 py-2.5">
+                                    <span className="text-sm font-medium text-neutral-800">Use Signal Entry Price</span>
+                                    <Toggle
+                                      checked={configDraft.manualSettings.use_signal_entry_price === true}
+                                      onChange={v => setManual({ use_signal_entry_price: v })}
+                                    />
+                                  </div>
+                                  {configDraft.manualSettings.use_signal_entry_price && (
+                                    <div className="border-t border-neutral-200 bg-neutral-50/80 px-3 py-3 space-y-2">
+                                      <p className="text-xs text-neutral-500">
+                                        <strong>Pip tolerance</strong> is legacy and no longer affects execution; strict entry uses the exact parsed entry price and live bid/ask as above.
+                                      </p>
+                                      <Input
+                                        label="Pip tolerance (legacy)"
+                                        type="number"
+                                        min={0}
+                                        step={1}
+                                        hint="Unused for strict entry routing; kept for backward compatibility with saved settings."
+                                        value={String(configDraft.manualSettings.signal_entry_pip_tolerance ?? 10)}
+                                        onChange={e => setManual({ signal_entry_pip_tolerance: Math.max(0, Number(e.target.value) || 0) })}
+                                      />
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            )}
 
                             {configDraft.manualSettings.trade_style === 'multi' && (
                               <div className="rounded-lg border border-neutral-200 p-3 space-y-3">
@@ -1653,38 +1694,6 @@ export function AccountConfigPage() {
                               <p className="text-xs text-neutral-500">
                                 <strong>Add to existing:</strong> follow-up on the same side refreshes every **open leg** that belongs to the same original signal (same basket), in **fill order** (oldest leg first), using the planner&apos;s **multi-trade TP distribution** (each leg gets the SL/TP of the matching immediate order from your TP lot percentage rows). Range virtual pendings for that basket are cancelled and re-inserted under the **parent** signal. Reply-thread or **4h** time window still applies. Single-trade partial-TP rows are only re-created when the basket is a single leg.
                               </p>
-                            </div>
-
-                            <div className="rounded-lg border border-neutral-200 p-3 space-y-3">
-                              <p className="text-sm font-medium text-neutral-800">Signal entry execution</p>
-                              <p className="text-xs text-neutral-500">
-                                With <strong>Use Signal Entry Price</strong> enabled, the signal must include an explicit entry in the parse (price, zone, @ price, labels like &quot;Entry Price:&quot;, or &quot;buy/sell at …&quot;). After any channel delay, the worker compares the <strong>live</strong> quote to that entry: <strong>Buy</strong> fills immediately only when ask is at or below the entry; if ask is above the entry it places a <strong>buy limit</strong> on the broker at the signal entry so you see a real pending order in MetaTrader. <strong>Sell</strong> is the inverse (immediate when bid is at or above entry; otherwise a <strong>sell limit</strong> at the entry). In <strong>Single</strong> trade mode, the broker take-profit targets the <strong>last</strong> parsed TP (e.g. TP3) and optional partial closes follow your TP ladder; in <strong>Multi</strong> trade mode strict-entry pendings use the first-bucket TP only and do not attach that partial schedule. Copier stores a companion row for each strict-entry pending so fills sync back to your trade list. When the basket is flat, those pendings are cancelled automatically. Bare calls such as &quot;Gold buy now&quot; with no entry in the message are skipped entirely (no trades).
-                              </p>
-                              <div className="rounded-md border border-neutral-200 overflow-hidden">
-                                <div className="flex items-center justify-between gap-3 bg-white px-3 py-2.5">
-                                  <span className="text-sm font-medium text-neutral-800">Use Signal Entry Price</span>
-                                  <Toggle
-                                    checked={configDraft.manualSettings.use_signal_entry_price === true}
-                                    onChange={v => setManual({ use_signal_entry_price: v })}
-                                  />
-                                </div>
-                                {configDraft.manualSettings.use_signal_entry_price && (
-                                  <div className="border-t border-neutral-200 bg-neutral-50/80 px-3 py-3 space-y-2">
-                                    <p className="text-xs text-neutral-500">
-                                      <strong>Pip tolerance</strong> is legacy and no longer affects execution; strict entry uses the exact parsed entry price and live bid/ask as above.
-                                    </p>
-                                    <Input
-                                      label="Pip tolerance (legacy)"
-                                      type="number"
-                                      min={0}
-                                      step={1}
-                                      hint="Unused for strict entry routing; kept for backward compatibility with saved settings."
-                                      value={String(configDraft.manualSettings.signal_entry_pip_tolerance ?? 10)}
-                                      onChange={e => setManual({ signal_entry_pip_tolerance: Math.max(0, Number(e.target.value) || 0) })}
-                                    />
-                                  </div>
-                                )}
-                              </div>
                             </div>
 
                             <div className="rounded-lg border border-neutral-200 p-3 space-y-3">

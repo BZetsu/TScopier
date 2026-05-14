@@ -852,7 +852,7 @@ class TradeExecutor {
         const manual = (broker.manual_settings ?? {});
         if (manual.add_new_trades_to_existing !== true)
             return { handled: false };
-        if (manual.use_signal_entry_price === true && !(0, manualPlanner_1.parsedHasExplicitEntryAnchor)(parsed)) {
+        if ((0, manualPlanner_1.signalEntryPriceStrictEnabled)(manual) && !(0, manualPlanner_1.parsedHasExplicitEntryAnchor)(parsed)) {
             return { handled: false };
         }
         const a = String(parsed.action ?? '').toLowerCase();
@@ -1011,7 +1011,7 @@ class TradeExecutor {
         }
         // Same strict-entry live quote rule as `sendOrder`: merge refresh only when the
         // market is already at or better than the signal entry (no virtual deferral here).
-        if (manual.use_signal_entry_price === true && plan.strictEntry && this.api) {
+        if ((0, manualPlanner_1.signalEntryPriceStrictEnabled)(manual) && plan.strictEntry && this.api) {
             const se = plan.strictEntry;
             try {
                 const q = strictEntryPrefetch ?? await this.api.quote(uuid, symbol);
@@ -1344,7 +1344,7 @@ class TradeExecutor {
         let strictEntryPrefetch = null;
         if (this.api
             && isManual
-            && manual.use_signal_entry_price === true
+            && (0, manualPlanner_1.signalEntryPriceStrictEnabled)(manual)
             && (0, manualPlanner_1.parsedHasExplicitEntryAnchor)(parsed)) {
             try {
                 strictEntryPrefetch = await this.api.quote(uuid, symbol);
