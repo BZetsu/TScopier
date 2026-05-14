@@ -114,6 +114,7 @@ interface BrokerRow {
   last_balance: number | null
   last_equity: number | null
   last_currency: string | null
+  performance_baseline_balance?: number | null
 }
 
 interface SymbolCacheEntry {

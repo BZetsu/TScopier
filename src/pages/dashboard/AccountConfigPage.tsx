@@ -832,7 +832,7 @@ export function AccountConfigPage() {
     for (const delay of delays) {
       await new Promise(r => setTimeout(r, delay))
       try {
-        const { summary } = await metatraderApi.summary(brokerId)
+        const { summary, performance_baseline_balance } = await metatraderApi.summary(brokerId)
         if (summary && (summary.balance != null || summary.equity != null || summary.currency)) {
           const patch = {
             last_balance: summary.balance ?? null,
@@ -840,6 +840,9 @@ export function AccountConfigPage() {
             last_currency: summary.currency ?? null,
             last_synced_at: new Date().toISOString(),
             connection_status: 'connected' as const,
+            ...(performance_baseline_balance != null && Number.isFinite(Number(performance_baseline_balance))
+              ? { performance_baseline_balance: Number(performance_baseline_balance) }
+              : {}),
           }
           setBrokers(prev => prev.map(b => b.id === brokerId ? { ...b, ...patch } : b))
           setConfigAccount(prev => prev && prev.id === brokerId ? { ...prev, ...patch } : prev)

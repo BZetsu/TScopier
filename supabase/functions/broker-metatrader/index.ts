@@ -145,6 +145,7 @@ Deno.serve(async (req: Request) => {
         last_equity: summary?.equity ?? null,
         last_currency: summary?.currency ?? null,
         last_synced_at: summary ? new Date().toISOString() : null,
+        performance_baseline_balance: summary?.balance ?? null,
       }
 
       const { data: row, error: insErr } = await supabase
@@ -209,7 +210,7 @@ Deno.serve(async (req: Request) => {
       if (!brokerId) return bad(400, "broker_id required")
       const { data: broker } = await supabase
         .from("broker_accounts")
-        .select("id,metaapi_account_id")
+        .select("id,metaapi_account_id,performance_baseline_balance")
         .eq("id", brokerId)
         .eq("user_id", userId)
         .maybeSingle()
@@ -243,18 +244,37 @@ Deno.serve(async (req: Request) => {
         } catch {
           openPositions = null
         }
-        await supabase
+        const updatePayload: Record<string, unknown> = {
+          last_balance: summary?.balance ?? null,
+          last_equity: summary?.equity ?? null,
+          last_currency: summary?.currency ?? null,
+          last_synced_at: new Date().toISOString(),
+          connection_status: "connected",
+        }
+        if (
+          broker?.performance_baseline_balance == null &&
+          summary?.balance != null &&
+          Number.isFinite(summary.balance)
+        ) {
+          updatePayload.performance_baseline_balance = summary.balance
+        }
+        const { data: updatedRow, error: updErr } = await supabase
           .from("broker_accounts")
-          .update({
-            last_balance: summary?.balance ?? null,
-            last_equity: summary?.equity ?? null,
-            last_currency: summary?.currency ?? null,
-            last_synced_at: new Date().toISOString(),
-            connection_status: "connected",
-          })
+          .update(updatePayload)
           .eq("id", brokerId)
           .eq("user_id", userId)
-        return Response.json({ ok: true, summary, open_positions: openPositions }, { headers: corsHeaders })
+          .select("performance_baseline_balance")
+          .maybeSingle()
+        if (updErr) throw new Error(updErr.message)
+        return Response.json(
+          {
+            ok: true,
+            summary,
+            open_positions: openPositions,
+            performance_baseline_balance: updatedRow?.performance_baseline_balance ?? null,
+          },
+          { headers: corsHeaders },
+        )
       } catch (e) {
         await supabase
           .from("broker_accounts")

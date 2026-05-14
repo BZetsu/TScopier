@@ -73,10 +73,19 @@ export const metatraderApi = {
     })
   },
 
-  summary(brokerId: string): Promise<{ summary: AccountSummary; open_positions: number | null }> {
+  summary(brokerId: string): Promise<{
+    summary: AccountSummary
+    open_positions: number | null
+    performance_baseline_balance?: number | null
+  }> {
     return call({
       body: { action: 'summary', broker_id: brokerId },
-      expect: (b) => b as { summary: AccountSummary; open_positions: number | null },
+      expect: (b) =>
+        b as {
+          summary: AccountSummary
+          open_positions: number | null
+          performance_baseline_balance?: number | null
+        },
     })
   },
 

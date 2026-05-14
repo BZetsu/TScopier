@@ -200,6 +200,11 @@ export interface BrokerAccount {
   last_equity?: number | null
   last_currency?: string | null
   last_synced_at?: string | null
+  /**
+   * Balance at first successful link/summary (TSCopier tracking start).
+   * Dashboard total profit uses current equity minus this baseline per account.
+   */
+  performance_baseline_balance?: number | null
   is_active: boolean
   /** AI uses balance-scaled sizing; Manual uses defaults unless signal specifies lots. */
   copier_mode?: 'ai' | 'manual'

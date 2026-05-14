@@ -25,12 +25,17 @@ interface DashboardStats {
   yesterdayTotalSignals: number
   totalVolume: number
   yesterdayTotalVolume: number
-  totalProfitLoss: number
-  yesterdayTotalProfitLoss: number
-  bestTradeProfit: number | null
-  yesterdayBestTradeProfit: number | null
-  worstTradeProfit: number | null
-  yesterdayWorstTradeProfit: number | null
+  /** Sum of `profit` across all trades (open floating + closed realized) — account-level P/L from the trade list. */
+  /** Sum of (equity − performance_baseline_balance) across linked brokers with a baseline; null if none. */
+  totalProfitLoss: number | null
+  /** Unused for Total P/L (lifetime-style metric has no single yesterday twin); keep null so the UI hides the sub. */
+  yesterdayTotalProfitLoss: number | null
+  /** Largest profit among trades closed today with strictly positive P/L; 0 if none. */
+  bestTradeProfit: number
+  yesterdayBestTradeProfit: number
+  /** Most negative profit among trades closed today; 0 if none. */
+  worstTradeProfit: number
+  yesterdayWorstTradeProfit: number
   todayProfit: number
   yesterdayProfit: number
   mostProfitableChannel: string
@@ -118,6 +123,26 @@ function lotSizeForExpertLogDisplay(row: AiExpertLogRow): number | null {
   if (Number.isFinite(parsedLot) && parsedLot > 0) return parsedLot
 
   return null
+}
+
+/** Sum of (current equity − performance baseline) per linked broker that has a baseline set. */
+function aggregateTotalProfitFromBaselines(
+  accounts: BrokerAccount[],
+  equityResolver: (account: BrokerAccount) => number,
+): number | null {
+  let sum = 0
+  let n = 0
+  for (const a of accounts) {
+    const raw = a.performance_baseline_balance
+    if (raw == null) continue
+    const base = Number(raw)
+    if (!Number.isFinite(base)) continue
+    const eq = equityResolver(a)
+    if (!Number.isFinite(eq)) continue
+    sum += eq - base
+    n++
+  }
+  return n > 0 ? sum : null
 }
 
 function formatLotSizeForMessage(lots: number): string {
@@ -234,12 +259,12 @@ export function DashboardPage() {
     yesterdayTotalSignals: 0,
     totalVolume: 0,
     yesterdayTotalVolume: 0,
-    totalProfitLoss: 0,
-    yesterdayTotalProfitLoss: 0,
-    bestTradeProfit: null,
-    yesterdayBestTradeProfit: null,
-    worstTradeProfit: null,
-    yesterdayWorstTradeProfit: null,
+    totalProfitLoss: null,
+    yesterdayTotalProfitLoss: null,
+    bestTradeProfit: 0,
+    yesterdayBestTradeProfit: 0,
+    worstTradeProfit: 0,
+    yesterdayWorstTradeProfit: 0,
     todayProfit: 0,
     yesterdayProfit: 0,
     mostProfitableChannel: '—',
@@ -258,7 +283,7 @@ export function DashboardPage() {
   const AUTO_REFRESH_MS = 15000
   const BROKER_SUMMARY_REFRESH_MS = 30000
   const MT_TRADES_REFRESH_MS = 30000
-  const DASHBOARD_CACHE_PREFIX = 'dashboard_cache_v4'
+  const DASHBOARD_CACHE_PREFIX = 'dashboard_cache_v6'
   const lastBrokerRefreshRef = useRef<number>(0)
   const lastMtTradesRefreshRef = useRef<number>(0)
   /** Last successful MT trades response, kept across renders so stats survive throttled refresh windows. */
@@ -276,8 +301,13 @@ export function DashboardPage() {
     (Number.isFinite(value as number) ? Number(value) : 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
   const formatVsYesterdayNumber = (todayValue: number | null | undefined, yesterdayValue: number | null | undefined) =>
     `vs yesterday: ${formatNumber(yesterdayValue)} (${((Number.isFinite(todayValue as number) ? Number(todayValue) : 0) - (Number.isFinite(yesterdayValue as number) ? Number(yesterdayValue) : 0)) >= 0 ? '+' : ''}${formatNumber((Number.isFinite(todayValue as number) ? Number(todayValue) : 0) - (Number.isFinite(yesterdayValue as number) ? Number(yesterdayValue) : 0))})`
-  const formatVsYesterdayMoney = (todayValue: number | null | undefined, yesterdayValue: number | null | undefined) =>
-    `vs yesterday: ${formatMoney(yesterdayValue)} (${((Number.isFinite(todayValue as number) ? Number(todayValue) : 0) - (Number.isFinite(yesterdayValue as number) ? Number(yesterdayValue) : 0)) >= 0 ? '+' : ''}${formatMoney((Number.isFinite(todayValue as number) ? Number(todayValue) : 0) - (Number.isFinite(yesterdayValue as number) ? Number(yesterdayValue) : 0))})`
+  const formatVsYesterdayMoney = (todayValue: number | null | undefined, yesterdayValue: number | null | undefined) => {
+    if (yesterdayValue == null) return ''
+    const t = Number.isFinite(todayValue as number) ? Number(todayValue) : 0
+    const y = Number.isFinite(yesterdayValue as number) ? Number(yesterdayValue) : 0
+    const delta = t - y
+    return `vs yesterday: ${formatMoney(yesterdayValue)} (${delta >= 0 ? '+' : ''}${formatMoney(delta)})`
+  }
   const formatVsYesterdayText = (yesterdayValue: string) => `vs yesterday: ${yesterdayValue || '—'}`
 
   useEffect(() => {
@@ -433,22 +463,28 @@ export function DashboardPage() {
 
     const tradesToday = sourceTrades.filter(t => isInRange(t.opened_at, todayStart, tomorrowStart))
     const tradesYesterday = sourceTrades.filter(t => isInRange(t.opened_at, yesterdayStart, todayStart))
-    const totalProfitLoss = tradesToday.reduce((sum, t) => sum + (t.profit ?? 0), 0)
-    const yesterdayTotalProfitLoss = tradesYesterday.reduce((sum, t) => sum + (t.profit ?? 0), 0)
     const totalVolume = tradesToday.reduce((sum, t) => sum + (t.lot_size ?? 0), 0)
     const yesterdayTotalVolume = tradesYesterday.reduce((sum, t) => sum + (t.lot_size ?? 0), 0)
-    const profitableTradesToday = tradesToday.filter(t => typeof t.profit === 'number' && Number.isFinite(t.profit))
-    const profitableTradesYesterday = tradesYesterday.filter(t => typeof t.profit === 'number' && Number.isFinite(t.profit))
-    const bestTradeProfit = profitableTradesToday.length ? Math.max(...profitableTradesToday.map(t => t.profit ?? 0)) : null
-    const yesterdayBestTradeProfit = profitableTradesYesterday.length ? Math.max(...profitableTradesYesterday.map(t => t.profit ?? 0)) : null
-    const worstTradeProfit = profitableTradesToday.length ? Math.min(...profitableTradesToday.map(t => t.profit ?? 0)) : null
-    const yesterdayWorstTradeProfit = profitableTradesYesterday.length ? Math.min(...profitableTradesYesterday.map(t => t.profit ?? 0)) : null
-    const todayProfit = sourceTrades
-      .filter(t => t.status === 'closed' && isInRange(t.closed_at, todayStart, tomorrowStart))
-      .reduce((sum, t) => sum + (t.profit ?? 0), 0)
-    const yesterdayProfit = sourceTrades
-      .filter(t => t.status === 'closed' && isInRange(t.closed_at, yesterdayStart, todayStart))
-      .reduce((sum, t) => sum + (t.profit ?? 0), 0)
+
+    const closedToday = sourceTrades.filter(t => t.status === 'closed' && isInRange(t.closed_at, todayStart, tomorrowStart))
+    const closedYesterdayWindow = sourceTrades.filter(
+      t => t.status === 'closed' && isInRange(t.closed_at, yesterdayStart, todayStart),
+    )
+    const positivePnls = (rows: WindowedTrade[]) =>
+      rows.map(t => t.profit).filter((p): p is number => typeof p === 'number' && Number.isFinite(p) && p > 0)
+    const negativePnls = (rows: WindowedTrade[]) =>
+      rows.map(t => t.profit).filter((p): p is number => typeof p === 'number' && Number.isFinite(p) && p < 0)
+    const posToday = positivePnls(closedToday)
+    const negToday = negativePnls(closedToday)
+    const posYest = positivePnls(closedYesterdayWindow)
+    const negYest = negativePnls(closedYesterdayWindow)
+    const bestTradeProfit = posToday.length ? Math.max(...posToday) : 0
+    const yesterdayBestTradeProfit = posYest.length ? Math.max(...posYest) : 0
+    const worstTradeProfit = negToday.length ? Math.min(...negToday) : 0
+    const yesterdayWorstTradeProfit = negYest.length ? Math.min(...negYest) : 0
+
+    const todayProfit = closedToday.reduce((sum, t) => sum + (t.profit ?? 0), 0)
+    const yesterdayProfit = closedYesterdayWindow.reduce((sum, t) => sum + (t.profit ?? 0), 0)
     const mostTradedAsset = (() => {
       const counts = new Map<string, number>()
       for (const trade of tradesToday) {
@@ -566,6 +602,12 @@ export function DashboardPage() {
         ]
       }),
     ) as Record<string, { balance?: number; equity?: number; currency?: string; broker?: string; mt_server_hint?: string; account_type?: 'Live' | 'Demo'; open_pnl?: number; open_trades?: number }>
+    /** Lifetime-style total vs baseline balance at link (sum of equity − baseline per account). */
+    const yesterdayTotalProfitLoss: number | null = null
+    const totalProfitLoss = aggregateTotalProfitFromBaselines(brokerAccounts, (account) => {
+      const m = balanceMap[account.id]
+      return Number(m?.equity ?? m?.balance ?? account.last_equity ?? account.last_balance ?? Number.NaN)
+    })
     const totalPortfolioValue = brokerAccounts.reduce((sum, account) => {
       const acct = balanceMap[account.id]
       return sum + (acct?.balance ?? 0)
@@ -679,9 +721,15 @@ export function DashboardPage() {
     const yesterday = trades.filter(t => inRange(t.opened_at, yesterday0, today0))
     const closedToday = trades.filter(t => t.status === 'closed' && inRange(t.closed_at, today0, tomorrow0))
     const closedYesterday = trades.filter(t => t.status === 'closed' && inRange(t.closed_at, yesterday0, today0))
-    const profitsToday = today.filter(t => typeof t.profit === 'number')
-    const profitsYesterday = yesterday.filter(t => typeof t.profit === 'number')
-    const topSymbol = (rows: typeof today): string => {
+    const positiveClosed = (rows: typeof trades) =>
+      rows.map(t => t.profit).filter((p): p is number => typeof p === 'number' && p > 0)
+    const negativeClosed = (rows: typeof trades) =>
+      rows.map(t => t.profit).filter((p): p is number => typeof p === 'number' && p < 0)
+    const posToday = positiveClosed(closedToday)
+    const negToday = negativeClosed(closedToday)
+    const posYest = positiveClosed(closedYesterday)
+    const negYest = negativeClosed(closedYesterday)
+    const topSymbol = (rows: typeof trades): string => {
       const counts = new Map<string, number>()
       for (const r of rows) if (r.symbol) counts.set(r.symbol, (counts.get(r.symbol) ?? 0) + 1)
       let best = '—'
@@ -692,14 +740,12 @@ export function DashboardPage() {
 
     setStats(prev => ({
       ...prev,
-      totalProfitLoss: today.reduce((sum, t) => sum + (t.profit ?? 0), 0),
-      yesterdayTotalProfitLoss: yesterday.reduce((sum, t) => sum + (t.profit ?? 0), 0),
       totalVolume: today.reduce((sum, t) => sum + (t.lot_size ?? 0), 0),
       yesterdayTotalVolume: yesterday.reduce((sum, t) => sum + (t.lot_size ?? 0), 0),
-      bestTradeProfit: profitsToday.length ? Math.max(...profitsToday.map(t => t.profit ?? 0)) : null,
-      yesterdayBestTradeProfit: profitsYesterday.length ? Math.max(...profitsYesterday.map(t => t.profit ?? 0)) : null,
-      worstTradeProfit: profitsToday.length ? Math.min(...profitsToday.map(t => t.profit ?? 0)) : null,
-      yesterdayWorstTradeProfit: profitsYesterday.length ? Math.min(...profitsYesterday.map(t => t.profit ?? 0)) : null,
+      bestTradeProfit: posToday.length ? Math.max(...posToday) : 0,
+      yesterdayBestTradeProfit: posYest.length ? Math.max(...posYest) : 0,
+      worstTradeProfit: negToday.length ? Math.min(...negToday) : 0,
+      yesterdayWorstTradeProfit: negYest.length ? Math.min(...negYest) : 0,
       todayProfit: closedToday.reduce((sum, t) => sum + (t.profit ?? 0), 0),
       yesterdayProfit: closedYesterday.reduce((sum, t) => sum + (t.profit ?? 0), 0),
       mostTradedAsset: topSymbol(today),
@@ -731,10 +777,22 @@ export function DashboardPage() {
     const results = await Promise.all(
       mtBrokers.map(async (b) => {
         try {
-          const { summary, open_positions } = await metatraderApi.summary(b.id)
-          return { id: b.id, summary, open_positions, error: null as Error | null }
+          const { summary, open_positions, performance_baseline_balance } = await metatraderApi.summary(b.id)
+          return {
+            id: b.id,
+            summary,
+            open_positions,
+            performance_baseline_balance: performance_baseline_balance ?? null,
+            error: null as Error | null,
+          }
         } catch (err) {
-          return { id: b.id, summary: null, open_positions: null as number | null, error: err instanceof Error ? err : new Error('summary failed') }
+          return {
+            id: b.id,
+            summary: null,
+            open_positions: null as number | null,
+            performance_baseline_balance: null as number | null,
+            error: err instanceof Error ? err : new Error('summary failed'),
+          }
         }
       }),
     )
@@ -797,11 +855,30 @@ export function DashboardPage() {
           }
         }
       }
+      const accountsForTotal = sourceAccounts.map(a => {
+        const row = successes.find(s => s.id === a.id)
+        const fromLive =
+          row?.performance_baseline_balance != null && Number.isFinite(Number(row.performance_baseline_balance))
+            ? Number(row.performance_baseline_balance)
+            : null
+        return {
+          ...a,
+          performance_baseline_balance: fromLive ?? a.performance_baseline_balance ?? null,
+        }
+      })
+      const totalProfitLoss = aggregateTotalProfitFromBaselines(accountsForTotal, account => {
+        const row = successes.find(s => s.id === account.id)
+        const live = row?.summary
+        return Number(
+          live?.equity ?? live?.balance ?? account.last_equity ?? account.last_balance ?? Number.NaN,
+        )
+      })
       return {
         ...prev,
         portfolioValue,
         totalEquity,
         openPnl: sawLivePnl ? openPnl : prev.openPnl,
+        totalProfitLoss,
         ...(sawOpenPosCount ? { openPositions: mtOpenTotal, openTrades: mtOpenTotal } : {}),
       }
     })
@@ -810,8 +887,13 @@ export function DashboardPage() {
     // session cache (and any subsequent re-render) keeps the live numbers.
     setLinkedAccounts(prev =>
       prev.map(b => {
-        const live = successes.find(r => r.id === b.id)?.summary
+        const row = successes.find(r => r.id === b.id)
+        const live = row?.summary
         if (!live) return b
+        const nextBaseline =
+          row.performance_baseline_balance != null && Number.isFinite(Number(row.performance_baseline_balance))
+            ? Number(row.performance_baseline_balance)
+            : b.performance_baseline_balance
         return {
           ...b,
           last_balance: live.balance ?? b.last_balance ?? null,
@@ -819,6 +901,7 @@ export function DashboardPage() {
           last_currency: live.currency ?? b.last_currency ?? null,
           last_synced_at: new Date().toISOString(),
           connection_status: 'connected',
+          performance_baseline_balance: nextBaseline ?? b.performance_baseline_balance,
         }
       }),
     )
@@ -929,10 +1012,10 @@ export function DashboardPage() {
         </div>
         {showExpandedPerformance && (
           <div className="border-t border-neutral-100 p-5 grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <OverviewStat label="Total Profit & Loss" value={loading ? '—' : formatMoney(stats.totalProfitLoss)} sub={loading ? '' : formatVsYesterdayMoney(stats.totalProfitLoss, stats.yesterdayTotalProfitLoss)} />
+            <OverviewStat label="Total Profit & Loss" value={loading ? '—' : stats.totalProfitLoss == null ? '—' : formatMoney(stats.totalProfitLoss)} sub={loading ? '' : stats.totalProfitLoss == null ? 'Equity vs balance when your account was first linked' : formatVsYesterdayMoney(stats.totalProfitLoss, stats.yesterdayTotalProfitLoss)} />
             <OverviewStat label="Total Volume" value={loading ? '—' : formatNumber(stats.totalVolume)} sub={loading ? '' : formatVsYesterdayNumber(stats.totalVolume, stats.yesterdayTotalVolume)} />
-            <OverviewStat label="Best Trade" value={loading ? '—' : (stats.bestTradeProfit == null ? '—' : formatMoney(stats.bestTradeProfit))} sub={loading ? '' : `vs yesterday: ${stats.yesterdayBestTradeProfit == null ? '—' : formatMoney(stats.yesterdayBestTradeProfit)}`} />
-            <OverviewStat label="Worst Trade" value={loading ? '—' : (stats.worstTradeProfit == null ? '—' : formatMoney(stats.worstTradeProfit))} sub={loading ? '' : `vs yesterday: ${stats.yesterdayWorstTradeProfit == null ? '—' : formatMoney(stats.yesterdayWorstTradeProfit)}`} />
+            <OverviewStat label="Best Trade" value={loading ? '—' : formatMoney(stats.bestTradeProfit)} sub={loading ? '' : `vs yesterday: ${formatMoney(stats.yesterdayBestTradeProfit)}`} />
+            <OverviewStat label="Worst Trade" value={loading ? '—' : formatMoney(stats.worstTradeProfit)} sub={loading ? '' : `vs yesterday: ${formatMoney(stats.yesterdayWorstTradeProfit)}`} />
             <OverviewStat label="Today Profit" value={loading ? '—' : formatMoney(stats.todayProfit)} sub={loading ? '' : formatVsYesterdayMoney(stats.todayProfit, stats.yesterdayProfit)} />
             <OverviewStat label="Most Traded Channel" value={loading ? '—' : stats.mostProfitableChannel} sub={loading ? '' : formatVsYesterdayText(stats.yesterdayMostProfitableChannel)} />
             <OverviewStat label="Most Traded Asset" value={loading ? '—' : stats.mostTradedAsset} sub={loading ? '' : formatVsYesterdayText(stats.yesterdayMostTradedAsset)} />
