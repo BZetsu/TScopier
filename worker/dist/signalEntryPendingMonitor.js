@@ -135,11 +135,19 @@ class SignalEntryPendingMonitor {
                         this.missingStreak.delete(row.id);
                         continue;
                     }
+                    // Do not infer a fill from ambiguous rows (would mark trade open, insert
+                    // partial_tp_legs, then partialTpMonitor can /OrderClose the pending ticket).
+                    if (!(0, signalEntryPendingHelpers_1.isLikelyMarketPositionRow)(hit)) {
+                        this.missingStreak.delete(row.id);
+                        continue;
+                    }
                     const px = extractOpenPrice(hit);
                     if (px != null) {
                         this.missingStreak.delete(row.id);
+                        const posTicket = (0, signalEntryPendingHelpers_1.rawOrderTicket)(hit);
                         await (0, signalEntryPendingHelpers_1.markSignalEntryFilled)(this.supabase, row, px, {
                             partialTpPlan: parsePartialTpPlan(row.partial_tp_plan),
+                            brokerPositionTicket: posTicket > 0 ? String(posTicket) : undefined,
                         });
                         continue;
                     }
@@ -171,6 +179,7 @@ class SignalEntryPendingMonitor {
                         this.missingStreak.delete(row.id);
                         await (0, signalEntryPendingHelpers_1.markSignalEntryFilled)(this.supabase, row, px, {
                             partialTpPlan: parsePartialTpPlan(row.partial_tp_plan),
+                            brokerPositionTicket: c.brokerTicket != null && c.brokerTicket > 0 ? String(c.brokerTicket) : undefined,
                         });
                         continue;
                     }

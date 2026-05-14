@@ -19,13 +19,54 @@ export function rawOrderTicket(o: Record<string, unknown>): number {
 }
 
 export function rawOrderOperation(o: Record<string, unknown>): string {
-  return String(o.operation ?? o.Operation ?? o.type ?? o.Type ?? '').toLowerCase()
+  return String(o.operation ?? o.Operation ?? '').toLowerCase()
 }
 
-/** True when /OpenedOrders row is a pending stop/limit entry (not a net position row). */
+function rawNumericOrderKind(o: Record<string, unknown>): number | undefined {
+  const pick = (v: unknown): number | undefined => {
+    if (typeof v === 'number' && Number.isFinite(v)) return v
+    if (typeof v === 'string' && v.trim()) {
+      const n = Number(v)
+      if (Number.isFinite(n)) return n
+    }
+    return undefined
+  }
+  return pick(o.type ?? o.Type ?? o.orderType ?? o.OrderType ?? o.cmd ?? o.Cmd)
+}
+
+/**
+ * True when /OpenedOrders row is a pending stop/limit entry (not a net position row).
+ *
+ * MetaTrader / REST shims often omit "limit" from `operation` and only send a
+ * numeric `type` / `orderType` (MT4: BuyLimit=2, SellLimit=3, BuyStop=4, SellStop=5).
+ * Missing that caused false "fills" while the broker pending was still live — then
+ * `partialTpMonitor` called /OrderClose on the pending ticket and cancelled it.
+ */
 export function isPendingEntryRow(o: Record<string, unknown>): boolean {
   const op = rawOrderOperation(o)
-  return op.includes('limit') || op.includes('stop')
+  if (op.includes('limit') || op.includes('stop')) return true
+  const ot = String(o.orderType ?? o.OrderType ?? '').toLowerCase()
+  if (ot.includes('limit') || ot.includes('stop')) return true
+  const t = rawNumericOrderKind(o)
+  if (t != null && t >= 2 && t <= 5) return true
+  if (o.pending === true || o.isPending === true) return true
+  const st = String(o.state ?? o.State ?? '').toLowerCase()
+  if (st === 'placed') return true
+  return false
+}
+
+/**
+ * True when the row looks like an executed market **position** in /OpenedOrders,
+ * not a resting pending. Used to avoid treating ambiguous API rows as fills.
+ */
+export function isLikelyMarketPositionRow(o: Record<string, unknown>): boolean {
+  if (isPendingEntryRow(o)) return false
+  const op = rawOrderOperation(o).replace(/\s+/g, '')
+  if (op.includes('limit') || op.includes('stop')) return false
+  if (op === 'buy' || op === 'sell') return true
+  const t = rawNumericOrderKind(o)
+  if (t === 0 || t === 1) return true
+  return false
 }
 
 export function findOpenedRowByTicket(orders: unknown[], ticket: number): Record<string, unknown> | null {
@@ -45,7 +86,7 @@ export function findOpenedRowByTicket(orders: unknown[], ticket: number): Record
 export function findClosedRowForTicket(
   closed: unknown[],
   ticket: number,
-): { openPrice?: number; profit?: number; state?: string } | null {
+): { openPrice?: number; profit?: number; state?: string; brokerTicket?: number } | null {
   if (!Number.isFinite(ticket) || ticket <= 0) return null
   for (const raw of closed ?? []) {
     if (!raw || typeof raw !== 'object') continue
@@ -59,10 +100,12 @@ export function findClosedRowForTicket(
       }
       return undefined
     }
+    const brokerTicket = rawOrderTicket(o)
     return {
       openPrice: num(o.openPrice ?? o.OpenPrice ?? o.price ?? o.Price ?? o.priceOpen ?? o.PriceOpen),
       profit: num(o.profit ?? o.Profit),
       state: typeof o.state === 'string' ? o.state : typeof o.State === 'string' ? String(o.State) : undefined,
+      brokerTicket: brokerTicket > 0 ? brokerTicket : undefined,
     }
   }
   return null
@@ -140,6 +183,8 @@ export async function markSignalEntryFilled(
   fillPrice: number,
   opts?: {
     partialTpPlan?: Array<{ tpIdx: number; triggerPrice: number; closeLots: number }> | null
+    /** When the broker exposes the live position ticket after fill, persist it for partialTpMonitor. */
+    brokerPositionTicket?: string | null
   },
 ): Promise<void> {
   const now = new Date().toISOString()
@@ -151,9 +196,16 @@ export async function markSignalEntryFilled(
     .eq('status', 'broker_pending')
 
   if (row.trade_id) {
+    const ticket = opts?.brokerPositionTicket?.trim()
+    const useTicket = ticket && /^\d+$/.test(ticket) && Number(ticket) > 0
     await supabase
       .from('trades')
-      .update({ status: 'open', entry_price: px, opened_at: now })
+      .update({
+        status: 'open',
+        entry_price: px,
+        opened_at: now,
+        ...(useTicket ? { metaapi_order_id: ticket } : {}),
+      })
       .eq('id', row.trade_id)
       .eq('status', 'pending')
   }

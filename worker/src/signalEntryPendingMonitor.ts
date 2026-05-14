@@ -7,9 +7,11 @@ import {
   cancelSignalEntryRowAtBroker,
   findClosedRowForTicket,
   findOpenedRowByTicket,
+  isLikelyMarketPositionRow,
   isPendingEntryRow,
   markSignalEntryFilled,
   markSignalEntryGoneFromBroker,
+  rawOrderTicket,
   type SignalEntryPendingRow,
 } from './signalEntryPendingHelpers'
 
@@ -156,11 +158,19 @@ export class SignalEntryPendingMonitor {
             this.missingStreak.delete(row.id)
             continue
           }
+          // Do not infer a fill from ambiguous rows (would mark trade open, insert
+          // partial_tp_legs, then partialTpMonitor can /OrderClose the pending ticket).
+          if (!isLikelyMarketPositionRow(hit)) {
+            this.missingStreak.delete(row.id)
+            continue
+          }
           const px = extractOpenPrice(hit)
           if (px != null) {
             this.missingStreak.delete(row.id)
+            const posTicket = rawOrderTicket(hit)
             await markSignalEntryFilled(this.supabase, row, px, {
               partialTpPlan: parsePartialTpPlan(row.partial_tp_plan),
+              brokerPositionTicket: posTicket > 0 ? String(posTicket) : undefined,
             })
             continue
           }
@@ -198,6 +208,8 @@ export class SignalEntryPendingMonitor {
             this.missingStreak.delete(row.id)
             await markSignalEntryFilled(this.supabase, row, px, {
               partialTpPlan: parsePartialTpPlan(row.partial_tp_plan),
+              brokerPositionTicket:
+                c.brokerTicket != null && c.brokerTicket > 0 ? String(c.brokerTicket) : undefined,
             })
             continue
           }
