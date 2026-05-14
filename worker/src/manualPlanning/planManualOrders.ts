@@ -100,14 +100,12 @@ export function planManualOrders(args: {
 
   const manualStrict = signalEntryPriceStrictEnabled(manual)
   const hasExplicitEntry = parsedHasExplicitEntryAnchor(parsed)
-  const isMulti = manual.trade_style === 'multi'
 
   const { orderBase, expirationFields, strictEntry } = resolveOpExecAndStrict({
     opSplit,
     isBuy,
     entryAnchor,
     manualStrict,
-    isMulti,
     hasExplicitEntry,
     roundPrice,
     resolvedSymbol,
@@ -118,7 +116,7 @@ export function planManualOrders(args: {
     pendingExpiryRaw: manual.pending_expiry_hours,
   })
 
-  const tradeStyle = isMulti ? 'multi' : 'single'
+  const tradeStyle = manual.trade_style === 'multi' ? 'multi' : 'single'
 
   const singleShared = {
     orderBase,

@@ -18,7 +18,6 @@ function op(
     isBuy: boolean
     entryAnchor: number | null
     manualStrict: boolean
-    isMulti: boolean
     hasExplicitEntry: boolean
   },
 ) {
@@ -31,7 +30,6 @@ test('resolveOpExecAndStrict: strict + explicit entry → market Buy/Sell', () =
     isBuy: true,
     entryAnchor: 1.1,
     manualStrict: true,
-    isMulti: false,
     hasExplicitEntry: true,
   })
   assert.equal(r.opExec, 'Buy')
@@ -40,31 +38,17 @@ test('resolveOpExecAndStrict: strict + explicit entry → market Buy/Sell', () =
   assert.equal(r.strictEntry?.entryPrice, 1.1)
 })
 
-test('resolveOpExecAndStrict: strict off + single + BuyLimit → market', () => {
+test('resolveOpExecAndStrict: strict off + BuyLimit → market (single and multi)', () => {
   const r = op({
     opSplit: 'BuyLimit',
     isBuy: true,
     entryAnchor: 1.1,
     manualStrict: false,
-    isMulti: false,
     hasExplicitEntry: true,
   })
   assert.equal(r.opExec, 'Buy')
   assert.equal(r.orderPrice, 0)
   assert.equal(r.strictEntry, undefined)
-})
-
-test('resolveOpExecAndStrict: multi ignores single-trade pending downgrade', () => {
-  const r = op({
-    opSplit: 'BuyLimit',
-    isBuy: true,
-    entryAnchor: 1.1,
-    manualStrict: false,
-    isMulti: true,
-    hasExplicitEntry: true,
-  })
-  assert.equal(r.opExec, 'BuyLimit')
-  assert.ok(r.orderPrice > 0)
 })
 
 test('resolveOpExecAndStrict: strict without anchor does not force market op', () => {
@@ -73,20 +57,18 @@ test('resolveOpExecAndStrict: strict without anchor does not force market op', (
     isBuy: true,
     entryAnchor: null,
     manualStrict: true,
-    isMulti: false,
     hasExplicitEntry: false,
   })
   assert.equal(r.opExec, 'BuyLimit')
 })
 
-test('resolveOpExecAndStrict: pending gets expiration when hours > 0', () => {
+test('resolveOpExecAndStrict: pending keeps expiration when strict leaves BuyLimit', () => {
   const r = op({
     opSplit: 'BuyLimit',
     isBuy: true,
-    entryAnchor: 1.1,
-    manualStrict: false,
-    isMulti: true,
-    hasExplicitEntry: true,
+    entryAnchor: null,
+    manualStrict: true,
+    hasExplicitEntry: false,
     pendingExpiryRaw: 2,
   })
   assert.ok(r.expirationFields.expiration)
@@ -99,7 +81,6 @@ test('resolveOpExecAndStrict: market has no expiration', () => {
     isBuy: true,
     entryAnchor: 1.1,
     manualStrict: true,
-    isMulti: false,
     hasExplicitEntry: true,
   })
   assert.equal(r.expirationFields.expiration, undefined)

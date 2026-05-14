@@ -70,13 +70,11 @@ function planManualOrders(args) {
     });
     const manualStrict = (0, manualSettings_1.signalEntryPriceStrictEnabled)(manual);
     const hasExplicitEntry = (0, parsedEntry_1.parsedHasExplicitEntryAnchor)(parsed);
-    const isMulti = manual.trade_style === 'multi';
     const { orderBase, expirationFields, strictEntry } = (0, executionShape_1.resolveOpExecAndStrict)({
         opSplit,
         isBuy,
         entryAnchor,
         manualStrict,
-        isMulti,
         hasExplicitEntry,
         roundPrice,
         resolvedSymbol,
@@ -86,7 +84,7 @@ function planManualOrders(args) {
         now,
         pendingExpiryRaw: manual.pending_expiry_hours,
     });
-    const tradeStyle = isMulti ? 'multi' : 'single';
+    const tradeStyle = manual.trade_style === 'multi' ? 'multi' : 'single';
     const singleShared = {
         orderBase,
         expirationFields,

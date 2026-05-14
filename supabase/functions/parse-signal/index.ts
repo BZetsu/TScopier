@@ -481,7 +481,7 @@ function parseDeterministicManagement(
 
 /**
  * Pulls entry price / zone from common channel text patterns (ENTRY 2650, @2650, zones, etc.).
- * Shared so "BUY … NOW / MARKET" simple signals still retain an anchor when the same line lists one.
+ * Shared so "BUY … NOW / MARKET" and "BUY … SYMBOL PRICE" (no market word) still retain an anchor when the line lists one.
  */
 function extractOptionalEntryAnchor(
   message: string,
@@ -537,13 +537,14 @@ function extractOptionalEntryAnchor(
       }
     }
     // Common signal shapes that omit "entry" / "@" labels but still carry a single anchor:
-    //   "BUY XAUUSD NOW 2650", "BUY GOLD 2645.5 MARKET", "SELL BTCUSD 98000 NOW"
+    //   "BUY XAUUSD NOW 2650", "BUY GOLD 2645.5 MARKET", "SELL BTCUSD 98000 NOW",
+    //   "BUY XAUUSD 2650" / "SELL GOLD 2645.5" (market word optional — same anchor as with NOW).
     if (entry_price == null && entry_zone_low == null) {
-      const symPriceThenMarket = text.match(
-        /\b(?:xauusd|xagusd|gold|silver|btcusd|btcusdt|ethusd|ethusdt|eurusd|gbpusd|usdjpy|us30|nas100)\s+(\d{3,}(?:\.\d+)?)\s+(?:now|instant|market|mkt)\b/i,
+      const symPriceOptionalMarket = text.match(
+        /\b(?:xauusd|xagusd|gold|silver|btcusd|btcusdt|ethusd|ethusdt|eurusd|gbpusd|usdjpy|us30|nas100)\s+(\d{3,}(?:\.\d+)?)(?:\s+(?:now|instant|market|mkt))?\b/i,
       )
-      if (symPriceThenMarket?.[1]) {
-        const n = Number(symPriceThenMarket[1])
+      if (symPriceOptionalMarket?.[1]) {
+        const n = Number(symPriceOptionalMarket[1])
         if (Number.isFinite(n) && n > 0) entry_price = n
       }
     }
@@ -598,8 +599,14 @@ function parseSimpleSignal(
   const isNow = parseSideFromKeywords(message, marketAliases)
   const atMarketLike = /\b(at\s+market|@\s*market)\b/i.test(message)
 
-  if (!isNow && !atMarketLike) return null
   if (isBuy === isSell) return null
+
+  const entryAnchor = extractOptionalEntryAnchor(message, channelKeywords)
+  const hasExplicitEntry =
+    entryAnchor.entry_price != null ||
+    (entryAnchor.entry_zone_low != null && entryAnchor.entry_zone_high != null)
+
+  if (!isNow && !atMarketLike && !hasExplicitEntry) return null
 
   const instrument = extractTradableSymbolFromMessage(message)
   if (!instrument) return null
@@ -623,7 +630,7 @@ function parseSimpleSignal(
   ]
   const tp = extractTpLevels(message, extraTp)
 
-  const { entry_price, entry_zone_low, entry_zone_high } = extractOptionalEntryAnchor(message, channelKeywords)
+  const { entry_price, entry_zone_low, entry_zone_high } = entryAnchor
 
   return {
     action: isBuy ? "buy" : "sell",

@@ -31,14 +31,16 @@ function strictSignalEntryQuoteAllowsImmediate(args) {
  * Owns the decision table for `opSplit` → `opExec`, `orderPrice`, `strictEntry`, and pending `expiration`.
  */
 function resolveOpExecAndStrict(args) {
-    const { opSplit, isBuy, entryAnchor, manualStrict, isMulti, hasExplicitEntry, roundPrice, resolvedSymbol, commentPrefix, expertId, slippage, now, pendingExpiryRaw, } = args;
+    const { opSplit, isBuy, entryAnchor, manualStrict, hasExplicitEntry, roundPrice, resolvedSymbol, commentPrefix, expertId, slippage, now, pendingExpiryRaw, } = args;
     let opExec = opSplit;
     if (manualStrict && hasExplicitEntry && entryAnchor != null) {
         opExec = isBuy ? 'Buy' : 'Sell';
     }
-    else if (!isMulti
-        && !manualStrict
+    else if (!manualStrict
         && (opSplit.includes('Limit') || opSplit.includes('Stop'))) {
+        // Single- and multi-trade immediates: never send broker pendings here — MT often
+        // rejects "Invalid price" when the parsed limit/stop price is on the wrong side
+        // of the live quote. Virtual range legs still key off `opSplit` in planMulti.
         opExec = isBuy ? 'Buy' : 'Sell';
     }
     const isMarketExec = opExec === 'Buy' || opExec === 'Sell';

@@ -37,8 +37,6 @@ export interface ResolveOpExecAndStrictArgs {
   entryAnchor: number | null
   /** `signalEntryPriceStrictEnabled(manual)` */
   manualStrict: boolean
-  /** `manual.trade_style === 'multi'` */
-  isMulti: boolean
   /** `parsedHasExplicitEntryAnchor(parsed)` */
   hasExplicitEntry: boolean
   roundPrice: (v: number | null | undefined) => number
@@ -68,7 +66,6 @@ export function resolveOpExecAndStrict(args: ResolveOpExecAndStrictArgs): Resolv
     isBuy,
     entryAnchor,
     manualStrict,
-    isMulti,
     hasExplicitEntry,
     roundPrice,
     resolvedSymbol,
@@ -83,10 +80,12 @@ export function resolveOpExecAndStrict(args: ResolveOpExecAndStrictArgs): Resolv
   if (manualStrict && hasExplicitEntry && entryAnchor != null) {
     opExec = isBuy ? 'Buy' : 'Sell'
   } else if (
-    !isMulti
-    && !manualStrict
+    !manualStrict
     && (opSplit.includes('Limit') || opSplit.includes('Stop'))
   ) {
+    // Single- and multi-trade immediates: never send broker pendings here — MT often
+    // rejects "Invalid price" when the parsed limit/stop price is on the wrong side
+    // of the live quote. Virtual range legs still key off `opSplit` in planMulti.
     opExec = isBuy ? 'Buy' : 'Sell'
   }
 

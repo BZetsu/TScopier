@@ -231,6 +231,24 @@ test('planManualOrders: range off → no virtualPendings', () => {
   assert.equal(plan.orders.length, 10) // all 10 legs are immediates
 })
 
+test('planManualOrders: multi + BuyLimit → market immediates (price 0; avoids MT invalid pending price)', () => {
+  const plan = planManualOrders({
+    parsed: { ...baseParsed, entry_price: 2650 },
+    resolvedSymbol: 'XAUUSD',
+    baseOperation: 'BuyLimit',
+    manual: { ...baseManual, range_trading: false },
+    channelKeywords: null,
+    manualLot: 1.0,
+    ctx: baseCtx,
+    commentPrefix: 'TSCopier:abc',
+  })
+  assert.equal(plan.orders.length, 10)
+  for (const o of plan.orders) {
+    assert.equal(o.operation, 'Buy')
+    assert.equal(o.price, 0)
+  }
+})
+
 test('planManualOrders: CWE policy emitted with extraPendings clamped', () => {
   const plan = planManualOrders({
     parsed: { ...baseParsed, entry_price: 1850 },
