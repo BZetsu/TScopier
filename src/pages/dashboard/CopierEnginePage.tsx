@@ -770,7 +770,7 @@ function ChannelRow({
   const username = channel.channel_username?.replace(/^@/, '') || undefined
 
   return (
-    <div className="hover:bg-neutral-50 dark:bg-neutral-800/50/80 transition-colors">
+    <div className="hover:bg-neutral-50 dark:bg-neutral-800/80 transition-colors">
       <div className="flex items-center gap-3 px-4 py-3">
         <TgChannelAvatar title={channel.display_name} username={username} />
         <div className="min-w-0 flex-1">
@@ -792,7 +792,7 @@ function ChannelRow({
           </button>
         </div>
       </div>
-      <div className="border-t border-neutral-100 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/50/60 px-4 py-2.5">
+      <div className="border-t border-neutral-100 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/60 px-4 py-2.5">
         {isAnalyzing ? (
           <div>
             <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-1.5">

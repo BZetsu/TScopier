@@ -366,7 +366,7 @@ function AccountDetailCell({
 }) {
   return (
     <div className={clsx('min-w-0 px-4 py-2.5', className)}>
-      <p className="text-[10px] font-medium uppercase tracking-wide text-neutral-400">{label}</p>
+      <p className="text-[10px] font-medium uppercase tracking-wide text-neutral-400 dark:text-neutral-500">{label}</p>
       <p className="mt-0.5 text-sm text-neutral-900 dark:text-neutral-50 truncate" title={typeof value === 'string' ? value : undefined}>
         {value}
       </p>
@@ -975,9 +975,9 @@ export function AccountConfigPage() {
 
         {brokers.length === 0 ? (
           <div className="bg-white dark:bg-neutral-900 rounded-xl border border-dashed border-neutral-200 dark:border-neutral-800 py-8 text-center">
-            <Server className="w-8 h-8 mx-auto mb-2 text-neutral-300" />
-            <p className="text-sm text-neutral-400">No accounts connected yet</p>
-            <p className="text-xs text-neutral-300 mt-0.5">Add your trading account to get started</p>
+            <Server className="w-8 h-8 mx-auto mb-2 text-neutral-300 dark:text-neutral-600" />
+            <p className="text-sm text-neutral-400 dark:text-neutral-500">No accounts connected yet</p>
+            <p className="text-xs text-neutral-300 dark:text-neutral-600 mt-0.5">Add your trading account to get started</p>
           </div>
         ) : (
           <div className="space-y-3">
@@ -998,7 +998,7 @@ export function AccountConfigPage() {
                 <Card key={broker.id} padding="none" className="overflow-hidden">
                   <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
                     <div className="flex min-w-0 items-center gap-3">
-                      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-primary-50">
+                      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-primary-50 dark:bg-teal-950/60">
                         <PlatformIcon platform={broker.platform} />
                       </div>
                       <div className="min-w-0">
@@ -1019,21 +1019,21 @@ export function AccountConfigPage() {
                       <button
                         type="button"
                         onClick={() => openConfigureModal(broker)}
-                        className="rounded-lg border border-neutral-200 dark:border-neutral-800 px-3 py-1.5 text-xs font-medium text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:bg-neutral-800/50 transition-colors"
+                        className="rounded-lg border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 px-3 py-1.5 text-xs font-medium text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-700 transition-colors"
                       >
                         Configure
                       </button>
                       <button
                         type="button"
                         onClick={() => { setError(''); setBrokerPendingDelete(broker) }}
-                        className="rounded-lg p-1.5 text-neutral-400 hover:bg-error-50 hover:text-error-600 transition-colors"
+                        className="rounded-lg p-1.5 text-neutral-400 dark:text-neutral-500 hover:bg-error-50 dark:hover:bg-error-950/40 hover:text-error-600 dark:hover:text-error-400 transition-colors"
                         aria-label={`Remove ${broker.label}`}
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 border-t border-neutral-100 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/50/60 lg:grid-cols-5">
+                  <div className="grid grid-cols-2 border-t border-neutral-100 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/60 lg:grid-cols-5">
                     <AccountDetailCell label="Login" value={broker.account_login || '—'} />
                     <AccountDetailCell
                       label="Server"
@@ -1334,7 +1334,7 @@ export function AccountConfigPage() {
                                     />
                                   </div>
                                   {configDraft.manualSettings.use_signal_entry_price && (
-                                    <div className="border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/50/80 px-3 py-3 space-y-2">
+                                    <div className="border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/80 px-3 py-3 space-y-2">
                                       <p className="text-xs text-neutral-500 dark:text-neutral-400">
                                         <strong>Pip tolerance</strong> is legacy and no longer affects execution; strict entry uses the exact parsed entry price and live bid/ask as above.
                                       </p>
@@ -1368,7 +1368,7 @@ export function AccountConfigPage() {
                                     />
                                   </div>
                                   {configDraft.manualSettings.trailing_enabled && (
-                                    <div className="border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/50/80 px-3 py-3">
+                                    <div className="border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/80 px-3 py-3">
                                       <p className="text-xs font-medium text-neutral-600 dark:text-neutral-400 mb-2">Trailing settings</p>
                                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                                         <Input
@@ -1674,7 +1674,7 @@ export function AccountConfigPage() {
                               </div>
 
                               {autoMgmtEnabled && (
-                                <div className="border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/50/80 px-3 py-3 space-y-4">
+                                <div className="border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/80 px-3 py-3 space-y-4">
                                   <div className="space-y-3">
                                     <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">Move SL to breakeven after</p>
                                     <Select
@@ -1776,8 +1776,8 @@ export function AccountConfigPage() {
                                         className={clsx(
                                           'rounded-lg border px-3 py-2.5 text-left text-sm transition-colors',
                                           beType === 'sl_only'
-                                            ? 'border-primary-500 bg-primary-50 text-primary-900'
-                                            : 'border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 hover:border-neutral-300',
+                                            ? 'border-primary-500 bg-primary-50 dark:bg-teal-950/50 text-primary-900 dark:text-teal-300'
+                                            : 'border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 hover:border-neutral-300 dark:hover:border-neutral-600',
                                         )}
                                       >
                                         <span className="font-medium">Move Only</span>
@@ -1791,8 +1791,8 @@ export function AccountConfigPage() {
                                         className={clsx(
                                           'rounded-lg border px-3 py-2.5 text-left text-sm transition-colors',
                                           beType === 'sl_and_close_half'
-                                            ? 'border-primary-500 bg-primary-50 text-primary-900'
-                                            : 'border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 hover:border-neutral-300',
+                                            ? 'border-primary-500 bg-primary-50 dark:bg-teal-950/50 text-primary-900 dark:text-teal-300'
+                                            : 'border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 hover:border-neutral-300 dark:hover:border-neutral-600',
                                         )}
                                       >
                                         <span className="font-medium">Move SL and Close Half</span>
@@ -1924,7 +1924,7 @@ export function AccountConfigPage() {
                                     />
                                   </div>
                                   {configDraft.manualSettings.use_predefined_sl_pips && (
-                                    <div className="border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/50/80 px-3 py-3 space-y-1">
+                                    <div className="border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/80 px-3 py-3 space-y-1">
                                       <Input
                                         label="Predefined SL Pips"
                                         type="number"
@@ -1967,7 +1967,7 @@ export function AccountConfigPage() {
                                     />
                                   </div>
                                   {configDraft.manualSettings.use_predefined_tp_pips && (
-                                    <div className="border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/50/80 px-3 py-3 space-y-3">
+                                    <div className="border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/80 px-3 py-3 space-y-3">
                                       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                                         <p className="text-xs text-neutral-600 dark:text-neutral-400">
                                           Distance from entry to each take-profit, in pips (TP1, TP2, …). Same pattern as{' '}
@@ -2015,7 +2015,7 @@ export function AccountConfigPage() {
                                     />
                                   </div>
                                   {configDraft.manualSettings.rr_for_sl_enabled && (
-                                    <div className="border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/50/80 px-3 py-3 space-y-1">
+                                    <div className="border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/80 px-3 py-3 space-y-1">
                                       <Input
                                         label="SL R:R"
                                         type="number"
@@ -2036,7 +2036,7 @@ export function AccountConfigPage() {
                                     />
                                   </div>
                                   {configDraft.manualSettings.rr_for_tps_enabled && (
-                                    <div className="border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/50/80 px-3 py-3 space-y-1">
+                                    <div className="border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/80 px-3 py-3 space-y-1">
                                       <Input
                                         label="TP R:R values (comma)"
                                         hint="When TPs are omitted but SL exists: each TP = entry ± (entry→SL distance) × each ratio. Predefined pip TPs (if on) and channel TPs override this."

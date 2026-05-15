@@ -252,7 +252,7 @@ function TradesPagination({
   }, [page, totalPages])
 
   return (
-    <div className="flex flex-col gap-3 px-4 py-3 border-t border-neutral-100 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/50/50 sm:flex-row sm:items-center sm:justify-between">
+    <div className="flex flex-col gap-3 px-4 py-3 border-t border-neutral-100 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/50 sm:flex-row sm:items-center sm:justify-between">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <label className="inline-flex items-center gap-2 text-sm text-neutral-600 dark:text-neutral-400">
           <span className="font-medium text-neutral-700 dark:text-neutral-300">Show</span>
