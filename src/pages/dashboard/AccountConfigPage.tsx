@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Plus, Trash2, Server, Activity, GitBranch, Eye, DollarSign,
-  SlidersHorizontal, Radio, Target, TrendingUp, Filter, Wallet,
+  SlidersHorizontal, Radio, Target, Filter, Wallet,
   ArrowLeftRight, ChevronDown, Brain, Settings2,
 } from 'lucide-react'
 import clsx from 'clsx'
@@ -405,7 +405,7 @@ const MANUAL_SUB_TABS: ManualSubTabDef[] = [
   { id: 'symbol_routing', label: 'Symbol Routing', icon: ArrowLeftRight },
   { id: 'risk', label: 'Risk & Entry', icon: Wallet },
   { id: 'stops', label: 'Targets', icon: Target },
-  { id: 'management', label: 'Management', icon: Settings2 },
+  { id: 'management', label: 'Auto-Management', icon: Settings2 },
   { id: 'filters', label: 'Filters', icon: Filter },
   { id: 'strategy', label: 'Strategy', icon: Brain },
 ]
@@ -1342,6 +1342,7 @@ export function AccountConfigPage() {
                             </div>
 
                             {configDraft.manualSettings.trade_style !== 'multi' && (
+                              <div className="space-y-4">
                               <div className="rounded-lg border border-neutral-200 p-3 space-y-3">
                                 <p className="text-sm font-medium text-neutral-800">Signal entry execution</p>
                                 <p className="text-xs text-neutral-500">
@@ -1369,6 +1370,55 @@ export function AccountConfigPage() {
                                         value={String(configDraft.manualSettings.signal_entry_pip_tolerance ?? 10)}
                                         onChange={e => setManual({ signal_entry_pip_tolerance: Math.max(0, Number(e.target.value) || 0) })}
                                       />
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+
+                              <div className="rounded-md border border-neutral-200 overflow-hidden">
+                                  <div className="flex items-center justify-between gap-3 bg-white px-3 py-2.5">
+                                    <div>
+                                      <p className="text-sm font-medium text-neutral-800 flex items-center gap-2">
+                                        Trailing stop
+                                      </p>
+                                      <p className="text-xs text-neutral-500 mt-0.5">
+                                        Moves stop loss as price moves in your favor after trail start is reached.
+                                      </p>
+                                    </div>
+                                    <Toggle
+                                      checked={configDraft.manualSettings.trailing_enabled === true}
+                                      onChange={v => setManual({ trailing_enabled: v })}
+                                    />
+                                  </div>
+                                  {configDraft.manualSettings.trailing_enabled && (
+                                    <div className="border-t border-neutral-200 bg-neutral-50/80 px-3 py-3">
+                                      <p className="text-xs font-medium text-neutral-600 mb-2">Trailing settings</p>
+                                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                        <Input
+                                          label="Trail Start (pips)"
+                                          type="number"
+                                          min={0}
+                                          step={1}
+                                          value={String(configDraft.manualSettings.trailing_start_pips ?? 20)}
+                                          onChange={e => setManual({ trailing_start_pips: Math.max(0, Number(e.target.value) || 0) })}
+                                        />
+                                        <Input
+                                          label="Trail Step (pips)"
+                                          type="number"
+                                          min={0}
+                                          step={1}
+                                          value={String(configDraft.manualSettings.trailing_step_pips ?? 5)}
+                                          onChange={e => setManual({ trailing_step_pips: Math.max(0, Number(e.target.value) || 0) })}
+                                        />
+                                        <Input
+                                          label="Trail Distance (pips)"
+                                          type="number"
+                                          min={0}
+                                          step={1}
+                                          value={String(configDraft.manualSettings.trailing_distance_pips ?? 10)}
+                                          onChange={e => setManual({ trailing_distance_pips: Math.max(0, Number(e.target.value) || 0) })}
+                                        />
+                                      </div>
                                     </div>
                                   )}
                                 </div>
@@ -1627,109 +1677,183 @@ export function AccountConfigPage() {
                           </div>
                         )}
 
-                        {activeManualSubTab === 'management' && (
-                          <div className="space-y-6">
+                        {activeManualSubTab === 'management' && (() => {
+                          const ms = configDraft.manualSettings
+                          const autoMgmtEnabled = (ms.move_sl_to_entry_after_mode ?? 'none') !== 'none'
+                          const triggerMode = ms.move_sl_to_entry_after_mode ?? 'pips'
+                          const beType = ms.move_sl_to_entry_type ?? 'sl_only'
+                          const tpRows = ms.tp_lots ?? DEFAULT_MANUAL_TP_LOTS
+                          const tpSelectOptions = tpRows
+                            .map((row, i) => ({
+                              value: String(i + 1),
+                              label: row.label?.trim() || `TP${i + 1}`,
+                            }))
+                            .filter((_, i) => tpRows[i]?.enabled !== false)
+                          const tpOptions = tpSelectOptions.length > 0
+                            ? tpSelectOptions
+                            : [{ value: '1', label: 'TP1' }, { value: '2', label: 'TP2' }, { value: '3', label: 'TP3' }]
+
+                          return (
+                          <div className="space-y-4">
                             <div className="rounded-md border border-neutral-200 overflow-hidden">
                               <div className="flex items-center justify-between gap-3 bg-white px-3 py-2.5">
                                 <div>
-                                  <p className="text-sm font-medium text-neutral-800 flex items-center gap-2">
-                                    <TrendingUp className="h-4 w-4 text-neutral-600" aria-hidden />
-                                    Trailing stop
-                                  </p>
+                                  <p className="text-sm font-medium text-neutral-800">Auto-management</p>
                                   <p className="text-xs text-neutral-500 mt-0.5">
-                                    Single Trade mode only. Moves stop loss as price moves in your favor.
+                                    Automatically move stop loss to breakeven when your trigger condition is met.
                                   </p>
                                 </div>
                                 <Toggle
-                                  checked={configDraft.manualSettings.trailing_enabled === true}
-                                  onChange={v => setManual({ trailing_enabled: v })}
+                                  checked={autoMgmtEnabled}
+                                  onChange={v => {
+                                    if (v) {
+                                      const prev = ms.move_sl_to_entry_after_mode
+                                      setManual({
+                                        move_sl_to_entry_after_mode:
+                                          prev && prev !== 'none' ? prev : 'pips',
+                                      })
+                                    } else {
+                                      setManual({ move_sl_to_entry_after_mode: 'none' })
+                                    }
+                                  }}
                                 />
                               </div>
-                              {configDraft.manualSettings.trailing_enabled && (
-                                <div className="border-t border-neutral-200 bg-neutral-50/80 px-3 py-3">
-                                  <p className="text-xs font-medium text-neutral-600 mb-2">Trailing settings</p>
-                                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+
+                              {autoMgmtEnabled && (
+                                <div className="border-t border-neutral-200 bg-neutral-50/80 px-3 py-3 space-y-4">
+                                  <div className="space-y-3">
+                                    <p className="text-sm font-medium text-neutral-800">Move SL to breakeven after</p>
+                                    <Select
+                                      label="Trigger"
+                                      value={triggerMode === 'none' ? 'pips' : triggerMode}
+                                      onChange={e => setManual({
+                                        move_sl_to_entry_after_mode: e.target.value as ManualSettings['move_sl_to_entry_after_mode'],
+                                      })}
+                                      options={[
+                                        { value: 'pips', label: 'Pips' },
+                                        { value: 'rr', label: 'RR' },
+                                        { value: 'money', label: 'Money' },
+                                        { value: 'tp_hit', label: 'TP' },
+                                      ]}
+                                    />
+
+                                    {triggerMode === 'pips' && (
+                                      <Input
+                                        label="Pip movement"
+                                        type="number"
+                                        min={0}
+                                        step={1}
+                                        hint="How many pips in profit before stop loss moves to breakeven."
+                                        value={String(ms.move_sl_to_entry_after_value ?? 10)}
+                                        onChange={e => setManual({
+                                          move_sl_to_entry_after_value: Math.max(0, Number(e.target.value) || 0),
+                                        })}
+                                      />
+                                    )}
+
+                                    {triggerMode === 'rr' && (
+                                      <Input
+                                        label="Risk:Reward ratio"
+                                        type="number"
+                                        min={0}
+                                        step={0.1}
+                                        hint="RR reached before stop loss moves to breakeven (e.g. 1 = 1:1)."
+                                        value={String(ms.move_sl_to_entry_after_value ?? 1)}
+                                        onChange={e => setManual({
+                                          move_sl_to_entry_after_value: Math.max(0, Number(e.target.value) || 0),
+                                        })}
+                                      />
+                                    )}
+
+                                    {triggerMode === 'money' && (
+                                      <Input
+                                        label="Profit ($)"
+                                        type="number"
+                                        min={0}
+                                        step={0.01}
+                                        hint="Unrealized profit in account currency before stop loss moves to breakeven."
+                                        value={String(ms.move_sl_to_entry_after_value ?? 10)}
+                                        onChange={e => setManual({
+                                          move_sl_to_entry_after_value: Math.max(0, Number(e.target.value) || 0),
+                                        })}
+                                      />
+                                    )}
+
+                                    {triggerMode === 'tp_hit' && (
+                                      <div className="space-y-1.5">
+                                        <Select
+                                          label="Take profit"
+                                          value={String(ms.move_sl_to_entry_tp_index ?? 1)}
+                                          onChange={e => setManual({
+                                            move_sl_to_entry_tp_index: Math.max(1, Number(e.target.value) || 1),
+                                          })}
+                                          options={tpOptions}
+                                        />
+                                        <p className="text-xs text-neutral-500">
+                                          Which take-profit level must be hit before stop loss moves to breakeven.
+                                        </p>
+                                      </div>
+                                    )}
+
                                     <Input
-                                      label="Trail Start (pips)"
+                                      label="Breakeven offset (pips)"
                                       type="number"
                                       min={0}
                                       step={1}
-                                      value={String(configDraft.manualSettings.trailing_start_pips ?? 20)}
-                                      onChange={e => setManual({ trailing_start_pips: Math.max(0, Number(e.target.value) || 0) })}
+                                      hint="Pips beyond entry when placing breakeven stop (locks in a small profit)."
+                                      value={String(ms.breakeven_offset_pips ?? 10)}
+                                      onChange={e => setManual({
+                                        breakeven_offset_pips: Math.max(0, Number(e.target.value) || 0),
+                                      })}
                                     />
-                                    <Input
-                                      label="Trail Step (pips)"
-                                      type="number"
-                                      min={0}
-                                      step={1}
-                                      value={String(configDraft.manualSettings.trailing_step_pips ?? 5)}
-                                      onChange={e => setManual({ trailing_step_pips: Math.max(0, Number(e.target.value) || 0) })}
-                                    />
-                                    <Input
-                                      label="Trail Distance (pips)"
-                                      type="number"
-                                      min={0}
-                                      step={1}
-                                      value={String(configDraft.manualSettings.trailing_distance_pips ?? 10)}
-                                      onChange={e => setManual({ trailing_distance_pips: Math.max(0, Number(e.target.value) || 0) })}
-                                    />
+                                  </div>
+
+                                  <div className="rounded-md border border-neutral-200 bg-white overflow-hidden">
+                                    <div className="px-3 py-2.5 border-b border-neutral-200">
+                                      <p className="text-sm font-medium text-neutral-800">Breakeven type</p>
+                                      <p className="text-xs text-neutral-500 mt-0.5">
+                                        What happens when the trigger condition is met.
+                                      </p>
+                                    </div>
+                                    <div className="p-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => setManual({ move_sl_to_entry_type: 'sl_only' })}
+                                        className={clsx(
+                                          'rounded-lg border px-3 py-2.5 text-left text-sm transition-colors',
+                                          beType === 'sl_only'
+                                            ? 'border-primary-500 bg-primary-50 text-primary-900'
+                                            : 'border-neutral-200 bg-white text-neutral-700 hover:border-neutral-300',
+                                        )}
+                                      >
+                                        <span className="font-medium">Move Only</span>
+                                        <span className="block text-xs mt-0.5 opacity-80">
+                                          Move stop loss to breakeven only.
+                                        </span>
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setManual({ move_sl_to_entry_type: 'sl_and_close_half' })}
+                                        className={clsx(
+                                          'rounded-lg border px-3 py-2.5 text-left text-sm transition-colors',
+                                          beType === 'sl_and_close_half'
+                                            ? 'border-primary-500 bg-primary-50 text-primary-900'
+                                            : 'border-neutral-200 bg-white text-neutral-700 hover:border-neutral-300',
+                                        )}
+                                      >
+                                        <span className="font-medium">Move SL and Close Half</span>
+                                        <span className="block text-xs mt-0.5 opacity-80">
+                                          Move stop loss to breakeven and close half the position.
+                                        </span>
+                                      </button>
+                                    </div>
                                   </div>
                                 </div>
                               )}
                             </div>
-
-                            <div className="rounded-lg border border-neutral-200 p-3 space-y-3">
-                              <p className="text-sm font-medium text-neutral-800">Auto-management</p>
-                              <p className="text-xs text-neutral-500">
-                                Move SL to entry once the trade reaches a milestone, and configure the
-                                default lot share for Breakeven, Partial Close and Half Close commands
-                                received from channels.
-                              </p>
-                              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                                <Select
-                                  label="Move SL to Entry After"
-                                  value={configDraft.manualSettings.move_sl_to_entry_after_mode ?? 'none'}
-                                  onChange={e => setManual({ move_sl_to_entry_after_mode: e.target.value as ManualSettings['move_sl_to_entry_after_mode'] })}
-                                  options={[{ value: 'none', label: 'None' }, { value: 'pips', label: 'Pips' }, { value: 'rr', label: 'RR' }, { value: 'money', label: 'Money' }, { value: 'tp_hit', label: 'TP Hit' }]}
-                                />
-                                {configDraft.manualSettings.move_sl_to_entry_after_mode !== 'none' && (
-                                  <Input
-                                    label="Move SL Trigger Value"
-                                    type="number"
-                                    value={String(configDraft.manualSettings.move_sl_to_entry_after_value ?? 10)}
-                                    onChange={e => setManual({ move_sl_to_entry_after_value: Number(e.target.value) })}
-                                  />
-                                )}
-                                {configDraft.manualSettings.move_sl_to_entry_after_mode !== 'none' && (
-                                  <Select
-                                    label="Move SL Type"
-                                    value={configDraft.manualSettings.move_sl_to_entry_type ?? 'sl_only'}
-                                    onChange={e => setManual({ move_sl_to_entry_type: e.target.value as ManualSettings['move_sl_to_entry_type'] })}
-                                    options={[{ value: 'sl_only', label: 'Move SL only' }, { value: 'sl_and_close_half', label: 'Move SL and close half' }]}
-                                  />
-                                )}
-                                <Input
-                                  label="Breakeven Offset (pips)"
-                                  type="number"
-                                  value={String(configDraft.manualSettings.breakeven_offset_pips ?? 10)}
-                                  onChange={e => setManual({ breakeven_offset_pips: Number(e.target.value) })}
-                                />
-                                <Input
-                                  label="Partial Close (%)"
-                                  type="number"
-                                  value={String(configDraft.manualSettings.partial_close_percent ?? 25)}
-                                  onChange={e => setManual({ partial_close_percent: Number(e.target.value) })}
-                                />
-                                <Input
-                                  label="Half Close (%)"
-                                  type="number"
-                                  value={String(configDraft.manualSettings.half_close_percent ?? 50)}
-                                  onChange={e => setManual({ half_close_percent: Number(e.target.value) })}
-                                />
-                              </div>
-                            </div>
                           </div>
-                        )}
+                          )
+                        })()}
 
                         {activeManualSubTab === 'filters' && (
                           <div className="space-y-4">
@@ -1788,8 +1912,7 @@ export function AccountConfigPage() {
                           <div className="space-y-4">
                             <p className="text-xs text-neutral-500">
                               Strategy controls how the copier reacts to signals and applies your own SL/TP
-                              templates. Trailing, move-SL-to-entry, and channel command defaults (breakeven / partial / half close) live under{' '}
-                              <strong>Management</strong>.
+                              templates. Trailing stop (Single Trade) is under <strong>Risk &amp; Entry</strong>. Auto breakeven triggers live under <strong>Management</strong>.
                             </p>
 
                             <div className="rounded-lg border border-neutral-200 p-3 space-y-3">

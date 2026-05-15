@@ -66,6 +66,11 @@ export interface ManualSettings {
   trailing_start_pips?: number
   trailing_step_pips?: number
   trailing_distance_pips?: number
+  move_sl_to_entry_after_mode?: 'none' | 'pips' | 'rr' | 'money' | 'tp_hit'
+  move_sl_to_entry_after_value?: number
+  move_sl_to_entry_tp_index?: number
+  move_sl_to_entry_type?: 'sl_only' | 'sl_and_close_half'
+  breakeven_offset_pips?: number
 }
 
 export interface ChannelKeywords {

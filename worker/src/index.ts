@@ -9,6 +9,7 @@ import { VirtualPendingMonitor } from './virtualPendingMonitor'
 import { CweCloseMonitor } from './cweCloseMonitor'
 import { PartialTpMonitor } from './partialTpMonitor'
 import { SignalEntryPendingMonitor } from './signalEntryPendingMonitor'
+import { AutoManagementMonitor } from './autoManagementMonitor'
 import { TrailingStopMonitor } from './trailingStopMonitor'
 
 // Supabase Realtime needs a WebSocket transport in Node < 22.
@@ -31,6 +32,7 @@ const cweCloseMonitor = new CweCloseMonitor(supabase)
 const partialTpMonitor = new PartialTpMonitor(supabase)
 const signalEntryPendingMonitor = new SignalEntryPendingMonitor(supabase)
 const trailingStopMonitor = new TrailingStopMonitor(supabase)
+const autoManagementMonitor = new AutoManagementMonitor(supabase)
 
 async function main() {
   console.log('[worker] TSCopier Telegram worker starting...')
@@ -42,6 +44,7 @@ async function main() {
   partialTpMonitor.start()
   signalEntryPendingMonitor.start()
   trailingStopMonitor.start()
+  autoManagementMonitor.start()
 
   setInterval(async () => {
     await sessionManager.syncSessions()
@@ -57,6 +60,7 @@ async function main() {
     partialTpMonitor.stop()
     signalEntryPendingMonitor.stop()
     trailingStopMonitor.stop()
+    autoManagementMonitor.stop()
     await sessionManager.disconnectAll()
     // Let MTProto sockets finish closing so the next deploy does not overlap
     // the same auth key on Telegram (AUTH_KEY_DUPLICATED).

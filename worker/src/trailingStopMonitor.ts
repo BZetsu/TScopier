@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { computePipQuote } from './pipCalculator'
+import { pipCalculator } from './pipCalculator'
 import {
   computeTrailingStopUpdate,
   normalizeTrailingConfig,
@@ -98,7 +98,7 @@ export class TrailingStopMonitor {
       console.error('[trailingStopMonitor] select failed:', error.message)
       return
     }
-    const rows = (data ?? []) as TrailTradeRow[]
+    const rows = (data ?? []) as unknown as TrailTradeRow[]
     if (!this.firstTickLogged) {
       this.firstTickLogged = true
       console.log(`[trailingStopMonitor] first tick ok trail_rows=${rows.length}`)
@@ -183,11 +183,12 @@ export class TrailingStopMonitor {
     const symEntry = await this.getSymbolCache(uuid, trade.symbol)
     if (!symEntry) return null
 
-    const pipQuote = computePipQuote(trade.symbol, {
-      point: symEntry.point,
-      digits: symEntry.digits,
-      contractSize: symEntry.contractSize,
-    })
+    const pipQuote = pipCalculator(
+      trade.symbol,
+      symEntry.point,
+      symEntry.digits,
+      symEntry.contractSize,
+    )
     const config: TrailingStopConfig = normalizeTrailingConfig({
       trailing_start_pips: trade.trail_start_pips ?? undefined,
       trailing_step_pips: trade.trail_step_pips ?? undefined,

@@ -3,6 +3,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.TradeExecutor = void 0;
 const metatraderapi_1 = require("./metatraderapi");
 const manualPlanner_1 = require("./manualPlanner");
+const autoManagement_1 = require("./autoManagement");
+const trailingStop_1 = require("./trailingStop");
 const rangePendingLegPersist_1 = require("./rangePendingLegPersist");
 const signalEntryPendingHelpers_1 = require("./signalEntryPendingHelpers");
 const signalMergeLink_1 = require("./signalMergeLink");
@@ -1321,7 +1323,7 @@ class TradeExecutor {
         if (mapping.whitelist.length > 0) {
             const sig = (parsed.symbol ?? '').toUpperCase();
             if (!mapping.whitelist.includes(sig)) {
-                await this.logSendSkipped(signal, broker, 'symbol_not_in_whitelist', {
+                await this.logSendSkipped(signal, broker, 'symbol_exempted_from_trading', {
                     signal_symbol: parsed.symbol ?? null,
                     allowed: mapping.whitelist,
                 });
@@ -1329,8 +1331,14 @@ class TradeExecutor {
             }
         }
         const requestedSymbol = mapping.symbol;
-        if (isExcluded(requestedSymbol, broker))
+        if (isExcluded(requestedSymbol, broker)) {
+            await this.logSendSkipped(signal, broker, 'symbol_exempted_from_trading', {
+                signal_symbol: parsed.symbol ?? null,
+                trade_symbol: requestedSymbol,
+                reason: 'symbols_exclude',
+            });
             return {};
+        }
         // Resolve to the broker's actual instrument name (e.g. BTCUSD → BTCUSDm).
         // Falls back to the requested symbol when /Symbols is unavailable or has no match.
         const symbol = await this.resolveBrokerSymbol(uuid, requestedSymbol);
@@ -1670,6 +1678,8 @@ class TradeExecutor {
                 const result = await this.api.orderSend(uuid, clamped.args);
                 const ticket = result.ticket;
                 const isBuyLeg = se.isBuy;
+                const pendingSl = clamped.args.stoploss && clamped.args.stoploss > 0 ? clamped.args.stoploss : null;
+                const autoBeCols = (0, autoManagement_1.autoManagementTradeSnapshot)(manual, entryPx, pendingSl);
                 const tradeInsert = await this.supabase
                     .from('trades')
                     .insert({
@@ -1681,12 +1691,13 @@ class TradeExecutor {
                     symbol,
                     direction: isBuyLeg ? 'buy' : 'sell',
                     entry_price: entryPx,
-                    sl: clamped.args.stoploss && clamped.args.stoploss > 0 ? clamped.args.stoploss : null,
+                    sl: pendingSl,
                     tp: clamped.args.takeprofit && clamped.args.takeprofit > 0 ? clamped.args.takeprofit : null,
                     lot_size: result.lots ?? vol,
                     status: 'pending',
                     opened_at: new Date().toISOString(),
                     cwe_close_price: null,
+                    ...autoBeCols,
                 })
                     .select('id')
                     .maybeSingle();
@@ -1894,6 +1905,13 @@ class TradeExecutor {
             return (materializedVirtuals || strictBrokerPlaced) ? { openedOrMerged: true } : {};
         }
         const totalCount = legs.length;
+        const orderLogContext = {
+            signal_symbol: parsed.symbol ?? null,
+            trade_symbol: requestedSymbol,
+        };
+        if (mapping.whitelist.length > 0) {
+            orderLogContext.allowed_symbols = mapping.whitelist;
+        }
         const sendLeg = async (leg) => {
             let args = leg.args;
             // Final SL/TP clamp using the actual market/entry price as the reference.
@@ -1908,6 +1926,10 @@ class TradeExecutor {
                 const latencyMs = Date.now() - t0;
                 console.log(`[tradeExecutor] OrderSend ok signal=${signal.id} broker=${broker.id} ticket=${result.ticket} leg=${leg.idx + 1}/${totalCount} price=${args.price ?? 0} ${latencyMs}ms`);
                 const isBuy = !args.operation.toLowerCase().includes('sell');
+                const entryPx = result.openPrice ?? args.price ?? null;
+                const openSl = result.stopLoss ?? args.stoploss ?? null;
+                const trailCols = (0, trailingStop_1.trailingTradeRowSnapshot)(manual, entryPx, openSl);
+                const autoBeCols = (0, autoManagement_1.autoManagementTradeSnapshot)(manual, entryPx, openSl);
                 // We need the row's id back so we can persist partial_tp_legs keyed to
                 // it. `.select('id').single()` keeps the INSERT to one round trip.
                 const tradeInsert = await this.supabase
@@ -1920,8 +1942,8 @@ class TradeExecutor {
                     metaapi_order_id: result.ticket != null ? String(result.ticket) : null,
                     symbol: args.symbol,
                     direction: isBuy ? 'buy' : 'sell',
-                    entry_price: result.openPrice ?? args.price ?? null,
-                    sl: result.stopLoss ?? args.stoploss ?? null,
+                    entry_price: entryPx,
+                    sl: openSl,
                     tp: result.takeProfit ?? args.takeprofit ?? null,
                     lot_size: result.lots ?? args.volume,
                     status: args.operation.includes('Limit') || args.operation.includes('Stop') ? 'pending' : 'open',
@@ -1930,6 +1952,8 @@ class TradeExecutor {
                     // Only the first N immediate legs have this; non-CWE legs leave it null
                     // and ride their bucket TP / SL normally.
                     cwe_close_price: leg.cweClosePrice ?? null,
+                    ...trailCols,
+                    ...autoBeCols,
                 })
                     .select('id')
                     .maybeSingle();
@@ -1973,7 +1997,7 @@ class TradeExecutor {
                     broker_account_id: broker.id,
                     action: 'order_send',
                     status: 'success',
-                    request_payload: args,
+                    request_payload: { ...args, ...orderLogContext },
                     response_payload: { ticket: result.ticket, latency_ms: latencyMs, leg: leg.idx + 1, total: totalCount },
                 });
                 return true;
@@ -1987,7 +2011,7 @@ class TradeExecutor {
                     broker_account_id: broker.id,
                     action: 'order_send',
                     status: 'failed',
-                    request_payload: args,
+                    request_payload: { ...args, ...orderLogContext },
                     error_message: msg,
                 });
                 return false;

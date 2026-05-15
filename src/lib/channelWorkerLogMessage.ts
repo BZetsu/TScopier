@@ -352,6 +352,16 @@ export function channelWorkerLogMessage(row: ChannelWorkerLogRow): string {
     }
     return `Could not update trailing stop ${onInstrument(instr)}${errSuffix(row)}`
   }
+  if (logAction === 'auto_be') {
+    if (status === 'success') {
+      const newSl = payload.new_sl
+      const half = payload.half_close === true
+      return half
+        ? `Auto-management: moved stop loss to break-even and closed half ${onInstrument(instr)}${newSl != null ? ` (SL ${newSl})` : ''}.`
+        : `Auto-management: moved stop loss to break-even ${onInstrument(instr)}${newSl != null ? ` at ${newSl}` : ''}.`
+    }
+    return `Auto-management could not move stop loss to break-even ${onInstrument(instr)}${errSuffix(row)}`
+  }
   if (logAction === 'cwe_close') {
     return namedOrGeneric(
       instr,

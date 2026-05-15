@@ -25,6 +25,7 @@ import {
   type PlannerResult,
   type VirtualPendingLeg,
 } from './manualPlanner'
+import { autoManagementTradeSnapshot } from './autoManagement'
 import { trailingTradeRowSnapshot } from './trailingStop'
 import { isPostgresDuplicateKeyError } from './rangePendingLegPersist'
 import { cancelSignalEntryRowAtBroker, type SignalEntryPendingRow } from './signalEntryPendingHelpers'
@@ -1991,6 +1992,8 @@ export class TradeExecutor {
           const result = await this.api.orderSend(uuid, clamped.args)
           const ticket = result.ticket
           const isBuyLeg = se.isBuy
+          const pendingSl = clamped.args.stoploss && clamped.args.stoploss > 0 ? clamped.args.stoploss : null
+          const autoBeCols = autoManagementTradeSnapshot(manual, entryPx, pendingSl)
           const tradeInsert = await this.supabase
             .from('trades')
             .insert({
@@ -2002,12 +2005,13 @@ export class TradeExecutor {
               symbol,
               direction: isBuyLeg ? 'buy' : 'sell',
               entry_price: entryPx,
-              sl: clamped.args.stoploss && clamped.args.stoploss > 0 ? clamped.args.stoploss : null,
+              sl: pendingSl,
               tp: clamped.args.takeprofit && clamped.args.takeprofit > 0 ? clamped.args.takeprofit : null,
               lot_size: result.lots ?? vol,
               status: 'pending',
               opened_at: new Date().toISOString(),
               cwe_close_price: null,
+              ...autoBeCols,
             })
             .select('id')
             .maybeSingle()
@@ -2259,6 +2263,7 @@ export class TradeExecutor {
           entryPx,
           openSl,
         )
+        const autoBeCols = autoManagementTradeSnapshot(manual, entryPx, openSl)
         // We need the row's id back so we can persist partial_tp_legs keyed to
         // it. `.select('id').single()` keeps the INSERT to one round trip.
         const tradeInsert = await this.supabase
@@ -2282,6 +2287,7 @@ export class TradeExecutor {
             // and ride their bucket TP / SL normally.
             cwe_close_price: leg.cweClosePrice ?? null,
             ...trailCols,
+            ...autoBeCols,
           })
           .select('id')
           .maybeSingle()
