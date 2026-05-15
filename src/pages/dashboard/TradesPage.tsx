@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { TrendingUp, TrendingDown, Minus, RefreshCw } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ArrowUpRight, ArrowDownRight, ChevronLeft, ChevronRight, Minus, RefreshCw, TrendingUp, TrendingDown } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { Card } from '../../components/ui/Card'
 import { Badge } from '../../components/ui/Badge'
@@ -8,6 +8,8 @@ import { metatraderApi, type MtTrade } from '../../lib/metatraderapi'
 type Filter = 'all' | 'open' | 'closed'
 
 const AUTO_REFRESH_MS = 15000
+const PAGE_SIZE_OPTIONS = [10, 50, 100] as const
+type PageSizeOption = (typeof PAGE_SIZE_OPTIONS)[number]
 
 export function TradesPage() {
   const { user } = useAuth()
@@ -17,6 +19,8 @@ export function TradesPage() {
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null)
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState<PageSizeOption>(10)
   const inflightRef = useRef(false)
 
   const loadTrades = useCallback(
@@ -72,13 +76,34 @@ export function TradesPage() {
     { value: 'closed', label: 'Closed', count: trades.filter(t => t.status === 'closed').length },
   ]
 
-  const visibleTrades = filter === 'all' ? trades : trades.filter(t => t.status === filter)
+  const visibleTrades = useMemo(
+    () => (filter === 'all' ? trades : trades.filter(t => t.status === filter)),
+    [trades, filter],
+  )
+
+  const totalPages = Math.max(1, Math.ceil(visibleTrades.length / pageSize))
+
+  useEffect(() => {
+    setPage(1)
+  }, [filter, pageSize])
+
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages)
+  }, [page, totalPages])
+
+  const paginatedTrades = useMemo(() => {
+    const start = (page - 1) * pageSize
+    return visibleTrades.slice(start, start + pageSize)
+  }, [visibleTrades, page, pageSize])
+
+  const rangeStart = visibleTrades.length === 0 ? 0 : (page - 1) * pageSize + 1
+  const rangeEnd = Math.min(page * pageSize, visibleTrades.length)
 
   return (
-    <div className="p-6 lg:p-8 max-w-6xl mx-auto">
-      <div className="flex items-center justify-between mb-6 gap-4">
+    <div className="px-4 py-4 sm:px-6 sm:py-6 lg:p-8 max-w-6xl mx-auto">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-4 sm:mb-6 gap-4">
         <div>
-          <h1 className="text-2xl font-semibold text-neutral-900">Trades</h1>
+          <h1 className="text-xl sm:text-2xl font-semibold text-neutral-900">Trades</h1>
           <p className="text-sm text-neutral-500 mt-0.5">
             Live positions and recent closes from your linked broker accounts
             {lastSyncedAt && (
@@ -86,7 +111,7 @@ export function TradesPage() {
             )}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
           <button
             type="button"
             onClick={() => void loadTrades({ silent: true })}
@@ -96,7 +121,7 @@ export function TradesPage() {
             <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
             Refresh
           </button>
-          <div className="flex bg-white border border-neutral-200 rounded-lg p-0.5 gap-0.5">
+          <div className="flex flex-wrap bg-white border border-neutral-200 rounded-lg p-0.5 gap-0.5">
             {filters.map(f => (
               <button
                 key={f.value}
@@ -134,7 +159,7 @@ export function TradesPage() {
           </div>
         ) : visibleTrades.length === 0 ? (
           <div className="px-6 py-16 text-center">
-            <TrendingUp className="w-10 h-10 mx-auto mb-3 text-neutral-200" />
+            <ArrowUpRight className="w-10 h-10 mx-auto mb-3 text-neutral-200" />
             <p className="text-sm text-neutral-400 font-medium">No trades to show</p>
             <p className="text-xs text-neutral-300 mt-1">
               {filter === 'open'
@@ -174,13 +199,142 @@ export function TradesPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-neutral-100">
-                {visibleTrades.map(trade => <TradeRow key={trade.id} trade={trade} />)}
+                {paginatedTrades.map(trade => <TradeRow key={trade.id} trade={trade} />)}
               </tbody>
             </table>
+            {visibleTrades.length > 0 && (
+              <TradesPagination
+                page={page}
+                pageSize={pageSize}
+                totalPages={totalPages}
+                rangeStart={rangeStart}
+                rangeEnd={rangeEnd}
+                total={visibleTrades.length}
+                onPageChange={setPage}
+                onPageSizeChange={setPageSize}
+              />
+            )}
           </div>
         )}
       </Card>
     </div>
+  )
+}
+
+function TradesPagination({
+  page,
+  pageSize,
+  totalPages,
+  rangeStart,
+  rangeEnd,
+  total,
+  onPageChange,
+  onPageSizeChange,
+}: {
+  page: number
+  pageSize: PageSizeOption
+  totalPages: number
+  rangeStart: number
+  rangeEnd: number
+  total: number
+  onPageChange: (page: number) => void
+  onPageSizeChange: (size: PageSizeOption) => void
+}) {
+  const pageNumbers = useMemo(() => {
+    const maxButtons = 5
+    if (totalPages <= maxButtons) {
+      return Array.from({ length: totalPages }, (_, i) => i + 1)
+    }
+    let start = Math.max(1, page - 2)
+    let end = Math.min(totalPages, start + maxButtons - 1)
+    start = Math.max(1, end - maxButtons + 1)
+    return Array.from({ length: end - start + 1 }, (_, i) => start + i)
+  }, [page, totalPages])
+
+  return (
+    <div className="flex flex-col gap-3 px-4 py-3 border-t border-neutral-100 bg-neutral-50/50 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <label className="inline-flex items-center gap-2 text-sm text-neutral-600">
+          <span className="font-medium text-neutral-700">Show</span>
+          <select
+            value={pageSize}
+            onChange={e => onPageSizeChange(Number(e.target.value) as PageSizeOption)}
+            className="h-8 min-w-[4.5rem] rounded-md border border-neutral-200 bg-white px-2 text-sm text-neutral-900 tabular-nums focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+            aria-label="Results per page"
+          >
+            {PAGE_SIZE_OPTIONS.map(n => (
+              <option key={n} value={n}>{n}</option>
+            ))}
+          </select>
+          <span>results</span>
+        </label>
+        <p className="text-xs text-neutral-500 tabular-nums">
+          Showing <span className="font-medium text-neutral-700">{rangeStart}–{rangeEnd}</span> of{' '}
+          <span className="font-medium text-neutral-700">{total}</span>
+        </p>
+      </div>
+      {totalPages > 1 && (
+        <div className="flex items-center gap-1 justify-end">
+          <button
+            type="button"
+            onClick={() => onPageChange(page - 1)}
+            disabled={page <= 1}
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-sm rounded-md border border-neutral-200 text-neutral-700 hover:bg-white disabled:opacity-40 disabled:pointer-events-none"
+            aria-label="Previous page"
+          >
+            <ChevronLeft className="w-4 h-4" />
+            <span className="hidden sm:inline">Previous</span>
+          </button>
+          <div className="flex items-center gap-0.5">
+            {pageNumbers[0]! > 1 && (
+              <>
+                <PageButton n={1} active={page === 1} onClick={() => onPageChange(1)} />
+                {pageNumbers[0]! > 2 && <span className="px-1 text-neutral-400 text-sm">…</span>}
+              </>
+            )}
+            {pageNumbers.map(n => (
+              <PageButton key={n} n={n} active={page === n} onClick={() => onPageChange(n)} />
+            ))}
+            {pageNumbers[pageNumbers.length - 1]! < totalPages && (
+              <>
+                {pageNumbers[pageNumbers.length - 1]! < totalPages - 1 && (
+                  <span className="px-1 text-neutral-400 text-sm">…</span>
+                )}
+                <PageButton n={totalPages} active={page === totalPages} onClick={() => onPageChange(totalPages)} />
+              </>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => onPageChange(page + 1)}
+            disabled={page >= totalPages}
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-sm rounded-md border border-neutral-200 text-neutral-700 hover:bg-white disabled:opacity-40 disabled:pointer-events-none"
+            aria-label="Next page"
+          >
+            <span className="hidden sm:inline">Next</span>
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+
+function PageButton({ n, active, onClick }: { n: number; active: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-current={active ? 'page' : undefined}
+      className={`min-w-[2rem] px-2 py-1.5 text-sm rounded-md font-medium tabular-nums transition-colors ${
+        active
+          ? 'bg-teal-600 text-white'
+          : 'text-neutral-600 hover:bg-white border border-transparent hover:border-neutral-200'
+      }`}
+    >
+      {n}
+    </button>
   )
 }
 
@@ -218,7 +372,7 @@ function TradeRow({ trade }: { trade: MtTrade }) {
         isBuy ? 'text-success-600' : isSell ? 'text-error-600' : 'text-neutral-500'
       }`}>
         <span className="inline-flex items-center justify-center gap-1 w-full">
-          {isBuy ? <TrendingUp className="w-3.5 h-3.5" /> : isSell ? <TrendingDown className="w-3.5 h-3.5" /> : <Minus className="w-3.5 h-3.5" />}
+          {isBuy ? <ArrowUpRight className="w-3.5 h-3.5" /> : isSell ? <ArrowDownRight className="w-3.5 h-3.5" /> : <Minus className="w-3.5 h-3.5" />}
           {directionLabel}
         </span>
       </td>

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Clock, ChevronRight, Info, Plus } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
@@ -12,6 +12,14 @@ import {
   buildSignalSymbolLookup,
 } from '../../lib/copierLogDisplay'
 import { channelWorkerLogMessage } from '../../lib/channelWorkerLogMessage'
+import {
+  buildAccountGrowthSeries,
+  buildTradeVolume7Day,
+  resolveDashboardChartTrades,
+  type DashboardChartTrade,
+} from '../../lib/dashboardCharts'
+import { AccountGrowthChart } from '../../components/dashboard/AccountGrowthChart'
+import { TradeVolumeChart } from '../../components/dashboard/TradeVolumeChart'
 
 /** Shared column template for dashboard Copier Logs header + rows. */
 const DASHBOARD_COPIER_LOG_GRID =
@@ -170,6 +178,7 @@ export function DashboardPage() {
   const [aiExpertLogs, setAiExpertLogs] = useState<AiExpertLogRow[]>([])
   const [linkedAccounts, setLinkedAccounts] = useState<BrokerAccount[]>([])
   const [linkedAccountBalances, setLinkedAccountBalances] = useState<Record<string, { balance?: number; equity?: number; currency?: string; broker?: string; mt_server_hint?: string; account_type?: 'Live' | 'Demo'; open_pnl?: number; open_trades?: number }>>({})
+  const [chartTrades, setChartTrades] = useState<DashboardChartTrade[]>([])
   const [showPlatformModal, setShowPlatformModal] = useState(false)
   const [loading, setLoading] = useState(true)
   const AUTO_REFRESH_MS = 15000
@@ -189,6 +198,23 @@ export function DashboardPage() {
   const liveBrokerStateRef = useRef<Record<string, { open_pnl?: number; open_trades?: number }>>({})
   const formatMoney = (value: number | null | undefined) =>
     `$${(Number.isFinite(value as number) ? Number(value) : 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  const tradeVolume7Day = useMemo(
+    () => buildTradeVolume7Day(chartTrades),
+    [chartTrades],
+  )
+
+  const accountGrowth = useMemo(() => {
+    const equityByAccountId: Record<string, number> = {}
+    for (const account of linkedAccounts) {
+      const live = linkedAccountBalances[account.id]
+      const eq = live?.equity ?? live?.balance ?? account.last_equity ?? account.last_balance
+      if (eq != null && Number.isFinite(Number(eq))) {
+        equityByAccountId[account.id] = Number(eq)
+      }
+    }
+    return buildAccountGrowthSeries(linkedAccounts, chartTrades, equityByAccountId)
+  }, [linkedAccounts, linkedAccountBalances, chartTrades])
+
   const formatVsYesterdayMoney = (todayValue: number | null | undefined, yesterdayValue: number | null | undefined) => {
     if (yesterdayValue == null) return ''
     const t = Number.isFinite(todayValue as number) ? Number(todayValue) : 0
@@ -572,6 +598,7 @@ export function DashboardPage() {
         linkedAccountBalances: balanceMap,
       }))
     }
+    setChartTrades(resolveDashboardChartTrades(mtTradesRef.current, allTrades))
     if (!silent) setLoading(false)
     // Kick off live balance + trade refreshes in the background; both throttled internally.
     void refreshBrokerSummaries(brokerAccounts, balanceMap)
@@ -602,6 +629,7 @@ export function DashboardPage() {
       return
     }
     mtTradesRef.current = trades
+    setChartTrades(resolveDashboardChartTrades(trades, []))
     if (trades.length === 0) return
 
     const today0 = new Date()
@@ -807,16 +835,16 @@ export function DashboardPage() {
   }
 
   return (
-    <div className="p-6 lg:p-8">
+    <div className="px-4 py-4 sm:px-6 sm:py-6 lg:p-8 max-w-[1600px] mx-auto">
       {/* Page header */}
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-neutral-900">Dashboard</h1>
+      <div className="flex items-center justify-between mb-4 sm:mb-6">
+        <h1 className="text-xl sm:text-2xl font-bold text-neutral-900">Dashboard</h1>
         
       </div>
 
       {/* Stats bar */}
-      <div className="bg-white rounded-xl border border-neutral-100 shadow-card mb-6">
-        <div className="grid grid-cols-4 divide-x divide-neutral-100">
+      <div className="bg-white rounded-2xl border border-neutral-200 mb-6">
+        <div className="grid grid-cols-2 lg:grid-cols-4 divide-y lg:divide-y-0 lg:divide-x divide-neutral-100">
           <StatBlock
             label="Total Balance"
             value={loading ? '—' : `$${stats.totalEquity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
@@ -860,7 +888,7 @@ export function DashboardPage() {
             subColor={stats.openPnl >= 0 ? 'text-neutral-400' : 'text-error-500'}
           />
         </div>
-        <div className="border-t border-neutral-100 p-5 grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="border-t border-neutral-100 p-4 sm:p-5 grid grid-cols-2 lg:grid-cols-4 gap-4">
           <OverviewStat
             label="Active Signal Channels"
             value={loading ? '—' : String(stats.activeChannels)}
@@ -888,11 +916,20 @@ export function DashboardPage() {
         </div>
       </div>
 
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+        <TradeVolumeChart data={tradeVolume7Day} loading={loading} />
+        <AccountGrowthChart
+          data={accountGrowth.data}
+          series={accountGrowth.series}
+          loading={loading}
+        />
+      </div>
+
       {/* Lower panels */}
-      <div className="grid grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
         {/* AI Expert Log */}
-        <div className="bg-white rounded-xl border border-neutral-100 shadow-card">
-          <div className="px-5 py-4 border-b border-neutral-100 flex items-center justify-between">
+          <div className="bg-white rounded-2xl border border-neutral-200 min-w-0">
+          <div className="px-4 sm:px-5 py-4 border-b border-neutral-100 flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <Clock className="w-4 h-4 text-teal-500" />
               <span className="text-sm font-semibold text-neutral-900">Channel Worker</span>
@@ -928,8 +965,8 @@ export function DashboardPage() {
         </div>
 
         {/* Copier Logs */}
-        <div className="bg-white rounded-xl border border-neutral-100 shadow-card">
-          <div className="px-5 py-4 border-b border-neutral-100 flex items-center justify-between">
+        <div className="bg-white rounded-2xl border border-neutral-200 min-w-0 overflow-hidden">
+          <div className="px-4 sm:px-5 py-4 border-b border-neutral-100 flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <Clock className="w-4 h-4 text-teal-500" />
               <span className="text-sm font-semibold text-neutral-900">Copier Logs</span>
@@ -946,9 +983,10 @@ export function DashboardPage() {
             </button>
           </div>
 
+          <div className="overflow-x-auto">
           {/* Table header */}
           <div
-            className={`${DASHBOARD_COPIER_LOG_GRID} px-5 py-3 border-b border-neutral-100 text-xs font-medium text-neutral-400 uppercase tracking-wide`}
+            className={`${DASHBOARD_COPIER_LOG_GRID} min-w-[28rem] px-4 sm:px-5 py-3 border-b border-neutral-100 text-xs font-medium text-neutral-400 uppercase tracking-wide`}
           >
             <span>Status</span>
             <span className="min-w-0">Channel</span>
@@ -982,7 +1020,7 @@ export function DashboardPage() {
               <p className="text-sm text-neutral-400 font-medium">No Data</p>
             </div>
           ) : (
-            <div className="divide-y divide-neutral-50 max-h-80 overflow-y-auto">
+            <div className="divide-y divide-neutral-50 max-h-80 overflow-y-auto min-w-[28rem]">
               {copierLogs.map(log => (
                 <LogRow
                   key={log.id}
@@ -993,12 +1031,13 @@ export function DashboardPage() {
               ))}
             </div>
           )}
+          </div>
         </div>
       </div>
 
       {/* Linked Accounts */}
-      <div className="mt-6 bg-white rounded-xl border border-neutral-100 shadow-card">
-        <div className="px-5 py-4 border-b border-neutral-100 flex items-center justify-between">
+      <div className="mt-4 sm:mt-6 bg-white rounded-2xl border border-neutral-200 overflow-hidden">
+        <div className="px-4 sm:px-5 py-4 border-b border-neutral-100 flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <Clock className="w-4 h-4 text-teal-500" />
             <div>
@@ -1015,7 +1054,9 @@ export function DashboardPage() {
           </button>
         </div>
 
-        <div className="grid grid-cols-9 gap-2 px-5 py-3 border-b border-neutral-100 text-xs font-medium text-neutral-400">
+        <div className="overflow-x-auto">
+        <div className="min-w-[52rem] lg:min-w-0">
+        <div className="hidden lg:grid grid-cols-9 gap-2 px-4 sm:px-5 py-3 border-b border-neutral-100 text-xs font-medium text-neutral-400">
           <span>Account</span>
           <span>Broker</span>
           <span>Account Type</span>
@@ -1030,7 +1071,7 @@ export function DashboardPage() {
         {loading ? (
           <div className="divide-y divide-neutral-50">
             {[...Array(3)].map((_, i) => (
-              <div key={i} className="px-5 py-3 flex gap-4">
+              <div key={i} className="hidden lg:flex px-4 sm:px-5 py-3 gap-4">
                 {[...Array(9)].map((_, j) => (
                   <div key={j} className="h-4 bg-neutral-100 rounded animate-pulse flex-1" />
                 ))}
@@ -1046,6 +1087,8 @@ export function DashboardPage() {
             ))}
           </div>
         )}
+        </div>
+        </div>
       </div>
 
       <AddAccountModal
@@ -1068,9 +1111,9 @@ function StatBlock({ label, value, sub, subColor, valueColor = 'text-neutral-900
   valueColor?: string
 }) {
   return (
-    <div className="px-6 py-5">
-      <p className="text-sm text-neutral-500 mb-2">{label}</p>
-      <p className={`text-3xl font-semibold mb-1.5 ${valueColor}`}>{value}</p>
+    <div className="px-4 py-4 sm:px-6 sm:py-5">
+      <p className="text-xs sm:text-sm text-neutral-500 mb-1.5 sm:mb-2">{label}</p>
+      <p className={`text-xl sm:text-3xl font-semibold mb-1 sm:mb-1.5 ${valueColor}`}>{value}</p>
       <p className={`text-xs ${subColor}`}>{sub}</p>
     </div>
   )
@@ -1138,7 +1181,7 @@ function LogRow({ signal, channelName, symbol }: { signal: Signal; channelName: 
   const typeLabel = action ? action.replace(/_/g, ' ') : '—'
 
   return (
-    <div className={`${DASHBOARD_COPIER_LOG_GRID} px-5 py-3 hover:bg-neutral-50 transition-colors`}>
+    <div className={`${DASHBOARD_COPIER_LOG_GRID} px-4 sm:px-5 py-3 hover:bg-neutral-50 transition-colors`}>
       <span className={`inline-flex w-fit items-center px-2 py-0.5 rounded-md text-xs font-medium ${s.color}`}>
         {s.label}
       </span>
@@ -1194,10 +1237,12 @@ function LinkedAccountRow({
   const brokerText = fromApi || fromServer || '—'
   const accountType = accountSummary?.account_type || '—'
 
+  const accountLabel = account.label || 'Unnamed account'
+
   return (
-    <div className="grid grid-cols-9 gap-2 px-5 py-3 items-center hover:bg-neutral-50 transition-colors">
-      <div className="flex flex-col">
-        <span className="text-sm font-semibold text-neutral-900">{account.label || 'Unnamed account'}</span>
+    <div className="grid grid-cols-9 gap-2 px-4 sm:px-5 py-3 items-center hover:bg-neutral-50 transition-colors">
+      <div className="flex flex-col min-w-0">
+        <span className="text-sm font-semibold text-neutral-900 truncate">{accountLabel}</span>
         <span className="text-[11px] font-medium text-primary-600 uppercase">{account.platform}</span>
       </div>
       <span className="text-sm font-medium text-neutral-900">{brokerText}</span>

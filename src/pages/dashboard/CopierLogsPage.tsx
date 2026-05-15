@@ -82,10 +82,10 @@ export function CopierLogsPage() {
   }
 
   return (
-    <div className="p-6 lg:p-8 max-w-5xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
+    <div className="px-4 py-4 sm:px-6 sm:py-6 lg:p-8 max-w-5xl mx-auto">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-4 sm:mb-6 gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-neutral-900">Copier Logs</h1>
+          <h1 className="text-xl sm:text-2xl font-bold text-neutral-900">Copier Logs</h1>
           <p className="text-sm text-neutral-500 mt-0.5">Full history of signals received and their execution outcome</p>
         </div>
         {/* Filter tabs */}
@@ -104,9 +104,10 @@ export function CopierLogsPage() {
         </div>
       </div>
 
-      <Card padding="none">
+      <Card padding="none" className="overflow-hidden">
+        <div className="overflow-x-auto">
         {/* Header */}
-        <div className="grid grid-cols-[1.5fr_1.2fr_1fr_1.2fr_1fr_1fr_auto] gap-3 px-5 py-3 border-b border-neutral-100 text-xs font-semibold text-neutral-400 uppercase tracking-wide">
+        <div className="grid grid-cols-[1.5fr_1.2fr_1fr_1.2fr_1fr_1fr_auto] gap-3 min-w-[44rem] px-4 sm:px-5 py-3 border-b border-neutral-100 text-xs font-semibold text-neutral-400 uppercase tracking-wide">
           <span>Status</span>
           <span>Reason</span>
           <span>Channel</span>
@@ -146,7 +147,7 @@ export function CopierLogsPage() {
               const channelName = channelLabel(signal.channel_id, channelDisplayNames)
 
               return (
-                <div key={signal.id} className="grid grid-cols-[1.5fr_1.2fr_1fr_1.2fr_1fr_1fr_auto] gap-3 px-5 py-3.5 items-center hover:bg-neutral-50 transition-colors">
+                <div key={signal.id} className="grid grid-cols-[1.5fr_1.2fr_1fr_1.2fr_1fr_1fr_auto] gap-3 min-w-[44rem] px-4 sm:px-5 py-3.5 items-center hover:bg-neutral-50 transition-colors">
                   <Badge variant={s.variant} size="sm">{s.label}</Badge>
                   <span
                     className="text-xs text-neutral-500 truncate"
@@ -182,6 +183,7 @@ export function CopierLogsPage() {
             })}
           </div>
         )}
+        </div>
       </Card>
     </div>
   )

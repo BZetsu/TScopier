@@ -67,7 +67,7 @@ export function AddAccountModal({ open, onClose, onSelect }: AddAccountModalProp
         <div className="h-px bg-neutral-100 mx-6" />
 
         {/* Platform grid */}
-        <div className="p-6 grid grid-cols-4 gap-3">
+        <div className="p-4 sm:p-6 grid grid-cols-2 sm:grid-cols-4 gap-3">
           {PLATFORMS.map(p => (
             <button
               key={p.value}

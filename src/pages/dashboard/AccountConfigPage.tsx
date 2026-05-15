@@ -209,7 +209,8 @@ function cloneTpLots(rows: ManualTpLot[] | undefined, fallback: ManualTpLot[]): 
 }
 
 function clonePredefinedTpPips(list: number[] | undefined): number[] {
-  const src = list?.length ? list : DEFAULT_MANUAL_SETTINGS.predefined_tp_pips
+  const fallback = DEFAULT_MANUAL_SETTINGS.predefined_tp_pips ?? [20, 40, 60]
+  const src = list?.length ? list : fallback
   return src.map(n => (Number.isFinite(Number(n)) ? Number(n) : 0))
 }
 
@@ -1995,10 +1996,10 @@ export function AccountConfigPage() {
                                         setConfigDraft(prev => {
                                           let list = prev.manualSettings.predefined_tp_pips
                                           if (!Array.isArray(list) || list.length === 0) {
-                                            list = [...DEFAULT_MANUAL_SETTINGS.predefined_tp_pips]
+                                            list = [...(DEFAULT_MANUAL_SETTINGS.predefined_tp_pips ?? [20, 40, 60])]
                                           } else {
                                             const filtered = list.map(n => Number(n)).filter(Number.isFinite)
-                                            list = filtered.length > 0 ? filtered : [...DEFAULT_MANUAL_SETTINGS.predefined_tp_pips]
+                                            list = filtered.length > 0 ? filtered : [...(DEFAULT_MANUAL_SETTINGS.predefined_tp_pips ?? [20, 40, 60])]
                                           }
                                           return {
                                             ...prev,
