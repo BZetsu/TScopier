@@ -10,8 +10,13 @@ import {
   Newspaper,
   Calendar,
   TrendingUp,
-  GitBranch,
   ChartBar as BarChart2,
+  LifeBuoy,
+  Lightbulb,
+  Handshake,
+  Share2,
+  CreditCard,
+  Repeat,
   Briefcase,
   ChartPie as PieChart,
   Search,
@@ -58,7 +63,6 @@ const navSections: NavSection[] = [
       { to: '/market-news', icon: Newspaper, label: 'Market News' },
       { to: '/economic-calendar', icon: Calendar, label: 'Economic Calendar' },
       { to: '/sentiments', icon: TrendingUp, label: 'Sentiments' },
-      { to: '/integrations', icon: GitBranch, label: 'Integrations' },
     ],
   },
   {
@@ -67,6 +71,27 @@ const navSections: NavSection[] = [
       { to: '/performance', icon: BarChart2, label: 'Performance' },
       { to: '/portfolio', icon: Briefcase, label: 'Portfolio' },
       { to: '/analysis-hub', icon: PieChart, label: 'Analysis Hub' },
+    ],
+  },
+  {
+    label: 'FEEDBACK',
+    items: [
+      { to: '/contact-support', icon: LifeBuoy, label: 'Contact Support' },
+      { to: '/feature-request', icon: Lightbulb, label: 'Feature Request' },
+    ],
+  },
+  {
+    label: 'GROWTH & MONETIZATION',
+    items: [
+      { to: '/partner-with-us', icon: Handshake, label: 'Partner with us' },
+      { to: '/affiliate-program', icon: Share2, label: 'Affiliate program' },
+    ],
+  },
+  {
+    label: 'MEMBERSHIP',
+    items: [
+      { to: '/billing', icon: CreditCard, label: 'Billing' },
+      { to: '/subscriptions', icon: Repeat, label: 'Subscriptions' },
     ],
   },
 ]

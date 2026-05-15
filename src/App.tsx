@@ -14,8 +14,15 @@ import { TradesPage } from './pages/dashboard/TradesPage'
 import { MarketNewsPage } from './pages/dashboard/MarketNewsPage'
 import { EconomicCalendarPage } from './pages/dashboard/EconomicCalendarPage'
 import { SentimentsPage } from './pages/dashboard/SentimentsPage'
-import { IntegrationsPage } from './pages/dashboard/IntegrationsPage'
 import { PerformancePage } from './pages/dashboard/PerformancePage'
+import {
+  AffiliateProgramPage,
+  BillingPage,
+  ContactSupportPage,
+  FeatureRequestPage,
+  PartnerWithUsPage,
+  SubscriptionsPage,
+} from './pages/dashboard/SupportMembershipPages'
 import { PortfolioPage } from './pages/dashboard/PortfolioPage'
 import { AnalysisHubPage } from './pages/dashboard/AnalysisHubPage'
 import { SignalHistoryPage } from './pages/dashboard/SignalHistoryPage'
@@ -49,7 +56,12 @@ export default function App() {
             <Route path="/market-news" element={<MarketNewsPage />} />
             <Route path="/economic-calendar" element={<EconomicCalendarPage />} />
             <Route path="/sentiments" element={<SentimentsPage />} />
-            <Route path="/integrations" element={<IntegrationsPage />} />
+            <Route path="/contact-support" element={<ContactSupportPage />} />
+            <Route path="/feature-request" element={<FeatureRequestPage />} />
+            <Route path="/partner-with-us" element={<PartnerWithUsPage />} />
+            <Route path="/affiliate-program" element={<AffiliateProgramPage />} />
+            <Route path="/billing" element={<BillingPage />} />
+            <Route path="/subscriptions" element={<SubscriptionsPage />} />
             <Route path="/performance" element={<PerformancePage />} />
             <Route path="/portfolio" element={<PortfolioPage />} />
             <Route path="/analysis-hub" element={<AnalysisHubPage />} />
@@ -59,6 +71,7 @@ export default function App() {
             <Route path="/trades" element={<Navigate to="/account-trades" replace />} />
             <Route path="/settings" element={<Navigate to="/account-configuration" replace />} />
             <Route path="/onboarding" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/integrations" element={<Navigate to="/dashboard" replace />} />
           </Route>
         </Routes>
       </BrowserRouter>
