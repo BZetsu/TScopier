@@ -159,7 +159,6 @@ const DEFAULT_MANUAL_SETTINGS: ManualSettings = {
   range_distance_pips: 30,
   close_worse_entries: false,
   close_worse_entries_pips: 30,
-  close_worse_extra_pendings: 0,
   reverse_signal: false,
   use_signal_entry_price: false,
   signal_entry_pip_tolerance: 10,
@@ -286,7 +285,6 @@ function normalizeManualSettings(raw: unknown): ManualSettings {
   const rangeDistancePips = Math.max(0, readNumber('range_distance_pips', DEFAULT_MANUAL_SETTINGS.range_distance_pips ?? 30))
   const closeWorseEntries = (j as Record<string, unknown>).close_worse_entries === true
   const closeWorseEntriesPips = Math.max(0, readNumber('close_worse_entries_pips', DEFAULT_MANUAL_SETTINGS.close_worse_entries_pips ?? 30))
-  const closeWorseExtraPendings = Math.max(0, Math.floor(readNumber('close_worse_extra_pendings', DEFAULT_MANUAL_SETTINGS.close_worse_extra_pendings ?? 0)))
 
   // Manual control: keep whatever the user saved. Only seed an equal split when
   // there is literally nothing enabled with a positive percent (empty / legacy row).
@@ -309,7 +307,6 @@ function normalizeManualSettings(raw: unknown): ManualSettings {
     range_distance_pips: rangeDistancePips,
     close_worse_entries: closeWorseEntries,
     close_worse_entries_pips: closeWorseEntriesPips,
-    close_worse_extra_pendings: closeWorseExtraPendings,
     use_signal_entry_price: (j as Record<string, unknown>).use_signal_entry_price === true,
     signal_entry_pip_tolerance: Math.max(0, readNumber('signal_entry_pip_tolerance', DEFAULT_MANUAL_SETTINGS.signal_entry_pip_tolerance ?? 10)),
     symbol_mapping: Object.fromEntries(Object.entries(map).map(([k, v]) => [String(k).toUpperCase(), String(v).toUpperCase()])),
@@ -525,26 +522,6 @@ export function AccountConfigPage() {
       return head
     }
   }, [livePipQuote, configDraft.manualSettings.fixed_lot, configDraft.manualSettings.symbol_to_trade])
-
-  // Keep close_worse_extra_pendings within the live pending count so the UI
-  // can't show a stale value larger than what the planner will actually use.
-  useEffect(() => {
-    if (!configDraft.manualSettings.range_trading) return
-    if (!configDraft.manualSettings.close_worse_entries) return
-    const max = multiTradePreview.pending ?? 0
-    const current = Math.max(0, Math.floor(Number(configDraft.manualSettings.close_worse_extra_pendings ?? 0) || 0))
-    if (current > max) {
-      setConfigDraft(prev => ({
-        ...prev,
-        manualSettings: { ...prev.manualSettings, close_worse_extra_pendings: max },
-      }))
-    }
-  }, [
-    multiTradePreview.pending,
-    configDraft.manualSettings.range_trading,
-    configDraft.manualSettings.close_worse_entries,
-    configDraft.manualSettings.close_worse_extra_pendings,
-  ])
 
   useEffect(() => {
     if (!user) return
@@ -1465,14 +1442,8 @@ export function AccountConfigPage() {
                                         && Math.abs(multiTradePreview.effectiveDistancePips - (Number(configDraft.manualSettings.range_distance_pips ?? 0) || 0)) >= 1 && (
                                         <> Ladder span = {multiTradePreview.pending} × {Number(configDraft.manualSettings.range_step_pips ?? 0) || 0}p = {multiTradePreview.effectiveDistancePips}p (configured distance {Number(configDraft.manualSettings.range_distance_pips ?? 0) || 0}p is advisory).</>
                                       )}
-                                      {configDraft.manualSettings.range_trading && configDraft.manualSettings.close_worse_entries && (multiTradePreview.immediate ?? 0) + Math.min(
-                                        Number(configDraft.manualSettings.close_worse_extra_pendings ?? 0) || 0,
-                                        multiTradePreview.pending ?? 0,
-                                      ) > 0 && (
-                                        <> {(multiTradePreview.immediate ?? 0) + Math.min(
-                                          Number(configDraft.manualSettings.close_worse_extra_pendings ?? 0) || 0,
-                                          multiTradePreview.pending ?? 0,
-                                        )} legs close at +{Number(configDraft.manualSettings.close_worse_entries_pips ?? 20) || 0}p.</>
+                                      {configDraft.manualSettings.close_worse_entries && (multiTradePreview.immediate ?? 0) > 0 && (
+                                        <> {multiTradePreview.immediate} instant leg{(multiTradePreview.immediate ?? 0) === 1 ? '' : 's'} close at +{Number(configDraft.manualSettings.close_worse_entries_pips ?? 20) || 0}p from anchor.</>
                                       )}
                                     </p>
                                   </div>
@@ -1548,44 +1519,27 @@ export function AccountConfigPage() {
                                         />
                                       </div>
                                       <p className="text-xs text-neutral-600">
-                                        When price moves +X pips beyond the worse (earliest) entry, the
-                                        worker auto-closes all immediates plus the shallowest layers
-                                        via /OrderClose. No broker-side TP is set on these legs (only the
-                                        SL rides) — this avoids "Invalid stops" rejections when the basket
-                                        is already in profit. Deeper layers keep their percent-row TPs
-                                        and ride for the bigger targets.
+                                        When price reaches +X pips from the signal entry (anchor), the worker
+                                        auto-closes instant legs via /OrderClose.
+                                        A channel message such as &quot;Close worse entries&quot; closes every open
+                                        leg whose entry is within X pips of the live price at that moment
+                                        (e.g. instant fills near the signal, not deep layers). No broker TP
+                                        is set on CWE legs — only the SL rides on the broker.
                                       </p>
                                       {configDraft.manualSettings.close_worse_entries && (
-                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                          <Input
-                                            label="Close profits from worse entry (pips)"
-                                            type="number"
-                                            min={1}
-                                            step={1}
-                                            placeholder="30"
-                                            hint={
-                                              formatPipHint(Number(configDraft.manualSettings.close_worse_entries_pips ?? 30) || 0)
-                                              ?? 'Pip profit from the worse entry.'
-                                            }
-                                            value={String(configDraft.manualSettings.close_worse_entries_pips ?? 30)}
-                                            onChange={e => setManual({ close_worse_entries_pips: Math.max(1, Number(e.target.value) || 1) })}
-                                          />
-                                          <Input
-                                            label="Also close shallowest layers"
-                                            type="number"
-                                            min={0}
-                                            max={multiTradePreview.pending ?? 0}
-                                            step={1}
-                                            placeholder="0"
-                                            hint={`Max ${multiTradePreview.pending ?? 0} (current pending count). 0 = immediates only.`}
-                                            value={String(configDraft.manualSettings.close_worse_extra_pendings ?? 0)}
-                                            onChange={e => {
-                                              const max = multiTradePreview.pending ?? 0
-                                              const v = Math.max(0, Math.floor(Number(e.target.value) || 0))
-                                              setManual({ close_worse_extra_pendings: Math.min(max, v) })
-                                            }}
-                                          />
-                                        </div>
+                                        <Input
+                                          label="Close profits from worse entry (pips)"
+                                          type="number"
+                                          min={1}
+                                          step={1}
+                                          placeholder="30"
+                                          hint={
+                                            formatPipHint(Number(configDraft.manualSettings.close_worse_entries_pips ?? 30) || 0)
+                                            ?? 'Distance from live price (instruction) or anchor + X pips (auto).'
+                                          }
+                                          value={String(configDraft.manualSettings.close_worse_entries_pips ?? 30)}
+                                          onChange={e => setManual({ close_worse_entries_pips: Math.max(1, Number(e.target.value) || 1) })}
+                                        />
                                       )}
                                     </div>
                                   </>
@@ -2390,4 +2344,3 @@ function CategoryRow({
     </div>
   )
 }
-

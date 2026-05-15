@@ -160,13 +160,11 @@ function planMultiManualOrders(args) {
         }
     }
     let closeWorseEntries;
-    if (effectiveRangeLegs > 0 && manual.close_worse_entries === true) {
+    if (manual.close_worse_entries === true && immediateLegs > 0) {
         const cwPips = Math.max(0, Number(manual.close_worse_entries_pips ?? 0));
         if (cwPips > 0) {
-            const extraPendings = Math.max(0, Math.min(effectiveRangeLegs, Math.floor(Number(manual.close_worse_extra_pendings ?? 0))));
             closeWorseEntries = {
                 immediates: immediateLegs,
-                extraPendings,
                 pipsFromAnchor: cwPips,
             };
         }

@@ -103,7 +103,7 @@ test('planRangeSplit: no signal anchor + no immediates → runtime-only fallback
 })
 
 test('computeCwOverrideTp: buy → anchor + pips × pip', () => {
-  const policy: PlannerCloseWorseEntries = { immediates: 2, extraPendings: 1, pipsFromAnchor: 30 }
+  const policy: PlannerCloseWorseEntries = { immediates: 2, pipsFromAnchor: 30 }
   const out = computeCwOverrideTp({
     policy, anchor: 1850, isBuy: true, pip: 0.1, digits: 2, minStopDistance: 1.02,
   })
@@ -117,7 +117,7 @@ test('computeCwOverrideTp: ignores broker stops/freeze floor (worker-managed clo
   // Post May-12 redesign the threshold is only ever compared against a
   // live quote inside cweCloseMonitor — never sent as a TP — so clamping
   // would silently shift the close trigger further than the user asked.
-  const policy: PlannerCloseWorseEntries = { immediates: 1, extraPendings: 0, pipsFromAnchor: 30 }
+  const policy: PlannerCloseWorseEntries = { immediates: 1, pipsFromAnchor: 30 }
   const out = computeCwOverrideTp({
     policy, anchor: 1.10000, isBuy: true, pip: 0.0001, digits: 5, minStopDistance: 0.005,
   })
@@ -125,7 +125,7 @@ test('computeCwOverrideTp: ignores broker stops/freeze floor (worker-managed clo
 })
 
 test('computeCwOverrideTp: sell direction inverts override', () => {
-  const policy: PlannerCloseWorseEntries = { immediates: 1, extraPendings: 0, pipsFromAnchor: 30 }
+  const policy: PlannerCloseWorseEntries = { immediates: 1, pipsFromAnchor: 30 }
   const out = computeCwOverrideTp({
     policy, anchor: 1850, isBuy: false, pip: 0.1, digits: 2, minStopDistance: 0,
   })
@@ -133,7 +133,7 @@ test('computeCwOverrideTp: sell direction inverts override', () => {
 })
 
 test('computeCwOverrideTp: zero anchor returns null', () => {
-  const policy: PlannerCloseWorseEntries = { immediates: 1, extraPendings: 0, pipsFromAnchor: 30 }
+  const policy: PlannerCloseWorseEntries = { immediates: 1, pipsFromAnchor: 30 }
   const out = computeCwOverrideTp({
     policy, anchor: 0, isBuy: true, pip: 0.1, digits: 2, minStopDistance: 0,
   })
@@ -141,7 +141,7 @@ test('computeCwOverrideTp: zero anchor returns null', () => {
 })
 
 test('computeCwOverrideTp: zero pipsFromAnchor returns null', () => {
-  const policy: PlannerCloseWorseEntries = { immediates: 1, extraPendings: 0, pipsFromAnchor: 0 }
+  const policy: PlannerCloseWorseEntries = { immediates: 1, pipsFromAnchor: 0 }
   const out = computeCwOverrideTp({
     policy, anchor: 1850, isBuy: true, pip: 0.1, digits: 2, minStopDistance: 0,
   })
@@ -268,7 +268,7 @@ test('planManualOrders: multi + BuyLimit → market immediates (price 0; avoids 
   }
 })
 
-test('planManualOrders: CWE policy emitted with extraPendings clamped', () => {
+test('planManualOrders: CWE policy emitted for immediate legs', () => {
   const plan = planManualOrders({
     parsed: { ...baseParsed, entry_price: 1850 },
     resolvedSymbol: 'XAUUSD',
@@ -277,7 +277,6 @@ test('planManualOrders: CWE policy emitted with extraPendings clamped', () => {
       ...baseManual,
       close_worse_entries: true,
       close_worse_entries_pips: 30,
-      close_worse_extra_pendings: 99, // way more than available → should clamp
     },
     channelKeywords: null,
     manualLot: 1.0,
@@ -288,8 +287,28 @@ test('planManualOrders: CWE policy emitted with extraPendings clamped', () => {
   assert.ok(cw, 'CWE policy should be emitted when range + close_worse_entries are on')
   assert.equal(cw!.pipsFromAnchor, 30)
   assert.equal(cw!.immediates, 5)
-  // extraPendings should be clamped to the number of virtual pendings available (5).
-  assert.equal(cw!.extraPendings, 5)
+})
+
+test('planManualOrders: CWE policy emitted without range trading (immediates only)', () => {
+  const plan = planManualOrders({
+    parsed: { ...baseParsed, entry_price: 1850 },
+    resolvedSymbol: 'XAUUSD',
+    baseOperation: 'Buy',
+    manual: {
+      ...baseManual,
+      range_trading: false,
+      range_percent: 0,
+      close_worse_entries: true,
+      close_worse_entries_pips: 30,
+    },
+    channelKeywords: null,
+    manualLot: 1.0,
+    ctx: baseCtx,
+    commentPrefix: 'TSCopier:abc',
+  })
+  const cw = plan.closeWorseEntries
+  assert.ok(cw, 'CWE should apply to multi immediates even when range trading is off')
+  assert.ok(cw!.immediates > 0)
 })
 
 test('planManualOrders: sell ladder → virtualPendings carry isBuy=false', () => {

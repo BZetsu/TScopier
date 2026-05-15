@@ -4,6 +4,8 @@ exports.TradeExecutor = void 0;
 const metatraderapi_1 = require("./metatraderapi");
 const manualPlanner_1 = require("./manualPlanner");
 const autoManagement_1 = require("./autoManagement");
+const closeWorseEntries_1 = require("./closeWorseEntries");
+const pipCalculator_1 = require("./pipCalculator");
 const trailingStop_1 = require("./trailingStop");
 const rangePendingLegPersist_1 = require("./rangePendingLegPersist");
 const signalEntryPendingHelpers_1 = require("./signalEntryPendingHelpers");
@@ -76,7 +78,12 @@ function operationFor(action, signal) {
 }
 function isManagementAction(action) {
     const a = action.toLowerCase();
-    return a === 'close' || a === 'breakeven' || a === 'partial_profit' || a === 'partial_breakeven' || a === 'modify';
+    return a === 'close'
+        || a === 'close_worse_entries'
+        || a === 'breakeven'
+        || a === 'partial_profit'
+        || a === 'partial_breakeven'
+        || a === 'modify';
 }
 function computeLot(broker, signal) {
     const mode = broker.copier_mode ?? 'ai';
@@ -172,7 +179,7 @@ function clampOrderStops(args, params) {
 /**
  * Compute the single CWE override TP price for this plan against the resolved
  * anchor. The executor applies this same value to the first N immediate orders
- * AND the first N shallowest virtual pendings (sorted by stepIdx) before
+ * on immediate legs before
  * sending / persisting. Returns `null` when CWE is off or inputs are missing.
  */
 function computeCweTp(plan, anchor, params) {
@@ -1056,15 +1063,6 @@ class TradeExecutor {
                     comment: `${immediateArgs[i].comment ?? ''}.cw`,
                 };
             }
-            const nVirt = Math.max(0, Math.min(virtualPendings.length, plan.closeWorseEntries.extraPendings));
-            for (let i = 0; i < nVirt; i++) {
-                virtualPendings[i] = {
-                    ...virtualPendings[i],
-                    takeprofit: null,
-                    comment: `${virtualPendings[i].comment}.cw`,
-                    cweClosePrice: overrideTp,
-                };
-            }
         }
         const legPairs = Math.min(immediateArgs.length, familyTrades.length);
         if (legPairs < immediateArgs.length || legPairs < familyTrades.length) {
@@ -1565,8 +1563,7 @@ class TradeExecutor {
                 console.warn(`[tradeExecutor] /Quote failed for ${symbol} signal=${signal.id} broker=${broker.id}: ${msg}`);
             }
         }
-        // Apply Close-Worse-Entries to the first N immediates + first N shallowest
-        // virtual pendings. As of May-12 this is a *worker-managed* close: the
+        // Apply Close-Worse-Entries to immediate legs. As of May-12 this is a *worker-managed* close: the
         // broker never sees the threshold as a takeprofit (which produced
         // "Invalid stops" rejections whenever the basket was already in profit or
         // inside the stops/freeze zone). Instead we:
@@ -1588,16 +1585,6 @@ class TradeExecutor {
                         takeprofit: 0,
                         comment: `${legs[i].args.comment ?? ''}.cw`,
                     },
-                    cweClosePrice: overrideTp,
-                };
-            }
-            const nVirt = Math.max(0, Math.min(virtualPendings.length, plan.closeWorseEntries.extraPendings));
-            // Virtuals are already ordered by stepIdx ascending (shallowest first).
-            for (let i = 0; i < nVirt; i++) {
-                virtualPendings[i] = {
-                    ...virtualPendings[i],
-                    takeprofit: null,
-                    comment: `${virtualPendings[i].comment}.cw`,
                     cweClosePrice: overrideTp,
                 };
             }
@@ -2100,7 +2087,7 @@ class TradeExecutor {
         // breakeven move silently wipes the TP too.
         const { data: trades } = await this.supabase
             .from('trades')
-            .select('id,broker_account_id,metaapi_order_id,symbol,lot_size,status,sl,tp,entry_price')
+            .select('id,broker_account_id,metaapi_order_id,symbol,direction,lot_size,status,sl,tp,entry_price')
             .eq('signal_id', basketAnchorId);
         const rows = (trades ?? []);
         if (!rows.length) {
@@ -2139,6 +2126,10 @@ class TradeExecutor {
             && typeof parsed.tp[0] === 'number'
             && Number.isFinite(parsed.tp[0])
             && parsed.tp[0] > 0;
+        if (action === 'close_worse_entries') {
+            await this.applyCloseWorseEntriesInstruction(signal, parsed, rows, byBroker);
+            return;
+        }
         await Promise.allSettled(rows.map(async (trade) => {
             const broker = byBroker.get(trade.broker_account_id);
             if (!broker || !isMtUuid(broker.metaapi_account_id))
@@ -2263,6 +2254,158 @@ class TradeExecutor {
                 .eq('status', 'parsed');
             if (sigErr) {
                 console.warn(`[tradeExecutor] mgmt signal finalize failed id=${signal.id}: ${sigErr.message}`);
+            }
+        }
+        catch {
+            // best-effort
+        }
+    }
+    /**
+     * Telegram "Close worse entries": close open basket legs whose entry is within
+     * `close_worse_entries_pips` of the live quote at instruction time.
+     */
+    async applyCloseWorseEntriesInstruction(signal, parsed, rows, byBroker) {
+        if (!this.api)
+            return;
+        const openRows = rows.filter(r => r.status === 'open');
+        if (!openRows.length) {
+            try {
+                await this.supabase
+                    .from('signals')
+                    .update({ status: 'skipped', skip_reason: 'cwe_no_open_trades' })
+                    .eq('id', signal.id)
+                    .eq('status', 'parsed');
+            }
+            catch { /* best-effort */ }
+            return;
+        }
+        const groups = new Map();
+        for (const t of openRows) {
+            const key = `${t.broker_account_id}|${t.symbol}`;
+            const list = groups.get(key) ?? [];
+            list.push(t);
+            groups.set(key, list);
+        }
+        await Promise.allSettled(Array.from(groups.entries()).map(async ([key, groupTrades]) => {
+            const [brokerId, symbol] = key.split('|');
+            const broker = brokerId ? byBroker.get(brokerId) : undefined;
+            if (!broker || !isMtUuid(broker.metaapi_account_id))
+                return;
+            const manual = (broker.manual_settings ?? {});
+            if (manual.trade_style !== 'multi' || manual.close_worse_entries !== true) {
+                await this.supabase.from('trade_execution_logs').insert({
+                    user_id: signal.user_id,
+                    signal_id: signal.id,
+                    broker_account_id: broker.id,
+                    action: 'mgmt_close_worse_entries',
+                    status: 'skipped',
+                    request_payload: {
+                        reason: 'close_worse_entries_disabled',
+                        trade_style: manual.trade_style ?? 'single',
+                    },
+                });
+                return;
+            }
+            const pips = Math.max(1, Number(manual.close_worse_entries_pips ?? 30));
+            const uuid = broker.metaapi_account_id;
+            const params = await this.getSymbolParams(uuid, symbol).catch(() => null);
+            const pipQuote = (0, pipCalculator_1.pipCalculator)(symbol, params?.point ?? 0.00001, params?.digits ?? 5, params?.contractSize ?? null);
+            const pipSize = pipQuote.pipPrice;
+            if (!Number.isFinite(pipSize) || pipSize <= 0) {
+                console.warn(`[tradeExecutor] cwe instruction skip: invalid pip size symbol=${symbol}`);
+                return;
+            }
+            let q;
+            try {
+                q = await this.api.quote(uuid, symbol);
+            }
+            catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                console.warn(`[tradeExecutor] cwe instruction /Quote failed symbol=${symbol}: ${msg}`);
+                return;
+            }
+            const direction = groupTrades[0].direction;
+            const ref = (0, closeWorseEntries_1.referencePriceForDirection)(direction, q.bid, q.ask);
+            const toClose = (0, closeWorseEntries_1.filterTradesWithinPipsOfReference)({
+                trades: groupTrades,
+                referencePrice: ref,
+                pips,
+                pipSize,
+            });
+            console.log(`[tradeExecutor] cwe instruction signal=${signal.id} broker=${broker.id} symbol=${symbol}`
+                + ` ref=${ref} pips=${pips} matched=${toClose.length}/${groupTrades.length}`);
+            for (const trade of toClose) {
+                const ticket = Number(trade.metaapi_order_id);
+                if (!Number.isFinite(ticket) || ticket <= 0)
+                    continue;
+                try {
+                    await this.api.orderClose(uuid, { ticket, lots: trade.lot_size });
+                    await this.supabase
+                        .from('trades')
+                        .update({
+                        status: 'closed',
+                        closed_at: new Date().toISOString(),
+                        cwe_close_price: null,
+                    })
+                        .eq('id', trade.id);
+                    await this.supabase.from('trade_execution_logs').insert({
+                        user_id: signal.user_id,
+                        signal_id: signal.id,
+                        broker_account_id: broker.id,
+                        action: 'mgmt_close_worse_entries',
+                        status: 'success',
+                        request_payload: {
+                            ticket,
+                            symbol,
+                            direction: trade.direction,
+                            entry_price: trade.entry_price,
+                            reference_price: ref,
+                            pips,
+                            pip_size: pipSize,
+                        },
+                    });
+                }
+                catch (err) {
+                    const msg = err instanceof Error ? err.message : String(err);
+                    const benign = /not\s+found|already\s+closed|invalid\s+ticket|no\s+such\s+order/i.test(msg);
+                    if (benign) {
+                        await this.supabase
+                            .from('trades')
+                            .update({
+                            status: 'closed',
+                            closed_at: new Date().toISOString(),
+                            cwe_close_price: null,
+                        })
+                            .eq('id', trade.id);
+                    }
+                    else {
+                        await this.supabase.from('trade_execution_logs').insert({
+                            user_id: signal.user_id,
+                            signal_id: signal.id,
+                            broker_account_id: broker.id,
+                            action: 'mgmt_close_worse_entries',
+                            status: 'failed',
+                            request_payload: {
+                                ticket,
+                                symbol,
+                                entry_price: trade.entry_price,
+                                reference_price: ref,
+                                pips,
+                            },
+                            error_message: msg,
+                        });
+                    }
+                }
+            }
+        }));
+        try {
+            const { error: sigErr } = await this.supabase
+                .from('signals')
+                .update({ status: 'executed' })
+                .eq('id', signal.id)
+                .eq('status', 'parsed');
+            if (sigErr) {
+                console.warn(`[tradeExecutor] cwe instruction finalize failed id=${signal.id}: ${sigErr.message}`);
             }
         }
         catch {

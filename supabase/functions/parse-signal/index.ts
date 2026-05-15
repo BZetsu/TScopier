@@ -246,7 +246,14 @@ function extractPriceByLabels(message: string, labels: string[]): number | null 
 }
 
 function isManagementAction(action: string): boolean {
-  return new Set(["close", "breakeven", "partial_profit", "partial_breakeven", "modify"]).has(String(action ?? "").toLowerCase())
+  return new Set([
+    "close",
+    "close_worse_entries",
+    "breakeven",
+    "partial_profit",
+    "partial_breakeven",
+    "modify",
+  ]).has(String(action ?? "").toLowerCase())
 }
 
 function normalizeParsedFromModel(raw: unknown, fallbackText: string): ParsedSignal {
@@ -255,7 +262,7 @@ function normalizeParsedFromModel(raw: unknown, fallbackText: string): ParsedSig
   if (action === "long") action = "buy"
   if (action === "short") action = "sell"
   const allowed = new Set([
-    "buy", "sell", "close", "breakeven", "partial_profit", "partial_breakeven", "modify", "ignore",
+    "buy", "sell", "close", "close_worse_entries", "breakeven", "partial_profit", "partial_breakeven", "modify", "ignore",
   ])
   if (!allowed.has(action)) action = "ignore"
 
@@ -405,7 +412,12 @@ function parseDeterministicManagement(
     /\bmove\s+.*\b(stop\s*loss|sl)\b.*\b(breakeven|break\s*even|entry|be)\b/i.test(t) ||
     hasAnyKeyword(t, kwBreakeven)
 
-  if (wantsPartialHalf && wantsBreakeven) action = "partial_breakeven"
+  const wantsCloseWorseEntries =
+    /\bclose\s+worse\s+entr(?:y|ies)\b/i.test(t) ||
+    /\bclose\s+worse\b/i.test(t)
+
+  if (wantsCloseWorseEntries) action = "close_worse_entries"
+  else if (wantsPartialHalf && wantsBreakeven) action = "partial_breakeven"
   else if (wantsPartialHalf) {
     action = "partial_profit"
     if (
@@ -742,7 +754,14 @@ function applyRawSymbolRepair(parsed: ParsedSignal, rawMsg: string): ParsedSigna
   const btcHints = /\b(btc|bitcoin|btcusd|btcusdt)\b/i.test(rawMsg)
   const hasAnySymbolHint = /([A-Z]{3,}\/[A-Z]{3,})|\b([A-Z]{6}|XAUUSD|XAGUSD|BTCUSD|BTCUSDT|ETHUSD|ETHUSDT)\b|(\bgold\b|\bxau\b|\bbtc\b|\bbitcoin\b|\beth\b|\bether)\b/i
     .test(rawMsg)
-  const mgmt = new Set(["close", "breakeven", "partial_profit", "partial_breakeven", "modify"]).has(parsed.action)
+  const mgmt = new Set([
+    "close",
+    "close_worse_entries",
+    "breakeven",
+    "partial_profit",
+    "partial_breakeven",
+    "modify",
+  ]).has(parsed.action)
 
   if (mgmt) {
     if (cur && MGMT_NON_INSTRUMENT_SYMBOLS.has(cur)) {

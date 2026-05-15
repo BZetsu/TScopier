@@ -40,7 +40,6 @@ export interface ManualSettings {
   range_distance_pips?: number
   close_worse_entries?: boolean
   close_worse_entries_pips?: number
-  close_worse_extra_pendings?: number
   /** @deprecated Replaced by `range_percent`. */
   range_total_lot?: number
   reverse_signal?: boolean
@@ -120,7 +119,6 @@ export interface VirtualPendingLeg {
 
 export interface PlannerCloseWorseEntries {
   immediates: number
-  extraPendings: number
   pipsFromAnchor: number
 }
 

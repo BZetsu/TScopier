@@ -132,12 +132,10 @@ export interface ManualSettings {
   range_step_pips?: number
   /** Total pip distance the range spans from entry. Caps the pending count to floor(distance / step). */
   range_distance_pips?: number
-  /** Range only: when true, the immediate legs (+ a configurable number of shallowest pendings) take a small profit at `close_worse_entries_pips` instead of riding the percent-row TPs. */
+  /** When true, immediate multi-trade legs are closed at anchor + `close_worse_entries_pips` via the worker. */
   close_worse_entries?: boolean
-  /** Pips of profit per worse-entry leg (from each leg's own entry) at which to close. Default 20. */
+  /** Pips from signal entry (anchor) at which instant legs auto-close. Default 30. */
   close_worse_entries_pips?: number
-  /** How many of the shallowest pendings (in addition to all immediates) should also use the tight TP. Default 0 (immediates only). Capped at the effective pending count. */
-  close_worse_extra_pendings?: number
   /** @deprecated Legacy lot-based range; replaced by `range_percent`. Stripped on load. */
   range_total_lot?: number
   reverse_signal?: boolean
