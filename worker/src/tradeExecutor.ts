@@ -30,6 +30,13 @@ import {
   filterTradesWithinPipsOfReference,
   referencePriceForDirection,
 } from './closeWorseEntries'
+import {
+  isChannelManagementBlocked,
+  isOppositeSignalCloseBlocked,
+  isPendingCancelBlocked,
+  normalizeChannelMessageFiltersMap,
+  type ChannelMessageFiltersMap,
+} from './channelMessageFilters'
 import { pipCalculator } from './pipCalculator'
 import { trailingTradeRowSnapshot } from './trailingStop'
 import { isPostgresDuplicateKeyError } from './rangePendingLegPersist'
@@ -122,6 +129,7 @@ interface BrokerRow {
   last_equity: number | null
   last_currency: string | null
   performance_baseline_balance?: number | null
+  channel_message_filters?: ChannelMessageFiltersMap | null
 }
 
 interface SymbolCacheEntry {
@@ -662,7 +670,24 @@ export class TradeExecutor {
       }
 
       if (isManagementAction(action)) {
-        await this.applyManagement(row, parsed, brokers)
+        const mgmtBrokers = brokers.filter(
+          b => !isChannelManagementBlocked(
+            normalizeChannelMessageFiltersMap(b.channel_message_filters),
+            row.channel_id,
+            action,
+          ),
+        )
+        if (!mgmtBrokers.length) {
+          try {
+            await this.supabase
+              .from('signals')
+              .update({ status: 'skipped', skip_reason: 'channel_filter_ignored' })
+              .eq('id', row.id)
+              .eq('status', 'parsed')
+          } catch { /* best-effort */ }
+          return
+        }
+        await this.applyManagement(row, parsed, mgmtBrokers)
         return
       }
 
@@ -1013,6 +1038,10 @@ export class TradeExecutor {
     if (!this.api) return
     const manual = (broker.manual_settings ?? {}) as ManualSettings
     if (manual.close_on_opposite_signal !== true) return
+    if (isOppositeSignalCloseBlocked(
+      normalizeChannelMessageFiltersMap(broker.channel_message_filters),
+      signal.channel_id,
+    )) return
     const a = String(parsed.action ?? '').toLowerCase()
     if (a !== 'buy' && a !== 'sell') return
     const channelBuy = a === 'buy'
@@ -1077,7 +1106,10 @@ export class TradeExecutor {
         }
       }
     }
-    if (scopes.length) {
+    if (scopes.length && !isPendingCancelBlocked(
+      normalizeChannelMessageFiltersMap(broker.channel_message_filters),
+      signal.channel_id,
+    )) {
       await this.cancelRangePendingLegsForScopes(signal.user_id, signal.id, scopes, 'opposite_signal_close')
     }
   }
@@ -2495,14 +2527,45 @@ export class TradeExecutor {
       && Number.isFinite(parsed.tp[0])
       && (parsed.tp[0] as number) > 0
 
+    const mgmtCtx = { hasNewSl, hasNewTp }
+
     if (action === 'close_worse_entries') {
-      await this.applyCloseWorseEntriesInstruction(signal, parsed, rows, byBroker)
+      const eligibleBrokers = brokers.filter(
+        b => !isChannelManagementBlocked(
+          normalizeChannelMessageFiltersMap(b.channel_message_filters),
+          signal.channel_id,
+          action,
+          mgmtCtx,
+        ),
+      )
+      if (!eligibleBrokers.length) {
+        try {
+          await this.supabase
+            .from('signals')
+            .update({ status: 'skipped', skip_reason: 'channel_filter_ignored' })
+            .eq('id', signal.id)
+            .eq('status', 'parsed')
+        } catch { /* best-effort */ }
+        return
+      }
+      const eligibleIds = new Set(eligibleBrokers.map(b => b.id))
+      const eligibleRows = rows.filter(r => eligibleIds.has(r.broker_account_id))
+      const eligibleByBroker = new Map(eligibleBrokers.map(b => [b.id, b]))
+      await this.applyCloseWorseEntriesInstruction(signal, parsed, eligibleRows, eligibleByBroker)
       return
     }
 
     await Promise.allSettled(rows.map(async trade => {
       const broker = byBroker.get(trade.broker_account_id)
       if (!broker || !isMtUuid(broker.metaapi_account_id)) return
+      if (isChannelManagementBlocked(
+        normalizeChannelMessageFiltersMap(broker.channel_message_filters),
+        signal.channel_id,
+        action,
+        mgmtCtx,
+      )) {
+        return
+      }
       const uuid = broker.metaapi_account_id!
       const ticket = Number(trade.metaapi_order_id)
       if (!Number.isFinite(ticket) || ticket <= 0) return
@@ -2602,10 +2665,19 @@ export class TradeExecutor {
     }))
 
     if (action === 'close' && cancelledPendingScopes.size > 0) {
-      const scopes = Array.from(cancelledPendingScopes).map(
-        enc => JSON.parse(enc) as RangePendingCancelScope,
-      )
-      await this.cancelRangePendingLegsForScopes(signal.user_id, signal.id, scopes, 'signal_closed')
+      const scopes = Array.from(cancelledPendingScopes)
+        .map(enc => JSON.parse(enc) as RangePendingCancelScope)
+        .filter(scope => {
+          const broker = byBroker.get(scope.brokerAccountId)
+          if (!broker) return false
+          return !isPendingCancelBlocked(
+            normalizeChannelMessageFiltersMap(broker.channel_message_filters),
+            signal.channel_id,
+          )
+        })
+      if (scopes.length > 0) {
+        await this.cancelRangePendingLegsForScopes(signal.user_id, signal.id, scopes, 'signal_closed')
+      }
     }
 
     // Management messages do not insert `trades` with `signal_id = this row`,

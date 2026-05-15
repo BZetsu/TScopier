@@ -22,6 +22,15 @@ import { estimateMultiTradeOrderCount } from '../../lib/estimateMultiTradeOrders
 import { pipCalculator, pipValueForLots, type PipQuote } from '../../lib/pipCalculator'
 import { classifySymbol } from '../../lib/pipMath'
 import type { BrokerAccount, ManualSettings, ManualTpLot } from '../../types/database'
+import {
+  DEFAULT_CHANNEL_FILTERS,
+  normalizeChannelFilters,
+  normalizeChannelMessageFiltersMap,
+  type ChannelFilterDecision,
+  type ChannelFilterKey,
+  type ChannelFilters,
+  type ChannelMessageFiltersMap,
+} from '../../lib/channelMessageFilters'
 
 interface ChannelOption {
   id: string
@@ -32,39 +41,23 @@ interface ChannelOption {
 }
 
 // ── Channel keyword filters ────────────────────────────────────────────────
-// Each connected channel inside a broker can silence categories of management
-// commands the parser already detects (close half, breakeven, etc.). This is
-// a UI-only layer for now — the worker still honours everything. Persistence
-// and the actual filter check will land in a follow-up; see the TODO in
-// `saveConfigureModal` below.
-
-type ChannelFilterKey =
-  | 'close_full' | 'close_half' | 'break_even'
-  | 'modify_sl' | 'modify_tp' | 'close_tp_levels'
-  | 'close_all' | 'delete_pendings' | 'reverse'
-
-type ChannelFilterDecision = 'allow' | 'ignore'
-
-type ChannelFilters = Record<ChannelFilterKey, ChannelFilterDecision>
 
 const CHANNEL_FILTER_CATEGORIES: Array<{
   key: ChannelFilterKey
   label: string
   example: string
 }> = [
-  { key: 'close_full',      label: 'Close full position',   example: 'e.g. "close all", "exit trade"' },
-  { key: 'close_half',      label: 'Close half / partial',  example: 'e.g. "close half", "take 50%"' },
-  { key: 'break_even',      label: 'Break-even',            example: 'e.g. "move SL to entry", "BE now"' },
-  { key: 'modify_sl',       label: 'Adjust SL',             example: 'e.g. "move SL to 4500"' },
-  { key: 'modify_tp',       label: 'Adjust TP',             example: 'e.g. "change TP to 4600"' },
-  { key: 'close_tp_levels', label: 'Close at named TP',     example: 'e.g. "close TP1", "TP2 hit"' },
-  { key: 'close_all',       label: 'Close all open trades', example: 'e.g. "flatten all"' },
-  { key: 'delete_pendings', label: 'Cancel pending orders', example: 'e.g. "cancel limit", "delete pending"' },
-  { key: 'reverse',         label: 'Reverse direction',     example: 'flips buy <-> sell' },
+  { key: 'close_full',          label: 'Close full position',   example: 'e.g. "close", "exit trade", "flatten"' },
+  { key: 'close_half',          label: 'Close half / partial',  example: 'e.g. "close half", "take 50%"' },
+  { key: 'break_even',          label: 'Break-even',            example: 'e.g. "move SL to entry", "BE now"' },
+  { key: 'modify_sl',           label: 'Adjust SL',             example: 'e.g. "move SL to 4500"' },
+  { key: 'modify_tp',           label: 'Adjust TP',             example: 'e.g. "change TP to 4600"' },
+  { key: 'close_tp_levels',     label: 'Close at named TP',     example: 'e.g. "close TP1", "TP2 hit"' },
+  { key: 'close_all',           label: 'Close all open trades', example: 'e.g. "close all", "flatten all"' },
+  { key: 'close_worse_entries', label: 'Close worse entries',   example: 'e.g. "close worse entries"' },
+  { key: 'delete_pendings',     label: 'Cancel pending orders', example: 'e.g. "cancel limit", "delete pending"' },
+  { key: 'reverse',             label: 'Reverse direction',     example: 'flips buy ↔ sell on entry' },
 ]
-
-const DEFAULT_CHANNEL_FILTERS: ChannelFilters =
-  Object.fromEntries(CHANNEL_FILTER_CATEGORIES.map(c => [c.key, 'allow'])) as ChannelFilters
 
 interface BrokerForm {
   label: string
@@ -111,8 +104,7 @@ interface AccountConfigDraft {
   mode: 'ai' | 'manual'
   channelIds: string[]
   manualSettings: ManualSettings
-  // UI-only for now; persisted in a follow-up (see TODO in saveConfigureModal).
-  channelFilters: Record<string, ChannelFilters>
+  channelFilters: ChannelMessageFiltersMap
 }
 
 /**
@@ -124,12 +116,15 @@ interface AccountConfigDraft {
 function buildChannelFiltersDraft(
   channels: ChannelOption[],
   selectedIds: string[],
-  prior: Record<string, ChannelFilters> = {},
-): Record<string, ChannelFilters> {
+  persisted: ChannelMessageFiltersMap = {},
+  prior: ChannelMessageFiltersMap = {},
+): ChannelMessageFiltersMap {
   const keys = new Set<string>([...channels.map(c => c.id), ...selectedIds])
-  const out: Record<string, ChannelFilters> = {}
+  const out: ChannelMessageFiltersMap = {}
   for (const id of keys) {
-    out[id] = prior[id] ?? { ...DEFAULT_CHANNEL_FILTERS }
+    out[id] = prior[id]
+      ? normalizeChannelFilters(prior[id])
+      : normalizeChannelFilters(persisted[id])
   }
   return out
 }
@@ -571,7 +566,11 @@ export function AccountConfigPage() {
       mode: AI_CONFIGURATION_ENABLED && fresh.copier_mode !== 'manual' ? 'ai' : 'manual',
       channelIds,
       manualSettings,
-      channelFilters: buildChannelFiltersDraft(channelOptions, channelIds),
+      channelFilters: buildChannelFiltersDraft(
+        channelOptions,
+        channelIds,
+        normalizeChannelMessageFiltersMap(fresh.channel_message_filters),
+      ),
     })
     setSymbolMappingText(
       Object.entries(manualSettings.symbol_mapping ?? {})
@@ -743,12 +742,11 @@ export function AccountConfigPage() {
     }
 
     setConfigSaving(true)
-    // TODO(channel-filters): persist configDraft.channelFilters once the schema lands.
-    //   Proposed column: broker_accounts.channel_message_filters jsonb
-    //   Shape: Record<channelId, Record<ChannelFilterKey, 'allow' | 'ignore'>>
-    //   The worker will consult this map before dispatching applyManagement /
-    //   sendOrder and skip when the action's category resolves to 'ignore' for
-    //   the originating channel. See applyManagement in worker/src/tradeExecutor.ts.
+    const channelMessageFilters: ChannelMessageFiltersMap = {}
+    const filterChannelIds = new Set([...channelOptions.map(c => c.id), ...channelIds])
+    for (const id of filterChannelIds) {
+      channelMessageFilters[id] = configDraft.channelFilters[id] ?? { ...DEFAULT_CHANNEL_FILTERS }
+    }
     const { data, error: upErr } = await supabase
       .from('broker_accounts')
       .update({
@@ -756,6 +754,7 @@ export function AccountConfigPage() {
         signal_channel_ids: channelIds,
         enforce_signal_channel_filter: restrictChannels,
         manual_settings: configDraft.manualSettings,
+        channel_message_filters: channelMessageFilters,
       })
       .eq('id', configAccount.id)
       .eq('user_id', user.id)
@@ -2145,8 +2144,9 @@ export function AccountConfigPage() {
                           </p>
                         </div>
                         <p className="text-xs text-neutral-500">
-                          Mark a category as Ignore to drop matching Telegram messages from that channel before
-                          this broker acts on them. Other channels are unaffected.
+                          Mark a category as Ignore to skip matching instructions from that channel on this
+                          broker (trades keep running). Ignoring Close full position also blocks generic
+                          &quot;close&quot; and &quot;close all&quot; messages.
                         </p>
 
                         {(() => {
@@ -2169,7 +2169,9 @@ export function AccountConfigPage() {
                               {visibleIds.map((id, idx) => {
                                 const channel = byId.get(id)
                                 if (!channel) return null
-                                const filters = configDraft.channelFilters[id] ?? DEFAULT_CHANNEL_FILTERS
+                                const filters = normalizeChannelFilters(
+                                  configDraft.channelFilters[id] ?? DEFAULT_CHANNEL_FILTERS,
+                                )
                                 return (
                                   <ChannelFiltersCard
                                     key={id}
