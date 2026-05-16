@@ -10,6 +10,8 @@ export interface BacktestStrategyConfig {
 
 export interface BacktestRunConfig {
   channelIds: string[]
+  /** Empty = all symbols in range; otherwise only these instruments. */
+  symbols: string[]
   dateFrom: string
   dateTo: string
   timeframe: BacktestTimeframe
@@ -44,6 +46,11 @@ export interface BacktestSummary {
     netPnl: number
     winRate: number
   }>
+  message?: string
+  signalSource?: string
+  rawParsedCount?: number
+  massiveApiCalls?: number
+  importWarnings?: string[]
 }
 
 export interface BacktestRunRow {

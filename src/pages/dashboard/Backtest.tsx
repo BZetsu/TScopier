@@ -8,6 +8,7 @@ import {
   Shield,
   BarChart3,
   Radio,
+  Coins,
 } from 'lucide-react'
 import clsx from 'clsx'
 import { supabase } from '../../lib/supabase'
@@ -22,6 +23,8 @@ import type {
 } from '../../lib/backtestTypes'
 import { BacktestEquityChart } from '../../components/backtest/BacktestEquityChart'
 import { BacktestSignalBreakdown } from '../../components/backtest/BacktestSignalBreakdown'
+import { BacktestSymbolPicker } from '../../components/backtest/BacktestSymbolPicker'
+import { BacktestRunOverlay } from '../../components/backtest/BacktestRunOverlay'
 import { Button } from '../../components/ui/Button'
 import { Alert } from '../../components/ui/Alert'
 
@@ -47,10 +50,11 @@ function defaultConfig(): BacktestRunConfig {
   from.setDate(from.getDate() - 30)
   return {
     channelIds: [],
+    symbols: [],
     dateFrom: from.toISOString().slice(0, 10),
     dateTo: to.toISOString().slice(0, 10),
     timeframe: '1m',
-    executionMode: 'tick_quotes',
+    executionMode: 'minute_bars',
     initialBalance: 10_000,
     currency: 'USD',
     sizingMode: 'fixed_lot',
@@ -105,6 +109,15 @@ export function Backtest() {
     [runs, activeRunId],
   )
   const summary = activeRun?.summary as BacktestSummary | null | undefined
+
+  const isCollatingResults =
+    running
+    || activeRun?.status === 'running'
+    || activeRun?.status === 'pending'
+
+  const collatingMessage = running && activeRun?.status !== 'running'
+    ? 'Starting backtest and importing Telegram signals…'
+    : activeRun?.progress_message
 
   const loadChannels = useCallback(async () => {
     if (!user) return
@@ -188,7 +201,7 @@ export function Backtest() {
         .finally(() => setPreviewLoading(false))
     }, 400)
     return () => clearTimeout(t)
-  }, [config.channelIds, config.dateFrom, config.dateTo])
+  }, [config.channelIds, config.dateFrom, config.dateTo, config.symbols])
 
   const toggleChannel = (id: string) => {
     setConfig(prev => ({
@@ -251,6 +264,11 @@ export function Backtest() {
 
   return (
     <div className="p-4 lg:p-8 max-w-6xl mx-auto space-y-6">
+      <BacktestRunOverlay
+        open={isCollatingResults}
+        message={collatingMessage}
+        progressPct={activeRun?.progress_pct}
+      />
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-neutral-900 dark:text-neutral-50 flex items-center gap-2">
@@ -299,6 +317,21 @@ export function Backtest() {
                 ))
               )}
             </div>
+
+            {config.channelIds.length > 0 ? (
+              <div className="space-y-2 border-t border-neutral-100 dark:border-neutral-800 pt-4">
+                <h2 className="text-sm font-semibold text-neutral-900 dark:text-neutral-50 flex items-center gap-2">
+                  <Coins className="w-4 h-4 text-teal-500" />
+                  Symbols
+                </h2>
+                <BacktestSymbolPicker
+                  availableSymbols={preview?.available_symbols ?? []}
+                  selected={config.symbols}
+                  onChange={symbols => setConfig(p => ({ ...p, symbols }))}
+                  disabled={previewLoading}
+                />
+              </div>
+            ) : null}
 
             <div className="grid grid-cols-2 gap-3">
               <label className="block">
@@ -444,14 +477,39 @@ export function Backtest() {
                 ) : preview ? (
                   <>
                     <p className="font-medium text-neutral-700 dark:text-neutral-200">
-                      {preview.tradeable_count} tradeable buy/sell signal{preview.tradeable_count === 1 ? '' : 's'} in range
+                      {preview.tradeable_count} tradeable signal{preview.tradeable_count === 1 ? '' : 's'} in range
+                      {config.symbols.length > 0
+                        ? ` (${config.symbols.join(', ')})`
+                        : preview.available_symbols?.length
+                          ? ` · ${preview.available_symbols.length} symbol${preview.available_symbols.length === 1 ? '' : 's'} in channel`
+                          : ''}
                     </p>
                     <p className="text-neutral-500">
                       {preview.stored_count} stored in backtest table (copier logs not used)
                     </p>
                     {!preview.massive_configured ? (
                       <p className="text-amber-600 dark:text-amber-400">
-                        MASSIVE_API_KEY is not set on the server — market data will not load.
+                        MASSIVE_API_KEY is not set in Supabase Edge secrets — market data will not load.
+                      </p>
+                    ) : (
+                      <p className="text-teal-600 dark:text-teal-400">
+                        Massive API key configured
+                        {preview.massive_calls_per_minute
+                          ? ` · ${preview.massive_calls_per_minute} calls/min limit (OHLC bars recommended)`
+                          : ''}
+                        .
+                        {preview.massive_probe ? (
+                          preview.massive_probe.ok
+                            ? ` Probe OK (${preview.massive_probe.bars ?? 0} bars).`
+                            : ` Probe: ${preview.massive_probe.error ?? 'failed'}.`
+                        ) : (
+                          ' Market data loads when you run a backtest.'
+                        )}
+                      </p>
+                    )}
+                    {config.executionMode === 'tick_quotes' && (preview.massive_calls_per_minute ?? 5) <= 5 ? (
+                      <p className="text-amber-600 dark:text-amber-400">
+                        Tick quotes use many API calls. On a 5/min plan the engine uses OHLC bars instead.
                       </p>
                     ) : null}
                     {preview.tradeable_count === 0 ? (
@@ -504,14 +562,28 @@ export function Backtest() {
 
         {/* Results */}
         <div className="lg:col-span-3 space-y-4 min-w-0">
-          {activeRun?.status === 'running' ? (
-            <Alert>
-              <Loader2 className="w-4 h-4 animate-spin inline mr-2" />
-              {activeRun.progress_message ?? 'Running…'} ({Number(activeRun.progress_pct).toFixed(0)}%)
-            </Alert>
-          ) : null}
           {activeRun?.status === 'failed' ? (
             <Alert variant="error">{activeRun.error_message ?? 'Backtest failed'}</Alert>
+          ) : null}
+          {activeRun?.progress_message && activeRun.status !== 'failed' && !isCollatingResults ? (
+            <p className="text-xs text-neutral-500 dark:text-neutral-400">{activeRun.progress_message}</p>
+          ) : null}
+          {summary?.massiveApiCalls != null && activeRun?.status === 'completed' ? (
+            <p className="text-xs text-neutral-500 dark:text-neutral-400">
+              Massive API: {summary.massiveApiCalls} request{summary.massiveApiCalls === 1 ? '' : 's'}
+              {summary.massiveApiCalls === 0
+                ? ' — no market data was fetched (zero tradeable signals or run did not reach simulation)'
+                : ''}
+            </p>
+          ) : null}
+          {summary?.importWarnings && summary.importWarnings.length > 0 ? (
+            <Alert variant="warning">
+              Import: {summary.importWarnings.slice(0, 2).join(' · ')}
+              {summary.importWarnings.length > 2 ? ` (+${summary.importWarnings.length - 2} more)` : ''}
+            </Alert>
+          ) : null}
+          {summary?.message && (summary.totalSignals ?? 0) === 0 ? (
+            <Alert variant="warning">{summary.message}</Alert>
           ) : null}
 
           {summary ? (
