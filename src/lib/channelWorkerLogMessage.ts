@@ -335,6 +335,49 @@ export function channelWorkerLogMessage(row: ChannelWorkerLogRow): string {
       () => 'Added to your open trade.',
     )
   }
+  if (logAction === 'merge_routed_modify_only' || logAction === 'merge_modify_summary') {
+    const openLegs = Number(payload.openLegs)
+    const modified = Number(payload.modified)
+    const skipped = Number(payload.skippedNoTicket)
+    const failed = Number(payload.failed)
+    const userMsg = typeof payload.user_message === 'string' ? payload.user_message : null
+    if (status === 'success') {
+      const n = Number.isFinite(modified) && modified > 0 ? modified : null
+      return namedOrGeneric(
+        instr,
+        s => `Updated stop loss and take profit on ${n ?? 'all'} open ${s} leg${n === 1 ? '' : 's'} (no new trades opened).`,
+        () => `Updated stop loss and take profit on your open trade${n != null ? ` (${n} leg${n === 1 ? '' : 's'})` : ''} — no new trades opened.`,
+      )
+    }
+    if (userMsg) {
+      return namedOrGeneric(
+        instr,
+        s => `${userMsg} (${s}).`,
+        () => userMsg,
+      )
+    }
+    const detail =
+      Number.isFinite(openLegs) && Number.isFinite(modified)
+        ? `${modified}/${openLegs} legs updated`
+        : 'partial update'
+    const extra =
+      (Number.isFinite(skipped) && skipped > 0 ? `; ${skipped} awaiting ticket` : '')
+      + (Number.isFinite(failed) && failed > 0 ? `; ${failed} broker errors` : '')
+    return namedOrGeneric(
+      instr,
+      s => `Could not update every open ${s} leg (${detail}${extra})`,
+      () => `Could not update every open leg (${detail}${extra})`,
+    )
+  }
+  if (logAction === 'merge_anchor_selected') {
+    if (status === 'success') {
+      return namedOrGeneric(
+        instr,
+        s => `Applying SL/TP to the open ${s} basket.`,
+        () => 'Applying SL/TP to your open trade basket.',
+      )
+    }
+  }
   if (logAction === 'opposite_signal_close') {
     return namedOrGeneric(
       instr,

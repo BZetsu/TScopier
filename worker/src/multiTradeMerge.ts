@@ -7,6 +7,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { OrderSendArgs } from './metatraderapi'
 import type { PlannerResult } from './manualPlanner'
 import { parsedHasExplicitEntryAnchor } from './manualPlanner'
+import { symbolsCompatibleForBasket } from './basketModFollowUp'
 
 export type ParsedSignalLike = {
   action?: string
@@ -109,17 +110,19 @@ export async function resolveLatestOpenBasketAnchor(
   args: {
     userId: string
     brokerAccountId: string
-    symbol: string
+    /** Resolved broker instrument (e.g. BTCUSDm). */
+    brokerSymbol: string
+    /** Parsed telegram symbol (e.g. BTCUSD) for fuzzy match. */
+    signalSymbol?: string | null
     direction: 'buy' | 'sell'
     channelId: string | null
   },
 ): Promise<LatestBasketAnchor | null> {
   const { data: openTrades, error } = await supabase
     .from('trades')
-    .select('signal_id, opened_at')
+    .select('signal_id, opened_at, symbol')
     .eq('user_id', args.userId)
     .eq('broker_account_id', args.brokerAccountId)
-    .eq('symbol', args.symbol)
     .eq('status', 'open')
     .eq('direction', args.direction)
     .order('opened_at', { ascending: false })
@@ -127,8 +130,16 @@ export async function resolveLatestOpenBasketAnchor(
 
   if (error || !openTrades?.length) return null
 
+  const symHint = args.signalSymbol ?? args.brokerSymbol
+  const matching = (openTrades as { signal_id: string; opened_at: string; symbol: string }[])
+    .filter(row =>
+      symbolsCompatibleForBasket(symHint, row.symbol)
+      || symbolsCompatibleForBasket(args.brokerSymbol, row.symbol),
+    )
+  if (!matching.length) return null
+
   const newestBySignal = new Map<string, string>()
-  for (const row of openTrades as { signal_id: string; opened_at: string }[]) {
+  for (const row of matching) {
     const sid = row.signal_id
     if (!sid) continue
     const prev = newestBySignal.get(sid)

@@ -12,6 +12,7 @@ const rangePendingLegPersist_1 = require("./rangePendingLegPersist");
 const signalEntryPendingHelpers_1 = require("./signalEntryPendingHelpers");
 const signalMergeLink_1 = require("./signalMergeLink");
 const multiTradeMerge_1 = require("./multiTradeMerge");
+const basketModFollowUp_1 = require("./basketModFollowUp");
 /** When true (default), channel-attached signals only execute if MTProto is connected in this process. */
 function telegramLiveTradeGateEnabled() {
     const v = String(process.env.WORKER_REQUIRE_TELEGRAM_LIVE_FOR_TRADES ?? 'true').toLowerCase();
@@ -917,7 +918,8 @@ class TradeExecutor {
         const anchor = await (0, multiTradeMerge_1.resolveLatestOpenBasketAnchor)(this.supabase, {
             userId: signal.user_id,
             brokerAccountId: broker.id,
-            symbol,
+            brokerSymbol: symbol,
+            signalSymbol: parsed.symbol,
             direction,
             channelId: signal.channel_id,
         });
@@ -988,17 +990,25 @@ class TradeExecutor {
             };
         }
         const manual = (broker.manual_settings ?? {});
-        const { data: familyRows, error: famErr } = await this.supabase
-            .from('trades')
-            .select('id,signal_id,metaapi_order_id,opened_at,lot_size,sl,tp,entry_price,direction')
-            .eq('broker_account_id', broker.id)
-            .eq('signal_id', anchorSignalId)
-            .eq('symbol', symbol)
-            .eq('status', 'open')
-            .order('opened_at', { ascending: true })
-            .limit(500);
-        const familyTrades = (familyRows ?? []);
-        if (famErr || !familyTrades.length) {
+        const loadFamilyTrades = async () => {
+            const { data: familyRows, error: famErr } = await this.supabase
+                .from('trades')
+                .select('id,signal_id,metaapi_order_id,opened_at,lot_size,sl,tp,entry_price,direction,symbol')
+                .eq('broker_account_id', broker.id)
+                .eq('signal_id', anchorSignalId)
+                .eq('status', 'open')
+                .order('opened_at', { ascending: true })
+                .limit(500);
+            if (famErr) {
+                console.warn(`[tradeExecutor] basket refresh load trades failed signal=${signal.id} anchor=${anchorSignalId}: ${famErr.message}`);
+                return [];
+            }
+            const symHint = parsed.symbol ?? symbol;
+            return (familyRows ?? []).filter(tr => (0, basketModFollowUp_1.symbolsCompatibleForBasket)(symHint, tr.symbol)
+                || (0, basketModFollowUp_1.symbolsCompatibleForBasket)(symbol, tr.symbol));
+        };
+        let familyTrades = await loadFamilyTrades();
+        if (!familyTrades.length) {
             return {
                 success: false,
                 summary: { openLegs: 0, attempted: 0, modified: 0, failed: 0, skippedNoTicket: 0 },
@@ -1085,7 +1095,7 @@ class TradeExecutor {
             await new Promise(resolve => setTimeout(resolve, Math.min(plan.delay_ms, 30000)));
         }
         let virtualPendings = (plan.virtualPendings ?? []).slice(0, 500);
-        const perLegTargets = (0, multiTradeMerge_1.buildPerLegStopTargets)({
+        let perLegTargets = (0, multiTradeMerge_1.buildPerLegStopTargets)({
             plan,
             parsed,
             openLegCount: familyTrades.length,
@@ -1125,63 +1135,109 @@ class TradeExecutor {
             failed: 0,
             skippedNoTicket: 0,
         };
-        for (let i = 0; i < familyTrades.length; i++) {
-            const tr = familyTrades[i];
-            const target = perLegTargets[i] ?? perLegTargets[perLegTargets.length - 1];
-            if (!target)
-                continue;
-            const ticket = Number(tr.metaapi_order_id);
-            if (!Number.isFinite(ticket) || ticket <= 0) {
-                summary.skippedNoTicket += 1;
-                summary.failed += 1;
-                continue;
-            }
-            summary.attempted += 1;
-            let ref = Number(tr.entry_price) || 0;
-            if (ref <= 0) {
-                try {
-                    const q = strictEntryPrefetch ?? await api.quote(uuid, symbol);
-                    ref = direction === 'buy' ? q.ask : q.bid;
-                }
-                catch {
-                    summary.failed += 1;
+        const modifiedTradeIds = new Set();
+        const stragglerRounds = Math.min(12, Math.max(3, Number(process.env.BASKET_REFRESH_STRAGGLER_ROUNDS ?? 8)));
+        const applyModifyPass = async (legs) => {
+            for (let i = 0; i < legs.length; i++) {
+                const tr = legs[i];
+                if (modifiedTradeIds.has(tr.id))
+                    continue;
+                const target = perLegTargets[i] ?? perLegTargets[perLegTargets.length - 1];
+                if (!target)
+                    continue;
+                const ticket = Number(tr.metaapi_order_id);
+                if (!Number.isFinite(ticket) || ticket <= 0) {
+                    summary.skippedNoTicket += 1;
                     continue;
                 }
+                summary.attempted += 1;
+                let ref = Number(tr.entry_price) || 0;
+                if (ref <= 0) {
+                    try {
+                        const q = strictEntryPrefetch ?? await api.quote(uuid, symbol);
+                        ref = direction === 'buy' ? q.ask : q.bid;
+                    }
+                    catch {
+                        summary.failed += 1;
+                        continue;
+                    }
+                }
+                const legIdx = familyTrades.findIndex(t => t.id === tr.id);
+                const cweIdx = legIdx >= 0 ? legIdx : i;
+                const sendShape = {
+                    symbol,
+                    operation: direction === 'buy' ? 'Buy' : 'Sell',
+                    volume: roundLot(Number(tr.lot_size) || baseLot, params),
+                    price: ref,
+                    stoploss: target.stoploss,
+                    takeprofit: cweIdx < nImmCwe ? 0 : target.takeprofit,
+                    slippage: 20,
+                    comment: `TSCopier:${signal.id.slice(0, 8)}:refresh`,
+                    expertID: 909090,
+                };
+                const clamped = clampOrderStops(sendShape, params);
+                try {
+                    const modRes = await api.orderModify(uuid, {
+                        ticket,
+                        stoploss: clamped.args.stoploss ?? 0,
+                        takeprofit: clamped.args.takeprofit ?? 0,
+                    });
+                    const newSl = modRes.stopLoss ?? clamped.args.stoploss ?? null;
+                    const newTp = modRes.takeProfit ?? clamped.args.takeprofit ?? null;
+                    const cweClose = cweIdx < nImmCwe ? overrideTp : null;
+                    await this.supabase.from('trades').update({
+                        sl: typeof newSl === 'number' && newSl > 0 ? newSl : null,
+                        tp: typeof newTp === 'number' && newTp > 0 ? newTp : null,
+                        cwe_close_price: typeof cweClose === 'number' && cweClose > 0 ? cweClose : null,
+                    }).eq('id', tr.id);
+                    modifiedTradeIds.add(tr.id);
+                    summary.modified += 1;
+                }
+                catch (err) {
+                    summary.failed += 1;
+                    const msg = err instanceof Error ? err.message : String(err);
+                    console.warn(`[tradeExecutor] basket refresh OrderModify failed leg=${i + 1}/${legs.length} trade=${tr.id}: ${msg}`);
+                }
             }
-            const sendShape = {
-                symbol,
-                operation: direction === 'buy' ? 'Buy' : 'Sell',
-                volume: roundLot(Number(tr.lot_size) || baseLot, params),
-                price: ref,
-                stoploss: target.stoploss,
-                takeprofit: i < nImmCwe ? 0 : target.takeprofit,
-                slippage: 20,
-                comment: `TSCopier:${signal.id.slice(0, 8)}:refresh`,
-                expertID: 909090,
-            };
-            const clamped = clampOrderStops(sendShape, params);
-            try {
-                const modRes = await api.orderModify(uuid, {
-                    ticket,
-                    stoploss: clamped.args.stoploss ?? 0,
-                    takeprofit: clamped.args.takeprofit ?? 0,
+        };
+        for (let round = 0; round < stragglerRounds; round++) {
+            if (round > 0) {
+                await new Promise(r => setTimeout(r, Math.min(round, 4) * 200));
+                familyTrades = await loadFamilyTrades();
+                summary.openLegs = familyTrades.length;
+                const refreshedTargets = (0, multiTradeMerge_1.buildPerLegStopTargets)({
+                    plan,
+                    parsed,
+                    openLegCount: familyTrades.length,
                 });
-                const newSl = modRes.stopLoss ?? clamped.args.stoploss ?? null;
-                const newTp = modRes.takeProfit ?? clamped.args.takeprofit ?? null;
-                const cweClose = i < nImmCwe ? overrideTp : null;
-                await this.supabase.from('trades').update({
-                    sl: typeof newSl === 'number' && newSl > 0 ? newSl : null,
-                    tp: typeof newTp === 'number' && newTp > 0 ? newTp : null,
-                    cwe_close_price: typeof cweClose === 'number' && cweClose > 0 ? cweClose : null,
-                }).eq('id', tr.id);
-                summary.modified += 1;
+                if (refreshedTargets.length) {
+                    perLegTargets.length = 0;
+                    perLegTargets.push(...refreshedTargets);
+                }
             }
-            catch (err) {
-                summary.failed += 1;
-                const msg = err instanceof Error ? err.message : String(err);
-                console.warn(`[tradeExecutor] basket refresh OrderModify failed leg=${i + 1}/${familyTrades.length} trade=${tr.id}: ${msg}`);
+            const pending = familyTrades.filter(tr => !modifiedTradeIds.has(tr.id));
+            if (!pending.length)
+                break;
+            const allHaveTickets = pending.every(tr => {
+                const t = Number(tr.metaapi_order_id);
+                return Number.isFinite(t) && t > 0;
+            });
+            if (round > 0 && !allHaveTickets && pending.every(tr => {
+                const t = Number(tr.metaapi_order_id);
+                return !Number.isFinite(t) || t <= 0;
+            })) {
+                break;
             }
+            await applyModifyPass(pending);
+            if (modifiedTradeIds.size >= familyTrades.length)
+                break;
         }
+        const stillMissingTicket = familyTrades.filter(tr => {
+            const t = Number(tr.metaapi_order_id);
+            return !Number.isFinite(t) || t <= 0;
+        }).length;
+        summary.skippedNoTicket = stillMissingTicket;
+        summary.failed = Math.max(0, familyTrades.length - summary.modified - stillMissingTicket);
         if (virtualPendings.length > 0 && anchor != null && Number.isFinite(anchor) && anchor > 0) {
             if (overrideTp != null && plan.closeWorseEntries) {
                 const nVirt = virtualPendings.length;
@@ -1234,8 +1290,12 @@ class TradeExecutor {
                     summary.failed += 1;
             }
         }
-        const mergeFailed = summary.failed > 0
-            || (summary.modified + summary.skippedNoTicket) < summary.openLegs;
+        const mergeFailed = summary.modified < summary.openLegs;
+        const partialMsg = mergeFailed
+            ? `Not all trades were modified (${summary.modified}/${summary.openLegs} open legs`
+                + `${stillMissingTicket > 0 ? `; ${stillMissingTicket} still waiting for broker ticket` : ''}`
+                + `${summary.failed > 0 ? `; ${summary.failed} broker modify errors` : ''})`
+            : null;
         console.log(`[tradeExecutor] merge_modify_summary signal=${signal.id} broker=${broker.id} anchor=${anchorSignalId}`
             + ` open=${summary.openLegs} attempted=${summary.attempted} modified=${summary.modified}`
             + ` failed=${summary.failed} no_ticket=${summary.skippedNoTicket}`);
@@ -1246,9 +1306,11 @@ class TradeExecutor {
                 broker_account_id: broker.id,
                 action: 'merge_modify_summary',
                 status: mergeFailed ? 'failed' : 'success',
+                error_message: partialMsg,
                 request_payload: {
                     parent_signal_id: anchorSignalId,
                     symbol,
+                    user_message: partialMsg,
                     ...summary,
                     virtual_pendings: virtualPendings.length,
                     ...(mergeLinkMeta ?? {}),
@@ -1263,10 +1325,12 @@ class TradeExecutor {
                 broker_account_id: broker.id,
                 action: logAction,
                 status: mergeFailed ? 'failed' : 'success',
+                error_message: partialMsg,
                 request_payload: {
                     parent_signal_id: anchorSignalId,
                     symbol,
                     modify_only: true,
+                    user_message: partialMsg,
                     ...summary,
                     virtual_pendings: virtualPendings.length,
                     ...(mergeLinkMeta ?? {}),
@@ -2301,7 +2365,8 @@ class TradeExecutor {
                 const latest = await (0, multiTradeMerge_1.resolveLatestOpenBasketAnchor)(this.supabase, {
                     userId: signal.user_id,
                     brokerAccountId: brokerAccountIds[0],
-                    symbol: symForResolve,
+                    brokerSymbol: symForResolve,
+                    signalSymbol: symForResolve,
                     direction: mgmtDir,
                     channelId: signal.channel_id,
                 });

@@ -11,6 +11,7 @@ exports.legacyMergeLinkingEnabled = legacyMergeLinkingEnabled;
 exports.resolveLatestOpenBasketAnchor = resolveLatestOpenBasketAnchor;
 exports.isBareEntryFollowUp = isBareEntryFollowUp;
 const manualPlanner_1 = require("./manualPlanner");
+const basketModFollowUp_1 = require("./basketModFollowUp");
 /** True when the message carries SL and/or TP levels to apply to an existing basket. */
 function isParameterFollowUpSignal(parsed) {
     const hasSl = typeof parsed.sl === 'number' && Number.isFinite(parsed.sl) && parsed.sl > 0;
@@ -68,18 +69,23 @@ function legacyMergeLinkingEnabled() {
 async function resolveLatestOpenBasketAnchor(supabase, args) {
     const { data: openTrades, error } = await supabase
         .from('trades')
-        .select('signal_id, opened_at')
+        .select('signal_id, opened_at, symbol')
         .eq('user_id', args.userId)
         .eq('broker_account_id', args.brokerAccountId)
-        .eq('symbol', args.symbol)
         .eq('status', 'open')
         .eq('direction', args.direction)
         .order('opened_at', { ascending: false })
         .limit(200);
     if (error || !openTrades?.length)
         return null;
+    const symHint = args.signalSymbol ?? args.brokerSymbol;
+    const matching = openTrades
+        .filter(row => (0, basketModFollowUp_1.symbolsCompatibleForBasket)(symHint, row.symbol)
+        || (0, basketModFollowUp_1.symbolsCompatibleForBasket)(args.brokerSymbol, row.symbol));
+    if (!matching.length)
+        return null;
     const newestBySignal = new Map();
-    for (const row of openTrades) {
+    for (const row of matching) {
         const sid = row.signal_id;
         if (!sid)
             continue;
