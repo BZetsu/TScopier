@@ -8,6 +8,7 @@ import {
 } from './metatraderapi'
 import { apiForMetaapiAccount, loadPlatformByMetaapiId, type PlatformByMetaapiId } from './mtApiByAccount'
 import { tryApplyBasketFollowUpToNewFill } from './basketModFollowUp'
+import { markRangeLegFired, markRangeLegsExpired } from './rangePendingLadderSync'
 
 /**
  * Worker-side monitor that turns persisted "virtual range pendings" into
@@ -43,7 +44,7 @@ import { tryApplyBasketFollowUpToNewFill } from './basketModFollowUp'
  *     rows in this table.
  *
  *   • Terminal rows (`expired` TTL, successful `fired`) are **deleted** from
- *     `range_pending_legs` after logging so the table does not accumulate
+ *     `range_pending_legs` with status `fired` (row retained for ladder history)
  *     tombstones. Failed / cancelled legs remain for diagnostics.
  */
 
@@ -183,7 +184,7 @@ export class VirtualPendingMonitor {
     const nowIso = new Date().toISOString()
     const { data: expired } = await this.supabase
       .from('range_pending_legs')
-      .delete()
+      .update({ status: 'expired', error_message: 'pending_expiry' })
       .eq('status', 'pending')
       .not('expires_at', 'is', null)
       .lt('expires_at', nowIso)
@@ -497,10 +498,7 @@ export class VirtualPendingMonitor {
         } as unknown as Record<string, unknown>,
         response_payload: { ticket: result.ticket, latency_ms: latencyMs, claimed_by: this.hostId },
       })
-      const { error: delErr } = await this.supabase.from('range_pending_legs').delete().eq('id', leg.id)
-      if (delErr) {
-        console.warn(`[virtualPendingMonitor] range_pending_legs delete after fire failed leg=${leg.id}: ${delErr.message}`)
-      }
+      await markRangeLegFired(this.supabase, leg.id, result.ticket ?? null)
       return true
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)

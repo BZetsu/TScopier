@@ -10,6 +10,7 @@ const node_os_1 = __importDefault(require("node:os"));
 const metatraderapi_1 = require("./metatraderapi");
 const mtApiByAccount_1 = require("./mtApiByAccount");
 const basketModFollowUp_1 = require("./basketModFollowUp");
+const rangePendingLadderSync_1 = require("./rangePendingLadderSync");
 const SYMBOL_TTL_MS = 10 * 60000;
 const TICK_INTERVAL_MS = 1500;
 const STALE_CLAIM_AFTER_MS = 30000;
@@ -96,7 +97,7 @@ class VirtualPendingMonitor {
         const nowIso = new Date().toISOString();
         const { data: expired } = await this.supabase
             .from('range_pending_legs')
-            .delete()
+            .update({ status: 'expired', error_message: 'pending_expiry' })
             .eq('status', 'pending')
             .not('expires_at', 'is', null)
             .lt('expires_at', nowIso)
@@ -394,10 +395,7 @@ class VirtualPendingMonitor {
                 },
                 response_payload: { ticket: result.ticket, latency_ms: latencyMs, claimed_by: this.hostId },
             });
-            const { error: delErr } = await this.supabase.from('range_pending_legs').delete().eq('id', leg.id);
-            if (delErr) {
-                console.warn(`[virtualPendingMonitor] range_pending_legs delete after fire failed leg=${leg.id}: ${delErr.message}`);
-            }
+            await (0, rangePendingLadderSync_1.markRangeLegFired)(this.supabase, leg.id, result.ticket ?? null);
             return true;
         }
         catch (err) {

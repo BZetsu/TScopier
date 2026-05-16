@@ -57,6 +57,7 @@ import {
   buildPerLegStopTargets,
   isParameterFollowUpSignal,
   legacyMergeLinkingEnabled,
+  mergePlanImmediateOrders,
   resolveLatestOpenBasketAnchor,
   type MergeModifySummary,
 } from './multiTradeMerge'
@@ -69,6 +70,7 @@ import {
   type BasketOpenLeg,
   type BasketSymbolParams,
 } from './basketSlTpReconcile'
+import { syncRangePendingLadderOnBasketRefresh } from './rangePendingLadderSync'
 
 /** When true (default), channel-attached signals only execute if MTProto is connected in this process. */
 function telegramLiveTradeGateEnabled(): boolean {
@@ -1414,12 +1416,6 @@ export class TradeExecutor {
       }
     }
 
-    await this.cancelRangePendingLegsForScopes(signal.user_id, signal.id, [{
-      signalId: anchorSignalId,
-      brokerAccountId: broker.id,
-      symbol,
-    }], 'signal_merge_refresh')
-
     for (const t of familyTrades) {
       try {
         await this.supabase.from('partial_tp_legs').delete().eq('trade_id', t.id)
@@ -1535,40 +1531,55 @@ export class TradeExecutor {
       const zoneHi = safe > 0 ? anchor + (safe + 2) * (params?.point ?? 0) : null
       const zoneLo = safe > 0 ? anchor - (safe + 2) * (params?.point ?? 0) : null
       const nowMs = Date.now()
-      const insertRows: Record<string, unknown>[] = []
-      for (const v of virtualPendings) {
-        const triggerPrice = triggerPriceFor(v, anchor, digits)
-        if (zoneHi != null && zoneLo != null && triggerPrice > zoneLo && triggerPrice < zoneHi) continue
-        const expiresAt = v.expiryHours && v.expiryHours > 0
-          ? new Date(nowMs + v.expiryHours * 60 * 60 * 1000).toISOString()
-          : null
-        insertRows.push({
-          signal_id: anchorSignalId,
-          user_id: signal.user_id,
-          broker_account_id: broker.id,
-          metaapi_account_id: uuid,
-          symbol,
-          step_idx: v.stepIdx,
-          is_buy: v.isBuy,
-          volume: roundLot(v.volume, params),
-          anchor_price: anchor,
-          trigger_price: triggerPrice,
-          stoploss: v.stoploss,
-          takeprofit: v.takeprofit,
-          slippage: v.slippage,
-          comment: v.comment,
-          expert_id: v.expertID ?? null,
-          expires_at: expiresAt,
-          status: 'pending',
-          cwe_close_price: v.cweClosePrice ?? null,
-        })
-      }
-      if (insertRows.length > 0) {
-        const persist = await this.persistRangePendingLegRows(
-          insertRows,
-          `basket_refresh signal=${signal.id} anchor=${anchorSignalId}`,
+      const plannedImmediateLegs = Math.max(
+        mergePlanImmediateOrders(plan).length,
+        plan.closeWorseEntries?.immediates ?? 0,
+      )
+      const ladderSync = await syncRangePendingLadderOnBasketRefresh({
+        supabase: this.supabase,
+        scope: { signalId: anchorSignalId, brokerAccountId: broker.id, symbol },
+        virtualPendings,
+        openTradeCount: familyTrades.length,
+        plannedImmediateLegs,
+        plannedRangeLegs: virtualPendings.length,
+        buildInsertRow: (v) => {
+          const triggerPrice = triggerPriceFor(v, anchor, digits)
+          if (zoneHi != null && zoneLo != null && triggerPrice > zoneLo && triggerPrice < zoneHi) {
+            return null
+          }
+          const expiresAt = v.expiryHours && v.expiryHours > 0
+            ? new Date(nowMs + v.expiryHours * 60 * 60 * 1000).toISOString()
+            : null
+          return {
+            signal_id: anchorSignalId,
+            user_id: signal.user_id,
+            broker_account_id: broker.id,
+            metaapi_account_id: uuid,
+            symbol,
+            step_idx: v.stepIdx,
+            is_buy: v.isBuy,
+            volume: roundLot(v.volume, params),
+            anchor_price: anchor,
+            trigger_price: triggerPrice,
+            stoploss: v.stoploss,
+            takeprofit: v.takeprofit,
+            slippage: v.slippage,
+            comment: v.comment,
+            expert_id: v.expertID ?? null,
+            expires_at: expiresAt,
+            status: 'pending',
+            cwe_close_price: v.cweClosePrice ?? null,
+          }
+        },
+        persistRows: (rows, ctx) => this.persistRangePendingLegRows(rows, ctx),
+        context: `basket_refresh signal=${signal.id} anchor=${anchorSignalId}`,
+      })
+      if (ladderSync.skippedConsumed > 0 || ladderSync.skippedCap > 0) {
+        console.log(
+          `[tradeExecutor] basket_refresh ladder sync signal=${signal.id} anchor=${anchorSignalId}`
+          + ` updated=${ladderSync.updated} inserted=${ladderSync.inserted}`
+          + ` skip_consumed=${ladderSync.skippedConsumed} skip_cap=${ladderSync.skippedCap}`,
         )
-        if (!persist.ok) summary.failed += 1
       }
     }
 

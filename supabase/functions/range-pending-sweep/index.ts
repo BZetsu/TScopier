@@ -17,8 +17,8 @@
  * (signal, broker, symbol) per invocation — shallowest triggered rung with no
  * shallower pending/claimed row.
  *
- * Expired TTL rows and successful fires **delete** the `range_pending_legs` row
- * (same as the worker) so the table stays free of terminal tombstones.
+ * Expired TTL rows and successful fires set `status` to `expired` / `fired`
+ * (rows are retained for ladder history — same as the worker).
  */
 
 // @ts-ignore - Deno runtime resolves these
@@ -121,7 +121,7 @@ Deno.serve(async (_req: Request) => {
   const nowIso = new Date().toISOString()
   await sb
     .from("range_pending_legs")
-    .delete()
+    .update({ status: "expired", error_message: "pending_expiry" })
     .eq("status", "pending")
     .not("expires_at", "is", null)
     .lt("expires_at", nowIso)
@@ -363,10 +363,16 @@ async function fireLeg(
       request_payload: { leg_id: leg.id, step_idx: leg.step_idx, trigger_price: leg.trigger_price, ref_price: refPrice, claimed_by: CLAIMED_BY },
       response_payload: { ticket: result.ticket },
     })
-    const { error: delErr } = await sb.from("range_pending_legs").delete().eq("id", leg.id)
-    if (delErr) {
-      console.warn(`[range-pending-sweep] range_pending_legs delete after fire failed leg=${leg.id}: ${delErr.message}`)
-    }
+    await sb
+      .from("range_pending_legs")
+      .update({
+        status: "fired",
+        fired_at: new Date().toISOString(),
+        ticket: result.ticket != null ? String(result.ticket) : null,
+        claimed_at: null,
+        claimed_by: null,
+      })
+      .eq("id", leg.id)
     return true
   } catch (err) {
     const msg = (err as Error).message
