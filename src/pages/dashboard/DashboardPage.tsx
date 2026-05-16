@@ -9,6 +9,13 @@ import { AddAccountModal } from '../../components/ui/AddAccountModal'
 import { Toggle } from '../../components/ui/Toggle'
 import { metatraderApi, type MtTrade } from '../../lib/metatraderapi'
 import {
+  countClosedTradeOutcomesInRange,
+  isTradeableClosedRow,
+  netClosedLegProfit,
+  sumTradeableClosedProfitInRange,
+  type TradeStatsRow,
+} from '../../lib/dashboardTradeStats'
+import {
   buildCopierLogSymbolLabels,
   buildSignalSymbolLookup,
 } from '../../lib/copierLogDisplay'
@@ -141,47 +148,6 @@ function aggregateTotalProfitFromBaselines(
   return n > 0 ? sum : null
 }
 
-function isTradeableClosedRow(row: {
-  status: string
-  symbol: string
-  lot_size: number
-  direction?: string
-  type?: string
-}): boolean {
-  if (row.status !== 'closed') return false
-  if (!(row.symbol ?? '').trim()) return false
-  const type = (row.type ?? '').toLowerCase()
-  if (type.includes('balance') || type.includes('credit') || type.includes('deposit') || type.includes('withdraw')) {
-    return false
-  }
-  if ((row.lot_size ?? 0) > 0) return true
-  const dir = (row.direction ?? '').toLowerCase()
-  return dir === 'buy' || dir === 'sell'
-}
-
-/** Closed buy/sell positions that finished today (by `closed_at`). */
-function countTodayClosedTradeOutcomes(
-  rows: Array<{
-    status: string
-    profit: number | null
-    closed_at: string | null
-    symbol: string
-    lot_size: number
-    direction?: string
-    type?: string
-  }>,
-  closedBetween: (closedAt: string | null) => boolean,
-): { taken: number; won: number; lost: number } {
-  const closedToday = rows.filter(
-    t => isTradeableClosedRow(t) && closedBetween(t.closed_at),
-  )
-  return {
-    taken: closedToday.length,
-    won: closedToday.filter(t => typeof t.profit === 'number' && t.profit > 0).length,
-    lost: closedToday.filter(t => typeof t.profit === 'number' && t.profit < 0).length,
-  }
-}
-
 function formatMtApiDateTime(d: Date): string {
   return d.toISOString().slice(0, 19)
 }
@@ -236,8 +202,8 @@ type DashboardCachePayload = {
   mtTrades?: MtTrade[]
 }
 
-const DASHBOARD_CACHE_VERSION = 'dashboard_cache_v8'
-const DASHBOARD_CACHE_LEGACY_KEYS = ['dashboard_cache_v7'] as const
+const DASHBOARD_CACHE_VERSION = 'dashboard_cache_v9'
+const DASHBOARD_CACHE_LEGACY_KEYS = ['dashboard_cache_v8', 'dashboard_cache_v7'] as const
 const DASHBOARD_ACTIVE_USER_KEY = 'dashboard_cache_active_user_id'
 
 const DEFAULT_DASHBOARD_STATS: DashboardStats = {
@@ -525,15 +491,9 @@ export function DashboardPage() {
     const mtTrades = mtTradesRef.current
     const hasMtCache = Array.isArray(mtTrades) && mtTrades.length > 0
     const useMtTrades = hasMtCache
-    type WindowedTrade = {
-      symbol: string
-      profit: number | null
-      lot_size: number
+    type WindowedTrade = TradeStatsRow & {
       status: 'open' | 'closed'
       opened_at: string | null
-      closed_at: string | null
-      direction?: string
-      type?: string
     }
     const dbWindowed: WindowedTrade[] = allTrades.map(t => ({
       symbol: t.symbol ?? '',
@@ -553,36 +513,38 @@ export function DashboardPage() {
           closed_at: t.closed_at,
           direction: t.direction,
           type: t.type,
+          swap: t.swap,
+          commission: t.commission,
         }))
       : []
     const sourceTrades: WindowedTrade[] = useMtTrades ? mtWindowed : dbWindowed
     const closedTodayForStats = (closedAt: string | null) => isInRange(closedAt, todayStart, tomorrowStart)
-    const closedOutcomesToday = countTodayClosedTradeOutcomes(sourceTrades, closedTodayForStats)
+    const closedYesterdayForStats = (closedAt: string | null) => isInRange(closedAt, yesterdayStart, todayStart)
+    const closedOutcomesToday = countClosedTradeOutcomesInRange(sourceTrades, closedTodayForStats)
 
     const tradesToday = sourceTrades.filter(t => isInRange(t.opened_at, todayStart, tomorrowStart))
     const tradesYesterday = sourceTrades.filter(t => isInRange(t.opened_at, yesterdayStart, todayStart))
     const totalVolume = tradesToday.reduce((sum, t) => sum + (t.lot_size ?? 0), 0)
     const yesterdayTotalVolume = tradesYesterday.reduce((sum, t) => sum + (t.lot_size ?? 0), 0)
 
-    const closedToday = sourceTrades.filter(t => t.status === 'closed' && isInRange(t.closed_at, todayStart, tomorrowStart))
-    const closedYesterdayWindow = sourceTrades.filter(
-      t => t.status === 'closed' && isInRange(t.closed_at, yesterdayStart, todayStart),
+    const closedTradeableToday = sourceTrades.filter(
+      t => isTradeableClosedRow(t) && closedTodayForStats(t.closed_at),
     )
-    const positivePnls = (rows: WindowedTrade[]) =>
-      rows.map(t => t.profit).filter((p): p is number => typeof p === 'number' && Number.isFinite(p) && p > 0)
-    const negativePnls = (rows: WindowedTrade[]) =>
-      rows.map(t => t.profit).filter((p): p is number => typeof p === 'number' && Number.isFinite(p) && p < 0)
-    const posToday = positivePnls(closedToday)
-    const negToday = negativePnls(closedToday)
-    const posYest = positivePnls(closedYesterdayWindow)
-    const negYest = negativePnls(closedYesterdayWindow)
+    const closedTradeableYesterday = sourceTrades.filter(
+      t => isTradeableClosedRow(t) && closedYesterdayForStats(t.closed_at),
+    )
+    const legPnls = (rows: WindowedTrade[]) => rows.map(t => netClosedLegProfit(t))
+    const posToday = legPnls(closedTradeableToday).filter(p => p > 0)
+    const negToday = legPnls(closedTradeableToday).filter(p => p < 0)
+    const posYest = legPnls(closedTradeableYesterday).filter(p => p > 0)
+    const negYest = legPnls(closedTradeableYesterday).filter(p => p < 0)
     const bestTradeProfit = posToday.length ? Math.max(...posToday) : 0
     const yesterdayBestTradeProfit = posYest.length ? Math.max(...posYest) : 0
     const worstTradeProfit = negToday.length ? Math.min(...negToday) : 0
     const yesterdayWorstTradeProfit = negYest.length ? Math.min(...negYest) : 0
 
-    const todayProfit = closedToday.reduce((sum, t) => sum + (t.profit ?? 0), 0)
-    const yesterdayProfit = closedYesterdayWindow.reduce((sum, t) => sum + (t.profit ?? 0), 0)
+    const todayProfit = sumTradeableClosedProfitInRange(sourceTrades, closedTodayForStats)
+    const yesterdayProfit = sumTradeableClosedProfitInRange(sourceTrades, closedYesterdayForStats)
     const mostTradedAsset = (() => {
       const counts = new Map<string, number>()
       for (const trade of tradesToday) {
@@ -921,16 +883,6 @@ export function DashboardPage() {
 
     const today = trades.filter(t => inRange(t.opened_at, today0, tomorrow0))
     const yesterday = trades.filter(t => inRange(t.opened_at, yesterday0, today0))
-    const closedToday = trades.filter(t => t.status === 'closed' && inRange(t.closed_at, today0, tomorrow0))
-    const closedYesterday = trades.filter(t => t.status === 'closed' && inRange(t.closed_at, yesterday0, today0))
-    const positiveClosed = (rows: typeof trades) =>
-      rows.map(t => t.profit).filter((p): p is number => typeof p === 'number' && p > 0)
-    const negativeClosed = (rows: typeof trades) =>
-      rows.map(t => t.profit).filter((p): p is number => typeof p === 'number' && p < 0)
-    const posToday = positiveClosed(closedToday)
-    const negToday = negativeClosed(closedToday)
-    const posYest = positiveClosed(closedYesterday)
-    const negYest = negativeClosed(closedYesterday)
     const topSymbol = (rows: typeof trades): string => {
       const counts = new Map<string, number>()
       for (const r of rows) if (r.symbol) counts.set(r.symbol, (counts.get(r.symbol) ?? 0) + 1)
@@ -941,18 +893,30 @@ export function DashboardPage() {
     }
 
     const closedTodayForStats = (closedAt: string | null) => inRange(closedAt, today0, tomorrow0)
-    const closedOutcomesToday = countTodayClosedTradeOutcomes(
-      trades.map(t => ({
-        status: t.status,
-        profit: t.profit,
-        closed_at: t.closed_at,
-        symbol: t.symbol,
-        lot_size: t.lot_size,
-        direction: t.direction,
-        type: t.type,
-      })),
-      closedTodayForStats,
+    const closedYesterdayForStats = (closedAt: string | null) => inRange(closedAt, yesterday0, today0)
+    const tradeRows: TradeStatsRow[] = trades.map(t => ({
+      status: t.status,
+      profit: t.profit,
+      closed_at: t.closed_at,
+      symbol: t.symbol,
+      lot_size: t.lot_size,
+      direction: t.direction,
+      type: t.type,
+      swap: t.swap,
+      commission: t.commission,
+    }))
+    const closedOutcomesToday = countClosedTradeOutcomesInRange(tradeRows, closedTodayForStats)
+    const closedTradeableToday = tradeRows.filter(
+      t => isTradeableClosedRow(t) && closedTodayForStats(t.closed_at),
     )
+    const closedTradeableYesterday = tradeRows.filter(
+      t => isTradeableClosedRow(t) && closedYesterdayForStats(t.closed_at),
+    )
+    const legPnls = (rows: TradeStatsRow[]) => rows.map(t => netClosedLegProfit(t))
+    const posTodayLeg = legPnls(closedTradeableToday).filter(p => p > 0)
+    const negTodayLeg = legPnls(closedTradeableToday).filter(p => p < 0)
+    const posYestLeg = legPnls(closedTradeableYesterday).filter(p => p > 0)
+    const negYestLeg = legPnls(closedTradeableYesterday).filter(p => p < 0)
     const mtStatsPatch: DashboardStats = {
       ...statsRef.current,
       tradesTaken: closedOutcomesToday.taken,
@@ -960,12 +924,12 @@ export function DashboardPage() {
       tradesLost: closedOutcomesToday.lost,
       totalVolume: today.reduce((sum, t) => sum + (t.lot_size ?? 0), 0),
       yesterdayTotalVolume: yesterday.reduce((sum, t) => sum + (t.lot_size ?? 0), 0),
-      bestTradeProfit: posToday.length ? Math.max(...posToday) : 0,
-      yesterdayBestTradeProfit: posYest.length ? Math.max(...posYest) : 0,
-      worstTradeProfit: negToday.length ? Math.min(...negToday) : 0,
-      yesterdayWorstTradeProfit: negYest.length ? Math.min(...negYest) : 0,
-      todayProfit: closedToday.reduce((sum, t) => sum + (t.profit ?? 0), 0),
-      yesterdayProfit: closedYesterday.reduce((sum, t) => sum + (t.profit ?? 0), 0),
+      bestTradeProfit: posTodayLeg.length ? Math.max(...posTodayLeg) : 0,
+      yesterdayBestTradeProfit: posYestLeg.length ? Math.max(...posYestLeg) : 0,
+      worstTradeProfit: negTodayLeg.length ? Math.min(...negTodayLeg) : 0,
+      yesterdayWorstTradeProfit: negYestLeg.length ? Math.min(...negYestLeg) : 0,
+      todayProfit: sumTradeableClosedProfitInRange(tradeRows, closedTodayForStats),
+      yesterdayProfit: sumTradeableClosedProfitInRange(tradeRows, closedYesterdayForStats),
       mostTradedAsset: topSymbol(today),
       yesterdayMostTradedAsset: topSymbol(yesterday),
     }

@@ -375,10 +375,8 @@ Deno.serve(async (req: Request) => {
         return undefined
       }
 
-      // MT order code → direction + label. Used for both MT4-style 'cmd' and MT5 'OrderType' enums.
-      // MT4 CMD: 0=BUY, 1=SELL, 2=BUYLIMIT, 3=SELLLIMIT, 4=BUYSTOP, 5=SELLSTOP, 6=BALANCE.
-      // MT5 OrderType: 0=BUY, 1=SELL, 2=BUYLIMIT, 3=SELLLIMIT, 4=BUYSTOP, 5=SELLSTOP, 6=BUYSTOPLIMIT, 7=SELLSTOPLIMIT, 8=CLOSEBY.
-      const codeMap: Record<number, { direction: "buy" | "sell" | ""; label: string }> = {
+      // MT order code → direction + label. MT4 CMD 6 = balance; MT5 OrderType 6 = buy stop limit.
+      const codeMapMt5: Record<number, { direction: "buy" | "sell" | ""; label: string }> = {
         0: { direction: "buy", label: "Buy" },
         1: { direction: "sell", label: "Sell" },
         2: { direction: "buy", label: "Buy Limit" },
@@ -388,6 +386,10 @@ Deno.serve(async (req: Request) => {
         6: { direction: "buy", label: "Buy Stop Limit" },
         7: { direction: "sell", label: "Sell Stop Limit" },
         8: { direction: "", label: "Close By" },
+      }
+      const codeMapMt4: Record<number, { direction: "buy" | "sell" | ""; label: string }> = {
+        ...codeMapMt5,
+        6: { direction: "", label: "Balance" },
       }
 
       const fromString = (raw: string): { direction: "buy" | "sell" | ""; label: string } | null => {
@@ -400,7 +402,10 @@ Deno.serve(async (req: Request) => {
         return { direction, label }
       }
 
-      const resolveDirection = (order: RawOrder): { direction: "buy" | "sell" | ""; type_label: string } => {
+      const resolveDirection = (
+        order: RawOrder,
+        platform: string,
+      ): { direction: "buy" | "sell" | ""; type_label: string } => {
         // Try every known string-typed field name first.
         const stringCandidate = pick(
           order,
@@ -430,11 +435,27 @@ Deno.serve(async (req: Request) => {
             : typeof numericFromEx === "number"
               ? numericFromEx
               : undefined
+        const codeMap = platform.toUpperCase() === "MT4" ? codeMapMt4 : codeMapMt5
         if (typeof candidate === "number" && codeMap[candidate]) {
           const m = codeMap[candidate]
           return { direction: m.direction, type_label: m.label }
         }
         return { direction: "", type_label: "" }
+      }
+
+      const isNonTradeEntry = (direction: string, typeLabel: string, lotSize: number): boolean => {
+        const type = typeLabel.toLowerCase()
+        if (
+          type.includes("balance") ||
+          type.includes("credit") ||
+          type.includes("deposit") ||
+          type.includes("withdraw") ||
+          type.includes("correction") ||
+          type.includes("transfer")
+        ) {
+          return true
+        }
+        return direction === "" && lotSize <= 0
       }
 
       const normalize = (
@@ -443,7 +464,9 @@ Deno.serve(async (req: Request) => {
         status: "open" | "closed",
       ) => {
         const ticket = Number(pick(order, "ticket", "Ticket") ?? 0)
-        const { direction, type_label } = resolveDirection(order)
+        const platform = String(broker.platform ?? "MT5")
+        const { direction, type_label } = resolveDirection(order, platform)
+        const lot_size = num(pick(order, "lots", "Lots", "volume", "Volume")) ?? 0
         const openTime = pick(
           order,
           "openTime", "OpenTime", "open_time", "timeOpen", "TimeOpen",
@@ -461,12 +484,14 @@ Deno.serve(async (req: Request) => {
           symbol: String(pick(order, "symbol", "Symbol") ?? ""),
           direction,
           type: type_label,
-          lot_size: num(pick(order, "lots", "Lots", "volume", "Volume")) ?? 0,
+          lot_size,
           entry_price: num(pick(order, "openPrice", "OpenPrice", "price")),
           sl: num(pick(order, "stopLoss", "StopLoss", "sl")),
           tp: num(pick(order, "takeProfit", "TakeProfit", "tp")),
           close_price: num(pick(order, "closePrice", "ClosePrice")),
-          profit: num(pick(order, "profit", "Profit")),
+          profit: isNonTradeEntry(direction, type_label, lot_size)
+            ? null
+            : num(pick(order, "profit", "Profit", "dealProfit", "DealProfit")),
           swap: num(pick(order, "swap", "Swap")),
           commission: num(pick(order, "commission", "Commission")),
           comment: (pick(order, "comment", "Comment") as string | undefined) ?? null,
