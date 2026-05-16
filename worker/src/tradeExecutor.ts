@@ -77,14 +77,8 @@ const PARSED_STATUSES = new Set(['parsed'])
 
 /** Multi-leg entries persist trade rows concurrently; SL/TP follow-ups can arrive before every row+ticket exists. */
 const MGMT_STRAGGLER_MAX_ROUNDS = Math.min(
-  40,
-  Math.max(8, Number(process.env.MGMT_STRAGGLER_MAX_ROUNDS ?? 14)),
-)
-
-/** After last range_pending leg clears, wait then re-apply modify/breakeven for late trade rows (0–3000ms). */
-const MGMT_FINALIZE_STABILIZE_MS = Math.min(
-  3000,
-  Math.max(0, Number(process.env.MGMT_FINALIZE_STABILIZE_MS ?? 1500)),
+  20,
+  Math.max(3, Number(process.env.MGMT_STRAGGLER_MAX_ROUNDS ?? 5)),
 )
 
 const sleep = (ms: number): Promise<void> =>
@@ -2509,24 +2503,6 @@ export class TradeExecutor {
     }
   }
 
-  private async countActiveBasketRangePendingLegs(
-    basketSignalId: string,
-    brokerAccountIds: string[],
-  ): Promise<number> {
-    if (!brokerAccountIds.length) return 0
-    const { count, error } = await this.supabase
-      .from('range_pending_legs')
-      .select('id', { count: 'exact', head: true })
-      .eq('signal_id', basketSignalId)
-      .in('broker_account_id', brokerAccountIds)
-      .in('status', ['pending', 'claimed'])
-    if (error) {
-      console.warn(`[tradeExecutor] countActiveBasketRangePendingLegs failed: ${error.message}`)
-      return 0
-    }
-    return count ?? 0
-  }
-
   private async applyManagement(signal: SignalRow, parsed: ParsedSignal, brokers: BrokerRow[]): Promise<void> {
     if (!hasMetatraderApiConfigured()) return
     if (!signal.parent_signal_id) return
@@ -2813,96 +2789,6 @@ export class TradeExecutor {
       if (scopes.length > 0) {
         await this.cancelRangePendingLegsForScopes(signal.user_id, signal.id, scopes, 'signal_closed')
       }
-    }
-
-    const deferFinalizeActions = ['modify', 'breakeven']
-    if (deferFinalizeActions.includes(action)) {
-      const pendingRange = await this.countActiveBasketRangePendingLegs(basketAnchorId, brokerAccountIds)
-      if (pendingRange > 0) {
-        console.warn(
-          `[tradeExecutor] mgmt signal=${signal.id} (${action}) stay parsed: `
-          + `${pendingRange} range_pending_legs still active for basket=${basketAnchorId} — will retry after ladders fill`,
-        )
-        return
-      }
-    }
-
-    if (deferFinalizeActions.includes(action) && MGMT_FINALIZE_STABILIZE_MS > 0) {
-      await sleep(MGMT_FINALIZE_STABILIZE_MS)
-      const tailRows = await loadOpenBasketTrades()
-      const tailPairs = tailRows
-        .map(trade => {
-          const broker = byBroker.get(trade.broker_account_id)
-          if (!broker || !isMtUuid(broker.metaapi_account_id)) return null
-          if (isChannelManagementBlocked(
-            normalizeChannelMessageFiltersMap(broker.channel_message_filters),
-            signal.channel_id,
-            action,
-            mgmtCtx,
-          )) return null
-          return { trade, broker }
-        })
-        .filter((x): x is { trade: MgmtTradeRow; broker: BrokerRow } => x != null)
-      await Promise.allSettled(tailPairs.map(async ({ trade, broker }) => {
-        const uuid = broker.metaapi_account_id!
-        const ticket = Number(trade.metaapi_order_id)
-        if (!Number.isFinite(ticket) || ticket <= 0) return
-        const api = this.apiFor(broker)
-        if (!api) return
-        try {
-          if (action === 'breakeven') {
-            const entry = sanitizeLevel(trade.entry_price)
-            if (entry > 0) {
-              await api.orderModify(uuid, {
-                ticket,
-                stoploss: entry,
-                takeprofit: sanitizeLevel(trade.tp),
-              })
-              await this.supabase.from('trades').update({ sl: entry }).eq('id', trade.id)
-            }
-          } else if (action === 'modify') {
-            const newSl = hasNewSl ? (parsed.sl as number) : sanitizeLevel(trade.sl)
-            const newTp = hasNewTp ? (parsed.tp![0] as number) : sanitizeLevel(trade.tp)
-            await api.orderModify(uuid, { ticket, stoploss: newSl, takeprofit: newTp })
-            const dbPatch: Record<string, number | null> = {}
-            if (hasNewSl) dbPatch.sl = parsed.sl as number
-            if (hasNewTp) dbPatch.tp = parsed.tp![0] as number
-            if (Object.keys(dbPatch).length > 0) {
-              await this.supabase.from('trades').update(dbPatch).eq('id', trade.id)
-            }
-          }
-          await this.supabase.from('trade_execution_logs').insert({
-            user_id: signal.user_id,
-            signal_id: signal.id,
-            broker_account_id: broker.id,
-            action: `mgmt_${action}`,
-            status: 'success',
-            request_payload: {
-              ticket,
-              action,
-              basket_anchor_signal_id: basketAnchorId,
-              phase: 'stabilize_tail',
-              stabilize_ms: MGMT_FINALIZE_STABILIZE_MS,
-            },
-          })
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err)
-          await this.supabase.from('trade_execution_logs').insert({
-            user_id: signal.user_id,
-            signal_id: signal.id,
-            broker_account_id: broker.id,
-            action: `mgmt_${action}`,
-            status: 'failed',
-            request_payload: {
-              ticket,
-              action,
-              basket_anchor_signal_id: basketAnchorId,
-              phase: 'stabilize_tail',
-            },
-            error_message: msg,
-          })
-        }
-      }))
     }
 
     // Management messages do not insert `trades` with `signal_id = this row`,
