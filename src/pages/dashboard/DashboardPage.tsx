@@ -21,6 +21,7 @@ import {
 } from '../../lib/dashboardCharts'
 import { AccountGrowthChart } from '../../components/dashboard/AccountGrowthChart'
 import { TradeVolumeChart } from '../../components/dashboard/TradeVolumeChart'
+import { useDashboardRealtime } from '../../hooks/useDashboardRealtime'
 
 /** Shared column template for dashboard Copier Logs header + rows. */
 const DASHBOARD_COPIER_LOG_GRID =
@@ -194,14 +195,16 @@ export function DashboardPage() {
   const [showPlatformModal, setShowPlatformModal] = useState(false)
   const [togglingBrokerId, setTogglingBrokerId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
-  const AUTO_REFRESH_MS = 15000
-  const BROKER_SUMMARY_REFRESH_MS = 30000
-  const MT_TRADES_REFRESH_MS = 30000
+  /** Background MT/broker poll — DB changes use Supabase Realtime instead. */
+  const MT_LIVE_REFRESH_MS = 45_000
+  const BROKER_SUMMARY_REFRESH_MS = 30_000
+  const MT_TRADES_REFRESH_MS = 30_000
   const DASHBOARD_CACHE_PREFIX = 'dashboard_cache_v7'
   const lastBrokerRefreshRef = useRef<number>(0)
   const lastMtTradesRefreshRef = useRef<number>(0)
   /** Ignore stale responses when a newer loadDashboard run started. */
   const loadGenerationRef = useRef(0)
+  const refreshQuietRef = useRef<() => void>(() => {})
   /** Last successful MT trades response, kept across renders so stats survive throttled refresh windows. */
   const mtTradesRef = useRef<MtTrade[] | null>(null)
   /**
@@ -238,63 +241,8 @@ export function DashboardPage() {
     return `vs yesterday: ${formatMoney(yesterdayValue)} (${delta >= 0 ? '+' : ''}${formatMoney(delta)})`
   }
 
-  useEffect(() => {
-    if (!user) return
-    const cacheKey = `${DASHBOARD_CACHE_PREFIX}:${user.id}`
-    const cached = sessionStorage.getItem(cacheKey)
-    if (cached) {
-      try {
-        const parsed = JSON.parse(cached) as {
-          linkedAccountBalances?: Record<string, { balance?: number; equity?: number; currency?: string; broker?: string; mt_server_hint?: string; account_type?: 'Live' | 'Demo'; open_pnl?: number; open_trades?: number }>
-        }
-        if (parsed.linkedAccountBalances) {
-          for (const [id, v] of Object.entries(parsed.linkedAccountBalances)) {
-            if (!v) continue
-            liveBrokerStateRef.current[id] = {
-              open_pnl: typeof v.open_pnl === 'number' ? v.open_pnl : liveBrokerStateRef.current[id]?.open_pnl,
-              open_trades: typeof v.open_trades === 'number' ? v.open_trades : liveBrokerStateRef.current[id]?.open_trades,
-            }
-          }
-        }
-      } catch {
-        // Ignore malformed cache and do a normal load below.
-      }
-    }
-    void loadDashboard({ fresh: true })
-  }, [user])
-
-  useEffect(() => {
-    if (!user) return
-
-    let cancelled = false
-    const tick = async () => {
-      if (cancelled) return
-      // Reduce unnecessary API calls when tab is not visible.
-      if (document.visibilityState !== 'visible') return
-      await loadDashboard({ fresh: false })
-    }
-
-    const interval = window.setInterval(() => {
-      void tick()
-    }, AUTO_REFRESH_MS)
-
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') {
-        lastBrokerRefreshRef.current = 0
-        lastMtTradesRefreshRef.current = 0
-        void tick()
-      }
-    }
-    document.addEventListener('visibilitychange', onVisible)
-
-    return () => {
-      cancelled = true
-      window.clearInterval(interval)
-      document.removeEventListener('visibilitychange', onVisible)
-    }
-  }, [user])
-
-  const loadDashboard = async ({ fresh = false }: { fresh?: boolean } = {}) => {
+  const loadDashboard = async (opts: { fresh?: boolean; syncLive?: boolean } = {}) => {
+    const { fresh = false, syncLive = fresh } = opts
     const generation = ++loadGenerationRef.current
     if (fresh) setLoading(true)
     const now = new Date()
@@ -348,7 +296,7 @@ export function DashboardPage() {
     // Prefer live MT trades when we have a cached snapshot; otherwise use the
     // local `trades` table. The live snapshot is refreshed in the background.
     const mtTrades = mtTradesRef.current
-    const useMtTrades = Array.isArray(mtTrades) && mtTrades.length > 0
+    const useMtTrades = syncLive && Array.isArray(mtTrades) && mtTrades.length > 0
     type WindowedTrade = {
       symbol: string
       profit: number | null
@@ -598,15 +546,84 @@ export function DashboardPage() {
         linkedAccountBalances: balanceMap,
       }))
     }
-    setChartTrades(resolveDashboardChartTrades(mtTradesRef.current, allTrades))
+    setChartTrades(
+      resolveDashboardChartTrades(syncLive ? mtTradesRef.current : null, allTrades),
+    )
 
-    await Promise.allSettled([
-      refreshBrokerSummaries(brokerAccounts, balanceMap, { force: true }),
-      refreshMtTrades(brokerAccounts, { force: true }),
-    ])
+    if (syncLive) {
+      await Promise.allSettled([
+        refreshBrokerSummaries(brokerAccounts, balanceMap, { force: true }),
+        refreshMtTrades(brokerAccounts, { force: true }),
+      ])
+      if (generation !== loadGenerationRef.current) return
+      setChartTrades(resolveDashboardChartTrades(mtTradesRef.current, allTrades))
+    }
     if (generation !== loadGenerationRef.current) return
     if (fresh) setLoading(false)
   }
+
+  refreshQuietRef.current = () => {
+    void loadDashboard({ fresh: false, syncLive: false })
+  }
+
+  useDashboardRealtime(user?.id, () => refreshQuietRef.current())
+
+  useEffect(() => {
+    if (!user) return
+    const cacheKey = `${DASHBOARD_CACHE_PREFIX}:${user.id}`
+    const cached = sessionStorage.getItem(cacheKey)
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached) as {
+          linkedAccountBalances?: Record<string, { balance?: number; equity?: number; currency?: string; broker?: string; mt_server_hint?: string; account_type?: 'Live' | 'Demo'; open_pnl?: number; open_trades?: number }>
+        }
+        if (parsed.linkedAccountBalances) {
+          for (const [id, v] of Object.entries(parsed.linkedAccountBalances)) {
+            if (!v) continue
+            liveBrokerStateRef.current[id] = {
+              open_pnl: typeof v.open_pnl === 'number' ? v.open_pnl : liveBrokerStateRef.current[id]?.open_pnl,
+              open_trades: typeof v.open_trades === 'number' ? v.open_trades : liveBrokerStateRef.current[id]?.open_trades,
+            }
+          }
+        }
+      } catch {
+        // Ignore malformed cache and do a normal load below.
+      }
+    }
+    void loadDashboard({ fresh: true, syncLive: true })
+  }, [user])
+
+  useEffect(() => {
+    if (!user) return
+
+    let cancelled = false
+    const syncLiveMt = async () => {
+      if (cancelled || document.visibilityState !== 'visible') return
+      await Promise.allSettled([
+        refreshBrokerSummaries(undefined, undefined, { force: true }),
+        refreshMtTrades(undefined, { force: true }),
+      ])
+    }
+
+    const interval = window.setInterval(() => {
+      void syncLiveMt()
+    }, MT_LIVE_REFRESH_MS)
+
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        lastBrokerRefreshRef.current = 0
+        lastMtTradesRefreshRef.current = 0
+        void loadDashboard({ fresh: false, syncLive: true })
+      }
+    }
+    document.addEventListener('visibilitychange', onVisible)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [user])
 
   /**
    * Pull live trades (open + recent closed) from MetatraderAPI for every linked
