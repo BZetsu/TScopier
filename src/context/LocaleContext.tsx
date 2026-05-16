@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { getAuthTranslations, type AuthTranslations } from '../i18n/auth'
+import { getTranslations, type Translations } from '../i18n/locales'
 import {
   DEFAULT_LOCALE,
   LOCALE_STORAGE_KEY,
@@ -27,7 +27,9 @@ function readStoredLocale(): Locale {
 interface LocaleContextValue {
   locale: Locale
   setLocale: (locale: Locale) => void
-  auth: AuthTranslations
+  t: Translations
+  /** @deprecated Use `t.auth` */
+  auth: Translations['auth']
 }
 
 const LocaleContext = createContext<LocaleContextValue | null>(null)
@@ -48,13 +50,16 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
     document.documentElement.lang = locale
   }, [locale])
 
+  const t = useMemo(() => getTranslations(locale), [locale])
+
   const value = useMemo(
     () => ({
       locale,
       setLocale,
-      auth: getAuthTranslations(locale),
+      t,
+      auth: t.auth,
     }),
-    [locale, setLocale],
+    [locale, setLocale, t],
   )
 
   return <LocaleContext.Provider value={value}>{children}</LocaleContext.Provider>
@@ -64,4 +69,9 @@ export function useLocale() {
   const ctx = useContext(LocaleContext)
   if (!ctx) throw new Error('useLocale must be used within LocaleProvider')
   return ctx
+}
+
+/** Shorthand for `useLocale().t` */
+export function useT() {
+  return useLocale().t
 }
