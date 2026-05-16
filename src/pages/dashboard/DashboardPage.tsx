@@ -523,7 +523,7 @@ export function DashboardPage() {
         )
         .eq('user_id', user!.id)
         .order('created_at', { ascending: false })
-        .limit(12),
+        .limit(20),
     ])
 
     const allTrades = (tradesRes.data ?? []) as Trade[]
@@ -1423,7 +1423,6 @@ export function DashboardPage() {
       <div className="mt-4 sm:mt-6 bg-white dark:bg-neutral-900 rounded-2xl border border-neutral-200 dark:border-neutral-800 overflow-hidden">
         <div className="px-4 sm:px-5 py-4 border-b border-neutral-100 dark:border-neutral-800 flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <Clock className="w-4 h-4 text-teal-500" />
             <div>
               <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">Linked Accounts</p>
               <p className="text-xs text-neutral-400 dark:text-neutral-500">Connected broker accounts used by copier</p>
@@ -1465,7 +1464,7 @@ export function DashboardPage() {
         ) : linkedAccounts.length === 0 ? (
           <div className="px-5 py-8 text-sm text-neutral-400">No linked accounts yet.</div>
         ) : (
-          <div className="divide-y divide-neutral-100 dark:divide-neutral-800">
+          <div className="divide-y divide-neutral-100 dark:divide-neutral-800"> 
             {linkedAccounts.map(account => (
               <LinkedAccountRow
                 key={account.id}
