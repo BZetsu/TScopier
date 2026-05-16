@@ -11,6 +11,7 @@ import { PartialTpMonitor } from './partialTpMonitor'
 import { SignalEntryPendingMonitor } from './signalEntryPendingMonitor'
 import { AutoManagementMonitor } from './autoManagementMonitor'
 import { TrailingStopMonitor } from './trailingStopMonitor'
+import { BasketSlTpReconcileMonitor } from './basketSlTpReconcileMonitor'
 
 // Supabase Realtime needs a WebSocket transport in Node < 22.
 // Railway is currently running Node 20, so we provide ws explicitly.
@@ -33,6 +34,7 @@ const partialTpMonitor = new PartialTpMonitor(supabase)
 const signalEntryPendingMonitor = new SignalEntryPendingMonitor(supabase)
 const trailingStopMonitor = new TrailingStopMonitor(supabase)
 const autoManagementMonitor = new AutoManagementMonitor(supabase)
+const basketSlTpReconcileMonitor = new BasketSlTpReconcileMonitor(supabase)
 
 async function main() {
   console.log('[worker] TSCopier Telegram worker starting...')
@@ -45,6 +47,7 @@ async function main() {
   signalEntryPendingMonitor.start()
   trailingStopMonitor.start()
   autoManagementMonitor.start()
+  basketSlTpReconcileMonitor.start()
 
   setInterval(async () => {
     await sessionManager.syncSessions()
@@ -61,6 +64,7 @@ async function main() {
     signalEntryPendingMonitor.stop()
     trailingStopMonitor.stop()
     autoManagementMonitor.stop()
+    basketSlTpReconcileMonitor.stop()
     await sessionManager.disconnectAll()
     // Let MTProto sockets finish closing so the next deploy does not overlap
     // the same auth key on Telegram (AUTH_KEY_DUPLICATED).

@@ -360,9 +360,15 @@ export function channelWorkerLogMessage(row: ChannelWorkerLogRow): string {
       Number.isFinite(openLegs) && Number.isFinite(modified)
         ? `${modified}/${openLegs} legs updated`
         : 'partial update'
+    const legErrors = payload.leg_errors
+    const firstLegErr =
+      Array.isArray(legErrors) && legErrors.length > 0 && typeof legErrors[0] === 'object' && legErrors[0] !== null
+        ? String((legErrors[0] as Record<string, unknown>).error ?? '').trim()
+        : ''
     const extra =
       (Number.isFinite(skipped) && skipped > 0 ? `; ${skipped} awaiting ticket` : '')
       + (Number.isFinite(failed) && failed > 0 ? `; ${failed} broker errors` : '')
+      + (firstLegErr ? ` — e.g. ${firstLegErr.slice(0, 120)}` : '')
     return namedOrGeneric(
       instr,
       s => `Could not update every open ${s} leg (${detail}${extra})`,

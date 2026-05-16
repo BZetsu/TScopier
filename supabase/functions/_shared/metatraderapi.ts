@@ -375,6 +375,28 @@ export class MetatraderApiClient {
     }
   }
 
+  async orderModify(id: string, args: {
+    ticket: number
+    stoploss?: number
+    takeprofit?: number
+    price?: number
+  }): Promise<{ stopLoss?: number; takeProfit?: number }> {
+    const raw = await this.get<unknown>(this.paths.orderModify, {
+      id,
+      ticket: args.ticket,
+      stoploss: args.stoploss ?? 0,
+      takeprofit: args.takeprofit ?? 0,
+      price: args.price ?? 0,
+    })
+    assertNoApiError(raw)
+    const root = (raw && typeof raw === "object") ? raw as Record<string, unknown> : {}
+    const r = (root.result && typeof root.result === "object") ? root.result as Record<string, unknown> : root
+    return {
+      stopLoss: num(r.stoploss ?? r.StopLoss ?? r.sl ?? r.SL),
+      takeProfit: num(r.takeprofit ?? r.TakeProfit ?? r.tp ?? r.TP),
+    }
+  }
+
   async symbolParams(id: string, symbol: string): Promise<{
     digits: number
     point: number
