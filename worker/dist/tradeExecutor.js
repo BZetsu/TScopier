@@ -23,9 +23,6 @@ function telegramLiveTradeGateEnabled() {
  * parsed signal goes Telegram -> parse-signal -> OrderSend with one HTTPS hop.
  */
 const PARSED_STATUSES = new Set(['parsed']);
-/** Multi-leg entries persist trade rows concurrently; SL/TP follow-ups can arrive before every row+ticket exists. */
-const MGMT_STRAGGLER_MAX_ROUNDS = Math.min(20, Math.max(3, Number(process.env.MGMT_STRAGGLER_MAX_ROUNDS ?? 5)));
-const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 const SYMBOL_CACHE_TTL_MS = 10 * 60000;
 const SYMBOL_LIST_TTL_MS = 30 * 60000;
 function isMtUuid(s) {
@@ -101,13 +98,8 @@ function computeLot(broker, signal) {
                 return Math.max(0.01, +(bal * (pct / 100) / 1000).toFixed(2));
             }
         }
-        // Multi-trade leg counts are computed from Fixed Lot on the Configure screen.
-        // Parsed telegram `lot_size` would bypass it and inflate leg counts vs the preview.
-        if (typeof signal.lot_size === 'number'
-            && signal.lot_size > 0
-            && m.trade_style !== 'multi') {
+        if (typeof signal.lot_size === 'number' && signal.lot_size > 0)
             return signal.lot_size;
-        }
         return Math.max(0.01, Number(m.fixed_lot ?? broker.default_lot_size ?? 0.01));
     }
     // AI mode
@@ -2151,13 +2143,24 @@ class TradeExecutor {
         catch {
             // best-effort
         }
-        const basketAnchorId = await this.resolveBasketAnchorSignalIdForOpenTrades({
-            userId: signal.user_id,
-            brokerAccountIds,
-            channelId: signal.channel_id,
-            parentSignalId: signal.parent_signal_id,
-            symbolHint,
-        });
+        // Prefer the old direct parent → trades mapping (worked reliably for multi/range baskets).
+        // Only walk the chain / channel disambiguation when the parent row has no open legs yet.
+        let basketAnchorId = signal.parent_signal_id;
+        const { count: parentOpenCount } = await this.supabase
+            .from('trades')
+            .select('id', { count: 'exact', head: true })
+            .eq('signal_id', signal.parent_signal_id)
+            .in('broker_account_id', brokerAccountIds)
+            .eq('status', 'open');
+        if ((parentOpenCount ?? 0) === 0) {
+            basketAnchorId = await this.resolveBasketAnchorSignalIdForOpenTrades({
+                userId: signal.user_id,
+                brokerAccountIds,
+                channelId: signal.channel_id,
+                parentSignalId: signal.parent_signal_id,
+                symbolHint,
+            });
+        }
         if (!basketAnchorId) {
             try {
                 await this.supabase
@@ -2230,152 +2233,120 @@ class TradeExecutor {
             await this.applyCloseWorseEntriesInstruction(signal, parsed, eligibleRows, eligibleByBroker);
             return;
         }
-        const maxStragglerRounds = MGMT_STRAGGLER_MAX_ROUNDS;
-        const mgmtSucceeded = new Set();
-        for (let round = 0; round < maxStragglerRounds; round++) {
-            if (round > 0) {
-                await sleep(Math.min(round, 5) * 250);
+        const rows = await loadOpenBasketTrades();
+        if (!rows.length) {
+            try {
+                await this.supabase
+                    .from('signals')
+                    .update({ status: 'skipped', skip_reason: 'mgmt_no_parent_trades' })
+                    .eq('id', signal.id)
+                    .eq('status', 'parsed');
             }
-            const rows = await loadOpenBasketTrades();
-            if (!rows.length) {
-                if (round === 0) {
-                    try {
-                        await this.supabase
-                            .from('signals')
-                            .update({ status: 'skipped', skip_reason: 'mgmt_no_parent_trades' })
-                            .eq('id', signal.id)
-                            .eq('status', 'parsed');
-                    }
-                    catch { /* best-effort */ }
-                    return;
-                }
-                break;
+            catch { /* best-effort */ }
+            return;
+        }
+        await Promise.allSettled(rows.map(async (trade) => {
+            const broker = byBroker.get(trade.broker_account_id);
+            if (!broker || !isMtUuid(broker.metaapi_account_id))
+                return;
+            if ((0, channelMessageFilters_1.isChannelManagementBlocked)((0, channelMessageFilters_1.normalizeChannelMessageFiltersMap)(broker.channel_message_filters), signal.channel_id, action, mgmtCtx)) {
+                return;
             }
-            const eligiblePairs = rows
-                .map(trade => {
-                const broker = byBroker.get(trade.broker_account_id);
-                if (!broker || !isMtUuid(broker.metaapi_account_id))
-                    return null;
-                if ((0, channelMessageFilters_1.isChannelManagementBlocked)((0, channelMessageFilters_1.normalizeChannelMessageFiltersMap)(broker.channel_message_filters), signal.channel_id, action, mgmtCtx)) {
-                    return null;
+            const uuid = broker.metaapi_account_id;
+            const ticket = Number(trade.metaapi_order_id);
+            if (!Number.isFinite(ticket) || ticket <= 0)
+                return;
+            const api = this.apiFor(broker);
+            if (!api)
+                return;
+            try {
+                if (action === 'close') {
+                    await api.orderClose(uuid, { ticket });
+                    await this.supabase.from('trades').update({ status: 'closed', closed_at: new Date().toISOString() }).eq('id', trade.id);
+                    cancelledPendingScopes.add(JSON.stringify({
+                        signalId: basketAnchorId,
+                        brokerAccountId: trade.broker_account_id,
+                        symbol: trade.symbol,
+                    }));
                 }
-                return { trade, broker };
-            })
-                .filter((x) => x != null);
-            const doable = eligiblePairs.filter(({ trade }) => {
-                const ticket = Number(trade.metaapi_order_id);
-                return Number.isFinite(ticket) && ticket > 0;
-            }).filter(({ trade }) => !mgmtSucceeded.has(trade.id));
-            await Promise.allSettled(doable.map(async ({ trade, broker }) => {
-                const uuid = broker.metaapi_account_id;
-                const ticket = Number(trade.metaapi_order_id);
-                const api = this.apiFor(broker);
-                if (!api)
-                    return;
-                try {
-                    if (action === 'close') {
-                        await api.orderClose(uuid, { ticket });
-                        await this.supabase.from('trades').update({ status: 'closed', closed_at: new Date().toISOString() }).eq('id', trade.id);
-                        cancelledPendingScopes.add(JSON.stringify({
-                            signalId: basketAnchorId,
-                            brokerAccountId: trade.broker_account_id,
-                            symbol: trade.symbol,
-                        }));
+                else if (action === 'partial_profit' || action === 'partial_breakeven') {
+                    const fraction = typeof parsed.partial_close_fraction === 'number' && parsed.partial_close_fraction > 0
+                        ? Math.min(0.95, parsed.partial_close_fraction)
+                        : 0.5;
+                    const lots = +(trade.lot_size * fraction).toFixed(2);
+                    await api.orderClose(uuid, { ticket, lots });
+                    const remaining = Math.max(0, +(trade.lot_size - lots).toFixed(2));
+                    if (remaining < 0.0001) {
+                        await this.supabase.from('trades').update({
+                            status: 'closed',
+                            closed_at: new Date().toISOString(),
+                            lot_size: 0,
+                        }).eq('id', trade.id);
                     }
-                    else if (action === 'partial_profit' || action === 'partial_breakeven') {
-                        const fraction = typeof parsed.partial_close_fraction === 'number' && parsed.partial_close_fraction > 0
-                            ? Math.min(0.95, parsed.partial_close_fraction)
-                            : 0.5;
-                        const lots = +(trade.lot_size * fraction).toFixed(2);
-                        await api.orderClose(uuid, { ticket, lots });
-                        const remaining = Math.max(0, +(trade.lot_size - lots).toFixed(2));
-                        if (remaining < 0.0001) {
-                            await this.supabase.from('trades').update({
-                                status: 'closed',
-                                closed_at: new Date().toISOString(),
-                                lot_size: 0,
-                            }).eq('id', trade.id);
-                        }
-                        else {
-                            await this.supabase.from('trades').update({ lot_size: remaining }).eq('id', trade.id);
-                        }
+                    else {
+                        await this.supabase.from('trades').update({ lot_size: remaining }).eq('id', trade.id);
                     }
-                    else if (action === 'breakeven') {
-                        const entry = sanitizeLevel(trade.entry_price);
-                        if (entry > 0) {
-                            await api.orderModify(uuid, {
-                                ticket,
-                                stoploss: entry,
-                                takeprofit: sanitizeLevel(trade.tp),
-                            });
-                            await this.supabase.from('trades').update({ sl: entry }).eq('id', trade.id);
-                        }
-                    }
-                    else if (action === 'modify') {
-                        const newSl = hasNewSl ? parsed.sl : sanitizeLevel(trade.sl);
-                        const newTp = hasNewTp ? parsed.tp[0] : sanitizeLevel(trade.tp);
+                }
+                else if (action === 'breakeven') {
+                    const entry = sanitizeLevel(trade.entry_price);
+                    if (entry > 0) {
                         await api.orderModify(uuid, {
                             ticket,
-                            stoploss: newSl,
-                            takeprofit: newTp,
+                            stoploss: entry,
+                            takeprofit: sanitizeLevel(trade.tp),
                         });
-                        const dbPatch = {};
-                        if (hasNewSl)
-                            dbPatch.sl = parsed.sl;
-                        if (hasNewTp)
-                            dbPatch.tp = parsed.tp[0];
-                        if (Object.keys(dbPatch).length > 0) {
-                            await this.supabase.from('trades').update(dbPatch).eq('id', trade.id);
-                        }
+                        await this.supabase.from('trades').update({ sl: entry }).eq('id', trade.id);
                     }
-                    mgmtSucceeded.add(trade.id);
-                    await this.supabase.from('trade_execution_logs').insert({
-                        user_id: signal.user_id,
-                        signal_id: signal.id,
-                        broker_account_id: broker.id,
-                        action: `mgmt_${action}`,
-                        status: 'success',
-                        request_payload: {
-                            ticket,
-                            action,
-                            basket_anchor_signal_id: basketAnchorId,
-                            mgmt_parent_signal_id: signal.parent_signal_id,
-                            straggler_round: round + 1,
-                        },
+                }
+                else if (action === 'modify') {
+                    const newSl = hasNewSl ? parsed.sl : sanitizeLevel(trade.sl);
+                    const newTp = hasNewTp ? parsed.tp[0] : sanitizeLevel(trade.tp);
+                    await api.orderModify(uuid, {
+                        ticket,
+                        stoploss: newSl,
+                        takeprofit: newTp,
                     });
+                    const dbPatch = {};
+                    if (hasNewSl)
+                        dbPatch.sl = parsed.sl;
+                    if (hasNewTp)
+                        dbPatch.tp = parsed.tp[0];
+                    if (Object.keys(dbPatch).length > 0) {
+                        await this.supabase.from('trades').update(dbPatch).eq('id', trade.id);
+                    }
                 }
-                catch (err) {
-                    const msg = err instanceof Error ? err.message : String(err);
-                    await this.supabase.from('trade_execution_logs').insert({
-                        user_id: signal.user_id,
-                        signal_id: signal.id,
-                        broker_account_id: broker.id,
-                        action: `mgmt_${action}`,
-                        status: 'failed',
-                        request_payload: {
-                            ticket,
-                            action,
-                            basket_anchor_signal_id: basketAnchorId,
-                            mgmt_parent_signal_id: signal.parent_signal_id,
-                            straggler_round: round + 1,
-                        },
-                        error_message: msg,
-                    });
-                }
-            }));
-            // Exit when nothing applies, or each eligible basket leg has both a broker
-            // ticket and a successful management dispatch (so late INSERTs/tickets pick up SL/TP).
-            let allEligibleApplied = eligiblePairs.length > 0;
-            for (const { trade } of eligiblePairs) {
-                const tid = Number(trade.metaapi_order_id);
-                if (!Number.isFinite(tid) || tid <= 0 || !mgmtSucceeded.has(trade.id)) {
-                    allEligibleApplied = false;
-                    break;
-                }
+                await this.supabase.from('trade_execution_logs').insert({
+                    user_id: signal.user_id,
+                    signal_id: signal.id,
+                    broker_account_id: broker.id,
+                    action: `mgmt_${action}`,
+                    status: 'success',
+                    request_payload: {
+                        ticket,
+                        action,
+                        basket_anchor_signal_id: basketAnchorId,
+                        mgmt_parent_signal_id: signal.parent_signal_id,
+                    },
+                });
             }
-            if (!eligiblePairs.length || allEligibleApplied)
-                break;
-        }
+            catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                await this.supabase.from('trade_execution_logs').insert({
+                    user_id: signal.user_id,
+                    signal_id: signal.id,
+                    broker_account_id: broker.id,
+                    action: `mgmt_${action}`,
+                    status: 'failed',
+                    request_payload: {
+                        ticket,
+                        action,
+                        basket_anchor_signal_id: basketAnchorId,
+                        mgmt_parent_signal_id: signal.parent_signal_id,
+                    },
+                    error_message: msg,
+                });
+            }
+        }));
         if (action === 'close' && cancelledPendingScopes.size > 0) {
             const scopes = Array.from(cancelledPendingScopes)
                 .map(enc => JSON.parse(enc))
