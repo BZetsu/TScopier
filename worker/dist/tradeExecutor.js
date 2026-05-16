@@ -11,6 +11,7 @@ const trailingStop_1 = require("./trailingStop");
 const rangePendingLegPersist_1 = require("./rangePendingLegPersist");
 const signalEntryPendingHelpers_1 = require("./signalEntryPendingHelpers");
 const signalMergeLink_1 = require("./signalMergeLink");
+const multiTradeMerge_1 = require("./multiTradeMerge");
 /** When true (default), channel-attached signals only execute if MTProto is connected in this process. */
 function telegramLiveTradeGateEnabled() {
     const v = String(process.env.WORKER_REQUIRE_TELEGRAM_LIVE_FOR_TRADES ?? 'true').toLowerCase();
@@ -76,13 +77,6 @@ function operationFor(action, signal) {
     if (a === 'sell')
         return hasEntry ? 'SellLimit' : 'Sell';
     return null;
-}
-/** Planner immediates used only for per-leg SL/TP during merge (not sent as new orders). */
-function mergePlanImmediateOrders(plan) {
-    return plan.orders.filter(o => {
-        const op = String(o.operation);
-        return op === 'Buy' || op === 'Sell' || op.includes('Limit') || op.includes('Stop');
-    });
 }
 function isManagementAction(action) {
     const a = action.toLowerCase();
@@ -904,6 +898,395 @@ class TradeExecutor {
         }
     }
     /**
+     * Parameter follow-up (SL/TP present): refresh the latest open basket on this
+     * channel + symbol + direction. Never opens new trades.
+     */
+    async tryParameterFollowUpMergeModifyOnly(args) {
+        const { signal, parsed, broker, channelKeywords, baseLot, params, symbol, uuid, strictEntryPrefetch } = args;
+        if (!(0, metatraderapi_1.hasMetatraderApiConfigured)())
+            return { handled: false };
+        if (!(0, multiTradeMerge_1.isParameterFollowUpSignal)(parsed))
+            return { handled: false };
+        const api = this.apiFor(broker);
+        if (!api)
+            return { handled: false };
+        const a = String(parsed.action ?? '').toLowerCase();
+        if (a !== 'buy' && a !== 'sell')
+            return { handled: false };
+        const direction = a === 'buy' ? 'buy' : 'sell';
+        const anchor = await (0, multiTradeMerge_1.resolveLatestOpenBasketAnchor)(this.supabase, {
+            userId: signal.user_id,
+            brokerAccountId: broker.id,
+            symbol,
+            direction,
+            channelId: signal.channel_id,
+        });
+        if (!anchor) {
+            try {
+                await this.supabase.from('trade_execution_logs').insert({
+                    user_id: signal.user_id,
+                    signal_id: signal.id,
+                    broker_account_id: broker.id,
+                    action: 'merge_routed_modify_only',
+                    status: 'skipped',
+                    request_payload: {
+                        skip_reason: 'parameter_follow_up_no_open_basket',
+                        symbol,
+                        direction,
+                        channel_id: signal.channel_id,
+                    },
+                });
+            }
+            catch { /* best-effort */ }
+            return { handled: true, success: false };
+        }
+        console.log(`[tradeExecutor] merge_anchor_selected signal=${signal.id} broker=${broker.id}`
+            + ` anchor=${anchor.anchorSignalId} symbol=${symbol} direction=${direction}`);
+        try {
+            await this.supabase.from('trade_execution_logs').insert({
+                user_id: signal.user_id,
+                signal_id: signal.id,
+                broker_account_id: broker.id,
+                action: 'merge_anchor_selected',
+                status: 'success',
+                request_payload: {
+                    anchor_signal_id: anchor.anchorSignalId,
+                    symbol,
+                    direction,
+                    channel_id: signal.channel_id,
+                    newest_opened_at: anchor.newestOpenedAt,
+                },
+            });
+        }
+        catch { /* best-effort */ }
+        const outcome = await this.applyBasketSlTpRefresh({
+            signal,
+            parsed,
+            broker,
+            channelKeywords,
+            baseLot,
+            params,
+            symbol,
+            uuid,
+            strictEntryPrefetch,
+            anchorSignalId: anchor.anchorSignalId,
+            direction,
+            logAction: 'merge_routed_modify_only',
+        });
+        return { handled: true, success: outcome.success };
+    }
+    /**
+     * OrderModify every open leg in the basket + refresh range ladder rows. No OrderSend.
+     */
+    async applyBasketSlTpRefresh(args) {
+        const { signal, parsed, broker, channelKeywords, baseLot, params, symbol, uuid, strictEntryPrefetch, anchorSignalId, direction, logAction, mergeLinkMeta, } = args;
+        const api = this.apiFor(broker);
+        if (!api) {
+            return {
+                success: false,
+                summary: { openLegs: 0, attempted: 0, modified: 0, failed: 0, skippedNoTicket: 0 },
+            };
+        }
+        const manual = (broker.manual_settings ?? {});
+        const { data: familyRows, error: famErr } = await this.supabase
+            .from('trades')
+            .select('id,signal_id,metaapi_order_id,opened_at,lot_size,sl,tp,entry_price,direction')
+            .eq('broker_account_id', broker.id)
+            .eq('signal_id', anchorSignalId)
+            .eq('symbol', symbol)
+            .eq('status', 'open')
+            .order('opened_at', { ascending: true })
+            .limit(500);
+        const familyTrades = (familyRows ?? []);
+        if (famErr || !familyTrades.length) {
+            return {
+                success: false,
+                summary: { openLegs: 0, attempted: 0, modified: 0, failed: 0, skippedNoTicket: 0 },
+            };
+        }
+        const newest = familyTrades[familyTrades.length - 1];
+        const rpe0 = (0, manualPlanner_1.resolvedParsedEntryPrice)(parsed);
+        const rzo0 = (0, manualPlanner_1.resolvedParsedEntryZone)(parsed);
+        const plannerParsed = {
+            action: parsed.action,
+            symbol: parsed.symbol,
+            entry_price: rpe0,
+            entry_zone_low: rzo0?.lo ?? parsed.entry_zone_low,
+            entry_zone_high: rzo0?.hi ?? parsed.entry_zone_high,
+            sl: parsed.sl,
+            tp: parsed.tp,
+            lot_size: parsed.lot_size,
+            open_tp: parsed.open_tp,
+            partial_close_fraction: parsed.partial_close_fraction,
+            raw_instruction: parsed.raw_instruction,
+        };
+        if (!(0, manualPlanner_1.parsedHasExplicitEntryAnchor)(plannerParsed)) {
+            const ep = Number(newest.entry_price);
+            if (Number.isFinite(ep) && ep > 0)
+                plannerParsed.entry_price = ep;
+        }
+        if (!(0, manualPlanner_1.parsedHasExplicitEntryAnchor)(plannerParsed)) {
+            try {
+                const q = strictEntryPrefetch ?? await api.quote(uuid, symbol);
+                plannerParsed.entry_price = direction === 'buy' ? q.ask : q.bid;
+            }
+            catch {
+                console.warn(`[tradeExecutor] basket refresh skipped: no entry anchor signal=${signal.id}`);
+                return {
+                    success: false,
+                    summary: {
+                        openLegs: familyTrades.length,
+                        attempted: 0,
+                        modified: 0,
+                        failed: 0,
+                        skippedNoTicket: familyTrades.length,
+                    },
+                };
+            }
+        }
+        const mergeBaseOp = direction === 'buy' ? 'Buy' : 'Sell';
+        const plan = (0, manualPlanner_1.planManualOrders)({
+            parsed: plannerParsed,
+            resolvedSymbol: symbol,
+            baseOperation: mergeBaseOp,
+            manual,
+            channelKeywords,
+            manualLot: baseLot,
+            ctx: {
+                point: params?.point ?? 0.00001,
+                digits: params?.digits ?? 5,
+                minLot: params?.minLot ?? 0.01,
+                lotStep: params?.lotStep ?? 0.01,
+                contractSize: params?.contractSize ?? null,
+                stopsLevel: params?.stopsLevel ?? 0,
+                freezeLevel: params?.freezeLevel ?? 0,
+                defaultLot: Number(broker.default_lot_size ?? 0.01),
+                lastBalance: broker.last_balance ?? null,
+                liveBid: strictEntryPrefetch?.bid,
+                liveAsk: strictEntryPrefetch?.ask,
+            },
+            commentPrefix: `TSCopier:${signal.id.slice(0, 8)}`,
+            expertId: 909090,
+            slippage: 20,
+        });
+        if (plan.skip_reason) {
+            return {
+                success: false,
+                summary: {
+                    openLegs: familyTrades.length,
+                    attempted: 0,
+                    modified: 0,
+                    failed: 0,
+                    skippedNoTicket: 0,
+                },
+            };
+        }
+        if (plan.delay_ms > 0) {
+            await new Promise(resolve => setTimeout(resolve, Math.min(plan.delay_ms, 30000)));
+        }
+        let virtualPendings = (plan.virtualPendings ?? []).slice(0, 500);
+        const perLegTargets = (0, multiTradeMerge_1.buildPerLegStopTargets)({
+            plan,
+            parsed,
+            openLegCount: familyTrades.length,
+        });
+        let anchor = plan.anchor?.value ?? null;
+        if ((virtualPendings.length > 0 || !!plan.closeWorseEntries) && (anchor == null || anchor <= 0)) {
+            try {
+                const q = strictEntryPrefetch ?? await api.quote(uuid, symbol);
+                anchor = plan.isBuy === false ? q.bid : q.ask;
+            }
+            catch { /* drop virtuals below */ }
+        }
+        const overrideTp = computeCweTp(plan, anchor, params);
+        let nImmCwe = 0;
+        if (overrideTp != null && plan.closeWorseEntries) {
+            nImmCwe = Math.max(0, Math.min(perLegTargets.length, plan.closeWorseEntries.immediates));
+            for (let i = 0; i < nImmCwe; i++) {
+                if (perLegTargets[i])
+                    perLegTargets[i].takeprofit = 0;
+            }
+        }
+        await this.cancelRangePendingLegsForScopes(signal.user_id, signal.id, [{
+                signalId: anchorSignalId,
+                brokerAccountId: broker.id,
+                symbol,
+            }], 'signal_merge_refresh');
+        for (const t of familyTrades) {
+            try {
+                await this.supabase.from('partial_tp_legs').delete().eq('trade_id', t.id);
+            }
+            catch { /* best-effort */ }
+        }
+        const summary = {
+            openLegs: familyTrades.length,
+            attempted: 0,
+            modified: 0,
+            failed: 0,
+            skippedNoTicket: 0,
+        };
+        for (let i = 0; i < familyTrades.length; i++) {
+            const tr = familyTrades[i];
+            const target = perLegTargets[i] ?? perLegTargets[perLegTargets.length - 1];
+            if (!target)
+                continue;
+            const ticket = Number(tr.metaapi_order_id);
+            if (!Number.isFinite(ticket) || ticket <= 0) {
+                summary.skippedNoTicket += 1;
+                summary.failed += 1;
+                continue;
+            }
+            summary.attempted += 1;
+            let ref = Number(tr.entry_price) || 0;
+            if (ref <= 0) {
+                try {
+                    const q = strictEntryPrefetch ?? await api.quote(uuid, symbol);
+                    ref = direction === 'buy' ? q.ask : q.bid;
+                }
+                catch {
+                    summary.failed += 1;
+                    continue;
+                }
+            }
+            const sendShape = {
+                symbol,
+                operation: direction === 'buy' ? 'Buy' : 'Sell',
+                volume: roundLot(Number(tr.lot_size) || baseLot, params),
+                price: ref,
+                stoploss: target.stoploss,
+                takeprofit: i < nImmCwe ? 0 : target.takeprofit,
+                slippage: 20,
+                comment: `TSCopier:${signal.id.slice(0, 8)}:refresh`,
+                expertID: 909090,
+            };
+            const clamped = clampOrderStops(sendShape, params);
+            try {
+                const modRes = await api.orderModify(uuid, {
+                    ticket,
+                    stoploss: clamped.args.stoploss ?? 0,
+                    takeprofit: clamped.args.takeprofit ?? 0,
+                });
+                const newSl = modRes.stopLoss ?? clamped.args.stoploss ?? null;
+                const newTp = modRes.takeProfit ?? clamped.args.takeprofit ?? null;
+                const cweClose = i < nImmCwe ? overrideTp : null;
+                await this.supabase.from('trades').update({
+                    sl: typeof newSl === 'number' && newSl > 0 ? newSl : null,
+                    tp: typeof newTp === 'number' && newTp > 0 ? newTp : null,
+                    cwe_close_price: typeof cweClose === 'number' && cweClose > 0 ? cweClose : null,
+                }).eq('id', tr.id);
+                summary.modified += 1;
+            }
+            catch (err) {
+                summary.failed += 1;
+                const msg = err instanceof Error ? err.message : String(err);
+                console.warn(`[tradeExecutor] basket refresh OrderModify failed leg=${i + 1}/${familyTrades.length} trade=${tr.id}: ${msg}`);
+            }
+        }
+        if (virtualPendings.length > 0 && anchor != null && Number.isFinite(anchor) && anchor > 0) {
+            if (overrideTp != null && plan.closeWorseEntries) {
+                const nVirt = virtualPendings.length;
+                for (let i = 0; i < nVirt; i++) {
+                    virtualPendings[i] = {
+                        ...virtualPendings[i],
+                        takeprofit: null,
+                        comment: `${virtualPendings[i].comment}.cw`,
+                        cweClosePrice: overrideTp,
+                    };
+                }
+            }
+            const digits = Math.max(0, Math.min(8, Number(params?.digits) || 5));
+            const safe = Math.max(Number(params?.stopsLevel) || 0, Number(params?.freezeLevel) || 0);
+            const zoneHi = safe > 0 ? anchor + (safe + 2) * (params?.point ?? 0) : null;
+            const zoneLo = safe > 0 ? anchor - (safe + 2) * (params?.point ?? 0) : null;
+            const nowMs = Date.now();
+            const insertRows = [];
+            for (const v of virtualPendings) {
+                const triggerPrice = triggerPriceFor(v, anchor, digits);
+                if (zoneHi != null && zoneLo != null && triggerPrice > zoneLo && triggerPrice < zoneHi)
+                    continue;
+                const expiresAt = v.expiryHours && v.expiryHours > 0
+                    ? new Date(nowMs + v.expiryHours * 60 * 60 * 1000).toISOString()
+                    : null;
+                insertRows.push({
+                    signal_id: anchorSignalId,
+                    user_id: signal.user_id,
+                    broker_account_id: broker.id,
+                    metaapi_account_id: uuid,
+                    symbol,
+                    step_idx: v.stepIdx,
+                    is_buy: v.isBuy,
+                    volume: roundLot(v.volume, params),
+                    anchor_price: anchor,
+                    trigger_price: triggerPrice,
+                    stoploss: v.stoploss,
+                    takeprofit: v.takeprofit,
+                    slippage: v.slippage,
+                    comment: v.comment,
+                    expert_id: v.expertID ?? null,
+                    expires_at: expiresAt,
+                    status: 'pending',
+                    cwe_close_price: v.cweClosePrice ?? null,
+                });
+            }
+            if (insertRows.length > 0) {
+                const persist = await this.persistRangePendingLegRows(insertRows, `basket_refresh signal=${signal.id} anchor=${anchorSignalId}`);
+                if (!persist.ok)
+                    summary.failed += 1;
+            }
+        }
+        const mergeFailed = summary.failed > 0
+            || (summary.modified + summary.skippedNoTicket) < summary.openLegs;
+        console.log(`[tradeExecutor] merge_modify_summary signal=${signal.id} broker=${broker.id} anchor=${anchorSignalId}`
+            + ` open=${summary.openLegs} attempted=${summary.attempted} modified=${summary.modified}`
+            + ` failed=${summary.failed} no_ticket=${summary.skippedNoTicket}`);
+        try {
+            await this.supabase.from('trade_execution_logs').insert({
+                user_id: signal.user_id,
+                signal_id: signal.id,
+                broker_account_id: broker.id,
+                action: 'merge_modify_summary',
+                status: mergeFailed ? 'failed' : 'success',
+                request_payload: {
+                    parent_signal_id: anchorSignalId,
+                    symbol,
+                    ...summary,
+                    virtual_pendings: virtualPendings.length,
+                    ...(mergeLinkMeta ?? {}),
+                },
+            });
+        }
+        catch { /* best-effort */ }
+        try {
+            await this.supabase.from('trade_execution_logs').insert({
+                user_id: signal.user_id,
+                signal_id: signal.id,
+                broker_account_id: broker.id,
+                action: logAction,
+                status: mergeFailed ? 'failed' : 'success',
+                request_payload: {
+                    parent_signal_id: anchorSignalId,
+                    symbol,
+                    modify_only: true,
+                    ...summary,
+                    virtual_pendings: virtualPendings.length,
+                    ...(mergeLinkMeta ?? {}),
+                },
+            });
+        }
+        catch { /* best-effort */ }
+        if (!mergeFailed) {
+            try {
+                await this.supabase
+                    .from('signals')
+                    .update({ status: 'executed' })
+                    .eq('id', signal.id)
+                    .eq('status', 'parsed');
+            }
+            catch { /* best-effort */ }
+        }
+        return { success: !mergeFailed, summary };
+    }
+    /**
      * When `add_new_trades_to_existing` is on, apply a same-direction follow-up
      * (Telegram reply to the anchor entry, reply to a thread whose parent chain
      * reaches the anchor, or time window with direct `parent_signal_id` → anchor)
@@ -918,6 +1301,8 @@ class TradeExecutor {
             return { handled: false };
         const manual = (broker.manual_settings ?? {});
         if (manual.add_new_trades_to_existing !== true)
+            return { handled: false };
+        if ((0, multiTradeMerge_1.isParameterFollowUpSignal)(parsed))
             return { handled: false };
         if ((0, manualPlanner_1.signalEntryPriceStrictEnabled)(manual) && !(0, manualPlanner_1.parsedHasExplicitEntryAnchor)(parsed)) {
             return { handled: false };
@@ -1023,335 +1408,35 @@ class TradeExecutor {
                 + ` implicit=${implicitSameChannelBundle} paramRefresh=${parameterRefreshSameChannel} dt_ms=${dt}`);
             return { handled: false };
         }
-        // Planner / predefined SL-TP need an entry anchor. Re-use the live trade's fill when the new parse has none.
-        const rpe0 = (0, manualPlanner_1.resolvedParsedEntryPrice)(parsed);
-        const rzo0 = (0, manualPlanner_1.resolvedParsedEntryZone)(parsed);
-        const plannerParsed = {
-            action: parsed.action,
-            symbol: parsed.symbol,
-            entry_price: rpe0,
-            entry_zone_low: rzo0?.lo ?? parsed.entry_zone_low,
-            entry_zone_high: rzo0?.hi ?? parsed.entry_zone_high,
-            sl: parsed.sl,
-            tp: parsed.tp,
-            lot_size: parsed.lot_size,
-            open_tp: parsed.open_tp,
-            partial_close_fraction: parsed.partial_close_fraction,
-            raw_instruction: parsed.raw_instruction,
-        };
-        if (!(0, manualPlanner_1.parsedHasExplicitEntryAnchor)(plannerParsed)) {
-            const ep = Number(newest.entry_price);
-            if (Number.isFinite(ep) && ep > 0) {
-                plannerParsed.entry_price = ep;
-            }
-        }
-        if (!(0, manualPlanner_1.parsedHasExplicitEntryAnchor)(plannerParsed)) {
-            try {
-                const q = strictEntryPrefetch ?? await api.quote(uuid, symbol);
-                plannerParsed.entry_price = direction === 'buy' ? q.ask : q.bid;
-            }
-            catch {
-                console.warn(`[tradeExecutor] merge skipped: no entry anchor signal=${signal.id} symbol=${symbol}`);
-                return { handled: false };
-            }
-        }
-        // Full manual (multi + range + tp_lots %) so each immediate leg maps to the correct bucket TP.
-        const mergeBaseOp = op === 'Buy' || op === 'Sell' ? op : direction === 'buy' ? 'Buy' : 'Sell';
-        const plan = (0, manualPlanner_1.planManualOrders)({
-            parsed: plannerParsed,
-            resolvedSymbol: symbol,
-            baseOperation: mergeBaseOp,
-            manual,
+        const refresh = await this.applyBasketSlTpRefresh({
+            signal,
+            parsed,
+            broker,
             channelKeywords,
-            manualLot: baseLot,
-            ctx: {
-                point: params?.point ?? 0.00001,
-                digits: params?.digits ?? 5,
-                minLot: params?.minLot ?? 0.01,
-                lotStep: params?.lotStep ?? 0.01,
-                contractSize: params?.contractSize ?? null,
-                stopsLevel: params?.stopsLevel ?? 0,
-                freezeLevel: params?.freezeLevel ?? 0,
-                defaultLot: Number(broker.default_lot_size ?? 0.01),
-                lastBalance: broker.last_balance ?? null,
-                liveBid: strictEntryPrefetch?.bid,
-                liveAsk: strictEntryPrefetch?.ask,
+            baseLot,
+            params,
+            symbol,
+            uuid,
+            strictEntryPrefetch,
+            anchorSignalId,
+            direction,
+            logAction: 'signal_merge_into_open_trade',
+            mergeLinkMeta: {
+                reply_chain: replyOk,
+                within_time_window: withinWindow,
+                parent_links_anchor: parentLinksAnchor,
+                has_reply_to_telegram: hasReplyToTelegram,
+                ancestor_chain_contains_anchor: ancestorChainContainsAnchor,
+                thread_links_anchor: threadLinksAnchor,
+                implicit_bundle_within_tight_window: implicitBundleWithinTightWindow,
+                implicit_same_channel_bundle: implicitSameChannelBundle,
+                parameter_refresh_same_channel: parameterRefreshSameChannel,
+                implicit_bundle_dt_ms: dt,
+                merge_implicit_tight_window_ms: signalMergeLink_1.MERGE_IMPLICIT_CHANNEL_BUNDLE_MS,
+                legacy_merge_linking: (0, multiTradeMerge_1.legacyMergeLinkingEnabled)(),
             },
-            commentPrefix: `TSCopier:${signal.id.slice(0, 8)}`,
-            expertId: 909090,
-            slippage: 20,
         });
-        if (plan.skip_reason)
-            return { handled: false };
-        let virtualPendings = (plan.virtualPendings ?? []).slice(0, 500);
-        const hasVirtualPlan = virtualPendings.length > 0;
-        let immediateArgs = mergePlanImmediateOrders(plan);
-        if (!immediateArgs.length && !hasVirtualPlan && !familyTrades.length)
-            return { handled: false };
-        if (plan.delay_ms > 0) {
-            await new Promise(resolve => setTimeout(resolve, Math.min(plan.delay_ms, 30000)));
-        }
-        // Same strict-entry live quote rule as `sendOrder`: merge refresh only when the
-        // market is already at or better than the signal entry (no virtual deferral here).
-        if ((0, manualPlanner_1.signalEntryPriceStrictEnabled)(manual) && plan.strictEntry) {
-            const se = plan.strictEntry;
-            try {
-                const q = strictEntryPrefetch ?? await api.quote(uuid, symbol);
-                const immediateOk = (0, manualPlanner_1.strictSignalEntryQuoteAllowsImmediate)({
-                    isBuy: se.isBuy,
-                    entryPrice: se.entryPrice,
-                    bid: q.bid,
-                    ask: q.ask,
-                });
-                if (!immediateOk)
-                    return { handled: false };
-            }
-            catch {
-                return { handled: false };
-            }
-        }
-        // When range mode puts every leg on the ladder (0 immediates), still refresh open
-        // legs + virtual pendings from parsed SL/TP instead of opening a second basket.
-        if (!immediateArgs.length && familyTrades.length > 0 && (hasSl || hasTp)) {
-            const tps = (parsed.tp ?? []).filter((t) => typeof t === 'number' && Number.isFinite(t) && t > 0);
-            immediateArgs = familyTrades.map((tr, i) => ({
-                symbol,
-                operation: direction === 'buy' ? 'Buy' : 'Sell',
-                volume: Number(tr.lot_size) || baseLot,
-                price: Number(tr.entry_price) || 0,
-                stoploss: hasSl ? parsed.sl : 0,
-                takeprofit: tps.length ? (tps[Math.min(i, tps.length - 1)] ?? tps[0]) : 0,
-                slippage: 20,
-                comment: `TSCopier:${signal.id.slice(0, 8)}:mergeRefresh`,
-                expertID: 909090,
-            }));
-        }
-        if (!immediateArgs.length && !hasVirtualPlan)
-            return { handled: false };
-        // Per-leg SL/TP (and optional CWE) aligned with `planManualOrders` immediate sequence.
-        immediateArgs = immediateArgs.map(o => ({ ...o }));
-        const needsAnchor = virtualPendings.length > 0 || !!plan.closeWorseEntries;
-        let anchor = plan.anchor?.value ?? null;
-        let anchorSource = plan.anchor?.source ?? 'unknown';
-        if (needsAnchor && (anchor == null || anchor <= 0)) {
-            try {
-                const q = strictEntryPrefetch ?? await api.quote(uuid, symbol);
-                anchor = plan.isBuy === false ? q.bid : q.ask;
-                anchorSource = 'quote';
-            }
-            catch {
-                // anchor may stay null; virtual insert path will drop legs
-            }
-        }
-        const overrideTp = computeCweTp(plan, anchor, params);
-        let nImmCwe = 0;
-        if (overrideTp != null && plan.closeWorseEntries) {
-            nImmCwe = Math.max(0, Math.min(immediateArgs.length, plan.closeWorseEntries.immediates));
-            for (let i = 0; i < nImmCwe; i++) {
-                immediateArgs[i] = {
-                    ...immediateArgs[i],
-                    takeprofit: 0,
-                    comment: `${immediateArgs[i].comment ?? ''}.cw`,
-                };
-            }
-        }
-        const legPairs = Math.min(immediateArgs.length, familyTrades.length);
-        if (legPairs < immediateArgs.length || legPairs < familyTrades.length) {
-            console.warn(`[tradeExecutor] merge leg mismatch signal=${signal.id} broker=${broker.id} symbol=${symbol}`
-                + ` plan_immediate=${immediateArgs.length} open_same_family=${familyTrades.length} applying_first=${legPairs}`);
-        }
-        await this.cancelRangePendingLegsForScopes(signal.user_id, signal.id, [{
-                signalId: anchorSignalId,
-                brokerAccountId: broker.id,
-                symbol,
-            }], 'signal_merge_refresh');
-        for (const t of familyTrades) {
-            try {
-                await this.supabase.from('partial_tp_legs').delete().eq('trade_id', t.id);
-            }
-            catch {
-                // best-effort
-            }
-        }
-        let mergeFailed = false;
-        for (let i = 0; i < legPairs; i++) {
-            const tr = familyTrades[i];
-            const ord = immediateArgs[i];
-            const ticket = Number(tr.metaapi_order_id);
-            if (!Number.isFinite(ticket) || ticket <= 0) {
-                mergeFailed = true;
-                continue;
-            }
-            let ref = Number(tr.entry_price) || 0;
-            if (ref <= 0) {
-                try {
-                    const q = strictEntryPrefetch ?? await api.quote(uuid, symbol);
-                    ref = direction === 'buy' ? q.ask : q.bid;
-                }
-                catch {
-                    mergeFailed = true;
-                    continue;
-                }
-            }
-            if (!Number.isFinite(ref) || ref <= 0) {
-                mergeFailed = true;
-                continue;
-            }
-            const vol = roundLot(Number(tr.lot_size) || ord.volume || baseLot, params);
-            const sendShape = {
-                symbol,
-                operation: direction === 'buy' ? 'Buy' : 'Sell',
-                volume: vol,
-                price: ref,
-                stoploss: ord.stoploss ?? 0,
-                takeprofit: ord.takeprofit ?? 0,
-                slippage: ord.slippage ?? 20,
-                comment: ord.comment,
-                expertID: ord.expertID,
-            };
-            const clamped = clampOrderStops(sendShape, params);
-            if (clamped.adjustments.length > 0) {
-                console.warn(`[tradeExecutor] merge modify stops clamped signal=${signal.id} broker=${broker.id} leg=${i + 1}/${legPairs} symbol=${symbol}: ${clamped.adjustments.join(', ')}`);
-            }
-            try {
-                const modRes = await api.orderModify(uuid, {
-                    ticket,
-                    stoploss: clamped.args.stoploss ?? 0,
-                    takeprofit: clamped.args.takeprofit ?? 0,
-                });
-                const newSl = modRes.stopLoss ?? clamped.args.stoploss ?? null;
-                const newTp = modRes.takeProfit ?? clamped.args.takeprofit ?? null;
-                const cweClose = i < nImmCwe ? overrideTp : null;
-                await this.supabase.from('trades').update({
-                    sl: typeof newSl === 'number' && newSl > 0 ? newSl : null,
-                    tp: typeof newTp === 'number' && newTp > 0 ? newTp : null,
-                    cwe_close_price: typeof cweClose === 'number' && cweClose > 0 ? cweClose : null,
-                }).eq('id', tr.id);
-            }
-            catch (err) {
-                mergeFailed = true;
-                const msg = err instanceof Error ? err.message : String(err);
-                console.warn(`[tradeExecutor] merge OrderModify failed leg=${i + 1} trade=${tr.id} ticket=${ticket}: ${msg}`);
-            }
-        }
-        if (virtualPendings.length > 0) {
-            if (anchor == null || !Number.isFinite(anchor) || anchor <= 0) {
-                console.warn(`[tradeExecutor] merge dropping ${virtualPendings.length} virtual pendings: no anchor signal=${signal.id} broker=${broker.id} symbol=${symbol}`);
-            }
-            else {
-                const digits = Math.max(0, Math.min(8, Number(params?.digits) || 5));
-                const safe = Math.max(Number(params?.stopsLevel) || 0, Number(params?.freezeLevel) || 0);
-                const zoneHi = safe > 0 ? anchor + (safe + 2) * (params?.point ?? 0) : null;
-                const zoneLo = safe > 0 ? anchor - (safe + 2) * (params?.point ?? 0) : null;
-                const nowMs = Date.now();
-                const insertRows = [];
-                for (const v of virtualPendings) {
-                    const triggerPrice = triggerPriceFor(v, anchor, digits);
-                    if (zoneHi != null && zoneLo != null && triggerPrice > zoneLo && triggerPrice < zoneHi) {
-                        console.warn(`[tradeExecutor] merge dropped virtual pending stepIdx=${v.stepIdx} trigger=${triggerPrice} inside stops zone`);
-                        continue;
-                    }
-                    const expiresAt = v.expiryHours && v.expiryHours > 0
-                        ? new Date(nowMs + v.expiryHours * 60 * 60 * 1000).toISOString()
-                        : null;
-                    insertRows.push({
-                        signal_id: anchorSignalId,
-                        user_id: signal.user_id,
-                        broker_account_id: broker.id,
-                        metaapi_account_id: uuid,
-                        symbol,
-                        step_idx: v.stepIdx,
-                        is_buy: v.isBuy,
-                        volume: roundLot(v.volume, params),
-                        anchor_price: anchor,
-                        trigger_price: triggerPrice,
-                        stoploss: v.stoploss,
-                        takeprofit: v.takeprofit,
-                        slippage: v.slippage,
-                        comment: v.comment,
-                        expert_id: v.expertID ?? null,
-                        expires_at: expiresAt,
-                        status: 'pending',
-                        cwe_close_price: v.cweClosePrice ?? null,
-                    });
-                }
-                if (insertRows.length > 0) {
-                    const persist = await this.persistRangePendingLegRows(insertRows, `merge signal=${signal.id} anchor=${anchorSignalId}`);
-                    if (!persist.ok) {
-                        console.error(`[tradeExecutor] merge range_pending_legs persist failed signal=${signal.id}: ${persist.lastError ?? 'unknown'}`);
-                        mergeFailed = true;
-                    }
-                    else {
-                        console.log(`[tradeExecutor] merge virtual pendings inserted=${insertRows.length} parent_signal=${anchorSignalId} merge_signal=${signal.id}`);
-                    }
-                }
-            }
-        }
-        if (plan.partialTps?.length && familyTrades.length === 1 && legPairs === 1) {
-            const tr0 = familyTrades[0];
-            const isBuy = direction === 'buy';
-            const partialRows = plan.partialTps.map(p => ({
-                trade_id: tr0.id,
-                signal_id: tr0.signal_id,
-                user_id: signal.user_id,
-                broker_account_id: broker.id,
-                metaapi_account_id: uuid,
-                symbol,
-                is_buy: isBuy,
-                tp_idx: p.tpIdx,
-                trigger_price: p.triggerPrice,
-                close_lots: p.closeLots,
-                status: 'pending',
-            }));
-            const { error: partialErr } = await this.supabase.from('partial_tp_legs').insert(partialRows);
-            if (partialErr) {
-                console.warn(`[tradeExecutor] merge partial_tp_legs INSERT failed: ${partialErr.message}`);
-            }
-        }
-        try {
-            await this.supabase.from('trade_execution_logs').insert({
-                user_id: signal.user_id,
-                signal_id: signal.id,
-                broker_account_id: broker.id,
-                action: 'signal_merge_into_open_trade',
-                status: mergeFailed ? 'failed' : 'success',
-                request_payload: {
-                    parent_signal_id: anchorSignalId,
-                    symbol,
-                    legs_updated: legPairs,
-                    plan_immediate_legs: immediateArgs.length,
-                    open_family_legs: familyTrades.length,
-                    virtual_pendings: virtualPendings.length,
-                    reply_chain: replyOk,
-                    within_time_window: withinWindow,
-                    parent_links_anchor: parentLinksAnchor,
-                    has_reply_to_telegram: hasReplyToTelegram,
-                    ancestor_chain_contains_anchor: ancestorChainContainsAnchor,
-                    thread_links_anchor: threadLinksAnchor,
-                    implicit_bundle_within_tight_window: implicitBundleWithinTightWindow,
-                    implicit_same_channel_bundle: implicitSameChannelBundle,
-                    parameter_refresh_same_channel: parameterRefreshSameChannel,
-                    implicit_bundle_dt_ms: dt,
-                    merge_implicit_tight_window_ms: signalMergeLink_1.MERGE_IMPLICIT_CHANNEL_BUNDLE_MS,
-                },
-            });
-        }
-        catch {
-            // best-effort
-        }
-        if (!mergeFailed) {
-            try {
-                await this.supabase
-                    .from('signals')
-                    .update({ status: 'executed' })
-                    .eq('id', signal.id)
-                    .eq('status', 'parsed');
-            }
-            catch {
-                // best-effort
-            }
-        }
-        return { handled: true, success: !mergeFailed };
+        return { handled: true, success: refresh.success };
     }
     async sweepExpiredTscopierBrokerPendings() {
         if (!(0, metatraderapi_1.hasMetatraderApiConfigured)())
@@ -1459,6 +1544,21 @@ class TradeExecutor {
         }
         if (isManual && manual.close_on_opposite_signal === true) {
             await this.closeOppositeDirectionTrades(signal, parsed, broker, symbol);
+        }
+        // SL/TP parameter posts always refresh the latest open basket — never open a second basket.
+        if (isManual && (0, multiTradeMerge_1.isParameterFollowUpSignal)(parsed)) {
+            const paramOutcome = await this.tryParameterFollowUpMergeModifyOnly({
+                signal,
+                parsed,
+                broker,
+                channelKeywords,
+                baseLot,
+                params,
+                symbol,
+                uuid,
+                strictEntryPrefetch,
+            });
+            return { openedOrMerged: paramOutcome.handled === true && paramOutcome.success === true };
         }
         if (isManual && manual.add_new_trades_to_existing === true) {
             const mergeOutcome = await this.tryMergeSignalIntoExistingOpenTrade({
@@ -2184,8 +2284,6 @@ class TradeExecutor {
         catch {
             // best-effort
         }
-        // Prefer the old direct parent → trades mapping (worked reliably for multi/range baskets).
-        // Only walk the chain / channel disambiguation when the parent row has no open legs yet.
         let basketAnchorId = signal.parent_signal_id;
         const { count: parentOpenCount } = await this.supabase
             .from('trades')
@@ -2194,13 +2292,31 @@ class TradeExecutor {
             .in('broker_account_id', brokerAccountIds)
             .eq('status', 'open');
         if ((parentOpenCount ?? 0) === 0) {
-            basketAnchorId = await this.resolveBasketAnchorSignalIdForOpenTrades({
-                userId: signal.user_id,
-                brokerAccountIds,
-                channelId: signal.channel_id,
-                parentSignalId: signal.parent_signal_id,
-                symbolHint,
-            });
+            const mgmtAction = String(parsed.action ?? '').toLowerCase();
+            const mgmtDir = mgmtAction === 'buy' || mgmtAction === 'sell'
+                ? mgmtAction
+                : null;
+            const symForResolve = symbolHint?.trim() ?? '';
+            if (mgmtDir && symForResolve && signal.channel_id && brokerAccountIds[0]) {
+                const latest = await (0, multiTradeMerge_1.resolveLatestOpenBasketAnchor)(this.supabase, {
+                    userId: signal.user_id,
+                    brokerAccountId: brokerAccountIds[0],
+                    symbol: symForResolve,
+                    direction: mgmtDir,
+                    channelId: signal.channel_id,
+                });
+                if (latest)
+                    basketAnchorId = latest.anchorSignalId;
+            }
+            if (!basketAnchorId || basketAnchorId === signal.parent_signal_id) {
+                basketAnchorId = await this.resolveBasketAnchorSignalIdForOpenTrades({
+                    userId: signal.user_id,
+                    brokerAccountIds,
+                    channelId: signal.channel_id,
+                    parentSignalId: signal.parent_signal_id,
+                    symbolHint,
+                });
+            }
         }
         if (!basketAnchorId) {
             try {

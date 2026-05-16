@@ -57,5 +57,5 @@ function isMergeFollowUpLinked(args) {
     return (args.replyOk ||
         (args.withinWindow && args.threadLinksAnchor) ||
         implicitPath ||
-        args.parameterRefreshSameChannel === true);
+        (args.withinWindow && args.parameterRefreshSameChannel === true));
 }

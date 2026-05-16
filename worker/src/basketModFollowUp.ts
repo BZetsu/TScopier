@@ -8,6 +8,16 @@ type ParsedMgmt = {
   tp?: number[] | null
 }
 
+function isParameterRefreshParsed(parsed: ParsedMgmt | null | undefined): boolean {
+  if (!parsed) return false
+  const hasSl = typeof parsed.sl === 'number' && Number.isFinite(parsed.sl) && parsed.sl > 0
+  const hasTp = Array.isArray(parsed.tp)
+    && parsed.tp.some(t => typeof t === 'number' && Number.isFinite(t) && (t as number) > 0)
+  if (!hasSl && !hasTp) return false
+  const act = String(parsed.action ?? '').toLowerCase()
+  return act === 'buy' || act === 'sell' || act === 'modify'
+}
+
 function sanitizeLevel(v: number | null | undefined): number {
   const n = typeof v === 'number' ? v : Number(v ?? 0)
   return Number.isFinite(n) && n > 0 ? n : 0
@@ -54,27 +64,27 @@ export async function tryApplyBasketFollowUpToNewFill(
 
   const { data: candidates } = await supabase
     .from('signals')
-    .select('id, parsed_data, created_at')
+    .select('id, parsed_data, created_at, is_modification')
     .eq('user_id', args.userId)
     .eq('channel_id', channelId)
-    .eq('is_modification', true)
     .in('status', ['parsed', 'executed'])
     .gte('created_at', createdAt)
     .order('created_at', { ascending: false })
-    .limit(40)
+    .limit(60)
 
   for (const row of candidates ?? []) {
     const parsed = row.parsed_data as ParsedMgmt | null
     if (!parsed?.action) continue
     const act = String(parsed.action).toLowerCase()
-    if (act !== 'modify' && act !== 'breakeven') continue
+    const paramRefresh = isParameterRefreshParsed(parsed)
+    if (act !== 'modify' && act !== 'breakeven' && !paramRefresh) continue
     if (!symbolsCompatibleForBasket(parsed.symbol, args.symbol)) continue
 
     let stoploss = 0
     let takeprofit = 0
     let dbPatch: Record<string, number | null> = {}
 
-    if (act === 'modify') {
+    if (act === 'modify' || paramRefresh) {
       const hasNewSl = typeof parsed.sl === 'number' && Number.isFinite(parsed.sl) && parsed.sl > 0
       const hasNewTp = Array.isArray(parsed.tp)
         && parsed.tp.length > 0
