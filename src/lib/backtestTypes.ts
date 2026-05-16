@@ -67,8 +67,12 @@ export interface BacktestTradeRow {
   outcome: string
   tps_hit: number
   pnl: number
+  pnl_r: number | null
   entry_price: number
   exit_price: number | null
+  sl: number | null
+  tp_levels: number[]
+  lot_size: number
   channel_id: string | null
 }
 

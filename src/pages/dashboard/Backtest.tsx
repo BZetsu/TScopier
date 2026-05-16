@@ -21,6 +21,7 @@ import type {
   BacktestEquityRow,
 } from '../../lib/backtestTypes'
 import { BacktestEquityChart } from '../../components/backtest/BacktestEquityChart'
+import { BacktestSignalBreakdown } from '../../components/backtest/BacktestSignalBreakdown'
 import { Button } from '../../components/ui/Button'
 import { Alert } from '../../components/ui/Alert'
 
@@ -227,6 +228,17 @@ export function Backtest() {
     }
     return [...m.entries()].sort((a, b) => b[1] - a[1])
   }, [trades])
+
+  const channelNames = useMemo(() => {
+    const map: Record<string, string> = {}
+    for (const ch of channels) map[ch.id] = ch.display_name
+    if (summary?.byChannel) {
+      for (const [id, ch] of Object.entries(summary.byChannel)) {
+        if (ch.channelName) map[id] = ch.channelName
+      }
+    }
+    return map
+  }, [channels, summary?.byChannel])
 
   if (loading) {
     return (
@@ -590,37 +602,15 @@ export function Backtest() {
           {trades.length > 0 ? (
             <div className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 overflow-hidden">
               <div className="px-5 py-3 border-b border-neutral-100 dark:border-neutral-800">
-                <h2 className="text-sm font-semibold">Simulated trades ({trades.length})</h2>
+                <h2 className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">
+                  Signal breakdown
+                </h2>
+                <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
+                  {trades.length} simulated signal{trades.length === 1 ? '' : 's'} · grouped by month
+                </p>
               </div>
-              <div className="max-h-80 overflow-y-auto">
-                <table className="w-full text-xs">
-                  <thead className="sticky top-0 bg-neutral-50 dark:bg-neutral-800/80">
-                    <tr className="text-left text-neutral-400">
-                      <th className="px-4 py-2">Time</th>
-                      <th className="px-4 py-2">Symbol</th>
-                      <th className="px-4 py-2">Dir</th>
-                      <th className="px-4 py-2">Outcome</th>
-                      <th className="px-4 py-2">TPs</th>
-                      <th className="px-4 py-2 text-right">P/L</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {trades.map(t => (
-                      <tr key={t.id} className="border-t border-neutral-50 dark:border-neutral-800/60">
-                        <td className="px-4 py-2 whitespace-nowrap">
-                          {new Date(t.signal_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                        </td>
-                        <td className="px-4 py-2 font-medium">{t.symbol}</td>
-                        <td className="px-4 py-2 uppercase">{t.direction}</td>
-                        <td className="px-4 py-2">{OUTCOME_LABELS[t.outcome] ?? t.outcome}</td>
-                        <td className="px-4 py-2">{t.tps_hit}</td>
-                        <td className={clsx('px-4 py-2 text-right font-semibold tabular-nums', t.pnl >= 0 ? 'text-teal-600' : 'text-error-600')}>
-                          {t.pnl >= 0 ? '+' : ''}{t.pnl.toFixed(2)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="max-h-[32rem] overflow-y-auto">
+                <BacktestSignalBreakdown trades={trades} channelNames={channelNames} />
               </div>
             </div>
           ) : null}
