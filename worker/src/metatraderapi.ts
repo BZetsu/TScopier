@@ -301,6 +301,8 @@ export function unwrapOrderList(raw: unknown): unknown[] {
     const r = raw as Record<string, unknown>
     if (Array.isArray(r.result)) return r.result
     if (Array.isArray(r.Result)) return r.Result
+    if (Array.isArray(r.orders)) return r.orders
+    if (Array.isArray(r.Orders)) return r.Orders
   }
   return []
 }
@@ -526,14 +528,84 @@ export class MetatraderApiClient {
     return this.get<unknown[]>('/ClosedOrders', { id })
   }
 
-  /**
-   * Full closed order history in a date range (GET /OrderHistory).
-   * `from` / `to` format: yyyy-MM-ddTHH:mm:ss (API docs).
-   */
   async orderHistory(id: string, from: string, to: string): Promise<unknown[]> {
     const raw = await this.get<unknown>('/OrderHistory', { id, from, to })
     assertNoApiError(raw)
     return unwrapOrderList(raw)
+  }
+
+  async historyPositions(id: string, from: string, to: string): Promise<unknown[]> {
+    const raw = await this.get<unknown>('/HistoryPositions', { id, from, to })
+    assertNoApiError(raw)
+    return unwrapOrderList(raw)
+  }
+
+  async orderHistoryPage(
+    id: string,
+    from: string,
+    to: string,
+    pageNumber: number,
+    ordersPerPage = 500,
+  ): Promise<{ orders: unknown[]; pagesCount: number }> {
+    const raw = await this.get<unknown>('/OrderHistoryPagination', {
+      id,
+      from,
+      to,
+      pageNumber,
+      ordersPerPage,
+    })
+    assertNoApiError(raw)
+    if (raw && typeof raw === 'object') {
+      const root = raw as Record<string, unknown>
+      const result = root.result ?? root.Result
+      if (result && typeof result === 'object') {
+        const pr = result as Record<string, unknown>
+        const orders = pr.Orders ?? pr.orders
+        return {
+          orders: Array.isArray(orders) ? orders : [],
+          pagesCount: Number(pr.PagesCount ?? pr.pagesCount ?? 1) || 1,
+        }
+      }
+    }
+    return { orders: unwrapOrderList(raw), pagesCount: 1 }
+  }
+
+  /** Pagination + OrderHistory + HistoryPositions + session ClosedOrders (deduped by ticket). */
+  async closedOrdersHistory(id: string, from: string, to: string): Promise<unknown[]> {
+    const byTicket = new Map<number, Record<string, unknown>>()
+    const ingest = (rows: unknown[]) => {
+      for (const row of rows) {
+        if (!row || typeof row !== 'object') continue
+        const o = row as Record<string, unknown>
+        const ticket = Number(o.ticket ?? o.Ticket ?? 0)
+        if (!Number.isFinite(ticket) || ticket <= 0) continue
+        byTicket.set(ticket, o)
+      }
+    }
+
+    try {
+      let page = 0
+      let pagesCount = 1
+      while (page < pagesCount && page < 100) {
+        const { orders, pagesCount: totalPages } = await this.orderHistoryPage(id, from, to, page)
+        ingest(orders)
+        pagesCount = Math.max(1, totalPages)
+        if (orders.length === 0) break
+        page += 1
+      }
+    } catch {
+      /* optional */
+    }
+
+    const settled = await Promise.allSettled([
+      this.orderHistory(id, from, to),
+      this.historyPositions(id, from, to),
+      this.closedOrders(id),
+    ])
+    for (const r of settled) {
+      if (r.status === 'fulfilled') ingest(r.value as unknown[])
+    }
+    return [...byTicket.values()]
   }
 
   async accountSummary(id: string): Promise<AccountSummary> {

@@ -323,22 +323,104 @@ export class MetatraderApiClient {
     return this.get<unknown[]>("/ClosedOrders", { id })
   }
 
+  /** yyyy-MM-ddTHH:mm:ss for mt4api.dev / mt5.mt4api.dev query params. */
+  static formatDateTime(d: Date): string {
+    return d.toISOString().slice(0, 19)
+  }
+
   async orderHistory(id: string, from: string, to: string): Promise<unknown[]> {
     const raw = await this.get<unknown>("/OrderHistory", { id, from, to })
-    if (raw && typeof raw === "object" && !Array.isArray(raw)) {
-      const err = (raw as Record<string, unknown>).error
-      if (err && typeof err === "object") {
-        const m = String((err as Record<string, unknown>).message ?? "").trim()
-        if (m) throw new MetatraderApiError(m, 200)
+    return MetatraderApiClient.parseOrderList(raw)
+  }
+
+  async historyPositions(id: string, from: string, to: string): Promise<unknown[]> {
+    const raw = await this.get<unknown>("/HistoryPositions", { id, from, to })
+    return MetatraderApiClient.parseOrderList(raw)
+  }
+
+  async orderHistoryPage(
+    id: string,
+    from: string,
+    to: string,
+    pageNumber: number,
+    ordersPerPage = 500,
+  ): Promise<{ orders: unknown[]; pagesCount: number }> {
+    const raw = await this.get<unknown>("/OrderHistoryPagination", {
+      id,
+      from,
+      to,
+      pageNumber,
+      ordersPerPage,
+    })
+    return MetatraderApiClient.parsePaginationOrders(raw)
+  }
+
+  /** Full closed history: pagination + OrderHistory + HistoryPositions + session ClosedOrders. */
+  async closedOrdersHistory(id: string, from: string, to: string): Promise<unknown[]> {
+    const byTicket = new Map<number, Record<string, unknown>>()
+    const ingest = (rows: unknown[]) => {
+      for (const row of rows) {
+        if (!row || typeof row !== "object") continue
+        const o = row as Record<string, unknown>
+        const ticket = Number(o.ticket ?? o.Ticket ?? 0)
+        if (!Number.isFinite(ticket) || ticket <= 0) continue
+        byTicket.set(ticket, o)
       }
     }
+
+    try {
+      let page = 0
+      let pagesCount = 1
+      while (page < pagesCount && page < 100) {
+        const { orders, pagesCount: totalPages } = await this.orderHistoryPage(id, from, to, page)
+        ingest(orders)
+        pagesCount = Math.max(1, totalPages)
+        if (orders.length === 0) break
+        page += 1
+      }
+    } catch {
+      /* pagination optional on some builds */
+    }
+
+    const settled = await Promise.allSettled([
+      this.orderHistory(id, from, to),
+      this.historyPositions(id, from, to),
+      this.closedOrders(id),
+    ])
+    for (const r of settled) {
+      if (r.status === "fulfilled") ingest(r.value)
+    }
+    return [...byTicket.values()]
+  }
+
+  static parseOrderList(raw: unknown): unknown[] {
+    assertNoApiError(raw)
     if (Array.isArray(raw)) return raw
     if (raw && typeof raw === "object") {
       const r = raw as Record<string, unknown>
       if (Array.isArray(r.result)) return r.result
       if (Array.isArray(r.Result)) return r.Result
+      if (Array.isArray(r.orders)) return r.orders
+      if (Array.isArray(r.Orders)) return r.Orders
     }
     return []
+  }
+
+  static parsePaginationOrders(raw: unknown): { orders: unknown[]; pagesCount: number } {
+    assertNoApiError(raw)
+    if (raw && typeof raw === "object") {
+      const root = raw as Record<string, unknown>
+      const result = root.result ?? root.Result
+      if (result && typeof result === "object") {
+        const pr = result as Record<string, unknown>
+        const orders = pr.Orders ?? pr.orders
+        return {
+          orders: Array.isArray(orders) ? orders : [],
+          pagesCount: Number(pr.PagesCount ?? pr.pagesCount ?? 1) || 1,
+        }
+      }
+    }
+    return { orders: MetatraderApiClient.parseOrderList(raw), pagesCount: 1 }
   }
 
   async quote(id: string, symbol: string): Promise<{ bid: number; ask: number }> {

@@ -145,15 +145,31 @@ function isTradeableClosedRow(row: {
   status: string
   symbol: string
   lot_size: number
+  direction?: string
+  type?: string
 }): boolean {
   if (row.status !== 'closed') return false
   if (!(row.symbol ?? '').trim()) return false
-  return (row.lot_size ?? 0) > 0
+  const type = (row.type ?? '').toLowerCase()
+  if (type.includes('balance') || type.includes('credit') || type.includes('deposit') || type.includes('withdraw')) {
+    return false
+  }
+  if ((row.lot_size ?? 0) > 0) return true
+  const dir = (row.direction ?? '').toLowerCase()
+  return dir === 'buy' || dir === 'sell'
 }
 
 /** Closed buy/sell positions that finished today (by `closed_at`). */
 function countTodayClosedTradeOutcomes(
-  rows: Array<{ status: string; profit: number | null; closed_at: string | null; symbol: string; lot_size: number }>,
+  rows: Array<{
+    status: string
+    profit: number | null
+    closed_at: string | null
+    symbol: string
+    lot_size: number
+    direction?: string
+    type?: string
+  }>,
   closedBetween: (closedAt: string | null) => boolean,
 ): { taken: number; won: number; lost: number } {
   const closedToday = rows.filter(
@@ -263,8 +279,26 @@ function readBootstrapDashboardCache(): DashboardCachePayload | null {
 }
 
 /** Avoid flashing DB/empty snapshots over live MT or session-cached figures. */
-function mergeDashboardStats(prev: DashboardStats, next: DashboardStats, authoritative: boolean): DashboardStats {
-  if (authoritative) return { ...prev, ...next }
+function mergeDashboardStats(
+  prev: DashboardStats,
+  next: DashboardStats,
+  authoritative: boolean,
+  opts?: { mtHasClosedTrades?: boolean },
+): DashboardStats {
+  if (authoritative) {
+    if (opts?.mtHasClosedTrades === false) {
+      return {
+        ...prev,
+        accounts: next.accounts,
+        activeChannels: next.activeChannels,
+        tradesCopiedToday: next.tradesCopiedToday,
+        copierHealth: next.copierHealth,
+        totalSignals: next.totalSignals,
+        yesterdayTotalSignals: next.yesterdayTotalSignals,
+      }
+    }
+    return { ...prev, ...next }
+  }
   const keepNum = (p: number, n: number) => (Number.isFinite(n) && !(n === 0 && p !== 0) ? n : p)
   const keepStr = (p: string, n: string) => (n === '—' && p !== '—' ? p : n)
   return {
@@ -498,6 +532,8 @@ export function DashboardPage() {
       status: 'open' | 'closed'
       opened_at: string | null
       closed_at: string | null
+      direction?: string
+      type?: string
     }
     const dbWindowed: WindowedTrade[] = allTrades.map(t => ({
       symbol: t.symbol ?? '',
@@ -515,6 +551,8 @@ export function DashboardPage() {
           status: t.status,
           opened_at: t.opened_at,
           closed_at: t.closed_at,
+          direction: t.direction,
+          type: t.type,
         }))
       : []
     const sourceTrades: WindowedTrade[] = useMtTrades ? mtWindowed : dbWindowed
@@ -753,13 +791,10 @@ export function DashboardPage() {
       ])
       if (fresh && generation !== loadGenerationRef.current) return
       const chartFromMt = resolveDashboardChartTrades(mtTradesRef.current, allTrades)
-      const mergedAfterMt = mergeDashboardStats(statsRef.current, nextStats, true)
-      statsRef.current = mergedAfterMt
-      setStats(mergedAfterMt)
       setChartTrades(prev => preferChartTrades(prev, chartFromMt))
       if (user) {
         writeDashboardCache(user.id, {
-          stats: mergedAfterMt,
+          stats: statsRef.current,
           copierLogs: logs,
           copierLogSymbols: logSymbols,
           channelDisplayNames: channelNames,
@@ -855,7 +890,7 @@ export function DashboardPage() {
     lastMtTradesRefreshRef.current = now
 
     const historyFrom = new Date()
-    historyFrom.setDate(historyFrom.getDate() - 90)
+    historyFrom.setDate(historyFrom.getDate() - 14)
     let trades: MtTrade[]
     try {
       const res = await metatraderApi.trades({
@@ -913,6 +948,8 @@ export function DashboardPage() {
         closed_at: t.closed_at,
         symbol: t.symbol,
         lot_size: t.lot_size,
+        direction: t.direction,
+        type: t.type,
       })),
       closedTodayForStats,
     )

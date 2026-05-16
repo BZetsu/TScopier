@@ -60,7 +60,7 @@ function friendlyMtApiError(e: MetatraderApiError): MetatraderApiError {
  * register / delete / refresh balance / check connection calls, plus the trades read
  * for the Trades page.
  */
-const BUILD_TAG = "broker-metatrader@trades-order-history-v1"
+const BUILD_TAG = "broker-metatrader@trades-history-v2"
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 200, headers: corsHeaders })
 
@@ -343,15 +343,6 @@ Deno.serve(async (req: Request) => {
         ? String(bodyRec.history_from).trim()
         : formatMtDt(defaultHistoryFrom)
       type RawOrder = Record<string, unknown>
-      const unwrapOrders = (raw: unknown): RawOrder[] => {
-        if (Array.isArray(raw)) return raw as RawOrder[]
-        if (raw && typeof raw === "object") {
-          const r = raw as Record<string, unknown>
-          if (Array.isArray(r.result)) return r.result as RawOrder[]
-          if (Array.isArray(r.Result)) return r.Result as RawOrder[]
-        }
-        return []
-      }
 
       let brokers: { id: string; label: string; metaapi_account_id: string; broker_name: string | null; platform: string }[] = []
       if (brokerId) {
@@ -417,6 +408,7 @@ Deno.serve(async (req: Request) => {
           "orderType", "OrderType",
           "dealType", "DealType",
           "cmdString",
+          "action", "Action",
         )
         if (typeof stringCandidate === "string" && stringCandidate.trim()) {
           const parsed = fromString(stringCandidate)
@@ -452,8 +444,14 @@ Deno.serve(async (req: Request) => {
       ) => {
         const ticket = Number(pick(order, "ticket", "Ticket") ?? 0)
         const { direction, type_label } = resolveDirection(order)
-        const openTime = pick(order, "openTime", "OpenTime") as string | undefined
-        const closeTime = pick(order, "closeTime", "CloseTime") as string | undefined
+        const openTime = pick(
+          order,
+          "openTime", "OpenTime", "open_time", "timeOpen", "TimeOpen",
+        ) as string | undefined
+        const closeTime = pick(
+          order,
+          "closeTime", "CloseTime", "close_time", "timeClose", "TimeClose", "doneTime", "DoneTime",
+        ) as string | undefined
         return {
           id: `${broker.id}:${ticket}`,
           broker_id: broker.id,
@@ -490,7 +488,7 @@ Deno.serve(async (req: Request) => {
           const [openedRes, closedRes] = await Promise.allSettled([
             wantOpen ? bClient.openedOrders(uuid) : Promise.resolve([] as unknown[]),
             wantClosed
-              ? bClient.orderHistory(uuid, historyFrom, historyTo).catch(() => bClient.closedOrders(uuid))
+              ? bClient.closedOrdersHistory(uuid, historyFrom, historyTo)
               : Promise.resolve([] as unknown[]),
           ])
           const out: ReturnType<typeof normalize>[] = []
@@ -500,9 +498,8 @@ Deno.serve(async (req: Request) => {
               out.push(normalize(o, b, "open"))
             }
           }
-          if (closedRes.status === "fulfilled") {
-            const closedRows = unwrapOrders(closedRes.value)
-            for (const o of closedRows) {
+          if (closedRes.status === "fulfilled" && Array.isArray(closedRes.value)) {
+            for (const o of closedRes.value as RawOrder[]) {
               if (!firstRawSample) firstRawSample = o
               out.push(normalize(o, b, "closed"))
             }

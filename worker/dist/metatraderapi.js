@@ -4,6 +4,8 @@ exports.MetatraderApiClient = exports.MetatraderApiError = void 0;
 exports.orderOperationRequiresPrice = orderOperationRequiresPrice;
 exports.normalizeOrderResponse = normalizeOrderResponse;
 exports.normalizeSymbolParams = normalizeSymbolParams;
+exports.formatMtApiDateTime = formatMtApiDateTime;
+exports.unwrapOrderList = unwrapOrderList;
 exports.resolveBasicAuthHeader = resolveBasicAuthHeader;
 exports.isMtApiAuthConfigured = isMtApiAuthConfigured;
 exports.mtPlatformFrom = mtPlatformFrom;
@@ -168,6 +170,26 @@ function buildQuery(params) {
         out.set(k, String(v));
     }
     return out.toString();
+}
+/** MetatraderAPI date query format (yyyy-MM-ddTHH:mm:ss). */
+function formatMtApiDateTime(d) {
+    return d.toISOString().slice(0, 19);
+}
+function unwrapOrderList(raw) {
+    if (Array.isArray(raw))
+        return raw;
+    if (raw && typeof raw === 'object') {
+        const r = raw;
+        if (Array.isArray(r.result))
+            return r.result;
+        if (Array.isArray(r.Result))
+            return r.Result;
+        if (Array.isArray(r.orders))
+            return r.orders;
+        if (Array.isArray(r.Orders))
+            return r.Orders;
+    }
+    return [];
 }
 function trimEnv(v) {
     return (v ?? '').trim();
@@ -357,9 +379,82 @@ class MetatraderApiClient {
     openedOrders(id) {
         return this.get('/OpenedOrders', { id });
     }
-    /** Recent closed deals / history (see docs: GET /ClosedOrders). */
+    /** Last ~100 closed orders in the current session only (see GET /ClosedOrders). */
     closedOrders(id) {
         return this.get('/ClosedOrders', { id });
+    }
+    async orderHistory(id, from, to) {
+        const raw = await this.get('/OrderHistory', { id, from, to });
+        assertNoApiError(raw);
+        return unwrapOrderList(raw);
+    }
+    async historyPositions(id, from, to) {
+        const raw = await this.get('/HistoryPositions', { id, from, to });
+        assertNoApiError(raw);
+        return unwrapOrderList(raw);
+    }
+    async orderHistoryPage(id, from, to, pageNumber, ordersPerPage = 500) {
+        const raw = await this.get('/OrderHistoryPagination', {
+            id,
+            from,
+            to,
+            pageNumber,
+            ordersPerPage,
+        });
+        assertNoApiError(raw);
+        if (raw && typeof raw === 'object') {
+            const root = raw;
+            const result = root.result ?? root.Result;
+            if (result && typeof result === 'object') {
+                const pr = result;
+                const orders = pr.Orders ?? pr.orders;
+                return {
+                    orders: Array.isArray(orders) ? orders : [],
+                    pagesCount: Number(pr.PagesCount ?? pr.pagesCount ?? 1) || 1,
+                };
+            }
+        }
+        return { orders: unwrapOrderList(raw), pagesCount: 1 };
+    }
+    /** Pagination + OrderHistory + HistoryPositions + session ClosedOrders (deduped by ticket). */
+    async closedOrdersHistory(id, from, to) {
+        const byTicket = new Map();
+        const ingest = (rows) => {
+            for (const row of rows) {
+                if (!row || typeof row !== 'object')
+                    continue;
+                const o = row;
+                const ticket = Number(o.ticket ?? o.Ticket ?? 0);
+                if (!Number.isFinite(ticket) || ticket <= 0)
+                    continue;
+                byTicket.set(ticket, o);
+            }
+        };
+        try {
+            let page = 0;
+            let pagesCount = 1;
+            while (page < pagesCount && page < 100) {
+                const { orders, pagesCount: totalPages } = await this.orderHistoryPage(id, from, to, page);
+                ingest(orders);
+                pagesCount = Math.max(1, totalPages);
+                if (orders.length === 0)
+                    break;
+                page += 1;
+            }
+        }
+        catch {
+            /* optional */
+        }
+        const settled = await Promise.allSettled([
+            this.orderHistory(id, from, to),
+            this.historyPositions(id, from, to),
+            this.closedOrders(id),
+        ]);
+        for (const r of settled) {
+            if (r.status === 'fulfilled')
+                ingest(r.value);
+        }
+        return [...byTicket.values()];
     }
     async accountSummary(id) {
         const raw = await this.get('/AccountSummary', { id });
