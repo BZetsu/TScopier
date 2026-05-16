@@ -56,6 +56,8 @@ export interface AccountSummary {
   /** Floating P/L across open positions, as reported by MT. */
   profit?: number
   credit?: number
+  /** MT account trade mode label or code (e.g. ACCOUNT_TRADE_MODE_DEMO). */
+  type?: string
 }
 
 export const metatraderApi = {

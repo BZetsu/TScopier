@@ -18,7 +18,12 @@ import { Alert } from '../../components/ui/Alert'
 import { AddAccountModal } from '../../components/ui/AddAccountModal'
 import { BrokerServerSelect } from '../../components/ui/BrokerServerSelect'
 import { metatraderApi } from '../../lib/metatraderapi'
-import { inferBrokerLabelFromServer } from '../../lib/brokerFromServer'
+import {
+  inferBrokerLabelFromServer,
+  resolveLinkedAccountType,
+  resolveMtServerCandidate,
+  type LinkedAccountType,
+} from '../../lib/brokerFromServer'
 import { estimateMultiTradeOrderCount } from '../../lib/estimateMultiTradeOrders'
 import { pipCalculator, pipValueForLots, type PipQuote } from '../../lib/pipCalculator'
 import { classifySymbol } from '../../lib/pipMath'
@@ -356,6 +361,12 @@ function formatBrokerMoney(value: number | null | undefined, currency?: string |
   return cur ? `${formatted} ${cur}` : formatted
 }
 
+function accountTypeValueClass(type: LinkedAccountType | undefined): string {
+  if (type === 'Demo') return 'font-semibold text-amber-700 dark:text-amber-300'
+  if (type === 'Live') return 'font-semibold text-teal-700 dark:text-teal-300'
+  return 'text-neutral-900 dark:text-neutral-50'
+}
+
 function AccountDetailCell({
   label,
   value,
@@ -429,6 +440,7 @@ export function AccountConfigPage() {
   const [brokerPendingDelete, setBrokerPendingDelete] = useState<BrokerAccount | null>(null)
   const [deleteInProgress, setDeleteInProgress] = useState(false)
   const [togglingBrokerId, setTogglingBrokerId] = useState<string | null>(null)
+  const [brokerAccountTypes, setBrokerAccountTypes] = useState<Record<string, LinkedAccountType>>({})
 
   const multiTradePreview = useMemo(() => {
     const ms = configDraft.manualSettings
@@ -536,6 +548,38 @@ export function AccountConfigPage() {
     return () => clearTimeout(t)
   }, [configSavedAt])
 
+  const syncBrokerAccountTypes = async (list: BrokerAccount[]) => {
+    const linked = list.filter(b => {
+      const uuid = (b.metaapi_account_id ?? '').trim()
+      return uuid.length > 0 && !uuid.includes('|')
+    })
+    if (linked.length === 0) return
+
+    const fromServer: Record<string, LinkedAccountType> = {}
+    for (const b of list) {
+      const inferred = resolveLinkedAccountType(undefined, resolveMtServerCandidate(b, b.broker_server))
+      if (inferred) fromServer[b.id] = inferred
+    }
+    setBrokerAccountTypes(prev => ({ ...fromServer, ...prev }))
+
+    const results = await Promise.allSettled(
+      linked.map(async b => {
+        const { summary } = await metatraderApi.summary(b.id)
+        const accountType = resolveLinkedAccountType(summary.type, resolveMtServerCandidate(b, b.broker_server))
+        return { id: b.id, accountType }
+      }),
+    )
+    const fromMt: Record<string, LinkedAccountType> = {}
+    for (const r of results) {
+      if (r.status === 'fulfilled' && r.value.accountType) {
+        fromMt[r.value.id] = r.value.accountType
+      }
+    }
+    if (Object.keys(fromMt).length > 0) {
+      setBrokerAccountTypes(prev => ({ ...prev, ...fromMt }))
+    }
+  }
+
   const loadData = async () => {
     const [brokersRes, channelsRes] = await Promise.all([
       supabase.from('broker_accounts').select('*').eq('user_id', user!.id).order('created_at'),
@@ -546,9 +590,11 @@ export function AccountConfigPage() {
         .eq('is_active', true)
         .order('created_at', { ascending: false }),
     ])
-    setBrokers((brokersRes.data ?? []) as BrokerAccount[])
+    const nextBrokers = (brokersRes.data ?? []) as BrokerAccount[]
+    setBrokers(nextBrokers)
     setChannelOptions((channelsRes.data ?? []) as ChannelOption[])
     setLoading(false)
+    void syncBrokerAccountTypes(nextBrokers)
   }
 
   // ── Configure modal ────────────────────────────────────────────────────
@@ -815,7 +861,7 @@ export function AccountConfigPage() {
 
     setSaving(true)
     try {
-      const { broker } = await metatraderApi.register({
+      const { broker, summary } = await metatraderApi.register({
         platform: form.platform,
         server: form.broker_server.trim(),
         login: form.account_number.trim(),
@@ -823,6 +869,13 @@ export function AccountConfigPage() {
         label: form.label.trim() || undefined,
       })
       setBrokers(prev => [...prev, broker])
+      const registeredType = resolveLinkedAccountType(
+        summary?.type,
+        resolveMtServerCandidate(broker, broker.broker_server),
+      )
+      if (registeredType) {
+        setBrokerAccountTypes(prev => ({ ...prev, [broker.id]: registeredType }))
+      }
       setForm(emptyForm)
       setShowAddBroker(false)
       // If the register endpoint couldn't pull a summary inside its short
@@ -857,7 +910,17 @@ export function AccountConfigPage() {
               ? { performance_baseline_balance: Number(performance_baseline_balance) }
               : {}),
           }
-          setBrokers(prev => prev.map(b => b.id === brokerId ? { ...b, ...patch } : b))
+          setBrokers(prev => {
+            const match = prev.find(b => b.id === brokerId)
+            const accountType = resolveLinkedAccountType(
+              summary.type,
+              match ? resolveMtServerCandidate(match, match.broker_server) : null,
+            )
+            if (accountType) {
+              setBrokerAccountTypes(types => ({ ...types, [brokerId]: accountType }))
+            }
+            return prev.map(b => (b.id === brokerId ? { ...b, ...patch } : b))
+          })
           setConfigAccount(prev => prev && prev.id === brokerId ? { ...prev, ...patch } : prev)
           return
         }
@@ -1025,6 +1088,9 @@ export function AccountConfigPage() {
                 || broker.broker_server
                 || ''
               const channelsLabel = getBrokerSignalChannelsLabel(broker.id)
+              const accountType =
+                brokerAccountTypes[broker.id]
+                ?? resolveLinkedAccountType(undefined, resolveMtServerCandidate(broker, broker.broker_server))
               return (
                 <Card key={broker.id} padding="none" className="overflow-hidden">
                   <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
@@ -1037,6 +1103,11 @@ export function AccountConfigPage() {
                           <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">{broker.label}</h3>
                           <Badge variant={statusVariant} size="sm">{statusLabel}</Badge>
                           <Badge variant="neutral" size="sm">{broker.platform}</Badge>
+                          {accountType ? (
+                            <Badge variant={accountType === 'Demo' ? 'warning' : 'primary'} size="sm">
+                              {accountType}
+                            </Badge>
+                          ) : null}
                           {brokerLabel && (
                             <Badge variant="neutral" size="sm">{brokerLabel}</Badge>
                           )}
@@ -1074,8 +1145,17 @@ export function AccountConfigPage() {
                       </button>
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 border-t border-neutral-100 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/60 lg:grid-cols-5">
+                  <div className="grid grid-cols-2 border-t border-neutral-100 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/60 lg:grid-cols-6">
                     <AccountDetailCell label="Login" value={broker.account_login || '—'} />
+                    <AccountDetailCell
+                      label="Account type"
+                      value={
+                        <span className={accountTypeValueClass(accountType)}>
+                          {accountType ?? '—'}
+                        </span>
+                      }
+                      className="border-l border-neutral-100 dark:border-neutral-800 max-lg:border-t-0"
+                    />
                     <AccountDetailCell
                       label="Server"
                       value={broker.broker_server || '—'}

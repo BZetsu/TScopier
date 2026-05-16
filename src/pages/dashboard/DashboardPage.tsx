@@ -4,7 +4,12 @@ import { Clock, ChevronRight, Info, Plus } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import type { BrokerAccount, Signal, Trade } from '../../types/database'
-import { inferBrokerLabelFromServer, resolveMtServerCandidate } from '../../lib/brokerFromServer'
+import {
+  inferBrokerLabelFromServer,
+  resolveLinkedAccountType,
+  resolveMtServerCandidate,
+  type LinkedAccountType,
+} from '../../lib/brokerFromServer'
 import { AddAccountModal } from '../../components/ui/AddAccountModal'
 import { Toggle } from '../../components/ui/Toggle'
 import { metatraderApi, type MtTrade } from '../../lib/metatraderapi'
@@ -700,6 +705,10 @@ export function DashboardPage() {
             currency: account.last_currency ?? undefined,
             broker: account.broker_name ?? undefined,
             mt_server_hint: account.broker_server ?? undefined,
+            account_type: resolveLinkedAccountType(
+              undefined,
+              resolveMtServerCandidate(account, account.broker_server ?? undefined),
+            ),
             open_pnl: sticky?.open_pnl ?? cachedOpenPnl,
             open_trades: sticky?.open_trades,
           },
@@ -1048,6 +1057,11 @@ export function DashboardPage() {
     const nextBalances = { ...prevBalances }
     for (const r of successes) {
       const s = r.summary!
+      const broker = sourceAccounts.find(b => b.id === r.id)
+      const server = broker
+        ? resolveMtServerCandidate(broker, nextBalances[r.id]?.mt_server_hint ?? broker.broker_server)
+        : null
+      const accountType = resolveLinkedAccountType(s.type, server)
       const nextBalance = s.balance ?? nextBalances[r.id]?.balance
       const nextEquity = s.equity ?? nextBalances[r.id]?.equity
       const liveProfit =
@@ -1062,6 +1076,7 @@ export function DashboardPage() {
         balance: nextBalance,
         equity: nextEquity,
         currency: s.currency ?? nextBalances[r.id]?.currency,
+        account_type: accountType ?? nextBalances[r.id]?.account_type,
         open_pnl: liveProfit,
         open_trades: liveOpenTrades,
       }
@@ -1632,7 +1647,19 @@ function LinkedAccountRow({
   const server = resolveMtServerCandidate(account, accountSummary?.mt_server_hint)
   const fromServer = inferBrokerLabelFromServer(server) || (server?.trim() ?? '')
   const brokerText = fromApi || fromServer || '—'
-  const accountType = accountSummary?.account_type || '—'
+  const accountType: LinkedAccountType | '—' =
+    accountSummary?.account_type
+    ?? resolveLinkedAccountType(
+      undefined,
+      resolveMtServerCandidate(account, accountSummary?.mt_server_hint),
+    )
+    ?? '—'
+  const accountTypeClass =
+    accountType === 'Demo'
+      ? 'text-amber-700 dark:text-amber-300'
+      : accountType === 'Live'
+        ? 'text-teal-700 dark:text-teal-300'
+        : 'text-neutral-900 dark:text-neutral-50'
 
   const accountLabel = account.label || 'Unnamed account'
   const roi = performance?.roi ?? null
@@ -1652,7 +1679,7 @@ function LinkedAccountRow({
         <span className="text-[11px] font-medium text-primary-600 uppercase">{account.platform}</span>
       </div>
       <span className="text-sm font-medium text-neutral-900 dark:text-neutral-50">{brokerText}</span>
-      <span className="text-sm font-medium text-neutral-900 dark:text-neutral-50">{accountType}</span>
+      <span className={`text-sm font-semibold ${accountTypeClass}`}>{accountType}</span>
       <span className="text-sm font-medium text-neutral-900 dark:text-neutral-50">{balanceText}</span>
       <span className={`text-sm font-semibold ${pnlColor}`}>{pnl >= 0 ? '+' : '-'}{pnlText}</span>
       <span className={`text-sm font-semibold tabular-nums ${roiColor}`}>{formatRoiPct(roi)}</span>

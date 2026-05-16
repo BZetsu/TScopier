@@ -80,3 +80,38 @@ export function inferBrokerLabelFromServer(server: string | null | undefined): s
   const spaced = first.replace(/([a-z\d])([A-Z])/g, '$1 $2')
   return spaced.charAt(0).toUpperCase() + spaced.slice(1)
 }
+
+export type LinkedAccountType = 'Live' | 'Demo'
+
+/** Parse MT AccountSummary `type` (e.g. ACCOUNT_TRADE_MODE_DEMO, "0", "2"). */
+export function parseMtAccountTradeMode(
+  mtSummaryType?: string | number | null,
+): LinkedAccountType | undefined {
+  if (mtSummaryType === 0 || mtSummaryType === '0') return 'Demo'
+  if (mtSummaryType === 1 || mtSummaryType === '1') return 'Demo' // contest
+  if (mtSummaryType === 2 || mtSummaryType === '2') return 'Live'
+  const t = String(mtSummaryType ?? '').trim().toLowerCase()
+  if (!t) return undefined
+  if (t.includes('demo') || t.includes('contest') || t.includes('test')) return 'Demo'
+  if (t.includes('real') || t.includes('live')) return 'Live'
+  return undefined
+}
+
+/** Infer Demo vs Live from the MT server hostname (e.g. ICMarkets-Demo, FTMO-Server-Live). */
+export function inferAccountTypeFromServer(server?: string | null): LinkedAccountType | undefined {
+  const s = (server ?? '').trim().toLowerCase()
+  if (!s) return undefined
+  if (/\bdemo\b/.test(s) || s.includes('-demo') || s.endsWith('demo')) return 'Demo'
+  if (/\blive\b/.test(s) || /\breal\b/.test(s) || s.includes('-live') || s.endsWith('live')) {
+    return 'Live'
+  }
+  return undefined
+}
+
+/** Prefer broker-reported trade mode; fall back to server name heuristics. */
+export function resolveLinkedAccountType(
+  mtSummaryType?: string | number | null,
+  server?: string | null,
+): LinkedAccountType | undefined {
+  return parseMtAccountTradeMode(mtSummaryType) ?? inferAccountTypeFromServer(server)
+}
