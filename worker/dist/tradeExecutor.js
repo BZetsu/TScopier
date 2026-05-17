@@ -1616,15 +1616,17 @@ class TradeExecutor {
         const isManual = (broker.copier_mode ?? 'ai') === 'manual';
         const manual = (broker.manual_settings ?? {});
         let strictEntryPrefetch = null;
-        if (isManual
-            && (0, manualPlanner_1.signalEntryPriceStrictEnabled)(manual)
-            && (0, manualPlanner_1.parsedHasExplicitEntryAnchor)(parsed)) {
+        const needsQuotePrefetch = isManual
+            && (((0, manualPlanner_1.signalEntryPriceStrictEnabled)(manual) && (0, manualPlanner_1.parsedHasExplicitEntryAnchor)(parsed))
+                || ((manual.use_predefined_sl_pips === true || manual.use_predefined_tp_pips === true)
+                    && !(0, manualPlanner_1.parsedHasExplicitEntryAnchor)(parsed)));
+        if (needsQuotePrefetch) {
             try {
                 strictEntryPrefetch = await api.quote(uuid, symbol);
             }
             catch (err) {
                 const msg = err instanceof Error ? err.message : String(err);
-                console.warn(`[tradeExecutor] /Quote prefetch failed (signal entry strictness) ${symbol} signal=${signal.id} broker=${broker.id}: ${msg}`);
+                console.warn(`[tradeExecutor] /Quote prefetch failed ${symbol} signal=${signal.id} broker=${broker.id}: ${msg}`);
             }
         }
         if (isManual && manual.close_on_opposite_signal === true) {

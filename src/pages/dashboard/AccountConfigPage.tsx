@@ -42,6 +42,7 @@ import {
   describeAutoManagementRule,
   isAutoManagementEnabled,
 } from '../../lib/autoManagementDisplay'
+import { describePredefinedStopsOverride } from '../../lib/predefinedStopsDisplay'
 
 interface ChannelOption {
   id: string
@@ -1660,9 +1661,96 @@ export function AccountConfigPage() {
                           </div>
                         )}
 
-                        {activeManualSubTab === 'stops' && (
-                          <div className="space-y-4">
-                            <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-3 space-y-3">
+                        {activeManualSubTab === 'stops' && (() => {
+                          const ms = configDraft.manualSettings
+                          const predefSummary = describePredefinedStopsOverride(ms)
+                          return (
+                          <div className="space-y-6">
+                            <section className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-4 space-y-3">
+                              <div>
+                                <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">Predefined SL &amp; TP</p>
+                                <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
+                                  When enabled, the copier <strong>replaces</strong> the signal&apos;s stop loss and/or take-profit with your pip distances from entry. Channel SL/TP from the message are not used for toggled sides.
+                                </p>
+                              </div>
+                              {predefSummary ? (
+                                <div className="rounded-lg border border-teal-200 bg-teal-50/80 px-3 py-2.5 text-sm text-teal-900 dark:border-teal-900/50 dark:bg-teal-950/40 dark:text-teal-200">
+                                  {predefSummary}
+                                </div>
+                              ) : null}
+                              <div className="space-y-3">
+                                <div className="rounded-md border border-neutral-200 dark:border-neutral-800 overflow-hidden">
+                                  <div className="flex items-center justify-between gap-3 bg-white dark:bg-neutral-900 px-3 py-2.5">
+                                    <span className="text-sm font-medium text-neutral-800 dark:text-neutral-100">Override signal SL</span>
+                                    <Toggle checked={ms.use_predefined_sl_pips === true} onChange={v => setManual({ use_predefined_sl_pips: v })} />
+                                  </div>
+                                  {ms.use_predefined_sl_pips && (
+                                    <div className="border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/80 px-3 py-3">
+                                      <Input
+                                        label="Stop loss (pips from entry)"
+                                        type="number"
+                                        min={1}
+                                        step={1}
+                                        hint="Buy: entry − pips. Sell: entry + pips. Ignores SL from the Telegram signal."
+                                        value={String(ms.predefined_sl_pips ?? 30)}
+                                        onChange={e => setManual({ predefined_sl_pips: Math.max(1, Number(e.target.value) || 0) })}
+                                      />
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="rounded-md border border-neutral-200 dark:border-neutral-800 overflow-hidden">
+                                  <div className="flex items-center justify-between gap-3 bg-white dark:bg-neutral-900 px-3 py-2.5">
+                                    <span className="text-sm font-medium text-neutral-800 dark:text-neutral-100">Override signal TPs</span>
+                                    <Toggle
+                                      checked={ms.use_predefined_tp_pips === true}
+                                      onChange={v => {
+                                        if (!v) { setManual({ use_predefined_tp_pips: false }); return }
+                                        setConfigDraft(prev => {
+                                          let list = prev.manualSettings.predefined_tp_pips
+                                          if (!Array.isArray(list) || list.length === 0) {
+                                            list = [...(DEFAULT_MANUAL_SETTINGS.predefined_tp_pips ?? [20, 40, 60])]
+                                          } else {
+                                            const filtered = list.map(n => Number(n)).filter(Number.isFinite)
+                                            list = filtered.length > 0 ? filtered : [...(DEFAULT_MANUAL_SETTINGS.predefined_tp_pips ?? [20, 40, 60])]
+                                          }
+                                          return { ...prev, manualSettings: { ...prev.manualSettings, use_predefined_tp_pips: true, predefined_tp_pips: list } }
+                                        })
+                                      }}
+                                    />
+                                  </div>
+                                  {ms.use_predefined_tp_pips && (
+                                    <div className="border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/80 px-3 py-3 space-y-3">
+                                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                        <p className="text-xs text-neutral-600 dark:text-neutral-400">
+                                          Each row is pips from entry (TP1, TP2, …). Ignores take-profit prices from the signal.
+                                        </p>
+                                        <Button variant="ghost" size="sm" className="shrink-0 self-start sm:self-auto" onClick={addPredefinedTpPipRow}>Add TP</Button>
+                                      </div>
+                                      <div className="space-y-2">
+                                        {clonePredefinedTpPips(ms.predefined_tp_pips).map((pips, idx) => (
+                                          <div key={`predef-tp-${idx}`} className="grid grid-cols-12 gap-2 items-end">
+                                            <div className="col-span-10">
+                                              <Input
+                                                label={`TP${idx + 1} (pips)`}
+                                                type="number"
+                                                min={1}
+                                                step={1}
+                                                hint={formatPipHint(Number(pips) || 0) ?? undefined}
+                                                value={String(pips)}
+                                                onChange={e => setPredefinedTpPipAt(idx, e.target.value)}
+                                              />
+                                            </div>
+                                            <Button className="col-span-2" variant="ghost" size="sm" onClick={() => removePredefinedTpPipRow(idx)}>Remove</Button>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </section>
+
+                            <section className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-3 space-y-3">
                               <div className="flex items-center justify-between">
                                 <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">TP distribution (% of legs)</p>
                                 <Button variant="ghost" size="sm" onClick={addTpLotRow}>Add TP</Button>
@@ -1737,10 +1825,11 @@ export function AccountConfigPage() {
                                   )
                                 })}
                               </div>
-                            </div>
+                            </section>
 
                           </div>
-                        )}
+                          )
+                        })()}
 
                         {activeManualSubTab === 'management' && (() => {
                           const ms = configDraft.manualSettings
@@ -2170,6 +2259,13 @@ export function AccountConfigPage() {
                             </p>
 
                             <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-3 space-y-3">
+                              <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                                <strong>Predefined SL &amp; TP</strong> (override signal stops) are under <strong>Stops &amp; Targets</strong>.
+                                R:R fallbacks below apply only when predefined and channel levels are missing.
+                              </p>
+                            </div>
+
+                            <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-3 space-y-3">
                               <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">Signal behavior</p>
                               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                                 <Select
@@ -2208,104 +2304,11 @@ export function AccountConfigPage() {
                             </div>
 
                             <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-3 space-y-3">
-                              <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">Predefined SL &amp; TP</p>
+                              <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">R:R fallbacks</p>
                               <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                                Override the signal&apos;s own stops/targets with your own fixed pip values
-                                or risk-reward multiples. Useful when channels post inconsistent levels.
-                                Precedence: predefined pip overrides, then channel SL/TP (after pip conversion), then R:R-for-SL, then R:R-for-TPs.
+                                Only used when predefined and channel SL/TP are missing. Predefined overrides on the Stops tab always win when enabled.
                               </p>
                               <div className="space-y-3">
-                                <div className="rounded-md border border-neutral-200 dark:border-neutral-800 overflow-hidden">
-                                  <div className="flex items-center justify-between gap-3 bg-white dark:bg-neutral-900 px-3 py-2.5">
-                                    <span className="text-sm font-medium text-neutral-800 dark:text-neutral-100">Use Predefined SL Pips</span>
-                                    <Toggle
-                                      checked={configDraft.manualSettings.use_predefined_sl_pips === true}
-                                      onChange={v => setManual({ use_predefined_sl_pips: v })}
-                                    />
-                                  </div>
-                                  {configDraft.manualSettings.use_predefined_sl_pips && (
-                                    <div className="border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/80 px-3 py-3 space-y-1">
-                                      <Input
-                                        label="Predefined SL Pips"
-                                        type="number"
-                                        hint={formatPipHint(Number(configDraft.manualSettings.predefined_sl_pips ?? 30) || 0) ?? undefined}
-                                        value={String(configDraft.manualSettings.predefined_sl_pips ?? 30)}
-                                        onChange={e => setManual({ predefined_sl_pips: Number(e.target.value) })}
-                                      />
-                                    </div>
-                                  )}
-                                </div>
-
-                                <div className="rounded-md border border-neutral-200 dark:border-neutral-800 overflow-hidden">
-                                  <div className="flex items-center justify-between gap-3 bg-white dark:bg-neutral-900 px-3 py-2.5">
-                                    <span className="text-sm font-medium text-neutral-800 dark:text-neutral-100">Use Predefined TPs</span>
-                                    <Toggle
-                                      checked={configDraft.manualSettings.use_predefined_tp_pips === true}
-                                      onChange={v => {
-                                        if (!v) {
-                                          setManual({ use_predefined_tp_pips: false })
-                                          return
-                                        }
-                                        setConfigDraft(prev => {
-                                          let list = prev.manualSettings.predefined_tp_pips
-                                          if (!Array.isArray(list) || list.length === 0) {
-                                            list = [...(DEFAULT_MANUAL_SETTINGS.predefined_tp_pips ?? [20, 40, 60])]
-                                          } else {
-                                            const filtered = list.map(n => Number(n)).filter(Number.isFinite)
-                                            list = filtered.length > 0 ? filtered : [...(DEFAULT_MANUAL_SETTINGS.predefined_tp_pips ?? [20, 40, 60])]
-                                          }
-                                          return {
-                                            ...prev,
-                                            manualSettings: {
-                                              ...prev.manualSettings,
-                                              use_predefined_tp_pips: true,
-                                              predefined_tp_pips: list,
-                                            },
-                                          }
-                                        })
-                                      }}
-                                    />
-                                  </div>
-                                  {configDraft.manualSettings.use_predefined_tp_pips && (
-                                    <div className="border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/80 px-3 py-3 space-y-3">
-                                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                                        <p className="text-xs text-neutral-600 dark:text-neutral-400">
-                                          Distance from entry to each take-profit, in pips (TP1, TP2, …). Same pattern as{' '}
-                                          <strong>Stops &amp; Targets</strong> — add or remove rows as needed.
-                                        </p>
-                                        <Button variant="ghost" size="sm" className="shrink-0 self-start sm:self-auto" onClick={addPredefinedTpPipRow}>
-                                          Add TP
-                                        </Button>
-                                      </div>
-                                      <div className="space-y-2">
-                                        {clonePredefinedTpPips(configDraft.manualSettings.predefined_tp_pips).map((pips, idx) => (
-                                          <div key={`predef-tp-${idx}`} className="grid grid-cols-12 gap-2 items-end">
-                                            <div className="col-span-10">
-                                              <Input
-                                                label={`TP${idx + 1} (pips)`}
-                                                type="number"
-                                                min={0}
-                                                step={1}
-                                                hint={formatPipHint(Number(pips) || 0) ?? undefined}
-                                                value={String(pips)}
-                                                onChange={e => setPredefinedTpPipAt(idx, e.target.value)}
-                                              />
-                                            </div>
-                                            <Button
-                                              className="col-span-2"
-                                              variant="ghost"
-                                              size="sm"
-                                              onClick={() => removePredefinedTpPipRow(idx)}
-                                            >
-                                              Remove
-                                            </Button>
-                                          </div>
-                                        ))}
-                                      </div>
-                                    </div>
-                                  )}
-                                </div>
-
                                 <div className="rounded-md border border-neutral-200 dark:border-neutral-800 overflow-hidden">
                                   <div className="flex items-center justify-between gap-3 bg-white dark:bg-neutral-900 px-3 py-2.5">
                                     <span className="text-sm font-medium text-neutral-800 dark:text-neutral-100">Enable R:R for SL</span>

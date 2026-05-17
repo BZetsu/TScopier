@@ -1960,17 +1960,22 @@ export class TradeExecutor {
     const manual = (broker.manual_settings ?? {}) as ManualSettings
 
     let strictEntryPrefetch: { bid: number; ask: number } | null = null
-    if (
+    const needsQuotePrefetch =
       isManual
-      && signalEntryPriceStrictEnabled(manual)
-      && parsedHasExplicitEntryAnchor(parsed)
-    ) {
+      && (
+        (signalEntryPriceStrictEnabled(manual) && parsedHasExplicitEntryAnchor(parsed))
+        || (
+          (manual.use_predefined_sl_pips === true || manual.use_predefined_tp_pips === true)
+          && !parsedHasExplicitEntryAnchor(parsed)
+        )
+      )
+    if (needsQuotePrefetch) {
       try {
         strictEntryPrefetch = await api.quote(uuid, symbol)
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
         console.warn(
-          `[tradeExecutor] /Quote prefetch failed (signal entry strictness) ${symbol} signal=${signal.id} broker=${broker.id}: ${msg}`,
+          `[tradeExecutor] /Quote prefetch failed ${symbol} signal=${signal.id} broker=${broker.id}: ${msg}`,
         )
       }
     }
