@@ -96,7 +96,6 @@ Deno.serve(async (req: Request) => {
           channelIds,
           cfg.dateFrom,
           cfg.dateTo,
-          { useAi: body.use_ai === true },
         )
       }
 
@@ -151,7 +150,6 @@ Deno.serve(async (req: Request) => {
         signal_source: "backtest_channel_signals",
         copier_isolated: true,
         import: importMeta,
-        openai_configured: Boolean((Deno.env.get("OPENAI_API_KEY") ?? "").trim()),
       }, { headers: corsHeaders })
     }
 
@@ -228,7 +226,6 @@ Deno.serve(async (req: Request) => {
           channelIds,
           cfg.dateFrom,
           cfg.dateTo,
-          { useAi: true },
         )
         if (imp.errors.length) {
           console.warn("[backtest-run] telegram import warnings:", imp.errors.join("; "))
@@ -247,7 +244,7 @@ Deno.serve(async (req: Request) => {
                 ? ["Telegram import returned 0 messages — using any signals already in backtest_channel_signals"]
                 : []),
               ...(imp.parse_attempted > 0
-                ? [`Import: scanned ${imp.messages_scanned}, parsed ${imp.parse_attempted}, tradeable ${imp.imported}${imp.ai_refined ? ` (${imp.ai_refined} via OpenAI)` : ""}`]
+                ? [`Import: scanned ${imp.messages_scanned}, parsed ${imp.parse_attempted}, stored ${imp.imported}${imp.lenient_parsed ? ` (${imp.lenient_parsed} lenient)` : ""}`]
                 : []),
             ],
           },

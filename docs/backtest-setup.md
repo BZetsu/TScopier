@@ -8,10 +8,6 @@ Backtests replay parsed Telegram signals against historical market data from [Ma
    - `MASSIVE_API_KEY` (or legacy `POLYGON_API_KEY`)
    - Optional: `MASSIVE_API_BASE_URL` (default `https://api.massive.com`)
    - Optional: `MASSIVE_CALLS_PER_MINUTE` (default `5`) — spaces API requests to respect your plan quota
-   - Optional: `OPENAI_API_KEY` — batched refine on **Run backtest** only (preview import skips AI to avoid rate limits)
-   - Optional: `OPENAI_MODEL` (default `gpt-4o-mini`)
-   - Optional: `OPENAI_REQUESTS_PER_MINUTE` (default `3`) or `OPENAI_MIN_GAP_MS` — spaces OpenAI calls (~20s between batches of 5 messages)
-   - Optional: `OPENAI_BATCH_SIZE` (default `5`) — messages per OpenAI request
    - Optional: `BACKTEST_PARSE_DELAY_MS` (default `80`) — pause between parse-signal calls during import
 
 2. Apply migrations:

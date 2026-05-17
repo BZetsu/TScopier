@@ -1,6 +1,6 @@
 import { extractTradableSymbolFromMessage } from "../tradableSymbol.ts"
 
-/** Backtest-only parser for common Telegram signal layouts (runs before OpenAI). */
+/** Backtest-only parser for common Telegram signal layouts when parse-signal misses. */
 export function lenientParseTradeMessage(raw: string): Record<string, unknown> | null {
   const text = String(raw ?? "").replace(/\s+/g, " ").trim()
   if (!text) return null

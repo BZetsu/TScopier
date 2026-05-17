@@ -197,7 +197,7 @@ export function Backtest() {
     const t = window.setTimeout(() => {
       setPreviewLoading(true)
       backtestApi
-        .preview(config, { importTelegram: true, useAi: false })
+        .preview(config, { importTelegram: true })
         .then(setPreview)
         .catch(() => setPreview(null))
         .finally(() => setPreviewLoading(false))
@@ -322,6 +322,46 @@ export function Backtest() {
                 ))
               )}
             </div>
+
+            {config.channelIds.length > 0 ? (
+              <div className="rounded-xl border border-neutral-100 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/50 p-3 text-xs space-y-1">
+                {previewLoading ? (
+                  <p className="text-neutral-500 flex items-center gap-2">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    Importing Telegram history &amp; parsing signals…
+                  </p>
+                ) : preview ? (
+                  <>
+                    <p className="text-neutral-700 dark:text-neutral-300">
+                      <span className="font-semibold tabular-nums">{preview.tradeable_count}</span>
+                      {' '}tradeable signal(s) ready · Massive{' '}
+                      {preview.massive_configured ? 'configured' : 'not configured'}
+                    </p>
+                    {preview.import ? (
+                      <p className="text-neutral-500">
+                        Telegram: {preview.import.messages_scanned} message(s) in range · parsed{' '}
+                        {preview.import.parse_attempted} · stored {preview.import.imported}
+                        {(preview.import.lenient_parsed ?? 0) > 0
+                          ? ` (${preview.import.lenient_parsed} lenient)`
+                          : ''}
+                      </p>
+                    ) : null}
+                    {preview.import?.errors?.length ? (
+                      <p className="text-amber-700 dark:text-amber-400">
+                        {preview.import.errors.slice(0, 2).join(' · ')}
+                      </p>
+                    ) : null}
+                    {preview.tradeable_count === 0 ? (
+                      <p className="text-neutral-500">
+                        Signals need buy/sell, a valid symbol, and SL or TP. Market entries use Massive price at signal time.
+                      </p>
+                    ) : null}
+                  </>
+                ) : (
+                  <p className="text-neutral-500">Select channels and dates to load signals.</p>
+                )}
+              </div>
+            ) : null}
 
             {config.channelIds.length > 0 ? (
               <div className="space-y-2 border-t border-neutral-100 dark:border-neutral-800 pt-4">
@@ -474,51 +514,6 @@ export function Backtest() {
                 </label>
               )}
             </div>
-
-            {config.channelIds.length > 0 ? (
-              <div className="rounded-xl border border-neutral-100 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/50 p-3 text-xs space-y-1">
-                {previewLoading ? (
-                  <p className="text-neutral-500 flex items-center gap-2">
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    Importing Telegram history &amp; parsing signals…
-                  </p>
-                ) : preview ? (
-                  <>
-                    <p className="text-neutral-700 dark:text-neutral-300">
-                      <span className="font-semibold tabular-nums">{preview.tradeable_count}</span>
-                      {' '}tradeable signal(s) ready · Massive{' '}
-                      {preview.massive_configured ? 'configured' : 'not configured'}
-                      {preview.openai_configured ? ' · OpenAI refine on' : ''}
-                    </p>
-                    {preview.import ? (
-                      <p className="text-neutral-500">
-                        Telegram: {preview.import.messages_scanned} message(s) in range · parsed{' '}
-                        {preview.import.parse_attempted} · stored {preview.import.imported}
-                        {(preview.import.lenient_parsed ?? 0) > 0
-                          ? ` (${preview.import.lenient_parsed} lenient)`
-                          : ''}
-                        {preview.import.ai_refined > 0 ? ` · ${preview.import.ai_refined} AI` : ''}
-                        {preview.import.messages_scanned > preview.import.parse_attempted
-                          ? ' — run backtest for full OpenAI refine'
-                          : ''}
-                      </p>
-                    ) : null}
-                    {preview.import?.errors?.length ? (
-                      <p className="text-amber-700 dark:text-amber-400">
-                        {preview.import.errors.slice(0, 2).join(' · ')}
-                      </p>
-                    ) : null}
-                    {preview.tradeable_count === 0 ? (
-                      <p className="text-neutral-500">
-                        Signals need buy/sell, a valid symbol, and SL or TP. Market entries use Massive price at signal time.
-                      </p>
-                    ) : null}
-                  </>
-                ) : (
-                  <p className="text-neutral-500">Select channels and dates to load signals.</p>
-                )}
-              </div>
-            ) : null}
 
             <Button
               className="w-full"
