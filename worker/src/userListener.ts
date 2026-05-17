@@ -4,6 +4,7 @@ import { NewMessage } from 'telegram/events'
 import type { NewMessageEvent } from 'telegram/events/NewMessage'
 import { Api } from 'telegram/tl'
 import { buildClient, tgInvoke } from './telegramClient'
+import { hasTradableInstrumentInText } from './tradableSymbol'
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? ''
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? ''
@@ -103,10 +104,7 @@ function looksLikeTradingSignal(text: string, isReply: boolean): boolean {
 
   if (!normalized) return false
 
-  // Common instrument patterns: EURUSD, XAUUSD, BTCUSDT, US30, etc.
-  const hasInstrument =
-    /\b[a-z]{6,7}\b/.test(normalized) ||
-    /\b(xauusd|xagusd|us30|nas100|spx500|ger40|uk100|btcusdt|ethusdt)\b/.test(normalized)
+  const hasInstrument = hasTradableInstrumentInText(text)
 
   const hasDirectionOrAction =
     /\b(buy|sell|long|short|close|tp|take profit|sl|stop loss|breakeven|be)\b/.test(normalized)
