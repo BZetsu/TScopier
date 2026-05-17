@@ -17,8 +17,13 @@ export function parseSignalRow(row: {
   const symbol = String(pd.symbol ?? "").trim().toUpperCase()
   if (!symbol) return null
 
-  const entry = num(pd.entry_price) ?? num(pd.entry_zone_low) ?? num(pd.entry_zone_high)
-  if (entry == null || entry <= 0) return null
+  const entryExplicit = num(pd.entry_price) ?? num(pd.entry_zone_low) ?? num(pd.entry_zone_high)
+  if (entryExplicit == null && num(pd.sl) == null) {
+    const tpRaw = pd.tp
+    const hasTp = Array.isArray(tpRaw) && tpRaw.length > 0
+    if (!hasTp) return null
+  }
+  const entry = entryExplicit != null && entryExplicit > 0 ? entryExplicit : 0
 
   const sl = num(pd.sl)
   const tpRaw = pd.tp

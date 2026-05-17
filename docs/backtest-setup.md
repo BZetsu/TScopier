@@ -8,6 +8,8 @@ Backtests replay parsed Telegram signals against historical market data from [Ma
    - `MASSIVE_API_KEY` (or legacy `POLYGON_API_KEY`)
    - Optional: `MASSIVE_API_BASE_URL` (default `https://api.massive.com`)
    - Optional: `MASSIVE_CALLS_PER_MINUTE` (default `5`) — spaces API requests to respect your plan quota
+   - Optional: `OPENAI_API_KEY` — refines ambiguous Telegram messages when deterministic parse misses SL/TP or market entries
+   - Optional: `OPENAI_MODEL` (default `gpt-4o-mini`)
 
 2. Apply migrations:
    - `20260516150000_backtest.sql` (runs, simulated trades, equity)
@@ -25,6 +27,8 @@ Backtests replay parsed Telegram signals against historical market data from [Ma
    - **`backtest_channel_signals`** — normalized buy/sell rows used for backtests.
 
    When you run a backtest, the worker **fetches Telegram history** for your selected date range. Parsing uses `parse-signal` in **`parse_only` mode** (no writes to `signals`, no trade execution). Tradeable rows go only into `backtest_channel_signals`. Copier Logs are unaffected.
+
+   Each tradeable row needs **buy/sell**, a **valid symbol**, and **SL or TP**. Entry can be omitted (market at signal time); simulation uses Massive price at `signal_at`.
 
 3. Link the project (once) and deploy edge functions:
    ```bash

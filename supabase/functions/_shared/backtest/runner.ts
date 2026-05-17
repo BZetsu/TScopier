@@ -76,7 +76,7 @@ export async function executeBacktestRun(
         : "Connect Telegram, ensure the worker is online (WORKER_URL), and run again to import history.",
     ]
     if (importWarnings.length) {
-      parts.push(`Import: ${importWarnings.slice(0, 3).join("; ")}`)
+      parts.push(`Import: ${importWarnings.slice(0, 5).join("; ")}`)
     }
     const hint = parts.join(" ")
     await updateProgress(100, hint)
@@ -132,6 +132,7 @@ export async function executeBacktestRun(
   const { seriesBySymbol, apiCalls, fetchLog } = await preloadMarketData(
     massive,
     symbolsNeeded,
+    signals,
     config,
     fromMs,
     toMs,

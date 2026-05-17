@@ -1,9 +1,13 @@
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2"
+import { messageLikelyNeedsAiRefine, refineSignalWithOpenAI } from "./refineSignalOpenAI.ts"
 import { tradeableFromParsed } from "./parsedToUpsert.ts"
 
 export interface BacktestImportResult {
   imported: number
   messages_scanned: number
+  parse_attempted: number
+  parse_tradeable: number
+  ai_refined: number
   errors: string[]
 }
 
@@ -30,20 +34,34 @@ export async function importTelegramHistoryForBacktest(
   const errors: string[] = []
   let imported = 0
   let messagesScanned = 0
+  let parseAttempted = 0
+  let parseTradeable = 0
+  let aiRefined = 0
 
   if (channelIds.length === 0) {
-    return { imported: 0, messages_scanned: 0, errors: [] }
+    return {
+      imported: 0,
+      messages_scanned: 0,
+      parse_attempted: 0,
+      parse_tradeable: 0,
+      ai_refined: 0,
+      errors: [],
+    }
   }
 
   const workerUrl = (env.get("WORKER_URL") ?? "").trim().replace(/\/+$/, "")
   const workerToken = env.get("WORKER_INTERNAL_TOKEN") ?? ""
   const supabaseUrl = (env.get("SUPABASE_URL") ?? "").replace(/\/$/, "")
   const serviceKey = env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
+  const openAiEnabled = Boolean((env.get("OPENAI_API_KEY") ?? "").trim())
 
   if (!workerUrl || !workerToken) {
     return {
       imported: 0,
       messages_scanned: 0,
+      parse_attempted: 0,
+      parse_tradeable: 0,
+      ai_refined: 0,
       errors: ["WORKER_URL not configured — cannot import Telegram history"],
     }
   }
@@ -51,13 +69,13 @@ export async function importTelegramHistoryForBacktest(
   const workerBase = /^https?:\/\//i.test(workerUrl) ? workerUrl : `https://${workerUrl}`
 
   const pushImportError = (errors: string[], msg: string) => {
-    if (errors.length < 5) {
+    if (errors.length < 8) {
       errors.push(msg)
       return
     }
     const last = errors[errors.length - 1]
     if (!last?.startsWith("(+")) {
-      errors.push("(+more errors; fix parse auth and redeploy backtest-run + parse-signal)")
+      errors.push("(+more import errors)")
     }
   }
 
@@ -95,7 +113,6 @@ export async function importTelegramHistoryForBacktest(
 
     if (messages.length === 0) continue
 
-    // Replace prior import rows for this channel/range only after a successful Telegram fetch.
     const { error: delErr } = await supabase
       .from("backtest_channel_signals")
       .delete()
@@ -113,19 +130,21 @@ export async function importTelegramHistoryForBacktest(
       if (!msg.raw_message?.trim() || !msg.telegram_message_id) continue
 
       try {
-        const parseBody = await invokeParseSignal(supabase, serviceKey, supabaseUrl, {
-          parse_only: true,
-          channel_id: channelRowId,
-          raw_message: msg.raw_message,
-        })
-        if (parseBody.error) {
-          pushImportError(errors, parseBody.error)
-          continue
-        }
-        if (parseBody.status !== "parsed" || !parseBody.parsed) continue
+        parseAttempted++
+        const resolved = await resolveTradeableParsed(
+          supabase,
+          serviceKey,
+          supabaseUrl,
+          channelRowId,
+          msg.raw_message,
+          env,
+          openAiEnabled,
+        )
 
-        const tradeable = tradeableFromParsed(parseBody.parsed)
-        if (!tradeable) continue
+        if (resolved.aiUsed) aiRefined++
+
+        if (!resolved.tradeable || !resolved.parsed) continue
+        parseTradeable++
 
         const { error: upsertErr } = await supabase.rpc("upsert_backtest_channel_signal", {
           p_user_id: userId,
@@ -133,14 +152,18 @@ export async function importTelegramHistoryForBacktest(
           p_signal_id: null,
           p_telegram_message_id: msg.telegram_message_id,
           p_source: "telegram_import",
-          p_direction: tradeable.direction,
-          p_symbol: tradeable.symbol,
-          p_entry_price: tradeable.entry_price,
-          p_sl: tradeable.sl,
-          p_tp_levels: tradeable.tp_levels,
-          p_lot_size: tradeable.lot_size,
+          p_direction: resolved.tradeable.direction,
+          p_symbol: resolved.tradeable.symbol,
+          p_entry_price: resolved.tradeable.entry_price,
+          p_sl: resolved.tradeable.sl,
+          p_tp_levels: resolved.tradeable.tp_levels,
+          p_lot_size: resolved.tradeable.lot_size,
           p_raw_message: msg.raw_message,
-          p_parsed_data: parseBody.parsed,
+          p_parsed_data: {
+            ...resolved.parsed,
+            ...(resolved.tradeable.market_entry ? { market_entry: true } : {}),
+            ...(resolved.aiUsed ? { parse_source: "openai" } : {}),
+          },
           p_signal_at: msg.signal_at,
         })
         if (upsertErr) {
@@ -154,7 +177,63 @@ export async function importTelegramHistoryForBacktest(
     }
   }
 
-  return { imported, messages_scanned: messagesScanned, errors }
+  if (imported === 0 && parseAttempted > 0 && !openAiEnabled) {
+    errors.push(
+      "No tradeable signals parsed. Set OPENAI_API_KEY on edge functions to refine ambiguous channel messages.",
+    )
+  }
+
+  return {
+    imported,
+    messages_scanned: messagesScanned,
+    parse_attempted: parseAttempted,
+    parse_tradeable: parseTradeable,
+    ai_refined: aiRefined,
+    errors,
+  }
+}
+
+async function resolveTradeableParsed(
+  supabase: SupabaseClient,
+  serviceKey: string,
+  supabaseUrl: string,
+  channelRowId: string,
+  rawMessage: string,
+  env: { get(name: string): string | undefined },
+  openAiEnabled: boolean,
+): Promise<{
+  tradeable: ReturnType<typeof tradeableFromParsed>
+  parsed: Record<string, unknown> | null
+  aiUsed: boolean
+}> {
+  const parseBody = await invokeParseSignal(supabase, serviceKey, supabaseUrl, {
+    parse_only: true,
+    channel_id: channelRowId,
+    raw_message: rawMessage,
+  })
+
+  if (parseBody.error) {
+    throw new Error(parseBody.error)
+  }
+
+  let parsed = parseBody.parsed ?? null
+  let tradeable = parsed ? tradeableFromParsed(parsed) : null
+  let aiUsed = false
+
+  if (!tradeable && openAiEnabled && messageLikelyNeedsAiRefine(rawMessage)) {
+    try {
+      const refined = await refineSignalWithOpenAI(rawMessage, env)
+      if (refined) {
+        parsed = refined.parsed
+        tradeable = tradeableFromParsed(parsed)
+        aiUsed = Boolean(tradeable)
+      }
+    } catch (e) {
+      console.warn("[backtest-import] OpenAI refine failed:", e)
+    }
+  }
+
+  return { tradeable, parsed, aiUsed }
 }
 
 type ParseSignalBody = {

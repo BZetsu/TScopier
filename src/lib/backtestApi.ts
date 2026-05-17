@@ -43,6 +43,15 @@ async function call<T>(body: Record<string, unknown>): Promise<T> {
   return data as T
 }
 
+export interface BacktestImportMeta {
+  imported: number
+  messages_scanned: number
+  parse_attempted: number
+  parse_tradeable: number
+  ai_refined: number
+  errors: string[]
+}
+
 export interface BacktestPreviewResult {
   tradeable_count: number
   stored_count: number
@@ -53,6 +62,8 @@ export interface BacktestPreviewResult {
   massive_probe?: { ok: boolean; error?: string; bars?: number }
   signal_source?: string
   copier_isolated?: boolean
+  openai_configured?: boolean
+  import?: BacktestImportMeta | null
 }
 
 export const backtestApi = {
@@ -60,8 +71,12 @@ export const backtestApi = {
     return call({ action: 'list' })
   },
 
-  preview(config: BacktestRunConfig): Promise<BacktestPreviewResult> {
-    return call({ action: 'preview', config })
+  preview(config: BacktestRunConfig, opts?: { importTelegram?: boolean }): Promise<BacktestPreviewResult> {
+    return call({
+      action: 'preview',
+      config,
+      import_telegram: opts?.importTelegram === true,
+    })
   },
 
   createRun(name: string, config: BacktestRunConfig): Promise<{ run_id: string }> {

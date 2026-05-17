@@ -2,7 +2,7 @@ import { MassiveClient } from "../massiveApi.ts"
 import type { PricePoint } from "./simulator.ts"
 import { barsToMidPoints, quotesToMidPoints } from "./simulator.ts"
 import { mapSymbolToMassive, timeframeToAgg } from "./symbolMap.ts"
-import type { BacktestRunConfig } from "./types.ts"
+import type { BacktestRunConfig, ParsedSignalForBacktest } from "./types.ts"
 
 /** Quotes API uses `C:EUR-USD`; aggregates use `C:EURUSD`. */
 export function toMassiveQuoteTicker(massiveTicker: string): string {
@@ -21,16 +21,37 @@ export interface PreloadedMarketData {
   fetchLog: string[]
 }
 
+function signalWindowForSymbol(
+  symbol: string,
+  signals: ParsedSignalForBacktest[],
+  configFromMs: number,
+  configToMs: number,
+): { fromMs: number; toMs: number } {
+  const symSigs = signals.filter((s) => s.symbol === symbol)
+  if (!symSigs.length) {
+    return { fromMs: configFromMs, toMs: configToMs }
+  }
+  const minSig = Math.min(...symSigs.map((s) => s.signalAt.getTime()))
+  const maxSig = Math.max(...symSigs.map((s) => s.signalAt.getTime()))
+  const padBefore = 2 * 24 * 3_600_000
+  const padAfter = 14 * 24 * 3_600_000
+  return {
+    fromMs: Math.max(configFromMs, minSig - padBefore),
+    toMs: Math.min(configToMs, maxSig + padAfter),
+  }
+}
+
 /**
  * Fetch OHLC or forex quotes from Massive for every symbol before simulation.
- * Always uses aggregates for crypto/indices; forex tick mode tries quotes first.
+ * Window is tightened per symbol around actual signal timestamps.
  */
 export async function preloadMarketData(
   massive: MassiveClient,
   symbols: string[],
+  signals: ParsedSignalForBacktest[],
   config: BacktestRunConfig,
-  fromMs: number,
-  toMs: number,
+  configFromMs: number,
+  configToMs: number,
   callsPerMinute = 5,
 ): Promise<PreloadedMarketData> {
   const { multiplier, timespan } = timeframeToAgg(config.timeframe)
@@ -47,6 +68,13 @@ export async function preloadMarketData(
       continue
     }
 
+    const { fromMs, toMs } = signalWindowForSymbol(symbol, signals, configFromMs, configToMs)
+    if (fromMs >= toMs) {
+      fetchLog.push(`${symbol}: invalid time window`)
+      seriesBySymbol.set(symbol, [])
+      continue
+    }
+
     let pts: PricePoint[] = []
     const wantsQuotes = config.executionMode === "tick_quotes" && mapped.assetClass === "forex"
     const useQuotes = wantsQuotes && !lowRatePlan
@@ -54,6 +82,8 @@ export async function preloadMarketData(
     if (wantsQuotes && lowRatePlan) {
       fetchLog.push(`${symbol}: tick quotes skipped (plan ≤${callsPerMinute}/min — using OHLC bars)`)
     }
+
+    const rangeLabel = `${new Date(fromMs).toISOString().slice(0, 10)}→${new Date(toMs).toISOString().slice(0, 10)}`
 
     if (useQuotes) {
       const quoteTicker = toMassiveQuoteTicker(mapped.massiveTicker)
@@ -66,7 +96,7 @@ export async function preloadMarketData(
         )
         apiCalls += 1
         pts = quotesToMidPoints(quotes)
-        fetchLog.push(`${symbol}: ${pts.length} quotes (${quoteTicker})`)
+        fetchLog.push(`${symbol}: ${pts.length} quotes (${quoteTicker}, ${rangeLabel})`)
         if (pts.length === 0) throw new Error("empty quotes")
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e)
@@ -77,11 +107,11 @@ export async function preloadMarketData(
           timespan,
           fromMs,
           toMs,
-          { sort: "asc", maxPages: 8 },
+          { sort: "asc", maxPages: 12 },
         )
         apiCalls += 1
         pts = barsToMidPoints(bars)
-        fetchLog.push(`${symbol}: ${pts.length} bars (${mapped.massiveTicker})`)
+        fetchLog.push(`${symbol}: ${pts.length} bars (${mapped.massiveTicker}, ${rangeLabel})`)
       }
     } else {
       const bars = await massive.getAggregates(
@@ -90,11 +120,11 @@ export async function preloadMarketData(
         timespan,
         fromMs,
         toMs,
-        { sort: "asc", maxPages: 8 },
+        { sort: "asc", maxPages: 12 },
       )
       apiCalls += 1
       pts = barsToMidPoints(bars)
-      fetchLog.push(`${symbol}: ${pts.length} bars (${mapped.massiveTicker})`)
+      fetchLog.push(`${symbol}: ${pts.length} bars (${mapped.massiveTicker}, ${rangeLabel})`)
     }
 
     seriesBySymbol.set(symbol, pts)

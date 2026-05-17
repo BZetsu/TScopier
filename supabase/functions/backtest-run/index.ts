@@ -1,6 +1,9 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { createClient } from "npm:@supabase/supabase-js@2"
-import { importTelegramHistoryForBacktest } from "../_shared/backtest/importTelegramHistory.ts"
+import {
+  importTelegramHistoryForBacktest,
+  type BacktestImportResult,
+} from "../_shared/backtest/importTelegramHistory.ts"
 import { listBacktestSymbolsInRange, loadBacktestSignals } from "../_shared/backtest/loadSignals.ts"
 import { normalizeSymbolFilter } from "../_shared/backtest/symbols.ts"
 import { executeBacktestRun } from "../_shared/backtest/runner.ts"
@@ -83,6 +86,19 @@ Deno.serve(async (req: Request) => {
       }
 
       const symbolFilter = normalizeSymbolFilter(cfg.symbols)
+
+      let importMeta: BacktestImportResult | null = null
+      if (body.import_telegram === true) {
+        importMeta = await importTelegramHistoryForBacktest(
+          supabase,
+          Deno.env,
+          userId,
+          channelIds,
+          cfg.dateFrom,
+          cfg.dateTo,
+        )
+      }
+
       const availableSymbols = await listBacktestSymbolsInRange(
         supabase,
         userId,
@@ -133,6 +149,8 @@ Deno.serve(async (req: Request) => {
         massive_probe: massiveProbe,
         signal_source: "backtest_channel_signals",
         copier_isolated: true,
+        import: importMeta,
+        openai_configured: Boolean((Deno.env.get("OPENAI_API_KEY") ?? "").trim()),
       }, { headers: corsHeaders })
     }
 
@@ -225,6 +243,9 @@ Deno.serve(async (req: Request) => {
               ...imp.errors,
               ...(imp.imported === 0 && imp.messages_scanned === 0
                 ? ["Telegram import returned 0 messages — using any signals already in backtest_channel_signals"]
+                : []),
+              ...(imp.parse_attempted > 0
+                ? [`Import: scanned ${imp.messages_scanned}, parsed ${imp.parse_attempted}, tradeable ${imp.imported}${imp.ai_refined ? ` (${imp.ai_refined} via OpenAI)` : ""}`]
                 : []),
             ],
           },
