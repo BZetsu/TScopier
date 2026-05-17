@@ -1,3 +1,4 @@
+import { effectiveTimeframeForRange } from "./effectiveTimeframe.ts"
 import type { BacktestRunConfig, BacktestTimeframe } from "./types.ts"
 
 export interface SimpleBacktestConfig {
@@ -32,7 +33,7 @@ export function toBacktestRunConfig(
     symbols: [],
     dateFrom: cfg.dateFrom,
     dateTo: cfg.dateTo,
-    timeframe: cfg.timeframe ?? "1m",
+    timeframe: effectiveTimeframeForRange(cfg.dateFrom, cfg.dateTo, cfg.timeframe),
     executionMode: "minute_bars",
     initialBalance: cfg.initialBalance,
     currency: "USD",
@@ -53,6 +54,6 @@ export function parseSimpleConfig(raw: Partial<SimpleBacktestConfig>): SimpleBac
     dateTo: String(raw.dateTo ?? new Date().toISOString().slice(0, 10)),
     initialBalance: Number(raw.initialBalance ?? 10_000),
     fixedLot: Number(raw.fixedLot ?? 0.1),
-    timeframe: (raw.timeframe as BacktestTimeframe | undefined) ?? "1m",
+    timeframe: (raw.timeframe as BacktestTimeframe | undefined) ?? "5m",
   }
 }

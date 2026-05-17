@@ -29,7 +29,7 @@ async function startBacktestRun(
   userId: string,
   simple: ReturnType<typeof parseSimpleConfig>,
   mode: BacktestRunMode,
-  opts: { skipSync?: boolean },
+  opts: { forceSync?: boolean },
 ): Promise<Response> {
   const cfg = toBacktestRunConfig(simple, mode)
   const runLabel = mode === "tpsl" ? "TP/SL backtest" : "Trade simulation"
@@ -72,18 +72,14 @@ async function startBacktestRun(
     }).eq("id", runId)
 
     const importWarnings: string[] = []
-    let shouldSync = !opts.skipSync
-
-    if (!shouldSync) {
-      const existing = await countStoredBacktestSignals(
-        supabase,
-        userId,
-        simple.channelIds,
-        cfg.dateFrom,
-        cfg.dateTo,
-      )
-      shouldSync = existing === 0
-    }
+    const existing = await countStoredBacktestSignals(
+      supabase,
+      userId,
+      simple.channelIds,
+      cfg.dateFrom,
+      cfg.dateTo,
+    )
+    const shouldSync = opts.forceSync === true || existing === 0
 
     if (shouldSync) {
       await supabase.from("backtest_runs").update({
@@ -219,9 +215,9 @@ Deno.serve(async (req: Request) => {
       if (simple.channelIds.length === 0) return bad(400, "At least one channel required")
 
       const mode: BacktestRunMode = action === "backtest_tpsl" ? "tpsl" : "simulate"
-      const skipSync = body.skip_sync === true
+      const forceSync = body.force_sync === true
 
-      return await startBacktestRun(supabase, userId, simple, mode, { skipSync })
+      return await startBacktestRun(supabase, userId, simple, mode, { forceSync })
     }
 
     return bad(400, `Unknown action: ${action}`)

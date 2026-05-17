@@ -43,7 +43,7 @@ function defaultConfig(): SimpleBacktestConfig {
     dateTo: to.toISOString().slice(0, 10),
     initialBalance: 10_000,
     fixedLot: 0.1,
-    timeframe: '1m',
+    timeframe: '5m',
   }
 }
 
@@ -322,12 +322,11 @@ export function Backtest() {
     setTrades([])
     setEquity([])
     setActiveRun(null)
-    const skipSync = storedSignals.length > 0
     try {
       const start =
         mode === 'tpsl'
-          ? backtestApi.backtestTpsl(config, { skipSync })
-          : backtestApi.simulateTrades(config, { skipSync })
+          ? backtestApi.backtestTpsl(config)
+          : backtestApi.simulateTrades(config)
       const { run_id } = await start
       localStorage.setItem(LAST_RUN_KEY, run_id)
       const run = await loadRun(run_id)
@@ -520,7 +519,7 @@ export function Backtest() {
 
           {storedSignals.length > 0 ? (
             <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
-              {storedSignals.length} stored signal{storedSignals.length === 1 ? '' : 's'} — backtests skip Telegram sync and use Massive only.
+              {storedSignals.length} stored signal{storedSignals.length === 1 ? '' : 's'} — runs use stored rows only (no Telegram). Use <strong>Sync signals only</strong> to refresh.
             </p>
           ) : null}
 

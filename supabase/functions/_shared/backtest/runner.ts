@@ -3,10 +3,10 @@ import { MassiveClient } from "../massiveApi.ts"
 import { loadBacktestSignals } from "./loadSignals.ts"
 import { preloadMarketData } from "./marketData.ts"
 import { runPortfolioSimulation } from "./portfolio.ts"
-import { simulateTradeOnSeries } from "./simulator.ts"
+import { simulateTradeOnSeries, sliceSeriesForSignal } from "./simulator.ts"
 import type { BacktestRunMode } from "./config.ts"
 import type { BacktestRunConfig, BacktestSummary, SimulatedTradeResult } from "./types.ts"
-import { tradePipPnlFromSim } from "./tpslSummary.ts"
+import { buildTpslSummary } from "./tpslSummary.ts"
 
 export interface BacktestRunContext {
   importWarnings?: string[]
@@ -22,7 +22,14 @@ export async function executeBacktestRun(
   ctx: BacktestRunContext = {},
 ): Promise<void> {
   const mode = ctx.mode ?? "simulate"
+  let lastProgressAt = 0
+  let lastProgressPct = -1
   const updateProgress = async (pct: number, message: string) => {
+    const now = Date.now()
+    const pctJump = Math.abs(pct - lastProgressPct)
+    if (pct < 100 && now - lastProgressAt < 1200 && pctJump < 4) return
+    lastProgressAt = now
+    lastProgressPct = pct
     await supabase.from("backtest_runs").update({
       progress_pct: pct,
       progress_message: message,
@@ -125,7 +132,7 @@ export async function executeBacktestRun(
   const estMinutes = Math.max(1, Math.ceil(symbolsNeeded.length / Math.max(1, callsPerMinute)))
   await updateProgress(
     12,
-    `Massive: ~${symbolsNeeded.length} symbol(s), ${callsPerMinute}/min limit (~${estMinutes} min)…`,
+    `Massive (${config.timeframe} bars): ~${symbolsNeeded.length} symbol(s), ~${estMinutes} min at ${callsPerMinute}/min…`,
   )
 
   const { seriesBySymbol, apiCalls, fetchLog, rateLimitHits } = await preloadMarketData(
@@ -146,17 +153,21 @@ export async function executeBacktestRun(
   await updateProgress(20, massiveProgress)
 
   const results: SimulatedTradeResult[] = []
+  const maxAfterMs = 5 * 86_400_000
   let i = 0
   for (const sig of signals) {
     i++
-    const series = seriesBySymbol.get(sig.symbol) ?? []
-    if (i === 1 || i % 5 === 0 || i === signals.length) {
+    const fullSeries = seriesBySymbol.get(sig.symbol) ?? []
+    const series = sliceSeriesForSignal(fullSeries, sig.signalAt, maxAfterMs)
+    if (i === 1 || i % 15 === 0 || i === signals.length) {
       await updateProgress(
         20 + Math.min(65, (i / Math.max(1, signals.length)) * 65),
-        `Simulating ${i}/${signals.length} (${sig.symbol}, ${series.length} points)…`,
+        mode === "tpsl"
+          ? `Checking TP/SL ${i}/${signals.length}…`
+          : `Simulating ${i}/${signals.length}…`,
       )
     }
-    const lot = sig.lotSize ?? config.fixedLot
+    const lot = mode === "tpsl" ? 0.01 : (sig.lotSize ?? config.fixedLot)
     const sim = simulateTradeOnSeries(sig, series, config.strategy, lot)
     results.push(sim)
   }
