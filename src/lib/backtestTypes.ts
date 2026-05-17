@@ -1,27 +1,12 @@
 export type BacktestTimeframe = '1m' | '5m' | '15m' | '1h' | '1d'
-export type BacktestSizingMode = 'fixed_lot' | 'risk_percent'
-export type BacktestExecutionMode = 'tick_quotes' | 'minute_bars'
 
-export interface BacktestStrategyConfig {
-  breakevenAfterTp: number
-  partialClosePerTp: number
-  intrabarPriority: 'sl_first' | 'tp_first'
-}
-
-export interface BacktestRunConfig {
+export interface SimpleBacktestConfig {
   channelIds: string[]
-  /** Empty = all symbols in range; otherwise only these instruments. */
-  symbols: string[]
   dateFrom: string
   dateTo: string
-  timeframe: BacktestTimeframe
-  executionMode: BacktestExecutionMode
   initialBalance: number
-  currency: string
-  sizingMode: BacktestSizingMode
   fixedLot: number
-  riskPercent: number
-  strategy: BacktestStrategyConfig
+  timeframe?: BacktestTimeframe
 }
 
 export interface BacktestSummary {
@@ -60,7 +45,7 @@ export interface BacktestRunRow {
   progress_pct: number
   progress_message: string | null
   summary: BacktestSummary | null
-  config: BacktestRunConfig
+  config: SimpleBacktestConfig & Record<string, unknown>
   error_message: string | null
   created_at: string
   completed_at: string | null

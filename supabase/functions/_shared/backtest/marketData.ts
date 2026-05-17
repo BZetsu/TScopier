@@ -1,4 +1,4 @@
-import { MassiveClient } from "../massiveApi.ts"
+import { MassiveClient, MassiveApiError, sanitizeMarketDataErrorMessage } from "../massiveApi.ts"
 import type { PricePoint } from "./simulator.ts"
 import { barsToMidPoints, quotesToMidPoints } from "./simulator.ts"
 import { mapSymbolToMassive, timeframeToAgg } from "./symbolMap.ts"
@@ -19,6 +19,7 @@ export interface PreloadedMarketData {
   seriesBySymbol: Map<string, PricePoint[]>
   apiCalls: number
   fetchLog: string[]
+  rateLimitHits: number
 }
 
 function signalWindowForSymbol(
@@ -41,9 +42,49 @@ function signalWindowForSymbol(
   }
 }
 
+async function fetchBarsForSymbol(
+  massive: MassiveClient,
+  mapped: { massiveTicker: string; assetClass: string },
+  multiplier: number,
+  timespan: "minute" | "hour" | "day",
+  fromMs: number,
+  toMs: number,
+): Promise<{ pts: PricePoint[]; apiCalls: number; log: string; rateLimited: boolean }> {
+  const rangeLabel = `${new Date(fromMs).toISOString().slice(0, 10)}→${new Date(toMs).toISOString().slice(0, 10)}`
+  try {
+    const bars = await massive.getAggregates(
+      mapped.massiveTicker,
+      multiplier,
+      timespan,
+      fromMs,
+      toMs,
+      { sort: "asc", maxPages: 12 },
+    )
+    const pts = barsToMidPoints(bars)
+    return {
+      pts,
+      apiCalls: 1,
+      log: `${pts.length} bars (${mapped.massiveTicker}, ${rangeLabel})`,
+      rateLimited: false,
+    }
+  } catch (e) {
+    const status = e instanceof MassiveApiError ? e.status : 0
+    const rateLimited = status === 429
+    const short = rateLimited
+      ? "rate limited — skipped (other symbols still run)"
+      : sanitizeMarketDataErrorMessage(e instanceof Error ? e.message : String(e))
+    return {
+      pts: [],
+      apiCalls: rateLimited ? 0 : 1,
+      log: `fetch failed: ${short}`,
+      rateLimited,
+    }
+  }
+}
+
 /**
  * Fetch OHLC or forex quotes from Massive for every symbol before simulation.
- * Window is tightened per symbol around actual signal timestamps.
+ * Per-symbol failures (including rate limits) do not abort the whole run.
  */
 export async function preloadMarketData(
   massive: MassiveClient,
@@ -58,6 +99,7 @@ export async function preloadMarketData(
   const seriesBySymbol = new Map<string, PricePoint[]>()
   const fetchLog: string[] = []
   let apiCalls = 0
+  let rateLimitHits = 0
   const lowRatePlan = callsPerMinute <= 5
 
   for (const symbol of symbols) {
@@ -83,8 +125,6 @@ export async function preloadMarketData(
       fetchLog.push(`${symbol}: tick quotes skipped (plan ≤${callsPerMinute}/min — using OHLC bars)`)
     }
 
-    const rangeLabel = `${new Date(fromMs).toISOString().slice(0, 10)}→${new Date(toMs).toISOString().slice(0, 10)}`
-
     if (useQuotes) {
       const quoteTicker = toMassiveQuoteTicker(mapped.massiveTicker)
       try {
@@ -96,39 +136,31 @@ export async function preloadMarketData(
         )
         apiCalls += 1
         pts = quotesToMidPoints(quotes)
-        fetchLog.push(`${symbol}: ${pts.length} quotes (${quoteTicker}, ${rangeLabel})`)
-        if (pts.length === 0) throw new Error("empty quotes")
+        fetchLog.push(`${symbol}: ${pts.length} quotes (${quoteTicker})`)
+        if (pts.length === 0) {
+          const fallback = await fetchBarsForSymbol(massive, mapped, multiplier, timespan, fromMs, toMs)
+          apiCalls += fallback.apiCalls
+          pts = fallback.pts
+          if (fallback.rateLimited) rateLimitHits++
+          fetchLog.push(`${symbol}: ${fallback.log}`)
+        }
       } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e)
-        fetchLog.push(`${symbol}: quotes failed (${msg}), using bars`)
-        const bars = await massive.getAggregates(
-          mapped.massiveTicker,
-          multiplier,
-          timespan,
-          fromMs,
-          toMs,
-          { sort: "asc", maxPages: 12 },
-        )
-        apiCalls += 1
-        pts = barsToMidPoints(bars)
-        fetchLog.push(`${symbol}: ${pts.length} bars (${mapped.massiveTicker}, ${rangeLabel})`)
+        const fallback = await fetchBarsForSymbol(massive, mapped, multiplier, timespan, fromMs, toMs)
+        apiCalls += fallback.apiCalls
+        pts = fallback.pts
+        if (fallback.rateLimited) rateLimitHits++
+        fetchLog.push(`${symbol}: quotes unavailable, ${fallback.log}`)
       }
     } else {
-      const bars = await massive.getAggregates(
-        mapped.massiveTicker,
-        multiplier,
-        timespan,
-        fromMs,
-        toMs,
-        { sort: "asc", maxPages: 12 },
-      )
-      apiCalls += 1
-      pts = barsToMidPoints(bars)
-      fetchLog.push(`${symbol}: ${pts.length} bars (${mapped.massiveTicker}, ${rangeLabel})`)
+      const result = await fetchBarsForSymbol(massive, mapped, multiplier, timespan, fromMs, toMs)
+      apiCalls += result.apiCalls
+      pts = result.pts
+      if (result.rateLimited) rateLimitHits++
+      fetchLog.push(`${symbol}: ${result.log}`)
     }
 
     seriesBySymbol.set(symbol, pts)
   }
 
-  return { seriesBySymbol, apiCalls, fetchLog }
+  return { seriesBySymbol, apiCalls, fetchLog, rateLimitHits }
 }

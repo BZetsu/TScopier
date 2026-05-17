@@ -4,6 +4,8 @@ exports.UserListener = void 0;
 const events_1 = require("telegram/events");
 const tl_1 = require("telegram/tl");
 const telegramClient_1 = require("./telegramClient");
+const backtestSignal_1 = require("./backtestSignal");
+const tradableSymbol_1 = require("./tradableSymbol");
 const SUPABASE_URL = process.env.SUPABASE_URL ?? '';
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? '';
 const PARSE_SIGNAL_URL = process.env.PARSE_SIGNAL_URL ?? (SUPABASE_URL ? `${SUPABASE_URL.replace(/\/$/, '')}/functions/v1/parse-signal` : '');
@@ -53,9 +55,7 @@ function looksLikeTradingSignal(text, isReply) {
         .trim();
     if (!normalized)
         return false;
-    // Common instrument patterns: EURUSD, XAUUSD, BTCUSDT, US30, etc.
-    const hasInstrument = /\b[a-z]{6,7}\b/.test(normalized) ||
-        /\b(xauusd|xagusd|us30|nas100|spx500|ger40|uk100|btcusdt|ethusdt)\b/.test(normalized);
+    const hasInstrument = (0, tradableSymbol_1.hasTradableInstrumentInText)(text);
     const hasDirectionOrAction = /\b(buy|sell|long|short|close|tp|take profit|sl|stop loss|breakeven|be)\b/.test(normalized);
     const hasPriceContext = /\b\d{1,5}(?:\.\d{1,5})\b/.test(normalized) ||
         /\b(entry|zone|between|above|below|now)\b/.test(normalized);
@@ -350,7 +350,7 @@ class UserListener {
             throw new Error(error.message);
         if (!row)
             throw new Error('Channel not found');
-        const collected = await this.fetchMessagesBetween(row, fromMs, toMs);
+        const collected = await this.fetchMessagesBetweenForBacktest(row, fromMs, toMs);
         const messages = [];
         for (const m of collected) {
             const raw = String(m.text ?? m.message ?? '').trim();
@@ -367,6 +367,128 @@ class UserListener {
             });
         }
         return { messages, messages_scanned: collected.length };
+    }
+    /**
+     * Sync Telegram history into backtest_channel_signals (parse + upsert on worker).
+     */
+    async syncBacktestSignals(channelRowId, fromIso, toIso) {
+        const fromMs = new Date(fromIso).getTime();
+        const toMs = new Date(toIso.includes('T') ? toIso : `${toIso}T23:59:59.999Z`).getTime();
+        if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || toMs < fromMs) {
+            throw new Error('Invalid backtest date range');
+        }
+        if (!PARSE_SIGNAL_URL || !PARSE_SIGNAL_AUTH_KEY) {
+            throw new Error('PARSE_SIGNAL_URL / service role key not configured on worker');
+        }
+        const { data: row, error } = await this.supabase
+            .from('telegram_channels')
+            .select('id, channel_id, channel_username, last_seen_message_id')
+            .eq('user_id', this.userId)
+            .eq('id', channelRowId)
+            .eq('is_active', true)
+            .maybeSingle();
+        if (error)
+            throw new Error(error.message);
+        if (!row)
+            throw new Error('Channel not found');
+        const collected = await this.fetchMessagesBetweenForBacktest(row, fromMs, toMs);
+        const errors = [];
+        const rangeFromIso = new Date(fromMs).toISOString();
+        const rangeToIso = new Date(toMs).toISOString();
+        const { error: delErr } = await this.supabase
+            .from('backtest_channel_signals')
+            .delete()
+            .eq('user_id', this.userId)
+            .eq('channel_id', channelRowId)
+            .eq('source', 'telegram_import')
+            .gte('signal_at', rangeFromIso)
+            .lte('signal_at', rangeToIso);
+        if (delErr)
+            errors.push(`clear prior import: ${delErr.message}`);
+        let imported = 0;
+        const parseDelayMs = Math.max(0, Number(process.env.BACKTEST_PARSE_DELAY_MS ?? 100));
+        for (const m of collected) {
+            const raw = String(m.text ?? m.message ?? '').trim();
+            if (!raw)
+                continue;
+            const epoch = this.messageEpochSec(m);
+            const signalAt = epoch > 0
+                ? new Date(epoch * 1000).toISOString()
+                : new Date().toISOString();
+            const telegramMessageId = String(m.id);
+            try {
+                const parsed = await this.parseSignalForBacktest(channelRowId, raw);
+                if (!parsed)
+                    continue;
+                const tradeable = (0, backtestSignal_1.tradeableFromParsed)(parsed);
+                if (!tradeable)
+                    continue;
+                const { error: upsertErr } = await this.supabase.rpc('upsert_backtest_channel_signal', {
+                    p_user_id: this.userId,
+                    p_channel_id: channelRowId,
+                    p_signal_id: null,
+                    p_telegram_message_id: telegramMessageId,
+                    p_source: 'telegram_import',
+                    p_direction: tradeable.direction,
+                    p_symbol: tradeable.symbol,
+                    p_entry_price: tradeable.entry_price,
+                    p_sl: tradeable.sl,
+                    p_tp_levels: tradeable.tp_levels,
+                    p_lot_size: tradeable.lot_size,
+                    p_raw_message: raw,
+                    p_parsed_data: parsed,
+                    p_signal_at: signalAt,
+                });
+                if (upsertErr) {
+                    errors.push(upsertErr.message);
+                    continue;
+                }
+                imported++;
+            }
+            catch (e) {
+                errors.push(e instanceof Error ? e.message : String(e));
+            }
+            if (parseDelayMs > 0) {
+                await new Promise(r => setTimeout(r, parseDelayMs));
+            }
+        }
+        if (collected.length === 0) {
+            errors.push('0 messages from Telegram — check session and channel access');
+        }
+        else if (imported === 0 && errors.length === 0) {
+            errors.push('No tradeable signals — messages need buy/sell, valid symbol, and SL or TP');
+        }
+        return { messages_scanned: collected.length, imported, errors };
+    }
+    async parseSignalForBacktest(channelRowId, rawMessage) {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort('parse-timeout'), 15000);
+        try {
+            const res = await fetch(PARSE_SIGNAL_URL, {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${PARSE_SIGNAL_AUTH_KEY}`,
+                    apikey: PARSE_SIGNAL_API_KEY,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    parse_only: true,
+                    channel_id: channelRowId,
+                    raw_message: rawMessage,
+                }),
+                signal: controller.signal,
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                throw new Error(data.error ?? `parse-signal ${res.status}`);
+            }
+            if (data.error)
+                throw new Error(data.error);
+            return data.parsed ?? null;
+        }
+        finally {
+            clearTimeout(timeout);
+        }
     }
     // ── live message handling ─────────────────────────────────────────────
     async handleMessage(event) {
@@ -732,7 +854,11 @@ class UserListener {
         }
         return 0;
     }
-    async fetchMessagesBetween(row, fromMs, toMs) {
+    /** All non-empty messages in range (no trading heuristic) — used for backtest import only. */
+    async fetchMessagesBetweenForBacktest(row, fromMs, toMs) {
+        return this.fetchMessagesBetween(row, fromMs, toMs, { forBacktest: true });
+    }
+    async fetchMessagesBetween(row, fromMs, toMs, opts) {
         const fromSec = Math.floor(fromMs / 1000);
         const toSec = Math.floor(toMs / 1000);
         let peer;
@@ -771,9 +897,11 @@ class UserListener {
                 const raw = String(m.text ?? m.message ?? '').trim();
                 if (!raw)
                     continue;
-                const isReply = !!m.replyTo;
-                if (!looksLikeTradingSignal(raw, isReply))
-                    continue;
+                if (!opts?.forBacktest) {
+                    const isReply = !!m.replyTo;
+                    if (!looksLikeTradingSignal(raw, isReply))
+                        continue;
+                }
                 collected.push(m);
             }
             offsetId = Number(batch[batch.length - 1].id);

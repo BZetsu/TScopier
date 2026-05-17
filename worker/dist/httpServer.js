@@ -15,6 +15,7 @@ const PORT = parseInt(process.env.WORKER_PORT ?? '8080', 10);
  *  POST /auth/list_channels { user_id }
  *  POST /auth/backfill_channel_history { user_id, channel_row_id, days? }
  *  POST /auth/import_backtest_history { user_id, channel_row_id, from, to }
+ *  POST /auth/backtest_sync_signals { user_id, channel_row_id, from, to }
  */
 function startHttpServer(authService, sessionManager) {
     if (!INTERNAL_TOKEN) {
@@ -93,6 +94,19 @@ function startHttpServer(authService, sessionManager) {
                 }
                 catch (err) {
                     const msg = err instanceof Error ? err.message : 'Failed to import backtest history';
+                    return sendJson(res, 400, { error: msg });
+                }
+            }
+            if (url === '/auth/backtest_sync_signals') {
+                if (!body.user_id || !body.channel_row_id || !body.from || !body.to) {
+                    return sendJson(res, 400, { error: 'user_id, channel_row_id, from, and to are required' });
+                }
+                try {
+                    const result = await sessionManager.syncBacktestSignals(body.user_id, body.channel_row_id, body.from, body.to);
+                    return sendJson(res, 200, result);
+                }
+                catch (err) {
+                    const msg = err instanceof Error ? err.message : 'Failed to sync backtest signals';
                     return sendJson(res, 400, { error: msg });
                 }
             }

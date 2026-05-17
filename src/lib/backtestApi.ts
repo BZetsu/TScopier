@@ -1,9 +1,9 @@
 import { supabase } from './supabase'
 import type {
   BacktestEquityRow,
-  BacktestRunConfig,
   BacktestRunRow,
   BacktestTradeRow,
+  SimpleBacktestConfig,
 } from './backtestTypes'
 
 async function call<T>(body: Record<string, unknown>): Promise<T> {
@@ -43,43 +43,9 @@ async function call<T>(body: Record<string, unknown>): Promise<T> {
   return data as T
 }
 
-export interface BacktestImportMeta {
-  imported: number
-  messages_scanned: number
-  parse_attempted: number
-  parse_tradeable: number
-  lenient_parsed?: number
-  errors: string[]
-}
-
-export interface BacktestPreviewResult {
-  tradeable_count: number
-  stored_count: number
-  available_symbols?: string[]
-  symbols_filter?: string[]
-  massive_configured: boolean
-  massive_calls_per_minute?: number
-  massive_probe?: { ok: boolean; error?: string; bars?: number }
-  signal_source?: string
-  copier_isolated?: boolean
-  import?: BacktestImportMeta | null
-}
-
 export const backtestApi = {
-  listRuns(): Promise<{ runs: BacktestRunRow[] }> {
-    return call({ action: 'list' })
-  },
-
-  preview(config: BacktestRunConfig, opts?: { importTelegram?: boolean }): Promise<BacktestPreviewResult> {
-    return call({
-      action: 'preview',
-      config,
-      import_telegram: opts?.importTelegram === true,
-    })
-  },
-
-  createRun(name: string, config: BacktestRunConfig): Promise<{ run_id: string }> {
-    return call({ action: 'create', name, config })
+  run(config: SimpleBacktestConfig): Promise<{ run_id: string }> {
+    return call({ action: 'run', config })
   },
 
   getRun(runId: string): Promise<{
