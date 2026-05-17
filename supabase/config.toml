@@ -11,3 +11,6 @@ verify_jwt = false
 
 [functions.backtest-run]
 verify_jwt = false
+
+[functions.parse-signal]
+verify_jwt = false
