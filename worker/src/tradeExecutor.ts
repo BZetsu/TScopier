@@ -27,6 +27,9 @@ import {
   type PlannerResult,
   type VirtualPendingLeg,
 } from './manualPlanner'
+import { findActiveNewsBlackout } from './newsTrading/blackout'
+import { getCalendarEventsCached } from './newsTrading/calendarProvider'
+import { isNewsTradingEnabled } from './newsTrading/settings'
 import { autoManagementTradeSnapshot } from './autoManagement'
 import {
   filterTradesWithinPipsOfReference,
@@ -2015,6 +2018,20 @@ export class TradeExecutor {
       const already = await this.hasOpenTradeForSymbol(broker.id, symbol)
       if (already) {
         await this.logSendSkipped(signal, broker, 'add_new_trades_to_existing=false', { symbol })
+        return {}
+      }
+    }
+
+    if (isManual && !isNewsTradingEnabled(manual)) {
+      const events = await getCalendarEventsCached()
+      const blackout = findActiveNewsBlackout(events, manual, symbol)
+      if (blackout) {
+        await this.logSendSkipped(signal, broker, 'filtered_news', {
+          symbol,
+          phase: blackout.phase,
+          event: blackout.event.event,
+          currency: blackout.event.currency,
+        })
         return {}
       }
     }

@@ -191,9 +191,11 @@ const DEFAULT_MANUAL_SETTINGS: ManualSettings = {
   trade_end_time: '23:59',
   days_filter_enabled: false,
   trade_days: [1, 2, 3, 4, 5],
-  allow_high_impact_news: false,
-  close_before_news_minutes: 10,
-  resume_after_news_minutes: 10,
+  news_trading_enabled: true,
+  news_avoid_impacts: ['high'],
+  allow_high_impact_news: true,
+  close_before_news_minutes: 30,
+  resume_after_news_minutes: 15,
 }
 
 /** Split `total` across `count` slots as non-negative integers that sum exactly to `total`. */
@@ -322,6 +324,34 @@ function normalizeManualSettings(raw: unknown): ManualSettings {
       if (peRaw <= 0) return 0
       return Math.max(1, Math.min(24, Math.floor(peRaw)))
     })(),
+    news_trading_enabled: (() => {
+      if (j.news_trading_enabled === true) return true
+      if (j.news_trading_enabled === false) return false
+      return j.allow_high_impact_news === true
+    })(),
+    news_avoid_impacts: (() => {
+      const raw = j.news_avoid_impacts
+      if (Array.isArray(raw)) {
+        const valid = raw.filter(
+          (i): i is 'high' | 'medium' | 'low' => i === 'high' || i === 'medium' || i === 'low',
+        )
+        if (valid.length) return valid
+      }
+      return DEFAULT_MANUAL_SETTINGS.news_avoid_impacts ?? ['high']
+    })(),
+    allow_high_impact_news: (() => {
+      if (j.news_trading_enabled === true) return true
+      if (j.news_trading_enabled === false) return false
+      return j.allow_high_impact_news === true
+    })(),
+    close_before_news_minutes: Math.max(
+      0,
+      Math.min(24 * 60, Math.floor(readNumber('close_before_news_minutes', DEFAULT_MANUAL_SETTINGS.close_before_news_minutes ?? 30))),
+    ),
+    resume_after_news_minutes: Math.max(
+      0,
+      Math.min(24 * 60, Math.floor(readNumber('resume_after_news_minutes', DEFAULT_MANUAL_SETTINGS.resume_after_news_minutes ?? 15))),
+    ),
   }
 }
 
@@ -808,7 +838,10 @@ export function AccountConfigPage() {
         copier_mode: AI_CONFIGURATION_ENABLED && configDraft.mode === 'ai' ? 'ai' : 'manual',
         signal_channel_ids: channelIds,
         enforce_signal_channel_filter: restrictChannels,
-        manual_settings: configDraft.manualSettings,
+        manual_settings: {
+          ...configDraft.manualSettings,
+          allow_high_impact_news: configDraft.manualSettings.news_trading_enabled === true,
+        },
         channel_message_filters: channelMessageFilters,
       })
       .eq('id', configAccount.id)
@@ -1932,20 +1965,36 @@ export function AccountConfigPage() {
                         })()}
 
                         {activeManualSubTab === 'filters' && (
-                          <div className="space-y-4">
+                          <div className="space-y-6">
+                            <section className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-4 space-y-3">
+                              <div>
+                                <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">Time filter</p>
+                                <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
+                                  When enabled, signals are only copied inside the allowed window (broker server local time).
+                                </p>
+                              </div>
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                              <Select label="Time Filter" value={configDraft.manualSettings.time_filter_enabled ? 'yes' : 'no'} onChange={e => setManual({ time_filter_enabled: e.target.value === 'yes' })} options={[{ value: 'no', label: 'No' }, { value: 'yes', label: 'Yes' }]} />
+                              <Select label="Time filter" value={configDraft.manualSettings.time_filter_enabled ? 'yes' : 'no'} onChange={e => setManual({ time_filter_enabled: e.target.value === 'yes' })} options={[{ value: 'no', label: 'No — trade any time' }, { value: 'yes', label: 'Yes — restrict to window' }]} />
                               {configDraft.manualSettings.time_filter_enabled && (
-                                <Input label="Start Time" type="time" value={configDraft.manualSettings.trade_start_time ?? '00:00'} onChange={e => setManual({ trade_start_time: e.target.value })} />
+                                <Input label="Start time" type="time" value={configDraft.manualSettings.trade_start_time ?? '00:00'} onChange={e => setManual({ trade_start_time: e.target.value })} />
                               )}
                               {configDraft.manualSettings.time_filter_enabled && (
-                                <Input label="End Time" type="time" value={configDraft.manualSettings.trade_end_time ?? '23:59'} onChange={e => setManual({ trade_end_time: e.target.value })} />
+                                <Input label="End time" type="time" value={configDraft.manualSettings.trade_end_time ?? '23:59'} onChange={e => setManual({ trade_end_time: e.target.value })} />
                               )}
-                              <Select label="Days Filter" value={configDraft.manualSettings.days_filter_enabled ? 'yes' : 'no'} onChange={e => setManual({ days_filter_enabled: e.target.value === 'yes' })} options={[{ value: 'no', label: 'No' }, { value: 'yes', label: 'Yes' }]} />
                             </div>
+                            </section>
+
+                            <section className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-4 space-y-3">
+                              <div>
+                                <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">Days trading</p>
+                                <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
+                                  When enabled, copying only runs on the selected weekdays.
+                                </p>
+                              </div>
+                              <Select label="Days trading" value={configDraft.manualSettings.days_filter_enabled ? 'yes' : 'no'} onChange={e => setManual({ days_filter_enabled: e.target.value === 'yes' })} options={[{ value: 'no', label: 'No — all days' }, { value: 'yes', label: 'Yes — selected days only' }]} />
                             {configDraft.manualSettings.days_filter_enabled && (
                               <div>
-                                <p className="text-xs text-neutral-600 dark:text-neutral-400 mb-1">Days of the week</p>
+                                <p className="text-xs text-neutral-600 dark:text-neutral-400 mb-2">Trading days</p>
                                 <div className="flex flex-wrap gap-3">
                                   {[
                                     { label: 'Sunday', value: 0 },
@@ -1970,17 +2019,94 @@ export function AccountConfigPage() {
                                     </label>
                                   ))}
                                 </div>
+                                {(configDraft.manualSettings.trade_days ?? []).length === 0 ? (
+                                  <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
+                                    Select at least one day or disable days trading.
+                                  </p>
+                                ) : null}
                               </div>
                             )}
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                              <Select label="Allow High Impact News" value={configDraft.manualSettings.allow_high_impact_news ? 'yes' : 'no'} onChange={e => setManual({ allow_high_impact_news: e.target.value === 'yes' })} options={[{ value: 'no', label: 'No' }, { value: 'yes', label: 'Yes' }]} />
-                              {configDraft.manualSettings.allow_high_impact_news && (
-                                <Input label="Close Before News (min)" type="number" value={String(configDraft.manualSettings.close_before_news_minutes ?? 10)} onChange={e => setManual({ close_before_news_minutes: Number(e.target.value) })} />
+                            </section>
+
+                            <section className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-4 space-y-3">
+                              <div>
+                                <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">News trading</p>
+                                <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
+                                  Uses the economic calendar (FMP). <strong>Yes</strong> copies through news. <strong>No</strong> pauses copying around selected releases, closes open trades beforehand, and resumes after a cooldown.
+                                </p>
+                              </div>
+                              <Select
+                                label="News trading"
+                                value={configDraft.manualSettings.news_trading_enabled !== false ? 'yes' : 'no'}
+                                onChange={e => {
+                                  const enabled = e.target.value === 'yes'
+                                  setManual({
+                                    news_trading_enabled: enabled,
+                                    allow_high_impact_news: enabled,
+                                  })
+                                }}
+                                options={[
+                                  { value: 'yes', label: 'Yes — copy through news' },
+                                  { value: 'no', label: 'No — avoid news windows' },
+                                ]}
+                              />
+                              {configDraft.manualSettings.news_trading_enabled === false && (
+                                <>
+                                  <div>
+                                    <p className="text-xs text-neutral-600 dark:text-neutral-400 mb-2">Avoid news impact</p>
+                                    <div className="flex flex-wrap gap-4">
+                                      {(
+                                        [
+                                          { id: 'high' as const, label: 'High impact' },
+                                          { id: 'medium' as const, label: 'Medium impact' },
+                                          { id: 'low' as const, label: 'Low impact' },
+                                        ] as const
+                                      ).map((impact) => (
+                                        <label key={impact.id} className="text-sm text-neutral-700 dark:text-neutral-300 flex items-center gap-2">
+                                          <input
+                                            type="checkbox"
+                                            checked={(configDraft.manualSettings.news_avoid_impacts ?? ['high']).includes(impact.id)}
+                                            onChange={(e) => {
+                                              const prev = configDraft.manualSettings.news_avoid_impacts ?? ['high']
+                                              const next = e.target.checked
+                                                ? [...new Set([...prev, impact.id])]
+                                                : prev.filter((x) => x !== impact.id)
+                                              setManual({ news_avoid_impacts: next })
+                                            }}
+                                          />
+                                          {impact.label}
+                                        </label>
+                                      ))}
+                                    </div>
+                                    {(configDraft.manualSettings.news_avoid_impacts ?? []).length === 0 ? (
+                                      <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
+                                        Select at least one impact level or enable news trading.
+                                      </p>
+                                    ) : null}
+                                  </div>
+                                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                    <Input
+                                      label="Close all trades before news (minutes)"
+                                      type="number"
+                                      min={0}
+                                      value={String(configDraft.manualSettings.close_before_news_minutes ?? 30)}
+                                      onChange={e =>
+                                        setManual({ close_before_news_minutes: Math.max(0, Number(e.target.value) || 0) })
+                                      }
+                                    />
+                                    <Input
+                                      label="Resume copying after news (minutes)"
+                                      type="number"
+                                      min={0}
+                                      value={String(configDraft.manualSettings.resume_after_news_minutes ?? 15)}
+                                      onChange={e =>
+                                        setManual({ resume_after_news_minutes: Math.max(0, Number(e.target.value) || 0) })
+                                      }
+                                    />
+                                  </div>
+                                </>
                               )}
-                              {configDraft.manualSettings.allow_high_impact_news && (
-                                <Input label="Resume After News (min)" type="number" value={String(configDraft.manualSettings.resume_after_news_minutes ?? 10)} onChange={e => setManual({ resume_after_news_minutes: Number(e.target.value) })} />
-                              )}
-                            </div>
+                            </section>
                           </div>
                         )}
 

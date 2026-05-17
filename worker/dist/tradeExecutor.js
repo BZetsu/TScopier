@@ -3,6 +3,9 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.TradeExecutor = void 0;
 const metatraderapi_1 = require("./metatraderapi");
 const manualPlanner_1 = require("./manualPlanner");
+const blackout_1 = require("./newsTrading/blackout");
+const calendarProvider_1 = require("./newsTrading/calendarProvider");
+const settings_1 = require("./newsTrading/settings");
 const autoManagement_1 = require("./autoManagement");
 const closeWorseEntries_1 = require("./closeWorseEntries");
 const channelMessageFilters_1 = require("./channelMessageFilters");
@@ -1664,6 +1667,19 @@ class TradeExecutor {
             const already = await this.hasOpenTradeForSymbol(broker.id, symbol);
             if (already) {
                 await this.logSendSkipped(signal, broker, 'add_new_trades_to_existing=false', { symbol });
+                return {};
+            }
+        }
+        if (isManual && !(0, settings_1.isNewsTradingEnabled)(manual)) {
+            const events = await (0, calendarProvider_1.getCalendarEventsCached)();
+            const blackout = (0, blackout_1.findActiveNewsBlackout)(events, manual, symbol);
+            if (blackout) {
+                await this.logSendSkipped(signal, broker, 'filtered_news', {
+                    symbol,
+                    phase: blackout.phase,
+                    event: blackout.event.event,
+                    currency: blackout.event.currency,
+                });
                 return {};
             }
         }
