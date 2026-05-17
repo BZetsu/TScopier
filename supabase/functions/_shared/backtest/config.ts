@@ -9,13 +9,24 @@ export interface SimpleBacktestConfig {
   timeframe?: BacktestTimeframe
 }
 
-const DEFAULT_STRATEGY: BacktestRunConfig["strategy"] = {
+export type BacktestRunMode = "tpsl" | "simulate"
+
+const TPSL_STRATEGY: BacktestRunConfig["strategy"] = {
+  breakevenAfterTp: 0,
+  partialClosePerTp: 0,
+  intrabarPriority: "sl_first",
+}
+
+const SIMULATE_STRATEGY: BacktestRunConfig["strategy"] = {
   breakevenAfterTp: 1,
   partialClosePerTp: 0,
   intrabarPriority: "sl_first",
 }
 
-export function toBacktestRunConfig(cfg: SimpleBacktestConfig): BacktestRunConfig {
+export function toBacktestRunConfig(
+  cfg: SimpleBacktestConfig,
+  mode: BacktestRunMode = "simulate",
+): BacktestRunConfig {
   return {
     channelIds: cfg.channelIds,
     symbols: [],
@@ -28,7 +39,7 @@ export function toBacktestRunConfig(cfg: SimpleBacktestConfig): BacktestRunConfi
     sizingMode: "fixed_lot",
     fixedLot: cfg.fixedLot,
     riskPercent: 1,
-    strategy: DEFAULT_STRATEGY,
+    strategy: mode === "tpsl" ? TPSL_STRATEGY : SIMULATE_STRATEGY,
   }
 }
 

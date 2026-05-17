@@ -146,6 +146,11 @@ export function simulateTradeOnSeries(
         remainingFraction -= closeFrac
         tpIdx += 1
         base.tpsHit = tpIdx
+        const events = Array.isArray(base.details.tpEvents)
+          ? (base.details.tpEvents as Array<{ index: number; price: number; ts: number }>)
+          : []
+        events.push({ index: tpIdx, price: lvl.price, ts: p.ts })
+        base.details.tpEvents = events
 
         if (strategy.breakevenAfterTp > 0 && tpIdx >= strategy.breakevenAfterTp) {
           beActive = true

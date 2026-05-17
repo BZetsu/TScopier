@@ -4,10 +4,13 @@ import { loadBacktestSignals } from "./loadSignals.ts"
 import { preloadMarketData } from "./marketData.ts"
 import { runPortfolioSimulation } from "./portfolio.ts"
 import { simulateTradeOnSeries } from "./simulator.ts"
-import type { BacktestRunConfig, SimulatedTradeResult } from "./types.ts"
+import type { BacktestRunMode } from "./config.ts"
+import type { BacktestRunConfig, BacktestSummary, SimulatedTradeResult } from "./types.ts"
+import { tradePipPnlFromSim } from "./tpslSummary.ts"
 
 export interface BacktestRunContext {
   importWarnings?: string[]
+  mode?: BacktestRunMode
 }
 
 export async function executeBacktestRun(
@@ -18,6 +21,7 @@ export async function executeBacktestRun(
   config: BacktestRunConfig,
   ctx: BacktestRunContext = {},
 ): Promise<void> {
+  const mode = ctx.mode ?? "simulate"
   const updateProgress = async (pct: number, message: string) => {
     await supabase.from("backtest_runs").update({
       progress_pct: pct,
@@ -157,13 +161,22 @@ export async function executeBacktestRun(
     results.push(sim)
   }
 
-  await updateProgress(85, "Building portfolio…")
+  let summary: BacktestSummary
+  let equityCurve: Awaited<ReturnType<typeof runPortfolioSimulation>>["equityCurve"] = []
 
-  const portfolioInput = results.map((r) => ({
-    ...r,
-    channelName: channelNames.get(r.channelId) ?? "Channel",
-  }))
-  const { equityCurve, summary } = runPortfolioSimulation(config, portfolioInput)
+  if (mode === "simulate") {
+    await updateProgress(85, "Building portfolio…")
+    const portfolioInput = results.map((r) => ({
+      ...r,
+      channelName: channelNames.get(r.channelId) ?? "Channel",
+    }))
+    const portfolio = runPortfolioSimulation(config, portfolioInput)
+    equityCurve = portfolio.equityCurve
+    summary = portfolio.summary
+  } else {
+    await updateProgress(85, "Summarizing TP/SL results…")
+    summary = buildTpslSummary(config, results, channelNames)
+  }
 
   summary.massiveApiCalls = apiCalls
   summary.importWarnings = importWarnings.length ? importWarnings : undefined
@@ -200,7 +213,7 @@ export async function executeBacktestRun(
     }
   }
 
-  if (equityCurve.length > 0) {
+  if (mode === "simulate" && equityCurve.length > 0) {
     const eqRows = equityCurve.map((p) => ({
       run_id: runId,
       ts: p.ts.toISOString(),
