@@ -48,6 +48,7 @@ export interface BacktestImportMeta {
   messages_scanned: number
   parse_attempted: number
   parse_tradeable: number
+  lenient_parsed?: number
   ai_refined: number
   errors: string[]
 }
@@ -71,11 +72,12 @@ export const backtestApi = {
     return call({ action: 'list' })
   },
 
-  preview(config: BacktestRunConfig, opts?: { importTelegram?: boolean }): Promise<BacktestPreviewResult> {
+  preview(config: BacktestRunConfig, opts?: { importTelegram?: boolean; useAi?: boolean }): Promise<BacktestPreviewResult> {
     return call({
       action: 'preview',
       config,
       import_telegram: opts?.importTelegram === true,
+      use_ai: opts?.useAi === true,
     })
   },
 

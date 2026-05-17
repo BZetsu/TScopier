@@ -197,7 +197,7 @@ export function Backtest() {
     const t = window.setTimeout(() => {
       setPreviewLoading(true)
       backtestApi
-        .preview(config, { importTelegram: true })
+        .preview(config, { importTelegram: true, useAi: false })
         .then(setPreview)
         .catch(() => setPreview(null))
         .finally(() => setPreviewLoading(false))
@@ -492,9 +492,15 @@ export function Backtest() {
                     </p>
                     {preview.import ? (
                       <p className="text-neutral-500">
-                        Scanned {preview.import.messages_scanned} message(s), parsed{' '}
-                        {preview.import.parse_attempted}, stored {preview.import.imported}
-                        {preview.import.ai_refined > 0 ? ` (${preview.import.ai_refined} via AI)` : ''}
+                        Telegram: {preview.import.messages_scanned} message(s) in range · parsed{' '}
+                        {preview.import.parse_attempted} · stored {preview.import.imported}
+                        {(preview.import.lenient_parsed ?? 0) > 0
+                          ? ` (${preview.import.lenient_parsed} lenient)`
+                          : ''}
+                        {preview.import.ai_refined > 0 ? ` · ${preview.import.ai_refined} AI` : ''}
+                        {preview.import.messages_scanned > preview.import.parse_attempted
+                          ? ' — run backtest for full OpenAI refine'
+                          : ''}
                       </p>
                     ) : null}
                     {preview.import?.errors?.length ? (

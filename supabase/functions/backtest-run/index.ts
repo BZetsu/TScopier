@@ -96,6 +96,7 @@ Deno.serve(async (req: Request) => {
           channelIds,
           cfg.dateFrom,
           cfg.dateTo,
+          { useAi: body.use_ai === true },
         )
       }
 
@@ -227,6 +228,7 @@ Deno.serve(async (req: Request) => {
           channelIds,
           cfg.dateFrom,
           cfg.dateTo,
+          { useAi: true },
         )
         if (imp.errors.length) {
           console.warn("[backtest-run] telegram import warnings:", imp.errors.join("; "))

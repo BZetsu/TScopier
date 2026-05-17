@@ -599,10 +599,10 @@ function parseSimpleSignal(
   if (!instrument) return null
 
   const hasInstrumentContext =
+    isTradableInstrumentSymbol(instrument) ||
     /\b(gold|xau|xauusd|btc|bitcoin|btcusd|btcusdt|eth|ethereum|silver|eur|gbp)\b/i.test(text) ||
     /\bEUR\/USD|EURUSD|GBPUSD|USDJPY|XAUUSD|BTCUSD|BTCUSDT\b/i.test(message) ||
-    /\b(us30|nas100|ger40|uk100|ustec|spx500)\b/i.test(text) ||
-    /^[A-Z]{4,}$/i.test(instrument.trim())
+    /\b(us30|nas100|ger40|uk100|ustec|spx500)\b/i.test(text)
 
   if (!hasInstrumentContext) return null
 

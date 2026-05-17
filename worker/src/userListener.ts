@@ -439,7 +439,7 @@ export class UserListener {
     if (error) throw new Error(error.message)
     if (!row) throw new Error('Channel not found')
 
-    const collected = await this.fetchMessagesBetween(row as ChannelRow, fromMs, toMs)
+    const collected = await this.fetchMessagesBetweenForBacktest(row as ChannelRow, fromMs, toMs)
     const messages: Array<{ telegram_message_id: string; raw_message: string; signal_at: string }> = []
 
     for (const m of collected) {
@@ -865,10 +865,20 @@ export class UserListener {
     return 0
   }
 
+  /** All non-empty messages in range (no trading heuristic) — used for backtest import only. */
+  private async fetchMessagesBetweenForBacktest(
+    row: ChannelRow,
+    fromMs: number,
+    toMs: number,
+  ): Promise<MessageLike[]> {
+    return this.fetchMessagesBetween(row, fromMs, toMs, { forBacktest: true })
+  }
+
   private async fetchMessagesBetween(
     row: ChannelRow,
     fromMs: number,
     toMs: number,
+    opts?: { forBacktest?: boolean },
   ): Promise<MessageLike[]> {
     const fromSec = Math.floor(fromMs / 1000)
     const toSec = Math.floor(toMs / 1000)
@@ -908,8 +918,10 @@ export class UserListener {
         }
         const raw = String(m.text ?? m.message ?? '').trim()
         if (!raw) continue
-        const isReply = !!m.replyTo
-        if (!looksLikeTradingSignal(raw, isReply)) continue
+        if (!opts?.forBacktest) {
+          const isReply = !!m.replyTo
+          if (!looksLikeTradingSignal(raw, isReply)) continue
+        }
         collected.push(m)
       }
 
