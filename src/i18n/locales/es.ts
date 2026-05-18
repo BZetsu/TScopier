@@ -169,6 +169,8 @@ export const es: Translations = {
     totalBalance: 'Balance total',
     acrossAccounts: 'En {count} cuenta(s) conectada(s)',
     todaysProfit: 'Beneficio de hoy',
+    todaysProfitHint:
+      'P/L realizado (beneficio + swap + comisiones) de operaciones cerradas desde medianoche local, más P/L flotante de posiciones abiertas cuando el bróker está conectado. Tu bróker puede usar hora del servidor u otra ventana diaria.',
     tradesTakenToday: 'Operaciones hoy',
     noClosedTradesToday: 'Sin operaciones cerradas hoy',
     openPnl: 'PnL abierto',

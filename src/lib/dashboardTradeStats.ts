@@ -58,6 +58,45 @@ export function sumTradeableClosedProfitInRange(
     .reduce((sum, t) => sum + netClosedLegProfit(t), 0)
 }
 
+/** Local calendar midnight → next midnight (browser timezone). */
+export function getLocalCalendarDayBounds(ref = new Date()): {
+  todayStart: Date
+  tomorrowStart: Date
+  yesterdayStart: Date
+} {
+  const todayStart = new Date(ref)
+  todayStart.setHours(0, 0, 0, 0)
+  const tomorrowStart = new Date(todayStart)
+  tomorrowStart.setDate(tomorrowStart.getDate() + 1)
+  const yesterdayStart = new Date(todayStart)
+  yesterdayStart.setDate(yesterdayStart.getDate() - 1)
+  return { todayStart, tomorrowStart, yesterdayStart }
+}
+
+export function isTimestampInRange(
+  iso: string | null | undefined,
+  start: Date,
+  end: Date,
+): boolean {
+  if (!iso) return false
+  const ts = new Date(iso).getTime()
+  return Number.isFinite(ts) && ts >= start.getTime() && ts < end.getTime()
+}
+
+/**
+ * Dashboard "Today's profit": realized closed P/L for the local calendar day,
+ * plus live open (floating) P/L when connected — closer to MT5 "daily" figures.
+ */
+export function computeTodaysProfit(
+  realizedClosedToday: number,
+  liveOpenPnl?: number | null,
+): number {
+  const realized = Number.isFinite(realizedClosedToday) ? realizedClosedToday : 0
+  const open =
+    liveOpenPnl != null && Number.isFinite(liveOpenPnl) ? liveOpenPnl : 0
+  return realized + open
+}
+
 /** Closed buy/sell positions that finished in the window (by `closed_at`). */
 export function countClosedTradeOutcomesInRange(
   rows: TradeStatsRow[],

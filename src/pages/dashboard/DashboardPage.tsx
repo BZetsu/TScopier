@@ -15,7 +15,10 @@ import { Toggle } from '../../components/ui/Toggle'
 import { metatraderApi, type MtTrade } from '../../lib/metatraderapi'
 import {
   computeLinkedAccountPerformanceMap,
+  computeTodaysProfit,
   countClosedTradeOutcomesInRange,
+  getLocalCalendarDayBounds,
+  isTimestampInRange,
   isTradeableClosedRow,
   netClosedLegProfit,
   sumTradeableClosedProfitInRange,
@@ -337,8 +340,8 @@ function mergeDashboardStats(
     openPnl: keepNum(prev.openPnl, next.openPnl),
     openPositions: keepOpenCount(prev.openPositions, next.openPositions),
     openTrades: keepOpenCount(prev.openTrades, next.openTrades),
-    todayProfit: keepNum(prev.todayProfit, next.todayProfit),
-    yesterdayProfit: keepNum(prev.yesterdayProfit, next.yesterdayProfit),
+    todayProfit: Number.isFinite(next.todayProfit) ? next.todayProfit : prev.todayProfit,
+    yesterdayProfit: Number.isFinite(next.yesterdayProfit) ? next.yesterdayProfit : prev.yesterdayProfit,
     tradesTaken: keepNum(prev.tradesTaken, next.tradesTaken),
     tradesWon: keepNum(prev.tradesWon, next.tradesWon),
     tradesLost: keepNum(prev.tradesLost, next.tradesLost),
@@ -576,13 +579,7 @@ export function DashboardPage() {
       liveBrokerStateRef.current = {}
     }
     try {
-    const now = new Date()
-    const todayStart = new Date(now)
-    todayStart.setHours(0, 0, 0, 0)
-    const tomorrowStart = new Date(todayStart)
-    tomorrowStart.setDate(tomorrowStart.getDate() + 1)
-    const yesterdayStart = new Date(todayStart)
-    yesterdayStart.setDate(yesterdayStart.getDate() - 1)
+    const { todayStart, tomorrowStart, yesterdayStart } = getLocalCalendarDayBounds()
 
     const [brokerRes, channelsRes, tradesRes, todaySignalsRes, yesterdaySignalsRes, logsRes, allSignalsRes, channelsMetaRes, aiLogsRes] = await Promise.all([
       supabase.from('broker_accounts').select('*').eq('user_id', user!.id),
@@ -618,11 +615,8 @@ export function DashboardPage() {
     const todaySignals = (todaySignalsRes.data ?? []) as { status: string }[]
     const copiedToday = todaySignals.filter(s => s.status === 'executed' || s.status === 'parsed').length
     const openPnlFromTrades = openTrades.reduce((sum, t) => sum + (t.profit ?? 0), 0)
-    const isInRange = (dateString: string | null | undefined, start: Date, end: Date) => {
-      if (!dateString) return false
-      const ts = new Date(dateString).getTime()
-      return Number.isFinite(ts) && ts >= start.getTime() && ts < end.getTime()
-    }
+    const isInRange = (dateString: string | null | undefined, start: Date, end: Date) =>
+      isTimestampInRange(dateString, start, end)
 
     // Prefer live MT trades when we have a cached snapshot; otherwise use the
     // local `trades` table. The live snapshot is refreshed in the background.
@@ -681,7 +675,7 @@ export function DashboardPage() {
     const worstTradeProfit = negToday.length ? Math.min(...negToday) : 0
     const yesterdayWorstTradeProfit = negYest.length ? Math.min(...negYest) : 0
 
-    const todayProfit = sumTradeableClosedProfitInRange(sourceTrades, closedTodayForStats)
+    const realizedToday = sumTradeableClosedProfitInRange(sourceTrades, closedTodayForStats)
     const yesterdayProfit = sumTradeableClosedProfitInRange(sourceTrades, closedYesterdayForStats)
     const mostTradedAsset = (() => {
       const counts = new Map<string, number>()
@@ -833,6 +827,10 @@ export function DashboardPage() {
       account => isBrokerLiveConnected(account) && mergedBalances[account.id]?.open_pnl != null,
     )
     const hasAnyBrokerOpenTradesFromSummary = hasConnectedBrokerOpenTrades(brokerAccounts, mergedBalances)
+    const todayProfit = computeTodaysProfit(
+      realizedToday,
+      hasAnyBrokerOpenPnl ? totalLiveOpenPnl : null,
+    )
 
     const resolvedOpenTradesCount =
       hasAnyBrokerOpenTradesFromSummary ? totalLiveOpenTradesFromSummary : openTrades.length
@@ -1015,17 +1013,10 @@ export function DashboardPage() {
     setChartTrades(prev => preferChartTrades(prev, chartNext))
     if (trades.length === 0) return
 
-    const today0 = new Date()
-    today0.setHours(0, 0, 0, 0)
-    const tomorrow0 = new Date(today0)
-    tomorrow0.setDate(tomorrow0.getDate() + 1)
-    const yesterday0 = new Date(today0)
-    yesterday0.setDate(yesterday0.getDate() - 1)
-    const inRange = (iso: string | null, start: Date, end: Date) => {
-      if (!iso) return false
-      const ts = new Date(iso).getTime()
-      return Number.isFinite(ts) && ts >= start.getTime() && ts < end.getTime()
-    }
+    const { todayStart: today0, tomorrowStart: tomorrow0, yesterdayStart: yesterday0 } =
+      getLocalCalendarDayBounds()
+    const inRange = (iso: string | null, start: Date, end: Date) =>
+      isTimestampInRange(iso, start, end)
 
     const today = trades.filter(t => inRange(t.opened_at, today0, tomorrow0))
     const yesterday = trades.filter(t => inRange(t.opened_at, yesterday0, today0))
@@ -1074,7 +1065,10 @@ export function DashboardPage() {
       yesterdayBestTradeProfit: posYestLeg.length ? Math.max(...posYestLeg) : 0,
       worstTradeProfit: negTodayLeg.length ? Math.min(...negTodayLeg) : 0,
       yesterdayWorstTradeProfit: negYestLeg.length ? Math.min(...negYestLeg) : 0,
-      todayProfit: sumTradeableClosedProfitInRange(tradeRows, closedTodayForStats),
+      todayProfit: computeTodaysProfit(
+        sumTradeableClosedProfitInRange(tradeRows, closedTodayForStats),
+        statsRef.current.openPnl,
+      ),
       yesterdayProfit: sumTradeableClosedProfitInRange(tradeRows, closedYesterdayForStats),
       mostTradedAsset: topSymbol(today),
       yesterdayMostTradedAsset: topSymbol(yesterday),
@@ -1340,6 +1334,7 @@ export function DashboardPage() {
           />
           <StatBlock
             label={t.dashboard.todaysProfit}
+            labelHint={t.dashboard.todaysProfitHint}
             value={formatMoney(stats.todayProfit)}
             sub={formatVsYesterdayMoney(stats.todayProfit, stats.yesterdayProfit)}
             valueColor={
@@ -1616,8 +1611,9 @@ export function DashboardPage() {
   )
 }
 
-function StatBlock({ label, value, sub, subColor, valueColor = 'text-neutral-900 dark:text-neutral-50' }: {
+function StatBlock({ label, labelHint, value, sub, subColor, valueColor = 'text-neutral-900 dark:text-neutral-50' }: {
   label: string
+  labelHint?: string
   value: string
   sub: ReactNode
   subColor: string
@@ -1625,7 +1621,15 @@ function StatBlock({ label, value, sub, subColor, valueColor = 'text-neutral-900
 }) {
   return (
     <div className="px-4 py-4 sm:px-6 sm:py-5">
-      <p className="text-xs sm:text-sm text-neutral-500 dark:text-neutral-400 mb-1.5 sm:mb-2">{label}</p>
+      <p
+        className="text-xs sm:text-sm text-neutral-500 dark:text-neutral-400 mb-1.5 sm:mb-2 inline-flex items-center gap-1"
+        title={labelHint}
+      >
+        {label}
+        {labelHint ? (
+          <Info className="w-3.5 h-3.5 shrink-0 opacity-60" aria-hidden />
+        ) : null}
+      </p>
       <p className={`text-xl sm:text-3xl font-semibold mb-1 sm:mb-1.5 ${valueColor}`}>{value}</p>
       {sub === '' ? null : typeof sub === 'string' ? (
         <p className={`text-xs ${subColor}`}>{sub}</p>
