@@ -45,6 +45,23 @@ export interface NavTranslations {
   collapseSidebar: string
   planFree: string
   settings: string
+  help: string
+  helpMenu: {
+    title: string
+    documentation: string
+    liveChat: string
+    whatsapp: string
+    telegram: string
+    status: string
+    statusOperational: string
+  }
+  userMenu: {
+    menuLabel: string
+    profileSettings: string
+    subscriptionBilling: string
+    affiliateProgram: string
+    signOut: string
+  }
 }
 
 export interface CommonTranslations {
@@ -78,6 +95,26 @@ export interface CommonTranslations {
 export interface PageMeta {
   title: string
   description: string
+}
+
+export interface DashboardLinkedAccountsTranslations {
+  title: string
+  subtitle: string
+  empty: string
+  colAccount: string
+  colBroker: string
+  colAccountType: string
+  colBalance: string
+  colPnl: string
+  colRoi: string
+  colWinRate: string
+  colDd: string
+  colStatus: string
+  unnamedAccount: string
+  statusActive: string
+  statusPaused: string
+  accountTypeLive: string
+  accountTypeDemo: string
 }
 
 export interface DashboardTranslations {
@@ -116,6 +153,7 @@ export interface DashboardTranslations {
   channelWorker: string
   noChannelWorkerLogs: string
   noData: string
+  linkedAccounts: DashboardLinkedAccountsTranslations
 }
 
 export interface CopierLogsTranslations {

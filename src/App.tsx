@@ -5,8 +5,6 @@ import { UserProfileProvider } from './context/UserProfileContext'
 import { AuthLayout } from './components/layout/AuthLayout'
 import { AppLayout } from './components/layout/AppLayout'
 import { ProtectedRoute } from './components/layout/ProtectedRoute'
-import { LoginPage } from './pages/auth/LoginPage'
-import { SignupPage } from './pages/auth/SignupPage'
 import { DashboardPage } from './pages/dashboard/DashboardPage'
 import { AccountConfigPage } from './pages/dashboard/AccountConfigPage'
 import { CopierEnginePage } from './pages/dashboard/CopierEnginePage'
@@ -38,10 +36,8 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
 
-          <Route element={<AuthLayout />}>
-            <Route path="/login" element={<LoginPage />} />
-            <Route path="/signup" element={<SignupPage />} />
-          </Route>
+          <Route path="/login" element={<AuthLayout />} />
+          <Route path="/signup" element={<AuthLayout />} />
 
           <Route
             element={

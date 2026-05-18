@@ -352,6 +352,7 @@ function seedLiveBrokerStateFromBalances(
 
 export function DashboardPage() {
   const t = useT()
+  const la = t.dashboard.linkedAccounts
   const { user } = useAuth()
   const { formatMoney, formatSignedMoney } = useFormatMoney()
   const navigate = useNavigate()
@@ -1434,8 +1435,8 @@ export function DashboardPage() {
         <div className="px-4 sm:px-5 py-4 border-b border-neutral-100 dark:border-neutral-800 flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <div>
-              <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">Linked Accounts</p>
-              <p className="text-xs text-neutral-400 dark:text-neutral-500">Connected broker accounts used by copier</p>
+              <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">{la.title}</p>
+              <p className="text-xs text-neutral-400 dark:text-neutral-500">{la.subtitle}</p>
             </div>
           </div>
           <button
@@ -1443,22 +1444,22 @@ export function DashboardPage() {
             className="flex items-center gap-1.5 px-3 py-1.5 border border-teal-500 dark:border-teal-600 text-teal-600 dark:text-teal-400 rounded-lg text-xs font-medium hover:bg-teal-50 dark:hover:bg-teal-950/50 transition-colors"
           >
             <Plus className="w-3.5 h-3.5" />
-            Add
+            {t.common.add}
           </button>
         </div>
 
         <div className="overflow-x-auto">
         <div className="min-w-[52rem] lg:min-w-0">
         <div className="hidden lg:grid grid-cols-9 gap-2 px-4 sm:px-5 py-3 border-b border-neutral-100 dark:border-neutral-800 text-xs font-medium text-neutral-400">
-          <span>Account</span>
-          <span>Broker</span>
-          <span>Account Type</span>
-          <span>Balance</span>
-          <span>PnL</span>
-          <span>ROI</span>
-          <span>WinRate</span>
-          <span>DD</span>
-          <span className="text-right">Status</span>
+          <span>{la.colAccount}</span>
+          <span>{la.colBroker}</span>
+          <span>{la.colAccountType}</span>
+          <span>{la.colBalance}</span>
+          <span>{la.colPnl}</span>
+          <span>{la.colRoi}</span>
+          <span>{la.colWinRate}</span>
+          <span>{la.colDd}</span>
+          <span className="text-right">{la.colStatus}</span>
         </div>
 
         {linkedAccounts.length === 0 && chartsEmpty ? (
@@ -1472,7 +1473,7 @@ export function DashboardPage() {
             ))}
           </div>
         ) : linkedAccounts.length === 0 ? (
-          <div className="px-5 py-8 text-sm text-neutral-400">No linked accounts yet.</div>
+          <div className="px-5 py-8 text-sm text-neutral-400">{la.empty}</div>
         ) : (
           <div className="divide-y divide-neutral-100 dark:divide-neutral-800"> 
             {linkedAccounts.map(account => (
@@ -1639,6 +1640,8 @@ function LinkedAccountRow({
   onToggleActive: (is_active: boolean) => void
   toggleDisabled?: boolean
 }) {
+  const t = useT()
+  const la = t.dashboard.linkedAccounts
   const { locale } = useLocale()
   const intlLocale = locale === 'en' ? undefined : locale
   const statusClass = account.is_active
@@ -1671,7 +1674,13 @@ function LinkedAccountRow({
         ? 'text-teal-700 dark:text-teal-300'
         : 'text-neutral-900 dark:text-neutral-50'
 
-  const accountLabel = account.label || 'Unnamed account'
+  const accountLabel = account.label || la.unnamedAccount
+  const accountTypeLabel =
+    accountType === 'Live'
+      ? la.accountTypeLive
+      : accountType === 'Demo'
+        ? la.accountTypeDemo
+        : accountType
   const roi = performance?.roi ?? null
   const winRate = performance?.winRate ?? null
   const maxDd = performance?.maxDrawdownPct ?? null
@@ -1689,7 +1698,7 @@ function LinkedAccountRow({
         <span className="text-[11px] font-medium text-primary-600 uppercase">{account.platform}</span>
       </div>
       <span className="text-sm font-medium text-neutral-900 dark:text-neutral-50">{brokerText}</span>
-      <span className={`text-sm font-semibold ${accountTypeClass}`}>{accountType}</span>
+      <span className={`text-sm font-semibold ${accountTypeClass}`}>{accountTypeLabel}</span>
       <span className="text-sm font-medium text-neutral-900 dark:text-neutral-50">{balanceText}</span>
       <span className={`text-sm font-semibold ${pnlColor}`}>
         {pnl >= 0 ? '+' : '-'}
@@ -1705,7 +1714,7 @@ function LinkedAccountRow({
           disabled={toggleDisabled}
         />
         <span className={`inline-flex items-center px-2.5 py-1 rounded-lg border text-xs font-semibold ${statusClass}`}>
-          {account.is_active ? 'Active' : 'Paused'}
+          {account.is_active ? la.statusActive : la.statusPaused}
         </span>
       </div>
     </div>
