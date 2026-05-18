@@ -7,6 +7,8 @@ export interface SimpleBacktestConfig {
   initialBalance: number
   fixedLot: number
   timeframe?: BacktestTimeframe
+  /** When set, only simulate these symbols (after profiling). */
+  symbols?: string[]
 }
 
 export interface BacktestSummary {
@@ -76,7 +78,12 @@ export interface BacktestTradeRow {
   tp_levels: number[]
   lot_size: number
   channel_id: string | null
-  details?: { tpEvents?: BacktestTpEvent[]; marketEntry?: boolean } | Record<string, unknown>
+  details?: {
+    tpEvents?: BacktestTpEvent[]
+    marketEntry?: boolean
+    /** Signal-style pip P/L from the simulator (supports partial TP legs). */
+    pipPnl?: number
+  } | Record<string, unknown>
 }
 
 export interface BacktestEquityRow {

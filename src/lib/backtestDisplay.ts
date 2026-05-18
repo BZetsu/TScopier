@@ -1,4 +1,18 @@
-import type { BacktestTradeRow } from './backtestTypes'
+import type { BacktestSummary, BacktestTradeRow } from './backtestTypes'
+import { computePipsFromSignalOutcome } from './backtestPip'
+
+export function parseSummary(raw: unknown): BacktestSummary | null {
+  if (!raw) return null
+  if (typeof raw === 'string') {
+    try {
+      return JSON.parse(raw) as BacktestSummary
+    } catch {
+      return null
+    }
+  }
+  if (typeof raw === 'object') return raw as BacktestSummary
+  return null
+}
 
 /** Hide raw Massive/Polygon trace rate-limit blobs in the UI. */
 export function sanitizeBacktestUserError(raw: string): string {
@@ -14,9 +28,6 @@ export function sanitizeBacktestUserError(raw: string): string {
 export function filterImportPreviewErrors(errors: string[]): string[] {
   return errors.filter((e) => !/rate limit exceeded for trace/i.test(e))
 }
-
-/** Matches simulator `pipValuePerLot` in backtest engine. */
-const PIP_VALUE_PER_LOT = 10
 
 export const BACKTEST_OUTCOME_SHORT: Record<string, string> = {
   all_tp_hit: 'All TPs',
@@ -67,13 +78,28 @@ export function tradeDurationMs(
   return end - start
 }
 
-/** Price-distance pips implied by simulated dollar P/L (same units as engine). */
-export function tradePipPnl(trade: Pick<BacktestTradeRow, 'pnl' | 'lot_size' | 'outcome'>): number | null {
-  if (trade.outcome === 'skipped' || trade.outcome === 'no_data') return null
-  const lot = trade.lot_size > 0 ? trade.lot_size : 0.01
-  const denom = lot * PIP_VALUE_PER_LOT * 100
-  if (denom <= 0) return null
-  return trade.pnl / denom
+/** Pip P/L from signal TP/SL levels (TelegramBacktester convention). */
+export function tradePipPnl(
+  trade: Pick<
+    BacktestTradeRow,
+    'pnl' | 'lot_size' | 'outcome' | 'symbol' | 'direction' | 'entry_price' | 'exit_price' | 'tp_levels' | 'sl' | 'tps_hit' | 'details'
+  >,
+): number | null {
+  const details = trade.details as { pipPnl?: number } | undefined
+  const fromDetails = details?.pipPnl
+  if (fromDetails != null && Number.isFinite(fromDetails)) {
+    return fromDetails
+  }
+
+  return computePipsFromSignalOutcome({
+    symbol: trade.symbol,
+    direction: trade.direction,
+    entry: trade.entry_price,
+    sl: trade.sl,
+    tpLevels: trade.tp_levels ?? [],
+    outcome: trade.outcome,
+    tpsHit: trade.tps_hit,
+  })
 }
 
 export function formatPipValue(pips: number | null): string {
@@ -110,6 +136,168 @@ export function monthGroupLabel(key: string): string {
   const [y, m] = key.split('-').map(Number)
   if (!y || !m) return key
   return new Date(y, m - 1, 1).toLocaleString(undefined, { month: 'long', year: 'numeric' })
+}
+
+export interface BacktestTradeEvent {
+  type: 'tp' | 'sl' | 'be'
+  level?: number
+  price: number
+  at: string
+  label: string
+}
+
+export function outcomeBannerLabel(outcome: string, tpsHit: number, tpCount: number): string {
+  if (outcome === 'all_tp_hit') return 'All TPs Hit'
+  if (outcome === 'sl_before_tp') return 'SL Hit'
+  if (outcome === 'breakeven') return 'Breakeven'
+  if (outcome === 'tp_then_be') return 'TP → Breakeven'
+  if (outcome === 'tp1_then_sl' || (tpsHit > 0 && tpsHit < tpCount)) return 'Partial Hit'
+  if (outcome === 'no_data') return 'No Market Data'
+  if (outcome === 'skipped') return 'Skipped'
+  if (outcome === 'open') return 'Open'
+  return displayOutcomeLabel(outcome, tpsHit, tpCount)
+}
+
+export function outcomeBannerTone(
+  outcome: string,
+  pips: number | null,
+): 'success' | 'danger' | 'warning' | 'neutral' {
+  if (outcome === 'no_data' || outcome === 'skipped' || outcome === 'open') return 'neutral'
+  if (outcome === 'sl_before_tp') return 'danger'
+  if (outcome === 'tp1_then_sl' || outcome === 'tp_then_be') return 'warning'
+  if (outcome === 'all_tp_hit' || outcome === 'breakeven') return 'success'
+  if (pips != null && pips > 0) return 'success'
+  if (pips != null && pips < 0) return 'danger'
+  return 'neutral'
+}
+
+export function formatEventTimestamp(isoOrMs: string | number): string {
+  const d = typeof isoOrMs === 'number' ? new Date(isoOrMs) : new Date(isoOrMs)
+  if (Number.isNaN(d.getTime())) return '—'
+  return d.toLocaleString(undefined, {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+    timeZoneName: 'short',
+  })
+}
+
+export function computeRiskRewardRatio(
+  entry: number,
+  sl: number | null,
+  tpLevels: number[],
+  direction: string,
+): string {
+  if (!(entry > 0) || sl == null || !Number.isFinite(sl) || !tpLevels.length) return '—'
+  const slDist = Math.abs(entry - sl)
+  if (slDist <= 0) return '—'
+  const sorted = [...tpLevels].sort((a, b) =>
+    direction === 'buy' ? a - b : b - a,
+  )
+  const furthest = sorted[sorted.length - 1]!
+  const tpDist = Math.abs(furthest - entry)
+  const ratio = tpDist / slDist
+  if (!Number.isFinite(ratio) || ratio <= 0) return '—'
+  const rounded = Math.round(ratio * 10) / 10
+  return `1:${rounded % 1 === 0 ? Math.round(rounded) : rounded}`
+}
+
+export function buildTradeEvents(trade: BacktestTradeRow): BacktestTradeEvent[] {
+  const events: BacktestTradeEvent[] = []
+  const details = trade.details as { tpEvents?: Array<{ index: number; price: number; ts: number }> } | undefined
+  const tpEvents = details?.tpEvents
+
+  if (tpEvents?.length) {
+    for (const e of tpEvents) {
+      events.push({
+        type: 'tp',
+        level: e.index,
+        price: e.price,
+        at: new Date(e.ts).toISOString(),
+        label: `TP${e.index} Hit`,
+      })
+    }
+  } else if (trade.tps_hit > 0 && trade.tp_levels.length > 0) {
+    const sorted = [...trade.tp_levels].sort((a, b) =>
+      trade.direction === 'buy' ? a - b : b - a,
+    )
+    for (let i = 0; i < Math.min(trade.tps_hit, sorted.length); i++) {
+      events.push({
+        type: 'tp',
+        level: i + 1,
+        price: sorted[i]!,
+        at: trade.closed_at ?? trade.signal_at,
+        label: `TP${i + 1} Hit`,
+      })
+    }
+  }
+
+  if (
+    (trade.outcome === 'sl_before_tp' || trade.outcome === 'tp1_then_sl' || trade.outcome === 'tp_then_be')
+    && trade.sl != null
+    && Number.isFinite(trade.sl)
+  ) {
+    const isBe = trade.outcome === 'tp_then_be'
+    events.push({
+      type: isBe ? 'be' : 'sl',
+      price: trade.sl,
+      at: trade.closed_at ?? trade.signal_at,
+      label: isBe ? 'Breakeven' : 'SL Hit',
+    })
+  }
+
+  if (trade.outcome === 'breakeven') {
+    events.push({
+      type: 'be',
+      price: trade.entry_price,
+      at: trade.closed_at ?? trade.signal_at,
+      label: 'Breakeven',
+    })
+  }
+
+  return events.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime())
+}
+
+export interface PriceLevelLine {
+  kind: 'entry' | 'sl' | 'tp' | 'be'
+  label: string
+  price: number
+  level?: number
+}
+
+export function buildPriceLevels(trade: BacktestTradeRow): PriceLevelLine[] {
+  const lines: PriceLevelLine[] = []
+  const isBuy = trade.direction === 'buy'
+
+  lines.push({
+    kind: 'entry',
+    label: 'Entry',
+    price: trade.entry_price,
+  })
+
+  if (trade.sl != null && Number.isFinite(trade.sl)) {
+    lines.push({
+      kind: trade.outcome === 'breakeven' || trade.outcome === 'tp_then_be' ? 'be' : 'sl',
+      label: trade.outcome === 'tp_then_be' ? 'BE' : 'SL',
+      price: trade.sl,
+    })
+  }
+
+  const sortedTps = [...trade.tp_levels].sort((a, b) => (isBuy ? a - b : b - a))
+  sortedTps.forEach((price, i) => {
+    lines.push({
+      kind: 'tp',
+      label: `TP${i + 1}`,
+      price,
+      level: i + 1,
+    })
+  })
+
+  return lines
 }
 
 export function outcomeTone(

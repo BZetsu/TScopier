@@ -570,6 +570,7 @@ export interface BacktestTranslations {
   riskPercent: string
   runBacktest: string
   recentRuns: string
+  history: string
   signalBreakdown: string
   noActiveChannels: string
 }

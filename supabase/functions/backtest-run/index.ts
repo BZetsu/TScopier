@@ -63,36 +63,24 @@ async function startBacktestRun(
   const massive = MassiveClient.fromEnv(Deno.env)
 
   const runPromise = (async () => {
+    const importWarnings: string[] = []
+    const symbolFilter = cfg.symbols ?? []
+
+    if (symbolFilter.length === 0) {
+      await supabase.from("backtest_runs").update({
+        status: "failed",
+        error_message: "Select a symbol to backtest (profile signals first).",
+        completed_at: new Date().toISOString(),
+      }).eq("id", runId)
+      return
+    }
+
     await supabase.from("backtest_runs").update({
       status: "running",
       started_at: new Date().toISOString(),
-      progress_pct: 5,
-      progress_message: "Syncing signals from Telegram…",
+      progress_pct: 8,
+      progress_message: `Backtesting ${symbolFilter.join(", ")}…`,
     }).eq("id", runId)
-
-    const importWarnings: string[] = []
-    const sync = await syncBacktestSignalsViaWorker(
-      Deno.env,
-      userId,
-      simple.channelIds,
-      cfg.dateFrom,
-      cfg.dateTo,
-      { runId },
-    )
-    if (sync.imported > 0) {
-      importWarnings.push(
-        `Imported ${sync.imported} signal(s) from Telegram (${sync.candidates} candidates, ${sync.messages_scanned} messages scanned).`,
-      )
-    } else if (sync.candidates > 0) {
-      importWarnings.push(
-        `Scanned ${sync.messages_scanned} messages; ${sync.candidates} candidate(s), none stored as tradeable.`,
-      )
-    } else {
-      importWarnings.push(
-        `Scanned ${sync.messages_scanned} messages; no tradeable signals in range.`,
-      )
-    }
-    importWarnings.push(...sync.errors.filter(Boolean))
 
     await executeBacktestRun(
       supabase,

@@ -432,6 +432,7 @@ export const en: Translations = {
     riskPercent: 'Risk % of equity',
     runBacktest: 'Run backtest',
     recentRuns: 'Recent runs',
+    history: 'History',
     signalBreakdown: 'Signal breakdown',
     noActiveChannels: 'No active Telegram channels',
   },

@@ -432,6 +432,7 @@ export const fr: Translations = {
     riskPercent: 'Risque % du capital',
     runBacktest: 'Lancer le backtest',
     recentRuns: 'Exécutions récentes',
+    history: 'Historique',
     signalBreakdown: 'Détail des signaux',
     noActiveChannels: 'Aucun canal Telegram actif',
   },
