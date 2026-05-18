@@ -79,6 +79,8 @@ export const metatraderApi = {
     summary: AccountSummary
     open_positions: number | null
     performance_baseline_balance?: number | null
+    /** True when balance is cached because live AccountSummary failed. */
+    stale?: boolean
   }> {
     return call({
       body: { action: 'summary', broker_id: brokerId },
@@ -87,6 +89,7 @@ export const metatraderApi = {
           summary: AccountSummary
           open_positions: number | null
           performance_baseline_balance?: number | null
+          stale?: boolean
         },
     })
   },
