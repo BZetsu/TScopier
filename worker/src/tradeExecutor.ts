@@ -702,7 +702,12 @@ export class TradeExecutor {
       const brokers = (this.brokersByUser.get(row.user_id) ?? []).filter(b =>
         b.is_active && isMtUuid(b.metaapi_account_id) && channelMatchesBrokerSignal(b, row.channel_id),
       )
-      if (!brokers.length) return
+      if (!brokers.length) {
+        console.warn(
+          `[tradeExecutor] skip signal ${row.id}: no active broker matches channel=${row.channel_id ?? 'none'} (check Configure Trading channel selection)`,
+        )
+        return
+      }
 
       // Pre-fetch channel keywords once per signal so manual-mode brokers can
       // honour delay_msec / prefer_entry / *_in_pips / ignore_keyword.
@@ -1925,12 +1930,14 @@ export class TradeExecutor {
     const uuid = broker.metaapi_account_id!
     const alive = await api.keepSessionAlive(uuid)
     if (!alive) {
-      console.warn(`[tradeExecutor] broker ${broker.id} not connected before order`)
-      await this.supabase
+      console.warn(
+        `[tradeExecutor] broker ${broker.id} session check failed before order; attempting OrderSend anyway`,
+      )
+    } else if (broker.connection_status !== 'connected') {
+      void this.supabase
         .from('broker_accounts')
-        .update({ connection_status: 'error' })
+        .update({ connection_status: 'connected' })
         .eq('id', broker.id)
-      return {}
     }
     const mapping = applySymbolMapping(parsed.symbol!, broker)
 

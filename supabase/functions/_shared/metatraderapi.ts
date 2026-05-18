@@ -167,6 +167,32 @@ function normalizeAccountSummary(body: unknown): AccountSummary {
   }
 }
 
+export function isCheckConnectOk(body: unknown): boolean {
+  if (body === true) return true
+  if (body === false) return false
+  if (typeof body === "number") return body > 0
+  if (typeof body === "string") {
+    const s = body.trim().toLowerCase()
+    if (!s) return false
+    if (s === "true" || s === "ok" || s === "connected" || s === "yes" || s === "1") return true
+    if (
+      s === "false" || s === "0" || s.includes("not connected") || s.includes("disconnected") || s.includes("notconnected")
+    ) {
+      return false
+    }
+    return true
+  }
+  if (body && typeof body === "object") {
+    const r = body as Record<string, unknown>
+    const nested = r.result ?? r.Result
+    if (nested !== undefined && nested !== r) return isCheckConnectOk(nested)
+    const flag = r.connected ?? r.Connected ?? r.isConnected ?? r.IsConnected
+    if (typeof flag === "boolean") return flag
+    if (typeof flag === "string" || typeof flag === "number") return isCheckConnectOk(flag)
+  }
+  return true
+}
+
 function assertNoApiError(body: unknown): void {
   if (body == null || typeof body !== "object") return
   const root = body as Record<string, unknown>
@@ -270,7 +296,8 @@ export class MetatraderApiClient {
 
   /** Reconnect using stored token (no password). */
   async connectByToken(id: string): Promise<void> {
-    await this.get<unknown>("/ConnectByToken", { id })
+    const raw = await this.get<unknown>("/ConnectByToken", { id })
+    assertNoApiError(raw)
   }
 
   async ensureConnected(id: string): Promise<void> {
@@ -306,8 +333,12 @@ export class MetatraderApiClient {
     return { message: "OK" }
   }
 
-  checkConnect(id: string): Promise<string> {
-    return this.get<string>("/CheckConnect", { id })
+  async checkConnect(id: string): Promise<void> {
+    const raw = await this.get<unknown>("/CheckConnect", { id })
+    assertNoApiError(raw)
+    if (!isCheckConnectOk(raw)) {
+      throw new MetatraderApiError("Broker session is not connected", 502)
+    }
   }
 
   /** Broker/server discovery — `company` must be at least 4 characters. */

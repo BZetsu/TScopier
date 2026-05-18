@@ -9,18 +9,16 @@ function normalizeSignalChannelIds(raw) {
 }
 /**
  * True when this broker should copy signals from `channelId`.
- * Whitelist applies when enforcement is on or when channel ids were persisted
- * (Configure Trading modal checkboxes).
+ * Whitelist applies only when `enforce_signal_channel_filter` is true (saved from
+ * Configure Trading). Stale `signal_channel_ids` with enforce off are ignored.
  */
 function channelMatchesBrokerSignal(broker, channelId) {
+    if (broker.enforce_signal_channel_filter !== true)
+        return true;
     const ids = normalizeSignalChannelIds(broker.signal_channel_ids);
-    const enforce = broker.enforce_signal_channel_filter === true;
-    const useWhitelist = enforce || ids.length > 0;
-    if (!useWhitelist)
+    if (!ids.length)
         return true;
     if (!channelId)
-        return false;
-    if (ids.length === 0)
         return false;
     return ids.includes(channelId);
 }

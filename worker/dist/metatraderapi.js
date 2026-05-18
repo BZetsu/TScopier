@@ -8,6 +8,7 @@ exports.formatMtApiDateTime = formatMtApiDateTime;
 exports.unwrapOrderList = unwrapOrderList;
 exports.resolveBasicAuthHeader = resolveBasicAuthHeader;
 exports.isMtApiAuthConfigured = isMtApiAuthConfigured;
+exports.isCheckConnectOk = isCheckConnectOk;
 exports.mtPlatformFrom = mtPlatformFrom;
 exports.hasMetatraderApiConfigured = hasMetatraderApiConfigured;
 exports.getMetatraderApi = getMetatraderApi;
@@ -255,6 +256,42 @@ function isMtApiAuthConfigured(env = process.env) {
         return false;
     }
 }
+/** Interpret /CheckConnect payloads across MT4/MT5 bridge versions. */
+function isCheckConnectOk(body) {
+    if (body === true)
+        return true;
+    if (body === false)
+        return false;
+    if (typeof body === 'number')
+        return body > 0;
+    if (typeof body === 'string') {
+        const s = body.trim().toLowerCase();
+        if (!s)
+            return false;
+        if (s === 'true' || s === 'ok' || s === 'connected' || s === 'yes' || s === '1')
+            return true;
+        if (s === 'false'
+            || s === '0'
+            || s.includes('not connected')
+            || s.includes('disconnected')
+            || s.includes('notconnected')) {
+            return false;
+        }
+        return true;
+    }
+    if (body && typeof body === 'object') {
+        const r = body;
+        const nested = r.result ?? r.Result;
+        if (nested !== undefined && nested !== r)
+            return isCheckConnectOk(nested);
+        const flag = r.connected ?? r.Connected ?? r.isConnected ?? r.IsConnected;
+        if (typeof flag === 'boolean')
+            return flag;
+        if (typeof flag === 'string' || typeof flag === 'number')
+            return isCheckConnectOk(flag);
+    }
+    return true;
+}
 function parseToken(body, fallbackId) {
     if (typeof body === 'string') {
         const t = body.trim().replace(/^"|"$/g, '');
@@ -368,7 +405,8 @@ class MetatraderApiClient {
         return parseToken(raw, args.id);
     }
     async connectByToken(id) {
-        await this.get('/ConnectByToken', { id });
+        const raw = await this.get('/ConnectByToken', { id });
+        assertNoApiError(raw);
     }
     async ensureConnected(id) {
         const alive = await this.keepSessionAlive(id);
@@ -381,15 +419,18 @@ class MetatraderApiClient {
             await this.checkConnect(id);
             return true;
         }
-        catch {
-            /* reconnect */
+        catch (first) {
+            const msg = first instanceof Error ? first.message : String(first);
+            console.warn(`[metatraderapi] CheckConnect failed id=${id}: ${msg}; trying ConnectByToken`);
         }
         try {
             await this.connectByToken(id);
             await this.checkConnect(id);
             return true;
         }
-        catch {
+        catch (second) {
+            const msg = second instanceof Error ? second.message : String(second);
+            console.warn(`[metatraderapi] keepSessionAlive failed id=${id}: ${msg}`);
             return false;
         }
     }
@@ -485,8 +526,12 @@ class MetatraderApiClient {
         assertNoApiError(raw);
         return normalizeAccountSummary(raw);
     }
-    checkConnect(id) {
-        return this.get('/CheckConnect', { id });
+    async checkConnect(id) {
+        const raw = await this.get('/CheckConnect', { id });
+        assertNoApiError(raw);
+        if (!isCheckConnectOk(raw)) {
+            throw new MetatraderApiError('Broker session is not connected', 502);
+        }
     }
     symbolParams(id, symbol) {
         return this.get('/SymbolParams', { id, symbol });

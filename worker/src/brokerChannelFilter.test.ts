@@ -17,13 +17,12 @@ describe('channelMatchesBrokerSignal', () => {
     assert.equal(channelMatchesBrokerSignal(broker, chB), false)
   })
 
-  it('honors persisted ids even when enforce flag is false (legacy saves)', () => {
-    const broker = { enforce_signal_channel_filter: false, signal_channel_ids: [chA, chB] }
-    assert.equal(channelMatchesBrokerSignal(broker, chA), true)
-    assert.equal(channelMatchesBrokerSignal(broker, 'other'), false)
+  it('ignores signal_channel_ids when enforce is false (legacy rows)', () => {
+    const broker = { enforce_signal_channel_filter: false, signal_channel_ids: [chA] }
+    assert.equal(channelMatchesBrokerSignal(broker, chB), true)
   })
 
-  it('denies when whitelist mode is on but list is empty', () => {
-    assert.equal(channelMatchesBrokerSignal({ enforce_signal_channel_filter: true }, chA), false)
+  it('allows all channels when enforce is on but list is empty (mis-save)', () => {
+    assert.equal(channelMatchesBrokerSignal({ enforce_signal_channel_filter: true }, chA), true)
   })
 })

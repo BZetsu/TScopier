@@ -373,13 +373,13 @@ Deno.serve(async (req: Request) => {
       try {
         const alive = await client.keepSessionAlive(uuid)
         if (!alive) throw new Error("Broker session is not connected")
-        const result = await client.checkConnect(uuid)
+        await client.checkConnect(uuid)
         await supabase
           .from("broker_accounts")
           .update({ connection_status: "connected" })
           .eq("id", brokerId)
           .eq("user_id", userId)
-        return Response.json({ ok: true, result }, { headers: corsHeaders })
+        return Response.json({ ok: true, result: "connected" }, { headers: corsHeaders })
       } catch (e) {
         await supabase
           .from("broker_accounts")
