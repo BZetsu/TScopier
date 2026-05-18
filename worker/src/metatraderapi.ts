@@ -1,4 +1,5 @@
 import { Agent, request } from 'undici'
+import { ingestMtHistoryRows } from './mtTradeFields.js'
 
 /**
  * MetatraderAPI (metatraderapi.dev) Node client tuned for low order-send latency.
@@ -665,22 +666,13 @@ export class MetatraderApiClient {
   /** Pagination + OrderHistory + HistoryPositions + session ClosedOrders (deduped by ticket). */
   async closedOrdersHistory(id: string, from: string, to: string): Promise<unknown[]> {
     const byTicket = new Map<number, Record<string, unknown>>()
-    const ingest = (rows: unknown[]) => {
-      for (const row of rows) {
-        if (!row || typeof row !== 'object') continue
-        const o = row as Record<string, unknown>
-        const ticket = Number(o.ticket ?? o.Ticket ?? 0)
-        if (!Number.isFinite(ticket) || ticket <= 0) continue
-        byTicket.set(ticket, o)
-      }
-    }
 
     try {
       let page = 0
       let pagesCount = 1
       while (page < pagesCount && page < 100) {
         const { orders, pagesCount: totalPages } = await this.orderHistoryPage(id, from, to, page)
-        ingest(orders)
+        ingestMtHistoryRows(byTicket, orders)
         pagesCount = Math.max(1, totalPages)
         if (orders.length === 0) break
         page += 1
@@ -695,7 +687,7 @@ export class MetatraderApiClient {
       this.orderHistory(id, from, to),
     ])
     for (const r of settled) {
-      if (r.status === 'fulfilled') ingest(r.value as unknown[])
+      if (r.status === 'fulfilled') ingestMtHistoryRows(byTicket, r.value as unknown[])
     }
     return [...byTicket.values()]
   }

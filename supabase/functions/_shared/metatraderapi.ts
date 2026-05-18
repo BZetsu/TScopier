@@ -3,6 +3,8 @@
  * Basic Auth + platform-specific hosts. See docs/mt4api-endpoint-map.md.
  */
 
+import { ingestMtHistoryRows } from "./mtTradeFields.ts"
+
 const DEFAULT_MT5_BASE = "https://mt5.mt4api.dev"
 const DEFAULT_MT4_BASE = "https://mt4.mt4api.dev"
 
@@ -425,27 +427,14 @@ export class MetatraderApiClient {
 
   /** Full closed history: pagination + OrderHistory + HistoryPositions + session ClosedOrders. */
   async closedOrdersHistory(id: string, from: string, to: string): Promise<unknown[]> {
-    const byKey = new Map<string, Record<string, unknown>>()
-    const ingest = (rows: unknown[]) => {
-      for (const row of rows) {
-        if (!row || typeof row !== "object") continue
-        const o = row as Record<string, unknown>
-        const ticket = Number(o.ticket ?? o.Ticket ?? 0)
-        if (!Number.isFinite(ticket) || ticket <= 0) continue
-        const closeTime = String(
-          o.closeTime ?? o.CloseTime ?? o.close_time ?? o.timeClose ?? o.TimeClose ?? "",
-        )
-        const key = closeTime ? `${ticket}:${closeTime}` : String(ticket)
-        byKey.set(key, o)
-      }
-    }
+    const byTicket = new Map<number, Record<string, unknown>>()
 
     try {
       let page = 0
       let pagesCount = 1
       while (page < pagesCount && page < 250) {
         const { orders, pagesCount: totalPages } = await this.orderHistoryPage(id, from, to, page)
-        ingest(orders)
+        ingestMtHistoryRows(byTicket, orders)
         pagesCount = Math.max(1, totalPages)
         if (orders.length === 0) break
         page += 1
@@ -454,16 +443,16 @@ export class MetatraderApiClient {
       /* pagination optional on some builds */
     }
 
-    // Ingest lowest-priority sources first; deal-level OrderHistory wins over position snapshots.
+    // Lowest priority first; later sources merge in (deal profit / lots preserved when newer row is sparse).
     const settled = await Promise.allSettled([
       this.closedOrders(id),
       this.historyPositions(id, from, to),
       this.orderHistory(id, from, to),
     ])
     for (const r of settled) {
-      if (r.status === "fulfilled") ingest(r.value)
+      if (r.status === "fulfilled") ingestMtHistoryRows(byTicket, r.value)
     }
-    return [...byKey.values()]
+    return [...byTicket.values()]
   }
 
   static parseOrderList(raw: unknown): unknown[] {

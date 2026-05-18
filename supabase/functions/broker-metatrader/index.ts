@@ -14,6 +14,11 @@ import {
   MetatraderApiError,
   type MtPlatform,
 } from "../_shared/metatraderapi.ts"
+import {
+  pickMtField,
+  resolveMtDealProfit,
+  resolveMtLots,
+} from "../_shared/mtTradeFields.ts"
 
 function mtClient(env: { get(name: string): string | undefined }, platform: string): ReturnType<typeof makeClientFromEnv> {
   const p: MtPlatform = platform === "MT4" ? "MT4" : "MT5"
@@ -508,12 +513,7 @@ Deno.serve(async (req: Request) => {
         return Number.isFinite(n) ? n : null
       }
 
-      const pick = (order: RawOrder, ...keys: string[]): unknown => {
-        for (const k of keys) {
-          if (order[k] !== undefined && order[k] !== null) return order[k]
-        }
-        return undefined
-      }
+      const pick = (order: RawOrder, ...keys: string[]): unknown => pickMtField(order, ...keys)
 
       // MT order code → direction + label. MT4 CMD 6 = balance; MT5 OrderType 6 = buy stop limit.
       const codeMapMt5: Record<number, { direction: "buy" | "sell" | ""; label: string }> = {
@@ -606,7 +606,7 @@ Deno.serve(async (req: Request) => {
         const ticket = Number(pick(order, "ticket", "Ticket") ?? 0)
         const platform = String(broker.platform ?? "MT5")
         const { direction, type_label } = resolveDirection(order, platform)
-        const lot_size = num(pick(order, "lots", "Lots", "volume", "Volume")) ?? 0
+        const lot_size = resolveMtLots(order)
         const openTime = pick(
           order,
           "openTime", "OpenTime", "open_time", "timeOpen", "TimeOpen",
@@ -631,7 +631,7 @@ Deno.serve(async (req: Request) => {
           close_price: num(pick(order, "closePrice", "ClosePrice")),
           profit: isNonTradeEntry(direction, type_label, lot_size)
             ? null
-            : num(pick(order, "profit", "Profit", "dealProfit", "DealProfit")),
+            : resolveMtDealProfit(order),
           swap: num(pick(order, "swap", "Swap")),
           commission: num(pick(order, "commission", "Commission")),
           comment: (pick(order, "comment", "Comment") as string | undefined) ?? null,
