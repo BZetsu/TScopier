@@ -23,7 +23,6 @@ const PARSE_SIGNAL_API_KEY = SUPABASE_SERVICE_ROLE_KEY
 /** Min seconds between client.connect() and first getDialogs on a fresh session. */
 const COLD_FANOUT_DELAY_MS = 8000
 const DIALOG_CACHE_TTL_MS = 60_000
-const DIALOG_PAGE_SIZE = 100
 const DIALOG_MAX_SCAN = 500
 const WATCHDOG_INTERVAL_MS = 30_000
 const WATCHDOG_FAILURE_THRESHOLD = 2
@@ -426,41 +425,12 @@ export class UserListener {
     return channels
   }
 
-  /** Paginate getDialogs until all channel/group dialogs are collected (capped). */
+  /**
+   * Load channel/group dialogs (capped). Uses gramjs built-in pagination, which
+   * offsets by top *message* id — not dialog/peer id (large channel ids overflow int32).
+   */
   private async fetchAllDialogs(): Promise<Awaited<ReturnType<TelegramClient['getDialogs']>>> {
-    const all: Awaited<ReturnType<TelegramClient['getDialogs']>> = []
-    let offsetDate: number | undefined
-    let offsetId: number | undefined
-    let offsetPeer: unknown
-
-    while (all.length < DIALOG_MAX_SCAN) {
-      const page = await this.client.getDialogs({
-        limit: DIALOG_PAGE_SIZE,
-        ...(offsetDate != null ? { offsetDate } : {}),
-        ...(offsetId != null ? { offsetId } : {}),
-        ...(offsetPeer != null ? { offsetPeer: offsetPeer as never } : {}),
-      })
-      if (!page.length) break
-      all.push(...page)
-      if (page.length < DIALOG_PAGE_SIZE) break
-
-      const last = page[page.length - 1]
-      const lastDate = last.date as Date | number | undefined
-      if (lastDate != null && typeof lastDate === 'object' && 'getTime' in lastDate) {
-        offsetDate = Math.floor((lastDate as Date).getTime() / 1000)
-      } else if (typeof lastDate === 'number') {
-        offsetDate = lastDate
-      } else {
-        break
-      }
-      const rawId = last.id
-      offsetId = typeof rawId === 'bigint' ? Number(rawId) : Number(rawId)
-      if (!Number.isFinite(offsetId)) break
-      offsetPeer = (last as { inputEntity?: unknown }).inputEntity ?? last.entity
-      if (offsetPeer == null) break
-    }
-
-    return all
+    return this.client.getDialogs({ limit: DIALOG_MAX_SCAN })
   }
 
   /**

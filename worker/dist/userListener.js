@@ -341,44 +341,12 @@ class UserListener {
         this.dialogsCacheAt = Date.now();
         return channels;
     }
-    /** Paginate getDialogs until all channel/group dialogs are collected (capped). */
+    /**
+     * Load channel/group dialogs (capped). Uses gramjs built-in pagination, which
+     * offsets by top *message* id — not dialog/peer id (large channel ids overflow int32).
+     */
     async fetchAllDialogs() {
-        const all = [];
-        let offsetDate;
-        let offsetId;
-        let offsetPeer;
-        while (all.length < DIALOG_MAX_SCAN) {
-            const page = await this.client.getDialogs({
-                limit: DIALOG_PAGE_SIZE,
-                ...(offsetDate != null ? { offsetDate } : {}),
-                ...(offsetId != null ? { offsetId } : {}),
-                ...(offsetPeer != null ? { offsetPeer: offsetPeer } : {}),
-            });
-            if (!page.length)
-                break;
-            all.push(...page);
-            if (page.length < DIALOG_PAGE_SIZE)
-                break;
-            const last = page[page.length - 1];
-            const lastDate = last.date;
-            if (lastDate != null && typeof lastDate === 'object' && 'getTime' in lastDate) {
-                offsetDate = Math.floor(lastDate.getTime() / 1000);
-            }
-            else if (typeof lastDate === 'number') {
-                offsetDate = lastDate;
-            }
-            else {
-                break;
-            }
-            const rawId = last.id;
-            offsetId = typeof rawId === 'bigint' ? Number(rawId) : Number(rawId);
-            if (!Number.isFinite(offsetId))
-                break;
-            offsetPeer = last.inputEntity ?? last.entity;
-            if (offsetPeer == null)
-                break;
-        }
-        return all;
+        return this.client.getDialogs({ limit: DIALOG_MAX_SCAN });
     }
     /**
      * Explicit historical import used by channel insights profiling.
