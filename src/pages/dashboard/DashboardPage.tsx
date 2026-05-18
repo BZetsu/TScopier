@@ -571,10 +571,24 @@ export function DashboardPage() {
     return out
   }, [linkedAccounts, linkedAccountBalances])
 
+  const balanceByAccountId = useMemo(() => {
+    const out: Record<string, number> = {}
+    for (const account of linkedAccounts) {
+      const live = linkedAccountBalances[account.id]
+      const bal = live?.balance ?? account.last_balance ?? live?.equity ?? account.last_equity
+      if (bal != null && Number.isFinite(Number(bal))) {
+        out[account.id] = Number(bal)
+      }
+    }
+    return out
+  }, [linkedAccounts, linkedAccountBalances])
+
   const accountGrowth = useMemo(
-    () => buildAccountGrowthSeries(linkedAccounts, chartTrades, equityByAccountId),
-    [linkedAccounts, chartTrades, equityByAccountId],
+    () => buildAccountGrowthSeries(linkedAccounts, chartTrades, balanceByAccountId, 7),
+    [linkedAccounts, chartTrades, balanceByAccountId],
   )
+
+  const tradeOutcomeEmpty = tradeVolume7Day.every(d => d.profit === 0 && d.loss === 0)
 
   const linkedAccountPerformance = useMemo(() => {
     const tradesByAccountId: Record<string, TradeStatsRow[]> = {}
@@ -1505,6 +1519,7 @@ export function DashboardPage() {
           data={accountGrowth.data}
           series={accountGrowth.series}
           loading={chartsEmpty}
+          isEmpty={tradeOutcomeEmpty}
         />
       </div>
 

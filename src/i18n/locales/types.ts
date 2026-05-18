@@ -312,6 +312,8 @@ export interface MarketNewsTranslations {
 export interface PerformanceTranslations {
   title: string
   subtitle: string
+  noMtBroker: string
+  noTradeHistory: string
   period7d: string
   period30d: string
   period90d: string
