@@ -453,8 +453,19 @@ const MANUAL_SUB_TABS: ManualSubTabDef[] = [
   { id: 'strategy', label: 'Strategy', icon: Brain },
 ]
 
+function formatLinkedAccountTypeLabel(
+  type: LinkedAccountType | undefined,
+  labels: { demo: string; live: string },
+): string {
+  if (!type) return '—'
+  if (type === 'Demo') return labels.demo
+  if (type === 'Live') return labels.live
+  return type
+}
+
 export function AccountConfigPage() {
   const t = useT()
+  const bl = t.accountConfig.brokerList
   const { user } = useAuth()
   const [brokers, setBrokers] = useState<BrokerAccount[]>([])
   const [channelOptions, setChannelOptions] = useState<ChannelOption[]>([])
@@ -542,7 +553,7 @@ export function AccountConfigPage() {
         setError(result.message)
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not reconnect broker')
+      setError(e instanceof Error ? e.message : bl.reconnectFailed)
     } finally {
       setReconnectingBrokerIds(prev => {
         const next = new Set(prev)
@@ -550,7 +561,7 @@ export function AccountConfigPage() {
         return next
       })
     }
-  }, [])
+  }, [bl.reconnectFailed])
 
   const tpLegPercentTotal = useMemo(() => {
     const rows = configDraft.manualSettings.tp_lots ?? DEFAULT_MANUAL_TP_LOTS
@@ -899,22 +910,22 @@ export function AccountConfigPage() {
   // ── Channel summary helper for cards ───────────────────────────────────
 
   const getBrokerSignalChannelsLabel = (brokerId: string) => {
-    if (channelOptions.length === 0) return 'None selected'
+    if (channelOptions.length === 0) return bl.channelsNoneSelected
     const oldest = getOldestChannel(channelOptions)
     if (channelOptions.length === 1) {
       const name = oldest?.display_name?.trim()
-      return name || 'Signal channel'
+      return name || bl.channelsSignalChannel
     }
     const brokerRow = brokers.find(b => b.id === brokerId)
     const persistedIds = normalizeSignalChannelIds(brokerRow)
     const restricts = brokerRow?.enforce_signal_channel_filter === true
-    if (!restricts || persistedIds.length === 0) return 'All signal channels'
+    if (!restricts || persistedIds.length === 0) return bl.channelsAll
     const labels = channelOptions
       .filter(ch => persistedIds.includes(ch.id))
       .map(ch => ch.display_name)
       .filter(Boolean)
     if (labels.length) return labels.join(', ')
-    return 'None selected'
+    return bl.channelsNoneSelected
   }
 
   // ── Add account flow ───────────────────────────────────────────────────
@@ -1011,7 +1022,7 @@ export function AccountConfigPage() {
       setBrokers(prev => prev.filter(b => b.id !== id))
       setBrokerPendingDelete(null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete broker')
+      setError(err instanceof Error ? err.message : bl.deleteFailed)
     } finally {
       setDeleteInProgress(false)
     }
@@ -1135,8 +1146,8 @@ export function AccountConfigPage() {
         {brokersNeedingRelink.length > 0 && (
           <Alert variant="warning" className="mb-3">
             {brokersNeedingRelink.length === 1
-              ? 'This account uses an older link format. Remove it and connect again with your MT login and password.'
-              : `${brokersNeedingRelink.length} accounts use an older link format. Remove each one and connect again with your MT login and password.`}
+              ? bl.relinkOne
+              : interpolate(bl.relinkMany, { count: String(brokersNeedingRelink.length) })}
           </Alert>
         )}
 
@@ -1144,8 +1155,8 @@ export function AccountConfigPage() {
           <Alert variant="warning" className="mb-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <span>
               {brokersNeedingReconnect.length === 1
-                ? 'Broker connection dropped. Use Reconnect on the account to restore the session.'
-                : `${brokersNeedingReconnect.length} accounts lost their broker connection. Use Reconnect on each account.`}
+                ? bl.reconnectDroppedOne
+                : interpolate(bl.reconnectDroppedMany, { count: String(brokersNeedingReconnect.length) })}
             </span>
             <Button
               type="button"
@@ -1160,7 +1171,7 @@ export function AccountConfigPage() {
               }}
             >
               <RefreshCw className="w-4 h-4" />
-              Reconnect all
+              {bl.reconnectAll}
             </Button>
           </Alert>
         )}
@@ -1180,10 +1191,13 @@ export function AccountConfigPage() {
                 : broker.connection_status === 'error' ? 'error'
                 : 'neutral'
               const isReconnecting = reconnectingBrokerIds.has(broker.id)
-              const statusLabel = !broker.is_active ? 'Paused'
-                : broker.connection_status === 'connected' ? 'Connected'
-                : broker.connection_status === 'error' ? 'Error'
-                : 'Disconnected'
+              const statusLabel = !broker.is_active
+                ? bl.statusPaused
+                : broker.connection_status === 'connected'
+                  ? bl.statusConnected
+                  : broker.connection_status === 'error'
+                    ? bl.statusError
+                    : bl.statusDisconnected
               const brokerLabel = broker.broker_name
                 || inferBrokerLabelFromServer(broker.broker_server ?? null)
                 || broker.broker_server
@@ -1216,7 +1230,7 @@ export function AccountConfigPage() {
                     <div className="flex shrink-0 items-center gap-2">
                       <div className="flex items-center gap-2 pr-1 border-r border-neutral-200 dark:border-neutral-700 mr-1">
                         <span className="text-xs font-medium text-neutral-500 dark:text-neutral-400 hidden sm:inline">
-                          Copy trades
+                          {bl.copyTrades}
                         </span>
                         <Toggle
                           checked={broker.is_active}
@@ -1233,7 +1247,7 @@ export function AccountConfigPage() {
                           onClick={() => void reconnectBroker(broker.id)}
                         >
                           <RefreshCw className="w-3.5 h-3.5" />
-                          Reconnect
+                          {bl.reconnect}
                         </Button>
                       ) : null}
                       <button
@@ -1241,46 +1255,49 @@ export function AccountConfigPage() {
                         onClick={() => openConfigureModal(broker)}
                         className="rounded-lg border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 px-3 py-1.5 text-xs font-medium text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-700 transition-colors"
                       >
-                        Configure
+                        {bl.configure}
                       </button>
                       <button
                         type="button"
                         onClick={() => { setError(''); setBrokerPendingDelete(broker) }}
                         className="rounded-lg p-1.5 text-neutral-400 dark:text-neutral-500 hover:bg-error-50 dark:hover:bg-error-950/40 hover:text-error-600 dark:hover:text-error-400 transition-colors"
-                        aria-label={`Remove ${broker.label}`}
+                        aria-label={interpolate(bl.removeAria, { label: broker.label })}
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
                   </div>
                   <div className="grid grid-cols-2 border-t border-neutral-100 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/60 lg:grid-cols-6">
-                    <AccountDetailCell label="Login" value={broker.account_login || '—'} />
+                    <AccountDetailCell label={bl.detailLogin} value={broker.account_login || '—'} />
                     <AccountDetailCell
-                      label="Account type"
+                      label={bl.detailAccountType}
                       value={
                         <span className={accountTypeValueClass(accountType)}>
-                          {accountType ?? '—'}
+                          {formatLinkedAccountTypeLabel(accountType, {
+                            demo: bl.accountTypeDemo,
+                            live: bl.accountTypeLive,
+                          })}
                         </span>
                       }
                       className="border-l border-neutral-100 dark:border-neutral-800 max-lg:border-t-0"
                     />
                     <AccountDetailCell
-                      label="Server"
+                      label={bl.detailServer}
                       value={broker.broker_server || '—'}
                       className="border-l border-neutral-100 dark:border-neutral-800 max-lg:border-t-0"
                     />
                     <AccountDetailCell
-                      label="Signal channels"
+                      label={bl.detailSignalChannels}
                       value={channelsLabel}
                       className="col-span-2 border-t border-neutral-100 dark:border-neutral-800 lg:col-span-1 lg:border-t-0 lg:border-l"
                     />
                     <AccountDetailCell
-                      label="Balance"
+                      label={bl.detailBalance}
                       value={formatBrokerMoney(broker.last_balance, broker.last_currency)}
                       className="border-t border-l border-neutral-100 dark:border-neutral-800 lg:border-t-0"
                     />
                     <AccountDetailCell
-                      label="Equity"
+                      label={bl.detailEquity}
                       value={formatBrokerMoney(broker.last_equity, broker.last_currency)}
                       className="border-t border-neutral-100 dark:border-neutral-800 lg:border-l lg:border-t-0"
                     />
@@ -1317,10 +1334,10 @@ export function AccountConfigPage() {
           >
             <div className="px-5 py-4 border-b border-neutral-100 dark:border-neutral-800">
               <h3 id="delete-broker-title" className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
-                Remove trading account?
+                {bl.deleteTitle}
               </h3>
               <p className="text-sm text-neutral-500 dark:text-neutral-400 mt-1">
-                This disconnects <span className="font-medium text-neutral-800 dark:text-neutral-100">{brokerPendingDelete.label}</span> from MetatraderAPI and the copier. This cannot be undone.
+                {interpolate(bl.deleteBody, { label: brokerPendingDelete.label })}
               </p>
             </div>
             {error && <Alert className="mx-5 mt-3">{error}</Alert>}
@@ -1331,7 +1348,7 @@ export function AccountConfigPage() {
                 disabled={deleteInProgress}
                 onClick={() => { if (!deleteInProgress) { setBrokerPendingDelete(null); setError('') } }}
               >
-                Cancel
+                {t.common.cancel}
               </Button>
               <Button
                 type="button"
@@ -1339,7 +1356,7 @@ export function AccountConfigPage() {
                 loading={deleteInProgress}
                 onClick={() => void confirmDeleteBroker()}
               >
-                Remove account
+                {bl.deleteConfirm}
               </Button>
             </div>
           </div>

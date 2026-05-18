@@ -164,11 +164,44 @@ export interface AccountConfigConnectFormTranslations {
   connectFailed: string
 }
 
+export interface AccountConfigBrokerListTranslations {
+  statusPaused: string
+  statusConnected: string
+  statusError: string
+  statusDisconnected: string
+  copyTrades: string
+  reconnect: string
+  reconnectAll: string
+  configure: string
+  removeAria: string
+  detailLogin: string
+  detailAccountType: string
+  accountTypeDemo: string
+  accountTypeLive: string
+  detailServer: string
+  detailSignalChannels: string
+  detailBalance: string
+  detailEquity: string
+  channelsNoneSelected: string
+  channelsSignalChannel: string
+  channelsAll: string
+  relinkOne: string
+  relinkMany: string
+  reconnectDroppedOne: string
+  reconnectDroppedMany: string
+  reconnectFailed: string
+  deleteFailed: string
+  deleteTitle: string
+  deleteBody: string
+  deleteConfirm: string
+}
+
 export interface AccountConfigTranslations {
   brokersEmptyTitle: string
   brokersEmptySubtitle: string
   addAccount: AccountConfigAddAccountModalTranslations
   connectForm: AccountConfigConnectFormTranslations
+  brokerList: AccountConfigBrokerListTranslations
 }
 
 export interface TradesTranslations {
@@ -305,6 +338,134 @@ export interface SettingsTranslations {
   }
 }
 
+export interface CopierEngineSignalKeywordTranslations {
+  entryPoint: string
+  buy: string
+  sell: string
+  sl: string
+  tp: string
+  marketOrder: string
+}
+
+export interface CopierEngineUpdateKeywordTranslations {
+  closeTp1: string
+  closeTp2: string
+  closeTp3: string
+  closeTp4: string
+  closeFull: string
+  closeHalf: string
+  closePartial: string
+  breakEven: string
+  setTp1: string
+  setTp2: string
+  setTp3: string
+  setTp4: string
+  setTp5: string
+  setTp: string
+  adjustTp: string
+  setSl: string
+  adjustSl: string
+  delete: string
+}
+
+export interface CopierEngineAdditionalKeywordTranslations {
+  layer: string
+  closeAll: string
+  deleteAll: string
+  ignoreKeyword: string
+  skipKeyword: string
+  removeSl: string
+  delayMsec: string
+  preferEntry: string
+  slInPips: string
+  tpInPips: string
+  delimiters: string
+  allOrder: string
+  readForwarded: string
+  readImage: string
+  firstPrice: string
+  lastPrice: string
+}
+
+export interface CopierEnginePageTranslations {
+  connectTelegram: string
+  telegramNotConnectedTitle: string
+  telegramNotConnectedBody: string
+  tgConnectPhoneTitle: string
+  tgConnectCodeTitle: string
+  phoneLabel: string
+  phonePlaceholder: string
+  phoneHint: string
+  sendCode: string
+  verificationCode: string
+  verificationPlaceholder: string
+  sentTo: string
+  twoFaPassword: string
+  twoFaPlaceholder: string
+  twoFaRequired: string
+  verify: string
+  back: string
+  networkError: string
+  failedSendCode: string
+  verificationFailed: string
+  failedLoadTgChannels: string
+  yourTelegramChannels: string
+  connected: string
+  expand: string
+  collapse: string
+  disconnect: string
+  channelsFound: string
+  refreshAfterFix: string
+  noTgChannelsTitle: string
+  noTgChannelsSubtitle: string
+  members: string
+  added: string
+  add: string
+  configuredEmptyTitle: string
+  configuredEmptySubtitle: string
+  activeChannels: string
+  configuredCount: string
+  statusPaused: string
+  removeAria: string
+  analyzing: string
+  profilePending: string
+  profileType: string
+  profileEntry: string
+  profileTp: string
+  profileSl: string
+  keywordsTitle: string
+  keywordsClose: string
+  keywordsSave: string
+  signalKeywordSection: string
+  updateKeywordSection: string
+  additionalKeywordSection: string
+  signalKeywords: CopierEngineSignalKeywordTranslations
+  updateKeywords: CopierEngineUpdateKeywordTranslations
+  additionalKeywords: CopierEngineAdditionalKeywordTranslations
+}
+
+export interface ChannelsPageTranslations {
+  title: string
+  subtitle: string
+  addChannel: string
+  addFormTitle: string
+  channelName: string
+  channelNamePlaceholder: string
+  usernameOptional: string
+  usernamePlaceholder: string
+  channelIdOptional: string
+  channelIdPlaceholder: string
+  channelIdHint: string
+  nameRequired: string
+  emptyTitle: string
+  emptySubtitle: string
+  statusPaused: string
+  overridesTitle: string
+  lotSizeOverride: string
+  pipToleranceOverride: string
+  useBrokerDefault: string
+}
+
 export interface BacktestTranslations {
   title: string
   subtitle: string
@@ -344,6 +505,8 @@ export interface Translations {
   dashboard: DashboardTranslations
   copierLogs: CopierLogsTranslations
   trades: TradesTranslations
+  channelsPage: ChannelsPageTranslations
+  copierEnginePage: CopierEnginePageTranslations
   backtest: BacktestTranslations
   marketNews: MarketNewsTranslations
   economicCalendar: EconomicCalendarTranslations
