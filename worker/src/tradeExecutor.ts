@@ -140,6 +140,7 @@ interface BrokerRow {
   user_id: string
   is_active: boolean
   platform: string
+  connection_status?: string | null
   metaapi_account_id: string | null
   account_login: string | null
   broker_server: string | null

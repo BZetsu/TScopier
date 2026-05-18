@@ -3,7 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.normalizeSignalChannelIds = normalizeSignalChannelIds;
 exports.channelMatchesBrokerSignal = channelMatchesBrokerSignal;
 function normalizeSignalChannelIds(raw) {
-    if (!(raw === null || raw === void 0 ? void 0 : raw.length))
+    if (!raw?.length)
         return [];
     return raw.map(String).filter(Boolean);
 }
@@ -13,9 +13,9 @@ function normalizeSignalChannelIds(raw) {
  * (Configure Trading modal checkboxes).
  */
 function channelMatchesBrokerSignal(broker, channelId) {
-    var ids = normalizeSignalChannelIds(broker.signal_channel_ids);
-    var enforce = broker.enforce_signal_channel_filter === true;
-    var useWhitelist = enforce || ids.length > 0;
+    const ids = normalizeSignalChannelIds(broker.signal_channel_ids);
+    const enforce = broker.enforce_signal_channel_filter === true;
+    const useWhitelist = enforce || ids.length > 0;
     if (!useWhitelist)
         return true;
     if (!channelId)
