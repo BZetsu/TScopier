@@ -21,7 +21,7 @@ export async function executeBacktestRun(
   config: BacktestRunConfig,
   ctx: BacktestRunContext = {},
 ): Promise<void> {
-  const mode = ctx.mode ?? "simulate"
+  const mode = ctx.mode ?? "tpsl"
   let lastProgressAt = 0
   let lastProgressPct = -1
   const updateProgress = async (pct: number, message: string) => {

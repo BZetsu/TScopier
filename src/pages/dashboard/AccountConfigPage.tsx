@@ -2356,18 +2356,6 @@ export function AccountConfigPage() {
 
                         {activeManualSubTab === 'strategy' && (
                           <div className="space-y-4">
-                            <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                              Strategy controls how the copier reacts to signals and applies your own SL/TP
-                              templates. Trailing stop and auto breakeven (move SL after movement) are under <strong>Auto-Management</strong>.
-                            </p>
-
-                            <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-3 space-y-3">
-                              <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                                <strong>Predefined SL &amp; TP</strong> (override signal stops) are under <strong>Stops &amp; Targets</strong>.
-                                R:R fallbacks below apply only when predefined and channel levels are missing.
-                              </p>
-                            </div>
-
                             <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-3 space-y-3">
                               <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">Signal behavior</p>
                               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">

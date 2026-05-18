@@ -1731,7 +1731,7 @@ function StatBlock({ label, labelHint, value, sub, subColor, valueColor = 'text-
           <Info className="w-3.5 h-3.5 shrink-0 opacity-60" aria-hidden />
         ) : null}
       </p>
-      <p className={`text-xl sm:text-3xl font-semibold mb-1 sm:mb-1.5 ${valueColor}`}>{value}</p>
+      <p className={`text-xl sm:text-2xl font-semibold mb-1 sm:mb-1.5 ${valueColor}`}>{value}</p>
       {sub === '' ? null : typeof sub === 'string' ? (
         <p className={`text-xs ${subColor}`}>{sub}</p>
       ) : (

@@ -21,6 +21,7 @@ export function buildTpslSummary(
   let allTpHits = 0
   let skippedSignals = 0
   let netPnl = 0
+  let totalPips = 0
   const byChannel: BacktestSummary["byChannel"] = {}
   const channelWins = new Map<string, number>()
 
@@ -33,6 +34,7 @@ export function buildTpslSummary(
     const pips = tradePipPnlFromSim(r)
     if (pips != null) {
       netPnl += r.pnl
+      totalPips += pips
       if (pips > 0) {
         wins++
         channelWins.set(r.channelId, (channelWins.get(r.channelId) ?? 0) + 1)
@@ -80,6 +82,7 @@ export function buildTpslSummary(
     maxDrawdownPct: 0,
     profitFactor: null,
     winRate,
+    totalPips,
     byChannel,
     message: "TP/SL backtest (no portfolio simulation)",
   }

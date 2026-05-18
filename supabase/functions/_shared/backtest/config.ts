@@ -26,7 +26,7 @@ const SIMULATE_STRATEGY: BacktestRunConfig["strategy"] = {
 
 export function toBacktestRunConfig(
   cfg: SimpleBacktestConfig,
-  mode: BacktestRunMode = "simulate",
+  mode: BacktestRunMode = "tpsl",
 ): BacktestRunConfig {
   return {
     channelIds: cfg.channelIds,

@@ -88,6 +88,7 @@ export interface BacktestSummary {
   maxDrawdownPct: number
   profitFactor: number | null
   winRate: number
+  totalPips?: number
   byChannel: Record<string, {
     channelName: string
     trades: number
