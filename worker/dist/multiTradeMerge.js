@@ -54,8 +54,9 @@ function mergePlanImmediateOrders(plan) {
     });
 }
 /**
- * Build one SL/TP target per open leg. Prefer planner immediates (bucket TPs); fall back
- * to parsed levels when the plan emitted zero immediates (range-only layout).
+ * Build one SL/TP target per open leg using Targets % (50/30/20, etc.).
+ * Always emits `openLegCount` entries — range baskets often have more filled legs than
+ * immediate `plan.orders`, so we never clone the last immediate order's TP onto extras.
  */
 function buildPerLegStopTargets(args) {
     const { plan, parsed, openLegCount, tpLots } = args;
@@ -66,9 +67,6 @@ function buildPerLegStopTargets(args) {
         stoploss: Number(o.stoploss) || 0,
         takeprofit: Number(o.takeprofit) || 0,
     }));
-    if (fromPlan.length >= n) {
-        return fromPlan.slice(0, n);
-    }
     const hasSl = typeof parsed.sl === 'number' && Number.isFinite(parsed.sl) && parsed.sl > 0;
     const parsedTps = (parsed.tp ?? []).filter((t) => typeof t === 'number' && Number.isFinite(t) && t > 0);
     const sl = hasSl

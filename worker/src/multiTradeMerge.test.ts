@@ -105,6 +105,33 @@ test('buildPerLegStopTargets: parsed fallback when plan has no immediates', () =
   assert.equal(targets[2]!.takeprofit, 80100)
 })
 
+test('buildPerLegStopTargets: never clones last immediate TP when open legs exceed plan.orders', () => {
+  const plan: PlannerResult = {
+    orders: [
+      { symbol: 'XAUUSD', operation: 'Sell', volume: 0.01, price: 0, stoploss: 4570, takeprofit: 4530, slippage: 20, comment: 'tp1', expertID: 1 },
+      { symbol: 'XAUUSD', operation: 'Sell', volume: 0.01, price: 0, stoploss: 4570, takeprofit: 4530, slippage: 20, comment: 'tp1', expertID: 1 },
+      { symbol: 'XAUUSD', operation: 'Sell', volume: 0.01, price: 0, stoploss: 4570, takeprofit: 4510, slippage: 20, comment: 'tp2', expertID: 1 },
+      { symbol: 'XAUUSD', operation: 'Sell', volume: 0.01, price: 0, stoploss: 4570, takeprofit: 4490, slippage: 20, comment: 'tp3', expertID: 1 },
+      { symbol: 'XAUUSD', operation: 'Sell', volume: 0.01, price: 0, stoploss: 4570, takeprofit: 4490, slippage: 20, comment: 'tp3', expertID: 1 },
+    ],
+    delay_ms: 0,
+  }
+  const targets = buildPerLegStopTargets({
+    plan,
+    parsed: { sl: 4570, tp: [4530, 4510, 4490] },
+    openLegCount: 10,
+    tpLots: [
+      { label: 'TP1', lot: 0, percent: 50, enabled: true },
+      { label: 'TP2', lot: 0, percent: 30, enabled: true },
+      { label: 'TP3', lot: 0, percent: 20, enabled: true },
+    ],
+  })
+  assert.equal(targets.length, 10)
+  assert.equal(targets.filter(t => t.takeprofit === 4490).length, 2)
+  assert.equal(targets.filter(t => t.takeprofit === 4530).length, 5)
+  assert.equal(targets.filter(t => t.takeprofit === 4510).length, 3)
+})
+
 test('buildPerLegStopTargets: spreads TPs by Targets % when plan has fewer immediates than legs', () => {
   const plan: PlannerResult = {
     orders: [

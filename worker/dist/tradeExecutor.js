@@ -19,6 +19,7 @@ const basketModFollowUp_1 = require("./basketModFollowUp");
 const basketSlTpReconcile_1 = require("./basketSlTpReconcile");
 const rangePendingLadderSync_1 = require("./rangePendingLadderSync");
 const brokerChannelFilter_1 = require("./brokerChannelFilter");
+const tpBucketDistribution_1 = require("./manualPlanning/tpBucketDistribution");
 /** When true (default), channel-attached signals only execute if MTProto is connected in this process. */
 function telegramLiveTradeGateEnabled() {
     const v = String(process.env.WORKER_REQUIRE_TELEGRAM_LIVE_FOR_TRADES ?? 'true').toLowerCase();
@@ -1156,6 +1157,78 @@ class TradeExecutor {
         return { handled: true, success: outcome.success };
     }
     /**
+     * After parallel multi immediates, re-apply per-leg TPs (Targets %) in case the
+     * broker accepted orders but normalized every leg to the same TP.
+     */
+    async syncMultiBasketLegTakeProfits(args) {
+        const { signal, parsed, broker, plan, symbol, uuid, params, manual, direction } = args;
+        const api = this.apiFor(broker);
+        if (!api)
+            return;
+        await new Promise(r => setTimeout(r, 250));
+        const { data: familyRows, error } = await this.supabase
+            .from('trades')
+            .select('id,signal_id,metaapi_order_id,opened_at,lot_size,sl,tp,entry_price,direction,symbol')
+            .eq('broker_account_id', broker.id)
+            .eq('signal_id', signal.id)
+            .eq('status', 'open')
+            .order('opened_at', { ascending: true })
+            .limit(500);
+        if (error || !(familyRows ?? []).length)
+            return;
+        const familyTrades = (familyRows ?? []);
+        const perLegTargets = (0, multiTradeMerge_1.buildPerLegStopTargets)({
+            plan,
+            parsed,
+            openLegCount: familyTrades.length,
+            tpLots: manual.tp_lots,
+        });
+        if (!perLegTargets.length)
+            return;
+        let openedTickets = null;
+        try {
+            openedTickets = await (0, basketSlTpReconcile_1.fetchOpenBrokerTickets)(api, uuid);
+        }
+        catch { /* optional */ }
+        const basketParams = params
+            ? {
+                digits: params.digits,
+                point: params.point,
+                minLot: params.minLot,
+                lotStep: params.lotStep,
+                contractSize: params.contractSize,
+                stopsLevel: params.stopsLevel,
+                freezeLevel: params.freezeLevel,
+            }
+            : null;
+        try {
+            await (0, basketSlTpReconcile_1.runBasketLegModifies)({
+                supabase: this.supabase,
+                api,
+                uuid,
+                symbol,
+                direction,
+                baseLot: Number(broker.default_lot_size ?? 0.01),
+                params: basketParams,
+                signalId: signal.id,
+                userId: signal.user_id,
+                brokerAccountId: broker.id,
+                familyTrades,
+                perLegTargets,
+                signalTps: (parsed.tp ?? []).filter((t) => typeof t === 'number' && Number.isFinite(t) && t > 0),
+                tpLots: manual.tp_lots,
+                nImmCwe: 0,
+                overrideTp: null,
+                strictEntryPrefetch: null,
+                openedTickets,
+                skipAlreadySynced: true,
+            });
+        }
+        catch (err) {
+            console.warn(`[tradeExecutor] multi TP sync failed signal=${signal.id} broker=${broker.id}:`, err instanceof Error ? err.message : String(err));
+        }
+    }
+    /**
      * OrderModify every open leg in the basket + refresh range ladder rows. No OrderSend.
      */
     async applyBasketSlTpRefresh(args) {
@@ -1373,6 +1446,8 @@ class TradeExecutor {
                 brokerAccountId: broker.id,
                 familyTrades,
                 perLegTargets,
+                signalTps: (parsed.tp ?? []).filter((t) => typeof t === 'number' && Number.isFinite(t) && t > 0),
+                tpLots: manual.tp_lots,
                 nImmCwe,
                 overrideTp,
                 strictEntryPrefetch,
@@ -1487,6 +1562,8 @@ class TradeExecutor {
                 direction,
                 perLegTargets,
                 familyTrades,
+                signalTps: (parsed.tp ?? []).filter((t) => typeof t === 'number' && Number.isFinite(t) && t > 0),
+                tpLots: manual.tp_lots,
                 virtualPendingsSnapshot: virtualPendings.length > 0 ? virtualPendings : null,
                 nImmCwe,
                 overrideTp,
@@ -1939,6 +2016,8 @@ class TradeExecutor {
         }
         const virtualPendings = (plan.virtualPendings ?? []).slice(0, 500);
         if (isManual && manual.trade_style === 'multi') {
+            const tpOnOrders = capped.map(o => Number(o.takeprofit) || 0).filter(tp => tp > 0);
+            const tpDistinct = [...new Set(tpOnOrders)];
             try {
                 await this.supabase.from('trade_execution_logs').insert({
                     user_id: signal.user_id,
@@ -1957,6 +2036,9 @@ class TradeExecutor {
                         range_distance_pips: manual.range_distance_pips ?? null,
                         symbol,
                         plan_fallback: plan.fallback_reason ?? null,
+                        parsed_tp_levels: (parsed.tp ?? []).filter((t) => typeof t === 'number' && Number.isFinite(t) && t > 0),
+                        immediate_tp_distinct: tpDistinct,
+                        tp_lots_enabled: (manual.tp_lots ?? []).filter(r => r?.enabled !== false).length,
                     },
                 });
             }
@@ -2481,6 +2563,23 @@ class TradeExecutor {
         // persisted; the worker monitor + edge sweep will fire them on trigger.
         const sendResults = await Promise.allSettled(legs.map(sendLeg));
         const anyImmediateOpened = sendResults.some(r => r.status === 'fulfilled' && r.value === true);
+        if (isManual
+            && manual.trade_style === 'multi'
+            && anyImmediateOpened
+            && (parsed.tp ?? []).filter((t) => typeof t === 'number' && Number.isFinite(t) && t > 0).length >= 2
+            && legs.length > 1) {
+            await this.syncMultiBasketLegTakeProfits({
+                signal,
+                parsed,
+                broker,
+                plan,
+                symbol,
+                uuid,
+                params,
+                manual,
+                direction: op.toLowerCase().includes('sell') ? 'sell' : 'buy',
+            });
+        }
         if (virtualPendings.length > 0 && !anyImmediateOpened && !strictDeferred) {
             const { error: stripErr } = await this.supabase
                 .from('range_pending_legs')
@@ -2595,11 +2694,8 @@ class TradeExecutor {
         // infer "remove the level" from missing data — that requires an
         // explicit close/cancel action upstream.
         const hasNewSl = typeof parsed.sl === 'number' && Number.isFinite(parsed.sl) && parsed.sl > 0;
-        const hasNewTp = Array.isArray(parsed.tp)
-            && parsed.tp.length > 0
-            && typeof parsed.tp[0] === 'number'
-            && Number.isFinite(parsed.tp[0])
-            && parsed.tp[0] > 0;
+        const parsedTpLevels = (parsed.tp ?? []).filter((t) => typeof t === 'number' && Number.isFinite(t) && t > 0);
+        const hasNewTp = parsedTpLevels.length > 0;
         const mgmtCtx = { hasNewSl, hasNewTp };
         const loadOpenBasketTrades = async () => {
             const { data } = await this.supabase
@@ -2607,6 +2703,7 @@ class TradeExecutor {
                 .select('id,broker_account_id,metaapi_order_id,symbol,direction,lot_size,status,sl,tp,entry_price')
                 .eq('signal_id', basketAnchorId)
                 .eq('status', 'open')
+                .order('opened_at', { ascending: true })
                 .limit(500);
             return (data ?? []);
         };
@@ -2653,6 +2750,12 @@ class TradeExecutor {
             catch { /* best-effort */ }
             return;
         }
+        const rowsByBroker = new Map();
+        for (const tr of rows) {
+            const list = rowsByBroker.get(tr.broker_account_id) ?? [];
+            list.push(tr);
+            rowsByBroker.set(tr.broker_account_id, list);
+        }
         await Promise.allSettled(rows.map(async (trade) => {
             const broker = byBroker.get(trade.broker_account_id);
             if (!broker || !isMtUuid(broker.metaapi_account_id))
@@ -2667,6 +2770,12 @@ class TradeExecutor {
             const api = this.apiFor(broker);
             if (!api)
                 return;
+            const brokerRows = rowsByBroker.get(trade.broker_account_id) ?? [trade];
+            const legIndex = brokerRows.findIndex(r => r.id === trade.id);
+            const manual = (broker.manual_settings ?? {});
+            const multiBasket = manual.trade_style === 'multi'
+                && brokerRows.length > 1
+                && parsedTpLevels.length >= 2;
             try {
                 if (action === 'close') {
                     await api.orderClose(uuid, { ticket });
@@ -2708,7 +2817,17 @@ class TradeExecutor {
                 }
                 else if (action === 'modify') {
                     const newSl = hasNewSl ? parsed.sl : sanitizeLevel(trade.sl);
-                    const newTp = hasNewTp ? parsed.tp[0] : sanitizeLevel(trade.tp);
+                    let newTp = hasNewTp ? parsedTpLevels[0] : sanitizeLevel(trade.tp);
+                    if (hasNewTp && multiBasket && legIndex >= 0) {
+                        const distributed = (0, tpBucketDistribution_1.takeProfitForLegIndex)({
+                            legIndex,
+                            openLegCount: brokerRows.length,
+                            finalTps: parsedTpLevels,
+                            tpLots: manual.tp_lots,
+                        });
+                        if (distributed > 0)
+                            newTp = distributed;
+                    }
                     await api.orderModify(uuid, {
                         ticket,
                         stoploss: newSl,
@@ -2718,7 +2837,7 @@ class TradeExecutor {
                     if (hasNewSl)
                         dbPatch.sl = parsed.sl;
                     if (hasNewTp)
-                        dbPatch.tp = parsed.tp[0];
+                        dbPatch.tp = newTp;
                     if (Object.keys(dbPatch).length > 0) {
                         await this.supabase.from('trades').update(dbPatch).eq('id', trade.id);
                     }

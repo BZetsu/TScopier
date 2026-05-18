@@ -1,11 +1,20 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.isTpLotRowEnabled = isTpLotRowEnabled;
 exports.resolveTpBucketRows = resolveTpBucketRows;
 exports.distributeCountAcrossTpBuckets = distributeCountAcrossTpBuckets;
 exports.buildDistributedPerLegTakeProfits = buildDistributedPerLegTakeProfits;
+exports.expandPerLegTargetsToCount = expandPerLegTargetsToCount;
+exports.takeProfitForLegIndex = takeProfitForLegIndex;
+/** Treat legacy rows without `enabled` as on (matches AccountConfig sanitize). */
+function isTpLotRowEnabled(row) {
+    if (!row)
+        return false;
+    return row.enabled !== false;
+}
 /** Enabled target rows paired with parsed TP prices (same rules as multi-trade planner). */
 function resolveTpBucketRows(finalTps, tpLots) {
-    const enabledRows = (tpLots ?? []).filter(r => r && r.enabled);
+    const enabledRows = (tpLots ?? []).filter(r => isTpLotRowEnabled(r));
     const bucketCount = finalTps.length > 0
         ? Math.max(1, Math.min(enabledRows.length || 1, finalTps.length))
         : 1;
@@ -71,4 +80,34 @@ function buildDistributedPerLegTakeProfits(args) {
         prices.push(tps[tps.length - 1]);
     }
     return prices.slice(0, n);
+}
+/** Pad/truncate targets to exactly one row per open leg (reconcile jobs, modify pass). */
+function expandPerLegTargetsToCount(args) {
+    const n = Math.max(0, args.openLegCount);
+    if (n === 0)
+        return [];
+    if (args.targets.length >= n)
+        return args.targets.slice(0, n);
+    const sl = args.targets[0]?.stoploss ?? 0;
+    const tps = args.finalTps.length
+        ? args.finalTps
+        : args.targets.map(t => t.takeprofit).filter(tp => tp > 0);
+    const tpPrices = buildDistributedPerLegTakeProfits({
+        openLegCount: n,
+        finalTps: tps,
+        tpLots: args.tpLots,
+    });
+    return tpPrices.map(tp => ({ stoploss: sl, takeprofit: tp }));
+}
+/** Targets % TP price for a single leg index (0 = oldest open leg). */
+function takeProfitForLegIndex(args) {
+    const prices = buildDistributedPerLegTakeProfits({
+        openLegCount: args.openLegCount,
+        finalTps: args.finalTps,
+        tpLots: args.tpLots,
+    });
+    const i = args.legIndex;
+    if (i < 0 || i >= prices.length)
+        return 0;
+    return prices[i] ?? 0;
 }
