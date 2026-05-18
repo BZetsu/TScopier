@@ -34,6 +34,8 @@ function telegramLiveTradeGateEnabled() {
 const PARSED_STATUSES = new Set(['parsed']);
 const SYMBOL_CACHE_TTL_MS = 10 * 60000;
 const SYMBOL_LIST_TTL_MS = 30 * 60000;
+const SESSION_PING_MIN_INTERVAL_MS = Math.max(5000, Math.min(120000, Number(process.env.BROKER_SESSION_PING_MIN_INTERVAL_MS ?? 25000)));
+const EXECUTOR_PARSED_SWEEP_MS = Math.max(1500, Math.min(60000, Number(process.env.EXECUTOR_PARSED_SWEEP_MS ?? 3000)));
 function isMtUuid(s) {
     if (!s)
         return false;
@@ -267,6 +269,7 @@ class TradeExecutor {
         this.symbolListCache = new Map();
         /** Cached channel rows keyed by `telegram_channels.id` — refreshed on demand. */
         this.channelKeywordsCache = new Map();
+        this.sessionPingAt = new Map();
         if (!(0, metatraderapi_1.hasMetatraderApiConfigured)()) {
             console.warn('[tradeExecutor] MT4API_BASIC_USER/PASSWORD missing — trade execution disabled.');
         }
@@ -287,10 +290,10 @@ class TradeExecutor {
         this.subscribeBrokers();
         this.subscribeChannelKeywords();
         // Periodic safety sweep: catch any 'parsed' signals we may have missed
-        // (Realtime drops, restarts). Cheap query, runs every 15s.
+        // (Realtime drops, restarts). Default 3s (EXECUTOR_PARSED_SWEEP_MS).
         this.timer = setInterval(() => {
             this.sweep().catch(err => console.error('[tradeExecutor] sweep failed:', err));
-        }, 15000);
+        }, EXECUTOR_PARSED_SWEEP_MS);
         this.timer.unref?.();
         this.brokerPendingSweepTimer = setInterval(() => {
             this.sweepExpiredTscopierBrokerPendings().catch(err => console.error('[tradeExecutor] broker pending TTL sweep failed:', err));
@@ -468,6 +471,15 @@ class TradeExecutor {
             await this.handleSignal(row);
         }
     }
+    /**
+     * Run trade logic immediately after parse (same process), without waiting
+     * for Supabase Realtime. Realtime/sweep remain as fallbacks.
+     */
+    dispatchParsedSignal(row) {
+        if (!PARSED_STATUSES.has(row.status))
+            return;
+        void this.handleSignal(row);
+    }
     // ── execution ─────────────────────────────────────────────────────────
     async handleSignal(row) {
         if (!(0, metatraderapi_1.hasMetatraderApiConfigured)())
@@ -483,6 +495,7 @@ class TradeExecutor {
             }
         }
         this.inflight.add(row.id);
+        const pipelineT0 = Date.now();
         try {
             const parsed = row.parsed_data;
             if (!parsed || !parsed.action)
@@ -525,8 +538,12 @@ class TradeExecutor {
             const op = operationFor(action, parsed);
             if (!op || !parsed.symbol)
                 return;
-            const outcomes = await Promise.all(brokers.map(b => this.sendOrder(row, parsed, op, b, channelKeywords)));
+            const outcomes = await Promise.all(brokers.map(b => this.sendOrder(row, parsed, op, b, channelKeywords, pipelineT0)));
             const anyOpened = outcomes.some(o => o.openedOrMerged === true);
+            const pipelineMs = Date.now() - pipelineT0;
+            if (pipelineMs > 4000) {
+                console.warn(`[tradeExecutor] slow pipeline signal=${row.id} user=${row.user_id} ms=${pipelineMs} brokers=${brokers.length}`);
+            }
             const strictSkips = outcomes.filter(o => o.signalEntryRequiredSkip === true).length;
             if (!anyOpened && strictSkips === brokers.length && strictSkips > 0) {
                 try {
@@ -1788,23 +1805,29 @@ class TradeExecutor {
             }
         }
     }
-    async sendOrder(signal, parsed, op, broker, channelKeywords) {
+    async ensureBrokerSession(api, uuid, broker) {
+        const now = Date.now();
+        const last = this.sessionPingAt.get(uuid) ?? 0;
+        if (now - last < SESSION_PING_MIN_INTERVAL_MS)
+            return true;
+        const alive = await api.keepSessionAlive(uuid);
+        if (alive)
+            this.sessionPingAt.set(uuid, now);
+        if (alive && broker.connection_status !== 'connected') {
+            void this.supabase
+                .from('broker_accounts')
+                .update({ connection_status: 'connected' })
+                .eq('id', broker.id);
+        }
+        return alive;
+    }
+    async sendOrder(signal, parsed, op, broker, channelKeywords, pipelineT0) {
         if (!(0, metatraderapi_1.hasMetatraderApiConfigured)())
             return {};
         const api = this.apiFor(broker);
         if (!api)
             return {};
         const uuid = broker.metaapi_account_id;
-        const alive = await api.keepSessionAlive(uuid);
-        if (!alive) {
-            console.warn(`[tradeExecutor] broker ${broker.id} session check failed before order; attempting OrderSend anyway`);
-        }
-        else if (broker.connection_status !== 'connected') {
-            void this.supabase
-                .from('broker_accounts')
-                .update({ connection_status: 'connected' })
-                .eq('id', broker.id);
-        }
         const mapping = applySymbolMapping(parsed.symbol, broker);
         // Whitelist mode: when the user listed multiple symbols, only let signals
         // matching one of them through. Skip the signal otherwise.
@@ -1827,21 +1850,26 @@ class TradeExecutor {
             });
             return {};
         }
-        // Resolve to the broker's actual instrument name (e.g. BTCUSD → BTCUSDm).
-        // Falls back to the requested symbol when /Symbols is unavailable or has no match.
-        const symbol = await this.resolveBrokerSymbol(uuid, requestedSymbol);
-        if (symbol.toUpperCase() !== requestedSymbol.toUpperCase()) {
-            console.log(`[tradeExecutor] symbol resolved broker=${broker.id} ${requestedSymbol} → ${symbol}`);
-        }
-        const params = await this.getSymbolParams(uuid, symbol).catch(() => null);
-        const baseLot = roundLot(computeLot(broker, parsed), params);
         const isManual = (broker.copier_mode ?? 'ai') === 'manual';
         const manual = (broker.manual_settings ?? {});
-        let strictEntryPrefetch = null;
         const needsQuotePrefetch = isManual
             && (((0, manualPlanner_1.signalEntryPriceStrictEnabled)(manual) && (0, manualPlanner_1.parsedHasExplicitEntryAnchor)(parsed))
                 || ((manual.use_predefined_sl_pips === true || manual.use_predefined_tp_pips === true)
                     && !(0, manualPlanner_1.parsedHasExplicitEntryAnchor)(parsed)));
+        const [sessionOk, symbol, paramsFromRequested] = await Promise.all([
+            this.ensureBrokerSession(api, uuid, broker),
+            this.resolveBrokerSymbol(uuid, requestedSymbol),
+            this.getSymbolParams(uuid, requestedSymbol).catch(() => null),
+        ]);
+        if (!sessionOk) {
+            console.warn(`[tradeExecutor] broker ${broker.id} session check failed before order; attempting OrderSend anyway`);
+        }
+        if (symbol.toUpperCase() !== requestedSymbol.toUpperCase()) {
+            console.log(`[tradeExecutor] symbol resolved broker=${broker.id} ${requestedSymbol} → ${symbol}`);
+        }
+        let params = paramsFromRequested ?? await this.getSymbolParams(uuid, symbol).catch(() => null);
+        const baseLot = roundLot(computeLot(broker, parsed), params);
+        let strictEntryPrefetch = null;
         if (needsQuotePrefetch) {
             try {
                 strictEntryPrefetch = await api.quote(uuid, symbol);
@@ -2540,7 +2568,13 @@ class TradeExecutor {
                     action: 'order_send',
                     status: 'success',
                     request_payload: { ...args, ...orderLogContext },
-                    response_payload: { ticket: result.ticket, latency_ms: latencyMs, leg: leg.idx + 1, total: totalCount },
+                    response_payload: {
+                        ticket: result.ticket,
+                        latency_ms: latencyMs,
+                        pipeline_ms: pipelineT0 != null ? Date.now() - pipelineT0 : undefined,
+                        leg: leg.idx + 1,
+                        total: totalCount,
+                    },
                 });
                 return true;
             }

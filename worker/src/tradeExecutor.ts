@@ -113,7 +113,7 @@ type ParsedSignal = {
   raw_instruction?: string
 }
 
-interface SignalRow {
+export interface SignalRow {
   id: string
   user_id: string
   channel_id: string | null
@@ -194,6 +194,14 @@ interface SymbolListCacheEntry {
 
 const SYMBOL_CACHE_TTL_MS = 10 * 60_000
 const SYMBOL_LIST_TTL_MS = 30 * 60_000
+const SESSION_PING_MIN_INTERVAL_MS = Math.max(
+  5_000,
+  Math.min(120_000, Number(process.env.BROKER_SESSION_PING_MIN_INTERVAL_MS ?? 25_000)),
+)
+const EXECUTOR_PARSED_SWEEP_MS = Math.max(
+  1_500,
+  Math.min(60_000, Number(process.env.EXECUTOR_PARSED_SWEEP_MS ?? 3_000)),
+)
 
 function isMtUuid(s: string | null | undefined): boolean {
   if (!s) return false
@@ -471,6 +479,7 @@ export class TradeExecutor {
   private symbolListCache = new Map<string, SymbolListCacheEntry>()
   /** Cached channel rows keyed by `telegram_channels.id` — refreshed on demand. */
   private channelKeywordsCache = new Map<string, { keywords: ChannelKeywords | null; loadedAt: number }>()
+  private sessionPingAt = new Map<string, number>()
   constructor(
     private readonly supabase: SupabaseClient,
     private readonly sessionManager?: UserSessionManager,
@@ -497,10 +506,10 @@ export class TradeExecutor {
     this.subscribeBrokers()
     this.subscribeChannelKeywords()
     // Periodic safety sweep: catch any 'parsed' signals we may have missed
-    // (Realtime drops, restarts). Cheap query, runs every 15s.
+    // (Realtime drops, restarts). Default 3s (EXECUTOR_PARSED_SWEEP_MS).
     this.timer = setInterval(() => {
       this.sweep().catch(err => console.error('[tradeExecutor] sweep failed:', err))
-    }, 15_000)
+    }, EXECUTOR_PARSED_SWEEP_MS)
     this.timer.unref?.()
     this.brokerPendingSweepTimer = setInterval(() => {
       this.sweepExpiredTscopierBrokerPendings().catch(err =>
@@ -682,6 +691,15 @@ export class TradeExecutor {
     }
   }
 
+  /**
+   * Run trade logic immediately after parse (same process), without waiting
+   * for Supabase Realtime. Realtime/sweep remain as fallbacks.
+   */
+  dispatchParsedSignal(row: SignalRow): void {
+    if (!PARSED_STATUSES.has(row.status)) return
+    void this.handleSignal(row)
+  }
+
   // ── execution ─────────────────────────────────────────────────────────
 
   private async handleSignal(row: SignalRow) {
@@ -698,6 +716,7 @@ export class TradeExecutor {
       }
     }
     this.inflight.add(row.id)
+    const pipelineT0 = Date.now()
     try {
       const parsed = row.parsed_data
       if (!parsed || !parsed.action) return
@@ -752,9 +771,15 @@ export class TradeExecutor {
       if (!op || !parsed.symbol) return
 
       const outcomes = await Promise.all(
-        brokers.map(b => this.sendOrder(row, parsed, op, b, channelKeywords)),
+        brokers.map(b => this.sendOrder(row, parsed, op, b, channelKeywords, pipelineT0)),
       )
       const anyOpened = outcomes.some(o => o.openedOrMerged === true)
+      const pipelineMs = Date.now() - pipelineT0
+      if (pipelineMs > 4000) {
+        console.warn(
+          `[tradeExecutor] slow pipeline signal=${row.id} user=${row.user_id} ms=${pipelineMs} brokers=${brokers.length}`,
+        )
+      }
       const strictSkips = outcomes.filter(o => o.signalEntryRequiredSkip === true).length
       if (!anyOpened && strictSkips === brokers.length && strictSkips > 0) {
         try {
@@ -2176,28 +2201,33 @@ export class TradeExecutor {
     }
   }
 
+  private async ensureBrokerSession(api: MetatraderApiClient, uuid: string, broker: BrokerRow): Promise<boolean> {
+    const now = Date.now()
+    const last = this.sessionPingAt.get(uuid) ?? 0
+    if (now - last < SESSION_PING_MIN_INTERVAL_MS) return true
+    const alive = await api.keepSessionAlive(uuid)
+    if (alive) this.sessionPingAt.set(uuid, now)
+    if (alive && broker.connection_status !== 'connected') {
+      void this.supabase
+        .from('broker_accounts')
+        .update({ connection_status: 'connected' })
+        .eq('id', broker.id)
+    }
+    return alive
+  }
+
   private async sendOrder(
     signal: SignalRow,
     parsed: ParsedSignal,
     op: MtOperation,
     broker: BrokerRow,
     channelKeywords: ChannelKeywords | null,
+    pipelineT0?: number,
   ): Promise<SendOrderOutcome> {
     if (!hasMetatraderApiConfigured()) return {}
     const api = this.apiFor(broker)
     if (!api) return {}
     const uuid = broker.metaapi_account_id!
-    const alive = await api.keepSessionAlive(uuid)
-    if (!alive) {
-      console.warn(
-        `[tradeExecutor] broker ${broker.id} session check failed before order; attempting OrderSend anyway`,
-      )
-    } else if (broker.connection_status !== 'connected') {
-      void this.supabase
-        .from('broker_accounts')
-        .update({ connection_status: 'connected' })
-        .eq('id', broker.id)
-    }
     const mapping = applySymbolMapping(parsed.symbol!, broker)
 
     // Whitelist mode: when the user listed multiple symbols, only let signals
@@ -2223,20 +2253,9 @@ export class TradeExecutor {
       return {}
     }
 
-    // Resolve to the broker's actual instrument name (e.g. BTCUSD → BTCUSDm).
-    // Falls back to the requested symbol when /Symbols is unavailable or has no match.
-    const symbol = await this.resolveBrokerSymbol(uuid, requestedSymbol)
-    if (symbol.toUpperCase() !== requestedSymbol.toUpperCase()) {
-      console.log(`[tradeExecutor] symbol resolved broker=${broker.id} ${requestedSymbol} → ${symbol}`)
-    }
-
-    const params = await this.getSymbolParams(uuid, symbol).catch(() => null)
-    const baseLot = roundLot(computeLot(broker, parsed), params)
-
     const isManual = (broker.copier_mode ?? 'ai') === 'manual'
     const manual = (broker.manual_settings ?? {}) as ManualSettings
 
-    let strictEntryPrefetch: { bid: number; ask: number } | null = null
     const needsQuotePrefetch =
       isManual
       && (
@@ -2246,6 +2265,25 @@ export class TradeExecutor {
           && !parsedHasExplicitEntryAnchor(parsed)
         )
       )
+
+    const [sessionOk, symbol, paramsFromRequested] = await Promise.all([
+      this.ensureBrokerSession(api, uuid, broker),
+      this.resolveBrokerSymbol(uuid, requestedSymbol),
+      this.getSymbolParams(uuid, requestedSymbol).catch(() => null),
+    ])
+    if (!sessionOk) {
+      console.warn(
+        `[tradeExecutor] broker ${broker.id} session check failed before order; attempting OrderSend anyway`,
+      )
+    }
+    if (symbol.toUpperCase() !== requestedSymbol.toUpperCase()) {
+      console.log(`[tradeExecutor] symbol resolved broker=${broker.id} ${requestedSymbol} → ${symbol}`)
+    }
+
+    let params = paramsFromRequested ?? await this.getSymbolParams(uuid, symbol).catch(() => null)
+    const baseLot = roundLot(computeLot(broker, parsed), params)
+
+    let strictEntryPrefetch: { bid: number; ask: number } | null = null
     if (needsQuotePrefetch) {
       try {
         strictEntryPrefetch = await api.quote(uuid, symbol)
@@ -3005,7 +3043,13 @@ export class TradeExecutor {
           action: 'order_send',
           status: 'success',
           request_payload: { ...args, ...orderLogContext } as unknown as Record<string, unknown>,
-          response_payload: { ticket: result.ticket, latency_ms: latencyMs, leg: leg.idx + 1, total: totalCount },
+          response_payload: {
+            ticket: result.ticket,
+            latency_ms: latencyMs,
+            pipeline_ms: pipelineT0 != null ? Date.now() - pipelineT0 : undefined,
+            leg: leg.idx + 1,
+            total: totalCount,
+          },
         })
         return true
       } catch (err) {
