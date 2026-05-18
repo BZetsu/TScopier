@@ -39,6 +39,7 @@ export const fr: Translations = {
     expandSidebar: 'Développer la barre',
     collapseSidebar: 'Réduire la barre',
     planFree: 'Gratuit',
+    settings: 'Paramètres',
   },
   common: {
     comingSoon: 'Bientôt disponible',
@@ -243,6 +244,59 @@ export const fr: Translations = {
     baselineNote:
       'Le ROI et le drawdown utilisent la base de performance de chaque compte. Les filtres de période s’appliquent aux stats de trades et au graphique des résultats uniquement.',
   },
+  settings: {
+    title: 'Paramètres',
+    subtitle: 'Gérez votre profil, vos préférences et la sécurité du compte.',
+    loadError: 'Impossible de charger les paramètres.',
+    saveError: 'Impossible d’enregistrer les modifications.',
+    saved: 'Modifications enregistrées.',
+    emailHint: 'L’e-mail est géré par votre fournisseur de connexion et ne peut pas être modifié ici.',
+    passwordHint: 'Au moins 8 caractères.',
+    passwordTooShort: 'Le mot de passe doit contenir au moins 8 caractères.',
+    passwordMismatch: 'Les mots de passe ne correspondent pas.',
+    passwordUpdated: 'Mot de passe mis à jour.',
+    passwordError: 'Impossible de mettre à jour le mot de passe.',
+    sections: {
+      personal: 'Informations personnelles',
+      general: 'Paramètres généraux',
+      security: 'Sécurité',
+    },
+    personal: {
+      title: 'Informations personnelles',
+      description: 'Vos coordonnées et votre affichage dans TSCopier.',
+    },
+    general: {
+      title: 'Paramètres généraux',
+      description: 'Valeurs par défaut pour les soldes, rapports et horaires.',
+    },
+    security: {
+      title: 'Sécurité',
+      description: 'Mettez à jour votre mot de passe pour sécuriser votre compte.',
+      updatePassword: 'Mettre à jour le mot de passe',
+    },
+    fields: {
+      firstName: 'Prénom',
+      lastName: 'Nom de famille',
+      username: 'Nom d’utilisateur',
+      email: 'E-mail',
+      country: 'Pays',
+      city: 'Ville',
+      mobile: 'Mobile',
+      address: 'Adresse',
+      baseCurrency: 'Devise de base',
+      timezone: 'Fuseau horaire',
+      newPassword: 'Nouveau mot de passe',
+      confirmPassword: 'Confirmer le mot de passe',
+    },
+    placeholders: {
+      address: 'Rue, bâtiment, code postal…',
+      selectCountry: 'Sélectionner un pays',
+      selectTimezone: 'Sélectionner un fuseau horaire',
+      searchCountry: 'Rechercher un pays…',
+      searchTimezone: 'Rechercher un fuseau…',
+      noMatches: 'Aucun résultat',
+    },
+  },
   pages: {
     accountConfiguration: {
       title: 'Compte et configuration',
@@ -299,6 +353,10 @@ export const fr: Translations = {
     copierEngine: {
       title: 'Canaux',
       description: 'Gérez les canaux Telegram et les réglages du copieur.',
+    },
+    settings: {
+      title: 'Paramètres',
+      description: 'Profil, devise, fuseau horaire et mot de passe.',
     },
   },
 }

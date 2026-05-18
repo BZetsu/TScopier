@@ -35,6 +35,7 @@ export interface NavTranslations {
   expandSidebar: string
   collapseSidebar: string
   planFree: string
+  settings: string
 }
 
 export interface CommonTranslations {
@@ -218,6 +219,50 @@ export interface PerformanceTranslations {
   baselineNote: string
 }
 
+export interface SettingsTranslations {
+  title: string
+  subtitle: string
+  loadError: string
+  saveError: string
+  saved: string
+  emailHint: string
+  passwordHint: string
+  passwordTooShort: string
+  passwordMismatch: string
+  passwordUpdated: string
+  passwordError: string
+  sections: {
+    personal: string
+    general: string
+    security: string
+  }
+  personal: { title: string; description: string }
+  general: { title: string; description: string }
+  security: { title: string; description: string; updatePassword: string }
+  fields: {
+    firstName: string
+    lastName: string
+    username: string
+    email: string
+    country: string
+    city: string
+    mobile: string
+    address: string
+    baseCurrency: string
+    timezone: string
+    newPassword: string
+    confirmPassword: string
+  }
+  placeholders: {
+    address: string
+    selectCountry: string
+    selectTimezone: string
+    searchCountry: string
+    searchTimezone: string
+    noMatches: string
+  }
+}
+
 export interface BacktestTranslations {
   title: string
   subtitle: string
@@ -260,6 +305,7 @@ export interface Translations {
   marketNews: MarketNewsTranslations
   economicCalendar: EconomicCalendarTranslations
   performance: PerformanceTranslations
+  settings: SettingsTranslations
   pages: {
     accountConfiguration: PageMeta
     contactSupport: PageMeta
@@ -275,5 +321,6 @@ export interface Translations {
     analysisHub: PageMeta
     signalHistory: PageMeta
     copierEngine: PageMeta
+    settings: PageMeta
   }
 }

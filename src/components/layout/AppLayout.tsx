@@ -274,7 +274,15 @@ export function AppLayout() {
             <ThemeToggle />
             <button
               type="button"
-              className="hidden sm:block p-2 rounded-lg text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
+              onClick={() => navigate('/settings')}
+              title={t.nav.settings}
+              aria-label={t.nav.settings}
+              className={clsx(
+                'p-2 rounded-lg transition-colors',
+                location.pathname === '/settings'
+                  ? 'text-teal-600 bg-teal-50 dark:text-teal-400 dark:bg-teal-950/50'
+                  : 'text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800',
+              )}
             >
               <Settings className="w-5 h-5" />
             </button>

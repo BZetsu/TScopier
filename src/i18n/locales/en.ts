@@ -39,6 +39,7 @@ export const en: Translations = {
     expandSidebar: 'Expand sidebar',
     collapseSidebar: 'Collapse sidebar',
     planFree: 'Free',
+    settings: 'Settings',
   },
   common: {
     comingSoon: 'Coming soon',
@@ -243,6 +244,59 @@ export const en: Translations = {
     baselineNote:
       'ROI and drawdown use each account’s performance baseline from configuration. Period filters apply to trade stats and the outcome chart only.',
   },
+  settings: {
+    title: 'Settings',
+    subtitle: 'Manage your profile, preferences, and account security.',
+    loadError: 'Could not load settings.',
+    saveError: 'Could not save changes.',
+    saved: 'Changes saved.',
+    emailHint: 'Email is managed by your sign-in provider and cannot be changed here.',
+    passwordHint: 'At least 8 characters.',
+    passwordTooShort: 'Password must be at least 8 characters.',
+    passwordMismatch: 'Passwords do not match.',
+    passwordUpdated: 'Password updated successfully.',
+    passwordError: 'Could not update password.',
+    sections: {
+      personal: 'Personal information',
+      general: 'General settings',
+      security: 'Security',
+    },
+    personal: {
+      title: 'Personal information',
+      description: 'Your contact details and how you appear in TSCopier.',
+    },
+    general: {
+      title: 'General settings',
+      description: 'Defaults used for balances, reports, and timestamps.',
+    },
+    security: {
+      title: 'Security',
+      description: 'Update your password to keep your account secure.',
+      updatePassword: 'Update password',
+    },
+    fields: {
+      firstName: 'First name',
+      lastName: 'Last name',
+      username: 'Username',
+      email: 'Email',
+      country: 'Country',
+      city: 'City',
+      mobile: 'Mobile number',
+      address: 'Address',
+      baseCurrency: 'Base currency',
+      timezone: 'Timezone',
+      newPassword: 'New password',
+      confirmPassword: 'Confirm password',
+    },
+    placeholders: {
+      address: 'Street, building, postal code…',
+      selectCountry: 'Select country',
+      selectTimezone: 'Select timezone',
+      searchCountry: 'Search countries…',
+      searchTimezone: 'Search timezones…',
+      noMatches: 'No matches',
+    },
+  },
   pages: {
     accountConfiguration: {
       title: 'Account & Configuration',
@@ -299,6 +353,10 @@ export const en: Translations = {
     copierEngine: {
       title: 'Channels',
       description: 'Manage Telegram signal channels and copier settings.',
+    },
+    settings: {
+      title: 'Settings',
+      description: 'Profile, currency, timezone, and password.',
     },
   },
 }

@@ -26,6 +26,7 @@ import {
 import { PortfolioPage } from './pages/dashboard/PortfolioPage'
 import { AnalysisHubPage } from './pages/dashboard/AnalysisHubPage'
 import { SignalHistoryPage } from './pages/dashboard/SignalHistoryPage'
+import { SettingsPage } from './pages/dashboard/SettingsPage'
 
 export default function App() {
   return (
@@ -66,11 +67,11 @@ export default function App() {
             <Route path="/performance" element={<PerformancePage />} />
             <Route path="/portfolio" element={<PortfolioPage />} />
             <Route path="/analysis-hub" element={<AnalysisHubPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
 
             {/* Legacy redirects */}
             <Route path="/channels" element={<Navigate to="/copier-engine" replace />} />
             <Route path="/trades" element={<Navigate to="/account-trades" replace />} />
-            <Route path="/settings" element={<Navigate to="/account-configuration" replace />} />
             <Route path="/onboarding" element={<Navigate to="/dashboard" replace />} />
             <Route path="/integrations" element={<Navigate to="/dashboard" replace />} />
             <Route path="/sentiments" element={<Navigate to="/market-news" replace />} />

@@ -39,6 +39,7 @@ export const es: Translations = {
     expandSidebar: 'Expandir barra',
     collapseSidebar: 'Contraer barra',
     planFree: 'Gratis',
+    settings: 'Ajustes',
   },
   common: {
     comingSoon: 'Próximamente',
@@ -243,6 +244,59 @@ export const es: Translations = {
     baselineNote:
       'El ROI y el drawdown usan la base de rendimiento de cada cuenta. Los filtros de periodo aplican solo a estadísticas de operaciones y al gráfico de resultados.',
   },
+  settings: {
+    title: 'Ajustes',
+    subtitle: 'Gestiona tu perfil, preferencias y seguridad de la cuenta.',
+    loadError: 'No se pudieron cargar los ajustes.',
+    saveError: 'No se pudieron guardar los cambios.',
+    saved: 'Cambios guardados.',
+    emailHint: 'El correo lo gestiona tu proveedor de acceso y no se puede cambiar aquí.',
+    passwordHint: 'Mínimo 8 caracteres.',
+    passwordTooShort: 'La contraseña debe tener al menos 8 caracteres.',
+    passwordMismatch: 'Las contraseñas no coinciden.',
+    passwordUpdated: 'Contraseña actualizada correctamente.',
+    passwordError: 'No se pudo actualizar la contraseña.',
+    sections: {
+      personal: 'Información personal',
+      general: 'Ajustes generales',
+      security: 'Seguridad',
+    },
+    personal: {
+      title: 'Información personal',
+      description: 'Tus datos de contacto y cómo apareces en TSCopier.',
+    },
+    general: {
+      title: 'Ajustes generales',
+      description: 'Valores predeterminados para saldos, informes y horas.',
+    },
+    security: {
+      title: 'Seguridad',
+      description: 'Actualiza tu contraseña para mantener tu cuenta segura.',
+      updatePassword: 'Actualizar contraseña',
+    },
+    fields: {
+      firstName: 'Nombre',
+      lastName: 'Apellidos',
+      username: 'Usuario',
+      email: 'Correo',
+      country: 'País',
+      city: 'Ciudad',
+      mobile: 'Teléfono móvil',
+      address: 'Dirección',
+      baseCurrency: 'Moneda base',
+      timezone: 'Zona horaria',
+      newPassword: 'Nueva contraseña',
+      confirmPassword: 'Confirmar contraseña',
+    },
+    placeholders: {
+      address: 'Calle, edificio, código postal…',
+      selectCountry: 'Seleccionar país',
+      selectTimezone: 'Seleccionar zona horaria',
+      searchCountry: 'Buscar países…',
+      searchTimezone: 'Buscar zonas horarias…',
+      noMatches: 'Sin resultados',
+    },
+  },
   pages: {
     accountConfiguration: {
       title: 'Cuenta y configuración',
@@ -299,6 +353,10 @@ export const es: Translations = {
     copierEngine: {
       title: 'Canales',
       description: 'Gestiona canales de Telegram y ajustes del copiador.',
+    },
+    settings: {
+      title: 'Ajustes',
+      description: 'Perfil, moneda, zona horaria y contraseña.',
     },
   },
 }
