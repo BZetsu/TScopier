@@ -13,10 +13,9 @@ import { useLocale, useT } from '../../context/LocaleContext'
 import { useUserProfile } from '../../context/UserProfileContext'
 import { updatePassword } from '../../lib/userProfile'
 import { buildCountryOptions } from '../../lib/countryOptions'
-import { BASE_CURRENCIES } from '../../lib/settingsOptions'
+import { buildBaseCurrencyOptions } from '../../lib/baseCurrencies'
 import { TIMEZONE_OPTIONS } from '../../lib/timezoneOptions'
 import { Input } from '../../components/ui/Input'
-import { Select } from '../../components/ui/Select'
 import { SearchableSelect } from '../../components/ui/SearchableSelect'
 import { Button } from '../../components/ui/Button'
 import { Alert } from '../../components/ui/Alert'
@@ -61,6 +60,10 @@ export function SettingsPage() {
   const countryOptions = useMemo(
     () => buildCountryOptions(locale, t.settings.placeholders.selectCountry),
     [locale, t.settings.placeholders.selectCountry],
+  )
+  const currencyOptions = useMemo(
+    () => buildBaseCurrencyOptions(profile.base_currency),
+    [profile.base_currency],
   )
   const [section, setSection] = useState<SettingsSection>('personal')
   const [email, setEmail] = useState('')
@@ -300,11 +303,15 @@ export function SettingsPage() {
                 </Alert>
               ) : null}
               <div className="grid sm:grid-cols-2 gap-4">
-                <Select
+                <SearchableSelect
                   label={t.settings.fields.baseCurrency}
                   value={profile.base_currency}
-                  onChange={e => void applyPreference({ base_currency: e.target.value }, setGeneralMsg)}
-                  options={[...BASE_CURRENCIES]}
+                  onChange={code => void applyPreference({ base_currency: code }, setGeneralMsg)}
+                  options={currencyOptions}
+                  placeholder={t.settings.placeholders.selectCurrency}
+                  searchPlaceholder={t.settings.placeholders.searchCurrency}
+                  noMatchesLabel={t.settings.placeholders.noMatches}
+                  className="sm:col-span-2"
                 />
                 <SearchableSelect
                   label={t.settings.fields.timezone}

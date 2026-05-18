@@ -341,8 +341,10 @@ export interface SettingsTranslations {
     address: string
     selectCountry: string
     selectTimezone: string
+    selectCurrency: string
     searchCountry: string
     searchTimezone: string
+    searchCurrency: string
     noMatches: string
   }
 }

@@ -151,10 +151,14 @@ export function AppSearch({ className }: { className?: string }) {
     return [...pages, ...brokerItems, ...channelItems]
   }, [t, brokers, channels])
 
-  const flatResults = useMemo(
-    () => filterSearchResults(allResults, query, 14),
-    [allResults, query],
-  )
+  const hasQuery = query.trim().length > 0
+
+  const flatResults = useMemo(() => {
+    if (!hasQuery) return []
+    return filterSearchResults(allResults, query, 14)
+  }, [allResults, query, hasQuery])
+
+  const showSuggestions = open && hasQuery
 
   const grouped = useMemo(
     () =>
@@ -186,7 +190,6 @@ export function AppSearch({ className }: { className?: string }) {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault()
         inputRef.current?.focus()
-        setOpen(true)
       }
     }
     document.addEventListener('keydown', onKey)
@@ -225,10 +228,10 @@ export function AppSearch({ className }: { className?: string }) {
   }
 
   useEffect(() => {
-    if (!open || !listRef.current) return
+    if (!showSuggestions || !listRef.current) return
     const active = listRef.current.querySelector('[data-active="true"]')
     active?.scrollIntoView({ block: 'nearest' })
-  }, [activeIndex, open])
+  }, [activeIndex, showSuggestions])
 
   let flatIdx = -1
 
@@ -240,15 +243,18 @@ export function AppSearch({ className }: { className?: string }) {
         type="search"
         value={query}
         role="combobox"
-        aria-expanded={open}
+        aria-expanded={showSuggestions}
         aria-controls="app-search-listbox"
         aria-autocomplete="list"
         placeholder={gs.placeholder}
         onChange={e => {
-          setQuery(e.target.value)
-          setOpen(true)
+          const next = e.target.value
+          setQuery(next)
+          setOpen(next.trim().length > 0)
         }}
-        onFocus={() => setOpen(true)}
+        onFocus={() => {
+          if (query.trim().length > 0) setOpen(true)
+        }}
         onKeyDown={onInputKeyDown}
         className="w-full rounded-lg border border-neutral-200 bg-neutral-50 py-2 pl-9 pr-14 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
       />
@@ -256,7 +262,7 @@ export function AppSearch({ className }: { className?: string }) {
         {shortcutLabel}
       </kbd>
 
-      {open && (
+      {showSuggestions && (
         <div
           id="app-search-listbox"
           ref={listRef}

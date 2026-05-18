@@ -9,7 +9,7 @@ import {
 } from 'react'
 import { useAuth } from './AuthContext'
 import { useLocale } from './LocaleContext'
-import { isSupportedBaseCurrency } from '../lib/settingsOptions'
+import { BASE_CURRENCY_CODES } from '../lib/baseCurrencies'
 import { formatMoneyAmount, normalizeCurrencyCode, type FormatMoneyOptions } from '../lib/currency'
 import {
   EMPTY_USER_PROFILE,
@@ -37,7 +37,7 @@ function sanitizeProfile(row: Partial<ProfileFields> | null | undefined): Profil
   const currency = normalizeCurrencyCode(base.base_currency)
   return {
     ...base,
-    base_currency: isSupportedBaseCurrency(currency) ? currency : 'USD',
+    base_currency: BASE_CURRENCY_CODES.has(currency) ? currency : 'USD',
     timezone: base.timezone?.trim() || EMPTY_USER_PROFILE.timezone,
   }
 }
