@@ -196,7 +196,7 @@ export function CopierEnginePage() {
     loadData()
   }, [user])
 
-  const loadData = async () => {
+  const loadData = async (opts?: { skipTgFetch?: boolean; backgroundTgFetch?: boolean }) => {
     const [channelsRes, sessionRes] = await Promise.all([
       supabase.from('telegram_channels').select('*').eq('user_id', user!.id).order('created_at', { ascending: false }),
       supabase.from('telegram_sessions').select('id').eq('user_id', user!.id).maybeSingle(),
@@ -208,7 +208,9 @@ export function CopierEnginePage() {
     setHasTgSession(hasSession)
     setTgStage(hasSession ? 'linked' : 'idle')
     setLoading(false)
-    if (hasSession) fetchTgChannels()
+    if (hasSession && !opts?.skipTgFetch) {
+      void fetchTgChannels({ background: opts?.backgroundTgFetch })
+    }
   }
 
   const loadChannelProfiles = async (channelRows: TelegramChannel[]) => {
@@ -318,27 +320,40 @@ export function CopierEnginePage() {
     await reconnectTelegram()
   }, [reconnectTelegram])
 
-  const fetchTgChannels = async () => {
+  const fetchTgChannels = async (opts?: { background?: boolean }) => {
     setLoadingTg(true)
-    setError('')
+    if (!opts?.background) setError('')
+    const maxAttempts = 3
     try {
-      const res = await fetch(EDGE_FN, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${session?.access_token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'list_channels' }),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (res.status === 401 || data.code === 'TELEGRAM_SESSION_INVALID') {
-        await handleTelegramSessionInvalid()
-        return
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        if (attempt > 0) {
+          await new Promise(r => setTimeout(r, 1500 * attempt))
+        }
+        try {
+          const res = await fetch(EDGE_FN, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${session?.access_token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'list_channels' }),
+          })
+          const data = await res.json().catch(() => ({}))
+          if (res.status === 401 || data.code === 'TELEGRAM_SESSION_INVALID') {
+            await handleTelegramSessionInvalid()
+            return
+          }
+          if (!res.ok || data.error) {
+            if (attempt < maxAttempts - 1) continue
+            if (!opts?.background) setError(ce.failedLoadTgChannels)
+            return
+          }
+          setTgChannels(data.channels ?? [])
+          if (!opts?.background) setError('')
+          return
+        } catch {
+          if (attempt >= maxAttempts - 1 && !opts?.background) {
+            setError(ce.failedLoadTgChannels)
+          }
+        }
       }
-      if (!res.ok || data.error) {
-        setError(ce.failedLoadTgChannels)
-        return
-      }
-      setTgChannels(data.channels ?? [])
-    } catch {
-      setError(ce.failedLoadTgChannels)
     } finally {
       setLoadingTg(false)
     }
@@ -473,7 +488,13 @@ export function CopierEnginePage() {
         setTgError(ce.verificationFailed)
         return
       }
-      await loadData()
+      if (Array.isArray(data.channels)) {
+        setTgChannels(data.channels)
+        await loadData({ skipTgFetch: true })
+        void fetchTgChannels({ background: true })
+      } else {
+        await loadData()
+      }
     } catch {
       setTgError(ce.networkError)
     } finally {
@@ -539,7 +560,7 @@ export function CopierEnginePage() {
         </div>
         {hasTgSession && (
           <div className="flex gap-2">
-            <Button variant="secondary" size="sm" onClick={fetchTgChannels} loading={loadingTg}>
+            <Button variant="secondary" size="sm" onClick={() => void fetchTgChannels()} loading={loadingTg}>
               <RefreshCw className="w-3.5 h-3.5" />
               {t.common.refresh}
             </Button>

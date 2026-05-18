@@ -4,6 +4,7 @@ import { Api } from 'telegram/tl'
 import { computeCheck } from 'telegram/Password'
 import { buildClient, tgInvoke, API_ID, API_HASH } from './telegramClient'
 import { UserSessionManager } from './sessionManager'
+import type { ChannelInfo } from './userListener'
 
 interface PendingAuth {
   client: TelegramClient
@@ -29,7 +30,7 @@ function phonesMatch(a: string, b: string): boolean {
 }
 
 export type VerifyResult =
-  | { ok: true; session_id: string }
+  | { ok: true; session_id: string; channels?: ChannelInfo[] }
   | { requires_password: true }
 
 /**
@@ -253,13 +254,24 @@ export class AuthService {
     // becomes the long-running listener — no second connect from this host.
     this.pending.delete(userId)
     await this.clearPendingRow(userId)
+    let channels: ChannelInfo[] | undefined
     try {
       await this.sessionManager.adoptClient(userId, client, sessionString)
+      try {
+        channels = await this.sessionManager.listChannels(userId, { skipColdDelay: true })
+      } catch (listErr) {
+        console.warn(`[authService] listChannels after verify failed for ${userId}:`, listErr)
+      }
     } catch (err) {
       console.error(`[authService] adoptClient failed for ${userId}:`, err)
-      // Session is persisted; manager will pick it up on next syncSessions tick.
+      try {
+        await client.disconnect()
+      } catch {
+        /* ignore */
+      }
+      // Session is persisted; ensureListener can start a single fresh client on list_channels.
     }
 
-    return { ok: true, session_id: row.id as string }
+    return { ok: true, session_id: row.id as string, channels }
   }
 }

@@ -162,6 +162,8 @@ export class UserListener {
   private currentHandler: Handler | null = null
   private currentEventBuilder: NewMessage | null = null
   private startedAt = 0
+  /** Set when start() reuses the auth-time client (no second connect). */
+  private startedWithLiveClient = false
   private dialogsCache: ChannelInfo[] | null = null
   private dialogsCacheAt = 0
   private safetyPollTimer: NodeJS.Timeout | null = null
@@ -385,10 +387,12 @@ export class UserListener {
    * avoid cold-session fan-out, pages with a small limit, and caches the
    * result briefly so onboarding UI re-renders don't re-hit Telegram.
    */
-  async listChannels(): Promise<ChannelInfo[]> {
-    const elapsed = Date.now() - this.startedAt
-    if (elapsed >= 0 && elapsed < COLD_FANOUT_DELAY_MS) {
-      await new Promise(r => setTimeout(r, COLD_FANOUT_DELAY_MS - elapsed))
+  async listChannels(opts?: { skipColdDelay?: boolean }): Promise<ChannelInfo[]> {
+    if (!opts?.skipColdDelay && !this.startedWithLiveClient) {
+      const elapsed = Date.now() - this.startedAt
+      if (elapsed >= 0 && elapsed < COLD_FANOUT_DELAY_MS) {
+        await new Promise(r => setTimeout(r, COLD_FANOUT_DELAY_MS - elapsed))
+      }
     }
 
     if (this.dialogsCache && (Date.now() - this.dialogsCacheAt) < DIALOG_CACHE_TTL_MS) {
