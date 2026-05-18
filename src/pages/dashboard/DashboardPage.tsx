@@ -17,6 +17,7 @@ import {
   aggregateTodaysProfitFromDayStart,
   formatLocalCalendarDay,
   hasBalanceDayStartForToday,
+  resolveDisplayedTodayProfit,
 } from '../../lib/dayStartBalance'
 import { formatLocalMtApiDateTime, isMtTimestampInRange } from '../../lib/mtApiDateTime'
 import {
@@ -450,6 +451,8 @@ export function DashboardPage() {
     () => bootCache?.linkedAccountBalances ?? {},
   )
   const [chartTrades, setChartTrades] = useState<DashboardChartTrade[]>(() => bootCache?.chartTrades ?? [])
+  const chartTradesRef = useRef(chartTrades)
+  chartTradesRef.current = chartTrades
   const [showPlatformModal, setShowPlatformModal] = useState(false)
   const [togglingBrokerId, setTogglingBrokerId] = useState<string | null>(null)
   /** Background MT/broker poll — DB changes use Supabase Realtime instead. */
@@ -536,12 +539,12 @@ export function DashboardPage() {
   const headlineStats = useMemo(() => {
     const calendarDayToday = formatLocalCalendarDay()
     const balanceDayReady = hasBalanceDayStartForToday(linkedAccounts, calendarDayToday)
-    const todayProfit =
-      balanceDayReady && Number.isFinite(stats.todayProfit)
-        ? stats.todayProfit
-        : todayChartStats.hasData
-          ? todayChartStats.netPnl
-          : stats.todayProfit
+    const todayProfit = resolveDisplayedTodayProfit({
+      balanceDelta: balanceDayReady ? stats.todayProfit : null,
+      balanceDayReady,
+      chartNetPnl: todayChartStats.netPnl,
+      chartHasData: todayChartStats.hasData,
+    })
     if (!todayChartStats.hasData) {
       return { ...stats, todayProfit }
     }
@@ -809,7 +812,6 @@ export function DashboardPage() {
     const brokerAccounts = (brokerRes.data ?? []) as BrokerAccount[]
     const mtBrokerConnected = hasActiveMtBroker(brokerAccounts)
     const calendarDay = formatLocalCalendarDay()
-    const grossProfitToday = sumClosedWinningProfitInRange(sourceTrades, closedTodayForStats)
     const grossProfitYesterday = sumClosedWinningProfitInRange(sourceTrades, closedYesterdayForStats)
     const activeBrokerCount = brokerAccounts.filter(account => account.is_active).length
     // Seed the balance map from the cached columns the worker / edge function
@@ -857,12 +859,18 @@ export function DashboardPage() {
       calendarDay,
       { connectedOnly: true },
     )
+    const chartSnapForLoad = summarizeTodayFromChartTrades(
+      useMtTrades && mtTrades ? resolveDashboardChartTrades(mtTrades, []) : chartTradesRef.current,
+    )
     const todayProfit =
-      balanceDeltaToday != null
-        ? balanceDeltaToday
-        : mtBrokerConnected && !useMtTrades
-          ? statsRef.current.todayProfit
-          : grossProfitToday
+      mtBrokerConnected && !useMtTrades
+        ? statsRef.current.todayProfit
+        : resolveDisplayedTodayProfit({
+            balanceDelta: balanceDeltaToday,
+            balanceDayReady: hasBalanceDayStartForToday(brokerAccounts, calendarDay),
+            chartNetPnl: chartSnapForLoad.netPnl,
+            chartHasData: chartSnapForLoad.hasData,
+          })
     const yesterdayProfit =
       mtBrokerConnected && !useMtTrades ? statsRef.current.yesterdayProfit : grossProfitYesterday
     /** Lifetime-style total vs baseline balance at link (sum of equity − baseline per account). */
@@ -1131,7 +1139,17 @@ export function DashboardPage() {
       tradesWon: closedOutcomesToday.won,
       tradesLost: closedOutcomesToday.lost,
       tradesBreakeven: closedOutcomesToday.breakeven,
-      ...(chartToday.hasData ? { todayProfit: chartToday.netPnl } : {}),
+      todayProfit: resolveDisplayedTodayProfit({
+        balanceDelta: aggregateTodaysProfitFromDayStart(
+          sourceAccounts,
+          linkedBalancesRef.current,
+          formatLocalCalendarDay(),
+          { connectedOnly: true },
+        ),
+        balanceDayReady: hasBalanceDayStartForToday(sourceAccounts, formatLocalCalendarDay()),
+        chartNetPnl: chartToday.netPnl,
+        chartHasData: chartToday.hasData,
+      }),
       totalVolume: today.reduce((sum, t) => sum + (t.lot_size ?? 0), 0),
       yesterdayTotalVolume: yesterday.reduce((sum, t) => sum + (t.lot_size ?? 0), 0),
       bestTradeProfit: posTodayLeg.length ? Math.max(...posTodayLeg) : 0,
@@ -1342,13 +1360,20 @@ export function DashboardPage() {
         calendarDay,
         { connectedOnly: true },
       )
+      const chartSnapLive = summarizeTodayFromChartTrades(chartTradesRef.current)
+      const displayTodayProfit = resolveDisplayedTodayProfit({
+        balanceDelta: balanceDeltaToday,
+        balanceDayReady: hasBalanceDayStartForToday(sourceAccounts, calendarDay),
+        chartNetPnl: chartSnapLive.netPnl,
+        chartHasData: chartSnapLive.hasData,
+      })
       const next = {
         ...prev,
         portfolioValue,
         totalEquity,
         openPnl: sawLivePnl ? openPnl : prev.openPnl,
         totalProfitLoss,
-        ...(balanceDeltaToday != null ? { todayProfit: balanceDeltaToday } : {}),
+        todayProfit: displayTodayProfit,
         ...(sawOpenPosCount
           ? { openPositions: mtOpenTotal, openTrades: mtOpenTotal }
           : { openPositions: 0, openTrades: 0 }),
