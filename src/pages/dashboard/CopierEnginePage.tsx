@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Radio, Trash2, RefreshCw, CircleAlert as AlertCircle, ChevronDown } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
@@ -174,6 +174,8 @@ export function CopierEnginePage() {
   const [newChannel, setNewChannel] = useState({ channel_id: '', channel_username: '', display_name: '' })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [tgNeedsReconnect, setTgNeedsReconnect] = useState(false)
+  const [tgChannelSearch, setTgChannelSearch] = useState('')
   const [hasTgSession, setHasTgSession] = useState(false)
   const [tgStage, setTgStage] = useState<'idle' | 'phone' | 'code' | 'linked'>('idle')
   const [tgPhone, setTgPhone] = useState('')
@@ -285,27 +287,61 @@ export function CopierEnginePage() {
     }
   }, [session?.access_token])
 
+  const handleTelegramSessionInvalid = useCallback(async () => {
+    if (!user?.id) return
+    await supabase.from('telegram_sessions').delete().eq('user_id', user.id)
+    setHasTgSession(false)
+    setTgStage('phone')
+    setTgChannels([])
+    setTgNeedsReconnect(true)
+    setError('')
+  }, [user])
+
+  const startReconnectTelegram = useCallback(() => {
+    setTgNeedsReconnect(false)
+    setTgStage('phone')
+    setTgError('')
+    setError('')
+    setTgChannels([])
+  }, [])
+
   const fetchTgChannels = async () => {
     setLoadingTg(true)
     setError('')
+    setTgNeedsReconnect(false)
     try {
       const res = await fetch(EDGE_FN, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${session?.access_token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'list_channels' }),
       })
-      const data = await res.json()
+      const data = await res.json().catch(() => ({}))
+      if (res.status === 401 || data.code === 'TELEGRAM_SESSION_INVALID') {
+        await handleTelegramSessionInvalid()
+        return
+      }
       if (!res.ok || data.error) {
-        setError(data.error || ce.failedLoadTgChannels)
+        setError(ce.failedLoadTgChannels)
         return
       }
       setTgChannels(data.channels ?? [])
+      setTgNeedsReconnect(false)
     } catch {
       setError(ce.failedLoadTgChannels)
     } finally {
       setLoadingTg(false)
     }
   }
+
+  const filteredTgChannels = useMemo(() => {
+    const q = tgChannelSearch.trim().toLowerCase()
+    if (!q) return tgChannels
+    return tgChannels.filter(ch => {
+      const title = (ch.title ?? '').toLowerCase()
+      const user = (ch.username ?? '').toLowerCase().replace(/^@/, '')
+      return title.includes(q) || user.includes(q) || `@${user}`.includes(q)
+    })
+  }, [tgChannels, tgChannelSearch])
 
   const toggleChannel = async (id: string, is_active: boolean) => {
     setChannels(prev => prev.map(c => c.id === id ? { ...c, is_active } : c))
@@ -385,9 +421,9 @@ export function CopierEnginePage() {
         },
         body: JSON.stringify({ action: 'send_code', phone: tgPhone }),
       })
-      const data = await res.json()
+      const data = await res.json().catch(() => ({}))
       if (!res.ok || data.error) {
-        setTgError(data.error || ce.failedSendCode)
+        setTgError(ce.failedSendCode)
         return
       }
       setTgStage('code')
@@ -416,16 +452,17 @@ export function CopierEnginePage() {
           password: requiresPassword ? tgPassword : undefined,
         }),
       })
-      const data = await res.json()
+      const data = await res.json().catch(() => ({}))
       if (!res.ok || data.error) {
         if (data.requires_password) {
           setRequiresPassword(true)
           setTgError(ce.twoFaRequired)
           return
         }
-        setTgError(data.error || ce.verificationFailed)
+        setTgError(ce.verificationFailed)
         return
       }
+      setTgNeedsReconnect(false)
       await loadData()
     } catch {
       setTgError(ce.networkError)
@@ -439,6 +476,9 @@ export function CopierEnginePage() {
     setHasTgSession(false)
     setTgStage('idle')
     setTgChannels([])
+    setTgNeedsReconnect(false)
+    setTgChannelSearch('')
+    setError('')
   }
 
   const openChannelKeywords = (channel: TelegramChannel) => {
@@ -581,6 +621,17 @@ export function CopierEnginePage() {
         </Card>
       )}
 
+      {tgNeedsReconnect && !hasTgSession && (
+        <Card className="mb-3">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <p className="text-sm text-neutral-600 dark:text-neutral-400">{ce.telegramSessionExpired}</p>
+            <Button size="sm" onClick={startReconnectTelegram}>
+              {ce.reconnectTelegram}
+            </Button>
+          </div>
+        </Card>
+      )}
+
       {/* Telegram channels panel */}
       {hasTgSession && (
         <Card className="mb-3" padding="none">
@@ -610,6 +661,17 @@ export function CopierEnginePage() {
             )}
             </div>
           </div>
+          {!tgChannelsCollapsed && tgChannels.length > 0 && (
+            <div className="px-4 py-2 border-b border-neutral-100 dark:border-neutral-800">
+              <Input
+                type="search"
+                placeholder={ce.channelSearchPlaceholder}
+                value={tgChannelSearch}
+                onChange={e => setTgChannelSearch(e.target.value)}
+                aria-label={ce.channelSearchPlaceholder}
+              />
+            </div>
+          )}
           {!tgChannelsCollapsed && (loadingTg ? (
             <div className="divide-y divide-neutral-100 dark:divide-neutral-800">
               {[...Array(4)].map((_, i) => (
@@ -625,8 +687,16 @@ export function CopierEnginePage() {
           ) : error ? (
             <div className="px-4 py-8 text-center">
               <AlertCircle className="w-8 h-8 mx-auto mb-2 text-error-300" />
-              <p className="text-sm text-error-600 font-medium">{error}</p>
-              <p className="text-xs text-neutral-400 mt-0.5">{ce.refreshAfterFix}</p>
+              <p className="text-sm text-neutral-700 dark:text-neutral-300 font-medium">{error}</p>
+              <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+                <Button size="sm" variant="secondary" onClick={() => void fetchTgChannels()} loading={loadingTg}>
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  {t.common.refresh}
+                </Button>
+                <Button size="sm" onClick={startReconnectTelegram}>
+                  {ce.reconnectTelegram}
+                </Button>
+              </div>
             </div>
           ) : tgChannels.length === 0 ? (
             <div className="px-4 py-8 text-center">
@@ -634,9 +704,13 @@ export function CopierEnginePage() {
               <p className="text-sm text-neutral-400">{ce.noTgChannelsTitle}</p>
               <p className="text-xs text-neutral-300 mt-0.5">{ce.noTgChannelsSubtitle}</p>
             </div>
+          ) : filteredTgChannels.length === 0 ? (
+            <div className="px-4 py-8 text-center">
+              <p className="text-sm text-neutral-400">{ce.noChannelSearchResults}</p>
+            </div>
           ) : (
             <div className="divide-y divide-neutral-100 dark:divide-neutral-800 max-h-72 overflow-y-auto">
-              {tgChannels.map(ch => {
+              {filteredTgChannels.map(ch => {
                 const alreadyAdded = channels.some(c => c.channel_id === ch.id)
                 return (
                   <div key={ch.id} className="px-4 py-2.5 flex items-center gap-3 hover:bg-neutral-50 dark:hover:bg-neutral-800/50 transition-colors">
