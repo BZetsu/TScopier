@@ -544,7 +544,10 @@ export class TradeExecutor {
       this.brokersByUser.set(row.user_id, arr)
     }
     console.log(`[tradeExecutor] cached ${this.brokersById.size} broker accounts across ${this.brokersByUser.size} users`)
-    await this.reconnectCachedBrokers()
+    const pingOnStart = String(process.env.BROKER_PING_ON_WORKER_START ?? 'true').toLowerCase()
+    if (pingOnStart !== 'false' && pingOnStart !== '0') {
+      await this.reconnectCachedBrokers()
+    }
   }
 
   private async reconnectCachedBrokers() {

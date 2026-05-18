@@ -333,15 +333,18 @@ Deno.serve(async (req: Request) => {
       ensureMtApiConfigured(Deno.env)
       const brokerId = String((body as Record<string, unknown>).broker_id ?? "")
       if (!brokerId) return bad(400, "broker_id required")
+      const password = String((body as Record<string, unknown>).password ?? "").trim()
       const { data: broker } = await supabase
         .from("broker_accounts")
-        .select("id,user_id,metaapi_account_id,platform,performance_baseline_balance")
+        .select("id,user_id,metaapi_account_id,platform,account_login,broker_server,performance_baseline_balance")
         .eq("id", brokerId)
         .eq("user_id", userId)
         .maybeSingle()
       if (!broker) return bad(404, "Broker account not found")
       const client = makeMtClient(Deno.env, String(broker.platform ?? "MT5"))
-      const result = await reconnectBrokerSession(client, supabase, broker)
+      const result = await reconnectBrokerSession(client, supabase, broker, {
+        password: password || undefined,
+      })
       if (!result.ok) {
         const status = result.message?.includes("legacy") ? 400 : 502
         return bad(status, result.message ?? "Reconnect failed")

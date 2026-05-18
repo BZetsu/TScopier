@@ -528,7 +528,21 @@ export function AccountConfigPage() {
     setReconnectingBrokerIds(prev => new Set(prev).add(brokerId))
     setError('')
     try {
-      const result = await metatraderApi.reconnect(brokerId)
+      let result = await metatraderApi.reconnect(brokerId)
+      const needsPassword =
+        result.connection_status !== 'connected'
+        && typeof result.message === 'string'
+        && /session expired|not connected|password/i.test(result.message)
+      if (needsPassword) {
+        const entered = window.prompt(
+          'Your broker session expired on the trade server. Enter your MT account password to reconnect:',
+        )
+        if (!entered?.trim()) {
+          setError(result.message ?? bl.reconnectFailed)
+          return
+        }
+        result = await metatraderApi.reconnect(brokerId, entered.trim())
+      }
       setBrokers(prev =>
         prev.map(b => {
           if (b.id !== brokerId) return b

@@ -193,6 +193,28 @@ export function isCheckConnectOk(body: unknown): boolean {
   return true
 }
 
+export function isMtSessionGoneMessage(message: string): boolean {
+  const m = message.trim().toLowerCase()
+  if (!m) return false
+  return (
+    m.includes("client with id")
+    || m.includes("client not found")
+    || (m.includes("not found") && (m.includes("client") || m.includes("id =")))
+    || m.includes("unknown client")
+    || m.includes("session not found")
+    || m.includes("account not found")
+  )
+}
+
+export function isMtSessionGoneError(err: unknown): boolean {
+  if (err instanceof MetatraderApiError) return isMtSessionGoneMessage(err.message)
+  if (err instanceof Error) return isMtSessionGoneMessage(err.message)
+  return isMtSessionGoneMessage(String(err))
+}
+
+export const MT_SESSION_EXPIRED_HINT =
+  "Trading session expired on the broker API. In Account Configuration, use Reconnect and enter your MT password (or remove and link the account again)."
+
 function assertNoApiError(body: unknown): void {
   if (body == null || typeof body !== "object") return
   const root = body as Record<string, unknown>
@@ -305,19 +327,20 @@ export class MetatraderApiClient {
     if (!alive) throw new MetatraderApiError("Broker session is not connected", 502)
   }
 
-  /** Ping session; reconnect by token only when CheckConnect fails. */
+  /** Ping session; ConnectByToken only when the session still exists on the bridge. */
   async keepSessionAlive(id: string): Promise<boolean> {
     try {
       await this.checkConnect(id)
       return true
-    } catch {
-      /* reconnect */
+    } catch (first) {
+      if (isMtSessionGoneError(first)) return false
     }
     try {
       await this.connectByToken(id)
       await this.checkConnect(id)
       return true
-    } catch {
+    } catch (second) {
+      if (isMtSessionGoneError(second)) return false
       return false
     }
   }

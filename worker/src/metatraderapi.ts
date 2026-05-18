@@ -403,6 +403,29 @@ export function isCheckConnectOk(body: unknown): boolean {
   return true
 }
 
+/** MT bridge no longer holds this session id (restart, expiry, or never connected). */
+export function isMtSessionGoneMessage(message: string): boolean {
+  const m = message.trim().toLowerCase()
+  if (!m) return false
+  return (
+    m.includes('client with id')
+    || m.includes('client not found')
+    || (m.includes('not found') && (m.includes('client') || m.includes('id =')))
+    || m.includes('unknown client')
+    || m.includes('session not found')
+    || m.includes('account not found')
+  )
+}
+
+export function isMtSessionGoneError(err: unknown): boolean {
+  if (err instanceof MetatraderApiError) return isMtSessionGoneMessage(err.message)
+  if (err instanceof Error) return isMtSessionGoneMessage(err.message)
+  return isMtSessionGoneMessage(String(err))
+}
+
+export const MT_SESSION_EXPIRED_HINT =
+  'Trading session expired on the broker API. In Account Configuration, use Reconnect and enter your MT password (or remove and link the account again).'
+
 function parseToken(body: unknown, fallbackId: string): string {
   if (typeof body === 'string') {
     const t = body.trim().replace(/^"|"$/g, '')
@@ -548,12 +571,20 @@ export class MetatraderApiClient {
     if (!alive) throw new MetatraderApiError('Broker session is not connected', 502)
   }
 
-  /** Ping session; reconnect by token only when CheckConnect fails. */
+  /**
+   * Ping session; call ConnectByToken only when the session exists but CheckConnect
+   * failed for a transient reason. When the bridge reports "client not found",
+   * ConnectByToken cannot recreate the session — user must ConnectEx with password.
+   */
   async keepSessionAlive(id: string): Promise<boolean> {
     try {
       await this.checkConnect(id)
       return true
     } catch (first) {
+      if (isMtSessionGoneError(first)) {
+        console.warn(`[metatraderapi] MT session gone id=${id} — ${MT_SESSION_EXPIRED_HINT}`)
+        return false
+      }
       const msg = first instanceof Error ? first.message : String(first)
       console.warn(`[metatraderapi] CheckConnect failed id=${id}: ${msg}; trying ConnectByToken`)
     }
@@ -562,6 +593,10 @@ export class MetatraderApiClient {
       await this.checkConnect(id)
       return true
     } catch (second) {
+      if (isMtSessionGoneError(second)) {
+        console.warn(`[metatraderapi] MT session gone id=${id} (ConnectByToken) — ${MT_SESSION_EXPIRED_HINT}`)
+        return false
+      }
       const msg = second instanceof Error ? second.message : String(second)
       console.warn(`[metatraderapi] keepSessionAlive failed id=${id}: ${msg}`)
       return false
