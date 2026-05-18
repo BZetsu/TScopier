@@ -68,6 +68,41 @@ export const en: Translations = {
     show: 'Show',
     results: 'results',
   },
+  accountConfig: {
+    brokersEmptyTitle: 'No accounts connected yet',
+    brokersEmptySubtitle: 'Add your trading account to get started',
+    addAccount: {
+      title: 'Add a trading account',
+      subtitle: 'Choose your preferred trading platform to get started',
+      footerHint: 'More platforms coming soon',
+      comingSoonBadge: 'Coming Soon',
+      comingSoonPlatform: '{platform} integration is coming soon. Pick MT4 or MT5 for now.',
+    },
+    connectForm: {
+      addAccountButton: 'Add account',
+      title: 'Connect a new {platform} account',
+      accountLabel: 'Account label (optional)',
+      accountLabelPlaceholder: 'e.g. Live {platform}',
+      platformLabel: 'Platform',
+      platformMt5: 'MetaTrader 5 (MT5)',
+      platformMt4: 'MetaTrader 4 (MT4)',
+      brokerServerLabel: 'Broker server',
+      brokerServerHint:
+        'Start typing to filter by broker (IC Markets, Exness, FTMO, …) or server name.',
+      brokerServerLoading: 'Loading servers…',
+      brokerServerSearch: 'Search {count} {platform} servers…',
+      brokerServerNoMatch:
+        'No matching server. You can still use "{server}" as a free-text server.',
+      mtLoginLabel: 'MT login',
+      mtLoginPlaceholder: 'Trading account number',
+      passwordLabel: 'Password',
+      passwordPlaceholder: 'Trading account password',
+      passwordHint: 'Sent to MT servers only. Never stored.',
+      connectButton: 'Connect account',
+      validationRequired: 'Account number, password, and server are required',
+      connectFailed: 'Failed to connect account',
+    },
+  },
   dashboard: {
     title: 'Dashboard',
     totalBalance: 'Total Balance',
@@ -135,6 +170,11 @@ export const en: Translations = {
     filterClosed: 'Closed',
     filterAll: 'All',
     refresh: 'Refresh',
+    emptyTitle: 'No trades to show',
+    emptySubtitleConnect:
+      'Connect a broker account in {page} to see live trades here.',
+    emptySubtitleOpen: 'No open positions on any of your linked broker accounts.',
+    emptySubtitleClosed: 'No recent closed orders in this MT session.',
   },
   backtest: {
     title: 'Channel Signal Backtest',

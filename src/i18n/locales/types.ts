@@ -133,6 +133,44 @@ export interface CopierLogsTranslations {
   statusParsed: string
 }
 
+export interface AccountConfigAddAccountModalTranslations {
+  title: string
+  subtitle: string
+  footerHint: string
+  comingSoonBadge: string
+  comingSoonPlatform: string
+}
+
+export interface AccountConfigConnectFormTranslations {
+  addAccountButton: string
+  title: string
+  accountLabel: string
+  accountLabelPlaceholder: string
+  platformLabel: string
+  platformMt5: string
+  platformMt4: string
+  brokerServerLabel: string
+  brokerServerHint: string
+  brokerServerLoading: string
+  brokerServerSearch: string
+  brokerServerNoMatch: string
+  mtLoginLabel: string
+  mtLoginPlaceholder: string
+  passwordLabel: string
+  passwordPlaceholder: string
+  passwordHint: string
+  connectButton: string
+  validationRequired: string
+  connectFailed: string
+}
+
+export interface AccountConfigTranslations {
+  brokersEmptyTitle: string
+  brokersEmptySubtitle: string
+  addAccount: AccountConfigAddAccountModalTranslations
+  connectForm: AccountConfigConnectFormTranslations
+}
+
 export interface TradesTranslations {
   title: string
   subtitle: string
@@ -140,6 +178,10 @@ export interface TradesTranslations {
   filterClosed: string
   filterAll: string
   refresh: string
+  emptyTitle: string
+  emptySubtitleConnect: string
+  emptySubtitleOpen: string
+  emptySubtitleClosed: string
 }
 
 export interface EconomicCalendarTranslations {
@@ -298,6 +340,7 @@ export interface Translations {
   channelWorker: ChannelWorkerTranslations
   nav: NavTranslations
   common: CommonTranslations
+  accountConfig: AccountConfigTranslations
   dashboard: DashboardTranslations
   copierLogs: CopierLogsTranslations
   trades: TradesTranslations

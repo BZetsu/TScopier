@@ -68,6 +68,41 @@ export const es: Translations = {
     show: 'Mostrar',
     results: 'resultados',
   },
+  accountConfig: {
+    brokersEmptyTitle: 'Aún no hay cuentas conectadas',
+    brokersEmptySubtitle: 'Añade tu cuenta de trading para empezar',
+    addAccount: {
+      title: 'Añadir una cuenta de trading',
+      subtitle: 'Elige tu plataforma de trading preferida para empezar',
+      footerHint: 'Más plataformas próximamente',
+      comingSoonBadge: 'Próximamente',
+      comingSoonPlatform: 'La integración con {platform} llegará pronto. Elige MT4 o MT5 por ahora.',
+    },
+    connectForm: {
+      addAccountButton: 'Añadir cuenta',
+      title: 'Conectar una nueva cuenta {platform}',
+      accountLabel: 'Etiqueta de cuenta (opcional)',
+      accountLabelPlaceholder: 'p. ej. Live {platform}',
+      platformLabel: 'Plataforma',
+      platformMt5: 'MetaTrader 5 (MT5)',
+      platformMt4: 'MetaTrader 4 (MT4)',
+      brokerServerLabel: 'Servidor del broker',
+      brokerServerHint:
+        'Escribe para filtrar por broker (IC Markets, Exness, FTMO, …) o nombre del servidor.',
+      brokerServerLoading: 'Cargando servidores…',
+      brokerServerSearch: 'Buscar entre {count} servidores {platform}…',
+      brokerServerNoMatch:
+        'Ningún servidor coincide. Puedes usar "{server}" como servidor manual.',
+      mtLoginLabel: 'Login MT',
+      mtLoginPlaceholder: 'Número de cuenta de trading',
+      passwordLabel: 'Contraseña',
+      passwordPlaceholder: 'Contraseña de la cuenta de trading',
+      passwordHint: 'Se envía solo a los servidores MT. Nunca se almacena.',
+      connectButton: 'Conectar cuenta',
+      validationRequired: 'Número de cuenta, contraseña y servidor son obligatorios',
+      connectFailed: 'No se pudo conectar la cuenta',
+    },
+  },
   dashboard: {
     title: 'Panel',
     totalBalance: 'Balance total',
@@ -135,6 +170,11 @@ export const es: Translations = {
     filterClosed: 'Cerradas',
     filterAll: 'Todas',
     refresh: 'Actualizar',
+    emptyTitle: 'No hay operaciones que mostrar',
+    emptySubtitleConnect:
+      'Conecta una cuenta de broker en {page} para ver operaciones en vivo aquí.',
+    emptySubtitleOpen: 'No hay posiciones abiertas en ninguna de tus cuentas vinculadas.',
+    emptySubtitleClosed: 'No hay órdenes cerradas recientes en esta sesión MT.',
   },
   backtest: {
     title: 'Backtest de señales',

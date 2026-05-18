@@ -9,6 +9,7 @@ import clsx from 'clsx'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import { useT } from '../../context/LocaleContext'
+import { interpolate } from '../../i18n/interpolate'
 import { Card } from '../../components/ui/Card'
 import { Input } from '../../components/ui/Input'
 import { Select } from '../../components/ui/Select'
@@ -925,7 +926,7 @@ export function AccountConfigPage() {
     e.preventDefault()
     setError('')
     if (!form.account_number.trim() || !form.broker_server.trim() || !form.account_password) {
-      setError('Account number, password, and server are required')
+      setError(t.accountConfig.connectForm.validationRequired)
       return
     }
 
@@ -956,7 +957,7 @@ export function AccountConfigPage() {
         void tailRefreshBrokerSummary(broker.id)
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to connect account')
+      setError(err instanceof Error ? err.message : t.accountConfig.connectForm.connectFailed)
     } finally {
       setSaving(false)
     }
@@ -1053,7 +1054,7 @@ export function AccountConfigPage() {
         </div>
         <Button size="sm" onClick={() => setShowPlatformModal(true)}>
           <Plus className="w-3.5 h-3.5" />
-          Add account
+          {t.accountConfig.connectForm.addAccountButton}
         </Button>
       </div>
 
@@ -1063,24 +1064,26 @@ export function AccountConfigPage() {
         {showAddBroker && (
           <Card className="mb-3">
             <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-50 mb-4">
-              Connect a new {form.platform} account
+              {interpolate(t.accountConfig.connectForm.title, { platform: form.platform })}
             </h3>
             {error && <Alert className="mb-3">{error}</Alert>}
             <form onSubmit={addBroker} className="space-y-3">
               <div className="grid grid-cols-2 gap-3">
                 <Input
-                  label="Account label (optional)"
-                  placeholder={`e.g. Live ${form.platform}`}
+                  label={t.accountConfig.connectForm.accountLabel}
+                  placeholder={interpolate(t.accountConfig.connectForm.accountLabelPlaceholder, {
+                    platform: form.platform,
+                  })}
                   value={form.label}
                   onChange={e => set('label', e.target.value)}
                 />
                 <Select
-                  label="Platform"
+                  label={t.accountConfig.connectForm.platformLabel}
                   value={form.platform}
                   onChange={e => set('platform', e.target.value as 'MT4' | 'MT5')}
                   options={[
-                    { value: 'MT5', label: 'MetaTrader 5 (MT5)' },
-                    { value: 'MT4', label: 'MetaTrader 4 (MT4)' },
+                    { value: 'MT5', label: t.accountConfig.connectForm.platformMt5 },
+                    { value: 'MT4', label: t.accountConfig.connectForm.platformMt4 },
                   ]}
                 />
               </div>
@@ -1089,38 +1092,40 @@ export function AccountConfigPage() {
                 platform={form.platform}
                 value={form.broker_server}
                 onChange={(v) => set('broker_server', v)}
-                hint="Start typing to filter by broker (IC Markets, Exness, FTMO, …) or server name."
+                hint={t.accountConfig.connectForm.brokerServerHint}
                 required
               />
 
               <div className="grid grid-cols-2 gap-3">
                 <Input
-                  label="MT login"
-                  placeholder="Trading account number"
+                  label={t.accountConfig.connectForm.mtLoginLabel}
+                  placeholder={t.accountConfig.connectForm.mtLoginPlaceholder}
                   value={form.account_number}
                   onChange={e => set('account_number', e.target.value)}
                   required
                 />
                 <Input
-                  label="Password"
+                  label={t.accountConfig.connectForm.passwordLabel}
                   type="password"
-                  placeholder="Trading account password"
+                  placeholder={t.accountConfig.connectForm.passwordPlaceholder}
                   value={form.account_password}
                   onChange={e => set('account_password', e.target.value)}
-                  hint="Sent to MT servers only. Never stored."
+                  hint={t.accountConfig.connectForm.passwordHint}
                   required
                 />
               </div>
 
               <div className="flex gap-2 pt-1">
-                <Button type="submit" loading={saving} size="sm">Connect account</Button>
+                <Button type="submit" loading={saving} size="sm">
+                  {t.accountConfig.connectForm.connectButton}
+                </Button>
                 <Button
                   type="button"
                   variant="ghost"
                   size="sm"
                   onClick={() => { setShowAddBroker(false); setForm(emptyForm); setError('') }}
                 >
-                  Cancel
+                  {t.common.cancel}
                 </Button>
               </div>
             </form>
@@ -1163,8 +1168,8 @@ export function AccountConfigPage() {
         {brokers.length === 0 ? (
           <div className="bg-white dark:bg-neutral-900 rounded-xl border border-dashed border-neutral-200 dark:border-neutral-800 py-8 text-center">
             <Server className="w-8 h-8 mx-auto mb-2 text-neutral-300 dark:text-neutral-600" />
-            <p className="text-sm text-neutral-400 dark:text-neutral-500">No accounts connected yet</p>
-            <p className="text-xs text-neutral-300 dark:text-neutral-600 mt-0.5">Add your trading account to get started</p>
+            <p className="text-sm text-neutral-400 dark:text-neutral-500">{t.accountConfig.brokersEmptyTitle}</p>
+            <p className="text-xs text-neutral-300 dark:text-neutral-600 mt-0.5">{t.accountConfig.brokersEmptySubtitle}</p>
           </div>
         ) : (
           <div className="space-y-3">
@@ -1292,7 +1297,7 @@ export function AccountConfigPage() {
         onClose={() => setShowPlatformModal(false)}
         onSelect={(platform) => {
           if (platform !== 'MT4' && platform !== 'MT5') {
-            setError(`${platform} integration is coming soon. Pick MT4 or MT5 for now.`)
+            setError(interpolate(t.accountConfig.addAccount.comingSoonPlatform, { platform }))
             setShowPlatformModal(false)
             return
           }

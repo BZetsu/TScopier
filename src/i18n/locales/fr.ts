@@ -68,6 +68,41 @@ export const fr: Translations = {
     show: 'Afficher',
     results: 'résultats',
   },
+  accountConfig: {
+    brokersEmptyTitle: 'Aucun compte connecté pour le moment',
+    brokersEmptySubtitle: 'Ajoutez votre compte de trading pour commencer',
+    addAccount: {
+      title: 'Ajouter un compte de trading',
+      subtitle: 'Choisissez votre plateforme de trading pour commencer',
+      footerHint: 'D\'autres plateformes bientôt disponibles',
+      comingSoonBadge: 'Bientôt disponible',
+      comingSoonPlatform: 'L\'intégration {platform} arrive bientôt. Choisissez MT4 ou MT5 pour l\'instant.',
+    },
+    connectForm: {
+      addAccountButton: 'Ajouter un compte',
+      title: 'Connecter un nouveau compte {platform}',
+      accountLabel: 'Libellé du compte (facultatif)',
+      accountLabelPlaceholder: 'ex. Live {platform}',
+      platformLabel: 'Plateforme',
+      platformMt5: 'MetaTrader 5 (MT5)',
+      platformMt4: 'MetaTrader 4 (MT4)',
+      brokerServerLabel: 'Serveur broker',
+      brokerServerHint:
+        'Tapez pour filtrer par broker (IC Markets, Exness, FTMO, …) ou nom du serveur.',
+      brokerServerLoading: 'Chargement des serveurs…',
+      brokerServerSearch: 'Rechercher parmi {count} serveurs {platform}…',
+      brokerServerNoMatch:
+        'Aucun serveur correspondant. Vous pouvez utiliser « {server} » comme serveur libre.',
+      mtLoginLabel: 'Identifiant MT',
+      mtLoginPlaceholder: 'Numéro de compte de trading',
+      passwordLabel: 'Mot de passe',
+      passwordPlaceholder: 'Mot de passe du compte de trading',
+      passwordHint: 'Envoyé aux serveurs MT uniquement. Jamais stocké.',
+      connectButton: 'Connecter le compte',
+      validationRequired: 'Numéro de compte, mot de passe et serveur sont requis',
+      connectFailed: 'Échec de la connexion du compte',
+    },
+  },
   dashboard: {
     title: 'Tableau de bord',
     totalBalance: 'Solde total',
@@ -135,6 +170,11 @@ export const fr: Translations = {
     filterClosed: 'Clôturés',
     filterAll: 'Tous',
     refresh: 'Actualiser',
+    emptyTitle: 'Aucun trade à afficher',
+    emptySubtitleConnect:
+      'Connectez un compte broker dans {page} pour voir les trades en direct ici.',
+    emptySubtitleOpen: 'Aucune position ouverte sur vos comptes broker liés.',
+    emptySubtitleClosed: 'Aucun ordre clôturé récent dans cette session MT.',
   },
   backtest: {
     title: 'Backtest de signaux',
