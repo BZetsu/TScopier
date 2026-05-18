@@ -27,6 +27,9 @@ export interface AccountGrowthSeries {
   color: string
 }
 
+/** How far back to pull MT closed history for charts and linked-account total P/L. */
+export const DASHBOARD_MT_HISTORY_DAYS = 365 * 10
+
 export const ACCOUNT_CHART_COLORS = [
   '#0d9488',
   '#6366f1',
@@ -163,6 +166,22 @@ export function findTodayTradeOutcomeDay(
 ): TradeVolumeDay | undefined {
   const todayKey = dayKey(startOfLocalDay(now))
   return buildTradeVolume7Day(trades, now).find(b => b.key === todayKey)
+}
+
+/** Sum deal `profit` on every closed leg per broker (same rules as Trade Outcome chart). */
+export function sumClosedDealProfitByBroker(
+  trades: DashboardChartTrade[],
+): Record<string, number> {
+  const out: Record<string, number> = {}
+  for (const t of trades) {
+    if (t.status !== 'closed') continue
+    const p = t.profit
+    if (p == null || !Number.isFinite(p)) continue
+    const id = t.brokerAccountId
+    if (!id) continue
+    out[id] = (out[id] ?? 0) + p
+  }
+  return out
 }
 
 const OUTCOME_EPSILON = 0.01

@@ -211,6 +211,7 @@ export const fr: Translations = {
       colAccountType: 'Type de compte',
       colBalance: 'Solde',
       colPnl: 'PnL',
+      colPnlHint: 'P/L réalisé total de toutes les transactions clôturées dans l’historique du courtier',
       colRoi: 'ROI',
       colWinRate: 'Taux de réussite',
       colDd: 'DD',

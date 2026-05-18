@@ -106,6 +106,7 @@ export interface DashboardLinkedAccountsTranslations {
   colAccountType: string
   colBalance: string
   colPnl: string
+  colPnlHint: string
   colRoi: string
   colWinRate: string
   colDd: string

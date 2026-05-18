@@ -211,6 +211,7 @@ export const en: Translations = {
       colAccountType: 'Account type',
       colBalance: 'Balance',
       colPnl: 'PnL',
+      colPnlHint: 'Total realized P/L from all closed trades in broker history',
       colRoi: 'ROI',
       colWinRate: 'Win rate',
       colDd: 'DD',

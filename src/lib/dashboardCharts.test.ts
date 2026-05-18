@@ -5,8 +5,21 @@ import {
   findTodayTradeOutcomeDay,
   netPnlFromTradeOutcomeDay,
   summarizeTodayFromChartTrades,
+  sumClosedDealProfitByBroker,
   type DashboardChartTrade,
 } from './dashboardCharts'
+
+test('sumClosedDealProfitByBroker: sums closed deal profit per broker', () => {
+  const trades: DashboardChartTrade[] = [
+    { brokerAccountId: 'a', lotSize: 0.1, profit: 100, status: 'closed', closedAt: '2026-01-01', openedAt: null },
+    { brokerAccountId: 'a', lotSize: 0.1, profit: -20, status: 'closed', closedAt: '2026-02-01', openedAt: null },
+    { brokerAccountId: 'b', lotSize: 0.1, profit: 50, status: 'closed', closedAt: '2026-01-15', openedAt: null },
+    { brokerAccountId: 'a', lotSize: 0.1, profit: 10, status: 'open', closedAt: null, openedAt: null },
+  ]
+  const sums = sumClosedDealProfitByBroker(trades)
+  assert.equal(sums.a, 80)
+  assert.equal(sums.b, 50)
+})
 
 test('summarizeTodayFromChartTrades: matches 7-day chart day bucket', () => {
   const now = new Date(2026, 4, 18, 15, 0, 0)
