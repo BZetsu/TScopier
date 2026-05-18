@@ -327,12 +327,14 @@ export class MetatraderApiClient {
     return normalizeAccountSummary(raw)
   }
 
-  openedOrders(id: string): Promise<unknown[]> {
-    return this.get<unknown[]>("/OpenedOrders", { id })
+  async openedOrders(id: string): Promise<unknown[]> {
+    const raw = await this.get<unknown>("/OpenedOrders", { id })
+    return MetatraderApiClient.parseOrderList(raw)
   }
 
-  closedOrders(id: string): Promise<unknown[]> {
-    return this.get<unknown[]>("/ClosedOrders", { id })
+  async closedOrders(id: string): Promise<unknown[]> {
+    const raw = await this.get<unknown>("/ClosedOrders", { id })
+    return MetatraderApiClient.parseOrderList(raw)
   }
 
   /** yyyy-MM-ddTHH:mm:ss for mt4api.dev / mt5.mt4api.dev query params. */
@@ -415,6 +417,12 @@ export class MetatraderApiClient {
       if (Array.isArray(r.Result)) return r.Result
       if (Array.isArray(r.orders)) return r.orders
       if (Array.isArray(r.Orders)) return r.Orders
+      const nested = r.result ?? r.Result
+      if (nested && typeof nested === "object") {
+        const pr = nested as Record<string, unknown>
+        const orders = pr.Orders ?? pr.orders
+        if (Array.isArray(orders)) return orders
+      }
     }
     return []
   }

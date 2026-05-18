@@ -188,6 +188,13 @@ function unwrapOrderList(raw) {
             return r.orders;
         if (Array.isArray(r.Orders))
             return r.Orders;
+        const nested = r.result ?? r.Result;
+        if (nested && typeof nested === 'object') {
+            const pr = nested;
+            const orders = pr.Orders ?? pr.orders;
+            if (Array.isArray(orders))
+                return orders;
+        }
     }
     return [];
 }
@@ -364,24 +371,41 @@ class MetatraderApiClient {
         await this.get('/ConnectByToken', { id });
     }
     async ensureConnected(id) {
+        const alive = await this.keepSessionAlive(id);
+        if (!alive)
+            throw new MetatraderApiError('Broker session is not connected', 502);
+    }
+    /** Ping session; reconnect by token only when CheckConnect fails. */
+    async keepSessionAlive(id) {
         try {
             await this.checkConnect(id);
-            return;
+            return true;
         }
         catch {
             /* reconnect */
         }
-        await this.connectByToken(id);
+        try {
+            await this.connectByToken(id);
+            await this.checkConnect(id);
+            return true;
+        }
+        catch {
+            return false;
+        }
     }
     async disconnect(id) {
         await this.get('/Disconnect', { id });
     }
-    openedOrders(id) {
-        return this.get('/OpenedOrders', { id });
+    async openedOrders(id) {
+        const raw = await this.get('/OpenedOrders', { id });
+        assertNoApiError(raw);
+        return unwrapOrderList(raw);
     }
     /** Last ~100 closed orders in the current session only (see GET /ClosedOrders). */
-    closedOrders(id) {
-        return this.get('/ClosedOrders', { id });
+    async closedOrders(id) {
+        const raw = await this.get('/ClosedOrders', { id });
+        assertNoApiError(raw);
+        return unwrapOrderList(raw);
     }
     async orderHistory(id, from, to) {
         const raw = await this.get('/OrderHistory', { id, from, to });

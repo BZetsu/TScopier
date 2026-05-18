@@ -303,6 +303,12 @@ export function unwrapOrderList(raw: unknown): unknown[] {
     if (Array.isArray(r.Result)) return r.Result
     if (Array.isArray(r.orders)) return r.orders
     if (Array.isArray(r.Orders)) return r.Orders
+    const nested = r.result ?? r.Result
+    if (nested && typeof nested === 'object') {
+      const pr = nested as Record<string, unknown>
+      const orders = pr.Orders ?? pr.orders
+      if (Array.isArray(orders)) return orders
+    }
   }
   return []
 }
@@ -531,13 +537,17 @@ export class MetatraderApiClient {
     await this.get<unknown>('/Disconnect', { id })
   }
 
-  openedOrders(id: string): Promise<unknown[]> {
-    return this.get<unknown[]>('/OpenedOrders', { id })
+  async openedOrders(id: string): Promise<unknown[]> {
+    const raw = await this.get<unknown>('/OpenedOrders', { id })
+    assertNoApiError(raw)
+    return unwrapOrderList(raw)
   }
 
   /** Last ~100 closed orders in the current session only (see GET /ClosedOrders). */
-  closedOrders(id: string): Promise<unknown[]> {
-    return this.get<unknown[]>('/ClosedOrders', { id })
+  async closedOrders(id: string): Promise<unknown[]> {
+    const raw = await this.get<unknown>('/ClosedOrders', { id })
+    assertNoApiError(raw)
+    return unwrapOrderList(raw)
   }
 
   async orderHistory(id: string, from: string, to: string): Promise<unknown[]> {
