@@ -1,6 +1,15 @@
 import type { AuthTranslations } from '../auth/types'
 import type { ChannelWorkerTranslations } from '../channelWorker/types'
 
+export interface GlobalSearchTranslations {
+  placeholder: string
+  noResults: string
+  groupPages: string
+  groupBrokers: string
+  groupChannels: string
+  shortcut: string
+}
+
 export interface NavTranslations {
   sections: {
     general: string
@@ -500,6 +509,7 @@ export interface Translations {
   auth: AuthTranslations
   channelWorker: ChannelWorkerTranslations
   nav: NavTranslations
+  globalSearch: GlobalSearchTranslations
   common: CommonTranslations
   accountConfig: AccountConfigTranslations
   dashboard: DashboardTranslations

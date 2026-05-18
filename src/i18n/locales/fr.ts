@@ -41,6 +41,14 @@ export const fr: Translations = {
     planFree: 'Gratuit',
     settings: 'Paramètres',
   },
+  globalSearch: {
+    placeholder: 'Rechercher pages, comptes, canaux…',
+    noResults: 'Aucun résultat',
+    groupPages: 'Pages',
+    groupBrokers: 'Comptes broker',
+    groupChannels: 'Canaux de signaux',
+    shortcut: '⌘K',
+  },
   common: {
     comingSoon: 'Bientôt disponible',
     underDevelopment: 'Cette fonctionnalité est en cours de développement',

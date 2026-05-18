@@ -16,7 +16,6 @@ import {
   Share2,
   CreditCard,
   Repeat,
-  Search,
   Bell,
   ChevronDown,
   LogOut,
@@ -28,6 +27,7 @@ import {
 } from 'lucide-react'
 import clsx from 'clsx'
 import { TscopierLogo } from '../ui/TscopierLogo'
+import { AppSearch } from './AppSearch'
 import { useAuth } from '../../context/AuthContext'
 import { useT } from '../../context/LocaleContext'
 import { ThemeToggle } from '../ui/ThemeToggle'
@@ -256,16 +256,7 @@ export function AppLayout() {
             {isSidebarCollapsed ? <PanelLeftOpen className="w-5 h-5" /> : <PanelLeftClose className="w-5 h-5" />}
           </button>
 
-          <div className="hidden sm:block flex-1 max-w-sm min-w-0">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-400" />
-              <input
-                type="text"
-                placeholder={t.nav.search}
-                className="w-full pl-9 pr-4 py-2 text-sm bg-neutral-50 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent placeholder:text-neutral-400 dark:text-neutral-100"
-              />
-            </div>
-          </div>
+          <AppSearch className="flex-1 max-w-md min-w-0" />
 
           <div className="flex-1 min-w-0" />
 

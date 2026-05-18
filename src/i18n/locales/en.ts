@@ -41,6 +41,14 @@ export const en: Translations = {
     planFree: 'Free',
     settings: 'Settings',
   },
+  globalSearch: {
+    placeholder: 'Search pages, accounts, channels…',
+    noResults: 'No results found',
+    groupPages: 'Pages',
+    groupBrokers: 'Broker accounts',
+    groupChannels: 'Signal channels',
+    shortcut: '⌘K',
+  },
   common: {
     comingSoon: 'Coming soon',
     underDevelopment: 'This feature is under development',
