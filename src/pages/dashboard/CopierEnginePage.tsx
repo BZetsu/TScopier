@@ -174,7 +174,6 @@ export function CopierEnginePage() {
   const [newChannel, setNewChannel] = useState({ channel_id: '', channel_username: '', display_name: '' })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
-  const [tgNeedsReconnect, setTgNeedsReconnect] = useState(false)
   const [tgChannelSearch, setTgChannelSearch] = useState('')
   const [hasTgSession, setHasTgSession] = useState(false)
   const [tgStage, setTgStage] = useState<'idle' | 'phone' | 'code' | 'linked'>('idle')
@@ -287,28 +286,28 @@ export function CopierEnginePage() {
     }
   }, [session?.access_token])
 
-  const handleTelegramSessionInvalid = useCallback(async () => {
+  /** Clear DB session and open the phone → code connect flow (same as Disconnect + Connect). */
+  const reconnectTelegram = useCallback(async () => {
     if (!user?.id) return
     await supabase.from('telegram_sessions').delete().eq('user_id', user.id)
     setHasTgSession(false)
-    setTgStage('phone')
     setTgChannels([])
-    setTgNeedsReconnect(true)
-    setError('')
-  }, [user])
-
-  const startReconnectTelegram = useCallback(() => {
-    setTgNeedsReconnect(false)
-    setTgStage('phone')
+    setTgChannelSearch('')
     setTgError('')
     setError('')
-    setTgChannels([])
-  }, [])
+    setTgCode('')
+    setTgPassword('')
+    setRequiresPassword(false)
+    setTgStage('phone')
+  }, [user])
+
+  const handleTelegramSessionInvalid = useCallback(async () => {
+    await reconnectTelegram()
+  }, [reconnectTelegram])
 
   const fetchTgChannels = async () => {
     setLoadingTg(true)
     setError('')
-    setTgNeedsReconnect(false)
     try {
       const res = await fetch(EDGE_FN, {
         method: 'POST',
@@ -325,7 +324,6 @@ export function CopierEnginePage() {
         return
       }
       setTgChannels(data.channels ?? [])
-      setTgNeedsReconnect(false)
     } catch {
       setError(ce.failedLoadTgChannels)
     } finally {
@@ -462,7 +460,6 @@ export function CopierEnginePage() {
         setTgError(ce.verificationFailed)
         return
       }
-      setTgNeedsReconnect(false)
       await loadData()
     } catch {
       setTgError(ce.networkError)
@@ -476,7 +473,6 @@ export function CopierEnginePage() {
     setHasTgSession(false)
     setTgStage('idle')
     setTgChannels([])
-    setTgNeedsReconnect(false)
     setTgChannelSearch('')
     setError('')
   }
@@ -621,17 +617,6 @@ export function CopierEnginePage() {
         </Card>
       )}
 
-      {tgNeedsReconnect && !hasTgSession && (
-        <Card className="mb-3">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <p className="text-sm text-neutral-600 dark:text-neutral-400">{ce.telegramSessionExpired}</p>
-            <Button size="sm" onClick={startReconnectTelegram}>
-              {ce.reconnectTelegram}
-            </Button>
-          </div>
-        </Card>
-      )}
-
       {/* Telegram channels panel */}
       {hasTgSession && (
         <Card className="mb-3" padding="none">
@@ -693,7 +678,7 @@ export function CopierEnginePage() {
                   <RefreshCw className="w-3.5 h-3.5" />
                   {t.common.refresh}
                 </Button>
-                <Button size="sm" onClick={startReconnectTelegram}>
+                <Button size="sm" onClick={() => void reconnectTelegram()}>
                   {ce.reconnectTelegram}
                 </Button>
               </div>
