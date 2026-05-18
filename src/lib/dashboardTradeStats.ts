@@ -1,7 +1,7 @@
 /** Shared filters for dashboard closed-trade P/L and win/loss counts. */
 
 export type TradeStatsRow = {
-  status: string
+  status?: string
   profit: number | null
   closed_at: string | null
   symbol: string
@@ -13,13 +13,13 @@ export type TradeStatsRow = {
 }
 
 export function isTradeableClosedRow(row: {
-  status: string
+  status?: string
   symbol: string
   lot_size: number
   direction?: string
   type?: string
 }): boolean {
-  if (row.status !== 'closed') return false
+  if ((row.status ?? 'closed') !== 'closed') return false
   if (!(row.symbol ?? '').trim()) return false
   const type = (row.type ?? '').toLowerCase()
   if (
@@ -35,6 +35,27 @@ export function isTradeableClosedRow(row: {
   const dir = (row.direction ?? '').toLowerCase()
   if (dir === 'buy' || dir === 'sell') return true
   return (row.lot_size ?? 0) > 0
+}
+
+/** Minimum |deal profit| to classify a close as won or lost (not breakeven). */
+export const CLOSED_TRADE_OUTCOME_EPSILON = 0.01
+
+/** Deal profit column from MT closed history (not swap/commission). */
+export function closedDealProfit(row: TradeStatsRow): number | null {
+  const p = row.profit
+  if (typeof p !== 'number' || !Number.isFinite(p)) return null
+  return p
+}
+
+/**
+ * MT closed deal eligible for today's win/loss count (matches terminal deal profit column).
+ */
+export function isMtClosedDealForOutcome(row: TradeStatsRow & { status?: string }): boolean {
+  if ((row.status ?? 'closed') !== 'closed') return false
+  if (!isTradeableClosedRow(row)) return false
+  const p = closedDealProfit(row)
+  if (p == null || p === 0) return false
+  return true
 }
 
 export function netClosedLegProfit(row: {
@@ -56,6 +77,22 @@ export function sumTradeableClosedProfitInRange(
   return rows
     .filter(t => isTradeableClosedRow(t) && closedBetween(t.closed_at))
     .reduce((sum, t) => sum + netClosedLegProfit(t), 0)
+}
+
+/**
+ * Sum profit+swap+commission for closed winning legs only (losses excluded).
+ * Matches broker terminals that show "profit today" separate from losses.
+ */
+export function sumClosedWinningProfitInRange(
+  rows: TradeStatsRow[],
+  closedBetween: (closedAt: string | null) => boolean,
+): number {
+  return rows
+    .filter(t => isTradeableClosedRow(t) && closedBetween(t.closed_at))
+    .reduce((sum, t) => {
+      const net = netClosedLegProfit(t)
+      return net > 0 ? sum + net : sum
+    }, 0)
 }
 
 /** Local calendar midnight → next midnight (browser timezone). */
@@ -84,30 +121,26 @@ export function isTimestampInRange(
 }
 
 /**
- * Dashboard "Today's profit": realized closed P/L for the local calendar day,
- * plus live open (floating) P/L when connected — closer to MT5 "daily" figures.
+ * Count closed MT deals in the window by deal `profit` (same column as the terminal).
+ * Swap/commission are not used for win/loss — they were turning wins into false losses.
  */
-export function computeTodaysProfit(
-  realizedClosedToday: number,
-  liveOpenPnl?: number | null,
-): number {
-  const realized = Number.isFinite(realizedClosedToday) ? realizedClosedToday : 0
-  const open =
-    liveOpenPnl != null && Number.isFinite(liveOpenPnl) ? liveOpenPnl : 0
-  return realized + open
-}
-
-/** Closed buy/sell positions that finished in the window (by `closed_at`). */
 export function countClosedTradeOutcomesInRange(
   rows: TradeStatsRow[],
   closedBetween: (closedAt: string | null) => boolean,
-): { taken: number; won: number; lost: number } {
-  const closed = rows.filter(t => isTradeableClosedRow(t) && closedBetween(t.closed_at))
-  return {
-    taken: closed.length,
-    won: closed.filter(t => netClosedLegProfit(t) > 0).length,
-    lost: closed.filter(t => netClosedLegProfit(t) < 0).length,
+): { taken: number; won: number; lost: number; breakeven: number } {
+  const closed = rows.filter(
+    t => isMtClosedDealForOutcome(t) && closedBetween(t.closed_at),
+  )
+  let won = 0
+  let lost = 0
+  let breakeven = 0
+  for (const t of closed) {
+    const p = closedDealProfit(t)!
+    if (p > CLOSED_TRADE_OUTCOME_EPSILON) won++
+    else if (p < -CLOSED_TRADE_OUTCOME_EPSILON) lost++
+    else breakeven++
   }
+  return { taken: closed.length, won, lost, breakeven }
 }
 
 export type LinkedAccountPerformance = {

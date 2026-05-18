@@ -1111,24 +1111,24 @@ export class TradeExecutor {
           }
           const rowsCancelled = (cancelled ?? []) as Array<{ id: string }>
           if (rowsCancelled.length) {
-            try {
-              await this.supabase.from('trade_execution_logs').insert({
-                user_id: userId,
-                signal_id: logSignalId,
-                broker_account_id: scope.brokerAccountId,
-                action: 'virtual_pending_cancelled',
-                status: 'success',
-                request_payload: {
-                  reason,
-                  parent_signal_id: scope.signalId,
-                  symbol: scope.symbol,
-                  rows: rowsCancelled.length,
-                  leg_ids: rowsCancelled.map(r => r.id),
-                } as unknown as Record<string, unknown>,
-              })
-            } catch {
-              // Logging failure is non-fatal.
-            }
+          try {
+            await this.supabase.from('trade_execution_logs').insert({
+              user_id: userId,
+              signal_id: logSignalId,
+              broker_account_id: scope.brokerAccountId,
+              action: 'virtual_pending_cancelled',
+              status: 'success',
+              request_payload: {
+                reason,
+                parent_signal_id: scope.signalId,
+                symbol: scope.symbol,
+                rows: rowsCancelled.length,
+                leg_ids: rowsCancelled.map(r => r.id),
+              } as unknown as Record<string, unknown>,
+            })
+          } catch {
+            // Logging failure is non-fatal.
+          }
           }
           await this.cancelSignalEntryBrokerRowsForScope(scope, userId, logSignalId, reason)
         } catch {
@@ -1281,12 +1281,12 @@ export class TradeExecutor {
       } | null
       if (!row) return signal
       return {
-        ...signal,
-        created_at: signal.created_at ?? row.created_at,
-        reply_to_message_id: signal.reply_to_message_id ?? row.reply_to_message_id ?? null,
-        telegram_message_id: signal.telegram_message_id ?? row.telegram_message_id ?? null,
-        parent_signal_id: signal.parent_signal_id ?? row.parent_signal_id ?? null,
-        channel_id: signal.channel_id ?? row.channel_id ?? null,
+          ...signal,
+          created_at: signal.created_at ?? row.created_at,
+          reply_to_message_id: signal.reply_to_message_id ?? row.reply_to_message_id ?? null,
+          telegram_message_id: signal.telegram_message_id ?? row.telegram_message_id ?? null,
+          parent_signal_id: signal.parent_signal_id ?? row.parent_signal_id ?? null,
+          channel_id: signal.channel_id ?? row.channel_id ?? null,
       }
     } catch {
       return signal
@@ -1861,11 +1861,11 @@ export class TradeExecutor {
           }
         }
       }
-      const digits = Math.max(0, Math.min(8, Number(params?.digits) || 5))
-      const safe = Math.max(Number(params?.stopsLevel) || 0, Number(params?.freezeLevel) || 0)
-      const zoneHi = safe > 0 ? anchor + (safe + 2) * (params?.point ?? 0) : null
-      const zoneLo = safe > 0 ? anchor - (safe + 2) * (params?.point ?? 0) : null
-      const nowMs = Date.now()
+        const digits = Math.max(0, Math.min(8, Number(params?.digits) || 5))
+        const safe = Math.max(Number(params?.stopsLevel) || 0, Number(params?.freezeLevel) || 0)
+        const zoneHi = safe > 0 ? anchor + (safe + 2) * (params?.point ?? 0) : null
+        const zoneLo = safe > 0 ? anchor - (safe + 2) * (params?.point ?? 0) : null
+        const nowMs = Date.now()
       const plannedImmediateLegs = Math.max(
         mergePlanImmediateOrders(plan).length,
         plan.closeWorseEntries?.immediates ?? 0,
@@ -1932,8 +1932,8 @@ export class TradeExecutor {
         familyTrades.map(tr => tr.id),
       )
       await markBasketReconcileDoneForAnchor(this.supabase, broker.id, anchorSignalId)
-      mergeFailed = true
-      console.log(
+            mergeFailed = true
+            console.log(
         `[tradeExecutor] ghost basket closed after modify signal=${signal.id} broker=${broker.id}`
         + ` anchor=${anchorSignalId} closed=${closedCount}`,
       )
@@ -1997,7 +1997,7 @@ export class TradeExecutor {
         error_message: partialMsg,
         request_payload: {
           parent_signal_id: anchorSignalId,
-          symbol,
+        symbol,
           user_message: partialMsg,
           ...summary,
           virtual_pendings: virtualPendings.length,
@@ -2688,7 +2688,7 @@ export class TradeExecutor {
         }
         const clamped = clampOrderStops(sendArgs, params)
         if (clamped.adjustments.length > 0) {
-          console.warn(
+        console.warn(
             `[tradeExecutor] strict entry pending stops clamped signal=${signal.id} broker=${broker.id}: ${clamped.adjustments.join(', ')}`,
           )
         }
@@ -2817,7 +2817,7 @@ export class TradeExecutor {
           } catch {
             /* best-effort */
           }
-        }
+      }
     }
 
     // ── Materialize virtual pendings into range_pending_legs ───────────────
@@ -2880,50 +2880,50 @@ export class TradeExecutor {
       }
     }
     let materializedVirtuals = false
-    if (insertRows.length > 0) {
-      const persist = await this.persistRangePendingLegRows(
-        insertRows,
-        `standard signal=${signal.id} broker=${broker.id}`,
-      )
+        if (insertRows.length > 0) {
+          const persist = await this.persistRangePendingLegRows(
+            insertRows,
+            `standard signal=${signal.id} broker=${broker.id}`,
+          )
       materializedVirtuals = persist.ok
-      if (!persist.ok) {
-        console.error(
-          `[tradeExecutor] range_pending_legs persist failed signal=${signal.id} broker=${broker.id}: ${persist.lastError ?? 'unknown'}`,
-        )
-        try {
-          await this.supabase.from('trade_execution_logs').insert({
-            user_id: signal.user_id,
-            signal_id: signal.id,
-            broker_account_id: broker.id,
-            action: 'virtual_pending_failed',
-            status: 'failed',
-            request_payload: { rows: insertRows.length, anchor, anchorSource } as unknown as Record<string, unknown>,
-            error_message: persist.lastError ?? 'unknown',
-          })
-        } catch { /* logging is best-effort */ }
-      } else {
-        console.log(
+          if (!persist.ok) {
+            console.error(
+              `[tradeExecutor] range_pending_legs persist failed signal=${signal.id} broker=${broker.id}: ${persist.lastError ?? 'unknown'}`,
+            )
+            try {
+              await this.supabase.from('trade_execution_logs').insert({
+                user_id: signal.user_id,
+                signal_id: signal.id,
+                broker_account_id: broker.id,
+                action: 'virtual_pending_failed',
+                status: 'failed',
+                request_payload: { rows: insertRows.length, anchor, anchorSource } as unknown as Record<string, unknown>,
+                error_message: persist.lastError ?? 'unknown',
+              })
+            } catch { /* logging is best-effort */ }
+          } else {
+            console.log(
           `[tradeExecutor] virtual pendings inserted=${insertRows.length} signal=${signal.id} broker=${broker.id} symbol=${symbol} anchor=${anchor ?? 'n/a'} (${anchorSource})`,
-        )
-        try {
-          await this.supabase.from('trade_execution_logs').insert({
-            user_id: signal.user_id,
-            signal_id: signal.id,
-            broker_account_id: broker.id,
-            action: 'virtual_pending_inserted',
-            status: 'success',
-            request_payload: {
-              rows: insertRows.length,
-              anchor,
-              anchorSource,
-              symbol,
-              stepIdxs: insertRows.map(r => r.step_idx),
-              triggers: insertRows.map(r => r.trigger_price),
+            )
+            try {
+              await this.supabase.from('trade_execution_logs').insert({
+                user_id: signal.user_id,
+                signal_id: signal.id,
+                broker_account_id: broker.id,
+                action: 'virtual_pending_inserted',
+                status: 'success',
+                request_payload: {
+                  rows: insertRows.length,
+                  anchor,
+                  anchorSource,
+                  symbol,
+                  stepIdxs: insertRows.map(r => r.step_idx),
+                  triggers: insertRows.map(r => r.trigger_price),
               strict_deferred: strictDeferred,
               strict_broker_pending: strictBrokerPlaced,
-            } as unknown as Record<string, unknown>,
-          })
-        } catch { /* logging is best-effort */ }
+                } as unknown as Record<string, unknown>,
+              })
+            } catch { /* logging is best-effort */ }
       }
     }
 
@@ -3182,12 +3182,12 @@ export class TradeExecutor {
       }
       if (!basketAnchorId || basketAnchorId === signal.parent_signal_id) {
         basketAnchorId = await this.resolveBasketAnchorSignalIdForOpenTrades({
-          userId: signal.user_id,
-          brokerAccountIds,
-          channelId: signal.channel_id,
-          parentSignalId: signal.parent_signal_id,
-          symbolHint,
-        })
+      userId: signal.user_id,
+      brokerAccountIds,
+      channelId: signal.channel_id,
+      parentSignalId: signal.parent_signal_id,
+      symbolHint,
+    })
       }
     }
     if (!basketAnchorId) {
@@ -3431,7 +3431,7 @@ export class TradeExecutor {
           )
         })
       if (scopes.length > 0) {
-        await this.cancelRangePendingLegsForScopes(signal.user_id, signal.id, scopes, 'signal_closed')
+      await this.cancelRangePendingLegsForScopes(signal.user_id, signal.id, scopes, 'signal_closed')
       }
     }
 
