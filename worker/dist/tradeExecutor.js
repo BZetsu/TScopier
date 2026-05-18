@@ -18,6 +18,7 @@ const multiTradeMerge_1 = require("./multiTradeMerge");
 const basketModFollowUp_1 = require("./basketModFollowUp");
 const basketSlTpReconcile_1 = require("./basketSlTpReconcile");
 const rangePendingLadderSync_1 = require("./rangePendingLadderSync");
+const brokerChannelFilter_1 = require("./brokerChannelFilter");
 /** When true (default), channel-attached signals only execute if MTProto is connected in this process. */
 function telegramLiveTradeGateEnabled() {
     const v = String(process.env.WORKER_REQUIRE_TELEGRAM_LIVE_FOR_TRADES ?? 'true').toLowerCase();
@@ -220,17 +221,6 @@ function triggerPriceFor(leg, anchor, digits) {
     const px = anchor + dir * leg.stepIdx * leg.stepPriceOffset;
     const d = Math.max(0, Math.min(8, Math.floor(digits)));
     return Number(px.toFixed(d));
-}
-function channelMatches(broker, channelId) {
-    const enforce = broker.enforce_signal_channel_filter === true;
-    if (!enforce)
-        return true;
-    const ids = broker.signal_channel_ids ?? [];
-    if (!ids.length)
-        return true;
-    if (!channelId)
-        return false;
-    return ids.includes(channelId);
 }
 /** Best-effort open time from /OpenedOrders row (MetaTraderAPI shapes vary). */
 function brokerOrderOpenMs(o) {
@@ -496,7 +486,7 @@ class TradeExecutor {
             const action = String(parsed.action).toLowerCase();
             if (action === 'ignore')
                 return;
-            const brokers = (this.brokersByUser.get(row.user_id) ?? []).filter(b => b.is_active && isMtUuid(b.metaapi_account_id) && channelMatches(b, row.channel_id));
+            const brokers = (this.brokersByUser.get(row.user_id) ?? []).filter(b => b.is_active && isMtUuid(b.metaapi_account_id) && (0, brokerChannelFilter_1.channelMatchesBrokerSignal)(b, row.channel_id));
             if (!brokers.length)
                 return;
             // Pre-fetch channel keywords once per signal so manual-mode brokers can

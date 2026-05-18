@@ -74,6 +74,7 @@ import {
   type BasketSymbolParams,
 } from './basketSlTpReconcile'
 import { syncRangePendingLadderOnBasketRefresh } from './rangePendingLadderSync'
+import { channelMatchesBrokerSignal } from './brokerChannelFilter'
 
 /** When true (default), channel-attached signals only execute if MTProto is connected in this process. */
 function telegramLiveTradeGateEnabled(): boolean {
@@ -426,15 +427,6 @@ function triggerPriceFor(leg: VirtualPendingLeg, anchor: number, digits: number)
   return Number(px.toFixed(d))
 }
 
-function channelMatches(broker: BrokerRow, channelId: string | null): boolean {
-  const enforce = broker.enforce_signal_channel_filter === true
-  if (!enforce) return true
-  const ids = broker.signal_channel_ids ?? []
-  if (!ids.length) return true
-  if (!channelId) return false
-  return ids.includes(channelId)
-}
-
 /** Best-effort open time from /OpenedOrders row (MetaTraderAPI shapes vary). */
 function brokerOrderOpenMs(o: Record<string, unknown>): number | null {
   const candidates = [
@@ -707,7 +699,7 @@ export class TradeExecutor {
       if (action === 'ignore') return
 
       const brokers = (this.brokersByUser.get(row.user_id) ?? []).filter(b =>
-        b.is_active && isMtUuid(b.metaapi_account_id) && channelMatches(b, row.channel_id),
+        b.is_active && isMtUuid(b.metaapi_account_id) && channelMatchesBrokerSignal(b, row.channel_id),
       )
       if (!brokers.length) return
 

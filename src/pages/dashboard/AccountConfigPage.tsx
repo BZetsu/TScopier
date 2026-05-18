@@ -679,12 +679,14 @@ export function AccountConfigPage() {
   const openConfigureModal = (broker: BrokerAccount) => {
     const fresh = brokers.find(b => b.id === broker.id) ?? broker
     const persistedIds = normalizeSignalChannelIds(fresh)
-    const restricts = fresh.enforce_signal_channel_filter === true
     let channelIds: string[]
     if (channelOptions.length === 1 && channelOptions[0]) {
       channelIds = [channelOptions[0].id]
     } else if (channelOptions.length > 1) {
-      channelIds = restricts && persistedIds.length > 0 ? persistedIds : channelOptions.map(c => c.id)
+      channelIds =
+        persistedIds.length > 0
+          ? persistedIds.filter(id => channelOptions.some(c => c.id === id))
+          : channelOptions.map(c => c.id)
     } else {
       channelIds = persistedIds
     }
@@ -855,20 +857,15 @@ export function AccountConfigPage() {
     setError('')
     let channelIds = configDraft.channelIds
     let restrictChannels = false
-    if (channelOptions.length === 1) {
-      channelIds = []
-      restrictChannels = false
+    if (channelOptions.length === 1 && channelOptions[0]) {
+      channelIds = [channelOptions[0].id]
+      restrictChannels = true
     } else if (channelOptions.length > 1) {
       if (channelIds.length === 0) {
         setError('Select at least one signal channel.')
         return
       }
-      if (channelIds.length === channelOptions.length) {
-        channelIds = []
-        restrictChannels = false
-      } else {
-        restrictChannels = true
-      }
+      restrictChannels = true
     }
 
     setConfigSaving(true)
@@ -916,8 +913,8 @@ export function AccountConfigPage() {
     }
     const brokerRow = brokers.find(b => b.id === brokerId)
     const persistedIds = normalizeSignalChannelIds(brokerRow)
-    const restricts = brokerRow?.enforce_signal_channel_filter === true
-    if (!restricts || persistedIds.length === 0) return bl.channelsAll
+    if (persistedIds.length === 0) return bl.channelsNoneSelected
+    if (persistedIds.length >= channelOptions.length) return bl.channelsAll
     const labels = channelOptions
       .filter(ch => persistedIds.includes(ch.id))
       .map(ch => ch.display_name)
@@ -2489,7 +2486,7 @@ export function AccountConfigPage() {
                             <p className="text-xs text-neutral-500 dark:text-neutral-400">{configDraft.channelIds.length} selected</p>
                           </div>
                           <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                            All channels selected (default) copies every connected Telegram channel. Uncheck one or more to restrict this broker.
+                            Only checked channels copy trades to this account. Uncheck a channel to ignore its signals.
                           </p>
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                             {channelOptions.map(channel => (
