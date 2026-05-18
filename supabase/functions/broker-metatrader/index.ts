@@ -15,6 +15,7 @@ import {
   type MtPlatform,
 } from "../_shared/metatraderapi.ts"
 import {
+  flattenMtOrder,
   pickMtField,
   resolveMtDealProfit,
   resolveMtLots,
@@ -603,16 +604,17 @@ Deno.serve(async (req: Request) => {
         broker: typeof brokers[number],
         status: "open" | "closed",
       ) => {
-        const ticket = Number(pick(order, "ticket", "Ticket") ?? 0)
+        const row = flattenMtOrder(order)
+        const ticket = Number(pick(row, "ticket", "Ticket") ?? 0)
         const platform = String(broker.platform ?? "MT5")
-        const { direction, type_label } = resolveDirection(order, platform)
-        const lot_size = resolveMtLots(order)
+        const { direction, type_label } = resolveDirection(row, platform)
+        const lot_size = resolveMtLots(row)
         const openTime = pick(
-          order,
+          row,
           "openTime", "OpenTime", "open_time", "timeOpen", "TimeOpen",
         ) as string | undefined
         const closeTime = pick(
-          order,
+          row,
           "closeTime", "CloseTime", "close_time", "timeClose", "TimeClose", "doneTime", "DoneTime",
         ) as string | undefined
         return {
@@ -621,24 +623,24 @@ Deno.serve(async (req: Request) => {
           broker_label: broker.label,
           broker_name: broker.broker_name,
           ticket,
-          symbol: String(pick(order, "symbol", "Symbol") ?? ""),
+          symbol: String(pick(row, "symbol", "Symbol") ?? ""),
           direction,
           type: type_label,
           lot_size,
-          entry_price: num(pick(order, "openPrice", "OpenPrice", "price")),
-          sl: num(pick(order, "stopLoss", "StopLoss", "sl")),
-          tp: num(pick(order, "takeProfit", "TakeProfit", "tp")),
-          close_price: num(pick(order, "closePrice", "ClosePrice")),
+          entry_price: num(pick(row, "openPrice", "OpenPrice", "price")),
+          sl: num(pick(row, "stopLoss", "StopLoss", "sl")),
+          tp: num(pick(row, "takeProfit", "TakeProfit", "tp")),
+          close_price: num(pick(row, "closePrice", "ClosePrice")),
           profit: isNonTradeEntry(direction, type_label, lot_size)
             ? null
-            : resolveMtDealProfit(order),
-          swap: num(pick(order, "swap", "Swap")),
-          commission: num(pick(order, "commission", "Commission")),
-          comment: (pick(order, "comment", "Comment") as string | undefined) ?? null,
-          magic: num(pick(order, "magicNumber", "MagicNumber", "magic", "Magic", "expertId", "ExpertId")),
+            : resolveMtDealProfit(row),
+          swap: num(pick(row, "swap", "Swap")),
+          commission: num(pick(row, "commission", "Commission")),
+          comment: (pick(row, "comment", "Comment") as string | undefined) ?? null,
+          magic: num(pick(row, "magicNumber", "MagicNumber", "magic", "Magic", "expertId", "ExpertId")),
           opened_at: openTime ?? null,
           closed_at: closeTime ?? null,
-          state: (pick(order, "state", "State") as string | undefined) ?? null,
+          state: (pick(row, "state", "State") as string | undefined) ?? null,
           status,
         }
       }
@@ -682,7 +684,14 @@ Deno.serve(async (req: Request) => {
       // When at least one trade is missing direction, echo back the raw shape so the
       // client can show the diagnostic and we can extend the parser if needed.
       const hasMissingDirection = trades.some((t) => !t.direction)
-      const debug = hasMissingDirection && firstRawSample
+      const hasSparseClosed = trades.some(
+        (t) =>
+          t.status === "closed" &&
+          Boolean(t.symbol?.trim()) &&
+          t.lot_size <= 0 &&
+          (t.profit === 0 || t.profit === null),
+      )
+      const debug = (hasMissingDirection || hasSparseClosed) && firstRawSample
         ? { raw_sample_keys: Object.keys(firstRawSample), raw_sample: firstRawSample }
         : undefined
       return Response.json({ ok: true, trades, debug }, { headers: corsHeaders })

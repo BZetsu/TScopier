@@ -6,6 +6,7 @@ import { interpolate } from '../../i18n/interpolate'
 import { Card } from '../../components/ui/Card'
 import { Badge } from '../../components/ui/Badge'
 import { Alert } from '../../components/ui/Alert'
+import { DASHBOARD_MT_HISTORY_DAYS } from '../../lib/dashboardCharts'
 import { metatraderApi, type MtTrade } from '../../lib/metatraderapi'
 
 type Filter = 'all' | 'open' | 'closed'
@@ -38,7 +39,12 @@ export function TradesPage() {
           setTrades([])
           return
         }
-        const res = await metatraderApi.trades({ scope: 'all' })
+        const historyFrom = new Date()
+        historyFrom.setDate(historyFrom.getDate() - DASHBOARD_MT_HISTORY_DAYS)
+        const res = await metatraderApi.trades({
+          scope: 'all',
+          historyFrom: historyFrom.toISOString().slice(0, 19),
+        })
         setTrades(res.trades ?? [])
         setError(null)
         setLastSyncedAt(Date.now())

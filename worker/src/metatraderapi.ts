@@ -663,16 +663,17 @@ export class MetatraderApiClient {
     return { orders: unwrapOrderList(raw), pagesCount: 1 }
   }
 
-  /** Pagination + OrderHistory + HistoryPositions + session ClosedOrders (deduped by ticket). */
+  /** OrderHistory + pagination (authoritative); HistoryPositions enriches position-level rows. */
   async closedOrdersHistory(id: string, from: string, to: string): Promise<unknown[]> {
-    const byTicket = new Map<number, Record<string, unknown>>()
+    const byKey = new Map<string, Record<string, unknown>>()
+    const ingest = (rows: unknown[]) => ingestMtHistoryRows(byKey, rows)
 
     try {
       let page = 0
       let pagesCount = 1
       while (page < pagesCount && page < 100) {
         const { orders, pagesCount: totalPages } = await this.orderHistoryPage(id, from, to, page)
-        ingestMtHistoryRows(byTicket, orders)
+        ingest(orders)
         pagesCount = Math.max(1, totalPages)
         if (orders.length === 0) break
         page += 1
@@ -682,14 +683,13 @@ export class MetatraderApiClient {
     }
 
     const settled = await Promise.allSettled([
-      this.closedOrders(id),
       this.historyPositions(id, from, to),
       this.orderHistory(id, from, to),
     ])
     for (const r of settled) {
-      if (r.status === 'fulfilled') ingestMtHistoryRows(byTicket, r.value as unknown[])
+      if (r.status === 'fulfilled') ingest(r.value as unknown[])
     }
-    return [...byTicket.values()]
+    return [...byKey.values()]
   }
 
   async accountSummary(id: string): Promise<AccountSummary> {
