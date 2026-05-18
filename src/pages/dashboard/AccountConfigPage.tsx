@@ -1,7 +1,7 @@
-import { useEffect, useState, useMemo, type ReactNode } from 'react'
+import { useCallback, useEffect, useState, useMemo, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  Plus, Trash2, Server, Activity, GitBranch, Eye, DollarSign,
+  Plus, Trash2, Server, Activity, GitBranch, Eye, DollarSign, RefreshCw,
   SlidersHorizontal, Radio, Target, Filter, Wallet,
   ArrowLeftRight, ChevronDown, Brain, Settings2,
 } from 'lucide-react'
@@ -19,6 +19,7 @@ import { Alert } from '../../components/ui/Alert'
 import { AddAccountModal } from '../../components/ui/AddAccountModal'
 import { BrokerServerSelect } from '../../components/ui/BrokerServerSelect'
 import { metatraderApi } from '../../lib/metatraderapi'
+import { isLegacyBrokerLink, isMtSessionUuid } from '../../lib/brokerLink'
 import {
   inferBrokerLabelFromServer,
   resolveLinkedAccountType,
@@ -501,10 +502,54 @@ export function AccountConfigPage() {
     configDraft.manualSettings.range_distance_pips,
   ])
 
+  const [reconnectingBrokerIds, setReconnectingBrokerIds] = useState<Set<string>>(() => new Set())
+
   const brokersNeedingReconnect = useMemo(
-    () => brokers.filter(b => b.connection_status === 'error'),
+    () => brokers.filter(b => b.connection_status === 'error' && isMtSessionUuid(b.metaapi_account_id)),
     [brokers],
   )
+
+  const brokersNeedingRelink = useMemo(
+    () => brokers.filter(b => isLegacyBrokerLink(b.metaapi_account_id)),
+    [brokers],
+  )
+
+  const reconnectBroker = useCallback(async (brokerId: string) => {
+    setReconnectingBrokerIds(prev => new Set(prev).add(brokerId))
+    setError('')
+    try {
+      const result = await metatraderApi.reconnect(brokerId)
+      setBrokers(prev =>
+        prev.map(b => {
+          if (b.id !== brokerId) return b
+          if (result.connection_status !== 'connected') return { ...b, connection_status: 'error' as const }
+          return {
+            ...b,
+            connection_status: 'connected' as const,
+            last_synced_at: new Date().toISOString(),
+            ...(result.summary
+              ? {
+                  last_balance: result.summary.balance ?? b.last_balance,
+                  last_equity: result.summary.equity ?? b.last_equity,
+                  last_currency: result.summary.currency ?? b.last_currency,
+                }
+              : {}),
+          }
+        }),
+      )
+      if (result.connection_status !== 'connected' && result.message) {
+        setError(result.message)
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not reconnect broker')
+    } finally {
+      setReconnectingBrokerIds(prev => {
+        const next = new Set(prev)
+        next.delete(brokerId)
+        return next
+      })
+    }
+  }, [])
 
   const tpLegPercentTotal = useMemo(() => {
     const rows = configDraft.manualSettings.tp_lots ?? DEFAULT_MANUAL_TP_LOTS
@@ -599,22 +644,7 @@ export function AccountConfigPage() {
     }
     setBrokerAccountTypes(prev => ({ ...fromServer, ...prev }))
 
-    const results = await Promise.allSettled(
-      linked.map(async b => {
-        const { summary } = await metatraderApi.summary(b.id)
-        const accountType = resolveLinkedAccountType(summary.type, resolveMtServerCandidate(b, b.broker_server))
-        return { id: b.id, accountType }
-      }),
-    )
-    const fromMt: Record<string, LinkedAccountType> = {}
-    for (const r of results) {
-      if (r.status === 'fulfilled' && r.value.accountType) {
-        fromMt[r.value.id] = r.value.accountType
-      }
-    }
-    if (Object.keys(fromMt).length > 0) {
-      setBrokerAccountTypes(prev => ({ ...prev, ...fromMt }))
-    }
+    // Account type from server name only — avoid summary() here (it can mark brokers disconnected).
   }
 
   const loadData = async () => {
@@ -1097,11 +1127,36 @@ export function AccountConfigPage() {
           </Card>
         )}
 
-        {brokersNeedingReconnect.length > 0 && (
+        {brokersNeedingRelink.length > 0 && (
           <Alert variant="warning" className="mb-3">
-            {brokersNeedingReconnect.length === 1
-              ? 'This account lost its broker connection after the API upgrade. Remove it and connect again with your MT login and password so copying can resume.'
-              : `${brokersNeedingReconnect.length} accounts need to be reconnected after the API upgrade. Remove each account and add it again with your MT login and password.`}
+            {brokersNeedingRelink.length === 1
+              ? 'This account uses an older link format. Remove it and connect again with your MT login and password.'
+              : `${brokersNeedingRelink.length} accounts use an older link format. Remove each one and connect again with your MT login and password.`}
+          </Alert>
+        )}
+
+        {brokersNeedingReconnect.length > 0 && (
+          <Alert variant="warning" className="mb-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <span>
+              {brokersNeedingReconnect.length === 1
+                ? 'Broker connection dropped. Use Reconnect on the account to restore the session.'
+                : `${brokersNeedingReconnect.length} accounts lost their broker connection. Use Reconnect on each account.`}
+            </span>
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              className="shrink-0"
+              loading={reconnectingBrokerIds.size > 0}
+              onClick={() => {
+                for (const b of brokersNeedingReconnect) {
+                  void reconnectBroker(b.id)
+                }
+              }}
+            >
+              <RefreshCw className="w-4 h-4" />
+              Reconnect all
+            </Button>
           </Alert>
         )}
 
@@ -1119,6 +1174,7 @@ export function AccountConfigPage() {
                 : broker.connection_status === 'connected' ? 'success'
                 : broker.connection_status === 'error' ? 'error'
                 : 'neutral'
+              const isReconnecting = reconnectingBrokerIds.has(broker.id)
               const statusLabel = !broker.is_active ? 'Paused'
                 : broker.connection_status === 'connected' ? 'Connected'
                 : broker.connection_status === 'error' ? 'Error'
@@ -1163,6 +1219,18 @@ export function AccountConfigPage() {
                           disabled={togglingBrokerId === broker.id}
                         />
                       </div>
+                      {broker.connection_status === 'error' && isMtSessionUuid(broker.metaapi_account_id) ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="secondary"
+                          loading={isReconnecting}
+                          onClick={() => void reconnectBroker(broker.id)}
+                        >
+                          <RefreshCw className="w-3.5 h-3.5" />
+                          Reconnect
+                        </Button>
+                      ) : null}
                       <button
                         type="button"
                         onClick={() => openConfigureModal(broker)}
