@@ -68,6 +68,13 @@ export function startHttpServer(
 
   const server = createServer(async (req, res) => {
     try {
+      const url = (req.url ?? '').split('?')[0] ?? ''
+
+      if (url === '/health' && (req.method === 'GET' || req.method === 'POST')) {
+        const payload = await sessionManager.getHealthPayload()
+        return sendJson(res, payload.ok ? 200 : 503, payload)
+      }
+
       if (req.method !== 'POST') {
         return sendJson(res, 404, { error: 'Not found' })
       }
@@ -78,7 +85,6 @@ export function startHttpServer(
       }
 
       const body = (await readJson(req)) as Body
-      const url = req.url ?? ''
 
       if (url === '/auth/send_code') {
         if (!body.user_id || !body.phone) {
@@ -167,21 +173,6 @@ export function startHttpServer(
         } catch (err: unknown) {
           return handleTelegramRpcError(res, body.user_id, sessionManager, err, 'Failed to sync backtest signals')
         }
-      }
-
-      if (url === '/health') {
-        const status = sessionManager.getStatus()
-        const now = Date.now()
-        const STALE_MS = 5 * 60 * 1000
-        const ok = status.every(s =>
-          s.connected && (s.last_event_at === 0 || now - s.last_event_at < STALE_MS)
-        )
-        return sendJson(res, ok ? 200 : 503, {
-          ok,
-          listeners: status.length,
-          detail: status,
-          checked_at: new Date(now).toISOString(),
-        })
       }
 
       return sendJson(res, 404, { error: 'Unknown route' })

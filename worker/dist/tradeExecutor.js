@@ -487,7 +487,10 @@ class TradeExecutor {
         if (this.inflight.has(row.id))
             return;
         if (telegramLiveTradeGateEnabled() && row.channel_id) {
-            if (!this.sessionManager?.canExecuteTelegramCopierTrades(row.user_id)) {
+            const live = this.sessionManager
+                ? await this.sessionManager.canExecuteTelegramCopierTradesAsync(row.user_id)
+                : false;
+            if (!live) {
                 if (String(process.env.WORKER_LOG_TELEGRAM_TRADE_GATE ?? '').toLowerCase() === 'true') {
                     console.log(`[tradeExecutor] skip signal ${row.id} (user ${row.user_id}): telegram listener not live for channel-backed copier`);
                 }

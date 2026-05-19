@@ -1,5 +1,5 @@
 import { Agent, request } from 'undici'
-import { ingestMtHistoryRows, type MtHistoryProfile } from './mtTradeFields.js'
+import { ingestMtHistoryRows, type MtHistoryProfile } from './mtTradeFields'
 
 /**
  * MetatraderAPI (metatraderapi.dev) Node client tuned for low order-send latency.

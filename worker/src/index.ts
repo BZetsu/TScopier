@@ -14,9 +14,9 @@ import { TrailingStopMonitor } from './trailingStopMonitor'
 import { BasketSlTpReconcileMonitor } from './basketSlTpReconcileMonitor'
 import { NewsTradingMonitor } from './newsTradingMonitor'
 import { BrokerConnectionMonitor } from './brokerConnectionMonitor'
+import { workerConfig } from './workerConfig'
+import type { Server } from 'http'
 
-// Supabase Realtime needs a WebSocket transport in Node < 22.
-// Railway is currently running Node 20, so we provide ws explicitly.
 if (!globalThis.WebSocket) {
   globalThis.WebSocket = WebSocket as unknown as typeof globalThis.WebSocket
 }
@@ -27,25 +27,23 @@ const supabase = createClient(
 )
 
 const sessionManager = new UserSessionManager(supabase)
-const authService = new AuthService(supabase, sessionManager)
-const httpServer = startHttpServer(authService, sessionManager)
-const tradeExecutor = new TradeExecutor(supabase, sessionManager)
-sessionManager.setTradeExecutor(tradeExecutor)
-const virtualPendingMonitor = new VirtualPendingMonitor(supabase)
-const cweCloseMonitor = new CweCloseMonitor(supabase)
-const partialTpMonitor = new PartialTpMonitor(supabase)
-const signalEntryPendingMonitor = new SignalEntryPendingMonitor(supabase)
-const trailingStopMonitor = new TrailingStopMonitor(supabase)
-const autoManagementMonitor = new AutoManagementMonitor(supabase)
-const basketSlTpReconcileMonitor = new BasketSlTpReconcileMonitor(supabase)
-const newsTradingMonitor = new NewsTradingMonitor(supabase)
-const brokerConnectionMonitor = new BrokerConnectionMonitor(supabase)
+let httpServer: Server | null = null
+let authService: AuthService | null = null
+let tradeExecutor: TradeExecutor | null = null
 
-async function main() {
-  console.log('[worker] TSCopier Telegram worker starting...')
+const monitors: Array<{ stop: () => void }> = []
 
-  await sessionManager.loadAll()
-  await tradeExecutor.start()
+function startTradeMonitors() {
+  const virtualPendingMonitor = new VirtualPendingMonitor(supabase)
+  const cweCloseMonitor = new CweCloseMonitor(supabase)
+  const partialTpMonitor = new PartialTpMonitor(supabase)
+  const signalEntryPendingMonitor = new SignalEntryPendingMonitor(supabase)
+  const trailingStopMonitor = new TrailingStopMonitor(supabase)
+  const autoManagementMonitor = new AutoManagementMonitor(supabase)
+  const basketSlTpReconcileMonitor = new BasketSlTpReconcileMonitor(supabase)
+  const newsTradingMonitor = new NewsTradingMonitor(supabase)
+  const brokerConnectionMonitor = new BrokerConnectionMonitor(supabase)
+
   virtualPendingMonitor.start()
   cweCloseMonitor.start()
   partialTpMonitor.start()
@@ -56,33 +54,69 @@ async function main() {
   newsTradingMonitor.start()
   brokerConnectionMonitor.start()
 
-  setInterval(async () => {
-    await sessionManager.syncSessions()
-  }, 30_000)
+  monitors.push(
+    virtualPendingMonitor,
+    cweCloseMonitor,
+    partialTpMonitor,
+    signalEntryPendingMonitor,
+    trailingStopMonitor,
+    autoManagementMonitor,
+    basketSlTpReconcileMonitor,
+    newsTradingMonitor,
+    brokerConnectionMonitor,
+  )
+}
+
+async function main() {
+  console.log(
+    `[worker] starting role=${workerConfig.role} shard=${workerConfig.shardId}/${workerConfig.shardCount}`
+    + ` instance=${workerConfig.instanceId}`,
+  )
+
+  if (workerConfig.runsListener || workerConfig.runsBacktestHttp) {
+    authService = new AuthService(supabase, sessionManager)
+    httpServer = startHttpServer(authService, sessionManager)
+  }
+
+  if (workerConfig.runsTrade) {
+    tradeExecutor = new TradeExecutor(supabase, sessionManager)
+    sessionManager.setTradeExecutor(tradeExecutor)
+    await tradeExecutor.start()
+    startTradeMonitors()
+  } else {
+    sessionManager.setTradeExecutor(null)
+  }
+
+  if (workerConfig.runsListener) {
+    await sessionManager.loadAll()
+    setInterval(async () => {
+      await sessionManager.syncSessions()
+    }, 30_000)
+
+    if (workerConfig.role === 'listener' || workerConfig.role === 'all') {
+      setInterval(async () => {
+        await sessionManager.renewAllLeases()
+      }, Math.max(10_000, Number(process.env.WORKER_LEASE_RENEW_INTERVAL_MS ?? 20_000)))
+    }
+  } else if (workerConfig.runsBacktestHttp) {
+    console.log('[worker] backtest-only: no live Telegram listeners loaded')
+  }
 
   const shutdown = async (signal: string) => {
     console.log(`[worker] ${signal} received, shutting down...`)
-    httpServer.close()
-    authService.shutdown()
-    tradeExecutor.stop()
-    virtualPendingMonitor.stop()
-    cweCloseMonitor.stop()
-    partialTpMonitor.stop()
-    signalEntryPendingMonitor.stop()
-    trailingStopMonitor.stop()
-    autoManagementMonitor.stop()
-    basketSlTpReconcileMonitor.stop()
-    newsTradingMonitor.stop()
-    brokerConnectionMonitor.stop()
-    await sessionManager.disconnectAll()
-    // Let MTProto sockets finish closing so the next deploy does not overlap
-    // the same auth key on Telegram (AUTH_KEY_DUPLICATED).
-    await new Promise(r => setTimeout(r, Math.min(10_000, Number(process.env.TELEGRAM_SHUTDOWN_DRAIN_MS ?? 1500))))
+    httpServer?.close()
+    authService?.shutdown()
+    tradeExecutor?.stop()
+    for (const m of monitors) m.stop()
+    if (workerConfig.runsListener) {
+      await sessionManager.disconnectAll()
+    }
+    await new Promise(r => setTimeout(r, Math.min(10_000, Number(process.env.TELEGRAM_SHUTDOWN_DRAIN_MS ?? 8000))))
     process.exit(0)
   }
 
   process.on('SIGTERM', () => { shutdown('SIGTERM').catch(() => process.exit(1)) })
-  process.on('SIGINT',  () => { shutdown('SIGINT').catch(() => process.exit(1)) })
+  process.on('SIGINT', () => { shutdown('SIGINT').catch(() => process.exit(1)) })
 }
 
 main().catch(err => {

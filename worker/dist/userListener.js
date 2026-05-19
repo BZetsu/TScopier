@@ -6,6 +6,7 @@ const tl_1 = require("telegram/tl");
 const telegramClient_1 = require("./telegramClient");
 const backtestSignal_1 = require("./backtestSignal");
 const tradableSymbol_1 = require("./tradableSymbol");
+const workerMetrics_1 = require("./workerMetrics");
 const SUPABASE_URL = process.env.SUPABASE_URL ?? '';
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? '';
 const PARSE_SIGNAL_URL = process.env.PARSE_SIGNAL_URL ?? (SUPABASE_URL ? `${SUPABASE_URL.replace(/\/$/, '')}/functions/v1/parse-signal` : '');
@@ -35,6 +36,12 @@ function catchUpOnStartEnabled() {
 function catchUpMaxAgeMs() {
     const minutes = Math.max(1, Math.min(24 * 60, Number(process.env.TELEGRAM_CATCHUP_MAX_AGE_MINUTES ?? 20)));
     return minutes * 60000;
+}
+function catchUpParseConcurrency() {
+    return Math.max(1, Math.min(4, Number(process.env.TELEGRAM_CATCHUP_PARSE_CONCURRENCY ?? 2)));
+}
+function livePriorityPauseMs() {
+    return Math.max(0, Math.min(30000, Number(process.env.TELEGRAM_LIVE_PRIORITY_PAUSE_MS ?? 3000)));
 }
 /** Telegram returns this when the same auth key is online twice (deploy overlap, double connect). */
 function isAuthKeyDuplicated(err) {
@@ -116,6 +123,8 @@ class UserListener {
         this.sessionPersistTimer = null;
         this.replyChainSweepTimer = null;
         this.catchUpInFlight = false;
+        this.catchUpParseActive = 0;
+        this.lastLiveMessageAt = 0;
         this.isConnected = false;
         this.lastEventAt = 0;
         this.lastReconnectAt = 0;
@@ -590,6 +599,8 @@ class UserListener {
     // ── live message handling ─────────────────────────────────────────────
     async handleMessage(event) {
         this.lastEventAt = Date.now();
+        this.lastLiveMessageAt = Date.now();
+        (0, workerMetrics_1.incMetric)('telegram_live_events');
         const message = event.message;
         if (!message)
             return;
@@ -669,7 +680,42 @@ class UserListener {
      * on signals(user_id, telegram_message_id) — a row that already exists
      * is left untouched and parse-signal is not re-fired.
      */
+    async waitForCatchUpParseSlot() {
+        const max = catchUpParseConcurrency();
+        while (this.catchUpParseActive >= max) {
+            await new Promise(r => setTimeout(r, 50));
+        }
+        this.catchUpParseActive++;
+    }
+    releaseCatchUpParseSlot() {
+        this.catchUpParseActive = Math.max(0, this.catchUpParseActive - 1);
+    }
+    async deferCatchUpWhileLiveBusy() {
+        const pauseMs = livePriorityPauseMs();
+        if (pauseMs <= 0)
+            return;
+        while (Date.now() - this.lastLiveMessageAt < pauseMs) {
+            await new Promise(r => setTimeout(r, 200));
+        }
+    }
     async logSignal(channelRow, message, opts) {
+        const isCatchUp = opts?.source === 'catchup';
+        if (isCatchUp) {
+            await this.deferCatchUpWhileLiveBusy();
+            await this.waitForCatchUpParseSlot();
+        }
+        else {
+            (0, workerMetrics_1.incMetric)('telegram_live_log_signal');
+        }
+        try {
+            return await this.logSignalInner(channelRow, message, opts);
+        }
+        finally {
+            if (isCatchUp)
+                this.releaseCatchUpParseSlot();
+        }
+    }
+    async logSignalInner(channelRow, message, opts) {
         const messageId = String(message.id);
         const rawMessage = (message.text ?? message.message ?? '');
         const isReply = !!message.replyTo;
@@ -957,16 +1003,15 @@ class UserListener {
         // gramjs returns newest-first; insert oldest-first so last_seen
         // monotonically advances and parse-signal sees signals in order.
         collected.sort((a, b) => Number(a.id) - Number(b.id));
-        for (const m of collected) {
+        const toProcess = collected.filter(m => {
             const mid = Number(m.id);
-            if (!Number.isFinite(mid))
-                continue;
-            // Never re-queue messages at or below the persisted high-water mark
-            // (belt-and-suspenders on top of gramjs minId filtering).
-            if (mid <= minId)
-                continue;
+            return Number.isFinite(mid) && mid > minId;
+        });
+        (0, workerMetrics_1.incMetric)('catchup_messages_queued', toProcess.length);
+        await this.mapWithConcurrency(toProcess, catchUpParseConcurrency(), async (m) => {
             await this.logSignal(row, m, { source: 'catchup' });
-        }
+        });
+        console.log(`[userListener] catch-up channel done user=${this.userId} channelRow=${row.id} processed=${toProcess.length}`);
     }
     messageEpochSec(m) {
         const dateRaw = m.date;
@@ -1172,6 +1217,7 @@ class UserListener {
             console.error(`[userListener] reconnect failed for ${this.userId}:`, err);
             if (!isAuthKeyDuplicated(err))
                 return;
+            (0, workerMetrics_1.incMetric)('auth_key_duplicated');
             console.warn(`[userListener] AUTH_KEY_DUPLICATED for ${this.userId} — waiting 15s then one retry`
                 + ' (overlapping worker instance or session still closing on Telegram)');
             try {

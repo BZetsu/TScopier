@@ -15,7 +15,7 @@ exports.mtPlatformFrom = mtPlatformFrom;
 exports.hasMetatraderApiConfigured = hasMetatraderApiConfigured;
 exports.getMetatraderApi = getMetatraderApi;
 const undici_1 = require("undici");
-const mtTradeFields_js_1 = require("./mtTradeFields.js");
+const mtTradeFields_1 = require("./mtTradeFields");
 /**
  * MetatraderAPI (metatraderapi.dev) Node client tuned for low order-send latency.
  *
@@ -518,7 +518,7 @@ class MetatraderApiClient {
     }
     async closedOrdersHistory(id, from, to, profile = 'dashboard') {
         const byKey = new Map();
-        const ingest = (rows) => (0, mtTradeFields_js_1.ingestMtHistoryRows)(byKey, rows, profile);
+        const ingest = (rows) => (0, mtTradeFields_1.ingestMtHistoryRows)(byKey, rows, profile);
         try {
             let page = 0;
             let pagesCount = 1;

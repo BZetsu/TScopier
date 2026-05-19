@@ -39,6 +39,11 @@ function startHttpServer(authService, sessionManager) {
     }
     const server = (0, http_1.createServer)(async (req, res) => {
         try {
+            const url = (req.url ?? '').split('?')[0] ?? '';
+            if (url === '/health' && (req.method === 'GET' || req.method === 'POST')) {
+                const payload = await sessionManager.getHealthPayload();
+                return sendJson(res, payload.ok ? 200 : 503, payload);
+            }
             if (req.method !== 'POST') {
                 return sendJson(res, 404, { error: 'Not found' });
             }
@@ -47,7 +52,6 @@ function startHttpServer(authService, sessionManager) {
                 return sendJson(res, 401, { error: 'Unauthorized' });
             }
             const body = (await readJson(req));
-            const url = req.url ?? '';
             if (url === '/auth/send_code') {
                 if (!body.user_id || !body.phone) {
                     return sendJson(res, 400, { error: 'user_id and phone are required' });
@@ -120,18 +124,6 @@ function startHttpServer(authService, sessionManager) {
                 catch (err) {
                     return handleTelegramRpcError(res, body.user_id, sessionManager, err, 'Failed to sync backtest signals');
                 }
-            }
-            if (url === '/health') {
-                const status = sessionManager.getStatus();
-                const now = Date.now();
-                const STALE_MS = 5 * 60 * 1000;
-                const ok = status.every(s => s.connected && (s.last_event_at === 0 || now - s.last_event_at < STALE_MS));
-                return sendJson(res, ok ? 200 : 503, {
-                    ok,
-                    listeners: status.length,
-                    detail: status,
-                    checked_at: new Date(now).toISOString(),
-                });
             }
             return sendJson(res, 404, { error: 'Unknown route' });
         }
