@@ -43,6 +43,7 @@ const SESSION_PING_MIN_INTERVAL_MS = Math.max(5000, Math.min(120000, Number(proc
 const EXECUTOR_PARSED_SWEEP_MS = Math.max(1500, Math.min(60000, Number(process.env.EXECUTOR_PARSED_SWEEP_MS ?? 3000)));
 /** Sweep + Realtime replay window; older `parsed` rows are not re-executed (live dispatch exempt). */
 const EXECUTOR_REPLAY_MAX_AGE_MS = Math.max(60000, Math.min(30 * 60000, Number(process.env.EXECUTOR_REPLAY_MAX_AGE_MS ?? 5 * 60000)));
+const EXECUTOR_MAX_CONCURRENT_SIGNALS = Math.max(1, Math.min(16, Number(process.env.EXECUTOR_MAX_CONCURRENT_SIGNALS ?? 4)));
 const EXECUTION_LOG_ACTIONS_HANDLED = [
     'order_send',
     'virtual_pending_inserted',
@@ -486,21 +487,42 @@ class TradeExecutor {
         if (!(0, tradeSignalActions_1.signalMatchesExecutorMode)(row.parsed_data, workerConfig_1.workerConfig.tradeExecutorMode)) {
             return false;
         }
+        const source = opts?.source ?? 'dispatch';
+        const receivedAt = Date.now();
+        void this.logPipelineStage(row, 'dispatch_received', { source, priority: opts?.priority ?? null });
+        if (this.shouldUseEntryFastPath(row)) {
+            if (this.inflight.has(row.id) || this.queuedIds.has(row.id))
+                return true;
+            void this.handleSignal(row, {
+                liveDispatch: true,
+                dispatchSource: source,
+                dispatchReceivedAt: receivedAt,
+                lightIdempotency: true,
+            });
+            return true;
+        }
         this.enqueueSignal(row, {
             liveDispatch: true,
             priority: opts?.priority,
-            source: opts?.source ?? 'dispatch',
+            source,
+            dispatchReceivedAt: receivedAt,
         });
         return true;
     }
     /**
-     * In-process fast path (monolith). Same priority queue as HTTP push / Realtime.
+     * In-process fast path (monolith). Live buy/sell bypass the queue when role allows.
      */
     dispatchParsedSignal(row) {
         this.acceptDispatchSignal(row, {
             priority: (0, tradeSignalActions_1.dispatchPriorityForAction)((0, tradeSignalActions_1.parsedAction)(row.parsed_data)),
             source: 'in_process',
         });
+    }
+    shouldUseEntryFastPath(row) {
+        const mode = workerConfig_1.workerConfig.tradeExecutorMode;
+        if (mode !== 'entry' && mode !== 'all')
+            return false;
+        return (0, tradeSignalActions_1.isEntryAction)((0, tradeSignalActions_1.parsedAction)(row.parsed_data));
     }
     enqueueSignal(row, opts) {
         if (!PARSED_STATUSES.has(row.status))
@@ -529,17 +551,35 @@ class TradeExecutor {
             void this.drainSignalQueues();
         });
     }
+    dequeueQueuedSignal() {
+        return this.highPriorityQueue.shift() ?? this.normalPriorityQueue.shift() ?? null;
+    }
     async drainSignalQueues() {
         if (this.queueDraining)
             return;
         this.queueDraining = true;
+        const inFlight = new Set();
         try {
-            while (this.highPriorityQueue.length > 0 || this.normalPriorityQueue.length > 0) {
-                const row = this.highPriorityQueue.shift() ?? this.normalPriorityQueue.shift();
-                if (!row)
+            while (this.highPriorityQueue.length > 0 || this.normalPriorityQueue.length > 0 || inFlight.size > 0) {
+                while (inFlight.size < EXECUTOR_MAX_CONCURRENT_SIGNALS
+                    && (this.highPriorityQueue.length > 0 || this.normalPriorityQueue.length > 0)) {
+                    const row = this.dequeueQueuedSignal();
+                    if (!row)
+                        break;
+                    this.queuedIds.delete(row.id);
+                    const job = this.handleSignal(row, { liveDispatch: false, lightIdempotency: false })
+                        .catch(err => console.error(`[tradeExecutor] handleSignal failed for ${row.id}:`, err));
+                    inFlight.add(job);
+                    void job.finally(() => {
+                        inFlight.delete(job);
+                    });
+                }
+                if (inFlight.size > 0) {
+                    await Promise.race(inFlight);
+                }
+                else {
                     break;
-                this.queuedIds.delete(row.id);
-                await this.handleSignal(row, { liveDispatch: true }).catch(err => console.error(`[tradeExecutor] handleSignal failed for ${row.id}:`, err));
+                }
             }
         }
         finally {
@@ -547,6 +587,20 @@ class TradeExecutor {
             if (this.highPriorityQueue.length > 0 || this.normalPriorityQueue.length > 0) {
                 this.scheduleQueueDrain();
             }
+        }
+    }
+    async logPipelineStage(signal, action, payload) {
+        try {
+            await this.supabase.from('trade_execution_logs').insert({
+                user_id: signal.user_id,
+                signal_id: signal.id,
+                action,
+                status: 'success',
+                request_payload: payload,
+            });
+        }
+        catch {
+            /* best-effort */
         }
     }
     async markSignalExecuted(signalId) {
@@ -560,6 +614,14 @@ class TradeExecutor {
         catch {
             /* best-effort */
         }
+    }
+    /** Cheaper idempotency for live entry dispatch (trades row only). */
+    async signalHasExistingTrade(signalId) {
+        const { count } = await this.supabase
+            .from('trades')
+            .select('id', { count: 'exact', head: true })
+            .eq('signal_id', signalId);
+        return (count ?? 0) > 0;
     }
     /** True when this signal row already drove execution (trades, virtuals, or success logs). */
     async signalAlreadyHandled(signalId) {
@@ -595,32 +657,51 @@ class TradeExecutor {
         return Number.isFinite(ageMs) && ageMs > EXECUTOR_REPLAY_MAX_AGE_MS;
     }
     // ── execution ─────────────────────────────────────────────────────────
+    claimSignalExecution(signalId) {
+        if (this.inflight.has(signalId))
+            return false;
+        this.inflight.add(signalId);
+        return true;
+    }
     async handleSignal(row, opts) {
         if (!(0, metatraderapi_1.hasMetatraderApiConfigured)())
             return;
-        if (this.inflight.has(row.id))
+        if (!this.claimSignalExecution(row.id))
             return;
-        if (!opts?.liveDispatch && this.signalTooOldForReplay(row)) {
-            return;
-        }
-        if (await this.signalAlreadyHandled(row.id)) {
-            await this.markSignalExecuted(row.id);
-            return;
-        }
-        if (telegramLiveTradeGateEnabled() && row.channel_id) {
-            const live = this.sessionManager
-                ? await this.sessionManager.canExecuteTelegramCopierTradesAsync(row.user_id)
-                : false;
-            if (!live) {
-                if (String(process.env.WORKER_LOG_TELEGRAM_TRADE_GATE ?? '').toLowerCase() === 'true') {
-                    console.log(`[tradeExecutor] skip signal ${row.id} (user ${row.user_id}): telegram listener not live for channel-backed copier`);
+        const handleStartMs = Date.now();
+        const queueWaitMs = opts?.dispatchReceivedAt != null
+            ? Math.max(0, handleStartMs - opts.dispatchReceivedAt)
+            : null;
+        try {
+            if (!opts?.liveDispatch && this.signalTooOldForReplay(row))
+                return;
+            void this.logPipelineStage(row, 'handle_start', {
+                live_dispatch: opts?.liveDispatch === true,
+                source: opts?.dispatchSource ?? null,
+                queue_wait_ms: queueWaitMs,
+            });
+            if (opts?.lightIdempotency) {
+                if (await this.signalHasExistingTrade(row.id)) {
+                    await this.markSignalExecuted(row.id);
+                    return;
                 }
+            }
+            else if (await this.signalAlreadyHandled(row.id)) {
+                await this.markSignalExecuted(row.id);
                 return;
             }
-        }
-        this.inflight.add(row.id);
-        const pipelineT0 = Date.now();
-        try {
+            if (telegramLiveTradeGateEnabled() && row.channel_id) {
+                const live = this.sessionManager
+                    ? await this.sessionManager.canExecuteTelegramCopierTradesAsync(row.user_id)
+                    : false;
+                if (!live) {
+                    if (String(process.env.WORKER_LOG_TELEGRAM_TRADE_GATE ?? '').toLowerCase() === 'true') {
+                        console.log(`[tradeExecutor] skip signal ${row.id} (user ${row.user_id}): telegram listener not live for channel-backed copier`);
+                    }
+                    return;
+                }
+            }
+            const pipelineT0 = Date.now();
             const parsed = row.parsed_data;
             if (!parsed || !parsed.action)
                 return;
@@ -689,7 +770,13 @@ class TradeExecutor {
             }
         }
         finally {
+            const handleMs = Date.now() - handleStartMs;
+            void this.logPipelineStage(row, 'handle_end', {
+                handle_ms: handleMs,
+                source: opts?.dispatchSource ?? null,
+            });
             this.inflight.delete(row.id);
+            this.queuedIds.delete(row.id);
         }
     }
     async getChannelKeywords(channelId) {

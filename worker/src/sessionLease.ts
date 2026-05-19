@@ -6,6 +6,27 @@ const LEASE_TTL_MS = Math.max(
   Math.min(120_000, Number(process.env.WORKER_SESSION_LEASE_TTL_MS ?? 45_000)),
 )
 
+const LEASE_GATE_CACHE_MS = Math.max(
+  2_000,
+  Math.min(60_000, Number(process.env.WORKER_LEASE_GATE_CACHE_MS ?? 8_000)),
+)
+
+const listenerLiveCache = new Map<string, { live: boolean; expiresAt: number }>()
+
+function cachedListenerLive(userId: string): boolean | null {
+  const hit = listenerLiveCache.get(userId)
+  if (!hit) return null
+  if (hit.expiresAt <= Date.now()) {
+    listenerLiveCache.delete(userId)
+    return null
+  }
+  return hit.live
+}
+
+function setCachedListenerLive(userId: string, live: boolean): void {
+  listenerLiveCache.set(userId, { live, expiresAt: Date.now() + LEASE_GATE_CACHE_MS })
+}
+
 export interface SessionLeaseRow {
   user_id: string
   worker_id: string
@@ -84,6 +105,18 @@ export async function releaseSessionLease(supabase: SupabaseClient, userId: stri
 
 /** Trade workers: true when a listener shard holds a fresh lease (Telegram path is live). */
 export async function isTelegramListenerLiveForUser(
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<boolean> {
+  const cached = cachedListenerLive(userId)
+  if (cached != null) return cached
+
+  const live = await fetchTelegramListenerLiveForUser(supabase, userId)
+  setCachedListenerLive(userId, live)
+  return live
+}
+
+async function fetchTelegramListenerLiveForUser(
   supabase: SupabaseClient,
   userId: string,
 ): Promise<boolean> {

@@ -7,6 +7,21 @@ exports.isTelegramListenerLiveForUser = isTelegramListenerLiveForUser;
 exports.listActiveLeases = listActiveLeases;
 const workerConfig_1 = require("./workerConfig");
 const LEASE_TTL_MS = Math.max(15000, Math.min(120000, Number(process.env.WORKER_SESSION_LEASE_TTL_MS ?? 45000)));
+const LEASE_GATE_CACHE_MS = Math.max(2000, Math.min(60000, Number(process.env.WORKER_LEASE_GATE_CACHE_MS ?? 8000)));
+const listenerLiveCache = new Map();
+function cachedListenerLive(userId) {
+    const hit = listenerLiveCache.get(userId);
+    if (!hit)
+        return null;
+    if (hit.expiresAt <= Date.now()) {
+        listenerLiveCache.delete(userId);
+        return null;
+    }
+    return hit.live;
+}
+function setCachedListenerLive(userId, live) {
+    listenerLiveCache.set(userId, { live, expiresAt: Date.now() + LEASE_GATE_CACHE_MS });
+}
 function expiresAtIso() {
     return new Date(Date.now() + LEASE_TTL_MS).toISOString();
 }
@@ -63,6 +78,14 @@ async function releaseSessionLease(supabase, userId) {
 }
 /** Trade workers: true when a listener shard holds a fresh lease (Telegram path is live). */
 async function isTelegramListenerLiveForUser(supabase, userId) {
+    const cached = cachedListenerLive(userId);
+    if (cached != null)
+        return cached;
+    const live = await fetchTelegramListenerLiveForUser(supabase, userId);
+    setCachedListenerLive(userId, live);
+    return live;
+}
+async function fetchTelegramListenerLiveForUser(supabase, userId) {
     const { data } = await supabase
         .from('worker_session_leases')
         .select('expires_at, role')

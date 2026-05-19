@@ -112,11 +112,34 @@ Apply migration `20260520120000_worker_session_leases.sql` before enabling split
 ## Low-latency path (split deploy)
 
 1. **Listener → trade HTTP push** — After `parse-signal`, the listener `POST`s to `TRADE_WORKER_URL` (entries) or `TRADE_MGMT_WORKER_URL` (management). This avoids waiting for Supabase Realtime (~100ms–several seconds).
-2. **Priority queue** — Buy/sell signals use a **high** queue; management uses **normal**, so a burst of channel updates does not block new entries on the same worker.
-3. **Optional role split** — `trade_entry` vs `trade_mgmt` scales and isolates CPU; `trade` runs both.
-4. **Monolith (`WORKER_ROLE=all`)** — Uses in-process `dispatchParsedSignal` (no HTTP push). Realtime + sweep remain fallbacks everywhere.
+2. **Entry fast path** — On `trade_entry` / `all`, live `buy`/`sell` dispatch calls `handleSignal` directly (no priority queue). Sweep, Realtime replay, and management still use the queue.
+3. **Concurrent queue drain** — `EXECUTOR_MAX_CONCURRENT_SIGNALS` (default **4**) runs multiple queued signals in parallel so one slow management job does not block unrelated entries on a combined `trade` worker.
+4. **Lease gate cache** — `WORKER_LEASE_GATE_CACHE_MS` (default **8000**) caches `isTelegramListenerLiveForUser` per user on trade workers to avoid a DB round-trip on every signal.
+5. **Optional role split** — `trade_entry` vs `trade_mgmt` scales and isolates CPU; `trade` runs both.
+6. **Monolith (`WORKER_ROLE=all`)** — Uses in-process `dispatchParsedSignal` (no HTTP push). Realtime + sweep remain fallbacks everywhere.
 
 Broker `OrderSend` latency is unchanged; this stack removes ingest/dispatch delay before the first API call.
+
+### Diagnosing slow execution
+
+`trade_execution_logs` records pipeline stages per signal:
+
+| `action` | Meaning |
+|----------|---------|
+| `dispatch_received` | HTTP push or in-process dispatch accepted |
+| `handle_start` / `handle_end` | Trade worker began/finished `handleSignal` (`queue_wait_ms` on live path) |
+| `order_send` | Broker `OrderSend` (see `request_payload.pipeline_ms`) |
+
+Example for one signal (replace `<signal_id>`):
+
+```sql
+select action, status, request_payload, created_at
+from trade_execution_logs
+where signal_id = '<signal_id>'
+order by created_at;
+```
+
+Look for a large gap between `handle_start` (`queue_wait_ms`) and the first successful `order_send`, or intentional delay from Copier Engine **`delay_msec`** on the channel.
 
 ## Channel management instructions (copier)
 

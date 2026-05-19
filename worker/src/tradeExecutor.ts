@@ -39,6 +39,7 @@ import {
 } from './closeWorseEntries'
 import {
   dispatchPriorityForAction,
+  isEntryAction,
   isManagementAction,
   parsedAction,
   signalMatchesExecutorMode,
@@ -238,6 +239,10 @@ const EXECUTOR_PARSED_SWEEP_MS = Math.max(
 const EXECUTOR_REPLAY_MAX_AGE_MS = Math.max(
   60_000,
   Math.min(30 * 60_000, Number(process.env.EXECUTOR_REPLAY_MAX_AGE_MS ?? 5 * 60_000)),
+)
+const EXECUTOR_MAX_CONCURRENT_SIGNALS = Math.max(
+  1,
+  Math.min(16, Number(process.env.EXECUTOR_MAX_CONCURRENT_SIGNALS ?? 4)),
 )
 const EXECUTION_LOG_ACTIONS_HANDLED = [
   'order_send',
@@ -738,16 +743,32 @@ export class TradeExecutor {
     if (!signalMatchesExecutorMode(row.parsed_data, workerConfig.tradeExecutorMode)) {
       return false
     }
+    const source = opts?.source ?? 'dispatch'
+    const receivedAt = Date.now()
+    void this.logPipelineStage(row, 'dispatch_received', { source, priority: opts?.priority ?? null })
+
+    if (this.shouldUseEntryFastPath(row)) {
+      if (this.inflight.has(row.id) || this.queuedIds.has(row.id)) return true
+      void this.handleSignal(row, {
+        liveDispatch: true,
+        dispatchSource: source,
+        dispatchReceivedAt: receivedAt,
+        lightIdempotency: true,
+      })
+      return true
+    }
+
     this.enqueueSignal(row, {
       liveDispatch: true,
       priority: opts?.priority,
-      source: opts?.source ?? 'dispatch',
+      source,
+      dispatchReceivedAt: receivedAt,
     })
     return true
   }
 
   /**
-   * In-process fast path (monolith). Same priority queue as HTTP push / Realtime.
+   * In-process fast path (monolith). Live buy/sell bypass the queue when role allows.
    */
   dispatchParsedSignal(row: SignalRow): void {
     this.acceptDispatchSignal(row, {
@@ -756,9 +777,20 @@ export class TradeExecutor {
     })
   }
 
+  private shouldUseEntryFastPath(row: SignalRow): boolean {
+    const mode = workerConfig.tradeExecutorMode
+    if (mode !== 'entry' && mode !== 'all') return false
+    return isEntryAction(parsedAction(row.parsed_data))
+  }
+
   private enqueueSignal(
     row: SignalRow,
-    opts?: { liveDispatch?: boolean; priority?: 'high' | 'normal'; source?: string },
+    opts?: {
+      liveDispatch?: boolean
+      priority?: 'high' | 'normal'
+      source?: string
+      dispatchReceivedAt?: number
+    },
   ): void {
     if (!PARSED_STATUSES.has(row.status)) return
     if (!signalMatchesExecutorMode(row.parsed_data, workerConfig.tradeExecutorMode)) return
@@ -785,23 +817,59 @@ export class TradeExecutor {
     })
   }
 
+  private dequeueQueuedSignal(): SignalRow | null {
+    return this.highPriorityQueue.shift() ?? this.normalPriorityQueue.shift() ?? null
+  }
+
   private async drainSignalQueues(): Promise<void> {
     if (this.queueDraining) return
     this.queueDraining = true
+    const inFlight = new Set<Promise<void>>()
     try {
-      while (this.highPriorityQueue.length > 0 || this.normalPriorityQueue.length > 0) {
-        const row = this.highPriorityQueue.shift() ?? this.normalPriorityQueue.shift()
-        if (!row) break
-        this.queuedIds.delete(row.id)
-        await this.handleSignal(row, { liveDispatch: true }).catch(err =>
-          console.error(`[tradeExecutor] handleSignal failed for ${row.id}:`, err),
-        )
+      while (this.highPriorityQueue.length > 0 || this.normalPriorityQueue.length > 0 || inFlight.size > 0) {
+        while (
+          inFlight.size < EXECUTOR_MAX_CONCURRENT_SIGNALS
+          && (this.highPriorityQueue.length > 0 || this.normalPriorityQueue.length > 0)
+        ) {
+          const row = this.dequeueQueuedSignal()
+          if (!row) break
+          this.queuedIds.delete(row.id)
+          const job = this.handleSignal(row, { liveDispatch: false, lightIdempotency: false })
+            .catch(err => console.error(`[tradeExecutor] handleSignal failed for ${row.id}:`, err))
+          inFlight.add(job)
+          void job.finally(() => {
+            inFlight.delete(job)
+          })
+        }
+        if (inFlight.size > 0) {
+          await Promise.race(inFlight)
+        } else {
+          break
+        }
       }
     } finally {
       this.queueDraining = false
       if (this.highPriorityQueue.length > 0 || this.normalPriorityQueue.length > 0) {
         this.scheduleQueueDrain()
       }
+    }
+  }
+
+  private async logPipelineStage(
+    signal: SignalRow,
+    action: string,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    try {
+      await this.supabase.from('trade_execution_logs').insert({
+        user_id: signal.user_id,
+        signal_id: signal.id,
+        action,
+        status: 'success',
+        request_payload: payload as unknown as Record<string, unknown>,
+      })
+    } catch {
+      /* best-effort */
     }
   }
 
@@ -815,6 +883,15 @@ export class TradeExecutor {
     } catch {
       /* best-effort */
     }
+  }
+
+  /** Cheaper idempotency for live entry dispatch (trades row only). */
+  private async signalHasExistingTrade(signalId: string): Promise<boolean> {
+    const { count } = await this.supabase
+      .from('trades')
+      .select('id', { count: 'exact', head: true })
+      .eq('signal_id', signalId)
+    return (count ?? 0) > 0
   }
 
   /** True when this signal row already drove execution (trades, virtuals, or success logs). */
@@ -855,32 +932,60 @@ export class TradeExecutor {
 
   // ── execution ─────────────────────────────────────────────────────────
 
-  private async handleSignal(row: SignalRow, opts?: { liveDispatch?: boolean }) {
+  private claimSignalExecution(signalId: string): boolean {
+    if (this.inflight.has(signalId)) return false
+    this.inflight.add(signalId)
+    return true
+  }
+
+  private async handleSignal(
+    row: SignalRow,
+    opts?: {
+      liveDispatch?: boolean
+      lightIdempotency?: boolean
+      dispatchSource?: string
+      dispatchReceivedAt?: number
+    },
+  ) {
     if (!hasMetatraderApiConfigured()) return
-    if (this.inflight.has(row.id)) return
-    if (!opts?.liveDispatch && this.signalTooOldForReplay(row)) {
-      return
-    }
-    if (await this.signalAlreadyHandled(row.id)) {
-      await this.markSignalExecuted(row.id)
-      return
-    }
-    if (telegramLiveTradeGateEnabled() && row.channel_id) {
-      const live = this.sessionManager
-        ? await this.sessionManager.canExecuteTelegramCopierTradesAsync(row.user_id)
-        : false
-      if (!live) {
-        if (String(process.env.WORKER_LOG_TELEGRAM_TRADE_GATE ?? '').toLowerCase() === 'true') {
-          console.log(
-            `[tradeExecutor] skip signal ${row.id} (user ${row.user_id}): telegram listener not live for channel-backed copier`,
-          )
+    if (!this.claimSignalExecution(row.id)) return
+
+    const handleStartMs = Date.now()
+    const queueWaitMs = opts?.dispatchReceivedAt != null
+      ? Math.max(0, handleStartMs - (opts.dispatchReceivedAt as number))
+      : null
+    try {
+      if (!opts?.liveDispatch && this.signalTooOldForReplay(row)) return
+
+      void this.logPipelineStage(row, 'handle_start', {
+        live_dispatch: opts?.liveDispatch === true,
+        source: opts?.dispatchSource ?? null,
+        queue_wait_ms: queueWaitMs,
+      })
+
+      if (opts?.lightIdempotency) {
+        if (await this.signalHasExistingTrade(row.id)) {
+          await this.markSignalExecuted(row.id)
+          return
         }
+      } else if (await this.signalAlreadyHandled(row.id)) {
+        await this.markSignalExecuted(row.id)
         return
       }
-    }
-    this.inflight.add(row.id)
-    const pipelineT0 = Date.now()
-    try {
+      if (telegramLiveTradeGateEnabled() && row.channel_id) {
+        const live = this.sessionManager
+          ? await this.sessionManager.canExecuteTelegramCopierTradesAsync(row.user_id)
+          : false
+        if (!live) {
+          if (String(process.env.WORKER_LOG_TELEGRAM_TRADE_GATE ?? '').toLowerCase() === 'true') {
+            console.log(
+              `[tradeExecutor] skip signal ${row.id} (user ${row.user_id}): telegram listener not live for channel-backed copier`,
+            )
+          }
+          return
+        }
+      }
+      const pipelineT0 = Date.now()
       const parsed = row.parsed_data
       if (!parsed || !parsed.action) return
       const action = String(parsed.action).toLowerCase()
@@ -961,7 +1066,13 @@ export class TradeExecutor {
         await this.markSignalExecuted(row.id)
       }
     } finally {
+      const handleMs = Date.now() - handleStartMs
+      void this.logPipelineStage(row, 'handle_end', {
+        handle_ms: handleMs,
+        source: opts?.dispatchSource ?? null,
+      })
       this.inflight.delete(row.id)
+      this.queuedIds.delete(row.id)
     }
   }
 
