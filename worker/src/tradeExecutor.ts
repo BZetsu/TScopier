@@ -84,6 +84,11 @@ import {
   resolveChannelModifyTargets,
   type MgmtTradeRow,
 } from './managementScope'
+import {
+  loadRangePendingLegsInMgmtScope,
+  pendingLegsToCancelScopes,
+  updateRangePendingLegsForManagement,
+} from './managementPendingLegs'
 
 /** When true (default), channel-attached signals only execute if MTProto is connected in this process. */
 function telegramLiveTradeGateEnabled(): boolean {
@@ -3321,6 +3326,20 @@ export class TradeExecutor {
     const action = String(parsed.action).toLowerCase()
     const cancelledPendingScopes = new Set<string>()
 
+    const pendingLegs = await loadRangePendingLegsInMgmtScope(this.supabase, {
+      userId: signal.user_id,
+      brokerAccountIds,
+      channelId: replyScoped ? null : signal.channel_id,
+      basketSignalId: replyScoped ? basketAnchorId : null,
+      symbolFilter: symbolFromText,
+    })
+
+    if (action === 'close') {
+      for (const scope of pendingLegsToCancelScopes(pendingLegs)) {
+        cancelledPendingScopes.add(JSON.stringify(scope satisfies RangePendingCancelScope))
+      }
+    }
+
     const sanitizeLevel = (v: number | null | undefined): number => {
       const n = typeof v === 'number' ? v : Number(v ?? 0)
       return Number.isFinite(n) && n > 0 ? n : 0
@@ -3363,11 +3382,35 @@ export class TradeExecutor {
       return
     }
 
-    if (!rows.length) {
+    if (!rows.length && !pendingLegs.length) {
       const skipReason = action === 'modify' && !symbolFromText && !replyScoped
         ? 'mgmt_ambiguous_modify'
         : 'mgmt_no_open_trades'
       await this.skipMgmtSignal(signal.id, skipReason)
+      return
+    }
+
+    if (action === 'close' && !rows.length && pendingLegs.length) {
+      const scopes = Array.from(cancelledPendingScopes)
+        .map(enc => JSON.parse(enc) as RangePendingCancelScope)
+        .filter(scope => {
+          const broker = byBroker.get(scope.brokerAccountId)
+          if (!broker) return false
+          return !isPendingCancelBlocked(
+            normalizeChannelMessageFiltersMap(broker.channel_message_filters),
+            signal.channel_id,
+          )
+        })
+      if (scopes.length) {
+        await this.cancelRangePendingLegsForScopes(signal.user_id, signal.id, scopes, 'signal_closed')
+      }
+      try {
+        await this.supabase
+          .from('signals')
+          .update({ status: 'executed' })
+          .eq('id', signal.id)
+          .eq('status', 'parsed')
+      } catch { /* best-effort */ }
       return
     }
 
@@ -3497,6 +3540,32 @@ export class TradeExecutor {
       }
     }))
 
+    if (
+      (action === 'modify' || action === 'breakeven' || action === 'partial_breakeven')
+      && pendingLegs.length
+      && (hasNewSl || hasNewTp || action === 'breakeven' || action === 'partial_breakeven')
+    ) {
+      const tpLotsByBroker = new Map(
+        brokers.map(b => [b.id, ((b.manual_settings ?? {}) as ManualSettings).tp_lots]),
+      )
+      const pendingUpdated = await updateRangePendingLegsForManagement({
+        supabase: this.supabase,
+        parsed,
+        pendingLegs,
+        openTrades: rows,
+        tpLotsByBroker,
+        action,
+        hasNewSl,
+        hasNewTp,
+        parsedTpLevels,
+      })
+      if (pendingUpdated > 0) {
+        console.log(
+          `[tradeExecutor] mgmt updated ${pendingUpdated} range_pending_legs signal=${signal.id} action=${action}`,
+        )
+      }
+    }
+
     if (action === 'close' && cancelledPendingScopes.size > 0) {
       const scopes = Array.from(cancelledPendingScopes)
         .map(enc => JSON.parse(enc) as RangePendingCancelScope)
@@ -3509,7 +3578,7 @@ export class TradeExecutor {
           )
         })
       if (scopes.length > 0) {
-      await this.cancelRangePendingLegsForScopes(signal.user_id, signal.id, scopes, 'signal_closed')
+        await this.cancelRangePendingLegsForScopes(signal.user_id, signal.id, scopes, 'signal_closed')
       }
     }
 
