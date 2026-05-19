@@ -98,6 +98,8 @@ import {
   loadChannelActiveTradeParamsForSymbol,
   mergeParsedWithChannelParams,
   reapplyChannelParamsToPendingLegs,
+  shouldMergeChannelParamsForEntry,
+  stripInvalidStopsForSide,
   symbolsForChannelParamsPersist,
   upsertChannelActiveTradeParams,
   type ChannelActiveTradeParams,
@@ -2559,6 +2561,7 @@ export class TradeExecutor {
     // Build the order list. In AI mode we keep the original single-order shape;
     // manual mode delegates to the planner so filters / multi-TP / pip-derived
     // SL & TP / pending expiry / reverse all apply consistently.
+    let mergedChannelParams = false
     let plan: PlannerResult
     if (isManual) {
       const rpe = resolvedParsedEntryPrice(parsed)
@@ -2576,7 +2579,7 @@ export class TradeExecutor {
         partial_close_fraction: parsed.partial_close_fraction,
         raw_instruction: parsed.raw_instruction,
       }
-      if (signal.channel_id) {
+      if (signal.channel_id && shouldMergeChannelParamsForEntry(plannerParsed)) {
         const channelParams = await loadChannelActiveTradeParamsForSymbol(
           this.supabase,
           signal.user_id,
@@ -2585,6 +2588,7 @@ export class TradeExecutor {
         )
         if (channelParams) {
           plannerParsed = mergeParsedWithChannelParams(plannerParsed, channelParams)
+          mergedChannelParams = true
         }
       }
       plan = planManualOrders({
@@ -2677,7 +2681,7 @@ export class TradeExecutor {
       )
     }
     let virtualPendings = (plan.virtualPendings ?? []).slice(0, 500)
-    if (virtualPendings.length > 0 && signal.channel_id) {
+    if (virtualPendings.length > 0 && signal.channel_id && mergedChannelParams) {
       const channelParams = await loadChannelActiveTradeParamsForSymbol(
         this.supabase,
         signal.user_id,
@@ -3163,6 +3167,32 @@ export class TradeExecutor {
 
     const sendLeg = async (leg: Leg): Promise<boolean> => {
       let args = leg.args
+      const isBuyLeg = isBuySideOp(String(args.operation))
+      const isMarket = args.operation === 'Buy' || args.operation === 'Sell'
+      if (isMarket && (!args.price || args.price <= 0) && api) {
+        try {
+          const q = strictEntryPrefetch ?? await api.quote(uuid, symbol)
+          args = { ...args, price: isBuyLeg ? q.ask : q.bid }
+        } catch {
+          /* clamp may no-op without ref */
+        }
+      }
+      const refPx = Number(args.price) || 0
+      if (refPx > 0) {
+        const stripped = stripInvalidStopsForSide({
+          stoploss: Number(args.stoploss) || 0,
+          takeprofit: Number(args.takeprofit) || 0,
+          referencePrice: refPx,
+          isBuy: isBuyLeg,
+        })
+        if (stripped.stripped.length > 0) {
+          console.warn(
+            `[tradeExecutor] stripped invalid stops signal=${signal.id} broker=${broker.id}`
+            + ` ref=${refPx} isBuy=${isBuyLeg}: ${stripped.stripped.join(', ')}`,
+          )
+          args = { ...args, stoploss: stripped.stoploss, takeprofit: stripped.takeprofit }
+        }
+      }
       // Final SL/TP clamp using the actual market/entry price as the reference.
       const clamped = clampOrderStops(args, params)
       if (clamped.adjustments.length > 0) {

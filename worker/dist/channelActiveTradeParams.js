@@ -6,7 +6,10 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.symbolsForChannelParamsPersist = symbolsForChannelParamsPersist;
 exports.loadChannelActiveTradeParamsForSymbol = loadChannelActiveTradeParamsForSymbol;
 exports.upsertChannelActiveTradeParams = upsertChannelActiveTradeParams;
+exports.parsedSignalHasExplicitStops = parsedSignalHasExplicitStops;
+exports.shouldMergeChannelParamsForEntry = shouldMergeChannelParamsForEntry;
 exports.mergeParsedWithChannelParams = mergeParsedWithChannelParams;
+exports.stripInvalidStopsForSide = stripInvalidStopsForSide;
 exports.resolvePendingLegTp = resolvePendingLegTp;
 exports.applyChannelParamsToVirtualPendingList = applyChannelParamsToVirtualPendingList;
 exports.applyChannelParamsToVirtualLeg = applyChannelParamsToVirtualLeg;
@@ -85,6 +88,19 @@ async function upsertChannelActiveTradeParams(supabase, args) {
         }
     }
 }
+/** True when the Telegram message itself included SL and/or TP (not channel memory). */
+function parsedSignalHasExplicitStops(parsed) {
+    const hasSl = positiveLevel(parsed.sl) != null;
+    const hasTp = (parsed.tp ?? []).some(t => positiveLevel(t) != null);
+    return hasSl || hasTp;
+}
+/**
+ * Channel memory from Adjust SL applies to management + pending ladder refresh,
+ * not naked "buy/sell" posts — otherwise stale levels cause "Invalid stops".
+ */
+function shouldMergeChannelParamsForEntry(parsed) {
+    return parsedSignalHasExplicitStops(parsed);
+}
 /** Overlay channel SL/TP onto parsed signal before planning orders / virtual pendings. */
 function mergeParsedWithChannelParams(parsed, params) {
     if (!params)
@@ -95,6 +111,32 @@ function mergeParsedWithChannelParams(parsed, params) {
     if (params.tpLevels.length > 0)
         next.tp = [...params.tpLevels];
     return next;
+}
+/** Drop SL/TP on the wrong side of the fill reference (broker rejects as invalid stops). */
+function stripInvalidStopsForSide(args) {
+    const { referencePrice, isBuy } = args;
+    const ref = referencePrice;
+    if (!Number.isFinite(ref) || ref <= 0) {
+        return { stoploss: args.stoploss, takeprofit: args.takeprofit, stripped: [] };
+    }
+    let stoploss = args.stoploss;
+    let takeprofit = args.takeprofit;
+    const stripped = [];
+    if (stoploss > 0) {
+        const bad = isBuy ? stoploss >= ref : stoploss <= ref;
+        if (bad) {
+            stripped.push(`sl ${stoploss}`);
+            stoploss = 0;
+        }
+    }
+    if (takeprofit > 0) {
+        const bad = isBuy ? takeprofit <= ref : takeprofit >= ref;
+        if (bad) {
+            stripped.push(`tp ${takeprofit}`);
+            takeprofit = 0;
+        }
+    }
+    return { stoploss, takeprofit, stripped };
 }
 function resolvePendingLegTp(args) {
     const { stepIdx, openLegCount, channelTpLevels, tpLots, fallbackTp } = args;

@@ -108,6 +108,21 @@ export async function upsertChannelActiveTradeParams(
   }
 }
 
+/** True when the Telegram message itself included SL and/or TP (not channel memory). */
+export function parsedSignalHasExplicitStops(parsed: ParsedSignal): boolean {
+  const hasSl = positiveLevel(parsed.sl) != null
+  const hasTp = (parsed.tp ?? []).some(t => positiveLevel(t) != null)
+  return hasSl || hasTp
+}
+
+/**
+ * Channel memory from Adjust SL applies to management + pending ladder refresh,
+ * not naked "buy/sell" posts — otherwise stale levels cause "Invalid stops".
+ */
+export function shouldMergeChannelParamsForEntry(parsed: ParsedSignal): boolean {
+  return parsedSignalHasExplicitStops(parsed)
+}
+
 /** Overlay channel SL/TP onto parsed signal before planning orders / virtual pendings. */
 export function mergeParsedWithChannelParams(
   parsed: ParsedSignal,
@@ -118,6 +133,38 @@ export function mergeParsedWithChannelParams(
   if (params.stoploss != null) next.sl = params.stoploss
   if (params.tpLevels.length > 0) next.tp = [...params.tpLevels]
   return next
+}
+
+/** Drop SL/TP on the wrong side of the fill reference (broker rejects as invalid stops). */
+export function stripInvalidStopsForSide(args: {
+  stoploss: number
+  takeprofit: number
+  referencePrice: number
+  isBuy: boolean
+}): { stoploss: number; takeprofit: number; stripped: string[] } {
+  const { referencePrice, isBuy } = args
+  const ref = referencePrice
+  if (!Number.isFinite(ref) || ref <= 0) {
+    return { stoploss: args.stoploss, takeprofit: args.takeprofit, stripped: [] }
+  }
+  let stoploss = args.stoploss
+  let takeprofit = args.takeprofit
+  const stripped: string[] = []
+  if (stoploss > 0) {
+    const bad = isBuy ? stoploss >= ref : stoploss <= ref
+    if (bad) {
+      stripped.push(`sl ${stoploss}`)
+      stoploss = 0
+    }
+  }
+  if (takeprofit > 0) {
+    const bad = isBuy ? takeprofit <= ref : takeprofit >= ref
+    if (bad) {
+      stripped.push(`tp ${takeprofit}`)
+      takeprofit = 0
+    }
+  }
+  return { stoploss, takeprofit, stripped }
 }
 
 export function resolvePendingLegTp(args: {

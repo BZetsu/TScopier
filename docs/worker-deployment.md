@@ -128,7 +128,7 @@ Management messages (`Close half`, `Close worse entries`, `Adjust SL`, etc.) are
 
 **Close worse entries** (channel post) closes open legs on that channel whose entry is within your configured pip band of the live price, and always closes legs tagged with `cwe_close_price` (range multi-trade CWE immediates). Requires **Multi Trades** + **Close worse entries** enabled on the broker account. Redeploy **trade worker** and **parse-signal** after CWE fixes.
 
-Channel **Adjust SL / TP** instructions are stored in `channel_active_trade_params` (per channel + symbol) and applied to all `range_pending_legs` on that channel, including ladder rungs inserted after the adjustment. Redeploy the **trade worker** and run migration `20260520130000_channel_active_trade_params.sql` when upgrading.
+Channel **Adjust SL / TP** instructions are stored in `channel_active_trade_params` (per channel + symbol). They apply to **management**, **pending ladder legs**, and **parameter refresh** on open baskets — not to naked **buy/sell** posts with no SL/TP in the message (avoids stale levels → broker "Invalid stops"). Run migration `20260520130000_channel_active_trade_params.sql` when upgrading.
 
 | **Channel post**, no symbol in text | All **open trades** on that Telegram channel |
 | **Channel post** with symbol (`Close half on EURUSD`, `for gold`) | Open trades on that channel for that symbol only |
