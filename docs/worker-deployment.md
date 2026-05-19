@@ -44,10 +44,11 @@ WORKER_REQUIRE_TELEGRAM_LIVE_FOR_TRADES=true
 WORKER_INTERNAL_TOKEN=<shared secret>
 ```
 
-- **Replicas:** 2+ as needed.
+- **Replicas:** start with **1** until you confirm no duplicate `order_send` logs per signal. With 2+ replicas, each used to subscribe to Supabase Realtime and could **double-execute** the same signal (in-memory dedupe is per process). Default: `EXECUTOR_REALTIME_SIGNALS=false` on split roles; listener push is primary, sweep is fallback.
 - Executes **buy/sell** only; high-priority queue drains before management backlog.
 - Monitors: virtual pending, CWE close, partial TP, signal entry pending.
 - **Health:** `GET /health`; **dispatch:** `POST /internal/dispatch-signal` with `x-internal-token`.
+- Startup log must show `realtime=false` on trade_entry unless you intentionally enabled it on a **single** replica.
 
 ### 3. Trade management (`WORKER_ROLE=trade_mgmt`) — optional split
 
@@ -169,6 +170,20 @@ where dup.status in ('pending', 'claimed')
 ```
 
 Redeploy **Trade Entry** and **`range-pending-sweep`** after guard changes.
+
+## Split deploy checklist (avoid duplicate trades)
+
+| Check | Where |
+|-------|--------|
+| `TRADE_WORKER_URL` = **Trade Entry** public URL (https, no trailing slash) | **Listener** service only |
+| `TRADE_MGMT_WORKER_URL` = **Trade Management** URL | **Listener** only |
+| `WORKER_URL` is **not** used for copier execution (telegram-auth / backtest only) | Supabase Edge secrets |
+| Old **`WORKER_ROLE=trade`** service is **stopped/deleted** — if it still runs, it duplicates Entry + Management | Railway |
+| Trade Entry logs: `started mode=entry … realtime=false` | Trade Entry deploy logs |
+| Multi-trade UI: **16 instant + 17 layering** = 16 market orders **at once** by design; only the 17 layer over time | Account config |
+| `order_send` count per `signal_id` ≈ immediates; `virtual_pending_fired` ≈ layering steps | `trade_execution_logs` |
+
+If `TRADE_WORKER_URL` points at a deleted service, push fails (listener warns `tradeSignalPush push failed`) and only sweep/realtime ran — fix the URL and redeploy listener.
 
 ## Channel management instructions (copier)
 

@@ -310,7 +310,8 @@ class TradeExecutor {
             this.sweepExpiredTscopierBrokerPendings().catch(err => console.error('[tradeExecutor] broker pending TTL sweep failed:', err));
         }, 5 * 60000);
         this.brokerPendingSweepTimer.unref?.();
-        console.log(`[tradeExecutor] started mode=${workerConfig_1.workerConfig.tradeExecutorMode} role=${workerConfig_1.workerConfig.role}`);
+        console.log(`[tradeExecutor] started mode=${workerConfig_1.workerConfig.tradeExecutorMode} role=${workerConfig_1.workerConfig.role}`
+            + ` realtime=${workerConfig_1.workerConfig.tradeExecutorRealtime}`);
         if (String(process.env.WORKER_LEGACY_PENDING_CLEANUP ?? '').toLowerCase() === 'true') {
             this.cleanupLegacyBrokerPendings().catch(err => console.error('[tradeExecutor] legacy pending cleanup failed:', err));
         }
@@ -410,6 +411,9 @@ class TradeExecutor {
     }
     // ── realtime ──────────────────────────────────────────────────────────
     subscribeSignals() {
+        if (!workerConfig_1.workerConfig.tradeExecutorRealtime) {
+            return;
+        }
         if (this.signalsChannel)
             return;
         this.signalsChannel = this.supabase

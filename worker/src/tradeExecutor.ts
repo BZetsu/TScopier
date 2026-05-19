@@ -562,7 +562,8 @@ export class TradeExecutor {
     }, 5 * 60_000)
     this.brokerPendingSweepTimer.unref?.()
     console.log(
-      `[tradeExecutor] started mode=${workerConfig.tradeExecutorMode} role=${workerConfig.role}`,
+      `[tradeExecutor] started mode=${workerConfig.tradeExecutorMode} role=${workerConfig.role}`
+      + ` realtime=${workerConfig.tradeExecutorRealtime}`,
     )
     if (String(process.env.WORKER_LEGACY_PENDING_CLEANUP ?? '').toLowerCase() === 'true') {
       this.cleanupLegacyBrokerPendings().catch(err =>
@@ -657,6 +658,9 @@ export class TradeExecutor {
   // ── realtime ──────────────────────────────────────────────────────────
 
   private subscribeSignals() {
+    if (!workerConfig.tradeExecutorRealtime) {
+      return
+    }
     if (this.signalsChannel) return
     this.signalsChannel = this.supabase
       .channel('trade_executor_signals')

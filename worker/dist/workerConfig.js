@@ -44,7 +44,23 @@ exports.workerConfig = {
     runsBacktestHttp: role === 'all' || role === 'backtest',
     /** Backtest uses a short-lived Telegram client, never the live listener connection. */
     backtestUsesEphemeralClient: role !== 'all' || process.env.BACKTEST_EPHEMERAL_CLIENT !== 'false',
+    /**
+     * Supabase Realtime on `signals` for trade execution. Off by default on split trade
+     * workers (`trade_entry` / `trade_mgmt`) — each replica would otherwise execute the
+     * same row (in-memory inflight is not shared). Listener HTTP push + sweep remain.
+     */
+    tradeExecutorRealtime: parseEnvBool(process.env.EXECUTOR_REALTIME_SIGNALS, role === 'all' || role === 'trade'),
 };
+function parseEnvBool(raw, defaultValue) {
+    if (raw === undefined || raw === '')
+        return defaultValue;
+    const v = raw.toLowerCase().trim();
+    if (v === '0' || v === 'false' || v === 'no')
+        return false;
+    if (v === '1' || v === 'true' || v === 'yes')
+        return true;
+    return defaultValue;
+}
 function shardForUserId(userId, shardCount) {
     let h = 0;
     for (let i = 0; i < userId.length; i++) {
