@@ -27,6 +27,15 @@ const CATCHUP_BACKPRESSURE_MS = 250;
 const CATCHUP_PER_CHANNEL_CAP = 200;
 const BACKFILL_PER_CHANNEL_CAP = 1000;
 const REPLY_CHAIN_SWEEP_MS = 60000;
+function catchUpOnStartEnabled() {
+    const v = String(process.env.TELEGRAM_CATCHUP_ON_START ?? 'true').toLowerCase();
+    return v !== '0' && v !== 'false' && v !== 'no';
+}
+/** Skip catch-up parse/trade for Telegram posts older than this (avoids stale fills after deploy). */
+function catchUpMaxAgeMs() {
+    const minutes = Math.max(1, Math.min(24 * 60, Number(process.env.TELEGRAM_CATCHUP_MAX_AGE_MINUTES ?? 20)));
+    return minutes * 60000;
+}
 /** Telegram returns this when the same auth key is online twice (deploy overlap, double connect). */
 function isAuthKeyDuplicated(err) {
     const m = err instanceof Error ? err.message : String(err);
@@ -143,7 +152,7 @@ class UserListener {
         this.startedAt = Date.now();
         this.lastEventAt = Date.now();
         await this.refreshChannelSubscription();
-        await this.runCatchUp();
+        this.scheduleCatchUpOnStart();
         this.startWatchdog();
         this.startSafetyPoll();
         this.startSessionPersist();
@@ -625,7 +634,8 @@ class UserListener {
             id: message.id,
             text: message.text ?? message.message,
             replyTo: message.replyTo,
-        });
+            date: message.date,
+        }, { source: 'live' });
     }
     /**
      * Resolve chat identity for an update without depending solely on
@@ -659,10 +669,20 @@ class UserListener {
      * on signals(user_id, telegram_message_id) — a row that already exists
      * is left untouched and parse-signal is not re-fired.
      */
-    async logSignal(channelRow, message) {
+    async logSignal(channelRow, message, opts) {
         const messageId = String(message.id);
         const rawMessage = (message.text ?? message.message ?? '');
         const isReply = !!message.replyTo;
+        const messageEpochSec = this.messageEpochSec(message);
+        if (opts?.source === 'catchup' && messageEpochSec > 0) {
+            const ageMs = Date.now() - messageEpochSec * 1000;
+            if (ageMs > catchUpMaxAgeMs()) {
+                await this.bumpLastSeen(channelRow.id, messageId);
+                console.log(`[userListener] catch-up skipped stale message user=${this.userId} channelRow=${channelRow.id}`
+                    + ` messageId=${messageId} ageMin=${Math.round(ageMs / 60000)}`);
+                return false;
+            }
+        }
         const replyToMessageId = extractReplyToMsgId(message.replyTo);
         let parentSignalId = null;
         if (replyToMessageId) {
@@ -850,6 +870,15 @@ class UserListener {
             .or(`last_seen_message_id.is.null,last_seen_message_id.lt.${num}`);
     }
     // ── catch-up after connect/reconnect ──────────────────────────────────
+    /** Non-blocking so live NewMessage handling is not delayed behind history replay. */
+    scheduleCatchUpOnStart() {
+        if (!catchUpOnStartEnabled()) {
+            console.log(`[userListener] catch-up on start disabled user=${this.userId}`);
+            return;
+        }
+        console.log(`[userListener] catch-up scheduled (background) user=${this.userId} maxAgeMin=${Math.round(catchUpMaxAgeMs() / 60000)}`);
+        void this.runCatchUp().catch(err => console.error(`[userListener] catch-up failed for ${this.userId}:`, err));
+    }
     async runCatchUp() {
         if (this.catchUpInFlight)
             return;
@@ -936,7 +965,7 @@ class UserListener {
             // (belt-and-suspenders on top of gramjs minId filtering).
             if (mid <= minId)
                 continue;
-            await this.logSignal(row, m);
+            await this.logSignal(row, m, { source: 'catchup' });
         }
     }
     messageEpochSec(m) {
