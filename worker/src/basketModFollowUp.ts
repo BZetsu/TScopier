@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { MetatraderApiClient } from './metatraderapi'
 import type { ManualTpLot } from './manualPlanning/types'
+import { normalizeManualSettingsForExecution } from './manualPlanning/normalizeManualSettings'
 import { takeProfitForLegIndex } from './manualPlanning/tpBucketDistribution'
 
 type ParsedMgmt = {
@@ -79,7 +80,7 @@ export async function tryApplyBasketFollowUpToNewFill(
       .select('manual_settings')
       .eq('id', args.brokerAccountId)
       .maybeSingle()
-    tpLots = ((br?.manual_settings ?? {}) as { tp_lots?: ManualTpLot[] | null }).tp_lots
+    tpLots = normalizeManualSettingsForExecution(br?.manual_settings).tp_lots
   }
 
   const { data: openLegs } = await supabase

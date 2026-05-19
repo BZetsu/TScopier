@@ -27,6 +27,7 @@ import {
   type PlannerResult,
   type VirtualPendingLeg,
 } from './manualPlanner'
+import { normalizeManualSettingsForExecution } from './manualPlanning/normalizeManualSettings'
 import { findActiveNewsBlackout } from './newsTrading/blackout'
 import { getCalendarEventsCached } from './newsTrading/calendarProvider'
 import { isNewsTradingEnabled } from './newsTrading/settings'
@@ -604,6 +605,13 @@ export class TradeExecutor {
 
   // ── caches ────────────────────────────────────────────────────────────
 
+  private normalizeBrokerRow(row: BrokerRow): BrokerRow {
+    return {
+      ...row,
+      manual_settings: normalizeManualSettingsForExecution(row.manual_settings) as Record<string, unknown>,
+    }
+  }
+
   private async loadBrokers() {
     const { data, error } = await this.supabase
       .from('broker_accounts')
@@ -616,9 +624,10 @@ export class TradeExecutor {
     this.brokersByUser.clear()
     this.brokersById.clear()
     for (const row of (data ?? []) as BrokerRow[]) {
-      this.brokersById.set(row.id, row)
+      const normalized = this.normalizeBrokerRow(row)
+      this.brokersById.set(row.id, normalized)
       const arr = this.brokersByUser.get(row.user_id) ?? []
-      arr.push(row)
+      arr.push(normalized)
       this.brokersByUser.set(row.user_id, arr)
     }
     console.log(`[tradeExecutor] cached ${this.brokersById.size} broker accounts across ${this.brokersByUser.size} users`)
@@ -686,11 +695,12 @@ export class TradeExecutor {
   }
 
   private upsertBrokerCache(row: BrokerRow) {
+    const normalized = this.normalizeBrokerRow(row)
     const previous = this.brokersById.get(row.id)
-    this.brokersById.set(row.id, row)
+    this.brokersById.set(row.id, normalized)
     const userId = row.user_id
     const list = (this.brokersByUser.get(userId) ?? []).filter(b => b.id !== row.id)
-    if (row.is_active) list.push(row)
+    if (normalized.is_active) list.push(normalized)
     this.brokersByUser.set(userId, list)
     if (previous && previous.user_id !== userId) {
       const prev = (this.brokersByUser.get(previous.user_id) ?? []).filter(b => b.id !== row.id)
