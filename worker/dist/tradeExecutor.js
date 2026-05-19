@@ -21,6 +21,7 @@ const rangePendingLadderSync_1 = require("./rangePendingLadderSync");
 const brokerChannelFilter_1 = require("./brokerChannelFilter");
 const tpBucketDistribution_1 = require("./manualPlanning/tpBucketDistribution");
 const managementScope_1 = require("./managementScope");
+const channelActiveTradeParams_1 = require("./channelActiveTradeParams");
 const managementPendingLegs_1 = require("./managementPendingLegs");
 /** When true (default), channel-attached signals only execute if MTProto is connected in this process. */
 function telegramLiveTradeGateEnabled() {
@@ -1424,10 +1425,27 @@ class TradeExecutor {
                 },
             };
         }
+        const refreshTpLevels = (parsed.tp ?? []).filter((t) => typeof t === 'number' && Number.isFinite(t) && t > 0);
+        if (signal.channel_id && (typeof parsed.sl === 'number' && parsed.sl > 0 || refreshTpLevels.length > 0)) {
+            await (0, channelActiveTradeParams_1.upsertChannelActiveTradeParams)(this.supabase, {
+                userId: signal.user_id,
+                channelId: signal.channel_id,
+                symbols: [symbol],
+                stoploss: parsed.sl,
+                tpLevels: refreshTpLevels,
+            });
+        }
         if (plan.delay_ms > 0) {
             await new Promise(resolve => setTimeout(resolve, Math.min(plan.delay_ms, 30000)));
         }
         let virtualPendings = (plan.virtualPendings ?? []).slice(0, 500);
+        let channelParamsForLadder = null;
+        if (signal.channel_id) {
+            channelParamsForLadder = await (0, channelActiveTradeParams_1.loadChannelActiveTradeParamsForSymbol)(this.supabase, signal.user_id, signal.channel_id, symbol);
+            if (virtualPendings.length > 0 && channelParamsForLadder) {
+                virtualPendings = (0, channelActiveTradeParams_1.applyChannelParamsToVirtualPendingList)(virtualPendings, channelParamsForLadder, familyTrades.length, manual.tp_lots);
+            }
+        }
         let perLegTargets = (0, multiTradeMerge_1.buildPerLegStopTargets)({
             plan,
             parsed,
@@ -1573,6 +1591,8 @@ class TradeExecutor {
                 openTradeCount: familyTrades.length,
                 plannedImmediateLegs,
                 plannedRangeLegs: virtualPendings.length,
+                channelParams: channelParamsForLadder,
+                tpLots: manual.tp_lots,
                 buildInsertRow: (v) => {
                     const triggerPrice = triggerPriceFor(v, anchor, digits);
                     if (zoneHi != null && zoneLo != null && triggerPrice > zoneLo && triggerPrice < zoneHi) {
@@ -2012,7 +2032,7 @@ class TradeExecutor {
         if (isManual) {
             const rpe = (0, manualPlanner_1.resolvedParsedEntryPrice)(parsed);
             const rzo = (0, manualPlanner_1.resolvedParsedEntryZone)(parsed);
-            const plannerParsed = {
+            let plannerParsed = {
                 action: parsed.action,
                 symbol: parsed.symbol,
                 entry_price: rpe,
@@ -2025,6 +2045,12 @@ class TradeExecutor {
                 partial_close_fraction: parsed.partial_close_fraction,
                 raw_instruction: parsed.raw_instruction,
             };
+            if (signal.channel_id) {
+                const channelParams = await (0, channelActiveTradeParams_1.loadChannelActiveTradeParamsForSymbol)(this.supabase, signal.user_id, signal.channel_id, symbol);
+                if (channelParams) {
+                    plannerParsed = (0, channelActiveTradeParams_1.mergeParsedWithChannelParams)(plannerParsed, channelParams);
+                }
+            }
             plan = (0, manualPlanner_1.planManualOrders)({
                 parsed: plannerParsed,
                 resolvedSymbol: symbol,
@@ -2107,7 +2133,11 @@ class TradeExecutor {
         if (capped.length < plan.orders.length) {
             console.warn(`[tradeExecutor] capped immediate legs ${plan.orders.length} → ${capped.length} signal=${signal.id} broker=${broker.id}`);
         }
-        const virtualPendings = (plan.virtualPendings ?? []).slice(0, 500);
+        let virtualPendings = (plan.virtualPendings ?? []).slice(0, 500);
+        if (virtualPendings.length > 0 && signal.channel_id) {
+            const channelParams = await (0, channelActiveTradeParams_1.loadChannelActiveTradeParamsForSymbol)(this.supabase, signal.user_id, signal.channel_id, symbol);
+            virtualPendings = (0, channelActiveTradeParams_1.applyChannelParamsToVirtualPendingList)(virtualPendings, channelParams, capped.length, manual.tp_lots);
+        }
         if (isManual && manual.trade_style === 'multi') {
             const tpOnOrders = capped.map(o => Number(o.takeprofit) || 0).filter(tp => tp > 0);
             const tpDistinct = [...new Set(tpOnOrders)];
@@ -3031,6 +3061,44 @@ class TradeExecutor {
             });
             if (pendingUpdated > 0) {
                 console.log(`[tradeExecutor] mgmt updated ${pendingUpdated} range_pending_legs signal=${signal.id} action=${action}`);
+            }
+        }
+        if (action === 'modify'
+            && signal.channel_id
+            && (hasNewSl || hasNewTp)) {
+            const symbols = (0, channelActiveTradeParams_1.symbolsForChannelParamsPersist)({
+                symbolFromText,
+                tradeSymbols: rows.map(r => r.symbol),
+                pendingSymbols: pendingLegs.map(l => l.symbol),
+            });
+            await (0, channelActiveTradeParams_1.upsertChannelActiveTradeParams)(this.supabase, {
+                userId: signal.user_id,
+                channelId: signal.channel_id,
+                symbols,
+                stoploss: hasNewSl ? parsed.sl : null,
+                tpLevels: hasNewTp ? parsedTpLevels : undefined,
+            });
+            const openLegCountByBasket = new Map();
+            for (const tr of rows) {
+                const key = `${tr.signal_id}|${tr.broker_account_id}`;
+                openLegCountByBasket.set(key, (openLegCountByBasket.get(key) ?? 0) + 1);
+            }
+            const tpLotsByBroker = new Map(brokers.map(b => [b.id, (b.manual_settings ?? {}).tp_lots]));
+            const mgmtSignalIds = replyScoped && basketAnchorId ? [basketAnchorId] : null;
+            for (const sym of symbols) {
+                const n = await (0, channelActiveTradeParams_1.reapplyChannelParamsToPendingLegs)({
+                    supabase: this.supabase,
+                    userId: signal.user_id,
+                    channelId: signal.channel_id,
+                    brokerAccountIds,
+                    symbolHint: sym,
+                    signalIds: mgmtSignalIds,
+                    tpLotsByBroker,
+                    openLegCountByBasket,
+                });
+                if (n > 0) {
+                    console.log(`[tradeExecutor] channel params reapplied to ${n} range_pending_legs signal=${signal.id} symbol=${sym}`);
+                }
             }
         }
         if (action === 'close' && cancelledPendingScopes.size > 0) {

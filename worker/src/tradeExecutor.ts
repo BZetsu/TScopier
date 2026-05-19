@@ -85,6 +85,15 @@ import {
   type MgmtTradeRow,
 } from './managementScope'
 import {
+  applyChannelParamsToVirtualPendingList,
+  loadChannelActiveTradeParamsForSymbol,
+  mergeParsedWithChannelParams,
+  reapplyChannelParamsToPendingLegs,
+  symbolsForChannelParamsPersist,
+  upsertChannelActiveTradeParams,
+  type ChannelActiveTradeParams,
+} from './channelActiveTradeParams'
+import {
   loadRangePendingLegsInMgmtScope,
   pendingLegsToCancelScopes,
   updateRangePendingLegsForManagement,
@@ -1799,11 +1808,41 @@ export class TradeExecutor {
       }
     }
 
+    const refreshTpLevels = (parsed.tp ?? []).filter(
+      (t): t is number => typeof t === 'number' && Number.isFinite(t) && t > 0,
+    )
+    if (signal.channel_id && (typeof parsed.sl === 'number' && parsed.sl > 0 || refreshTpLevels.length > 0)) {
+      await upsertChannelActiveTradeParams(this.supabase, {
+        userId: signal.user_id,
+        channelId: signal.channel_id,
+        symbols: [symbol],
+        stoploss: parsed.sl,
+        tpLevels: refreshTpLevels,
+      })
+    }
+
     if (plan.delay_ms > 0) {
       await new Promise(resolve => setTimeout(resolve, Math.min(plan.delay_ms, 30_000)))
     }
 
     let virtualPendings = (plan.virtualPendings ?? []).slice(0, 500)
+    let channelParamsForLadder: ChannelActiveTradeParams | null = null
+    if (signal.channel_id) {
+      channelParamsForLadder = await loadChannelActiveTradeParamsForSymbol(
+        this.supabase,
+        signal.user_id,
+        signal.channel_id,
+        symbol,
+      )
+      if (virtualPendings.length > 0 && channelParamsForLadder) {
+        virtualPendings = applyChannelParamsToVirtualPendingList(
+          virtualPendings,
+          channelParamsForLadder,
+          familyTrades.length,
+          manual.tp_lots,
+        )
+      }
+    }
     let perLegTargets = buildPerLegStopTargets({
       plan,
       parsed,
@@ -1958,6 +1997,8 @@ export class TradeExecutor {
         openTradeCount: familyTrades.length,
         plannedImmediateLegs,
         plannedRangeLegs: virtualPendings.length,
+        channelParams: channelParamsForLadder,
+        tpLots: manual.tp_lots,
         buildInsertRow: (v) => {
           const triggerPrice = triggerPriceFor(v, anchor, digits)
           if (zoneHi != null && zoneLo != null && triggerPrice > zoneLo && triggerPrice < zoneHi) {
@@ -2449,7 +2490,7 @@ export class TradeExecutor {
     if (isManual) {
       const rpe = resolvedParsedEntryPrice(parsed)
       const rzo = resolvedParsedEntryZone(parsed)
-      const plannerParsed: PlannerParsedSignal = {
+      let plannerParsed: PlannerParsedSignal = {
         action: parsed.action,
         symbol: parsed.symbol,
         entry_price: rpe,
@@ -2461,6 +2502,17 @@ export class TradeExecutor {
         open_tp: parsed.open_tp,
         partial_close_fraction: parsed.partial_close_fraction,
         raw_instruction: parsed.raw_instruction,
+      }
+      if (signal.channel_id) {
+        const channelParams = await loadChannelActiveTradeParamsForSymbol(
+          this.supabase,
+          signal.user_id,
+          signal.channel_id,
+          symbol,
+        )
+        if (channelParams) {
+          plannerParsed = mergeParsedWithChannelParams(plannerParsed, channelParams)
+        }
       }
       plan = planManualOrders({
         parsed: plannerParsed,
@@ -2551,7 +2603,21 @@ export class TradeExecutor {
         `[tradeExecutor] capped immediate legs ${plan.orders.length} → ${capped.length} signal=${signal.id} broker=${broker.id}`,
       )
     }
-    const virtualPendings = (plan.virtualPendings ?? []).slice(0, 500)
+    let virtualPendings = (plan.virtualPendings ?? []).slice(0, 500)
+    if (virtualPendings.length > 0 && signal.channel_id) {
+      const channelParams = await loadChannelActiveTradeParamsForSymbol(
+        this.supabase,
+        signal.user_id,
+        signal.channel_id,
+        symbol,
+      )
+      virtualPendings = applyChannelParamsToVirtualPendingList(
+        virtualPendings,
+        channelParams,
+        capped.length,
+        manual.tp_lots,
+      )
+    }
 
     if (isManual && manual.trade_style === 'multi') {
       const tpOnOrders = capped.map(o => Number(o.takeprofit) || 0).filter(tp => tp > 0)
@@ -3563,6 +3629,51 @@ export class TradeExecutor {
         console.log(
           `[tradeExecutor] mgmt updated ${pendingUpdated} range_pending_legs signal=${signal.id} action=${action}`,
         )
+      }
+    }
+
+    if (
+      action === 'modify'
+      && signal.channel_id
+      && (hasNewSl || hasNewTp)
+    ) {
+      const symbols = symbolsForChannelParamsPersist({
+        symbolFromText,
+        tradeSymbols: rows.map(r => r.symbol),
+        pendingSymbols: pendingLegs.map(l => l.symbol),
+      })
+      await upsertChannelActiveTradeParams(this.supabase, {
+        userId: signal.user_id,
+        channelId: signal.channel_id,
+        symbols,
+        stoploss: hasNewSl ? (parsed.sl as number) : null,
+        tpLevels: hasNewTp ? parsedTpLevels : undefined,
+      })
+      const openLegCountByBasket = new Map<string, number>()
+      for (const tr of rows) {
+        const key = `${tr.signal_id}|${tr.broker_account_id}`
+        openLegCountByBasket.set(key, (openLegCountByBasket.get(key) ?? 0) + 1)
+      }
+      const tpLotsByBroker = new Map(
+        brokers.map(b => [b.id, ((b.manual_settings ?? {}) as ManualSettings).tp_lots]),
+      )
+      const mgmtSignalIds = replyScoped && basketAnchorId ? [basketAnchorId] : null
+      for (const sym of symbols) {
+        const n = await reapplyChannelParamsToPendingLegs({
+          supabase: this.supabase,
+          userId: signal.user_id,
+          channelId: signal.channel_id,
+          brokerAccountIds,
+          symbolHint: sym,
+          signalIds: mgmtSignalIds,
+          tpLotsByBroker,
+          openLegCountByBasket,
+        })
+        if (n > 0) {
+          console.log(
+            `[tradeExecutor] channel params reapplied to ${n} range_pending_legs signal=${signal.id} symbol=${sym}`,
+          )
+        }
       }
     }
 

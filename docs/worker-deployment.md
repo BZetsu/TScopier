@@ -90,6 +90,8 @@ Management messages (`Close half`, `Close worse entries`, `Adjust SL`, etc.) are
 | Message type | Applies to |
 |--------------|------------|
 | **Reply** to a Telegram signal (`reply_to_message_id` set) | That signal’s basket only (e.g. Gold entry + SL/TP in the reply thread) |
+
+Channel **Adjust SL / TP** instructions are stored in `channel_active_trade_params` (per channel + symbol) and applied to all `range_pending_legs` on that channel, including ladder rungs inserted after the adjustment. Redeploy the **trade worker** and run migration `20260520130000_channel_active_trade_params.sql` when upgrading.
 | **Channel post**, no symbol in text | All **open trades** on that Telegram channel |
 | **Channel post** with symbol (`Close half on EURUSD`, `for gold`) | Open trades on that channel for that symbol only |
 | **Modify SL/TP** with no symbol, multiple symbols open | Symbols where the price is plausible; if none match, the **most recently opened** symbol on the channel |
