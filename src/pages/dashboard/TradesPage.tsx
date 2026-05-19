@@ -399,13 +399,15 @@ function useTradeDisplay(trade: MtTrade) {
   const status = statusConfig[trade.status] ?? { variant: 'neutral' as const, label: trade.status }
   const timeIso = trade.status === 'closed' ? (trade.closed_at ?? trade.opened_at) : trade.opened_at
   const broker = trade.broker_name || trade.broker_label || '—'
-  const directionLabel = trade.type
-    ? trade.type
-    : isBuy
-      ? 'Buy'
-      : isSell
-        ? 'Sell'
-        : '—'
+  const directionLabel = (() => {
+    if (trade.direction === 'buy') {
+      return /deal/i.test(trade.type ?? '') ? 'Deal Buy' : trade.type || 'Buy'
+    }
+    if (trade.direction === 'sell') {
+      return /deal/i.test(trade.type ?? '') ? 'Deal Sell' : trade.type || 'Sell'
+    }
+    return trade.type || '—'
+  })()
   const timeLabel = timeIso
     ? new Date(timeIso).toLocaleString([], {
         day: '2-digit',
