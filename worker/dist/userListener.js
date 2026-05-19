@@ -18,7 +18,6 @@ const PARSE_SIGNAL_API_KEY = SUPABASE_SERVICE_ROLE_KEY;
 /** Min seconds between client.connect() and first getDialogs on a fresh session. */
 const COLD_FANOUT_DELAY_MS = 8000;
 const DIALOG_CACHE_TTL_MS = 60000;
-const DIALOG_PAGE_SIZE = 100;
 const DIALOG_MAX_SCAN = 500;
 const WATCHDOG_INTERVAL_MS = 30000;
 const WATCHDOG_FAILURE_THRESHOLD = 2;

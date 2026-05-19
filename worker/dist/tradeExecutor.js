@@ -9,7 +9,7 @@ const settings_1 = require("./newsTrading/settings");
 const autoManagement_1 = require("./autoManagement");
 const closeWorseEntries_1 = require("./closeWorseEntries");
 const channelMessageFilters_1 = require("./channelMessageFilters");
-const pipCalculator_1 = require("./pipCalculator");
+const signalPip_1 = require("./signalPip");
 const trailingStop_1 = require("./trailingStop");
 const rangePendingLegPersist_1 = require("./rangePendingLegPersist");
 const signalEntryPendingHelpers_1 = require("./signalEntryPendingHelpers");
@@ -2990,9 +2990,7 @@ class TradeExecutor {
             const api = this.apiFor(broker);
             if (!api)
                 return;
-            const params = await this.getSymbolParams(uuid, symbol).catch(() => null);
-            const pipQuote = (0, pipCalculator_1.pipCalculator)(symbol, params?.point ?? 0.00001, params?.digits ?? 5, params?.contractSize ?? null);
-            const pipSize = pipQuote.pipPrice;
+            const pipSize = (0, signalPip_1.signalPipPrice)(symbol);
             if (!Number.isFinite(pipSize) || pipSize <= 0) {
                 console.warn(`[tradeExecutor] cwe instruction skip: invalid pip size symbol=${symbol}`);
                 return;

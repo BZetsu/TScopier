@@ -42,7 +42,7 @@ import {
   normalizeChannelMessageFiltersMap,
   type ChannelMessageFiltersMap,
 } from './channelMessageFilters'
-import { pipCalculator } from './pipCalculator'
+import { signalPipPrice } from './signalPip'
 import { trailingTradeRowSnapshot } from './trailingStop'
 import { isPostgresDuplicateKeyError } from './rangePendingLegPersist'
 import { cancelSignalEntryRowAtBroker, type SignalEntryPendingRow } from './signalEntryPendingHelpers'
@@ -3519,14 +3519,7 @@ export class TradeExecutor {
       const uuid = broker.metaapi_account_id!
       const api = this.apiFor(broker)
       if (!api) return
-      const params = await this.getSymbolParams(uuid, symbol).catch(() => null)
-      const pipQuote = pipCalculator(
-        symbol,
-        params?.point ?? 0.00001,
-        params?.digits ?? 5,
-        params?.contractSize ?? null,
-      )
-      const pipSize = pipQuote.pipPrice
+      const pipSize = signalPipPrice(symbol)
       if (!Number.isFinite(pipSize) || pipSize <= 0) {
         console.warn(`[tradeExecutor] cwe instruction skip: invalid pip size symbol=${symbol}`)
         return
