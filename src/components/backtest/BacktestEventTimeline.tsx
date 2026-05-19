@@ -1,18 +1,29 @@
 import clsx from 'clsx'
+import { useT } from '../../context/LocaleContext'
 import type { BacktestTradeRow } from '../../lib/backtestTypes'
-import { buildTradeEvents, formatEntryPrice, formatEventTimestamp } from '../../lib/backtestDisplay'
+import {
+  backtestDisplayLabels,
+  buildTradeEvents,
+  formatEntryPrice,
+  formatEventTimestamp,
+  type BacktestDisplayLabels,
+} from '../../lib/backtestDisplay'
 
 interface BacktestEventTimelineProps {
   trade: BacktestTradeRow
+  labels?: BacktestDisplayLabels
 }
 
-export function BacktestEventTimeline({ trade }: BacktestEventTimelineProps) {
-  const events = buildTradeEvents(trade)
+export function BacktestEventTimeline({ trade, labels: labelsProp }: BacktestEventTimelineProps) {
+  const t = useT()
+  const bt = t.backtest
+  const labels = labelsProp ?? backtestDisplayLabels(bt)
+  const events = buildTradeEvents(trade, labels)
 
   if (events.length === 0) {
     return (
       <p className="text-sm text-neutral-500 py-4 text-center">
-        No timed events recorded for this signal.
+        {bt.noEvents}
       </p>
     )
   }
@@ -20,7 +31,7 @@ export function BacktestEventTimeline({ trade }: BacktestEventTimelineProps) {
   return (
     <div>
       <p className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400 mb-4">
-        Event timeline
+        {bt.eventTimeline}
       </p>
       <ol className="relative border-l border-neutral-200 dark:border-neutral-700 ml-2 space-y-5">
         {events.map((ev, i) => {

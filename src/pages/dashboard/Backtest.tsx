@@ -11,6 +11,7 @@ import {
 import clsx from 'clsx'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import { interpolate } from '../../i18n/interpolate'
 import { useT } from '../../context/LocaleContext'
 import { backtestApi } from '../../lib/backtestApi'
 import type {
@@ -74,6 +75,7 @@ function buildConfig(
 
 export function Backtest() {
   const t = useT()
+  const bt = t.backtest
   const { user } = useAuth()
   const defaultDates = useMemo(() => defaultDateRange(), [])
   const [channels, setChannels] = useState<ChannelOption[]>([])
@@ -107,7 +109,7 @@ export function Backtest() {
   const hasValidProfile =
     profileKey === selectionKey && profiledSignals.length > 0 && Boolean(selectedChannelId)
 
-  const channelName = channels.find(c => c.id === selectedChannelId)?.display_name ?? 'Channel'
+  const channelName = channels.find(c => c.id === selectedChannelId)?.display_name ?? bt.channelFallback
 
   const channelNameMap = useMemo(
     () => new Map(channels.map(c => [c.id, c.display_name])),
@@ -181,10 +183,13 @@ export function Backtest() {
         .order('display_name')
       setChannels((data ?? []).map(r => ({
         id: r.id as string,
-        display_name: (r.display_name as string) || 'Channel',
+        display_name: (r.display_name as string) || bt.channelFallback,
       })))
     })()
-  }, [user])
+  }, [user, bt.channelFallback])
+
+  const userError = (e: unknown) =>
+    sanitizeBacktestUserError(e instanceof Error ? e.message : String(e), bt.errors.rateLimit)
 
   useEffect(() => {
     if (!activeRun?.id) return
@@ -217,7 +222,7 @@ export function Backtest() {
 
   const profileSignals = async () => {
     if (!selectedChannelId) {
-      setError('Select a signal channel')
+      setError(bt.selectChannelError)
       return
     }
     setError('')
@@ -234,17 +239,20 @@ export function Backtest() {
       setProfiledSignals(signals)
       setProfileKey(`${selectedChannelId}|${dateFrom}|${dateTo}`)
       const msg = result.imported > 0
-        ? `Imported ${result.imported} signal(s) from ${result.messages_scanned} messages.`
+        ? interpolate(bt.profileImported, {
+            imported: String(result.imported),
+            scanned: String(result.messages_scanned),
+          })
         : result.candidates > 0
-          ? `${result.candidates} candidate(s) found; none stored as tradeable.`
-          : `No tradeable signals in range (${result.messages_scanned} messages scanned).`
+          ? interpolate(bt.profileCandidates, { candidates: String(result.candidates) })
+          : interpolate(bt.profileNoTradeable, { scanned: String(result.messages_scanned) })
       setProfileNote([msg, ...result.errors].filter(Boolean).join(' '))
       if (signals.length > 0) {
         setSelectedSymbol(buildSymbolProfiles(signals)[0]?.symbol ?? null)
         setStep('symbol')
       }
     } catch (e) {
-      setError(sanitizeBacktestUserError(e instanceof Error ? e.message : String(e)))
+      setError(userError(e))
     } finally {
       setProfiling(false)
     }
@@ -252,7 +260,7 @@ export function Backtest() {
 
   const startBacktest = async () => {
     if (!selectedChannelId || !hasValidProfile || !selectedSymbol) {
-      setError(!hasValidProfile ? 'Profile signals first' : 'Select a symbol')
+      setError(!hasValidProfile ? bt.profileFirstError : bt.selectSymbolError)
       return
     }
     setError('')
@@ -270,7 +278,7 @@ export function Backtest() {
         setRunning(false)
       }
     } catch (e) {
-      setError(sanitizeBacktestUserError(e instanceof Error ? e.message : String(e)))
+      setError(userError(e))
       setRunning(false)
     }
   }
@@ -299,17 +307,22 @@ export function Backtest() {
         setRunning(true)
       }
     } catch (e) {
-      setError(sanitizeBacktestUserError(e instanceof Error ? e.message : String(e)))
+      setError(userError(e))
     } finally {
       setLoadingHistoryRun(false)
     }
   }
 
+  const signalListLabel =
+    trades.length === 1
+      ? bt.oneSignal
+      : interpolate(bt.nSignals, { count: String(trades.length) })
+
   return (
     <PageShell maxWidth="lg" spacing="none" className="space-y-6">
       <PageHeader
-        title={t.backtest.title}
-        subtitle={t.backtest.subtitle}
+        title={bt.title}
+        subtitle={bt.subtitle}
         actions={(
           <Button
             variant="secondary"
@@ -322,30 +335,30 @@ export function Backtest() {
             ) : (
               <History className="w-4 h-4 mr-2" />
             )}
-            {t.backtest.history}
+            {bt.history}
           </Button>
         )}
       />
 
       {error ? <Alert variant="error">{error}</Alert> : null}
       {activeRun?.status === 'failed' && activeRun.error_message ? (
-        <Alert variant="error">{sanitizeBacktestUserError(activeRun.error_message)}</Alert>
+        <Alert variant="error">{sanitizeBacktestUserError(activeRun.error_message, bt.errors.rateLimit)}</Alert>
       ) : null}
 
       {step === 'configure' ? (
         <section className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-6 space-y-6 shadow-sm">
           <div>
-            <p className="text-sm text-neutral-500 mt-1">Choose channel and date range, then pull signals from Telegram.</p>
+            <p className="text-sm text-neutral-500 mt-1">{bt.configureHint}</p>
           </div>
 
           <div>
             <p className="text-xs font-medium text-neutral-500 mb-2 flex items-center gap-1.5">
               <Radio className="w-3.5 h-3.5" />
-              Signal channel
+              {bt.signalChannel}
             </p>
             <div className="flex flex-wrap gap-2">
               {channels.length === 0 ? (
-                <p className="text-sm text-neutral-400">{t.backtest.noActiveChannels}</p>
+                <p className="text-sm text-neutral-400">{bt.noActiveChannels}</p>
               ) : (
                 channels.map(ch => (
                   <button
@@ -372,7 +385,7 @@ export function Backtest() {
 
           <div className="grid grid-cols-2 gap-4">
             <label className="block">
-              <span className="text-xs font-medium text-neutral-500">{t.backtest.from}</span>
+              <span className="text-xs font-medium text-neutral-500">{bt.from}</span>
               <input
                 type="date"
                 disabled={isBusy}
@@ -382,7 +395,7 @@ export function Backtest() {
               />
             </label>
             <label className="block">
-              <span className="text-xs font-medium text-neutral-500">{t.backtest.to}</span>
+              <span className="text-xs font-medium text-neutral-500">{bt.to}</span>
               <input
                 type="date"
                 disabled={isBusy}
@@ -397,12 +410,12 @@ export function Backtest() {
             {profiling ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                Pulling signals…
+                {bt.pullingSignals}
               </>
             ) : (
               <>
                 <RefreshCw className="w-4 h-4 mr-2" />
-                Pull & profile signals
+                {bt.pullProfileSignals}
                 <ArrowRight className="w-4 h-4 ml-2 opacity-70" />
               </>
             )}
@@ -414,9 +427,14 @@ export function Backtest() {
         <section className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-6 space-y-6 shadow-sm">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-50">Ready to backtest</h2>
+              <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-50">{bt.readyTitle}</h2>
               <p className="text-sm text-neutral-500 mt-1">
-                {channelName} · {profiledSignals.length} signals · {dateFrom} → {dateTo}
+                {interpolate(bt.readyMeta, {
+                  channel: channelName,
+                  count: String(profiledSignals.length),
+                  from: dateFrom,
+                  to: dateTo,
+                })}
               </p>
             </div>
             <button
@@ -425,7 +443,7 @@ export function Backtest() {
               className="text-sm text-neutral-500 hover:text-neutral-800 flex items-center gap-1 shrink-0"
             >
               <ArrowLeft className="w-4 h-4" />
-              Back
+              {bt.back}
             </button>
           </div>
 
@@ -436,7 +454,7 @@ export function Backtest() {
           ) : null}
 
           <div>
-            <p className="text-xs font-medium text-neutral-500 mb-3">Symbol to backtest</p>
+            <p className="text-xs font-medium text-neutral-500 mb-3">{bt.symbolToBacktest}</p>
             <div className="flex flex-wrap gap-2">
               {symbolProfiles.map(({ symbol, count }) => (
                 <button
@@ -466,7 +484,7 @@ export function Backtest() {
             <div className="space-y-3 rounded-xl border border-teal-200 dark:border-teal-900 bg-teal-50/50 dark:bg-teal-950/20 p-4">
               <div className="flex items-center gap-2 text-sm text-teal-800 dark:text-teal-200">
                 <Loader2 className="w-4 h-4 animate-spin" />
-                {activeRun?.progress_message ?? 'Running backtest on Massive data…'}
+                {activeRun?.progress_message ?? bt.runningDefault}
               </div>
               {activeRun?.progress_pct != null ? (
                 <div className="h-2 rounded-full bg-teal-100 dark:bg-teal-900 overflow-hidden">
@@ -480,7 +498,7 @@ export function Backtest() {
           ) : (
             <Button className="w-full" onClick={() => void startBacktest()} disabled={!canBacktest}>
               <Crosshair className="w-4 h-4 mr-2" />
-              Run backtest{selectedSymbol ? ` · ${selectedSymbol}` : ''}
+              {bt.runBacktest}{selectedSymbol ? ` · ${selectedSymbol}` : ''}
             </Button>
           )}
         </section>
@@ -490,9 +508,12 @@ export function Backtest() {
         <section className="space-y-4">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-50">Backtest results</h2>
+              <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-50">{bt.resultsTitle}</h2>
               <p className="text-sm text-neutral-500 mt-0.5">
-                {selectedSymbol} · {channelName} · tap a signal for details
+                {interpolate(bt.resultsSubtitle, {
+                  symbol: selectedSymbol ?? '—',
+                  channel: channelName,
+                })}
               </p>
             </div>
             <button
@@ -504,13 +525,13 @@ export function Backtest() {
               className="text-sm text-neutral-500 hover:text-neutral-800 flex items-center gap-1"
             >
               <ArrowLeft className="w-4 h-4" />
-              New run
+              {bt.newRun}
             </button>
           </div>
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 col-span-2 sm:col-span-1">
-              <p className="text-[10px] font-medium uppercase tracking-wide text-neutral-400">Total pips</p>
+              <p className="text-[10px] font-medium uppercase tracking-wide text-neutral-400">{bt.totalPips}</p>
               <p
                 className={clsx(
                   'text-3xl font-bold tabular-nums mt-1',
@@ -524,15 +545,15 @@ export function Backtest() {
             {summary ? (
               <>
                 <div className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4">
-                  <p className="text-[10px] font-medium uppercase tracking-wide text-neutral-400">Win rate</p>
+                  <p className="text-[10px] font-medium uppercase tracking-wide text-neutral-400">{bt.winRate}</p>
                   <p className="text-2xl font-bold mt-1">{(summary.winRate * 100).toFixed(0)}%</p>
                 </div>
                 <div className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4">
-                  <p className="text-[10px] font-medium uppercase tracking-wide text-neutral-400">W / L</p>
+                  <p className="text-[10px] font-medium uppercase tracking-wide text-neutral-400">{bt.winLoss}</p>
                   <p className="text-2xl font-bold mt-1 tabular-nums">{summary.wins}/{summary.losses}</p>
                 </div>
                 <div className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4">
-                  <p className="text-[10px] font-medium uppercase tracking-wide text-neutral-400">Signals</p>
+                  <p className="text-[10px] font-medium uppercase tracking-wide text-neutral-400">{bt.signalsLabel}</p>
                   <p className="text-2xl font-bold mt-1 tabular-nums">{summary.tradedSignals}</p>
                 </div>
               </>
@@ -542,7 +563,7 @@ export function Backtest() {
           <div className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 overflow-hidden shadow-sm">
             <div className="px-4 py-3 border-b border-neutral-100 dark:border-neutral-800">
               <p className="text-sm font-medium text-neutral-700 dark:text-neutral-200">
-                {trades.length} signal{trades.length === 1 ? '' : 's'}
+                {signalListLabel}
               </p>
             </div>
             <BacktestResultsList trades={trades} onSelect={setSelectedTrade} />

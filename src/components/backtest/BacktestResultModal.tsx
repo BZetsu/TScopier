@@ -1,8 +1,10 @@
 import { useEffect, useRef } from 'react'
 import { CheckCircle2, Clock, Scale, TrendingUp, X } from 'lucide-react'
 import clsx from 'clsx'
+import { useT } from '../../context/LocaleContext'
 import type { BacktestTradeRow } from '../../lib/backtestTypes'
 import {
+  backtestDisplayLabels,
   computeRiskRewardRatio,
   displayOutcomeLabel,
   formatDurationMs,
@@ -22,6 +24,9 @@ interface BacktestResultModalProps {
 }
 
 export function BacktestResultModal({ trade, onClose }: BacktestResultModalProps) {
+  const t = useT()
+  const bt = t.backtest
+  const btLabels = backtestDisplayLabels(bt)
   const panelRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -47,9 +52,14 @@ export function BacktestResultModal({ trade, onClose }: BacktestResultModalProps
     trade.tp_levels,
     trade.direction,
   )
-  const banner = outcomeBannerLabel(trade.outcome, trade.tps_hit, trade.tp_levels.length)
+  const banner = outcomeBannerLabel(trade.outcome, trade.tps_hit, trade.tp_levels.length, btLabels)
   const bannerTone = outcomeBannerTone(trade.outcome, pips)
-  const outcomeLabel = displayOutcomeLabel(trade.outcome, trade.tps_hit, trade.tp_levels.length)
+  const outcomeLabel = displayOutcomeLabel(
+    trade.outcome,
+    trade.tps_hit,
+    trade.tp_levels.length,
+    btLabels.outcomes,
+  )
   const pipsPositive = pips != null && pips > 0
   const pipsNegative = pips != null && pips < 0
 
@@ -72,7 +82,7 @@ export function BacktestResultModal({ trade, onClose }: BacktestResultModalProps
       <button
         type="button"
         className="absolute inset-0 bg-neutral-900/50 backdrop-blur-sm"
-        aria-label="Close"
+        aria-label={bt.close}
         onClick={onClose}
       />
       <div
@@ -81,13 +91,13 @@ export function BacktestResultModal({ trade, onClose }: BacktestResultModalProps
       >
         <div className="sticky top-0 z-10 flex items-center justify-between gap-3 px-5 py-4 border-b border-neutral-100 dark:border-neutral-800 bg-white/95 dark:bg-neutral-900/95 backdrop-blur">
           <h2 id="backtest-result-title" className="text-lg font-semibold text-neutral-900 dark:text-neutral-50">
-            Backtest result
+            {bt.resultModalTitle}
           </h2>
           <div className="flex items-center gap-1">
             <button
               type="button"
               className="p-2 rounded-lg text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
-              aria-label="Close"
+              aria-label={bt.close}
               onClick={onClose}
             >
               <X className="w-5 h-5" />
@@ -107,7 +117,7 @@ export function BacktestResultModal({ trade, onClose }: BacktestResultModalProps
 
           <div className="grid grid-cols-3 gap-3">
             <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-3 text-center">
-              <p className="text-[10px] font-medium uppercase tracking-wide text-neutral-400">Pips</p>
+              <p className="text-[10px] font-medium uppercase tracking-wide text-neutral-400">{bt.pips}</p>
               <p
                 className={clsx(
                   'text-xl font-bold tabular-nums mt-1',
@@ -122,7 +132,7 @@ export function BacktestResultModal({ trade, onClose }: BacktestResultModalProps
             <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-3 text-center">
               <p className="text-[10px] font-medium uppercase tracking-wide text-neutral-400 flex items-center justify-center gap-1">
                 <Scale className="w-3 h-3" />
-                R:R
+                {bt.riskReward}
               </p>
               <p className="text-xl font-bold tabular-nums mt-1 text-neutral-900 dark:text-neutral-50">
                 {rr}
@@ -131,7 +141,7 @@ export function BacktestResultModal({ trade, onClose }: BacktestResultModalProps
             <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-3 text-center">
               <p className="text-[10px] font-medium uppercase tracking-wide text-neutral-400 flex items-center justify-center gap-1">
                 <Clock className="w-3 h-3" />
-                Duration
+                {bt.duration}
               </p>
               <p className="text-xl font-bold tabular-nums mt-1 text-neutral-900 dark:text-neutral-50">
                 {formatDurationMs(durationMs)}
@@ -149,8 +159,8 @@ export function BacktestResultModal({ trade, onClose }: BacktestResultModalProps
             <span className="tabular-nums">{formatSignalTimestamp(trade.signal_at)}</span>
           </div>
 
-          <BacktestPriceLadder trade={trade} />
-          <BacktestEventTimeline trade={trade} />
+          <BacktestPriceLadder trade={trade} labels={btLabels} />
+          <BacktestEventTimeline trade={trade} labels={btLabels} />
         </div>
       </div>
     </div>

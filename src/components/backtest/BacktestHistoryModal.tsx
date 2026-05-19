@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Clock, Loader2, X } from 'lucide-react'
 import clsx from 'clsx'
+import { interpolate } from '../../i18n/interpolate'
+import { useT } from '../../context/LocaleContext'
 import { supabase } from '../../lib/supabase'
 import type { BacktestRunRow } from '../../lib/backtestTypes'
 import { formatPipValue, parseSummary } from '../../lib/backtestDisplay'
@@ -26,56 +28,6 @@ function runSymbols(config: BacktestRunRow['config']): string {
   return '—'
 }
 
-function runChannelLabel(config: BacktestRunRow['config'], channelNames: Map<string, string>): string {
-  const ids = config?.channelIds
-  if (!Array.isArray(ids) || ids.length === 0) return '—'
-  const first = channelNames.get(String(ids[0])) ?? 'Channel'
-  return ids.length > 1 ? `${first} +${ids.length - 1}` : first
-}
-
-function statusBadge(status: string): { label: string; className: string } {
-  switch (status) {
-    case 'completed':
-      return {
-        label: 'Completed',
-        className: 'bg-teal-100 text-teal-800 dark:bg-teal-950 dark:text-teal-300',
-      }
-    case 'failed':
-      return {
-        label: 'Failed',
-        className: 'bg-error-100 text-error-800 dark:bg-error-950 dark:text-error-300',
-      }
-    case 'running':
-    case 'pending':
-      return {
-        label: 'Running',
-        className: 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200',
-      }
-    case 'cancelled':
-      return {
-        label: 'Cancelled',
-        className: 'bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400',
-      }
-    default:
-      return {
-        label: status,
-        className: 'bg-neutral-100 text-neutral-600 dark:bg-neutral-800',
-      }
-  }
-}
-
-function formatRunDate(iso: string): string {
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return iso
-  return d.toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}
-
 export function BacktestHistoryModal({
   open,
   userId,
@@ -83,9 +35,63 @@ export function BacktestHistoryModal({
   onClose,
   onSelectRun,
 }: BacktestHistoryModalProps) {
+  const t = useT()
+  const bt = t.backtest
   const [runs, setRuns] = useState<BacktestHistoryRow[]>([])
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState('')
+
+  const runChannelLabel = (config: BacktestRunRow['config']): string => {
+    const ids = config?.channelIds
+    if (!Array.isArray(ids) || ids.length === 0) return '—'
+    const first = channelNames.get(String(ids[0])) ?? bt.channelFallback
+    return ids.length > 1
+      ? interpolate(bt.channelMore, { name: first, count: String(ids.length - 1) })
+      : first
+  }
+
+  const statusBadge = (status: string): { label: string; className: string } => {
+    switch (status) {
+      case 'completed':
+        return {
+          label: bt.statusCompleted,
+          className: 'bg-teal-100 text-teal-800 dark:bg-teal-950 dark:text-teal-300',
+        }
+      case 'failed':
+        return {
+          label: bt.statusFailed,
+          className: 'bg-error-100 text-error-800 dark:bg-error-950 dark:text-error-300',
+        }
+      case 'running':
+      case 'pending':
+        return {
+          label: bt.statusRunning,
+          className: 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200',
+        }
+      case 'cancelled':
+        return {
+          label: bt.statusCancelled,
+          className: 'bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400',
+        }
+      default:
+        return {
+          label: status,
+          className: 'bg-neutral-100 text-neutral-600 dark:bg-neutral-800',
+        }
+    }
+  }
+
+  const formatRunDate = (iso: string): string => {
+    const d = new Date(iso)
+    if (Number.isNaN(d.getTime())) return iso
+    return d.toLocaleString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+  }
 
   const fetchHistory = useCallback(async () => {
     if (!userId) return
@@ -138,22 +144,22 @@ export function BacktestHistoryModal({
       <button
         type="button"
         className="absolute inset-0 bg-neutral-900/50 backdrop-blur-sm"
-        aria-label="Close"
+        aria-label={bt.close}
         onClick={onClose}
       />
       <div className="relative w-full sm:max-w-lg max-h-[85vh] flex flex-col rounded-t-2xl sm:rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 shadow-2xl">
         <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-neutral-100 dark:border-neutral-800 shrink-0">
           <div>
             <h2 id="backtest-history-title" className="text-lg font-semibold text-neutral-900 dark:text-neutral-50">
-              Backtest history
+              {bt.historyModalTitle}
             </h2>
-            <p className="text-xs text-neutral-500 mt-0.5">Past runs for your account</p>
+            <p className="text-xs text-neutral-500 mt-0.5">{bt.historyModalSubtitle}</p>
           </div>
           <button
             type="button"
             onClick={onClose}
             className="p-2 rounded-lg text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800"
-            aria-label="Close"
+            aria-label={bt.close}
           >
             <X className="w-5 h-5" />
           </button>
@@ -163,13 +169,13 @@ export function BacktestHistoryModal({
           {loading ? (
             <div className="flex items-center justify-center gap-2 py-16 text-sm text-neutral-500">
               <Loader2 className="w-5 h-5 animate-spin" />
-              Loading…
+              {t.common.loading}
             </div>
           ) : loadError ? (
             <p className="text-sm text-error-600 px-5 py-8">{loadError}</p>
           ) : runs.length === 0 ? (
             <p className="text-sm text-neutral-500 text-center py-16 px-5">
-              No backtest runs yet. Run a backtest to see it here.
+              {bt.historyEmpty}
             </p>
           ) : (
             <ul className="divide-y divide-neutral-100 dark:divide-neutral-800">
@@ -194,7 +200,7 @@ export function BacktestHistoryModal({
                             {runSymbols(cfg)}
                           </p>
                           <p className="text-xs text-neutral-500 mt-0.5">
-                            {runChannelLabel(cfg, channelNames)}
+                            {runChannelLabel(cfg)}
                             <span className="mx-1.5">·</span>
                             {dateRange}
                           </p>

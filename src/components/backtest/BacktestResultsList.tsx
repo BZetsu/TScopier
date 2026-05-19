@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import clsx from 'clsx'
+import { interpolate } from '../../i18n/interpolate'
+import { useT } from '../../context/LocaleContext'
 import type { BacktestTradeRow } from '../../lib/backtestTypes'
 import {
+  backtestDisplayLabels,
   displayOutcomeLabel,
   formatDurationMs,
   formatPipValue,
@@ -47,6 +50,9 @@ function PageButton({
 }
 
 export function BacktestResultsList({ trades, onSelect }: BacktestResultsListProps) {
+  const t = useT()
+  const bt = t.backtest
+  const btLabels = backtestDisplayLabels(bt)
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState<PageSizeOption>(10)
 
@@ -106,6 +112,7 @@ export function BacktestResultsList({ trades, onSelect }: BacktestResultsListPro
             trade.outcome,
             trade.tps_hit,
             trade.tp_levels.length,
+            btLabels.outcomes,
           )
           const isBuy = trade.direction === 'buy'
 
@@ -167,26 +174,25 @@ export function BacktestResultsList({ trades, onSelect }: BacktestResultsListPro
       <div className="flex flex-col gap-3 px-4 sm:px-5 py-3 border-t border-neutral-100 dark:border-neutral-800 bg-neutral-50/80 dark:bg-neutral-800/30 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           <label className="inline-flex items-center gap-2 text-sm text-neutral-600 dark:text-neutral-400">
-            <span className="font-medium text-neutral-700 dark:text-neutral-300">Show</span>
+            <span className="font-medium text-neutral-700 dark:text-neutral-300">{t.common.show}</span>
             <select
               value={pageSize}
               onChange={e => setPageSize(Number(e.target.value) as PageSizeOption)}
               className="h-8 min-w-[4.5rem] rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-teal-500"
-              aria-label="Results per page"
+              aria-label={bt.resultsPerPage}
             >
               {PAGE_SIZE_OPTIONS.map(n => (
                 <option key={n} value={n}>{n}</option>
               ))}
             </select>
-            <span>per page</span>
+            <span>{t.common.perPage}</span>
           </label>
           <p className="text-xs text-neutral-500 tabular-nums">
-            Showing{' '}
-            <span className="font-medium text-neutral-700 dark:text-neutral-300">
-              {rangeStart}–{rangeEnd}
-            </span>{' '}
-            of{' '}
-            <span className="font-medium text-neutral-700 dark:text-neutral-300">{rows.length}</span>
+            {interpolate(t.common.showingRange, {
+              start: String(rangeStart),
+              end: String(rangeEnd),
+              total: String(rows.length),
+            })}
           </p>
         </div>
         {totalPages > 1 ? (
@@ -196,10 +202,10 @@ export function BacktestResultsList({ trades, onSelect }: BacktestResultsListPro
               onClick={() => setPage(p => Math.max(1, p - 1))}
               disabled={page <= 1}
               className="inline-flex items-center gap-1 px-2.5 py-1.5 text-sm rounded-md border border-neutral-200 dark:border-neutral-800 disabled:opacity-40 disabled:pointer-events-none hover:bg-white dark:hover:bg-neutral-900"
-              aria-label="Previous page"
+              aria-label={t.common.previous}
             >
               <ChevronLeft className="w-4 h-4" />
-              <span className="hidden sm:inline">Previous</span>
+              <span className="hidden sm:inline">{t.common.previous}</span>
             </button>
             <div className="flex items-center gap-0.5">
               {pageNumbers[0]! > 1 ? (
@@ -231,9 +237,9 @@ export function BacktestResultsList({ trades, onSelect }: BacktestResultsListPro
               onClick={() => setPage(p => Math.min(totalPages, p + 1))}
               disabled={page >= totalPages}
               className="inline-flex items-center gap-1 px-2.5 py-1.5 text-sm rounded-md border border-neutral-200 dark:border-neutral-800 disabled:opacity-40 disabled:pointer-events-none hover:bg-white dark:hover:bg-neutral-900"
-              aria-label="Next page"
+              aria-label={t.common.next}
             >
-              <span className="hidden sm:inline">Next</span>
+              <span className="hidden sm:inline">{t.common.next}</span>
               <ChevronRight className="w-4 h-4" />
             </button>
           </div>

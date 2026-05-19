@@ -1,11 +1,19 @@
 import { useMemo } from 'react'
 import { TrendingDown, TrendingUp } from 'lucide-react'
 import clsx from 'clsx'
+import { useT } from '../../context/LocaleContext'
 import type { BacktestTradeRow } from '../../lib/backtestTypes'
-import { buildPriceLevels, formatEntryPrice, type PriceLevelLine } from '../../lib/backtestDisplay'
+import {
+  backtestDisplayLabels,
+  buildPriceLevels,
+  formatEntryPrice,
+  type BacktestDisplayLabels,
+  type PriceLevelLine,
+} from '../../lib/backtestDisplay'
 
 interface BacktestPriceLadderProps {
   trade: BacktestTradeRow
+  labels?: BacktestDisplayLabels
 }
 
 function lineStyle(kind: PriceLevelLine['kind']): { line: string; text: string } {
@@ -33,9 +41,12 @@ function lineStyle(kind: PriceLevelLine['kind']): { line: string; text: string }
   }
 }
 
-export function BacktestPriceLadder({ trade }: BacktestPriceLadderProps) {
+export function BacktestPriceLadder({ trade, labels: labelsProp }: BacktestPriceLadderProps) {
+  const t = useT()
+  const bt = t.backtest
+  const labels = labelsProp ?? backtestDisplayLabels(bt)
   const isBuy = trade.direction === 'buy'
-  const levels = useMemo(() => buildPriceLevels(trade), [trade])
+  const levels = useMemo(() => buildPriceLevels(trade, labels), [trade, labels])
 
   const rows = useMemo(() => {
     if (!levels.length) return []
@@ -63,7 +74,7 @@ export function BacktestPriceLadder({ trade }: BacktestPriceLadderProps) {
             isBuy ? 'text-teal-700 dark:text-teal-400' : 'text-error-700 dark:text-error-400',
           )}
         >
-          {isBuy ? 'Buy' : 'Sell'}
+          {isBuy ? bt.buy : bt.sell}
         </span>
       </div>
 
