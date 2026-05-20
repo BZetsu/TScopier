@@ -27,6 +27,7 @@ import { isLegacyBrokerLink } from '../../lib/brokerLink'
 import { brokerCanReconnect } from '../../lib/brokerReconnect'
 import { useBrokerReconnect } from '../../hooks/useBrokerReconnect'
 import { useBrokerAccountsRealtime } from '../../hooks/useBrokerAccountsRealtime'
+import { useBrokerConnectionHealth } from '../../hooks/useBrokerConnectionHealth'
 import {
   inferBrokerLabelFromServer,
   resolveLinkedAccountType,
@@ -525,6 +526,7 @@ export function AccountConfigPage() {
   })
 
   useBrokerAccountsRealtime(user?.id, setBrokers)
+  useBrokerConnectionHealth(brokers, setBrokers)
 
   const tpLegPercentTotal = useMemo(() => {
     const rows = configDraft.manualSettings.tp_lots ?? DEFAULT_MANUAL_TP_LOTS

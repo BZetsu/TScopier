@@ -454,9 +454,8 @@ Deno.serve(async (req: Request) => {
       const client = mtClient(Deno.env, String(broker.platform ?? "MT5"))
 
       try {
-        const alive = await client.keepSessionAlive(uuid)
-        if (!alive) throw new Error("Broker session is not connected")
-        await client.checkConnect(uuid)
+        const ready = await client.verifyTradingReady(uuid)
+        if (!ready) throw new Error("Broker session is not connected")
         await supabase
           .from("broker_accounts")
           .update({ connection_status: "connected" })

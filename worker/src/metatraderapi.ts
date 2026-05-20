@@ -617,6 +617,28 @@ export class MetatraderApiClient {
     }
   }
 
+  /**
+   * CheckConnect alone can report "connected" while OrderSend still fails with
+   * "Not connected (:login)". Confirm the terminal can serve trading APIs.
+   */
+  async verifyTradingReady(id: string): Promise<boolean> {
+    if (!await this.keepSessionAlive(id)) return false
+    try {
+      const summary = await this.accountSummary(id)
+      const hasSummary =
+        summary != null
+        && (summary.balance != null || summary.equity != null || summary.currency)
+      if (!hasSummary) return false
+      await this.openedOrders(id)
+      return true
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (isBrokerDisconnectedMessage(msg) || isMtSessionGoneError(err)) return false
+      console.warn(`[metatraderapi] verifyTradingReady failed id=${id}: ${msg}`)
+      return false
+    }
+  }
+
   async disconnect(id: string): Promise<void> {
     await this.get<unknown>('/Disconnect', { id })
   }

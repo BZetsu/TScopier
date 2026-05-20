@@ -542,6 +542,8 @@ export class TradeExecutor {
   /** Cached channel rows keyed by `telegram_channels.id` — refreshed on demand. */
   private channelKeywordsCache = new Map<string, { keywords: ChannelKeywords | null; loadedAt: number }>()
   private sessionPingAt = new Map<string, number>()
+  /** After OrderSend "Not connected", block re-trading until user reconnects. */
+  private sessionOrderBlocked = new Set<string>()
   constructor(
     private readonly supabase: SupabaseClient,
     private readonly sessionManager?: UserSessionManager,
@@ -678,22 +680,14 @@ export class TradeExecutor {
       if (!uuid || uuid.includes('|')) continue
       const api = this.apiFor(row)
       if (!api) continue
-      const alive = await api.keepSessionAlive(uuid)
-      if (alive) {
-        if (row.connection_status !== 'connected') {
-          await this.supabase
-            .from('broker_accounts')
-            .update({ connection_status: 'connected' })
-            .eq('id', row.id)
-        }
-      } else {
-        console.warn(`[tradeExecutor] session down for broker=${row.id}`)
-        if (row.connection_status !== 'error') {
-          await this.supabase
-            .from('broker_accounts')
-            .update({ connection_status: 'error' })
-            .eq('id', row.id)
-        }
+      const ready = await api.verifyTradingReady(uuid)
+      if (!ready) {
+        console.warn(`[tradeExecutor] session not trading-ready for broker=${row.id}`)
+        row.connection_status = 'error'
+        await this.supabase
+          .from('broker_accounts')
+          .update({ connection_status: 'error' })
+          .eq('id', row.id)
       }
     }
   }
@@ -702,6 +696,9 @@ export class TradeExecutor {
     const normalized = this.normalizeBrokerRow(row)
     const previous = this.brokersById.get(row.id)
     this.brokersById.set(row.id, normalized)
+    if (normalized.connection_status === 'connected') {
+      this.sessionOrderBlocked.delete(row.id)
+    }
     const userId = row.user_id
     const list = (this.brokersByUser.get(userId) ?? []).filter(b => b.id !== row.id)
     if (normalized.is_active) list.push(normalized)
@@ -2739,14 +2736,13 @@ export class TradeExecutor {
 
   private async markBrokerSessionDown(broker: BrokerRow, uuid: string, reason: string): Promise<void> {
     this.sessionPingAt.delete(uuid)
+    this.sessionOrderBlocked.add(broker.id)
     console.warn(`[tradeExecutor] broker ${broker.id} session down: ${reason}`)
-    if (broker.connection_status !== 'error') {
-      broker.connection_status = 'error'
-      void this.supabase
-        .from('broker_accounts')
-        .update({ connection_status: 'error' })
-        .eq('id', broker.id)
-    }
+    broker.connection_status = 'error'
+    await this.supabase
+      .from('broker_accounts')
+      .update({ connection_status: 'error' })
+      .eq('id', broker.id)
   }
 
   private async pingBrokerSession(row: BrokerRow): Promise<void> {
@@ -2754,19 +2750,12 @@ export class TradeExecutor {
     if (!isMtUuid(uuid)) return
     const api = this.apiFor(row)
     if (!api) return
-    const alive = await api.keepSessionAlive(uuid!)
-    if (alive) {
+    const ready = await api.verifyTradingReady(uuid!)
+    if (ready) {
       this.sessionPingAt.set(uuid!, Date.now())
-      if (row.connection_status !== 'connected') {
-        row.connection_status = 'connected'
-        void this.supabase
-          .from('broker_accounts')
-          .update({ connection_status: 'connected' })
-          .eq('id', row.id)
-      }
-    } else {
-      await this.markBrokerSessionDown(row, uuid!, 'keepSessionAlive failed')
+      return
     }
+    await this.markBrokerSessionDown(row, uuid!, 'verifyTradingReady failed')
   }
 
   private async ensureBrokerSession(
@@ -2775,22 +2764,19 @@ export class TradeExecutor {
     broker: BrokerRow,
     opts?: { force?: boolean },
   ): Promise<boolean> {
+    if (this.sessionOrderBlocked.has(broker.id)) {
+      await this.markBrokerSessionDown(broker, uuid, 'session blocked after prior OrderSend disconnect')
+      return false
+    }
     const now = Date.now()
     const last = this.sessionPingAt.get(uuid) ?? 0
     if (!opts?.force && now - last < SESSION_PING_MIN_INTERVAL_MS) return true
-    const alive = await api.keepSessionAlive(uuid)
-    if (alive) {
+    const ready = await api.verifyTradingReady(uuid)
+    if (ready) {
       this.sessionPingAt.set(uuid, now)
-      if (broker.connection_status !== 'connected') {
-        broker.connection_status = 'connected'
-        void this.supabase
-          .from('broker_accounts')
-          .update({ connection_status: 'connected' })
-          .eq('id', broker.id)
-      }
       return true
     }
-    await this.markBrokerSessionDown(broker, uuid, 'CheckConnect / ConnectByToken failed')
+    await this.markBrokerSessionDown(broker, uuid, 'verifyTradingReady failed before OrderSend')
     return false
   }
 

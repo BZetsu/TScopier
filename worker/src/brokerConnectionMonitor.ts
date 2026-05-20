@@ -110,15 +110,9 @@ export class BrokerConnectionMonitor {
         if (!isMtUuid(uuid)) continue
         const api = this.clientFor(row.platform)
         if (!api) continue
-        const alive = await api.keepSessionAlive(uuid!)
-        if (alive) {
+        const ready = await api.verifyTradingReady(uuid!)
+        if (ready) {
           this.failStreak.delete(row.id)
-          if (row.connection_status !== 'connected') {
-            await this.supabase
-              .from('broker_accounts')
-              .update({ connection_status: 'connected' })
-              .eq('id', row.id)
-          }
           ok++
         } else {
           const streak = (this.failStreak.get(row.id) ?? 0) + 1
