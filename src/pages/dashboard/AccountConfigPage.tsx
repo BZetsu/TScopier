@@ -899,11 +899,22 @@ export function AccountConfigPage() {
     }
 
     setSaving(true)
+    const login = form.account_number.trim()
+    const server = form.broker_server.trim()
+    const duplicate = brokers.find(
+      b => b.account_login === login && b.broker_server === server,
+    )
+    if (duplicate) {
+      setError(bl.duplicateMtLogin)
+      setSaving(false)
+      return
+    }
+
     try {
       const { broker, summary } = await metatraderApi.register({
         platform: form.platform,
-        server: form.broker_server.trim(),
-        login: form.account_number.trim(),
+        server,
+        login,
         password: form.account_password,
         label: form.label.trim() || undefined,
       })
@@ -991,6 +1002,19 @@ export function AccountConfigPage() {
     try {
       await metatraderApi.remove(id)
     } catch (err) {
+      const msg = err instanceof Error ? err.message : bl.deleteFailed
+
+      const { error: directDelErr } = await supabase
+        .from('broker_accounts')
+        .delete()
+        .eq('id', id)
+        .eq('user_id', user.id)
+
+      if (!directDelErr) {
+        void metatraderApi.remove(id).catch(() => {})
+        return
+      }
+
       const { data: stillThere } = await supabase
         .from('broker_accounts')
         .select('id')
@@ -1005,7 +1029,7 @@ export function AccountConfigPage() {
             (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
           )
         })
-        setError(err instanceof Error ? err.message : bl.deleteFailed)
+        setError(/unauthorized/i.test(msg) ? bl.deleteSessionExpired : msg)
       }
     } finally {
       setDeleteInProgress(false)

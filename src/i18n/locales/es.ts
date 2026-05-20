@@ -160,6 +160,10 @@ export const es: Translations = {
       reconnectPasswordPrompt:
         'La sesión del broker expiró en el servidor de trading. Introduce la contraseña de tu cuenta MT para reconectar:',
       deleteFailed: 'No se pudo eliminar la cuenta',
+      deleteSessionExpired:
+        'Tu sesión expiró. Actualiza la página o vuelve a iniciar sesión e inténtalo de nuevo.',
+      duplicateMtLogin:
+        'Este login MT ya está vinculado a otra cuenta aquí. Elimínala primero o usa Reconnect — no se puede conectar el mismo login dos veces.',
       deleteTitle: '¿Eliminar cuenta de trading?',
       deleteBody:
         'Esto desconecta {label} de MetatraderAPI y del copiador. No se puede deshacer.',

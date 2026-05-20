@@ -122,6 +122,20 @@ Deno.serve(async (req: Request) => {
       if (!login) return bad(400, "login required")
       if (!password) return bad(400, "password required")
 
+      const { data: duplicateLogin } = await supabase
+        .from("broker_accounts")
+        .select("id,label")
+        .eq("user_id", userId)
+        .eq("account_login", login)
+        .eq("broker_server", server)
+        .maybeSingle()
+      if (duplicateLogin) {
+        return bad(
+          409,
+          `This MT login is already linked as "${duplicateLogin.label}". Remove that account first or use Reconnect — linking the same login twice causes session conflicts.`,
+        )
+      }
+
       const brokerName = inferBrokerLabel(server)
       const displayLabel = label || `${platform} • ${login}`
       const sessionId = crypto.randomUUID()
@@ -439,11 +453,6 @@ Deno.serve(async (req: Request) => {
           .eq("user_id", userId)
         return Response.json({ ok: true, result: "connected" }, { headers: corsHeaders })
       } catch (e) {
-        await supabase
-          .from("broker_accounts")
-          .update({ connection_status: "error" })
-          .eq("id", brokerId)
-          .eq("user_id", userId)
         const status = e instanceof MetatraderApiError ? e.status : 502
         const msg = e instanceof Error ? e.message : "CheckConnect failed"
         return bad(status >= 400 && status < 600 ? status : 502, msg)
