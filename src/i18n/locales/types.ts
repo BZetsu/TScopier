@@ -128,7 +128,9 @@ export interface DashboardTranslations {
   tradesTakenToday: string
   noClosedTradesToday: string
   openPnl: string
-  acrossAllAccounts: string
+  openPnlNoOpen: string
+  openPnlAcrossOneAccount: string
+  openPnlAcrossAccounts: string
   activeSignalChannels: string
   connectedTelegramChannels: string
   manageChannels: string
