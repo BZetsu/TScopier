@@ -31,7 +31,9 @@ export function useBrokerReconnect(opts: UseBrokerReconnectOptions) {
     opts.setBrokers(prev =>
       prev.map(b => {
         if (b.id !== brokerId) return b
-        if (result.connection_status !== 'connected') return { ...b, connection_status: 'error' as const }
+        if (result.connection_status !== 'connected' || !result.summary) {
+          return { ...b, connection_status: 'error' as const }
+        }
         return {
           ...b,
           connection_status: 'connected' as const,
@@ -46,7 +48,7 @@ export function useBrokerReconnect(opts: UseBrokerReconnectOptions) {
         }
       }),
     )
-    if (result.connection_status === 'connected') {
+    if (result.connection_status === 'connected' && result.summary) {
       opts.onReconnectSuccess?.(brokerId)
     } else if (result.message) {
       opts.onError?.(result.message)

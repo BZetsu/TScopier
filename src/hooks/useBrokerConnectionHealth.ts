@@ -4,7 +4,7 @@ import type { BrokerAccount } from '../types/database'
 import { isMtSessionUuid } from '../lib/brokerLink'
 import { metatraderApi } from '../lib/metatraderapi'
 
-const DEFAULT_INTERVAL_MS = 45_000
+const DEFAULT_INTERVAL_MS = 20_000
 
 /**
  * Periodically verify brokers marked "connected" can actually reach trading APIs.

@@ -24,10 +24,11 @@ import { BrokerServerSelect } from '../../components/ui/BrokerServerSelect'
 import { formatLocalCalendarDay } from '../../lib/dayStartBalance'
 import { metatraderApi } from '../../lib/metatraderapi'
 import { isLegacyBrokerLink } from '../../lib/brokerLink'
-import { brokerCanReconnect } from '../../lib/brokerReconnect'
+import { brokerCanReconnect, brokerConnectionBadgeVariant, brokerConnectionStatusLabel } from '../../lib/brokerReconnect'
 import { useBrokerReconnect } from '../../hooks/useBrokerReconnect'
 import { useBrokerAccountsRealtime } from '../../hooks/useBrokerAccountsRealtime'
 import { useBrokerConnectionHealth } from '../../hooks/useBrokerConnectionHealth'
+import { useBrokerSessionFailureRealtime } from '../../hooks/useBrokerSessionFailureRealtime'
 import {
   inferBrokerLabelFromServer,
   resolveLinkedAccountType,
@@ -518,7 +519,7 @@ export function AccountConfigPage() {
   } = useBrokerReconnect({
     brokers,
     setBrokers,
-    autoReconnect: true,
+    autoReconnect: false,
     onError: setError,
     onClearError: () => setError(''),
     reconnectFailedLabel: bl.reconnectFailed,
@@ -527,6 +528,7 @@ export function AccountConfigPage() {
 
   useBrokerAccountsRealtime(user?.id, setBrokers)
   useBrokerConnectionHealth(brokers, setBrokers)
+  useBrokerSessionFailureRealtime(user?.id, setBrokers)
 
   const tpLegPercentTotal = useMemo(() => {
     const rows = configDraft.manualSettings.tp_lots ?? DEFAULT_MANUAL_TP_LOTS
@@ -1143,19 +1145,9 @@ export function AccountConfigPage() {
         ) : (
           <div className="space-y-3">
             {brokers.map(broker => {
-              const statusVariant: 'success' | 'neutral' | 'error' =
-                !broker.is_active ? 'neutral'
-                : broker.connection_status === 'connected' ? 'success'
-                : broker.connection_status === 'error' ? 'error'
-                : 'neutral'
+              const statusVariant = brokerConnectionBadgeVariant(broker)
               const isReconnecting = isBrokerReconnecting(broker.id)
-              const statusLabel = !broker.is_active
-                ? bl.statusPaused
-                : broker.connection_status === 'connected'
-                  ? bl.statusConnected
-                  : broker.connection_status === 'error'
-                    ? bl.statusError
-                    : bl.statusDisconnected
+              const statusLabel = brokerConnectionStatusLabel(broker, bl)
               const brokerLabel = broker.broker_name
                 || inferBrokerLabelFromServer(broker.broker_server ?? null)
                 || broker.broker_server

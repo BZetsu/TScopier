@@ -269,7 +269,10 @@ Deno.serve(async (req: Request) => {
       const client = mtClient(Deno.env, String(broker.platform ?? "MT5"))
 
       try {
-        try { await client.keepSessionAlive(uuid) } catch { /* swallow */ }
+        const ready = await client.verifyTradingReady(uuid)
+        if (!ready) {
+          throw new MetatraderApiError("Broker session is not connected", 502)
+        }
         let summary: Awaited<ReturnType<typeof client.accountSummary>> | null = null
         let lastErr: unknown = null
         for (let i = 0; i < 3; i++) {
@@ -363,41 +366,6 @@ Deno.serve(async (req: Request) => {
           { headers: corsHeaders },
         )
       } catch (e) {
-        let sessionAlive = false
-        try {
-          sessionAlive = await client.keepSessionAlive(uuid)
-        } catch { /* ignore */ }
-        if (sessionAlive) {
-          const cachedBalance = broker?.last_balance != null ? Number(broker.last_balance) : null
-          const cachedEquity = broker?.last_equity != null ? Number(broker.last_equity) : null
-          return Response.json(
-            {
-              ok: true,
-              summary: {
-                balance: cachedBalance,
-                equity: cachedEquity,
-                currency: broker?.last_currency ?? null,
-              },
-              open_positions: null,
-              performance_baseline_balance: broker?.performance_baseline_balance ?? null,
-              day_start_balance:
-                broker?.day_start_balance != null ? Number(broker.day_start_balance) : null,
-              day_start_balance_on: broker?.day_start_balance_on
-                ? String(broker.day_start_balance_on).slice(0, 10)
-                : null,
-              todays_profit_from_balance: accountTodaysProfitFromBalance(
-                cachedBalance,
-                broker?.day_start_balance != null ? Number(broker.day_start_balance) : null,
-                broker?.day_start_balance_on
-                  ? String(broker.day_start_balance_on).slice(0, 10)
-                  : null,
-                calendarDay,
-              ),
-              stale: true,
-            },
-            { headers: corsHeaders },
-          )
-        }
         await supabase
           .from("broker_accounts")
           .update({ connection_status: "error" })

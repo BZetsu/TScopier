@@ -114,6 +114,7 @@ export interface DashboardLinkedAccountsTranslations {
   unnamedAccount: string
   statusActive: string
   statusPaused: string
+  statusConnected: string
   accountTypeLive: string
   accountTypeDemo: string
   statusDisconnected: string

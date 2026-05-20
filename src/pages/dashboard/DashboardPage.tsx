@@ -55,7 +55,14 @@ import { AccountGrowthChart } from '../../components/dashboard/AccountGrowthChar
 import { TradeVolumeChart } from '../../components/dashboard/TradeVolumeChart'
 import { useDashboardRealtime } from '../../hooks/useDashboardRealtime'
 import { useBrokerReconnect } from '../../hooks/useBrokerReconnect'
-import { brokerCanReconnect } from '../../lib/brokerReconnect'
+import { useBrokerAccountsRealtime } from '../../hooks/useBrokerAccountsRealtime'
+import { useBrokerConnectionHealth } from '../../hooks/useBrokerConnectionHealth'
+import { useBrokerSessionFailureRealtime } from '../../hooks/useBrokerSessionFailureRealtime'
+import {
+  brokerCanReconnect,
+  brokerConnectionStatusLabel,
+  isBrokerSessionConnected,
+} from '../../lib/brokerReconnect'
 import { useLocale, useT } from '../../context/LocaleContext'
 import { useFormatMoney } from '../../context/UserProfileContext'
 import { formatMoneyWithCode } from '../../lib/currency'
@@ -203,7 +210,7 @@ type BrokerBalanceSnapshot = {
 }
 
 function isBrokerLiveConnected(account: Pick<BrokerAccount, 'connection_status'>): boolean {
-  return account.connection_status === 'connected'
+  return isBrokerSessionConnected(account)
 }
 
 /** Sum open positions only from brokers with a live connected session. */
@@ -1076,7 +1083,7 @@ export function DashboardPage() {
   } = useBrokerReconnect({
     brokers: linkedAccounts,
     setBrokers: setLinkedAccounts,
-    autoReconnect: true,
+    autoReconnect: false,
     onError: setBrokerReconnectError,
     onClearError: () => setBrokerReconnectError(''),
     reconnectFailedLabel: bl.reconnectFailed,
@@ -1085,6 +1092,9 @@ export function DashboardPage() {
   })
 
   useDashboardRealtime(user?.id, () => refreshQuietRef.current())
+  useBrokerAccountsRealtime(user?.id, setLinkedAccounts)
+  useBrokerConnectionHealth(linkedAccounts, setLinkedAccounts)
+  useBrokerSessionFailureRealtime(user?.id, setLinkedAccounts)
 
   useEffect(() => {
     if (!user) return
@@ -1314,14 +1324,14 @@ export function DashboardPage() {
     const successes: typeof results = []
     for (const r of results) {
       const broker = sourceAccounts.find(b => b.id === r.id)
-      if (r.error || !r.summary) {
+      if (r.error || !r.summary || r.stale) {
         delete liveBrokerStateRef.current[r.id]
         nextBalances[r.id] = {
           ...(nextBalances[r.id] ?? {}),
           open_pnl: 0,
           open_trades: 0,
         }
-        if (broker) {
+        if (broker && (r.error || r.stale || !r.summary)) {
           setLinkedAccounts(prev =>
             prev.map(row =>
               row.id === r.id ? { ...row, connection_status: 'error' as const } : row,
@@ -1445,7 +1455,7 @@ export function DashboardPage() {
           last_equity: live.equity ?? b.last_equity ?? null,
           last_currency: live.currency ?? b.last_currency ?? null,
           last_synced_at: new Date().toISOString(),
-          connection_status: 'connected',
+          ...(row.stale ? {} : { connection_status: 'connected' as const }),
           performance_baseline_balance: nextBaseline ?? b.performance_baseline_balance,
           day_start_balance: row.day_start_balance ?? b.day_start_balance ?? null,
           day_start_balance_on: row.day_start_balance_on ?? b.day_start_balance_on ?? null,
@@ -1793,7 +1803,7 @@ export function DashboardPage() {
         onClose={() => setShowPlatformModal(false)}
         onSelect={() => {
           setShowPlatformModal(false)
-          navigate('/account-config')
+          navigate('/account-configuration')
         }}
       />
     </PageShell>
@@ -1958,7 +1968,7 @@ function LinkedAccountRow({
   const la = t.dashboard.linkedAccounts
   const { locale } = useLocale()
   const intlLocale = locale === 'en' ? undefined : locale
-  const isDisconnected = showReconnect === true
+  const isDisconnected = !isBrokerSessionConnected(account)
   const statusClass = isDisconnected
     ? 'text-error-700 border-error-200 bg-error-50 dark:text-error-300 dark:border-error-800 dark:bg-error-950/50'
     : account.is_active
@@ -2049,11 +2059,7 @@ function LinkedAccountRow({
           disabled={toggleDisabled}
         />
         <span className={`inline-flex items-center px-2.5 py-1 rounded-lg border text-xs font-semibold ${statusClass}`}>
-          {isDisconnected
-            ? la.statusDisconnected
-            : account.is_active
-              ? la.statusActive
-              : la.statusPaused}
+          {brokerConnectionStatusLabel(account, la)}
         </span>
       </div>
     </div>

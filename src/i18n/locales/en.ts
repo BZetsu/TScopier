@@ -153,9 +153,9 @@ export const en: Translations = {
       relinkMany:
         '{count} accounts use an older link format. Remove each one and connect again with your MT login and password.',
       reconnectDroppedOne:
-        'Broker connection dropped. Use Reconnect on the account to restore the session.',
+        'Broker connection lost. The account is shown as Disconnected — use Reconnect to restore trading.',
       reconnectDroppedMany:
-        '{count} accounts lost their broker connection. Use Reconnect on each account.',
+        '{count} accounts lost their broker connection and are shown as Disconnected. Use Reconnect on each account.',
       reconnectFailed: 'Could not reconnect broker',
       reconnectPasswordPrompt:
         'Your broker session expired on the trade server. Enter your MT account password to reconnect:',
@@ -224,6 +224,7 @@ export const en: Translations = {
       unnamedAccount: 'Unnamed account',
       statusActive: 'Active',
       statusPaused: 'Paused',
+      statusConnected: 'Connected',
       accountTypeLive: 'Live',
       accountTypeDemo: 'Demo',
       statusDisconnected: 'Disconnected',

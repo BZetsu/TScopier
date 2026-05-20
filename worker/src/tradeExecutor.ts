@@ -3918,6 +3918,12 @@ export class TradeExecutor {
     reason: string,
     extra: Record<string, unknown>,
   ): Promise<void> {
+    if (reason === 'broker_session_not_connected') {
+      const uuid = broker.metaapi_account_id
+      if (uuid) {
+        await this.markBrokerSessionDown(broker, uuid, 'broker_session_not_connected')
+      }
+    }
     try {
       await this.supabase.from('trade_execution_logs').insert({
         user_id: signal.user_id,

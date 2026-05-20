@@ -224,6 +224,7 @@ export const es: Translations = {
       unnamedAccount: 'Cuenta sin nombre',
       statusActive: 'Activa',
       statusPaused: 'Pausada',
+      statusConnected: 'Conectada',
       accountTypeLive: 'Real',
       accountTypeDemo: 'Demo',
       statusDisconnected: 'Desconectado',
