@@ -1091,7 +1091,11 @@ export function DashboardPage() {
     onReconnectSuccess: () => loadDashboardLiveRef.current(),
   })
 
-  useDashboardRealtime(user?.id, () => refreshQuietRef.current())
+  useDashboardRealtime(user?.id, () => refreshQuietRef.current(), broker => {
+    setLinkedAccounts(prev =>
+      prev.map(a => (a.id === broker.id ? { ...a, ...broker } : a)),
+    )
+  })
   useBrokerAccountsRealtime(user?.id, setLinkedAccounts)
   useBrokerConnectionHealth(linkedAccounts, setLinkedAccounts)
   useBrokerSessionFailureRealtime(user?.id, setLinkedAccounts)

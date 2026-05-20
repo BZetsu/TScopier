@@ -446,11 +446,6 @@ Deno.serve(async (req: Request) => {
       try {
         const ready = await client.verifyTradingReady(uuid)
         if (!ready) throw new Error("Broker session is not connected")
-        await supabase
-          .from("broker_accounts")
-          .update({ connection_status: "connected" })
-          .eq("id", brokerId)
-          .eq("user_id", userId)
         return Response.json({ ok: true, result: "connected" }, { headers: corsHeaders })
       } catch (e) {
         const status = e instanceof MetatraderApiError ? e.status : 502

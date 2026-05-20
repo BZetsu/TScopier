@@ -4,6 +4,7 @@
 
 import { dispatchPriorityForAction, isManagementAction, parsedAction } from './tradeSignalActions'
 import type { PipelineTimestamps } from './pipelineTimestamps'
+import { shardForUserId } from './workerConfig'
 
 export type TradeSignalPushPayload = {
   id: string
@@ -28,13 +29,33 @@ function internalToken(): string {
   return String(process.env.WORKER_INTERNAL_TOKEN ?? '').trim()
 }
 
-function pickTradeWorkerUrl(action: string): string | null {
+function parseShardUrls(raw: string | undefined): string[] {
+  if (!raw?.trim()) return []
+  return raw.split(',').map(s => s.trim().replace(/\/$/, '')).filter(Boolean)
+}
+
+function pickTradeWorkerUrl(action: string, userId?: string): string | null {
+  const shardUrls = parseShardUrls(process.env.TRADE_WORKER_SHARD_URLS)
   const entryUrl = String(process.env.TRADE_WORKER_URL ?? '').trim().replace(/\/$/, '')
   const mgmtUrl = String(process.env.TRADE_MGMT_WORKER_URL ?? '').trim().replace(/\/$/, '')
+
+  let base: string | null
   if (isManagementAction(action)) {
-    return mgmtUrl || entryUrl || null
+    base = mgmtUrl || entryUrl || null
+  } else {
+    base = entryUrl || null
   }
-  return entryUrl || null
+
+  if (shardUrls.length > 1 && userId) {
+    const shard = shardForUserId(userId, shardUrls.length)
+    const sharded = shardUrls[shard]
+    if (sharded) {
+      if (isManagementAction(action) && mgmtUrl) return mgmtUrl
+      return sharded
+    }
+  }
+
+  return base
 }
 
 /**
@@ -46,7 +67,7 @@ export function pushParsedSignalToTradeWorker(row: TradeSignalPushPayload): void
   if (!token) return
 
   const action = parsedAction(row.parsed_data as { action?: string })
-  const baseUrl = pickTradeWorkerUrl(action)
+  const baseUrl = pickTradeWorkerUrl(action, row.user_id)
   if (!baseUrl) return
 
   const timeoutMs = Math.max(

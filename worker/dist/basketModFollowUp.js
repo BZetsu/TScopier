@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.symbolsCompatibleForBasket = symbolsCompatibleForBasket;
 exports.tryApplyBasketFollowUpToNewFill = tryApplyBasketFollowUpToNewFill;
 const normalizeManualSettings_1 = require("./manualPlanning/normalizeManualSettings");
+const channelActiveTradeParams_1 = require("./channelActiveTradeParams");
 const tpBucketDistribution_1 = require("./manualPlanning/tpBucketDistribution");
 function isParameterRefreshParsed(parsed) {
     if (!parsed)
@@ -64,6 +65,24 @@ async function tryApplyBasketFollowUpToNewFill(supabase, api, args) {
         .order('opened_at', { ascending: true })
         .limit(500);
     const legIndex = (openLegs ?? []).findIndex(r => r.id === args.tradeRowId);
+    const { data: pendingRows } = await supabase
+        .from('range_pending_legs')
+        .select('step_idx')
+        .eq('broker_account_id', args.brokerAccountId)
+        .eq('signal_id', args.basketSignalId)
+        .in('status', ['pending', 'claimed'])
+        .limit(500);
+    const openCount = openLegs?.length ?? 0;
+    const activePendingCount = pendingRows?.length ?? 0;
+    const maxPendingStepIdx = Math.max(0, ...(pendingRows ?? []).map(r => Number(r.step_idx) || 0));
+    const totalPlannedLegs = (0, channelActiveTradeParams_1.estimateBasketTotalPlannedLegs)({
+        openLegCount: openCount,
+        activePendingCount,
+        maxPendingStepIdx,
+    });
+    const firedPendingApprox = Math.max(0, maxPendingStepIdx - activePendingCount);
+    const immediateLegCount = Math.max(0, openCount - firedPendingApprox);
+    const rangeLegCount = Math.max(0, totalPlannedLegs - immediateLegCount);
     const { data: candidates } = await supabase
         .from('signals')
         .select('id, parsed_data, created_at, is_modification')
@@ -96,11 +115,11 @@ async function tryApplyBasketFollowUpToNewFill(supabase, api, args) {
                 continue;
             stoploss = hasNewSl ? parsed.sl : sanitizeLevel(args.existingSl);
             if (hasNewTp) {
-                const openLegCount = Math.max((openLegs ?? []).length, legIndex + 1);
-                const idx = legIndex >= 0 ? legIndex : openLegCount - 1;
-                takeprofit = (0, tpBucketDistribution_1.takeProfitForLegIndex)({
+                const idx = legIndex >= 0 ? legIndex : openCount - 1;
+                takeprofit = (0, tpBucketDistribution_1.takeProfitForSplitBasketLeg)({
                     legIndex: idx,
-                    openLegCount,
+                    immediateLegCount,
+                    rangeLegCount,
                     finalTps,
                     tpLots,
                 });

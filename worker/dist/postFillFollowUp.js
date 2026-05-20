@@ -14,6 +14,11 @@ function newsBlackoutPreFillEnabled() {
 async function applyPipAndChannelStops(args) {
     const { api, uuid, signal, parsed, broker, channelKeywords, symbol, params, filledLegs } = args;
     const manual = (broker.manual_settings ?? {});
+    if ((manual.trade_style ?? 'single') === 'multi') {
+        // Multi-trade legs already carry per-bucket TPs from the planner; syncMultiBasketLegTakeProfits
+        // reconciles them. Flattening to tp[0] here caused wrong targets on layered baskets.
+        return;
+    }
     const isBuy = !String(parsed.action ?? '').toLowerCase().includes('sell');
     for (const leg of filledLegs) {
         const entry = leg.entryPrice;

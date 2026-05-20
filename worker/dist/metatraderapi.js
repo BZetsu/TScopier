@@ -10,6 +10,7 @@ exports.resolveBasicAuthHeader = resolveBasicAuthHeader;
 exports.isMtApiAuthConfigured = isMtApiAuthConfigured;
 exports.isCheckConnectOk = isCheckConnectOk;
 exports.isMtSessionGoneMessage = isMtSessionGoneMessage;
+exports.isBrokerDisconnectedMessage = isBrokerDisconnectedMessage;
 exports.isMtSessionGoneError = isMtSessionGoneError;
 exports.mtPlatformFrom = mtPlatformFrom;
 exports.hasMetatraderApiConfigured = hasMetatraderApiConfigured;
@@ -307,6 +308,15 @@ function isMtSessionGoneMessage(message) {
         || m.includes('session not found')
         || m.includes('account not found'));
 }
+/** OrderSend/CheckConnect rejected because the MT terminal session is offline. */
+function isBrokerDisconnectedMessage(message) {
+    const m = message.trim().toLowerCase();
+    if (!m)
+        return false;
+    if (isMtSessionGoneMessage(message))
+        return true;
+    return m.includes('not connected') || m.includes('broker session is not connected');
+}
 function isMtSessionGoneError(err) {
     if (err instanceof MetatraderApiError)
         return isMtSessionGoneMessage(err.message);
@@ -467,6 +477,30 @@ class MetatraderApiClient {
             }
             const msg = second instanceof Error ? second.message : String(second);
             console.warn(`[metatraderapi] keepSessionAlive failed id=${id}: ${msg}`);
+            return false;
+        }
+    }
+    /**
+     * CheckConnect alone can report "connected" while OrderSend still fails with
+     * "Not connected (:login)". Confirm the terminal can serve trading APIs.
+     */
+    async verifyTradingReady(id) {
+        if (!await this.keepSessionAlive(id))
+            return false;
+        try {
+            const summary = await this.accountSummary(id);
+            const hasSummary = summary != null
+                && (summary.balance != null || summary.equity != null || summary.currency);
+            if (!hasSummary)
+                return false;
+            await this.openedOrders(id);
+            return true;
+        }
+        catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            if (isBrokerDisconnectedMessage(msg) || isMtSessionGoneError(err))
+                return false;
+            console.warn(`[metatraderapi] verifyTradingReady failed id=${id}: ${msg}`);
             return false;
         }
     }

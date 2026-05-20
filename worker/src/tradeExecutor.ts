@@ -47,7 +47,16 @@ import {
   parsedAction,
   signalMatchesExecutorMode,
 } from './tradeSignalActions'
-import { workerConfig } from './workerConfig'
+import { workerConfig, userBelongsToShard } from './workerConfig'
+import { writeBrokerConnectionStatus } from './brokerConnectionStatus'
+import {
+  applyShardToQuery,
+  hasWorkOnShard,
+  monitorActiveIntervalMs,
+  monitorIdleIntervalMs,
+  startMonitorLoop,
+  type MonitorLoopHandle,
+} from './monitorIdleGate'
 import {
   isChannelManagementBlocked,
   isOppositeSignalCloseBlocked,
@@ -249,10 +258,8 @@ const SESSION_PING_MIN_INTERVAL_MS = Math.max(
   5_000,
   Math.min(120_000, Number(process.env.BROKER_SESSION_PING_MIN_INTERVAL_MS ?? BROKER_SESSION_HEARTBEAT_MS)),
 )
-const EXECUTOR_PARSED_SWEEP_MS = Math.max(
-  1_500,
-  Math.min(60_000, Number(process.env.EXECUTOR_PARSED_SWEEP_MS ?? 3_000)),
-)
+const EXECUTOR_PARSED_SWEEP_MS = monitorActiveIntervalMs('EXECUTOR_PARSED_SWEEP_MS', 3_000)
+const EXECUTOR_SWEEP_IDLE_MS = monitorIdleIntervalMs('EXECUTOR_SWEEP_IDLE_MS', 60_000)
 /** Sweep + Realtime replay window; older `parsed` rows are not re-executed (live dispatch exempt). */
 const EXECUTOR_REPLAY_MAX_AGE_MS = Math.max(
   60_000,
@@ -521,7 +528,7 @@ function brokerOrderOpenMs(o: Record<string, unknown>): number | null {
 }
 
 export class TradeExecutor {
-  private timer: NodeJS.Timeout | null = null
+  private sweepLoop: MonitorLoopHandle | null = null
   /** Cancels TSCopier broker pendings past `pending_expiry_hours` (1–24) when env enabled. */
   private brokerPendingSweepTimer: NodeJS.Timeout | null = null
   private sessionHeartbeatTimer: NodeJS.Timeout | null = null
@@ -569,12 +576,19 @@ export class TradeExecutor {
     this.subscribeSignals()
     this.subscribeBrokers()
     this.subscribeChannelKeywords()
-    // Periodic safety sweep: catch any 'parsed' signals we may have missed
-    // (Realtime drops, restarts). Default 3s (EXECUTOR_PARSED_SWEEP_MS).
-    this.timer = setInterval(() => {
-      this.sweep().catch(err => console.error('[tradeExecutor] sweep failed:', err))
-    }, EXECUTOR_PARSED_SWEEP_MS)
-    this.timer.unref?.()
+    const replaySince = () =>
+      new Date(Date.now() - EXECUTOR_REPLAY_MAX_AGE_MS).toISOString()
+    this.sweepLoop = startMonitorLoop({
+      name: 'tradeExecutorSweep',
+      supabase: this.supabase,
+      activeIntervalMs: EXECUTOR_PARSED_SWEEP_MS,
+      idleIntervalMs: EXECUTOR_SWEEP_IDLE_MS,
+      hasWork: sb =>
+        hasWorkOnShard(sb, 'signals', q =>
+          q.eq('status', 'parsed').gte('created_at', replaySince()),
+        ),
+      tick: () => this.sweep(),
+    })
     this.brokerPendingSweepTimer = setInterval(() => {
       this.sweepExpiredTscopierBrokerPendings().catch(err =>
         console.error('[tradeExecutor] broker pending TTL sweep failed:', err),
@@ -598,8 +612,8 @@ export class TradeExecutor {
   }
 
   stop() {
-    if (this.timer) clearInterval(this.timer)
-    this.timer = null
+    this.sweepLoop?.stop()
+    this.sweepLoop = null
     if (this.brokerPendingSweepTimer) clearInterval(this.brokerPendingSweepTimer)
     this.brokerPendingSweepTimer = null
     if (this.sessionHeartbeatTimer) clearInterval(this.sessionHeartbeatTimer)
@@ -618,11 +632,21 @@ export class TradeExecutor {
     }
   }
 
+  getSweepLoopHandle(): MonitorLoopHandle | null {
+    return this.sweepLoop
+  }
+
   private async loadBrokers() {
-    const { data, error } = await this.supabase
-      .from('broker_accounts')
-      .select('*')
-      .eq('is_active', true)
+    const brokersQ = await applyShardToQuery(
+      this.supabase,
+      this.supabase.from('broker_accounts').select('*').eq('is_active', true),
+    )
+    if (!brokersQ) {
+      this.brokersByUser.clear()
+      this.brokersById.clear()
+      return
+    }
+    const { data, error } = await brokersQ
     if (error) {
       console.error('[tradeExecutor] loadBrokers failed:', error.message)
       return
@@ -684,15 +708,13 @@ export class TradeExecutor {
       if (!ready) {
         console.warn(`[tradeExecutor] session not trading-ready for broker=${row.id}`)
         row.connection_status = 'error'
-        await this.supabase
-          .from('broker_accounts')
-          .update({ connection_status: 'error' })
-          .eq('id', row.id)
+        await writeBrokerConnectionStatus(this.supabase, row.id, 'error')
       }
     }
   }
 
   private upsertBrokerCache(row: BrokerRow) {
+    if (!userBelongsToShard(row.user_id)) return
     const normalized = this.normalizeBrokerRow(row)
     const previous = this.brokersById.get(row.id)
     this.brokersById.set(row.id, normalized)
@@ -732,6 +754,7 @@ export class TradeExecutor {
         (payload: { new?: Record<string, unknown> }) => {
           const row = payload.new as SignalRow | undefined
           if (!row) return
+          if (!userBelongsToShard(row.user_id)) return
           if (!PARSED_STATUSES.has(row.status)) return
           this.enqueueSignal(row, { source: 'realtime' })
         },
@@ -755,6 +778,7 @@ export class TradeExecutor {
           }
           const row = payload.new as BrokerRow | undefined
           if (!row) return
+          if (!userBelongsToShard(row.user_id)) return
           if (row.is_active === false) this.removeBrokerCache(row.id)
           else {
             this.upsertBrokerCache(row)
@@ -785,14 +809,19 @@ export class TradeExecutor {
 
   private async sweep() {
     const since = new Date(Date.now() - EXECUTOR_REPLAY_MAX_AGE_MS).toISOString()
-    const { data } = await this.supabase
-      .from('signals')
-      .select(
-        'id,user_id,channel_id,parsed_data,status,parent_signal_id,is_modification,created_at,telegram_message_id,reply_to_message_id',
-      )
-      .eq('status', 'parsed')
-      .gte('created_at', since)
-      .limit(50)
+    const signalsQ = await applyShardToQuery(
+      this.supabase,
+      this.supabase
+        .from('signals')
+        .select(
+          'id,user_id,channel_id,parsed_data,status,parent_signal_id,is_modification,created_at,telegram_message_id,reply_to_message_id',
+        )
+        .eq('status', 'parsed')
+        .gte('created_at', since)
+        .limit(50),
+    )
+    if (!signalsQ) return
+    const { data } = await signalsQ
     for (const row of (data ?? []) as SignalRow[]) {
       if (this.inflight.has(row.id)) continue
       if (await this.signalAlreadyHandled(row.id)) {
@@ -2739,10 +2768,7 @@ export class TradeExecutor {
     this.sessionOrderBlocked.add(broker.id)
     console.warn(`[tradeExecutor] broker ${broker.id} session down: ${reason}`)
     broker.connection_status = 'error'
-    await this.supabase
-      .from('broker_accounts')
-      .update({ connection_status: 'error' })
-      .eq('id', broker.id)
+    await writeBrokerConnectionStatus(this.supabase, broker.id, 'error')
   }
 
   private async pingBrokerSession(row: BrokerRow): Promise<void> {

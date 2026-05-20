@@ -11,6 +11,8 @@ const autoManagement_1 = require("./autoManagement");
 const closeWorseEntries_1 = require("./closeWorseEntries");
 const tradeSignalActions_1 = require("./tradeSignalActions");
 const workerConfig_1 = require("./workerConfig");
+const brokerConnectionStatus_1 = require("./brokerConnectionStatus");
+const monitorIdleGate_1 = require("./monitorIdleGate");
 const channelMessageFilters_1 = require("./channelMessageFilters");
 const signalPip_1 = require("./signalPip");
 const trailingStop_1 = require("./trailingStop");
@@ -46,7 +48,8 @@ const SYMBOL_CACHE_TTL_MS = 10 * 60000;
 const SYMBOL_LIST_TTL_MS = 30 * 60000;
 const BROKER_SESSION_HEARTBEAT_MS = Math.max(5000, Math.min(60000, Number(process.env.BROKER_SESSION_HEARTBEAT_MS ?? 15000)));
 const SESSION_PING_MIN_INTERVAL_MS = Math.max(5000, Math.min(120000, Number(process.env.BROKER_SESSION_PING_MIN_INTERVAL_MS ?? BROKER_SESSION_HEARTBEAT_MS)));
-const EXECUTOR_PARSED_SWEEP_MS = Math.max(1500, Math.min(60000, Number(process.env.EXECUTOR_PARSED_SWEEP_MS ?? 3000)));
+const EXECUTOR_PARSED_SWEEP_MS = (0, monitorIdleGate_1.monitorActiveIntervalMs)('EXECUTOR_PARSED_SWEEP_MS', 3000);
+const EXECUTOR_SWEEP_IDLE_MS = (0, monitorIdleGate_1.monitorIdleIntervalMs)('EXECUTOR_SWEEP_IDLE_MS', 60000);
 /** Sweep + Realtime replay window; older `parsed` rows are not re-executed (live dispatch exempt). */
 const EXECUTOR_REPLAY_MAX_AGE_MS = Math.max(60000, Math.min(30 * 60000, Number(process.env.EXECUTOR_REPLAY_MAX_AGE_MS ?? 5 * 60000)));
 const EXECUTOR_MAX_CONCURRENT_SIGNALS = Math.max(1, Math.min(16, Number(process.env.EXECUTOR_MAX_CONCURRENT_SIGNALS ?? 4)));
@@ -266,7 +269,7 @@ class TradeExecutor {
     constructor(supabase, sessionManager) {
         this.supabase = supabase;
         this.sessionManager = sessionManager;
-        this.timer = null;
+        this.sweepLoop = null;
         /** Cancels TSCopier broker pendings past `pending_expiry_hours` (1–24) when env enabled. */
         this.brokerPendingSweepTimer = null;
         this.sessionHeartbeatTimer = null;
@@ -287,6 +290,8 @@ class TradeExecutor {
         /** Cached channel rows keyed by `telegram_channels.id` — refreshed on demand. */
         this.channelKeywordsCache = new Map();
         this.sessionPingAt = new Map();
+        /** After OrderSend "Not connected", block re-trading until user reconnects. */
+        this.sessionOrderBlocked = new Set();
         if (!(0, metatraderapi_1.hasMetatraderApiConfigured)()) {
             console.warn('[tradeExecutor] MT4API_BASIC_USER/PASSWORD missing — trade execution disabled.');
         }
@@ -306,12 +311,15 @@ class TradeExecutor {
         this.subscribeSignals();
         this.subscribeBrokers();
         this.subscribeChannelKeywords();
-        // Periodic safety sweep: catch any 'parsed' signals we may have missed
-        // (Realtime drops, restarts). Default 3s (EXECUTOR_PARSED_SWEEP_MS).
-        this.timer = setInterval(() => {
-            this.sweep().catch(err => console.error('[tradeExecutor] sweep failed:', err));
-        }, EXECUTOR_PARSED_SWEEP_MS);
-        this.timer.unref?.();
+        const replaySince = () => new Date(Date.now() - EXECUTOR_REPLAY_MAX_AGE_MS).toISOString();
+        this.sweepLoop = (0, monitorIdleGate_1.startMonitorLoop)({
+            name: 'tradeExecutorSweep',
+            supabase: this.supabase,
+            activeIntervalMs: EXECUTOR_PARSED_SWEEP_MS,
+            idleIntervalMs: EXECUTOR_SWEEP_IDLE_MS,
+            hasWork: sb => (0, monitorIdleGate_1.hasWorkOnShard)(sb, 'signals', q => q.eq('status', 'parsed').gte('created_at', replaySince())),
+            tick: () => this.sweep(),
+        });
         this.brokerPendingSweepTimer = setInterval(() => {
             this.sweepExpiredTscopierBrokerPendings().catch(err => console.error('[tradeExecutor] broker pending TTL sweep failed:', err));
         }, 5 * 60000);
@@ -328,9 +336,8 @@ class TradeExecutor {
         this.sessionHeartbeatTimer.unref?.();
     }
     stop() {
-        if (this.timer)
-            clearInterval(this.timer);
-        this.timer = null;
+        this.sweepLoop?.stop();
+        this.sweepLoop = null;
         if (this.brokerPendingSweepTimer)
             clearInterval(this.brokerPendingSweepTimer);
         this.brokerPendingSweepTimer = null;
@@ -357,11 +364,17 @@ class TradeExecutor {
             manual_settings: (0, normalizeManualSettings_1.normalizeManualSettingsForExecution)(row.manual_settings),
         };
     }
+    getSweepLoopHandle() {
+        return this.sweepLoop;
+    }
     async loadBrokers() {
-        const { data, error } = await this.supabase
-            .from('broker_accounts')
-            .select('*')
-            .eq('is_active', true);
+        const brokersQ = await (0, monitorIdleGate_1.applyShardToQuery)(this.supabase, this.supabase.from('broker_accounts').select('*').eq('is_active', true));
+        if (!brokersQ) {
+            this.brokersByUser.clear();
+            this.brokersById.clear();
+            return;
+        }
+        const { data, error } = await brokersQ;
         if (error) {
             console.error('[tradeExecutor] loadBrokers failed:', error.message);
             return;
@@ -423,30 +436,23 @@ class TradeExecutor {
             const api = this.apiFor(row);
             if (!api)
                 continue;
-            const alive = await api.keepSessionAlive(uuid);
-            if (alive) {
-                if (row.connection_status !== 'connected') {
-                    await this.supabase
-                        .from('broker_accounts')
-                        .update({ connection_status: 'connected' })
-                        .eq('id', row.id);
-                }
-            }
-            else {
-                console.warn(`[tradeExecutor] session down for broker=${row.id}`);
-                if (row.connection_status !== 'error') {
-                    await this.supabase
-                        .from('broker_accounts')
-                        .update({ connection_status: 'error' })
-                        .eq('id', row.id);
-                }
+            const ready = await api.verifyTradingReady(uuid);
+            if (!ready) {
+                console.warn(`[tradeExecutor] session not trading-ready for broker=${row.id}`);
+                row.connection_status = 'error';
+                await (0, brokerConnectionStatus_1.writeBrokerConnectionStatus)(this.supabase, row.id, 'error');
             }
         }
     }
     upsertBrokerCache(row) {
+        if (!(0, workerConfig_1.userBelongsToShard)(row.user_id))
+            return;
         const normalized = this.normalizeBrokerRow(row);
         const previous = this.brokersById.get(row.id);
         this.brokersById.set(row.id, normalized);
+        if (normalized.connection_status === 'connected') {
+            this.sessionOrderBlocked.delete(row.id);
+        }
         const userId = row.user_id;
         const list = (this.brokersByUser.get(userId) ?? []).filter(b => b.id !== row.id);
         if (normalized.is_active)
@@ -478,6 +484,8 @@ class TradeExecutor {
             const row = payload.new;
             if (!row)
                 return;
+            if (!(0, workerConfig_1.userBelongsToShard)(row.user_id))
+                return;
             if (!PARSED_STATUSES.has(row.status))
                 return;
             this.enqueueSignal(row, { source: 'realtime' });
@@ -500,10 +508,14 @@ class TradeExecutor {
             const row = payload.new;
             if (!row)
                 return;
+            if (!(0, workerConfig_1.userBelongsToShard)(row.user_id))
+                return;
             if (row.is_active === false)
                 this.removeBrokerCache(row.id);
-            else
+            else {
                 this.upsertBrokerCache(row);
+                void this.pingBrokerSession(row);
+            }
         })
             .subscribe();
     }
@@ -524,12 +536,15 @@ class TradeExecutor {
     }
     async sweep() {
         const since = new Date(Date.now() - EXECUTOR_REPLAY_MAX_AGE_MS).toISOString();
-        const { data } = await this.supabase
+        const signalsQ = await (0, monitorIdleGate_1.applyShardToQuery)(this.supabase, this.supabase
             .from('signals')
             .select('id,user_id,channel_id,parsed_data,status,parent_signal_id,is_modification,created_at,telegram_message_id,reply_to_message_id')
             .eq('status', 'parsed')
             .gte('created_at', since)
-            .limit(50);
+            .limit(50));
+        if (!signalsQ)
+            return;
+        const { data } = await signalsQ;
         for (const row of (data ?? [])) {
             if (this.inflight.has(row.id))
                 continue;
@@ -1576,10 +1591,14 @@ class TradeExecutor {
         if (error || !(familyRows ?? []).length)
             return;
         const familyTrades = (familyRows ?? []);
+        const immediateLegCount = (0, multiTradeMerge_1.mergePlanImmediateOrders)(plan).length;
+        const totalPlannedLegCount = immediateLegCount + (plan.virtualPendings?.length ?? 0);
         const perLegTargets = (0, multiTradeMerge_1.buildPerLegStopTargets)({
             plan,
             parsed,
             openLegCount: familyTrades.length,
+            totalPlannedLegCount,
+            immediateLegCount,
             tpLots: manual.tp_lots,
         });
         if (!perLegTargets.length)
@@ -1620,7 +1639,7 @@ class TradeExecutor {
                 overrideTp: null,
                 strictEntryPrefetch: null,
                 openedTickets,
-                skipAlreadySynced: true,
+                skipAlreadySynced: false,
             });
         }
         catch (err) {
@@ -1755,17 +1774,36 @@ class TradeExecutor {
             await new Promise(resolve => setTimeout(resolve, Math.min(plan.delay_ms, 30000)));
         }
         let virtualPendings = (plan.virtualPendings ?? []).slice(0, 500);
+        const { data: activePendingRows } = await this.supabase
+            .from('range_pending_legs')
+            .select('step_idx')
+            .eq('signal_id', anchorSignalId)
+            .eq('broker_account_id', broker.id)
+            .in('status', ['pending', 'claimed'])
+            .limit(500);
+        const activePendingCount = activePendingRows?.length ?? 0;
+        const maxPendingStepIdx = Math.max(0, ...(activePendingRows ?? []).map(r => Number(r.step_idx) || 0));
+        const basketTotalPlannedLegs = Math.max((0, channelActiveTradeParams_1.estimateBasketTotalPlannedLegs)({
+            openLegCount: familyTrades.length,
+            activePendingCount,
+            maxPendingStepIdx,
+        }), familyTrades.length + virtualPendings.length);
         let channelParamsForLadder = null;
         if (signal.channel_id) {
             channelParamsForLadder = await (0, channelActiveTradeParams_1.loadChannelActiveTradeParamsForSymbol)(this.supabase, signal.user_id, signal.channel_id, symbol);
             if (virtualPendings.length > 0 && channelParamsForLadder) {
-                virtualPendings = (0, channelActiveTradeParams_1.applyChannelParamsToVirtualPendingList)(virtualPendings, channelParamsForLadder, familyTrades.length, manual.tp_lots);
+                const firedPendingApprox = Math.max(0, maxPendingStepIdx - activePendingCount);
+                const immediateEstimate = Math.max(0, familyTrades.length - firedPendingApprox);
+                virtualPendings = (0, channelActiveTradeParams_1.applyChannelParamsToVirtualPendingList)(virtualPendings, channelParamsForLadder, immediateEstimate, manual.tp_lots, basketTotalPlannedLegs);
             }
         }
+        const refreshImmediateLegCount = Math.max((0, multiTradeMerge_1.mergePlanImmediateOrders)(plan).length, Math.max(0, familyTrades.length - Math.max(0, maxPendingStepIdx - activePendingCount)));
         let perLegTargets = (0, multiTradeMerge_1.buildPerLegStopTargets)({
             plan,
             parsed,
             openLegCount: familyTrades.length,
+            totalPlannedLegCount: basketTotalPlannedLegs,
+            immediateLegCount: refreshImmediateLegCount,
             tpLots: manual.tp_lots,
         });
         let anchor = plan.anchor?.value ?? null;
@@ -1827,6 +1865,8 @@ class TradeExecutor {
                     plan,
                     parsed,
                     openLegCount: familyTrades.length,
+                    totalPlannedLegCount: basketTotalPlannedLegs,
+                    immediateLegCount: refreshImmediateLegCount,
                     tpLots: manual.tp_lots,
                 });
                 if (refreshedTargets.length) {
@@ -2206,21 +2246,43 @@ class TradeExecutor {
             }
         }
     }
-    async ensureBrokerSession(api, uuid, broker) {
+    async markBrokerSessionDown(broker, uuid, reason) {
+        this.sessionPingAt.delete(uuid);
+        this.sessionOrderBlocked.add(broker.id);
+        console.warn(`[tradeExecutor] broker ${broker.id} session down: ${reason}`);
+        broker.connection_status = 'error';
+        await (0, brokerConnectionStatus_1.writeBrokerConnectionStatus)(this.supabase, broker.id, 'error');
+    }
+    async pingBrokerSession(row) {
+        const uuid = row.metaapi_account_id;
+        if (!isMtUuid(uuid))
+            return;
+        const api = this.apiFor(row);
+        if (!api)
+            return;
+        const ready = await api.verifyTradingReady(uuid);
+        if (ready) {
+            this.sessionPingAt.set(uuid, Date.now());
+            return;
+        }
+        await this.markBrokerSessionDown(row, uuid, 'verifyTradingReady failed');
+    }
+    async ensureBrokerSession(api, uuid, broker, opts) {
+        if (this.sessionOrderBlocked.has(broker.id)) {
+            await this.markBrokerSessionDown(broker, uuid, 'session blocked after prior OrderSend disconnect');
+            return false;
+        }
         const now = Date.now();
         const last = this.sessionPingAt.get(uuid) ?? 0;
-        if (now - last < SESSION_PING_MIN_INTERVAL_MS)
+        if (!opts?.force && now - last < SESSION_PING_MIN_INTERVAL_MS)
             return true;
-        const alive = await api.keepSessionAlive(uuid);
-        if (alive)
+        const ready = await api.verifyTradingReady(uuid);
+        if (ready) {
             this.sessionPingAt.set(uuid, now);
-        if (alive && broker.connection_status !== 'connected') {
-            void this.supabase
-                .from('broker_accounts')
-                .update({ connection_status: 'connected' })
-                .eq('id', broker.id);
+            return true;
         }
-        return alive;
+        await this.markBrokerSessionDown(broker, uuid, 'verifyTradingReady failed before OrderSend');
+        return false;
     }
     async sendOrder(signal, parsed, op, broker, channelKeywords, pipelineT0, sendOpts) {
         const liveEntryFast = sendOpts?.liveEntryFast === true;
@@ -2259,12 +2321,17 @@ class TradeExecutor {
             && (0, manualPlanner_1.signalEntryPriceStrictEnabled)(manual)
             && (0, manualPlanner_1.parsedHasExplicitEntryAnchor)(parsed);
         const [sessionOk, symbol, paramsFromRequested] = await Promise.all([
-            this.ensureBrokerSession(api, uuid, broker),
+            this.ensureBrokerSession(api, uuid, broker, { force: true }),
             this.resolveBrokerSymbol(uuid, requestedSymbol),
             this.getSymbolParams(uuid, requestedSymbol).catch(() => null),
         ]);
         if (!sessionOk) {
-            console.warn(`[tradeExecutor] broker ${broker.id} session check failed before order; attempting OrderSend anyway`);
+            await this.logSendSkipped(signal, broker, 'broker_session_not_connected', {
+                symbol: requestedSymbol,
+                metaapi_account_id: uuid,
+                hint: metatraderapi_1.MT_SESSION_EXPIRED_HINT,
+            });
+            return {};
         }
         if (symbol.toUpperCase() !== requestedSymbol.toUpperCase()) {
             console.log(`[tradeExecutor] symbol resolved broker=${broker.id} ${requestedSymbol} → ${symbol}`);
@@ -2370,11 +2437,23 @@ class TradeExecutor {
                 partial_close_fraction: parsed.partial_close_fraction,
                 raw_instruction: parsed.raw_instruction,
             };
-            if (!liveEntryFast && signal.channel_id && (0, channelActiveTradeParams_1.shouldMergeChannelParamsForEntry)(plannerParsed)) {
-                const channelParams = await (0, channelActiveTradeParams_1.loadChannelActiveTradeParamsForSymbol)(this.supabase, signal.user_id, signal.channel_id, symbol);
-                if (channelParams) {
-                    plannerParsed = (0, channelActiveTradeParams_1.mergeParsedWithChannelParams)(plannerParsed, channelParams);
-                    mergedChannelParams = true;
+            if (!liveEntryFast && signal.channel_id) {
+                if ((0, channelActiveTradeParams_1.parsedSignalHasExplicitStops)(plannerParsed)) {
+                    const refreshTpLevels = (plannerParsed.tp ?? []).filter((t) => typeof t === 'number' && Number.isFinite(t) && t > 0);
+                    await (0, channelActiveTradeParams_1.upsertChannelActiveTradeParams)(this.supabase, {
+                        userId: signal.user_id,
+                        channelId: signal.channel_id,
+                        symbols: [symbol],
+                        stoploss: plannerParsed.sl,
+                        tpLevels: refreshTpLevels,
+                    });
+                }
+                else {
+                    const channelParams = await (0, channelActiveTradeParams_1.loadChannelActiveTradeParamsForSymbol)(this.supabase, signal.user_id, signal.channel_id, symbol);
+                    if (channelParams) {
+                        plannerParsed = (0, channelActiveTradeParams_1.mergeParsedWithChannelParams)(plannerParsed, channelParams);
+                        mergedChannelParams = true;
+                    }
                 }
             }
             plan = (0, manualPlanner_1.planManualOrders)({
@@ -2467,9 +2546,10 @@ class TradeExecutor {
             console.warn(`[tradeExecutor] capped immediate legs ${plan.orders.length} → ${capped.length} signal=${signal.id} broker=${broker.id}`);
         }
         let virtualPendings = (plan.virtualPendings ?? []).slice(0, 500);
+        const totalPlannedLegCount = capped.length + virtualPendings.length;
         if (!liveEntryFast && virtualPendings.length > 0 && signal.channel_id && mergedChannelParams) {
             const channelParams = await (0, channelActiveTradeParams_1.loadChannelActiveTradeParamsForSymbol)(this.supabase, signal.user_id, signal.channel_id, symbol);
-            virtualPendings = (0, channelActiveTradeParams_1.applyChannelParamsToVirtualPendingList)(virtualPendings, channelParams, capped.length, manual.tp_lots);
+            virtualPendings = (0, channelActiveTradeParams_1.applyChannelParamsToVirtualPendingList)(virtualPendings, channelParams, capped.length, manual.tp_lots, totalPlannedLegCount);
         }
         if (isManual && manual.trade_style === 'multi') {
             const tpOnOrders = capped.map(o => Number(o.takeprofit) || 0).filter(tp => tp > 0);
@@ -3118,6 +3198,9 @@ class TradeExecutor {
             }
             catch (err) {
                 const msg = err instanceof Error ? err.message : String(err);
+                if ((0, metatraderapi_1.isBrokerDisconnectedMessage)(msg)) {
+                    await this.markBrokerSessionDown(broker, uuid, msg);
+                }
                 console.error(`[tradeExecutor] OrderSend failed signal=${signal.id} broker=${broker.id} leg=${leg.idx + 1}/${totalCount} op=${args.operation} price=${args.price ?? 0}:`, msg);
                 if (liveEntryFast) {
                     void this.supabase.from('trade_execution_logs').insert({
@@ -3184,11 +3267,14 @@ class TradeExecutor {
             });
         }
         const anyImmediateOpened = sendResults.some(r => r.status === 'fulfilled' && r.value === true);
+        const parsedTpCount = (parsed.tp ?? []).filter((t) => typeof t === 'number' && Number.isFinite(t) && t > 0).length;
+        const tpLotBuckets = (manual.tp_lots ?? []).filter(r => r?.enabled !== false && Number(r.percent) > 0).length;
+        const needsPerLegTpSync = parsedTpCount >= 2 || tpLotBuckets >= 2;
         if (isManual
             && manual.trade_style === 'multi'
             && anyImmediateOpened
-            && (parsed.tp ?? []).filter((t) => typeof t === 'number' && Number.isFinite(t) && t > 0).length >= 2
-            && legs.length > 1) {
+            && legs.length > 1
+            && needsPerLegTpSync) {
             await this.syncMultiBasketLegTakeProfits({
                 signal,
                 parsed,
@@ -3221,6 +3307,12 @@ class TradeExecutor {
         };
     }
     async logSendSkipped(signal, broker, reason, extra) {
+        if (reason === 'broker_session_not_connected') {
+            const uuid = broker.metaapi_account_id;
+            if (uuid) {
+                await this.markBrokerSessionDown(broker, uuid, 'broker_session_not_connected');
+            }
+        }
         try {
             await this.supabase.from('trade_execution_logs').insert({
                 user_id: signal.user_id,

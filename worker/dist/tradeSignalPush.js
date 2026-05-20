@@ -5,6 +5,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.pushParsedSignalToTradeWorker = pushParsedSignalToTradeWorker;
 const tradeSignalActions_1 = require("./tradeSignalActions");
+const workerConfig_1 = require("./workerConfig");
 function tradePushEnabled() {
     const v = String(process.env.TRADE_SIGNAL_PUSH_ENABLED ?? 'true').toLowerCase();
     return v !== '0' && v !== 'false' && v !== 'no';
@@ -12,13 +13,32 @@ function tradePushEnabled() {
 function internalToken() {
     return String(process.env.WORKER_INTERNAL_TOKEN ?? '').trim();
 }
-function pickTradeWorkerUrl(action) {
+function parseShardUrls(raw) {
+    if (!raw?.trim())
+        return [];
+    return raw.split(',').map(s => s.trim().replace(/\/$/, '')).filter(Boolean);
+}
+function pickTradeWorkerUrl(action, userId) {
+    const shardUrls = parseShardUrls(process.env.TRADE_WORKER_SHARD_URLS);
     const entryUrl = String(process.env.TRADE_WORKER_URL ?? '').trim().replace(/\/$/, '');
     const mgmtUrl = String(process.env.TRADE_MGMT_WORKER_URL ?? '').trim().replace(/\/$/, '');
+    let base;
     if ((0, tradeSignalActions_1.isManagementAction)(action)) {
-        return mgmtUrl || entryUrl || null;
+        base = mgmtUrl || entryUrl || null;
     }
-    return entryUrl || null;
+    else {
+        base = entryUrl || null;
+    }
+    if (shardUrls.length > 1 && userId) {
+        const shard = (0, workerConfig_1.shardForUserId)(userId, shardUrls.length);
+        const sharded = shardUrls[shard];
+        if (sharded) {
+            if ((0, tradeSignalActions_1.isManagementAction)(action) && mgmtUrl)
+                return mgmtUrl;
+            return sharded;
+        }
+    }
+    return base;
 }
 /**
  * Fire-and-forget POST to trade worker. Never throws; logs failures only.
@@ -30,7 +50,7 @@ function pushParsedSignalToTradeWorker(row) {
     if (!token)
         return;
     const action = (0, tradeSignalActions_1.parsedAction)(row.parsed_data);
-    const baseUrl = pickTradeWorkerUrl(action);
+    const baseUrl = pickTradeWorkerUrl(action, row.user_id);
     if (!baseUrl)
         return;
     const timeoutMs = Math.max(500, Math.min(10000, Number(process.env.TRADE_SIGNAL_PUSH_TIMEOUT_MS ?? 4000)));
