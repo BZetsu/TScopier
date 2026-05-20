@@ -973,16 +973,40 @@ export function AccountConfigPage() {
   }
 
   const confirmDeleteBroker = async () => {
-    if (!brokerPendingDelete) return
+    if (!brokerPendingDelete || !user) return
     setDeleteInProgress(true)
     setError('')
     const id = brokerPendingDelete.id
+    const removed = brokerPendingDelete
+
+    setBrokers(prev => prev.filter(b => b.id !== id))
+    setBrokerPendingDelete(null)
+    if (configAccount?.id === id) closeConfigureModal()
+    setBrokerAccountTypes(prev => {
+      const next = { ...prev }
+      delete next[id]
+      return next
+    })
+
     try {
       await metatraderApi.remove(id)
-      setBrokers(prev => prev.filter(b => b.id !== id))
-      setBrokerPendingDelete(null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : bl.deleteFailed)
+      const { data: stillThere } = await supabase
+        .from('broker_accounts')
+        .select('id')
+        .eq('id', id)
+        .eq('user_id', user.id)
+        .maybeSingle()
+
+      if (stillThere) {
+        setBrokers(prev => {
+          if (prev.some(b => b.id === id)) return prev
+          return [...prev, removed].sort(
+            (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+          )
+        })
+        setError(err instanceof Error ? err.message : bl.deleteFailed)
+      }
     } finally {
       setDeleteInProgress(false)
     }

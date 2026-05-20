@@ -223,18 +223,26 @@ Deno.serve(async (req: Request) => {
       if (!broker) return bad(404, "Broker account not found")
 
       const uuid = String(broker.metaapi_account_id ?? "").trim()
-      if (uuid && !uuid.includes("|")) {
-        try {
-          await mtClient(Deno.env, String(broker.platform ?? "MT5")).disconnect(uuid)
-        } catch { /* swallow — proceed with DB delete */ }
-      }
+      const platform = String(broker.platform ?? "MT5")
 
+      // Remove the row first so the UI/realtime updates immediately; MT disconnect
+      // can hang on a dead session and must not block account removal.
       const { error: delErr } = await supabase
         .from("broker_accounts")
         .delete()
         .eq("id", brokerId)
         .eq("user_id", userId)
       if (delErr) return bad(500, delErr.message)
+
+      if (uuid && !uuid.includes("|")) {
+        const client = mtClient(Deno.env, platform)
+        void Promise.race([
+          client.disconnect(uuid),
+          new Promise<void>((_, reject) => {
+            setTimeout(() => reject(new Error("disconnect timeout")), 8_000)
+          }),
+        ]).catch(() => { /* best-effort */ })
+      }
 
       return Response.json({ ok: true }, { headers: corsHeaders })
     }

@@ -163,7 +163,7 @@ export const es: Translations = {
       deleteTitle: '¿Eliminar cuenta de trading?',
       deleteBody:
         'Esto desconecta {label} de MetatraderAPI y del copiador. No se puede deshacer.',
-      deleteConfirm: 'Eliminar cuenta',
+      deleteConfirm: 'Desconectar',
     },
   },
   dashboard: {

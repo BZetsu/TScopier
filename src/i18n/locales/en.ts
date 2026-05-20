@@ -163,7 +163,7 @@ export const en: Translations = {
       deleteTitle: 'Remove trading account?',
       deleteBody:
         'This disconnects {label} from MetatraderAPI and the copier. This cannot be undone.',
-      deleteConfirm: 'Remove account',
+      deleteConfirm: 'Disconnect',
     },
   },
   dashboard: {

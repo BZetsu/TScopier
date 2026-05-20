@@ -163,7 +163,7 @@ export const fr: Translations = {
       deleteTitle: 'Supprimer le compte de trading ?',
       deleteBody:
         'Cela déconnecte {label} de MetatraderAPI et du copieur. Cette action est irréversible.',
-      deleteConfirm: 'Supprimer le compte',
+      deleteConfirm: 'Déconnecter',
     },
   },
   dashboard: {

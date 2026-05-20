@@ -26,7 +26,14 @@ export function useBrokerAccountsRealtime(
           if (!row?.id) return
           setBrokers(prev => {
             const idx = prev.findIndex(b => b.id === row.id)
-            if (idx < 0) return [...prev, row]
+            if (payload.eventType === 'INSERT') {
+              if (idx >= 0) {
+                return prev.map(b => (b.id === row.id ? { ...b, ...row } : b))
+              }
+              return [...prev, row]
+            }
+            // UPDATE — do not re-add rows the user just removed locally.
+            if (idx < 0) return prev
             return prev.map(b => (b.id === row.id ? { ...b, ...row } : b))
           })
         },
