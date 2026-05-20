@@ -264,6 +264,14 @@ export function channelWorkerLogMessage(row: ChannelWorkerLogRow, cw: ChannelWor
   const forInstr = forInstrument(instr, cw)
   const err = errSuffix(row, cw)
 
+  if (logAction === 'dispatch_skipped') {
+    const reason = translateSkipReason(
+      String(payload.skip_reason ?? row.error_message ?? cw.notPlaced),
+      cw,
+    )
+    return interpolate(cw.dispatchSkipped, { reason })
+  }
+
   if (logAction === 'pipeline_parse_dispatch') {
     if (status === 'attempt') {
       return interpolate(cw.pipelineReading, { for: forInstr })

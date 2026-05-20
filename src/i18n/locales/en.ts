@@ -146,6 +146,8 @@ export const en: Translations = {
       detailBalance: 'Balance',
       detailEquity: 'Equity',
       channelsNoneSelected: 'None selected',
+      channelsEmptySaveWarning:
+        'No signal channels selected — this broker will not copy any Telegram signals. Save anyway?',
       channelsSignalChannel: 'Signal channel',
       channelsAll: 'All signal channels',
       relinkOne:
@@ -337,6 +339,8 @@ export const en: Translations = {
     reconnectTelegram: 'Reconnect Telegram',
     channelSearchPlaceholder: 'Search channels…',
     noChannelSearchResults: 'No channels match your search',
+    channelsUnlinkedWarning:
+      '{count} active channel(s) have no broker linked — signals will not copy. Open Account Configuration → each broker → Channels tab, check the channel, and Save (or use Connect to broker below).',
     yourTelegramChannels: 'Your Telegram channels',
     telegramConnectedHint: 'Add channels below to start copying signals',
     connected: 'Connected',
@@ -367,6 +371,8 @@ export const en: Translations = {
     profileSl: 'SL: {value}',
     connectedBrokers: 'Connected brokers',
     connectToBroker: 'Connect to Broker',
+    connectAllBrokers: 'Connect all brokers',
+    connectAllBrokersAria: 'Link {channel} to all active broker accounts',
     addBrokerConnectionAria: 'Connect {channel} to another broker',
     removeBrokerConnectionAria: 'Disconnect {broker} from {channel}',
     noBrokersYet: 'No broker accounts yet',

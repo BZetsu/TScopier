@@ -15,6 +15,7 @@ import { BasketSlTpReconcileMonitor } from './basketSlTpReconcileMonitor'
 import { NewsTradingMonitor } from './newsTradingMonitor'
 import { BrokerConnectionMonitor } from './brokerConnectionMonitor'
 import { workerConfig } from './workerConfig'
+import { validateListenerTradeShardConfig } from './tradeSignalPush'
 import type { MonitorLoopHandle } from './monitorIdleGate'
 import { subscribeMonitorWorkWake } from './monitorWorkWake'
 import { startTradeLogRetention } from './tradeLogRetention'
@@ -91,6 +92,14 @@ function startTradeMonitors() {
 }
 
 async function main() {
+  if (workerConfig.runsListener) {
+    const shardErr = validateListenerTradeShardConfig()
+    if (shardErr) {
+      console.error(`[worker] FATAL: ${shardErr}`)
+      process.exit(1)
+    }
+  }
+
   console.log(
     `[worker] starting role=${workerConfig.role} shard=${workerConfig.shardId}/${workerConfig.shardCount}`
     + ` instance=${workerConfig.instanceId}`,

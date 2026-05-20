@@ -27,6 +27,9 @@ TRADE_WORKER_URL=https://your-trade-entry.up.railway.app
 TRADE_MGMT_WORKER_URL=https://your-trade-mgmt.up.railway.app
 # Optional: N trade entry shards (comma-separated, index = WORKER_SHARD_ID)
 # TRADE_WORKER_SHARD_URLS=https://trade-shard-0.up.railway.app,https://trade-shard-1.up.railway.app
+# TRADE_WORKER_SHARD_COUNT=2
+# TRADE_SIGNAL_PUSH_MAX_ATTEMPTS=3
+# TRADE_SIGNAL_PUSH_RETRY_BASE_MS=75
 TELEGRAM_SHUTDOWN_DRAIN_MS=8000
 WORKER_HEALTH_STALE_MS=180000
 WORKER_LEASE_RENEW_INTERVAL_MS=20000
@@ -177,6 +180,10 @@ sequenceDiagram
 5. **No market `/Quote` on live path** — Clamp from cached `SymbolParams`; pip/channel stops applied via `OrderModify` post-fill.
 6. **Concurrent queue drain** — `EXECUTOR_MAX_CONCURRENT_SIGNALS` (default **4**) for sweep/realtime/management.
 7. **Lease gate cache** — `WORKER_LEASE_GATE_CACHE_MS` (default **8000**).
+8. **MT HTTP pool** — `MT4API_HTTP_CONNECTIONS` (default **128**) per MT4/MT5 host; raise for burst copy at scale.
+9. **Broker keepalive** — `TradeExecutor.sessionHeartbeatTick` pings cached sessions; `BrokerConnectionMonitor` handles reconnect/status only (no duplicate heartbeat loop).
+
+**Staging sharding pilot:** see [`docs/staging-shard-fleet.md`](staging-shard-fleet.md). **Load tests:** [`scripts/load/README.md`](../scripts/load/README.md). **Latency SQL:** [`scripts/diagnostics/pipeline_latency.sql`](../scripts/diagnostics/pipeline_latency.sql).
 
 ### Diagnosing slow execution
 

@@ -997,6 +997,35 @@ export class TradeExecutor {
     }
   }
 
+  /** Visible in Channel Worker when trade dispatch is skipped (no silent failures). */
+  private async logDispatchSkipped(
+    signal: SignalRow,
+    skipReason: string,
+    extra?: Record<string, unknown>,
+  ): Promise<void> {
+    try {
+      await this.supabase.from('trade_execution_logs').insert({
+        user_id: signal.user_id,
+        signal_id: signal.id,
+        action: 'dispatch_skipped',
+        status: 'skipped',
+        error_message: skipReason,
+        request_payload: {
+          skip_reason: skipReason,
+          channel_id: signal.channel_id ?? null,
+          ...extra,
+        },
+      })
+      await this.supabase
+        .from('signals')
+        .update({ status: 'skipped', skip_reason: skipReason })
+        .eq('id', signal.id)
+        .in('status', ['parsed', 'pending'])
+    } catch {
+      /* best-effort */
+    }
+  }
+
   private logPipelineSummaryBackground(
     signal: SignalRow,
     extra?: Record<string, unknown>,
@@ -1146,11 +1175,10 @@ export class TradeExecutor {
           ? await this.sessionManager.canExecuteTelegramCopierTradesAsync(row.user_id)
           : false
         if (!live) {
-          if (String(process.env.WORKER_LOG_TELEGRAM_TRADE_GATE ?? '').toLowerCase() === 'true') {
-            console.log(
-              `[tradeExecutor] skip signal ${row.id} (user ${row.user_id}): telegram listener not live for channel-backed copier`,
-            )
-          }
+          console.warn(
+            `[tradeExecutor] skip signal ${row.id} (user ${row.user_id}): telegram listener not live for channel-backed copier`,
+          )
+          await this.logDispatchSkipped(row, 'telegram_listener_not_live')
           return
         }
       }
@@ -1167,6 +1195,7 @@ export class TradeExecutor {
         console.warn(
           `[tradeExecutor] skip signal ${row.id}: no active broker matches channel=${row.channel_id ?? 'none'} (check Configure Trading channel selection)`,
         )
+        await this.logDispatchSkipped(row, 'no_broker_channel_match')
         return
       }
 

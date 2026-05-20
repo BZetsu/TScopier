@@ -16,29 +16,17 @@ function isMtUuid(s) {
  * Keeps MetatraderAPI sessions alive with lightweight CheckConnect pings.
  * Only calls ConnectByToken when the session is down; avoids flipping status on transient blips.
  */
-const HEARTBEAT_MS = (0, monitorIdleGate_1.monitorActiveIntervalMs)('BROKER_SESSION_HEARTBEAT_MS', 15000);
-const HEARTBEAT_IDLE_MS = (0, monitorIdleGate_1.monitorIdleIntervalMs)('BROKER_HEARTBEAT_IDLE_MS', 120000);
 const RECONNECT_ACTIVE_MS = (0, monitorIdleGate_1.monitorActiveIntervalMs)('BROKER_RECONNECT_INTERVAL_MS', Math.max(60000, Number(process.env.BROKER_RECONNECT_INTERVAL_MS ?? 300000) || 300000));
 const RECONNECT_IDLE_MS = (0, monitorIdleGate_1.monitorIdleIntervalMs)('BROKER_RECONNECT_IDLE_MS', 300000);
 class BrokerConnectionMonitor {
     constructor(supabase) {
         this.supabase = supabase;
-        this.heartbeatLoop = null;
         this.reconnectLoop = null;
         this.failStreak = new Map();
     }
     start() {
-        if (!this.heartbeatLoop) {
-            this.heartbeatLoop = (0, monitorIdleGate_1.startMonitorLoop)({
-                name: 'brokerConnectionHeartbeat',
-                supabase: this.supabase,
-                activeIntervalMs: HEARTBEAT_MS,
-                idleIntervalMs: HEARTBEAT_IDLE_MS,
-                hasWork: sb => (0, monitorIdleGate_1.hasWorkOnShard)(sb, 'broker_accounts', q => q.eq('is_active', true)),
-                tick: () => this.heartbeatTick(),
-            });
-            console.log(`[brokerConnection] heartbeat active=${HEARTBEAT_MS}ms idle=${HEARTBEAT_IDLE_MS}ms`);
-        }
+        // Keepalive pings run in TradeExecutor.sessionHeartbeatTick (in-memory broker cache).
+        // This monitor only handles reconnect sweeps and connection_status updates.
         if (!this.reconnectLoop) {
             this.reconnectLoop = (0, monitorIdleGate_1.startMonitorLoop)({
                 name: 'brokerConnectionReconnect',
@@ -52,39 +40,14 @@ class BrokerConnectionMonitor {
         }
     }
     stop() {
-        this.heartbeatLoop?.stop();
-        this.heartbeatLoop = null;
         this.reconnectLoop?.stop();
         this.reconnectLoop = null;
     }
     getLoopHandles() {
-        return [this.heartbeatLoop, this.reconnectLoop].filter(Boolean);
+        return [this.reconnectLoop].filter(Boolean);
     }
     clientFor(platform) {
         return (0, metatraderapi_1.getMetatraderApi)((0, metatraderapi_1.mtPlatformFrom)(platform));
-    }
-    /** Lightweight CheckConnect ping so OrderSend hot path skips session checks. */
-    async heartbeatTick() {
-        if (!(0, metatraderapi_1.hasMetatraderApiConfigured)())
-            return;
-        const brokersQ = await (0, monitorIdleGate_1.applyShardToQuery)(this.supabase, this.supabase
-            .from('broker_accounts')
-            .select('id,platform,metaapi_account_id')
-            .eq('is_active', true));
-        if (!brokersQ)
-            return;
-        const { data, error } = await brokersQ;
-        if (error)
-            return;
-        for (const row of (data ?? [])) {
-            const uuid = row.metaapi_account_id?.trim();
-            if (!isMtUuid(uuid))
-                continue;
-            const api = this.clientFor(row.platform);
-            if (!api)
-                continue;
-            await api.keepSessionAlive(uuid);
-        }
     }
     async reconnectTick() {
         if (!(0, metatraderapi_1.hasMetatraderApiConfigured)())

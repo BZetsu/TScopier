@@ -25,10 +25,11 @@ const mtTradeFields_1 = require("./mtTradeFields");
  */
 const DEFAULT_MT5_BASE = 'https://mt5.mt4api.dev';
 const DEFAULT_MT4_BASE = 'https://mt4.mt4api.dev';
+const MT4API_HTTP_CONNECTIONS = Math.max(8, Math.min(512, Number(process.env.MT4API_HTTP_CONNECTIONS ?? 128)));
 const KEEP_ALIVE_AGENT = new undici_1.Agent({
     keepAliveTimeout: 60000,
     keepAliveMaxTimeout: 600000,
-    connections: 32,
+    connections: MT4API_HTTP_CONNECTIONS,
     pipelining: 1,
 });
 /** Pending / stop entry types require a positive limit/stop price on OrderSend. */

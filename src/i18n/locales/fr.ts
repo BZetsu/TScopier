@@ -146,6 +146,8 @@ export const fr: Translations = {
       detailBalance: 'Solde',
       detailEquity: 'Équité',
       channelsNoneSelected: 'Aucune sélection',
+      channelsEmptySaveWarning:
+        'Aucun canal de signaux sélectionné — ce courtier ne copiera aucun signal Telegram. Enregistrer quand même ?',
       channelsSignalChannel: 'Canal de signaux',
       channelsAll: 'Tous les canaux de signaux',
       relinkOne:
@@ -337,6 +339,8 @@ export const fr: Translations = {
     reconnectTelegram: 'Reconnecter Telegram',
     channelSearchPlaceholder: 'Rechercher des canaux…',
     noChannelSearchResults: 'Aucun canal ne correspond à votre recherche',
+    channelsUnlinkedWarning:
+      '{count} canal(aux) actif(s) sans courtier lié — les signaux ne seront pas copiés. Ouvrez Configuration du compte → chaque courtier → onglet Canaux, cochez le canal et enregistrez.',
     yourTelegramChannels: 'Vos canaux Telegram',
     telegramConnectedHint: 'Ajoutez des canaux ci-dessous pour commencer à copier les signaux',
     connected: 'Connecté',
@@ -367,6 +371,8 @@ export const fr: Translations = {
     profileSl: 'SL : {value}',
     connectedBrokers: 'Courtiers connectés',
     connectToBroker: 'Connecter au courtier',
+    connectAllBrokers: 'Connecter tous les courtiers',
+    connectAllBrokersAria: 'Lier {channel} à tous les comptes courtiers actifs',
     addBrokerConnectionAria: 'Connecter {channel} à un autre courtier',
     removeBrokerConnectionAria: 'Déconnecter {broker} de {channel}',
     noBrokersYet: 'Aucun compte courtier',

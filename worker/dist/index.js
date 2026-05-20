@@ -20,6 +20,7 @@ const basketSlTpReconcileMonitor_1 = require("./basketSlTpReconcileMonitor");
 const newsTradingMonitor_1 = require("./newsTradingMonitor");
 const brokerConnectionMonitor_1 = require("./brokerConnectionMonitor");
 const workerConfig_1 = require("./workerConfig");
+const tradeSignalPush_1 = require("./tradeSignalPush");
 const monitorWorkWake_1 = require("./monitorWorkWake");
 const tradeLogRetention_1 = require("./tradeLogRetention");
 if (!globalThis.WebSocket) {
@@ -82,6 +83,13 @@ function startTradeMonitors() {
     stopLogRetention = (0, tradeLogRetention_1.startTradeLogRetention)(supabase);
 }
 async function main() {
+    if (workerConfig_1.workerConfig.runsListener) {
+        const shardErr = (0, tradeSignalPush_1.validateListenerTradeShardConfig)();
+        if (shardErr) {
+            console.error(`[worker] FATAL: ${shardErr}`);
+            process.exit(1);
+        }
+    }
     console.log(`[worker] starting role=${workerConfig_1.workerConfig.role} shard=${workerConfig_1.workerConfig.shardId}/${workerConfig_1.workerConfig.shardCount}`
         + ` instance=${workerConfig_1.workerConfig.instanceId}`);
     if (workerConfig_1.workerConfig.runsListener || workerConfig_1.workerConfig.runsBacktestHttp) {

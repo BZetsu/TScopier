@@ -834,6 +834,11 @@ export function AccountConfigPage() {
     let channelIds = configDraft.channelIds
     const restrictChannels = channelIds.length > 0
 
+    if (channelIds.length === 0) {
+      const proceed = window.confirm(bl.channelsEmptySaveWarning)
+      if (!proceed) return
+    }
+
     setConfigSaving(true)
     const channelMessageFilters: ChannelMessageFiltersMap = {}
     const filterChannelIds = new Set([...channelOptions.map(c => c.id), ...channelIds])

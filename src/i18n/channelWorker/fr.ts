@@ -133,7 +133,12 @@ export const channelWorkerFr: ChannelWorkerTranslations = {
     symbol_excluded: 'symbole exclu',
     broker_session_not_connected:
       'courtier non connecté — ouvrez Configuration du compte et utilisez Reconnect pour ce compte',
+    no_broker_channel_match:
+      'aucun compte courtier n\'est lié à ce canal — ouvrez Configuration du compte, onglet Canaux, cochez le canal et enregistrez',
+    telegram_listener_not_live:
+      'écoute Telegram inactive — ouvrez Copier Engine et reconnectez Telegram',
   },
+  dispatchSkipped: 'Signal non copié ({reason}).',
   errorTicketNotFound: 'Ticket {ticket} introuvable',
   errorSymbolNotFound: 'Symbole introuvable : {symbol}',
   errorBrokerNotConnected:

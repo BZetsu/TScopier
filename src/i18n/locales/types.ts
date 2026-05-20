@@ -238,6 +238,7 @@ export interface AccountConfigBrokerListTranslations {
   detailBalance: string
   detailEquity: string
   channelsNoneSelected: string
+  channelsEmptySaveWarning: string
   channelsSignalChannel: string
   channelsAll: string
   relinkOne: string
@@ -493,6 +494,7 @@ export interface CopierEnginePageTranslations {
   reconnectTelegram: string
   channelSearchPlaceholder: string
   noChannelSearchResults: string
+  channelsUnlinkedWarning: string
   yourTelegramChannels: string
   telegramConnectedHint: string
   connected: string
@@ -523,6 +525,8 @@ export interface CopierEnginePageTranslations {
   profileSl: string
   connectedBrokers: string
   connectToBroker: string
+  connectAllBrokers: string
+  connectAllBrokersAria: string
   addBrokerConnectionAria: string
   removeBrokerConnectionAria: string
   noBrokersYet: string

@@ -702,6 +702,31 @@ class TradeExecutor {
             /* best-effort */
         }
     }
+    /** Visible in Channel Worker when trade dispatch is skipped (no silent failures). */
+    async logDispatchSkipped(signal, skipReason, extra) {
+        try {
+            await this.supabase.from('trade_execution_logs').insert({
+                user_id: signal.user_id,
+                signal_id: signal.id,
+                action: 'dispatch_skipped',
+                status: 'skipped',
+                error_message: skipReason,
+                request_payload: {
+                    skip_reason: skipReason,
+                    channel_id: signal.channel_id ?? null,
+                    ...extra,
+                },
+            });
+            await this.supabase
+                .from('signals')
+                .update({ status: 'skipped', skip_reason: skipReason })
+                .eq('id', signal.id)
+                .in('status', ['parsed', 'pending']);
+        }
+        catch {
+            /* best-effort */
+        }
+    }
     logPipelineSummaryBackground(signal, extra) {
         const ts = signal.pipeline_ts ?? {};
         void this.supabase
@@ -832,9 +857,8 @@ class TradeExecutor {
                     ? await this.sessionManager.canExecuteTelegramCopierTradesAsync(row.user_id)
                     : false;
                 if (!live) {
-                    if (String(process.env.WORKER_LOG_TELEGRAM_TRADE_GATE ?? '').toLowerCase() === 'true') {
-                        console.log(`[tradeExecutor] skip signal ${row.id} (user ${row.user_id}): telegram listener not live for channel-backed copier`);
-                    }
+                    console.warn(`[tradeExecutor] skip signal ${row.id} (user ${row.user_id}): telegram listener not live for channel-backed copier`);
+                    await this.logDispatchSkipped(row, 'telegram_listener_not_live');
                     return;
                 }
             }
@@ -848,6 +872,7 @@ class TradeExecutor {
             const brokers = (this.brokersByUser.get(row.user_id) ?? []).filter(b => b.is_active && isMtUuid(b.metaapi_account_id) && (0, brokerChannelFilter_1.channelMatchesBrokerSignal)(b, row.channel_id));
             if (!brokers.length) {
                 console.warn(`[tradeExecutor] skip signal ${row.id}: no active broker matches channel=${row.channel_id ?? 'none'} (check Configure Trading channel selection)`);
+                await this.logDispatchSkipped(row, 'no_broker_channel_match');
                 return;
             }
             // Pre-fetch channel keywords once per signal so manual-mode brokers can
