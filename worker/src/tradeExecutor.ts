@@ -98,9 +98,11 @@ import {
 } from './managementScope'
 import {
   applyChannelParamsToVirtualPendingList,
+  estimateBasketTotalPlannedLegs,
   loadChannelActiveTradeParamsForSymbol,
   mergeParsedWithChannelParams,
   reapplyChannelParamsToPendingLegs,
+  parsedSignalHasExplicitStops,
   shouldMergeChannelParamsForEntry,
   stripInvalidStopsForSide,
   symbolsForChannelParamsPersist,
@@ -1986,10 +1988,13 @@ export class TradeExecutor {
     if (error || !(familyRows ?? []).length) return
 
     const familyTrades = (familyRows ?? []) as BasketOpenLeg[]
+    const totalPlannedLegCount =
+      familyTrades.length + (plan.virtualPendings?.length ?? 0)
     const perLegTargets = buildPerLegStopTargets({
       plan,
       parsed,
       openLegCount: familyTrades.length,
+      totalPlannedLegCount,
       tpLots: manual.tp_lots,
     })
     if (!perLegTargets.length) return
@@ -2200,6 +2205,23 @@ export class TradeExecutor {
     }
 
     let virtualPendings = (plan.virtualPendings ?? []).slice(0, 500)
+    const { data: activePendingRows } = await this.supabase
+      .from('range_pending_legs')
+      .select('step_idx')
+      .eq('signal_id', anchorSignalId)
+      .eq('broker_account_id', broker.id)
+      .in('status', ['pending', 'claimed'])
+      .limit(500)
+    const activePendingCount = activePendingRows?.length ?? 0
+    const maxPendingStepIdx = Math.max(0, ...(activePendingRows ?? []).map(r => Number(r.step_idx) || 0))
+    const basketTotalPlannedLegs = Math.max(
+      estimateBasketTotalPlannedLegs({
+        openLegCount: familyTrades.length,
+        activePendingCount,
+        maxPendingStepIdx,
+      }),
+      familyTrades.length + virtualPendings.length,
+    )
     let channelParamsForLadder: ChannelActiveTradeParams | null = null
     if (signal.channel_id) {
       channelParamsForLadder = await loadChannelActiveTradeParamsForSymbol(
@@ -2209,11 +2231,14 @@ export class TradeExecutor {
         symbol,
       )
       if (virtualPendings.length > 0 && channelParamsForLadder) {
+        const firedPendingApprox = Math.max(0, maxPendingStepIdx - activePendingCount)
+        const immediateEstimate = Math.max(0, familyTrades.length - firedPendingApprox)
         virtualPendings = applyChannelParamsToVirtualPendingList(
           virtualPendings,
           channelParamsForLadder,
-          familyTrades.length,
+          immediateEstimate,
           manual.tp_lots,
+          basketTotalPlannedLegs,
         )
       }
     }
@@ -2221,6 +2246,7 @@ export class TradeExecutor {
       plan,
       parsed,
       openLegCount: familyTrades.length,
+      totalPlannedLegCount: basketTotalPlannedLegs,
       tpLots: manual.tp_lots,
     })
 
@@ -2287,6 +2313,7 @@ export class TradeExecutor {
           plan,
           parsed,
           openLegCount: familyTrades.length,
+          totalPlannedLegCount: basketTotalPlannedLegs,
           tpLots: manual.tp_lots,
         })
         if (refreshedTargets.length) {
@@ -2887,16 +2914,29 @@ export class TradeExecutor {
         partial_close_fraction: parsed.partial_close_fraction,
         raw_instruction: parsed.raw_instruction,
       }
-      if (!liveEntryFast && signal.channel_id && shouldMergeChannelParamsForEntry(plannerParsed)) {
-        const channelParams = await loadChannelActiveTradeParamsForSymbol(
-          this.supabase,
-          signal.user_id,
-          signal.channel_id,
-          symbol,
-        )
-        if (channelParams) {
-          plannerParsed = mergeParsedWithChannelParams(plannerParsed, channelParams)
-          mergedChannelParams = true
+      if (!liveEntryFast && signal.channel_id) {
+        if (parsedSignalHasExplicitStops(plannerParsed)) {
+          const refreshTpLevels = (plannerParsed.tp ?? []).filter(
+            (t): t is number => typeof t === 'number' && Number.isFinite(t) && t > 0,
+          )
+          await upsertChannelActiveTradeParams(this.supabase, {
+            userId: signal.user_id,
+            channelId: signal.channel_id,
+            symbols: [symbol],
+            stoploss: plannerParsed.sl,
+            tpLevels: refreshTpLevels,
+          })
+        } else {
+          const channelParams = await loadChannelActiveTradeParamsForSymbol(
+            this.supabase,
+            signal.user_id,
+            signal.channel_id,
+            symbol,
+          )
+          if (channelParams) {
+            plannerParsed = mergeParsedWithChannelParams(plannerParsed, channelParams)
+            mergedChannelParams = true
+          }
         }
       }
       plan = planManualOrders({
@@ -2997,6 +3037,7 @@ export class TradeExecutor {
       )
     }
     let virtualPendings = (plan.virtualPendings ?? []).slice(0, 500)
+    const totalPlannedLegCount = capped.length + virtualPendings.length
     if (!liveEntryFast && virtualPendings.length > 0 && signal.channel_id && mergedChannelParams) {
       const channelParams = await loadChannelActiveTradeParamsForSymbol(
         this.supabase,
@@ -3009,6 +3050,7 @@ export class TradeExecutor {
         channelParams,
         capped.length,
         manual.tp_lots,
+        totalPlannedLegCount,
       )
     }
 

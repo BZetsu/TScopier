@@ -23,7 +23,6 @@ import { AddAccountModal } from '../../components/ui/AddAccountModal'
 import { BrokerServerSelect } from '../../components/ui/BrokerServerSelect'
 import { formatLocalCalendarDay } from '../../lib/dayStartBalance'
 import { metatraderApi } from '../../lib/metatraderapi'
-import { linkBrokersToChannelsOnRegister } from '../../lib/brokerChannelLink'
 import { isLegacyBrokerLink, isMtSessionUuid } from '../../lib/brokerLink'
 import {
   inferBrokerLabelFromServer,
@@ -36,7 +35,7 @@ import { pipCalculator, pipValueForLots, type PipQuote } from '../../lib/pipCalc
 import { classifySymbol } from '../../lib/pipMath'
 import { pipsToPriceOffset, signalPipPrice } from '../../lib/signalPip'
 import { formatMoneyWithCode } from '../../lib/currency'
-import type { BrokerAccount, ManualSettings, ManualTpLot, TelegramChannel } from '../../types/database'
+import type { BrokerAccount, ManualSettings, ManualTpLot } from '../../types/database'
 import {
   DEFAULT_CHANNEL_FILTERS,
   normalizeChannelFilters,
@@ -100,21 +99,6 @@ function normalizeSignalChannelIds(b: BrokerAccount | undefined): string[] {
   if (!raw) return []
   if (Array.isArray(raw)) return raw.map(String).filter(Boolean)
   return []
-}
-
-function getOldestChannel(channels: ChannelOption[]): ChannelOption | undefined {
-  if (!channels.length) return undefined
-  return [...channels].reduce((oldest, ch) => {
-    const t = Date.parse(ch.created_at)
-    const ot = Date.parse(oldest.created_at)
-    const tOk = Number.isFinite(t)
-    const oOk = Number.isFinite(ot)
-    if (!tOk && !oOk) return ch.id < oldest.id ? ch : oldest
-    if (!tOk) return oldest
-    if (!oOk) return ch
-    if (t !== ot) return t < ot ? ch : oldest
-    return ch.id < oldest.id ? ch : oldest
-  })
 }
 
 /** When false, the configure modal only shows manual settings (AI tab hidden). */
@@ -713,18 +697,9 @@ export function AccountConfigPage() {
 
   const openConfigureModal = (broker: BrokerAccount) => {
     const fresh = brokers.find(b => b.id === broker.id) ?? broker
-    const persistedIds = normalizeSignalChannelIds(fresh)
-    let channelIds: string[]
-    if (channelOptions.length === 1 && channelOptions[0]) {
-      channelIds = [channelOptions[0].id]
-    } else if (channelOptions.length > 1) {
-      channelIds =
-        persistedIds.length > 0
-          ? persistedIds.filter(id => channelOptions.some(c => c.id === id))
-          : channelOptions.map(c => c.id)
-    } else {
-      channelIds = persistedIds
-    }
+    const channelIds = normalizeSignalChannelIds(fresh).filter(id =>
+      channelOptions.some(c => c.id === id),
+    )
     setConfigAccount(fresh)
     setActiveTab('mode')
     setActiveManualSubTab('symbol_routing')
@@ -891,17 +866,7 @@ export function AccountConfigPage() {
     if (!configAccount || !user) return
     setError('')
     let channelIds = configDraft.channelIds
-    let restrictChannels = false
-    if (channelOptions.length === 1 && channelOptions[0]) {
-      channelIds = [channelOptions[0].id]
-      restrictChannels = true
-    } else if (channelOptions.length > 1) {
-      if (channelIds.length === 0) {
-        setError('Select at least one signal channel.')
-        return
-      }
-      restrictChannels = true
-    }
+    const restrictChannels = channelIds.length > 0
 
     setConfigSaving(true)
     const channelMessageFilters: ChannelMessageFiltersMap = {}
@@ -941,19 +906,15 @@ export function AccountConfigPage() {
 
   const getBrokerSignalChannelsLabel = (brokerId: string) => {
     if (channelOptions.length === 0) return bl.channelsNoneSelected
-    const oldest = getOldestChannel(channelOptions)
-    if (channelOptions.length === 1) {
-      const name = oldest?.display_name?.trim()
-      return name || bl.channelsSignalChannel
-    }
     const brokerRow = brokers.find(b => b.id === brokerId)
     const persistedIds = normalizeSignalChannelIds(brokerRow)
     if (persistedIds.length === 0) return bl.channelsNoneSelected
-    if (persistedIds.length >= channelOptions.length) return bl.channelsAll
-    const labels = channelOptions
-      .filter(ch => persistedIds.includes(ch.id))
-      .map(ch => ch.display_name)
-      .filter(Boolean)
+    const selected = channelOptions.filter(ch => persistedIds.includes(ch.id))
+    if (selected.length === 0) return bl.channelsNoneSelected
+    if (selected.length === channelOptions.length && channelOptions.length > 1) {
+      return bl.channelsAll
+    }
+    const labels = selected.map(ch => ch.display_name).filter(Boolean)
     if (labels.length) return labels.join(', ')
     return bl.channelsNoneSelected
   }
@@ -980,21 +941,13 @@ export function AccountConfigPage() {
         password: form.account_password,
         label: form.label.trim() || undefined,
       })
-      const linkedBroker = user
-        ? await linkBrokersToChannelsOnRegister(
-          supabase,
-          user.id,
-          broker,
-          channelOptions.map(ch => ({ ...ch, user_id: user.id } as TelegramChannel)),
-        )
-        : broker
-      setBrokers(prev => [...prev, linkedBroker])
+      setBrokers(prev => [...prev, broker])
       const registeredType = resolveLinkedAccountType(
         summary?.type,
-        resolveMtServerCandidate(linkedBroker, linkedBroker.broker_server),
+        resolveMtServerCandidate(broker, broker.broker_server),
       )
       if (registeredType) {
-        setBrokerAccountTypes(prev => ({ ...prev, [linkedBroker.id]: registeredType }))
+        setBrokerAccountTypes(prev => ({ ...prev, [broker.id]: registeredType }))
       }
       setForm(emptyForm)
       setShowAddBroker(false)
@@ -1003,7 +956,7 @@ export function AccountConfigPage() {
       // session to come up), keep tailing for it client-side so the card
       // is populated without the user having to click Refresh.
       if (broker?.id && (broker.last_balance == null && broker.last_equity == null)) {
-        void tailRefreshBrokerSummary(linkedBroker.id)
+        void tailRefreshBrokerSummary(broker.id)
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : t.accountConfig.connectForm.connectFailed)
@@ -2509,10 +2462,6 @@ export function AccountConfigPage() {
                         <p className="text-sm text-neutral-500 dark:text-neutral-400">
                           No connected channels found. <Link to="/channels" className="text-primary-600 underline">Connect channels here</Link>.
                         </p>
-                      ) : channelOptions.length === 1 ? (
-                        <p className="text-sm text-neutral-600 dark:text-neutral-400">
-                          One Telegram channel is connected — this broker copies from it automatically.
-                        </p>
                       ) : (
                         <>
                           <div className="flex items-center justify-between">
@@ -2520,7 +2469,7 @@ export function AccountConfigPage() {
                             <p className="text-xs text-neutral-500 dark:text-neutral-400">{configDraft.channelIds.length} selected</p>
                           </div>
                           <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                            Only checked channels copy trades to this account. Uncheck a channel to ignore its signals.
+                            Check channels to copy their signals to this account. None are connected by default.
                           </p>
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                             {channelOptions.map(channel => (
@@ -2552,9 +2501,7 @@ export function AccountConfigPage() {
                           <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">Channel keyword filters</p>
                           <p className="text-xs text-neutral-500 dark:text-neutral-400">
                             {(() => {
-                              const ids = channelOptions.length === 1
-                                ? [channelOptions[0]!.id]
-                                : configDraft.channelIds
+                              const ids = configDraft.channelIds
                               const total = ids.reduce((sum, id) => {
                                 const f = configDraft.channelFilters[id] ?? DEFAULT_CHANNEL_FILTERS
                                 return sum + CHANNEL_FILTER_CATEGORIES.reduce(
@@ -2572,12 +2519,7 @@ export function AccountConfigPage() {
                         </p>
 
                         {(() => {
-                          // For a 1-channel account the picker is hidden, but the user still wants filter
-                          // controls — render the lone channel directly. Otherwise honour the broker's
-                          // channelIds selection so an unchecked channel disappears from this list.
-                          const visibleIds = channelOptions.length === 1
-                            ? [channelOptions[0]!.id]
-                            : configDraft.channelIds
+                          const visibleIds = configDraft.channelIds
                           if (visibleIds.length === 0) {
                             return (
                               <p className="text-xs text-neutral-400 italic">

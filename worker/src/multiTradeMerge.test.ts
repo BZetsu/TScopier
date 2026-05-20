@@ -157,6 +157,31 @@ test('buildPerLegStopTargets: spreads TPs by Targets % when plan has fewer immed
   assert.equal(targets.filter(t => t.takeprofit === 4490).length, 2)
 })
 
+test('buildPerLegStopTargets: uses totalPlannedLegCount for stable indices while basket fills', () => {
+  const plan: PlannerResult = {
+    orders: [
+      { symbol: 'XAUUSD', operation: 'Sell', volume: 0.01, price: 0, stoploss: 4570, takeprofit: 4530, slippage: 20, comment: 'a', expertID: 1 },
+    ],
+    delay_ms: 0,
+    virtualPendings: [],
+  }
+  const targets = buildPerLegStopTargets({
+    plan,
+    parsed: { sl: 4570, tp: [4530, 4510, 4490] },
+    openLegCount: 3,
+    totalPlannedLegCount: 10,
+    tpLots: [
+      { label: 'TP1', lot: 0, percent: 50, enabled: true },
+      { label: 'TP2', lot: 0, percent: 30, enabled: true },
+      { label: 'TP3', lot: 0, percent: 20, enabled: true },
+    ],
+  })
+  assert.equal(targets.length, 3)
+  assert.equal(targets[0]!.takeprofit, 4530)
+  assert.equal(targets[1]!.takeprofit, 4530)
+  assert.equal(targets[2]!.takeprofit, 4530)
+})
+
 test('mergePlanImmediateOrders: includes limits', () => {
   const plan: PlannerResult = {
     orders: [

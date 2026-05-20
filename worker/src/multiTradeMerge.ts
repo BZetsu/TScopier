@@ -88,10 +88,12 @@ export function buildPerLegStopTargets(args: {
   plan: PlannerResult
   parsed: ParsedSignalLike
   openLegCount: number
+  /** Full basket size (immediates + range pendings). Keeps TP1/TP2/TP3 stable as legs fill. */
+  totalPlannedLegCount?: number
   /** Configure Trading → Targets % rows; used when legs outnumber planner immediates. */
   tpLots?: ManualTpLot[] | null
 }): PerLegStopTarget[] {
-  const { plan, parsed, openLegCount, tpLots } = args
+  const { plan, parsed, openLegCount, totalPlannedLegCount, tpLots } = args
   const n = Math.max(0, openLegCount)
   if (n === 0) return []
 
@@ -115,12 +117,13 @@ export function buildPerLegStopTargets(args: {
       .filter(tp => typeof tp === 'number' && Number.isFinite(tp) && tp > 0)
   }
 
+  const bucketN = Math.max(n, totalPlannedLegCount ?? n)
   const tpPrices = buildDistributedPerLegTakeProfits({
-    openLegCount: n,
+    openLegCount: bucketN,
     finalTps,
     tpLots,
   })
-  return tpPrices.map(tp => ({
+  return tpPrices.slice(0, n).map(tp => ({
     stoploss: sl,
     takeprofit: tp,
   }))

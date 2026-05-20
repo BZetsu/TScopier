@@ -11,10 +11,7 @@ import type {
 import { clampPendingExpiryHours } from './manualSettings'
 import type { PlanSingleManualOrdersArgs } from './planSingleManualOrders'
 import { planRangeSplit } from './rangeSplit'
-import {
-  distributeCountAcrossTpBuckets,
-  resolveTpBucketRows,
-} from './tpBucketDistribution'
+import { buildDistributedPerLegTakeProfits } from './tpBucketDistribution'
 
 export interface PlanMultiManualOrdersArgs {
   orderBase: Omit<OrderSendArgs, 'volume' | 'stoploss' | 'takeprofit' | 'expiration' | 'expirationType'>
@@ -125,31 +122,30 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
   const stepPriceOffset = split.stepPriceOffset
   const rangeFallbackReason = split.fallbackReason
 
-  const { bucketRows } = resolveTpBucketRows(finalTps, manual.tp_lots)
-  const distributeCount = (count: number): number[] =>
-    distributeCountAcrossTpBuckets(count, bucketRows)
-
-  const tpForBucket = (b: number): number | null => {
+  const totalLegsForTp = immediateLegs + effectiveRangeLegs
+  const perLegTpPrices = buildDistributedPerLegTakeProfits({
+    openLegCount: totalLegsForTp,
+    finalTps,
+    tpLots: manual.tp_lots,
+  })
+  const tpForLegIndex = (idx: number): number | null => {
     if (finalTps.length === 0) return null
-    return finalTps[b] ?? finalTps[finalTps.length - 1] ?? null
+    const price = perLegTpPrices[idx]
+    if (typeof price === 'number' && Number.isFinite(price) && price > 0) return price
+    return finalTps[finalTps.length - 1] ?? null
   }
 
-  const immediateCounts = distributeCount(immediateLegs)
-  const rangeCounts = distributeCount(effectiveRangeLegs)
-
   const orders: OrderSendArgs[] = []
-  for (let b = 0; b < bucketRows.length; b++) {
-    const tpPrice = tpForBucket(b)
-    for (let k = 0; k < (immediateCounts[b] ?? 0); k++) {
-      orders.push({
-        ...orderBase,
-        volume: targetLeg,
-        stoploss: roundPrice(finalSl),
-        takeprofit: roundPrice(tpPrice),
-        ...expirationFields,
-        comment: `${commentPrefix}:tp${b + 1}.${k + 1}`,
-      })
-    }
+  for (let i = 0; i < immediateLegs; i++) {
+    const tpPrice = tpForLegIndex(i)
+    orders.push({
+      ...orderBase,
+      volume: targetLeg,
+      stoploss: roundPrice(finalSl),
+      takeprofit: roundPrice(tpPrice),
+      ...expirationFields,
+      comment: `${commentPrefix}:tp${i + 1}`,
+    })
   }
 
   const virtualPendings: VirtualPendingLeg[] = []
@@ -158,37 +154,35 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
     const expiryHours = pendHours > 0 ? pendHours : undefined
 
     let stepIdx = 1
-    for (let b = 0; b < bucketRows.length; b++) {
-      const tpPrice = tpForBucket(b)
-      for (let k = 0; k < (rangeCounts[b] ?? 0); k++) {
-        virtualPendings.push({
-          stepIdx,
-          stepPriceOffset,
-          isBuy,
-          volume: targetLeg,
-          stoploss: finalSl,
-          takeprofit: tpPrice,
-          slippage: slippage ?? 20,
-          comment: `${commentPrefix}:rg${stepIdx}.tp${b + 1}`,
-          expertID: expertId,
-          expiryHours,
-        })
-        stepIdx += 1
-      }
+    for (let i = immediateLegs; i < totalLegsForTp; i++) {
+      const tpPrice = tpForLegIndex(i)
+      virtualPendings.push({
+        stepIdx,
+        stepPriceOffset,
+        isBuy,
+        volume: targetLeg,
+        stoploss: finalSl,
+        takeprofit: tpPrice,
+        slippage: slippage ?? 20,
+        comment: `${commentPrefix}:rg${stepIdx}.tp`,
+        expertID: expertId,
+        expiryHours,
+      })
+      stepIdx += 1
     }
   }
 
   if (effectiveRangeLegs === 0) {
     const remainderUnits = manualUnits - totalLegs * targetUnits
     if (remainderUnits >= minUnits && orders.length < ABS_MAX_LEGS) {
-      const tpPrice = tpForBucket(bucketRows.length - 1)
+      const tpPrice = tpForLegIndex(Math.max(0, totalLegsForTp - 1))
       orders.push({
         ...orderBase,
         volume: unitsToLot(remainderUnits),
         stoploss: roundPrice(finalSl),
         takeprofit: roundPrice(tpPrice),
         ...expirationFields,
-        comment: `${commentPrefix}:tp${bucketRows.length}.rem`,
+        comment: `${commentPrefix}:tp.rem`,
       })
     }
   }

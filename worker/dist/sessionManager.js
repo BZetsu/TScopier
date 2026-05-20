@@ -242,8 +242,24 @@ class UserSessionManager {
         return listener;
     }
     async backfillChannelHistory(userId, channelRowId, days) {
+        // Prefer the live listener (listener-only deploys). Avoids a second MTProto
+        // connection that would trigger AUTH_KEY_DUPLICATED.
+        if (workerConfig_1.workerConfig.runsListener) {
+            let listener = this.listeners.get(userId);
+            if (!listener?.isTelegramConnected()) {
+                try {
+                    listener = await this.ensureListener(userId);
+                }
+                catch {
+                    listener = undefined;
+                }
+            }
+            if (listener?.isTelegramConnected()) {
+                return listener.backfillChannelHistory(channelRowId, days);
+            }
+        }
         if (!workerConfig_1.workerConfig.runsBacktestHttp) {
-            throw new Error('Backtest not enabled on this worker');
+            throw new Error('Telegram listener is not connected. Link Telegram on Copier Engine, wait a few seconds, then refresh.');
         }
         return this.withEphemeralTelegram(userId, () => (0, backtestSync_1.runWithEphemeralListener)(this.supabase, userId, listener => listener.backfillChannelHistory(channelRowId, days)));
     }

@@ -509,6 +509,8 @@ export interface CopierEnginePageTranslations {
   removeAria: string
   analyzing: string
   profilePending: string
+  profileAnalyzeFailed: string
+  profileNoMessages: string
   profileType: string
   profileEntry: string
   profileTp: string
@@ -516,6 +518,7 @@ export interface CopierEnginePageTranslations {
   connectedBrokers: string
   connectToBroker: string
   addBrokerConnectionAria: string
+  removeBrokerConnectionAria: string
   noBrokersYet: string
   connectBrokerInConfig: string
   keywordsTitle: string
