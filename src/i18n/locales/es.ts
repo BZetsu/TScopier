@@ -157,6 +157,8 @@ export const es: Translations = {
       reconnectDroppedMany:
         '{count} cuentas perdieron la conexión con el broker. Usa Reconectar en cada una.',
       reconnectFailed: 'No se pudo reconectar el broker',
+      reconnectPasswordPrompt:
+        'La sesión del broker expiró en el servidor de trading. Introduce la contraseña de tu cuenta MT para reconectar:',
       deleteFailed: 'No se pudo eliminar la cuenta',
       deleteTitle: '¿Eliminar cuenta de trading?',
       deleteBody:
@@ -224,6 +226,8 @@ export const es: Translations = {
       statusPaused: 'Pausada',
       accountTypeLive: 'Real',
       accountTypeDemo: 'Demo',
+      statusDisconnected: 'Desconectado',
+      reconnect: 'Reconectar',
     },
   },
   copierLogs: {

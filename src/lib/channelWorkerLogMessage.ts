@@ -131,6 +131,9 @@ function translateBrokerError(message: string, cw: ChannelWorkerTranslations): s
   if (ticket) return interpolate(cw.errorTicketNotFound, { ticket: ticket[1] })
   const sym = message.match(/symbol not found:\s*([A-Z0-9._#+]+)/i)
   if (sym) return interpolate(cw.errorSymbolNotFound, { symbol: sym[1]!.toUpperCase() })
+  if (/not connected/i.test(message) || /broker session is not connected/i.test(message)) {
+    return cw.errorBrokerNotConnected
+  }
   return message
 }
 

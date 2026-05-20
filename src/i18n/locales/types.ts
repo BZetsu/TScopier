@@ -116,6 +116,8 @@ export interface DashboardLinkedAccountsTranslations {
   statusPaused: string
   accountTypeLive: string
   accountTypeDemo: string
+  statusDisconnected: string
+  reconnect: string
 }
 
 export interface DashboardTranslations {
@@ -242,6 +244,7 @@ export interface AccountConfigBrokerListTranslations {
   reconnectDroppedOne: string
   reconnectDroppedMany: string
   reconnectFailed: string
+  reconnectPasswordPrompt: string
   deleteFailed: string
   deleteTitle: string
   deleteBody: string

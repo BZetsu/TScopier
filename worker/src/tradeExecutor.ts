@@ -2,6 +2,8 @@ import { RealtimeChannel, SupabaseClient } from '@supabase/supabase-js'
 import {
   getMetatraderApi,
   hasMetatraderApiConfigured,
+  isBrokerDisconnectedMessage,
+  MT_SESSION_EXPIRED_HINT,
   mtPlatformFrom,
   MetatraderApiClient,
   MtOperation,
@@ -757,7 +759,10 @@ export class TradeExecutor {
           const row = payload.new as BrokerRow | undefined
           if (!row) return
           if (row.is_active === false) this.removeBrokerCache(row.id)
-          else this.upsertBrokerCache(row)
+          else {
+            this.upsertBrokerCache(row)
+            void this.pingBrokerSession(row)
+          }
         },
       )
       .subscribe()
@@ -2732,19 +2737,61 @@ export class TradeExecutor {
     }
   }
 
-  private async ensureBrokerSession(api: MetatraderApiClient, uuid: string, broker: BrokerRow): Promise<boolean> {
-    const now = Date.now()
-    const last = this.sessionPingAt.get(uuid) ?? 0
-    if (now - last < SESSION_PING_MIN_INTERVAL_MS) return true
-    const alive = await api.keepSessionAlive(uuid)
-    if (alive) this.sessionPingAt.set(uuid, now)
-    if (alive && broker.connection_status !== 'connected') {
+  private async markBrokerSessionDown(broker: BrokerRow, uuid: string, reason: string): Promise<void> {
+    this.sessionPingAt.delete(uuid)
+    console.warn(`[tradeExecutor] broker ${broker.id} session down: ${reason}`)
+    if (broker.connection_status !== 'error') {
+      broker.connection_status = 'error'
       void this.supabase
         .from('broker_accounts')
-        .update({ connection_status: 'connected' })
+        .update({ connection_status: 'error' })
         .eq('id', broker.id)
     }
-    return alive
+  }
+
+  private async pingBrokerSession(row: BrokerRow): Promise<void> {
+    const uuid = row.metaapi_account_id
+    if (!isMtUuid(uuid)) return
+    const api = this.apiFor(row)
+    if (!api) return
+    const alive = await api.keepSessionAlive(uuid!)
+    if (alive) {
+      this.sessionPingAt.set(uuid!, Date.now())
+      if (row.connection_status !== 'connected') {
+        row.connection_status = 'connected'
+        void this.supabase
+          .from('broker_accounts')
+          .update({ connection_status: 'connected' })
+          .eq('id', row.id)
+      }
+    } else {
+      await this.markBrokerSessionDown(row, uuid!, 'keepSessionAlive failed')
+    }
+  }
+
+  private async ensureBrokerSession(
+    api: MetatraderApiClient,
+    uuid: string,
+    broker: BrokerRow,
+    opts?: { force?: boolean },
+  ): Promise<boolean> {
+    const now = Date.now()
+    const last = this.sessionPingAt.get(uuid) ?? 0
+    if (!opts?.force && now - last < SESSION_PING_MIN_INTERVAL_MS) return true
+    const alive = await api.keepSessionAlive(uuid)
+    if (alive) {
+      this.sessionPingAt.set(uuid, now)
+      if (broker.connection_status !== 'connected') {
+        broker.connection_status = 'connected'
+        void this.supabase
+          .from('broker_accounts')
+          .update({ connection_status: 'connected' })
+          .eq('id', broker.id)
+      }
+      return true
+    }
+    await this.markBrokerSessionDown(broker, uuid, 'CheckConnect / ConnectByToken failed')
+    return false
   }
 
   private async sendOrder(
@@ -2796,14 +2843,17 @@ export class TradeExecutor {
       && parsedHasExplicitEntryAnchor(parsed)
 
     const [sessionOk, symbol, paramsFromRequested] = await Promise.all([
-      this.ensureBrokerSession(api, uuid, broker),
+      this.ensureBrokerSession(api, uuid, broker, { force: true }),
       this.resolveBrokerSymbol(uuid, requestedSymbol),
       this.getSymbolParams(uuid, requestedSymbol).catch(() => null),
     ])
     if (!sessionOk) {
-      console.warn(
-        `[tradeExecutor] broker ${broker.id} session check failed before order; attempting OrderSend anyway`,
-      )
+      await this.logSendSkipped(signal, broker, 'broker_session_not_connected', {
+        symbol: requestedSymbol,
+        metaapi_account_id: uuid,
+        hint: MT_SESSION_EXPIRED_HINT,
+      })
+      return {}
     }
     if (symbol.toUpperCase() !== requestedSymbol.toUpperCase()) {
       console.log(`[tradeExecutor] symbol resolved broker=${broker.id} ${requestedSymbol} → ${symbol}`)
@@ -3752,6 +3802,9 @@ export class TradeExecutor {
         return true
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
+        if (isBrokerDisconnectedMessage(msg)) {
+          await this.markBrokerSessionDown(broker, uuid, msg)
+        }
         console.error(
           `[tradeExecutor] OrderSend failed signal=${signal.id} broker=${broker.id} leg=${leg.idx + 1}/${totalCount} op=${args.operation} price=${args.price ?? 0}:`,
           msg,

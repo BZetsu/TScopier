@@ -131,7 +131,10 @@ export const channelWorkerEn: ChannelWorkerTranslations = {
     symbol_exempted_from_trading: 'symbol exempted from trading',
     symbol_not_in_whitelist: 'symbol not in whitelist',
     symbol_excluded: 'symbol excluded',
+    broker_session_not_connected: 'broker not connected — open Account Configuration and use Reconnect for this account',
   },
   errorTicketNotFound: 'Ticket {ticket} not found',
   errorSymbolNotFound: 'Symbol not found: {symbol}',
+  errorBrokerNotConnected:
+    'Broker not connected — in Account Configuration, use Reconnect and enter your MT password for this account',
 }

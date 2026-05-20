@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, useMemo, type ReactNode } from 'react'
+import { useEffect, useState, useMemo, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Plus, Trash2, Server, Activity, GitBranch, Eye, DollarSign, RefreshCw,
@@ -23,7 +23,10 @@ import { AddAccountModal } from '../../components/ui/AddAccountModal'
 import { BrokerServerSelect } from '../../components/ui/BrokerServerSelect'
 import { formatLocalCalendarDay } from '../../lib/dayStartBalance'
 import { metatraderApi } from '../../lib/metatraderapi'
-import { isLegacyBrokerLink, isMtSessionUuid } from '../../lib/brokerLink'
+import { isLegacyBrokerLink } from '../../lib/brokerLink'
+import { brokerCanReconnect } from '../../lib/brokerReconnect'
+import { useBrokerReconnect } from '../../hooks/useBrokerReconnect'
+import { useBrokerAccountsRealtime } from '../../hooks/useBrokerAccountsRealtime'
 import {
   inferBrokerLabelFromServer,
   resolveLinkedAccountType,
@@ -501,68 +504,27 @@ export function AccountConfigPage() {
     configDraft.manualSettings.range_distance_pips,
   ])
 
-  const [reconnectingBrokerIds, setReconnectingBrokerIds] = useState<Set<string>>(() => new Set())
-
-  const brokersNeedingReconnect = useMemo(
-    () => brokers.filter(b => b.connection_status === 'error' && isMtSessionUuid(b.metaapi_account_id)),
-    [brokers],
-  )
-
   const brokersNeedingRelink = useMemo(
     () => brokers.filter(b => isLegacyBrokerLink(b.metaapi_account_id)),
     [brokers],
   )
 
-  const reconnectBroker = useCallback(async (brokerId: string) => {
-    setReconnectingBrokerIds(prev => new Set(prev).add(brokerId))
-    setError('')
-    try {
-      let result = await metatraderApi.reconnect(brokerId)
-      const needsPassword =
-        result.connection_status !== 'connected'
-        && typeof result.message === 'string'
-        && /session expired|not connected|password/i.test(result.message)
-      if (needsPassword) {
-        const entered = window.prompt(
-          'Your broker session expired on the trade server. Enter your MT account password to reconnect:',
-        )
-        if (!entered?.trim()) {
-          setError(result.message ?? bl.reconnectFailed)
-          return
-        }
-        result = await metatraderApi.reconnect(brokerId, entered.trim())
-      }
-      setBrokers(prev =>
-        prev.map(b => {
-          if (b.id !== brokerId) return b
-          if (result.connection_status !== 'connected') return { ...b, connection_status: 'error' as const }
-          return {
-            ...b,
-            connection_status: 'connected' as const,
-            last_synced_at: new Date().toISOString(),
-            ...(result.summary
-              ? {
-                  last_balance: result.summary.balance ?? b.last_balance,
-                  last_equity: result.summary.equity ?? b.last_equity,
-                  last_currency: result.summary.currency ?? b.last_currency,
-                }
-              : {}),
-          }
-        }),
-      )
-      if (result.connection_status !== 'connected' && result.message) {
-        setError(result.message)
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : bl.reconnectFailed)
-    } finally {
-      setReconnectingBrokerIds(prev => {
-        const next = new Set(prev)
-        next.delete(brokerId)
-        return next
-      })
-    }
-  }, [bl.reconnectFailed])
+  const {
+    reconnectBroker,
+    reconnectingBrokerIds,
+    brokersNeedingReconnect,
+    isReconnecting: isBrokerReconnecting,
+  } = useBrokerReconnect({
+    brokers,
+    setBrokers,
+    autoReconnect: true,
+    onError: setError,
+    onClearError: () => setError(''),
+    reconnectFailedLabel: bl.reconnectFailed,
+    passwordPrompt: bl.reconnectPasswordPrompt,
+  })
+
+  useBrokerAccountsRealtime(user?.id, setBrokers)
 
   const tpLegPercentTotal = useMemo(() => {
     const rows = configDraft.manualSettings.tp_lots ?? DEFAULT_MANUAL_TP_LOTS
@@ -1184,7 +1146,7 @@ export function AccountConfigPage() {
                 : broker.connection_status === 'connected' ? 'success'
                 : broker.connection_status === 'error' ? 'error'
                 : 'neutral'
-              const isReconnecting = reconnectingBrokerIds.has(broker.id)
+              const isReconnecting = isBrokerReconnecting(broker.id)
               const statusLabel = !broker.is_active
                 ? bl.statusPaused
                 : broker.connection_status === 'connected'
@@ -1232,7 +1194,7 @@ export function AccountConfigPage() {
                           disabled={togglingBrokerId === broker.id}
                         />
                       </div>
-                      {broker.connection_status === 'error' && isMtSessionUuid(broker.metaapi_account_id) ? (
+                      {brokerCanReconnect(broker) ? (
                         <Button
                           type="button"
                           size="sm"

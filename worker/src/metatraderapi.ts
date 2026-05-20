@@ -418,6 +418,14 @@ export function isMtSessionGoneMessage(message: string): boolean {
   )
 }
 
+/** OrderSend/CheckConnect rejected because the MT terminal session is offline. */
+export function isBrokerDisconnectedMessage(message: string): boolean {
+  const m = message.trim().toLowerCase()
+  if (!m) return false
+  if (isMtSessionGoneMessage(message)) return true
+  return m.includes('not connected') || m.includes('broker session is not connected')
+}
+
 export function isMtSessionGoneError(err: unknown): boolean {
   if (err instanceof MetatraderApiError) return isMtSessionGoneMessage(err.message)
   if (err instanceof Error) return isMtSessionGoneMessage(err.message)

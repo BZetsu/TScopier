@@ -125,4 +125,5 @@ export interface ChannelWorkerTranslations {
   skipReasons: Record<string, string>
   errorTicketNotFound: string
   errorSymbolNotFound: string
+  errorBrokerNotConnected: string
 }
