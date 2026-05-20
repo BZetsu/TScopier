@@ -31,6 +31,7 @@ const channelActiveTradeParams_1 = require("./channelActiveTradeParams");
 const managementPendingLegs_1 = require("./managementPendingLegs");
 const pipelineTimestamps_1 = require("./pipelineTimestamps");
 const postFillFollowUp_1 = require("./postFillFollowUp");
+const orderModifyBenign_1 = require("./orderModifyBenign");
 const channelKeywordsCache_1 = require("./channelKeywordsCache");
 /** When true (default), channel-attached signals only execute if MTProto is connected in this process. */
 function telegramLiveTradeGateEnabled() {
@@ -1664,7 +1665,7 @@ class TradeExecutor {
                 overrideTp: null,
                 strictEntryPrefetch: null,
                 openedTickets,
-                skipAlreadySynced: false,
+                skipAlreadySynced: true,
             });
         }
         catch (err) {
@@ -3640,20 +3641,22 @@ class TradeExecutor {
             }
             catch (err) {
                 const msg = err instanceof Error ? err.message : String(err);
+                const benign = (0, orderModifyBenign_1.isBenignOrderModifyError)(msg);
                 await this.supabase.from('trade_execution_logs').insert({
                     user_id: signal.user_id,
                     signal_id: signal.id,
                     broker_account_id: broker.id,
                     action: `mgmt_${action}`,
-                    status: 'failed',
+                    status: benign ? 'success' : 'failed',
                     request_payload: {
                         ticket,
                         action,
                         basket_anchor_signal_id: trade.signal_id,
                         mgmt_scope: replyScoped ? 'reply_basket' : 'channel',
                         mgmt_parent_signal_id: signal.parent_signal_id,
+                        already_synced: benign || undefined,
                     },
-                    error_message: msg,
+                    error_message: benign ? null : msg,
                 });
             }
         }));

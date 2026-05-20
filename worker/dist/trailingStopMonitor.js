@@ -5,6 +5,7 @@ const signalPip_1 = require("./signalPip");
 const trailingStop_1 = require("./trailingStop");
 const metatraderapi_1 = require("./metatraderapi");
 const mtApiByAccount_1 = require("./mtApiByAccount");
+const orderModifyBenign_1 = require("./orderModifyBenign");
 const monitorIdleGate_1 = require("./monitorIdleGate");
 const ACTIVE_MS = (0, monitorIdleGate_1.monitorActiveIntervalMs)('TRAILING_STOP_TICK_MS', 1500);
 const IDLE_MS = (0, monitorIdleGate_1.monitorIdleIntervalMs)('TRAILING_STOP_IDLE_MS', 60000);
@@ -209,7 +210,8 @@ class TrailingStopMonitor {
         }
         catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
-            const benign = /not\s+found|already\s+closed|invalid\s+ticket|no\s+such\s+order/i.test(msg);
+            const benign = /not\s+found|already\s+closed|invalid\s+ticket|no\s+such\s+order/i.test(msg)
+                || (0, orderModifyBenign_1.isBenignOrderModifyError)(msg);
             if (benign) {
                 await this.supabase
                     .from('trades')

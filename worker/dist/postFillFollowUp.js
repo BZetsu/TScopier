@@ -7,6 +7,7 @@ const calendarProvider_1 = require("./newsTrading/calendarProvider");
 const settings_1 = require("./newsTrading/settings");
 const manualStops_1 = require("./manualPlanning/manualStops");
 const manualStops_2 = require("./manualPlanning/manualStops");
+const orderModifyBenign_1 = require("./orderModifyBenign");
 function newsBlackoutPreFillEnabled() {
     const v = String(process.env.EXECUTOR_NEWS_BLACKOUT_PRE_FILL ?? 'false').toLowerCase();
     return v === '1' || v === 'true' || v === 'yes';
@@ -94,6 +95,8 @@ async function applyPipAndChannelStops(args) {
         }
         catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
+            if ((0, orderModifyBenign_1.isBenignOrderModifyError)(msg))
+                continue;
             console.warn(`[postFillFollowUp] OrderModify stops failed signal=${signal.id} ticket=${leg.ticket}: ${msg}`);
         }
     }

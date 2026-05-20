@@ -143,4 +143,5 @@ export const channelWorkerEs: ChannelWorkerTranslations = {
   errorSymbolNotFound: 'Símbolo no encontrado: {symbol}',
   errorBrokerNotConnected:
     'Broker no conectado — en Configuración de cuenta, use Reconnect e ingrese su contraseña MT',
+  errorStopsAlreadySet: 'El SL y el TP ya estaban configurados en el broker (no se requirió cambio).',
 }

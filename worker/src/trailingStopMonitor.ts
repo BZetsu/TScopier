@@ -12,6 +12,7 @@ import {
   type SymbolParams,
 } from './metatraderapi'
 import { apiForMetaapiAccount, loadPlatformByMetaapiId, type PlatformByMetaapiId } from './mtApiByAccount'
+import { isBenignOrderModifyError } from './orderModifyBenign'
 import {
   applyShardToQuery,
   hasWorkOnShard,
@@ -279,6 +280,7 @@ export class TrailingStopMonitor {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       const benign = /not\s+found|already\s+closed|invalid\s+ticket|no\s+such\s+order/i.test(msg)
+        || isBenignOrderModifyError(msg)
       if (benign) {
         await this.supabase
           .from('trades')

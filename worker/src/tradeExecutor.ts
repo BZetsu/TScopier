@@ -127,6 +127,7 @@ import {
 } from './managementPendingLegs'
 import { parsePipelineTimestamps, pipelineSummaryPayload, type PipelineTimestamps } from './pipelineTimestamps'
 import { applyPostFillFollowUp, type PostFillTradeLeg } from './postFillFollowUp'
+import { isBenignOrderModifyError } from './orderModifyBenign'
 import { invalidateChannelParseCache } from './channelKeywordsCache'
 
 /** When true (default), channel-attached signals only execute if MTProto is connected in this process. */
@@ -2100,7 +2101,7 @@ export class TradeExecutor {
         overrideTp: null,
         strictEntryPrefetch: null,
         openedTickets,
-        skipAlreadySynced: false,
+        skipAlreadySynced: true,
       })
     } catch (err) {
       console.warn(
@@ -4299,20 +4300,22 @@ export class TradeExecutor {
         })
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
+        const benign = isBenignOrderModifyError(msg)
         await this.supabase.from('trade_execution_logs').insert({
           user_id: signal.user_id,
           signal_id: signal.id,
           broker_account_id: broker.id,
           action: `mgmt_${action}`,
-          status: 'failed',
+          status: benign ? 'success' : 'failed',
           request_payload: {
             ticket,
             action,
             basket_anchor_signal_id: trade.signal_id,
             mgmt_scope: replyScoped ? 'reply_basket' : 'channel',
             mgmt_parent_signal_id: signal.parent_signal_id,
+            already_synced: benign || undefined,
           },
-          error_message: msg,
+          error_message: benign ? null : msg,
         })
       }
     }))

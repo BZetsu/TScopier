@@ -5,6 +5,7 @@ exports.tryApplyBasketFollowUpToNewFill = tryApplyBasketFollowUpToNewFill;
 const normalizeManualSettings_1 = require("./manualPlanning/normalizeManualSettings");
 const channelActiveTradeParams_1 = require("./channelActiveTradeParams");
 const tpBucketDistribution_1 = require("./manualPlanning/tpBucketDistribution");
+const orderModifyBenign_1 = require("./orderModifyBenign");
 function isParameterRefreshParsed(parsed) {
     if (!parsed)
         return false;
@@ -171,13 +172,14 @@ async function tryApplyBasketFollowUpToNewFill(supabase, api, args) {
         }
         catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
+            const benign = (0, orderModifyBenign_1.isBenignOrderModifyError)(msg);
             await supabase.from('trade_execution_logs').insert({
                 user_id: args.userId,
                 signal_id: row.id,
                 broker_account_id: args.brokerAccountId,
                 action: 'mgmt_range_leg_followup',
-                status: 'failed',
-                error_message: msg,
+                status: benign ? 'success' : 'failed',
+                error_message: benign ? null : msg,
                 request_payload: {
                     ticket: args.ticket,
                     trade_id: args.tradeRowId,
