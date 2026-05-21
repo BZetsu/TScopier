@@ -212,7 +212,7 @@ export class UserListener {
   private lastReconnectAt = 0
   private consecutiveProbeFailures = 0
   private lastSavedSession: string
-  private onSignalParsed: ((row: SignalRow) => void) | null = null
+  private onSignalParsed: ((row: SignalRow) => boolean) | null = null
 
   constructor(
     userId: string,
@@ -227,7 +227,7 @@ export class UserListener {
   }
 
   /** Immediate trade dispatch after parse (avoids waiting on Supabase Realtime). */
-  setOnSignalParsed(handler: ((row: SignalRow) => void) | null): void {
+  setOnSignalParsed(handler: ((row: SignalRow) => boolean) | null): void {
     this.onSignalParsed = handler
   }
 
@@ -1043,10 +1043,26 @@ export class UserListener {
       `[userListener] dispatch signal user=${this.userId} signalId=${signalId} channelRow=${channelRow.id} messageId=${messageId}`,
     )
 
-    if (this.onSignalParsed) {
-      this.onSignalParsed(dispatchRow)
-    }
-    if (workerConfig.runsListener && !workerConfig.runsTrade) {
+    const dispatchedInProcess = this.onSignalParsed ? this.onSignalParsed(dispatchRow) === true : false
+    const shouldPush = workerConfig.runsListener && (!workerConfig.runsTrade || !dispatchedInProcess)
+    // #region agent log
+    fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'551fbc'},body:JSON.stringify({sessionId:'551fbc',runId:'latency-v2',hypothesisId:'H4',location:'userListener.ts:dispatch-route',message:'dispatch route decision',data:{signalId,userId:this.userId,dispatchedInProcess,shouldPush,runsTrade:workerConfig.runsTrade,runsListener:workerConfig.runsListener},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
+    void this.supabase.from('trade_execution_logs').insert({
+      user_id: this.userId,
+      signal_id: signalId,
+      action: 'dispatch_route_decision',
+      status: 'success',
+      request_payload: {
+        run_id: 'latency-v2',
+        hypothesis_id: 'H4',
+        dispatched_in_process: dispatchedInProcess,
+        should_push: shouldPush,
+        runs_trade: workerConfig.runsTrade,
+        runs_listener: workerConfig.runsListener,
+      },
+    }).catch(() => {})
+    if (shouldPush) {
       pushParsedSignalToTradeWorker(dispatchRow)
     }
 

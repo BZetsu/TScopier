@@ -894,8 +894,8 @@ export class TradeExecutor {
   /**
    * In-process fast path (monolith). Live buy/sell bypass the queue when role allows.
    */
-  dispatchParsedSignal(row: SignalRow): void {
-    this.acceptDispatchSignal(row, {
+  dispatchParsedSignal(row: SignalRow): boolean {
+    return this.acceptDispatchSignal(row, {
       priority: dispatchPriorityForAction(parsedAction(row.parsed_data)),
       source: 'in_process',
     })
