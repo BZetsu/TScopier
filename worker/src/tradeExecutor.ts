@@ -547,6 +547,7 @@ export class TradeExecutor {
   /** Cancels TSCopier broker pendings past `pending_expiry_hours` (1–24) when env enabled. */
   private brokerPendingSweepTimer: NodeJS.Timeout | null = null
   private sessionHeartbeatTimer: NodeJS.Timeout | null = null
+  private symbolCacheKeepaliveTimer: NodeJS.Timeout | null = null
   private signalsChannel: RealtimeChannel | null = null
   private brokersChannel: RealtimeChannel | null = null
   private channelsChannel: RealtimeChannel | null = null
@@ -628,6 +629,14 @@ export class TradeExecutor {
       void this.sessionHeartbeatTick()
     }, BROKER_SESSION_HEARTBEAT_MS)
     this.sessionHeartbeatTimer.unref?.()
+    // Re-fetch every cached symbol list / params entry before its TTL expires
+    // so the live-entry hot path always finds a warm cache. Without this,
+    // signal symbols outside `symbol_to_trade` fall back to a cold broker
+    // round-trip (~1.5s) each time and inflate `send_order_prep_ms`.
+    this.symbolCacheKeepaliveTimer = setInterval(() => {
+      void this.symbolCacheKeepaliveTick()
+    }, SYMBOL_CACHE_KEEPALIVE_MS)
+    this.symbolCacheKeepaliveTimer.unref?.()
   }
 
   stop() {
@@ -637,6 +646,8 @@ export class TradeExecutor {
     this.brokerPendingSweepTimer = null
     if (this.sessionHeartbeatTimer) clearInterval(this.sessionHeartbeatTimer)
     this.sessionHeartbeatTimer = null
+    if (this.symbolCacheKeepaliveTimer) clearInterval(this.symbolCacheKeepaliveTimer)
+    this.symbolCacheKeepaliveTimer = null
     if (this.signalsChannel) { void this.supabase.removeChannel(this.signalsChannel); this.signalsChannel = null }
     if (this.brokersChannel) { void this.supabase.removeChannel(this.brokersChannel); this.brokersChannel = null }
     if (this.channelsChannel) { void this.supabase.removeChannel(this.channelsChannel); this.channelsChannel = null }
@@ -715,6 +726,51 @@ export class TradeExecutor {
       const alive = await api.keepSessionAlive(uuid!)
       if (alive) this.sessionPingAt.set(uuid!, Date.now())
     }
+  }
+
+  /**
+   * Re-fetch every entry currently in `symbolListCache` and `symbolCache` so
+   * the next live signal hits a warm cache. Force-bypasses the TTL guard by
+   * clearing `loadedAt`; the on-demand fetch will repopulate. Background
+   * only — never blocks a signal.
+   */
+  private async symbolCacheKeepaliveTick(): Promise<void> {
+    if (!hasMetatraderApiConfigured()) return
+    if (!this.prewarmSymbolsEnabled()) return
+
+    const uuidsWithList = [...this.symbolListCache.keys()]
+    await Promise.all(uuidsWithList.map(async uuid => {
+      try {
+        const fresh = await this.fetchSymbolList(uuid)
+        if (fresh) this.symbolListCache.set(uuid, fresh)
+      } catch { /* best-effort */ }
+    }))
+
+    const paramsKeys = [...this.symbolCache.keys()]
+    await Promise.all(paramsKeys.map(async key => {
+      const sepIdx = key.indexOf(':')
+      if (sepIdx < 0) return
+      const uuid = key.slice(0, sepIdx)
+      const symbol = key.slice(sepIdx + 1)
+      if (!isMtUuid(uuid) || !symbol) return
+      const api = this.apiForUuid(uuid)
+      if (!api) return
+      try {
+        const p: SymbolParams = await api.symbolParams(uuid, symbol)
+        const n = normalizeSymbolParams(p)
+        this.symbolCache.set(key, {
+          digits: n.digits ?? 5,
+          point: n.point ?? 0.00001,
+          minLot: n.minLot ?? 0.01,
+          maxLot: n.maxLot ?? 100,
+          lotStep: n.lotStep ?? 0.01,
+          contractSize: Number.isFinite(n.contractSize) && (n.contractSize ?? 0) > 0 ? Number(n.contractSize) : null,
+          stopsLevel: Math.max(0, n.stopsLevel ?? 0),
+          freezeLevel: Math.max(0, n.freezeLevel ?? 0),
+          loadedAt: Date.now(),
+        })
+      } catch { /* best-effort */ }
+    }))
   }
 
   private async reconnectCachedBrokers() {
