@@ -193,6 +193,7 @@ export class UserListener {
   private userId: string
   private supabase: SupabaseClient
   private monitoredChannels = new Set<string>()
+  private channelRowCache = new Map<string, ChannelRow>()
   private currentHandler: Handler | null = null
   private currentEventBuilder: NewMessage | null = null
   private startedAt = 0
@@ -291,6 +292,7 @@ export class UserListener {
   private clearDialogsCache() {
     this.dialogsCache = null
     this.dialogsCacheAt = 0
+    this.channelRowCache.clear()
   }
 
   private stopTimer(field: 'watchdogTimer' | 'safetyPollTimer' | 'sessionPersistTimer' | 'replyChainSweepTimer') {
@@ -422,16 +424,24 @@ export class UserListener {
   private async loadChannels(): Promise<Set<string>> {
     const { data } = await this.supabase
       .from('telegram_channels')
-      .select('channel_id, channel_username')
+      .select('id, channel_id, channel_username, last_seen_message_id')
       .eq('user_id', this.userId)
       .eq('is_active', true)
 
     const next = new Set<string>()
-    for (const ch of data ?? []) {
+    this.channelRowCache.clear()
+    for (const ch of (data ?? []) as ChannelRow[]) {
       if (ch.channel_id) {
-        for (const v of toChannelIdVariants(ch.channel_id)) next.add(v)
+        for (const v of toChannelIdVariants(ch.channel_id)) {
+          next.add(v)
+          this.channelRowCache.set(v, ch)
+        }
       }
-      if (ch.channel_username) next.add(ch.channel_username.toLowerCase())
+      if (ch.channel_username) {
+        const lower = ch.channel_username.toLowerCase()
+        next.add(lower)
+        this.channelRowCache.set(lower, ch)
+      }
     }
     return next
   }
@@ -793,29 +803,40 @@ export class UserListener {
     )
 
     // Prefer channel_id matching across normalized variants, fallback to username.
+    // Use in-memory cache first (populated by loadChannels), fall back to DB.
     let channelRow: ChannelRow | null = null
-    if (chatIdVariants.length > 0) {
-      const idRes = await this.supabase
-        .from('telegram_channels')
-        .select('id, channel_id, channel_username, last_seen_message_id')
-        .eq('user_id', this.userId)
-        .eq('is_active', true)
-        .in('channel_id', chatIdVariants)
-        .limit(1)
-        .maybeSingle()
-      channelRow = (idRes.data as ChannelRow | null) ?? null
+    for (const v of chatIdVariants) {
+      channelRow = this.channelRowCache.get(v) ?? null
+      if (channelRow) break
+    }
+    if (!channelRow && chatUsername) {
+      channelRow = this.channelRowCache.get(chatUsername.toLowerCase()) ?? null
     }
 
-    if (!channelRow && chatUsername) {
-      const usernameRes = await this.supabase
-        .from('telegram_channels')
-        .select('id, channel_id, channel_username, last_seen_message_id')
-        .eq('user_id', this.userId)
-        .eq('is_active', true)
-        .eq('channel_username', chatUsername)
-        .limit(1)
-        .maybeSingle()
-      channelRow = (usernameRes.data as ChannelRow | null) ?? null
+    if (!channelRow) {
+      // Cache miss — fall back to Supabase (handles race with channel activation)
+      if (chatIdVariants.length > 0) {
+        const idRes = await this.supabase
+          .from('telegram_channels')
+          .select('id, channel_id, channel_username, last_seen_message_id')
+          .eq('user_id', this.userId)
+          .eq('is_active', true)
+          .in('channel_id', chatIdVariants)
+          .limit(1)
+          .maybeSingle()
+        channelRow = (idRes.data as ChannelRow | null) ?? null
+      }
+      if (!channelRow && chatUsername) {
+        const usernameRes = await this.supabase
+          .from('telegram_channels')
+          .select('id, channel_id, channel_username, last_seen_message_id')
+          .eq('user_id', this.userId)
+          .eq('is_active', true)
+          .eq('channel_username', chatUsername)
+          .limit(1)
+          .maybeSingle()
+        channelRow = (usernameRes.data as ChannelRow | null) ?? null
+      }
     }
 
     if (!channelRow) {
@@ -1611,6 +1632,7 @@ export class UserListener {
     // session and may not survive the reconnect cleanly.
     this.removeCurrentHandler()
     this.monitoredChannels.clear()
+    this.channelRowCache.clear()
     await this.refreshChannelSubscription()
     // Do NOT run history catch-up here: `runCatchUp` walks Telegram history and
     // calls `logSignal` for each candidate, which can re-dispatch parse/trade
