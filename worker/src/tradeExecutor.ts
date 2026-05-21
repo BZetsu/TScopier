@@ -3006,6 +3006,11 @@ export class TradeExecutor {
     }
 
     if (!liveEntryFast) {
+      if (isManual && manual.add_new_trades_to_existing === false && !parsedSignalHasExplicitStops(parsed)) {
+        await this.logSendSkipped(signal, broker, 'explicit_stops_required_when_add_to_existing_off', { symbol })
+        return { finalizeSkipReason: 'explicit_stops_required_when_add_to_existing_off' }
+      }
+
       if (isManual && manual.close_on_opposite_signal === true) {
         await this.closeOppositeDirectionTrades(signal, parsed, broker, symbol)
       }
