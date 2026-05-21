@@ -207,9 +207,6 @@ export function pushParsedSignalToTradeWorker(row: TradeSignalPushPayload): void
   }
 
   void (async () => {
-    // #region agent log
-    fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'551fbc'},body:JSON.stringify({sessionId:'551fbc',runId:'latency-v1',hypothesisId:'H1',location:'tradeSignalPush.ts:push-start',message:'push start',data:{signalId:row.id,userId:row.user_id,action,baseUrl,timeoutMs,maxAttempts:PUSH_MAX_ATTEMPTS},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
     await logPushAttemptToDb(row, 'success', {
       run_id: 'latency-v3',
       phase: 'start',
@@ -221,9 +218,6 @@ export function pushParsedSignalToTradeWorker(row: TradeSignalPushPayload): void
     for (let attempt = 1; attempt <= PUSH_MAX_ATTEMPTS; attempt++) {
       const attemptStartedAt = Date.now()
       const result = await postDispatchSignal(url, token, signalBody, priority, timeoutMs)
-      // #region agent log
-      fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'551fbc'},body:JSON.stringify({sessionId:'551fbc',runId:'latency-v1',hypothesisId:'H1',location:'tradeSignalPush.ts:push-attempt',message:'push attempt result',data:{signalId:row.id,userId:row.user_id,attempt,ok:result.ok,status:result.status,retryable:result.retryable,elapsedMs:Date.now()-attemptStartedAt,detail:result.detail.slice(0,120)},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
       await logPushAttemptToDb(row, result.ok ? 'success' : 'failed', {
         run_id: 'latency-v3',
         phase: 'attempt',
