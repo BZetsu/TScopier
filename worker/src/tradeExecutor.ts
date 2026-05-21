@@ -216,6 +216,13 @@ interface BrokerRow {
   last_currency: string | null
   performance_baseline_balance?: number | null
   channel_message_filters?: ChannelMessageFiltersMap | null
+  /**
+   * Wall time the broker's `is_active` most recently flipped to TRUE
+   * (maintained by `broker_accounts_stamp_activated_at` trigger). Used to
+   * reject parsed signals that pre-date a reactivation, so sweep replay
+   * doesn't fire trades that piled up while the broker was disabled.
+   */
+  last_activated_at?: string | null
 }
 
 interface SymbolCacheEntry {
@@ -582,6 +589,14 @@ export class TradeExecutor {
   private symbolParamsInflight = new Map<string, Promise<SymbolCacheEntry | null>>()
   /** After OrderSend "Not connected", block re-trading until user reconnects. */
   private sessionOrderBlocked = new Set<string>()
+  /**
+   * Per-broker "last reactivated" wall time. Set whenever `is_active` flips
+   * to true (including the initial load when the broker is already active).
+   * Signals whose `created_at` is older than this timestamp are treated as
+   * stale-after-outage and skipped, so the 5-minute sweep can't fire trades
+   * that piled up while the broker was disabled.
+   */
+  private brokerActivatedAt = new Map<string, number>()
   constructor(
     private readonly supabase: SupabaseClient,
     private readonly sessionManager?: UserSessionManager,
@@ -694,12 +709,14 @@ export class TradeExecutor {
     }
     this.brokersByUser.clear()
     this.brokersById.clear()
+    this.brokerActivatedAt.clear()
     for (const row of (data ?? []) as BrokerRow[]) {
       const normalized = this.normalizeBrokerRow(row)
       this.brokersById.set(row.id, normalized)
       const arr = this.brokersByUser.get(row.user_id) ?? []
       arr.push(normalized)
       this.brokersByUser.set(row.user_id, arr)
+      this.trackBrokerActivation(normalized)
     }
     console.log(`[tradeExecutor] cached ${this.brokersById.size} broker accounts across ${this.brokersByUser.size} users`)
     const pingOnStart = String(process.env.BROKER_PING_ON_WORKER_START ?? 'true').toLowerCase()
@@ -814,6 +831,7 @@ export class TradeExecutor {
     if (normalized.connection_status === 'connected') {
       this.sessionOrderBlocked.delete(row.id)
     }
+    this.trackBrokerActivation(normalized, previous)
     const userId = row.user_id
     const list = (this.brokersByUser.get(userId) ?? []).filter(b => b.id !== row.id)
     if (normalized.is_active) list.push(normalized)
@@ -830,6 +848,45 @@ export class TradeExecutor {
     this.brokersById.delete(id)
     const list = (this.brokersByUser.get(row.user_id) ?? []).filter(b => b.id !== id)
     this.brokersByUser.set(row.user_id, list)
+    this.brokerActivatedAt.delete(id)
+  }
+
+  /**
+   * Maintain `brokerActivatedAt` so the executor can reject signals that
+   * pre-date a reactivation. Prefers the DB-persisted `last_activated_at`
+   * column (set by the `broker_accounts_stamp_activated_at` trigger) so the
+   * value survives worker restarts. Falls back to `Date.now()` if the row
+   * lacks the field but is currently active.
+   */
+  private trackBrokerActivation(current: BrokerRow, previous?: BrokerRow): void {
+    if (!current.is_active) return
+    const dbStampMs = current.last_activated_at
+      ? Date.parse(current.last_activated_at)
+      : NaN
+    if (Number.isFinite(dbStampMs)) {
+      this.brokerActivatedAt.set(current.id, dbStampMs)
+      return
+    }
+    // Trigger missing (e.g. older DB): treat any false→true flip as a fresh
+    // activation and otherwise leave any existing memory value intact.
+    if (previous && previous.is_active === false) {
+      this.brokerActivatedAt.set(current.id, Date.now())
+    } else if (!this.brokerActivatedAt.has(current.id)) {
+      this.brokerActivatedAt.set(current.id, Date.now())
+    }
+  }
+
+  /** True iff the signal was created AFTER this broker was last reactivated. */
+  private brokerEligibleForSignal(broker: BrokerRow, signal: SignalRow): boolean {
+    const activatedAt = this.brokerActivatedAt.get(broker.id)
+    if (activatedAt == null) return true
+    const createdAtRaw = (signal as { created_at?: string | number | null }).created_at
+    if (createdAtRaw == null) return true
+    const createdMs = typeof createdAtRaw === 'number'
+      ? createdAtRaw
+      : Date.parse(String(createdAtRaw))
+    if (!Number.isFinite(createdMs)) return true
+    return createdMs >= activatedAt
   }
 
   // ── realtime ──────────────────────────────────────────────────────────
@@ -1326,10 +1383,29 @@ export class TradeExecutor {
       const action = String(parsed.action).toLowerCase()
       if (action === 'ignore') return
 
-      const brokers = (this.brokersByUser.get(row.user_id) ?? []).filter(b =>
+      const allMatchingBrokers = (this.brokersByUser.get(row.user_id) ?? []).filter(b =>
         b.is_active && isMtUuid(b.metaapi_account_id) && channelMatchesBrokerSignal(b, row.channel_id),
       )
+      const brokers = allMatchingBrokers.filter(b => this.brokerEligibleForSignal(b, row))
       if (!brokers.length) {
+        if (allMatchingBrokers.length > 0) {
+          // A matching broker exists but it was reactivated AFTER the signal
+          // arrived — i.e. the signal piled up while the broker was disabled.
+          // Marking as skipped here prevents the 5-min sweep from picking it
+          // up the moment the user re-enables a broker.
+          console.warn(
+            `[tradeExecutor] skip signal ${row.id}: all matching brokers reactivated after signal arrival (stale-after-outage)`,
+          )
+          await this.logDispatchSkipped(row, 'broker_reactivated_after_signal', {
+            matching_brokers: allMatchingBrokers.length,
+            broker_activated_at: allMatchingBrokers.map(b => ({
+              id: b.id,
+              activated_at: this.brokerActivatedAt.get(b.id) ?? null,
+            })),
+            signal_created_at: row.created_at ?? null,
+          })
+          return
+        }
         console.warn(
           `[tradeExecutor] skip signal ${row.id}: no active broker matches channel=${row.channel_id ?? 'none'} (check Configure Trading channel selection)`,
         )
