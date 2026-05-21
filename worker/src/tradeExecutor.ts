@@ -1927,6 +1927,28 @@ export class TradeExecutor {
       newestTradeOpenedAt: anchor.newestOpenedAt,
       parsed,
     })
+    // Parameter follow-up (modify-only) must be explicitly linked by reply/thread/parent.
+    // Same-channel implicit bundling is too ambiguous and can hijack fresh entries.
+    if (!link.replyOk && !link.threadLinksAnchor && !link.parentLinksAnchor) {
+      try {
+        await this.supabase.from('trade_execution_logs').insert({
+          user_id: signal.user_id,
+          signal_id: signal.id,
+          broker_account_id: broker.id,
+          action: 'merge_routed_modify_only',
+          status: 'skipped',
+          request_payload: {
+            skip_reason: 'parameter_follow_up_requires_explicit_link',
+            symbol,
+            direction,
+            channel_id: signal.channel_id,
+            anchor_signal_id: anchor.anchorSignalId,
+            dt_ms: link.dtMs,
+          } as unknown as Record<string, unknown>,
+        })
+      } catch { /* best-effort */ }
+      return { handled: false }
+    }
     if (!link.isLinked) {
       try {
         await this.supabase.from('trade_execution_logs').insert({
