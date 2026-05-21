@@ -253,6 +253,18 @@ interface SymbolListCacheEntry {
 
 const SYMBOL_CACHE_TTL_MS = 10 * 60_000
 const SYMBOL_LIST_TTL_MS = 30 * 60_000
+/**
+ * How often the cache-keepalive sweep re-fetches symbol params + symbol lists
+ * that are already in cache. Keeps the live-entry hot path perpetually warm
+ * so `sendOrder` never has to wait on a cold `/SymbolParams` round-trip.
+ *
+ * Must be < SYMBOL_CACHE_TTL_MS (10 min) so entries are refreshed before they
+ * expire under low-signal-rate conditions.
+ */
+const SYMBOL_CACHE_KEEPALIVE_MS = Math.max(
+  30_000,
+  Math.min(SYMBOL_CACHE_TTL_MS - 60_000, Number(process.env.SYMBOL_CACHE_KEEPALIVE_MS ?? 5 * 60_000)),
+)
 const BROKER_SESSION_HEARTBEAT_MS = Math.max(
   5_000,
   Math.min(60_000, Number(process.env.BROKER_SESSION_HEARTBEAT_MS ?? 15_000)),
