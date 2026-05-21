@@ -259,13 +259,13 @@ const SESSION_PING_MIN_INTERVAL_MS = Math.max(
   Math.min(120_000, Number(process.env.BROKER_SESSION_PING_MIN_INTERVAL_MS ?? BROKER_SESSION_HEARTBEAT_MS)),
 )
 const SESSION_FAST_CHECK_STALE_MS = Math.max(
-  2_000,
-  Math.min(30_000, Number(process.env.BROKER_SESSION_FAST_CHECK_STALE_MS ?? 5_000)),
+  5_000,
+  Math.min(120_000, Number(process.env.BROKER_SESSION_FAST_CHECK_STALE_MS ?? 30_000)),
 )
 const MGMT_CLOSE_RETRY_MAX = Math.max(1, Math.min(5, Number(process.env.MGMT_CLOSE_RETRY_MAX ?? 2)))
 const MGMT_CLOSE_RETRY_DELAY_MS = Math.max(500, Math.min(5_000, Number(process.env.MGMT_CLOSE_RETRY_DELAY_MS ?? 2_000)))
 const EXECUTOR_PARSED_SWEEP_MS = monitorActiveIntervalMs('EXECUTOR_PARSED_SWEEP_MS', 3_000)
-const EXECUTOR_SWEEP_IDLE_MS = monitorIdleIntervalMs('EXECUTOR_SWEEP_IDLE_MS', 60_000)
+const EXECUTOR_SWEEP_IDLE_MS = monitorIdleIntervalMs('EXECUTOR_SWEEP_IDLE_MS', 5_000)
 /** Sweep + Realtime replay window; older `parsed` rows are not re-executed (live dispatch exempt). */
 const EXECUTOR_REPLAY_MAX_AGE_MS = Math.max(
   60_000,
@@ -701,8 +701,8 @@ export class TradeExecutor {
       const api = this.apiFor(row)
       if (!api) continue
       checks.push(
-        api.verifyTradingReady(uuid!).then(ready => {
-          if (ready) this.sessionPingAt.set(uuid!, Date.now())
+        api.keepSessionAlive(uuid!).then(alive => {
+          if (alive) this.sessionPingAt.set(uuid!, Date.now())
         }).catch(() => { /* non-fatal */ }),
       )
     }
@@ -1292,11 +1292,7 @@ export class TradeExecutor {
           // best-effort
         }
       } else if (anyOpened) {
-        if (liveFast) {
-          void this.markSignalExecuted(row.id)
-        } else {
-          await this.markSignalExecuted(row.id)
-        }
+        await this.markSignalExecuted(row.id)
       }
     } finally {
       const handleMs = Date.now() - handleStartMs
