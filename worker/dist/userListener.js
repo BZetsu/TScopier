@@ -774,6 +774,9 @@ class UserListener {
         const rawMessage = (message.text ?? message.message ?? '');
         const isReply = !!message.replyTo;
         const messageEpochSec = this.messageEpochSec(message);
+        // Stamp listener arrival as early as possible so telegram_to_listener_ms
+        // reflects only Telegram delivery time (not our dedup/parent lookup DB calls).
+        const tListenerReceived = Date.now();
         if (opts?.source === 'catchup' && messageEpochSec > 0) {
             const ageMs = Date.now() - messageEpochSec * 1000;
             if (ageMs > catchUpMaxAgeMs()) {
@@ -802,7 +805,6 @@ class UserListener {
             return false;
         }
         const signalId = (0, node_crypto_1.randomUUID)();
-        const tListenerReceived = Date.now();
         const pipelineTs = {
             t_telegram_event: messageEpochSec > 0 ? messageEpochSec * 1000 : undefined,
             t_listener_received: tListenerReceived,
