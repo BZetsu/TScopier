@@ -3179,14 +3179,35 @@ export class TradeExecutor {
       && signalEntryPriceStrictEnabled(manual)
       && parsedHasExplicitEntryAnchor(parsed)
 
+    const stampOnResolve = liveEntryFast && !!signal.pipeline_ts
+    const sessionPromise = (liveEntryFast
+      ? this.ensureBrokerSessionLiveFast(api, uuid, broker)
+      : this.ensureBrokerSession(api, uuid, broker, { force: true })
+    ).then(r => {
+      if (stampOnResolve && signal.pipeline_ts && signal.pipeline_ts.t_session_resolved == null) {
+        signal.pipeline_ts.t_session_resolved = Date.now()
+      }
+      return r
+    })
+    const symbolPromise = (liveEntryFast
+      ? this.resolveBrokerSymbolForLiveEntry(uuid, requestedSymbol)
+      : this.resolveBrokerSymbol(uuid, requestedSymbol)
+    ).then(r => {
+      if (stampOnResolve && signal.pipeline_ts && signal.pipeline_ts.t_symbol_resolved == null) {
+        signal.pipeline_ts.t_symbol_resolved = Date.now()
+      }
+      return r
+    })
+    const paramsPromise = this.getSymbolParams(uuid, requestedSymbol).catch(() => null).then(r => {
+      if (stampOnResolve && signal.pipeline_ts && signal.pipeline_ts.t_params_resolved == null) {
+        signal.pipeline_ts.t_params_resolved = Date.now()
+      }
+      return r
+    })
     const [sessionOk, symbol, paramsFromRequested] = await Promise.all([
-      liveEntryFast
-        ? this.ensureBrokerSessionLiveFast(api, uuid, broker)
-        : this.ensureBrokerSession(api, uuid, broker, { force: true }),
-      liveEntryFast
-        ? this.resolveBrokerSymbolForLiveEntry(uuid, requestedSymbol)
-        : this.resolveBrokerSymbol(uuid, requestedSymbol),
-      this.getSymbolParams(uuid, requestedSymbol).catch(() => null),
+      sessionPromise,
+      symbolPromise,
+      paramsPromise,
     ])
     if (liveEntryFast && signal.pipeline_ts && signal.pipeline_ts.t_send_caches_resolved == null) {
       signal.pipeline_ts.t_send_caches_resolved = Date.now()

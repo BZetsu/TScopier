@@ -17,6 +17,12 @@ export type PipelineTimestamps = {
    *   - send_plan_ms      = t_first_broker_send    - t_send_caches_resolved
    */
   t_send_caches_resolved?: number
+  /** Diagnostic: time the session ping promise resolved. */
+  t_session_resolved?: number
+  /** Diagnostic: time the symbol-list resolve promise resolved. */
+  t_symbol_resolved?: number
+  /** Diagnostic: time the symbol-params fetch promise resolved. */
+  t_params_resolved?: number
   /** First broker OrderSend call for this signal. */
   t_first_broker_send?: number
   /** Last broker OrderSend call returned for this signal. */
@@ -39,6 +45,9 @@ export function parsePipelineTimestamps(raw: unknown): PipelineTimestamps | unde
     t_dispatch_received: n('t_dispatch_received'),
     t_order_send_start: n('t_order_send_start'),
     t_send_caches_resolved: n('t_send_caches_resolved'),
+    t_session_resolved: n('t_session_resolved'),
+    t_symbol_resolved: n('t_symbol_resolved'),
+    t_params_resolved: n('t_params_resolved'),
     t_first_broker_send: n('t_first_broker_send'),
     t_last_broker_send: n('t_last_broker_send'),
     t_order_send_done: n('t_order_send_done'),
@@ -81,6 +90,15 @@ export function pipelineSummaryPayload(
   const sendPlanMs = ts.t_first_broker_send != null && ts.t_send_caches_resolved != null
     ? ts.t_first_broker_send - ts.t_send_caches_resolved
     : null
+  const sessionMs = ts.t_session_resolved != null && ts.t_order_send_start != null
+    ? ts.t_session_resolved - ts.t_order_send_start
+    : null
+  const symbolMs = ts.t_symbol_resolved != null && ts.t_order_send_start != null
+    ? ts.t_symbol_resolved - ts.t_order_send_start
+    : null
+  const paramsMs = ts.t_params_resolved != null && ts.t_order_send_start != null
+    ? ts.t_params_resolved - ts.t_order_send_start
+    : null
   const totalMs = t0 != null ? tEnd - t0 : null
   const telegramToListenerMs = ts.t_listener_received != null && ts.t_telegram_event != null
     ? ts.t_listener_received - ts.t_telegram_event
@@ -97,6 +115,9 @@ export function pipelineSummaryPayload(
     send_order_prep_ms: sendOrderPrepMs,
     broker_resolve_ms: brokerResolveMs,
     send_plan_ms: sendPlanMs,
+    session_resolve_ms: sessionMs,
+    symbol_resolve_ms: symbolMs,
+    params_resolve_ms: paramsMs,
     total_ms: totalMs,
     timestamps: ts,
   }
