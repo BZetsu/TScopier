@@ -140,6 +140,8 @@ function telegramLiveTradeGateEnabled(): boolean {
 type SendOrderOutcome = {
   openedOrMerged?: boolean
   signalEntryRequiredSkip?: boolean
+  /** Deterministic no-op where retrying the same parsed signal won't change outcome. */
+  finalizeSkipReason?: string
   /** Channel `delay_msec` from Copier Engine (skipped on live fast path). */
   channelDelayMs?: number
   channelDelaySkipped?: boolean
@@ -1268,11 +1270,28 @@ export class TradeExecutor {
         )
       }
       const strictSkips = outcomes.filter(o => o.signalEntryRequiredSkip === true).length
+      const finalizeSkipReasons = outcomes
+        .map(o => o.finalizeSkipReason)
+        .filter((r): r is string => typeof r === 'string' && r.length > 0)
       if (!anyOpened && strictSkips === brokers.length && strictSkips > 0) {
         try {
           const { error: sigErr } = await this.supabase
             .from('signals')
             .update({ status: 'skipped', skip_reason: SKIP_REASON_SIGNAL_ENTRY_REQUIRED })
+            .eq('id', row.id)
+            .eq('status', 'parsed')
+          if (sigErr) {
+            console.warn(`[tradeExecutor] signal skip finalize failed id=${row.id}: ${sigErr.message}`)
+          }
+        } catch {
+          // best-effort
+        }
+      } else if (!anyOpened && finalizeSkipReasons.length === brokers.length && finalizeSkipReasons.length > 0) {
+        const skipReason = finalizeSkipReasons[0]!
+        try {
+          const { error: sigErr } = await this.supabase
+            .from('signals')
+            .update({ status: 'skipped', skip_reason: skipReason })
             .eq('id', row.id)
             .eq('status', 'parsed')
           if (sigErr) {
@@ -1922,8 +1941,12 @@ export class TradeExecutor {
       parsed,
     })
     // Parameter follow-up (modify-only) must be explicitly linked by reply/thread/parent.
-    // Same-channel implicit bundling is too ambiguous and can hijack fresh entries.
-    if (!link.replyOk && !link.threadLinksAnchor && !link.parentLinksAnchor) {
+    // Exception: when add_new_trades_to_existing=false, the strategy is "single slot";
+    // a same-direction signal carrying explicit stops should refresh that live slot.
+    const manual = (broker.manual_settings ?? {}) as ManualSettings
+    const allowUnlinkedSingleSlotRefresh =
+      manual.add_new_trades_to_existing === false && parsedSignalHasExplicitStops(parsed)
+    if (!link.replyOk && !link.threadLinksAnchor && !link.parentLinksAnchor && !allowUnlinkedSingleSlotRefresh) {
       try {
         await this.supabase.from('trade_execution_logs').insert({
           user_id: signal.user_id,
@@ -2991,7 +3014,7 @@ export class TradeExecutor {
         const already = await this.hasOpenTradeForSymbol(broker.id, symbol)
         if (already) {
           await this.logSendSkipped(signal, broker, 'add_new_trades_to_existing=false', { symbol })
-          return {}
+          return { finalizeSkipReason: 'add_new_trades_to_existing=false' }
         }
       }
 
