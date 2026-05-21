@@ -2425,7 +2425,8 @@ class TradeExecutor {
             && (0, manualPlanner_1.signalEntryPriceStrictEnabled)(manual)
             && (0, manualPlanner_1.parsedHasExplicitEntryAnchor)(parsed);
         const [sessionOk, symbol, paramsFromRequested] = await Promise.all([
-            this.ensureBrokerSession(api, uuid, broker, { force: true }),
+            // Live entry: trust heartbeat cache (skip full verifyTradingReady when recently pinged).
+            this.ensureBrokerSession(api, uuid, broker, liveEntryFast ? undefined : { force: true }),
             this.resolveBrokerSymbol(uuid, requestedSymbol),
             this.getSymbolParams(uuid, requestedSymbol).catch(() => null),
         ]);
@@ -3214,11 +3215,7 @@ class TradeExecutor {
                 const openSl = result.stopLoss ?? args.stoploss ?? null;
                 const trailCols = (0, trailingStop_1.trailingTradeRowSnapshot)(manual, entryPx, openSl);
                 const autoBeCols = (0, autoManagement_1.autoManagementTradeSnapshot)(manual, entryPx, openSl);
-                // We need the row's id back so we can persist partial_tp_legs keyed to
-                // it. `.select('id').single()` keeps the INSERT to one round trip.
-                const tradeInsert = await this.supabase
-                    .from('trades')
-                    .insert({
+                const tradeRowPayload = {
                     user_id: signal.user_id,
                     signal_id: signal.id,
                     telegram_channel_id: signal.channel_id,
@@ -3232,21 +3229,12 @@ class TradeExecutor {
                     lot_size: result.lots ?? args.volume,
                     status: args.operation.includes('Limit') || args.operation.includes('Stop') ? 'pending' : 'open',
                     opened_at: new Date().toISOString(),
-                    // Worker-managed Close-Worse-Entries threshold (see cweCloseMonitor).
-                    // Only the first N immediate legs have this; non-CWE legs leave it null
-                    // and ride their bucket TP / SL normally.
                     cwe_close_price: leg.cweClosePrice ?? null,
                     ...trailCols,
                     ...autoBeCols,
-                })
-                    .select('id')
-                    .maybeSingle();
-                if (tradeInsert.error) {
-                    console.error(`[tradeExecutor] trades INSERT failed signal=${signal.id} broker=${broker.id} ticket=${result.ticket}: ${tradeInsert.error.message}`);
-                }
-                const tradeRowId = tradeInsert.data?.id ?? null;
-                filledLegs.push({
-                    tradeRowId,
+                };
+                const filledLeg = {
+                    tradeRowId: null,
                     ticket: result.ticket,
                     symbol: args.symbol,
                     direction: isBuy ? 'buy' : 'sell',
@@ -3255,8 +3243,8 @@ class TradeExecutor {
                     openTp: (result.takeProfit ?? args.takeprofit) != null
                         ? Number(result.takeProfit ?? args.takeprofit)
                         : null,
-                });
-                const persistPostFillDb = async () => {
+                };
+                const persistPostFillDb = async (tradeRowId) => {
                     if (tradeRowId && leg.partialTps && leg.partialTps.length > 0) {
                         const partialRows = leg.partialTps.map(p => ({
                             trade_id: tradeRowId,
@@ -3295,12 +3283,35 @@ class TradeExecutor {
                     });
                 };
                 if (liveEntryFast) {
-                    void persistPostFillDb().catch(err => {
-                        console.error(`[tradeExecutor] post-fill DB failed signal=${signal.id}:`, err);
+                    filledLegs.push(filledLeg);
+                    void (async () => {
+                        const tradeInsert = await this.supabase
+                            .from('trades')
+                            .insert(tradeRowPayload)
+                            .select('id')
+                            .maybeSingle();
+                        if (tradeInsert.error) {
+                            console.error(`[tradeExecutor] trades INSERT failed signal=${signal.id} broker=${broker.id} ticket=${result.ticket}: ${tradeInsert.error.message}`);
+                        }
+                        const tradeRowId = tradeInsert.data?.id ?? null;
+                        filledLeg.tradeRowId = tradeRowId;
+                        await persistPostFillDb(tradeRowId);
+                    })().catch(err => {
+                        console.error(`[tradeExecutor] live-fast trade persist failed signal=${signal.id}:`, err);
                     });
                 }
                 else {
-                    await persistPostFillDb();
+                    const tradeInsert = await this.supabase
+                        .from('trades')
+                        .insert(tradeRowPayload)
+                        .select('id')
+                        .maybeSingle();
+                    if (tradeInsert.error) {
+                        console.error(`[tradeExecutor] trades INSERT failed signal=${signal.id} broker=${broker.id} ticket=${result.ticket}: ${tradeInsert.error.message}`);
+                    }
+                    filledLeg.tradeRowId = tradeInsert.data?.id ?? null;
+                    filledLegs.push(filledLeg);
+                    await persistPostFillDb(filledLeg.tradeRowId);
                 }
                 return true;
             }
@@ -3383,7 +3394,7 @@ class TradeExecutor {
             && anyImmediateOpened
             && legs.length > 1
             && needsPerLegTpSync) {
-            await this.syncMultiBasketLegTakeProfits({
+            const syncArgs = {
                 signal,
                 parsed,
                 broker,
@@ -3393,7 +3404,15 @@ class TradeExecutor {
                 params,
                 manual,
                 direction: op.toLowerCase().includes('sell') ? 'sell' : 'buy',
-            });
+            };
+            if (liveEntryFast) {
+                void this.syncMultiBasketLegTakeProfits(syncArgs).catch(err => {
+                    console.error(`[tradeExecutor] syncMultiBasketLegTakeProfits failed signal=${signal.id}:`, err);
+                });
+            }
+            else {
+                await this.syncMultiBasketLegTakeProfits(syncArgs);
+            }
         }
         if (virtualPendings.length > 0 && !anyImmediateOpened && !strictDeferred) {
             const { error: stripErr } = await this.supabase
