@@ -1048,20 +1048,25 @@ export class UserListener {
     // #region agent log
     fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'551fbc'},body:JSON.stringify({sessionId:'551fbc',runId:'latency-v2',hypothesisId:'H4',location:'userListener.ts:dispatch-route',message:'dispatch route decision',data:{signalId,userId:this.userId,dispatchedInProcess,shouldPush,runsTrade:workerConfig.runsTrade,runsListener:workerConfig.runsListener},timestamp:Date.now()})}).catch(()=>{});
     // #endregion
-    void this.supabase.from('trade_execution_logs').insert({
-      user_id: this.userId,
-      signal_id: signalId,
-      action: 'dispatch_route_decision',
-      status: 'success',
-      request_payload: {
-        run_id: 'latency-v2',
-        hypothesis_id: 'H4',
-        dispatched_in_process: dispatchedInProcess,
-        should_push: shouldPush,
-        runs_trade: workerConfig.runsTrade,
-        runs_listener: workerConfig.runsListener,
-      },
-    }).catch(() => {})
+    void (async () => {
+      const { error } = await this.supabase.from('trade_execution_logs').insert({
+        user_id: this.userId,
+        signal_id: signalId,
+        action: 'dispatch_route_decision',
+        status: 'success',
+        request_payload: {
+          run_id: 'latency-v2',
+          hypothesis_id: 'H4',
+          dispatched_in_process: dispatchedInProcess,
+          should_push: shouldPush,
+          runs_trade: workerConfig.runsTrade,
+          runs_listener: workerConfig.runsListener,
+        },
+      })
+      if (error) {
+        /* best-effort */
+      }
+    })()
     if (shouldPush) {
       pushParsedSignalToTradeWorker(dispatchRow)
     }

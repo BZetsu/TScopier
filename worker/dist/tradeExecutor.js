@@ -610,7 +610,7 @@ class TradeExecutor {
      * In-process fast path (monolith). Live buy/sell bypass the queue when role allows.
      */
     dispatchParsedSignal(row) {
-        this.acceptDispatchSignal(row, {
+        return this.acceptDispatchSignal(row, {
             priority: (0, tradeSignalActions_1.dispatchPriorityForAction)((0, tradeSignalActions_1.parsedAction)(row.parsed_data)),
             source: 'in_process',
         });
