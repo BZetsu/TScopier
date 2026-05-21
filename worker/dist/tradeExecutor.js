@@ -291,6 +291,10 @@ class TradeExecutor {
         /** Cached channel rows keyed by `telegram_channels.id` — refreshed on demand. */
         this.channelKeywordsCache = new Map();
         this.sessionPingAt = new Map();
+        /** Coalesce concurrent session checks per MT uuid (burst fan-out). */
+        this.sessionCheckInflight = new Map();
+        /** Coalesce concurrent /Symbols fetches per MT uuid. */
+        this.symbolListInflight = new Map();
         /** After OrderSend "Not connected", block re-trading until user reconnects. */
         this.sessionOrderBlocked = new Set();
         if (!(0, metatraderapi_1.hasMetatraderApiConfigured)()) {
@@ -939,6 +943,9 @@ class TradeExecutor {
             const op = operationFor(action, parsed);
             if (!op || !parsed.symbol)
                 return;
+            if (liveFast) {
+                await this.prewarmBrokersForLiveEntry(brokers, parsed.symbol ?? '');
+            }
             if (liveFast && row.pipeline_ts) {
                 row.pipeline_ts.t_order_send_start = Date.now();
             }
@@ -2388,6 +2395,54 @@ class TradeExecutor {
         await this.markBrokerSessionDown(broker, uuid, 'verifyTradingReady failed before OrderSend');
         return false;
     }
+    /** Live entry: CheckConnect only (not AccountSummary+OpenedOrders). Deduped per uuid. */
+    async ensureBrokerSessionLiveFast(api, uuid, broker) {
+        if (this.sessionOrderBlocked.has(broker.id)) {
+            await this.markBrokerSessionDown(broker, uuid, 'session blocked after prior OrderSend disconnect');
+            return false;
+        }
+        const now = Date.now();
+        const last = this.sessionPingAt.get(uuid) ?? 0;
+        if (now - last < SESSION_PING_MIN_INTERVAL_MS)
+            return true;
+        const inflight = this.sessionCheckInflight.get(uuid);
+        if (inflight)
+            return inflight;
+        const check = (async () => {
+            try {
+                const alive = await api.keepSessionAlive(uuid);
+                if (alive) {
+                    this.sessionPingAt.set(uuid, Date.now());
+                    return true;
+                }
+                await this.markBrokerSessionDown(broker, uuid, 'keepSessionAlive failed before live OrderSend');
+                return false;
+            }
+            finally {
+                this.sessionCheckInflight.delete(uuid);
+            }
+        })();
+        this.sessionCheckInflight.set(uuid, check);
+        return check;
+    }
+    /** Warm session + symbol caches once per live signal before OrderSend. */
+    async prewarmBrokersForLiveEntry(brokers, signalSymbol) {
+        await Promise.all(brokers.map(async (broker) => {
+            const uuid = broker.metaapi_account_id;
+            if (!isMtUuid(uuid))
+                return;
+            const api = this.apiFor(broker);
+            if (!api)
+                return;
+            const mapping = applySymbolMapping(signalSymbol, broker);
+            const requested = mapping.symbol;
+            await Promise.all([
+                this.ensureBrokerSessionLiveFast(api, uuid, broker),
+                this.getSymbolList(uuid).catch(() => null),
+                this.getSymbolParams(uuid, requested).catch(() => null),
+            ]);
+        }));
+    }
     async sendOrder(signal, parsed, op, broker, channelKeywords, pipelineT0, sendOpts) {
         const liveEntryFast = sendOpts?.liveEntryFast === true;
         if (!(0, metatraderapi_1.hasMetatraderApiConfigured)())
@@ -2425,9 +2480,12 @@ class TradeExecutor {
             && (0, manualPlanner_1.signalEntryPriceStrictEnabled)(manual)
             && (0, manualPlanner_1.parsedHasExplicitEntryAnchor)(parsed);
         const [sessionOk, symbol, paramsFromRequested] = await Promise.all([
-            // Live entry: trust heartbeat cache (skip full verifyTradingReady when recently pinged).
-            this.ensureBrokerSession(api, uuid, broker, liveEntryFast ? undefined : { force: true }),
-            this.resolveBrokerSymbol(uuid, requestedSymbol),
+            liveEntryFast
+                ? this.ensureBrokerSessionLiveFast(api, uuid, broker)
+                : this.ensureBrokerSession(api, uuid, broker, { force: true }),
+            liveEntryFast
+                ? this.resolveBrokerSymbolForLiveEntry(uuid, requestedSymbol)
+                : this.resolveBrokerSymbol(uuid, requestedSymbol),
             this.getSymbolParams(uuid, requestedSymbol).catch(() => null),
         ]);
         if (!sessionOk) {
@@ -2777,10 +2835,15 @@ class TradeExecutor {
         // trigger prices) OR Close-Worse-Entries is on (so we can compute the
         // single override TP). Strict broker pendings use the signal entry as the
         // clamp reference — no extra quote solely for that path.
-        // The Quote is a ~50-150ms GET that we issue BEFORE
-        // sending immediates so every leg + every virtual trigger sees the same
-        // deterministic reference price.
-        const needsAnchor = virtualPendings.length > 0 || !!plan.closeWorseEntries;
+        // The Quote is a ~50-150ms GET that we issue BEFORE sending immediates so every
+        // leg + every virtual trigger sees the same deterministic reference price.
+        // Live fast + immediate legs: defer virtual-only anchor work until after OrderSend.
+        const deferVirtualAnchor = liveEntryFast
+            && legs.length > 0
+            && virtualPendings.length > 0
+            && !plan.closeWorseEntries;
+        const needsAnchor = !deferVirtualAnchor
+            && (virtualPendings.length > 0 || !!plan.closeWorseEntries);
         let anchor = plan.anchor?.value ?? plan.strictEntry?.entryPrice ?? null;
         let anchorSource = plan.anchor?.source ?? 'unknown';
         if (needsAnchor && (anchor == null || anchor <= 0)) {
@@ -3047,7 +3110,7 @@ class TradeExecutor {
         // the trigger. UPSERT with ignoreDuplicates leans on the partial unique
         // index (see migration 20260513140000_range_pending_unique_active_step).
         const insertRows = [];
-        if (virtualPendings.length > 0) {
+        if (virtualPendings.length > 0 && !deferVirtualAnchor) {
             if (anchor == null || !Number.isFinite(anchor) || anchor <= 0) {
                 console.warn(`[tradeExecutor] dropping ${virtualPendings.length} virtual pendings: no anchor available for signal=${signal.id} broker=${broker.id} symbol=${symbol}`);
             }
@@ -3349,6 +3412,22 @@ class TradeExecutor {
         // All immediates fan out in parallel. Virtual pendings are already
         // persisted; the worker monitor + edge sweep will fire them on trigger.
         const sendResults = await Promise.allSettled(legs.map(sendLeg));
+        if (deferVirtualAnchor && virtualPendings.length > 0 && api) {
+            void this.deferredVirtualPendingMaterialize({
+                signal,
+                broker,
+                uuid,
+                api,
+                symbol,
+                virtualPendings,
+                parsed,
+                plan,
+                params,
+                strictEntryPrefetch,
+            }).catch(err => {
+                console.error(`[tradeExecutor] deferred virtual pending failed signal=${signal.id} broker=${broker.id}:`, err);
+            });
+        }
         if (liveEntryFast && filledLegs.length > 0) {
             const plannerCtx = params
                 ? {
@@ -4101,6 +4180,19 @@ class TradeExecutor {
         const cached = this.symbolListCache.get(uuid);
         if (cached && (Date.now() - cached.loadedAt) < SYMBOL_LIST_TTL_MS)
             return cached;
+        const inflight = this.symbolListInflight.get(uuid);
+        if (inflight)
+            return inflight;
+        const fetchPromise = this.fetchSymbolList(uuid);
+        this.symbolListInflight.set(uuid, fetchPromise);
+        try {
+            return await fetchPromise;
+        }
+        finally {
+            this.symbolListInflight.delete(uuid);
+        }
+    }
+    async fetchSymbolList(uuid) {
         if (!(0, metatraderapi_1.hasMetatraderApiConfigured)())
             return null;
         const api = this.apiForUuid(uuid);
@@ -4137,18 +4229,8 @@ class TradeExecutor {
             return null;
         }
     }
-    /**
-     * Map a generic symbol (e.g. 'BTCUSD') to the exact instrument name the broker
-     * exposes (e.g. 'BTCUSDm', 'BTCUSD.r', 'BTCUSD_i'). Strategy:
-     *   1. Honour an explicit manual mapping when one exists for this symbol.
-     *   2. Fall back to fuzzy matching against `/Symbols` using common broker suffixes
-     *      and prefix/suffix substitution. Picks the shortest match (closest variant).
-     */
-    async resolveBrokerSymbol(uuid, requested) {
+    resolveBrokerSymbolFromInventory(inventory, requested) {
         const target = requested.toUpperCase();
-        const inventory = await this.getSymbolList(uuid);
-        if (!inventory)
-            return requested;
         if (inventory.set.has(target)) {
             const exact = inventory.list.find(s => s.toUpperCase() === target);
             return exact ?? requested;
@@ -4168,7 +4250,6 @@ class TradeExecutor {
             const exact = inventory.list.find(s => s.toUpperCase() === winner);
             return exact ?? winner;
         }
-        // Last resort: any instrument that CONTAINS the requested ticker (e.g. "XAUUSDpro").
         const contains = inventory.list.filter(s => s.toUpperCase().includes(target));
         if (contains.length === 1)
             return contains[0];
@@ -4177,6 +4258,93 @@ class TradeExecutor {
             return contains[0];
         }
         return requested;
+    }
+    async resolveBrokerSymbolForLiveEntry(uuid, requested) {
+        const cached = this.symbolListCache.get(uuid);
+        if (cached && (Date.now() - cached.loadedAt) < SYMBOL_LIST_TTL_MS) {
+            return this.resolveBrokerSymbolFromInventory(cached, requested);
+        }
+        const inventory = await this.getSymbolList(uuid);
+        if (!inventory)
+            return requested;
+        return this.resolveBrokerSymbolFromInventory(inventory, requested);
+    }
+    async deferredVirtualPendingMaterialize(args) {
+        const { signal, broker, uuid, api, symbol, virtualPendings, parsed, plan, params, strictEntryPrefetch, } = args;
+        let anchor = plan.anchor?.value ?? plan.strictEntry?.entryPrice ?? null;
+        const parsedEntry = (0, manualPlanner_1.resolvedParsedEntryPrice)(parsed);
+        if (parsedEntry != null && parsedEntry > 0) {
+            anchor = parsedEntry;
+        }
+        else {
+            try {
+                const q = strictEntryPrefetch ?? await api.quote(uuid, symbol);
+                anchor = plan.isBuy === false ? q.bid : q.ask;
+            }
+            catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                console.warn(`[tradeExecutor] deferred virtual /Quote failed signal=${signal.id} broker=${broker.id}: ${msg}`);
+                return;
+            }
+        }
+        if (anchor == null || !Number.isFinite(anchor) || anchor <= 0) {
+            console.warn(`[tradeExecutor] deferred virtual: no anchor signal=${signal.id} broker=${broker.id}`);
+            return;
+        }
+        const digits = Math.max(0, Math.min(8, Number(params?.digits) || 5));
+        const safe = Math.max(Number(params?.stopsLevel) || 0, Number(params?.freezeLevel) || 0);
+        const zoneHi = safe > 0 ? anchor + (safe + 2) * (params?.point ?? 0) : null;
+        const zoneLo = safe > 0 ? anchor - (safe + 2) * (params?.point ?? 0) : null;
+        const nowMs = Date.now();
+        const insertRows = [];
+        for (const v of virtualPendings) {
+            const triggerPrice = triggerPriceFor(v, anchor, digits);
+            if (zoneHi != null && zoneLo != null && triggerPrice > zoneLo && triggerPrice < zoneHi) {
+                continue;
+            }
+            const expiresAt = v.expiryHours && v.expiryHours > 0
+                ? new Date(nowMs + v.expiryHours * 60 * 60 * 1000).toISOString()
+                : null;
+            insertRows.push({
+                signal_id: signal.id,
+                user_id: signal.user_id,
+                broker_account_id: broker.id,
+                metaapi_account_id: uuid,
+                symbol,
+                step_idx: v.stepIdx,
+                is_buy: v.isBuy,
+                volume: roundLot(v.volume, params),
+                anchor_price: anchor,
+                trigger_price: triggerPrice,
+                stoploss: v.stoploss,
+                takeprofit: v.takeprofit,
+                slippage: v.slippage,
+                comment: v.comment,
+                expert_id: v.expertID ?? null,
+                expires_at: expiresAt,
+                status: 'pending',
+                cwe_close_price: v.cweClosePrice ?? null,
+            });
+        }
+        if (insertRows.length === 0)
+            return;
+        const persist = await this.persistRangePendingLegRows(insertRows, `deferred live signal=${signal.id} broker=${broker.id}`);
+        if (!persist.ok) {
+            console.error(`[tradeExecutor] deferred virtual persist failed signal=${signal.id} broker=${broker.id}: ${persist.lastError ?? 'unknown'}`);
+        }
+    }
+    /**
+     * Map a generic symbol (e.g. 'BTCUSD') to the exact instrument name the broker
+     * exposes (e.g. 'BTCUSDm', 'BTCUSD.r', 'BTCUSD_i'). Strategy:
+     *   1. Honour an explicit manual mapping when one exists for this symbol.
+     *   2. Fall back to fuzzy matching against `/Symbols` using common broker suffixes
+     *      and prefix/suffix substitution. Picks the shortest match (closest variant).
+     */
+    async resolveBrokerSymbol(uuid, requested) {
+        const inventory = await this.getSymbolList(uuid);
+        if (!inventory)
+            return requested;
+        return this.resolveBrokerSymbolFromInventory(inventory, requested);
     }
 }
 exports.TradeExecutor = TradeExecutor;
