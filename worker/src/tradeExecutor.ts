@@ -3266,6 +3266,9 @@ export class TradeExecutor {
             `[tradeExecutor] strict entry deferred signal=${signal.id} broker=${broker.id} symbol=${symbol}`
             + ` entry=${se.entryPrice} isBuy=${se.isBuy} bid=${q.bid} ask=${q.ask}`,
           )
+          // #region agent log
+          fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'551fbc'},body:JSON.stringify({sessionId:'551fbc',runId:'latency-v2',hypothesisId:'H6',location:'tradeExecutor.ts:strict-deferred',message:'strict entry deferred to pending',data:{signalId:signal.id,userId:signal.user_id,brokerId:broker.id,symbol,entryPrice:se.entryPrice,isBuy:se.isBuy,bid:q.bid,ask:q.ask},timestamp:Date.now()})}).catch(()=>{});
+          // #endregion
         }
       } catch (err) {
         strictDeferred = true
@@ -3273,6 +3276,9 @@ export class TradeExecutor {
         console.warn(
           `[tradeExecutor] strict entry /Quote failed; deferring to broker pending signal=${signal.id} broker=${broker.id} symbol=${symbol}: ${msg}`,
         )
+        // #region agent log
+        fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'551fbc'},body:JSON.stringify({sessionId:'551fbc',runId:'latency-v2',hypothesisId:'H6',location:'tradeExecutor.ts:strict-deferred-quote-fail',message:'strict entry deferred due quote failure',data:{signalId:signal.id,userId:signal.user_id,brokerId:broker.id,symbol,error:msg.slice(0,180)},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
       }
     }
 
@@ -3522,6 +3528,9 @@ export class TradeExecutor {
                 /* best-effort rollback */
               }
             } else {
+              // #region agent log
+              fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'551fbc'},body:JSON.stringify({sessionId:'551fbc',runId:'latency-v2',hypothesisId:'H7',location:'tradeExecutor.ts:signal-entry-pending-insert',message:'signal entry pending row inserted',data:{signalId:signal.id,userId:signal.user_id,brokerId:broker.id,symbol,ticket,entryPrice:entryPx},timestamp:Date.now()})}).catch(()=>{});
+              // #endregion
               strictBrokerPlaced = true
               try {
                 await this.supabase.from('trade_execution_logs').insert({
