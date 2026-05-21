@@ -126,6 +126,11 @@ import {
   updateRangePendingLegsForManagement,
 } from './managementPendingLegs'
 import { parsePipelineTimestamps, pipelineSummaryPayload, type PipelineTimestamps } from './pipelineTimestamps'
+import {
+  buildTscopierCommentPrefix,
+  resolveChannelLabelForComment,
+  sanitizeChannelCommentSlug,
+} from './tradeComment'
 import { applyPostFillFollowUp, type PostFillTradeLeg } from './postFillFollowUp'
 import { isBenignOrderModifyError } from './orderModifyBenign'
 import { invalidateChannelParseCache } from './channelKeywordsCache'
@@ -579,7 +584,11 @@ export class TradeExecutor {
   /** Per-broker `/Symbols` cache used to map signal symbols (e.g. BTCUSD) to broker variants (BTCUSDm). */
   private symbolListCache = new Map<string, SymbolListCacheEntry>()
   /** Cached channel rows keyed by `telegram_channels.id` — refreshed on demand. */
-  private channelKeywordsCache = new Map<string, { keywords: ChannelKeywords | null; loadedAt: number }>()
+  private channelMetaCache = new Map<string, {
+    keywords: ChannelKeywords | null
+    commentSlug: string | null
+    loadedAt: number
+  }>()
   private sessionPingAt = new Map<string, number>()
   /** Coalesce concurrent session checks per MT uuid (burst fan-out). */
   private sessionCheckInflight = new Map<string, Promise<boolean>>()
@@ -949,8 +958,8 @@ export class TradeExecutor {
         (payload: { new?: Record<string, unknown> }) => {
           const row = payload.new as { id?: string; channel_keywords?: ChannelKeywords | null } | undefined
           if (!row?.id) return
-          // Refresh cache eagerly so the next signal picks up edits made in Copier Engine.
-          this.channelKeywordsCache.set(row.id, { keywords: row.channel_keywords ?? null, loadedAt: Date.now() })
+          // Drop cache so the next signal refetches display name + keywords.
+          this.channelMetaCache.delete(row.id)
           invalidateChannelParseCache(row.id)
         },
       )
@@ -1413,9 +1422,9 @@ export class TradeExecutor {
         return
       }
 
-      // Pre-fetch channel keywords once per signal so manual-mode brokers can
-      // honour delay_msec / prefer_entry / *_in_pips / ignore_keyword.
-      const channelKeywords = await this.getChannelKeywords(row.channel_id)
+      // Pre-fetch channel keywords + comment slug once per signal.
+      const { keywords: channelKeywords, commentSlug } = await this.getChannelMeta(row.channel_id)
+      const commentPrefix = buildTscopierCommentPrefix(row.id, commentSlug)
       const rawText = String(parsed.raw_instruction ?? '').toLowerCase()
       const ignoreKw = channelKeywords?.additional?.ignore_keyword?.trim().toLowerCase()
       const skipKw = channelKeywords?.additional?.skip_keyword?.trim().toLowerCase()
@@ -1467,6 +1476,7 @@ export class TradeExecutor {
       const outcomes = await Promise.all(
         brokers.map(b => this.sendOrder(row, parsed, op, b, channelKeywords, pipelineT0, {
           liveEntryFast: liveFast,
+          commentPrefix,
         })),
       )
       if (liveFast && row.pipeline_ts) {
@@ -1544,22 +1554,34 @@ export class TradeExecutor {
     }
   }
 
-  private async getChannelKeywords(channelId: string | null): Promise<ChannelKeywords | null> {
-    if (!channelId) return null
-    const cached = this.channelKeywordsCache.get(channelId)
-    if (cached && Date.now() - cached.loadedAt < 5 * 60_000) return cached.keywords
+  private async getChannelMeta(channelId: string | null): Promise<{
+    keywords: ChannelKeywords | null
+    commentSlug: string | null
+  }> {
+    if (!channelId) return { keywords: null, commentSlug: null }
+    const cached = this.channelMetaCache.get(channelId)
+    if (cached && Date.now() - cached.loadedAt < 5 * 60_000) {
+      return { keywords: cached.keywords, commentSlug: cached.commentSlug }
+    }
     try {
       const { data } = await this.supabase
         .from('telegram_channels')
-        .select('channel_keywords')
+        .select('channel_keywords, display_name, channel_username')
         .eq('id', channelId)
         .maybeSingle()
-      const keywords = (data as { channel_keywords?: ChannelKeywords | null } | null)?.channel_keywords ?? null
-      this.channelKeywordsCache.set(channelId, { keywords, loadedAt: Date.now() })
-      return keywords
+      const row = data as {
+        channel_keywords?: ChannelKeywords | null
+        display_name?: string | null
+        channel_username?: string | null
+      } | null
+      const keywords = row?.channel_keywords ?? null
+      const label = resolveChannelLabelForComment(row?.display_name, row?.channel_username)
+      const commentSlug = label ? sanitizeChannelCommentSlug(label) : null
+      this.channelMetaCache.set(channelId, { keywords, commentSlug, loadedAt: Date.now() })
+      return { keywords, commentSlug }
     } catch {
-      this.channelKeywordsCache.set(channelId, { keywords: null, loadedAt: Date.now() })
-      return null
+      this.channelMetaCache.set(channelId, { keywords: null, commentSlug: null, loadedAt: Date.now() })
+      return { keywords: null, commentSlug: null }
     }
   }
 
@@ -2117,8 +2139,12 @@ export class TradeExecutor {
     symbol: string
     uuid: string
     strictEntryPrefetch: { bid: number; ask: number } | null
+    commentPrefix: string
   }): Promise<MergeOutcome> {
-    const { signal, parsed, broker, channelKeywords, baseLot, params, symbol, uuid, strictEntryPrefetch } = args
+    const {
+      signal, parsed, broker, channelKeywords, baseLot, params, symbol, uuid,
+      strictEntryPrefetch, commentPrefix,
+    } = args
     if (!hasMetatraderApiConfigured()) return { handled: false }
     if (!shouldRouteAsBasketParameterRefresh(parsed)) return { handled: false }
     const api = this.apiFor(broker)
@@ -2262,6 +2288,7 @@ export class TradeExecutor {
       symbol,
       uuid,
       strictEntryPrefetch,
+      commentPrefix,
       anchorSignalId: anchor.anchorSignalId,
       direction,
       logAction: 'merge_routed_modify_only',
@@ -2388,6 +2415,7 @@ export class TradeExecutor {
     symbol: string
     uuid: string
     strictEntryPrefetch: { bid: number; ask: number } | null
+    commentPrefix: string
     anchorSignalId: string
     direction: 'buy' | 'sell'
     logAction: 'merge_routed_modify_only' | 'signal_merge_into_open_trade'
@@ -2395,7 +2423,7 @@ export class TradeExecutor {
   }): Promise<{ success: boolean; summary: MergeModifySummary }> {
     const {
       signal, parsed, broker, channelKeywords, baseLot, params, symbol, uuid,
-      strictEntryPrefetch, anchorSignalId, direction, logAction, mergeLinkMeta,
+      strictEntryPrefetch, commentPrefix, anchorSignalId, direction, logAction, mergeLinkMeta,
     } = args
     const api = this.apiFor(broker)
     if (!api) {
@@ -2496,7 +2524,7 @@ export class TradeExecutor {
         liveBid: strictEntryPrefetch?.bid,
         liveAsk: strictEntryPrefetch?.ask,
       },
-      commentPrefix: `TSCopier:${signal.id.slice(0, 8)}`,
+      commentPrefix,
       expertId: 909090,
       slippage: 20,
     })
@@ -2914,8 +2942,12 @@ export class TradeExecutor {
     symbol: string
     uuid: string
     strictEntryPrefetch: { bid: number; ask: number } | null
+    commentPrefix: string
   }): Promise<MergeOutcome> {
-    const { signal, parsed, op, broker, channelKeywords, baseLot, params, symbol, uuid, strictEntryPrefetch } = args
+    const {
+      signal, parsed, op, broker, channelKeywords, baseLot, params, symbol, uuid,
+      strictEntryPrefetch, commentPrefix,
+    } = args
     if (!hasMetatraderApiConfigured()) return { handled: false }
     const api = this.apiFor(broker)
     if (!api) return { handled: false }
@@ -2989,6 +3021,7 @@ export class TradeExecutor {
       symbol,
       uuid,
       strictEntryPrefetch,
+      commentPrefix,
       anchorSignalId,
       direction,
       logAction: 'signal_merge_into_open_trade',
@@ -3214,9 +3247,10 @@ export class TradeExecutor {
     broker: BrokerRow,
     channelKeywords: ChannelKeywords | null,
     pipelineT0?: number,
-    sendOpts?: { liveEntryFast?: boolean },
+    sendOpts?: { liveEntryFast?: boolean; commentPrefix?: string },
   ): Promise<SendOrderOutcome> {
     const liveEntryFast = sendOpts?.liveEntryFast === true
+    const commentPrefix = sendOpts?.commentPrefix ?? buildTscopierCommentPrefix(signal.id)
     if (!hasMetatraderApiConfigured()) return {}
     const api = this.apiFor(broker)
     if (!api) return {}
@@ -3327,6 +3361,7 @@ export class TradeExecutor {
         symbol,
         uuid,
         strictEntryPrefetch,
+        commentPrefix,
       })
       if (paramOutcome.handled && paramOutcome.success) {
         return { openedOrMerged: true }
@@ -3353,6 +3388,7 @@ export class TradeExecutor {
         symbol,
         uuid,
         strictEntryPrefetch,
+        commentPrefix,
       })
       if (mergeOutcome.handled && mergeOutcome.success) {
         return { openedOrMerged: true }
@@ -3463,7 +3499,7 @@ export class TradeExecutor {
           liveBid: strictEntryPrefetch?.bid,
           liveAsk: strictEntryPrefetch?.ask,
         },
-        commentPrefix: `TSCopier:${signal.id.slice(0, 8)}`,
+        commentPrefix,
         expertId: 909090,
         slippage: 20,
       })
@@ -3477,7 +3513,7 @@ export class TradeExecutor {
           stoploss: parsed.sl ?? 0,
           takeprofit: parsed.tp?.[0] ?? 0,
           slippage: 20,
-          comment: `TSCopier:${signal.id.slice(0, 8)}`,
+          comment: commentPrefix,
           expertID: 909090,
         }],
         delay_ms: 0,
@@ -3799,7 +3835,7 @@ export class TradeExecutor {
         let aggVol = 0
         for (const o of capped) aggVol += Number(o.volume) || 0
         const vol = roundLot(capped.length === 1 ? Number(first.volume) || 0 : aggVol, params)
-        const baseComment = first.comment ?? `TSCopier:${signal.id.slice(0, 8)}`
+        const baseComment = first.comment ?? commentPrefix
         const comment = capped.length === 1 ? `${baseComment}:strictEntry` : `${baseComment}:strictEntryAgg`
         // Broker pending expiry is enforced in `signalEntryPendingMonitor` via `expires_at`
         // (MetatraderAPI GET /OrderSend rejects many `expiration` payloads for pendings).
