@@ -1035,6 +1035,9 @@ export class UserListener {
       created_at: new Date().toISOString(),
       pipeline_ts: pipelineTs,
     }
+    // #region agent log
+    fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'551fbc'},body:JSON.stringify({sessionId:'551fbc',runId:'latency-v1',hypothesisId:'H1',location:'userListener.ts:dispatch',message:'listener dispatch created',data:{userId:this.userId,signalId,channelId:channelRow.id,action:String((parseResult.parsed as { action?: unknown } | null)?.action ?? ''),dispatchDeltaMs:pipelineTs.t_parse_done != null && pipelineTs.t_dispatch_sent != null ? pipelineTs.t_dispatch_sent - pipelineTs.t_parse_done : null},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
 
     console.log(
       `[userListener] dispatch signal user=${this.userId} signalId=${signalId} channelRow=${channelRow.id} messageId=${messageId}`,

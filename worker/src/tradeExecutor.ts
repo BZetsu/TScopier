@@ -855,6 +855,9 @@ export class TradeExecutor {
     }
     const entryFast = this.shouldUseEntryFastPath(rowWithTs)
     const listenerTs = parsePipelineTimestamps(rowWithTs.pipeline_ts)
+    // #region agent log
+    fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'551fbc'},body:JSON.stringify({sessionId:'551fbc',runId:'latency-v1',hypothesisId:'H2',location:'tradeExecutor.ts:acceptDispatchSignal',message:'dispatch accepted',data:{signalId:row.id,userId:row.user_id,source,entryFast,priority:opts?.priority ?? null,dispatchLagMs:listenerTs?.t_dispatch_sent != null ? receivedAt - listenerTs.t_dispatch_sent : null,hasListenerTs:Boolean(listenerTs?.t_listener_received)},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     if (
       source === 'listener_push'
       && !listenerTs?.t_listener_received
@@ -1155,6 +1158,9 @@ export class TradeExecutor {
     const queueWaitMs = opts?.dispatchReceivedAt != null
       ? Math.max(0, handleStartMs - (opts.dispatchReceivedAt as number))
       : null
+    // #region agent log
+    fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'551fbc'},body:JSON.stringify({sessionId:'551fbc',runId:'latency-v1',hypothesisId:'H3',location:'tradeExecutor.ts:handle-start',message:'handle signal start',data:{signalId:row.id,userId:row.user_id,source:opts?.dispatchSource ?? null,liveFast,queueWaitMs},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     let pipelineOutcome: Record<string, unknown> = { live_fast: liveFast }
     try {
       if (!opts?.liveDispatch && this.signalTooOldForReplay(row)) return
@@ -2889,6 +2895,9 @@ export class TradeExecutor {
       this.resolveBrokerSymbol(uuid, requestedSymbol),
       this.getSymbolParams(uuid, requestedSymbol).catch(() => null),
     ])
+    // #region agent log
+    fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'551fbc'},body:JSON.stringify({sessionId:'551fbc',runId:'latency-v1',hypothesisId:'H4',location:'tradeExecutor.ts:sendOrder-precheck',message:'sendOrder precheck complete',data:{signalId:signal.id,userId:signal.user_id,brokerId:broker.id,requestedSymbol,resolvedSymbol:symbol,sessionOk,hasSymbolParams:Boolean(paramsFromRequested)},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     if (!sessionOk) {
       await this.logSendSkipped(signal, broker, 'broker_session_not_connected', {
         symbol: requestedSymbol,
@@ -3124,7 +3133,13 @@ export class TradeExecutor {
         console.log(
           `[tradeExecutor] live fast: skipping channel delay_msec=${channelDelayMs} signal=${signal.id} broker=${broker.id}`,
         )
+        // #region agent log
+        fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'551fbc'},body:JSON.stringify({sessionId:'551fbc',runId:'latency-v1',hypothesisId:'H5',location:'tradeExecutor.ts:channel-delay-skip',message:'channel delay skipped on live fast path',data:{signalId:signal.id,userId:signal.user_id,brokerId:broker.id,channelDelayMs},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
       } else {
+        // #region agent log
+        fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'551fbc'},body:JSON.stringify({sessionId:'551fbc',runId:'latency-v1',hypothesisId:'H5',location:'tradeExecutor.ts:channel-delay-wait-start',message:'channel delay wait start',data:{signalId:signal.id,userId:signal.user_id,brokerId:broker.id,channelDelayMs,waitAppliedMs:Math.min(channelDelayMs,30000)},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
         await new Promise(resolve => setTimeout(resolve, Math.min(channelDelayMs, 30_000)))
       }
     }
@@ -3731,6 +3746,9 @@ export class TradeExecutor {
       try {
         const result = await api.orderSend(uuid, args)
         const latencyMs = Date.now() - t0
+        // #region agent log
+        fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'551fbc'},body:JSON.stringify({sessionId:'551fbc',runId:'latency-v1',hypothesisId:'H4',location:'tradeExecutor.ts:order-send-success',message:'order send success',data:{signalId:signal.id,userId:signal.user_id,brokerId:broker.id,symbol:args.symbol,ticket:result.ticket,elapsedMs:latencyMs,leg:leg.idx+1,total:totalCount},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
         if (liveEntryFast && signal.pipeline_ts) {
           signal.pipeline_ts.t_last_broker_send = Date.now()
         }
@@ -3844,6 +3862,9 @@ export class TradeExecutor {
         return true
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
+        // #region agent log
+        fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'551fbc'},body:JSON.stringify({sessionId:'551fbc',runId:'latency-v1',hypothesisId:'H4',location:'tradeExecutor.ts:order-send-failed',message:'order send failed',data:{signalId:signal.id,userId:signal.user_id,brokerId:broker.id,symbol:args.symbol,elapsedMs:Date.now()-t0,error:msg.slice(0,180)},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
         if (isBrokerDisconnectedMessage(msg)) {
           await this.markBrokerSessionDown(broker, uuid, msg)
         }
