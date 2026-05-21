@@ -121,6 +121,19 @@ async function main() {
         }
         const queueCfg = (0, signalQueueConfig_1.signalQueueConfig)();
         if (queueCfg.enabled && (0, signalQueueConfig_1.redisQueueConfigured)()) {
+            if (queueCfg.shardCount > 1 && workerConfig_1.workerConfig.shardCount <= 1) {
+                console.warn(`[worker] TRADE_SIGNAL_QUEUE_SHARD_COUNT=${queueCfg.shardCount} but this worker`
+                    + ` is shard ${workerConfig_1.workerConfig.shardId} only — users on other shards need matching trade workers`);
+            }
+            if (workerConfig_1.workerConfig.shardId >= queueCfg.shardCount) {
+                console.error(`[worker] FATAL: WORKER_SHARD_ID=${workerConfig_1.workerConfig.shardId} >= TRADE_SIGNAL_QUEUE_SHARD_COUNT=${queueCfg.shardCount}`);
+                process.exit(1);
+            }
+            const tradeShards = (0, signalQueueConfig_1.deployedTradeShardCount)();
+            if (queueCfg.shardCount > tradeShards && workerConfig_1.workerConfig.shardId === 0) {
+                console.warn(`[worker] queue shard count (${queueCfg.shardCount}) > deployed trade shards (${tradeShards})`
+                    + ' — set TRADE_SIGNAL_QUEUE_SHARD_COUNT=1 on listener and worker');
+            }
             signalQueueConsumers = new signalQueueConsumer_1.SignalQueueConsumerManager(supabase, tradeExecutor);
             signalQueueConsumers.start();
             (0, queueHealth_1.setQueueMetricsProvider)(() => signalQueueConsumers.getMetrics());

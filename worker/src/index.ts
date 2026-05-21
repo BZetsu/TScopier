@@ -17,7 +17,7 @@ import { BrokerConnectionMonitor } from './brokerConnectionMonitor'
 import { workerConfig } from './workerConfig'
 import { validateListenerTradeShardConfig, validateListenerQueueConfig } from './tradeSignalPush'
 import { SignalQueueConsumerManager } from './queue/signalQueueConsumer'
-import { signalQueueConfig, redisQueueConfigured } from './queue/signalQueueConfig'
+import { deployedTradeShardCount, signalQueueConfig, redisQueueConfigured } from './queue/signalQueueConfig'
 import { setQueueMetricsProvider } from './queue/queueHealth'
 import type { MonitorLoopHandle } from './monitorIdleGate'
 import { subscribeMonitorWorkWake } from './monitorWorkWake'
@@ -135,6 +135,25 @@ async function main() {
 
     const queueCfg = signalQueueConfig()
     if (queueCfg.enabled && redisQueueConfigured()) {
+      if (queueCfg.shardCount > 1 && workerConfig.shardCount <= 1) {
+        console.warn(
+          `[worker] TRADE_SIGNAL_QUEUE_SHARD_COUNT=${queueCfg.shardCount} but this worker`
+          + ` is shard ${workerConfig.shardId} only — users on other shards need matching trade workers`,
+        )
+      }
+      if (workerConfig.shardId >= queueCfg.shardCount) {
+        console.error(
+          `[worker] FATAL: WORKER_SHARD_ID=${workerConfig.shardId} >= TRADE_SIGNAL_QUEUE_SHARD_COUNT=${queueCfg.shardCount}`,
+        )
+        process.exit(1)
+      }
+      const tradeShards = deployedTradeShardCount()
+      if (queueCfg.shardCount > tradeShards && workerConfig.shardId === 0) {
+        console.warn(
+          `[worker] queue shard count (${queueCfg.shardCount}) > deployed trade shards (${tradeShards})`
+          + ' — set TRADE_SIGNAL_QUEUE_SHARD_COUNT=1 on listener and worker',
+        )
+      }
       signalQueueConsumers = new SignalQueueConsumerManager(supabase, tradeExecutor)
       signalQueueConsumers.start()
       setQueueMetricsProvider(() => signalQueueConsumers!.getMetrics())

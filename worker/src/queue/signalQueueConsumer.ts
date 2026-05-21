@@ -22,7 +22,7 @@ import {
   streamKeyForLane,
   type SignalQueueLane,
 } from './signalQueueConfig'
-import { claimQueueIdempotency, isDuplicateQueueDelivery } from './signalQueueIdempotency'
+import { claimQueueIdempotency } from './signalQueueIdempotency'
 import { parseQueueJobFields } from './signalQueuePublisher'
 import {
   logQueueExecution,
@@ -132,10 +132,11 @@ export class SignalQueueConsumer {
         )
         this.lastReadAt = Date.now()
         if (messages.length === 0) continue
-        for (const msg of messages) {
-          if (this.stopped) break
-          await this.processMessage(streamKey, group, msg)
-        }
+        await mapConcurrent(
+          messages,
+          cfg.consumerConcurrency,
+          msg => this.processMessage(streamKey, group, msg),
+        )
       } catch (err) {
         this.lastError = err instanceof Error ? err.message : String(err)
         incMetric('queue_consumer_read_errors')
@@ -167,10 +168,11 @@ export class SignalQueueConsumer {
         this.reclaimCursor = nextStart
         if (messages.length === 0) continue
         incMetric('queue_reclaimed', messages.length)
-        for (const msg of messages) {
-          if (this.stopped) break
-          await this.processMessage(streamKey, group, msg, { reclaimed: true })
-        }
+        await mapConcurrent(
+          messages,
+          cfg.consumerConcurrency,
+          msg => this.processMessage(streamKey, group, msg, { reclaimed: true }),
+        )
       } catch (err) {
         this.lastError = err instanceof Error ? err.message : String(err)
         incMetric('queue_consumer_reclaim_errors')
@@ -194,25 +196,6 @@ export class SignalQueueConsumer {
 
     const attempts = parseAttemptCount(msg.fields)
     const enqueueToStartMs = Date.now() - job.enqueued_at
-
-    if (await isDuplicateQueueDelivery(this.supabase, job.idempotency_key)) {
-      incMetric('queue_duplicate_skip')
-      void logQueueExecution(this.supabase, {
-        user_id: job.user_id,
-        signal_id: job.signal_id,
-        action: 'queue_duplicate_skip',
-        status: 'skipped',
-        request_payload: {
-          message_id: msg.id,
-          idempotency_key: job.idempotency_key,
-          attempts,
-          reclaimed: opts?.reclaimed === true,
-        },
-      })
-      await xack(streamKey, group, msg.id)
-      this.lastAckAt = Date.now()
-      return
-    }
 
     const claimed = await claimQueueIdempotency(this.supabase, job.idempotency_key, {
       signal_id: job.signal_id,
@@ -251,7 +234,8 @@ export class SignalQueueConsumer {
     })
 
     try {
-      const accepted = await this.tradeExecutor.acceptDispatchSignalAwait(signalRow, {
+      // Match HTTP push latency: accept in-process (fast path is async), ack after accept.
+      const accepted = this.tradeExecutor.acceptDispatchSignal(signalRow, {
         priority: job.priority,
         source: 'queue',
       })
@@ -323,9 +307,24 @@ export class SignalQueueConsumer {
       })
 
       // Leave unacked — XAUTOCLAIM will retry after claim idle timeout.
-      await sleep(retryBackoffMs(attempts))
     }
   }
+}
+
+async function mapConcurrent<T>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<void>,
+): Promise<void> {
+  if (items.length === 0) return
+  const pool = Math.max(1, Math.min(limit, items.length))
+  let idx = 0
+  await Promise.all(Array.from({ length: pool }, async () => {
+    while (idx < items.length) {
+      const i = idx++
+      await fn(items[i]!)
+    }
+  }))
 }
 
 function sleep(ms: number): Promise<void> {

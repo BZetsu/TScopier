@@ -4,7 +4,7 @@
 
 import { dispatchPriorityForAction, isManagementAction, parsedAction } from './tradeSignalActions'
 import type { PipelineTimestamps } from './pipelineTimestamps'
-import { redisQueueConfigured, signalQueueConfig } from './queue/signalQueueConfig'
+import { deployedTradeShardCount, redisQueueConfigured, signalQueueConfig } from './queue/signalQueueConfig'
 import { shardForUserId } from './workerConfig'
 
 export type TradeSignalPushPayload = {
@@ -280,6 +280,15 @@ export function validateListenerQueueConfig(): string | null {
   }
   if (cfg.shardCount < 1) {
     return 'TRADE_SIGNAL_QUEUE_SHARD_COUNT must be >= 1'
+  }
+  const tradeShards = deployedTradeShardCount()
+  if (cfg.shardCount > tradeShards) {
+    return `TRADE_SIGNAL_QUEUE_SHARD_COUNT=${cfg.shardCount} exceeds deployed trade shards (${tradeShards}).`
+      + ' Set TRADE_SIGNAL_QUEUE_SHARD_COUNT=1 for a single trade worker, or add matching trade shards.'
+  }
+  const shardUrls = parseTradeWorkerShardUrls(process.env.TRADE_WORKER_SHARD_URLS)
+  if (shardUrls.length > 0 && cfg.shardCount !== shardUrls.length) {
+    return `TRADE_SIGNAL_QUEUE_SHARD_COUNT=${cfg.shardCount} must match TRADE_WORKER_SHARD_URLS count (${shardUrls.length})`
   }
   return null
 }

@@ -22,6 +22,7 @@ export type SignalQueueConfig = {
   maxAttempts: number
   readCount: number
   shardCount: number
+  consumerConcurrency: number
   pushFallbackOnQueueFail: boolean
   redisRestUrl: string
   redisRestToken: string
@@ -60,6 +61,17 @@ export function loadSignalQueueConfig(): SignalQueueConfig {
     maxAttempts: Math.max(1, Math.min(20, Number(process.env.TRADE_SIGNAL_QUEUE_MAX_ATTEMPTS ?? 5))),
     readCount: Math.max(1, Math.min(100, Number(process.env.TRADE_SIGNAL_QUEUE_READ_COUNT ?? 10))),
     shardCount: queueShardCount(),
+    consumerConcurrency: Math.max(
+      1,
+      Math.min(
+        32,
+        Number(
+          process.env.TRADE_SIGNAL_QUEUE_CONSUMER_CONCURRENCY
+          ?? process.env.EXECUTOR_MAX_CONCURRENT_SIGNALS
+          ?? 8,
+        ),
+      ),
+    ),
     pushFallbackOnQueueFail: parseEnvBool(process.env.TRADE_SIGNAL_PUSH_FALLBACK_ON_QUEUE_FAIL, true),
     redisRestUrl: String(process.env.UPSTASH_REDIS_REST_URL ?? process.env.REDIS_REST_URL ?? '').trim(),
     redisRestToken: String(process.env.UPSTASH_REDIS_REST_TOKEN ?? process.env.REDIS_REST_TOKEN ?? '').trim(),
@@ -124,6 +136,15 @@ export function shouldConsumeQueueLane(lane: SignalQueueLane): boolean {
   if (lane === 'entry') return mode === 'entry'
   if (lane === 'mgmt') return mode === 'mgmt'
   return false
+}
+
+export function deployedTradeShardCount(): number {
+  const shardUrls = String(process.env.TRADE_WORKER_SHARD_URLS ?? '').trim()
+  if (shardUrls) {
+    return Math.max(1, shardUrls.split(',').map(s => s.trim()).filter(Boolean).length)
+  }
+  const raw = process.env.TRADE_WORKER_SHARD_COUNT ?? process.env.WORKER_SHARD_COUNT ?? '1'
+  return Math.max(1, Math.floor(Number(raw)))
 }
 
 export function buildIdempotencyKey(parts: {

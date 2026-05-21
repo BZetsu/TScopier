@@ -14,6 +14,7 @@ exports.consumerGroupForLane = consumerGroupForLane;
 exports.tradeShardForUser = tradeShardForUser;
 exports.shouldEnqueueForUser = shouldEnqueueForUser;
 exports.shouldConsumeQueueLane = shouldConsumeQueueLane;
+exports.deployedTradeShardCount = deployedTradeShardCount;
 exports.buildIdempotencyKey = buildIdempotencyKey;
 const tradeSignalActions_1 = require("../tradeSignalActions");
 const workerConfig_1 = require("../workerConfig");
@@ -51,6 +52,9 @@ function loadSignalQueueConfig() {
         maxAttempts: Math.max(1, Math.min(20, Number(process.env.TRADE_SIGNAL_QUEUE_MAX_ATTEMPTS ?? 5))),
         readCount: Math.max(1, Math.min(100, Number(process.env.TRADE_SIGNAL_QUEUE_READ_COUNT ?? 10))),
         shardCount: queueShardCount(),
+        consumerConcurrency: Math.max(1, Math.min(32, Number(process.env.TRADE_SIGNAL_QUEUE_CONSUMER_CONCURRENCY
+            ?? process.env.EXECUTOR_MAX_CONCURRENT_SIGNALS
+            ?? 8))),
         pushFallbackOnQueueFail: parseEnvBool(process.env.TRADE_SIGNAL_PUSH_FALLBACK_ON_QUEUE_FAIL, true),
         redisRestUrl: String(process.env.UPSTASH_REDIS_REST_URL ?? process.env.REDIS_REST_URL ?? '').trim(),
         redisRestToken: String(process.env.UPSTASH_REDIS_REST_TOKEN ?? process.env.REDIS_REST_TOKEN ?? '').trim(),
@@ -116,6 +120,14 @@ function shouldConsumeQueueLane(lane) {
     if (lane === 'mgmt')
         return mode === 'mgmt';
     return false;
+}
+function deployedTradeShardCount() {
+    const shardUrls = String(process.env.TRADE_WORKER_SHARD_URLS ?? '').trim();
+    if (shardUrls) {
+        return Math.max(1, shardUrls.split(',').map(s => s.trim()).filter(Boolean).length);
+    }
+    const raw = process.env.TRADE_WORKER_SHARD_COUNT ?? process.env.WORKER_SHARD_COUNT ?? '1';
+    return Math.max(1, Math.floor(Number(raw)));
 }
 function buildIdempotencyKey(parts) {
     const broker = parts.brokerAccountId?.trim() || '_';

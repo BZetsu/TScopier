@@ -90,11 +90,7 @@ class SignalQueueConsumer {
                 this.lastReadAt = Date.now();
                 if (messages.length === 0)
                     continue;
-                for (const msg of messages) {
-                    if (this.stopped)
-                        break;
-                    await this.processMessage(streamKey, group, msg);
-                }
+                await mapConcurrent(messages, cfg.consumerConcurrency, msg => this.processMessage(streamKey, group, msg));
             }
             catch (err) {
                 this.lastError = err instanceof Error ? err.message : String(err);
@@ -120,11 +116,7 @@ class SignalQueueConsumer {
                 if (messages.length === 0)
                     continue;
                 (0, workerMetrics_1.incMetric)('queue_reclaimed', messages.length);
-                for (const msg of messages) {
-                    if (this.stopped)
-                        break;
-                    await this.processMessage(streamKey, group, msg, { reclaimed: true });
-                }
+                await mapConcurrent(messages, cfg.consumerConcurrency, msg => this.processMessage(streamKey, group, msg, { reclaimed: true }));
             }
             catch (err) {
                 this.lastError = err instanceof Error ? err.message : String(err);
@@ -142,24 +134,6 @@ class SignalQueueConsumer {
         }
         const attempts = (0, signalQueueRetry_1.parseAttemptCount)(msg.fields);
         const enqueueToStartMs = Date.now() - job.enqueued_at;
-        if (await (0, signalQueueIdempotency_1.isDuplicateQueueDelivery)(this.supabase, job.idempotency_key)) {
-            (0, workerMetrics_1.incMetric)('queue_duplicate_skip');
-            void (0, signalQueueRetry_1.logQueueExecution)(this.supabase, {
-                user_id: job.user_id,
-                signal_id: job.signal_id,
-                action: 'queue_duplicate_skip',
-                status: 'skipped',
-                request_payload: {
-                    message_id: msg.id,
-                    idempotency_key: job.idempotency_key,
-                    attempts,
-                    reclaimed: opts?.reclaimed === true,
-                },
-            });
-            await (0, redisStreamsClient_1.xack)(streamKey, group, msg.id);
-            this.lastAckAt = Date.now();
-            return;
-        }
         const claimed = await (0, signalQueueIdempotency_1.claimQueueIdempotency)(this.supabase, job.idempotency_key, {
             signal_id: job.signal_id,
             user_id: job.user_id,
@@ -194,7 +168,8 @@ class SignalQueueConsumer {
             },
         });
         try {
-            const accepted = await this.tradeExecutor.acceptDispatchSignalAwait(signalRow, {
+            // Match HTTP push latency: accept in-process (fast path is async), ack after accept.
+            const accepted = this.tradeExecutor.acceptDispatchSignal(signalRow, {
                 priority: job.priority,
                 source: 'queue',
             });
@@ -262,11 +237,22 @@ class SignalQueueConsumer {
                 },
             });
             // Leave unacked — XAUTOCLAIM will retry after claim idle timeout.
-            await sleep((0, signalQueueRetry_1.retryBackoffMs)(attempts));
         }
     }
 }
 exports.SignalQueueConsumer = SignalQueueConsumer;
+async function mapConcurrent(items, limit, fn) {
+    if (items.length === 0)
+        return;
+    const pool = Math.max(1, Math.min(limit, items.length));
+    let idx = 0;
+    await Promise.all(Array.from({ length: pool }, async () => {
+        while (idx < items.length) {
+            const i = idx++;
+            await fn(items[i]);
+        }
+    }));
+}
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
