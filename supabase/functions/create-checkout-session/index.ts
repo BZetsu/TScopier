@@ -44,7 +44,7 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    const { plan, interval, extraAccounts, returnUrl } = await req.json();
+    const { plan, interval, extraAccounts, successUrl, cancelUrl } = await req.json();
 
     if (!plan || !["basic", "advanced"].includes(plan)) {
       return new Response(
@@ -106,12 +106,14 @@ Deno.serve(async (req: Request) => {
       }
     }
 
+    const origin = req.headers.get("origin") || "http://localhost:5173";
     const sessionParams: Stripe.Checkout.SessionCreateParams = {
       customer: customerId,
       mode: "subscription",
       line_items: lineItems,
-      ui_mode: "embedded",
-      return_url: returnUrl || `${req.headers.get("origin")}/dashboard?checkout=success`,
+      success_url:
+        successUrl || `${origin}/dashboard?checkout=success`,
+      cancel_url: cancelUrl || `${origin}/pricing`,
       metadata: {
         supabase_user_id: user.id,
         plan,
@@ -135,8 +137,15 @@ Deno.serve(async (req: Request) => {
 
     const session = await stripe.checkout.sessions.create(sessionParams);
 
+    if (!session.url) {
+      return new Response(
+        JSON.stringify({ error: "Checkout session URL missing" }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     return new Response(
-      JSON.stringify({ clientSecret: session.client_secret }),
+      JSON.stringify({ url: session.url }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (err) {

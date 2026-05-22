@@ -1,0 +1,24 @@
+import { BrowserRouter, Route, Routes } from 'react-router-dom'
+import { LocaleProvider } from './context/LocaleContext'
+import { LandingPage } from './pages/marketing/LandingPage'
+import { appUrl } from './lib/site'
+
+function MarketingCatchAll() {
+  if (typeof window !== 'undefined') {
+    window.location.href = appUrl('/dashboard')
+  }
+  return null
+}
+
+export default function MarketingApp() {
+  return (
+    <LocaleProvider>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/" element={<LandingPage />} />
+          <Route path="*" element={<MarketingCatchAll />} />
+        </Routes>
+      </BrowserRouter>
+    </LocaleProvider>
+  )
+}

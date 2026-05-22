@@ -30,6 +30,16 @@ html.dark {
   --tsc-text-muted: #94a3b8;
 }
 
+html {
+  scroll-behavior: smooth;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
+
 html.dark,
 html.dark body {
   background-color: var(--tsc-page);
@@ -87,6 +97,173 @@ html.app-viewport-lock #root {
 
   .tsc-page-subtext {
     @apply text-neutral-500 dark:text-neutral-400;
+  }
+
+  .marketing-card {
+    @apply rounded-2xl border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900;
+  }
+
+  .marketing-card-feature {
+    @apply marketing-card p-6 transition-transform duration-300 hover:-translate-y-0.5;
+  }
+
+  .marketing-card-pricing {
+    @apply marketing-card p-8;
+  }
+
+  /* Auth Trustpilot reviews panel + landing hero */
+  .trustpilot-panel-bg {
+    @apply bg-neutral-100;
+  }
+
+  html.dark .trustpilot-panel-bg {
+    @apply bg-neutral-900/50;
+  }
+
+  .trustpilot-panel-surface {
+    @apply bg-gradient-to-br from-white via-teal-50/40 to-primary-50/30;
+  }
+
+  html.dark .trustpilot-panel-surface {
+    @apply from-neutral-900 via-teal-950/20 to-primary-950/40;
+  }
+
+  .trustpilot-panel-radial {
+    pointer-events: none;
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(ellipse 70% 50% at 80% 0%, rgba(45, 212, 191, 0.12), transparent),
+      radial-gradient(ellipse 50% 40% at 0% 100%, rgba(13, 148, 136, 0.08), transparent);
+  }
+
+  html.dark .trustpilot-panel-radial {
+    background: radial-gradient(ellipse 70% 50% at 80% 0%, rgba(45, 212, 191, 0.08), transparent);
+  }
+
+  .marketing-hero-bg {
+    @apply relative min-h-screen overflow-hidden bg-neutral-50;
+  }
+
+  html.dark .marketing-hero-bg {
+    @apply bg-neutral-950;
+  }
+
+  .marketing-hero-bg::before {
+    content: '';
+    @apply pointer-events-none absolute inset-0;
+    background:
+      radial-gradient(ellipse 80% 50% at 50% -20%, rgba(45, 212, 191, 0.15), transparent),
+      radial-gradient(ellipse 60% 40% at 100% 50%, rgba(13, 148, 136, 0.08), transparent),
+      radial-gradient(ellipse 50% 30% at 0% 80%, rgba(20, 184, 166, 0.06), transparent);
+  }
+
+  html.dark .marketing-hero-bg::before {
+    background:
+      radial-gradient(ellipse 80% 50% at 50% -20%, rgba(45, 212, 191, 0.12), transparent),
+      radial-gradient(ellipse 60% 40% at 100% 50%, rgba(13, 148, 136, 0.06), transparent),
+      radial-gradient(ellipse 50% 30% at 0% 80%, rgba(20, 184, 166, 0.04), transparent);
+  }
+
+  .marketing-nav-header {
+    transform: translateY(0);
+    transition:
+      padding 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+      transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .marketing-nav-header--hidden {
+    transform: translateY(calc(-100% - 0.5rem));
+  }
+
+  .marketing-nav-float {
+    @apply relative h-14 rounded-2xl border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900;
+    transition:
+      height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+      background-color 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+      border-color 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .marketing-nav-float--scrolled {
+    @apply h-12;
+  }
+
+  .marketing-nav-mobile {
+    @apply rounded-2xl border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900;
+    transition:
+      background-color 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+      border-color 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .marketing-nav-header,
+    .marketing-nav-float,
+    .marketing-nav-mobile {
+      transition: none;
+    }
+  }
+
+  .hero-product-showcase {
+    @apply relative w-full;
+  }
+
+  .hero-product-glow {
+    @apply pointer-events-none absolute -inset-6 -z-10 sm:-inset-10;
+    background:
+      radial-gradient(ellipse 70% 55% at 50% 40%, rgba(45, 212, 191, 0.35), transparent 68%),
+      radial-gradient(ellipse 45% 35% at 50% 90%, rgba(13, 148, 136, 0.12), transparent);
+  }
+
+  html.dark .hero-product-glow {
+    background:
+      radial-gradient(ellipse 70% 55% at 50% 40%, rgba(45, 212, 191, 0.22), transparent 68%),
+      radial-gradient(ellipse 45% 35% at 50% 90%, rgba(13, 148, 136, 0.08), transparent);
+  }
+
+  .hero-product-frame {
+    @apply relative z-10 overflow-hidden rounded-2xl border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900;
+    transform: perspective(1600px) rotateX(3deg);
+    transform-origin: center top;
+  }
+
+  @media (min-width: 640px) {
+    .hero-product-frame {
+      transform: perspective(1600px) rotateX(4deg);
+    }
+  }
+
+  .hero-product-chrome {
+    @apply flex items-center gap-3 border-b border-neutral-200 bg-neutral-50 px-3 py-2 dark:border-neutral-800 dark:bg-neutral-900/80 sm:px-4;
+  }
+
+  .hero-chrome-dot {
+    @apply h-2.5 w-2.5 rounded-full;
+  }
+
+  .hero-product-url {
+    @apply mx-auto flex min-w-0 max-w-[min(100%,14rem)] flex-1 items-center justify-center gap-1.5 rounded-md border border-neutral-200 bg-white px-2.5 py-0.5 text-[10px] font-medium text-neutral-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-400 sm:text-[11px];
+  }
+
+  .hero-product-screen {
+    @apply overflow-hidden bg-neutral-100;
+  }
+
+  html.dark .hero-product-screen {
+    @apply bg-neutral-950;
+  }
+
+  .hero-product-screenshot {
+    @apply block h-auto w-full align-top;
+  }
+
+  .hero-product-reflection {
+    @apply absolute -bottom-6 left-[8%] right-[8%] h-16 -z-10 rounded-[100%];
+    background: radial-gradient(ellipse 80% 40% at 50% 0%, rgba(45, 212, 191, 0.2), transparent 70%);
+    filter: blur(12px);
+  }
+
+  html.dark .hero-product-reflection {
+    background: radial-gradient(ellipse 80% 40% at 50% 0%, rgba(45, 212, 191, 0.12), transparent 70%);
   }
 }
 

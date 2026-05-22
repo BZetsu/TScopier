@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Mail } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
+import { sendVerificationEmail } from '../../lib/sendVerificationEmail'
+import { useAuth } from '../../context/AuthContext'
 import { Button } from '../../components/ui/Button'
 import { Alert } from '../../components/ui/Alert'
 import { useLocale } from '../../context/LocaleContext'
@@ -9,8 +11,10 @@ import { useLocale } from '../../context/LocaleContext'
 export function VerifyEmailPage() {
   const { auth } = useLocale()
   const verifyT = auth.verify
+  const { session } = useAuth()
   const [searchParams] = useSearchParams()
   const email = searchParams.get('email') ?? ''
+  const redirectTo = `${window.location.origin}/dashboard`
 
   const [resending, setResending] = useState(false)
   const [resent, setResent] = useState(false)
@@ -22,13 +26,22 @@ export function VerifyEmailPage() {
     setError('')
     setResent(false)
 
-    const { error: resendError } = await supabase.auth.resend({
-      type: 'signup',
+    const sent = await sendVerificationEmail({
       email,
+      accessToken: session?.access_token,
+      redirectTo,
     })
-
-    if (resendError) {
-      setError(resendError.message)
+    if (!sent.ok) {
+      const { error: resendError } = await supabase.auth.resend({
+        type: 'signup',
+        email,
+        options: { emailRedirectTo: redirectTo },
+      })
+      if (resendError) {
+        setError(sent.error ?? resendError.message)
+      } else {
+        setResent(true)
+      }
     } else {
       setResent(true)
     }

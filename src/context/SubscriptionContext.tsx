@@ -59,6 +59,16 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
     fetchSubscription()
   }, [fetchSubscription])
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('checkout') !== 'success') return
+    void fetchSubscription()
+    params.delete('checkout')
+    const qs = params.toString()
+    const next = `${window.location.pathname}${qs ? `?${qs}` : ''}${window.location.hash}`
+    window.history.replaceState({}, '', next)
+  }, [fetchSubscription])
+
   const hasActiveSubscription =
     subscription?.status === 'active' || subscription?.status === 'trialing'
 

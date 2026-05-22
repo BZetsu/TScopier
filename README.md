@@ -71,3 +71,10 @@ export default defineConfig([
   },
 ])
 ```
+
+## TSCopier domains
+
+- **Marketing**: `tscopier.ai` — landing page
+- **App**: `app.tscopier.ai` — dashboard, auth, pricing
+
+One Netlify build serves both hostnames. See [docs/marketing-site.md](docs/marketing-site.md) for DNS, Supabase Auth, and local preview (`VITE_DEV_SITE=marketing` or `?site=marketing`).

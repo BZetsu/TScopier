@@ -8,6 +8,7 @@ import { Button } from '../../components/ui/Button'
 import { Alert } from '../../components/ui/Alert'
 import { useLocale } from '../../context/LocaleContext'
 import { EMPTY_USER_PROFILE, saveUserProfile } from '../../lib/userProfile'
+import { sendVerificationEmail } from '../../lib/sendVerificationEmail'
 
 function GoogleIcon({ className }: { className?: string }) {
   return (
@@ -78,10 +79,12 @@ export function SignupPage() {
 
     const trimmedFirst = firstName.trim()
     const trimmedLast = lastName.trim()
+    const redirectTo = `${window.location.origin}/dashboard`
     const { data, error: signUpError } = await supabase.auth.signUp({
       email,
       password,
       options: {
+        emailRedirectTo: redirectTo,
         data: {
           first_name: trimmedFirst,
           last_name: trimmedLast,
@@ -109,16 +112,24 @@ export function SignupPage() {
           // Profile save is non-blocking for verification flow
         }
 
-        const confirmUrl = `${window.location.origin}/dashboard`
-        const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-verification-email`
-        await fetch(apiUrl, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${data.session.access_token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ confirmUrl }),
-        }).catch(() => {})
+      }
+
+      const sent = await sendVerificationEmail({
+        email: data.user.email ?? email,
+        accessToken: data.session?.access_token,
+        redirectTo,
+      })
+      if (!sent.ok) {
+        const fallback = await supabase.auth.resend({
+          type: 'signup',
+          email,
+          options: { emailRedirectTo: redirectTo },
+        })
+        if (fallback.error) {
+          setError(sent.error ?? fallback.error.message)
+          setLoading(false)
+          return
+        }
       }
     }
 

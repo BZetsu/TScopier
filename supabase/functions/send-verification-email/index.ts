@@ -21,7 +21,6 @@ function buildEmailHtml(firstName: string, confirmUrl: string): string {
     <tr>
       <td align="center">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background-color:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.08);">
-          <!-- Header -->
           <tr>
             <td style="padding:40px 40px 0 40px;">
               <h1 style="margin:0 0 24px 0;font-size:22px;font-weight:600;color:#171717;line-height:1.3;">
@@ -35,7 +34,6 @@ function buildEmailHtml(firstName: string, confirmUrl: string): string {
               </p>
             </td>
           </tr>
-          <!-- Button -->
           <tr>
             <td style="padding:0 40px 40px 40px;">
               <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto;">
@@ -49,13 +47,11 @@ function buildEmailHtml(firstName: string, confirmUrl: string): string {
               </table>
             </td>
           </tr>
-          <!-- Divider -->
           <tr>
             <td style="padding:0 40px;">
               <hr style="border:none;border-top:1px solid #e5e5e5;margin:0;">
             </td>
           </tr>
-          <!-- Footer -->
           <tr>
             <td style="padding:32px 40px 40px 40px;text-align:center;">
               <p style="margin:0;font-size:12px;line-height:1.6;color:#a3a3a3;">
@@ -74,59 +70,104 @@ function buildEmailHtml(firstName: string, confirmUrl: string): string {
 </html>`;
 }
 
+function json(
+  body: Record<string, unknown>,
+  status: number,
+): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 200, headers: corsHeaders });
   }
 
   try {
-    const authHeader = req.headers.get("Authorization");
-    if (!authHeader) {
-      return new Response(
-        JSON.stringify({ error: "Missing authorization header" }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const resendApiKey = Deno.env.get("RESEND_API_KEY");
+    const resendFrom = "TSCopier <verification@tscopier.ai>";
 
     if (!resendApiKey) {
-      return new Response(
-        JSON.stringify({ error: "RESEND_API_KEY not configured" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      return json(
+        { error: "RESEND_API_KEY not configured on the server" },
+        500,
       );
     }
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    const token = authHeader.replace("Bearer ", "");
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
-    if (authError || !user) {
-      return new Response(
-        JSON.stringify({ error: "Invalid token" }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    const body = await req.json().catch(() => ({})) as {
+      confirmUrl?: string;
+      redirectTo?: string;
+      email?: string;
+    };
+
+    const redirectTo =
+      body.redirectTo ||
+      body.confirmUrl ||
+      `${req.headers.get("origin") ?? "http://localhost:5173"}/dashboard`;
+
+    let targetEmail: string | undefined;
+    let firstName = "there";
+
+    const authHeader = req.headers.get("Authorization");
+    if (authHeader) {
+      const token = authHeader.replace("Bearer ", "");
+      const { data: { user }, error: authError } = await supabase.auth.getUser(
+        token,
+      );
+      if (!authError && user?.email) {
+        targetEmail = user.email;
+        firstName = (user.user_metadata?.first_name as string) || firstName;
+      }
+    }
+
+    if (!targetEmail && typeof body.email === "string") {
+      const normalized = body.email.trim().toLowerCase();
+      if (normalized.includes("@")) {
+        targetEmail = normalized;
+      }
+    }
+
+    if (!targetEmail) {
+      return json({ error: "Missing email" }, 400);
+    }
+
+    if (firstName === "there") {
+      const { data: listed } = await supabase.auth.admin.listUsers({
+        page: 1,
+        perPage: 50,
+      });
+      const match = listed?.users?.find(
+        (u) => u.email?.toLowerCase() === targetEmail,
+      );
+      if (match?.user_metadata?.first_name) {
+        firstName = String(match.user_metadata.first_name);
+      }
+    }
+
+    const { data: linkData, error: linkError } = await supabase.auth.admin
+      .generateLink({
+        type: "magiclink",
+        email: targetEmail,
+        options: { redirectTo },
+      });
+
+    if (linkError || !linkData?.properties?.action_link) {
+      return json(
+        {
+          error: "Could not create verification link",
+          details: linkError?.message ?? "no action_link returned",
+        },
+        500,
       );
     }
 
-    const { confirmUrl } = await req.json();
-    if (!confirmUrl) {
-      return new Response(
-        JSON.stringify({ error: "Missing confirmUrl" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    const firstName = user.user_metadata?.first_name || "there";
-    const email = user.email;
-
-    if (!email) {
-      return new Response(
-        JSON.stringify({ error: "User has no email" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
+    const confirmUrl = linkData.properties.action_link;
 
     const html = buildEmailHtml(firstName, confirmUrl);
 
@@ -137,31 +178,35 @@ Deno.serve(async (req: Request) => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: "TSCopier <noreply@tscopier.com>",
-        to: [email],
-        subject: "Confirm your account",
+        from: resendFrom,
+        to: [targetEmail],
+        subject: "Confirm your TSCopier account",
         html,
       }),
     });
 
     if (!resendRes.ok) {
       const resendError = await resendRes.text();
-      return new Response(
-        JSON.stringify({ error: "Failed to send email", details: resendError }),
-        { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      console.error("[send-verification-email] Resend error:", resendError);
+      return json(
+        {
+          error: "Failed to send email via Resend",
+          details: resendError,
+          hint:
+            "Verify RESEND_API_KEY and that tscopier.ai is verified in Resend for verification@tscopier.ai.",
+        },
+        502,
       );
     }
 
     const resendData = await resendRes.json();
 
-    return new Response(
-      JSON.stringify({ success: true, id: resendData.id }),
-      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return json({ success: true, id: resendData.id }, 200);
   } catch (err) {
-    return new Response(
-      JSON.stringify({ error: err instanceof Error ? err.message : "Unknown error" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    console.error("[send-verification-email]", err);
+    return json(
+      { error: err instanceof Error ? err.message : "Unknown error" },
+      500,
     );
   }
 });

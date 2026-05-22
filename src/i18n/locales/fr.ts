@@ -1,5 +1,6 @@
 import { authFr } from '../auth/fr'
 import { channelWorkerFr } from '../channelWorker/fr'
+import { landingFr } from './landing/fr'
 import type { Translations } from './types'
 
 export const fr: Translations = {
@@ -108,7 +109,9 @@ export const fr: Translations = {
       trialEnds: 'L\'essai se termine',
       choosePlan: 'Choisir un plan',
     },
+    checkoutFailed: 'Impossible de démarrer le paiement. Veuillez réessayer.',
   },
+  landing: landingFr,
   common: {
     comingSoon: 'Bientôt disponible',
     underDevelopment: 'Cette fonctionnalité est en cours de développement',

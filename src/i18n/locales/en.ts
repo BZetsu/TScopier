@@ -1,5 +1,6 @@
 import { authEn } from '../auth/en'
 import { channelWorkerEn } from '../channelWorker/en'
+import { landingEn } from './landing/en'
 import type { Translations } from './types'
 
 export const en: Translations = {
@@ -108,7 +109,9 @@ export const en: Translations = {
       trialEnds: 'Trial ends',
       choosePlan: 'Choose a plan',
     },
+    checkoutFailed: 'Could not start checkout. Please try again.',
   },
+  landing: landingEn,
   common: {
     comingSoon: 'Coming soon',
     underDevelopment: 'This feature is under development',

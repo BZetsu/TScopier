@@ -1,5 +1,6 @@
 import type { AuthTranslations } from '../auth/types'
 import type { ChannelWorkerTranslations } from '../channelWorker/types'
+import type { LandingTranslations } from './landing/types'
 
 export interface GlobalSearchTranslations {
   placeholder: string
@@ -719,6 +720,7 @@ export interface PricingTranslations {
     trialEnds: string
     choosePlan: string
   }
+  checkoutFailed: string
 }
 
 export interface Translations {
@@ -728,6 +730,7 @@ export interface Translations {
   globalSearch: GlobalSearchTranslations
   common: CommonTranslations
   pricing: PricingTranslations
+  landing: LandingTranslations
   accountConfig: AccountConfigTranslations
   dashboard: DashboardTranslations
   copierLogs: CopierLogsTranslations

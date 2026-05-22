@@ -1,16 +1,22 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import clsx from 'clsx'
+import { useTheme } from '../../context/ThemeContext'
 
-/** Wordmark for auth header — do not apply CSS invert/filter. */
-const AUTH_LOGIN_LOGO = '/tscopier-login-logo.png'
-const AUTH_LOGIN_LOGO_FALLBACK = '/tscopierlogo.png'
+const AUTH_LOGO_LIGHT = '/tscopierlogo.png'
+const AUTH_LOGO_DARK = '/tscopierlogo-dark.png'
 
 interface AuthBrandLogoProps {
   className?: string
 }
 
 export function AuthBrandLogo({ className }: AuthBrandLogoProps) {
-  const [src, setSrc] = useState(AUTH_LOGIN_LOGO)
+  const { isDark } = useTheme()
+  const themedSrc = isDark ? AUTH_LOGO_DARK : AUTH_LOGO_LIGHT
+  const [src, setSrc] = useState(themedSrc)
+
+  useEffect(() => {
+    setSrc(isDark ? AUTH_LOGO_DARK : AUTH_LOGO_LIGHT)
+  }, [isDark])
 
   return (
     <img
@@ -19,7 +25,7 @@ export function AuthBrandLogo({ className }: AuthBrandLogoProps) {
       className={clsx('h-8 w-auto max-w-[140px] object-contain', className)}
       draggable={false}
       onError={() => {
-        if (src !== AUTH_LOGIN_LOGO_FALLBACK) setSrc(AUTH_LOGIN_LOGO_FALLBACK)
+        if (src !== AUTH_LOGO_LIGHT) setSrc(AUTH_LOGO_LIGHT)
       }}
     />
   )

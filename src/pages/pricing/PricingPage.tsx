@@ -1,18 +1,10 @@
-import { useCallback, useState } from 'react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Check, Zap, ArrowLeft } from 'lucide-react'
+import { Check, Zap } from 'lucide-react'
 import clsx from 'clsx'
-import { loadStripe } from '@stripe/stripe-js'
-import {
-  EmbeddedCheckoutProvider,
-  EmbeddedCheckout,
-} from '@stripe/react-stripe-js'
 import { useT } from '../../context/LocaleContext'
 import { useAuth } from '../../context/AuthContext'
-import { useSubscription } from '../../context/SubscriptionContext'
 import { Button } from '../../components/ui/Button'
-
-const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || '')
 
 const BASIC_FEATURES = [
   '1 demo/live account',
@@ -54,10 +46,10 @@ export function PricingPage() {
   const pt = t.pricing
   const navigate = useNavigate()
   const { session } = useAuth()
-  const { refresh } = useSubscription()
   const [interval, setInterval] = useState<'monthly' | 'annual'>('monthly')
   const [extraAccounts, setExtraAccounts] = useState(0)
-  const [checkoutPlan, setCheckoutPlan] = useState<'basic' | 'advanced' | null>(null)
+  const [checkoutLoading, setCheckoutLoading] = useState<'basic' | 'advanced' | null>(null)
+  const [checkoutError, setCheckoutError] = useState('')
 
   const isAnnual = interval === 'annual'
 
@@ -69,56 +61,38 @@ export function PricingPage() {
   const basicAnnualTotal = ANNUAL_BASIC
   const advancedAnnualTotal = ANNUAL_ADVANCED + extraAccounts * ANNUAL_EXTRA_ACCOUNT
 
-  const fetchClientSecret = useCallback(async () => {
-    if (!checkoutPlan) return ''
-    const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-checkout-session`
-    const res = await fetch(apiUrl, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${session?.access_token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        plan: checkoutPlan,
-        interval,
-        extraAccounts: checkoutPlan === 'advanced' ? extraAccounts : 0,
-        returnUrl: `${window.location.origin}/dashboard?checkout=success`,
-      }),
-    })
-    const data = await res.json()
-    return data.clientSecret as string
-  }, [checkoutPlan, interval, extraAccounts, session?.access_token])
-
-  const handleComplete = useCallback(async () => {
-    await refresh()
-    navigate('/dashboard?checkout=success')
-  }, [refresh, navigate])
-
-  // Embedded checkout view
-  if (checkoutPlan) {
-    return (
-      <div className="min-h-screen bg-neutral-50 dark:bg-neutral-950">
-        <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6 lg:px-8">
-          <button
-            type="button"
-            onClick={() => setCheckoutPlan(null)}
-            className="mb-6 inline-flex items-center gap-2 text-sm font-medium text-neutral-500 hover:text-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-200 transition-colors"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            {t.backtest?.back || 'Back'}
-          </button>
-
-          <div className="rounded-2xl border border-neutral-200 bg-white p-1 shadow-sm dark:border-neutral-800 dark:bg-neutral-900 overflow-hidden">
-            <EmbeddedCheckoutProvider
-              stripe={stripePromise}
-              options={{ fetchClientSecret, onComplete: handleComplete }}
-            >
-              <EmbeddedCheckout />
-            </EmbeddedCheckoutProvider>
-          </div>
-        </div>
-      </div>
-    )
+  const startCheckout = async (plan: 'basic' | 'advanced') => {
+    if (!session?.access_token) {
+      navigate('/login')
+      return
+    }
+    setCheckoutError('')
+    setCheckoutLoading(plan)
+    try {
+      const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-checkout-session`
+      const res = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          plan,
+          interval,
+          extraAccounts: plan === 'advanced' ? extraAccounts : 0,
+          successUrl: `${window.location.origin}/dashboard?checkout=success`,
+          cancelUrl: `${window.location.origin}/pricing`,
+        }),
+      })
+      const data = (await res.json()) as { url?: string; error?: string }
+      if (!res.ok || !data.url) {
+        throw new Error(data.error || pt.checkoutFailed)
+      }
+      window.location.href = data.url
+    } catch (err) {
+      setCheckoutError(err instanceof Error ? err.message : pt.checkoutFailed)
+      setCheckoutLoading(null)
+    }
   }
 
   return (
@@ -132,6 +106,15 @@ export function PricingPage() {
           <p className="mt-3 text-base text-neutral-500 dark:text-neutral-400">
             {pt.subtitle}
           </p>
+
+          {checkoutError ? (
+            <div
+              role="alert"
+              className="mx-auto mt-6 max-w-lg rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-200"
+            >
+              {checkoutError}
+            </div>
+          ) : null}
 
           {/* Billing toggle */}
           <div className="mt-8 inline-flex items-center rounded-full border border-neutral-200 bg-white p-1 dark:border-neutral-700 dark:bg-neutral-900">
@@ -204,7 +187,9 @@ export function PricingPage() {
             <Button
               size="lg"
               className="w-full"
-              onClick={() => setCheckoutPlan('basic')}
+              loading={checkoutLoading === 'basic'}
+              disabled={checkoutLoading !== null}
+              onClick={() => void startCheckout('basic')}
             >
               {pt.subscribe}
             </Button>
@@ -271,7 +256,7 @@ export function PricingPage() {
                   <button
                     type="button"
                     onClick={() => setExtraAccounts((v) => Math.max(0, v - 1))}
-                    disabled={extraAccounts === 0}
+                    disabled={extraAccounts === 0 || checkoutLoading !== null}
                     className="flex h-8 w-8 items-center justify-center rounded-md border border-neutral-300 text-neutral-600 transition-colors hover:bg-neutral-100 disabled:opacity-40 dark:border-neutral-600 dark:text-neutral-300 dark:hover:bg-neutral-700"
                   >
                     -
@@ -282,12 +267,13 @@ export function PricingPage() {
                     max={95}
                     value={extraAccounts}
                     onChange={(e) => setExtraAccounts(Math.max(0, Math.min(95, Number(e.target.value) || 0)))}
+                    disabled={checkoutLoading !== null}
                     className="h-8 w-14 rounded-md border border-neutral-300 bg-white text-center text-sm font-medium text-neutral-900 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-50"
                   />
                   <button
                     type="button"
                     onClick={() => setExtraAccounts((v) => Math.min(95, v + 1))}
-                    disabled={extraAccounts >= 95}
+                    disabled={extraAccounts >= 95 || checkoutLoading !== null}
                     className="flex h-8 w-8 items-center justify-center rounded-md border border-neutral-300 text-neutral-600 transition-colors hover:bg-neutral-100 disabled:opacity-40 dark:border-neutral-600 dark:text-neutral-300 dark:hover:bg-neutral-700"
                   >
                     +
@@ -304,7 +290,9 @@ export function PricingPage() {
             <Button
               size="lg"
               className="w-full"
-              onClick={() => setCheckoutPlan('advanced')}
+              loading={checkoutLoading === 'advanced'}
+              disabled={checkoutLoading !== null}
+              onClick={() => void startCheckout('advanced')}
             >
               {pt.startTrial}
             </Button>
