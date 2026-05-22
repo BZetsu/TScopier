@@ -130,6 +130,30 @@ export interface LandingFeatureVisualsCopy {
   }
 }
 
+export type LandingBentoIcon =
+  | 'zap'
+  | 'cloud'
+  | 'link'
+  | 'clock'
+  | 'activity'
+  | 'chart'
+  | 'layers'
+  | 'settings'
+  | 'messages'
+
+export type LandingBentoCardLayout = 'tall' | 'short' | 'featured'
+
+export type LandingBentoMetricVariant = 'teal' | 'neutral' | 'amber'
+
+export interface LandingBentoCard {
+  label: string
+  metric: string
+  metricVariant: LandingBentoMetricVariant
+  description: string
+  layout: LandingBentoCardLayout
+  icon: LandingBentoIcon
+}
+
 export interface LandingStepTranslation {
   title: string
   description: string
@@ -234,9 +258,9 @@ export interface LandingTranslations {
     dashboard: LandingHeroDashboardCopy
   }
   whyChoose: {
+    eyebrow: string
     title: string
-    subtitle: string
-    items: LandingFeatureTranslation[]
+    cards: LandingBentoCard[]
   }
   features: {
     eyebrow: string
