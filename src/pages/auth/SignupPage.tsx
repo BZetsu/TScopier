@@ -232,6 +232,3 @@ export function SignupPage() {
     </div>
   )
 }
-
-
-export { SignupPage }
