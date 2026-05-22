@@ -8,6 +8,8 @@ import { buildClient, isAuthKeyUnregistered, rethrowIfSessionInvalid, TelegramSe
 import { tradeableFromParsed } from './backtestSignal'
 import { hasTradableInstrumentInText } from './tradableSymbol'
 import type { SignalRow } from './tradeExecutor'
+import { enqueueParsedSignal } from './queue/signalQueuePublisher'
+import { signalQueueConfig } from './queue/signalQueueConfig'
 import { pushParsedSignalToTradeWorker } from './tradeSignalPush'
 import { getChannelParseContext, invalidateChannelParseCache } from './channelKeywordsCache'
 import { parseChannelMessageSync, parseRawChannelMessage } from './parseSignal'
@@ -73,6 +75,10 @@ function isAuthKeyDuplicated(err: unknown): boolean {
 function reconnectCooldownMs(): number {
   return Math.max(500, Math.min(120_000, Number(process.env.TELEGRAM_RECONNECT_COOLDOWN_MS ?? 3500)))
 }
+
+const AUTH_KEY_DUP_RECONNECT_DELAY_MS = Math.max(
+  2_000, Math.min(30_000, Number(process.env.TELEGRAM_AUTH_DUP_RECONNECT_DELAY_MS ?? 10_000)),
+)
 
 function startConnectJitterMaxMs(): number {
   return Math.max(0, Math.min(30_000, Number(process.env.TELEGRAM_START_JITTER_MAX_MS ?? 2000)))
@@ -208,7 +214,7 @@ export class UserListener {
   private lastReconnectAt = 0
   private consecutiveProbeFailures = 0
   private lastSavedSession: string
-  private onSignalParsed: ((row: SignalRow) => void) | null = null
+  private onSignalParsed: ((row: SignalRow) => boolean) | null = null
 
   constructor(
     userId: string,
@@ -223,7 +229,7 @@ export class UserListener {
   }
 
   /** Immediate trade dispatch after parse (avoids waiting on Supabase Realtime). */
-  setOnSignalParsed(handler: ((row: SignalRow) => void) | null): void {
+  setOnSignalParsed(handler: ((row: SignalRow) => boolean) | null): void {
     this.onSignalParsed = handler
   }
 
@@ -240,7 +246,18 @@ export class UserListener {
         await this.client.connect()
       } catch (err) {
         if (isAuthKeyUnregistered(err)) throw new TelegramSessionInvalidError()
-        throw err
+        if (isAuthKeyDuplicated(err)) {
+          console.warn(
+            `[userListener] AUTH_KEY_DUPLICATED on initial connect for ${this.userId}`
+            + ` — old session still releasing; waiting ${AUTH_KEY_DUP_RECONNECT_DELAY_MS}ms then retrying`,
+          )
+          incMetric('auth_key_duplicated')
+          try { await this.client.disconnect() } catch { /* ignore */ }
+          await new Promise(r => setTimeout(r, AUTH_KEY_DUP_RECONNECT_DELAY_MS))
+          await this.client.connect()
+        } else {
+          throw err
+        }
       }
     }
     this.isConnected = true
@@ -444,7 +461,11 @@ export class UserListener {
     try {
       dialogs = await this.fetchAllDialogs()
     } catch (err) {
-      rethrowIfSessionInvalid(err)
+      if (isAuthKeyDuplicated(err)) {
+        dialogs = await this.reconnectAndRetryDialogs()
+      } else {
+        rethrowIfSessionInvalid(err)
+      }
     }
 
     const byId = new Map<string, ChannelInfo>()
@@ -465,6 +486,20 @@ export class UserListener {
     this.dialogsCache = channels
     this.dialogsCacheAt = Date.now()
     return channels
+  }
+
+  private async reconnectAndRetryDialogs(): Promise<Awaited<ReturnType<TelegramClient['getDialogs']>>> {
+    console.warn(
+      `[userListener] AUTH_KEY_DUPLICATED on getDialogs for ${this.userId}`
+      + ' — disconnecting, waiting for old session to release, then reconnecting',
+    )
+    incMetric('auth_key_duplicated')
+    this.isConnected = false
+    try { await this.client.disconnect() } catch { /* ignore */ }
+    await new Promise(r => setTimeout(r, AUTH_KEY_DUP_RECONNECT_DELAY_MS))
+    await this.client.connect()
+    this.isConnected = true
+    return this.fetchAllDialogs()
   }
 
   /**
@@ -886,6 +921,9 @@ export class UserListener {
     const rawMessage = (message.text ?? message.message ?? '') as string
     const isReply = !!message.replyTo
     const messageEpochSec = this.messageEpochSec(message)
+    // Stamp listener arrival as early as possible so telegram_to_listener_ms
+    // reflects only Telegram delivery time (not our dedup/parent lookup DB calls).
+    const tListenerReceived = Date.now()
 
     if (opts?.source === 'catchup' && messageEpochSec > 0) {
       const ageMs = Date.now() - messageEpochSec * 1000
@@ -924,7 +962,6 @@ export class UserListener {
     }
 
     const signalId = randomUUID()
-    const tListenerReceived = Date.now()
     const pipelineTs: PipelineTimestamps = {
       t_telegram_event: messageEpochSec > 0 ? messageEpochSec * 1000 : undefined,
       t_listener_received: tListenerReceived,
@@ -1002,17 +1039,48 @@ export class UserListener {
       created_at: new Date().toISOString(),
       pipeline_ts: pipelineTs,
     }
-
     console.log(
       `[userListener] dispatch signal user=${this.userId} signalId=${signalId} channelRow=${channelRow.id} messageId=${messageId}`,
     )
 
-    if (this.onSignalParsed) {
-      this.onSignalParsed(dispatchRow)
-    }
-    if (workerConfig.runsListener && !workerConfig.runsTrade) {
-      pushParsedSignalToTradeWorker(dispatchRow)
-    }
+    const dispatchedInProcess = this.onSignalParsed ? this.onSignalParsed(dispatchRow) === true : false
+    const shouldPush = workerConfig.runsListener && (!workerConfig.runsTrade || !dispatchedInProcess)
+    void (async () => {
+      let queueResult: Awaited<ReturnType<typeof enqueueParsedSignal>> | null = null
+      if (shouldPush) {
+        queueResult = await enqueueParsedSignal(this.supabase, dispatchRow)
+      }
+      const queueCfg = signalQueueConfig()
+      const queueSucceeded = queueResult?.ok === true
+      const pushFallback = queueCfg.pushFallbackOnQueueFail
+      const shouldHttpPush = shouldPush && (
+        !queueSucceeded
+        && (pushFallback || !queueResult || queueResult.skipped)
+      )
+      const { error } = await this.supabase.from('trade_execution_logs').insert({
+        user_id: this.userId,
+        signal_id: signalId,
+        action: 'dispatch_route_decision',
+        status: 'success',
+        request_payload: {
+          dispatched_in_process: dispatchedInProcess,
+          should_push: shouldPush,
+          queue_enabled: queueCfg.enabled,
+          queue_enqueued: queueSucceeded,
+          queue_skipped_reason: queueResult?.skipped ? queueResult.reason : null,
+          queue_error: queueResult?.error ?? null,
+          http_push_fallback: shouldHttpPush,
+          runs_trade: workerConfig.runsTrade,
+          runs_listener: workerConfig.runsListener,
+        },
+      })
+      if (error) {
+        /* best-effort */
+      }
+      if (shouldHttpPush) {
+        pushParsedSignalToTradeWorker(dispatchRow)
+      }
+    })()
 
     return true
   }

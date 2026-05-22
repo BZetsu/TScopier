@@ -7,6 +7,8 @@ const tl_1 = require("telegram/tl");
 const telegramClient_1 = require("./telegramClient");
 const backtestSignal_1 = require("./backtestSignal");
 const tradableSymbol_1 = require("./tradableSymbol");
+const signalQueuePublisher_1 = require("./queue/signalQueuePublisher");
+const signalQueueConfig_1 = require("./queue/signalQueueConfig");
 const tradeSignalPush_1 = require("./tradeSignalPush");
 const channelKeywordsCache_1 = require("./channelKeywordsCache");
 const parseSignal_1 = require("./parseSignal");
@@ -60,6 +62,7 @@ function isAuthKeyDuplicated(err) {
 function reconnectCooldownMs() {
     return Math.max(500, Math.min(120000, Number(process.env.TELEGRAM_RECONNECT_COOLDOWN_MS ?? 3500)));
 }
+const AUTH_KEY_DUP_RECONNECT_DELAY_MS = Math.max(2000, Math.min(30000, Number(process.env.TELEGRAM_AUTH_DUP_RECONNECT_DELAY_MS ?? 10000)));
 function startConnectJitterMaxMs() {
     return Math.max(0, Math.min(30000, Number(process.env.TELEGRAM_START_JITTER_MAX_MS ?? 2000)));
 }
@@ -163,7 +166,20 @@ class UserListener {
             catch (err) {
                 if ((0, telegramClient_1.isAuthKeyUnregistered)(err))
                     throw new telegramClient_1.TelegramSessionInvalidError();
-                throw err;
+                if (isAuthKeyDuplicated(err)) {
+                    console.warn(`[userListener] AUTH_KEY_DUPLICATED on initial connect for ${this.userId}`
+                        + ` — old session still releasing; waiting ${AUTH_KEY_DUP_RECONNECT_DELAY_MS}ms then retrying`);
+                    (0, workerMetrics_1.incMetric)('auth_key_duplicated');
+                    try {
+                        await this.client.disconnect();
+                    }
+                    catch { /* ignore */ }
+                    await new Promise(r => setTimeout(r, AUTH_KEY_DUP_RECONNECT_DELAY_MS));
+                    await this.client.connect();
+                }
+                else {
+                    throw err;
+                }
             }
         }
         this.isConnected = true;
@@ -355,7 +371,12 @@ class UserListener {
             dialogs = await this.fetchAllDialogs();
         }
         catch (err) {
-            (0, telegramClient_1.rethrowIfSessionInvalid)(err);
+            if (isAuthKeyDuplicated(err)) {
+                dialogs = await this.reconnectAndRetryDialogs();
+            }
+            else {
+                (0, telegramClient_1.rethrowIfSessionInvalid)(err);
+            }
         }
         const byId = new Map();
         for (const d of dialogs) {
@@ -376,6 +397,20 @@ class UserListener {
         this.dialogsCache = channels;
         this.dialogsCacheAt = Date.now();
         return channels;
+    }
+    async reconnectAndRetryDialogs() {
+        console.warn(`[userListener] AUTH_KEY_DUPLICATED on getDialogs for ${this.userId}`
+            + ' — disconnecting, waiting for old session to release, then reconnecting');
+        (0, workerMetrics_1.incMetric)('auth_key_duplicated');
+        this.isConnected = false;
+        try {
+            await this.client.disconnect();
+        }
+        catch { /* ignore */ }
+        await new Promise(r => setTimeout(r, AUTH_KEY_DUP_RECONNECT_DELAY_MS));
+        await this.client.connect();
+        this.isConnected = true;
+        return this.fetchAllDialogs();
     }
     /**
      * Load channel/group dialogs (capped). Uses gramjs built-in pagination, which
@@ -739,6 +774,9 @@ class UserListener {
         const rawMessage = (message.text ?? message.message ?? '');
         const isReply = !!message.replyTo;
         const messageEpochSec = this.messageEpochSec(message);
+        // Stamp listener arrival as early as possible so telegram_to_listener_ms
+        // reflects only Telegram delivery time (not our dedup/parent lookup DB calls).
+        const tListenerReceived = Date.now();
         if (opts?.source === 'catchup' && messageEpochSec > 0) {
             const ageMs = Date.now() - messageEpochSec * 1000;
             if (ageMs > catchUpMaxAgeMs()) {
@@ -767,7 +805,6 @@ class UserListener {
             return false;
         }
         const signalId = (0, node_crypto_1.randomUUID)();
-        const tListenerReceived = Date.now();
         const pipelineTs = {
             t_telegram_event: messageEpochSec > 0 ? messageEpochSec * 1000 : undefined,
             t_listener_received: tListenerReceived,
@@ -845,12 +882,42 @@ class UserListener {
             pipeline_ts: pipelineTs,
         };
         console.log(`[userListener] dispatch signal user=${this.userId} signalId=${signalId} channelRow=${channelRow.id} messageId=${messageId}`);
-        if (this.onSignalParsed) {
-            this.onSignalParsed(dispatchRow);
-        }
-        if (workerConfig_1.workerConfig.runsListener && !workerConfig_1.workerConfig.runsTrade) {
-            (0, tradeSignalPush_1.pushParsedSignalToTradeWorker)(dispatchRow);
-        }
+        const dispatchedInProcess = this.onSignalParsed ? this.onSignalParsed(dispatchRow) === true : false;
+        const shouldPush = workerConfig_1.workerConfig.runsListener && (!workerConfig_1.workerConfig.runsTrade || !dispatchedInProcess);
+        void (async () => {
+            let queueResult = null;
+            if (shouldPush) {
+                queueResult = await (0, signalQueuePublisher_1.enqueueParsedSignal)(this.supabase, dispatchRow);
+            }
+            const queueCfg = (0, signalQueueConfig_1.signalQueueConfig)();
+            const queueSucceeded = queueResult?.ok === true;
+            const pushFallback = queueCfg.pushFallbackOnQueueFail;
+            const shouldHttpPush = shouldPush && (!queueSucceeded
+                && (pushFallback || !queueResult || queueResult.skipped));
+            const { error } = await this.supabase.from('trade_execution_logs').insert({
+                user_id: this.userId,
+                signal_id: signalId,
+                action: 'dispatch_route_decision',
+                status: 'success',
+                request_payload: {
+                    dispatched_in_process: dispatchedInProcess,
+                    should_push: shouldPush,
+                    queue_enabled: queueCfg.enabled,
+                    queue_enqueued: queueSucceeded,
+                    queue_skipped_reason: queueResult?.skipped ? queueResult.reason : null,
+                    queue_error: queueResult?.error ?? null,
+                    http_push_fallback: shouldHttpPush,
+                    runs_trade: workerConfig_1.workerConfig.runsTrade,
+                    runs_listener: workerConfig_1.workerConfig.runsListener,
+                },
+            });
+            if (error) {
+                /* best-effort */
+            }
+            if (shouldHttpPush) {
+                (0, tradeSignalPush_1.pushParsedSignalToTradeWorker)(dispatchRow);
+            }
+        })();
         return true;
     }
     /** Edge parse fallback when LISTENER_INLINE_PARSE=false (UI preview path unchanged on edge). */

@@ -6,10 +6,14 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.parseTradeWorkerShardUrls = parseTradeWorkerShardUrls;
 exports.pushParsedSignalToTradeWorker = pushParsedSignalToTradeWorker;
 exports.validateListenerTradeShardConfig = validateListenerTradeShardConfig;
+exports.validateListenerQueueConfig = validateListenerQueueConfig;
 const tradeSignalActions_1 = require("./tradeSignalActions");
+const signalQueueConfig_1 = require("./queue/signalQueueConfig");
 const workerConfig_1 = require("./workerConfig");
 const PUSH_MAX_ATTEMPTS = Math.max(1, Math.min(5, Number(process.env.TRADE_SIGNAL_PUSH_MAX_ATTEMPTS ?? 3)));
 const PUSH_RETRY_BASE_MS = Math.max(25, Math.min(500, Number(process.env.TRADE_SIGNAL_PUSH_RETRY_BASE_MS ?? 75)));
+const SUPABASE_URL = String(process.env.SUPABASE_URL ?? '').trim();
+const SUPABASE_SERVICE_ROLE_KEY = String(process.env.SUPABASE_SERVICE_ROLE_KEY ?? '').trim();
 function tradePushEnabled() {
     const v = String(process.env.TRADE_SIGNAL_PUSH_ENABLED ?? 'true').toLowerCase();
     return v !== '0' && v !== 'false' && v !== 'no';
@@ -64,6 +68,31 @@ function logPushFailed(row, baseUrl, action, reason, attempt) {
         max_attempts: PUSH_MAX_ATTEMPTS,
         reason,
     }));
+}
+async function logPushAttemptToDb(row, status, payload) {
+    if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY)
+        return;
+    try {
+        await fetch(`${SUPABASE_URL}/rest/v1/trade_execution_logs`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                apikey: SUPABASE_SERVICE_ROLE_KEY,
+                Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+                Prefer: 'return=minimal',
+            },
+            body: JSON.stringify([{
+                    user_id: row.user_id,
+                    signal_id: row.id,
+                    action: 'dispatch_push_attempt',
+                    status,
+                    request_payload: payload,
+                }]),
+        });
+    }
+    catch {
+        /* best-effort */
+    }
 }
 async function postDispatchSignal(url, token, signalBody, priority, timeoutMs) {
     const controller = new AbortController();
@@ -134,8 +163,28 @@ function pushParsedSignalToTradeWorker(row) {
         pipeline_ts: row.pipeline_ts,
     };
     void (async () => {
+        await logPushAttemptToDb(row, 'success', {
+            run_id: 'latency-v3',
+            phase: 'start',
+            action,
+            base_url: baseUrl,
+            timeout_ms: timeoutMs,
+            max_attempts: PUSH_MAX_ATTEMPTS,
+        });
         for (let attempt = 1; attempt <= PUSH_MAX_ATTEMPTS; attempt++) {
+            const attemptStartedAt = Date.now();
             const result = await postDispatchSignal(url, token, signalBody, priority, timeoutMs);
+            await logPushAttemptToDb(row, result.ok ? 'success' : 'failed', {
+                run_id: 'latency-v3',
+                phase: 'attempt',
+                action,
+                attempt,
+                ok: result.ok,
+                status_code: result.status,
+                retryable: result.retryable,
+                elapsed_ms: Date.now() - attemptStartedAt,
+                detail: result.detail.slice(0, 120),
+            });
             if (result.ok)
                 return;
             const reason = result.status > 0
@@ -167,6 +216,30 @@ function validateListenerTradeShardConfig() {
     }
     if (shardUrls.length !== expected) {
         return `TRADE_WORKER_SHARD_URLS has ${shardUrls.length} URL(s) but TRADE_WORKER_SHARD_COUNT=${expected}`;
+    }
+    return null;
+}
+/**
+ * Listener startup check for Redis queue env when queue mode is enabled.
+ */
+function validateListenerQueueConfig() {
+    const cfg = (0, signalQueueConfig_1.signalQueueConfig)();
+    if (!cfg.enabled)
+        return null;
+    if (!(0, signalQueueConfig_1.redisQueueConfigured)()) {
+        return 'TRADE_SIGNAL_QUEUE_ENABLED=true but UPSTASH_REDIS_REST_URL/TOKEN (or REDIS_REST_*) are missing';
+    }
+    if (cfg.shardCount < 1) {
+        return 'TRADE_SIGNAL_QUEUE_SHARD_COUNT must be >= 1';
+    }
+    const tradeShards = (0, signalQueueConfig_1.deployedTradeShardCount)();
+    if (cfg.shardCount > tradeShards) {
+        return `TRADE_SIGNAL_QUEUE_SHARD_COUNT=${cfg.shardCount} exceeds deployed trade shards (${tradeShards}).`
+            + ' Set TRADE_SIGNAL_QUEUE_SHARD_COUNT=1 for a single trade worker, or add matching trade shards.';
+    }
+    const shardUrls = parseTradeWorkerShardUrls(process.env.TRADE_WORKER_SHARD_URLS);
+    if (shardUrls.length > 0 && cfg.shardCount !== shardUrls.length) {
+        return `TRADE_SIGNAL_QUEUE_SHARD_COUNT=${cfg.shardCount} must match TRADE_WORKER_SHARD_URLS count (${shardUrls.length})`;
     }
     return null;
 }
