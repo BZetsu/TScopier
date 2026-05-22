@@ -1,5 +1,6 @@
 import type { AuthTranslations } from '../auth/types'
 import type { ChannelWorkerTranslations } from '../channelWorker/types'
+import type { ConfigureModalTranslations } from './configureModal/types'
 
 export interface GlobalSearchTranslations {
   placeholder: string
@@ -261,6 +262,7 @@ export interface AccountConfigTranslations {
   addAccount: AccountConfigAddAccountModalTranslations
   connectForm: AccountConfigConnectFormTranslations
   brokerList: AccountConfigBrokerListTranslations
+  configureModal: ConfigureModalTranslations
 }
 
 export interface TradesTranslations {

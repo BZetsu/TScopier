@@ -1,6 +1,7 @@
 import { authEn } from '../auth/en'
 import { channelWorkerEn } from '../channelWorker/en'
 import type { Translations } from './types'
+import { configureModalEn } from './configureModal/en'
 
 export const en: Translations = {
   auth: authEn,
@@ -171,6 +172,7 @@ export const en: Translations = {
         'This disconnects {label} from MetatraderAPI and the copier. This cannot be undone.',
       deleteConfirm: 'Disconnect',
     },
+    configureModal: configureModalEn,
   },
   dashboard: {
     title: 'Dashboard',

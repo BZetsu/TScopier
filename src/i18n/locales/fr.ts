@@ -1,6 +1,7 @@
 import { authFr } from '../auth/fr'
 import { channelWorkerFr } from '../channelWorker/fr'
 import type { Translations } from './types'
+import { configureModalFr } from './configureModal/fr'
 
 export const fr: Translations = {
   auth: authFr,
@@ -171,6 +172,7 @@ export const fr: Translations = {
         'Cela déconnecte {label} de MetatraderAPI et du copieur. Cette action est irréversible.',
       deleteConfirm: 'Déconnecter',
     },
+    configureModal: configureModalFr,
   },
   dashboard: {
     title: 'Tableau de bord',

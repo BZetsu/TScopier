@@ -50,11 +50,14 @@ import {
   type ChannelFilters,
   type ChannelMessageFiltersMap,
 } from '../../lib/channelMessageFilters'
+import { isAutoManagementEnabled } from '../../lib/autoManagementDisplay'
+import type { ConfigureModalTranslations } from '../../i18n/locales/configureModal/types'
 import {
-  describeAutoManagementRule,
-  isAutoManagementEnabled,
-} from '../../lib/autoManagementDisplay'
-import { describePredefinedStopsOverride } from '../../lib/predefinedStopsDisplay'
+  describeAutoManagementRuleI18n,
+  describePredefinedStopsOverrideI18n,
+  formatPipHintI18n,
+  getChannelFilterCategories,
+} from './configureModalI18n'
 
 interface ChannelOption {
   id: string
@@ -63,25 +66,6 @@ interface ChannelOption {
   is_active: boolean
   created_at: string
 }
-
-// ── Channel keyword filters ────────────────────────────────────────────────
-
-const CHANNEL_FILTER_CATEGORIES: Array<{
-  key: ChannelFilterKey
-  label: string
-  example: string
-}> = [
-  { key: 'close_full',          label: 'Close full position',   example: 'e.g. "close", "exit trade", "flatten"' },
-  { key: 'close_half',          label: 'Close half / partial',  example: 'e.g. "close half", "take 50%"' },
-  { key: 'break_even',          label: 'Break-even',            example: 'e.g. "move SL to entry", "BE now"' },
-  { key: 'modify_sl',           label: 'Adjust SL',             example: 'e.g. "move SL to 4500"' },
-  { key: 'modify_tp',           label: 'Adjust TP',             example: 'e.g. "change TP to 4600"' },
-  { key: 'close_tp_levels',     label: 'Close at named TP',     example: 'e.g. "close TP1", "TP2 hit"' },
-  { key: 'close_all',           label: 'Close all open trades', example: 'e.g. "close all", "flatten all"' },
-  { key: 'close_worse_entries', label: 'Close worse entries',   example: 'e.g. "close worse entries"' },
-  { key: 'delete_pendings',     label: 'Cancel pending orders', example: 'e.g. "cancel limit", "delete pending"' },
-  { key: 'reverse',             label: 'Reverse direction',     example: 'flips buy ↔ sell on entry' },
-]
 
 interface BrokerForm {
   label: string
@@ -431,20 +415,6 @@ interface ManualSubTabDef {
   icon: typeof SlidersHorizontal
 }
 
-const ALL_TABS: TabDef[] = [
-  { id: 'mode', label: 'Trade', icon: SlidersHorizontal },
-  { id: 'channels', label: 'Channels', icon: Radio },
-]
-
-const MANUAL_SUB_TABS: ManualSubTabDef[] = [
-  { id: 'symbol_routing', label: 'Symbol Routing', icon: ArrowLeftRight },
-  { id: 'risk', label: 'Risk & Entry', icon: Wallet },
-  { id: 'stops', label: 'Targets', icon: Target },
-  { id: 'management', label: 'Auto-Management', icon: Settings2 },
-  { id: 'filters', label: 'Filters', icon: Filter },
-  { id: 'strategy', label: 'Strategy', icon: Brain },
-]
-
 function formatLinkedAccountTypeLabel(
   type: LinkedAccountType | undefined,
   labels: { demo: string; live: string },
@@ -457,7 +427,40 @@ function formatLinkedAccountTypeLabel(
 
 export function AccountConfigPage() {
   const t = useT()
+  const cm = t.accountConfig.configureModal
   const bl = t.accountConfig.brokerList
+
+  const tabs = useMemo<TabDef[]>(
+    () => [
+      { id: 'mode', label: cm.tabs.trade, icon: SlidersHorizontal },
+      { id: 'channels', label: cm.tabs.channels, icon: Radio },
+    ],
+    [cm.tabs.trade, cm.tabs.channels],
+  )
+
+  const manualSubTabs = useMemo<ManualSubTabDef[]>(
+    () => [
+      { id: 'symbol_routing', label: cm.manualSubTabs.symbolRouting, icon: ArrowLeftRight },
+      { id: 'risk', label: cm.manualSubTabs.risk, icon: Wallet },
+      { id: 'stops', label: cm.manualSubTabs.stops, icon: Target },
+      { id: 'management', label: cm.manualSubTabs.management, icon: Settings2 },
+      { id: 'filters', label: cm.manualSubTabs.filters, icon: Filter },
+      { id: 'strategy', label: cm.manualSubTabs.strategy, icon: Brain },
+    ],
+    [
+      cm.manualSubTabs.symbolRouting,
+      cm.manualSubTabs.risk,
+      cm.manualSubTabs.stops,
+      cm.manualSubTabs.management,
+      cm.manualSubTabs.filters,
+      cm.manualSubTabs.strategy,
+    ],
+  )
+
+  const channelFilterCategories = useMemo(
+    () => getChannelFilterCategories(cm),
+    [cm],
+  )
   const { user } = useAuth()
   const [brokers, setBrokers] = useState<BrokerAccount[]>([])
   const [channelOptions, setChannelOptions] = useState<ChannelOption[]>([])
@@ -593,26 +596,23 @@ export function AccountConfigPage() {
             : klass === 'index' ? 0
               : 2
       const fmtPrice = (n: number) => n.toFixed(priceDigits)
-
-      const distance =
-        pipCount > 0
-          ? `${pipCount} pip${pipCount === 1 ? '' : 's'} ≈ ${fmtPrice(pipsToPriceOffset(pipCount, symbol))} price on ${symbol}`
-          : `1 pip = ${fmtPrice(pipPx)} price on ${symbol}`
-
-      if (!livePipQuote) return distance
-
+      const priceOffset = pipCount > 0 ? pipsToPriceOffset(pipCount, symbol) : pipPx
       const fixedLot = Number(configDraft.manualSettings.fixed_lot ?? 0.01) || 0.01
-      const perPip = pipValueForLots(livePipQuote, fixedLot)
-      if (perPip <= 0) return distance
-      const ccy = livePipQuote.quoteCurrency ?? undefined
+      const perPip = livePipQuote ? pipValueForLots(livePipQuote, fixedLot) : 0
+      const ccy = livePipQuote?.quoteCurrency ?? undefined
       const fmtMoney = (n: number) => formatMoneyWithCode(n, ccy, { nullAsDash: false })
-      const money =
-        pipCount > 0
-          ? ` · At ${fixedLot.toFixed(2)} lot ≈ ${fmtMoney(perPip * pipCount)}`
-          : ` · At ${fixedLot.toFixed(2)} lot ≈ ${fmtMoney(perPip)}/pip`
-      return `${distance}${money}`
+      return formatPipHintI18n(cm.pipHint, {
+        pipCount,
+        symbol,
+        fmtPrice,
+        priceOffset,
+        pipPx,
+        fixedLot,
+        perPip,
+        fmtMoney,
+      })
     }
-  }, [livePipQuote, configDraft.manualSettings.fixed_lot, configDraft.manualSettings.symbol_to_trade])
+  }, [cm.pipHint, livePipQuote, configDraft.manualSettings.fixed_lot, configDraft.manualSettings.symbol_to_trade])
 
   useEffect(() => {
     if (!user) return
@@ -1057,8 +1057,6 @@ export function AccountConfigPage() {
     }
   }
 
-  const tabs = ALL_TABS
-
   // ── Loading ────────────────────────────────────────────────────────────
 
   if (loading) {
@@ -1377,7 +1375,7 @@ export function AccountConfigPage() {
             <div className="px-4 sm:px-6 py-3 sm:py-4 border-b border-neutral-100 dark:border-neutral-800 flex items-start justify-between gap-3 shrink-0">
               <div className="min-w-0 flex-1">
                 <h3 id="configure-trading-title" className="text-base sm:text-lg font-semibold text-neutral-900 dark:text-neutral-50 truncate">
-                  Configure Trading
+                  {cm.title}
                 </h3>
                 <p className="text-xs sm:text-sm text-neutral-500 dark:text-neutral-400 mt-0.5 truncate">
                   {configAccount.label} · {configAccount.platform}
@@ -1388,7 +1386,7 @@ export function AccountConfigPage() {
                 onClick={closeConfigureModal}
                 className="shrink-0 min-h-[44px] px-3 py-2 text-sm font-medium text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-300 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800"
               >
-                Close
+                {cm.close}
               </button>
             </div>
 
@@ -1422,7 +1420,7 @@ export function AccountConfigPage() {
                 {activeTab === 'mode' && (
                   <div className="shrink-0 px-4 sm:px-6 pt-3 sm:pt-4 bg-white dark:bg-neutral-900 border-b border-neutral-100 dark:border-neutral-800 overflow-x-auto overscroll-x-contain">
                     <div className="flex flex-nowrap items-center gap-1 min-w-max sm:min-w-0 sm:flex-wrap pb-px">
-                      {MANUAL_SUB_TABS.map(sub => {
+                      {manualSubTabs.map(sub => {
                         const SubIcon = sub.icon
                         const active = sub.id === activeManualSubTab
                         return (
@@ -1471,29 +1469,28 @@ export function AccountConfigPage() {
 
                     {AI_CONFIGURATION_ENABLED && configDraft.mode === 'ai' ? (
                       <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 space-y-3">
-                        <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">AI configuration</p>
+                        <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">{cm.ai.title}</p>
                         <p className="text-sm text-neutral-600 dark:text-neutral-400">
-                          AI Expert mode behaves like a human expert trader: dynamic lot sizing by balance, range entry handling,
-                          TP-based management, and channel instruction interpretation.
+                          {cm.ai.intro}
                         </p>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                          <FeatureBullet icon={DollarSign} title="Money management" body="Linear sizing by default; optional margin mode; broker min-lot floor; forex SL-distance refinement." />
-                          <FeatureBullet icon={Eye} title="Signal interpretation" body="Handles no-entry, single-entry, range-entry, and delayed TP/SL updates." />
-                          <FeatureBullet icon={Activity} title="Trade management" body="Supports partials, break-even, and channel commands like close/secure profits." />
-                          <FeatureBullet icon={GitBranch} title="Modification detection" body="Distinguishes new entries from follow-up modification instructions." />
+                          <FeatureBullet icon={DollarSign} title={cm.ai.moneyManagementTitle} body={cm.ai.moneyManagementBody} />
+                          <FeatureBullet icon={Eye} title={cm.ai.signalTitle} body={cm.ai.signalBody} />
+                          <FeatureBullet icon={Activity} title={cm.ai.tradeTitle} body={cm.ai.tradeBody} />
+                          <FeatureBullet icon={GitBranch} title={cm.ai.modificationTitle} body={cm.ai.modificationBody} />
                         </div>
                       </div>
                     ) : (
                       <div className="space-y-4">
                         {activeManualSubTab === 'symbol_routing' && (
                           <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 space-y-4">
-                            <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">Symbol routing</p>
+                            <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">{cm.symbolRouting.title}</p>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                               <div>
-                                <p className="text-xs text-neutral-600 dark:text-neutral-400 mb-1">Symbol Mapping (one per line: FROM=TO)</p>
+                                <p className="text-xs text-neutral-600 dark:text-neutral-400 mb-1">{cm.symbolRouting.mappingLabel}</p>
                                 <textarea
                                   className="w-full min-h-[90px] rounded-md border border-neutral-200 dark:border-neutral-800 px-3 py-2 text-sm"
-                                  placeholder={`GOLD=XAUUSD\nUSOIL=WTIOIL\nBTC=BTCUSD`}
+                                  placeholder={cm.symbolRouting.mappingPlaceholder}
                                   value={symbolMappingText}
                                   onChange={(e) => {
                                     const raw = e.target.value
@@ -1507,26 +1504,25 @@ export function AccountConfigPage() {
                                   }}
                                 />
                                 <p className="mt-1 text-[11px] text-neutral-500 dark:text-neutral-400">
-                                  Examples: <span className="font-mono">GOLD=XAUUSD</span>, <span className="font-mono">USOIL=WTIOIL</span>
+                                  {cm.symbolRouting.examples}
                                 </p>
                               </div>
                               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                <Input label="Symbol Prefix" value={configDraft.manualSettings.symbol_prefix ?? ''} onChange={e => setManual({ symbol_prefix: e.target.value })} />
-                                <Input label="Symbol Suffix" value={configDraft.manualSettings.symbol_suffix ?? ''} onChange={e => setManual({ symbol_suffix: e.target.value })} />
+                                <Input label={cm.symbolRouting.prefix} value={configDraft.manualSettings.symbol_prefix ?? ''} onChange={e => setManual({ symbol_prefix: e.target.value })} />
+                                <Input label={cm.symbolRouting.suffix} value={configDraft.manualSettings.symbol_suffix ?? ''} onChange={e => setManual({ symbol_suffix: e.target.value })} />
                                 <div className="col-span-2">
                                   <Input
-                                    label="Symbols to Trade"
-                                    placeholder="Leave empty for all. Single = override. Multiple = whitelist."
+                                    label={cm.symbolRouting.symbolsToTrade}
+                                    placeholder={cm.symbolRouting.symbolsToTradePlaceholder}
                                     value={configDraft.manualSettings.symbol_to_trade ?? ''}
                                     onChange={e => setManual({ symbol_to_trade: e.target.value })}
                                   />
                                   <p className="text-xs text-slate-500 mt-1">
-                                    Empty = trade every signal. One symbol (e.g. <span className="font-mono">XAUUSD</span>) = force every signal to that instrument.
-                                    Multiple (e.g. <span className="font-mono">XAUUSD, BTCUSD</span>) = only trade signals matching one of these symbols.
+                                    {cm.symbolRouting.symbolsToTradeHint}
                                   </p>
                                 </div>
                                 <Input
-                                  label="Symbols to Exclude (comma)"
+                                  label={cm.symbolRouting.symbolsExclude}
                                   value={(configDraft.manualSettings.symbols_exclude ?? []).join(',')}
                                   onChange={e => setManual({ symbols_exclude: e.target.value.split(',').map(x => x.trim().toUpperCase()).filter(Boolean) })}
                                 />
@@ -1539,21 +1535,21 @@ export function AccountConfigPage() {
                           <div className="space-y-4">
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                               <Select
-                                label="Risk Mode"
+                                label={cm.risk.riskMode}
                                 value={configDraft.manualSettings.risk_mode ?? 'fixed_lot'}
                                 onChange={e => setManual({ risk_mode: e.target.value as ManualSettings['risk_mode'] })}
                                 options={[
-                                  { value: 'fixed_lot', label: 'Fixed Lot' },
-                                  { value: 'dynamic_balance_percent', label: 'Dynamic (% Balance)' },
+                                  { value: 'fixed_lot', label: cm.risk.fixedLot },
+                                  { value: 'dynamic_balance_percent', label: cm.risk.dynamicBalance },
                                 ]}
                               />
                               {configDraft.manualSettings.risk_mode === 'dynamic_balance_percent' ? (
-                                <Input label="% Balance per trade" type="number" value={String(configDraft.manualSettings.dynamic_balance_percent ?? 1)} onChange={e => setManual({ dynamic_balance_percent: Number(e.target.value) })} />
+                                <Input label={cm.risk.dynamicBalance} type="number" value={String(configDraft.manualSettings.dynamic_balance_percent ?? 1)} onChange={e => setManual({ dynamic_balance_percent: Number(e.target.value) })} />
                               ) : (
-                                <Input label="Fixed Lot" type="number" value={String(configDraft.manualSettings.fixed_lot ?? 0.01)} onChange={e => setManual({ fixed_lot: Number(e.target.value) })} />
+                                <Input label={cm.risk.fixedLot} type="number" value={String(configDraft.manualSettings.fixed_lot ?? 0.01)} onChange={e => setManual({ fixed_lot: Number(e.target.value) })} />
                               )}
                               <Select
-                                label="Trade Style"
+                                label={cm.risk.tradeStyle}
                                 value={configDraft.manualSettings.trade_style ?? 'single'}
                                 onChange={e => {
                                   const v = e.target.value as ManualSettings['trade_style']
@@ -1564,8 +1560,8 @@ export function AccountConfigPage() {
                                   }
                                 }}
                                 options={[
-                                  { value: 'single', label: 'Single Trade' },
-                                  { value: 'multi', label: 'Multi Trades' },
+                                  { value: 'single', label: cm.risk.singleTrade },
+                                  { value: 'multi', label: cm.risk.multiTrades },
                                 ]}
                               />
                             </div>
@@ -1573,13 +1569,13 @@ export function AccountConfigPage() {
                             {configDraft.manualSettings.trade_style !== 'multi' && (
                               <div className="space-y-4">
                               <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-3 space-y-3">
-                                <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">Signal entry execution</p>
+                                <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.risk.signalEntryTitle}</p>
                                 <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                                  <strong>Use Signal Entry Price</strong> applies only in <strong>Single Trade</strong> mode. When enabled, the signal must include an explicit parsed entry (price, zone, @ price, or labels like &quot;Entry Price:&quot;). After any channel delay, the worker compares the <strong>live</strong> quote to that entry: <strong>Buy</strong> fills at market only when ask is at or below the entry; otherwise it places a <strong>buy limit</strong> at the entry. <strong>Sell</strong> is the inverse. The broker take-profit targets the <strong>last</strong> parsed TP when you have several targets, with optional partial closes from your TP ladder. Copier tracks each strict-entry pending so fills sync to your trade list; pendings are cancelled when the basket is flat. Bare &quot;buy now&quot; messages with no entry are skipped.
+                                  {cm.risk.signalEntryBody}
                                 </p>
                                 <div className="rounded-md border border-neutral-200 dark:border-neutral-800 overflow-hidden">
                                   <div className="flex items-center justify-between gap-3 bg-white dark:bg-neutral-900 px-3 py-2.5">
-                                    <span className="text-sm font-medium text-neutral-800 dark:text-neutral-100">Use Signal Entry Price</span>
+                                    <span className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.risk.useSignalEntryPrice}</span>
                                     <Toggle
                                       checked={configDraft.manualSettings.use_signal_entry_price === true}
                                       onChange={v => setManual({ use_signal_entry_price: v })}
@@ -1587,15 +1583,12 @@ export function AccountConfigPage() {
                                   </div>
                                   {configDraft.manualSettings.use_signal_entry_price && (
                                     <div className="border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/80 px-3 py-3 space-y-2">
-                                      <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                                        <strong>Pip tolerance</strong> is legacy and no longer affects execution; strict entry uses the exact parsed entry price and live bid/ask as above.
-                                      </p>
                                       <Input
-                                        label="Pip tolerance (legacy)"
+                                        label={cm.risk.pipToleranceLegacy}
                                         type="number"
                                         min={0}
                                         step={1}
-                                        hint="Unused for strict entry routing; kept for backward compatibility with saved settings."
+                                        hint={cm.risk.pipToleranceHint}
                                         value={String(configDraft.manualSettings.signal_entry_pip_tolerance ?? 10)}
                                         onChange={e => setManual({ signal_entry_pip_tolerance: Math.max(0, Number(e.target.value) || 0) })}
                                       />
@@ -1609,15 +1602,11 @@ export function AccountConfigPage() {
                             {configDraft.manualSettings.trade_style === 'multi' && (
                               <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-3 space-y-3">
                                 <p className="text-xs text-neutral-600 dark:text-neutral-400">
-                                  <strong>Multi Trades</strong> splits your fixed lot into many smaller orders
-                                  (e.g. <span className="font-mono">1.0 lot @ 5%/leg = 20 trades of 0.05</span>).
-                                  Legs are distributed across the signal's TPs using the percent rows below.
-                                  If the per-leg size falls below the broker's symbol minimum, the planner
-                                  falls back to a single full-size trade and logs the reason.
+                                  {cm.risk.multiIntro}
                                 </p>
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                   <Input
-                                    label="Per-leg size (% of fixed lot)"
+                                    label={cm.risk.perLegSize}
                                     type="number"
                                     min={0.1}
                                     max={100}
@@ -1626,28 +1615,43 @@ export function AccountConfigPage() {
                                     onChange={e => setManual({ multi_trade_leg_percent: Number(e.target.value) })}
                                   />
                                   <div>
-                                    <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100 mb-1">Total Open Trades</p>
+                                    <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100 mb-1">{cm.risk.totalOpenTrades}</p>
                                     <div className="rounded-md border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/50 px-3 py-2 text-sm font-mono text-neutral-900 dark:text-neutral-50">
                                       {multiTradePreview.fallsBackSingle
-                                        ? '1 (split not possible at 0.01 min / 0.01 step preview)'
+                                        ? cm.risk.previewFallbackSingle
                                         : multiTradePreview.immediate != null && multiTradePreview.pending != null
-                                          ? `${multiTradePreview.totalOrders} (${multiTradePreview.immediate} instant + ${multiTradePreview.pending} for layering)`
+                                          ? interpolate(cm.risk.previewInstantPending, {
+                                              total: String(multiTradePreview.totalOrders),
+                                              immediate: String(multiTradePreview.immediate),
+                                              pending: String(multiTradePreview.pending),
+                                            })
                                           : multiTradePreview.totalOrders}
                                     </div>
                                     <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
-                                      Estimated from Fixed Lot and per-leg %. Live execution uses the symbol&apos;s min lot and step (may differ slightly). Capped at 500 orders per signal.
-                                      {' '}Telegram-reported lots on each signal do not resize multi-trade baskets—they always split your Fixed Lot.
+                                      {cm.risk.previewFooter}
                                       {configDraft.manualSettings.risk_mode === 'dynamic_balance_percent' && (
-                                        <> With Dynamic (% Balance) risk, the resolved lot at runtime can differ from Fixed Lot.</>
+                                        <>{cm.risk.previewDynamicRisk}</>
                                       )}
                                       {configDraft.manualSettings.range_trading
                                         && multiTradePreview.effectiveDistancePips != null
                                         && (multiTradePreview.pending ?? 0) > 0
                                         && Math.abs(multiTradePreview.effectiveDistancePips - (Number(configDraft.manualSettings.range_distance_pips ?? 0) || 0)) >= 1 && (
-                                        <> Ladder span = {multiTradePreview.pending} × {Number(configDraft.manualSettings.range_step_pips ?? 0) || 0}p = {multiTradePreview.effectiveDistancePips}p (configured distance {Number(configDraft.manualSettings.range_distance_pips ?? 0) || 0}p is advisory).</>
+                                        <>
+                                          {interpolate(cm.risk.previewLadderSpan, {
+                                            pending: String(multiTradePreview.pending),
+                                            step: String(Number(configDraft.manualSettings.range_step_pips ?? 0) || 0),
+                                            distance: String(multiTradePreview.effectiveDistancePips),
+                                            configured: String(Number(configDraft.manualSettings.range_distance_pips ?? 0) || 0),
+                                          })}
+                                        </>
                                       )}
                                       {configDraft.manualSettings.close_worse_entries && (multiTradePreview.immediate ?? 0) > 0 && (
-                                        <> {multiTradePreview.immediate} instant leg{(multiTradePreview.immediate ?? 0) === 1 ? '' : 's'} close at +{Number(configDraft.manualSettings.close_worse_entries_pips ?? 20) || 0}p from anchor.</>
+                                        <>
+                                          {interpolate(cm.risk.previewCweLegs, {
+                                            count: String(multiTradePreview.immediate),
+                                            pips: String(Number(configDraft.manualSettings.close_worse_entries_pips ?? 20) || 0),
+                                          })}
+                                        </>
                                       )}
                                     </p>
                                   </div>
@@ -1658,56 +1662,51 @@ export function AccountConfigPage() {
                             {configDraft.manualSettings.trade_style === 'multi' && (
                               <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-3 space-y-3">
                                 <div className="flex items-center justify-between">
-                                  <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">Range Layering</p>
+                                  <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.risk.rangeLayering}</p>
                                   <Toggle
                                     checked={configDraft.manualSettings.range_trading === true}
                                     onChange={v => setManual({ range_trading: v })}
                                   />
                                 </div>
                                 <p className="text-xs text-neutral-600 dark:text-neutral-400">
-                                  Reserve a share of the planned legs as pending Limit orders stepped away from the
-                                  live anchor by a fixed pip interval (averaging-down). When the signal carries no
-                                  entry price, the worker fetches a live <strong>/Quote</strong> bid/ask and anchors
-                                  the ladder there. Stop-loss and TP distribution mirror the immediate legs. If
-                                  <strong> distance &divide; step </strong> caps the count, the effective pending
-                                  total is reduced.
+                                  {cm.risk.rangeIntro}
                                 </p>
                                 {configDraft.manualSettings.range_trading && (
                                   <>
                                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                                       <Input
-                                        label="Reserved lot (% of total)"
+                                        label={cm.risk.reservedLot}
                                         type="number"
                                         min={0}
                                         max={100}
                                         step={1}
                                         placeholder="50"
-                                        hint="Share of total legs reserved as pendings."
+                                        hint={cm.risk.reservedLotHint}
                                         value={String(configDraft.manualSettings.range_percent ?? 50)}
                                         onChange={e => setManual({ range_percent: Math.max(0, Math.min(100, Number(e.target.value) || 0)) })}
                                       />
                                       <Input
-                                        label="Step (pips per layering)"
+                                        label={cm.risk.stepPips}
                                         type="number"
                                         min={1}
                                         step={1}
                                         placeholder="10"
                                         hint={
                                           formatPipHint(Number(configDraft.manualSettings.range_step_pips ?? DEFAULT_MANUAL_SETTINGS.range_step_pips) || 0)
-                                          ?? 'Pips between pendings.'
+                                          ?? cm.risk.stepPipsFallback
                                         }
                                         value={String(configDraft.manualSettings.range_step_pips ?? DEFAULT_MANUAL_SETTINGS.range_step_pips)}
                                         onChange={e => setManual({ range_step_pips: Math.max(1, Number(e.target.value) || 1) })}
                                       />
                                       <Input
-                                        label="Range distance (pips from entry)"
+                                        label={cm.risk.rangeDistance}
                                         type="number"
                                         min={1}
                                         step={1}
                                         placeholder="100"
                                         hint={
                                           formatPipHint(Number(configDraft.manualSettings.range_distance_pips ?? DEFAULT_MANUAL_SETTINGS.range_distance_pips) || 0)
-                                          ?? "Advisory target span. Actual ladder reach = pending count × step (Total Open Trades is not capped by this)."
+                                          ?? cm.risk.rangeDistanceFallback
                                         }
                                         value={String(configDraft.manualSettings.range_distance_pips ?? DEFAULT_MANUAL_SETTINGS.range_distance_pips)}
                                         onChange={e => setManual({ range_distance_pips: Math.max(1, Number(e.target.value) || 1) })}
@@ -1716,30 +1715,25 @@ export function AccountConfigPage() {
 
                                     <div className="rounded-md border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/50 p-3 space-y-3">
                                       <div className="flex items-center justify-between">
-                                        <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">Close worse entries</p>
+                                        <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.risk.closeWorseEntries}</p>
                                         <Toggle
                                           checked={configDraft.manualSettings.close_worse_entries === true}
                                           onChange={v => setManual({ close_worse_entries: v })}
                                         />
                                       </div>
                                       <p className="text-xs text-neutral-600 dark:text-neutral-400">
-                                        When price reaches +X pips from the signal entry (anchor), the worker
-                                        auto-closes instant legs via /OrderClose.
-                                        A channel message such as &quot;Close worse entries&quot; closes every open
-                                        leg whose entry is within X pips of the live price at that moment
-                                        (e.g. instant fills near the signal, not deep layers). No broker TP
-                                        is set on CWE legs — only the SL rides on the broker.
+                                        {cm.risk.closeWorseBody}
                                       </p>
                                       {configDraft.manualSettings.close_worse_entries && (
                                         <Input
-                                          label="Close profits from worse entry (pips)"
+                                          label={cm.risk.closeWorsePips}
                                           type="number"
                                           min={1}
                                           step={1}
                                           placeholder="30"
                                           hint={
                                             formatPipHint(Number(configDraft.manualSettings.close_worse_entries_pips ?? 30) || 0)
-                                            ?? 'Distance from live price (instruction) or anchor + X pips (auto).'
+                                            ?? cm.risk.closeWorsePipsFallback
                                           }
                                           value={String(configDraft.manualSettings.close_worse_entries_pips ?? 30)}
                                           onChange={e => setManual({ close_worse_entries_pips: Math.max(1, Number(e.target.value) || 1) })}
@@ -1756,14 +1750,14 @@ export function AccountConfigPage() {
 
                         {activeManualSubTab === 'stops' && (() => {
                           const ms = configDraft.manualSettings
-                          const predefSummary = describePredefinedStopsOverride(ms)
+                          const predefSummary = describePredefinedStopsOverrideI18n(ms, cm.stops)
                           return (
                           <div className="space-y-6">
                             <section className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-4 space-y-3">
                               <div>
-                                <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">Predefined SL &amp; TP</p>
+                                <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.stops.predefinedTitle}</p>
                                 <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
-                                  When enabled, the copier <strong>replaces</strong> the signal&apos;s stop loss and/or take-profit with your pip distances from entry. Channel SL/TP from the message are not used for toggled sides.
+                                  {cm.stops.predefinedIntro}
                                 </p>
                               </div>
                               {predefSummary ? (
@@ -1774,17 +1768,17 @@ export function AccountConfigPage() {
                               <div className="space-y-3">
                                 <div className="rounded-md border border-neutral-200 dark:border-neutral-800 overflow-hidden">
                                   <div className="flex items-center justify-between gap-3 bg-white dark:bg-neutral-900 px-3 py-2.5">
-                                    <span className="text-sm font-medium text-neutral-800 dark:text-neutral-100">Override signal SL</span>
+                                    <span className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.stops.overrideSl}</span>
                                     <Toggle checked={ms.use_predefined_sl_pips === true} onChange={v => setManual({ use_predefined_sl_pips: v })} />
                                   </div>
                                   {ms.use_predefined_sl_pips && (
                                     <div className="border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/80 px-3 py-3">
                                       <Input
-                                        label="Stop loss (pips from entry)"
+                                        label={cm.stops.slPips}
                                         type="number"
                                         min={1}
                                         step={1}
-                                        hint="Buy: entry − pips. Sell: entry + pips. Ignores SL from the Telegram signal."
+                                        hint={cm.stops.slPipsHint}
                                         value={String(ms.predefined_sl_pips ?? 30)}
                                         onChange={e => setManual({ predefined_sl_pips: Math.max(1, Number(e.target.value) || 0) })}
                                       />
@@ -1793,7 +1787,7 @@ export function AccountConfigPage() {
                                 </div>
                                 <div className="rounded-md border border-neutral-200 dark:border-neutral-800 overflow-hidden">
                                   <div className="flex items-center justify-between gap-3 bg-white dark:bg-neutral-900 px-3 py-2.5">
-                                    <span className="text-sm font-medium text-neutral-800 dark:text-neutral-100">Override signal TPs</span>
+                                    <span className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.stops.overrideTps}</span>
                                     <Toggle
                                       checked={ms.use_predefined_tp_pips === true}
                                       onChange={v => {
@@ -1815,16 +1809,16 @@ export function AccountConfigPage() {
                                     <div className="border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/80 px-3 py-3 space-y-3">
                                       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                                         <p className="text-xs text-neutral-600 dark:text-neutral-400">
-                                          Each row is pips from entry (TP1, TP2, …). Ignores take-profit prices from the signal.
+                                          {cm.stops.tpRowsIntro}
                                         </p>
-                                        <Button variant="ghost" size="sm" className="shrink-0 self-start sm:self-auto" onClick={addPredefinedTpPipRow}>Add TP</Button>
+                                        <Button variant="ghost" size="sm" className="shrink-0 self-start sm:self-auto" onClick={addPredefinedTpPipRow}>{cm.stops.addTp}</Button>
                                       </div>
                                       <div className="space-y-2">
                                         {clonePredefinedTpPips(ms.predefined_tp_pips).map((pips, idx) => (
                                           <div key={`predef-tp-${idx}`} className="grid grid-cols-12 gap-2 items-end">
                                             <div className="col-span-10">
                                               <Input
-                                                label={`TP${idx + 1} (pips)`}
+                                                label={interpolate(cm.stops.tpPipsLabel, { index: String(idx + 1) })}
                                                 type="number"
                                                 min={1}
                                                 step={1}
@@ -1833,7 +1827,7 @@ export function AccountConfigPage() {
                                                 onChange={e => setPredefinedTpPipAt(idx, e.target.value)}
                                               />
                                             </div>
-                                            <Button className="col-span-2" variant="ghost" size="sm" onClick={() => removePredefinedTpPipRow(idx)}>Remove</Button>
+                                            <Button className="col-span-2" variant="ghost" size="sm" onClick={() => removePredefinedTpPipRow(idx)}>{cm.stops.remove}</Button>
                                           </div>
                                         ))}
                                       </div>
@@ -1845,26 +1839,20 @@ export function AccountConfigPage() {
 
                             <section className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-3 space-y-3">
                               <div className="flex items-center justify-between">
-                                <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">TP distribution (% of legs)</p>
-                                <Button variant="ghost" size="sm" onClick={addTpLotRow}>Add TP</Button>
+                                <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.stops.tpDistributionTitle}</p>
+                                <Button variant="ghost" size="sm" onClick={addTpLotRow}>{cm.stops.addTp}</Button>
                               </div>
                               <p className="text-xs text-neutral-600 dark:text-neutral-400">
-                                Set each enabled TP&apos;s share manually. The total across enabled rows cannot
-                                exceed 100% — any input is capped to the remaining budget. Disabled rows are
-                                pinned at 0%.
+                                {cm.stops.tpDistributionIntro}
                               </p>
                               <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                                <strong>Multi-trade:</strong> distributes the planned legs across TPs by these
-                                percentages (e.g. 50/30/20 of 20 legs &rarr; 10/6/4 at TP1/TP2/TP3).
+                                {cm.stops.multiTradeNote}
                                 <br />
-                                <strong>Single-trade:</strong> the order rides to the <strong>last enabled TP</strong>{' '}
-                                at the broker; the worker auto-partial-closes the configured percentage at every
-                                earlier TP (e.g. 50/30/20 on a 1.0 lot &rarr; close 0.50 at TP1, 0.30 at TP2,
-                                remaining 0.20 closes at TP3 via the broker).
+                                {cm.stops.singleTradeNote}
                               </p>
                               <div className="flex items-center justify-between text-xs">
                                 <span className="text-neutral-600 dark:text-neutral-400">
-                                  Enabled total:{' '}
+                                  {cm.stops.enabledTotal}{' '}
                                   <strong className={clsx('font-semibold', tpLegPercentTotal === 100 ? 'text-emerald-600' : 'text-amber-600')}>
                                     {tpLegPercentTotal}%
                                   </strong>{' '}
@@ -1873,8 +1861,8 @@ export function AccountConfigPage() {
                                 {tpLegPercentTotal !== 100 && (
                                   <span className="text-amber-600">
                                     {tpLegPercentTotal < 100
-                                      ? `${100 - tpLegPercentTotal}% unallocated`
-                                      : 'Over 100% (capped on next edit)'}
+                                      ? interpolate(cm.stops.unallocated, { pct: String(100 - tpLegPercentTotal) })
+                                      : cm.stops.overCap}
                                   </span>
                                 )}
                               </div>
@@ -1900,7 +1888,7 @@ export function AccountConfigPage() {
                                         max={rowBudget}
                                         step={1}
                                         disabled={!row.enabled}
-                                        title={row.enabled ? `Max ${rowBudget}% available for this row` : 'Enable the row to edit its share'}
+                                        title={row.enabled ? interpolate(cm.stops.maxRowTitle, { budget: String(rowBudget) }) : cm.stops.enableRowTitle}
                                         value={String(row.percent ?? 0)}
                                         onChange={e => setTpDistributionPercent(idx, e.target.value)}
                                       />
@@ -1911,9 +1899,9 @@ export function AccountConfigPage() {
                                           checked={row.enabled}
                                           onChange={e => setTpRowEnabled(idx, e.target.checked)}
                                         />
-                                        Enabled
+                                        {cm.stops.enabled}
                                       </label>
-                                      <Button className="col-span-2" variant="ghost" size="sm" onClick={() => removeTpLotRow(idx)}>Remove</Button>
+                                      <Button className="col-span-2" variant="ghost" size="sm" onClick={() => removeTpLotRow(idx)}>{cm.stops.remove}</Button>
                                     </div>
                                   )
                                 })}
@@ -1929,13 +1917,14 @@ export function AccountConfigPage() {
                           const autoMgmtEnabled = isAutoManagementEnabled(ms)
                           const triggerMode = ms.move_sl_to_entry_after_mode ?? 'pips'
                           const beType = ms.move_sl_to_entry_type ?? 'sl_only'
-                          const autoRuleSummary = describeAutoManagementRule(ms)
+                          const autoRuleSummary = describeAutoManagementRuleI18n(ms, cm.management)
                           const isSingleTrade = (ms.trade_style ?? 'single') !== 'multi'
+                          const triggerModes = cm.management.triggerModes
                           const TRIGGER_MODES = [
-                            { id: 'pips' as const, label: 'Pips', hint: 'Price movement in your favor' },
-                            { id: 'rr' as const, label: 'R:R', hint: 'Risk/reward vs open stop loss' },
-                            { id: 'money' as const, label: '$ Profit', hint: 'Unrealized profit in account currency' },
-                            { id: 'tp_hit' as const, label: 'TP hit', hint: 'Partial or broker TP reached' },
+                            { id: 'pips' as const, label: triggerModes.pips, hint: triggerModes.pipsHint },
+                            { id: 'rr' as const, label: triggerModes.rr, hint: triggerModes.rrHint },
+                            { id: 'money' as const, label: triggerModes.money, hint: triggerModes.moneyHint },
+                            { id: 'tp_hit' as const, label: triggerModes.tpHit, hint: triggerModes.tpHitHint },
                           ]
                           const tpRows = ms.tp_lots ?? DEFAULT_MANUAL_TP_LOTS
                           const tpSelectOptions = tpRows
@@ -1951,16 +1940,15 @@ export function AccountConfigPage() {
                           return (
                           <div className="space-y-6">
                             <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                              The worker monitors open trades every few seconds. Rules apply per open leg
-                              {isSingleTrade ? ' in Single Trade mode.' : ' (each Multi Trade leg is tracked separately).'}
+                              {isSingleTrade ? cm.management.monitorIntroSingle : cm.management.monitorIntroMulti}
                             </p>
 
                             <section className="rounded-lg border border-neutral-200 dark:border-neutral-800 overflow-hidden">
                               <div className="flex items-center justify-between gap-3 bg-white dark:bg-neutral-900 px-4 py-3">
                                 <div>
-                                  <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">Move SL after movement</p>
+                                  <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.management.moveSlTitle}</p>
                                   <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
-                                    Automatically move stop loss to breakeven (plus optional partial close) once price reaches your threshold.
+                                    {cm.management.moveSlSubtitle}
                                   </p>
                                 </div>
                                 <Toggle
@@ -1983,12 +1971,12 @@ export function AccountConfigPage() {
                                 <div className="border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/80 px-4 py-4 space-y-4">
                                   {autoRuleSummary ? (
                                     <div className="rounded-lg border border-teal-200 bg-teal-50/80 px-3 py-2.5 text-sm text-teal-900 dark:border-teal-900/50 dark:bg-teal-950/40 dark:text-teal-200">
-                                      <span className="font-medium">Active rule:</span> {autoRuleSummary}
+                                      {autoRuleSummary}
                                     </div>
                                   ) : null}
 
                                   <div className="space-y-3">
-                                    <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">Trigger — move SL when</p>
+                                    <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.management.triggerTitle}</p>
                                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                                       {TRIGGER_MODES.map((m) => (
                                         <button
@@ -2010,11 +1998,11 @@ export function AccountConfigPage() {
 
                                     {triggerMode === 'pips' && (
                                       <Input
-                                        label="Pip movement"
+                                        label={cm.management.triggerPips}
                                         type="number"
                                         min={0}
                                         step={1}
-                                        hint="How many pips in profit before stop loss moves to breakeven."
+                                        hint={cm.management.triggerPipsHint}
                                         value={String(ms.move_sl_to_entry_after_value ?? 10)}
                                         onChange={e => setManual({
                                           move_sl_to_entry_after_value: Math.max(0, Number(e.target.value) || 0),
@@ -2024,11 +2012,11 @@ export function AccountConfigPage() {
 
                                     {triggerMode === 'rr' && (
                                       <Input
-                                        label="Risk:Reward ratio"
+                                        label={cm.management.triggerRrLabel}
                                         type="number"
                                         min={0}
                                         step={0.1}
-                                        hint="RR reached before stop loss moves to breakeven (e.g. 1 = 1:1)."
+                                        hint={cm.management.triggerRrHint}
                                         value={String(ms.move_sl_to_entry_after_value ?? 1)}
                                         onChange={e => setManual({
                                           move_sl_to_entry_after_value: Math.max(0, Number(e.target.value) || 0),
@@ -2038,11 +2026,11 @@ export function AccountConfigPage() {
 
                                     {triggerMode === 'money' && (
                                       <Input
-                                        label="Profit ($)"
+                                        label={cm.management.triggerMoney}
                                         type="number"
                                         min={0}
                                         step={0.01}
-                                        hint="Unrealized profit in account currency before stop loss moves to breakeven."
+                                        hint={cm.management.triggerMoneyHint}
                                         value={String(ms.move_sl_to_entry_after_value ?? 10)}
                                         onChange={e => setManual({
                                           move_sl_to_entry_after_value: Math.max(0, Number(e.target.value) || 0),
@@ -2053,7 +2041,7 @@ export function AccountConfigPage() {
                                     {triggerMode === 'tp_hit' && (
                                       <div className="space-y-1.5">
                                         <Select
-                                          label="Take profit"
+                                          label={cm.management.takeProfit}
                                           value={String(ms.move_sl_to_entry_tp_index ?? 1)}
                                           onChange={e => setManual({
                                             move_sl_to_entry_tp_index: Math.max(1, Number(e.target.value) || 1),
@@ -2061,17 +2049,17 @@ export function AccountConfigPage() {
                                           options={tpOptions}
                                         />
                                         <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                                          Which take-profit level must be hit before stop loss moves to breakeven.
+                                          {cm.management.tpHitHint}
                                         </p>
                                       </div>
                                     )}
 
                                     <Input
-                                      label="Breakeven offset (pips)"
+                                      label={cm.management.breakevenOffset}
                                       type="number"
                                       min={0}
                                       step={1}
-                                      hint="Pips beyond entry when placing breakeven stop (locks in a small profit)."
+                                      hint={cm.management.breakevenOffsetHint}
                                       value={String(ms.breakeven_offset_pips ?? 10)}
                                       onChange={e => setManual({
                                         breakeven_offset_pips: Math.max(0, Number(e.target.value) || 0),
@@ -2081,9 +2069,9 @@ export function AccountConfigPage() {
 
                                   <div className="rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 overflow-hidden">
                                     <div className="px-3 py-2.5 border-b border-neutral-200 dark:border-neutral-800">
-                                      <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">Breakeven type</p>
+                                      <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.management.breakevenTypeTitle}</p>
                                       <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
-                                        What happens when the trigger condition is met.
+                                        {cm.management.breakevenTypeSubtitle}
                                       </p>
                                     </div>
                                     <div className="p-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -2097,9 +2085,9 @@ export function AccountConfigPage() {
                                             : 'border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 hover:border-neutral-300 dark:hover:border-neutral-600',
                                         )}
                                       >
-                                        <span className="font-medium">Move Only</span>
+                                        <span className="font-medium">{cm.management.moveOnly}</span>
                                         <span className="block text-xs mt-0.5 opacity-80">
-                                          Move stop loss to breakeven only.
+                                          {cm.management.moveOnlyHint}
                                         </span>
                                       </button>
                                       <button
@@ -2112,20 +2100,20 @@ export function AccountConfigPage() {
                                             : 'border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 hover:border-neutral-300 dark:hover:border-neutral-600',
                                         )}
                                       >
-                                        <span className="font-medium">Move SL and partial close</span>
+                                        <span className="font-medium">{cm.management.moveAndPartial}</span>
                                         <span className="block text-xs mt-0.5 opacity-80">
-                                          Move stop loss to breakeven and close a portion of the position.
+                                          {cm.management.moveAndPartialHint}
                                         </span>
                                       </button>
                                     </div>
                                     {beType === 'sl_and_close_half' && (
                                       <Input
-                                        label="Partial close (%)"
+                                        label={cm.management.partialClose}
                                         type="number"
                                         min={1}
                                         max={99}
                                         step={1}
-                                        hint="Percent of position volume to close when the trigger fires."
+                                        hint={cm.management.partialCloseHint}
                                         value={String(ms.half_close_percent ?? 50)}
                                         onChange={e =>
                                           setManual({
@@ -2143,9 +2131,9 @@ export function AccountConfigPage() {
                               <section className="rounded-lg border border-neutral-200 dark:border-neutral-800 overflow-hidden">
                                 <div className="flex items-center justify-between gap-3 bg-white dark:bg-neutral-900 px-4 py-3">
                                   <div>
-                                    <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">Trailing stop</p>
+                                    <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.management.trailingTitle}</p>
                                     <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
-                                      Continuously ratchets stop loss as price moves in your favor (Single Trade only).
+                                      {cm.management.trailingSubtitle}
                                     </p>
                                   </div>
                                   <Toggle
@@ -2157,29 +2145,29 @@ export function AccountConfigPage() {
                                   <div className="border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/80 px-4 py-4">
                                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                                       <Input
-                                        label="Trail start (pips)"
+                                        label={cm.management.trailStart}
                                         type="number"
                                         min={0}
                                         step={1}
-                                        hint="Profit pips before trailing begins."
+                                        hint={cm.management.trailStartHint}
                                         value={String(ms.trailing_start_pips ?? 20)}
                                         onChange={e => setManual({ trailing_start_pips: Math.max(0, Number(e.target.value) || 0) })}
                                       />
                                       <Input
-                                        label="Trail step (pips)"
+                                        label={cm.management.trailStep}
                                         type="number"
                                         min={0}
                                         step={1}
-                                        hint="Minimum favorable move before SL steps again."
+                                        hint={cm.management.trailStepHint}
                                         value={String(ms.trailing_step_pips ?? 5)}
                                         onChange={e => setManual({ trailing_step_pips: Math.max(0, Number(e.target.value) || 0) })}
                                       />
                                       <Input
-                                        label="Trail distance (pips)"
+                                        label={cm.management.trailDistance}
                                         type="number"
                                         min={0}
                                         step={1}
-                                        hint="SL stays this many pips behind the peak price."
+                                        hint={cm.management.trailDistanceHint}
                                         value={String(ms.trailing_distance_pips ?? 10)}
                                         onChange={e => setManual({ trailing_distance_pips: Math.max(0, Number(e.target.value) || 0) })}
                                       />
@@ -2191,7 +2179,7 @@ export function AccountConfigPage() {
 
                             {!isSingleTrade && (
                               <p className="text-xs text-amber-700 dark:text-amber-400 rounded-lg border border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-950/30 px-3 py-2">
-                                Trailing stop is available in <strong>Single Trade</strong> mode only. Auto breakeven still runs on each multi-trade leg.
+                                {cm.management.trailingSingleOnly}
                               </p>
                             )}
                           </div>
@@ -2202,60 +2190,52 @@ export function AccountConfigPage() {
                           <div className="space-y-6">
                             <section className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-4 space-y-3">
                               <div>
-                                <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">Time filter</p>
+                                <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.filters.timeTitle}</p>
                                 <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
-                                  When enabled, signals are only copied inside the allowed window (broker server local time).
+                                  {cm.filters.timeSubtitle}
                                 </p>
                               </div>
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                              <Select label="Time filter" value={configDraft.manualSettings.time_filter_enabled ? 'yes' : 'no'} onChange={e => setManual({ time_filter_enabled: e.target.value === 'yes' })} options={[{ value: 'no', label: 'No — trade any time' }, { value: 'yes', label: 'Yes — restrict to window' }]} />
+                              <Select label={cm.filters.timeFilter} value={configDraft.manualSettings.time_filter_enabled ? 'yes' : 'no'} onChange={e => setManual({ time_filter_enabled: e.target.value === 'yes' })} options={[{ value: 'no', label: cm.filters.timeNo }, { value: 'yes', label: cm.filters.timeYes }]} />
                               {configDraft.manualSettings.time_filter_enabled && (
-                                <Input label="Start time" type="time" value={configDraft.manualSettings.trade_start_time ?? '00:00'} onChange={e => setManual({ trade_start_time: e.target.value })} />
+                                <Input label={cm.filters.startTime} type="time" value={configDraft.manualSettings.trade_start_time ?? '00:00'} onChange={e => setManual({ trade_start_time: e.target.value })} />
                               )}
                               {configDraft.manualSettings.time_filter_enabled && (
-                                <Input label="End time" type="time" value={configDraft.manualSettings.trade_end_time ?? '23:59'} onChange={e => setManual({ trade_end_time: e.target.value })} />
+                                <Input label={cm.filters.endTime} type="time" value={configDraft.manualSettings.trade_end_time ?? '23:59'} onChange={e => setManual({ trade_end_time: e.target.value })} />
                               )}
                             </div>
                             </section>
 
                             <section className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-4 space-y-3">
                               <div>
-                                <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">Days trading</p>
+                                <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.filters.daysTitle}</p>
                                 <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
-                                  When enabled, copying only runs on the selected weekdays.
+                                  {cm.filters.daysSubtitle}
                                 </p>
                               </div>
-                              <Select label="Days trading" value={configDraft.manualSettings.days_filter_enabled ? 'yes' : 'no'} onChange={e => setManual({ days_filter_enabled: e.target.value === 'yes' })} options={[{ value: 'no', label: 'No — all days' }, { value: 'yes', label: 'Yes — selected days only' }]} />
+                              <Select label={cm.filters.daysFilter} value={configDraft.manualSettings.days_filter_enabled ? 'yes' : 'no'} onChange={e => setManual({ days_filter_enabled: e.target.value === 'yes' })} options={[{ value: 'no', label: cm.filters.daysNo }, { value: 'yes', label: cm.filters.daysYes }]} />
                             {configDraft.manualSettings.days_filter_enabled && (
                               <div>
-                                <p className="text-xs text-neutral-600 dark:text-neutral-400 mb-2">Trading days</p>
+                                <p className="text-xs text-neutral-600 dark:text-neutral-400 mb-2">{cm.filters.tradingDays}</p>
                                 <div className="flex flex-wrap gap-3">
-                                  {[
-                                    { label: 'Sunday', value: 0 },
-                                    { label: 'Monday', value: 1 },
-                                    { label: 'Tuesday', value: 2 },
-                                    { label: 'Wednesday', value: 3 },
-                                    { label: 'Thursday', value: 4 },
-                                    { label: 'Friday', value: 5 },
-                                    { label: 'Saturday', value: 6 },
-                                  ].map((d) => (
-                                    <label key={d.value} className="text-sm text-neutral-700 dark:text-neutral-300 flex items-center gap-2">
+                                  {([0, 1, 2, 3, 4, 5, 6] as const).map((value) => (
+                                    <label key={value} className="text-sm text-neutral-700 dark:text-neutral-300 flex items-center gap-2">
                                       <input
                                         type="checkbox"
-                                        checked={(configDraft.manualSettings.trade_days ?? [1, 2, 3, 4, 5]).includes(d.value)}
+                                        checked={(configDraft.manualSettings.trade_days ?? [1, 2, 3, 4, 5]).includes(value)}
                                         onChange={(e) => {
                                           const prev = configDraft.manualSettings.trade_days ?? [1, 2, 3, 4, 5]
-                                          const next = e.target.checked ? [...new Set([...prev, d.value])] : prev.filter((x) => x !== d.value)
+                                          const next = e.target.checked ? [...new Set([...prev, value])] : prev.filter((x) => x !== value)
                                           setManual({ trade_days: next })
                                         }}
                                       />
-                                      {d.label}
+                                      {cm.filters.weekdays[String(value) as keyof typeof cm.filters.weekdays]}
                                     </label>
                                   ))}
                                 </div>
                                 {(configDraft.manualSettings.trade_days ?? []).length === 0 ? (
                                   <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
-                                    Select at least one day or disable days trading.
+                                    {cm.filters.daysWarning}
                                   </p>
                                 ) : null}
                               </div>
@@ -2264,13 +2244,13 @@ export function AccountConfigPage() {
 
                             <section className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-4 space-y-3">
                               <div>
-                                <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">News trading</p>
+                                <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.filters.newsTitle}</p>
                                 <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
-                                  Uses the economic calendar (FMP). <strong>Yes</strong> copies through news. <strong>No</strong> pauses copying around selected releases, closes open trades beforehand, and resumes after a cooldown.
+                                  {cm.filters.newsSubtitle}
                                 </p>
                               </div>
                               <Select
-                                label="News trading"
+                                label={cm.filters.newsTrading}
                                 value={configDraft.manualSettings.news_trading_enabled !== false ? 'yes' : 'no'}
                                 onChange={e => {
                                   const enabled = e.target.value === 'yes'
@@ -2280,20 +2260,20 @@ export function AccountConfigPage() {
                                   })
                                 }}
                                 options={[
-                                  { value: 'yes', label: 'Yes — copy through news' },
-                                  { value: 'no', label: 'No — avoid news windows' },
+                                  { value: 'yes', label: cm.filters.newsYes },
+                                  { value: 'no', label: cm.filters.newsNo },
                                 ]}
                               />
                               {configDraft.manualSettings.news_trading_enabled === false && (
                                 <>
                                   <div>
-                                    <p className="text-xs text-neutral-600 dark:text-neutral-400 mb-2">Avoid news impact</p>
+                                    <p className="text-xs text-neutral-600 dark:text-neutral-400 mb-2">{cm.filters.avoidImpact}</p>
                                     <div className="flex flex-wrap gap-4">
                                       {(
                                         [
-                                          { id: 'high' as const, label: 'High impact' },
-                                          { id: 'medium' as const, label: 'Medium impact' },
-                                          { id: 'low' as const, label: 'Low impact' },
+                                          { id: 'high' as const, label: cm.filters.impactHigh },
+                                          { id: 'medium' as const, label: cm.filters.impactMedium },
+                                          { id: 'low' as const, label: cm.filters.impactLow },
                                         ] as const
                                       ).map((impact) => (
                                         <label key={impact.id} className="text-sm text-neutral-700 dark:text-neutral-300 flex items-center gap-2">
@@ -2314,13 +2294,13 @@ export function AccountConfigPage() {
                                     </div>
                                     {(configDraft.manualSettings.news_avoid_impacts ?? []).length === 0 ? (
                                       <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
-                                        Select at least one impact level or enable news trading.
+                                        {cm.filters.impactWarning}
                                       </p>
                                     ) : null}
                                   </div>
                                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                     <Input
-                                      label="Close all trades before news (minutes)"
+                                      label={cm.filters.closeBeforeNews}
                                       type="number"
                                       min={0}
                                       value={String(configDraft.manualSettings.close_before_news_minutes ?? 30)}
@@ -2329,7 +2309,7 @@ export function AccountConfigPage() {
                                       }
                                     />
                                     <Input
-                                      label="Resume copying after news (minutes)"
+                                      label={cm.filters.resumeAfterNews}
                                       type="number"
                                       min={0}
                                       value={String(configDraft.manualSettings.resume_after_news_minutes ?? 15)}
@@ -2347,52 +2327,51 @@ export function AccountConfigPage() {
                         {activeManualSubTab === 'strategy' && (
                           <div className="space-y-4">
                             <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-3 space-y-3">
-                              <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">Signal behavior</p>
+                              <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.strategy.signalBehavior}</p>
                               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                                 <Select
-                                  label="Reverse Signal"
+                                  label={cm.strategy.reverseSignal}
                                   value={configDraft.manualSettings.reverse_signal ? 'yes' : 'no'}
                                   onChange={e => {
                                     const v = e.target.value === 'yes'
                                     if (v && !reverseSignalPlannerGateSettingsOk(configDraft.manualSettings)) return
                                     setManual({ reverse_signal: v })
                                   }}
-                                  options={[{ value: 'no', label: 'No' }, { value: 'yes', label: 'Yes' }]}
+                                  options={[{ value: 'no', label: cm.common.no }, { value: 'yes', label: cm.common.yes }]}
                                 />
                                 <Select
-                                  label="Add New Trade to Existing"
+                                  label={cm.strategy.addToExisting}
                                   value={configDraft.manualSettings.add_new_trades_to_existing ? 'yes' : 'no'}
                                   onChange={e => setManual({ add_new_trades_to_existing: e.target.value === 'yes' })}
-                                  options={[{ value: 'yes', label: 'Yes' }, { value: 'no', label: 'No' }]}
+                                  options={[{ value: 'yes', label: cm.common.yes }, { value: 'no', label: cm.common.no }]}
                                 />
                                 <Select
-                                  label="Close on Opposite Signal"
+                                  label={cm.strategy.closeOpposite}
                                   value={configDraft.manualSettings.close_on_opposite_signal ? 'yes' : 'no'}
                                   onChange={e => setManual({ close_on_opposite_signal: e.target.value === 'yes' })}
-                                  options={[{ value: 'no', label: 'No' }, { value: 'yes', label: 'Yes' }]}
+                                  options={[{ value: 'no', label: cm.common.no }, { value: 'yes', label: cm.common.yes }]}
                                 />
                               </div>
                               <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                                <strong>Reverse:</strong> flips buy/sell only when the signal has an entry price or zone{' '}
-                                <em>and</em> both predefined SL and TP are enabled with positive pip values — so mirrored risk uses your template, not the channel&apos;s stops.
+                                {cm.strategy.reverseHint}
                               </p>
                               <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                                <strong>Close on opposite:</strong> in manual mode, a new channel buy/sell closes any open trades on the same symbol facing the opposite way (channel direction, before reverse), cancels their virtual range pendings, then the new plan runs.
+                                {cm.strategy.closeOppositeHint}
                               </p>
                               <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                                <strong>Add to existing:</strong> follow-up on the same side refreshes every **open leg** that belongs to the same original signal (same basket), in **fill order** (oldest leg first), using the planner&apos;s **multi-trade TP distribution** (each leg gets the SL/TP of the matching immediate order from your TP lot percentage rows). Range virtual pendings for that basket are cancelled and re-inserted under the **parent** signal. Reply-thread or **4h** time window still applies. Single-trade partial-TP rows are only re-created when the basket is a single leg.
+                                {cm.strategy.addExistingHint}
                               </p>
                             </div>
 
                             <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-3 space-y-3">
-                              <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">R:R fallbacks</p>
+                              <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.strategy.rrFallbacksTitle}</p>
                               <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                                Only used when predefined and channel SL/TP are missing. Predefined overrides on the Stops tab always win when enabled.
+                                {cm.strategy.rrFallbacksIntro}
                               </p>
                               <div className="space-y-3">
                                 <div className="rounded-md border border-neutral-200 dark:border-neutral-800 overflow-hidden">
                                   <div className="flex items-center justify-between gap-3 bg-white dark:bg-neutral-900 px-3 py-2.5">
-                                    <span className="text-sm font-medium text-neutral-800 dark:text-neutral-100">Enable R:R for SL</span>
+                                    <span className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.strategy.enableRrSl}</span>
                                     <Toggle
                                       checked={configDraft.manualSettings.rr_for_sl_enabled === true}
                                       onChange={v => setManual({ rr_for_sl_enabled: v })}
@@ -2401,9 +2380,9 @@ export function AccountConfigPage() {
                                   {configDraft.manualSettings.rr_for_sl_enabled && (
                                     <div className="border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/80 px-3 py-3 space-y-1">
                                       <Input
-                                        label="SL R:R"
+                                        label={cm.strategy.slRr}
                                         type="number"
-                                        hint="When SL is omitted but TP exists: SL distance = (distance from entry to TP1) ÷ this ratio. Predefined pip SL (if on) and channel SL override this."
+                                        hint={cm.strategy.slRrHint}
                                         value={String(configDraft.manualSettings.rr_for_sl ?? 1)}
                                         onChange={e => setManual({ rr_for_sl: Number(e.target.value) })}
                                       />
@@ -2413,7 +2392,7 @@ export function AccountConfigPage() {
 
                                 <div className="rounded-md border border-neutral-200 dark:border-neutral-800 overflow-hidden">
                                   <div className="flex items-center justify-between gap-3 bg-white dark:bg-neutral-900 px-3 py-2.5">
-                                    <span className="text-sm font-medium text-neutral-800 dark:text-neutral-100">Enable R:R for TPs</span>
+                                    <span className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.strategy.enableRrTps}</span>
                                     <Toggle
                                       checked={configDraft.manualSettings.rr_for_tps_enabled === true}
                                       onChange={v => setManual({ rr_for_tps_enabled: v })}
@@ -2422,8 +2401,8 @@ export function AccountConfigPage() {
                                   {configDraft.manualSettings.rr_for_tps_enabled && (
                                     <div className="border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/80 px-3 py-3 space-y-1">
                                       <Input
-                                        label="TP R:R values (comma)"
-                                        hint="When TPs are omitted but SL exists: each TP = entry ± (entry→SL distance) × each ratio. Predefined pip TPs (if on) and channel TPs override this."
+                                        label={cm.strategy.tpRrValues}
+                                        hint={cm.strategy.tpRrHint}
                                         value={(configDraft.manualSettings.rr_for_tps ?? []).join(',')}
                                         onChange={e => setManual({ rr_for_tps: e.target.value.split(',').map(n => Number(n.trim())).filter(Number.isFinite) })}
                                       />
@@ -2434,19 +2413,19 @@ export function AccountConfigPage() {
                             </div>
 
                             <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-3 space-y-3">
-                              <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">Pending orders</p>
+                              <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.strategy.pendingTitle}</p>
                               <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                                Applied to broker Limit/Stop sends and worker virtual range legs. 
+                                {cm.strategy.pendingIntro}
                                 {/* <code className="text-[11px]">WORKER_BROKER_PENDING_EXPIRY_SWEEP=true</code> on the worker to cancel stale TSCopier broker pendings past this TTL when order open time is available from the API. */}
                               </p>
                               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                                 <Input
-                                  label="Pending Expiry (hours 1-24)"
+                                  label={cm.strategy.pendingExpiry}
                                   type="number"
                                   min={1}
                                   max={24}
                                   step={1}
-                                  hint="Use 1–24 hours. Values are clamped in the planner; 0 in stored settings means no expiry (not recommended from this panel)."
+                                  hint={cm.strategy.pendingExpiryHint}
                                   value={String(configDraft.manualSettings.pending_expiry_hours ?? 1)}
                                   onChange={e => {
                                     const n = Number(e.target.value)
@@ -2469,16 +2448,19 @@ export function AccountConfigPage() {
                     <div className="space-y-3">
                       {channelOptions.length === 0 ? (
                         <p className="text-sm text-neutral-500 dark:text-neutral-400">
-                          No connected channels found. <Link to="/channels" className="text-primary-600 underline">Connect channels here</Link>.
+                          {cm.channels.noneConnected}{' '}
+                          <Link to="/channels" className="text-primary-600 underline">{cm.channels.connectLink}</Link>.
                         </p>
                       ) : (
                         <>
                           <div className="flex items-center justify-between">
-                            <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">Signal channels</p>
-                            <p className="text-xs text-neutral-500 dark:text-neutral-400">{configDraft.channelIds.length} selected</p>
+                            <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">{cm.channels.signalChannels}</p>
+                            <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                              {interpolate(cm.channels.selected, { count: String(configDraft.channelIds.length) })}
+                            </p>
                           </div>
                           <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                            Check channels to copy their signals to this account. None are connected by default.
+                            {cm.channels.pickHint}
                           </p>
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                             {channelOptions.map(channel => (
@@ -2507,24 +2489,26 @@ export function AccountConfigPage() {
                     {channelOptions.length > 0 && (
                       <div className="space-y-3">
                         <div className="flex items-center justify-between">
-                          <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">Channel keyword filters</p>
+                          <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">{cm.channels.keywordFilters}</p>
                           <p className="text-xs text-neutral-500 dark:text-neutral-400">
                             {(() => {
                               const ids = configDraft.channelIds
                               const total = ids.reduce((sum, id) => {
-                                const f = configDraft.channelFilters[id] ?? DEFAULT_CHANNEL_FILTERS
-                                return sum + CHANNEL_FILTER_CATEGORIES.reduce(
+                                const f = normalizeChannelFilters(
+                                  configDraft.channelFilters[id] ?? DEFAULT_CHANNEL_FILTERS,
+                                )
+                                return sum + channelFilterCategories.reduce(
                                   (n, c) => n + (f[c.key] === 'ignore' ? 1 : 0), 0,
                                 )
                               }, 0)
-                              return total === 0 ? 'All categories allowed' : `${total} ignored across all channels`
+                              return total === 0
+                                ? cm.channels.allAllowed
+                                : interpolate(cm.channels.ignoredAcross, { total: String(total) })
                             })()}
                           </p>
                         </div>
                         <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                          Mark a category as Ignore to skip matching instructions from that channel on this
-                          broker (trades keep running). Ignoring Close full position also blocks generic
-                          &quot;close&quot; and &quot;close all&quot; messages.
+                          {cm.channels.filtersIntro}
                         </p>
 
                         {(() => {
@@ -2532,7 +2516,7 @@ export function AccountConfigPage() {
                           if (visibleIds.length === 0) {
                             return (
                               <p className="text-xs text-neutral-400 italic">
-                                Select at least one channel above to configure its filters.
+                                {cm.channels.selectChannelFirst}
                               </p>
                             )
                           }
@@ -2550,6 +2534,8 @@ export function AccountConfigPage() {
                                     key={id}
                                     channel={channel}
                                     filters={filters}
+                                    categories={channelFilterCategories}
+                                    labels={cm.channelFilters}
                                     onChange={(key, value) => setChannelFilter(id, key, value)}
                                     onReset={() => resetChannelFilters(id)}
                                     defaultOpen={idx === 0 && visibleIds.length === 1}
@@ -2570,10 +2556,10 @@ export function AccountConfigPage() {
 
             <div className="shrink-0 px-4 sm:px-6 py-3 sm:py-4 border-t border-neutral-100 dark:border-neutral-800 flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-2 sm:gap-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:pb-4">
               {configSavedAt != null && (
-                <span className="text-xs text-success-600 text-center sm:text-left sm:mr-auto transition-opacity">Saved</span>
+                <span className="text-xs text-success-600 text-center sm:text-left sm:mr-auto transition-opacity">{cm.saved}</span>
               )}
-              <Button variant="ghost" className="w-full sm:w-auto min-h-[44px]" onClick={closeConfigureModal} disabled={configSaving}>Cancel</Button>
-              <Button className="w-full sm:w-auto min-h-[44px]" loading={configSaving} onClick={() => void saveConfigureModal()}>Save</Button>
+              <Button variant="ghost" className="w-full sm:w-auto min-h-[44px]" onClick={closeConfigureModal} disabled={configSaving}>{cm.cancel}</Button>
+              <Button className="w-full sm:w-auto min-h-[44px]" loading={configSaving} onClick={() => void saveConfigureModal()}>{cm.save}</Button>
             </div>
           </div>
         </div>
@@ -2605,18 +2591,22 @@ function FeatureBullet({ icon: Icon, title, body }: { icon: typeof DollarSign; t
 function ChannelFiltersCard({
   channel,
   filters,
+  categories,
+  labels,
   onChange,
   onReset,
   defaultOpen = false,
 }: {
   channel: ChannelOption
   filters: ChannelFilters
+  categories: ReturnType<typeof getChannelFilterCategories>
+  labels: ConfigureModalTranslations['channelFilters']
   onChange: (key: ChannelFilterKey, value: ChannelFilterDecision) => void
   onReset: () => void
   defaultOpen?: boolean
 }) {
   const [open, setOpen] = useState(defaultOpen)
-  const ignoredCount = CHANNEL_FILTER_CATEGORIES.reduce(
+  const ignoredCount = categories.reduce(
     (n, c) => n + (filters[c.key] === 'ignore' ? 1 : 0),
     0,
   )
@@ -2629,7 +2619,7 @@ function ChannelFiltersCard({
         aria-expanded={open}
       >
         <div className="min-w-0">
-          <p className="text-sm font-medium text-neutral-900 dark:text-neutral-50 truncate">{channel.display_name || 'Unnamed channel'}</p>
+          <p className="text-sm font-medium text-neutral-900 dark:text-neutral-50 truncate">{channel.display_name || labels.unnamedChannel}</p>
           {channel.channel_username && (
             <p className="text-xs text-neutral-500 dark:text-neutral-400 truncate">@{channel.channel_username}</p>
           )}
@@ -2637,7 +2627,7 @@ function ChannelFiltersCard({
         <div className="flex items-center gap-2 shrink-0">
           {ignoredCount > 0 && (
             <span className="text-[10px] font-medium uppercase tracking-wide rounded-full px-2 py-0.5 bg-amber-50 text-amber-700">
-              {ignoredCount} ignored
+              {interpolate(labels.ignoredBadge, { count: String(ignoredCount) })}
             </span>
           )}
           <ChevronDown className={clsx('w-4 h-4 text-neutral-500 dark:text-neutral-400 transition-transform', open && 'rotate-180')} />
@@ -2646,11 +2636,13 @@ function ChannelFiltersCard({
       {open && (
         <div className="p-3 border-t border-neutral-100 dark:border-neutral-800 space-y-3">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {CHANNEL_FILTER_CATEGORIES.map(cat => (
+            {categories.map(cat => (
               <CategoryRow
                 key={cat.key}
                 label={cat.label}
                 example={cat.example}
+                allowLabel={labels.allow}
+                ignoreLabel={labels.ignore}
                 value={filters[cat.key] ?? 'allow'}
                 onChange={v => onChange(cat.key, v)}
               />
@@ -2658,7 +2650,7 @@ function ChannelFiltersCard({
           </div>
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
             <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
-              Ignored categories drop matching messages from this channel before the worker runs them.
+              {labels.footer}
             </p>
             <button
               type="button"
@@ -2666,7 +2658,7 @@ function ChannelFiltersCard({
               onClick={onReset}
               disabled={ignoredCount === 0}
             >
-              Reset to defaults
+              {labels.resetDefaults}
             </button>
           </div>
         </div>
@@ -2678,11 +2670,15 @@ function ChannelFiltersCard({
 function CategoryRow({
   label,
   example,
+  allowLabel,
+  ignoreLabel,
   value,
   onChange,
 }: {
   label: string
   example: string
+  allowLabel: string
+  ignoreLabel: string
   value: ChannelFilterDecision
   onChange: (v: ChannelFilterDecision) => void
 }) {
@@ -2702,7 +2698,7 @@ function CategoryRow({
           onClick={() => onChange('allow')}
           aria-pressed={value === 'allow'}
         >
-          Allow
+          {allowLabel}
         </button>
         <button
           type="button"
@@ -2713,7 +2709,7 @@ function CategoryRow({
           onClick={() => onChange('ignore')}
           aria-pressed={value === 'ignore'}
         >
-          Ignore
+          {ignoreLabel}
         </button>
       </div>
     </div>
