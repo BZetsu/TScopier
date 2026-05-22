@@ -677,12 +677,52 @@ export interface BacktestTranslations {
   }
 }
 
+export interface PricingTranslations {
+  title: string
+  subtitle: string
+  skip: string
+  monthly: string
+  perMonth: string
+  extraAccountLabel: string
+  extraAccountUnit: string
+  subscribe: string
+  startTrial: string
+  trialDays: string
+  features: string
+  popular: string
+  basic: {
+    name: string
+    description: string
+  }
+  advanced: {
+    name: string
+    description: string
+  }
+  billing: {
+    title: string
+    subtitle: string
+    currentPlan: string
+    status: string
+    nextBilling: string
+    extraAccounts: string
+    manageBilling: string
+    noPlan: string
+    statusActive: string
+    statusTrialing: string
+    statusCanceled: string
+    statusPastDue: string
+    trialEnds: string
+    choosePlan: string
+  }
+}
+
 export interface Translations {
   auth: AuthTranslations
   channelWorker: ChannelWorkerTranslations
   nav: NavTranslations
   globalSearch: GlobalSearchTranslations
   common: CommonTranslations
+  pricing: PricingTranslations
   accountConfig: AccountConfigTranslations
   dashboard: DashboardTranslations
   copierLogs: CopierLogsTranslations

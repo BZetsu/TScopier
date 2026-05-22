@@ -2,9 +2,12 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider } from './context/AuthContext'
 import { LocaleProvider } from './context/LocaleContext'
 import { UserProfileProvider } from './context/UserProfileContext'
+import { SubscriptionProvider } from './context/SubscriptionContext'
 import { AuthLayout } from './components/layout/AuthLayout'
 import { AppLayout } from './components/layout/AppLayout'
 import { ProtectedRoute } from './components/layout/ProtectedRoute'
+import { SubscriptionGuard } from './components/layout/SubscriptionGuard'
+import { PricingPage } from './pages/pricing/PricingPage'
 import { DashboardPage } from './pages/dashboard/DashboardPage'
 import { AccountConfigPage } from './pages/dashboard/AccountConfigPage'
 import { CopierEnginePage } from './pages/dashboard/CopierEnginePage'
@@ -32,6 +35,7 @@ export default function App() {
     <AuthProvider>
       <LocaleProvider>
       <UserProfileProvider>
+      <SubscriptionProvider>
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
@@ -40,10 +44,22 @@ export default function App() {
           <Route path="/signup" element={<AuthLayout />} />
           <Route path="/verify-email" element={<AuthLayout />} />
 
+          {/* Pricing wall - requires auth but not subscription */}
+          <Route
+            path="/pricing"
+            element={
+              <ProtectedRoute>
+                <PricingPage />
+              </ProtectedRoute>
+            }
+          />
+
           <Route
             element={
               <ProtectedRoute>
-                <AppLayout />
+                <SubscriptionGuard>
+                  <AppLayout />
+                </SubscriptionGuard>
               </ProtectedRoute>
             }
           >
@@ -77,6 +93,7 @@ export default function App() {
           </Route>
         </Routes>
       </BrowserRouter>
+      </SubscriptionProvider>
       </UserProfileProvider>
       </LocaleProvider>
     </AuthProvider>
