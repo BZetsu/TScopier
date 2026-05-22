@@ -52,10 +52,15 @@ export function PricingPage() {
 
   const isAnnual = interval === 'annual'
 
-  const basicPrice = isAnnual ? ANNUAL_BASIC : MONTHLY_BASIC
-  const advancedBase = isAnnual ? ANNUAL_ADVANCED : MONTHLY_ADVANCED
-  const extraAccountPrice = isAnnual ? ANNUAL_EXTRA_ACCOUNT : MONTHLY_EXTRA_ACCOUNT
-  const advancedTotal = advancedBase + extraAccounts * extraAccountPrice
+  // Display price is always per-month; annual shows the discounted monthly rate
+  const basicDisplayPrice = isAnnual ? +(ANNUAL_BASIC / 12).toFixed(2) : MONTHLY_BASIC
+  const advancedDisplayBase = isAnnual ? +(ANNUAL_ADVANCED / 12).toFixed(2) : MONTHLY_ADVANCED
+  const extraAccountDisplayPrice = isAnnual ? +(ANNUAL_EXTRA_ACCOUNT / 12).toFixed(2) : MONTHLY_EXTRA_ACCOUNT
+  const advancedDisplayTotal = advancedDisplayBase + extraAccounts * extraAccountDisplayPrice
+
+  // Annual totals for "Billed $X/year" subtitle
+  const basicAnnualTotal = ANNUAL_BASIC
+  const advancedAnnualTotal = ANNUAL_ADVANCED + extraAccounts * ANNUAL_EXTRA_ACCOUNT
 
   const handleCheckout = async (plan: 'basic' | 'advanced') => {
     setLoadingPlan(plan)
@@ -149,20 +154,21 @@ export function PricingPage() {
               </p>
             </div>
 
-            <div className="mb-2">
+            <div className="mb-1">
               <span className="text-4xl font-bold text-neutral-900 dark:text-neutral-50">
-                ${basicPrice.toFixed(2)}
+                ${basicDisplayPrice.toFixed(2)}
               </span>
               <span className="text-base text-neutral-500 dark:text-neutral-400">
-                {isAnnual ? pt.perYear : pt.perMonth}
+                {pt.perMonth}
               </span>
             </div>
-            {isAnnual && (
+            {isAnnual ? (
               <p className="mb-6 text-xs text-neutral-400 dark:text-neutral-500">
-                {pt.billedAnnually}
+                Billed ${basicAnnualTotal.toFixed(2)}{pt.perYear}
               </p>
+            ) : (
+              <div className="mb-6" />
             )}
-            {!isAnnual && <div className="mb-6" />}
 
             <Button
               size="lg"
@@ -205,20 +211,21 @@ export function PricingPage() {
               </p>
             </div>
 
-            <div className="mb-2">
+            <div className="mb-1">
               <span className="text-4xl font-bold text-neutral-900 dark:text-neutral-50">
-                ${advancedTotal.toFixed(2)}
+                ${advancedDisplayTotal.toFixed(2)}
               </span>
               <span className="text-base text-neutral-500 dark:text-neutral-400">
-                {isAnnual ? pt.perYear : pt.perMonth}
+                {pt.perMonth}
               </span>
             </div>
-            {isAnnual && (
+            {isAnnual ? (
               <p className="mb-4 text-xs text-neutral-400 dark:text-neutral-500">
-                {pt.billedAnnually}
+                Billed ${advancedAnnualTotal.toFixed(2)}{pt.perYear}
               </p>
+            ) : (
+              <div className="mb-4" />
             )}
-            {!isAnnual && <div className="mb-4" />}
 
             {/* Extra accounts selector */}
             <div className="mb-6 rounded-lg border border-neutral-200 bg-neutral-50 p-4 dark:border-neutral-700 dark:bg-neutral-800">
