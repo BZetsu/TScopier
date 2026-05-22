@@ -145,9 +145,22 @@ export type LandingHeroOverviewStatKey =
   | 'tradingAccountsConnected'
   | 'tradesCopiedToday'
 
+export interface LandingHeroLiveMoney {
+  /** Starting amount when the hero preview mounts. */
+  from: number
+  /** Soft ceiling; ticks hover just below with small jitter. */
+  cap: number
+  stepMin: number
+  stepMax: number
+  /** Prefix with + for P/L style values. */
+  signed?: boolean
+}
+
 export interface LandingHeroHeadlineStat {
   key: LandingHeroHeadlineStatKey
-  value: string
+  /** Static fallback (reduced motion) and SEO; omit when `live` is set. */
+  value?: string
+  live?: LandingHeroLiveMoney
   sub: string
   valueTone: LandingHeroStatTone
   showHint?: boolean

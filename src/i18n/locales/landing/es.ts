@@ -26,7 +26,8 @@ export const landingEs: LandingTranslations = {
       headlineStats: [
         {
           key: 'totalBalance',
-          value: '$54,250.00',
+          value: '$54,650.00',
+          live: { from: 48120, cap: 54650, stepMin: 14, stepMax: 52 },
           sub: 'En 5 cuentas conectadas',
           valueTone: 'neutral',
         },
@@ -45,7 +46,8 @@ export const landingEs: LandingTranslations = {
         },
         {
           key: 'openPnl',
-          value: '+$126.40',
+          value: '+$134.80',
+          live: { from: 102.3, cap: 134.8, stepMin: 0.25, stepMax: 1.75, signed: true },
           sub: 'De 2 cuentas',
           valueTone: 'good',
         },

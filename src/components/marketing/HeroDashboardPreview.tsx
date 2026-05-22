@@ -23,6 +23,7 @@ import { LanguageSwitcher } from '../auth/LanguageSwitcher'
 import { ThemeToggle } from '../ui/ThemeToggle'
 import { TscopierLogo } from '../ui/TscopierLogo'
 import { useT } from '../../context/LocaleContext'
+import { formatHeroLiveMoney, useLiveMoneyTicker } from './useLiveMoneyTicker'
 import type {
   LandingBacktestPipsTone,
   LandingHeroCopierLogRow,
@@ -91,6 +92,26 @@ const OVERVIEW_LABELS: Record<LandingHeroOverviewStatKey, (t: ReturnType<typeof 
   tradesCopiedToday: t => t.dashboard.tradesCopiedToday,
 }
 
+function HeroLiveMoneyValue({
+  live,
+  tone,
+}: {
+  live: NonNullable<LandingHeroHeadlineStat['live']>
+  tone: LandingHeroHeadlineStat['valueTone']
+}) {
+  const amount = useLiveMoneyTicker(live)
+
+  return (
+    <p
+      className={clsx('mb-1.5 text-2xl font-semibold tabular-nums', valueToneClass(tone))}
+      aria-live="polite"
+      aria-atomic="true"
+    >
+      {formatHeroLiveMoney(amount, live.signed)}
+    </p>
+  )
+}
+
 function HeroStatBlock({ stat, label }: { stat: LandingHeroHeadlineStat; label: string }) {
   return (
     <div className="px-6 py-5">
@@ -98,9 +119,13 @@ function HeroStatBlock({ stat, label }: { stat: LandingHeroHeadlineStat; label: 
         {label}
         {stat.showHint ? <Info className="h-3.5 w-3.5 shrink-0 opacity-60" aria-hidden /> : null}
       </p>
-      <p className={clsx('mb-1.5 text-2xl font-semibold tabular-nums', valueToneClass(stat.valueTone))}>
-        {stat.value}
-      </p>
+      {stat.live ? (
+        <HeroLiveMoneyValue live={stat.live} tone={stat.valueTone} />
+      ) : (
+        <p className={clsx('mb-1.5 text-2xl font-semibold tabular-nums', valueToneClass(stat.valueTone))}>
+          {stat.value}
+        </p>
+      )}
       <p className="text-xs text-neutral-400">{stat.sub}</p>
     </div>
   )
