@@ -44,7 +44,7 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    const { plan, interval, extraAccounts, successUrl, cancelUrl } = await req.json();
+    const { plan, interval, extraAccounts, returnUrl } = await req.json();
 
     if (!plan || !["basic", "advanced"].includes(plan)) {
       return new Response(
@@ -110,8 +110,8 @@ Deno.serve(async (req: Request) => {
       customer: customerId,
       mode: "subscription",
       line_items: lineItems,
-      success_url: successUrl || `${req.headers.get("origin")}/dashboard?checkout=success`,
-      cancel_url: cancelUrl || `${req.headers.get("origin")}/pricing`,
+      ui_mode: "embedded",
+      return_url: returnUrl || `${req.headers.get("origin")}/dashboard?checkout=success`,
       metadata: {
         supabase_user_id: user.id,
         plan,
@@ -136,7 +136,7 @@ Deno.serve(async (req: Request) => {
     const session = await stripe.checkout.sessions.create(sessionParams);
 
     return new Response(
-      JSON.stringify({ url: session.url }),
+      JSON.stringify({ clientSecret: session.client_secret }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (err) {

@@ -1,10 +1,18 @@
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Check, Zap } from 'lucide-react'
+import { Check, Zap, ArrowLeft } from 'lucide-react'
 import clsx from 'clsx'
+import { loadStripe } from '@stripe/stripe-js'
+import {
+  EmbeddedCheckoutProvider,
+  EmbeddedCheckout,
+} from '@stripe/react-stripe-js'
 import { useT } from '../../context/LocaleContext'
 import { useAuth } from '../../context/AuthContext'
+import { useSubscription } from '../../context/SubscriptionContext'
 import { Button } from '../../components/ui/Button'
+
+const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || '')
 
 const BASIC_FEATURES = [
   '1 demo/live account',
@@ -46,48 +54,71 @@ export function PricingPage() {
   const pt = t.pricing
   const navigate = useNavigate()
   const { session } = useAuth()
+  const { refresh } = useSubscription()
   const [interval, setInterval] = useState<'monthly' | 'annual'>('monthly')
   const [extraAccounts, setExtraAccounts] = useState(0)
-  const [loadingPlan, setLoadingPlan] = useState<'basic' | 'advanced' | null>(null)
+  const [checkoutPlan, setCheckoutPlan] = useState<'basic' | 'advanced' | null>(null)
 
   const isAnnual = interval === 'annual'
 
-  // Display price is always per-month; annual shows the discounted monthly rate
   const basicDisplayPrice = isAnnual ? +(ANNUAL_BASIC / 12).toFixed(2) : MONTHLY_BASIC
   const advancedDisplayBase = isAnnual ? +(ANNUAL_ADVANCED / 12).toFixed(2) : MONTHLY_ADVANCED
   const extraAccountDisplayPrice = isAnnual ? +(ANNUAL_EXTRA_ACCOUNT / 12).toFixed(2) : MONTHLY_EXTRA_ACCOUNT
   const advancedDisplayTotal = advancedDisplayBase + extraAccounts * extraAccountDisplayPrice
 
-  // Annual totals for "Billed $X/year" subtitle
   const basicAnnualTotal = ANNUAL_BASIC
   const advancedAnnualTotal = ANNUAL_ADVANCED + extraAccounts * ANNUAL_EXTRA_ACCOUNT
 
-  const handleCheckout = async (plan: 'basic' | 'advanced') => {
-    setLoadingPlan(plan)
-    try {
-      const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-checkout-session`
-      const res = await fetch(apiUrl, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${session?.access_token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          plan,
-          interval,
-          extraAccounts: plan === 'advanced' ? extraAccounts : 0,
-          successUrl: `${window.location.origin}/dashboard?checkout=success`,
-          cancelUrl: `${window.location.origin}/pricing`,
-        }),
-      })
+  const fetchClientSecret = useCallback(async () => {
+    if (!checkoutPlan) return ''
+    const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-checkout-session`
+    const res = await fetch(apiUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${session?.access_token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        plan: checkoutPlan,
+        interval,
+        extraAccounts: checkoutPlan === 'advanced' ? extraAccounts : 0,
+        returnUrl: `${window.location.origin}/dashboard?checkout=success`,
+      }),
+    })
+    const data = await res.json()
+    return data.clientSecret as string
+  }, [checkoutPlan, interval, extraAccounts, session?.access_token])
 
-      const data = await res.json()
-      if (data.url) {
-        window.location.href = data.url
-      }
-    } finally {
-      setLoadingPlan(null)
-    }
+  const handleComplete = useCallback(async () => {
+    await refresh()
+    navigate('/dashboard?checkout=success')
+  }, [refresh, navigate])
+
+  // Embedded checkout view
+  if (checkoutPlan) {
+    return (
+      <div className="min-h-screen bg-neutral-50 dark:bg-neutral-950">
+        <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6 lg:px-8">
+          <button
+            type="button"
+            onClick={() => setCheckoutPlan(null)}
+            className="mb-6 inline-flex items-center gap-2 text-sm font-medium text-neutral-500 hover:text-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-200 transition-colors"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            {t.backtest?.back || 'Back'}
+          </button>
+
+          <div className="rounded-2xl border border-neutral-200 bg-white p-1 shadow-sm dark:border-neutral-800 dark:bg-neutral-900 overflow-hidden">
+            <EmbeddedCheckoutProvider
+              stripe={stripePromise}
+              options={{ fetchClientSecret, onComplete: handleComplete }}
+            >
+              <EmbeddedCheckout />
+            </EmbeddedCheckoutProvider>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -173,9 +204,7 @@ export function PricingPage() {
             <Button
               size="lg"
               className="w-full"
-              onClick={() => handleCheckout('basic')}
-              loading={loadingPlan === 'basic'}
-              disabled={loadingPlan !== null}
+              onClick={() => setCheckoutPlan('basic')}
             >
               {pt.subscribe}
             </Button>
@@ -275,9 +304,7 @@ export function PricingPage() {
             <Button
               size="lg"
               className="w-full"
-              onClick={() => handleCheckout('advanced')}
-              loading={loadingPlan === 'advanced'}
-              disabled={loadingPlan !== null}
+              onClick={() => setCheckoutPlan('advanced')}
             >
               {pt.startTrial}
             </Button>

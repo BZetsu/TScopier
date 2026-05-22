@@ -1,8 +1,7 @@
-import { Navigate } from 'react-router-dom'
 import { useSubscription } from '../../context/SubscriptionContext'
 
 export function SubscriptionGuard({ children }: { children: React.ReactNode }) {
-  const { hasActiveSubscription, loading } = useSubscription()
+  const { loading } = useSubscription()
 
   if (loading) {
     return (
@@ -12,6 +11,5 @@ export function SubscriptionGuard({ children }: { children: React.ReactNode }) {
     )
   }
 
-  if (!hasActiveSubscription) return <Navigate to="/pricing" replace />
   return <>{children}</>
 }

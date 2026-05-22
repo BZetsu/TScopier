@@ -20,6 +20,7 @@ interface SubscriptionContextValue {
   hasActiveSubscription: boolean
   planName: string
   refresh: () => Promise<void>
+  requireSubscription: () => boolean
 }
 
 const SubscriptionContext = createContext<SubscriptionContextValue>({
@@ -28,6 +29,7 @@ const SubscriptionContext = createContext<SubscriptionContextValue>({
   hasActiveSubscription: false,
   planName: '',
   refresh: async () => {},
+  requireSubscription: () => false,
 })
 
 export function SubscriptionProvider({ children }: { children: React.ReactNode }) {
@@ -64,9 +66,15 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
     ? subscription.plan === 'advanced' ? 'Advanced' : 'Basic'
     : ''
 
+  const requireSubscription = useCallback(() => {
+    if (hasActiveSubscription) return true
+    window.location.href = '/pricing'
+    return false
+  }, [hasActiveSubscription])
+
   return (
     <SubscriptionContext.Provider
-      value={{ subscription, loading, hasActiveSubscription, planName, refresh: fetchSubscription }}
+      value={{ subscription, loading, hasActiveSubscription, planName, refresh: fetchSubscription, requireSubscription }}
     >
       {children}
     </SubscriptionContext.Provider>
