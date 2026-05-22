@@ -9,6 +9,9 @@ export interface AuthTranslations {
     orDivider: string
   }
   login: {
+    heading: string
+    noAccount: string
+    signUpLink: string
     footerPrompt: string
     footerLink: string
     email: string
@@ -18,6 +21,9 @@ export interface AuthTranslations {
     submit: string
   }
   signup: {
+    heading: string
+    hasAccount: string
+    signInLink: string
     footerPrompt: string
     footerLink: string
     firstName: string

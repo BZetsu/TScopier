@@ -7,6 +7,7 @@ import { Input } from '../../components/ui/Input'
 import { Button } from '../../components/ui/Button'
 import { Alert } from '../../components/ui/Alert'
 import { useLocale } from '../../context/LocaleContext'
+import { EMPTY_USER_PROFILE, saveUserProfile } from '../../lib/userProfile'
 
 function GoogleIcon({ className }: { className?: string }) {
   return (
@@ -31,13 +32,16 @@ function GoogleIcon({ className }: { className?: string }) {
   )
 }
 
-export function AuthPage() {
+export function SignupPage() {
   const navigate = useNavigate()
   const { auth } = useLocale()
-  const loginT = auth.login
+  const signupT = auth.signup
 
+  const [firstName, setFirstName] = useState('')
+  const [lastName, setLastName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [googleLoading, setGoogleLoading] = useState(false)
   const [error, setError] = useState('')
@@ -60,13 +64,51 @@ export function AuthPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
+
+    if (password.length < 6) {
+      setError(signupT.passwordTooShort)
+      return
+    }
+    if (password !== confirmPassword) {
+      setError(signupT.passwordMismatch)
+      return
+    }
+
     setLoading(true)
 
-    const { error: signInError } = await supabase.auth.signInWithPassword({ email, password })
-    if (signInError) {
-      setError(signInError.message)
+    const trimmedFirst = firstName.trim()
+    const trimmedLast = lastName.trim()
+    const { data, error: signUpError } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: {
+          first_name: trimmedFirst,
+          last_name: trimmedLast,
+        },
+      },
+    })
+    if (signUpError) {
+      setError(signUpError.message)
       setLoading(false)
       return
+    }
+
+    if (data.user && data.session) {
+      const displayName = [trimmedFirst, trimmedLast].filter(Boolean).join(' ')
+      try {
+        await saveUserProfile(data.user.id, {
+          ...EMPTY_USER_PROFILE,
+          first_name: trimmedFirst,
+          last_name: trimmedLast,
+          display_name: displayName,
+          username: email.split('@')[0] ?? '',
+        })
+      } catch (profileError) {
+        setError(profileError instanceof Error ? profileError.message : 'Failed to save profile')
+        setLoading(false)
+        return
+      }
     }
 
     navigate('/dashboard')
@@ -75,15 +117,15 @@ export function AuthPage() {
   return (
     <div className="w-full">
       <h1 className="text-2xl font-semibold tracking-tight text-neutral-900 dark:text-neutral-50 sm:text-3xl">
-        {loginT.heading}
+        {signupT.heading}
       </h1>
       <p className="mt-2 mb-8 text-sm text-neutral-500 dark:text-neutral-400">
-        {loginT.noAccount}{' '}
+        {signupT.hasAccount}{' '}
         <a
-          href="/signup"
+          href="/login"
           className="font-medium text-teal-600 hover:text-teal-700 dark:text-teal-400 dark:hover:text-teal-300"
         >
-          {loginT.signUpLink}
+          {signupT.signInLink}
         </a>
       </p>
 
@@ -115,10 +157,33 @@ export function AuthPage() {
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Input
+            label={signupT.firstName}
+            type="text"
+            placeholder={signupT.firstNamePlaceholder}
+            value={firstName}
+            onChange={e => setFirstName(e.target.value)}
+            required
+            autoComplete="given-name"
+            className="py-2.5"
+          />
+          <Input
+            label={signupT.lastName}
+            type="text"
+            placeholder={signupT.lastNamePlaceholder}
+            value={lastName}
+            onChange={e => setLastName(e.target.value)}
+            required
+            autoComplete="family-name"
+            className="py-2.5"
+          />
+        </div>
+
         <Input
-          label={loginT.email}
+          label={signupT.email}
           type="email"
-          placeholder={loginT.emailPlaceholder}
+          placeholder={signupT.emailPlaceholder}
           value={email}
           onChange={e => setEmail(e.target.value)}
           required
@@ -127,18 +192,32 @@ export function AuthPage() {
         />
 
         <PasswordInput
-          label={loginT.password}
-          placeholder={loginT.passwordPlaceholder}
+          label={signupT.password}
+          placeholder={signupT.passwordPlaceholder}
           value={password}
           onChange={e => setPassword(e.target.value)}
           required
-          autoComplete="current-password"
+          autoComplete="new-password"
+          hint={signupT.passwordHint}
+        />
+
+        <PasswordInput
+          label={signupT.confirmPassword}
+          placeholder={signupT.confirmPasswordPlaceholder}
+          value={confirmPassword}
+          onChange={e => setConfirmPassword(e.target.value)}
+          required
+          autoComplete="new-password"
         />
 
         <Button type="submit" loading={loading} className="w-full !mt-6" size="lg">
-          {loginT.submit}
+          {signupT.submit}
         </Button>
       </form>
+
+      <p className="mt-4 text-center text-xs leading-relaxed text-neutral-400 dark:text-neutral-500">
+        {signupT.terms}
+      </p>
     </div>
   )
 }

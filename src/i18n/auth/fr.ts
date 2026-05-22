@@ -11,6 +11,9 @@ export const authFr: AuthTranslations = {
     orDivider: 'ou',
   },
   login: {
+    heading: 'Connectez-vous a TSCopier',
+    noAccount: "Vous n'avez pas de compte ?",
+    signUpLink: "S'inscrire",
     footerPrompt: 'Nouveau sur TSCopier ?',
     footerLink: 'Créer un compte gratuit',
     email: 'E-mail',
@@ -20,6 +23,9 @@ export const authFr: AuthTranslations = {
     submit: 'Se connecter',
   },
   signup: {
+    heading: 'Créez votre compte',
+    hasAccount: 'Vous avez déjà un compte ?',
+    signInLink: 'Se connecter',
     footerPrompt: 'Vous avez déjà un compte ?',
     footerLink: 'Se connecter',
     firstName: 'Prénom',
