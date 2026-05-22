@@ -45,14 +45,25 @@ export interface LandingCopierLogsVisualCopy {
   rows: LandingCopierLogRowVisual[]
 }
 
+export type LandingCalendarImpact = 'high' | 'medium' | 'low'
+
+export type LandingCalendarActualTone = 'good' | 'bad' | 'neutral'
+
 export interface LandingCalendarEventVisual {
-  name: string
   time: string
-  impact: 'high' | 'med'
+  currency: string
+  name: string
+  impact: LandingCalendarImpact
+  actual: string
+  forecast: string
+  previous: string
+  actualTone: LandingCalendarActualTone
 }
 
-export interface LandingNewsHeadlineVisual {
-  label: string
+export interface LandingNewsArticleVisual {
+  headline: string
+  source: string
+  relativeTime: string
 }
 
 export type LandingBacktestPipsTone = 'good' | 'bad' | 'neutral'
@@ -105,12 +116,9 @@ export interface LandingFeatureVisualsCopy {
   backtest: LandingBacktestVisualCopy
   logs: LandingCopierLogsVisualCopy
   news: {
-    calendarTitle: string
-    impactHigh: string
-    impactMed: string
-    pillCalendar: string
+    dayHeading: string
     events: LandingCalendarEventVisual[]
-    headlines: LandingNewsHeadlineVisual[]
+    articles: LandingNewsArticleVisual[]
   }
   integrations: {
     hubLabel: string
