@@ -284,6 +284,7 @@ export interface LandingTranslations {
     pricing: string
     signIn: string
     getStarted: string
+    dashboard: string
     menuOpen: string
     menuClose: string
   }

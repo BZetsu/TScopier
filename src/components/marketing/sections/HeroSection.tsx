@@ -1,9 +1,9 @@
-import { ArrowRight, Lock } from 'lucide-react'
+import { Lock } from 'lucide-react'
 import { HeroDashboardPreview } from '../HeroDashboardPreview'
 import { HeroPlatformFlow } from '../HeroPlatformFlow'
+import { MarketingAuthCta } from '../MarketingAuthCta'
 import { MarketingPricingHint } from '../MarketingPricingHint'
 import { useT } from '../../../context/LocaleContext'
-import { appUrl } from '../../../lib/site'
 
 const HERO_AVATARS = [
   '/marketing/hero-avatar-1.jpg',
@@ -33,24 +33,7 @@ export function HeroSection() {
           </p>
 
           <div className="mt-10 flex flex-col items-center">
-            <div className="flex w-full flex-col items-center justify-center gap-3 sm:flex-row">
-              <a
-                href={appUrl('/signup')}
-                className="group inline-flex w-full items-center justify-center gap-2 rounded-xl border border-teal-600 bg-teal-600 px-7 py-3.5 text-base font-semibold text-white transition-colors hover:border-teal-700 hover:bg-teal-700 sm:w-auto"
-              >
-                {l.hero.primaryCta}
-                <ArrowRight
-                  className="h-4 w-4 transition-transform group-hover:translate-x-0.5"
-                  aria-hidden
-                />
-              </a>
-              <a
-                href={appUrl('/login')}
-                className="inline-flex w-full items-center justify-center rounded-xl border border-neutral-200 bg-white px-7 py-3.5 text-base font-medium text-neutral-700 transition-colors hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100 dark:hover:bg-neutral-700 sm:w-auto"
-              >
-                {l.hero.secondaryCta}
-              </a>
-            </div>
+            <MarketingAuthCta variant="hero" />
             <MarketingPricingHint
               basic={l.pricingSnippet.basic}
               advanced={l.pricingSnippet.advanced}
@@ -76,7 +59,7 @@ export function HeroSection() {
           </div>
         </div>
 
-        <div className="hero-product-showcase relative mx-auto mt-12 w-full max-w-5xl sm:mt-14 lg:mt-16">
+        <div className="hero-product-showcase relative mx-auto mt-6 w-full max-w-5xl sm:mt-8 lg:mt-10">
           <div className="hero-product-frame">
             <div className="hero-product-chrome">
               <div className="flex shrink-0 items-center gap-1.5" aria-hidden>

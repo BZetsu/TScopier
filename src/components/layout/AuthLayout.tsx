@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import clsx from 'clsx'
+import { ArrowLeft } from 'lucide-react'
 import { AuthReviewsPanel } from '../auth/AuthReviewsPanel'
 import { AuthPage } from '../../pages/auth/AuthPage'
 import { SignupPage } from '../../pages/auth/SignupPage'
@@ -9,6 +10,7 @@ import { LanguageSwitcher } from '../auth/LanguageSwitcher'
 import { ThemeToggle } from '../ui/ThemeToggle'
 import { AuthBrandLogo } from '../auth/AuthBrandLogo'
 import { useLocale } from '../../context/LocaleContext'
+import { marketingUrl } from '../../lib/site'
 
 export function AuthLayout() {
   const { auth } = useLocale()
@@ -33,9 +35,18 @@ export function AuthLayout() {
             'lg:static lg:z-auto lg:h-auto lg:px-10 lg:py-4 lg:touch-auto',
           )}
         >
-          <Link to="/" className="flex items-center" aria-label="TSCopier home">
-            <AuthBrandLogo className="h-8 w-auto sm:h-6" />
-          </Link>
+          <div className="flex min-w-0 items-center gap-3">
+            <a
+              href={marketingUrl('/')}
+              className="inline-flex items-center gap-1.5 text-sm font-medium text-neutral-600 transition-colors hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
+            >
+              <ArrowLeft className="h-4 w-4 shrink-0" aria-hidden />
+              <span className="hidden sm:inline">{auth.nav.backHome}</span>
+            </a>
+            <Link to="/" className="flex shrink-0 items-center" aria-label="TSCopier">
+              <AuthBrandLogo className="h-8 w-auto sm:h-6" />
+            </Link>
+          </div>
           <div className="flex items-center gap-1 sm:gap-1.5">
             <LanguageSwitcher />
             <ThemeToggle />

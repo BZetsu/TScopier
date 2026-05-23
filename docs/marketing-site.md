@@ -73,6 +73,22 @@ Then set `VITE_APP_URL=http://app.local.tscopier.ai:5173` and `VITE_MARKETING_UR
 
 Checkout success/cancel URLs use `window.location.origin`. Users should complete checkout on **app.tscopier.ai** only.
 
+## Troubleshooting a blank page or console iframe error
+
+The app does **not** embed `app.tscopier.ai` in an iframe. A message like:
+
+`Unsafe attempt to load URL https://app.tscopier.ai/ from frame with URL chrome-error://chromewebdata/`
+
+usually means the browser opened **`app.tscopier.ai` (or was redirected there) and that host failed to resolve** (DNS). Chrome’s error page then blocks subframe loads.
+
+**Check:**
+
+1. **`https://tscopier.ai`** — marketing landing (`isAppHost` is false).
+2. **`https://app.tscopier.ai`** — product app; must be added in Netlify **Domain management** (do not hand-add a conflicting CNAME; let Netlify create the record).
+3. **Sign in / Get started** — full navigation to `app.tscopier.ai`; if app DNS is down, those links fail even when the marketing site works.
+4. **Netlify `*.netlify.app` preview URL** — shows the marketing site (not the dashboard).
+5. Redeploy after changing any `VITE_*` variable.
+
 ## Smoke test checklist
 
 - [ ] `https://tscopier.ai` — landing, glass cards, dark mode, language switch

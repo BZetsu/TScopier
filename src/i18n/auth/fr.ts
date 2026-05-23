@@ -6,16 +6,17 @@ export const authFr: AuthTranslations = {
     signIn: 'Connexion',
     createAccount: 'Créer un compte',
     mobileTagline: 'Un copieur fluide pour chaque signal Telegram',
+    backHome: "Retour à l'accueil",
   },
   oauth: {
     continueWithGoogle: 'Continuer avec Google',
     orDivider: 'ou',
   },
   login: {
-    heading: 'Connectez-vous a TSCopier',
+    heading: 'Connectez-vous a TScopier',
     noAccount: "Vous n'avez pas de compte ?",
     signUpLink: "S'inscrire",
-    footerPrompt: 'Nouveau sur TSCopier ?',
+    footerPrompt: 'Nouveau sur TScopier ?',
     footerLink: 'Créer un compte gratuit',
     email: 'E-mail',
     emailPlaceholder: 'vous@exemple.com',
@@ -44,7 +45,7 @@ export const authFr: AuthTranslations = {
     passwordMismatch: 'Les mots de passe ne correspondent pas',
     submit: 'Créer un compte',
     terms:
-      "En créant un compte, vous acceptez d'utiliser TSCopier de manière responsable et de respecter les conditions de votre broker.",
+      "En créant un compte, vous acceptez d'utiliser TScopier de manière responsable et de respecter les conditions de votre broker.",
   },
   verify: {
     heading: 'Vérifiez votre e-mail',

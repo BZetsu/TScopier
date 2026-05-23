@@ -1,4 +1,5 @@
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
+import { AuthProvider } from './context/AuthContext'
 import { LocaleProvider } from './context/LocaleContext'
 import { LandingPage } from './pages/marketing/LandingPage'
 import { appUrl } from './lib/site'
@@ -12,13 +13,15 @@ function MarketingCatchAll() {
 
 export default function MarketingApp() {
   return (
-    <LocaleProvider>
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<LandingPage />} />
-          <Route path="*" element={<MarketingCatchAll />} />
-        </Routes>
-      </BrowserRouter>
-    </LocaleProvider>
+    <AuthProvider>
+      <LocaleProvider>
+        <BrowserRouter>
+          <Routes>
+            <Route path="/" element={<LandingPage />} />
+            <Route path="*" element={<MarketingCatchAll />} />
+          </Routes>
+        </BrowserRouter>
+      </LocaleProvider>
+    </AuthProvider>
   )
 }

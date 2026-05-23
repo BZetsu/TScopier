@@ -49,14 +49,21 @@ function devSiteOverride(): 'app' | 'marketing' | null {
   return null
 }
 
+function isMarketingHost(hostname: string): boolean {
+  if (hostname === 'tscopier.ai' || hostname === 'www.tscopier.ai') return true
+  if (hostname.endsWith('.netlify.app')) return true
+  return false
+}
+
 /** True when the product app (dashboard, auth, pricing) should mount. */
 export function isAppHost(hostname = window.location.hostname): boolean {
   const override = devSiteOverride()
   if (override) return override === 'app'
 
   if (hostname === 'app.tscopier.ai') return true
-  if (hostname === 'tscopier.ai' || hostname === 'www.tscopier.ai') return false
+  if (isMarketingHost(hostname)) return false
   if (isLocalDevHost(hostname)) return true
   if (hostname.startsWith('app.')) return true
-  return true
+  // Same Netlify deploy serves both hosts — unknown host defaults to marketing.
+  return false
 }

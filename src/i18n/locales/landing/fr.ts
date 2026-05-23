@@ -8,6 +8,7 @@ export const landingFr: LandingTranslations = {
     pricing: 'Tarifs',
     signIn: 'Se connecter',
     getStarted: 'Commencer',
+    dashboard: 'Tableau de bord',
     menuOpen: 'Ouvrir le menu',
     menuClose: 'Fermer le menu',
   },

@@ -8,20 +8,21 @@ export const landingEn: LandingTranslations = {
     pricing: 'Pricing',
     signIn: 'Sign in',
     getStarted: 'Get started',
+    dashboard: 'Dashboard',
     menuOpen: 'Open menu',
     menuClose: 'Close menu',
   },
   hero: {
     trustedBy: '30,000+ Traders from 156 Countries Already Joined',
-    avatarAlts: ['TSCopier trader', 'TSCopier trader', 'TSCopier trader'],
+    avatarAlts: ['TScopier trader', 'TScopier trader', 'TScopier trader'],
     headline: 'Ultra-Fast Telegram Signal Copier',
     headlineAccent: 'Powered by AI.',
     subheadline:
-      'Connect your MT4/MT5 account, pick signal channels, and let TSCopier execute entries, layering, and management — with full control over risk and filters.',
+      'Connect your MT4/MT5 account, pick signal channels, and let TScopier execute entries, layering, and management — with full control over risk and filters.',
     primaryCta: 'Try it for free',
     secondaryCta: 'Sign in',
     imageAlt:
-      'TSCopier dashboard with balance, daily profit, trade outcomes, and account growth charts',
+      'TScopier dashboard with balance, daily profit, trade outcomes, and account growth charts',
     previewUrl: 'app.tscopier.ai/dashboard',
     dashboard: {
       headlineStats: [
@@ -237,7 +238,7 @@ export const landingEn: LandingTranslations = {
         telegramLabel: 'Signal channel',
         channelName: 'Gold Signals Pro',
         channelMeta: '3 new signals · just now',
-        hubLabel: 'TSCopier',
+        hubLabel: 'TScopier',
         mt4Label: 'MT4 account',
         mt4Meta: 'Copying · 0.10 lot rules',
         mt5Label: 'MT5 account',
@@ -475,15 +476,15 @@ export const landingEn: LandingTranslations = {
   faq: {
     eyebrow: 'FAQ',
     title: 'Frequently asked questions',
-    subtitle: 'Quick answers about setup, copying, and what makes TSCopier different.',
+    subtitle: 'Quick answers about setup, copying, and what makes TScopier different.',
     items: [
       {
         question: 'Do I need to download an EA or run a VPS?',
         answer:
-          'No. TSCopier is fully cloud-based. You sign in from your browser, connect Telegram and your MT4/MT5 accounts, and the copier runs on our infrastructure—no Expert Advisor installs or VPS to maintain.',
+          'No. TScopier is fully cloud-based. You sign in from your browser, connect Telegram and your MT4/MT5 accounts, and the copier runs on our infrastructure—no Expert Advisor installs or VPS to maintain.',
       },
       {
-        question: 'Which platforms does TSCopier support?',
+        question: 'Which platforms does TScopier support?',
         answer:
           'You connect Telegram signal channels and copy to MetaTrader 4 and MetaTrader 5 accounts. Link multiple brokers and route each channel to the accounts you choose.',
       },
@@ -498,7 +499,7 @@ export const landingEn: LandingTranslations = {
           'You can link up to 100 MT4/MT5 connections per user, depending on your plan. Each Telegram channel can be connected to one or more broker accounts from the Channels page.',
       },
       {
-        question: 'Does TSCopier read my private Telegram messages?',
+        question: 'Does TScopier read my private Telegram messages?',
         answer:
           'TSCopier does not read your personal chats. Connecting Telegram only grants access to channels and groups you are a member of so the copier can receive signal messages from sources you add.',
       },
@@ -510,7 +511,7 @@ export const landingEn: LandingTranslations = {
       {
         question: 'Do you support range trades, layering, and management signals?',
         answer:
-          'Yes. TSCopier handles single and range entries, multi-TP lot splitting, layering, close-worse-entries, break-even moves, partial profits, and other management instructions—with per-channel allow/ignore filters.',
+          'Yes. TScopier handles single and range entries, multi-TP lot splitting, layering, close-worse-entries, break-even moves, partial profits, and other management instructions—with per-channel allow/ignore filters.',
       },
       {
         question: 'What is included in Basic vs Advanced?',
@@ -526,10 +527,10 @@ export const landingEn: LandingTranslations = {
   },
   comparison: {
     eyebrow: 'Why traders switch',
-    title: 'Level up with TSCopier',
+    title: 'Level up with TScopier',
     subtitle: 'Typical Telegram copiers vs a cloud platform built for speed, clarity, and scale.',
     otherLabel: 'Other copiers',
-    tscopierLabel: 'TSCopier',
+    tscopierLabel: 'TScopier',
     cta: 'Start free',
     rows: [
       {
@@ -622,6 +623,6 @@ export const landingEn: LandingTranslations = {
     platforms: 'Works with',
     copyright: '© {year} Tartarix Inc. All rights reserved.',
     disclaimer:
-      'Trading involves risk. TSCopier is a copy tool — not financial advice.',
+      'Trading involves risk. TScopier is a copy tool — not financial advice.',
   },
 }

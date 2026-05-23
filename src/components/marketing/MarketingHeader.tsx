@@ -6,7 +6,7 @@ import { TscopierLogo } from '../ui/TscopierLogo'
 import { ThemeToggle } from '../ui/ThemeToggle'
 import { LanguageSwitcher } from '../auth/LanguageSwitcher'
 import { useT } from '../../context/LocaleContext'
-import { appUrl } from '../../lib/site'
+import { MarketingAuthCta } from './MarketingAuthCta'
 
 const NAV_ITEMS = [
   { key: 'product' as const, href: '#product' },
@@ -75,7 +75,7 @@ export function MarketingHeader() {
           <Link
             to="/"
             className="flex shrink-0 items-center"
-            aria-label="TSCopier home"
+            aria-label="TScopier home"
             onClick={closeMobile}
           >
             <TscopierLogo
@@ -104,18 +104,7 @@ export function MarketingHeader() {
           <div className="ml-auto flex items-center gap-0.5 sm:gap-1">
             <LanguageSwitcher />
             <ThemeToggle />
-            <a
-              href={appUrl('/login')}
-              className="hidden text-sm font-medium text-neutral-600 transition-colors hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100 lg:inline-block lg:px-3"
-            >
-              {l.signIn}
-            </a>
-            <a
-              href={appUrl('/signup')}
-              className="inline-flex shrink-0 items-center justify-center rounded-lg border border-teal-600 bg-teal-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:border-teal-700 hover:bg-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2 dark:focus:ring-offset-neutral-950"
-            >
-              {l.getStarted}
-            </a>
+            <MarketingAuthCta variant="header" />
             <button
               type="button"
               className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-neutral-600 transition-colors hover:bg-neutral-100 hover:text-neutral-900 md:hidden dark:text-neutral-400 dark:hover:bg-white/10 dark:hover:text-neutral-100"
@@ -148,13 +137,7 @@ export function MarketingHeader() {
                 {l[key]}
               </a>
             ))}
-            <a
-              href={appUrl('/login')}
-              className="rounded-lg px-3 py-2.5 text-sm font-medium text-neutral-600 transition-colors hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-white/10"
-              onClick={closeMobile}
-            >
-              {l.signIn}
-            </a>
+            <MarketingAuthCta variant="headerMobile" onNavigate={closeMobile} />
           </nav>
         )}
       </div>

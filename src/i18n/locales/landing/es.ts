@@ -8,6 +8,7 @@ export const landingEs: LandingTranslations = {
     pricing: 'Precios',
     signIn: 'Iniciar sesión',
     getStarted: 'Empezar',
+    dashboard: 'Panel',
     menuOpen: 'Abrir menú',
     menuClose: 'Cerrar menú',
   },
@@ -104,7 +105,7 @@ export const landingEs: LandingTranslations = {
   whyChoose: {
     eyebrow: 'La copia inteligente empieza con herramientas inteligentes',
     title:
-      'Cada función de TSCopier está pensada para darte control, claridad y resultados medibles.',
+      'Cada función de TScopier está pensada para darte control, claridad y resultados medibles.',
     cards: [
       {
         label: 'Velocidad de ejecución',
@@ -237,7 +238,7 @@ export const landingEs: LandingTranslations = {
         telegramLabel: 'Canal de señales',
         channelName: 'Gold Signals Pro',
         channelMeta: '3 señales nuevas · ahora',
-        hubLabel: 'TSCopier',
+        hubLabel: 'TScopier',
         mt4Label: 'Cuenta MT4',
         mt4Meta: 'Copiando · reglas 0.10 lot',
         mt5Label: 'Cuenta MT5',
@@ -480,10 +481,10 @@ export const landingEs: LandingTranslations = {
       {
         question: '¿Necesito descargar un EA o un VPS?',
         answer:
-          'No. TSCopier es 100 % en la nube. Inicias sesión en el navegador, conectas Telegram y tus cuentas MT4/MT5, y el copiador corre en nuestra infraestructura—sin EA ni VPS que mantener.',
+          'No. TScopier es 100 % en la nube. Inicias sesión en el navegador, conectas Telegram y tus cuentas MT4/MT5, y el copiador corre en nuestra infraestructura—sin EA ni VPS que mantener.',
       },
       {
-        question: '¿Qué plataformas admite TSCopier?',
+        question: '¿Qué plataformas admite TScopier?',
         answer:
           'Conectas canales de señales de Telegram y copias a cuentas MetaTrader 4 y 5. Enlaza varios brokers y dirige cada canal a las cuentas que elijas.',
       },
@@ -498,9 +499,9 @@ export const landingEs: LandingTranslations = {
           'Puedes vincular hasta 100 conexiones MT4/MT5 por usuario, según tu plan. Cada canal de Telegram puede conectarse a una o más cuentas desde la página de Canales.',
       },
       {
-        question: '¿TSCopier lee mis mensajes privados de Telegram?',
+        question: '¿TScopier lee mis mensajes privados de Telegram?',
         answer:
-          'TSCopier no lee tus chats personales. Conectar Telegram solo da acceso a canales y grupos de los que eres miembro para recibir señales de las fuentes que añades.',
+          'TScopier no lee tus chats personales. Conectar Telegram solo da acceso a canales y grupos de los que eres miembro para recibir señales de las fuentes que añades.',
       },
       {
         question: '¿Puedo probar un canal antes de ir en vivo?',
@@ -510,7 +511,7 @@ export const landingEs: LandingTranslations = {
       {
         question: '¿Admitís rangos, capas y señales de gestión?',
         answer:
-          'Sí. TSCopier gestiona entradas single y range, reparto de lotes en varios TPs, layering, cierre de entradas peores, break-even, beneficios parciales y más, con filtros permitir/ignorar por canal.',
+          'Sí. TScopier gestiona entradas single y range, reparto de lotes en varios TPs, layering, cierre de entradas peores, break-even, beneficios parciales y más, con filtros permitir/ignorar por canal.',
       },
       {
         question: '¿Qué incluye Basic frente a Advanced?',
@@ -526,11 +527,11 @@ export const landingEs: LandingTranslations = {
   },
   comparison: {
     eyebrow: 'Por qué cambian de copiador',
-    title: 'Sube de nivel con TSCopier',
+    title: 'Sube de nivel con TScopier',
     subtitle:
       'Copiadores típicos de Telegram frente a una plataforma en la nube pensada para velocidad, claridad y escala.',
     otherLabel: 'Otros copiadores',
-    tscopierLabel: 'TSCopier',
+    tscopierLabel: 'TScopier',
     cta: 'Empezar gratis',
     rows: [
       {
@@ -623,6 +624,6 @@ export const landingEs: LandingTranslations = {
     platforms: 'Compatible con',
     copyright: '© {year} Tartarix Inc. Todos los derechos reservados.',
     disclaimer:
-      'Operar implica riesgo. TSCopier es una herramienta de copia — no asesoramiento financiero.',
+      'Operar implica riesgo. TScopier es una herramienta de copia — no asesoramiento financiero.',
   },
 }

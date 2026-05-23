@@ -18,7 +18,7 @@ export function TscopierLogo({ className, collapsed }: TscopierLogoProps) {
     return (
       <img
         src={logoCollapsed}
-        alt="TSCopier"
+        alt="TScopier"
         className={clsx('h-10 w-10 object-contain', className)}
       />
     )
@@ -27,7 +27,7 @@ export function TscopierLogo({ className, collapsed }: TscopierLogoProps) {
   return (
     <img
       src={isDark ? logoDark : logoLight}
-      alt="TSCopier"
+      alt="TScopier"
       className={className}
     />
   )

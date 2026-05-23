@@ -3,6 +3,7 @@ export interface AuthTranslations {
     signIn: string
     createAccount: string
     mobileTagline: string
+    backHome: string
   }
   oauth: {
     continueWithGoogle: string
