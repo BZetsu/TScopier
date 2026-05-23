@@ -6,6 +6,7 @@ import { PasswordInput } from '../../components/auth/PasswordInput'
 import { Input } from '../../components/ui/Input'
 import { Button } from '../../components/ui/Button'
 import { Alert } from '../../components/ui/Alert'
+import { AuthBackHome } from '../../components/auth/AuthBackHome'
 import { useLocale } from '../../context/LocaleContext'
 import { EMPTY_USER_PROFILE, saveUserProfile } from '../../lib/userProfile'
 import { sendVerificationEmail } from '../../lib/sendVerificationEmail'
@@ -138,6 +139,7 @@ export function SignupPage() {
 
   return (
     <div className="w-full">
+      <AuthBackHome />
       <h1 className="text-2xl font-semibold tracking-tight text-neutral-900 dark:text-neutral-50 sm:text-3xl">
         {signupT.heading}
       </h1>

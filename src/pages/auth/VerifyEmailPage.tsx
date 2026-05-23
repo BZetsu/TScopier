@@ -6,6 +6,7 @@ import { sendVerificationEmail } from '../../lib/sendVerificationEmail'
 import { useAuth } from '../../context/AuthContext'
 import { Button } from '../../components/ui/Button'
 import { Alert } from '../../components/ui/Alert'
+import { AuthBackHome } from '../../components/auth/AuthBackHome'
 import { useLocale } from '../../context/LocaleContext'
 
 export function VerifyEmailPage() {
@@ -51,14 +52,16 @@ export function VerifyEmailPage() {
   const subtitle = verifyT.subtitle.replace('{email}', email)
 
   return (
-    <div className="w-full text-center">
-      <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-teal-50 dark:bg-teal-900/20">
-        <Mail className="h-8 w-8 text-teal-600 dark:text-teal-400" />
-      </div>
+    <div className="w-full">
+      <AuthBackHome />
+      <div className="text-center">
+        <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-teal-50 dark:bg-teal-900/20">
+          <Mail className="h-8 w-8 text-teal-600 dark:text-teal-400" />
+        </div>
 
-      <h1 className="text-2xl font-semibold tracking-tight text-neutral-900 dark:text-neutral-50 sm:text-3xl">
-        {verifyT.heading}
-      </h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-neutral-900 dark:text-neutral-50 sm:text-3xl">
+          {verifyT.heading}
+        </h1>
 
       <p className="mt-3 text-sm text-neutral-500 dark:text-neutral-400">
         {subtitle}
@@ -84,6 +87,7 @@ export function VerifyEmailPage() {
         >
           {verifyT.backToLogin}
         </a>
+      </div>
       </div>
     </div>
   )
