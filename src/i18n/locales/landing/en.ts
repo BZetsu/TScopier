@@ -1,3 +1,4 @@
+import { testimonialsEn } from '../../testimonials/en'
 import type { LandingTranslations } from './types'
 
 export const landingEn: LandingTranslations = {
@@ -11,7 +12,7 @@ export const landingEn: LandingTranslations = {
     menuClose: 'Close menu',
   },
   hero: {
-    trustedBy: 'Trusted by 30,000+ Traders from 156 Countries',
+    trustedBy: '30,000+ Traders from 156 Countries Already Joined',
     avatarAlts: ['TSCopier trader', 'TSCopier trader', 'TSCopier trader'],
     headline: 'Ultra-Fast Telegram Signal Copier',
     headlineAccent: 'Powered by AI.',
@@ -471,26 +472,57 @@ export const landingEn: LandingTranslations = {
       },
     },
   },
-  reviews: {
-    title: 'Trusted by traders',
-    trustpilotLabel: 'Trustpilot',
+  faq: {
+    eyebrow: 'FAQ',
+    title: 'Frequently asked questions',
+    subtitle: 'Quick answers about setup, copying, and what makes TSCopier different.',
     items: [
       {
-        quote:
-          'TSCopier cut my manual copying time to almost zero. Signals land on my MT5 account within seconds.',
-        author: 'Rob Flemming',
+        question: 'Do I need to download an EA or run a VPS?',
+        answer:
+          'No. TSCopier is fully cloud-based. You sign in from your browser, connect Telegram and your MT4/MT5 accounts, and the copier runs on our infrastructure—no Expert Advisor installs or VPS to maintain.',
       },
       {
-        quote:
-          'Clean dashboard, reliable parsing, and the copier logs make debugging easy.',
-        author: 'Sarah Mitchell',
+        question: 'Which platforms does TSCopier support?',
+        answer:
+          'You connect Telegram signal channels and copy to MetaTrader 4 and MetaTrader 5 accounts. Link multiple brokers and route each channel to the accounts you choose.',
       },
       {
-        quote:
-          'The range and layer trading plus worse-entries closing — I copy signals with peace of mind.',
-        author: 'Eloise Laurent',
+        question: 'How fast are trades copied?',
+        answer:
+          'Our pipeline is built for low latency—typically under 150ms from signal parse to broker dispatch—so entries, modifications, and closes reach your terminal while price is still relevant.',
+      },
+      {
+        question: 'How many accounts can I connect?',
+        answer:
+          'You can link up to 100 MT4/MT5 connections per user, depending on your plan. Each Telegram channel can be connected to one or more broker accounts from the Channels page.',
+      },
+      {
+        question: 'Does TSCopier read my private Telegram messages?',
+        answer:
+          'TSCopier does not read your personal chats. Connecting Telegram only grants access to channels and groups you are a member of so the copier can receive signal messages from sources you add.',
+      },
+      {
+        question: 'Can I test a channel before going live?',
+        answer:
+          'Yes. Use Backtest to replay past signals from a channel against your lot rules, TP splits, range settings, and filters—then review results before enabling live copying.',
+      },
+      {
+        question: 'Do you support range trades, layering, and management signals?',
+        answer:
+          'Yes. TSCopier handles single and range entries, multi-TP lot splitting, layering, close-worse-entries, break-even moves, partial profits, and other management instructions—with per-channel allow/ignore filters.',
+      },
+      {
+        question: 'What is included in Basic vs Advanced?',
+        answer:
+          'Basic covers core copying on one account with backtests and essential filters. Advanced adds multi-account copying, range layering, auto-management features, and unlimited Telegram channels. See Pricing for current plan details.',
       },
     ],
+  },
+  reviews: {
+    title: 'What traders are saying',
+    trustpilotLabel: 'Trustpilot',
+    items: testimonialsEn,
   },
   comparison: {
     eyebrow: 'Why traders switch',
@@ -553,28 +585,39 @@ export const landingEn: LandingTranslations = {
     ],
   },
   pricing: {
-    title: 'Simple pricing',
-    subtitle: 'Start with Basic or unlock advanced strategies on Advanced.',
-    perMonth: '/mo',
-    popular: 'Most popular',
-    viewPlans: 'View all plans',
-    basic: {
-      name: 'Basic',
-      description: 'One account, single-trade mode, backtests, and core filters.',
-      priceLabel: '$9.99',
-      cta: 'Start with Basic',
-    },
-    advanced: {
-      name: 'Advanced',
-      description: 'Multi accounts, range layering, auto-management, unlimited channels.',
-      priceLabel: '$39.99',
-      cta: 'Start 10-day trial',
-    },
+    title: 'Choose your plan',
+    subtitle: 'Start copying signals to your trading accounts today.',
   },
   footer: {
-    copyright: '© {year} Tartarix Inc.',
-    docs: 'Documentation',
-    status: 'Status',
-    openApp: 'Open app',
+    cta: {
+      title: 'Ready to copy signals without the manual work?',
+      subtitle:
+        'Link Telegram, connect MT4 or MT5, and start copying in minutes — no VPS, no install.',
+      primary: 'Get started free',
+      secondary: 'Sign in',
+    },
+    tagline: 'Ultra-fast Telegram signal copier for MetaTrader accounts.',
+    columns: {
+      product: 'Product',
+      resources: 'Resources',
+      account: 'Account',
+    },
+    links: {
+      overview: 'Overview',
+      features: 'Features',
+      pricing: 'Pricing',
+      howItWorks: 'How it works',
+      faq: 'FAQ',
+      docs: 'Documentation',
+      status: 'System status',
+      telegram: 'Telegram support',
+      signIn: 'Sign in',
+      signUp: 'Create account',
+      openApp: 'Open dashboard',
+    },
+    platforms: 'Works with',
+    copyright: '© {year} Tartarix Inc. All rights reserved.',
+    disclaimer:
+      'Trading involves risk. TSCopier is a copy tool — not financial advice.',
   },
 }

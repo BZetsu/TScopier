@@ -5,7 +5,7 @@ export function StepsSection() {
   const l = useT().landing.steps
 
   return (
-    <section className="mx-auto max-w-6xl px-5 py-16 sm:px-8 sm:py-24">
+    <section id="how-it-works" className="mx-auto max-w-6xl scroll-mt-28 px-5 py-16 sm:px-8 sm:py-24">
       <div className="mx-auto max-w-2xl text-center">
         <p className="text-xs font-semibold uppercase tracking-wider text-teal-600 dark:text-teal-400">
           {l.eyebrow}

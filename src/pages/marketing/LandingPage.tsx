@@ -4,6 +4,7 @@ import { WhyChooseSection } from '../../components/marketing/sections/WhyChooseS
 import { ComparisonSection } from '../../components/marketing/sections/ComparisonSection'
 import { FeaturesSection } from '../../components/marketing/sections/FeaturesSection'
 import { StepsSection } from '../../components/marketing/sections/StepsSection'
+import { FaqSection } from '../../components/marketing/sections/FaqSection'
 import { ReviewsSection } from '../../components/marketing/sections/ReviewsSection'
 import { PricingTeaserSection } from '../../components/marketing/sections/PricingTeaserSection'
 
@@ -14,9 +15,10 @@ export function LandingPage() {
       <WhyChooseSection />
       <FeaturesSection />
       <ComparisonSection />
-      <StepsSection />
-      <ReviewsSection />
       <PricingTeaserSection />
+      <StepsSection />
+      <FaqSection />
+      <ReviewsSection />
     </MarketingLayout>
   )
 }

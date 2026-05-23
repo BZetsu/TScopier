@@ -199,6 +199,7 @@ export interface LandingStepsVisualsCopy {
 export interface LandingReviewTranslation {
   quote: string
   author: string
+  role?: string
 }
 
 export interface LandingComparisonRow {
@@ -207,11 +208,9 @@ export interface LandingComparisonRow {
   tscopier: string
 }
 
-export interface LandingPlanTeaserTranslation {
-  name: string
-  description: string
-  priceLabel: string
-  cta: string
+export interface LandingFaqItem {
+  question: string
+  answer: string
 }
 
 export type LandingHeroStatTone = 'good' | 'bad' | 'neutral'
@@ -319,6 +318,12 @@ export interface LandingTranslations {
     items: LandingStepItem[]
     visuals: LandingStepsVisualsCopy
   }
+  faq: {
+    eyebrow: string
+    title: string
+    subtitle: string
+    items: LandingFaqItem[]
+  }
   reviews: {
     title: string
     trustpilotLabel: string
@@ -336,16 +341,35 @@ export interface LandingTranslations {
   pricing: {
     title: string
     subtitle: string
-    perMonth: string
-    popular: string
-    viewPlans: string
-    basic: LandingPlanTeaserTranslation
-    advanced: LandingPlanTeaserTranslation
   }
   footer: {
+    cta: {
+      title: string
+      subtitle: string
+      primary: string
+      secondary: string
+    }
+    tagline: string
+    columns: {
+      product: string
+      resources: string
+      account: string
+    }
+    links: {
+      overview: string
+      features: string
+      pricing: string
+      howItWorks: string
+      faq: string
+      docs: string
+      status: string
+      telegram: string
+      signIn: string
+      signUp: string
+      openApp: string
+    }
+    platforms: string
     copyright: string
-    docs: string
-    status: string
-    openApp: string
+    disclaimer: string
   }
 }
