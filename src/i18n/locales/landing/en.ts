@@ -105,7 +105,7 @@ export const landingEn: LandingTranslations = {
   whyChoose: {
     eyebrow: 'Smarter copying starts with smarter tools',
     title:
-      'Every feature in TSCopier is built to give you control, clarity, and measurable results.',
+      'Every feature in TScopier is built to give you control, clarity, and measurable results.',
     cards: [
       {
         label: 'Execution speed',
@@ -143,7 +143,7 @@ export const landingEn: LandingTranslations = {
       {
         label: 'Copy engine',
         metric: 'Advanced',
-        metricVariant: 'amber',
+        metricVariant: 'teal',
         description:
           'Advanced copy strategy—templates, filters, backtest, and per-channel rules in one engine.',
         layout: 'featured',
@@ -201,7 +201,7 @@ export const landingEn: LandingTranslations = {
         eyebrow: 'Signal copier',
         title: 'Copy Telegram signals to MT4 & MT5 with precision',
         description:
-          'Mirror trusted channels into your broker accounts. TSCopier parses entries, take-profits, range legs, and management instructions—then executes with your lot rules, multi-trade splitting, and range layering on every connected account.',
+          'Mirror trusted channels into your broker accounts. TScopier parses entries, take-profits, range legs, and management instructions—then executes with your lot rules, multi-trade splitting, and range layering on every connected account.',
         visual: 'copier',
       },
       {
