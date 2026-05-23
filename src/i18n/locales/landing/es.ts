@@ -396,22 +396,80 @@ export const landingEs: LandingTranslations = {
     },
   },
   steps: {
+    eyebrow: 'Primeros pasos',
     title: 'Cómo funciona',
-    subtitle: 'Del canal de Telegram al broker en tres pasos.',
+    subtitle: 'Del canal de Telegram al broker en tres pasos, con las mismas pantallas de la app.',
     items: [
       {
         title: 'Conectar Telegram',
-        description: 'Enlaza los canales que confías. Solo los marcados alimentan tu broker.',
+        description:
+          'Enlaza tu cuenta de Telegram, elige canales de señales y conéctalos a las cuentas MT4/MT5 que deben copiar.',
+        visual: 'telegram',
       },
       {
         title: 'Configurar el broker',
-        description: 'Lote, TPs, capas, filtros y auto-gestión por cuenta.',
+        description:
+          'Define lote, reparto de TPs, reglas de rango y filtros permitir/ignorar por canal en cada cuenta.',
+        visual: 'configure',
       },
       {
         title: 'Copiar señales',
-        description: 'TSCopier analiza, planifica y envía órdenes — tú supervisas desde el panel.',
+        description:
+          'El channel worker analiza cada mensaje; los logs del copiador muestran cada ejecución en tiempo real.',
+        visual: 'copy',
       },
     ],
+    visuals: {
+      telegram: {
+        channels: [
+          {
+            name: 'Gold Signals Pro',
+            username: 'goldsignalspro',
+            active: true,
+            brokers: ['MT5 · #88291'],
+          },
+          {
+            name: 'FX Scalper VIP',
+            username: 'fxscalpervip',
+            active: true,
+            brokers: ['MT4 · #44102'],
+          },
+        ],
+      },
+      configure: {
+        accountName: 'IC Markets · MT5',
+        login: 'Login #88291',
+        lotSize: '0,10',
+        rangeLabel: 'Capas en rango',
+        rangeValue: '50 % · 3 pips',
+        tpRows: [
+          { label: 'TP1', percent: '50%' },
+          { label: 'TP2', percent: '30%' },
+          { label: 'TP3', percent: '20%' },
+        ],
+        filters: [
+          { label: 'Señales de cierre', decision: 'allow' },
+          { label: 'Modificar SL / TP', decision: 'allow' },
+          { label: 'Movimientos a BE', decision: 'allow' },
+        ],
+      },
+      copy: {
+        workerLogs: [
+          {
+            message: 'Analizado BUY XAUUSD · 2 TPs de Gold Signals Pro',
+            time: '22 may, 09:37',
+          },
+          {
+            message: 'Enviado 0,10 lot a MT5 · cuenta #88291',
+            time: '22 may, 09:37',
+          },
+        ],
+        logRows: [
+          { symbol: 'XAUUSD', type: 'buy', time: '09:37' },
+          { symbol: 'XAUUSD', type: 'sell', time: '09:35' },
+        ],
+      },
+    },
   },
   reviews: {
     title: 'Confianza de traders',

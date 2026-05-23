@@ -162,6 +162,10 @@ html.app-viewport-lock #root {
     color: white;
   }
 
+  .marketing-step-visual-panel {
+    @apply shadow-sm;
+  }
+
   .marketing-comparison-table-wrap {
     @apply overflow-x-auto rounded-2xl border border-neutral-200/90 shadow-sm dark:border-neutral-800;
   }

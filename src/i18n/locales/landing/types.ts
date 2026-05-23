@@ -146,9 +146,54 @@ export interface LandingBentoCard {
   icon: LandingBentoIcon
 }
 
-export interface LandingStepTranslation {
+export type LandingStepVisualId = 'telegram' | 'configure' | 'copy'
+
+export interface LandingStepItem {
   title: string
   description: string
+  visual: LandingStepVisualId
+}
+
+export interface LandingStepsTelegramChannelVisual {
+  name: string
+  username: string
+  active: boolean
+  brokers: string[]
+}
+
+export interface LandingStepsConfigureTpVisual {
+  label: string
+  percent: string
+}
+
+export interface LandingStepsConfigureFilterVisual {
+  label: string
+  decision: LandingFilterDecision
+}
+
+export interface LandingStepsCopyLogVisual {
+  symbol: string
+  type: 'buy' | 'sell'
+  time: string
+}
+
+export interface LandingStepsVisualsCopy {
+  telegram: {
+    channels: LandingStepsTelegramChannelVisual[]
+  }
+  configure: {
+    accountName: string
+    login: string
+    lotSize: string
+    rangeLabel: string
+    rangeValue: string
+    tpRows: LandingStepsConfigureTpVisual[]
+    filters: LandingStepsConfigureFilterVisual[]
+  }
+  copy: {
+    workerLogs: { message: string; time: string }[]
+    logRows: LandingStepsCopyLogVisual[]
+  }
 }
 
 export interface LandingReviewTranslation {
@@ -268,9 +313,11 @@ export interface LandingTranslations {
     visuals: LandingFeatureVisualsCopy
   }
   steps: {
+    eyebrow: string
     title: string
     subtitle: string
-    items: LandingStepTranslation[]
+    items: LandingStepItem[]
+    visuals: LandingStepsVisualsCopy
   }
   reviews: {
     title: string
