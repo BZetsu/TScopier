@@ -5,6 +5,7 @@ import {
   BarChart3,
   Clock,
   Cloud,
+  History,
   Layers,
   Link2,
   MessageCircle,
@@ -12,7 +13,11 @@ import {
   Zap,
 } from 'lucide-react'
 import { useT } from '../../../context/LocaleContext'
-import type { LandingBentoCard, LandingBentoIcon } from '../../../i18n/locales/landing/types'
+import type {
+  LandingBentoCard,
+  LandingBentoCardLayout,
+  LandingBentoIcon,
+} from '../../../i18n/locales/landing/types'
 
 const ICONS: Record<LandingBentoIcon, LucideIcon> = {
   zap: Zap,
@@ -24,7 +29,25 @@ const ICONS: Record<LandingBentoIcon, LucideIcon> = {
   layers: Layers,
   settings: Settings,
   messages: MessageCircle,
+  history: History,
 }
+
+/** Five columns × two cards; odd columns tall→short, even columns short→tall. */
+const BENTO_COLUMN_CARD_INDEXES: readonly [number, number][] = [
+  [0, 1],
+  [2, 6],
+  [4, 5],
+  [3, 7],
+  [8, 9],
+]
+
+const BENTO_COLUMN_SLOTS: readonly [LandingBentoCardLayout, LandingBentoCardLayout][] = [
+  ['tall', 'short'],
+  ['short', 'tall'],
+  ['featured', 'short'],
+  ['short', 'tall'],
+  ['tall', 'short'],
+]
 
 function metricClass(card: LandingBentoCard, featured: boolean): string {
   if (featured) {
@@ -35,16 +58,22 @@ function metricClass(card: LandingBentoCard, featured: boolean): string {
   return 'text-neutral-800 dark:text-neutral-100'
 }
 
-function BentoCard({ card }: { card: LandingBentoCard }) {
-  const featured = card.layout === 'featured'
+function BentoCard({
+  card,
+  slot,
+}: {
+  card: LandingBentoCard
+  slot: LandingBentoCardLayout
+}) {
+  const featured = slot === 'featured'
+  const tall = slot === 'tall' || featured
   const Icon = ICONS[card.icon]
 
   return (
     <article
       className={clsx(
         'marketing-bento-card',
-        card.layout === 'tall' && 'marketing-bento-card--tall',
-        card.layout === 'short' && 'marketing-bento-card--short',
+        tall ? 'marketing-bento-card--tall' : 'marketing-bento-card--short',
         featured && 'marketing-bento-card--featured',
       )}
     >
@@ -58,7 +87,7 @@ function BentoCard({ card }: { card: LandingBentoCard }) {
       </p>
       <p
         className={clsx(
-          'relative z-10 mt-3 text-2xl font-bold leading-none tracking-tight sm:text-3xl lg:text-[1.75rem]',
+          'relative z-10 mt-3 text-2xl font-bold leading-tight tracking-tight sm:text-3xl lg:text-[1.65rem] lg:leading-tight',
           metricClass(card, featured),
         )}
       >
@@ -66,7 +95,7 @@ function BentoCard({ card }: { card: LandingBentoCard }) {
       </p>
       <p
         className={clsx(
-          'relative z-10 mt-2 max-w-[16rem] text-xs leading-relaxed sm:text-sm',
+          'relative z-10 mt-auto pt-2 text-xs leading-relaxed sm:text-sm',
           featured ? 'text-teal-50/90' : 'text-neutral-600 dark:text-neutral-400',
         )}
       >
@@ -86,6 +115,7 @@ function BentoCard({ card }: { card: LandingBentoCard }) {
 
 export function WhyChooseSection() {
   const l = useT().landing.whyChoose
+  const mobileOrder = BENTO_COLUMN_CARD_INDEXES.flat()
 
   return (
     <section className="mx-auto max-w-6xl px-5 py-16 sm:px-8 sm:py-24">
@@ -98,10 +128,22 @@ export function WhyChooseSection() {
         </h2>
       </div>
 
-      <div className="marketing-bento-grid mt-10 sm:mt-12">
-        {l.cards.map((card) => (
-          <BentoCard key={card.label} card={card} />
+      <div className="mt-10 grid gap-3 sm:mt-12 sm:grid-cols-2 sm:gap-4 lg:hidden">
+        {mobileOrder.map((cardIndex) => (
+          <BentoCard key={l.cards[cardIndex].label} card={l.cards[cardIndex]} slot={l.cards[cardIndex].layout} />
         ))}
+      </div>
+
+      <div className="marketing-bento-columns mt-10 hidden sm:mt-12 lg:grid">
+        {BENTO_COLUMN_CARD_INDEXES.map(([topIndex, bottomIndex], columnIndex) => {
+          const [topSlot, bottomSlot] = BENTO_COLUMN_SLOTS[columnIndex]
+          return (
+            <div key={columnIndex} className="marketing-bento-column">
+              <BentoCard card={l.cards[topIndex]} slot={topSlot} />
+              <BentoCard card={l.cards[bottomIndex]} slot={bottomSlot} />
+            </div>
+          )
+        })}
       </div>
     </section>
   )

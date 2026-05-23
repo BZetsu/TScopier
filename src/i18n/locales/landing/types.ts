@@ -131,6 +131,7 @@ export type LandingBentoIcon =
   | 'layers'
   | 'settings'
   | 'messages'
+  | 'history'
 
 export type LandingBentoCardLayout = 'tall' | 'short' | 'featured'
 
