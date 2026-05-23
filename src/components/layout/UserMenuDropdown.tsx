@@ -12,6 +12,7 @@ import clsx from 'clsx'
 import { useAuth } from '../../context/AuthContext'
 import { useT } from '../../context/LocaleContext'
 import { useUserProfile } from '../../context/UserProfileContext'
+import { useSubscription } from '../../context/SubscriptionContext'
 
 export interface UserMenuDropdownProps {
   open: boolean
@@ -52,6 +53,7 @@ export function UserMenuDropdown({ open, onClose, onSignOut }: UserMenuDropdownP
   const navigate = useNavigate()
   const { user } = useAuth()
   const { profile } = useUserProfile()
+  const { planName } = useSubscription()
   const panelRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -109,7 +111,7 @@ export function UserMenuDropdown({ open, onClose, onSignOut }: UserMenuDropdownP
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-semibold text-neutral-900 dark:text-neutral-50">{headerName}</p>
             <p className="truncate text-xs text-neutral-500 dark:text-neutral-400">{user?.email}</p>
-            <p className="mt-0.5 text-xs font-medium text-teal-600 dark:text-teal-400">{t.nav.planFree}</p>
+            <p className="mt-0.5 text-xs font-medium text-teal-600 dark:text-teal-400">{planName || t.nav.planFree}</p>
           </div>
         </div>
       </div>

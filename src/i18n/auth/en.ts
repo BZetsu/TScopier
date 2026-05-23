@@ -1,3 +1,4 @@
+import { testimonialsEn } from '../testimonials/en'
 import type { AuthTranslations } from './types'
 
 export const authEn: AuthTranslations = {
@@ -6,7 +7,14 @@ export const authEn: AuthTranslations = {
     createAccount: 'Create account',
     mobileTagline: 'One seamless copier for every Telegram signal',
   },
+  oauth: {
+    continueWithGoogle: 'Continue with Google',
+    orDivider: 'or',
+  },
   login: {
+    heading: 'Log in to TSCopier',
+    noAccount: "Don't have an account?",
+    signUpLink: 'Sign up',
     footerPrompt: 'New to TSCopier?',
     footerLink: 'Create a free account',
     email: 'Email',
@@ -16,6 +24,9 @@ export const authEn: AuthTranslations = {
     submit: 'Sign in',
   },
   signup: {
+    heading: 'Create your account',
+    hasAccount: 'Already have an account?',
+    signInLink: 'Sign in',
     footerPrompt: 'Already have an account?',
     footerLink: 'Sign in',
     firstName: 'First name',
@@ -35,26 +46,17 @@ export const authEn: AuthTranslations = {
     terms:
       "By creating an account, you agree to use TSCopier responsibly and comply with your broker's terms.",
   },
+  verify: {
+    heading: 'Check your email',
+    subtitle: 'We just sent a verification link to {email}.',
+    resend: 'Resend email',
+    resent: 'Email sent!',
+    backToLogin: 'Back to login',
+  },
   marketing: {
     headline: 'One Seamless Copier for every Telegram Signal',
     trustpilotLabel: 'Trustpilot',
-    reviews: [
-      {
-        quote:
-          'TSCopier cut my manual copying time to almost zero. Signals land on my MT5 account within seconds — exactly what I needed for my Telegram channels.',
-        author: 'Rob Flemming',
-      },
-      {
-        quote:
-          'Clean dashboard, reliable parsing, and the copier logs make debugging easy. Support answered quickly when I had a broker question.',
-        author: 'Sarah Mitchell',
-      },
-      {
-        quote:
-          'This is the simplest and most reliable signal copier I have ever used. Better than the rest with it\'s range and layer trading, worse entries closing feature, I can copy signals with rest of mind.',
-        author: 'Eloise Laurent',
-      },
-    ],
+    reviews: testimonialsEn,
     copyright: '© {year} Tartarix Inc.',
   },
   language: {

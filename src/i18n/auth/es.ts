@@ -1,3 +1,4 @@
+import { testimonialsEs } from '../testimonials/es'
 import type { AuthTranslations } from './types'
 
 export const authEs: AuthTranslations = {
@@ -6,7 +7,14 @@ export const authEs: AuthTranslations = {
     createAccount: 'Crear cuenta',
     mobileTagline: 'Un copiador fluido para cada señal de Telegram',
   },
+  oauth: {
+    continueWithGoogle: 'Continuar con Google',
+    orDivider: 'o',
+  },
   login: {
+    heading: 'Inicia sesión en TSCopier',
+    noAccount: '¿No tienes cuenta?',
+    signUpLink: 'Regístrate',
     footerPrompt: '¿Nuevo en TSCopier?',
     footerLink: 'Crea una cuenta gratis',
     email: 'Correo electrónico',
@@ -16,6 +24,9 @@ export const authEs: AuthTranslations = {
     submit: 'Iniciar sesión',
   },
   signup: {
+    heading: 'Crea tu cuenta',
+    hasAccount: '¿Ya tienes cuenta?',
+    signInLink: 'Iniciar sesión',
     footerPrompt: '¿Ya tienes cuenta?',
     footerLink: 'Iniciar sesión',
     firstName: 'Nombre',
@@ -35,26 +46,17 @@ export const authEs: AuthTranslations = {
     terms:
       'Al crear una cuenta, aceptas usar TSCopier de forma responsable y cumplir los términos de tu broker.',
   },
+  verify: {
+    heading: 'Revisa tu correo',
+    subtitle: 'Acabamos de enviar un enlace de verificación a {email}.',
+    resend: 'Reenviar correo',
+    resent: 'Correo enviado!',
+    backToLogin: 'Volver al inicio de sesión',
+  },
   marketing: {
     headline: 'Un copiador fluido para cada señal de Telegram',
     trustpilotLabel: 'Trustpilot',
-    reviews: [
-      {
-        quote:
-          'TSCopier redujo casi a cero mi tiempo copiando a mano. Las señales llegan a mi cuenta MT5 en segundos — justo lo que necesitaba para mis canales de Telegram.',
-        author: 'Rob Flemming',
-      },
-      {
-        quote:
-          'Panel claro, análisis fiable y los registros del copiador facilitan depurar. El soporte respondió rápido cuando tuve una duda con el broker.',
-        author: 'Sarah Mitchell',
-      },
-      {
-        quote:
-          'Este es el copiador de señales más sencillo y fiable que he usado. Es mejor que los demás en cuanto a rango y negociación por capas, aunque su función de cierre de entradas es peor. Puedo copiar señales con total tranquilidad.',
-        author: 'Eloise Laurent',
-      },
-    ],
+    reviews: testimonialsEs,
     copyright: '© {year} Tartarix Inc.',
   },
   language: {

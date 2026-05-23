@@ -1,23 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
-import {
-  LayoutDashboard,
-  Settings,
-  History,
-  Send,
-  LayoutTemplate,
-  ScrollText,
-  Newspaper,
-  Calendar,
-  ChartBar as BarChart2,
-  CircleHelp,
-  ChevronDown,
-  ChartNoAxesColumn,
-  PanelLeftClose,
-  PanelLeftOpen,
-  Menu,
-  X,
-} from 'lucide-react'
+import { LayoutDashboard, Settings, History, Send, LayoutTemplate, ScrollText, Newspaper, Calendar, ChartBar as BarChart2, Circle as CircleHelp, ChevronDown, ChartNoAxesColumn, PanelLeftClose, PanelLeftOpen, Menu, X } from 'lucide-react'
 import clsx from 'clsx'
 import { TscopierLogo } from '../ui/TscopierLogo'
 import { AppSearchDesktop, AppSearchMobileTrigger, AppSearchProvider } from './AppSearch'
@@ -28,6 +11,7 @@ import { LanguageSwitcher } from '../auth/LanguageSwitcher'
 import { HelpMenuDropdown } from './HelpMenuDropdown'
 import { UserMenuDropdown } from './UserMenuDropdown'
 import { useUserProfile } from '../../context/UserProfileContext'
+import { useSubscription } from '../../context/SubscriptionContext'
 
 export function AppLayout() {
   const t = useT()
@@ -44,6 +28,7 @@ export function AppLayout() {
   const helpMenuCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const userMenuCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const { profile } = useUserProfile()
+  const { planName } = useSubscription()
 
   const openHelpMenu = () => {
     if (helpMenuCloseTimerRef.current) {
@@ -390,7 +375,7 @@ export function AppLayout() {
                 <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100 leading-tight truncate max-w-[8rem]">
                   {displayName}
                 </p>
-                <p className="text-xs text-neutral-400 leading-tight">{t.nav.planFree}</p>
+                <p className="text-xs text-neutral-400 leading-tight">{planName || t.nav.planFree}</p>
               </div>
                 <ChevronDown
                   className={clsx(

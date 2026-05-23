@@ -1,7 +1,7 @@
 /** @type {import('tailwindcss').Config} */
 export default {
-  // Explicit html.dark selector — more reliable than default :is(.dark *) with Vite/Lightning CSS
-  darkMode: ['selector', 'html.dark &'],
+  // Class on <html> (see ThemeContext). Required for @apply dark: in @layer components.
+  darkMode: 'class',
   content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
   theme: {
     extend: {

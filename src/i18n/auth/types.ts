@@ -4,7 +4,14 @@ export interface AuthTranslations {
     createAccount: string
     mobileTagline: string
   }
+  oauth: {
+    continueWithGoogle: string
+    orDivider: string
+  }
   login: {
+    heading: string
+    noAccount: string
+    signUpLink: string
     footerPrompt: string
     footerLink: string
     email: string
@@ -14,6 +21,9 @@ export interface AuthTranslations {
     submit: string
   }
   signup: {
+    heading: string
+    hasAccount: string
+    signInLink: string
     footerPrompt: string
     footerLink: string
     firstName: string
@@ -32,11 +42,18 @@ export interface AuthTranslations {
     submit: string
     terms: string
   }
+  verify: {
+    heading: string
+    subtitle: string
+    resend: string
+    resent: string
+    backToLogin: string
+  }
   marketing: {
     headline: string
     copyright: string
     trustpilotLabel: string
-    reviews: Array<{ quote: string; author: string }>
+    reviews: Array<{ quote: string; author: string; role?: string }>
   }
   language: {
     label: string

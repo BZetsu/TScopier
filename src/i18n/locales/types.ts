@@ -1,6 +1,6 @@
 import type { AuthTranslations } from '../auth/types'
 import type { ChannelWorkerTranslations } from '../channelWorker/types'
-import type { ConfigureModalTranslations } from './configureModal/types'
+import type { LandingTranslations } from './landing/types'
 
 export interface GlobalSearchTranslations {
   placeholder: string
@@ -679,12 +679,62 @@ export interface BacktestTranslations {
   }
 }
 
+export interface PricingTranslations {
+  title: string
+  subtitle: string
+  skip: string
+  monthly: string
+  annual: string
+  perMonth: string
+  perYear: string
+  save20: string
+  billedAnnually: string
+  extraAccountLabel: string
+  extraAccountUnit: string
+  extraAccountUnitAnnual: string
+  subscribe: string
+  startTrial: string
+  trialDays: string
+  features: string
+  popular: string
+  basicFeatures: string[]
+  advancedFeatures: string[]
+  extraAccountsSummary: string
+  basic: {
+    name: string
+    description: string
+  }
+  advanced: {
+    name: string
+    description: string
+  }
+  billing: {
+    title: string
+    subtitle: string
+    currentPlan: string
+    status: string
+    nextBilling: string
+    extraAccounts: string
+    manageBilling: string
+    noPlan: string
+    statusActive: string
+    statusTrialing: string
+    statusCanceled: string
+    statusPastDue: string
+    trialEnds: string
+    choosePlan: string
+  }
+  checkoutFailed: string
+}
+
 export interface Translations {
   auth: AuthTranslations
   channelWorker: ChannelWorkerTranslations
   nav: NavTranslations
   globalSearch: GlobalSearchTranslations
   common: CommonTranslations
+  pricing: PricingTranslations
+  landing: LandingTranslations
   accountConfig: AccountConfigTranslations
   dashboard: DashboardTranslations
   copierLogs: CopierLogsTranslations
