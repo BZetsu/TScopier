@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom'
 import type { BrokerAccount } from '../../types/database'
 import type { LinkedAccountPerformance } from '../../lib/dashboardTradeStats'
 import { inferBrokerLabelFromServer } from '../../lib/brokerFromServer'
-import { useFormatMoney } from '../../context/UserProfileContext'
+import { useFormatMoney } from '../../hooks/useFormatMoney'
 
 interface AccountPerformanceTableProps {
   accounts: BrokerAccount[]

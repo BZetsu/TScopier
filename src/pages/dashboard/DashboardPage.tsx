@@ -64,7 +64,7 @@ import {
   isBrokerSessionConnected,
 } from '../../lib/brokerReconnect'
 import { useLocale, useT } from '../../context/LocaleContext'
-import { useFormatMoney } from '../../context/UserProfileContext'
+import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { formatMoneyWithCode } from '../../lib/currency'
 import { interpolate } from '../../i18n/interpolate'
 

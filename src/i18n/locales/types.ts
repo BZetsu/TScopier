@@ -1,5 +1,6 @@
 import type { AuthTranslations } from '../auth/types'
 import type { ChannelWorkerTranslations } from '../channelWorker/types'
+import type { ConfigureModalTranslations } from './configureModal/types'
 import type { LandingTranslations } from './landing/types'
 
 export interface GlobalSearchTranslations {

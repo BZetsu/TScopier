@@ -8,7 +8,7 @@ import {
   YAxis,
 } from 'recharts'
 import { useTheme } from '../../context/ThemeContext'
-import { useFormatMoney } from '../../context/UserProfileContext'
+import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { chartThemeColors, chartTooltipProps } from '../../lib/chartTheme'
 import type { BacktestEquityRow } from '../../lib/backtestTypes'
 

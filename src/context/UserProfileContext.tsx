@@ -8,9 +8,8 @@ import {
   type ReactNode,
 } from 'react'
 import { useAuth } from './AuthContext'
-import { useLocale } from './LocaleContext'
 import { BASE_CURRENCY_CODES } from '../lib/baseCurrencies'
-import { formatMoneyAmount, normalizeCurrencyCode, type FormatMoneyOptions } from '../lib/currency'
+import { normalizeCurrencyCode } from '../lib/currency'
 import {
   EMPTY_USER_PROFILE,
   loadUserProfile,
@@ -137,26 +136,4 @@ export function useUserProfile(): UserProfileContextValue {
     throw new Error('useUserProfile must be used within UserProfileProvider')
   }
   return ctx
-}
-
-export function useFormatMoney() {
-  const { baseCurrency } = useUserProfile()
-  const { locale } = useLocale()
-
-  return useMemo(() => {
-    const intlLocale = locale === 'en' ? undefined : locale
-    const withLocale = (options?: FormatMoneyOptions): FormatMoneyOptions => ({
-      locale: intlLocale,
-      ...options,
-    })
-    return {
-      baseCurrency,
-      formatMoney: (value: number | null | undefined, options?: FormatMoneyOptions) =>
-        formatMoneyAmount(value, baseCurrency, withLocale(options)),
-      formatAxisMoney: (value: number) =>
-        formatMoneyAmount(value, baseCurrency, withLocale({ compact: true, nullAsDash: false })),
-      formatSignedMoney: (value: number | null | undefined) =>
-        formatMoneyAmount(value, baseCurrency, withLocale({ signed: true })),
-    }
-  }, [baseCurrency, locale])
 }

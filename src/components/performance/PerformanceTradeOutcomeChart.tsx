@@ -11,7 +11,7 @@ import {
 } from 'recharts'
 import type { TradeVolumeDay } from '../../lib/dashboardCharts'
 import { useTheme } from '../../context/ThemeContext'
-import { useFormatMoney } from '../../context/UserProfileContext'
+import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { chartThemeColors, chartTooltipProps } from '../../lib/chartTheme'
 
 interface PerformanceTradeOutcomeChartProps {

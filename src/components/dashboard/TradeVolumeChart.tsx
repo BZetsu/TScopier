@@ -12,7 +12,7 @@ import {
 import type { TradeVolumeDay } from '../../lib/dashboardCharts'
 import { useTheme } from '../../context/ThemeContext'
 import { useT } from '../../context/LocaleContext'
-import { useFormatMoney } from '../../context/UserProfileContext'
+import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { chartThemeColors, chartTooltipProps } from '../../lib/chartTheme'
 
 interface TradeVolumeChartProps {

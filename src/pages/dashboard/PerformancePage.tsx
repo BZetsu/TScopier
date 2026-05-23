@@ -12,7 +12,7 @@ import {
 } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { useT } from '../../context/LocaleContext'
-import { useFormatMoney } from '../../context/UserProfileContext'
+import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { interpolate } from '../../i18n/interpolate'
 import { buildAccountGrowthSeries, buildTradeVolumeByDays } from '../../lib/dashboardCharts'
 import {
