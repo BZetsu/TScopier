@@ -222,13 +222,6 @@ export const landingEn: LandingTranslations = {
           'Track high-impact events and curated market headlines from the same dashboard—optionally pause copying around news with blackout rules.',
         visual: 'news',
       },
-      {
-        eyebrow: 'Integrations',
-        title: 'Works with the platforms you already use',
-        description:
-          'Connect Telegram signal channels and copy to MetaTrader accounts you manage today—no local EA installs or VPS scripts required.',
-        visual: 'integrations',
-      },
     ],
     visuals: {
       copier: {
@@ -391,14 +384,6 @@ export const landingEn: LandingTranslations = {
             relativeTime: '14h ago',
           },
         ],
-      },
-      integrations: {
-        hubLabel: 'TSCopier',
-        labels: {
-          telegram: 'Telegram',
-          mt4: 'MT4',
-          mt5: 'MT5',
-        },
       },
     },
   },

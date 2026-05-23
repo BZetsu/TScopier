@@ -222,13 +222,6 @@ export const landingEs: LandingTranslations = {
           'Sigue eventos de alto impacto y titulares seleccionados desde el mismo panel, con bloqueo opcional alrededor de noticias.',
         visual: 'news',
       },
-      {
-        eyebrow: 'Integraciones',
-        title: 'Funciona con las plataformas que ya usas',
-        description:
-          'Conecta canales de Telegram y copia a cuentas MetaTrader que ya gestionas, sin EA local ni scripts en VPS.',
-        visual: 'integrations',
-      },
     ],
     visuals: {
       copier: {
@@ -391,10 +384,6 @@ export const landingEs: LandingTranslations = {
             relativeTime: 'hace 14 h',
           },
         ],
-      },
-      integrations: {
-        hubLabel: 'TSCopier',
-        labels: { telegram: 'Telegram', mt4: 'MT4', mt5: 'MT5' },
       },
     },
   },

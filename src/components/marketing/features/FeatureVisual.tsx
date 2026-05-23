@@ -3,7 +3,6 @@ import { BacktestVisual } from './visuals/BacktestVisual'
 import { ChannelFiltersVisual } from './visuals/ChannelFiltersVisual'
 import { CopierFlowVisual } from './visuals/CopierFlowVisual'
 import { CopierLogsVisual } from './visuals/CopierLogsVisual'
-import { IntegrationsVisual } from './visuals/IntegrationsVisual'
 import { NewsCalendarVisual } from './visuals/NewsCalendarVisual'
 
 interface FeatureVisualProps {
@@ -22,8 +21,6 @@ export function FeatureVisual({ id }: FeatureVisualProps) {
       return <CopierLogsVisual />
     case 'news':
       return <NewsCalendarVisual />
-    case 'integrations':
-      return <IntegrationsVisual />
     default:
       return null
   }

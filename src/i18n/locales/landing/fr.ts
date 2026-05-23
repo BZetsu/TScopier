@@ -222,13 +222,6 @@ export const landingFr: LandingTranslations = {
           'Suivez les événements à fort impact et les titres sélectionnés depuis le même tableau de bord, avec blackout news optionnel.',
         visual: 'news',
       },
-      {
-        eyebrow: 'Intégrations',
-        title: 'Compatible avec vos plateformes actuelles',
-        description:
-          'Connectez des canaux Telegram et copiez vers MetaTrader sans EA local ni scripts VPS.',
-        visual: 'integrations',
-      },
     ],
     visuals: {
       copier: {
@@ -391,10 +384,6 @@ export const landingFr: LandingTranslations = {
             relativeTime: 'il y a 14 h',
           },
         ],
-      },
-      integrations: {
-        hubLabel: 'TSCopier',
-        labels: { telegram: 'Telegram', mt4: 'MT4', mt5: 'MT5' },
       },
     },
   },

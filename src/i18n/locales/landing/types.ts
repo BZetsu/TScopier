@@ -9,7 +9,6 @@ export type LandingFeatureVisualId =
   | 'backtest'
   | 'logs'
   | 'news'
-  | 'integrations'
 
 export interface LandingFeatureShowcase {
   eyebrow: string
@@ -119,14 +118,6 @@ export interface LandingFeatureVisualsCopy {
     dayHeading: string
     events: LandingCalendarEventVisual[]
     articles: LandingNewsArticleVisual[]
-  }
-  integrations: {
-    hubLabel: string
-    labels: {
-      telegram: string
-      mt4: string
-      mt5: string
-    }
   }
 }
 
