@@ -1,6 +1,6 @@
 import clsx from 'clsx'
 import { ArrowRight } from 'lucide-react'
-import { useAuth } from '../../context/AuthContext'
+import { useMarketingAuthState } from '../../hooks/useMarketingAuthState'
 import { useT } from '../../context/LocaleContext'
 import { appUrl } from '../../lib/site'
 
@@ -15,7 +15,7 @@ const primaryBtnClass =
   'inline-flex shrink-0 items-center justify-center rounded-lg border border-teal-600 bg-teal-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:border-teal-700 hover:bg-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2 dark:focus:ring-offset-neutral-950'
 
 export function MarketingAuthCta({ variant, onNavigate }: MarketingAuthCtaProps) {
-  const { user, loading } = useAuth()
+  const { isSignedIn, loading } = useMarketingAuthState()
   const nav = useT().landing.nav
   const hero = useT().landing.hero
 
@@ -26,7 +26,7 @@ export function MarketingAuthCta({ variant, onNavigate }: MarketingAuthCtaProps)
     return null
   }
 
-  if (user) {
+  if (isSignedIn) {
     const dashboardLink = (
       <a
         href={appUrl('/dashboard')}

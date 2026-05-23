@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 import type { User, Session } from '@supabase/supabase-js'
+import { clearAuthPresenceCookie, setAuthPresenceCookie } from '../lib/authPresenceCookie'
 import { supabase } from '../lib/supabase'
 import { clearDashboardSessionCache } from '../lib/dashboardSessionCache'
 import { clearPerformanceSessionCache } from '../lib/performanceSessionCache'
@@ -25,15 +26,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    const applySession = (next: Session | null) => {
+      setSession(next)
+      setUser(next?.user ?? null)
+      if (next?.user) setAuthPresenceCookie()
+    }
+
     supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session)
-      setUser(session?.user ?? null)
+      applySession(session)
       setLoading(false)
     })
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_, session) => {
-      setSession(session)
-      setUser(session?.user ?? null)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      applySession(session)
+      if (event === 'SIGNED_OUT') clearAuthPresenceCookie()
       setLoading(false)
     })
 
@@ -46,6 +52,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     clearPerformanceSessionCache(uid)
     clearTradesSessionCache(uid)
     await supabase.auth.signOut()
+    clearAuthPresenceCookie()
   }
 
   return (
