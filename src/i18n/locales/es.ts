@@ -2,6 +2,7 @@ import { authEs } from '../auth/es'
 import { channelWorkerEs } from '../channelWorker/es'
 import { landingEs } from './landing/es'
 import type { Translations } from './types'
+import { configureModalEs } from './configureModal/es'
 
 export const es: Translations = {
   auth: authEs,
@@ -245,6 +246,7 @@ export const es: Translations = {
         'Esto desconecta {label} de MetatraderAPI y del copiador. No se puede deshacer.',
       deleteConfirm: 'Desconectar',
     },
+    configureModal: configureModalEs,
   },
   dashboard: {
     title: 'Panel',

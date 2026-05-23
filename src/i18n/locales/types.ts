@@ -262,6 +262,7 @@ export interface AccountConfigTranslations {
   addAccount: AccountConfigAddAccountModalTranslations
   connectForm: AccountConfigConnectFormTranslations
   brokerList: AccountConfigBrokerListTranslations
+  configureModal: ConfigureModalTranslations
 }
 
 export interface TradesTranslations {
