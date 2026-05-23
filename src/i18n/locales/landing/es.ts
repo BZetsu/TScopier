@@ -143,7 +143,7 @@ export const landingEs: LandingTranslations = {
       {
         label: 'Motor de copia',
         metric: 'Avanzado',
-        metricVariant: 'amber',
+        metricVariant: 'teal',
         description:
           'Estrategia de copia avanzada: plantillas, filtros, backtest y reglas por canal.',
         layout: 'featured',

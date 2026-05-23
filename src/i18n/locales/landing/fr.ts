@@ -105,7 +105,7 @@ export const landingFr: LandingTranslations = {
   whyChoose: {
     eyebrow: 'Une copie plus intelligente commence par de meilleurs outils',
     title:
-      'Chaque fonction de TSCopier est conçue pour vous donner contrôle, clarté et des résultats mesurables.',
+      'Chaque fonction de TScopier est conçue pour vous donner contrôle, clarté et des résultats mesurables.',
     cards: [
       {
         label: 'Vitesse d’exécution',
@@ -143,7 +143,7 @@ export const landingFr: LandingTranslations = {
       {
         label: 'Moteur de copie',
         metric: 'Avancé',
-        metricVariant: 'amber',
+        metricVariant: 'teal',
         description:
           'Stratégie de copie avancée : modèles, filtres, backtest et règles par canal.',
         layout: 'featured',
@@ -476,15 +476,15 @@ export const landingFr: LandingTranslations = {
   faq: {
     eyebrow: 'FAQ',
     title: 'Questions fréquentes',
-    subtitle: 'Réponses rapides sur la configuration, la copie et ce qui distingue TSCopier.',
+    subtitle: 'Réponses rapides sur la configuration, la copie et ce qui distingue TScopier.',
     items: [
       {
         question: 'Faut-il installer un EA ou un VPS ?',
         answer:
-          'Non. TSCopier est entièrement cloud. Vous vous connectez dans le navigateur, liez Telegram et vos comptes MT4/MT5, et le copieur tourne sur notre infrastructure—sans EA ni VPS à maintenir.',
+          'Non. TScopier est entièrement cloud. Vous vous connectez dans le navigateur, liez Telegram et vos comptes MT4/MT5, et le copieur tourne sur notre infrastructure—sans EA ni VPS à maintenir.',
       },
       {
-        question: 'Quelles plateformes TSCopier prend-il en charge ?',
+        question: 'Quelles plateformes TScopier prend-il en charge ?',
         answer:
           'Vous connectez des canaux de signaux Telegram et copiez vers MetaTrader 4 et 5. Liez plusieurs courtiers et routez chaque canal vers les comptes de votre choix.',
       },
@@ -499,9 +499,9 @@ export const landingFr: LandingTranslations = {
           'Jusqu’à 100 connexions MT4/MT5 par utilisateur selon votre forfait. Chaque canal Telegram peut être relié à un ou plusieurs comptes depuis la page Canaux.',
       },
       {
-        question: 'TSCopier lit-il mes messages Telegram privés ?',
+        question: 'TScopier lit-il mes messages Telegram privés ?',
         answer:
-          'TSCopier ne lit pas vos conversations personnelles. La connexion Telegram donne seulement accès aux canaux et groupes dont vous êtes membre pour recevoir les signaux que vous ajoutez.',
+          'TScopier ne lit pas vos conversations personnelles. La connexion Telegram donne seulement accès aux canaux et groupes dont vous êtes membre pour recevoir les signaux que vous ajoutez.',
       },
       {
         question: 'Puis-je tester un canal avant le live ?',
@@ -527,11 +527,11 @@ export const landingFr: LandingTranslations = {
   },
   comparison: {
     eyebrow: 'Pourquoi les traders changent',
-    title: 'Passez au niveau supérieur avec TSCopier',
+    title: 'Passez au niveau supérieur avec TScopier',
     subtitle:
       'Copieurs Telegram classiques vs une plateforme cloud conçue pour la vitesse, la clarté et l’échelle.',
     otherLabel: 'Autres copieurs',
-    tscopierLabel: 'TSCopier',
+    tscopierLabel: 'TScopier',
     cta: 'Commencer gratuitement',
     rows: [
       {
@@ -624,6 +624,6 @@ export const landingFr: LandingTranslations = {
     platforms: 'Compatible avec',
     copyright: '© {year} Tartarix Inc. Tous droits réservés.',
     disclaimer:
-      'Le trading comporte des risques. TSCopier est un outil de copie — pas un conseil financier.',
+      'Le trading comporte des risques. TScopier est un outil de copie — pas un conseil financier.',
   },
 }
