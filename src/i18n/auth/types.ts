@@ -19,7 +19,36 @@ export interface AuthTranslations {
     emailPlaceholder: string
     password: string
     passwordPlaceholder: string
+    forgotPassword: string
+    passwordResetSuccess: string
     submit: string
+  }
+  forgotPassword: {
+    heading: string
+    subtitle: string
+    email: string
+    emailPlaceholder: string
+    submit: string
+    sentHeading: string
+    sentSubtitle: string
+    sentHint: string
+    backToLogin: string
+  }
+  resetPassword: {
+    heading: string
+    subtitle: string
+    password: string
+    passwordPlaceholder: string
+    confirmPassword: string
+    confirmPasswordPlaceholder: string
+    passwordHint: string
+    passwordTooShort: string
+    passwordMismatch: string
+    submit: string
+    invalidHeading: string
+    invalidSubtitle: string
+    requestNewLink: string
+    backToLogin: string
   }
   signup: {
     heading: string

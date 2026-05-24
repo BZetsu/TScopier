@@ -3,6 +3,8 @@ import { Link, useLocation } from 'react-router-dom'
 import clsx from 'clsx'
 import { AuthReviewsPanel } from '../auth/AuthReviewsPanel'
 import { AuthPage } from '../../pages/auth/AuthPage'
+import { ForgotPasswordPage } from '../../pages/auth/ForgotPasswordPage'
+import { ResetPasswordPage } from '../../pages/auth/ResetPasswordPage'
 import { SignupPage } from '../../pages/auth/SignupPage'
 import { VerifyEmailPage } from '../../pages/auth/VerifyEmailPage'
 import { LanguageSwitcher } from '../auth/LanguageSwitcher'
@@ -15,6 +17,8 @@ export function AuthLayout() {
   const { pathname } = useLocation()
   const isSignup = pathname === '/signup'
   const isVerify = pathname === '/verify-email'
+  const isForgotPassword = pathname === '/forgot-password'
+  const isResetPassword = pathname === '/reset-password'
   const year = new Date().getFullYear()
   const copyright = auth.marketing.copyright.replace('{year}', String(year))
 
@@ -49,7 +53,17 @@ export function AuthLayout() {
           )}
         >
           <div className="mx-auto flex w-full max-w-[420px] flex-1 flex-col justify-center py-6 lg:py-8">
-            {isVerify ? <VerifyEmailPage /> : isSignup ? <SignupPage /> : <AuthPage />}
+            {isVerify ? (
+              <VerifyEmailPage />
+            ) : isResetPassword ? (
+              <ResetPasswordPage />
+            ) : isForgotPassword ? (
+              <ForgotPasswordPage />
+            ) : isSignup ? (
+              <SignupPage />
+            ) : (
+              <AuthPage />
+            )}
           </div>
 
           <footer className="mx-auto w-full max-w-[420px] shrink-0 pb-6 pt-4 lg:pb-8">

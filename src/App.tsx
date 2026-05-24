@@ -43,6 +43,8 @@ export default function App() {
           <Route path="/login" element={<AuthLayout />} />
           <Route path="/signup" element={<AuthLayout />} />
           <Route path="/verify-email" element={<AuthLayout />} />
+          <Route path="/forgot-password" element={<AuthLayout />} />
+          <Route path="/reset-password" element={<AuthLayout />} />
 
           {/* Pricing wall - requires auth but not subscription */}
           <Route

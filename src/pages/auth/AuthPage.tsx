@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import clsx from 'clsx'
 import { supabase } from '../../lib/supabase'
 import { PasswordInput } from '../../components/auth/PasswordInput'
@@ -34,8 +34,10 @@ function GoogleIcon({ className }: { className?: string }) {
 
 export function AuthPage() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const { auth } = useLocale()
   const loginT = auth.login
+  const passwordResetSuccess = searchParams.get('reset') === 'success'
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -89,6 +91,11 @@ export function AuthPage() {
         </a>
       </p>
 
+      {passwordResetSuccess ? (
+        <Alert variant="success" className="mb-5 py-2.5">
+          {loginT.passwordResetSuccess}
+        </Alert>
+      ) : null}
       {error ? <Alert variant="error" className="mb-5 py-2.5">{error}</Alert> : null}
 
       <button
@@ -136,6 +143,15 @@ export function AuthPage() {
           required
           autoComplete="current-password"
         />
+
+        <div className="-mt-1 flex justify-end">
+          <Link
+            to="/forgot-password"
+            className="text-sm font-medium text-teal-600 hover:text-teal-700 dark:text-teal-400 dark:hover:text-teal-300"
+          >
+            {loginT.forgotPassword}
+          </Link>
+        </div>
 
         <Button type="submit" loading={loading} className="w-full !mt-6" size="lg">
           {loginT.submit}
