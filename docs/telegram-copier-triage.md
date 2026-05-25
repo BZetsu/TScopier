@@ -123,6 +123,10 @@ Use **multi** when the channel posts two take-profits and you want two separate 
 
 **Symbol-less parameter posts:** Messages with only `Entry price:` / TP / SL (no Gold/BUY/SELL) parse as `modify` and target open trades on that channel via the management executor.
 
+**Management updates (breakeven / partial close):** Phrases like `move stop to breakeven`, `secure 30% profits by closing partial lotsize`, and `take profit target is hit` parse as `breakeven` or `partial_profit` (not IGNORE). They apply to open trades on the same channel without requiring a symbol in the message.
+
+**Broker “already set” on modify:** When SL/TP on the broker already match the signal, the copier treats that as success (no failed trade log).
+
 ## 8. Incident note template
 
 ```

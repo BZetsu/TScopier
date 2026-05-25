@@ -12,6 +12,11 @@ import {
   extractUnlabeledPrices,
   type TradeDirection,
 } from "../_shared/signalPriceInference.ts"
+import {
+  bareTradePricesExcludingPips,
+  looksLikeChannelManagementUpdate,
+  partialCloseFractionFromMessage,
+} from "../_shared/signalManagementIntent.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -425,11 +430,15 @@ function parseDeterministicManagement(
     hitClosePartialKw ||
     hitCloseTpTierKw ||
     /\b(close\s+partials?|close\s+half|close\s+50%|take\s+partials?|take\s+half|take\s+50%|c\s+half|half\s+of\s+(the\s+)?(position|trade))\b/i.test(t) ||
+    /\b(closing\s+partial|close\s+partial\s+(?:lot|lots|lotsize|position|trade))\b/i.test(t) ||
+    /\bsecure\s+\d+\s*%\s*profit/i.test(t) ||
+    /\btake\s+profit\s+(?:target\s+)?(?:is\s+)?hit\b/i.test(t) ||
     /\b(50|half)\s*%?\s*(of\s+)?(the\s+)?(position|trade|lot|profit)\b/i.test(t) ||
-    /\b(25|quarter)\s*%?\s*(of\s+)?(the\s+)?(position|trade|lot|profit)\b/i.test(tl) ||
+    /\b(25|quarter|30|40|75)\s*%?\s*(of\s+)?(the\s+)?(position|trade|lot|profit)\b/i.test(tl) ||
     hasAnyKeyword(t, kwPartial)
   const wantsBreakeven =
     /\bbreakeven|break\s*even\b/i.test(t) ||
+    /\bmove\s+stop\s+to\s+breakeven\b/i.test(t) ||
     /\bmoved?\s+(sl\s+)?to\s+(be|entry|entr(y)?\s?price)|\b(be|bk)\s*now\b/i.test(t) ||
     /\bstop\s*loss\s+to\s+(be|entry|breakeven|break\s*even)\b/i.test(t) ||
     /\bsl\s+to\s+(be|entry)\b/i.test(t) ||
@@ -457,6 +466,9 @@ function parseDeterministicManagement(
       /\b(25|quarter)\s*%?\s*(of\s+)?(the\s+)?(position|trade|lot|profit)\b/i.test(tl)
     ) {
       partial_close_fraction = 0.25
+    } else {
+      const pct = partialCloseFractionFromMessage(t)
+      if (pct != null) partial_close_fraction = pct
     }
   } else if (wantsBreakeven) action = "breakeven"
   else if (MGMT_CLOSE.test(t) || hasAnyKeyword(t, kwClose)) action = "close"
@@ -636,6 +648,7 @@ function buildExtraTpLabels(
 }
 
 function hasParameterEvidence(message: string, channelKeywords: ChannelKeywords): boolean {
+  if (looksLikeChannelManagementUpdate(message)) return false
   const text = message.replace(/\s+/g, ' ').trim()
   const delim = channelKeywords.additional.delimiters
   if (extractSlFromMessage(message, channelKeywords) != null) return true
@@ -643,7 +656,8 @@ function hasParameterEvidence(message: string, channelKeywords: ChannelKeywords)
   if (/\bentry\s*(?:price)?\s*[:=]\s*\d/i.test(text)) return true
   if (/@\s*\d+(?:\.\d+)?/.test(text)) return true
   if (hasAnyKeyword(message, splitKeywordAliases(channelKeywords.signal.entry_point, delim))) return true
-  return extractUnlabeledPrices(message).length > 0
+  const bare = bareTradePricesExcludingPips(message, extractUnlabeledPrices(message))
+  return bare.length > 0
 }
 
 function messageHasSideKeywords(message: string, channelKeywords: ChannelKeywords): boolean {

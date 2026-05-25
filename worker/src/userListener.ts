@@ -14,7 +14,7 @@ import { signalQueueConfig } from './queue/signalQueueConfig'
 import { pushParsedSignalToTradeWorkerAwait } from './tradeSignalPush'
 import { persistListenerEvent } from './listenerEvents'
 import { getChannelParseContext, invalidateChannelParseCache } from './channelKeywordsCache'
-import { parseChannelMessageSync, parseRawChannelMessage } from './parseSignal'
+import { parseChannelMessageSync, parseRawChannelMessage, looksLikeChannelManagementUpdate } from './parseSignal'
 import type { PipelineTimestamps } from './pipelineTimestamps'
 import { incMetric } from './workerMetrics'
 import { workerConfig } from './workerConfig'
@@ -169,6 +169,9 @@ function looksLikeTradingSignal(text: string, isReply: boolean): boolean {
   if (isReply && /\b(move|set|update|adjust|tp|sl|breakeven|be|close)\b/.test(normalized)) {
     return true
   }
+
+  // Breakeven / partial-close / TP-hit updates often lack symbol or explicit SL/TP labels.
+  if (looksLikeChannelManagementUpdate(text)) return true
 
   // Require stronger evidence than a single keyword to reduce false positives.
   const score = Number(hasDirectionOrAction) + Number(hasInstrument) + Number(hasPriceContext) + Number(hasTradeStructure)

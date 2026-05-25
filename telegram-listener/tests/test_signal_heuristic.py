@@ -19,5 +19,15 @@ def test_reply_management():
     assert looks_like_trading_signal("Move SL to breakeven", is_reply=True)
 
 
+def test_move_stop_breakeven_without_reply():
+    assert looks_like_trading_signal("+50 pips running, you can move stop to breakeven.")
+
+
+def test_partial_close_secure_profits():
+    assert looks_like_trading_signal(
+        "Make sure to secure 30% profits by closing partial lotsize"
+    )
+
+
 def test_empty_text():
     assert not looks_like_trading_signal("")

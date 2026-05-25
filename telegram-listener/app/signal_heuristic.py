@@ -38,6 +38,32 @@ def _has_tradable_instrument_in_text(text: str) -> bool:
     return False
 
 
+def _looks_like_channel_management_update(text: str) -> bool:
+    t = re.sub(r"\s+", " ", (text or "").strip())
+    if not t:
+        return False
+    return bool(
+        re.search(
+            r"\b(move\s+stop|move\s+sl|stop\s+to\s+breakeven|breakeven|break\s*even)\b",
+            t,
+            re.I,
+        )
+        or re.search(
+            r"\b(close\s+partial|closing\s+partial|take\s+partial|partial\s+(?:lot|lots|lotsize|position|trade))\b",
+            t,
+            re.I,
+        )
+        or re.search(r"\bsecure\s+\d+\s*%\s*profit", t, re.I)
+        or re.search(r"\btake\s+profit\s+(?:target\s+)?(?:is\s+)?hit\b", t, re.I)
+        or re.search(r"\bclose\s+(?:half|50%|25%|partials?)\b", t, re.I)
+        or re.search(
+            r"\b\d{1,3}\s*%\s*(?:of\s+)?(?:the\s+)?(?:position|trade|lot|profit(?:s)?)\b",
+            t,
+            re.I,
+        )
+    )
+
+
 def looks_like_trading_signal(text: str, is_reply: bool = False) -> bool:
     """Score-based gate matching TS listener (score >= 2)."""
     normalized = re.sub(r"\s+", " ", (text or "").strip().lower())
@@ -59,9 +85,12 @@ def looks_like_trading_signal(text: str, is_reply: bool = False) -> bool:
         re.search(r"\b(tp\s*\d*|sl|entry|signal|setup)\b", normalized)
     )
 
-    if is_reply and re.search(
+    if (is_reply and re.search(
         r"\b(move|set|update|adjust|tp|sl|breakeven|be|close)\b", normalized
-    ):
+    )):
+        return True
+
+    if _looks_like_channel_management_update(text):
         return True
 
     score = sum(

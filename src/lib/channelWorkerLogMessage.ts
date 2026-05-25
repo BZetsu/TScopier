@@ -140,8 +140,14 @@ function translateBrokerError(message: string, cw: ChannelWorkerTranslations): s
   return message
 }
 
+function isBenignStopsAlreadySetMessage(message: string | null | undefined): boolean {
+  if (!message?.trim()) return false
+  return /already\s+have\s+(this\s+)?parameters/i.test(message)
+}
+
 function errSuffix(row: ChannelWorkerLogRow, cw: ChannelWorkerTranslations): string {
   if (!row.error_message) return ''
+  if (isBenignStopsAlreadySetMessage(row.error_message)) return ''
   return interpolate(cw.errSuffix, { detail: translateBrokerError(row.error_message, cw) })
 }
 
@@ -356,6 +362,9 @@ export function channelWorkerLogMessage(row: ChannelWorkerLogRow, cw: ChannelWor
 
   if (logAction.startsWith('mgmt_') || MANAGEMENT_COPIER_ACTIONS.has(signalAction)) {
     const mgmt = logAction.startsWith('mgmt_') ? logAction.slice(5) : signalAction
+    if (status === 'failed' && isBenignStopsAlreadySetMessage(row.error_message)) {
+      return mgmtSuccessPhrase(mgmt, instr, parsed, cw)
+    }
     if (status === 'failed') {
       return `${mgmtFailurePhrase(mgmt, instr, cw)}${err}`
     }
@@ -474,6 +483,23 @@ export function channelWorkerLogMessage(row: ChannelWorkerLogRow, cw: ChannelWor
         instr,
         s => interpolate(cw.mergeUserMsgNamed, { message: userMsg, symbol: s }),
         () => userMsg,
+      )
+    }
+    if (isBenignStopsAlreadySetMessage(row.error_message)) {
+      const n = Number.isFinite(modified) && modified > 0 ? modified : null
+      const count = n ?? cw.all
+      const legsLabel = n === 1 ? cw.leg : cw.legs
+      return namedOrGeneric(
+        instr,
+        s =>
+          interpolate(cw.mergeSlTpSuccessNamed, {
+            count,
+            symbol: s,
+            legsLabel,
+          }),
+        () => interpolate(cw.mergeSlTpSuccessGeneric, {
+          legsDetail: n != null ? interpolate(cw.legsDetail, { count: n, legsLabel }) : '',
+        }),
       )
     }
     const detail =

@@ -160,4 +160,20 @@ SL: 4577`
     assert.equal(result.parsed.sl, 4577)
     assert.deepEqual(result.parsed.tp, [4564, 4527])
   })
+
+  it('parses Trading Central partial close (secure 30% profits)', () => {
+    const msg = `First take profit target is hit , which gives us +30 pips
+Make sure to secure 30% profits by closing partial lotsize`
+    const result = parseChannelMessageSync(msg, DEFAULT_CHANNEL_KEYWORDS, lexicon)
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.action, 'partial_profit')
+    assert.equal(result.parsed.partial_close_fraction, 0.3)
+  })
+
+  it('parses Trading Central breakeven suggestion', () => {
+    const msg = '+50 pips running, you can move stop to breakeven.'
+    const result = parseChannelMessageSync(msg, DEFAULT_CHANNEL_KEYWORDS, lexicon)
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.action, 'breakeven')
+  })
 })
