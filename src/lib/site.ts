@@ -28,10 +28,16 @@ export function joinOrigin(origin: string, path: string): string {
 }
 
 export function appUrl(path = '/'): string {
+  if (typeof window !== 'undefined' && isAppHost()) {
+    return normalizePath(path)
+  }
   return joinOrigin(APP_ORIGIN, path)
 }
 
 export function marketingUrl(path = '/'): string {
+  if (typeof window !== 'undefined' && !isAppHost()) {
+    return normalizePath(path)
+  }
   return joinOrigin(MARKETING_ORIGIN, path)
 }
 
