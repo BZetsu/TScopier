@@ -175,18 +175,41 @@ export async function closeStaleOpenTrades(
   tradeIds: string[],
 ): Promise<number> {
   if (!tradeIds.length) return 0
+
+  const { data: targets, error: loadErr } = await supabase
+    .from('trades')
+    .select('id,signal_id,broker_account_id')
+    .in('id', tradeIds)
+    .eq('status', 'open')
+  if (loadErr) {
+    console.warn(`[basketSlTpReconcile] closeStaleOpenTrades load failed: ${loadErr.message}`)
+    return 0
+  }
+  const rows = (targets ?? []) as Array<{ id: string; signal_id: string; broker_account_id: string }>
+  if (!rows.length) return 0
+
   const now = new Date().toISOString()
   const { data, error } = await supabase
     .from('trades')
     .update({ status: 'closed', closed_at: now })
-    .in('id', tradeIds)
+    .in('id', rows.map(r => r.id))
     .eq('status', 'open')
     .select('id')
   if (error) {
     console.warn(`[basketSlTpReconcile] closeStaleOpenTrades failed: ${error.message}`)
     return 0
   }
-  return (data ?? []).length
+
+  const closed = (data ?? []).length
+  if (closed > 0) {
+    const { purgeRangePendingLegsForBaskets } = await import('./rangePendingLegDelete')
+    await purgeRangePendingLegsForBaskets(
+      supabase,
+      rows.map(r => ({ signalId: r.signal_id, brokerAccountId: r.broker_account_id })),
+      'basket_flat',
+    )
+  }
+  return closed
 }
 
 export async function markBasketReconcileDoneForAnchor(

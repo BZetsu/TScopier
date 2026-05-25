@@ -152,6 +152,17 @@ async function applyManagement(ctx, signal, parsed, brokers) {
         for (const scope of (0, managementPendingLegs_1.pendingLegsToCancelScopes)(pendingLegs)) {
             cancelledPendingScopes.add(JSON.stringify(scope));
         }
+        const earlyScopes = Array.from(cancelledPendingScopes)
+            .map(enc => JSON.parse(enc))
+            .filter(scope => {
+            const broker = byBroker.get(scope.brokerAccountId);
+            if (!broker)
+                return false;
+            return !(0, channelMessageFilters_1.isPendingCancelBlocked)((0, channelMessageFilters_1.normalizeChannelMessageFiltersMap)(broker.channel_message_filters), signal.channel_id);
+        });
+        if (earlyScopes.length) {
+            await ctx.cancelRangePendingLegsForScopes(signal.user_id, signal.id, earlyScopes, 'signal_closed');
+        }
     }
     const sanitizeLevel = (v) => {
         const n = typeof v === 'number' ? v : Number(v ?? 0);

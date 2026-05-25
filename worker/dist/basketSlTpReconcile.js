@@ -3,6 +3,39 @@
  * Shared basket SL/TP modify + reconcile job persistence.
  * Used by tradeExecutor (realtime), BasketSlTpReconcileMonitor, and edge sweep.
  */
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.GHOST_BASKET_CLOSED_USER_MESSAGE = void 0;
 exports.clampBasketOrderStops = clampBasketOrderStops;
@@ -119,18 +152,35 @@ function classifyGhostBasketLegs(familyTrades, brokerTickets) {
 async function closeStaleOpenTrades(supabase, tradeIds) {
     if (!tradeIds.length)
         return 0;
+    const { data: targets, error: loadErr } = await supabase
+        .from('trades')
+        .select('id,signal_id,broker_account_id')
+        .in('id', tradeIds)
+        .eq('status', 'open');
+    if (loadErr) {
+        console.warn(`[basketSlTpReconcile] closeStaleOpenTrades load failed: ${loadErr.message}`);
+        return 0;
+    }
+    const rows = (targets ?? []);
+    if (!rows.length)
+        return 0;
     const now = new Date().toISOString();
     const { data, error } = await supabase
         .from('trades')
         .update({ status: 'closed', closed_at: now })
-        .in('id', tradeIds)
+        .in('id', rows.map(r => r.id))
         .eq('status', 'open')
         .select('id');
     if (error) {
         console.warn(`[basketSlTpReconcile] closeStaleOpenTrades failed: ${error.message}`);
         return 0;
     }
-    return (data ?? []).length;
+    const closed = (data ?? []).length;
+    if (closed > 0) {
+        const { purgeRangePendingLegsForBaskets } = await Promise.resolve().then(() => __importStar(require('./rangePendingLegDelete')));
+        await purgeRangePendingLegsForBaskets(supabase, rows.map(r => ({ signalId: r.signal_id, brokerAccountId: r.broker_account_id })), 'basket_flat');
+    }
+    return closed;
 }
 async function markBasketReconcileDoneForAnchor(supabase, brokerAccountId, anchorSignalId) {
     const { data: existingJob } = await supabase

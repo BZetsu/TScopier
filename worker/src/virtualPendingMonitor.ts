@@ -18,6 +18,11 @@ import {
   type MonitorLoopHandle,
 } from './monitorIdleGate'
 import { reconcileStaleClaimedLegs, shouldBlockVirtualLegFire } from './rangePendingFireGuard'
+import {
+  deleteRangePendingLegsForBasket,
+  reconcileBasketFlatFromBroker,
+  reconcilePendingLegBasketsFromBroker,
+} from './rangePendingBasketCleanup'
 
 /**
  * Worker-side monitor that turns persisted "virtual range pendings" into
@@ -278,6 +283,13 @@ export class VirtualPendingMonitor {
       rows.map(r => r.metaapi_account_id),
     )
 
+    // SL/TP/manual broker closes leave DB trades "open" — reconcile before triggers.
+    await reconcilePendingLegBasketsFromBroker(
+      this.supabase,
+      rows,
+      uuid => apiForMetaapiAccount(this.platformByUuid, uuid),
+    )
+
     // Group by (account, symbol) so we issue at most ONE /Quote per group.
     const groups = new Map<string, PendingRow[]>()
     for (const r of rows) {
@@ -318,18 +330,27 @@ export class VirtualPendingMonitor {
       }
 
       const cancelledStaleIds = new Set<string>()
+      const purgedBaskets = new Set<string>()
       for (const leg of triggeredInGroup) {
-        const staleEarly = await this.getStaleLegReason(leg)
-        if (!staleEarly) continue
-        const { data: dropped } = await this.supabase
-          .from('range_pending_legs')
-          .update({ status: 'cancelled', error_message: staleEarly })
-          .eq('id', leg.id)
-          .eq('status', 'pending')
-          .select('id')
-          .maybeSingle()
-        if (dropped) {
+        const bk = `${leg.signal_id}|${leg.broker_account_id}`
+        if (purgedBaskets.has(bk)) {
           cancelledStaleIds.add(leg.id)
+          continue
+        }
+        const staleEarly = await this.getStaleLegReason(leg, api, uuid)
+        if (!staleEarly) continue
+        purgedBaskets.add(bk)
+        const deleted = await deleteRangePendingLegsForBasket(
+          this.supabase,
+          { signalId: leg.signal_id, brokerAccountId: leg.broker_account_id },
+          staleEarly,
+        )
+        if (deleted > 0) {
+          for (const l of legs) {
+            if (l.signal_id === leg.signal_id && l.broker_account_id === leg.broker_account_id) {
+              cancelledStaleIds.add(l.id)
+            }
+          }
           try {
             await this.supabase.from('trade_execution_logs').insert({
               user_id: leg.user_id,
@@ -338,11 +359,10 @@ export class VirtualPendingMonitor {
               action: 'virtual_pending_cancelled',
               status: 'info',
               request_payload: {
-                leg_id: leg.id,
-                step_idx: leg.step_idx,
-                symbol: leg.symbol,
                 reason: staleEarly,
                 phase: 'pre_claim_stale',
+                rows: deleted,
+                basket: bk,
               } as unknown as Record<string, unknown>,
             })
           } catch {
@@ -444,9 +464,13 @@ export class VirtualPendingMonitor {
       return false
     }
     if (!claimed) return false
-    const staleReason = await this.getStaleLegReason(leg)
+    const staleReason = await this.getStaleLegReason(leg, api, leg.metaapi_account_id)
     if (staleReason) {
-      await this.cancelClaimedLeg(leg, staleReason)
+      await deleteRangePendingLegsForBasket(
+        this.supabase,
+        { signalId: leg.signal_id, brokerAccountId: leg.broker_account_id },
+        staleReason,
+      )
       return true
     }
 
@@ -635,40 +659,25 @@ export class VirtualPendingMonitor {
     return out
   }
 
-  /**
-   * A virtual pending leg is stale once there are no open/pending `trades` for
-   * the same (signal_id, broker_account_id). We intentionally do **not** filter
-   * by `symbol` here: `trades.symbol` is often broker-resolved (e.g. XAUUSDm)
-   * while `range_pending_legs.symbol` may differ, which previously let "flat"
-   * baskets look still live and re-fire deeper rungs.
-   */
-  private async getStaleLegReason(leg: PendingRow): Promise<string | null> {
-    const { data, error } = await this.supabase
-      .from('trades')
-      .select('status')
-      .eq('signal_id', leg.signal_id)
-      .eq('broker_account_id', leg.broker_account_id)
-      .limit(200)
-    if (error) {
-      console.warn(`[virtualPendingMonitor] stale-check failed leg=${leg.id}: ${error.message}`)
-      return null
-    }
-    const rows = (data ?? []) as Array<{ status: string | null }>
-    if (!rows.length) return null
-    const hasOpen = rows.some(r => r.status === 'open' || r.status === 'pending')
-    return hasOpen ? null : 'signal_closed'
+  private async getStaleLegReason(
+    leg: PendingRow,
+    api: ReturnType<typeof apiForMetaapiAccount> | null,
+    metaapiAccountId: string,
+  ): Promise<string | null> {
+    return reconcileBasketFlatFromBroker(
+      this.supabase,
+      api ?? null,
+      metaapiAccountId,
+      { signalId: leg.signal_id, brokerAccountId: leg.broker_account_id },
+    )
   }
 
   private async cancelClaimedLeg(leg: PendingRow, reason: string): Promise<void> {
-    await this.supabase
-      .from('range_pending_legs')
-      .update({
-        status: 'cancelled',
-        error_message: reason,
-        fired_at: new Date().toISOString(),
-      })
-      .eq('id', leg.id)
-      .eq('status', 'claimed')
+    await deleteRangePendingLegsForBasket(
+      this.supabase,
+      { signalId: leg.signal_id, brokerAccountId: leg.broker_account_id },
+      reason,
+    )
     try {
       await this.supabase.from('trade_execution_logs').insert({
         user_id: leg.user_id,

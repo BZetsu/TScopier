@@ -286,6 +286,19 @@ export async function applyManagement(ctx: TradeExecutorContext, signal: SignalR
       for (const scope of pendingLegsToCancelScopes(pendingLegs)) {
         cancelledPendingScopes.add(JSON.stringify(scope satisfies RangePendingCancelScope))
       }
+      const earlyScopes = Array.from(cancelledPendingScopes)
+        .map(enc => JSON.parse(enc) as RangePendingCancelScope)
+        .filter(scope => {
+          const broker = byBroker.get(scope.brokerAccountId)
+          if (!broker) return false
+          return !isPendingCancelBlocked(
+            normalizeChannelMessageFiltersMap(broker.channel_message_filters),
+            signal.channel_id,
+          )
+        })
+      if (earlyScopes.length) {
+        await ctx.cancelRangePendingLegsForScopes(signal.user_id, signal.id, earlyScopes, 'signal_closed')
+      }
     }
 
     const sanitizeLevel = (v: number | null | undefined): number => {

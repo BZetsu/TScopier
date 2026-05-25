@@ -13,6 +13,7 @@ const basketModFollowUp_1 = require("./basketModFollowUp");
 const rangePendingLadderSync_1 = require("./rangePendingLadderSync");
 const monitorIdleGate_1 = require("./monitorIdleGate");
 const rangePendingFireGuard_1 = require("./rangePendingFireGuard");
+const rangePendingBasketCleanup_1 = require("./rangePendingBasketCleanup");
 const SYMBOL_TTL_MS = 10 * 60000;
 const ACTIVE_MS = (0, monitorIdleGate_1.monitorActiveIntervalMs)('VIRTUAL_PENDING_TICK_MS', 1500);
 const IDLE_MS = (0, monitorIdleGate_1.monitorIdleIntervalMs)('VIRTUAL_PENDING_IDLE_MS', 60000);
@@ -166,6 +167,8 @@ class VirtualPendingMonitor {
             return;
         }
         this.platformByUuid = await (0, mtApiByAccount_1.loadPlatformByMetaapiId)(this.supabase, rows.map(r => r.metaapi_account_id));
+        // SL/TP/manual broker closes leave DB trades "open" — reconcile before triggers.
+        await (0, rangePendingBasketCleanup_1.reconcilePendingLegBasketsFromBroker)(this.supabase, rows, uuid => (0, mtApiByAccount_1.apiForMetaapiAccount)(this.platformByUuid, uuid));
         // Group by (account, symbol) so we issue at most ONE /Quote per group.
         const groups = new Map();
         for (const r of rows) {
@@ -208,19 +211,24 @@ class VirtualPendingMonitor {
                     triggeredInGroup.push(leg);
             }
             const cancelledStaleIds = new Set();
+            const purgedBaskets = new Set();
             for (const leg of triggeredInGroup) {
-                const staleEarly = await this.getStaleLegReason(leg);
+                const bk = `${leg.signal_id}|${leg.broker_account_id}`;
+                if (purgedBaskets.has(bk)) {
+                    cancelledStaleIds.add(leg.id);
+                    continue;
+                }
+                const staleEarly = await this.getStaleLegReason(leg, api, uuid);
                 if (!staleEarly)
                     continue;
-                const { data: dropped } = await this.supabase
-                    .from('range_pending_legs')
-                    .update({ status: 'cancelled', error_message: staleEarly })
-                    .eq('id', leg.id)
-                    .eq('status', 'pending')
-                    .select('id')
-                    .maybeSingle();
-                if (dropped) {
-                    cancelledStaleIds.add(leg.id);
+                purgedBaskets.add(bk);
+                const deleted = await (0, rangePendingBasketCleanup_1.deleteRangePendingLegsForBasket)(this.supabase, { signalId: leg.signal_id, brokerAccountId: leg.broker_account_id }, staleEarly);
+                if (deleted > 0) {
+                    for (const l of legs) {
+                        if (l.signal_id === leg.signal_id && l.broker_account_id === leg.broker_account_id) {
+                            cancelledStaleIds.add(l.id);
+                        }
+                    }
                     try {
                         await this.supabase.from('trade_execution_logs').insert({
                             user_id: leg.user_id,
@@ -229,11 +237,10 @@ class VirtualPendingMonitor {
                             action: 'virtual_pending_cancelled',
                             status: 'info',
                             request_payload: {
-                                leg_id: leg.id,
-                                step_idx: leg.step_idx,
-                                symbol: leg.symbol,
                                 reason: staleEarly,
                                 phase: 'pre_claim_stale',
+                                rows: deleted,
+                                basket: bk,
                             },
                         });
                     }
@@ -328,9 +335,9 @@ class VirtualPendingMonitor {
         }
         if (!claimed)
             return false;
-        const staleReason = await this.getStaleLegReason(leg);
+        const staleReason = await this.getStaleLegReason(leg, api, leg.metaapi_account_id);
         if (staleReason) {
-            await this.cancelClaimedLeg(leg, staleReason);
+            await (0, rangePendingBasketCleanup_1.deleteRangePendingLegsForBasket)(this.supabase, { signalId: leg.signal_id, brokerAccountId: leg.broker_account_id }, staleReason);
             return true;
         }
         // Build a MARKET order. We DO NOT send `price` for Buy/Sell — the broker
@@ -500,40 +507,11 @@ class VirtualPendingMonitor {
         }
         return out;
     }
-    /**
-     * A virtual pending leg is stale once there are no open/pending `trades` for
-     * the same (signal_id, broker_account_id). We intentionally do **not** filter
-     * by `symbol` here: `trades.symbol` is often broker-resolved (e.g. XAUUSDm)
-     * while `range_pending_legs.symbol` may differ, which previously let "flat"
-     * baskets look still live and re-fire deeper rungs.
-     */
-    async getStaleLegReason(leg) {
-        const { data, error } = await this.supabase
-            .from('trades')
-            .select('status')
-            .eq('signal_id', leg.signal_id)
-            .eq('broker_account_id', leg.broker_account_id)
-            .limit(200);
-        if (error) {
-            console.warn(`[virtualPendingMonitor] stale-check failed leg=${leg.id}: ${error.message}`);
-            return null;
-        }
-        const rows = (data ?? []);
-        if (!rows.length)
-            return null;
-        const hasOpen = rows.some(r => r.status === 'open' || r.status === 'pending');
-        return hasOpen ? null : 'signal_closed';
+    async getStaleLegReason(leg, api, metaapiAccountId) {
+        return (0, rangePendingBasketCleanup_1.reconcileBasketFlatFromBroker)(this.supabase, api ?? null, metaapiAccountId, { signalId: leg.signal_id, brokerAccountId: leg.broker_account_id });
     }
     async cancelClaimedLeg(leg, reason) {
-        await this.supabase
-            .from('range_pending_legs')
-            .update({
-            status: 'cancelled',
-            error_message: reason,
-            fired_at: new Date().toISOString(),
-        })
-            .eq('id', leg.id)
-            .eq('status', 'claimed');
+        await (0, rangePendingBasketCleanup_1.deleteRangePendingLegsForBasket)(this.supabase, { signalId: leg.signal_id, brokerAccountId: leg.broker_account_id }, reason);
         try {
             await this.supabase.from('trade_execution_logs').insert({
                 user_id: leg.user_id,

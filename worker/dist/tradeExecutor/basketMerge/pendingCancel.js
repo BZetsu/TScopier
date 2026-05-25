@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.cancelSignalEntryBrokerRowsForScope = cancelSignalEntryBrokerRowsForScope;
 exports.cancelRangePendingLegsForScopes = cancelRangePendingLegsForScopes;
 const signalEntryPendingHelpers_1 = require("../../signalEntryPendingHelpers");
+const rangePendingLegDelete_1 = require("../../rangePendingLegDelete");
 async function cancelSignalEntryBrokerRowsForScope(ctx, scope, userId, logSignalId, reason) {
     const { data: seRows, error } = await ctx.supabase
         .from('signal_entry_pending_orders')
@@ -35,23 +36,12 @@ async function cancelSignalEntryBrokerRowsForScope(ctx, scope, userId, logSignal
 async function cancelRangePendingLegsForScopes(ctx, userId, logSignalId, scopes, reason) {
     const uniq = new Map();
     for (const s of scopes) {
-        uniq.set(`${s.signalId}|${s.brokerAccountId}|${s.symbol}`, s);
+        uniq.set(`${s.signalId}|${s.brokerAccountId}`, s);
     }
     await Promise.allSettled([...uniq.values()].map(async (scope) => {
         try {
-            const { data: cancelled, error: cancelErr } = await ctx.supabase
-                .from('range_pending_legs')
-                .delete()
-                .eq('signal_id', scope.signalId)
-                .eq('broker_account_id', scope.brokerAccountId)
-                .eq('symbol', scope.symbol)
-                .select('id');
-            if (cancelErr) {
-                console.warn(`[tradeExecutor] range_pending_legs cancel failed signal=${scope.signalId} broker=${scope.brokerAccountId} symbol=${scope.symbol}: ${cancelErr.message}`);
-                return;
-            }
-            const rowsCancelled = (cancelled ?? []);
-            if (rowsCancelled.length) {
+            const rowsCancelled = await (0, rangePendingLegDelete_1.deleteRangePendingLegsForBasket)(ctx.supabase, { signalId: scope.signalId, brokerAccountId: scope.brokerAccountId }, reason);
+            if (rowsCancelled > 0) {
                 try {
                     await ctx.supabase.from('trade_execution_logs').insert({
                         user_id: userId,
@@ -62,9 +52,7 @@ async function cancelRangePendingLegsForScopes(ctx, userId, logSignalId, scopes,
                         request_payload: {
                             reason,
                             parent_signal_id: scope.signalId,
-                            symbol: scope.symbol,
-                            rows: rowsCancelled.length,
-                            leg_ids: rowsCancelled.map(r => r.id),
+                            rows: rowsCancelled,
                         },
                     });
                 }

@@ -143,6 +143,7 @@ import type {
   SignalRow,
   SymbolCacheEntry,
 } from '../types'
+import { deleteRangePendingLegsForBasket } from '../../rangePendingLegDelete'
 import { computeCweTp, roundLot, triggerPriceFor } from '../helpers'
 
 
@@ -190,26 +191,17 @@ export async function cancelRangePendingLegsForScopes(ctx: TradeExecutorContext,
   ): Promise<void> {
     const uniq = new Map<string, RangePendingCancelScope>()
     for (const s of scopes) {
-      uniq.set(`${s.signalId}|${s.brokerAccountId}|${s.symbol}`, s)
+      uniq.set(`${s.signalId}|${s.brokerAccountId}`, s)
     }
     await Promise.allSettled(
       [...uniq.values()].map(async scope => {
         try {
-          const { data: cancelled, error: cancelErr } = await ctx.supabase
-            .from('range_pending_legs')
-            .delete()
-            .eq('signal_id', scope.signalId)
-            .eq('broker_account_id', scope.brokerAccountId)
-            .eq('symbol', scope.symbol)
-            .select('id')
-          if (cancelErr) {
-            console.warn(
-              `[tradeExecutor] range_pending_legs cancel failed signal=${scope.signalId} broker=${scope.brokerAccountId} symbol=${scope.symbol}: ${cancelErr.message}`,
-            )
-            return
-          }
-          const rowsCancelled = (cancelled ?? []) as Array<{ id: string }>
-          if (rowsCancelled.length) {
+          const rowsCancelled = await deleteRangePendingLegsForBasket(
+            ctx.supabase,
+            { signalId: scope.signalId, brokerAccountId: scope.brokerAccountId },
+            reason,
+          )
+          if (rowsCancelled > 0) {
           try {
             await ctx.supabase.from('trade_execution_logs').insert({
               user_id: userId,
@@ -220,9 +212,7 @@ export async function cancelRangePendingLegsForScopes(ctx: TradeExecutorContext,
               request_payload: {
                 reason,
                 parent_signal_id: scope.signalId,
-                symbol: scope.symbol,
-                rows: rowsCancelled.length,
-                leg_ids: rowsCancelled.map(r => r.id),
+                rows: rowsCancelled,
               } as unknown as Record<string, unknown>,
             })
           } catch {
