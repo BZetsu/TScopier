@@ -96,6 +96,9 @@ function looksLikeTradingSignal(text, isReply) {
     if (isReply && /\b(move|set|update|adjust|tp|sl|breakeven|be|close)\b/.test(normalized)) {
         return true;
     }
+    // Breakeven / partial-close / TP-hit updates often lack symbol or explicit SL/TP labels.
+    if ((0, parseSignal_1.looksLikeChannelManagementUpdate)(text))
+        return true;
     // Require stronger evidence than a single keyword to reduce false positives.
     const score = Number(hasDirectionOrAction) + Number(hasInstrument) + Number(hasPriceContext) + Number(hasTradeStructure);
     return score >= 2;

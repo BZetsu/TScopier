@@ -13,6 +13,7 @@ exports.legacyMergeLinkingEnabled = legacyMergeLinkingEnabled;
 exports.resolveLatestOpenBasketAnchor = resolveLatestOpenBasketAnchor;
 exports.isBareEntryFollowUp = isBareEntryFollowUp;
 const manualPlanner_1 = require("./manualPlanner");
+const signalPriceInference_1 = require("./signalPriceInference");
 const tpBucketDistribution_1 = require("./manualPlanning/tpBucketDistribution");
 const basketModFollowUp_1 = require("./basketModFollowUp");
 /** True when the parsed message includes SL and/or TP price levels. */
@@ -33,13 +34,12 @@ function isParameterFollowUpSignal(parsed) {
 function shouldRouteAsBasketParameterRefresh(parsed) {
     if (!parsedHasSlOrTp(parsed))
         return false;
+    if ((0, signalPriceInference_1.parsedHasReEnterIntent)(parsed))
+        return false;
     const act = String(parsed.action ?? '').toLowerCase();
     if (act === 'modify')
         return true;
     if (act === 'buy' || act === 'sell') {
-        if ((0, manualPlanner_1.parsedHasExplicitEntryAnchor)(parsed)) {
-            return false;
-        }
         if (isBareEntryFollowUp(parsed))
             return false;
         return true;

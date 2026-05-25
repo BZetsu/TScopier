@@ -6,6 +6,7 @@ const metatraderapi_1 = require("../../metatraderapi");
 const manualPlanner_1 = require("../../manualPlanner");
 const signalMergeLink_1 = require("../../signalMergeLink");
 const multiTradeMerge_1 = require("../../multiTradeMerge");
+const signalPriceInference_1 = require("../../signalPriceInference");
 const basketModFollowUp_1 = require("../../basketModFollowUp");
 const channelActiveTradeParams_1 = require("../../channelActiveTradeParams");
 const slTpRefresh_1 = require("./slTpRefresh");
@@ -13,6 +14,8 @@ const helpers_1 = require("./helpers");
 async function tryParameterFollowUpMergeModifyOnly(ctx, args) {
     const { signal, parsed, broker, channelKeywords, baseLot, params, symbol, uuid, strictEntryPrefetch, commentPrefix, } = args;
     if (!(0, metatraderapi_1.hasMetatraderApiConfigured)())
+        return { handled: false };
+    if ((0, signalPriceInference_1.parsedHasReEnterIntent)(parsed))
         return { handled: false };
     if (!(0, multiTradeMerge_1.shouldRouteAsBasketParameterRefresh)(parsed))
         return { handled: false };
@@ -61,8 +64,9 @@ async function tryParameterFollowUpMergeModifyOnly(ctx, args) {
     // Exception: when add_new_trades_to_existing=false, the strategy is "single slot";
     // a same-direction signal carrying explicit stops should refresh that live slot.
     const manual = (broker.manual_settings ?? {});
-    const allowUnlinkedSingleSlotRefresh = manual.add_new_trades_to_existing === false && (0, channelActiveTradeParams_1.parsedSignalHasExplicitStops)(parsed);
-    if (!link.replyOk && !link.threadLinksAnchor && !link.parentLinksAnchor && !allowUnlinkedSingleSlotRefresh) {
+    const allowUnlinkedRefresh = (manual.add_new_trades_to_existing === false && (0, channelActiveTradeParams_1.parsedSignalHasExplicitStops)(parsed))
+        || link.parameterRefreshSameChannel;
+    if (!link.replyOk && !link.threadLinksAnchor && !link.parentLinksAnchor && !allowUnlinkedRefresh) {
         void ctx.supabase.from('trade_execution_logs').insert({
             user_id: signal.user_id,
             signal_id: signal.id,
@@ -173,6 +177,8 @@ async function tryMergeSignalIntoExistingOpenTrade(ctx, args) {
         return { handled: false };
     const api = ctx.apiFor(broker);
     if (!api)
+        return { handled: false };
+    if ((0, signalPriceInference_1.parsedHasReEnterIntent)(parsed))
         return { handled: false };
     const manual = (broker.manual_settings ?? {});
     if (manual.add_new_trades_to_existing !== true)

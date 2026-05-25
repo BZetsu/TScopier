@@ -78,11 +78,11 @@ import {
   buildPerLegStopTargets,
   legacyMergeLinkingEnabled,
   mergePlanImmediateOrders,
-  parsedHasReEnterIntent,
   resolveLatestOpenBasketAnchor,
   shouldRouteAsBasketParameterRefresh,
   type MergeModifySummary,
 } from '../../multiTradeMerge'
+import { parsedHasReEnterIntent } from '../../signalPriceInference'
 import { symbolsCompatibleForBasket } from '../../basketModFollowUp'
 import {
   classifyGhostBasketLegs,
