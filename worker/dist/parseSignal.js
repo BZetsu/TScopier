@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.looksLikeChannelManagementUpdate = exports.DEFAULT_CHANNEL_KEYWORDS = void 0;
+exports.looksLikeExplicitFullCloseCommand = exports.looksLikeChannelManagementUpdate = exports.DEFAULT_CHANNEL_KEYWORDS = void 0;
 exports.normalizeChannelKeywords = normalizeChannelKeywords;
 exports.loadChannelLexicon = loadChannelLexicon;
 exports.loadChannelKeywords = loadChannelKeywords;
@@ -270,7 +270,11 @@ function normalizeParsedFromModel(raw, fallbackText) {
     };
 }
 const ENTRY_KW = /\b(buy|sell|long|short)\b/i;
-const MGMT_CLOSE = /\b(close\s*(all)?|flatten|kill\s*zones?|exit\s*(trade|position|long|short))\b|\b(close|closed)\s+((my|the|this)\s+)?((running|active|open)\s+)?(trade|position|btc|gold)/i;
+function wantsExplicitFullClose(message, kwClose) {
+    if ((0, signalManagementIntent_1.looksLikeExplicitFullCloseCommand)(message))
+        return true;
+    return hasAnyKeyword(message, kwClose);
+}
 function parseDeterministicManagement(message, lexicon, channelKeywords) {
     const t = message.replace(/\s+/g, " ").trim();
     if (!t)
@@ -357,7 +361,7 @@ function parseDeterministicManagement(message, lexicon, channelKeywords) {
     }
     else if (wantsBreakeven)
         action = "breakeven";
-    else if (MGMT_CLOSE.test(t) || hasAnyKeyword(t, kwClose))
+    else if (wantsExplicitFullClose(t, kwClose))
         action = "close";
     else if (/\b(set|move|adjust|bring)\s+(sl|tp|target|stop\s*loss|take\s*profit)\b|\b(stop\s*loss|take\s*profit|target)\s*(to|=)\s*[\d.]+/i
         .test(t) || hasAnyKeyword(t, kwModify))
@@ -650,7 +654,9 @@ function parseSimpleSignal(message, lexicon, channelKeywords) {
         ...splitKeywordAliases(channelKeywords.update.close_tp3, delim),
         ...splitKeywordAliases(channelKeywords.update.close_tp4, delim),
     ];
-    if (/\b(close|flatten|exit\s+trade|breakeven|break\s+even|partial|move\s+(sl|tp))\b/i.test(text) || hasAnyKeyword(message, mgmtAliases)) {
+    if (/\b(flatten|exit\s+trade|breakeven|break\s+even|partial|move\s+(sl|tp))\b/i.test(text)
+        || (0, signalManagementIntent_1.looksLikeExplicitFullCloseCommand)(message)
+        || hasAnyKeyword(message, mgmtAliases)) {
         return null;
     }
     const isBuy = parseSideFromKeywords(message, buyAliases);
@@ -867,6 +873,7 @@ async function loadChannelKeywords(supabase, channelId) {
 }
 var signalManagementIntent_2 = require("./signalManagementIntent");
 Object.defineProperty(exports, "looksLikeChannelManagementUpdate", { enumerable: true, get: function () { return signalManagementIntent_2.looksLikeChannelManagementUpdate; } });
+Object.defineProperty(exports, "looksLikeExplicitFullCloseCommand", { enumerable: true, get: function () { return signalManagementIntent_2.looksLikeExplicitFullCloseCommand; } });
 /** Synchronous parse when keywords/lexicon are already loaded (hot path). */
 function parseChannelMessageSync(rawMessage, channelKeywords, lexicon) {
     const ignoreAliases = [

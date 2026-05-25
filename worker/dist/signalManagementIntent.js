@@ -3,10 +3,27 @@
  * Shared detection for channel management updates (breakeven, partial close, etc.).
  */
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.looksLikeExplicitFullCloseCommand = looksLikeExplicitFullCloseCommand;
 exports.looksLikeChannelManagementUpdate = looksLikeChannelManagementUpdate;
 exports.partialCloseFractionFromMessage = partialCloseFractionFromMessage;
 exports.isPipCountInMessage = isPipCountInMessage;
 exports.bareTradePricesExcludingPips = bareTradePricesExcludingPips;
+const EXPLICIT_CLOSE_SYMBOL = 'gold|xauusd|xau|silver|xagusd|btc|bitcoin|btcusd|ethusd|eurusd|gbpusd|us30|nas100';
+/**
+ * True for intentional full-close commands (two-word minimum), not prose like "close to our entry".
+ */
+function looksLikeExplicitFullCloseCommand(message) {
+    const t = String(message ?? '').replace(/\s+/g, ' ').trim();
+    if (!t)
+        return false;
+    if (/\bclose\s+to\b/i.test(t))
+        return false;
+    return (/\bclose\s+(?:now|all|full|trade|trades|position|positions|everything|every\s+thing)\b/i.test(t)
+        || /\bclose\s+(?:my|the|this|running|active|open)\s+(?:trade|trades|position|positions)\b/i.test(t)
+        || new RegExp(`\\bclose\\s+(?:${EXPLICIT_CLOSE_SYMBOL}|[a-z]{6})\\b`, 'i').test(t)
+        || /\b(?:flatten|kill\s+zones?)\b/i.test(t)
+        || /\bexit\s+(?:trade|trades|position|positions|long|short|now)\b/i.test(t));
+}
 /** True when text looks like a trade-management instruction (not a fresh entry). */
 function looksLikeChannelManagementUpdate(text) {
     const t = String(text ?? '').replace(/\s+/g, ' ').trim();

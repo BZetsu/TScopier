@@ -176,4 +176,17 @@ Make sure to secure 30% profits by closing partial lotsize`
     assert.equal(result.status, 'parsed')
     assert.equal(result.parsed.action, 'breakeven')
   })
+
+  it('does not close on prose "close to our entry"', () => {
+    const msg = `Beforehand? Yes... beforehand.
+You receive signals in here once a day, for free, randomly timed.
+My private community, receives more trades, for free as well, but receive it before price is even close to our entry`
+    const result = parseChannelMessageSync(msg, DEFAULT_CHANNEL_KEYWORDS, lexicon)
+    assert.notEqual(result.parsed.action, 'close')
+  })
+
+  it('still closes on explicit Close all now', () => {
+    const result = parseChannelMessageSync('Close all now', DEFAULT_CHANNEL_KEYWORDS, lexicon)
+    assert.equal(result.parsed.action, 'close')
+  })
 })

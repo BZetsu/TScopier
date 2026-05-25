@@ -15,6 +15,7 @@ import {
 import {
   bareTradePricesExcludingPips,
   looksLikeChannelManagementUpdate,
+  looksLikeExplicitFullCloseCommand,
   partialCloseFractionFromMessage,
 } from "../_shared/signalManagementIntent.ts"
 
@@ -374,8 +375,11 @@ function normalizeParsedFromModel(raw: unknown, fallbackText: string): ParsedSig
 }
 
 const ENTRY_KW = /\b(buy|sell|long|short)\b/i
-const MGMT_CLOSE =
-  /\b(close\s*(all)?|flatten|kill\s*zones?|exit\s*(trade|position|long|short))\b|\b(close|closed)\s+((my|the|this)\s+)?((running|active|open)\s+)?(trade|position|btc|gold)/i
+
+function wantsExplicitFullClose(message: string, kwClose: string[]): boolean {
+  if (looksLikeExplicitFullCloseCommand(message)) return true
+  return hasAnyKeyword(message, kwClose)
+}
 
 function parseDeterministicManagement(
   message: string,
@@ -471,7 +475,7 @@ function parseDeterministicManagement(
       if (pct != null) partial_close_fraction = pct
     }
   } else if (wantsBreakeven) action = "breakeven"
-  else if (MGMT_CLOSE.test(t) || hasAnyKeyword(t, kwClose)) action = "close"
+  else if (wantsExplicitFullClose(t, kwClose)) action = "close"
   else if (
     /\b(set|move|adjust|bring)\s+(sl|tp|target|stop\s*loss|take\s*profit)\b|\b(stop\s*loss|take\s*profit|target)\s*(to|=)\s*[\d.]+/i
       .test(t) || hasAnyKeyword(t, kwModify)
@@ -784,7 +788,11 @@ function parseSimpleSignal(
     ...splitKeywordAliases(channelKeywords.update.close_tp4, delim),
   ]
 
-  if (/\b(close|flatten|exit\s+trade|breakeven|break\s+even|partial|move\s+(sl|tp))\b/i.test(text) || hasAnyKeyword(message, mgmtAliases)) {
+  if (
+    /\b(flatten|exit\s+trade|breakeven|break\s+even|partial|move\s+(sl|tp))\b/i.test(text)
+    || looksLikeExplicitFullCloseCommand(message)
+    || hasAnyKeyword(message, mgmtAliases)
+  ) {
     return null
   }
 

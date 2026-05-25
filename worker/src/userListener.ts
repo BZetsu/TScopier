@@ -14,7 +14,7 @@ import { signalQueueConfig } from './queue/signalQueueConfig'
 import { pushParsedSignalToTradeWorkerAwait } from './tradeSignalPush'
 import { persistListenerEvent } from './listenerEvents'
 import { getChannelParseContext, invalidateChannelParseCache } from './channelKeywordsCache'
-import { parseChannelMessageSync, parseRawChannelMessage, looksLikeChannelManagementUpdate } from './parseSignal'
+import { parseChannelMessageSync, parseRawChannelMessage, looksLikeChannelManagementUpdate, looksLikeExplicitFullCloseCommand } from './parseSignal'
 import type { PipelineTimestamps } from './pipelineTimestamps'
 import { incMetric } from './workerMetrics'
 import { workerConfig } from './workerConfig'
@@ -156,7 +156,8 @@ function looksLikeTradingSignal(text: string, isReply: boolean): boolean {
   const hasInstrument = hasTradableInstrumentInText(text)
 
   const hasDirectionOrAction =
-    /\b(buy|sell|long|short|close|tp|take profit|sl|stop loss|breakeven|be)\b/.test(normalized)
+    /\b(buy|sell|long|short|tp|take profit|sl|stop loss|breakeven|be)\b/.test(normalized)
+    || looksLikeExplicitFullCloseCommand(text)
 
   const hasPriceContext =
     /\b\d{1,5}(?:\.\d{1,5})\b/.test(normalized) ||

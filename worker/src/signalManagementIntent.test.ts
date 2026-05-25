@@ -2,8 +2,21 @@ import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
 import {
   looksLikeChannelManagementUpdate,
+  looksLikeExplicitFullCloseCommand,
   partialCloseFractionFromMessage,
 } from './signalManagementIntent'
+
+test('looksLikeExplicitFullCloseCommand: accepts two-word close phrases', () => {
+  assert.equal(looksLikeExplicitFullCloseCommand('Close all now'), true)
+  assert.equal(looksLikeExplicitFullCloseCommand('close trade now'), true)
+  assert.equal(looksLikeExplicitFullCloseCommand('close gold'), true)
+  assert.equal(looksLikeExplicitFullCloseCommand('close XAUUSD'), true)
+})
+
+test('looksLikeExplicitFullCloseCommand: rejects prose close to', () => {
+  const msg = 'receive it before price is even close to our entry'
+  assert.equal(looksLikeExplicitFullCloseCommand(msg), false)
+})
 
 test('looksLikeChannelManagementUpdate: partial lotsize close', () => {
   assert.equal(

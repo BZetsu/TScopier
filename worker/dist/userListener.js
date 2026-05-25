@@ -88,7 +88,8 @@ function looksLikeTradingSignal(text, isReply) {
     if (!normalized)
         return false;
     const hasInstrument = (0, tradableSymbol_1.hasTradableInstrumentInText)(text);
-    const hasDirectionOrAction = /\b(buy|sell|long|short|close|tp|take profit|sl|stop loss|breakeven|be)\b/.test(normalized);
+    const hasDirectionOrAction = /\b(buy|sell|long|short|tp|take profit|sl|stop loss|breakeven|be)\b/.test(normalized)
+        || (0, parseSignal_1.looksLikeExplicitFullCloseCommand)(text);
     const hasPriceContext = /\b\d{1,5}(?:\.\d{1,5})\b/.test(normalized) ||
         /\b(entry|zone|between|above|below|now)\b/.test(normalized);
     const hasTradeStructure = /\b(tp\s*\d*|sl|entry|signal|setup)\b/.test(normalized);

@@ -38,6 +38,37 @@ def _has_tradable_instrument_in_text(text: str) -> bool:
     return False
 
 
+def _looks_like_explicit_full_close_command(text: str) -> bool:
+    t = re.sub(r"\s+", " ", (text or "").strip())
+    if not t:
+        return False
+    if re.search(r"\bclose\s+to\b", t, re.I):
+        return False
+    return bool(
+        re.search(
+            r"\bclose\s+(?:now|all|full|trade|trades|position|positions|everything|every\s+thing)\b",
+            t,
+            re.I,
+        )
+        or re.search(
+            r"\bclose\s+(?:my|the|this|running|active|open)\s+(?:trade|trades|position|positions)\b",
+            t,
+            re.I,
+        )
+        or re.search(
+            r"\bclose\s+(?:gold|xauusd|xau|silver|xagusd|btc|bitcoin|btcusd|ethusd|gbpusd|us30|nas100|[a-z]{6})\b",
+            t,
+            re.I,
+        )
+        or re.search(r"\b(?:flatten|kill\s+zones?)\b", t, re.I)
+        or re.search(
+            r"\bexit\s+(?:trade|trades|position|positions|long|short|now)\b",
+            t,
+            re.I,
+        )
+    )
+
+
 def _looks_like_channel_management_update(text: str) -> bool:
     t = re.sub(r"\s+", " ", (text or "").strip())
     if not t:
@@ -73,9 +104,10 @@ def looks_like_trading_signal(text: str, is_reply: bool = False) -> bool:
     has_instrument = _has_tradable_instrument_in_text(text)
     has_direction_or_action = bool(
         re.search(
-            r"\b(buy|sell|long|short|close|tp|take profit|sl|stop loss|breakeven|be)\b",
+            r"\b(buy|sell|long|short|tp|take profit|sl|stop loss|breakeven|be)\b",
             normalized,
         )
+        or _looks_like_explicit_full_close_command(text)
     )
     has_price_context = bool(
         re.search(r"\b\d{1,5}(?:\.\d{1,5})\b", normalized)

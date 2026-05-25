@@ -29,5 +29,15 @@ def test_partial_close_secure_profits():
     )
 
 
+def test_rejects_prose_close_to():
+    assert not looks_like_trading_signal(
+        "receive it before price is even close to our entry"
+    )
+
+
+def test_explicit_close_all():
+    assert looks_like_trading_signal("Close all now")
+
+
 def test_empty_text():
     assert not looks_like_trading_signal("")
