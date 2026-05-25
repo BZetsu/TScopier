@@ -46,6 +46,10 @@ const CATCHUP_BACKPRESSURE_MS = 250
 const CATCHUP_PER_CHANNEL_CAP = 200
 const BACKFILL_PER_CHANNEL_CAP = 1000
 const REPLY_CHAIN_SWEEP_MS = 60_000
+const ENTITY_WARMUP_INTERVAL_MS = Math.max(
+  60_000,
+  Math.min(30 * 60_000, Number(process.env.TELEGRAM_ENTITY_WARMUP_INTERVAL_MS ?? 10 * 60_000)),
+)
 
 function catchUpOnStartEnabled(): boolean {
   const v = String(process.env.TELEGRAM_CATCHUP_ON_START ?? 'true').toLowerCase()
@@ -206,6 +210,7 @@ export class UserListener {
   private watchdogTimer: NodeJS.Timeout | null = null
   private sessionPersistTimer: NodeJS.Timeout | null = null
   private replyChainSweepTimer: NodeJS.Timeout | null = null
+  private entityWarmupTimer: NodeJS.Timeout | null = null
   private catchUpInFlight = false
   private catchUpParseActive = 0
   private lastLiveMessageAt = 0
@@ -264,6 +269,8 @@ export class UserListener {
     this.startedAt = Date.now()
     this.lastEventAt = Date.now()
 
+    // Warm gramjs entity cache so NewMessage events fire for all channels.
+    await this.warmEntityCache()
     await this.refreshChannelSubscription()
     this.scheduleCatchUpOnStart()
 
@@ -271,6 +278,7 @@ export class UserListener {
     this.startSafetyPoll()
     this.startSessionPersist()
     this.startReplyChainSweep()
+    this.startEntityWarmup()
   }
 
   async stop() {
@@ -279,6 +287,7 @@ export class UserListener {
       this.stopTimer('safetyPollTimer')
       this.stopTimer('sessionPersistTimer')
       this.stopTimer('replyChainSweepTimer')
+      this.stopTimer('entityWarmupTimer')
       this.removeCurrentHandler()
       await this.persistSessionIfChanged()
       await this.client.disconnect()
@@ -295,7 +304,7 @@ export class UserListener {
     this.dialogsCacheAt = 0
   }
 
-  private stopTimer(field: 'watchdogTimer' | 'safetyPollTimer' | 'sessionPersistTimer' | 'replyChainSweepTimer') {
+  private stopTimer(field: 'watchdogTimer' | 'safetyPollTimer' | 'sessionPersistTimer' | 'replyChainSweepTimer' | 'entityWarmupTimer') {
     const t = this[field]
     if (t) {
       clearInterval(t)
@@ -1314,6 +1323,66 @@ export class UserListener {
     }
   }
 
+  private async runRecentCatchUp(): Promise<void> {
+    if (this.catchUpInFlight) return
+    this.catchUpInFlight = true
+    try {
+      const { data: rows } = await this.supabase
+        .from('telegram_channels')
+        .select('id, channel_id, channel_username, last_seen_message_id')
+        .eq('user_id', this.userId)
+        .eq('is_active', true)
+
+      for (const row of (rows ?? []) as ChannelRow[]) {
+        await this.catchUpChannelRecent(row).catch(err =>
+          console.error(`[userListener] recent catchUp failed for channel ${row.id}:`, err)
+        )
+      }
+    } finally {
+      this.catchUpInFlight = false
+    }
+  }
+
+  private async catchUpChannelRecent(row: ChannelRow): Promise<void> {
+    let peer: unknown
+    try {
+      peer = await this.resolveChannelPeer(row)
+    } catch {
+      return
+    }
+
+    const minIdRaw = row.last_seen_message_id
+    const minId = minIdRaw == null ? 0 : Number(minIdRaw)
+    if (!Number.isFinite(minId) || minId <= 0) return
+
+    let batch: Array<MessageLike & { id: number | bigint }>
+    try {
+      batch = (await this.client.getMessages(peer as never, {
+        limit: 20,
+        minId,
+      })) as unknown as Array<MessageLike & { id: number | bigint }>
+    } catch {
+      return
+    }
+
+    if (!batch.length) return
+
+    const now = Date.now()
+    const maxAgeMs = 60_000
+    const recent = batch
+      .filter(m => {
+        const mid = Number(m.id)
+        if (!Number.isFinite(mid) || mid <= minId) return false
+        const epoch = this.messageEpochSec(m as MessageLike & { date?: number | Date | string })
+        return epoch > 0 && (now - epoch * 1000) <= maxAgeMs
+      })
+      .sort((a, b) => Number(a.id) - Number(b.id))
+
+    for (const m of recent) {
+      await this.logSignal(row, m, { source: 'catchup' })
+    }
+  }
+
   private async resolveChannelPeer(row: ChannelRow): Promise<unknown> {
     const key = row.channel_username?.replace(/^@/, '') || row.channel_id
     try {
@@ -1646,13 +1715,16 @@ export class UserListener {
     // session and may not survive the reconnect cleanly.
     this.removeCurrentHandler()
     this.monitoredChannels.clear()
+    // Warm entity cache BEFORE registering the handler so gramjs can
+    // deliver NewMessage events for all monitored channels.
+    await this.warmEntityCache()
     await this.refreshChannelSubscription()
-    // Do NOT run history catch-up here: `runCatchUp` walks Telegram history and
-    // calls `logSignal` for each candidate, which can re-dispatch parse/trade
-    // for messages the worker already processed (duplicate handling + last_seen
-    // edge cases). Mid-session reconnects should rely on live `NewMessage`
-    // updates + Telegram's own gap recovery. Full catch-up only runs from
-    // `start()` after a cold boot.
+    // Run a lightweight catch-up for very recent messages (last 60s) that
+    // may have arrived during the reconnect window. Full history replay is
+    // NOT done here to avoid stale trade execution.
+    void this.runRecentCatchUp().catch(err =>
+      console.error(`[userListener] recent catch-up after reconnect failed for ${this.userId}:`, err)
+    )
     await this.runReplyChainSweep()
   }
 
@@ -1666,6 +1738,39 @@ export class UserListener {
       )
     }, SAFETY_POLL_INTERVAL_MS)
     this.safetyPollTimer.unref?.()
+  }
+
+  // ── entity cache warmup ────────────────────────────────────────────────
+
+  private startEntityWarmup() {
+    if (this.entityWarmupTimer) return
+    this.entityWarmupTimer = setInterval(() => {
+      this.warmEntityCache().catch(err =>
+        console.error(`[userListener] entity warmup error for ${this.userId}:`, err)
+      )
+    }, ENTITY_WARMUP_INTERVAL_MS)
+    this.entityWarmupTimer.unref?.()
+  }
+
+  private async warmEntityCache(): Promise<void> {
+    if (!this.isConnected) return
+    try {
+      const dialogs = await this.client.getDialogs({ limit: DIALOG_MAX_SCAN })
+      const channelCount = dialogs.filter(
+        (d: { isChannel?: boolean; isGroup?: boolean }) => d.isChannel || d.isGroup,
+      ).length
+      console.log(
+        `[userListener] entity cache warmed user=${this.userId} dialogs=${dialogs.length} channels=${channelCount}`,
+      )
+      incMetric('entity_cache_warmed')
+    } catch (err: unknown) {
+      if (isAuthKeyDuplicated(err)) return
+      if (isAuthKeyUnregistered(err)) rethrowIfSessionInvalid(err)
+      console.warn(
+        `[userListener] entity warmup getDialogs failed for ${this.userId}:`,
+        err instanceof Error ? err.message : String(err),
+      )
+    }
   }
 
   // ── session string rotation ───────────────────────────────────────────
