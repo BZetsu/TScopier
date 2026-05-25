@@ -7,6 +7,7 @@ const http_1 = require("http");
 const telegramClient_1 = require("./telegramClient");
 const workerConfig_1 = require("./workerConfig");
 const queueHealth_1 = require("./queue/queueHealth");
+const parseSignal_1 = require("./parseSignal");
 const INTERNAL_TOKEN = process.env.WORKER_INTERNAL_TOKEN ?? '';
 const PORT = parseInt(process.env.WORKER_PORT ?? '8080', 10);
 function isTelegramSessionInvalid(err) {
@@ -157,6 +158,34 @@ function startTradeHttpServer(sessionManager, tradeExecutor) {
                     queue,
                 });
             }
+            if (url === '/internal/parse-signal' && req.method === 'POST') {
+                if (!INTERNAL_TOKEN) {
+                    return sendJson(res, 503, { error: 'WORKER_INTERNAL_TOKEN not configured' });
+                }
+                const token = req.headers['x-internal-token'];
+                if (token !== INTERNAL_TOKEN) {
+                    return sendJson(res, 401, { error: 'Unauthorized' });
+                }
+                const body = (await readJson(req));
+                if (!body.channel_row_id || typeof body.raw_message !== 'string') {
+                    return sendJson(res, 400, { error: 'channel_row_id and raw_message required' });
+                }
+                if (body.user_id && !(0, workerConfig_1.userBelongsToShard)(body.user_id)) {
+                    return sendJson(res, 200, { parsed: null, status: 'skipped', reason: 'wrong_shard' });
+                }
+                try {
+                    const result = await (0, parseSignal_1.parseRawChannelMessage)(sessionManager.getSupabase(), body.channel_row_id, body.raw_message);
+                    return sendJson(res, 200, {
+                        parsed: result.parsed,
+                        status: result.status,
+                        skip_reason: result.skip_reason,
+                    });
+                }
+                catch (err) {
+                    const msg = err instanceof Error ? err.message : 'parse failed';
+                    return sendJson(res, 500, { error: msg });
+                }
+            }
             if (url === '/internal/dispatch-signal' && req.method === 'POST') {
                 if (!INTERNAL_TOKEN) {
                     return sendJson(res, 503, { error: 'WORKER_INTERNAL_TOKEN not configured' });
@@ -180,11 +209,17 @@ function startTradeHttpServer(sessionManager, tradeExecutor) {
                     ...raw,
                     pipeline_ts: raw.pipeline_ts,
                 };
-                const accepted = tradeExecutor.acceptDispatchSignal(signalRow, {
+                const dispatchOpts = {
                     priority: body.priority,
                     source: body.source ?? 'listener_push',
-                });
-                return sendJson(res, 200, { accepted });
+                };
+                const shouldAwait = body.await === true
+                    || body.source === 'listener_push'
+                    || String(process.env.TRADE_DISPATCH_AWAIT_DEFAULT ?? 'true').toLowerCase() !== 'false';
+                const accepted = shouldAwait
+                    ? await tradeExecutor.acceptDispatchSignalAwait(signalRow, dispatchOpts)
+                    : tradeExecutor.acceptDispatchSignal(signalRow, dispatchOpts);
+                return sendJson(res, 200, { accepted, awaited: shouldAwait });
             }
             return sendJson(res, 404, { error: 'Not found' });
         }

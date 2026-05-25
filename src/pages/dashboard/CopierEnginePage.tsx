@@ -16,10 +16,13 @@ import {
   pruneStaleBrokerChannelIds,
 } from '../../lib/brokerChannelLink'
 import {
+  channelListenerHealthLabel,
+  getChannelListenerHealth,
+} from '../../lib/channelListenerHealth'
+import {
   hasValidTelegramChannelIdentity,
   isNumericTelegramChatId,
   normalizeTelegramUsername,
-  validateManualChannelInput,
 } from '../../lib/telegramChannelIdentity'
 import {
   reconcileChannelIdentitiesFromTelegram,
@@ -32,7 +35,6 @@ import { Toggle } from '../../components/ui/Toggle'
 import { PageHeader } from '../../components/layout/PageHeader'
 import { PageShell } from '../../components/layout/PageShell'
 import { Button } from '../../components/ui/Button'
-import { Alert } from '../../components/ui/Alert'
 import { Input } from '../../components/ui/Input'
 import { TelegramConnectFlow, type TelegramConnectStage } from '../../components/telegram/TelegramConnectFlow'
 import {
@@ -83,7 +85,6 @@ function TgChannelAvatar({ title, username }: { title: string; username?: string
 export function CopierEnginePage() {
   const t = useT()
   const ce = t.copierEnginePage
-  const ch = t.channelsPage
   const { user, session } = useAuth()
   const initialTgCache = user?.id ? getCachedTgChannels(user.id) : null
   const initialTgSession = user?.id ? getCachedTgSession(user.id) : null
@@ -97,9 +98,6 @@ export function CopierEnginePage() {
   const [loading, setLoading] = useState(true)
   const [loadingTg, setLoadingTg] = useState(false)
   const [tgChannelsCollapsed, setTgChannelsCollapsed] = useState(false)
-  const [showAdd, setShowAdd] = useState(false)
-  const [newChannel, setNewChannel] = useState({ channel_id: '', channel_username: '', display_name: '' })
-  const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [tgChannelSearch, setTgChannelSearch] = useState('')
   const [hasTgSession, setHasTgSession] = useState(
@@ -402,40 +400,6 @@ export function CopierEnginePage() {
     }
   }
 
-  const addManual = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setError('')
-    const validation = validateManualChannelInput(newChannel)
-    if (validation.ok === false) {
-      if (validation.errorKey === 'nameRequired') setError(ch.nameRequired)
-      else if (validation.errorKey === 'identityRequired') setError(ce.manualIdentityRequired)
-      else if (validation.errorKey === 'invalidUsername') setError(ce.invalidUsernameFormat)
-      else setError(ce.invalidChannelIdFormat)
-      return
-    }
-    setSaving(true)
-    const username = normalizeTelegramUsername(newChannel.channel_username)
-    const chatId = newChannel.channel_id.trim()
-    const { data, error: dbErr } = await supabase
-      .from('telegram_channels')
-      .insert({
-        user_id: user!.id,
-        channel_id: chatId || username,
-        channel_username: username,
-        display_name: newChannel.display_name.trim(),
-        is_active: true,
-      })
-      .select('*')
-      .single()
-    setSaving(false)
-    if (dbErr) { setError(dbErr.message); return }
-    const inserted = data as TelegramChannel
-    setChannels(prev => [inserted, ...prev])
-    setNewChannel({ channel_id: '', channel_username: '', display_name: '' })
-    setShowAdd(false)
-    await autoLinkChannelToBrokers(inserted.id)
-  }
-
   const addFromTg = async (ch: { id: string; title: string; username: string }) => {
     setError('')
     await removeStaleDuplicateChannels(supabase, user!.id, { id: ch.id, title: ch.title })
@@ -725,26 +689,6 @@ export function CopierEnginePage() {
         </Card>
       )}
 
-      {/* Manual add form */}
-      {showAdd && (
-        <Card className="mb-3">
-          <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-50 mb-3">{ch.addFormTitle}</h3>
-          {error && <Alert className="mb-3">{error}</Alert>}
-          <form onSubmit={addManual} className="space-y-3">
-            <Input label={ch.channelName} placeholder={ch.channelNamePlaceholder} value={newChannel.display_name} onChange={e => setNewChannel(p => ({ ...p, display_name: e.target.value }))} required />
-            <div className="grid grid-cols-2 gap-3">
-              <Input label={ch.usernameOptional} placeholder={ch.usernamePlaceholder} value={newChannel.channel_username} onChange={e => setNewChannel(p => ({ ...p, channel_username: e.target.value }))} />
-              <Input label={ch.channelIdOptional} placeholder={ch.channelIdPlaceholder} value={newChannel.channel_id} onChange={e => setNewChannel(p => ({ ...p, channel_id: e.target.value }))} />
-            </div>
-            <div className="flex gap-2 pt-1">
-              <Button type="submit" loading={saving} size="sm">{ch.addChannel}</Button>
-              <Button type="button" variant="ghost" size="sm" onClick={() => setShowAdd(false)}>{t.common.cancel}</Button>
-            </div>
-          </form>
-        </Card>
-      )}
-
-
       {/* Channel list */}
       {loading ? (
         <div className="space-y-2">
@@ -828,6 +772,8 @@ function ChannelRow({
   )
   const hasAnyBrokers = brokers.some(b => b.is_active)
   const identityValid = hasValidTelegramChannelIdentity(channel)
+  const listenerHealth = getChannelListenerHealth(channel)
+  const healthLabel = channelListenerHealthLabel(ce, listenerHealth)
   const lastHeardLabel = channel.last_seen_at
     ? interpolate(ce.channelLastHeard, {
         time: new Date(channel.last_seen_at).toLocaleString(),
@@ -856,6 +802,14 @@ function ChannelRow({
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">{channel.display_name}</h3>
             {!channel.is_active && <Badge variant="neutral" size="sm">{ce.statusPaused}</Badge>}
+            {channel.is_active && (
+              <Badge
+                variant={listenerHealth === 'listening' ? 'success' : listenerHealth === 'poll_only' ? 'warning' : 'neutral'}
+                size="sm"
+              >
+                {healthLabel}
+              </Badge>
+            )}
           </div>
           {!identityValid && (
             <p className="mt-1 text-xs text-warning-800 dark:text-amber-200">{ce.invalidChannelIdentity}</p>

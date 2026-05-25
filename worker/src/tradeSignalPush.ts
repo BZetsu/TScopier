@@ -131,6 +131,7 @@ async function postDispatchSignal(
   signalBody: Record<string, unknown>,
   priority: string,
   timeoutMs: number,
+  awaitExecution = false,
 ): Promise<{ ok: boolean; status: number; retryable: boolean; detail: string }> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort('trade-push-timeout'), timeoutMs)
@@ -141,7 +142,12 @@ async function postDispatchSignal(
         'Content-Type': 'application/json',
         'x-internal-token': token,
       },
-      body: JSON.stringify({ signal: signalBody, priority, source: 'listener_push' }),
+      body: JSON.stringify({
+        signal: signalBody,
+        priority,
+        source: 'listener_push',
+        await: awaitExecution,
+      }),
       signal: controller.signal,
     })
     if (res.ok) {
@@ -162,18 +168,18 @@ async function postDispatchSignal(
   }
 }
 
-/**
- * Fire-and-forget POST to trade worker with short retry on transient failures.
- */
-export function pushParsedSignalToTradeWorker(row: TradeSignalPushPayload): void {
+async function pushParsedSignalToTradeWorkerInner(
+  row: TradeSignalPushPayload,
+  opts?: { awaitExecution?: boolean },
+): Promise<boolean> {
   if (!tradePushEnabled()) {
     console.warn('[tradeSignalPush] disabled (TRADE_SIGNAL_PUSH_ENABLED=false)')
-    return
+    return false
   }
   const token = internalToken()
   if (!token) {
     console.warn('[tradeSignalPush] missing WORKER_INTERNAL_TOKEN — cannot push to trade worker')
-    return
+    return false
   }
 
   const action = parsedAction(row.parsed_data as { action?: string })
@@ -183,7 +189,7 @@ export function pushParsedSignalToTradeWorker(row: TradeSignalPushPayload): void
       `[tradeSignalPush] no trade worker URL for action=${action} user=${row.user_id}`
       + ' — set TRADE_WORKER_URL / TRADE_MGMT_WORKER_URL on listener',
     )
-    return
+    return false
   }
 
   const timeoutMs = Math.max(
@@ -207,44 +213,68 @@ export function pushParsedSignalToTradeWorker(row: TradeSignalPushPayload): void
     pipeline_ts: row.pipeline_ts,
   }
 
-  void (async () => {
-    await logPushAttemptToDb(row, 'success', {
+  await logPushAttemptToDb(row, 'success', {
+    run_id: 'latency-v3',
+    phase: 'start',
+    action,
+    base_url: baseUrl,
+    timeout_ms: timeoutMs,
+    max_attempts: PUSH_MAX_ATTEMPTS,
+    await_execution: opts?.awaitExecution === true,
+  })
+
+  for (let attempt = 1; attempt <= PUSH_MAX_ATTEMPTS; attempt++) {
+    const attemptStartedAt = Date.now()
+    const result = await postDispatchSignal(
+      url,
+      token,
+      signalBody,
+      priority,
+      timeoutMs,
+      opts?.awaitExecution === true,
+    )
+    await logPushAttemptToDb(row, result.ok ? 'success' : 'failed', {
       run_id: 'latency-v3',
-      phase: 'start',
+      phase: 'attempt',
       action,
-      base_url: baseUrl,
-      timeout_ms: timeoutMs,
-      max_attempts: PUSH_MAX_ATTEMPTS,
+      attempt,
+      ok: result.ok,
+      status_code: result.status,
+      retryable: result.retryable,
+      elapsed_ms: Date.now() - attemptStartedAt,
+      detail: result.detail.slice(0, 120),
     })
-    for (let attempt = 1; attempt <= PUSH_MAX_ATTEMPTS; attempt++) {
-      const attemptStartedAt = Date.now()
-      const result = await postDispatchSignal(url, token, signalBody, priority, timeoutMs)
-      await logPushAttemptToDb(row, result.ok ? 'success' : 'failed', {
-        run_id: 'latency-v3',
-        phase: 'attempt',
-        action,
-        attempt,
-        ok: result.ok,
-        status_code: result.status,
-        retryable: result.retryable,
-        elapsed_ms: Date.now() - attemptStartedAt,
-        detail: result.detail.slice(0, 120),
-      })
-      if (result.ok) return
+    if (result.ok) return true
 
-      const reason = result.status > 0
-        ? `status=${result.status} ${result.detail}`
-        : result.detail
+    const reason = result.status > 0
+      ? `status=${result.status} ${result.detail}`
+      : result.detail
 
-      if (!result.retryable || attempt >= PUSH_MAX_ATTEMPTS) {
-        logPushFailed(row, baseUrl, action, reason, attempt)
-        return
-      }
-
-      const backoffMs = PUSH_RETRY_BASE_MS * attempt
-      await sleep(backoffMs)
+    if (!result.retryable || attempt >= PUSH_MAX_ATTEMPTS) {
+      logPushFailed(row, baseUrl, action, reason, attempt)
+      return false
     }
-  })()
+
+    const backoffMs = PUSH_RETRY_BASE_MS * attempt
+    await sleep(backoffMs)
+  }
+  return false
+}
+
+/**
+ * Fire-and-forget POST to trade worker with short retry on transient failures.
+ */
+export function pushParsedSignalToTradeWorker(row: TradeSignalPushPayload): void {
+  void pushParsedSignalToTradeWorkerInner(row).catch(err => {
+    console.warn('[tradeSignalPush] push failed:', err instanceof Error ? err.message : err)
+  })
+}
+
+/** Awaitable push — used after signals row is persisted (durable handoff). */
+export async function pushParsedSignalToTradeWorkerAwait(
+  row: TradeSignalPushPayload,
+): Promise<boolean> {
+  return pushParsedSignalToTradeWorkerInner(row, { awaitExecution: true })
 }
 
 /**

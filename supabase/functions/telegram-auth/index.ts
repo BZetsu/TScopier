@@ -30,7 +30,9 @@ function normalizeWorkerBaseUrl(raw: string): string {
   return `https://${trimmed}`
 }
 
-const WORKER_URL = normalizeWorkerBaseUrl(Deno.env.get("WORKER_URL") ?? "")
+const WORKER_URL = normalizeWorkerBaseUrl(
+  Deno.env.get("TELEGRAM_LISTENER_URL") ?? Deno.env.get("WORKER_URL") ?? "",
+)
 const WORKER_INTERNAL_TOKEN = Deno.env.get("WORKER_INTERNAL_TOKEN") ?? ""
 
 const ROUTES: Record<string, string> = {

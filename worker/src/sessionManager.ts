@@ -15,6 +15,17 @@ import type { TradeExecutor } from './tradeExecutor'
 
 export { TelegramSessionInvalidError }
 
+function gramjsListenerEnabled(): boolean {
+  const engine = String(process.env.LISTENER_ENGINE ?? 'gramjs').toLowerCase().trim()
+  return engine !== 'telethon'
+}
+
+function shouldRunGramjsForSession(session: { listener_engine?: string | null }): boolean {
+  if (!gramjsListenerEnabled()) return false
+  const engine = String(session.listener_engine ?? 'gramjs').toLowerCase().trim()
+  return engine !== 'telethon'
+}
+
 export class UserSessionManager {
   private listeners = new Map<string, UserListener>()
   private supabase: SupabaseClient
@@ -23,6 +34,10 @@ export class UserSessionManager {
 
   constructor(supabase: SupabaseClient) {
     this.supabase = supabase
+  }
+
+  getSupabase(): SupabaseClient {
+    return this.supabase
   }
 
   setTradeExecutor(executor: TradeExecutor | null): void {
@@ -36,10 +51,14 @@ export class UserSessionManager {
 
   async loadAll() {
     if (!workerConfig.runsListener) return
+    if (!gramjsListenerEnabled()) {
+      console.log('[sessionManager] LISTENER_ENGINE=telethon — gramjs listener disabled on this service')
+      return
+    }
 
     const { data: sessions, error } = await this.supabase
       .from('telegram_sessions')
-      .select('user_id, session_string, phone_number')
+      .select('user_id, session_string, phone_number, listener_engine')
       .eq('is_active', true)
 
     if (error) {
@@ -47,7 +66,9 @@ export class UserSessionManager {
       return
     }
 
-    const owned = (sessions ?? []).filter(s => userBelongsToShard(s.user_id))
+    const owned = (sessions ?? []).filter(
+      s => userBelongsToShard(s.user_id) && shouldRunGramjsForSession(s),
+    )
     console.log(
       `[sessionManager] Loading ${owned.length}/${sessions?.length ?? 0} sessions`
       + ` (shard ${workerConfig.shardId}/${workerConfig.shardCount})`,
@@ -70,7 +91,15 @@ export class UserSessionManager {
   }
 
   async renewAllLeases(): Promise<void> {
-    for (const userId of this.listeners.keys()) {
+    const staleMs = Math.max(
+      60_000,
+      Math.min(600_000, Number(process.env.WORKER_HEALTH_STALE_MS ?? 180_000)),
+    )
+    for (const [userId, listener] of this.listeners) {
+      if (!listener.isListenerHealthy(staleMs)) {
+        console.warn(`[sessionManager] skip lease renew — listener stale user=${userId}`)
+        continue
+      }
       await renewSessionLease(this.supabase, userId).catch(err =>
         console.warn(`[sessionManager] lease renew failed ${userId}:`, err),
       )
@@ -110,10 +139,10 @@ export class UserSessionManager {
 
     const { data: sessions } = await this.supabase
       .from('telegram_sessions')
-      .select('user_id, session_string, is_active')
+      .select('user_id, session_string, is_active, listener_engine')
 
     const activeOnShard = (sessions ?? []).filter(
-      s => s.is_active && userBelongsToShard(s.user_id),
+      s => s.is_active && userBelongsToShard(s.user_id) && shouldRunGramjsForSession(s),
     )
     const activeSessions = new Set(activeOnShard.map(s => s.user_id))
 

@@ -41,12 +41,25 @@ const userListener_1 = require("./userListener");
 const sessionLease_1 = require("./sessionLease");
 const workerMetrics_1 = require("./workerMetrics");
 const workerConfig_1 = require("./workerConfig");
+function gramjsListenerEnabled() {
+    const engine = String(process.env.LISTENER_ENGINE ?? 'gramjs').toLowerCase().trim();
+    return engine !== 'telethon';
+}
+function shouldRunGramjsForSession(session) {
+    if (!gramjsListenerEnabled())
+        return false;
+    const engine = String(session.listener_engine ?? 'gramjs').toLowerCase().trim();
+    return engine !== 'telethon';
+}
 class UserSessionManager {
     constructor(supabase) {
         this.listeners = new Map();
         this.channelChannel = null;
         this.tradeExecutor = null;
         this.supabase = supabase;
+    }
+    getSupabase() {
+        return this.supabase;
     }
     setTradeExecutor(executor) {
         this.tradeExecutor = executor;
@@ -57,15 +70,19 @@ class UserSessionManager {
     async loadAll() {
         if (!workerConfig_1.workerConfig.runsListener)
             return;
+        if (!gramjsListenerEnabled()) {
+            console.log('[sessionManager] LISTENER_ENGINE=telethon — gramjs listener disabled on this service');
+            return;
+        }
         const { data: sessions, error } = await this.supabase
             .from('telegram_sessions')
-            .select('user_id, session_string, phone_number')
+            .select('user_id, session_string, phone_number, listener_engine')
             .eq('is_active', true);
         if (error) {
             console.error('[sessionManager] Failed to load sessions:', error.message);
             return;
         }
-        const owned = (sessions ?? []).filter(s => (0, workerConfig_1.userBelongsToShard)(s.user_id));
+        const owned = (sessions ?? []).filter(s => (0, workerConfig_1.userBelongsToShard)(s.user_id) && shouldRunGramjsForSession(s));
         console.log(`[sessionManager] Loading ${owned.length}/${sessions?.length ?? 0} sessions`
             + ` (shard ${workerConfig_1.workerConfig.shardId}/${workerConfig_1.workerConfig.shardCount})`);
         const staggerMs = Math.max(0, Math.min(30000, Number(process.env.TELEGRAM_MULTI_SESSION_STAGGER_MS ?? 600)));
@@ -84,7 +101,12 @@ class UserSessionManager {
         this.subscribeToChannelChanges();
     }
     async renewAllLeases() {
-        for (const userId of this.listeners.keys()) {
+        const staleMs = Math.max(60000, Math.min(600000, Number(process.env.WORKER_HEALTH_STALE_MS ?? 180000)));
+        for (const [userId, listener] of this.listeners) {
+            if (!listener.isListenerHealthy(staleMs)) {
+                console.warn(`[sessionManager] skip lease renew — listener stale user=${userId}`);
+                continue;
+            }
             await (0, sessionLease_1.renewSessionLease)(this.supabase, userId).catch(err => console.warn(`[sessionManager] lease renew failed ${userId}:`, err));
         }
     }
@@ -118,8 +140,8 @@ class UserSessionManager {
             return;
         const { data: sessions } = await this.supabase
             .from('telegram_sessions')
-            .select('user_id, session_string, is_active');
-        const activeOnShard = (sessions ?? []).filter(s => s.is_active && (0, workerConfig_1.userBelongsToShard)(s.user_id));
+            .select('user_id, session_string, is_active, listener_engine');
+        const activeOnShard = (sessions ?? []).filter(s => s.is_active && (0, workerConfig_1.userBelongsToShard)(s.user_id) && shouldRunGramjsForSession(s));
         const activeSessions = new Set(activeOnShard.map(s => s.user_id));
         for (const session of activeOnShard) {
             if (!this.listeners.has(session.user_id)) {

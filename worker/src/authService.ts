@@ -265,6 +265,7 @@ export class AuthService {
         session_string: sessionString,
         phone_number: pendingPhone,
         is_active: true,
+        listener_engine: 'gramjs',
       }, { onConflict: 'user_id' })
       .select('id')
       .single()

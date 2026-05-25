@@ -536,6 +536,9 @@ export interface CopierEnginePageTranslations {
   channelTelegramId: string
   channelLastHeard: string
   channelNeverHeard: string
+  channelHealthListening: string
+  channelHealthPollOnly: string
+  channelHealthStale: string
   invalidChannelIdentity: string
   manualIdentityRequired: string
   invalidChannelIdFormat: string

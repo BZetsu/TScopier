@@ -27,8 +27,42 @@ function expiresAtIso() {
 }
 /**
  * Claim listener ownership for user_id. Fails if another worker holds a non-expired lease.
+ * Uses Postgres advisory lock + conditional update (acquire_worker_session_lease RPC).
  */
 async function acquireSessionLease(supabase, userId) {
+    const workerId = (0, workerConfig_1.listenerWorkerId)();
+    const expiresAt = expiresAtIso();
+    const { data: acquired, error } = await supabase.rpc('acquire_worker_session_lease', {
+        p_user_id: userId,
+        p_worker_id: workerId,
+        p_role: (0, workerConfig_1.leaseRoleLabel)(),
+        p_shard_id: workerConfig_1.workerConfig.shardId,
+        p_shard_count: workerConfig_1.workerConfig.shardCount,
+        p_expires_at: expiresAt,
+    });
+    if (error) {
+        // Fallback for environments without migration applied yet.
+        console.warn('[sessionLease] RPC acquire failed, using legacy upsert:', error.message);
+        return acquireSessionLeaseLegacy(supabase, userId);
+    }
+    if (acquired === true)
+        return { ok: true };
+    const { data: existing } = await supabase
+        .from('worker_session_leases')
+        .select('worker_id, expires_at')
+        .eq('user_id', userId)
+        .maybeSingle();
+    const held = existing?.worker_id;
+    const exp = existing?.expires_at;
+    return {
+        ok: false,
+        reason: held && exp
+            ? `lease held by ${held} until ${exp}`
+            : 'lease acquire rejected',
+    };
+}
+/** Legacy upsert path when RPC migration is not yet applied. */
+async function acquireSessionLeaseLegacy(supabase, userId) {
     const workerId = (0, workerConfig_1.listenerWorkerId)();
     const now = new Date().toISOString();
     const { data: existing } = await supabase

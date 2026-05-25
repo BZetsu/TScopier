@@ -11,6 +11,7 @@ const tradableSymbol_1 = require("./tradableSymbol");
 const signalQueuePublisher_1 = require("./queue/signalQueuePublisher");
 const signalQueueConfig_1 = require("./queue/signalQueueConfig");
 const tradeSignalPush_1 = require("./tradeSignalPush");
+const listenerEvents_1 = require("./listenerEvents");
 const channelKeywordsCache_1 = require("./channelKeywordsCache");
 const parseSignal_1 = require("./parseSignal");
 const workerMetrics_1 = require("./workerMetrics");
@@ -154,6 +155,7 @@ class UserListener {
         this.lastLiveMessageAt = 0;
         this.isConnected = false;
         this.lastEventAt = 0;
+        this.lastSuccessfulPollAt = 0;
         this.lastReconnectAt = 0;
         this.consecutiveProbeFailures = 0;
         this.onSignalParsed = null;
@@ -250,10 +252,17 @@ class UserListener {
             user_id: this.userId,
             connected: this.isConnected,
             last_event_at: this.lastEventAt,
+            last_successful_poll_at: this.lastSuccessfulPollAt,
             last_reconnect_at: this.lastReconnectAt,
             monitored_channels: this.monitoredChannels.size,
             consecutive_probe_failures: this.consecutiveProbeFailures,
         };
+    }
+    /** Used by session manager to skip lease renew when listener is stale. */
+    isListenerHealthy(staleMs) {
+        const now = Date.now();
+        const lastActivity = Math.max(this.lastEventAt, this.lastSuccessfulPollAt);
+        return this.isConnected && (lastActivity === 0 || now - lastActivity < staleMs);
     }
     // ── channel subscription ──────────────────────────────────────────────
     /**
@@ -294,6 +303,7 @@ class UserListener {
         for (const key of added) {
             const row = lookup.get(key);
             if (row) {
+                await this.warmChannelEntity(row).catch(err => console.warn(`[userListener] entity warmup failed channel=${row.id}:`, err));
                 await this.catchUpChannel(row).catch(err => console.error(`[userListener] catchUp (added) failed for ${row.id}:`, err));
             }
         }
@@ -732,6 +742,17 @@ class UserListener {
             console.warn(`[userListener] monitored message could not map to telegram_channels row user=${this.userId}`
                 + ` chatId=${chatId} username=${chatUsername || '-'} variants=${chatIdVariants.join(',')}`
                 + ` configured=[${configuredSummary}]`);
+            void (0, listenerEvents_1.persistListenerEvent)(this.supabase, {
+                userId: this.userId,
+                eventType: 'unmapped_channel',
+                telegramMessageId: String(message.id),
+                detail: {
+                    chat_id: chatId,
+                    chat_username: chatUsername || null,
+                    variants: chatIdVariants,
+                    configured: configuredSummary,
+                },
+            });
             return;
         }
         await this.logSignal(channelRow, {
@@ -910,7 +931,20 @@ class UserListener {
             return false;
         }
         pipelineTs.t_parse_done = Date.now();
-        void this.persistSignalBackground({
+        if (parseResult.status !== 'parsed') {
+            void this.persistSignalBackground({
+                signalId,
+                channelRow,
+                rawMessage,
+                messageId,
+                parentSignalId,
+                replyToMessageId,
+                isReply,
+                parseResult,
+            });
+            return true;
+        }
+        const persisted = await this.persistSignalSync({
             signalId,
             channelRow,
             rawMessage,
@@ -920,9 +954,8 @@ class UserListener {
             isReply,
             parseResult,
         });
-        if (parseResult.status !== 'parsed') {
-            return true;
-        }
+        if (!persisted)
+            return false;
         pipelineTs.t_dispatch_sent = Date.now();
         const dispatchRow = {
             id: signalId,
@@ -940,40 +973,74 @@ class UserListener {
         console.log(`[userListener] dispatch signal user=${this.userId} signalId=${signalId} channelRow=${channelRow.id} messageId=${messageId}`);
         const dispatchedInProcess = this.onSignalParsed ? this.onSignalParsed(dispatchRow) === true : false;
         const shouldPush = workerConfig_1.workerConfig.runsListener && (!workerConfig_1.workerConfig.runsTrade || !dispatchedInProcess);
-        void (async () => {
-            let queueResult = null;
-            if (shouldPush) {
-                queueResult = await (0, signalQueuePublisher_1.enqueueParsedSignal)(this.supabase, dispatchRow);
+        let queueResult = null;
+        if (shouldPush) {
+            queueResult = await (0, signalQueuePublisher_1.enqueueParsedSignal)(this.supabase, dispatchRow);
+        }
+        const queueCfg = (0, signalQueueConfig_1.signalQueueConfig)();
+        const queueSucceeded = queueResult?.ok === true;
+        const pushFallback = queueCfg.pushFallbackOnQueueFail;
+        const shouldHttpPush = shouldPush && (!queueSucceeded
+            && (pushFallback || !queueResult || queueResult.skipped));
+        void this.supabase.from('trade_execution_logs').insert({
+            user_id: this.userId,
+            signal_id: signalId,
+            action: 'dispatch_route_decision',
+            status: 'success',
+            request_payload: {
+                dispatched_in_process: dispatchedInProcess,
+                should_push: shouldPush,
+                queue_enabled: queueCfg.enabled,
+                queue_enqueued: queueSucceeded,
+                queue_skipped_reason: queueResult?.skipped ? queueResult.reason : null,
+                queue_error: queueResult?.error ?? null,
+                http_push_fallback: shouldHttpPush,
+                runs_trade: workerConfig_1.workerConfig.runsTrade,
+                runs_listener: workerConfig_1.workerConfig.runsListener,
+                persist_before_dispatch: true,
+            },
+        });
+        if (shouldHttpPush) {
+            const pushed = await (0, tradeSignalPush_1.pushParsedSignalToTradeWorkerAwait)(dispatchRow);
+            if (!pushed) {
+                (0, workerMetrics_1.incMetric)('dispatch_push_exhausted');
             }
-            const queueCfg = (0, signalQueueConfig_1.signalQueueConfig)();
-            const queueSucceeded = queueResult?.ok === true;
-            const pushFallback = queueCfg.pushFallbackOnQueueFail;
-            const shouldHttpPush = shouldPush && (!queueSucceeded
-                && (pushFallback || !queueResult || queueResult.skipped));
-            const { error } = await this.supabase.from('trade_execution_logs').insert({
-                user_id: this.userId,
-                signal_id: signalId,
-                action: 'dispatch_route_decision',
-                status: 'success',
-                request_payload: {
-                    dispatched_in_process: dispatchedInProcess,
-                    should_push: shouldPush,
-                    queue_enabled: queueCfg.enabled,
-                    queue_enqueued: queueSucceeded,
-                    queue_skipped_reason: queueResult?.skipped ? queueResult.reason : null,
-                    queue_error: queueResult?.error ?? null,
-                    http_push_fallback: shouldHttpPush,
-                    runs_trade: workerConfig_1.workerConfig.runsTrade,
-                    runs_listener: workerConfig_1.workerConfig.runsListener,
-                },
-            });
-            if (error) {
-                /* best-effort */
+        }
+        return true;
+    }
+    /** Persist signal row before trade dispatch (durable handoff). */
+    async persistSignalSync(args) {
+        const { signalId, channelRow, rawMessage, messageId, parentSignalId, replyToMessageId, isReply, parseResult, } = args;
+        const { error: insertErr } = await this.supabase.from('signals').upsert({
+            id: signalId,
+            user_id: this.userId,
+            channel_id: channelRow.id,
+            raw_message: rawMessage,
+            raw_image_url: null,
+            status: parseResult.status,
+            parsed_data: parseResult.parsed,
+            skip_reason: parseResult.skip_reason,
+            telegram_message_id: messageId,
+            is_modification: isReply,
+            parent_signal_id: parentSignalId,
+            reply_to_message_id: replyToMessageId,
+        }, { onConflict: 'user_id,telegram_message_id', ignoreDuplicates: true });
+        if (insertErr) {
+            console.error(`[userListener] signal upsert failed signalId=${signalId}:`, insertErr.message);
+            return false;
+        }
+        await this.bumpLastSeen(channelRow.id, messageId);
+        let resolvedParent = parentSignalId;
+        if (replyToMessageId && !resolvedParent) {
+            resolvedParent = await this.resolveParentSignalIdForReply(channelRow.id, replyToMessageId);
+            if (resolvedParent) {
+                await this.supabase
+                    .from('signals')
+                    .update({ parent_signal_id: resolvedParent })
+                    .eq('id', signalId);
             }
-            if (shouldHttpPush) {
-                (0, tradeSignalPush_1.pushParsedSignalToTradeWorker)(dispatchRow);
-            }
-        })();
+        }
+        await this.relinkReplyOrphansAfterParentInsert(channelRow.id, messageId, signalId);
         return true;
     }
     /** Edge parse fallback when LISTENER_INLINE_PARSE=false (UI preview path unchanged on edge). */
@@ -1236,7 +1303,16 @@ class UserListener {
         try {
             peer = await this.resolveChannelPeer(row);
         }
-        catch {
+        catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.warn(`[userListener] poll peer resolve failed user=${this.userId} channel=${row.id}:`, msg);
+            (0, workerMetrics_1.incMetric)('poll_peer_resolve_failed');
+            void (0, listenerEvents_1.persistListenerEvent)(this.supabase, {
+                userId: this.userId,
+                eventType: 'poll_peer_resolve_failed',
+                channelRowId: row.id,
+                detail: { error: msg.slice(0, 300) },
+            });
             return;
         }
         let minId = Number(row.last_seen_message_id ?? 0);
@@ -1249,9 +1325,19 @@ class UserListener {
                 ...(minId > 0 ? { minId } : {}),
             }));
         }
-        catch {
+        catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.warn(`[userListener] poll getMessages failed user=${this.userId} channel=${row.id}:`, msg);
+            (0, workerMetrics_1.incMetric)('poll_get_messages_failed');
+            void (0, listenerEvents_1.persistListenerEvent)(this.supabase, {
+                userId: this.userId,
+                eventType: 'poll_error',
+                channelRowId: row.id,
+                detail: { error: msg.slice(0, 300), min_id: minId },
+            });
             return;
         }
+        this.lastSuccessfulPollAt = Date.now();
         if (!batch.length)
             return;
         const sorted = [...batch].sort((a, b) => Number(a.id) - Number(b.id));
@@ -1318,6 +1404,21 @@ class UserListener {
             .sort((a, b) => Number(a.id) - Number(b.id));
         for (const m of recent) {
             await this.logSignal(row, m, { source: 'catchup' });
+        }
+    }
+    async warmChannelEntity(row) {
+        try {
+            await this.resolveChannelPeer(row);
+        }
+        catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.warn(`[userListener] warmChannelEntity failed channel=${row.id}:`, msg);
+            void (0, listenerEvents_1.persistListenerEvent)(this.supabase, {
+                userId: this.userId,
+                eventType: 'peer_resolve_failed',
+                channelRowId: row.id,
+                detail: { error: msg.slice(0, 300) },
+            });
         }
     }
     async resolveChannelPeer(row) {

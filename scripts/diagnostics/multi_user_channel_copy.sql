@@ -56,6 +56,12 @@ from telegram_channels
 where is_active
   and (
     coalesce(nullif(trim(channel_username), ''), '') = ''
-    and (channel_id is null or channel_id !~ '^-?[0-9]+$')
   )
 order by user_id, display_name;
+
+-- 8) Listener audit events (poll errors, unmapped channels — last 2 hours)
+select user_id, channel_row_id, event_type, telegram_message_id, detail, created_at
+from listener_events
+where created_at > now() - interval '2 hours'
+order by created_at desc
+limit 100;

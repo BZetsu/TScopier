@@ -371,6 +371,24 @@ TScopier stores a GramJS **StringSession** in `telegram_sessions.session_string`
 
 **Never run more than one listener replica per shard** with the same user session. See `WORKER_LEASE_*` and `docs/worker-deployment.md` hard rule above.
 
+## Telethon listener (Python)
+
+For users migrated off gramjs, deploy [`telegram-listener/`](../telegram-listener/README.md) as a separate Railway service:
+
+```env
+WORKER_ROLE=listener
+LISTENER_ENGINE=telethon
+TRADE_WORKER_URL=https://your-trade-worker.up.railway.app
+```
+
+Set `telegram_sessions.listener_engine = 'telethon'` per user (gramjs listener skips these rows). Point Supabase Edge `TELEGRAM_LISTENER_URL` at the Python service (falls back to `WORKER_URL`).
+
+**Cutover:** stop gramjs listener for user → set `listener_engine` → verify test signal within 30s (poll backstop).
+
+## Incident triage
+
+See [`docs/telegram-copier-triage.md`](telegram-copier-triage.md) and `scripts/diagnostics/phase0_triage.sh`.
+
 ## Environment reference
 
 See `worker/.env.example` for catch-up, lease, and parse tuning variables.

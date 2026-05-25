@@ -168,8 +168,7 @@ class SignalQueueConsumer {
             },
         });
         try {
-            // Match HTTP push latency: accept in-process (fast path is async), ack after accept.
-            const accepted = this.tradeExecutor.acceptDispatchSignal(signalRow, {
+            const accepted = await this.tradeExecutor.acceptDispatchSignalAwait(signalRow, {
                 priority: job.priority,
                 source: 'queue',
             });

@@ -5,6 +5,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.parseTradeWorkerShardUrls = parseTradeWorkerShardUrls;
 exports.pushParsedSignalToTradeWorker = pushParsedSignalToTradeWorker;
+exports.pushParsedSignalToTradeWorkerAwait = pushParsedSignalToTradeWorkerAwait;
 exports.validateListenerTradeShardConfig = validateListenerTradeShardConfig;
 exports.validateListenerQueueConfig = validateListenerQueueConfig;
 const tradeSignalActions_1 = require("./tradeSignalActions");
@@ -94,7 +95,7 @@ async function logPushAttemptToDb(row, status, payload) {
         /* best-effort */
     }
 }
-async function postDispatchSignal(url, token, signalBody, priority, timeoutMs) {
+async function postDispatchSignal(url, token, signalBody, priority, timeoutMs, awaitExecution = false) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort('trade-push-timeout'), timeoutMs);
     try {
@@ -104,7 +105,12 @@ async function postDispatchSignal(url, token, signalBody, priority, timeoutMs) {
                 'Content-Type': 'application/json',
                 'x-internal-token': token,
             },
-            body: JSON.stringify({ signal: signalBody, priority, source: 'listener_push' }),
+            body: JSON.stringify({
+                signal: signalBody,
+                priority,
+                source: 'listener_push',
+                await: awaitExecution,
+            }),
             signal: controller.signal,
         });
         if (res.ok) {
@@ -126,25 +132,22 @@ async function postDispatchSignal(url, token, signalBody, priority, timeoutMs) {
         clearTimeout(timer);
     }
 }
-/**
- * Fire-and-forget POST to trade worker with short retry on transient failures.
- */
-function pushParsedSignalToTradeWorker(row) {
+async function pushParsedSignalToTradeWorkerInner(row, opts) {
     if (!tradePushEnabled()) {
         console.warn('[tradeSignalPush] disabled (TRADE_SIGNAL_PUSH_ENABLED=false)');
-        return;
+        return false;
     }
     const token = internalToken();
     if (!token) {
         console.warn('[tradeSignalPush] missing WORKER_INTERNAL_TOKEN — cannot push to trade worker');
-        return;
+        return false;
     }
     const action = (0, tradeSignalActions_1.parsedAction)(row.parsed_data);
     const baseUrl = pickTradeWorkerUrl(action, row.user_id);
     if (!baseUrl) {
         console.warn(`[tradeSignalPush] no trade worker URL for action=${action} user=${row.user_id}`
             + ' — set TRADE_WORKER_URL / TRADE_MGMT_WORKER_URL on listener');
-        return;
+        return false;
     }
     const timeoutMs = Math.max(500, Math.min(10000, Number(process.env.TRADE_SIGNAL_PUSH_TIMEOUT_MS ?? 4000)));
     const url = `${baseUrl}/internal/dispatch-signal`;
@@ -162,42 +165,54 @@ function pushParsedSignalToTradeWorker(row) {
         created_at: row.created_at,
         pipeline_ts: row.pipeline_ts,
     };
-    void (async () => {
-        await logPushAttemptToDb(row, 'success', {
+    await logPushAttemptToDb(row, 'success', {
+        run_id: 'latency-v3',
+        phase: 'start',
+        action,
+        base_url: baseUrl,
+        timeout_ms: timeoutMs,
+        max_attempts: PUSH_MAX_ATTEMPTS,
+        await_execution: opts?.awaitExecution === true,
+    });
+    for (let attempt = 1; attempt <= PUSH_MAX_ATTEMPTS; attempt++) {
+        const attemptStartedAt = Date.now();
+        const result = await postDispatchSignal(url, token, signalBody, priority, timeoutMs, opts?.awaitExecution === true);
+        await logPushAttemptToDb(row, result.ok ? 'success' : 'failed', {
             run_id: 'latency-v3',
-            phase: 'start',
+            phase: 'attempt',
             action,
-            base_url: baseUrl,
-            timeout_ms: timeoutMs,
-            max_attempts: PUSH_MAX_ATTEMPTS,
+            attempt,
+            ok: result.ok,
+            status_code: result.status,
+            retryable: result.retryable,
+            elapsed_ms: Date.now() - attemptStartedAt,
+            detail: result.detail.slice(0, 120),
         });
-        for (let attempt = 1; attempt <= PUSH_MAX_ATTEMPTS; attempt++) {
-            const attemptStartedAt = Date.now();
-            const result = await postDispatchSignal(url, token, signalBody, priority, timeoutMs);
-            await logPushAttemptToDb(row, result.ok ? 'success' : 'failed', {
-                run_id: 'latency-v3',
-                phase: 'attempt',
-                action,
-                attempt,
-                ok: result.ok,
-                status_code: result.status,
-                retryable: result.retryable,
-                elapsed_ms: Date.now() - attemptStartedAt,
-                detail: result.detail.slice(0, 120),
-            });
-            if (result.ok)
-                return;
-            const reason = result.status > 0
-                ? `status=${result.status} ${result.detail}`
-                : result.detail;
-            if (!result.retryable || attempt >= PUSH_MAX_ATTEMPTS) {
-                logPushFailed(row, baseUrl, action, reason, attempt);
-                return;
-            }
-            const backoffMs = PUSH_RETRY_BASE_MS * attempt;
-            await sleep(backoffMs);
+        if (result.ok)
+            return true;
+        const reason = result.status > 0
+            ? `status=${result.status} ${result.detail}`
+            : result.detail;
+        if (!result.retryable || attempt >= PUSH_MAX_ATTEMPTS) {
+            logPushFailed(row, baseUrl, action, reason, attempt);
+            return false;
         }
-    })();
+        const backoffMs = PUSH_RETRY_BASE_MS * attempt;
+        await sleep(backoffMs);
+    }
+    return false;
+}
+/**
+ * Fire-and-forget POST to trade worker with short retry on transient failures.
+ */
+function pushParsedSignalToTradeWorker(row) {
+    void pushParsedSignalToTradeWorkerInner(row).catch(err => {
+        console.warn('[tradeSignalPush] push failed:', err instanceof Error ? err.message : err);
+    });
+}
+/** Awaitable push — used after signals row is persisted (durable handoff). */
+async function pushParsedSignalToTradeWorkerAwait(row) {
+    return pushParsedSignalToTradeWorkerInner(row, { awaitExecution: true });
 }
 /**
  * Listener startup check: TRADE_WORKER_SHARD_URLS count must match TRADE_WORKER_SHARD_COUNT.

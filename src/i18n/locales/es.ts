@@ -454,6 +454,9 @@ export const es: Translations = {
     channelTelegramId: 'ID de Telegram: {id}',
     channelLastHeard: 'Último mensaje: {time}',
     channelNeverHeard: 'Nunca recibido de Telegram',
+    channelHealthListening: 'Escuchando',
+    channelHealthPollOnly: 'Solo sondeo (eventos en vivo inactivos)',
+    channelHealthStale: 'Inactivo — sin actividad reciente en Telegram',
     invalidChannelIdentity:
       'ID de Telegram no válido — elimine este canal y vuelva a añadirlo desde el selector de Telegram arriba.',
     manualIdentityRequired: 'Introduzca un ID numérico de canal de Telegram o @usuario.',
