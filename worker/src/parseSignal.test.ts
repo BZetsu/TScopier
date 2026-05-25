@@ -78,4 +78,86 @@ describe('parseChannelMessageSync', () => {
     assert.equal(result.parsed.action, 'buy')
     assert.equal(result.parsed.symbol, 'EURUSD')
   })
+
+  it('parses hash-numbered TP tiers (TP #1: / TP #2: format)', () => {
+    const msg = `🔴 Sell XAUUSD @ 4567 
+
+TP #1: 4564
+
+TP #2: 4527
+
+__
+
+SL: 4577 (4577.10)`
+    const result = parseChannelMessageSync(msg, DEFAULT_CHANNEL_KEYWORDS, lexicon)
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.action, 'sell')
+    assert.equal(result.parsed.symbol, 'XAUUSD')
+    assert.equal(result.parsed.entry_price, 4567)
+    assert.equal(result.parsed.sl, 4577)
+    assert.deepEqual(result.parsed.tp, [4564, 4527])
+  })
+
+  it('parses slash-separated TP label (TP: 4557 / 4527)', () => {
+    const msg = `Gold Sell now:
+TP: 4557 / 4527
+SL: 4577`
+    const result = parseChannelMessageSync(msg, DEFAULT_CHANNEL_KEYWORDS, lexicon)
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.action, 'sell')
+    assert.equal(result.parsed.sl, 4577)
+    assert.deepEqual(result.parsed.tp, [4557, 4527])
+  })
+
+  it('infers TP/SL from bare prices on sell now signal', () => {
+    const msg = `Gold Sell now:
+4557 / 4527
+4577`
+    const result = parseChannelMessageSync(msg, DEFAULT_CHANNEL_KEYWORDS, lexicon)
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.action, 'sell')
+    assert.equal(result.parsed.sl, 4577)
+    assert.deepEqual(result.parsed.tp, [4557, 4527])
+  })
+
+  it('parses follow-up sell with @ entry and numbered TPs', () => {
+    const msg = `Gold sell now @ 4567
+TP1: 4564
+TP2: 4527
+SL: 4577 (4577.10)`
+    const result = parseChannelMessageSync(msg, DEFAULT_CHANNEL_KEYWORDS, lexicon)
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.action, 'sell')
+    assert.equal(result.parsed.entry_price, 4567)
+    assert.equal(result.parsed.sl, 4577)
+    assert.deepEqual(result.parsed.tp, [4564, 4527])
+  })
+
+  it('parses symbol-less parameter follow-up as modify', () => {
+    const msg = `Entry price: 4567
+TP1: 4564
+TP2: 4527
+SL: 4577 (4577.10)`
+    const result = parseChannelMessageSync(msg, DEFAULT_CHANNEL_KEYWORDS, lexicon)
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.action, 'modify')
+    assert.equal(result.parsed.symbol, null)
+    assert.equal(result.parsed.entry_price, 4567)
+    assert.equal(result.parsed.sl, 4577)
+    assert.deepEqual(result.parsed.tp, [4564, 4527])
+  })
+
+  it('parses re-enter sell with stops', () => {
+    const msg = `Gold re-enter sell @ 4567
+TP1: 4564
+TP2: 4527
+SL: 4577`
+    const result = parseChannelMessageSync(msg, DEFAULT_CHANNEL_KEYWORDS, lexicon)
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.action, 'sell')
+    assert.equal(result.parsed.re_enter, true)
+    assert.equal(result.parsed.entry_price, 4567)
+    assert.equal(result.parsed.sl, 4577)
+    assert.deepEqual(result.parsed.tp, [4564, 4527])
+  })
 })

@@ -107,6 +107,22 @@ Listener logs to grep: `heuristic_rejected`, `duplicate_message_skipped`, `parse
 
 **SIGNALS 2 missing but query #13 shows Signal Tester:** run query **#14** (ingest health) and **#15** (duplicate channel rows). Deactivate stale duplicates with [`prune_duplicate_telegram_channels.sql`](../scripts/diagnostics/prune_duplicate_telegram_channels.sql), then redeploy Telethon. Check query **#12** for `duplicate_message_skipped` or `signal_persist_failed` on the SIGNALS 2 `channel_row_id`.
 
+**TPs ignored on signal (e.g. `TP #1: 4564`):** Parser must extract numbered tiers (`extractTpLevels` in [`worker/src/parseSignal.ts`](../worker/src/parseSignal.ts)). Redeploy **trade worker** (Telethon `/internal/parse-signal`). In Copier Logs, confirm `parsed_data.tp` lists all levels.
+
+**Multiple broker TP legs:** Parsing `TP #1` and `TP #2` fills `parsed_data.tp`, but execution depends on **Configure Trading → trade style**:
+- **single** (default): one order uses **`tp[0]`** only (first take-profit).
+- **multi**: splits volume across legs per enabled **TP lots** tiers (`tp_lots` in manual settings).
+
+Use **multi** when the channel posts two take-profits and you want two separate broker positions/TPs.
+
+**Follow-up vs new trade (SL/TP parameter posts):** When a channel already has an open basket on the same instrument and direction, a follow-up message that includes SL and/or TP (even with `@ entry` or `Entry price:`) **modifies** the existing basket — it does not open another trade. This applies within the merge time window (4 hours) on the same channel without requiring a Telegram reply thread.
+
+**`re-enter` keyword:** If the message contains `re-enter` / `reenter`, the copier treats it as an explicit request to **add a new trade** with the given parameters instead of modifying the open basket.
+
+**Bare prices without labels:** On entry signals, unlabeled prices are classified by direction — for sells, higher prices become SL and lower prices become TPs (relative to entry when present). Example: `4557 / 4527` and `4577` on a sell → TPs 4557 & 4527, SL 4577.
+
+**Symbol-less parameter posts:** Messages with only `Entry price:` / TP / SL (no Gold/BUY/SELL) parse as `modify` and target open trades on that channel via the management executor.
+
 ## 8. Incident note template
 
 ```

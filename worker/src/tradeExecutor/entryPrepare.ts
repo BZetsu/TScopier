@@ -26,6 +26,7 @@ import { findActiveNewsBlackout } from '../newsTrading/blackout'
 import { getCalendarEventsCached } from '../newsTrading/calendarProvider'
 import { isNewsTradingEnabled } from '../newsTrading/settings'
 import { shouldRouteAsBasketParameterRefresh } from '../multiTradeMerge'
+import { parsedHasReEnterIntent } from '../signalPriceInference'
 import {
   applyChannelParamsToVirtualPendingList,
   loadChannelActiveTradeParamsForSymbol,
@@ -91,11 +92,80 @@ export type PrepareEntryResult =
   | { ok: false; outcome: SendOrderOutcome }
   | { ok: true; prep: PreparedEntry }
 
+/** Fill missing symbol for re-enter posts that omit instrument name. */
+async function resolveReEnterSymbolFromChannel(
+  ctx: TradeExecutorContext,
+  signal: SignalRow,
+  broker: BrokerRow,
+  parsed: ParsedSignal,
+): Promise<ParsedSignal> {
+  if (!parsedHasReEnterIntent(parsed)) return parsed
+  if (parsed.symbol?.trim()) return parsed
+  if (!signal.channel_id) return parsed
+
+  const direction = String(parsed.action ?? '').toLowerCase()
+  if (direction !== 'buy' && direction !== 'sell') return parsed
+
+  const { data: openTrades, error } = await ctx.supabase
+    .from('trades')
+    .select('symbol, signal_id, opened_at')
+    .eq('user_id', signal.user_id)
+    .eq('broker_account_id', broker.id)
+    .eq('status', 'open')
+    .eq('direction', direction)
+    .order('opened_at', { ascending: false })
+    .limit(100)
+  if (error || !openTrades?.length) return parsed
+
+  const signalIds = [...new Set(
+    (openTrades as { signal_id: string }[]).map(r => r.signal_id).filter(Boolean),
+  )]
+  if (!signalIds.length) return parsed
+
+  const { data: sigRows } = await ctx.supabase
+    .from('signals')
+    .select('id, channel_id')
+    .in('id', signalIds)
+  const channelSignalIds = new Set(
+    ((sigRows ?? []) as { id: string; channel_id: string | null }[])
+      .filter(s => s.channel_id === signal.channel_id)
+      .map(s => s.id),
+  )
+  if (!channelSignalIds.size) return parsed
+
+  const symbols = new Set<string>()
+  for (const row of openTrades as { symbol: string; signal_id: string }[]) {
+    if (!channelSignalIds.has(row.signal_id)) continue
+    const sym = row.symbol?.trim()
+    if (sym) symbols.add(sym)
+  }
+  if (symbols.size !== 1) {
+    if (symbols.size > 1) {
+      await ctx.logSendSkipped(signal, broker, 're_enter_ambiguous_channel_symbols', {
+        symbols: [...symbols],
+        channel_id: signal.channel_id,
+      })
+    }
+    return parsed
+  }
+
+  const resolvedSymbol = [...symbols][0]!
+  return { ...parsed, symbol: resolvedSymbol }
+}
+
 export async function prepareEntryExecution(
   ctx: TradeExecutorContext,
   args: EntryArgs,
 ): Promise<PrepareEntryResult> {
-  const { signal, parsed, op, broker, channelKeywords, pipelineT0, sendOpts } = args
+  const { signal, op, broker, channelKeywords, pipelineT0, sendOpts } = args
+  let parsed = args.parsed
+  parsed = await resolveReEnterSymbolFromChannel(ctx, signal, broker, parsed)
+  if (parsedHasReEnterIntent(parsed) && !parsed.symbol?.trim()) {
+    await ctx.logSendSkipped(signal, broker, 're_enter_missing_symbol_context', {
+      channel_id: signal.channel_id,
+    })
+    return { ok: false, outcome: {} }
+  }
   const liveEntryFast = sendOpts?.liveEntryFast === true
   const commentPrefix = sendOpts?.commentPrefix ?? buildTscopierCommentPrefix(signal.id)
   if (!hasMetatraderApiConfigured()) return { ok: false, outcome: {} }

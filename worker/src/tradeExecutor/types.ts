@@ -33,6 +33,7 @@ export type ParsedSignal = {
   open_tp?: boolean
   partial_close_fraction?: number | null
   raw_instruction?: string
+  re_enter?: boolean
 }
 
 export interface SignalRow {

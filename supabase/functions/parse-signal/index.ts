@@ -5,6 +5,13 @@ import {
   isTradableInstrumentSymbol,
   sanitizeParsedSymbol,
 } from "../_shared/tradableSymbol.ts"
+import {
+  classifyPricesByDirection,
+  detectReEnterIntent,
+  entryReferenceFromParsed,
+  extractUnlabeledPrices,
+  type TradeDirection,
+} from "../_shared/signalPriceInference.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -26,6 +33,7 @@ interface ParsedSignal {
   raw_instruction: string
   open_tp?: boolean
   partial_close_fraction?: number | null
+  re_enter?: boolean
 }
 
 type ChannelLexiconRow = {
@@ -224,14 +232,48 @@ function buildTpRegex(extraLabels: string[] = []): RegExp {
 
 function extractTpLevels(message: string, extraLabels: string[] = []): number[] {
   const text = String(message ?? "")
-  const rx = buildTpRegex(extraLabels)
-  const matches = [...text.matchAll(rx)]
-  const values = matches.map((m) => Number(m[1])).filter((n) => Number.isFinite(n))
-  if (values.length) return values
-  const compact = [...text.matchAll(/\b(?:tp|target)\s*\d+\s+(\d+(?:\.\d+)?)/gi)]
-    .map((m) => Number(m[1]))
-    .filter((n) => Number.isFinite(n))
-  return compact
+  type TpHit = { index: number; value: number }
+  const hits: TpHit[] = []
+
+  const collect = (rx: RegExp) => {
+    for (const m of text.matchAll(rx)) {
+      const value = Number(m[1])
+      if (!Number.isFinite(value)) continue
+      hits.push({ index: m.index ?? 0, value })
+    }
+  }
+
+  collect(buildTpRegex(extraLabels))
+  collect(/\b(?:tp|take\s*profit|target)\s*#\s*\d+\s*[:=\-]\s*(\d+(?:\.\d+)?)/gi)
+  collect(/\b(?:tp|take\s*profit|target)\s+\d+\s*[:=\-]\s*(\d+(?:\.\d+)?)/gi)
+  collect(/\b(?:tp|target)\s*\d+\s+(\d+(?:\.\d+)?)/gi)
+  for (const m of text.matchAll(
+    /\b(?:tp|take\s*profit|target)\s*[:=]?\s*((?:\d+(?:\.\d+)?(?:\s*(?:\/|,|and|\|)\s*)?)+\d+(?:\.\d+)?)/gi,
+  )) {
+    const block = m[1] ?? ''
+    const base = m.index ?? 0
+    const offset = m[0].indexOf(block)
+    for (const part of block.split(/\s*(?:\/|,|\band\b|\|)\s*/i)) {
+      const value = Number(part.trim())
+      if (!Number.isFinite(value) || value <= 0) continue
+      hits.push({ index: base + offset + block.indexOf(part), value })
+    }
+  }
+
+  if (!hits.length) return []
+
+  hits.sort((a, b) => a.index - b.index)
+  const seenIndex = new Set<number>()
+  const seenValues = new Set<number>()
+  const values: number[] = []
+  for (const hit of hits) {
+    if (seenIndex.has(hit.index)) continue
+    seenIndex.add(hit.index)
+    if (seenValues.has(hit.value)) continue
+    seenValues.add(hit.value)
+    values.push(hit.value)
+  }
+  return values
 }
 
 function detectOpenTp(message: string): boolean {
@@ -307,6 +349,8 @@ function normalizeParsedFromModel(raw: unknown, fallbackText: string): ParsedSig
     if (Number.isFinite(n) && n > 0 && n <= 1) partial_close_fraction = n
   }
 
+  const re_enter = j.re_enter === true || detectReEnterIntent(raw_instruction)
+
   return {
     action,
     symbol,
@@ -320,6 +364,7 @@ function normalizeParsedFromModel(raw: unknown, fallbackText: string): ParsedSig
     raw_instruction,
     open_tp: Boolean(j.open_tp ?? detectOpenTp(fallbackText)),
     ...(partial_close_fraction != null ? { partial_close_fraction } : {}),
+    ...(re_enter ? { re_enter: true } : {}),
   }
 }
 
@@ -551,6 +596,149 @@ function extractOptionalEntryAnchor(
   return { entry_price, entry_zone_low, entry_zone_high }
 }
 
+function extractSlFromMessage(
+  message: string,
+  channelKeywords: ChannelKeywords,
+): number | null {
+  const text = message.replace(/\s+/g, ' ').trim()
+  const delim = channelKeywords.additional.delimiters
+  const slPriceLabels = [
+    ...splitKeywordAliases(channelKeywords.signal.sl, delim),
+    ...splitKeywordAliases(channelKeywords.update.set_sl, delim),
+    ...splitKeywordAliases(channelKeywords.update.adjust_sl, delim),
+  ]
+  const slMatchStandard = text.match(/\b(?:sl|stop\s*loss)\s*[:=]?\s*(\d+(?:\.\d+)?)/i)
+  if (slMatchStandard?.[1]) {
+    const n = Number(slMatchStandard[1])
+    if (Number.isFinite(n) && n > 0) return n
+  }
+  const slMatchTo = text.match(/\b(?:sl|stop\s*loss)\s+to\s+(\d+(?:\.\d+)?)/i)
+  if (slMatchTo?.[1]) {
+    const n = Number(slMatchTo[1])
+    if (Number.isFinite(n) && n > 0) return n
+  }
+  const fromLabel = extractPriceByLabels(text, slPriceLabels)
+  return fromLabel != null && Number.isFinite(fromLabel) && fromLabel > 0 ? fromLabel : null
+}
+
+function buildExtraTpLabels(
+  lexicon: ChannelLexiconRow | null,
+  channelKeywords: ChannelKeywords,
+): string[] {
+  const delim = channelKeywords.additional.delimiters
+  return [
+    ...(lexicon?.tp_aliases ?? []),
+    ...(lexicon?.target_aliases ?? []),
+    ...splitKeywordAliases(channelKeywords.signal.tp, delim),
+    ...splitKeywordAliases(channelKeywords.update.set_tp, delim),
+    ...splitKeywordAliases(channelKeywords.update.adjust_tp, delim),
+  ]
+}
+
+function hasParameterEvidence(message: string, channelKeywords: ChannelKeywords): boolean {
+  const text = message.replace(/\s+/g, ' ').trim()
+  const delim = channelKeywords.additional.delimiters
+  if (extractSlFromMessage(message, channelKeywords) != null) return true
+  if (extractTpLevels(message, buildExtraTpLabels(null, channelKeywords)).length > 0) return true
+  if (/\bentry\s*(?:price)?\s*[:=]\s*\d/i.test(text)) return true
+  if (/@\s*\d+(?:\.\d+)?/.test(text)) return true
+  if (hasAnyKeyword(message, splitKeywordAliases(channelKeywords.signal.entry_point, delim))) return true
+  return extractUnlabeledPrices(message).length > 0
+}
+
+function messageHasSideKeywords(message: string, channelKeywords: ChannelKeywords): boolean {
+  const delim = channelKeywords.additional.delimiters
+  const buyAliases = Array.from(new Set(['buy', 'long', ...splitKeywordAliases(channelKeywords.signal.buy, delim)]))
+  const sellAliases = Array.from(new Set(['sell', 'short', ...splitKeywordAliases(channelKeywords.signal.sell, delim)]))
+  return parseSideFromKeywords(message, buyAliases) !== parseSideFromKeywords(message, sellAliases)
+}
+
+function parseChannelParameterFollowUp(
+  message: string,
+  lexicon: ChannelLexiconRow | null,
+  channelKeywords: ChannelKeywords,
+): ParsedSignal | null {
+  if (!hasParameterEvidence(message, channelKeywords)) return null
+  if (extractTradableSymbolFromMessage(message)) return null
+  if (messageHasSideKeywords(message, channelKeywords) && !detectReEnterIntent(message)) return null
+
+  const extraTp = buildExtraTpLabels(lexicon, channelKeywords)
+  const sl = extractSlFromMessage(message, channelKeywords)
+  const tp = extractTpLevels(message, extraTp)
+  const { entry_price, entry_zone_low, entry_zone_high } = extractOptionalEntryAnchor(message, channelKeywords)
+  const reEnter = detectReEnterIntent(message)
+
+  if (reEnter) {
+    const delim = channelKeywords.additional.delimiters
+    const buyAliases = Array.from(new Set(['buy', 'long', ...splitKeywordAliases(channelKeywords.signal.buy, delim)]))
+    const sellAliases = Array.from(new Set(['sell', 'short', ...splitKeywordAliases(channelKeywords.signal.sell, delim)]))
+    const isBuy = parseSideFromKeywords(message, buyAliases)
+    const isSell = parseSideFromKeywords(message, sellAliases)
+    if (isBuy === isSell) return null
+    return {
+      action: isBuy ? 'buy' : 'sell',
+      symbol: null,
+      entry_price,
+      entry_zone_low,
+      entry_zone_high,
+      sl,
+      tp,
+      lot_size: null,
+      confidence: 0.91,
+      raw_instruction: message,
+      open_tp: detectOpenTp(message),
+      re_enter: true,
+    }
+  }
+
+  return {
+    action: 'modify',
+    symbol: null,
+    entry_price,
+    entry_zone_low,
+    entry_zone_high,
+    sl,
+    tp,
+    lot_size: null,
+    confidence: 0.9,
+    raw_instruction: message,
+    open_tp: detectOpenTp(message),
+  }
+}
+
+function applyDirectionalPriceInference(
+  parsed: ParsedSignal,
+  rawMessage: string,
+): ParsedSignal {
+  const action = String(parsed.action ?? '').toLowerCase()
+  if (action !== 'buy' && action !== 'sell') return parsed
+
+  const hasSl = typeof parsed.sl === 'number' && Number.isFinite(parsed.sl) && parsed.sl > 0
+  const hasTp = (parsed.tp ?? []).some(t => typeof t === 'number' && Number.isFinite(t) && t > 0)
+  if (hasSl && hasTp) return parsed
+
+  const bare = extractUnlabeledPrices(rawMessage)
+  if (!bare.length) return parsed
+
+  const classified = classifyPricesByDirection(
+    action as TradeDirection,
+    entryReferenceFromParsed(parsed),
+    bare,
+  )
+
+  return {
+    ...parsed,
+    sl: hasSl ? parsed.sl : (classified.sl ?? parsed.sl),
+    tp: hasTp ? parsed.tp : (classified.tp.length ? classified.tp : parsed.tp),
+  }
+}
+
+function applyReEnterFlag(parsed: ParsedSignal, rawMessage: string): ParsedSignal {
+  if (parsed.re_enter === true) return parsed
+  if (!detectReEnterIntent(rawMessage)) return parsed
+  return { ...parsed, re_enter: true }
+}
+
 function parseSimpleSignal(
   message: string,
   lexicon: ChannelLexiconRow | null,
@@ -766,7 +954,9 @@ function applyRawSymbolRepair(parsed: ParsedSignal, rawMsg: string): ParsedSigna
 
 function dropInvalidTradeSymbol(parsed: ParsedSignal): ParsedSignal {
   const symbol = sanitizeParsedSymbol(parsed.symbol)
-  const needsSymbol = parsed.action === "buy" || parsed.action === "sell"
+  const needsSymbol =
+    (parsed.action === "buy" || parsed.action === "sell")
+    && parsed.re_enter !== true
   if (needsSymbol && !symbol) {
     return {
       ...parsed,
@@ -839,6 +1029,7 @@ async function parseRawChannelMessage(
   const explicitIgnore = hasAnyKeyword(rawMessage, ignoreAliases)
   const keywordMatch =
     parseDeterministicManagement(rawMessage, lexicon, channelKeywords) ??
+    parseChannelParameterFollowUp(rawMessage, lexicon, channelKeywords) ??
     parseSimpleSignal(rawMessage, lexicon, channelKeywords) ??
     parseEntryFromKeywords(rawMessage, lexicon, channelKeywords)
 
@@ -858,11 +1049,16 @@ async function parseRawChannelMessage(
       open_tp: false,
     }
 
-  const parsed = dropInvalidTradeSymbol(
-    applyRawSymbolRepair(
+  const enriched = applyReEnterFlag(
+    applyDirectionalPriceInference(
       normalizeParsedFromModel(rawParsed, rawMessage),
       rawMessage,
     ),
+    rawMessage,
+  )
+
+  const parsed = dropInvalidTradeSymbol(
+    applyRawSymbolRepair(enriched, rawMessage),
   )
 
   const status = parsed.action === "ignore" ? "skipped" : "parsed"

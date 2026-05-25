@@ -27,13 +27,26 @@ test('parsedHasSlOrTp aliases isParameterFollowUpSignal', () => {
   assert.equal(parsedHasSlOrTp({ action: 'buy', sl: null, tp: null }), false)
 })
 
-test('shouldRouteAsBasketParameterRefresh: priced entry + SL/TP is fresh entry', () => {
+test('shouldRouteAsBasketParameterRefresh: priced entry + SL/TP is parameter refresh', () => {
   assert.equal(
     shouldRouteAsBasketParameterRefresh({
       action: 'sell',
       entry_price: 4550,
       sl: 4570,
       tp: [4530, 4510, 4490],
+    }),
+    true,
+  )
+})
+
+test('shouldRouteAsBasketParameterRefresh: re-enter bypasses parameter refresh', () => {
+  assert.equal(
+    shouldRouteAsBasketParameterRefresh({
+      action: 'sell',
+      entry_price: 4567,
+      sl: 4577,
+      tp: [4564, 4527],
+      re_enter: true,
     }),
     false,
   )

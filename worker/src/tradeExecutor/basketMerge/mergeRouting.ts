@@ -78,6 +78,7 @@ import {
   buildPerLegStopTargets,
   legacyMergeLinkingEnabled,
   mergePlanImmediateOrders,
+  parsedHasReEnterIntent,
   resolveLatestOpenBasketAnchor,
   shouldRouteAsBasketParameterRefresh,
   type MergeModifySummary,
@@ -169,6 +170,7 @@ export async function tryParameterFollowUpMergeModifyOnly(ctx: TradeExecutorCont
       strictEntryPrefetch, commentPrefix,
     } = args
     if (!hasMetatraderApiConfigured()) return { handled: false }
+    if (parsedHasReEnterIntent(parsed)) return { handled: false }
     if (!shouldRouteAsBasketParameterRefresh(parsed)) return { handled: false }
     const api = ctx.apiFor(broker)
     if (!api) return { handled: false }
@@ -216,9 +218,10 @@ export async function tryParameterFollowUpMergeModifyOnly(ctx: TradeExecutorCont
     // Exception: when add_new_trades_to_existing=false, the strategy is "single slot";
     // a same-direction signal carrying explicit stops should refresh that live slot.
     const manual = (broker.manual_settings ?? {}) as ManualSettings
-    const allowUnlinkedSingleSlotRefresh =
-      manual.add_new_trades_to_existing === false && parsedSignalHasExplicitStops(parsed)
-    if (!link.replyOk && !link.threadLinksAnchor && !link.parentLinksAnchor && !allowUnlinkedSingleSlotRefresh) {
+    const allowUnlinkedRefresh =
+      (manual.add_new_trades_to_existing === false && parsedSignalHasExplicitStops(parsed))
+      || link.parameterRefreshSameChannel
+    if (!link.replyOk && !link.threadLinksAnchor && !link.parentLinksAnchor && !allowUnlinkedRefresh) {
       void ctx.supabase.from('trade_execution_logs').insert({
         user_id: signal.user_id,
         signal_id: signal.id,
@@ -351,6 +354,7 @@ export async function tryMergeSignalIntoExistingOpenTrade(ctx: TradeExecutorCont
     if (!hasMetatraderApiConfigured()) return { handled: false }
     const api = ctx.apiFor(broker)
     if (!api) return { handled: false }
+    if (parsedHasReEnterIntent(parsed)) return { handled: false }
     const manual = (broker.manual_settings ?? {}) as ManualSettings
     if (manual.add_new_trades_to_existing !== true) return { handled: false }
     if (shouldRouteAsBasketParameterRefresh(parsed)) return { handled: false }

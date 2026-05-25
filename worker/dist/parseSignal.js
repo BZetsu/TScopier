@@ -138,15 +138,34 @@ function buildTpRegex(extraLabels = []) {
 }
 function extractTpLevels(message, extraLabels = []) {
     const text = String(message ?? "");
-    const rx = buildTpRegex(extraLabels);
-    const matches = [...text.matchAll(rx)];
-    const values = matches.map((m) => Number(m[1])).filter((n) => Number.isFinite(n));
-    if (values.length)
-        return values;
-    const compact = [...text.matchAll(/\b(?:tp|target)\s*\d+\s+(\d+(?:\.\d+)?)/gi)]
-        .map((m) => Number(m[1]))
-        .filter((n) => Number.isFinite(n));
-    return compact;
+    const hits = [];
+    const collect = (rx) => {
+        for (const m of text.matchAll(rx)) {
+            const value = Number(m[1]);
+            if (!Number.isFinite(value))
+                continue;
+            hits.push({ index: m.index ?? 0, value });
+        }
+    };
+    collect(buildTpRegex(extraLabels));
+    // TP #1: 4564 / TP#2: 4527 (hash-numbered tiers — common in signal channels)
+    collect(/\b(?:tp|take\s*profit|target)\s*#\s*\d+\s*[:=\-]\s*(\d+(?:\.\d+)?)/gi);
+    // TP 1: 4564 (numbered without hash)
+    collect(/\b(?:tp|take\s*profit|target)\s+\d+\s*[:=\-]\s*(\d+(?:\.\d+)?)/gi);
+    // TP1 4564 (space-separated tier number)
+    collect(/\b(?:tp|target)\s*\d+\s+(\d+(?:\.\d+)?)/gi);
+    if (!hits.length)
+        return [];
+    hits.sort((a, b) => a.index - b.index);
+    const seenIndex = new Set();
+    const values = [];
+    for (const hit of hits) {
+        if (seenIndex.has(hit.index))
+            continue;
+        seenIndex.add(hit.index);
+        values.push(hit.value);
+    }
+    return values;
 }
 function detectOpenTp(message) {
     const t = String(message ?? "");

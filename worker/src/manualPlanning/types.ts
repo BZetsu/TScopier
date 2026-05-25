@@ -13,6 +13,8 @@ export interface ParsedSignal {
   open_tp?: boolean
   partial_close_fraction?: number | null
   raw_instruction?: string
+  /** Explicit channel intent to open a new trade (not modify existing). */
+  re_enter?: boolean
 }
 
 export interface ManualTpLot {
