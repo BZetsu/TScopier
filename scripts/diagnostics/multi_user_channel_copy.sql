@@ -65,3 +65,70 @@ from listener_events
 where created_at > now() - interval '2 hours'
 order by created_at desc
 limit 100;
+
+-- 9) Parse funnel by channel (last 2 hours) — where ingest stops
+select tc.display_name,
+       tc.id as channel_row_id,
+       s.status,
+       s.skip_reason,
+       count(*) as n
+from signals s
+join telegram_channels tc on tc.id = s.channel_id
+where s.created_at > now() - interval '2 hours'
+group by 1, 2, 3, 4
+order by 1, 3, 4;
+
+-- 10) Latest signal row per channel (24h) — did ANY message persist?
+select distinct on (s.channel_id)
+  tc.display_name,
+  tc.id as channel_row_id,
+  s.status,
+  s.skip_reason,
+  left(s.raw_message, 80) as preview,
+  s.created_at
+from signals s
+join telegram_channels tc on tc.id = s.channel_id
+where s.created_at > now() - interval '24 hours'
+order by s.channel_id, s.created_at desc;
+
+-- 11) Per-channel parse context (keywords + lexicon for replay / diff)
+select tc.user_id,
+       tc.display_name,
+       tc.id as channel_row_id,
+       tc.channel_keywords,
+       l.action_aliases,
+       l.tp_aliases,
+       l.target_aliases
+from telegram_channels tc
+left join channel_signal_lexicon l on l.channel_id = tc.id
+where tc.is_active
+order by tc.user_id, tc.display_name;
+
+-- 12) Parse-stage listener events (heuristic reject, duplicate skip — last 2 hours)
+select user_id, channel_row_id, event_type, telegram_message_id, detail, created_at
+from listener_events
+where created_at > now() - interval '2 hours'
+  and event_type in (
+    'heuristic_rejected',
+    'duplicate_message_skipped',
+    'parse_http_failed',
+    'image_only_message'
+  )
+order by created_at desc
+limit 100;
+
+-- 13) Cross-channel Telegram message id collisions (symptom of old user_id+msg unique index)
+-- Same numeric message id stored for different channels should be normal after migration
+-- 20260525160000; before the fix only one channel could own each id.
+select s.telegram_message_id,
+       count(distinct s.channel_id) as channels,
+       array_agg(distinct tc.display_name order by tc.display_name) as channel_names,
+       max(s.created_at) as latest_at
+from signals s
+join telegram_channels tc on tc.id = s.channel_id
+where s.telegram_message_id is not null
+  and s.created_at > now() - interval '24 hours'
+group by s.telegram_message_id
+having count(distinct s.channel_id) > 1
+order by latest_at desc
+limit 50;

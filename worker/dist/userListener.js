@@ -817,7 +817,7 @@ class UserListener {
     /**
      * Single insert path used by both live events (handleMessage) and
      * catch-up (catchUpChannel). Idempotent via the unique partial index
-     * on signals(user_id, telegram_message_id) — a row that already exists
+     * on signals(user_id, channel_id, telegram_message_id) — a row that already exists
      * is left untouched and parse-signal is not re-fired.
      */
     async waitForCatchUpParseSlot() {
@@ -893,6 +893,7 @@ class UserListener {
             .from('signals')
             .select('id', { count: 'exact', head: true })
             .eq('user_id', this.userId)
+            .eq('channel_id', channelRow.id)
             .eq('telegram_message_id', messageId);
         if ((dupCount ?? 0) > 0) {
             console.log(`[userListener] duplicate message ignored user=${this.userId} channelRow=${channelRow.id} messageId=${messageId}`);
@@ -1041,7 +1042,7 @@ class UserListener {
             is_modification: isReply,
             parent_signal_id: parentSignalId,
             reply_to_message_id: replyToMessageId,
-        }, { onConflict: 'user_id,telegram_message_id', ignoreDuplicates: true });
+        }, { onConflict: 'user_id,channel_id,telegram_message_id', ignoreDuplicates: true });
         if (insertErr) {
             console.error(`[userListener] signal upsert failed signalId=${signalId}:`, insertErr.message);
             return false;
@@ -1108,6 +1109,7 @@ class UserListener {
                 .from('signals')
                 .select('id', { count: 'exact', head: true })
                 .eq('user_id', this.userId)
+                .eq('channel_id', channelRow.id)
                 .eq('telegram_message_id', messageId);
             if ((dupCount ?? 0) > 0)
                 return;
@@ -1137,7 +1139,7 @@ class UserListener {
                 is_modification: isReply,
                 parent_signal_id: parentSignalId,
                 reply_to_message_id: replyToMessageId,
-            }, { onConflict: 'user_id,telegram_message_id', ignoreDuplicates: true });
+            }, { onConflict: 'user_id,channel_id,telegram_message_id', ignoreDuplicates: true });
             if (insertErr) {
                 console.error(`[userListener] non-signal upsert failed signalId=${signalId}:`, insertErr.message);
                 return;
@@ -1163,7 +1165,7 @@ class UserListener {
                 is_modification: isReply,
                 parent_signal_id: parentSignalId,
                 reply_to_message_id: replyToMessageId,
-            }, { onConflict: 'user_id,telegram_message_id', ignoreDuplicates: true });
+            }, { onConflict: 'user_id,channel_id,telegram_message_id', ignoreDuplicates: true });
             if (insertErr) {
                 console.error(`[userListener] signal upsert failed signalId=${signalId}:`, insertErr.message);
                 return;

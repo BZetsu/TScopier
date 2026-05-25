@@ -41,7 +41,7 @@ curl -sS -X POST "https://YOUR-TRADE.up.railway.app/internal/dispatch-signal" \
 
 ## 4. Supabase SQL
 
-Run [`scripts/diagnostics/multi_user_channel_copy.sql`](../scripts/diagnostics/multi_user_channel_copy.sql) queries 1–7 in the SQL Editor after posting a test signal.
+Run [`scripts/diagnostics/multi_user_channel_copy.sql`](../scripts/diagnostics/multi_user_channel_copy.sql) queries 1–12 in the SQL Editor after posting a test signal.
 
 Interpretation:
 
@@ -67,7 +67,45 @@ After sending a test signal, grep for:
 
 On **trade** worker only, temporarily set `WORKER_REQUIRE_TELEGRAM_LIVE_FOR_TRADES=false`. If trades resume, fix listener lease/connectivity before re-enabling.
 
-## 7. Incident note template
+## 7. Parse pipeline (Telethon → trade worker)
+
+When channels show **Listening** but no trades:
+
+1. Run SQL queries **#9–#12** in [`scripts/diagnostics/multi_user_channel_copy.sql`](../scripts/diagnostics/multi_user_channel_copy.sql)
+2. Probe parse bridge:
+
+```bash
+TRADE_WORKER_URL=https://YOUR-TRADE.up.railway.app \
+WORKER_INTERNAL_TOKEN=secret \
+USER_ID=your-user-uuid \
+CHANNEL_ROW_IDS=uuid1,uuid2 \
+MESSAGE='BUY XAUUSD NOW SL 2650 TP 2700' \
+./scripts/diagnostics/parse_pipeline_probe.sh
+```
+
+3. Replay parse locally with DB keywords:
+
+```bash
+./scripts/diagnostics/replay_channel_parse.sh \
+  --channel-id CHANNEL_UUID \
+  --message 'BUY XAUUSD NOW SL 2650 TP 2700'
+```
+
+(requires `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` in `worker/.env`)
+
+| `signals.status` | `skip_reason` | Gate |
+|--------------------|---------------|------|
+| (no row) | — | Duplicate message, image-only, or Copier Logs filter |
+| `skipped` | `non_trade_message` | Telethon heuristic (see `listener_events.heuristic_rejected`) |
+| `skipped` | keyword message | `/internal/parse-signal` — tune `channel_keywords` |
+| `error` | HTTP error text | `TRADE_WORKER_URL` / token / shard |
+| `parsed` | — | Trade dispatch layer (broker whitelist, lease) |
+
+Listener logs to grep: `heuristic_rejected`, `duplicate_message_skipped`, `parse_http_failed`, `image_only_message` in `listener_events` (query #12).
+
+**Cross-channel message id collisions:** Telegram message ids are only unique per chat. If multiple channels stop ingesting while others work, run query **#13** and apply migration `20260525160000_signals_per_channel_message_unique.sql` (dedupe key is `user_id + channel_id + telegram_message_id`, not `user_id + telegram_message_id` alone).
+
+## 8. Incident note template
 
 ```
 Date:

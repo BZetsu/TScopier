@@ -288,7 +288,30 @@ class UserListener:
                 await self._bump_last_seen(row.id, message_id)
                 return
 
+        if not raw.strip():
+            persist_listener_event(
+                self.supabase,
+                user_id=self.user_id,
+                event_type="image_only_message",
+                channel_row_id=row.id,
+                telegram_message_id=message_id,
+                detail={"source": source, "hint": "Telethon has no OCR; text-only signals required"},
+            )
+            return
+
         if not looks_like_trading_signal(raw, is_reply):
+            persist_listener_event(
+                self.supabase,
+                user_id=self.user_id,
+                event_type="heuristic_rejected",
+                channel_row_id=row.id,
+                telegram_message_id=message_id,
+                detail={
+                    "source": source,
+                    "preview": raw[:160],
+                    "is_reply": is_reply,
+                },
+            )
             await self._persist_skip(row, message_id, raw, is_reply)
             return
 
@@ -296,10 +319,19 @@ class UserListener:
             self.supabase.table("signals")
             .select("id", count="exact")
             .eq("user_id", self.user_id)
+            .eq("channel_id", row.id)
             .eq("telegram_message_id", message_id)
             .execute()
         )
         if (dup.count or 0) > 0:
+            persist_listener_event(
+                self.supabase,
+                user_id=self.user_id,
+                event_type="duplicate_message_skipped",
+                channel_row_id=row.id,
+                telegram_message_id=message_id,
+                detail={"source": source, "preview": raw[:160]},
+            )
             return
 
         signal_id = str(uuid.uuid4())
@@ -309,6 +341,14 @@ class UserListener:
             )
         except Exception as exc:
             print(f"[user_listener] parse failed signal={signal_id}: {exc}")
+            persist_listener_event(
+                self.supabase,
+                user_id=self.user_id,
+                event_type="parse_http_failed",
+                channel_row_id=row.id,
+                telegram_message_id=message_id,
+                detail={"error": str(exc)[:300], "signal_id": signal_id},
+            )
             await self._persist_row(
                 signal_id, row, message_id, raw, is_reply, status="error", skip_reason=str(exc)
             )
@@ -381,7 +421,9 @@ class UserListener:
             payload["parsed_data"] = parsed_data
         if skip_reason:
             payload["skip_reason"] = skip_reason
-        self.supabase.table("signals").upsert(payload, on_conflict="user_id,telegram_message_id").execute()
+        self.supabase.table("signals").upsert(
+            payload, on_conflict="user_id,channel_id,telegram_message_id"
+        ).execute()
         await self._bump_last_seen(row.id, message_id)
 
     async def _bump_last_seen(self, channel_row_id: str, message_id: str) -> None:
