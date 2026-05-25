@@ -121,6 +121,30 @@ export function CopierEnginePage() {
     void loadData({ skipTgFetch: Boolean(cached) })
   }, [user])
 
+  useEffect(() => {
+    if (!user?.id) return
+    const rt = supabase
+      .channel(`telegram_channels_ui:${user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'telegram_channels',
+          filter: `user_id=eq.${user.id}`,
+        },
+        payload => {
+          const row = payload.new as TelegramChannel
+          if (!row?.id) return
+          setChannels(prev => prev.map(c => (c.id === row.id ? { ...c, ...row } : c)))
+        },
+      )
+      .subscribe()
+    return () => {
+      void supabase.removeChannel(rt)
+    }
+  }, [user?.id])
+
   const loadData = async (opts?: { skipTgFetch?: boolean; backgroundTgFetch?: boolean; forceTgFetch?: boolean }) => {
     const [channelsRes, sessionRes] = await Promise.all([
       supabase.from('telegram_channels').select('*').eq('user_id', user!.id).order('created_at', { ascending: false }),

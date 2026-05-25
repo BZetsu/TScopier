@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { SupabaseClient } from '@supabase/supabase-js'
 import { TelegramClient } from 'telegram'
+import { utils } from 'telegram'
 import { NewMessage } from 'telegram/events'
 import type { NewMessageEvent } from 'telegram/events/NewMessage'
 import { Api } from 'telegram/tl'
@@ -40,7 +41,7 @@ const DIALOG_CACHE_TTL_MS = 60_000
 const DIALOG_MAX_SCAN = 500
 const WATCHDOG_INTERVAL_MS = 30_000
 const WATCHDOG_FAILURE_THRESHOLD = 2
-const SAFETY_POLL_INTERVAL_MS = 60_000
+const SAFETY_POLL_INTERVAL_MS = 30_000
 const SESSION_PERSIST_INTERVAL_MS = 30 * 60_000
 const CATCHUP_BACKPRESSURE_MS = 250
 const CATCHUP_PER_CHANNEL_CAP = 200
@@ -113,6 +114,7 @@ interface ChannelRow {
   channel_id: string
   channel_username: string
   last_seen_message_id: number | string | null
+  last_seen_at?: string | null
 }
 
 type Handler = (event: NewMessageEvent) => void
@@ -290,6 +292,9 @@ export class UserListener {
 
     this.startWatchdog()
     this.startSafetyPoll()
+    void this.pollMonitoredChannelsForMessages().catch(err =>
+      console.warn(`[userListener] initial channel poll failed for ${this.userId}:`, err),
+    )
     this.startSessionPersist()
     this.startReplyChainSweep()
     this.startEntityWarmup()
@@ -362,29 +367,39 @@ export class UserListener {
     const previous = new Set(this.monitoredChannels)
     await this.refreshChannelSubscription()
 
-    const added = [...this.monitoredChannels].filter(c => !previous.has(c))
-    if (added.length === 0) return
-
-    // Catch up only the newly added channels — full catchUp would re-scan
-    // every channel and is wasteful when the user just toggled one on.
     const { data: rows } = await this.supabase
       .from('telegram_channels')
-      .select('id, channel_id, channel_username, last_seen_message_id')
+      .select('id, channel_id, channel_username, last_seen_message_id, last_seen_at')
       .eq('user_id', this.userId)
       .eq('is_active', true)
+
+    const added = [...this.monitoredChannels].filter(c => !previous.has(c))
+
     const lookup = new Map<string, ChannelRow>()
     for (const row of (rows ?? []) as ChannelRow[]) {
-      if (row.channel_id) {
-        for (const v of toChannelIdVariants(row.channel_id)) {
+      if (row.channel_id && isNumericTelegramChatId(String(row.channel_id))) {
+        for (const v of toChannelIdVariants(String(row.channel_id))) {
           lookup.set(v, row)
         }
       }
-      if (row.channel_username) lookup.set(row.channel_username.toLowerCase(), row)
+      if (isValidTelegramUsername(row.channel_username)) {
+        lookup.set(normalizeChannelUsername(row.channel_username), row)
+      }
     }
     for (const key of added) {
       const row = lookup.get(key)
-      if (row) await this.catchUpChannel(row).catch(err =>
-        console.error(`[userListener] catchUp (added) failed for ${row.id}:`, err)
+      if (row) {
+        await this.catchUpChannel(row).catch(err =>
+          console.error(`[userListener] catchUp (added) failed for ${row.id}:`, err),
+        )
+      }
+    }
+
+    // Re-added rows (same Telegram id) or missed realtime: poll never-heard channels now.
+    for (const row of (rows ?? []) as ChannelRow[]) {
+      if (row.last_seen_at) continue
+      await this.pollChannelNewMessages(row).catch(err =>
+        console.warn(`[userListener] poll (never-heard) failed for ${row.id}:`, err),
       )
     }
   }
@@ -886,9 +901,18 @@ export class UserListener {
    * getChat(), which can fail transiently when gramjs entity cache is cold.
    */
   private async resolveChatIdentity(event: NewMessageEvent): Promise<ChatIdentity> {
+    const message = event.message
     const fallbackId = event.chatId != null ? String(event.chatId) : ''
     let chatId = fallbackId
     let chatUsername = ''
+
+    if ((!chatId || chatId === 'undefined') && message?.peerId) {
+      try {
+        chatId = utils.getPeerId(message.peerId, false).toString()
+      } catch {
+        // keep fallback
+      }
+    }
 
     try {
       const chat = await event.message?.getChat()
@@ -898,7 +922,7 @@ export class UserListener {
         chatUsername = (chatRaw.username ?? '').toLowerCase()
       }
     } catch {
-      // Fallback to event.chatId if entity lookup fails.
+      // Fallback to event.chatId / peerId if entity lookup fails.
     }
 
     return {
@@ -1441,6 +1465,78 @@ export class UserListener {
     }
   }
 
+  private async pollMonitoredChannelsForMessages(): Promise<void> {
+    if (!this.isConnected) return
+    const { data: rows } = await this.supabase
+      .from('telegram_channels')
+      .select('id, channel_id, channel_username, last_seen_message_id, last_seen_at')
+      .eq('user_id', this.userId)
+      .eq('is_active', true)
+
+    for (const row of (rows ?? []) as ChannelRow[]) {
+      await this.pollChannelNewMessages(row).catch(err =>
+        console.warn(`[userListener] poll failed channel=${row.id}:`, err),
+      )
+    }
+  }
+
+  /**
+   * Poll Telegram history for channels where live NewMessage updates are missing
+   * (common when the linked account broadcasts to its own channel).
+   */
+  private async pollChannelNewMessages(row: ChannelRow): Promise<void> {
+    let peer: unknown
+    try {
+      peer = await this.resolveChannelPeer(row)
+    } catch {
+      return
+    }
+
+    let minId = Number(row.last_seen_message_id ?? 0)
+    if (!Number.isFinite(minId) || minId < 0) minId = 0
+
+    let batch: Array<MessageLike & { id: number | bigint }>
+    try {
+      batch = (await this.client.getMessages(peer as never, {
+        limit: minId === 0 ? 20 : 30,
+        ...(minId > 0 ? { minId } : {}),
+      })) as unknown as Array<MessageLike & { id: number | bigint }>
+    } catch {
+      return
+    }
+
+    if (!batch.length) return
+
+    const sorted = [...batch].sort((a, b) => Number(a.id) - Number(b.id))
+    const latestId = Number(sorted[sorted.length - 1]?.id)
+    if (!Number.isFinite(latestId)) return
+
+    if (minId === 0) {
+      const now = Date.now()
+      const recentWindowMs = 15 * 60_000
+      for (const m of sorted) {
+        const mid = Number(m.id)
+        if (!Number.isFinite(mid)) continue
+        const epoch = this.messageEpochSec(m as MessageLike & { date?: number | Date | string })
+        if (epoch > 0 && now - epoch * 1000 <= recentWindowMs) {
+          await this.logSignal(row, m, { source: 'catchup' })
+        }
+      }
+      await this.bumpLastSeen(row.id, String(latestId))
+      console.log(
+        `[userListener] poll seeded channel=${row.id} username=${row.channel_username || '-'} lastMsg=${latestId}`,
+      )
+      return
+    }
+
+    const toProcess = sorted.filter(m => Number(m.id) > minId)
+    if (!toProcess.length) return
+
+    for (const m of toProcess) {
+      await this.logSignal(row, m, { source: 'catchup' })
+    }
+  }
+
   private async catchUpChannelRecent(row: ChannelRow): Promise<void> {
     let peer: unknown
     try {
@@ -1832,7 +1928,10 @@ export class UserListener {
     if (this.safetyPollTimer) return
     this.safetyPollTimer = setInterval(() => {
       this.refreshChannelSubscription().catch(err =>
-        console.error(`[userListener] safety poll error for ${this.userId}:`, err)
+        console.error(`[userListener] safety poll error for ${this.userId}:`, err),
+      )
+      this.pollMonitoredChannelsForMessages().catch(err =>
+        console.error(`[userListener] channel poll error for ${this.userId}:`, err),
       )
     }, SAFETY_POLL_INTERVAL_MS)
     this.safetyPollTimer.unref?.()
