@@ -283,6 +283,8 @@ export interface TelegramChannel {
   last_seen_message_id?: number | null
   /** When the listener last mapped a message to this channel row. */
   last_seen_at?: string | null
+  /** When the listener last received a live Telegram event for this channel. */
+  last_live_at?: string | null
   created_at: string
   updated_at: string
 }

@@ -11,6 +11,7 @@ from typing import Any, Callable, Awaitable
 
 from supabase import Client
 from telethon import TelegramClient, events
+from telethon.tl.functions.channels import JoinChannelRequest
 from telethon.tl.types import Channel, Chat
 
 from telethon.sessions import StringSession
@@ -105,6 +106,7 @@ class UserListener:
         await self.refresh_channels()
         await self._register_handler()
         await self.sync_dialogs()
+        await self.warm_all_monitored_entities()
         asyncio.create_task(self.run_catchup())
         self._poll_task = asyncio.create_task(self._poll_loop())
 
@@ -137,6 +139,7 @@ class UserListener:
 
     async def on_channels_changed(self) -> None:
         await self.refresh_channels()
+        await self.warm_all_monitored_entities()
         await self.run_catchup()
 
     async def list_channels(self) -> list[dict[str, Any]]:
@@ -161,7 +164,7 @@ class UserListener:
     async def refresh_channels(self) -> None:
         result = (
             self.supabase.table("telegram_channels")
-            .select("id, channel_id, channel_username, last_seen_message_id, last_seen_at")
+            .select("id, channel_id, channel_username, last_seen_message_id, last_seen_at, last_live_at")
             .eq("user_id", self.user_id)
             .eq("is_active", True)
             .execute()
@@ -190,9 +193,30 @@ class UserListener:
         """Warm entity cache after connect."""
         assert self.client
         try:
-            await self.client.get_dialogs(limit=100)
+            await self.client.get_dialogs(limit=200)
+            await self.warm_all_monitored_entities()
         except Exception as exc:
             print(f"[user_listener] sync_dialogs failed user={self.user_id}: {exc}")
+
+    async def ensure_joined_public_channel(self, row: ChannelRow) -> None:
+        username = normalize_username(row.channel_username)
+        if not username or not self.client:
+            return
+        try:
+            entity = await self.client.get_input_entity(username)
+            await self.client(JoinChannelRequest(entity))
+            metrics.inc("channel_join_ok")
+        except Exception as exc:
+            msg = str(exc)
+            if "already" in msg.lower() or "USER_ALREADY_PARTICIPANT" in msg:
+                return
+            print(f"[user_listener] join @{username} failed: {msg[:200]}")
+
+    async def warm_all_monitored_entities(self) -> None:
+        await self.refresh_channels()
+        for row in self.channel_rows:
+            await self.ensure_joined_public_channel(row)
+            await self.warm_channel_entity(row)
 
     async def _register_handler(self) -> None:
         assert self.client
@@ -226,6 +250,7 @@ class UserListener:
             )
             return
         await self.process_message(row, message, source="live")
+        await self._bump_last_live(row.id)
 
     async def _resolve_chat(self, event: events.NewMessage.Event) -> tuple[str, str, list[str]]:
         chat_id = str(event.chat_id) if event.chat_id is not None else ""
@@ -371,6 +396,11 @@ class UserListener:
             }
         ).eq("id", channel_row_id).execute()
 
+    async def _bump_last_live(self, channel_row_id: str) -> None:
+        self.supabase.table("telegram_channels").update(
+            {"last_live_at": datetime.now(timezone.utc).isoformat()}
+        ).eq("id", channel_row_id).execute()
+
     async def _resolve_peer(self, row: ChannelRow) -> Any:
         assert self.client
         key = normalize_username(row.channel_username) or row.channel_id
@@ -423,6 +453,7 @@ class UserListener:
         interval = self.cfg.safety_poll_interval_ms / 1000
         while self.is_connected:
             try:
+                await self.warm_all_monitored_entities()
                 await self.refresh_channels()
                 for row in self.channel_rows:
                     await self.poll_channel(row)

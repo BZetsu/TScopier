@@ -285,7 +285,7 @@ class UserListener {
         await this.refreshChannelSubscription();
         const { data: rows } = await this.supabase
             .from('telegram_channels')
-            .select('id, channel_id, channel_username, last_seen_message_id, last_seen_at')
+            .select('id, channel_id, channel_username, last_seen_message_id, last_seen_at, last_live_at')
             .eq('user_id', this.userId)
             .eq('is_active', true);
         const added = [...this.monitoredChannels].filter(c => !previous.has(c));
@@ -307,7 +307,23 @@ class UserListener {
                 await this.catchUpChannel(row).catch(err => console.error(`[userListener] catchUp (added) failed for ${row.id}:`, err));
             }
         }
-        // Re-added rows (same Telegram id) or missed realtime: poll never-heard channels now.
+        // Keep entity cache hot for every active channel (not only newly added keys).
+        for (const row of (rows ?? [])) {
+            await this.warmChannelEntity(row).catch(() => { });
+            await this.ensureJoinedPublicChannel(row).catch(err => console.warn(`[userListener] join channel failed ${row.id}:`, err));
+        }
+        // Poll channels with no recent activity (missed live events or stale entity).
+        const pollStaleMs = 5 * 60000;
+        const now = Date.now();
+        for (const row of (rows ?? [])) {
+            const lastLive = row.last_live_at ? new Date(row.last_live_at).getTime() : 0;
+            const lastSeen = row.last_seen_at ? new Date(row.last_seen_at).getTime() : 0;
+            const lastActivity = Math.max(lastLive, lastSeen);
+            if (lastActivity > 0 && now - lastActivity < pollStaleMs)
+                continue;
+            await this.pollChannelNewMessages(row).catch(err => console.warn(`[userListener] poll (stale) failed for ${row.id}:`, err));
+        }
+        // Never heard from Telegram at all.
         for (const row of (rows ?? [])) {
             if (row.last_seen_at)
                 continue;
@@ -761,6 +777,7 @@ class UserListener {
             replyTo: message.replyTo,
             date: message.date,
         }, { source: 'live' });
+        void this.bumpLastLive(channelRow.id);
     }
     /**
      * Resolve chat identity for an update without depending solely on
@@ -1236,6 +1253,47 @@ class UserListener {
             .eq('id', channelRowId)
             .or(`last_seen_message_id.is.null,last_seen_message_id.lt.${num}`);
     }
+    async bumpLastLive(channelRowId) {
+        await this.supabase
+            .from('telegram_channels')
+            .update({ last_live_at: new Date().toISOString() })
+            .eq('id', channelRowId);
+    }
+    /** Resolve + join every monitored channel so live NewMessage fires for all of them. */
+    async warmAllMonitoredChannelEntities() {
+        const { data: rows } = await this.supabase
+            .from('telegram_channels')
+            .select('id, channel_id, channel_username')
+            .eq('user_id', this.userId)
+            .eq('is_active', true);
+        for (const row of (rows ?? [])) {
+            await this.ensureJoinedPublicChannel(row).catch(() => { });
+            await this.warmChannelEntity(row).catch(() => { });
+        }
+    }
+    /**
+     * Join public channels by @username so getMessages and live updates work for
+     * external signal providers the user has not opened in Telegram yet.
+     */
+    async ensureJoinedPublicChannel(row) {
+        const username = normalizeChannelUsername(row.channel_username);
+        if (!username)
+            return;
+        try {
+            const entity = await this.client.getInputEntity(username);
+            await (0, telegramClient_1.tgInvoke)(this.client, new tl_1.Api.channels.JoinChannel({ channel: entity }));
+            (0, workerMetrics_1.incMetric)('channel_join_ok');
+        }
+        catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            if (msg.includes('USER_ALREADY_PARTICIPANT')
+                || msg.includes('CHANNELS_TOO_MUCH')
+                || msg.includes('INVITE_HASH_EMPTY')) {
+                return;
+            }
+            console.warn(`[userListener] ensureJoinedPublicChannel @${username} channel=${row.id}:`, msg.slice(0, 200));
+        }
+    }
     // ── catch-up after connect/reconnect ──────────────────────────────────
     /** Non-blocking so live NewMessage handling is not delayed behind history replay. */
     scheduleCatchUpOnStart() {
@@ -1287,7 +1345,7 @@ class UserListener {
             return;
         const { data: rows } = await this.supabase
             .from('telegram_channels')
-            .select('id, channel_id, channel_username, last_seen_message_id, last_seen_at')
+            .select('id, channel_id, channel_username, last_seen_message_id, last_seen_at, last_live_at')
             .eq('user_id', this.userId)
             .eq('is_active', true);
         for (const row of (rows ?? [])) {
@@ -1763,6 +1821,7 @@ class UserListener {
             return;
         this.safetyPollTimer = setInterval(() => {
             this.refreshChannelSubscription().catch(err => console.error(`[userListener] safety poll error for ${this.userId}:`, err));
+            this.warmAllMonitoredChannelEntities().catch(err => console.error(`[userListener] entity warm (poll tick) error for ${this.userId}:`, err));
             this.pollMonitoredChannelsForMessages().catch(err => console.error(`[userListener] channel poll error for ${this.userId}:`, err));
         }, SAFETY_POLL_INTERVAL_MS);
         this.safetyPollTimer.unref?.();
@@ -1784,6 +1843,7 @@ class UserListener {
             const channelCount = dialogs.filter((d) => d.isChannel || d.isGroup).length;
             console.log(`[userListener] entity cache warmed user=${this.userId} dialogs=${dialogs.length} channels=${channelCount}`);
             (0, workerMetrics_1.incMetric)('entity_cache_warmed');
+            await this.warmAllMonitoredChannelEntities();
         }
         catch (err) {
             if (isAuthKeyDuplicated(err))
