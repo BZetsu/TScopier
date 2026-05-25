@@ -458,6 +458,7 @@ export const es: Translations = {
       'ID de Telegram no válido — elimine este canal y vuelva a añadirlo desde el selector de Telegram arriba.',
     manualIdentityRequired: 'Introduzca un ID numérico de canal de Telegram o @usuario.',
     invalidChannelIdFormat: 'El ID del canal debe ser numérico (p. ej. -1001234567890).',
+    invalidUsernameFormat: 'El @usuario debe tener 5–32 caracteres (letras, números y guión bajo).',
     keywordsTitle: 'Palabras clave del canal',
     keywordsClose: 'Cerrar',
     keywordsSave: 'Guardar palabras clave',

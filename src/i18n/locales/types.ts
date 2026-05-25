@@ -539,6 +539,7 @@ export interface CopierEnginePageTranslations {
   invalidChannelIdentity: string
   manualIdentityRequired: string
   invalidChannelIdFormat: string
+  invalidUsernameFormat: string
   keywordsTitle: string
   keywordsClose: string
   keywordsSave: string

@@ -18,8 +18,13 @@ import {
 import {
   hasValidTelegramChannelIdentity,
   isNumericTelegramChatId,
+  normalizeTelegramUsername,
   validateManualChannelInput,
 } from '../../lib/telegramChannelIdentity'
+import {
+  reconcileChannelIdentitiesFromTelegram,
+  removeStaleDuplicateChannels,
+} from '../../lib/telegramChannelReconcile'
 import { useBrokerAccounts } from '../../context/BrokerAccountsContext'
 import { Card } from '../../components/ui/Card'
 import { Badge } from '../../components/ui/Badge'
@@ -122,9 +127,13 @@ export function CopierEnginePage() {
       supabase.from('telegram_sessions').select('id').eq('user_id', user!.id).maybeSingle(),
     ])
     const channelRows = (channelsRes.data ?? []) as TelegramChannel[]
-    setChannels(channelRows)
+    const tgList = user?.id ? getCachedTgChannels(user.id) : null
+    const reconciledChannels = tgList?.length
+      ? await reconcileChannelIdentitiesFromTelegram(supabase, user!.id, channelRows, tgList)
+      : channelRows
+    setChannels(reconciledChannels)
     const brokerRows = await refreshBrokers({ silent: true })
-    const reconciled = await pruneStaleBrokerChannelIds(supabase, user!.id, channelRows, brokerRows)
+    const reconciled = await pruneStaleBrokerChannelIds(supabase, user!.id, reconciledChannels, brokerRows)
     setBrokers(reconciled)
     const hasSession = !!sessionRes.data
     setHasTgSession(hasSession)
@@ -232,7 +241,21 @@ export function CopierEnginePage() {
           }
           const list = (data.channels ?? []) as TgChannelListItem[]
           setTgChannels(list)
-          if (user?.id) setCachedTgChannels(user.id, list)
+          if (user?.id) {
+            setCachedTgChannels(user.id, list)
+            const { data: channelRows } = await supabase
+              .from('telegram_channels')
+              .select('*')
+              .eq('user_id', user.id)
+              .order('created_at', { ascending: false })
+            const reconciled = await reconcileChannelIdentitiesFromTelegram(
+              supabase,
+              user.id,
+              (channelRows ?? []) as TelegramChannel[],
+              list,
+            )
+            setChannels(reconciled)
+          }
           if (!opts?.background) setError('')
           return
         } catch {
@@ -362,11 +385,12 @@ export function CopierEnginePage() {
     if (validation.ok === false) {
       if (validation.errorKey === 'nameRequired') setError(ch.nameRequired)
       else if (validation.errorKey === 'identityRequired') setError(ce.manualIdentityRequired)
+      else if (validation.errorKey === 'invalidUsername') setError(ce.invalidUsernameFormat)
       else setError(ce.invalidChannelIdFormat)
       return
     }
     setSaving(true)
-    const username = newChannel.channel_username.trim().replace(/^@/, '')
+    const username = normalizeTelegramUsername(newChannel.channel_username)
     const chatId = newChannel.channel_id.trim()
     const { data, error: dbErr } = await supabase
       .from('telegram_channels')
@@ -390,12 +414,13 @@ export function CopierEnginePage() {
 
   const addFromTg = async (ch: { id: string; title: string; username: string }) => {
     setError('')
+    await removeStaleDuplicateChannels(supabase, user!.id, { id: ch.id, title: ch.title })
     const { data, error: dbErr } = await supabase
       .from('telegram_channels')
       .upsert({
         user_id: user!.id,
         channel_id: ch.id,
-        channel_username: ch.username ?? '',
+        channel_username: normalizeTelegramUsername(ch.username),
         display_name: ch.title,
         is_active: true,
       }, { onConflict: 'user_id,channel_id' })
@@ -408,8 +433,16 @@ export function CopierEnginePage() {
     if (!dbErr && data) {
       const upserted = data as TelegramChannel
       setChannels(prev => {
-        const prevExists = prev.find(c => c.channel_id === ch.id)
-        return prevExists ? prev.map(c => c.channel_id === ch.id ? upserted : c) : [upserted, ...prev]
+        const titleKey = ch.title.trim().toLowerCase()
+        const withoutStale = prev.filter(row =>
+          row.channel_id === ch.id
+          || row.display_name.trim().toLowerCase() !== titleKey
+          || hasValidTelegramChannelIdentity(row),
+        )
+        const prevExists = withoutStale.find(c => c.channel_id === ch.id)
+        return prevExists
+          ? withoutStale.map(c => (c.channel_id === ch.id ? upserted : c))
+          : [upserted, ...withoutStale]
       })
       await autoLinkChannelToBrokers(upserted.id)
     }

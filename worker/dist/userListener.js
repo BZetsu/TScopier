@@ -98,6 +98,18 @@ function looksLikeTradingSignal(text, isReply) {
     const score = Number(hasDirectionOrAction) + Number(hasInstrument) + Number(hasPriceContext) + Number(hasTradeStructure);
     return score >= 2;
 }
+function normalizeChannelUsername(raw) {
+    return (raw ?? '').trim().replace(/^@/, '').toLowerCase();
+}
+function isValidTelegramUsername(raw) {
+    const value = normalizeChannelUsername(raw);
+    if (!value)
+        return false;
+    return /^[a-z0-9_]{5,32}$/i.test(value);
+}
+function isNumericTelegramChatId(raw) {
+    return /^-?\d+$/.test(String(raw ?? '').trim());
+}
 function toChannelIdVariants(raw) {
     const value = (raw ?? '').trim();
     if (!value)
@@ -347,16 +359,43 @@ class UserListener {
             .eq('is_active', true);
         const next = new Set();
         for (const ch of data ?? []) {
-            if (ch.channel_id) {
-                for (const v of toChannelIdVariants(ch.channel_id))
+            if (ch.channel_id && isNumericTelegramChatId(String(ch.channel_id))) {
+                for (const v of toChannelIdVariants(String(ch.channel_id)))
                     next.add(v);
             }
-            if (ch.channel_username)
-                next.add(ch.channel_username.toLowerCase());
+            if (isValidTelegramUsername(ch.channel_username)) {
+                next.add(normalizeChannelUsername(ch.channel_username));
+            }
         }
         return next;
     }
-    // ── public dialog listing for onboarding UI ───────────────────────────
+    async resolveChannelRowForChat(chatIdVariants, chatUsername) {
+        const { data: rows, error } = await this.supabase
+            .from('telegram_channels')
+            .select('id, channel_id, channel_username, last_seen_message_id')
+            .eq('user_id', this.userId)
+            .eq('is_active', true);
+        if (error || !rows?.length)
+            return null;
+        const variantSet = new Set(chatIdVariants);
+        for (const row of rows) {
+            const storedId = String(row.channel_id ?? '').trim();
+            if (storedId && isNumericTelegramChatId(storedId)) {
+                if (toChannelIdVariants(storedId).some(v => variantSet.has(v))) {
+                    return row;
+                }
+            }
+        }
+        if (chatUsername) {
+            const wanted = normalizeChannelUsername(chatUsername);
+            for (const row of rows) {
+                const stored = normalizeChannelUsername(row.channel_username);
+                if (stored && stored === wanted)
+                    return row;
+            }
+        }
+        return null;
+    }
     /**
      * Return user's channels/groups. Delays the first call after start to
      * avoid cold-session fan-out, pages with a small limit, and caches the
@@ -674,29 +713,7 @@ class UserListener {
             return;
         console.log(`[userListener] message candidate user=${this.userId} chatId=${chatId} variants=${chatIdVariants.join(',')} username=${chatUsername || '-'} msgId=${String(message.id)}`);
         // Prefer channel_id matching across normalized variants, fallback to username.
-        let channelRow = null;
-        if (chatIdVariants.length > 0) {
-            const idRes = await this.supabase
-                .from('telegram_channels')
-                .select('id, channel_id, channel_username, last_seen_message_id')
-                .eq('user_id', this.userId)
-                .eq('is_active', true)
-                .in('channel_id', chatIdVariants)
-                .limit(1)
-                .maybeSingle();
-            channelRow = idRes.data ?? null;
-        }
-        if (!channelRow && chatUsername) {
-            const usernameRes = await this.supabase
-                .from('telegram_channels')
-                .select('id, channel_id, channel_username, last_seen_message_id')
-                .eq('user_id', this.userId)
-                .eq('is_active', true)
-                .eq('channel_username', chatUsername)
-                .limit(1)
-                .maybeSingle();
-            channelRow = usernameRes.data ?? null;
-        }
+        const channelRow = await this.resolveChannelRowForChat(chatIdVariants, chatUsername);
         if (!channelRow) {
             const { data: configured } = await this.supabase
                 .from('telegram_channels')

@@ -458,6 +458,7 @@ export const fr: Translations = {
       'ID Telegram invalide — supprimez ce canal et réajoutez-le via le sélecteur Telegram ci-dessus.',
     manualIdentityRequired: 'Saisissez un ID de canal Telegram numérique ou un @nom d’utilisateur.',
     invalidChannelIdFormat: 'L’ID du canal doit être numérique (ex. -1001234567890).',
+    invalidUsernameFormat: 'Le @nom d’utilisateur doit contenir 5–32 caractères (lettres, chiffres, underscore).',
     keywordsTitle: 'Mots-clés du canal',
     keywordsClose: 'Fermer',
     keywordsSave: 'Enregistrer les mots-clés',

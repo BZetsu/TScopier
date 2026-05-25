@@ -170,6 +170,20 @@ function looksLikeTradingSignal(text: string, isReply: boolean): boolean {
   return score >= 2
 }
 
+function normalizeChannelUsername(raw: string | null | undefined): string {
+  return (raw ?? '').trim().replace(/^@/, '').toLowerCase()
+}
+
+function isValidTelegramUsername(raw: string | null | undefined): boolean {
+  const value = normalizeChannelUsername(raw)
+  if (!value) return false
+  return /^[a-z0-9_]{5,32}$/i.test(value)
+}
+
+function isNumericTelegramChatId(raw: string | null | undefined): boolean {
+  return /^-?\d+$/.test(String(raw ?? '').trim())
+}
+
 function toChannelIdVariants(raw: string): string[] {
   const value = (raw ?? '').trim()
   if (!value) return []
@@ -439,15 +453,47 @@ export class UserListener {
 
     const next = new Set<string>()
     for (const ch of data ?? []) {
-      if (ch.channel_id) {
-        for (const v of toChannelIdVariants(ch.channel_id)) next.add(v)
+      if (ch.channel_id && isNumericTelegramChatId(String(ch.channel_id))) {
+        for (const v of toChannelIdVariants(String(ch.channel_id))) next.add(v)
       }
-      if (ch.channel_username) next.add(ch.channel_username.toLowerCase())
+      if (isValidTelegramUsername(ch.channel_username)) {
+        next.add(normalizeChannelUsername(ch.channel_username))
+      }
     }
     return next
   }
 
-  // ── public dialog listing for onboarding UI ───────────────────────────
+  private async resolveChannelRowForChat(
+    chatIdVariants: string[],
+    chatUsername: string,
+  ): Promise<ChannelRow | null> {
+    const { data: rows, error } = await this.supabase
+      .from('telegram_channels')
+      .select('id, channel_id, channel_username, last_seen_message_id')
+      .eq('user_id', this.userId)
+      .eq('is_active', true)
+    if (error || !rows?.length) return null
+
+    const variantSet = new Set(chatIdVariants)
+    for (const row of rows as ChannelRow[]) {
+      const storedId = String(row.channel_id ?? '').trim()
+      if (storedId && isNumericTelegramChatId(storedId)) {
+        if (toChannelIdVariants(storedId).some(v => variantSet.has(v))) {
+          return row
+        }
+      }
+    }
+
+    if (chatUsername) {
+      const wanted = normalizeChannelUsername(chatUsername)
+      for (const row of rows as ChannelRow[]) {
+        const stored = normalizeChannelUsername(row.channel_username)
+        if (stored && stored === wanted) return row
+      }
+    }
+
+    return null
+  }
 
   /**
    * Return user's channels/groups. Delays the first call after start to
@@ -804,30 +850,7 @@ export class UserListener {
     )
 
     // Prefer channel_id matching across normalized variants, fallback to username.
-    let channelRow: ChannelRow | null = null
-    if (chatIdVariants.length > 0) {
-      const idRes = await this.supabase
-        .from('telegram_channels')
-        .select('id, channel_id, channel_username, last_seen_message_id')
-        .eq('user_id', this.userId)
-        .eq('is_active', true)
-        .in('channel_id', chatIdVariants)
-        .limit(1)
-        .maybeSingle()
-      channelRow = (idRes.data as ChannelRow | null) ?? null
-    }
-
-    if (!channelRow && chatUsername) {
-      const usernameRes = await this.supabase
-        .from('telegram_channels')
-        .select('id, channel_id, channel_username, last_seen_message_id')
-        .eq('user_id', this.userId)
-        .eq('is_active', true)
-        .eq('channel_username', chatUsername)
-        .limit(1)
-        .maybeSingle()
-      channelRow = (usernameRes.data as ChannelRow | null) ?? null
-    }
+    const channelRow = await this.resolveChannelRowForChat(chatIdVariants, chatUsername)
 
     if (!channelRow) {
       const { data: configured } = await this.supabase
