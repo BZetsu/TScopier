@@ -187,6 +187,8 @@ export const metatraderApi = {
      * `trades` — Account Trades page (deal-level rows + nested profit/lots).
      */
     historyProfile?: 'dashboard' | 'trades'
+    /** Cap results after sorting newest-first (server-side). */
+    limit?: number
   } = {}): Promise<{ trades: MtTrade[]; debug?: { raw_sample_keys: string[]; raw_sample: Record<string, unknown> } }> {
     return call({
       body: {
@@ -196,6 +198,7 @@ export const metatraderApi = {
         history_profile: args.historyProfile ?? 'dashboard',
         ...(args.historyFrom ? { history_from: args.historyFrom } : {}),
         ...(args.historyTo ? { history_to: args.historyTo } : {}),
+        ...(args.limit != null && args.limit > 0 ? { limit: args.limit } : {}),
       },
       expect: (b) => b as { trades: MtTrade[]; debug?: { raw_sample_keys: string[]; raw_sample: Record<string, unknown> } },
     })

@@ -669,11 +669,11 @@ Deno.serve(async (req: Request) => {
         const row = historyProfile === "trades" ? flattenMtOrder(order, "trades") : order
         const ticket = Number(pick(row, "ticket", "Ticket") ?? 0)
         const platform = String(broker.platform ?? "MT5")
-        const { direction, type_label } = adjustMtTradesPositionDirection(
-          order,
-          historyProfile,
-          resolveDirection(row, platform),
-        )
+        const resolved = resolveDirection(row, platform)
+        const { direction, type_label } =
+          status === "closed" && historyProfile === "trades"
+            ? adjustMtTradesPositionDirection(order, historyProfile, resolved)
+            : resolved
         const lot_size = resolveMtLots(row, historyProfile)
         const openTime = pick(
           row,
@@ -740,13 +740,18 @@ Deno.serve(async (req: Request) => {
           return out
         }),
       )
+      const limitRaw = Number(bodyRec.limit ?? 0)
+      const limit =
+        Number.isFinite(limitRaw) && limitRaw > 0
+          ? Math.min(Math.floor(limitRaw), 500)
+          : 0
       const trades = tradesByBroker.flat().sort((a, b) => {
         const at = a.status === "closed" ? (a.closed_at ?? a.opened_at) : a.opened_at
         const bt = b.status === "closed" ? (b.closed_at ?? b.opened_at) : b.opened_at
         const av = at ? Date.parse(at) : 0
         const bv = bt ? Date.parse(bt) : 0
         return bv - av
-      })
+      }).slice(0, limit > 0 ? limit : undefined)
       // When at least one trade is missing direction, echo back the raw shape so the
       // client can show the diagnostic and we can extend the parser if needed.
       const hasMissingDirection = trades.some((t) => !t.direction)

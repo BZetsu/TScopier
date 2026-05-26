@@ -81,6 +81,21 @@ test('adjustMtTradesPositionDirection: closing buy position uses buy not exit se
   assert.equal(adjusted.type_label, 'Deal Buy')
 })
 
+test('adjustMtTradesPositionDirection: opening buy with dealInternalOut does not invert', () => {
+  const row = {
+    ticket: 102,
+    dealType: 'DEAL_TYPE_BUY',
+    dealInternalOut: { profit: 0, lots: 0.1 },
+  }
+  const adjusted = adjustMtTradesPositionDirection(
+    row,
+    'trades',
+    { direction: 'buy', type_label: 'Deal Buy' },
+  )
+  assert.equal(adjusted.direction, 'buy')
+  assert.equal(adjusted.type_label, 'Deal Buy')
+})
+
 test('mergeMtHistoryRow: keeps deal profit and lots when position snapshot is sparse', () => {
   const deal = { ticket: 123, lots: 0.1, profit: 42.5, closeTime: '2026-05-18T10:00:00' }
   const position = { ticket: 123, volume: 0, profit: 0, closeTime: '2026-05-18T10:00:00' }

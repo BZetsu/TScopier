@@ -369,20 +369,6 @@ export function adjustMtTradesPositionDirection(
   if (entry === "out" && (direction === "buy" || direction === "sell")) {
     direction = invertMtDirection(direction)
     type_label = labelForPositionDirection(direction, type_label)
-    return { direction, type_label }
-  }
-
-  if (entry === "unknown" && (direction === "buy" || direction === "sell")) {
-    const hasOutNested =
-      isPlainObject(flat.dealInternalOut) ||
-      isPlainObject(flat.DealInternalOut)
-    const hasInNested =
-      isPlainObject(flat.dealInternalIn) ||
-      isPlainObject(flat.DealInternalIn)
-    if (hasOutNested && !hasInNested) {
-      direction = invertMtDirection(direction)
-      type_label = labelForPositionDirection(direction, type_label)
-    }
   }
 
   return { direction, type_label }

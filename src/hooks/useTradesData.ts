@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { DASHBOARD_MT_HISTORY_DAYS } from '../lib/dashboardCharts'
 import { getLocalCalendarDayBounds } from '../lib/dashboardTradeStats'
 import { formatLocalMtApiDateTime } from '../lib/mtApiDateTime'
 import { metatraderApi, type MtTrade } from '../lib/metatraderapi'
@@ -14,18 +13,23 @@ import { useDashboardRealtime } from './useDashboardRealtime'
 
 const AUTO_REFRESH_MS = 15_000
 const VISIBILITY_STALE_MS = 30_000
+/** Max rows returned for the Account Trades page (newest first). */
+export const TRADES_PAGE_MAX_RESULTS = 100
+/** History window for trades list — enough for recent activity without pulling years of deals. */
+export const TRADES_PAGE_HISTORY_DAYS = 90
 
 async function fetchTradesFromMt(): Promise<MtTrade[]> {
   const { tomorrowStart: historyTo } = getLocalCalendarDayBounds()
   const historyFrom = new Date()
-  historyFrom.setDate(historyFrom.getDate() - DASHBOARD_MT_HISTORY_DAYS)
+  historyFrom.setDate(historyFrom.getDate() - TRADES_PAGE_HISTORY_DAYS)
   const res = await metatraderApi.trades({
     scope: 'all',
     historyProfile: 'trades',
     historyFrom: formatLocalMtApiDateTime(historyFrom),
     historyTo: formatLocalMtApiDateTime(historyTo),
+    limit: TRADES_PAGE_MAX_RESULTS,
   })
-  return res.trades ?? []
+  return (res.trades ?? []).slice(0, TRADES_PAGE_MAX_RESULTS)
 }
 
 export function useTradesData(userId: string | undefined) {
