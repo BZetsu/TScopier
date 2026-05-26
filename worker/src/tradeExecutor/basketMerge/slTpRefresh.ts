@@ -162,11 +162,13 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
     anchorSignalId: string
     direction: 'buy' | 'sell'
     logAction: 'merge_routed_modify_only' | 'signal_merge_into_open_trade'
+    messageEditOnly?: boolean
     mergeLinkMeta?: Record<string, unknown>
   }): Promise<{ success: boolean; summary: MergeModifySummary }> {
     const {
       signal, parsed, broker, channelKeywords, baseLot, params, symbol, uuid,
       strictEntryPrefetch, commentPrefix, anchorSignalId, direction, logAction, mergeLinkMeta,
+      messageEditOnly,
     } = args
     const api = ctx.apiFor(broker)
     if (!api) {
@@ -213,9 +215,9 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
     const plannerParsed: PlannerParsedSignal = {
       action: parsed.action,
       symbol: parsed.symbol,
-      entry_price: rpe0,
-      entry_zone_low: rzo0?.lo ?? parsed.entry_zone_low,
-      entry_zone_high: rzo0?.hi ?? parsed.entry_zone_high,
+      entry_price: messageEditOnly ? null : rpe0,
+      entry_zone_low: messageEditOnly ? null : (rzo0?.lo ?? parsed.entry_zone_low),
+      entry_zone_high: messageEditOnly ? null : (rzo0?.hi ?? parsed.entry_zone_high),
       sl: parsed.sl,
       tp: parsed.tp,
       lot_size: parsed.lot_size,

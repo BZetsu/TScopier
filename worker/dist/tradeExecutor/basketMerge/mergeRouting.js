@@ -156,6 +156,7 @@ async function tryParameterFollowUpMergeModifyOnly(ctx, args) {
         anchorSignalId: anchor.anchorSignalId,
         direction,
         logAction: 'merge_routed_modify_only',
+        messageEditOnly: args.messageEditOnly === true,
         mergeLinkMeta: {
             reply_chain: link.replyOk,
             within_time_window: link.withinWindow,

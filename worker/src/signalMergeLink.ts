@@ -69,6 +69,7 @@ export function isMergeFollowUpLinked(args: {
   implicitBundleWithinTightWindow: boolean
   implicitSameChannelBundle: boolean
   parameterRefreshSameChannel?: boolean
+  messageEditSameSignal?: boolean
 }): boolean {
   const implicitPath =
     args.implicitBundleWithinTightWindow && args.implicitSameChannelBundle
@@ -76,7 +77,8 @@ export function isMergeFollowUpLinked(args: {
     args.replyOk ||
     (args.withinWindow && args.threadLinksAnchor) ||
     implicitPath ||
-    (args.withinWindow && args.parameterRefreshSameChannel === true)
+    (args.withinWindow && args.parameterRefreshSameChannel === true) ||
+    args.messageEditSameSignal === true
   )
 }
 
@@ -89,6 +91,7 @@ export type BasketMergeLinkInput = {
   anchorChannelId: string | null
   parentSignalId: string | null
   anchorSignalId: string
+  mergeSignalId?: string
   hasSl: boolean
   hasTp: boolean
   ancestorChainContainsAnchor: boolean
@@ -101,6 +104,7 @@ export type BasketMergeLinkContext = {
   implicitBundleWithinTightWindow: boolean
   implicitSameChannelBundle: boolean
   parameterRefreshSameChannel: boolean
+  messageEditSameSignal: boolean
   isLinked: boolean
   dtMs: number
   parentLinksAnchor: boolean
@@ -140,6 +144,10 @@ export function computeBasketMergeLinkContext(input: BasketMergeLinkInput): Bask
     && !threadLinksAnchor
     && (input.hasSl || input.hasTp),
   )
+  const mergeSignalId = String(input.mergeSignalId ?? '').trim()
+  const messageEditSameSignal = Boolean(
+    mergeSignalId && mergeSignalId === input.anchorSignalId && (input.hasSl || input.hasTp),
+  )
   const flags = {
     replyOk,
     withinWindow,
@@ -147,6 +155,7 @@ export function computeBasketMergeLinkContext(input: BasketMergeLinkInput): Bask
     implicitBundleWithinTightWindow,
     implicitSameChannelBundle,
     parameterRefreshSameChannel,
+    messageEditSameSignal,
   }
   return {
     ...flags,

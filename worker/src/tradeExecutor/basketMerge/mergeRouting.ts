@@ -164,6 +164,7 @@ export async function tryParameterFollowUpMergeModifyOnly(ctx: TradeExecutorCont
     uuid: string
     strictEntryPrefetch: { bid: number; ask: number } | null
     commentPrefix: string
+    messageEditOnly?: boolean
   }): Promise<MergeOutcome> {
     const {
       signal, parsed, broker, channelKeywords, baseLot, params, symbol, uuid,
@@ -318,6 +319,7 @@ export async function tryParameterFollowUpMergeModifyOnly(ctx: TradeExecutorCont
       anchorSignalId: anchor.anchorSignalId,
       direction,
       logAction: 'merge_routed_modify_only',
+      messageEditOnly: args.messageEditOnly === true,
       mergeLinkMeta: {
         reply_chain: link.replyOk,
         within_time_window: link.withinWindow,

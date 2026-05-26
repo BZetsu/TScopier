@@ -39,13 +39,13 @@ class TradeClient:
             res.raise_for_status()
             return res.json()
 
-    async def dispatch_signal(self, signal: dict[str, Any]) -> bool:
+    async def dispatch_signal(self, signal: dict[str, Any], *, source: str = "telethon_listener") -> bool:
         base = self._trade_url()
         if not base:
             raise RuntimeError("TRADE_WORKER_URL not configured")
         url = f"{base}/internal/dispatch-signal"
         timeout = self.cfg.trade_signal_push_timeout_ms / 1000
-        body = {"signal": signal, "source": "telethon_listener", "await": True}
+        body = {"signal": signal, "source": source, "await": True}
 
         for attempt in range(1, self.cfg.trade_signal_push_max_attempts + 1):
             try:

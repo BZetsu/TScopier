@@ -289,6 +289,7 @@ async function resolveBasketMergeLinkContext(ctx, args) {
         anchorChannelId,
         parentSignalId: mergeSignal.parent_signal_id,
         anchorSignalId,
+        mergeSignalId: mergeSignal.id,
         hasSl,
         hasTp,
         ancestorChainContainsAnchor,

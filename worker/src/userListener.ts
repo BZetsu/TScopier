@@ -4,6 +4,8 @@ import { TelegramClient } from 'telegram'
 import { utils } from 'telegram'
 import { NewMessage } from 'telegram/events'
 import type { NewMessageEvent } from 'telegram/events/NewMessage'
+import { EditedMessage } from 'telegram/events/EditedMessage'
+import type { EditedMessageEvent } from 'telegram/events/EditedMessage'
 import { Api } from 'telegram/tl'
 import { buildClient, isAuthKeyUnregistered, rethrowIfSessionInvalid, TelegramSessionInvalidError, tgInvoke } from './telegramClient'
 import { tradeableFromParsed } from './backtestSignal'
@@ -18,6 +20,14 @@ import { parseChannelMessageSync, parseRawChannelMessage, looksLikeChannelManage
 import type { PipelineTimestamps } from './pipelineTimestamps'
 import { incMetric } from './workerMetrics'
 import { workerConfig } from './workerConfig'
+import {
+  MESSAGE_EDIT_DISPATCH_SOURCE,
+  buildMessageEditDispatchRow,
+  loadSignalByTelegramMessage,
+  messageEditParseEligible,
+  updateSignalAfterTelegramEdit,
+} from './telegramMessageEdit'
+import { parsedHasSlOrTp } from './multiTradeMerge'
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? ''
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? ''
@@ -121,6 +131,7 @@ interface ChannelRow {
 }
 
 type Handler = (event: NewMessageEvent) => void
+type EditHandler = (event: EditedMessageEvent) => void
 
 interface MessageLike {
   id: number | bigint
@@ -224,6 +235,8 @@ export class UserListener {
   private monitoredChannels = new Set<string>()
   private currentHandler: Handler | null = null
   private currentEventBuilder: NewMessage | null = null
+  private currentEditHandler: EditHandler | null = null
+  private currentEditEventBuilder: EditedMessage | null = null
   private startedAt = 0
   /** Set when start() reuses the auth-time client (no second connect). */
   private startedWithLiveClient = false
@@ -467,6 +480,11 @@ export class UserListener {
         console.error(`[userListener] handleMessage error for ${this.userId}:`, err)
       })
     }
+    const editHandler: EditHandler = (event: EditedMessageEvent) => {
+      this.handleEditedMessage(event).catch(err => {
+        console.error(`[userListener] handleEditedMessage error for ${this.userId}:`, err)
+      })
+    }
     // NOTE:
     // Passing `chats:` here depends on Telegram/gramjs resolving each chat
     // identifier exactly as expected. In practice, channel ids can vary in
@@ -476,9 +494,13 @@ export class UserListener {
     // Important: do not use `incoming: true` here — channel posts are not
     // always classified as "incoming", which can cause silent drops.
     const builder = new NewMessage({})
+    const editBuilder = new EditedMessage({})
     this.client.addEventHandler(handler, builder)
+    this.client.addEventHandler(editHandler, editBuilder)
     this.currentHandler = handler
     this.currentEventBuilder = builder
+    this.currentEditHandler = editHandler
+    this.currentEditEventBuilder = editBuilder
   }
 
   private removeCurrentHandler() {
@@ -489,8 +511,17 @@ export class UserListener {
         // ignore
       }
     }
+    if (this.currentEditHandler && this.currentEditEventBuilder) {
+      try {
+        this.client.removeEventHandler(this.currentEditHandler, this.currentEditEventBuilder)
+      } catch {
+        // ignore
+      }
+    }
     this.currentHandler = null
     this.currentEventBuilder = null
+    this.currentEditHandler = null
+    this.currentEditEventBuilder = null
   }
 
   private setsEqual(a: Set<string>, b: Set<string>) {
@@ -948,6 +979,165 @@ export class UserListener {
     void this.bumpLastLive(channelRow.id)
   }
 
+  private async handleEditedMessage(event: EditedMessageEvent) {
+    this.lastEventAt = Date.now()
+    incMetric('telegram_edit_events')
+
+    const message = event.message
+    if (!message) return
+
+    const { chatId, chatIdVariants, chatUsername } = await this.resolveChatIdentity(event)
+    if (!chatId && !chatUsername) return
+
+    const isMonitored =
+      chatIdVariants.some(v => this.monitoredChannels.has(v)) ||
+      (!!chatUsername && this.monitoredChannels.has(chatUsername))
+    if (!isMonitored) return
+
+    const channelRow = await this.resolveChannelRowForChat(chatIdVariants, chatUsername)
+    if (!channelRow) return
+
+    const rawMessage = (message.text ?? message.message ?? '') as string
+    if (!rawMessage.trim()) return
+
+    console.log(
+      `[userListener] message edit user=${this.userId} channelRow=${channelRow.id} msgId=${String(message.id)}`,
+    )
+
+    await this.tryApplyTelegramMessageEdit({
+      channelRow,
+      messageId: String(message.id),
+      rawMessage,
+      source: 'live_edit',
+    })
+    void this.bumpLastLive(channelRow.id)
+  }
+
+  private async parseMessageForChannel(
+    channelRowId: string,
+    rawMessage: string,
+    signalId: string,
+  ): Promise<Awaited<ReturnType<typeof parseChannelMessageSync>>> {
+    if (listenerInlineParseEnabled()) {
+      const { keywords, lexicon } = await getChannelParseContext(this.supabase, channelRowId)
+      return parseChannelMessageSync(rawMessage, keywords, lexicon)
+    }
+    if (PARSE_SIGNAL_URL) {
+      return this.parseViaEdgeFunction(signalId, rawMessage, channelRowId)
+    }
+    return parseRawChannelMessage(this.supabase, channelRowId, rawMessage)
+  }
+
+  private async tryApplyTelegramMessageEdit(args: {
+    channelRow: ChannelRow
+    messageId: string
+    rawMessage: string
+    source: string
+  }): Promise<boolean> {
+    const { channelRow, messageId, rawMessage, source } = args
+    const existing = await loadSignalByTelegramMessage(this.supabase, {
+      userId: this.userId,
+      channelRowId: channelRow.id,
+      telegramMessageId: messageId,
+    })
+    if (!existing) return false
+    if (existing.raw_message.trim() === rawMessage.trim()) return false
+
+    let parseResult: Awaited<ReturnType<typeof parseChannelMessageSync>>
+    try {
+      parseResult = await this.parseMessageForChannel(channelRow.id, rawMessage, existing.id)
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      console.error(
+        `[userListener] message edit parse failed user=${this.userId} signalId=${existing.id}:`,
+        errMsg,
+      )
+      void persistListenerEvent(this.supabase, {
+        userId: this.userId,
+        eventType: 'message_edit_parse_failed',
+        channelRowId: channelRow.id,
+        telegramMessageId: messageId,
+        detail: { error: errMsg.slice(0, 300), signal_id: existing.id, source },
+      })
+      return false
+    }
+
+    if (!messageEditParseEligible(parseResult)) {
+      void persistListenerEvent(this.supabase, {
+        userId: this.userId,
+        eventType: 'message_edit_no_sl_tp',
+        channelRowId: channelRow.id,
+        telegramMessageId: messageId,
+        detail: {
+          signal_id: existing.id,
+          source,
+          has_sl_tp: parsedHasSlOrTp(parseResult.parsed),
+          parse_status: parseResult.status,
+        },
+      })
+      return false
+    }
+
+    const updated = await updateSignalAfterTelegramEdit(this.supabase, {
+      signalId: existing.id,
+      rawMessage,
+      parseResult,
+    })
+    if (!updated) {
+      console.error(
+        `[userListener] message edit update failed user=${this.userId} signalId=${existing.id}`,
+      )
+      return false
+    }
+
+    const tEditReceived = Date.now()
+    const dispatchRow = buildMessageEditDispatchRow(existing, parseResult, rawMessage, {
+      t_message_edit_received: tEditReceived,
+      t_dispatch_sent: tEditReceived,
+    })
+    dispatchRow.dispatch_source = MESSAGE_EDIT_DISPATCH_SOURCE
+
+    console.log(
+      `[userListener] message edit dispatch user=${this.userId} signalId=${existing.id}`
+      + ` channelRow=${channelRow.id} messageId=${messageId} source=${source}`,
+    )
+
+    void persistListenerEvent(this.supabase, {
+      userId: this.userId,
+      eventType: 'message_edit_applied',
+      channelRowId: channelRow.id,
+      telegramMessageId: messageId,
+      detail: {
+        signal_id: existing.id,
+        source,
+        sl: parseResult.parsed.sl ?? null,
+        tp: parseResult.parsed.tp ?? [],
+      },
+    })
+
+    await this.dispatchMessageEditSignal(dispatchRow)
+    return true
+  }
+
+  private async dispatchMessageEditSignal(dispatchRow: SignalRow): Promise<void> {
+    const dispatchedInProcess = this.onSignalParsed
+      ? this.onSignalParsed(dispatchRow) === true
+      : false
+    const shouldPush = workerConfig.runsListener && (!workerConfig.runsTrade || !dispatchedInProcess)
+
+    if (shouldPush) {
+      const pushed = await pushParsedSignalToTradeWorkerAwait(
+        {
+          ...dispatchRow,
+          parsed_data: dispatchRow.parsed_data as Record<string, unknown> | null,
+          dispatch_source: MESSAGE_EDIT_DISPATCH_SOURCE,
+        },
+        { source: MESSAGE_EDIT_DISPATCH_SOURCE },
+      )
+      if (!pushed) incMetric('dispatch_push_exhausted')
+    }
+  }
+
   /**
    * Resolve chat identity for an update without depending solely on
    * getChat(), which can fail transiently when gramjs entity cache is cold.
@@ -1082,6 +1272,13 @@ export class UserListener {
       .eq('channel_id', channelRow.id)
       .eq('telegram_message_id', messageId)
     if ((dupCount ?? 0) > 0) {
+      const edited = await this.tryApplyTelegramMessageEdit({
+        channelRow,
+        messageId,
+        rawMessage,
+        source: opts?.source === 'catchup' ? 'catchup' : 'duplicate_fallback',
+      })
+      if (edited) return true
       console.log(
         `[userListener] duplicate message ignored user=${this.userId} channelRow=${channelRow.id} messageId=${messageId}`,
       )

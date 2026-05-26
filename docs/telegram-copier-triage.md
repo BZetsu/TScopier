@@ -127,6 +127,8 @@ Use **multi** when the channel posts two take-profits and you want two separate 
 
 **Broker “already set” on modify:** When SL/TP on the broker already match the signal, the copier treats that as success (no failed trade log).
 
+**Message edits (same Telegram post updated):** Some channels post a bare entry first (`Gold buy now`) and **edit the same message** later to add `@ entry`, SL, and TP. The listener detects edits (and duplicate message-id replays with changed text), re-parses the existing `signals` row, and re-dispatches with `source=message_edit` so open legs get **SL/TP updates only**. Phase 1 does **not** change entry price on already-open market fills; entry-only edits are ignored until SL or TP appears in the parsed message. Requires worker + Telethon listener redeploy and migration `20260526120000_signals_telegram_message_edited_at.sql`.
+
 ## 8. Incident note template
 
 ```

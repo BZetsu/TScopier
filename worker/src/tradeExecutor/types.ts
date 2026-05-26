@@ -49,6 +49,8 @@ export interface SignalRow {
   reply_to_message_id?: string | null
   /** Latency stamps from listener → trade entry (live path). */
   pipeline_ts?: PipelineTimestamps
+  /** In-memory dispatch hint (not persisted on signals row). */
+  dispatch_source?: string
 }
 
 export interface RangePendingCancelScope {

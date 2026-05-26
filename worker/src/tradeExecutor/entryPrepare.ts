@@ -53,7 +53,7 @@ export type EntryArgs = {
   broker: BrokerRow
   channelKeywords: ChannelKeywords | null
   pipelineT0?: number
-  sendOpts?: { liveEntryFast?: boolean; commentPrefix?: string }
+  sendOpts?: { liveEntryFast?: boolean; commentPrefix?: string; messageEditOnly?: boolean }
 }
 
 export type PreparedEntry = {
@@ -279,6 +279,7 @@ export async function prepareEntryExecution(
       uuid,
       strictEntryPrefetch,
       commentPrefix,
+      messageEditOnly: sendOpts?.messageEditOnly === true,
     })
     if (paramOutcome.handled && paramOutcome.success) {
       return { ok: false, outcome: { openedOrMerged: true } }

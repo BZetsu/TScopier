@@ -4,6 +4,7 @@ exports.UserListener = void 0;
 const node_crypto_1 = require("node:crypto");
 const telegram_1 = require("telegram");
 const events_1 = require("telegram/events");
+const EditedMessage_1 = require("telegram/events/EditedMessage");
 const tl_1 = require("telegram/tl");
 const telegramClient_1 = require("./telegramClient");
 const backtestSignal_1 = require("./backtestSignal");
@@ -16,6 +17,8 @@ const channelKeywordsCache_1 = require("./channelKeywordsCache");
 const parseSignal_1 = require("./parseSignal");
 const workerMetrics_1 = require("./workerMetrics");
 const workerConfig_1 = require("./workerConfig");
+const telegramMessageEdit_1 = require("./telegramMessageEdit");
+const multiTradeMerge_1 = require("./multiTradeMerge");
 const SUPABASE_URL = process.env.SUPABASE_URL ?? '';
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? '';
 const PARSE_SIGNAL_URL = process.env.PARSE_SIGNAL_URL ?? (SUPABASE_URL ? `${SUPABASE_URL.replace(/\/$/, '')}/functions/v1/parse-signal` : '');
@@ -144,6 +147,8 @@ class UserListener {
         this.monitoredChannels = new Set();
         this.currentHandler = null;
         this.currentEventBuilder = null;
+        this.currentEditHandler = null;
+        this.currentEditEventBuilder = null;
         this.startedAt = 0;
         /** Set when start() reuses the auth-time client (no second connect). */
         this.startedWithLiveClient = false;
@@ -354,6 +359,11 @@ class UserListener {
                 console.error(`[userListener] handleMessage error for ${this.userId}:`, err);
             });
         };
+        const editHandler = (event) => {
+            this.handleEditedMessage(event).catch(err => {
+                console.error(`[userListener] handleEditedMessage error for ${this.userId}:`, err);
+            });
+        };
         // NOTE:
         // Passing `chats:` here depends on Telegram/gramjs resolving each chat
         // identifier exactly as expected. In practice, channel ids can vary in
@@ -363,9 +373,13 @@ class UserListener {
         // Important: do not use `incoming: true` here — channel posts are not
         // always classified as "incoming", which can cause silent drops.
         const builder = new events_1.NewMessage({});
+        const editBuilder = new EditedMessage_1.EditedMessage({});
         this.client.addEventHandler(handler, builder);
+        this.client.addEventHandler(editHandler, editBuilder);
         this.currentHandler = handler;
         this.currentEventBuilder = builder;
+        this.currentEditHandler = editHandler;
+        this.currentEditEventBuilder = editBuilder;
     }
     removeCurrentHandler() {
         if (this.currentHandler && this.currentEventBuilder) {
@@ -376,8 +390,18 @@ class UserListener {
                 // ignore
             }
         }
+        if (this.currentEditHandler && this.currentEditEventBuilder) {
+            try {
+                this.client.removeEventHandler(this.currentEditHandler, this.currentEditEventBuilder);
+            }
+            catch {
+                // ignore
+            }
+        }
         this.currentHandler = null;
         this.currentEventBuilder = null;
+        this.currentEditHandler = null;
+        this.currentEditEventBuilder = null;
     }
     setsEqual(a, b) {
         if (a.size !== b.size)
@@ -783,6 +807,133 @@ class UserListener {
         }, { source: 'live' });
         void this.bumpLastLive(channelRow.id);
     }
+    async handleEditedMessage(event) {
+        this.lastEventAt = Date.now();
+        (0, workerMetrics_1.incMetric)('telegram_edit_events');
+        const message = event.message;
+        if (!message)
+            return;
+        const { chatId, chatIdVariants, chatUsername } = await this.resolveChatIdentity(event);
+        if (!chatId && !chatUsername)
+            return;
+        const isMonitored = chatIdVariants.some(v => this.monitoredChannels.has(v)) ||
+            (!!chatUsername && this.monitoredChannels.has(chatUsername));
+        if (!isMonitored)
+            return;
+        const channelRow = await this.resolveChannelRowForChat(chatIdVariants, chatUsername);
+        if (!channelRow)
+            return;
+        const rawMessage = (message.text ?? message.message ?? '');
+        if (!rawMessage.trim())
+            return;
+        console.log(`[userListener] message edit user=${this.userId} channelRow=${channelRow.id} msgId=${String(message.id)}`);
+        await this.tryApplyTelegramMessageEdit({
+            channelRow,
+            messageId: String(message.id),
+            rawMessage,
+            source: 'live_edit',
+        });
+        void this.bumpLastLive(channelRow.id);
+    }
+    async parseMessageForChannel(channelRowId, rawMessage, signalId) {
+        if (listenerInlineParseEnabled()) {
+            const { keywords, lexicon } = await (0, channelKeywordsCache_1.getChannelParseContext)(this.supabase, channelRowId);
+            return (0, parseSignal_1.parseChannelMessageSync)(rawMessage, keywords, lexicon);
+        }
+        if (PARSE_SIGNAL_URL) {
+            return this.parseViaEdgeFunction(signalId, rawMessage, channelRowId);
+        }
+        return (0, parseSignal_1.parseRawChannelMessage)(this.supabase, channelRowId, rawMessage);
+    }
+    async tryApplyTelegramMessageEdit(args) {
+        const { channelRow, messageId, rawMessage, source } = args;
+        const existing = await (0, telegramMessageEdit_1.loadSignalByTelegramMessage)(this.supabase, {
+            userId: this.userId,
+            channelRowId: channelRow.id,
+            telegramMessageId: messageId,
+        });
+        if (!existing)
+            return false;
+        if (existing.raw_message.trim() === rawMessage.trim())
+            return false;
+        let parseResult;
+        try {
+            parseResult = await this.parseMessageForChannel(channelRow.id, rawMessage, existing.id);
+        }
+        catch (err) {
+            const errMsg = err instanceof Error ? err.message : String(err);
+            console.error(`[userListener] message edit parse failed user=${this.userId} signalId=${existing.id}:`, errMsg);
+            void (0, listenerEvents_1.persistListenerEvent)(this.supabase, {
+                userId: this.userId,
+                eventType: 'message_edit_parse_failed',
+                channelRowId: channelRow.id,
+                telegramMessageId: messageId,
+                detail: { error: errMsg.slice(0, 300), signal_id: existing.id, source },
+            });
+            return false;
+        }
+        if (!(0, telegramMessageEdit_1.messageEditParseEligible)(parseResult)) {
+            void (0, listenerEvents_1.persistListenerEvent)(this.supabase, {
+                userId: this.userId,
+                eventType: 'message_edit_no_sl_tp',
+                channelRowId: channelRow.id,
+                telegramMessageId: messageId,
+                detail: {
+                    signal_id: existing.id,
+                    source,
+                    has_sl_tp: (0, multiTradeMerge_1.parsedHasSlOrTp)(parseResult.parsed),
+                    parse_status: parseResult.status,
+                },
+            });
+            return false;
+        }
+        const updated = await (0, telegramMessageEdit_1.updateSignalAfterTelegramEdit)(this.supabase, {
+            signalId: existing.id,
+            rawMessage,
+            parseResult,
+        });
+        if (!updated) {
+            console.error(`[userListener] message edit update failed user=${this.userId} signalId=${existing.id}`);
+            return false;
+        }
+        const tEditReceived = Date.now();
+        const dispatchRow = (0, telegramMessageEdit_1.buildMessageEditDispatchRow)(existing, parseResult, rawMessage, {
+            t_message_edit_received: tEditReceived,
+            t_dispatch_sent: tEditReceived,
+        });
+        dispatchRow.dispatch_source = telegramMessageEdit_1.MESSAGE_EDIT_DISPATCH_SOURCE;
+        console.log(`[userListener] message edit dispatch user=${this.userId} signalId=${existing.id}`
+            + ` channelRow=${channelRow.id} messageId=${messageId} source=${source}`);
+        void (0, listenerEvents_1.persistListenerEvent)(this.supabase, {
+            userId: this.userId,
+            eventType: 'message_edit_applied',
+            channelRowId: channelRow.id,
+            telegramMessageId: messageId,
+            detail: {
+                signal_id: existing.id,
+                source,
+                sl: parseResult.parsed.sl ?? null,
+                tp: parseResult.parsed.tp ?? [],
+            },
+        });
+        await this.dispatchMessageEditSignal(dispatchRow);
+        return true;
+    }
+    async dispatchMessageEditSignal(dispatchRow) {
+        const dispatchedInProcess = this.onSignalParsed
+            ? this.onSignalParsed(dispatchRow) === true
+            : false;
+        const shouldPush = workerConfig_1.workerConfig.runsListener && (!workerConfig_1.workerConfig.runsTrade || !dispatchedInProcess);
+        if (shouldPush) {
+            const pushed = await (0, tradeSignalPush_1.pushParsedSignalToTradeWorkerAwait)({
+                ...dispatchRow,
+                parsed_data: dispatchRow.parsed_data,
+                dispatch_source: telegramMessageEdit_1.MESSAGE_EDIT_DISPATCH_SOURCE,
+            }, { source: telegramMessageEdit_1.MESSAGE_EDIT_DISPATCH_SOURCE });
+            if (!pushed)
+                (0, workerMetrics_1.incMetric)('dispatch_push_exhausted');
+        }
+    }
     /**
      * Resolve chat identity for an update without depending solely on
      * getChat(), which can fail transiently when gramjs entity cache is cold.
@@ -900,6 +1051,14 @@ class UserListener {
             .eq('channel_id', channelRow.id)
             .eq('telegram_message_id', messageId);
         if ((dupCount ?? 0) > 0) {
+            const edited = await this.tryApplyTelegramMessageEdit({
+                channelRow,
+                messageId,
+                rawMessage,
+                source: opts?.source === 'catchup' ? 'catchup' : 'duplicate_fallback',
+            });
+            if (edited)
+                return true;
             console.log(`[userListener] duplicate message ignored user=${this.userId} channelRow=${channelRow.id} messageId=${messageId}`);
             return false;
         }

@@ -15,7 +15,7 @@ import {
   isChannelManagementBlocked,
   normalizeChannelMessageFiltersMap,
 } from '../channelMessageFilters'
-import { shouldRouteAsBasketParameterRefresh } from '../multiTradeMerge'
+import { shouldRouteAsBasketParameterRefresh, parsedHasSlOrTp } from '../multiTradeMerge'
 import { SKIP_REASON_SIGNAL_ENTRY_REQUIRED } from '../manualPlanner'
 import { parsePipelineTimestamps, pipelineSummaryPayload } from '../pipelineTimestamps'
 import { buildTscopierCommentPrefix, resolveChannelLabelForComment, sanitizeChannelCommentSlug } from '../tradeComment'
@@ -28,6 +28,7 @@ import {
   telegramLiveTradeGateEnabled,
 } from './types'
 import type { ChannelKeywords } from '../manualPlanner'
+import { MESSAGE_EDIT_DISPATCH_SOURCE } from '../telegramMessageEdit'
 
 export function shouldUseEntryFastPath(ctx: TradeExecutorContext, row: SignalRow): boolean {
     const mode = workerConfig.tradeExecutorMode
@@ -278,8 +279,9 @@ export async function handleSignal(ctx: TradeExecutorContext,
       ? Math.max(0, handleStartMs - (opts.dispatchReceivedAt as number))
       : null
     let pipelineOutcome: Record<string, unknown> = { live_fast: liveFast }
+    const isMessageEdit = opts?.dispatchSource === MESSAGE_EDIT_DISPATCH_SOURCE
     try {
-      if (!opts?.liveDispatch && ctx.signalTooOldForReplay(row)) return
+      if (!opts?.liveDispatch && !isMessageEdit && ctx.signalTooOldForReplay(row)) return
 
       if (!liveFast) {
         void ctx.logPipelineStage(row, 'handle_start', {
@@ -289,7 +291,7 @@ export async function handleSignal(ctx: TradeExecutorContext,
         })
       }
 
-      if (!opts?.lightIdempotency && await ctx.signalAlreadyHandled(row.id)) {
+      if (!opts?.lightIdempotency && !isMessageEdit && await ctx.signalAlreadyHandled(row.id)) {
         await ctx.markSignalExecuted(row.id)
         return
       }
@@ -310,6 +312,26 @@ export async function handleSignal(ctx: TradeExecutorContext,
       if (!parsed || !parsed.action) return
       const action = String(parsed.action).toLowerCase()
       if (action === 'ignore') return
+
+      if (isMessageEdit) {
+        if (!parsedHasSlOrTp(parsed)) {
+          await ctx.logDispatchSkipped(row, 'message_edit_no_sl_tp')
+          return
+        }
+        const { count: openTradeCount } = await ctx.supabase
+          .from('trades')
+          .select('id', { count: 'exact', head: true })
+          .eq('signal_id', row.id)
+          .eq('status', 'open')
+        if ((openTradeCount ?? 0) === 0) {
+          await ctx.logDispatchSkipped(row, 'message_edit_no_open_trades')
+          return
+        }
+        if (!shouldRouteAsBasketParameterRefresh(parsed) && !isManagementAction(action)) {
+          await ctx.logDispatchSkipped(row, 'message_edit_not_parameter_refresh')
+          return
+        }
+      }
 
       const allMatchingBrokers = (ctx.brokersByUser.get(row.user_id) ?? []).filter(b =>
         b.is_active && isMtUuid(b.metaapi_account_id) && channelMatchesBrokerSignal(b, row.channel_id),
@@ -396,6 +418,7 @@ export async function handleSignal(ctx: TradeExecutorContext,
         brokers.map(b => ctx.sendOrder(row, parsed, op, b, channelKeywords, pipelineT0, {
           liveEntryFast: liveFast,
           commentPrefix,
+          messageEditOnly: isMessageEdit,
         })),
       )
       if (liveFast && row.pipeline_ts) {
@@ -457,6 +480,8 @@ export async function handleSignal(ctx: TradeExecutorContext,
         } else {
           await ctx.markSignalExecuted(row.id)
         }
+      } else if (isMessageEdit) {
+        await ctx.markSignalExecuted(row.id)
       }
     } finally {
       const handleMs = Date.now() - handleStartMs

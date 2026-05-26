@@ -479,6 +479,7 @@ export async function resolveBasketMergeLinkContext(ctx: TradeExecutorContext, a
       anchorChannelId,
       parentSignalId: mergeSignal.parent_signal_id,
       anchorSignalId,
+      mergeSignalId: mergeSignal.id,
       hasSl,
       hasTp,
       ancestorChainContainsAnchor,

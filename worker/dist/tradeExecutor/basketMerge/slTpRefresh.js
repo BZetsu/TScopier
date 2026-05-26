@@ -10,7 +10,7 @@ const channelActiveTradeParams_1 = require("../../channelActiveTradeParams");
 const helpers_1 = require("../helpers");
 const helpers_2 = require("./helpers");
 async function applyBasketSlTpRefresh(ctx, args) {
-    const { signal, parsed, broker, channelKeywords, baseLot, params, symbol, uuid, strictEntryPrefetch, commentPrefix, anchorSignalId, direction, logAction, mergeLinkMeta, } = args;
+    const { signal, parsed, broker, channelKeywords, baseLot, params, symbol, uuid, strictEntryPrefetch, commentPrefix, anchorSignalId, direction, logAction, mergeLinkMeta, messageEditOnly, } = args;
     const api = ctx.apiFor(broker);
     if (!api) {
         return {
@@ -49,9 +49,9 @@ async function applyBasketSlTpRefresh(ctx, args) {
     const plannerParsed = {
         action: parsed.action,
         symbol: parsed.symbol,
-        entry_price: rpe0,
-        entry_zone_low: rzo0?.lo ?? parsed.entry_zone_low,
-        entry_zone_high: rzo0?.hi ?? parsed.entry_zone_high,
+        entry_price: messageEditOnly ? null : rpe0,
+        entry_zone_low: messageEditOnly ? null : (rzo0?.lo ?? parsed.entry_zone_low),
+        entry_zone_high: messageEditOnly ? null : (rzo0?.hi ?? parsed.entry_zone_high),
         sl: parsed.sl,
         tp: parsed.tp,
         lot_size: parsed.lot_size,

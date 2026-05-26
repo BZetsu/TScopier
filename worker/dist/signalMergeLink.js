@@ -58,7 +58,8 @@ function isMergeFollowUpLinked(args) {
     return (args.replyOk ||
         (args.withinWindow && args.threadLinksAnchor) ||
         implicitPath ||
-        (args.withinWindow && args.parameterRefreshSameChannel === true));
+        (args.withinWindow && args.parameterRefreshSameChannel === true) ||
+        args.messageEditSameSignal === true);
 }
 /** Shared merge-link flags for entry merge and SL/TP parameter refresh paths. */
 function computeBasketMergeLinkContext(input) {
@@ -88,6 +89,8 @@ function computeBasketMergeLinkContext(input) {
         && !replyOk
         && !threadLinksAnchor
         && (input.hasSl || input.hasTp));
+    const mergeSignalId = String(input.mergeSignalId ?? '').trim();
+    const messageEditSameSignal = Boolean(mergeSignalId && mergeSignalId === input.anchorSignalId && (input.hasSl || input.hasTp));
     const flags = {
         replyOk,
         withinWindow,
@@ -95,6 +98,7 @@ function computeBasketMergeLinkContext(input) {
         implicitBundleWithinTightWindow,
         implicitSameChannelBundle,
         parameterRefreshSameChannel,
+        messageEditSameSignal,
     };
     return {
         ...flags,

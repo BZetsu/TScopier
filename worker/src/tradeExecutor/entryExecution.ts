@@ -14,7 +14,7 @@ export type EntryArgs = {
   broker: BrokerRow
   channelKeywords: ChannelKeywords | null
   pipelineT0?: number
-  sendOpts?: { liveEntryFast?: boolean; commentPrefix?: string }
+  sendOpts?: { liveEntryFast?: boolean; commentPrefix?: string; messageEditOnly?: boolean }
 }
 
 export type EntryMode = 'single' | 'range'

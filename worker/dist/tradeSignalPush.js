@@ -95,7 +95,7 @@ async function logPushAttemptToDb(row, status, payload) {
         /* best-effort */
     }
 }
-async function postDispatchSignal(url, token, signalBody, priority, timeoutMs, awaitExecution = false) {
+async function postDispatchSignal(url, token, signalBody, priority, timeoutMs, awaitExecution = false, source = 'listener_push') {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort('trade-push-timeout'), timeoutMs);
     try {
@@ -108,7 +108,7 @@ async function postDispatchSignal(url, token, signalBody, priority, timeoutMs, a
             body: JSON.stringify({
                 signal: signalBody,
                 priority,
-                source: 'listener_push',
+                source,
                 await: awaitExecution,
             }),
             signal: controller.signal,
@@ -150,6 +150,7 @@ async function pushParsedSignalToTradeWorkerInner(row, opts) {
         return false;
     }
     const timeoutMs = Math.max(500, Math.min(10000, Number(process.env.TRADE_SIGNAL_PUSH_TIMEOUT_MS ?? 4000)));
+    const dispatchSource = opts?.source ?? row.dispatch_source ?? 'listener_push';
     const url = `${baseUrl}/internal/dispatch-signal`;
     const priority = (0, tradeSignalActions_1.dispatchPriorityForAction)(action);
     const signalBody = {
@@ -173,10 +174,11 @@ async function pushParsedSignalToTradeWorkerInner(row, opts) {
         timeout_ms: timeoutMs,
         max_attempts: PUSH_MAX_ATTEMPTS,
         await_execution: opts?.awaitExecution === true,
+        dispatch_source: dispatchSource,
     });
     for (let attempt = 1; attempt <= PUSH_MAX_ATTEMPTS; attempt++) {
         const attemptStartedAt = Date.now();
-        const result = await postDispatchSignal(url, token, signalBody, priority, timeoutMs, opts?.awaitExecution === true);
+        const result = await postDispatchSignal(url, token, signalBody, priority, timeoutMs, opts?.awaitExecution === true, dispatchSource);
         await logPushAttemptToDb(row, result.ok ? 'success' : 'failed', {
             run_id: 'latency-v3',
             phase: 'attempt',
@@ -211,8 +213,11 @@ function pushParsedSignalToTradeWorker(row) {
     });
 }
 /** Awaitable push — used after signals row is persisted (durable handoff). */
-async function pushParsedSignalToTradeWorkerAwait(row) {
-    return pushParsedSignalToTradeWorkerInner(row, { awaitExecution: true });
+async function pushParsedSignalToTradeWorkerAwait(row, opts) {
+    return pushParsedSignalToTradeWorkerInner(row, {
+        awaitExecution: true,
+        source: opts?.source ?? row.dispatch_source,
+    });
 }
 /**
  * Listener startup check: TRADE_WORKER_SHARD_URLS count must match TRADE_WORKER_SHARD_COUNT.

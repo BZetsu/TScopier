@@ -28,6 +28,7 @@ const pipelineTimestamps_1 = require("../pipelineTimestamps");
 const tradeComment_1 = require("../tradeComment");
 const helpers_1 = require("./helpers");
 const types_1 = require("./types");
+const telegramMessageEdit_1 = require("../telegramMessageEdit");
 function shouldUseEntryFastPath(ctx, row) {
     const mode = workerConfig_1.workerConfig.tradeExecutorMode;
     if (mode !== 'entry' && mode !== 'all')
@@ -247,8 +248,9 @@ async function handleSignal(ctx, row, opts) {
         ? Math.max(0, handleStartMs - opts.dispatchReceivedAt)
         : null;
     let pipelineOutcome = { live_fast: liveFast };
+    const isMessageEdit = opts?.dispatchSource === telegramMessageEdit_1.MESSAGE_EDIT_DISPATCH_SOURCE;
     try {
-        if (!opts?.liveDispatch && ctx.signalTooOldForReplay(row))
+        if (!opts?.liveDispatch && !isMessageEdit && ctx.signalTooOldForReplay(row))
             return;
         if (!liveFast) {
             void ctx.logPipelineStage(row, 'handle_start', {
@@ -257,7 +259,7 @@ async function handleSignal(ctx, row, opts) {
                 queue_wait_ms: queueWaitMs,
             });
         }
-        if (!opts?.lightIdempotency && await ctx.signalAlreadyHandled(row.id)) {
+        if (!opts?.lightIdempotency && !isMessageEdit && await ctx.signalAlreadyHandled(row.id)) {
             await ctx.markSignalExecuted(row.id);
             return;
         }
@@ -278,6 +280,25 @@ async function handleSignal(ctx, row, opts) {
         const action = String(parsed.action).toLowerCase();
         if (action === 'ignore')
             return;
+        if (isMessageEdit) {
+            if (!(0, multiTradeMerge_1.parsedHasSlOrTp)(parsed)) {
+                await ctx.logDispatchSkipped(row, 'message_edit_no_sl_tp');
+                return;
+            }
+            const { count: openTradeCount } = await ctx.supabase
+                .from('trades')
+                .select('id', { count: 'exact', head: true })
+                .eq('signal_id', row.id)
+                .eq('status', 'open');
+            if ((openTradeCount ?? 0) === 0) {
+                await ctx.logDispatchSkipped(row, 'message_edit_no_open_trades');
+                return;
+            }
+            if (!(0, multiTradeMerge_1.shouldRouteAsBasketParameterRefresh)(parsed) && !(0, tradeSignalActions_1.isManagementAction)(action)) {
+                await ctx.logDispatchSkipped(row, 'message_edit_not_parameter_refresh');
+                return;
+            }
+        }
         const allMatchingBrokers = (ctx.brokersByUser.get(row.user_id) ?? []).filter(b => b.is_active && (0, helpers_1.isMtUuid)(b.metaapi_account_id) && (0, brokerChannelFilter_1.channelMatchesBrokerSignal)(b, row.channel_id)).map(b => (0, channelTradingConfig_1.withChannelTradingConfig)(b, row.channel_id));
         const brokers = allMatchingBrokers.filter(b => ctx.brokerEligibleForSignal(b, row));
         if (!brokers.length) {
@@ -348,6 +369,7 @@ async function handleSignal(ctx, row, opts) {
         const outcomes = await Promise.all(brokers.map(b => ctx.sendOrder(row, parsed, op, b, channelKeywords, pipelineT0, {
             liveEntryFast: liveFast,
             commentPrefix,
+            messageEditOnly: isMessageEdit,
         })));
         if (liveFast && row.pipeline_ts) {
             row.pipeline_ts.t_order_send_done = Date.now();
@@ -411,6 +433,9 @@ async function handleSignal(ctx, row, opts) {
             else {
                 await ctx.markSignalExecuted(row.id);
             }
+        }
+        else if (isMessageEdit) {
+            await ctx.markSignalExecuted(row.id);
         }
     }
     finally {

@@ -41,6 +41,13 @@ const userListener_1 = require("./userListener");
 const sessionLease_1 = require("./sessionLease");
 const workerMetrics_1 = require("./workerMetrics");
 const workerConfig_1 = require("./workerConfig");
+const tradeSignalActions_1 = require("./tradeSignalActions");
+function listenerInProcessDispatch(executor, row) {
+    return executor.acceptDispatchSignal(row, {
+        priority: (0, tradeSignalActions_1.dispatchPriorityForAction)((0, tradeSignalActions_1.parsedAction)(row.parsed_data)),
+        source: row.dispatch_source ?? 'in_process',
+    });
+}
 function gramjsListenerEnabled() {
     const engine = String(process.env.LISTENER_ENGINE ?? 'gramjs').toLowerCase().trim();
     return engine !== 'telethon';
@@ -64,7 +71,7 @@ class UserSessionManager {
     setTradeExecutor(executor) {
         this.tradeExecutor = executor;
         for (const listener of this.listeners.values()) {
-            listener.setOnSignalParsed(executor ? row => executor.dispatchParsedSignal(row) : null);
+            listener.setOnSignalParsed(executor ? row => listenerInProcessDispatch(executor, row) : null);
         }
     }
     async loadAll() {
@@ -214,7 +221,7 @@ class UserSessionManager {
         await this.stopListener(userId);
         const listener = new userListener_1.UserListener(userId, sessionString, this.supabase, client);
         if (this.tradeExecutor) {
-            listener.setOnSignalParsed(row => this.tradeExecutor.dispatchParsedSignal(row));
+            listener.setOnSignalParsed(row => listenerInProcessDispatch(this.tradeExecutor, row));
         }
         await listener.start({ alreadyConnected: true });
         this.listeners.set(userId, listener);
@@ -338,7 +345,7 @@ class UserSessionManager {
         }
         const listener = new userListener_1.UserListener(userId, sessionString, this.supabase);
         if (this.tradeExecutor) {
-            listener.setOnSignalParsed(row => this.tradeExecutor.dispatchParsedSignal(row));
+            listener.setOnSignalParsed(row => listenerInProcessDispatch(this.tradeExecutor, row));
         }
         try {
             await listener.start();

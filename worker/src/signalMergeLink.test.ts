@@ -119,6 +119,41 @@ test('isMergeFollowUpLinked: implicit bundle blocked outside tight window', () =
   )
 })
 
+test('isMergeFollowUpLinked: same-signal message edit with SL/TP', () => {
+  assert.equal(
+    isMergeFollowUpLinked({
+      replyOk: false,
+      withinWindow: false,
+      threadLinksAnchor: false,
+      implicitBundleWithinTightWindow: false,
+      implicitSameChannelBundle: false,
+      parameterRefreshSameChannel: false,
+      messageEditSameSignal: true,
+    }),
+    true,
+  )
+})
+
+test('computeBasketMergeLinkContext: same signal id edit refresh', () => {
+  const now = Date.now()
+  const ctx = computeBasketMergeLinkContext({
+    signalCreatedAtMs: now,
+    newestTradeOpenedAtMs: now - 30_000,
+    replyToTelegramId: '',
+    anchorTelegramMessageId: '100',
+    mergeChannelId: 'ch-1',
+    anchorChannelId: 'ch-1',
+    parentSignalId: null,
+    anchorSignalId: 'sig-1',
+    mergeSignalId: 'sig-1',
+    hasSl: false,
+    hasTp: true,
+    ancestorChainContainsAnchor: false,
+  })
+  assert.equal(ctx.messageEditSameSignal, true)
+  assert.equal(ctx.isLinked, true)
+})
+
 test('isMergeFollowUpLinked: same-channel SL/TP parameter refresh within long window', () => {
   assert.equal(
     isMergeFollowUpLinked({

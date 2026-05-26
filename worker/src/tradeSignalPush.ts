@@ -19,6 +19,7 @@ export type TradeSignalPushPayload = {
   reply_to_message_id?: string | null
   created_at?: string
   pipeline_ts?: PipelineTimestamps
+  dispatch_source?: string
 }
 
 const PUSH_MAX_ATTEMPTS = Math.max(1, Math.min(5, Number(process.env.TRADE_SIGNAL_PUSH_MAX_ATTEMPTS ?? 3)))
@@ -132,6 +133,7 @@ async function postDispatchSignal(
   priority: string,
   timeoutMs: number,
   awaitExecution = false,
+  source = 'listener_push',
 ): Promise<{ ok: boolean; status: number; retryable: boolean; detail: string }> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort('trade-push-timeout'), timeoutMs)
@@ -145,7 +147,7 @@ async function postDispatchSignal(
       body: JSON.stringify({
         signal: signalBody,
         priority,
-        source: 'listener_push',
+        source,
         await: awaitExecution,
       }),
       signal: controller.signal,
@@ -170,7 +172,7 @@ async function postDispatchSignal(
 
 async function pushParsedSignalToTradeWorkerInner(
   row: TradeSignalPushPayload,
-  opts?: { awaitExecution?: boolean },
+  opts?: { awaitExecution?: boolean; source?: string },
 ): Promise<boolean> {
   if (!tradePushEnabled()) {
     console.warn('[tradeSignalPush] disabled (TRADE_SIGNAL_PUSH_ENABLED=false)')
@@ -196,6 +198,7 @@ async function pushParsedSignalToTradeWorkerInner(
     500,
     Math.min(10_000, Number(process.env.TRADE_SIGNAL_PUSH_TIMEOUT_MS ?? 4_000)),
   )
+  const dispatchSource = opts?.source ?? row.dispatch_source ?? 'listener_push'
   const url = `${baseUrl}/internal/dispatch-signal`
   const priority = dispatchPriorityForAction(action)
 
@@ -221,6 +224,7 @@ async function pushParsedSignalToTradeWorkerInner(
     timeout_ms: timeoutMs,
     max_attempts: PUSH_MAX_ATTEMPTS,
     await_execution: opts?.awaitExecution === true,
+    dispatch_source: dispatchSource,
   })
 
   for (let attempt = 1; attempt <= PUSH_MAX_ATTEMPTS; attempt++) {
@@ -232,6 +236,7 @@ async function pushParsedSignalToTradeWorkerInner(
       priority,
       timeoutMs,
       opts?.awaitExecution === true,
+      dispatchSource,
     )
     await logPushAttemptToDb(row, result.ok ? 'success' : 'failed', {
       run_id: 'latency-v3',
@@ -273,8 +278,12 @@ export function pushParsedSignalToTradeWorker(row: TradeSignalPushPayload): void
 /** Awaitable push — used after signals row is persisted (durable handoff). */
 export async function pushParsedSignalToTradeWorkerAwait(
   row: TradeSignalPushPayload,
+  opts?: { source?: string },
 ): Promise<boolean> {
-  return pushParsedSignalToTradeWorkerInner(row, { awaitExecution: true })
+  return pushParsedSignalToTradeWorkerInner(row, {
+    awaitExecution: true,
+    source: opts?.source ?? row.dispatch_source,
+  })
 }
 
 /**

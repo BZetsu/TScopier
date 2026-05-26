@@ -54,6 +54,19 @@ def channel_id_variants(chat_id: str) -> list[str]:
     return list(out)
 
 
+MESSAGE_EDIT_DISPATCH_SOURCE = "message_edit"
+
+
+def _parsed_has_sl_or_tp(parsed: dict[str, Any] | None) -> bool:
+    if not parsed:
+        return False
+    sl = parsed.get("sl")
+    has_sl = isinstance(sl, (int, float)) and sl > 0
+    tp = parsed.get("tp") or []
+    has_tp = any(isinstance(t, (int, float)) and t > 0 for t in tp)
+    return has_sl or has_tp
+
+
 @dataclass
 class ChannelRow:
     id: str
@@ -119,6 +132,7 @@ class UserListener:
                 pass
         if self.client and self._handler_registered:
             self.client.remove_event_handler(self._on_message)
+            self.client.remove_event_handler(self._on_message_edited)
         if self.client:
             await self.client.disconnect()
         self.is_connected = False
@@ -223,7 +237,31 @@ class UserListener:
         if self._handler_registered:
             return
         self.client.add_event_handler(self._on_message, events.NewMessage())
+        self.client.add_event_handler(self._on_message_edited, events.MessageEdited())
         self._handler_registered = True
+
+    async def _on_message_edited(self, event: events.MessageEdited.Event) -> None:
+        self.last_event_at = asyncio.get_event_loop().time()
+        metrics.inc("telegram_edit_events")
+        message = event.message
+        if not message:
+            return
+        chat_id, username, variants = await self._resolve_chat(event)
+        if not chat_id and not username:
+            return
+        monitored = any(v in self.monitored_keys for v in variants) or (
+            username and username in self.monitored_keys
+        )
+        if not monitored:
+            return
+        row = self._resolve_channel_row(variants, username)
+        if not row:
+            return
+        raw = (message.message or message.text or "").strip()
+        if not raw:
+            return
+        await self._try_apply_message_edit(row, str(message.id), raw, "live_edit")
+        await self._bump_last_live(row.id)
 
     async def _on_message(self, event: events.NewMessage.Event) -> None:
         self.last_event_at = asyncio.get_event_loop().time()
@@ -345,6 +383,8 @@ class UserListener:
             .execute()
         )
         if (dup.count or 0) > 0:
+            if await self._try_apply_message_edit(row, message_id, raw, source):
+                return
             persist_listener_event(
                 self.supabase,
                 user_id=self.user_id,
@@ -411,6 +451,93 @@ class UserListener:
         ok = await self.trade.dispatch_signal(dispatch_row)
         if not ok:
             metrics.inc("dispatch_push_exhausted")
+
+    async def _try_apply_message_edit(
+        self, row: ChannelRow, message_id: str, raw: str, source: str
+    ) -> bool:
+        existing = (
+            self.supabase.table("signals")
+            .select(
+                "id,user_id,channel_id,raw_message,parsed_data,status,parent_signal_id,"
+                "is_modification,telegram_message_id,reply_to_message_id,created_at"
+            )
+            .eq("user_id", self.user_id)
+            .eq("channel_id", row.id)
+            .eq("telegram_message_id", message_id)
+            .maybe_single()
+            .execute()
+        )
+        signal_row = existing.data
+        if not signal_row:
+            return False
+        if str(signal_row.get("raw_message") or "").strip() == raw.strip():
+            return False
+
+        try:
+            parsed = await self.trade.parse_signal(
+                channel_row_id=row.id, raw_message=raw, user_id=self.user_id
+            )
+        except Exception as exc:
+            persist_listener_event(
+                self.supabase,
+                user_id=self.user_id,
+                event_type="message_edit_parse_failed",
+                channel_row_id=row.id,
+                telegram_message_id=message_id,
+                detail={"error": str(exc)[:300], "signal_id": signal_row["id"], "source": source},
+            )
+            return False
+
+        status = str(parsed.get("status") or "skipped")
+        parsed_data = parsed.get("parsed")
+        if status != "parsed" or not _parsed_has_sl_or_tp(parsed_data if isinstance(parsed_data, dict) else None):
+            persist_listener_event(
+                self.supabase,
+                user_id=self.user_id,
+                event_type="message_edit_no_sl_tp",
+                channel_row_id=row.id,
+                telegram_message_id=message_id,
+                detail={"signal_id": signal_row["id"], "source": source, "parse_status": status},
+            )
+            return False
+
+        edited_at = datetime.now(timezone.utc).isoformat()
+        self.supabase.table("signals").update(
+            {
+                "raw_message": raw,
+                "parsed_data": parsed_data,
+                "status": "parsed",
+                "skip_reason": None,
+                "telegram_message_edited_at": edited_at,
+            }
+        ).eq("id", signal_row["id"]).execute()
+
+        persist_listener_event(
+            self.supabase,
+            user_id=self.user_id,
+            event_type="message_edit_applied",
+            channel_row_id=row.id,
+            telegram_message_id=message_id,
+            detail={"signal_id": signal_row["id"], "source": source},
+        )
+
+        dispatch_row = {
+            "id": signal_row["id"],
+            "user_id": self.user_id,
+            "channel_id": row.id,
+            "parsed_data": parsed_data,
+            "status": "parsed",
+            "telegram_message_id": message_id,
+            "is_modification": signal_row.get("is_modification") or False,
+            "parent_signal_id": signal_row.get("parent_signal_id"),
+            "reply_to_message_id": signal_row.get("reply_to_message_id"),
+            "created_at": signal_row.get("created_at"),
+            "pipeline_ts": {"t_message_edit_received": int(datetime.now(timezone.utc).timestamp() * 1000)},
+        }
+        ok = await self.trade.dispatch_signal(dispatch_row, source=MESSAGE_EDIT_DISPATCH_SOURCE)
+        if not ok:
+            metrics.inc("dispatch_push_exhausted")
+        return True
 
     async def _persist_skip(self, row: ChannelRow, message_id: str, raw: str, is_reply: bool) -> None:
         await self._persist_row(

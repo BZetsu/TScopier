@@ -12,6 +12,15 @@ import {
 import { getMetricsSnapshot } from './workerMetrics'
 import { userBelongsToShard, workerConfig } from './workerConfig'
 import type { TradeExecutor } from './tradeExecutor'
+import type { SignalRow } from './tradeExecutor/types'
+import { dispatchPriorityForAction, parsedAction } from './tradeSignalActions'
+
+function listenerInProcessDispatch(executor: TradeExecutor, row: SignalRow): boolean {
+  return executor.acceptDispatchSignal(row, {
+    priority: dispatchPriorityForAction(parsedAction(row.parsed_data)),
+    source: row.dispatch_source ?? 'in_process',
+  })
+}
 
 export { TelegramSessionInvalidError }
 
@@ -44,7 +53,7 @@ export class UserSessionManager {
     this.tradeExecutor = executor
     for (const listener of this.listeners.values()) {
       listener.setOnSignalParsed(
-        executor ? row => executor.dispatchParsedSignal(row) : null,
+        executor ? row => listenerInProcessDispatch(executor, row) : null,
       )
     }
   }
@@ -237,7 +246,7 @@ export class UserSessionManager {
     await this.stopListener(userId)
     const listener = new UserListener(userId, sessionString, this.supabase, client)
     if (this.tradeExecutor) {
-      listener.setOnSignalParsed(row => this.tradeExecutor!.dispatchParsedSignal(row))
+      listener.setOnSignalParsed(row => listenerInProcessDispatch(this.tradeExecutor!, row))
     }
     await listener.start({ alreadyConnected: true })
     this.listeners.set(userId, listener)
@@ -398,7 +407,7 @@ export class UserSessionManager {
 
     const listener = new UserListener(userId, sessionString, this.supabase)
     if (this.tradeExecutor) {
-      listener.setOnSignalParsed(row => this.tradeExecutor!.dispatchParsedSignal(row))
+      listener.setOnSignalParsed(row => listenerInProcessDispatch(this.tradeExecutor!, row))
     }
     try {
       await listener.start()

@@ -178,6 +178,7 @@ async function prepareEntryExecution(ctx, args) {
             uuid,
             strictEntryPrefetch,
             commentPrefix,
+            messageEditOnly: sendOpts?.messageEditOnly === true,
         });
         if (paramOutcome.handled && paramOutcome.success) {
             return { ok: false, outcome: { openedOrMerged: true } };

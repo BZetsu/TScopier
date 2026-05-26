@@ -17,6 +17,15 @@ describe('parseChannelMessageSync', () => {
     assert.equal(result.parsed.symbol, 'XAUUSD')
   })
 
+  it('parses Gold buy now with entry and TP after channel edit pattern', () => {
+    const msg = 'Gold buy now @ 4500\nTP 4510'
+    const result = parseChannelMessageSync(msg, DEFAULT_CHANNEL_KEYWORDS, lexicon)
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.action, 'buy')
+    assert.equal(result.parsed.symbol, 'XAUUSD')
+    assert.ok(Array.isArray(result.parsed.tp) && result.parsed.tp.length > 0)
+  })
+
   it('parses Close all now management (SIGNALS 2 channel format)', () => {
     const msg = 'Close all now'
     const result = parseChannelMessageSync(msg, DEFAULT_CHANNEL_KEYWORDS, lexicon)
