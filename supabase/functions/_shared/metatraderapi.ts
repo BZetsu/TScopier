@@ -499,8 +499,8 @@ export class MetatraderApiClient {
   }
 
   /**
-   * Recent closed history only — a few pagination pages, no full multi-endpoint merge.
-   * Used when the UI only needs the newest rows (Trades page with limit).
+   * Recent closed history only — last pagination page(s) + session closed orders.
+   * Page 0 is the oldest slice of the range; newest deals are on the last page(s).
    */
   async closedOrdersHistoryLite(
     id: string,
@@ -514,11 +514,27 @@ export class MetatraderApiClient {
     const ingest = (rows: unknown[]) => ingestMtHistoryRows(byKey, rows, profile)
 
     try {
-      for (let page = 0; page < maxPages; page++) {
-        const { orders } = await this.orderHistoryPage(id, from, to, page, ordersPerPage)
-        ingest(orders)
-        if (orders.length === 0) break
+      ingest(await this.closedOrders(id))
+    } catch {
+      /* optional on some sessions */
+    }
+
+    try {
+      const probe = await this.orderHistoryPage(id, from, to, 0, ordersPerPage)
+      const pagesCount = Math.max(1, probe.pagesCount)
+
+      if (pagesCount === 1) {
+        ingest(probe.orders)
+      } else {
+        const startPage = Math.max(0, pagesCount - maxPages)
+        for (let page = startPage; page < pagesCount; page++) {
+          const { orders } = page === 0
+            ? probe
+            : await this.orderHistoryPage(id, from, to, page, ordersPerPage)
+          ingest(orders)
+        }
       }
+
       if (byKey.size > 0) return [...byKey.values()]
     } catch {
       /* fall through to single request */

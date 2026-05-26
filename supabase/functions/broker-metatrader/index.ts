@@ -90,7 +90,7 @@ function friendlyMtApiError(e: MetatraderApiError): MetatraderApiError {
  * register / delete / refresh balance / check connection calls, plus the trades read
  * for the Trades page.
  */
-const BUILD_TAG = "broker-metatrader@trades-history-v3-lite"
+const BUILD_TAG = "broker-metatrader@trades-history-v4-recent-pages"
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 200, headers: corsHeaders })
 
@@ -558,7 +558,7 @@ Deno.serve(async (req: Request) => {
       let effectiveHistoryFrom = historyFrom
       if (limit > 0) {
         const cap = new Date()
-        cap.setDate(cap.getDate() - 14)
+        cap.setDate(cap.getDate() - 7)
         const capStr = formatMtDt(cap)
         if (effectiveHistoryFrom < capStr) effectiveHistoryFrom = capStr
       }
