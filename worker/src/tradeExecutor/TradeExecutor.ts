@@ -29,6 +29,7 @@ import {
   type VirtualPendingLeg,
 } from '../manualPlanner'
 import { normalizeManualSettingsForExecution } from '../manualPlanning/normalizeManualSettings'
+import { normalizeChannelTradingConfigsMap } from '../channelTradingConfig'
 import { findActiveNewsBlackout } from '../newsTrading/blackout'
 import { getCalendarEventsCached } from '../newsTrading/calendarProvider'
 import { isNewsTradingEnabled } from '../newsTrading/settings'
@@ -307,9 +308,18 @@ export class TradeExecutor {
   // ── caches ────────────────────────────────────────────────────────────
 
   private normalizeBrokerRow(row: BrokerRow): BrokerRow {
+    const configs = normalizeChannelTradingConfigsMap(row.channel_trading_configs)
+    const normalizedConfigs: Record<string, unknown> = {}
+    for (const [channelId, cfg] of Object.entries(configs)) {
+      normalizedConfigs[channelId] = {
+        ...cfg,
+        manual_settings: normalizeManualSettingsForExecution(cfg.manual_settings) as Record<string, unknown>,
+      }
+    }
     return {
       ...row,
       manual_settings: normalizeManualSettingsForExecution(row.manual_settings) as Record<string, unknown>,
+      channel_trading_configs: Object.keys(normalizedConfigs).length ? normalizedConfigs : row.channel_trading_configs,
     }
   }
 

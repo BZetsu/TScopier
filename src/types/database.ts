@@ -252,6 +252,8 @@ export interface BrokerAccount {
   manual_settings?: Json | null
   /** Per Telegram channel id → management category → allow|ignore. */
   channel_message_filters?: Json | null
+  /** Per telegram_channels.id → { copier_mode, manual_settings, ai_settings }. */
+  channel_trading_configs?: Json | null
   default_lot_size: number
   pip_tolerance: number
   max_trades_per_zone: number

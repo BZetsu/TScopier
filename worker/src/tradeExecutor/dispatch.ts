@@ -10,6 +10,7 @@ import {
 } from '../tradeSignalActions'
 import { workerConfig } from '../workerConfig'
 import { channelMatchesBrokerSignal } from '../brokerChannelFilter'
+import { withChannelTradingConfig } from '../channelTradingConfig'
 import {
   isChannelManagementBlocked,
   normalizeChannelMessageFiltersMap,
@@ -312,7 +313,7 @@ export async function handleSignal(ctx: TradeExecutorContext,
 
       const allMatchingBrokers = (ctx.brokersByUser.get(row.user_id) ?? []).filter(b =>
         b.is_active && isMtUuid(b.metaapi_account_id) && channelMatchesBrokerSignal(b, row.channel_id),
-      )
+      ).map(b => withChannelTradingConfig(b, row.channel_id))
       const brokers = allMatchingBrokers.filter(b => ctx.brokerEligibleForSignal(b, row))
       if (!brokers.length) {
         if (allMatchingBrokers.length > 0) {

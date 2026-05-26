@@ -9,6 +9,11 @@ export interface ConfigureModalTranslations {
   saved: string
   cancel: string
   save: string
+  channelsSidebar: string
+  selectChannelToConfigure: string
+  copyFromChannel: string
+  copyFromChannelPlaceholder: string
+  copyFromChannelConfirm: string
   tabs: {
     trade: string
     channels: string

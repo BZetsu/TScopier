@@ -4,6 +4,7 @@ import { getCalendarEventsCached } from './newsTrading/calendarProvider'
 import { isNewsTradingEnabled, type ScheduleFilterSettings } from './newsTrading/settings'
 import { hasMetatraderApiConfigured } from './metatraderapi'
 import { apiForMetaapiAccount, loadPlatformByMetaapiId } from './mtApiByAccount'
+import { resolveChannelTradingConfig } from './channelTradingConfig'
 
 interface BrokerRow {
   id: string
@@ -11,6 +12,9 @@ interface BrokerRow {
   metaapi_account_id: string
   platform: string
   manual_settings: Record<string, unknown> | null
+  channel_trading_configs: Record<string, unknown> | null
+  copier_mode: string | null
+  ai_settings: Record<string, unknown> | null
   is_active: boolean
 }
 
@@ -20,6 +24,7 @@ interface OpenTradeRow {
   broker_account_id: string | null
   metaapi_order_id: string | null
   symbol: string
+  signal_id: string | null
 }
 
 const TICK_MS = 60_000
@@ -63,7 +68,7 @@ export class NewsTradingMonitor {
 
     const { data, error } = await this.supabase
       .from('broker_accounts')
-      .select('id,user_id,metaapi_account_id,platform,manual_settings,is_active')
+      .select('id,user_id,metaapi_account_id,platform,manual_settings,channel_trading_configs,copier_mode,ai_settings,is_active')
       .eq('is_active', true)
       .not('metaapi_account_id', 'is', null)
     if (error) {
@@ -72,44 +77,78 @@ export class NewsTradingMonitor {
     }
 
     const brokers = (data ?? []) as BrokerRow[]
-    const newsBrokers = brokers.filter(b => {
-      const manual = (b.manual_settings ?? {}) as ScheduleFilterSettings
-      return !isNewsTradingEnabled(manual)
-    })
-    if (!newsBrokers.length) return
+    if (!brokers.length) return
 
     const platformByUuid = await loadPlatformByMetaapiId(
       this.supabase,
-      newsBrokers.map(b => String(b.metaapi_account_id ?? '')),
+      brokers.map(b => String(b.metaapi_account_id ?? '')),
     )
 
     const now = new Date()
     this.pruneClosedMap(now)
 
-    for (const broker of newsBrokers) {
-      const manual = (broker.manual_settings ?? {}) as ScheduleFilterSettings
-      const triggers = findPreNewsCloseTriggers(events, manual, now)
-      if (!triggers.length) continue
-
+    for (const broker of brokers) {
       const uuid = broker.metaapi_account_id
       const api = apiForMetaapiAccount(platformByUuid, uuid)
       if (!api) continue
 
-      for (const event of triggers) {
+      const { data: trades, error: tradeErr } = await this.supabase
+        .from('trades')
+        .select('id,user_id,broker_account_id,metaapi_order_id,symbol,signal_id')
+        .eq('broker_account_id', broker.id)
+        .eq('status', 'open')
+      if (tradeErr) {
+        console.warn(`[newsTradingMonitor] trades select failed broker=${broker.id}: ${tradeErr.message}`)
+        continue
+      }
+
+      const openTrades = (trades ?? []) as OpenTradeRow[]
+      if (!openTrades.length) continue
+
+      const signalIds = [...new Set(openTrades.map(t => t.signal_id).filter(Boolean))] as string[]
+      const channelBySignal = new Map<string, string | null>()
+      if (signalIds.length) {
+        const { data: signals } = await this.supabase
+          .from('signals')
+          .select('id, channel_id')
+          .in('id', signalIds)
+        for (const row of signals ?? []) {
+          channelBySignal.set(row.id as string, (row.channel_id as string | null) ?? null)
+        }
+      }
+
+      const triggersByChannel = new Map<string, ReturnType<typeof findPreNewsCloseTriggers>>()
+      const getTriggers = (channelId: string | null) => {
+        const key = channelId ?? '__legacy__'
+        if (!triggersByChannel.has(key)) {
+          const resolved = resolveChannelTradingConfig(broker, channelId)
+          const manual = resolved.manual_settings as ScheduleFilterSettings
+          if (isNewsTradingEnabled(manual)) {
+            triggersByChannel.set(key, [])
+          } else {
+            triggersByChannel.set(key, findPreNewsCloseTriggers(events, manual, now))
+          }
+        }
+        return triggersByChannel.get(key) ?? []
+      }
+
+      const eventsToProcess = new Map<string, typeof events[number]>()
+      for (const trade of openTrades) {
+        const channelId = trade.signal_id ? (channelBySignal.get(trade.signal_id) ?? null) : null
+        for (const trigger of getTriggers(channelId)) {
+          eventsToProcess.set(trigger.id, trigger)
+        }
+      }
+      if (!eventsToProcess.size) continue
+
+      for (const event of eventsToProcess.values()) {
         const dedupeKey = `${broker.id}|${event.id}`
         if (this.closedForEvent.has(dedupeKey)) continue
 
-        const { data: trades, error: tradeErr } = await this.supabase
-          .from('trades')
-          .select('id,user_id,broker_account_id,metaapi_order_id,symbol')
-          .eq('broker_account_id', broker.id)
-          .eq('status', 'open')
-        if (tradeErr) {
-          console.warn(`[newsTradingMonitor] trades select failed broker=${broker.id}: ${tradeErr.message}`)
-          continue
-        }
-
-        const toClose = (trades ?? []) as OpenTradeRow[]
+        const toClose = openTrades.filter(trade => {
+          const channelId = trade.signal_id ? (channelBySignal.get(trade.signal_id) ?? null) : null
+          return getTriggers(channelId).some(t => t.id === event.id)
+        })
         if (!toClose.length) {
           this.closedForEvent.set(dedupeKey, now.getTime())
           continue

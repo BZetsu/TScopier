@@ -55,6 +55,12 @@ import {
   type ChannelMessageFiltersMap,
 } from '../../lib/channelMessageFilters'
 import { isAutoManagementEnabled } from '../../lib/autoManagementDisplay'
+import {
+  buildChannelTradingConfigsFromDraft,
+  buildDefaultChannelTradingConfig,
+  normalizeChannelTradingConfigsMap,
+} from '../../lib/channelTradingConfig'
+import { DEFAULT_MANUAL_SETTINGS, DEFAULT_MANUAL_TP_LOTS } from '../../lib/defaultManualSettings'
 import type { ConfigureModalTranslations } from '../../i18n/locales/configureModal/types'
 import {
   describeAutoManagementRuleI18n,
@@ -102,95 +108,16 @@ function normalizeSignalChannelIds(b: BrokerAccount | undefined): string[] {
 /** When false, the configure modal only shows manual settings (AI tab hidden). */
 const AI_CONFIGURATION_ENABLED = false
 
-interface AccountConfigDraft {
+interface ChannelConfigDraft {
   mode: 'ai' | 'manual'
-  channelIds: string[]
   manualSettings: ManualSettings
-  channelFilters: ChannelMessageFiltersMap
+  channelFilters: ChannelFilters
 }
 
-/**
- * Build the channel-filters map for a broker draft. Every channel that may be
- * referenced by the modal (selected today, plus everything in `channelOptions`
- * so toggling a checkbox doesn't drop a previously-edited row) gets defaults.
- * Existing entries in `prior` win so we don't clobber in-session edits.
- */
-function buildChannelFiltersDraft(
-  channels: ChannelOption[],
-  selectedIds: string[],
-  persisted: ChannelMessageFiltersMap = {},
-  prior: ChannelMessageFiltersMap = {},
-): ChannelMessageFiltersMap {
-  const keys = new Set<string>([...channels.map(c => c.id), ...selectedIds])
-  const out: ChannelMessageFiltersMap = {}
-  for (const id of keys) {
-    out[id] = prior[id]
-      ? normalizeChannelFilters(prior[id])
-      : normalizeChannelFilters(persisted[id])
-  }
-  return out
-}
-
-const DEFAULT_MANUAL_TP_LOTS: ManualTpLot[] = [
-  { label: 'TP1', lot: 0.01, percent: 50, enabled: true },
-  { label: 'TP2', lot: 0.01, percent: 30, enabled: true },
-  { label: 'TP3', lot: 0.01, percent: 20, enabled: true },
-]
-
-const DEFAULT_MANUAL_SETTINGS: ManualSettings = {
-  schema_version: 1,
-  symbol_mapping: {},
-  symbol_prefix: '',
-  symbol_suffix: '',
-  symbol_to_trade: null,
-  symbols_exclude: [],
-  risk_mode: 'fixed_lot',
-  fixed_lot: 0.01,
-  dynamic_balance_percent: 1,
-  tp_lots: DEFAULT_MANUAL_TP_LOTS,
-  multi_trade_leg_percent: 5,
-  trade_style: 'single',
-  range_trading: false,
-  range_percent: 50,
-  range_step_pips: 3,
-  range_distance_pips: 30,
-  close_worse_entries: false,
-  close_worse_entries_pips: 30,
-  reverse_signal: false,
-  use_signal_entry_price: false,
-  signal_entry_pip_tolerance: 10,
-  use_predefined_sl_pips: false,
-  predefined_sl_pips: 30,
-  use_predefined_tp_pips: false,
-  predefined_tp_pips: [20, 40, 60],
-  rr_for_sl_enabled: false,
-  rr_for_sl: 1,
-  rr_for_tps_enabled: false,
-  rr_for_tps: [1, 2, 3],
-  pending_expiry_hours: 1,
-  add_new_trades_to_existing: true,
-  move_sl_to_entry_after_mode: 'none',
-  move_sl_to_entry_after_value: 10,
-  move_sl_to_entry_tp_index: 1,
-  move_sl_to_entry_type: 'sl_only',
-  breakeven_offset_pips: 10,
-  partial_close_percent: 25,
-  half_close_percent: 50,
-  trailing_enabled: false,
-  trailing_start_pips: 20,
-  trailing_step_pips: 5,
-  trailing_distance_pips: 10,
-  close_on_opposite_signal: false,
-  time_filter_enabled: false,
-  trade_start_time: '00:00',
-  trade_end_time: '23:59',
-  days_filter_enabled: false,
-  trade_days: [1, 2, 3, 4, 5],
-  news_trading_enabled: true,
-  news_avoid_impacts: ['high'],
-  allow_high_impact_news: true,
-  close_before_news_minutes: 30,
-  resume_after_news_minutes: 15,
+interface AccountConfigDraft {
+  channelIds: string[]
+  selectedChannelId: string | null
+  channelConfigs: Record<string, ChannelConfigDraft>
 }
 
 /** Split `total` across `count` slots as non-negative integers that sum exactly to `total`. */
@@ -409,19 +336,48 @@ function AccountDetailCell({
   )
 }
 
-type ConfigTabId = 'mode' | 'channels'
 type ManualSubTabId = 'symbol_routing' | 'risk' | 'stops' | 'management' | 'filters' | 'strategy'
-
-interface TabDef {
-  id: ConfigTabId
-  label: string
-  icon: typeof SlidersHorizontal
-}
 
 interface ManualSubTabDef {
   id: ManualSubTabId
   label: string
   icon: typeof SlidersHorizontal
+}
+
+function defaultChannelConfigDraft(): ChannelConfigDraft {
+  return {
+    mode: 'manual',
+    manualSettings: normalizeManualSettings(buildDefaultChannelTradingConfig().manual_settings),
+    channelFilters: { ...DEFAULT_CHANNEL_FILTERS },
+  }
+}
+
+function buildChannelConfigDraftFromBroker(
+  broker: BrokerAccount,
+  channelIds: string[],
+): AccountConfigDraft {
+  const storedConfigs = normalizeChannelTradingConfigsMap(broker.channel_trading_configs)
+  const persistedFilters = normalizeChannelMessageFiltersMap(broker.channel_message_filters)
+  const channelConfigs: Record<string, ChannelConfigDraft> = {}
+  const legacyManual = normalizeManualSettings(broker.manual_settings)
+  const legacyMode = AI_CONFIGURATION_ENABLED && broker.copier_mode !== 'manual' ? 'ai' : 'manual'
+
+  for (const id of channelIds) {
+    const stored = storedConfigs[id]
+    channelConfigs[id] = {
+      mode: stored?.copier_mode === 'ai' ? 'ai' : stored?.copier_mode === 'manual' ? 'manual' : legacyMode,
+      manualSettings: stored?.manual_settings
+        ? normalizeManualSettings(stored.manual_settings)
+        : legacyManual,
+      channelFilters: normalizeChannelFilters(persistedFilters[id] ?? DEFAULT_CHANNEL_FILTERS),
+    }
+  }
+
+  return {
+    channelIds,
+    selectedChannelId: channelIds[0] ?? null,
+    channelConfigs,
+  }
 }
 
 function formatLinkedAccountTypeLabel(
@@ -438,14 +394,6 @@ export function AccountConfigPage() {
   const t = useT()
   const cm = t.accountConfig.configureModal
   const bl = t.accountConfig.brokerList
-
-  const tabs = useMemo<TabDef[]>(
-    () => [
-      { id: 'mode', label: cm.tabs.trade, icon: SlidersHorizontal },
-      { id: 'channels', label: cm.tabs.channels, icon: Radio },
-    ],
-    [cm.tabs.trade, cm.tabs.channels],
-  )
 
   const manualSubTabs = useMemo<ManualSubTabDef[]>(
     () => [
@@ -503,12 +451,10 @@ export function AccountConfigPage() {
   )
   const [configAccount, setConfigAccount] = useState<BrokerAccount | null>(null)
   const [configDraft, setConfigDraft] = useState<AccountConfigDraft>({
-    mode: 'manual',
     channelIds: [],
-    manualSettings: { ...DEFAULT_MANUAL_SETTINGS },
-    channelFilters: {},
+    selectedChannelId: null,
+    channelConfigs: {},
   })
-  const [activeTab, setActiveTab] = useState<ConfigTabId>('mode')
   const [activeManualSubTab, setActiveManualSubTab] = useState<ManualSubTabId>('symbol_routing')
   const [symbolMappingText, setSymbolMappingText] = useState('')
   const [configSaving, setConfigSaving] = useState(false)
@@ -537,8 +483,25 @@ export function AccountConfigPage() {
     if (brokers.length > 0) void syncBrokerAccountTypes(brokers)
   }, [brokerAccountTypeKey])
 
+  const channelManualSettings = useMemo(() => {
+    const id = configDraft.selectedChannelId
+    if (!id) return DEFAULT_MANUAL_SETTINGS
+    return configDraft.channelConfigs[id]?.manualSettings ?? DEFAULT_MANUAL_SETTINGS
+  }, [configDraft.selectedChannelId, configDraft.channelConfigs])
+
+  const channelMode = useMemo(() => {
+    const id = configDraft.selectedChannelId
+    if (!id) return 'manual' as const
+    return configDraft.channelConfigs[id]?.mode ?? 'manual'
+  }, [configDraft.selectedChannelId, configDraft.channelConfigs])
+
+  const selectedChannelOption = useMemo(
+    () => channelOptions.find(c => c.id === configDraft.selectedChannelId) ?? null,
+    [channelOptions, configDraft.selectedChannelId],
+  )
+
   const multiTradePreview = useMemo(() => {
-    const ms = configDraft.manualSettings
+    const ms = channelManualSettings
     const manualLot = Number(ms.fixed_lot ?? 0.01) || 0.01
     const legPct = Number(ms.multi_trade_leg_percent ?? 5) || 5
     const range = ms.range_trading
@@ -551,12 +514,12 @@ export function AccountConfigPage() {
       : undefined
     return estimateMultiTradeOrderCount({ manualLot, legPercent: legPct, range })
   }, [
-    configDraft.manualSettings.fixed_lot,
-    configDraft.manualSettings.multi_trade_leg_percent,
-    configDraft.manualSettings.range_trading,
-    configDraft.manualSettings.range_percent,
-    configDraft.manualSettings.range_step_pips,
-    configDraft.manualSettings.range_distance_pips,
+    channelManualSettings.fixed_lot,
+    channelManualSettings.multi_trade_leg_percent,
+    channelManualSettings.range_trading,
+    channelManualSettings.range_percent,
+    channelManualSettings.range_step_pips,
+    channelManualSettings.range_distance_pips,
   ])
 
   const brokersNeedingRelink = useMemo(
@@ -570,9 +533,9 @@ export function AccountConfigPage() {
   }, [setReconnectErrorHandler])
 
   const tpLegPercentTotal = useMemo(() => {
-    const rows = configDraft.manualSettings.tp_lots ?? DEFAULT_MANUAL_TP_LOTS
+    const rows = channelManualSettings.tp_lots ?? DEFAULT_MANUAL_TP_LOTS
     return rows.filter(r => r.enabled).reduce((s, r) => s + (Number(r.percent) || 0), 0)
-  }, [configDraft.manualSettings.tp_lots])
+  }, [channelManualSettings.tp_lots])
 
   /**
    * Live pip quote for the Account Config page.
@@ -588,7 +551,7 @@ export function AccountConfigPage() {
    * Hints in that case fall back to the legacy static text.
    */
   const livePipQuote: PipQuote | null = useMemo(() => {
-    const raw = (configDraft.manualSettings.symbol_to_trade ?? '').trim()
+    const raw = (channelManualSettings.symbol_to_trade ?? '').trim()
     if (!raw) return null
     // Symbol-to-Trade is a whitelist; only compute when there's exactly one
     // symbol so the hint can't lie about an ambiguous multi-symbol config.
@@ -612,14 +575,14 @@ export function AccountConfigPage() {
       default:             point = 0.00001; digits = 5; break
     }
     return pipCalculator(symbol, point, digits)
-  }, [configDraft.manualSettings.symbol_to_trade])
+  }, [channelManualSettings.symbol_to_trade])
 
   /**
    * Pip-count hint: signal pip size (matches backtest) plus optional $/lot from pipCalculator.
    */
   const formatPipHint = useMemo(() => {
     return (pipCount: number): string | null => {
-      const raw = (configDraft.manualSettings.symbol_to_trade ?? '').trim()
+      const raw = (channelManualSettings.symbol_to_trade ?? '').trim()
       if (!raw) return null
       const parts = raw.split(/[,;\s]+/).map(s => s.trim()).filter(Boolean)
       if (parts.length !== 1) return null
@@ -633,7 +596,7 @@ export function AccountConfigPage() {
               : 2
       const fmtPrice = (n: number) => n.toFixed(priceDigits)
       const priceOffset = pipCount > 0 ? pipsToPriceOffset(pipCount, symbol) : pipPx
-      const fixedLot = Number(configDraft.manualSettings.fixed_lot ?? 0.01) || 0.01
+      const fixedLot = Number(channelManualSettings.fixed_lot ?? 0.01) || 0.01
       const perPip = livePipQuote ? pipValueForLots(livePipQuote, fixedLot) : 0
       const ccy = livePipQuote?.quoteCurrency ?? undefined
       const fmtMoney = (n: number) => formatMoneyWithCode(n, ccy, { nullAsDash: false })
@@ -648,7 +611,7 @@ export function AccountConfigPage() {
         fmtMoney,
       })
     }
-  }, [cm.pipHint, livePipQuote, configDraft.manualSettings.fixed_lot, configDraft.manualSettings.symbol_to_trade])
+  }, [cm.pipHint, livePipQuote, channelManualSettings.fixed_lot, channelManualSettings.symbol_to_trade])
 
   useEffect(() => {
     if (!userId) return
@@ -704,25 +667,34 @@ export function AccountConfigPage() {
       channelOptions.some(c => c.id === id),
     )
     setConfigAccount(fresh)
-    setActiveTab('mode')
     setActiveManualSubTab('symbol_routing')
-    const manualSettings = normalizeManualSettings(fresh.manual_settings)
-    setConfigDraft({
-      mode: AI_CONFIGURATION_ENABLED && fresh.copier_mode !== 'manual' ? 'ai' : 'manual',
-      channelIds,
-      manualSettings,
-      channelFilters: buildChannelFiltersDraft(
-        channelOptions,
-        channelIds,
-        normalizeChannelMessageFiltersMap(fresh.channel_message_filters),
-      ),
-    })
+    const draft = buildChannelConfigDraftFromBroker(fresh, channelIds)
+    setConfigDraft(draft)
+    const firstMs = draft.selectedChannelId
+      ? draft.channelConfigs[draft.selectedChannelId]?.manualSettings
+      : null
     setSymbolMappingText(
-      Object.entries(manualSettings.symbol_mapping ?? {})
+      Object.entries(firstMs?.symbol_mapping ?? {})
         .map(([k, v]) => `${k}=${v}`)
         .join('\n'),
     )
   }
+
+  const selectConfigureChannel = (channelId: string) => {
+    setConfigDraft(prev => ({ ...prev, selectedChannelId: channelId }))
+    setActiveManualSubTab('symbol_routing')
+  }
+
+  useEffect(() => {
+    if (!configDraft.selectedChannelId) return
+    const ms = configDraft.channelConfigs[configDraft.selectedChannelId]?.manualSettings
+    setSymbolMappingText(
+      Object.entries(ms?.symbol_mapping ?? {})
+        .map(([k, v]) => `${k}=${v}`)
+        .join('\n'),
+    )
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- sync textarea when switching channels only
+  }, [configDraft.selectedChannelId])
 
   const closeConfigureModal = () => {
     setConfigAccount(null)
@@ -736,12 +708,16 @@ export function AccountConfigPage() {
       const channelIds = willEnable
         ? [...prev.channelIds, channelId]
         : prev.channelIds.filter(id => id !== channelId)
-      // Seed filters for a freshly-checked channel; leave existing rows alone
-      // when un-checking so the user's prior choices return if they re-enable.
-      const channelFilters = willEnable && !prev.channelFilters[channelId]
-        ? { ...prev.channelFilters, [channelId]: { ...DEFAULT_CHANNEL_FILTERS } }
-        : prev.channelFilters
-      return { ...prev, channelIds, channelFilters }
+      const channelConfigs = { ...prev.channelConfigs }
+      if (willEnable && !channelConfigs[channelId]) {
+        channelConfigs[channelId] = defaultChannelConfigDraft()
+      }
+      let selectedChannelId = prev.selectedChannelId
+      if (willEnable && !selectedChannelId) selectedChannelId = channelId
+      if (!willEnable && selectedChannelId === channelId) {
+        selectedChannelId = channelIds[0] ?? null
+      }
+      return { ...prev, channelIds, channelConfigs, selectedChannelId }
     })
   }
 
@@ -751,124 +727,162 @@ export function AccountConfigPage() {
     value: ChannelFilterDecision,
   ) => {
     setConfigDraft(prev => {
-      const current = prev.channelFilters[channelId] ?? DEFAULT_CHANNEL_FILTERS
+      const entry = prev.channelConfigs[channelId]
+      if (!entry) return prev
+      const current = entry.channelFilters ?? DEFAULT_CHANNEL_FILTERS
       return {
         ...prev,
-        channelFilters: {
-          ...prev.channelFilters,
-          [channelId]: { ...current, [key]: value },
+        channelConfigs: {
+          ...prev.channelConfigs,
+          [channelId]: {
+            ...entry,
+            channelFilters: { ...current, [key]: value },
+          },
         },
       }
     })
   }
 
   const resetChannelFilters = (channelId: string) => {
-    setConfigDraft(prev => ({
-      ...prev,
-      channelFilters: {
-        ...prev.channelFilters,
-        [channelId]: { ...DEFAULT_CHANNEL_FILTERS },
-      },
+    setConfigDraft(prev => {
+      const entry = prev.channelConfigs[channelId]
+      if (!entry) return prev
+      return {
+        ...prev,
+        channelConfigs: {
+          ...prev.channelConfigs,
+          [channelId]: { ...entry, channelFilters: { ...DEFAULT_CHANNEL_FILTERS } },
+        },
+      }
+    })
+  }
+
+  const patchSelectedChannel = (
+    patch: (current: ChannelConfigDraft) => ChannelConfigDraft,
+  ) => {
+    setConfigDraft(prev => {
+      const id = prev.selectedChannelId
+      if (!id || !prev.channelConfigs[id]) return prev
+      return {
+        ...prev,
+        channelConfigs: {
+          ...prev.channelConfigs,
+          [id]: patch(prev.channelConfigs[id]),
+        },
+      }
+    })
+  }
+
+  const copyConfigFromChannel = (sourceChannelId: string) => {
+    const targetId = configDraft.selectedChannelId
+    if (!targetId || sourceChannelId === targetId) return
+    const source = configDraft.channelConfigs[sourceChannelId]
+    if (!source) return
+    const sourceName = channelOptions.find(c => c.id === sourceChannelId)?.display_name ?? sourceChannelId
+    if (!window.confirm(interpolate(cm.copyFromChannelConfirm, { name: sourceName }))) return
+    patchSelectedChannel(() => ({
+      mode: source.mode,
+      manualSettings: JSON.parse(JSON.stringify(source.manualSettings)) as ManualSettings,
+      channelFilters: JSON.parse(JSON.stringify(source.channelFilters)) as ChannelFilters,
     }))
   }
 
   const setManual = (patch: Partial<ManualSettings>) => {
-    setConfigDraft(prev => ({
-      ...prev,
-      manualSettings: { ...prev.manualSettings, ...patch },
+    patchSelectedChannel(current => ({
+      ...current,
+      manualSettings: { ...current.manualSettings, ...patch },
     }))
   }
 
   const updateTpLotRow = (idx: number, patch: Partial<ManualTpLot>) => {
-    setConfigDraft(prev => {
-      const rows = cloneTpLots(prev.manualSettings.tp_lots, DEFAULT_MANUAL_TP_LOTS)
+    patchSelectedChannel(current => {
+      const rows = cloneTpLots(current.manualSettings.tp_lots, DEFAULT_MANUAL_TP_LOTS)
       rows[idx] = { ...rows[idx], ...patch }
-      return { ...prev, manualSettings: { ...prev.manualSettings, tp_lots: rows } }
+      return { ...current, manualSettings: { ...current.manualSettings, tp_lots: rows } }
     })
   }
 
   const setTpDistributionPercent = (idx: number, raw: string) => {
     const num = raw === '' ? 0 : Number(raw)
     if (!Number.isFinite(num)) return
-    setConfigDraft(prev => ({
-      ...prev,
+    patchSelectedChannel(current => ({
+      ...current,
       manualSettings: {
-        ...prev.manualSettings,
-        tp_lots: applyTpPercentEdit(prev.manualSettings.tp_lots ?? DEFAULT_MANUAL_TP_LOTS, idx, num),
+        ...current.manualSettings,
+        tp_lots: applyTpPercentEdit(current.manualSettings.tp_lots ?? DEFAULT_MANUAL_TP_LOTS, idx, num),
       },
     }))
   }
 
   const setTpRowEnabled = (idx: number, enabled: boolean) => {
-    setConfigDraft(prev => {
-      const rows = cloneTpLots(prev.manualSettings.tp_lots, DEFAULT_MANUAL_TP_LOTS)
+    patchSelectedChannel(current => {
+      const rows = cloneTpLots(current.manualSettings.tp_lots, DEFAULT_MANUAL_TP_LOTS)
       if (!enabled) {
-        // Keep at least one row enabled so multi-TP distribution always has a target.
         const othersEnabled = rows.filter((r, i) => i !== idx && r.enabled)
-        if (othersEnabled.length === 0) return prev
+        if (othersEnabled.length === 0) return current
         rows[idx] = { ...rows[idx]!, enabled: false, percent: 0 }
       } else {
         rows[idx] = { ...rows[idx]!, enabled: true }
       }
-      return { ...prev, manualSettings: { ...prev.manualSettings, tp_lots: sanitizeTpLots(rows) } }
+      return { ...current, manualSettings: { ...current.manualSettings, tp_lots: sanitizeTpLots(rows) } }
     })
   }
 
   const addTpLotRow = () => {
-    setConfigDraft(prev => {
-      const rows = cloneTpLots(prev.manualSettings.tp_lots, DEFAULT_MANUAL_TP_LOTS)
+    patchSelectedChannel(current => {
+      const rows = cloneTpLots(current.manualSettings.tp_lots, DEFAULT_MANUAL_TP_LOTS)
       rows.push({ label: `TP${rows.length + 1}`, lot: 0.01, percent: 0, enabled: true })
-      return { ...prev, manualSettings: { ...prev.manualSettings, tp_lots: sanitizeTpLots(rows) } }
+      return { ...current, manualSettings: { ...current.manualSettings, tp_lots: sanitizeTpLots(rows) } }
     })
   }
 
   const removeTpLotRow = (idx: number) => {
-    setConfigDraft(prev => {
-      const rows = cloneTpLots(prev.manualSettings.tp_lots, DEFAULT_MANUAL_TP_LOTS)
-      if (rows.length <= 1) return prev
+    patchSelectedChannel(current => {
+      const rows = cloneTpLots(current.manualSettings.tp_lots, DEFAULT_MANUAL_TP_LOTS)
+      if (rows.length <= 1) return current
       rows.splice(idx, 1)
-      return { ...prev, manualSettings: { ...prev.manualSettings, tp_lots: sanitizeTpLots(rows) } }
+      return { ...current, manualSettings: { ...current.manualSettings, tp_lots: sanitizeTpLots(rows) } }
     })
   }
 
   const setPredefinedTpPipAt = (idx: number, raw: string) => {
-    setConfigDraft(prev => {
-      const list = clonePredefinedTpPips(prev.manualSettings.predefined_tp_pips)
-      if (idx < 0 || idx >= list.length) return prev
+    patchSelectedChannel(current => {
+      const list = clonePredefinedTpPips(current.manualSettings.predefined_tp_pips)
+      if (idx < 0 || idx >= list.length) return current
       if (raw === '') {
         list[idx] = 0
       } else {
         const n = Number(raw)
-        if (!Number.isFinite(n)) return prev
+        if (!Number.isFinite(n)) return current
         list[idx] = n
       }
-      return { ...prev, manualSettings: { ...prev.manualSettings, predefined_tp_pips: list } }
+      return { ...current, manualSettings: { ...current.manualSettings, predefined_tp_pips: list } }
     })
   }
 
   const addPredefinedTpPipRow = () => {
-    setConfigDraft(prev => {
-      const list = clonePredefinedTpPips(prev.manualSettings.predefined_tp_pips)
+    patchSelectedChannel(current => {
+      const list = clonePredefinedTpPips(current.manualSettings.predefined_tp_pips)
       const last = list[list.length - 1] ?? 0
       const next = Number.isFinite(last) && last > 0 ? last + 20 : 20
       list.push(next)
-      return { ...prev, manualSettings: { ...prev.manualSettings, predefined_tp_pips: list } }
+      return { ...current, manualSettings: { ...current.manualSettings, predefined_tp_pips: list } }
     })
   }
 
   const removePredefinedTpPipRow = (idx: number) => {
-    setConfigDraft(prev => {
-      const list = clonePredefinedTpPips(prev.manualSettings.predefined_tp_pips)
-      if (list.length <= 1) return prev
+    patchSelectedChannel(current => {
+      const list = clonePredefinedTpPips(current.manualSettings.predefined_tp_pips)
+      if (list.length <= 1) return current
       list.splice(idx, 1)
-      return { ...prev, manualSettings: { ...prev.manualSettings, predefined_tp_pips: list } }
+      return { ...current, manualSettings: { ...current.manualSettings, predefined_tp_pips: list } }
     })
   }
 
   const saveConfigureModal = async () => {
     if (!configAccount || !user) return
     setError('')
-    let channelIds = configDraft.channelIds
+    const channelIds = configDraft.channelIds
     const restrictChannels = channelIds.length > 0
 
     if (channelIds.length === 0) {
@@ -878,20 +892,36 @@ export function AccountConfigPage() {
 
     setConfigSaving(true)
     const channelMessageFilters: ChannelMessageFiltersMap = {}
-    const filterChannelIds = new Set([...channelOptions.map(c => c.id), ...channelIds])
-    for (const id of filterChannelIds) {
-      channelMessageFilters[id] = configDraft.channelFilters[id] ?? { ...DEFAULT_CHANNEL_FILTERS }
+    for (const id of channelIds) {
+      channelMessageFilters[id] = configDraft.channelConfigs[id]?.channelFilters ?? { ...DEFAULT_CHANNEL_FILTERS }
     }
+    const channelTradingConfigs = buildChannelTradingConfigsFromDraft(
+      channelIds,
+      Object.fromEntries(
+        channelIds.map(id => [
+          id,
+          {
+            mode: configDraft.channelConfigs[id]?.mode ?? 'manual',
+            manualSettings: configDraft.channelConfigs[id]?.manualSettings ?? DEFAULT_MANUAL_SETTINGS,
+          },
+        ]),
+      ),
+    )
+    const firstId = channelIds[0]
+    const firstConfig = firstId ? configDraft.channelConfigs[firstId] : null
     const { data, error: upErr } = await supabase
       .from('broker_accounts')
       .update({
-        copier_mode: AI_CONFIGURATION_ENABLED && configDraft.mode === 'ai' ? 'ai' : 'manual',
+        copier_mode: AI_CONFIGURATION_ENABLED && firstConfig?.mode === 'ai' ? 'ai' : 'manual',
         signal_channel_ids: channelIds,
         enforce_signal_channel_filter: restrictChannels,
-        manual_settings: {
-          ...configDraft.manualSettings,
-          allow_high_impact_news: configDraft.manualSettings.news_trading_enabled === true,
-        },
+        channel_trading_configs: channelTradingConfigs,
+        manual_settings: firstConfig
+          ? {
+              ...firstConfig.manualSettings,
+              allow_high_impact_news: firstConfig.manualSettings.news_trading_enabled === true,
+            }
+          : {},
         channel_message_filters: channelMessageFilters,
       })
       .eq('id', configAccount.id)
@@ -1447,6 +1477,7 @@ export function AccountConfigPage() {
                 </h3>
                 <p className="text-xs sm:text-sm text-neutral-500 dark:text-neutral-400 mt-0.5 truncate">
                   {configAccount.label} · {configAccount.platform}
+                  {selectedChannelOption ? ` · ${selectedChannelOption.display_name}` : ''}
                 </p>
               </div>
               <button
@@ -1459,83 +1490,140 @@ export function AccountConfigPage() {
             </div>
 
             <div className="flex flex-col sm:flex-row flex-1 min-h-0 min-w-0">
-              {/* Primary tabs — horizontal scroll on mobile, sidebar on sm+ */}
-              <nav className="shrink-0 flex sm:flex-col w-full sm:w-52 border-b sm:border-b-0 sm:border-r border-neutral-100 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/50 p-2 sm:p-3 gap-1 sm:space-y-0.5 overflow-x-auto sm:overflow-y-auto overscroll-x-contain">
-                {tabs.map(tab => {
-                  const Icon = tab.icon
-                  const active = tab.id === activeTab
-                  return (
-                    <button
-                      key={tab.id}
-                      type="button"
-                      onClick={() => setActiveTab(tab.id)}
-                      className={clsx(
-                        'shrink-0 sm:w-full flex items-center gap-2 text-left px-3 py-2.5 sm:py-2 rounded-lg text-sm transition-colors min-h-[44px] sm:min-h-0 whitespace-nowrap',
-                        active
-                          ? 'bg-white dark:bg-neutral-900 text-primary-700 shadow-sm border border-primary-100 dark:border-primary-900/50'
-                          : 'text-neutral-600 dark:text-neutral-400 hover:bg-white dark:hover:bg-neutral-900 hover:text-neutral-900 dark:hover:text-neutral-50 border border-transparent',
-                      )}
-                    >
-                      <Icon className={clsx('w-4 h-4 shrink-0', active ? 'text-primary-600' : 'text-neutral-400')} />
-                      {tab.label}
-                    </button>
-                  )
-                })}
-              </nav>
-
-              {/* Tab body column */}
-              <div className="flex-1 flex flex-col min-h-0 min-w-0">
-                {activeTab === 'mode' && (
-                  <div className="shrink-0 px-4 sm:px-6 pt-3 sm:pt-4 bg-white dark:bg-neutral-900 border-b border-neutral-100 dark:border-neutral-800 overflow-x-auto overscroll-x-contain">
-                    <div className="flex flex-nowrap items-center gap-1 min-w-max sm:min-w-0 sm:flex-wrap pb-px">
-                      {manualSubTabs.map(sub => {
-                        const SubIcon = sub.icon
-                        const active = sub.id === activeManualSubTab
-                        return (
+              {/* Channel sidebar */}
+              <nav className="shrink-0 flex sm:flex-col w-full sm:w-56 border-b sm:border-b-0 sm:border-r border-neutral-100 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/50 p-2 sm:p-3 gap-2 sm:gap-1 overflow-x-auto sm:overflow-y-auto overscroll-x-contain">
+                <p className="hidden sm:block px-2 text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
+                  {cm.channelsSidebar}
+                </p>
+                {channelOptions.length === 0 ? (
+                  <p className="text-xs text-neutral-500 dark:text-neutral-400 px-2 py-1">
+                    {cm.channels.noneConnected}{' '}
+                    <Link to="/channels" className="text-primary-600 underline">{cm.channels.connectLink}</Link>
+                  </p>
+                ) : (
+                  <>
+                    {channelOptions.map(channel => {
+                      const linked = configDraft.channelIds.includes(channel.id)
+                      const selected = configDraft.selectedChannelId === channel.id
+                      return (
+                        <div key={channel.id} className="flex items-center gap-1 shrink-0 sm:w-full">
+                          <label className="flex items-center gap-2 px-2 py-1 shrink-0">
+                            <input
+                              type="checkbox"
+                              checked={linked}
+                              onChange={() => toggleDraftChannel(channel.id)}
+                            />
+                          </label>
                           <button
-                            key={sub.id}
                             type="button"
-                            onClick={() => setActiveManualSubTab(sub.id)}
+                            disabled={!linked}
+                            onClick={() => selectConfigureChannel(channel.id)}
                             className={clsx(
-                              'shrink-0 flex items-center gap-1.5 px-3 py-2.5 sm:py-2 text-sm transition-colors border-b-2 -mb-px min-h-[44px] sm:min-h-0 whitespace-nowrap',
-                              active
-                                ? 'border-primary-600 text-primary-700 dark:text-primary-400'
-                                : 'border-transparent text-neutral-500 dark:text-neutral-400 hover:text-neutral-800 dark:hover:text-neutral-100',
+                              'flex-1 min-w-0 flex items-center gap-2 text-left px-2 py-2 rounded-lg text-sm transition-colors min-h-[44px] sm:min-h-0',
+                              !linked && 'opacity-50 cursor-not-allowed',
+                              selected && linked
+                                ? 'bg-white dark:bg-neutral-900 text-primary-700 shadow-sm border border-primary-100 dark:border-primary-900/50'
+                                : 'text-neutral-600 dark:text-neutral-400 hover:bg-white dark:hover:bg-neutral-900 border border-transparent',
                             )}
                           >
-                            <SubIcon className={clsx('w-3.5 h-3.5 shrink-0', active ? 'text-primary-600' : 'text-neutral-400')} />
-                            {sub.label}
+                            <Radio className={clsx('w-4 h-4 shrink-0', selected ? 'text-primary-600' : 'text-neutral-400')} />
+                            <span className="truncate">{channel.display_name}</span>
                           </button>
-                        )
-                      })}
+                        </div>
+                      )
+                    })}
+                    <p className="hidden sm:block px-2 pt-2 text-xs text-neutral-500 dark:text-neutral-400">
+                      {interpolate(cm.channels.selected, { count: String(configDraft.channelIds.length) })}
+                    </p>
+                  </>
+                )}
+              </nav>
+
+              {/* Config body column */}
+              <div className="flex-1 flex flex-col min-h-0 min-w-0">
+                {configDraft.selectedChannelId && configDraft.channelIds.includes(configDraft.selectedChannelId) ? (
+                  <div className="shrink-0 px-4 sm:px-6 pt-3 sm:pt-4 bg-white dark:bg-neutral-900 border-b border-neutral-100 dark:border-neutral-800 overflow-x-auto overscroll-x-contain">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pb-3 sm:pb-0">
+                      <div className="flex flex-nowrap items-center gap-1 min-w-max sm:min-w-0 sm:flex-wrap pb-px">
+                        {manualSubTabs.map(sub => {
+                          const SubIcon = sub.icon
+                          const active = sub.id === activeManualSubTab
+                          return (
+                            <button
+                              key={sub.id}
+                              type="button"
+                              onClick={() => setActiveManualSubTab(sub.id)}
+                              className={clsx(
+                                'shrink-0 flex items-center gap-1.5 px-3 py-2.5 sm:py-2 text-sm transition-colors border-b-2 -mb-px min-h-[44px] sm:min-h-0 whitespace-nowrap',
+                                active
+                                  ? 'border-primary-600 text-primary-700 dark:text-primary-400'
+                                  : 'border-transparent text-neutral-500 dark:text-neutral-400 hover:text-neutral-800 dark:hover:text-neutral-100',
+                              )}
+                            >
+                              <SubIcon className={clsx('w-3.5 h-3.5 shrink-0', active ? 'text-primary-600' : 'text-neutral-400')} />
+                              {sub.label}
+                            </button>
+                          )
+                        })}
+                      </div>
+                      {configDraft.channelIds.filter(id => id !== configDraft.selectedChannelId).length > 0 && (
+                        <div className="flex items-center gap-2 shrink-0">
+                          <label className="text-xs text-neutral-500 dark:text-neutral-400 whitespace-nowrap">{cm.copyFromChannel}</label>
+                          <select
+                            className="text-sm rounded-lg border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1.5 min-h-[36px]"
+                            defaultValue=""
+                            onChange={e => {
+                              const v = e.target.value
+                              e.target.value = ''
+                              if (v) copyConfigFromChannel(v)
+                            }}
+                          >
+                            <option value="">{cm.copyFromChannelPlaceholder}</option>
+                            {configDraft.channelIds
+                              .filter(id => id !== configDraft.selectedChannelId)
+                              .map(id => {
+                                const ch = channelOptions.find(c => c.id === id)
+                                return (
+                                  <option key={id} value={id}>{ch?.display_name ?? id}</option>
+                                )
+                              })}
+                          </select>
+                        </div>
+                      )}
                     </div>
                   </div>
-                )}
+                ) : null}
 
                 <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 sm:px-6 py-4 sm:py-5 min-h-0 overscroll-y-contain">
                 {error && <Alert className="mb-4">{error}</Alert>}
 
-                {activeTab === 'mode' && (
+                {!configDraft.selectedChannelId || !configDraft.channelIds.includes(configDraft.selectedChannelId) ? (
+                  <div className="py-12 text-center">
+                    <Radio className="w-10 h-10 mx-auto mb-3 text-neutral-300 dark:text-neutral-600" />
+                    <p className="text-sm text-neutral-500 dark:text-neutral-400">{cm.selectChannelToConfigure}</p>
+                    <p className="text-xs text-neutral-400 dark:text-neutral-500 mt-1">{cm.channels.pickHint}</p>
+                  </div>
+                ) : (
                   <div className="space-y-5">
                     {/* <div>
                       <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100 mb-2">Configure mode</p>
                       <div className="inline-flex rounded-lg border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/50 p-1">
                         <button
                           onClick={() => setConfigDraft(prev => ({ ...prev, mode: 'ai' }))}
-                          className={`px-4 py-2 text-sm rounded-md transition-colors ${configDraft.mode === 'ai' ? 'bg-primary-600 text-white' : 'text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:bg-neutral-800'}`}
+                          className={`px-4 py-2 text-sm rounded-md transition-colors ${channelMode === 'ai' ? 'bg-primary-600 text-white' : 'text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:bg-neutral-800'}`}
                         >
                           AI Expert Mode
                         </button>
                         <button
                           onClick={() => setConfigDraft(prev => ({ ...prev, mode: 'manual' }))}
-                          className={`px-4 py-2 text-sm rounded-md transition-colors ${configDraft.mode === 'manual' ? 'bg-primary-600 text-white' : 'text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:bg-neutral-800'}`}
+                          className={`px-4 py-2 text-sm rounded-md transition-colors ${channelMode === 'manual' ? 'bg-primary-600 text-white' : 'text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:bg-neutral-800'}`}
                         >
                           Manual
                         </button>
                       </div>
                     </div> */}
 
-                    {AI_CONFIGURATION_ENABLED && configDraft.mode === 'ai' ? (
+                    {AI_CONFIGURATION_ENABLED && channelMode === 'ai' ? (
                       <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 space-y-3">
                         <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">{cm.ai.title}</p>
                         <p className="text-sm text-neutral-600 dark:text-neutral-400">
@@ -1576,13 +1664,13 @@ export function AccountConfigPage() {
                                 </p>
                               </div>
                               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                <Input label={cm.symbolRouting.prefix} value={configDraft.manualSettings.symbol_prefix ?? ''} onChange={e => setManual({ symbol_prefix: e.target.value })} />
-                                <Input label={cm.symbolRouting.suffix} value={configDraft.manualSettings.symbol_suffix ?? ''} onChange={e => setManual({ symbol_suffix: e.target.value })} />
+                                <Input label={cm.symbolRouting.prefix} value={channelManualSettings.symbol_prefix ?? ''} onChange={e => setManual({ symbol_prefix: e.target.value })} />
+                                <Input label={cm.symbolRouting.suffix} value={channelManualSettings.symbol_suffix ?? ''} onChange={e => setManual({ symbol_suffix: e.target.value })} />
                                 <div className="col-span-2">
                                   <Input
                                     label={cm.symbolRouting.symbolsToTrade}
                                     placeholder={cm.symbolRouting.symbolsToTradePlaceholder}
-                                    value={configDraft.manualSettings.symbol_to_trade ?? ''}
+                                    value={channelManualSettings.symbol_to_trade ?? ''}
                                     onChange={e => setManual({ symbol_to_trade: e.target.value })}
                                   />
                                   <p className="text-xs text-slate-500 mt-1">
@@ -1591,7 +1679,7 @@ export function AccountConfigPage() {
                                 </div>
                                 <Input
                                   label={cm.symbolRouting.symbolsExclude}
-                                  value={(configDraft.manualSettings.symbols_exclude ?? []).join(',')}
+                                  value={(channelManualSettings.symbols_exclude ?? []).join(',')}
                                   onChange={e => setManual({ symbols_exclude: e.target.value.split(',').map(x => x.trim().toUpperCase()).filter(Boolean) })}
                                 />
                               </div>
@@ -1604,21 +1692,21 @@ export function AccountConfigPage() {
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                               <Select
                                 label={cm.risk.riskMode}
-                                value={configDraft.manualSettings.risk_mode ?? 'fixed_lot'}
+                                value={channelManualSettings.risk_mode ?? 'fixed_lot'}
                                 onChange={e => setManual({ risk_mode: e.target.value as ManualSettings['risk_mode'] })}
                                 options={[
                                   { value: 'fixed_lot', label: cm.risk.fixedLot },
                                   { value: 'dynamic_balance_percent', label: cm.risk.dynamicBalance },
                                 ]}
                               />
-                              {configDraft.manualSettings.risk_mode === 'dynamic_balance_percent' ? (
-                                <Input label={cm.risk.dynamicBalance} type="number" value={String(configDraft.manualSettings.dynamic_balance_percent ?? 1)} onChange={e => setManual({ dynamic_balance_percent: Number(e.target.value) })} />
+                              {channelManualSettings.risk_mode === 'dynamic_balance_percent' ? (
+                                <Input label={cm.risk.dynamicBalance} type="number" value={String(channelManualSettings.dynamic_balance_percent ?? 1)} onChange={e => setManual({ dynamic_balance_percent: Number(e.target.value) })} />
                               ) : (
-                                <Input label={cm.risk.fixedLot} type="number" value={String(configDraft.manualSettings.fixed_lot ?? 0.01)} onChange={e => setManual({ fixed_lot: Number(e.target.value) })} />
+                                <Input label={cm.risk.fixedLot} type="number" value={String(channelManualSettings.fixed_lot ?? 0.01)} onChange={e => setManual({ fixed_lot: Number(e.target.value) })} />
                               )}
                               <Select
                                 label={cm.risk.tradeStyle}
-                                value={configDraft.manualSettings.trade_style ?? 'single'}
+                                value={channelManualSettings.trade_style ?? 'single'}
                                 onChange={e => {
                                   const v = e.target.value as ManualSettings['trade_style']
                                   if (v === 'multi') {
@@ -1634,7 +1722,7 @@ export function AccountConfigPage() {
                               />
                             </div>
 
-                            {configDraft.manualSettings.trade_style !== 'multi' && (
+                            {channelManualSettings.trade_style !== 'multi' && (
                               <div className="space-y-4">
                               <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-3 space-y-3">
                                 <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.risk.signalEntryTitle}</p>
@@ -1645,11 +1733,11 @@ export function AccountConfigPage() {
                                   <div className="flex items-center justify-between gap-3 bg-white dark:bg-neutral-900 px-3 py-2.5">
                                     <span className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.risk.useSignalEntryPrice}</span>
                                     <Toggle
-                                      checked={configDraft.manualSettings.use_signal_entry_price === true}
+                                      checked={channelManualSettings.use_signal_entry_price === true}
                                       onChange={v => setManual({ use_signal_entry_price: v })}
                                     />
                                   </div>
-                                  {configDraft.manualSettings.use_signal_entry_price && (
+                                  {channelManualSettings.use_signal_entry_price && (
                                     <div className="border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/80 px-3 py-3 space-y-2">
                                       <Input
                                         label={cm.risk.pipToleranceLegacy}
@@ -1657,7 +1745,7 @@ export function AccountConfigPage() {
                                         min={0}
                                         step={1}
                                         hint={cm.risk.pipToleranceHint}
-                                        value={String(configDraft.manualSettings.signal_entry_pip_tolerance ?? 10)}
+                                        value={String(channelManualSettings.signal_entry_pip_tolerance ?? 10)}
                                         onChange={e => setManual({ signal_entry_pip_tolerance: Math.max(0, Number(e.target.value) || 0) })}
                                       />
                                     </div>
@@ -1667,7 +1755,7 @@ export function AccountConfigPage() {
                               </div>
                             )}
 
-                            {configDraft.manualSettings.trade_style === 'multi' && (
+                            {channelManualSettings.trade_style === 'multi' && (
                               <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-3 space-y-3">
                                 <p className="text-xs text-neutral-600 dark:text-neutral-400">
                                   {cm.risk.multiIntro}
@@ -1679,7 +1767,7 @@ export function AccountConfigPage() {
                                     min={0.1}
                                     max={100}
                                     step={0.5}
-                                    value={String(configDraft.manualSettings.multi_trade_leg_percent ?? 5)}
+                                    value={String(channelManualSettings.multi_trade_leg_percent ?? 5)}
                                     onChange={e => setManual({ multi_trade_leg_percent: Number(e.target.value) })}
                                   />
                                   <div>
@@ -1697,27 +1785,27 @@ export function AccountConfigPage() {
                                     </div>
                                     <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
                                       {cm.risk.previewFooter}
-                                      {configDraft.manualSettings.risk_mode === 'dynamic_balance_percent' && (
+                                      {channelManualSettings.risk_mode === 'dynamic_balance_percent' && (
                                         <>{cm.risk.previewDynamicRisk}</>
                                       )}
-                                      {configDraft.manualSettings.range_trading
+                                      {channelManualSettings.range_trading
                                         && multiTradePreview.effectiveDistancePips != null
                                         && (multiTradePreview.pending ?? 0) > 0
-                                        && Math.abs(multiTradePreview.effectiveDistancePips - (Number(configDraft.manualSettings.range_distance_pips ?? 0) || 0)) >= 1 && (
+                                        && Math.abs(multiTradePreview.effectiveDistancePips - (Number(channelManualSettings.range_distance_pips ?? 0) || 0)) >= 1 && (
                                         <>
                                           {interpolate(cm.risk.previewLadderSpan, {
                                             pending: String(multiTradePreview.pending),
-                                            step: String(Number(configDraft.manualSettings.range_step_pips ?? 0) || 0),
+                                            step: String(Number(channelManualSettings.range_step_pips ?? 0) || 0),
                                             distance: String(multiTradePreview.effectiveDistancePips),
-                                            configured: String(Number(configDraft.manualSettings.range_distance_pips ?? 0) || 0),
+                                            configured: String(Number(channelManualSettings.range_distance_pips ?? 0) || 0),
                                           })}
                                         </>
                                       )}
-                                      {configDraft.manualSettings.close_worse_entries && (multiTradePreview.immediate ?? 0) > 0 && (
+                                      {channelManualSettings.close_worse_entries && (multiTradePreview.immediate ?? 0) > 0 && (
                                         <>
                                           {interpolate(cm.risk.previewCweLegs, {
                                             count: String(multiTradePreview.immediate),
-                                            pips: String(Number(configDraft.manualSettings.close_worse_entries_pips ?? 20) || 0),
+                                            pips: String(Number(channelManualSettings.close_worse_entries_pips ?? 20) || 0),
                                           })}
                                         </>
                                       )}
@@ -1727,19 +1815,19 @@ export function AccountConfigPage() {
                               </div>
                             )}
 
-                            {configDraft.manualSettings.trade_style === 'multi' && (
+                            {channelManualSettings.trade_style === 'multi' && (
                               <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-3 space-y-3">
                                 <div className="flex items-center justify-between">
                                   <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.risk.rangeLayering}</p>
                                   <Toggle
-                                    checked={configDraft.manualSettings.range_trading === true}
+                                    checked={channelManualSettings.range_trading === true}
                                     onChange={v => setManual({ range_trading: v })}
                                   />
                                 </div>
                                 <p className="text-xs text-neutral-600 dark:text-neutral-400">
                                   {cm.risk.rangeIntro}
                                 </p>
-                                {configDraft.manualSettings.range_trading && (
+                                {channelManualSettings.range_trading && (
                                   <>
                                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                                       <Input
@@ -1750,7 +1838,7 @@ export function AccountConfigPage() {
                                         step={1}
                                         placeholder="50"
                                         hint={cm.risk.reservedLotHint}
-                                        value={String(configDraft.manualSettings.range_percent ?? 50)}
+                                        value={String(channelManualSettings.range_percent ?? 50)}
                                         onChange={e => setManual({ range_percent: Math.max(0, Math.min(100, Number(e.target.value) || 0)) })}
                                       />
                                       <Input
@@ -1760,10 +1848,10 @@ export function AccountConfigPage() {
                                         step={1}
                                         placeholder="10"
                                         hint={
-                                          formatPipHint(Number(configDraft.manualSettings.range_step_pips ?? DEFAULT_MANUAL_SETTINGS.range_step_pips) || 0)
+                                          formatPipHint(Number(channelManualSettings.range_step_pips ?? DEFAULT_MANUAL_SETTINGS.range_step_pips) || 0)
                                           ?? cm.risk.stepPipsFallback
                                         }
-                                        value={String(configDraft.manualSettings.range_step_pips ?? DEFAULT_MANUAL_SETTINGS.range_step_pips)}
+                                        value={String(channelManualSettings.range_step_pips ?? DEFAULT_MANUAL_SETTINGS.range_step_pips)}
                                         onChange={e => setManual({ range_step_pips: Math.max(1, Number(e.target.value) || 1) })}
                                       />
                                       <Input
@@ -1773,10 +1861,10 @@ export function AccountConfigPage() {
                                         step={1}
                                         placeholder="100"
                                         hint={
-                                          formatPipHint(Number(configDraft.manualSettings.range_distance_pips ?? DEFAULT_MANUAL_SETTINGS.range_distance_pips) || 0)
+                                          formatPipHint(Number(channelManualSettings.range_distance_pips ?? DEFAULT_MANUAL_SETTINGS.range_distance_pips) || 0)
                                           ?? cm.risk.rangeDistanceFallback
                                         }
-                                        value={String(configDraft.manualSettings.range_distance_pips ?? DEFAULT_MANUAL_SETTINGS.range_distance_pips)}
+                                        value={String(channelManualSettings.range_distance_pips ?? DEFAULT_MANUAL_SETTINGS.range_distance_pips)}
                                         onChange={e => setManual({ range_distance_pips: Math.max(1, Number(e.target.value) || 1) })}
                                       />
                                     </div>
@@ -1785,14 +1873,14 @@ export function AccountConfigPage() {
                                       <div className="flex items-center justify-between">
                                         <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.risk.closeWorseEntries}</p>
                                         <Toggle
-                                          checked={configDraft.manualSettings.close_worse_entries === true}
+                                          checked={channelManualSettings.close_worse_entries === true}
                                           onChange={v => setManual({ close_worse_entries: v })}
                                         />
                                       </div>
                                       <p className="text-xs text-neutral-600 dark:text-neutral-400">
                                         {cm.risk.closeWorseBody}
                                       </p>
-                                      {configDraft.manualSettings.close_worse_entries && (
+                                      {channelManualSettings.close_worse_entries && (
                                         <Input
                                           label={cm.risk.closeWorsePips}
                                           type="number"
@@ -1800,10 +1888,10 @@ export function AccountConfigPage() {
                                           step={1}
                                           placeholder="30"
                                           hint={
-                                            formatPipHint(Number(configDraft.manualSettings.close_worse_entries_pips ?? 30) || 0)
+                                            formatPipHint(Number(channelManualSettings.close_worse_entries_pips ?? 30) || 0)
                                             ?? cm.risk.closeWorsePipsFallback
                                           }
-                                          value={String(configDraft.manualSettings.close_worse_entries_pips ?? 30)}
+                                          value={String(channelManualSettings.close_worse_entries_pips ?? 30)}
                                           onChange={e => setManual({ close_worse_entries_pips: Math.max(1, Number(e.target.value) || 1) })}
                                         />
                                       )}
@@ -1817,7 +1905,7 @@ export function AccountConfigPage() {
                         )}
 
                         {activeManualSubTab === 'stops' && (() => {
-                          const ms = configDraft.manualSettings
+                          const ms = channelManualSettings
                           const predefSummary = describePredefinedStopsOverrideI18n(ms, cm.stops)
                           return (
                           <div className="space-y-6">
@@ -1860,15 +1948,22 @@ export function AccountConfigPage() {
                                       checked={ms.use_predefined_tp_pips === true}
                                       onChange={v => {
                                         if (!v) { setManual({ use_predefined_tp_pips: false }); return }
-                                        setConfigDraft(prev => {
-                                          let list = prev.manualSettings.predefined_tp_pips
+                                        patchSelectedChannel(current => {
+                                          let list = current.manualSettings.predefined_tp_pips
                                           if (!Array.isArray(list) || list.length === 0) {
                                             list = [...(DEFAULT_MANUAL_SETTINGS.predefined_tp_pips ?? [20, 40, 60])]
                                           } else {
                                             const filtered = list.map(n => Number(n)).filter(Number.isFinite)
                                             list = filtered.length > 0 ? filtered : [...(DEFAULT_MANUAL_SETTINGS.predefined_tp_pips ?? [20, 40, 60])]
                                           }
-                                          return { ...prev, manualSettings: { ...prev.manualSettings, use_predefined_tp_pips: true, predefined_tp_pips: list } }
+                                          return {
+                                            ...current,
+                                            manualSettings: {
+                                              ...current.manualSettings,
+                                              use_predefined_tp_pips: true,
+                                              predefined_tp_pips: list,
+                                            },
+                                          }
                                         })
                                       }}
                                     />
@@ -1935,8 +2030,8 @@ export function AccountConfigPage() {
                                 )}
                               </div>
                               <div className="space-y-2">
-                                {(configDraft.manualSettings.tp_lots ?? DEFAULT_MANUAL_TP_LOTS).map((row, idx) => {
-                                  const tpRows = configDraft.manualSettings.tp_lots ?? DEFAULT_MANUAL_TP_LOTS
+                                {(channelManualSettings.tp_lots ?? DEFAULT_MANUAL_TP_LOTS).map((row, idx) => {
+                                  const tpRows = channelManualSettings.tp_lots ?? DEFAULT_MANUAL_TP_LOTS
                                   const othersSum = tpRows.reduce(
                                     (s, r, i) => (i !== idx && r.enabled ? s + (Number(r.percent) || 0) : s),
                                     0,
@@ -1981,7 +2076,7 @@ export function AccountConfigPage() {
                         })()}
 
                         {activeManualSubTab === 'management' && (() => {
-                          const ms = configDraft.manualSettings
+                          const ms = channelManualSettings
                           const autoMgmtEnabled = isAutoManagementEnabled(ms)
                           const triggerMode = ms.move_sl_to_entry_after_mode ?? 'pips'
                           const beType = ms.move_sl_to_entry_type ?? 'sl_only'
@@ -2264,12 +2359,12 @@ export function AccountConfigPage() {
                                 </p>
                               </div>
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                              <Select label={cm.filters.timeFilter} value={configDraft.manualSettings.time_filter_enabled ? 'yes' : 'no'} onChange={e => setManual({ time_filter_enabled: e.target.value === 'yes' })} options={[{ value: 'no', label: cm.filters.timeNo }, { value: 'yes', label: cm.filters.timeYes }]} />
-                              {configDraft.manualSettings.time_filter_enabled && (
-                                <Input label={cm.filters.startTime} type="time" value={configDraft.manualSettings.trade_start_time ?? '00:00'} onChange={e => setManual({ trade_start_time: e.target.value })} />
+                              <Select label={cm.filters.timeFilter} value={channelManualSettings.time_filter_enabled ? 'yes' : 'no'} onChange={e => setManual({ time_filter_enabled: e.target.value === 'yes' })} options={[{ value: 'no', label: cm.filters.timeNo }, { value: 'yes', label: cm.filters.timeYes }]} />
+                              {channelManualSettings.time_filter_enabled && (
+                                <Input label={cm.filters.startTime} type="time" value={channelManualSettings.trade_start_time ?? '00:00'} onChange={e => setManual({ trade_start_time: e.target.value })} />
                               )}
-                              {configDraft.manualSettings.time_filter_enabled && (
-                                <Input label={cm.filters.endTime} type="time" value={configDraft.manualSettings.trade_end_time ?? '23:59'} onChange={e => setManual({ trade_end_time: e.target.value })} />
+                              {channelManualSettings.time_filter_enabled && (
+                                <Input label={cm.filters.endTime} type="time" value={channelManualSettings.trade_end_time ?? '23:59'} onChange={e => setManual({ trade_end_time: e.target.value })} />
                               )}
                             </div>
                             </section>
@@ -2281,8 +2376,8 @@ export function AccountConfigPage() {
                                   {cm.filters.daysSubtitle}
                                 </p>
                               </div>
-                              <Select label={cm.filters.daysFilter} value={configDraft.manualSettings.days_filter_enabled ? 'yes' : 'no'} onChange={e => setManual({ days_filter_enabled: e.target.value === 'yes' })} options={[{ value: 'no', label: cm.filters.daysNo }, { value: 'yes', label: cm.filters.daysYes }]} />
-                            {configDraft.manualSettings.days_filter_enabled && (
+                              <Select label={cm.filters.daysFilter} value={channelManualSettings.days_filter_enabled ? 'yes' : 'no'} onChange={e => setManual({ days_filter_enabled: e.target.value === 'yes' })} options={[{ value: 'no', label: cm.filters.daysNo }, { value: 'yes', label: cm.filters.daysYes }]} />
+                            {channelManualSettings.days_filter_enabled && (
                               <div>
                                 <p className="text-xs text-neutral-600 dark:text-neutral-400 mb-2">{cm.filters.tradingDays}</p>
                                 <div className="flex flex-wrap gap-3">
@@ -2290,9 +2385,9 @@ export function AccountConfigPage() {
                                     <label key={value} className="text-sm text-neutral-700 dark:text-neutral-300 flex items-center gap-2">
                                       <input
                                         type="checkbox"
-                                        checked={(configDraft.manualSettings.trade_days ?? [1, 2, 3, 4, 5]).includes(value)}
+                                        checked={(channelManualSettings.trade_days ?? [1, 2, 3, 4, 5]).includes(value)}
                                         onChange={(e) => {
-                                          const prev = configDraft.manualSettings.trade_days ?? [1, 2, 3, 4, 5]
+                                          const prev = channelManualSettings.trade_days ?? [1, 2, 3, 4, 5]
                                           const next = e.target.checked ? [...new Set([...prev, value])] : prev.filter((x) => x !== value)
                                           setManual({ trade_days: next })
                                         }}
@@ -2301,7 +2396,7 @@ export function AccountConfigPage() {
                                     </label>
                                   ))}
                                 </div>
-                                {(configDraft.manualSettings.trade_days ?? []).length === 0 ? (
+                                {(channelManualSettings.trade_days ?? []).length === 0 ? (
                                   <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
                                     {cm.filters.daysWarning}
                                   </p>
@@ -2319,7 +2414,7 @@ export function AccountConfigPage() {
                               </div>
                               <Select
                                 label={cm.filters.newsTrading}
-                                value={configDraft.manualSettings.news_trading_enabled !== false ? 'yes' : 'no'}
+                                value={channelManualSettings.news_trading_enabled !== false ? 'yes' : 'no'}
                                 onChange={e => {
                                   const enabled = e.target.value === 'yes'
                                   setManual({
@@ -2332,7 +2427,7 @@ export function AccountConfigPage() {
                                   { value: 'no', label: cm.filters.newsNo },
                                 ]}
                               />
-                              {configDraft.manualSettings.news_trading_enabled === false && (
+                              {channelManualSettings.news_trading_enabled === false && (
                                 <>
                                   <div>
                                     <p className="text-xs text-neutral-600 dark:text-neutral-400 mb-2">{cm.filters.avoidImpact}</p>
@@ -2347,9 +2442,9 @@ export function AccountConfigPage() {
                                         <label key={impact.id} className="text-sm text-neutral-700 dark:text-neutral-300 flex items-center gap-2">
                                           <input
                                             type="checkbox"
-                                            checked={(configDraft.manualSettings.news_avoid_impacts ?? ['high']).includes(impact.id)}
+                                            checked={(channelManualSettings.news_avoid_impacts ?? ['high']).includes(impact.id)}
                                             onChange={(e) => {
-                                              const prev = configDraft.manualSettings.news_avoid_impacts ?? ['high']
+                                              const prev = channelManualSettings.news_avoid_impacts ?? ['high']
                                               const next = e.target.checked
                                                 ? [...new Set([...prev, impact.id])]
                                                 : prev.filter((x) => x !== impact.id)
@@ -2360,7 +2455,7 @@ export function AccountConfigPage() {
                                         </label>
                                       ))}
                                     </div>
-                                    {(configDraft.manualSettings.news_avoid_impacts ?? []).length === 0 ? (
+                                    {(channelManualSettings.news_avoid_impacts ?? []).length === 0 ? (
                                       <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
                                         {cm.filters.impactWarning}
                                       </p>
@@ -2371,7 +2466,7 @@ export function AccountConfigPage() {
                                       label={cm.filters.closeBeforeNews}
                                       type="number"
                                       min={0}
-                                      value={String(configDraft.manualSettings.close_before_news_minutes ?? 30)}
+                                      value={String(channelManualSettings.close_before_news_minutes ?? 30)}
                                       onChange={e =>
                                         setManual({ close_before_news_minutes: Math.max(0, Number(e.target.value) || 0) })
                                       }
@@ -2380,7 +2475,7 @@ export function AccountConfigPage() {
                                       label={cm.filters.resumeAfterNews}
                                       type="number"
                                       min={0}
-                                      value={String(configDraft.manualSettings.resume_after_news_minutes ?? 15)}
+                                      value={String(channelManualSettings.resume_after_news_minutes ?? 15)}
                                       onChange={e =>
                                         setManual({ resume_after_news_minutes: Math.max(0, Number(e.target.value) || 0) })
                                       }
@@ -2399,23 +2494,23 @@ export function AccountConfigPage() {
                               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                                 <Select
                                   label={cm.strategy.reverseSignal}
-                                  value={configDraft.manualSettings.reverse_signal ? 'yes' : 'no'}
+                                  value={channelManualSettings.reverse_signal ? 'yes' : 'no'}
                                   onChange={e => {
                                     const v = e.target.value === 'yes'
-                                    if (v && !reverseSignalPlannerGateSettingsOk(configDraft.manualSettings)) return
+                                    if (v && !reverseSignalPlannerGateSettingsOk(channelManualSettings)) return
                                     setManual({ reverse_signal: v })
                                   }}
                                   options={[{ value: 'no', label: cm.common.no }, { value: 'yes', label: cm.common.yes }]}
                                 />
                                 <Select
                                   label={cm.strategy.addToExisting}
-                                  value={configDraft.manualSettings.add_new_trades_to_existing ? 'yes' : 'no'}
+                                  value={channelManualSettings.add_new_trades_to_existing ? 'yes' : 'no'}
                                   onChange={e => setManual({ add_new_trades_to_existing: e.target.value === 'yes' })}
                                   options={[{ value: 'yes', label: cm.common.yes }, { value: 'no', label: cm.common.no }]}
                                 />
                                 <Select
                                   label={cm.strategy.closeOpposite}
-                                  value={configDraft.manualSettings.close_on_opposite_signal ? 'yes' : 'no'}
+                                  value={channelManualSettings.close_on_opposite_signal ? 'yes' : 'no'}
                                   onChange={e => setManual({ close_on_opposite_signal: e.target.value === 'yes' })}
                                   options={[{ value: 'no', label: cm.common.no }, { value: 'yes', label: cm.common.yes }]}
                                 />
@@ -2441,17 +2536,17 @@ export function AccountConfigPage() {
                                   <div className="flex items-center justify-between gap-3 bg-white dark:bg-neutral-900 px-3 py-2.5">
                                     <span className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.strategy.enableRrSl}</span>
                                     <Toggle
-                                      checked={configDraft.manualSettings.rr_for_sl_enabled === true}
+                                      checked={channelManualSettings.rr_for_sl_enabled === true}
                                       onChange={v => setManual({ rr_for_sl_enabled: v })}
                                     />
                                   </div>
-                                  {configDraft.manualSettings.rr_for_sl_enabled && (
+                                  {channelManualSettings.rr_for_sl_enabled && (
                                     <div className="border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/80 px-3 py-3 space-y-1">
                                       <Input
                                         label={cm.strategy.slRr}
                                         type="number"
                                         hint={cm.strategy.slRrHint}
-                                        value={String(configDraft.manualSettings.rr_for_sl ?? 1)}
+                                        value={String(channelManualSettings.rr_for_sl ?? 1)}
                                         onChange={e => setManual({ rr_for_sl: Number(e.target.value) })}
                                       />
                                     </div>
@@ -2462,16 +2557,16 @@ export function AccountConfigPage() {
                                   <div className="flex items-center justify-between gap-3 bg-white dark:bg-neutral-900 px-3 py-2.5">
                                     <span className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.strategy.enableRrTps}</span>
                                     <Toggle
-                                      checked={configDraft.manualSettings.rr_for_tps_enabled === true}
+                                      checked={channelManualSettings.rr_for_tps_enabled === true}
                                       onChange={v => setManual({ rr_for_tps_enabled: v })}
                                     />
                                   </div>
-                                  {configDraft.manualSettings.rr_for_tps_enabled && (
+                                  {channelManualSettings.rr_for_tps_enabled && (
                                     <div className="border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/80 px-3 py-3 space-y-1">
                                       <Input
                                         label={cm.strategy.tpRrValues}
                                         hint={cm.strategy.tpRrHint}
-                                        value={(configDraft.manualSettings.rr_for_tps ?? []).join(',')}
+                                        value={(channelManualSettings.rr_for_tps ?? []).join(',')}
                                         onChange={e => setManual({ rr_for_tps: e.target.value.split(',').map(n => Number(n.trim())).filter(Number.isFinite) })}
                                       />
                                     </div>
@@ -2494,7 +2589,7 @@ export function AccountConfigPage() {
                                   max={24}
                                   step={1}
                                   hint={cm.strategy.pendingExpiryHint}
-                                  value={String(configDraft.manualSettings.pending_expiry_hours ?? 1)}
+                                  value={String(channelManualSettings.pending_expiry_hours ?? 1)}
                                   onChange={e => {
                                     const n = Number(e.target.value)
                                     const v = Number.isFinite(n) ? Math.max(1, Math.min(24, Math.floor(n))) : 1
@@ -2507,114 +2602,39 @@ export function AccountConfigPage() {
                         )}
                       </div>
                     )}
-                  </div>
-                )}
 
-                {activeTab === 'channels' && (
-                  <div className="space-y-5">
-                    {/* Section A: pick which Telegram channels feed this broker. */}
-                    <div className="space-y-3">
-                      {channelOptions.length === 0 ? (
-                        <p className="text-sm text-neutral-500 dark:text-neutral-400">
-                          {cm.channels.noneConnected}{' '}
-                          <Link to="/channels" className="text-primary-600 underline">{cm.channels.connectLink}</Link>.
-                        </p>
-                      ) : (
-                        <>
-                          <div className="flex items-center justify-between">
-                            <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">{cm.channels.signalChannels}</p>
-                            <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                              {interpolate(cm.channels.selected, { count: String(configDraft.channelIds.length) })}
-                            </p>
-                          </div>
-                          <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                            {cm.channels.pickHint}
-                          </p>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                            {channelOptions.map(channel => (
-                              <label key={channel.id} className="flex items-center gap-2 rounded-lg border border-neutral-200 dark:border-neutral-800 px-3 py-2 cursor-pointer hover:bg-neutral-50 dark:hover:bg-neutral-800/50">
-                                <input
-                                  type="checkbox"
-                                  checked={configDraft.channelIds.includes(channel.id)}
-                                  onChange={() => toggleDraftChannel(channel.id)}
-                                />
-                                <div className="min-w-0">
-                                  <p className="text-sm text-neutral-800 dark:text-neutral-100 truncate">{channel.display_name}</p>
-                                  {channel.channel_username && (
-                                    <p className="text-xs text-neutral-500 dark:text-neutral-400 truncate">@{channel.channel_username}</p>
-                                  )}
-                                </div>
-                              </label>
-                            ))}
-                          </div>
-                        </>
-                      )}
-                    </div>
-
-                    {/* Section B: per-channel keyword filters. Always shown
-                        when at least one channel is connected, regardless of
-                        the single-channel auto-select copy above. */}
-                    {channelOptions.length > 0 && (
-                      <div className="space-y-3">
+                    {configDraft.selectedChannelId && selectedChannelOption ? (
+                      <div className="space-y-3 pt-4 border-t border-neutral-100 dark:border-neutral-800">
                         <div className="flex items-center justify-between">
                           <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">{cm.channels.keywordFilters}</p>
                           <p className="text-xs text-neutral-500 dark:text-neutral-400">
                             {(() => {
-                              const ids = configDraft.channelIds
-                              const total = ids.reduce((sum, id) => {
-                                const f = normalizeChannelFilters(
-                                  configDraft.channelFilters[id] ?? DEFAULT_CHANNEL_FILTERS,
-                                )
-                                return sum + channelFilterCategories.reduce(
-                                  (n, c) => n + (f[c.key] === 'ignore' ? 1 : 0), 0,
-                                )
-                              }, 0)
+                              const f = normalizeChannelFilters(
+                                configDraft.channelConfigs[configDraft.selectedChannelId!]?.channelFilters ?? DEFAULT_CHANNEL_FILTERS,
+                              )
+                              const total = channelFilterCategories.reduce(
+                                (n, c) => n + (f[c.key] === 'ignore' ? 1 : 0), 0,
+                              )
                               return total === 0
                                 ? cm.channels.allAllowed
                                 : interpolate(cm.channels.ignoredAcross, { total: String(total) })
                             })()}
                           </p>
                         </div>
-                        <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                          {cm.channels.filtersIntro}
-                        </p>
-
-                        {(() => {
-                          const visibleIds = configDraft.channelIds
-                          if (visibleIds.length === 0) {
-                            return (
-                              <p className="text-xs text-neutral-400 italic">
-                                {cm.channels.selectChannelFirst}
-                              </p>
-                            )
-                          }
-                          const byId = new Map(channelOptions.map(c => [c.id, c]))
-                          return (
-                            <div className="space-y-2">
-                              {visibleIds.map((id, idx) => {
-                                const channel = byId.get(id)
-                                if (!channel) return null
-                                const filters = normalizeChannelFilters(
-                                  configDraft.channelFilters[id] ?? DEFAULT_CHANNEL_FILTERS,
-                                )
-                                return (
-                                  <ChannelFiltersCard
-                                    key={id}
-                                    channel={channel}
-                                    filters={filters}
-                                    categories={channelFilterCategories}
-                                    labels={cm.channelFilters}
-                                    onChange={(key, value) => setChannelFilter(id, key, value)}
-                                    onReset={() => resetChannelFilters(id)}
-                                    defaultOpen={idx === 0 && visibleIds.length === 1}
-                                  />
-                                )
-                              })}
-                            </div>
-                          )
-                        })()}
+                        <p className="text-xs text-neutral-500 dark:text-neutral-400">{cm.channels.filtersIntro}</p>
+                        <ChannelFiltersCard
+                          channel={selectedChannelOption}
+                          filters={normalizeChannelFilters(
+                            configDraft.channelConfigs[configDraft.selectedChannelId!]?.channelFilters ?? DEFAULT_CHANNEL_FILTERS,
+                          )}
+                          categories={channelFilterCategories}
+                          labels={cm.channelFilters}
+                          onChange={(key, value) => setChannelFilter(configDraft.selectedChannelId!, key, value)}
+                          onReset={() => resetChannelFilters(configDraft.selectedChannelId!)}
+                          defaultOpen
+                        />
                       </div>
-                    )}
+                    ) : null}
                   </div>
                 )}
 

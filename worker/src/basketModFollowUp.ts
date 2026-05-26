@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { MetatraderApiClient } from './metatraderapi'
 import type { ManualTpLot } from './manualPlanning/types'
-import { normalizeManualSettingsForExecution } from './manualPlanning/normalizeManualSettings'
+import { resolveChannelTradingConfig } from './channelTradingConfig'
 import {
   estimateBasketTotalPlannedLegs,
 } from './channelActiveTradeParams'
@@ -81,10 +81,13 @@ export async function tryApplyBasketFollowUpToNewFill(
   if (tpLots === undefined) {
     const { data: br } = await supabase
       .from('broker_accounts')
-      .select('manual_settings')
+      .select('manual_settings, channel_trading_configs, copier_mode, ai_settings')
       .eq('id', args.brokerAccountId)
       .maybeSingle()
-    tpLots = normalizeManualSettingsForExecution(br?.manual_settings).tp_lots
+    tpLots = resolveChannelTradingConfig(
+      (br ?? {}) as Parameters<typeof resolveChannelTradingConfig>[0],
+      channelId,
+    ).manual_settings.tp_lots
   }
 
   const { data: openLegs } = await supabase

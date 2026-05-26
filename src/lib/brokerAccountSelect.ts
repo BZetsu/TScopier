@@ -23,6 +23,7 @@ export const BROKER_ACCOUNT_CLIENT_SELECT = [
   'ai_settings',
   'manual_settings',
   'channel_message_filters',
+  'channel_trading_configs',
   'default_lot_size',
   'pip_tolerance',
   'max_trades_per_zone',

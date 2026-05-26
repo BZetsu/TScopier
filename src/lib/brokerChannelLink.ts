@@ -1,6 +1,15 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { BrokerAccount, TelegramChannel } from '../types/database'
 import { BROKER_ACCOUNT_CLIENT_SELECT } from './brokerAccountSelect'
+import {
+  buildDefaultChannelTradingConfig,
+  normalizeChannelTradingConfigsMap,
+  removeChannelTradingConfigKey,
+} from './channelTradingConfig'
+import {
+  DEFAULT_CHANNEL_FILTERS,
+  normalizeChannelMessageFiltersMap,
+} from './channelMessageFilters'
 
 export type BrokerChannelFilterFields = {
   enforce_signal_channel_filter?: boolean | null
@@ -46,12 +55,22 @@ export async function connectChannelToBroker(
   }
 
   const nextIds = [...ids, channelId]
+  const configs = normalizeChannelTradingConfigsMap(broker.channel_trading_configs)
+  if (!configs[channelId]) {
+    configs[channelId] = buildDefaultChannelTradingConfig()
+  }
+  const filters = normalizeChannelMessageFiltersMap(broker.channel_message_filters)
+  if (!filters[channelId]) {
+    filters[channelId] = { ...DEFAULT_CHANNEL_FILTERS }
+  }
 
   const { data, error } = await supabase
     .from('broker_accounts')
     .update({
       signal_channel_ids: nextIds,
       enforce_signal_channel_filter: true,
+      channel_trading_configs: configs,
+      channel_message_filters: filters,
     })
     .eq('id', broker.id)
     .eq('user_id', userId)
@@ -96,12 +115,20 @@ export async function disconnectChannelFromBroker(
   }
 
   const nextIds = ids.filter(id => id !== channelId)
+  const configs = removeChannelTradingConfigKey(
+    normalizeChannelTradingConfigsMap(broker.channel_trading_configs),
+    channelId,
+  )
+  const filters = normalizeChannelMessageFiltersMap(broker.channel_message_filters)
+  delete filters[channelId]
 
   const { data, error } = await supabase
     .from('broker_accounts')
     .update({
       signal_channel_ids: nextIds,
       enforce_signal_channel_filter: nextIds.length > 0,
+      channel_trading_configs: configs,
+      channel_message_filters: filters,
     })
     .eq('id', broker.id)
     .eq('user_id', userId)
@@ -130,9 +157,21 @@ export async function pruneStaleBrokerChannelIds(
     const validIds = ids.filter(id => channelIdSet.has(id))
     if (validIds.length === ids.length) continue
 
+    const removedIds = ids.filter(id => !channelIdSet.has(id))
+    let configs = normalizeChannelTradingConfigsMap(broker.channel_trading_configs)
+    let filters = normalizeChannelMessageFiltersMap(broker.channel_message_filters)
+    for (const removedId of removedIds) {
+      configs = removeChannelTradingConfigKey(configs, removedId)
+      delete filters[removedId]
+    }
+
     const { data, error } = await supabase
       .from('broker_accounts')
-      .update({ signal_channel_ids: validIds })
+      .update({
+        signal_channel_ids: validIds,
+        channel_trading_configs: configs,
+        channel_message_filters: filters,
+      })
       .eq('id', broker.id)
       .eq('user_id', userId)
       .select(BROKER_ACCOUNT_CLIENT_SELECT)

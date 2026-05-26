@@ -82,6 +82,7 @@ export interface BrokerRow {
   last_currency: string | null
   performance_baseline_balance?: number | null
   channel_message_filters?: ChannelMessageFiltersMap | null
+  channel_trading_configs?: Record<string, unknown> | null
   /**
    * Wall time the broker's `is_active` most recently flipped to TRUE
    * (maintained by `broker_accounts_stamp_activated_at` trigger). Used to
