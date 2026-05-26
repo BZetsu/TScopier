@@ -146,6 +146,7 @@ export const metatraderApi = {
     ok: boolean
     connection_status: 'connected' | 'error'
     message?: string
+    connection_error_kind?: string
     summary?: AccountSummary | null
   }> {
     return call({
@@ -162,6 +163,7 @@ export const metatraderApi = {
           ok: boolean
           connection_status: 'connected' | 'error'
           message?: string
+          connection_error_kind?: string
           summary?: AccountSummary | null
         },
     })

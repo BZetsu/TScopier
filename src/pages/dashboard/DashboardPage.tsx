@@ -60,6 +60,10 @@ import {
   brokerConnectionStatusLabel,
   isBrokerSessionConnected,
 } from '../../lib/brokerReconnect'
+import {
+  brokerConnectErrorLabelsFromI18n,
+  brokerReconnectBannerText,
+} from '../../lib/brokerConnectError'
 import { useLocale, useT } from '../../context/LocaleContext'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { formatMoneyWithCode } from '../../lib/currency'
@@ -1082,6 +1086,15 @@ export function DashboardPage() {
   }
 
   const bl = t.accountConfig.brokerList
+  const connectErrorLabels = useMemo(() => brokerConnectErrorLabelsFromI18n(bl), [bl])
+  const reconnectBannerText = useMemo(
+    () => brokerReconnectBannerText(brokersNeedingReconnect, {
+      ...connectErrorLabels,
+      droppedOne: bl.reconnectDroppedOne,
+      droppedMany: bl.reconnectDroppedMany,
+    }),
+    [brokersNeedingReconnect, connectErrorLabels, bl.reconnectDroppedOne, bl.reconnectDroppedMany],
+  )
 
   useEffect(() => {
     setReconnectErrorHandler(message => setBrokerReconnectError(message))
@@ -1698,9 +1711,7 @@ export function DashboardPage() {
 
         {brokersNeedingReconnect.length > 0 ? (
           <div className="px-4 sm:px-5 py-2 text-sm text-amber-700 dark:text-amber-300 border-b border-neutral-100 dark:border-neutral-800">
-            {brokersNeedingReconnect.length === 1
-              ? bl.reconnectDroppedOne
-              : interpolate(bl.reconnectDroppedMany, { count: String(brokersNeedingReconnect.length) })}
+            {reconnectBannerText}
           </div>
         ) : null}
 

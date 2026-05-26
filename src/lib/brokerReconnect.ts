@@ -1,5 +1,6 @@
 import type { BrokerAccount } from '../types/database'
 import { isMtSessionUuid } from './brokerLink'
+import { brokerNeedsPasswordForReconnectMessage } from './brokerConnectError'
 
 /** True only when the DB session flag is explicitly connected. */
 export function isBrokerSessionConnected(
@@ -16,7 +17,7 @@ export function brokerCanReconnect(
 }
 
 export function brokerNeedsPasswordForReconnect(message: string | undefined): boolean {
-  return typeof message === 'string' && /session expired|not connected|password/i.test(message)
+  return brokerNeedsPasswordForReconnectMessage(message)
 }
 
 /** User-facing connection label for broker list rows (active accounts only). */

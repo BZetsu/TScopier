@@ -11,6 +11,7 @@ import {
   stripBrokerSecretFields,
 } from "../_shared/brokerSession.ts"
 import { encryptMtPassword } from "../_shared/brokerCredentialsCrypto.ts"
+import { friendlyBrokerConnectError } from "../_shared/brokerConnectError.ts"
 import {
   isMtApiAuthConfigured,
   makeClientFromEnv,
@@ -143,12 +144,18 @@ Deno.serve(async (req: Request) => {
       const brokerName = inferBrokerLabel(server)
       const displayLabel = label || `${platform} • ${login}`
       const sessionId = crypto.randomUUID()
-      const uuid = await client.connectEx({
-        id: sessionId,
-        server,
-        login,
-        password,
-      })
+      let uuid: string
+      try {
+        uuid = await client.connectEx({
+          id: sessionId,
+          server,
+          login,
+          password,
+        })
+      } catch (e) {
+        const raw = e instanceof MetatraderApiError ? e.message : e instanceof Error ? e.message : "Connect failed"
+        return bad(400, friendlyBrokerConnectError(raw))
+      }
       if (!uuid) return bad(502, "MetatraderAPI did not return a session id")
 
       // After ConnectEx the session needs a moment to authenticate

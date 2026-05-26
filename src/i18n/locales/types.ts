@@ -249,6 +249,13 @@ export interface AccountConfigBrokerListTranslations {
   relinkMany: string
   reconnectDroppedOne: string
   reconnectDroppedMany: string
+  connectErrorWrongPassword: string
+  connectErrorWrongLogin: string
+  connectErrorWrongServer: string
+  connectErrorInvestorPassword: string
+  connectErrorAccountDisabled: string
+  connectErrorSessionExpired: string
+  connectErrorUnknown: string
   reconnectFailed: string
   reconnectPasswordTitle: string
   reconnectPasswordBody: string

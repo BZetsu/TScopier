@@ -237,6 +237,10 @@ export interface BrokerAccount {
   auto_reconnect_enabled?: boolean | null
   /** When stored credentials were last written (no password exposed to client). */
   password_updated_at?: string | null
+  /** Classified last connect failure (wrong_password, session_expired, etc.). */
+  connection_error_kind?: string | null
+  /** User-facing last connect failure message. */
+  connection_error_message?: string | null
   is_active: boolean
   /** AI uses balance-scaled sizing; Manual uses defaults unless signal specifies lots. */
   copier_mode?: 'ai' | 'manual'

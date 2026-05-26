@@ -233,9 +233,23 @@ export const es: Translations = {
       relinkMany:
         '{count} cuentas usan un formato de enlace antiguo. Elimina cada una y vuelve a conectarlas con tu login y contraseña MT.',
       reconnectDroppedOne:
-        'Se perdió la conexión con el broker. Usa Reconectar en la cuenta para restaurar la sesión.',
+        'La sesión del broker expiró en el servidor de trading. Usa Reconectar e introduce tu contraseña MT actual.',
       reconnectDroppedMany:
         '{count} cuentas perdieron la conexión con el broker. Usa Reconectar en cada una.',
+      connectErrorWrongPassword:
+        'La contraseña de la cuenta MT es incorrecta. Compruébala en MetaTrader y usa Reconectar.',
+      connectErrorWrongLogin:
+        'El número de login MT no coincide con esta cuenta vinculada. Verifica el número o elimina y vuelve a vincular la cuenta.',
+      connectErrorWrongServer:
+        'El nombre del servidor del broker es incorrecto o no coincide con este login. Comprueba el servidor exacto en MetaTrader.',
+      connectErrorInvestorPassword:
+        'Se usó una contraseña de inversor (solo lectura). Conecta con la contraseña principal de trading de MetaTrader.',
+      connectErrorAccountDisabled:
+        'Esta cuenta MT está deshabilitada o bloqueada en el broker. Contacta con tu broker o inicia sesión primero en MetaTrader.',
+      connectErrorSessionExpired:
+        'La sesión de trading expiró en el servidor. Usa Reconectar e introduce tu contraseña MT actual.',
+      connectErrorUnknown:
+        'No se pudo conectar al broker. Comprueba login, contraseña y servidor MT, luego usa Reconectar.',
       reconnectFailed: 'No se pudo reconectar el broker',
       reconnectPasswordTitle: 'Sesión del broker expirada',
       reconnectPasswordBody:

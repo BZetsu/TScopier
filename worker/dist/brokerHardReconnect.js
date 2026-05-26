@@ -55,6 +55,7 @@ async function hardReconnectBrokerSession(supabase, api, row) {
     catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         console.warn(`[brokerConnection] broker=${row.id} hard reconnect failed: ${msg}`);
+        await (0, brokerConnectionStatus_1.writeBrokerConnectionStatus)(supabase, row.id, 'error', { rawError: msg });
         return false;
     }
 }

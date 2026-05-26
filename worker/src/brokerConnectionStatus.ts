@@ -1,4 +1,9 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import {
+  classifyBrokerConnectError,
+  friendlyBrokerConnectError,
+  type BrokerConnectErrorKind,
+} from './brokerConnectError'
 
 type ConnectionStatus = 'pending' | 'connected' | 'error'
 
@@ -17,14 +22,30 @@ export async function writeBrokerConnectionStatus(
   supabase: SupabaseClient,
   brokerId: string,
   status: ConnectionStatus,
+  opts?: {
+    rawError?: string | null
+    errorKind?: BrokerConnectErrorKind | null
+  },
 ): Promise<void> {
   const now = Date.now()
   const prev = lastWritten.get(brokerId)
-  if (prev?.status === status && now - prev.at < MIN_WRITE_INTERVAL_MS) return
+  if (prev?.status === status && now - prev.at < MIN_WRITE_INTERVAL_MS && !opts?.rawError) return
+
+  const patch: Record<string, unknown> = { connection_status: status }
+  if (status === 'connected') {
+    patch.connection_error_kind = null
+    patch.connection_error_message = null
+  } else if (opts?.rawError) {
+    patch.connection_error_kind = opts.errorKind ?? classifyBrokerConnectError(opts.rawError)
+    patch.connection_error_message = friendlyBrokerConnectError(opts.rawError)
+  } else if (status === 'error') {
+    patch.connection_error_kind = 'session_expired'
+    patch.connection_error_message = friendlyBrokerConnectError('session expired')
+  }
 
   const { error } = await supabase
     .from('broker_accounts')
-    .update({ connection_status: status })
+    .update(patch)
     .eq('id', brokerId)
   if (error) {
     console.warn(`[brokerConnectionStatus] update failed broker=${brokerId}:`, error.message)

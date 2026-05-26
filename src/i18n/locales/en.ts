@@ -232,10 +232,24 @@ export const en: Translations = {
         'This account uses an older link format. Remove it and connect again with your MT login and password.',
       relinkMany:
         '{count} accounts use an older link format. Remove each one and connect again with your MT login and password.',
-      reconnectDroppedOne:
-        'Broker connection lost. The account is shown as Disconnected — use Reconnect to restore trading.',
-      reconnectDroppedMany:
-        '{count} accounts lost their broker connection and are shown as Disconnected. Use Reconnect on each account.',
+  reconnectDroppedOne:
+    'Trading session expired on the trade server. Use Reconnect and enter your current MT password.',
+  reconnectDroppedMany:
+    '{count} accounts lost their broker connection and are shown as Disconnected. Use Reconnect on each account.',
+  connectErrorWrongPassword:
+    'The MT account password is incorrect. Check the password in your MetaTrader terminal, then use Reconnect.',
+  connectErrorWrongLogin:
+    'The MT login number does not match this linked account. Verify the account number or remove and link the account again.',
+  connectErrorWrongServer:
+    'The broker server name is incorrect or does not match this login. Check the exact server name from MetaTrader.',
+  connectErrorInvestorPassword:
+    'An investor (read-only) password was used. Connect with the main trading password from MetaTrader.',
+  connectErrorAccountDisabled:
+    'This MT account is disabled or blocked at the broker. Contact your broker or log in via MetaTrader first.',
+  connectErrorSessionExpired:
+    'Trading session expired on the trade server. Use Reconnect and enter your current MT password.',
+  connectErrorUnknown:
+    'Could not connect to the broker. Check your MT login, password, and server, then use Reconnect.',
       reconnectFailed: 'Could not reconnect broker',
       reconnectPasswordTitle: 'Broker session expired',
       reconnectPasswordBody:

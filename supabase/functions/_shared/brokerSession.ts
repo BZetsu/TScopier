@@ -1,5 +1,9 @@
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2"
 import {
+  classifyBrokerConnectError,
+  friendlyBrokerConnectError,
+} from "./brokerConnectError.ts"
+import {
   decryptMtPassword,
   encryptMtPassword,
 } from "./brokerCredentialsCrypto.ts"
@@ -26,6 +30,7 @@ export interface BrokerReconnectResult {
   ok: boolean
   connection_status: "connected" | "error"
   message?: string
+  connection_error_kind?: string
   summary?: Awaited<ReturnType<MetatraderApiClient["accountSummary"]>> | null
 }
 
@@ -99,6 +104,39 @@ export async function clearStoredMtPassword(
     .eq("user_id", userId)
 }
 
+function connectionErrorFromRaw(raw: string): { kind: string; message: string } {
+  const kind = classifyBrokerConnectError(raw)
+  return { kind, message: friendlyBrokerConnectError(raw) }
+}
+
+export async function markBrokerConnectionError(
+  supabase: SupabaseClient,
+  broker: { id: string; user_id: string },
+  rawMessage: string,
+): Promise<{ kind: string; message: string }> {
+  const { kind, message } = connectionErrorFromRaw(rawMessage)
+  await supabase
+    .from("broker_accounts")
+    .update({
+      connection_status: "error",
+      connection_error_kind: kind,
+      connection_error_message: message,
+    })
+    .eq("id", broker.id)
+    .eq("user_id", broker.user_id)
+  return { kind, message }
+}
+
+export function brokerConnectionFailure(rawMessage: string): {
+  ok: false
+  connection_status: "error"
+  message: string
+  connection_error_kind: string
+} {
+  const { kind, message } = connectionErrorFromRaw(rawMessage)
+  return { ok: false, connection_status: "error", message, connection_error_kind: kind }
+}
+
 /** Ping session; only calls ConnectByToken when CheckConnect fails. */
 export async function keepBrokerSessionAlive(
   client: MetatraderApiClient,
@@ -154,33 +192,21 @@ export async function reconnectBrokerSession(
           })
           alive = await keepBrokerSessionAlive(client, uuid)
         } catch (e) {
-          const msg = e instanceof MetatraderApiError ? e.message : e instanceof Error ? e.message : "Connect failed"
-          await supabase
-            .from("broker_accounts")
-            .update({ connection_status: "error" })
-            .eq("id", broker.id)
-            .eq("user_id", broker.user_id)
-          return { ok: false, connection_status: "error", message: msg }
+          const raw = e instanceof MetatraderApiError ? e.message : e instanceof Error ? e.message : "Connect failed"
+          const failure = await markBrokerConnectionError(supabase, broker, raw)
+          return failure
         }
       }
     }
     if (!alive) {
-      await supabase
-        .from("broker_accounts")
-        .update({ connection_status: "error" })
-        .eq("id", broker.id)
-        .eq("user_id", broker.user_id)
-      return { ok: false, connection_status: "error", message: MT_SESSION_EXPIRED_HINT }
+      const failure = await markBrokerConnectionError(supabase, broker, MT_SESSION_EXPIRED_HINT)
+      return failure
     }
 
     const tradingReady = await client.verifyTradingReady(uuid)
     if (!tradingReady) {
-      await supabase
-        .from("broker_accounts")
-        .update({ connection_status: "error" })
-        .eq("id", broker.id)
-        .eq("user_id", broker.user_id)
-      return { ok: false, connection_status: "error", message: MT_SESSION_EXPIRED_HINT }
+      const failure = await markBrokerConnectionError(supabase, broker, MT_SESSION_EXPIRED_HINT)
+      return failure
     }
 
     let summary: Awaited<ReturnType<MetatraderApiClient["accountSummary"]>> | null = null
@@ -199,17 +225,15 @@ export async function reconnectBrokerSession(
     }
 
     if (!summary) {
-      const msg = lastErr instanceof Error ? lastErr.message : "AccountSummary returned no data"
-      await supabase
-        .from("broker_accounts")
-        .update({ connection_status: "error" })
-        .eq("id", broker.id)
-        .eq("user_id", broker.user_id)
-      return { ok: false, connection_status: "error", message: msg }
+      const raw = lastErr instanceof Error ? lastErr.message : "AccountSummary returned no data"
+      const failure = await markBrokerConnectionError(supabase, broker, raw)
+      return failure
     }
 
     const updatePayload: Record<string, unknown> = {
       connection_status: "connected",
+      connection_error_kind: null,
+      connection_error_message: null,
       last_synced_at: new Date().toISOString(),
       last_balance: summary.balance ?? null,
       last_equity: summary.equity ?? null,
@@ -245,18 +269,13 @@ export async function reconnectBrokerSession(
 
     return { ok: true, connection_status: "connected", summary }
   } catch (e) {
-    await supabase
-      .from("broker_accounts")
-      .update({ connection_status: "error" })
-      .eq("id", broker.id)
-      .eq("user_id", broker.user_id)
-
-    const msg = e instanceof MetatraderApiError
+    const raw = e instanceof MetatraderApiError
       ? e.message
       : e instanceof Error
       ? e.message
       : "Reconnect failed"
-    return { ok: false, connection_status: "error", message: msg }
+    const failure = await markBrokerConnectionError(supabase, broker, raw)
+    return failure
   }
 }
 

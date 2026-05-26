@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type 
 import type { BrokerAccount } from '../types/database'
 import { metatraderApi } from '../lib/metatraderapi'
 import { brokerCanReconnect, brokerNeedsPasswordForReconnect } from '../lib/brokerReconnect'
+import { classifyBrokerConnectError } from '../lib/brokerConnectError'
 
 const SILENT_RECONNECT_INTERVAL_MS = 45_000
 
@@ -102,11 +103,23 @@ export function useBrokerReconnect(opts: UseBrokerReconnectOptions) {
       prev.map(b => {
         if (b.id !== brokerId) return b
         if (result.connection_status !== 'connected' || !result.summary) {
-          return { ...b, connection_status: 'error' as const }
+          return {
+            ...b,
+            connection_status: 'error' as const,
+            ...(result.message
+              ? {
+                  connection_error_message: result.message,
+                  connection_error_kind: result.connection_error_kind
+                    ?? classifyBrokerConnectError(result.message),
+                }
+              : {}),
+          }
         }
         return {
           ...b,
           connection_status: 'connected' as const,
+          connection_error_kind: null,
+          connection_error_message: null,
           last_synced_at: new Date().toISOString(),
           ...(rememberPassword === true
             ? {

@@ -25,6 +25,12 @@ import { formatLocalCalendarDay } from '../../lib/dayStartBalance'
 import { metatraderApi } from '../../lib/metatraderapi'
 import { isLegacyBrokerLink } from '../../lib/brokerLink'
 import { brokerCanReconnect, brokerConnectionBadgeVariant, brokerConnectionStatusLabel } from '../../lib/brokerReconnect'
+import {
+  brokerConnectErrorLabelsFromI18n,
+  brokerConnectErrorText,
+  brokerReconnectBannerText,
+  type BrokerConnectErrorKind,
+} from '../../lib/brokerConnectError'
 import { useBrokerAccounts } from '../../context/BrokerAccountsContext'
 import {
   inferBrokerLabelFromServer,
@@ -481,6 +487,15 @@ export function AccountConfigPage() {
     setReconnectErrorHandler,
     clearStoredCredentials,
   } = useBrokerAccounts()
+  const connectErrorLabels = useMemo(() => brokerConnectErrorLabelsFromI18n(bl), [bl])
+  const reconnectBannerText = useMemo(
+    () => brokerReconnectBannerText(brokersNeedingReconnect, {
+      ...connectErrorLabels,
+      droppedOne: bl.reconnectDroppedOne,
+      droppedMany: bl.reconnectDroppedMany,
+    }),
+    [brokersNeedingReconnect, connectErrorLabels, bl.reconnectDroppedOne, bl.reconnectDroppedMany],
+  )
   const [channelOptions, setChannelOptions] = useState<ChannelOption[]>(() =>
     userId ? (channelOptionsCache.get(userId) ?? []) : [],
   )
@@ -1191,11 +1206,7 @@ export function AccountConfigPage() {
 
         {brokersNeedingReconnect.length > 0 && (
           <Alert variant="warning" className="mb-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <span>
-              {brokersNeedingReconnect.length === 1
-                ? bl.reconnectDroppedOne
-                : interpolate(bl.reconnectDroppedMany, { count: String(brokersNeedingReconnect.length) })}
-            </span>
+            <span>{reconnectBannerText}</span>
             <Button
               type="button"
               size="sm"
@@ -1256,6 +1267,15 @@ export function AccountConfigPage() {
                         {broker.broker_server && (
                           <p className="mt-0.5 truncate text-xs text-neutral-500 dark:text-neutral-400">{broker.broker_server}</p>
                         )}
+                        {(broker.connection_error_kind || broker.connection_error_message) && brokerCanReconnect(broker) ? (
+                          <p className="mt-1 text-xs text-error-600 dark:text-error-400 leading-relaxed">
+                            {brokerConnectErrorText(
+                              broker.connection_error_kind as BrokerConnectErrorKind | null | undefined,
+                              broker.connection_error_message,
+                              connectErrorLabels,
+                            )}
+                          </p>
+                        ) : null}
                       </div>
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
