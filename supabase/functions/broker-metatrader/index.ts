@@ -22,6 +22,7 @@ import {
   adjustMtTradesPositionDirection,
   flattenMtOrder,
   pickMtField,
+  reconcileTradeDirectionWithStops,
   resolveMtDealProfit,
   resolveMtLots,
   type MtHistoryProfile,
@@ -670,11 +671,20 @@ Deno.serve(async (req: Request) => {
         const ticket = Number(pick(row, "ticket", "Ticket") ?? 0)
         const platform = String(broker.platform ?? "MT5")
         const resolved = resolveDirection(row, platform)
-        const { direction, type_label } =
+        const adjusted =
           status === "closed" && historyProfile === "trades"
             ? adjustMtTradesPositionDirection(order, historyProfile, resolved)
             : resolved
         const lot_size = resolveMtLots(row, historyProfile)
+        const entry_price = num(pick(row, "openPrice", "OpenPrice", "price"))
+        const sl = num(pick(row, "stopLoss", "StopLoss", "sl"))
+        const tp = num(pick(row, "takeProfit", "TakeProfit", "tp"))
+        const { direction, type_label } = reconcileTradeDirectionWithStops(
+          adjusted.direction,
+          entry_price,
+          sl,
+          tp,
+        )
         const openTime = pick(
           row,
           "openTime", "OpenTime", "open_time", "timeOpen", "TimeOpen",
@@ -693,9 +703,9 @@ Deno.serve(async (req: Request) => {
           direction,
           type: type_label,
           lot_size,
-          entry_price: num(pick(row, "openPrice", "OpenPrice", "price")),
-          sl: num(pick(row, "stopLoss", "StopLoss", "sl")),
-          tp: num(pick(row, "takeProfit", "TakeProfit", "tp")),
+          entry_price,
+          sl,
+          tp,
           close_price: num(pick(row, "closePrice", "ClosePrice")),
           profit: isNonTradeEntry(direction, type_label, lot_size)
             ? null

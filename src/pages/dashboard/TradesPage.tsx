@@ -10,6 +10,7 @@ import { Card } from '../../components/ui/Card'
 import { Badge } from '../../components/ui/Badge'
 import { Alert } from '../../components/ui/Alert'
 import type { MtTrade } from '../../lib/metatraderapi'
+import { directionDisplayLabel, resolveTradeDisplayDirection } from '../../lib/tradeDirection'
 
 type Filter = 'all' | 'open' | 'closed'
 
@@ -331,8 +332,9 @@ function displayProfit(trade: MtTrade): number | null {
 }
 
 function useTradeDisplay(trade: MtTrade) {
-  const isBuy = trade.direction === 'buy'
-  const isSell = trade.direction === 'sell'
+  const displayDirection = resolveTradeDisplayDirection(trade)
+  const isBuy = displayDirection === 'buy'
+  const isSell = displayDirection === 'sell'
   const profit = displayProfit(trade)
   const statusConfig: Record<string, { variant: 'success' | 'warning' | 'error' | 'neutral' | 'primary'; label: string }> = {
     open: { variant: 'primary', label: 'Open' },
@@ -341,10 +343,7 @@ function useTradeDisplay(trade: MtTrade) {
   const status = statusConfig[trade.status] ?? { variant: 'neutral' as const, label: trade.status }
   const timeIso = trade.status === 'closed' ? (trade.closed_at ?? trade.opened_at) : trade.opened_at
   const broker = trade.broker_name || trade.broker_label || '—'
-  const directionLabel =
-    trade.direction === 'buy' ? 'Buy' :
-    trade.direction === 'sell' ? 'Sell' :
-    trade.type || '—'
+  const directionLabel = directionDisplayLabel(displayDirection)
   const timeLabel = timeIso
     ? new Date(timeIso).toLocaleString([], {
         day: '2-digit',

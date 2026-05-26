@@ -3,7 +3,9 @@ import { test } from 'node:test'
 import {
   adjustMtTradesPositionDirection,
   flattenMtOrder,
+  inferDirectionFromStopPrices,
   mergeMtHistoryRow,
+  reconcileTradeDirectionWithStops,
   resolveMtDealProfit,
   resolveMtLots,
 } from './mtTradeFields'
@@ -94,6 +96,16 @@ test('adjustMtTradesPositionDirection: opening buy with dealInternalOut does not
   )
   assert.equal(adjusted.direction, 'buy')
   assert.equal(adjusted.type_label, 'Deal Buy')
+})
+
+test('reconcileTradeDirectionWithStops: sell deal on buy position uses SL/TP geometry', () => {
+  const reconciled = reconcileTradeDirectionWithStops('sell', 4528.74, 4514.3, 4538.3)
+  assert.equal(reconciled.direction, 'buy')
+  assert.equal(reconciled.type_label, 'Buy')
+})
+
+test('inferDirectionFromStopPrices: buy when SL below and TP above entry', () => {
+  assert.equal(inferDirectionFromStopPrices(4528.74, 4514.3, 4538.3), 'buy')
 })
 
 test('mergeMtHistoryRow: keeps deal profit and lots when position snapshot is sparse', () => {
