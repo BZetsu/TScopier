@@ -1,0 +1,88 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.normalizeChannelTradingConfigsMap = normalizeChannelTradingConfigsMap;
+exports.buildDefaultChannelTradingConfig = buildDefaultChannelTradingConfig;
+exports.resolveChannelTradingConfig = resolveChannelTradingConfig;
+exports.withChannelTradingConfig = withChannelTradingConfig;
+exports.cloneChannelTradingConfig = cloneChannelTradingConfig;
+exports.removeChannelTradingConfigKey = removeChannelTradingConfigKey;
+const normalizeManualSettings_1 = require("./manualPlanning/normalizeManualSettings");
+function normalizeChannelTradingConfigsMap(raw) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw))
+        return {};
+    const out = {};
+    for (const [channelId, value] of Object.entries(raw)) {
+        if (!channelId.trim() || !value || typeof value !== 'object' || Array.isArray(value))
+            continue;
+        const row = value;
+        const mode = row.copier_mode;
+        out[channelId] = {
+            copier_mode: mode === 'ai' || mode === 'manual' ? mode : undefined,
+            manual_settings: row.manual_settings && typeof row.manual_settings === 'object'
+                ? row.manual_settings
+                : undefined,
+            ai_settings: row.ai_settings && typeof row.ai_settings === 'object'
+                ? row.ai_settings
+                : undefined,
+        };
+    }
+    return out;
+}
+function buildDefaultChannelTradingConfig() {
+    return {
+        copier_mode: 'manual',
+        manual_settings: (0, normalizeManualSettings_1.normalizeManualSettingsForExecution)({}),
+        ai_settings: {},
+    };
+}
+function resolveChannelTradingConfig(broker, channelId) {
+    const fallbackMode = (broker.copier_mode ?? 'manual');
+    const fallbackManual = (0, normalizeManualSettings_1.normalizeManualSettingsForExecution)(broker.manual_settings);
+    const fallbackAi = (broker.ai_settings ?? {});
+    if (!channelId) {
+        return {
+            copier_mode: fallbackMode,
+            manual_settings: fallbackManual,
+            ai_settings: fallbackAi,
+        };
+    }
+    const configs = normalizeChannelTradingConfigsMap(broker.channel_trading_configs);
+    const channelConfig = configs[channelId];
+    if (!channelConfig) {
+        return {
+            copier_mode: fallbackMode,
+            manual_settings: fallbackManual,
+            ai_settings: fallbackAi,
+        };
+    }
+    return {
+        copier_mode: channelConfig.copier_mode ?? fallbackMode,
+        manual_settings: (0, normalizeManualSettings_1.normalizeManualSettingsForExecution)(channelConfig.manual_settings ?? broker.manual_settings),
+        ai_settings: (channelConfig.ai_settings ?? broker.ai_settings ?? {}),
+    };
+}
+function withChannelTradingConfig(broker, channelId) {
+    const resolved = resolveChannelTradingConfig(broker, channelId);
+    return {
+        ...broker,
+        copier_mode: resolved.copier_mode,
+        manual_settings: resolved.manual_settings,
+        ai_settings: resolved.ai_settings,
+    };
+}
+function cloneChannelTradingConfig(from) {
+    return {
+        copier_mode: from.copier_mode ?? 'manual',
+        manual_settings: from.manual_settings
+            ? JSON.parse(JSON.stringify(from.manual_settings))
+            : buildDefaultChannelTradingConfig().manual_settings,
+        ai_settings: from.ai_settings
+            ? JSON.parse(JSON.stringify(from.ai_settings))
+            : {},
+    };
+}
+function removeChannelTradingConfigKey(configs, channelId) {
+    const next = { ...configs };
+    delete next[channelId];
+    return next;
+}

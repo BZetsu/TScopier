@@ -10,10 +10,10 @@ export interface ChannelTradingConfig {
 export type ChannelTradingConfigsMap = Record<string, ChannelTradingConfig>
 
 export type BrokerChannelTradingFields = {
-  copier_mode?: 'ai' | 'manual' | null
+  copier_mode?: 'ai' | 'manual' | string | null
   manual_settings?: Record<string, unknown> | null
   ai_settings?: Record<string, unknown> | null
-  channel_trading_configs?: ChannelTradingConfigsMap | null
+  channel_trading_configs?: unknown
 }
 
 export function normalizeChannelTradingConfigsMap(raw: unknown): ChannelTradingConfigsMap {

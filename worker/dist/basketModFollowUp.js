@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.symbolsCompatibleForBasket = symbolsCompatibleForBasket;
 exports.tryApplyBasketFollowUpToNewFill = tryApplyBasketFollowUpToNewFill;
 const normalizeManualSettings_1 = require("./manualPlanning/normalizeManualSettings");
+const channelTradingConfig_1 = require("./channelTradingConfig");
 const channelActiveTradeParams_1 = require("./channelActiveTradeParams");
 const tpBucketDistribution_1 = require("./manualPlanning/tpBucketDistribution");
 const orderModifyBenign_1 = require("./orderModifyBenign");
@@ -52,10 +53,10 @@ async function tryApplyBasketFollowUpToNewFill(supabase, api, args) {
     if (tpLots === undefined) {
         const { data: br } = await supabase
             .from('broker_accounts')
-            .select('manual_settings')
+            .select('manual_settings, channel_trading_configs, copier_mode, ai_settings')
             .eq('id', args.brokerAccountId)
             .maybeSingle();
-        tpLots = (0, normalizeManualSettings_1.normalizeManualSettingsForExecution)(br?.manual_settings).tp_lots;
+        tpLots = (0, normalizeManualSettings_1.normalizeManualSettingsForExecution)((0, channelTradingConfig_1.resolveChannelTradingConfig)((br ?? {}), channelId).manual_settings).tp_lots;
     }
     const { data: openLegs } = await supabase
         .from('trades')

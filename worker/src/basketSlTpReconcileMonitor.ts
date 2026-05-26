@@ -191,10 +191,6 @@ export class BasketSlTpReconcileMonitor {
 
     const openedTickets = await fetchOpenBrokerTickets(api, uuid)
     const baseLot = Number(broker.default_lot_size ?? 0.01)
-    const manual = resolveChannelTradingConfig(
-      broker as Parameters<typeof resolveChannelTradingConfig>[0],
-      anchorChannelId,
-    ).manual_settings
     const { data: anchorSig } = await this.supabase
       .from('signals')
       .select('parsed_data, channel_id')
@@ -202,6 +198,12 @@ export class BasketSlTpReconcileMonitor {
       .maybeSingle()
     const anchorParsed = (anchorSig as { parsed_data?: { tp?: number[] }; channel_id?: string | null } | null)?.parsed_data
     const anchorChannelId = (anchorSig as { channel_id?: string | null } | null)?.channel_id ?? null
+    const manual = normalizeManualSettingsForExecution(
+      resolveChannelTradingConfig(
+        broker as Parameters<typeof resolveChannelTradingConfig>[0],
+        anchorChannelId,
+      ).manual_settings,
+    )
     const signalTps = Array.isArray(anchorParsed?.tp)
       ? anchorParsed.tp.filter(
           (t): t is number => typeof t === 'number' && Number.isFinite(t) && t > 0,

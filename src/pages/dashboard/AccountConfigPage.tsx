@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import {
   Plus, Trash2, Server, Activity, GitBranch, Eye, DollarSign, RefreshCw,
   SlidersHorizontal, Radio, Target, Filter, Wallet,
-  ArrowLeftRight, ChevronDown, Settings2, Bookmark, Pencil, ScrollText,
+  ArrowLeftRight, ChevronDown, Settings2, Bookmark, Pencil, ScrollText, AlertTriangle,
 } from 'lucide-react'
 import clsx from 'clsx'
 import { supabase } from '../../lib/supabase'
@@ -483,6 +483,7 @@ export function AccountConfigPage() {
   const [presetSavedAt, setPresetSavedAt] = useState<number | null>(null)
   const [showPresetNameModal, setShowPresetNameModal] = useState(false)
   const [presetNameDraft, setPresetNameDraft] = useState('')
+  const [pendingApplyPreset, setPendingApplyPreset] = useState<ChannelTradingPreset | null>(null)
   const [channelLinkEditMode, setChannelLinkEditMode] = useState(false)
   const [showPlatformModal, setShowPlatformModal] = useState(false)
   const [showAddBroker, setShowAddBroker] = useState(false)
@@ -755,6 +756,7 @@ export function AccountConfigPage() {
     setSymbolMappingText('')
     setShowPresetNameModal(false)
     setPresetNameDraft('')
+    setPendingApplyPreset(null)
     setChannelLinkEditMode(false)
     setError('')
   }
@@ -830,9 +832,9 @@ export function AccountConfigPage() {
     })
   }
 
-  const applyPresetToSelectedChannel = (preset: ChannelTradingPreset) => {
-    if (!configDraft.selectedChannelId) return
-    if (!window.confirm(interpolate(cm.applyPresetConfirm, { name: preset.name }))) return
+  const confirmApplyPreset = () => {
+    if (!pendingApplyPreset || !configDraft.selectedChannelId) return
+    const preset = pendingApplyPreset
     const payload = presetToChannelConfigDraft(preset)
     patchSelectedChannel(() => ({
       mode: payload.mode,
@@ -847,6 +849,7 @@ export function AccountConfigPage() {
         channelFilters: payload.channelFilters,
       },
     })
+    setPendingApplyPreset(null)
   }
 
   const openSavePresetModal = () => {
@@ -2763,7 +2766,7 @@ export function AccountConfigPage() {
                       const v = e.target.value
                       e.target.value = ''
                       const preset = tradingPresets.find(p => p.id === v)
-                      if (preset) applyPresetToSelectedChannel(preset)
+                      if (preset) setPendingApplyPreset(preset)
                     }}
                   >
                     <option value="" disabled>
@@ -2793,6 +2796,69 @@ export function AccountConfigPage() {
               ) : null}
               <Button className="w-full sm:w-auto min-h-[44px]" loading={configSaving} disabled={presetSaving} onClick={() => void saveConfigureModal()}>{cm.save}</Button>
             </div>
+
+            {pendingApplyPreset ? (
+              <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/40 p-4">
+                <div
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="apply-preset-title"
+                  aria-describedby="apply-preset-description"
+                  className="w-full max-w-md rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 shadow-xl overflow-hidden"
+                >
+                  <div className="px-5 pt-5 pb-4">
+                    <div className="flex gap-3">
+                      <div className="shrink-0 flex h-10 w-10 items-center justify-center rounded-full bg-amber-100 dark:bg-amber-950/50">
+                        <AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400" aria-hidden="true" />
+                      </div>
+                      <div className="min-w-0">
+                        <h4 id="apply-preset-title" className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
+                          {cm.applyPresetTitle}
+                        </h4>
+                        <p id="apply-preset-description" className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
+                          {interpolate(cm.applyPresetConfirm, {
+                            channel: selectedChannelOption?.display_name ?? '—',
+                            name: pendingApplyPreset.name,
+                          })}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="mt-4 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/50 px-3 py-2.5 space-y-2">
+                      <div className="flex items-center justify-between gap-3 text-sm">
+                        <span className="text-neutral-500 dark:text-neutral-400">{cm.applyPresetChannelLabel}</span>
+                        <span className="font-medium text-neutral-900 dark:text-neutral-50 truncate">
+                          {selectedChannelOption?.display_name ?? '—'}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between gap-3 text-sm">
+                        <span className="text-neutral-500 dark:text-neutral-400">{cm.applyPresetPresetLabel}</span>
+                        <span className="font-medium text-primary-700 dark:text-primary-400 truncate">
+                          {pendingApplyPreset.name}
+                        </span>
+                      </div>
+                    </div>
+                    <p className="mt-4 text-xs text-amber-700 dark:text-amber-400 rounded-lg border border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-950/30 px-3 py-2">
+                      {cm.applyPresetWarning}
+                    </p>
+                  </div>
+                  <div className="px-5 py-4 border-t border-neutral-100 dark:border-neutral-800 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+                    <Button
+                      variant="ghost"
+                      className="w-full sm:w-auto"
+                      onClick={() => setPendingApplyPreset(null)}
+                    >
+                      {cm.cancel}
+                    </Button>
+                    <Button
+                      className="w-full sm:w-auto"
+                      onClick={confirmApplyPreset}
+                    >
+                      {cm.applyPresetAction}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
 
             {showPresetNameModal ? (
               <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/30 p-4">

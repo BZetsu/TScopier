@@ -20,6 +20,7 @@ const metatraderapi_1 = require("../metatraderapi");
 const tradeSignalActions_1 = require("../tradeSignalActions");
 const workerConfig_1 = require("../workerConfig");
 const brokerChannelFilter_1 = require("../brokerChannelFilter");
+const channelTradingConfig_1 = require("../channelTradingConfig");
 const channelMessageFilters_1 = require("../channelMessageFilters");
 const multiTradeMerge_1 = require("../multiTradeMerge");
 const manualPlanner_1 = require("../manualPlanner");
@@ -277,7 +278,7 @@ async function handleSignal(ctx, row, opts) {
         const action = String(parsed.action).toLowerCase();
         if (action === 'ignore')
             return;
-        const allMatchingBrokers = (ctx.brokersByUser.get(row.user_id) ?? []).filter(b => b.is_active && (0, helpers_1.isMtUuid)(b.metaapi_account_id) && (0, brokerChannelFilter_1.channelMatchesBrokerSignal)(b, row.channel_id));
+        const allMatchingBrokers = (ctx.brokersByUser.get(row.user_id) ?? []).filter(b => b.is_active && (0, helpers_1.isMtUuid)(b.metaapi_account_id) && (0, brokerChannelFilter_1.channelMatchesBrokerSignal)(b, row.channel_id)).map(b => (0, channelTradingConfig_1.withChannelTradingConfig)(b, row.channel_id));
         const brokers = allMatchingBrokers.filter(b => ctx.brokerEligibleForSignal(b, row));
         if (!brokers.length) {
             if (allMatchingBrokers.length > 0) {

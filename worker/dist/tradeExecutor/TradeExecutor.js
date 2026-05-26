@@ -37,6 +37,7 @@ exports.TradeExecutor = void 0;
 const metatraderapi_1 = require("../metatraderapi");
 const manualPlanner_1 = require("../manualPlanner");
 const normalizeManualSettings_1 = require("../manualPlanning/normalizeManualSettings");
+const channelTradingConfig_1 = require("../channelTradingConfig");
 const tradeSignalActions_1 = require("../tradeSignalActions");
 const workerConfig_1 = require("../workerConfig");
 const monitorIdleGate_1 = require("../monitorIdleGate");
@@ -169,9 +170,18 @@ class TradeExecutor {
     }
     // ── caches ────────────────────────────────────────────────────────────
     normalizeBrokerRow(row) {
+        const configs = (0, channelTradingConfig_1.normalizeChannelTradingConfigsMap)(row.channel_trading_configs);
+        const normalizedConfigs = {};
+        for (const [channelId, cfg] of Object.entries(configs)) {
+            normalizedConfigs[channelId] = {
+                ...cfg,
+                manual_settings: (0, normalizeManualSettings_1.normalizeManualSettingsForExecution)(cfg.manual_settings),
+            };
+        }
         return {
             ...row,
             manual_settings: (0, normalizeManualSettings_1.normalizeManualSettingsForExecution)(row.manual_settings),
+            channel_trading_configs: Object.keys(normalizedConfigs).length ? normalizedConfigs : row.channel_trading_configs,
         };
     }
     getSweepLoopHandle() {

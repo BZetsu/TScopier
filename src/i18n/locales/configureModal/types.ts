@@ -15,7 +15,12 @@ export interface ConfigureModalTranslations {
   selectChannelToConfigure: string
   applyPreset: string
   applyPresetPlaceholder: string
+  applyPresetTitle: string
   applyPresetConfirm: string
+  applyPresetChannelLabel: string
+  applyPresetPresetLabel: string
+  applyPresetWarning: string
+  applyPresetAction: string
   noPresetsYet: string
   saveAsPreset: string
   saveAsPresetTitle: string

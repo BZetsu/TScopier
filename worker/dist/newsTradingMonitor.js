@@ -6,6 +6,7 @@ const calendarProvider_1 = require("./newsTrading/calendarProvider");
 const settings_1 = require("./newsTrading/settings");
 const metatraderapi_1 = require("./metatraderapi");
 const mtApiByAccount_1 = require("./mtApiByAccount");
+const channelTradingConfig_1 = require("./channelTradingConfig");
 const TICK_MS = 60000;
 class NewsTradingMonitor {
     constructor(supabase) {
@@ -46,7 +47,7 @@ class NewsTradingMonitor {
             return;
         const { data, error } = await this.supabase
             .from('broker_accounts')
-            .select('id,user_id,metaapi_account_id,platform,manual_settings,is_active')
+            .select('id,user_id,metaapi_account_id,platform,manual_settings,channel_trading_configs,copier_mode,ai_settings,is_active')
             .eq('is_active', true)
             .not('metaapi_account_id', 'is', null);
         if (error) {
@@ -54,38 +55,71 @@ class NewsTradingMonitor {
             return;
         }
         const brokers = (data ?? []);
-        const newsBrokers = brokers.filter(b => {
-            const manual = (b.manual_settings ?? {});
-            return !(0, settings_1.isNewsTradingEnabled)(manual);
-        });
-        if (!newsBrokers.length)
+        if (!brokers.length)
             return;
-        const platformByUuid = await (0, mtApiByAccount_1.loadPlatformByMetaapiId)(this.supabase, newsBrokers.map(b => String(b.metaapi_account_id ?? '')));
+        const platformByUuid = await (0, mtApiByAccount_1.loadPlatformByMetaapiId)(this.supabase, brokers.map(b => String(b.metaapi_account_id ?? '')));
         const now = new Date();
         this.pruneClosedMap(now);
-        for (const broker of newsBrokers) {
-            const manual = (broker.manual_settings ?? {});
-            const triggers = (0, blackout_1.findPreNewsCloseTriggers)(events, manual, now);
-            if (!triggers.length)
-                continue;
+        for (const broker of brokers) {
             const uuid = broker.metaapi_account_id;
             const api = (0, mtApiByAccount_1.apiForMetaapiAccount)(platformByUuid, uuid);
             if (!api)
                 continue;
-            for (const event of triggers) {
+            const { data: trades, error: tradeErr } = await this.supabase
+                .from('trades')
+                .select('id,user_id,broker_account_id,metaapi_order_id,symbol,signal_id')
+                .eq('broker_account_id', broker.id)
+                .eq('status', 'open');
+            if (tradeErr) {
+                console.warn(`[newsTradingMonitor] trades select failed broker=${broker.id}: ${tradeErr.message}`);
+                continue;
+            }
+            const openTrades = (trades ?? []);
+            if (!openTrades.length)
+                continue;
+            const signalIds = [...new Set(openTrades.map(t => t.signal_id).filter(Boolean))];
+            const channelBySignal = new Map();
+            if (signalIds.length) {
+                const { data: signals } = await this.supabase
+                    .from('signals')
+                    .select('id, channel_id')
+                    .in('id', signalIds);
+                for (const row of signals ?? []) {
+                    channelBySignal.set(row.id, row.channel_id ?? null);
+                }
+            }
+            const triggersByChannel = new Map();
+            const getTriggers = (channelId) => {
+                const key = channelId ?? '__legacy__';
+                if (!triggersByChannel.has(key)) {
+                    const resolved = (0, channelTradingConfig_1.resolveChannelTradingConfig)(broker, channelId);
+                    const manual = resolved.manual_settings;
+                    if ((0, settings_1.isNewsTradingEnabled)(manual)) {
+                        triggersByChannel.set(key, []);
+                    }
+                    else {
+                        triggersByChannel.set(key, (0, blackout_1.findPreNewsCloseTriggers)(events, manual, now));
+                    }
+                }
+                return triggersByChannel.get(key) ?? [];
+            };
+            const eventsToProcess = new Map();
+            for (const trade of openTrades) {
+                const channelId = trade.signal_id ? (channelBySignal.get(trade.signal_id) ?? null) : null;
+                for (const trigger of getTriggers(channelId)) {
+                    eventsToProcess.set(trigger.id, trigger);
+                }
+            }
+            if (!eventsToProcess.size)
+                continue;
+            for (const event of eventsToProcess.values()) {
                 const dedupeKey = `${broker.id}|${event.id}`;
                 if (this.closedForEvent.has(dedupeKey))
                     continue;
-                const { data: trades, error: tradeErr } = await this.supabase
-                    .from('trades')
-                    .select('id,user_id,broker_account_id,metaapi_order_id,symbol')
-                    .eq('broker_account_id', broker.id)
-                    .eq('status', 'open');
-                if (tradeErr) {
-                    console.warn(`[newsTradingMonitor] trades select failed broker=${broker.id}: ${tradeErr.message}`);
-                    continue;
-                }
-                const toClose = (trades ?? []);
+                const toClose = openTrades.filter(trade => {
+                    const channelId = trade.signal_id ? (channelBySignal.get(trade.signal_id) ?? null) : null;
+                    return getTriggers(channelId).some(t => t.id === event.id);
+                });
                 if (!toClose.length) {
                     this.closedForEvent.set(dedupeKey, now.getTime());
                     continue;
