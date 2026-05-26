@@ -31,6 +31,7 @@ import {
   brokerReconnectBannerText,
   type BrokerConnectErrorKind,
 } from '../../lib/brokerConnectError'
+import { BROKER_ACCOUNT_CLIENT_SELECT } from '../../lib/brokerAccountSelect'
 import { useBrokerAccounts } from '../../context/BrokerAccountsContext'
 import {
   inferBrokerLabelFromServer,
@@ -474,6 +475,7 @@ export function AccountConfigPage() {
   const {
     brokers,
     loading: brokersLoading,
+    loadError: brokersLoadError,
     upsertBroker,
     replaceBroker,
     removeBroker,
@@ -894,14 +896,14 @@ export function AccountConfigPage() {
       })
       .eq('id', configAccount.id)
       .eq('user_id', user.id)
-      .select('*')
+      .select(BROKER_ACCOUNT_CLIENT_SELECT)
       .single()
     setConfigSaving(false)
 
     if (upErr) { setError(upErr.message); return }
 
     if (data) {
-      const fresh = data as BrokerAccount
+      const fresh = data as unknown as BrokerAccount
       replaceBroker(fresh)
       setConfigAccount(fresh)
     }
@@ -1104,6 +1106,12 @@ export function AccountConfigPage() {
           </Button>
         )}
       />
+
+      {brokersLoadError ? (
+        <Alert variant="error" className="mb-3">
+          {brokersLoadError}
+        </Alert>
+      ) : null}
 
       {/* ── Broker Accounts ── */}
       <section>

@@ -55,6 +55,7 @@ import { AccountGrowthChart } from '../../components/dashboard/AccountGrowthChar
 import { TradeVolumeChart } from '../../components/dashboard/TradeVolumeChart'
 import { useDashboardRealtime } from '../../hooks/useDashboardRealtime'
 import { useBrokerAccounts } from '../../context/BrokerAccountsContext'
+import { BROKER_ACCOUNT_CLIENT_SELECT } from '../../lib/brokerAccountSelect'
 import {
   brokerCanReconnect,
   brokerConnectionStatusLabel,
@@ -716,7 +717,7 @@ export function DashboardPage() {
     const { todayStart, tomorrowStart, yesterdayStart } = getLocalCalendarDayBounds()
 
     const [brokerRes, channelsRes, tradesRes, todaySignalsRes, yesterdaySignalsRes, logsRes, allSignalsRes, channelsMetaRes, aiLogsRes] = await Promise.all([
-      supabase.from('broker_accounts').select('*').eq('user_id', user!.id),
+      supabase.from('broker_accounts').select(BROKER_ACCOUNT_CLIENT_SELECT).eq('user_id', user!.id),
       supabase.from('telegram_channels').select('id').eq('user_id', user!.id).eq('is_active', true),
       supabase.from('trades').select('*').eq('user_id', user!.id),
       supabase.from('signals').select('status').eq('user_id', user!.id).gte('created_at', todayStart.toISOString()).lt('created_at', tomorrowStart.toISOString()),
@@ -896,7 +897,7 @@ export function DashboardPage() {
       }
       return winnerName
     })()
-    const brokerAccounts = (brokerRes.data ?? []) as BrokerAccount[]
+    const brokerAccounts = (brokerRes.data ?? []) as unknown as BrokerAccount[]
     const mtBrokerConnected = hasActiveMtBroker(brokerAccounts)
     const activeBrokerCount = brokerAccounts.filter(account => account.is_active).length
     // Seed the balance map from the cached columns the worker / edge function

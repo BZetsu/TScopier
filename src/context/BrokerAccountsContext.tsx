@@ -21,10 +21,12 @@ import { useBrokerConnectionHealth } from '../hooks/useBrokerConnectionHealth'
 import { useBrokerReconnect, type BrokerPasswordPromptResult } from '../hooks/useBrokerReconnect'
 import { useBrokerSessionFailureRealtime } from '../hooks/useBrokerSessionFailureRealtime'
 import { BrokerReconnectPasswordModal } from '../components/broker/BrokerReconnectPasswordModal'
+import { BROKER_ACCOUNT_CLIENT_SELECT } from '../lib/brokerAccountSelect'
 
 interface BrokerAccountsContextValue {
   brokers: BrokerAccount[]
   loading: boolean
+  loadError: string | null
   refreshBrokers: (options?: { silent?: boolean }) => Promise<BrokerAccount[]>
   setBrokers: Dispatch<SetStateAction<BrokerAccount[]>>
   replaceBroker: (broker: BrokerAccount) => void
@@ -54,6 +56,7 @@ export function BrokerAccountsProvider({ children }: { children: ReactNode }) {
 
   const [brokers, setBrokers] = useState<BrokerAccount[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [manualConnectivityPaused, setManualConnectivityPaused] = useState(false)
   const initialLoadDoneRef = useRef(false)
 
@@ -95,20 +98,23 @@ export function BrokerAccountsProvider({ children }: { children: ReactNode }) {
     if (!user?.id) {
       setBrokers([])
       setLoading(false)
+      setLoadError(null)
       return []
     }
     const silent = options?.silent || initialLoadDoneRef.current
     if (!silent) setLoading(true)
+    setLoadError(null)
     const { data, error } = await supabase
       .from('broker_accounts')
-      .select('*')
+      .select(BROKER_ACCOUNT_CLIENT_SELECT)
       .eq('user_id', user.id)
       .order('created_at')
     if (error) {
+      setLoadError(error.message)
       if (!silent) setLoading(false)
-      throw new Error(error.message)
+      return []
     }
-    const next = (data ?? []) as BrokerAccount[]
+    const next = (data ?? []) as unknown as BrokerAccount[]
     setBrokers(next)
     initialLoadDoneRef.current = true
     setLoading(false)
@@ -202,6 +208,7 @@ export function BrokerAccountsProvider({ children }: { children: ReactNode }) {
     (): BrokerAccountsContextValue => ({
       brokers,
       loading,
+      loadError,
       refreshBrokers,
       setBrokers,
       replaceBroker,
@@ -226,6 +233,7 @@ export function BrokerAccountsProvider({ children }: { children: ReactNode }) {
     [
       brokers,
       loading,
+      loadError,
       refreshBrokers,
       replaceBroker,
       upsertBroker,

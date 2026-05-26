@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { BrokerAccount, TelegramChannel } from '../types/database'
+import { BROKER_ACCOUNT_CLIENT_SELECT } from './brokerAccountSelect'
 
 export type BrokerChannelFilterFields = {
   enforce_signal_channel_filter?: boolean | null
@@ -54,11 +55,11 @@ export async function connectChannelToBroker(
     })
     .eq('id', broker.id)
     .eq('user_id', userId)
-    .select('*')
+    .select(BROKER_ACCOUNT_CLIENT_SELECT)
     .single()
 
   if (error) return { broker: null, error: error.message }
-  return { broker: data as BrokerAccount, error: null }
+  return { broker: data as unknown as BrokerAccount, error: null }
 }
 
 /** Link one channel to every active broker that does not already have it. */
@@ -104,11 +105,11 @@ export async function disconnectChannelFromBroker(
     })
     .eq('id', broker.id)
     .eq('user_id', userId)
-    .select('*')
+    .select(BROKER_ACCOUNT_CLIENT_SELECT)
     .single()
 
   if (error) return { broker: null, error: error.message }
-  return { broker: data as BrokerAccount, error: null }
+  return { broker: data as unknown as BrokerAccount, error: null }
 }
 
 /** Drop deleted channel ids from broker whitelists; never auto-add links. */
@@ -134,11 +135,11 @@ export async function pruneStaleBrokerChannelIds(
       .update({ signal_channel_ids: validIds })
       .eq('id', broker.id)
       .eq('user_id', userId)
-      .select('*')
+      .select(BROKER_ACCOUNT_CLIENT_SELECT)
       .single()
 
     if (!error && data) {
-      result = result.map(b => (b.id === broker.id ? (data as BrokerAccount) : b))
+      result = result.map(b => (b.id === broker.id ? (data as unknown as BrokerAccount) : b))
     }
   }
 

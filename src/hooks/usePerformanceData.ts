@@ -22,6 +22,7 @@ import {
   mtTradesToStatsRows,
   type PerformancePeriod,
 } from '../lib/performanceAnalytics'
+import { BROKER_ACCOUNT_CLIENT_SELECT } from '../lib/brokerAccountSelect'
 import type { BrokerAccount } from '../types/database'
 
 function isMtLinkedBroker(account: BrokerAccount): boolean {
@@ -32,12 +33,12 @@ function isMtLinkedBroker(account: BrokerAccount): boolean {
 async function fetchPerformancePayload(userId: string): Promise<PerformanceCachePayload> {
   const brokerRes = await supabase
     .from('broker_accounts')
-    .select('*')
+    .select(BROKER_ACCOUNT_CLIENT_SELECT)
     .eq('user_id', userId)
     .eq('is_active', true)
   if (brokerRes.error) throw brokerRes.error
 
-  const linked = (brokerRes.data ?? []) as BrokerAccount[]
+  const linked = (brokerRes.data ?? []) as unknown as BrokerAccount[]
   const mtBrokers = linked.filter(isMtLinkedBroker)
 
   let trades: MtTrade[] = []
