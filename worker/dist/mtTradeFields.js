@@ -8,6 +8,8 @@ exports.resolveMtDealProfit = resolveMtDealProfit;
 exports.resolveMtTicket = resolveMtTicket;
 exports.historyRowKey = historyRowKey;
 exports.mergeMtHistoryRow = mergeMtHistoryRow;
+exports.inferDirectionFromStopPrices = inferDirectionFromStopPrices;
+exports.reconcileTradeDirectionWithStops = reconcileTradeDirectionWithStops;
 exports.adjustMtTradesPositionDirection = adjustMtTradesPositionDirection;
 exports.ingestMtHistoryRows = ingestMtHistoryRows;
 const MT_DEAL_NESTED_OBJECTS = [
@@ -238,8 +240,44 @@ function labelForPositionDirection(direction, typeLabel) {
         return typeLabel;
     const wantsDealPrefix = /deal/i.test(typeLabel);
     if (direction === 'buy')
-        return wantsDealPrefix ? 'Sell' : 'Buy';
-    return wantsDealPrefix ? 'Buy' : 'Sell';
+        return wantsDealPrefix ? 'Deal Buy' : 'Buy';
+    return wantsDealPrefix ? 'Deal Sell' : 'Sell';
+}
+/** Position side from entry vs SL/TP geometry (buy: SL below, TP above entry). */
+function inferDirectionFromStopPrices(entry, sl, tp) {
+    if (entry == null || !Number.isFinite(entry) || entry <= 0)
+        return '';
+    let buyVotes = 0;
+    let sellVotes = 0;
+    if (sl != null && Number.isFinite(sl) && sl > 0) {
+        if (sl < entry)
+            buyVotes++;
+        else if (sl > entry)
+            sellVotes++;
+    }
+    if (tp != null && Number.isFinite(tp) && tp > 0) {
+        if (tp > entry)
+            buyVotes++;
+        else if (tp < entry)
+            sellVotes++;
+    }
+    if (buyVotes > sellVotes)
+        return 'buy';
+    if (sellVotes > buyVotes)
+        return 'sell';
+    return '';
+}
+/** When deal type says sell but SL/TP imply buy (OUT deal on long), trust geometry. */
+function reconcileTradeDirectionWithStops(direction, entry, sl, tp) {
+    const inferred = inferDirectionFromStopPrices(entry, sl, tp);
+    let finalDir = direction;
+    if (inferred && (!finalDir || finalDir !== inferred))
+        finalDir = inferred;
+    if (finalDir === 'buy')
+        return { direction: 'buy', type_label: 'Buy' };
+    if (finalDir === 'sell')
+        return { direction: 'sell', type_label: 'Sell' };
+    return { direction: finalDir, type_label: direction ? labelForPositionDirection(direction, 'Buy') : '' };
 }
 function adjustMtTradesPositionDirection(order, profile, resolved) {
     if (profile !== 'trades')
@@ -262,17 +300,6 @@ function adjustMtTradesPositionDirection(order, profile, resolved) {
     if (entry === 'out' && (direction === 'buy' || direction === 'sell')) {
         direction = invertMtDirection(direction);
         type_label = labelForPositionDirection(direction, type_label);
-        return { direction, type_label };
-    }
-    if (entry === 'unknown' && (direction === 'buy' || direction === 'sell')) {
-        const hasOutNested = isPlainObject(flat.dealInternalOut) ||
-            isPlainObject(flat.DealInternalOut);
-        const hasInNested = isPlainObject(flat.dealInternalIn) ||
-            isPlainObject(flat.DealInternalIn);
-        if (hasOutNested && !hasInNested) {
-            direction = invertMtDirection(direction);
-            type_label = labelForPositionDirection(direction, type_label);
-        }
     }
     return { direction, type_label };
 }

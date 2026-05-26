@@ -16,7 +16,7 @@ const VISIBILITY_STALE_MS = 30_000
 /** Max rows returned for the Account Trades page (newest first). */
 export const TRADES_PAGE_MAX_RESULTS = 100
 /** History window for trades list — enough for recent activity without pulling years of deals. */
-export const TRADES_PAGE_HISTORY_DAYS = 90
+export const TRADES_PAGE_HISTORY_DAYS = 14
 
 async function fetchTradesFromMt(): Promise<MtTrade[]> {
   const { tomorrowStart: historyTo } = getLocalCalendarDayBounds()

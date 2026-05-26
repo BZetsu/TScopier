@@ -605,6 +605,31 @@ class MetatraderApiClient {
         }
         return [...byKey.values()];
     }
+    /** Recent closed history — bounded pagination for Trades page (avoids edge timeouts). */
+    async closedOrdersHistoryLite(id, from, to, profile = 'dashboard', maxPages = 2, ordersPerPage = 200) {
+        const byKey = new Map();
+        const ingest = (rows) => (0, mtTradeFields_1.ingestMtHistoryRows)(byKey, rows, profile);
+        try {
+            for (let page = 0; page < maxPages; page++) {
+                const { orders } = await this.orderHistoryPage(id, from, to, page, ordersPerPage);
+                ingest(orders);
+                if (orders.length === 0)
+                    break;
+            }
+            if (byKey.size > 0)
+                return [...byKey.values()];
+        }
+        catch {
+            /* fall through */
+        }
+        try {
+            ingest(await this.orderHistory(id, from, to));
+        }
+        catch {
+            /* ignore */
+        }
+        return [...byKey.values()];
+    }
     async accountSummary(id) {
         const raw = await this.get('/AccountSummary', { id });
         assertNoApiError(raw);

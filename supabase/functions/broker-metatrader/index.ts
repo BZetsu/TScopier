@@ -90,7 +90,7 @@ function friendlyMtApiError(e: MetatraderApiError): MetatraderApiError {
  * register / delete / refresh balance / check connection calls, plus the trades read
  * for the Trades page.
  */
-const BUILD_TAG = "broker-metatrader@trades-history-v2"
+const BUILD_TAG = "broker-metatrader@trades-history-v3-lite"
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 200, headers: corsHeaders })
 
@@ -550,6 +550,19 @@ Deno.serve(async (req: Request) => {
         : formatMtDt(defaultHistoryFrom)
       const historyProfile: MtHistoryProfile =
         bodyRec.history_profile === "trades" ? "trades" : "dashboard"
+      const limitRaw = Number(bodyRec.limit ?? 0)
+      const limit =
+        Number.isFinite(limitRaw) && limitRaw > 0
+          ? Math.min(Math.floor(limitRaw), 500)
+          : 0
+      let effectiveHistoryFrom = historyFrom
+      if (limit > 0) {
+        const cap = new Date()
+        cap.setDate(cap.getDate() - 14)
+        const capStr = formatMtDt(cap)
+        if (effectiveHistoryFrom < capStr) effectiveHistoryFrom = capStr
+      }
+      const brokerTradesTimeoutMs = limit > 0 ? 18_000 : 45_000
       type RawOrder = Record<string, unknown>
 
       let brokers: { id: string; label: string; metaapi_account_id: string; broker_name: string | null; platform: string }[] = []
@@ -567,6 +580,7 @@ Deno.serve(async (req: Request) => {
           .from("broker_accounts")
           .select("id,label,metaapi_account_id,broker_name,platform")
           .eq("user_id", userId)
+          .eq("is_active", true)
         brokers = ((data ?? []) as typeof brokers)
       }
 
@@ -722,39 +736,43 @@ Deno.serve(async (req: Request) => {
       }
 
       let firstRawSample: RawOrder | null = null
+      const fetchBrokerTrades = async (b: typeof brokers[number]): Promise<ReturnType<typeof normalize>[]> => {
+        const uuid = String(b.metaapi_account_id ?? "").trim()
+        if (!uuid || uuid.includes("|")) return []
+        const bClient = mtClient(Deno.env, String(b.platform ?? "MT5"))
+        try { await bClient.keepSessionAlive(uuid) } catch { /* best-effort */ }
+        const closedHistory = limit > 0
+          ? bClient.closedOrdersHistoryLite(uuid, effectiveHistoryFrom, historyTo, historyProfile, 2, 200)
+          : bClient.closedOrdersHistory(uuid, historyFrom, historyTo, historyProfile)
+        const [openedRes, closedRes] = await Promise.allSettled([
+          wantOpen ? bClient.openedOrders(uuid) : Promise.resolve([] as unknown[]),
+          wantClosed ? closedHistory : Promise.resolve([] as unknown[]),
+        ])
+        const out: ReturnType<typeof normalize>[] = []
+        if (openedRes.status === "fulfilled" && Array.isArray(openedRes.value)) {
+          for (const o of openedRes.value as RawOrder[]) {
+            if (!firstRawSample) firstRawSample = o
+            out.push(normalize(o, b, "open"))
+          }
+        }
+        if (closedRes.status === "fulfilled" && Array.isArray(closedRes.value)) {
+          for (const o of closedRes.value as RawOrder[]) {
+            if (!firstRawSample) firstRawSample = o
+            out.push(normalize(o, b, "closed"))
+          }
+        }
+        return out
+      }
+
+      const withTimeout = <T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> =>
+        Promise.race([
+          promise,
+          new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms)),
+        ])
+
       const tradesByBroker = await Promise.all(
-        brokers.map(async (b) => {
-          const uuid = String(b.metaapi_account_id ?? "").trim()
-          if (!uuid || uuid.includes("|")) return [] as ReturnType<typeof normalize>[]
-          const bClient = mtClient(Deno.env, String(b.platform ?? "MT5"))
-          try { await bClient.keepSessionAlive(uuid) } catch { /* best-effort */ }
-          const [openedRes, closedRes] = await Promise.allSettled([
-            wantOpen ? bClient.openedOrders(uuid) : Promise.resolve([] as unknown[]),
-            wantClosed
-              ? bClient.closedOrdersHistory(uuid, historyFrom, historyTo, historyProfile)
-              : Promise.resolve([] as unknown[]),
-          ])
-          const out: ReturnType<typeof normalize>[] = []
-          if (openedRes.status === "fulfilled" && Array.isArray(openedRes.value)) {
-            for (const o of openedRes.value as RawOrder[]) {
-              if (!firstRawSample) firstRawSample = o
-              out.push(normalize(o, b, "open"))
-            }
-          }
-          if (closedRes.status === "fulfilled" && Array.isArray(closedRes.value)) {
-            for (const o of closedRes.value as RawOrder[]) {
-              if (!firstRawSample) firstRawSample = o
-              out.push(normalize(o, b, "closed"))
-            }
-          }
-          return out
-        }),
+        brokers.map((b) => withTimeout(fetchBrokerTrades(b), brokerTradesTimeoutMs, [])),
       )
-      const limitRaw = Number(bodyRec.limit ?? 0)
-      const limit =
-        Number.isFinite(limitRaw) && limitRaw > 0
-          ? Math.min(Math.floor(limitRaw), 500)
-          : 0
       const trades = tradesByBroker.flat().sort((a, b) => {
         const at = a.status === "closed" ? (a.closed_at ?? a.opened_at) : a.opened_at
         const bt = b.status === "closed" ? (b.closed_at ?? b.opened_at) : b.opened_at

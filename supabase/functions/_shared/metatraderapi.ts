@@ -498,6 +498,40 @@ export class MetatraderApiClient {
     return [...byKey.values()]
   }
 
+  /**
+   * Recent closed history only — a few pagination pages, no full multi-endpoint merge.
+   * Used when the UI only needs the newest rows (Trades page with limit).
+   */
+  async closedOrdersHistoryLite(
+    id: string,
+    from: string,
+    to: string,
+    profile: MtHistoryProfile = "dashboard",
+    maxPages = 2,
+    ordersPerPage = 200,
+  ): Promise<unknown[]> {
+    const byKey = new Map<string, Record<string, unknown>>()
+    const ingest = (rows: unknown[]) => ingestMtHistoryRows(byKey, rows, profile)
+
+    try {
+      for (let page = 0; page < maxPages; page++) {
+        const { orders } = await this.orderHistoryPage(id, from, to, page, ordersPerPage)
+        ingest(orders)
+        if (orders.length === 0) break
+      }
+      if (byKey.size > 0) return [...byKey.values()]
+    } catch {
+      /* fall through to single request */
+    }
+
+    try {
+      ingest(await this.orderHistory(id, from, to))
+    } catch {
+      /* ignore */
+    }
+    return [...byKey.values()]
+  }
+
   static parseOrderList(raw: unknown): unknown[] {
     assertNoApiError(raw)
     if (Array.isArray(raw)) return raw

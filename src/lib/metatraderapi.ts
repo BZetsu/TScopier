@@ -48,6 +48,9 @@ async function call<T = unknown>(opts: CallOpts<T>): Promise<T> {
     const msg = (body && typeof body === 'object' && 'error' in (body as Record<string, unknown>))
       ? String((body as Record<string, unknown>).error)
       : text || `HTTP ${res.status}`
+    if (res.status === 504) {
+      throw new Error('Trade history timed out loading from your broker. Try Refresh in a moment.')
+    }
     throw new Error(msg)
   }
   return (opts.expect ? opts.expect(body) : (body as T))

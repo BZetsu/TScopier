@@ -762,6 +762,37 @@ export class MetatraderApiClient {
     return [...byKey.values()]
   }
 
+  /** Recent closed history — bounded pagination for Trades page (avoids edge timeouts). */
+  async closedOrdersHistoryLite(
+    id: string,
+    from: string,
+    to: string,
+    profile: MtHistoryProfile = 'dashboard',
+    maxPages = 2,
+    ordersPerPage = 200,
+  ): Promise<unknown[]> {
+    const byKey = new Map<string, Record<string, unknown>>()
+    const ingest = (rows: unknown[]) => ingestMtHistoryRows(byKey, rows, profile)
+
+    try {
+      for (let page = 0; page < maxPages; page++) {
+        const { orders } = await this.orderHistoryPage(id, from, to, page, ordersPerPage)
+        ingest(orders)
+        if (orders.length === 0) break
+      }
+      if (byKey.size > 0) return [...byKey.values()]
+    } catch {
+      /* fall through */
+    }
+
+    try {
+      ingest(await this.orderHistory(id, from, to) as unknown[])
+    } catch {
+      /* ignore */
+    }
+    return [...byKey.values()]
+  }
+
   async accountSummary(id: string): Promise<AccountSummary> {
     const raw = await this.get<unknown>('/AccountSummary', { id })
     assertNoApiError(raw)
