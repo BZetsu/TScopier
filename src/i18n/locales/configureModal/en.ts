@@ -26,12 +26,12 @@ export const configureModalEn: ConfigureModalTranslations = {
     channels: 'Channels',
   },
   manualSubTabs: {
+    channelInstructions: 'Instructions',
     symbolRouting: 'Symbol Routing',
-    risk: 'Risk & Entry',
+    risk: 'Risk',
     stops: 'Targets',
-    management: 'Auto-Management',
+    management: 'Management',
     filters: 'Filters',
-    strategy: 'Strategy',
   },
   ai: {
     title: 'AI configuration',
@@ -264,7 +264,7 @@ export const configureModalEn: ConfigureModalTranslations = {
     signalChannels: 'Signal channels',
     selected: '{count} selected',
     pickHint: 'Link channels with the checkbox, then select one to configure its own lot size, targets, and filters.',
-    keywordFilters: 'Channel management filters',
+    keywordFilters: 'Filter channel instructions to follow',
     allAllowed: 'All categories allowed',
     ignoredAcross: '{total} ignored for this channel',
     filtersIntro:

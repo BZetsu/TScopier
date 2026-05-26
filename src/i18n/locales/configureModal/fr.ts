@@ -26,12 +26,12 @@ export const configureModalFr: ConfigureModalTranslations = {
     channels: 'Canaux',
   },
   manualSubTabs: {
+    channelInstructions: 'Consignes',
     symbolRouting: 'Routage des symboles',
-    risk: 'Risque et entrée',
+    risk: 'Risque',
     stops: 'Objectifs',
-    management: 'Gestion automatique',
+    management: 'Gestion',
     filters: 'Filtres',
-    strategy: 'Stratégie',
   },
   ai: {
     title: 'Configuration IA',
@@ -266,7 +266,7 @@ export const configureModalFr: ConfigureModalTranslations = {
     signalChannels: 'Canaux de signaux',
     selected: '{count} sélectionnés',
     pickHint: 'Liez des canaux avec la case, puis sélectionnez-en un pour configurer lot, objectifs et filtres.',
-    keywordFilters: 'Filtres de gestion du canal',
+    keywordFilters: 'Filtrer les consignes du canal à suivre',
     allAllowed: 'Toutes les catégories autorisées',
     ignoredAcross: '{total} ignorées pour ce canal',
     filtersIntro:

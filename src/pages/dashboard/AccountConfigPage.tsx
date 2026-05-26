@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import {
   Plus, Trash2, Server, Activity, GitBranch, Eye, DollarSign, RefreshCw,
   SlidersHorizontal, Radio, Target, Filter, Wallet,
-  ArrowLeftRight, ChevronDown, Brain, Settings2, Bookmark, Pencil,
+  ArrowLeftRight, ChevronDown, Settings2, Bookmark, Pencil, ScrollText,
 } from 'lucide-react'
 import clsx from 'clsx'
 import { supabase } from '../../lib/supabase'
@@ -342,7 +342,7 @@ function AccountDetailCell({
   )
 }
 
-type ManualSubTabId = 'symbol_routing' | 'risk' | 'stops' | 'management' | 'filters' | 'strategy'
+type ManualSubTabId = 'channel_instructions' | 'symbol_routing' | 'risk' | 'stops' | 'management' | 'filters'
 
 interface ManualSubTabDef {
   id: ManualSubTabId
@@ -415,20 +415,20 @@ export function AccountConfigPage() {
 
   const manualSubTabs = useMemo<ManualSubTabDef[]>(
     () => [
+      { id: 'channel_instructions', label: cm.manualSubTabs.channelInstructions, icon: ScrollText },
       { id: 'symbol_routing', label: cm.manualSubTabs.symbolRouting, icon: ArrowLeftRight },
       { id: 'risk', label: cm.manualSubTabs.risk, icon: Wallet },
       { id: 'stops', label: cm.manualSubTabs.stops, icon: Target },
       { id: 'management', label: cm.manualSubTabs.management, icon: Settings2 },
       { id: 'filters', label: cm.manualSubTabs.filters, icon: Filter },
-      { id: 'strategy', label: cm.manualSubTabs.strategy, icon: Brain },
     ],
     [
+      cm.manualSubTabs.channelInstructions,
       cm.manualSubTabs.symbolRouting,
       cm.manualSubTabs.risk,
       cm.manualSubTabs.stops,
       cm.manualSubTabs.management,
       cm.manualSubTabs.filters,
-      cm.manualSubTabs.strategy,
     ],
   )
 
@@ -473,7 +473,7 @@ export function AccountConfigPage() {
     selectedChannelId: null,
     channelConfigs: {},
   })
-  const [activeManualSubTab, setActiveManualSubTab] = useState<ManualSubTabId>('symbol_routing')
+  const [activeManualSubTab, setActiveManualSubTab] = useState<ManualSubTabId>('channel_instructions')
   const [symbolMappingText, setSymbolMappingText] = useState('')
   const [configSaving, setConfigSaving] = useState(false)
   const [configSavedAt, setConfigSavedAt] = useState<number | null>(null)
@@ -731,7 +731,7 @@ export function AccountConfigPage() {
       channelOptions.some(c => c.id === id),
     )
     setConfigAccount(fresh)
-    setActiveManualSubTab('symbol_routing')
+    setActiveManualSubTab('channel_instructions')
     const draft = buildChannelConfigDraftFromBroker(fresh, channelIds)
     setConfigDraft(draft)
     setChannelLinkEditMode(false)
@@ -741,7 +741,7 @@ export function AccountConfigPage() {
 
   const selectConfigureChannel = (channelId: string) => {
     setConfigDraft(prev => ({ ...prev, selectedChannelId: channelId }))
-    setActiveManualSubTab('symbol_routing')
+    setActiveManualSubTab('channel_instructions')
   }
 
   useEffect(() => {
@@ -1735,6 +1735,43 @@ export function AccountConfigPage() {
                       </div>
                     ) : (
                       <div className="space-y-4">
+                        {activeManualSubTab === 'channel_instructions' && (
+                          selectedChannelOption && configDraft.selectedChannelId ? (
+                            <section className="space-y-3">
+                              <div className="flex items-center justify-between">
+                                <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">{cm.channels.keywordFilters}</p>
+                                <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                                  {(() => {
+                                    const f = normalizeChannelFilters(
+                                      configDraft.channelConfigs[configDraft.selectedChannelId]?.channelFilters ?? DEFAULT_CHANNEL_FILTERS,
+                                    )
+                                    const total = channelFilterCategories.reduce(
+                                      (n, c) => n + (f[c.key] === 'ignore' ? 1 : 0), 0,
+                                    )
+                                    return total === 0
+                                      ? cm.channels.allAllowed
+                                      : interpolate(cm.channels.ignoredAcross, { total: String(total) })
+                                  })()}
+                                </p>
+                              </div>
+                              <p className="text-xs text-neutral-500 dark:text-neutral-400">{cm.channels.filtersIntro}</p>
+                              <ChannelFiltersCard
+                                channel={selectedChannelOption}
+                                filters={normalizeChannelFilters(
+                                  configDraft.channelConfigs[configDraft.selectedChannelId]?.channelFilters ?? DEFAULT_CHANNEL_FILTERS,
+                                )}
+                                categories={channelFilterCategories}
+                                labels={cm.channelFilters}
+                                onChange={(key, value) => setChannelFilter(configDraft.selectedChannelId!, key, value)}
+                                onReset={() => resetChannelFilters(configDraft.selectedChannelId!)}
+                                defaultOpen
+                              />
+                            </section>
+                          ) : (
+                            <p className="text-sm text-neutral-500 dark:text-neutral-400">{cm.channels.selectChannelFirst}</p>
+                          )
+                        )}
+
                         {activeManualSubTab === 'symbol_routing' && (
                           <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 space-y-4">
                             <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">{cm.symbolRouting.title}</p>
@@ -2443,38 +2480,114 @@ export function AccountConfigPage() {
                               </p>
                             )}
 
-                            {selectedChannelOption && configDraft.selectedChannelId ? (
-                              <section className="space-y-3 pt-2 border-t border-neutral-200 dark:border-neutral-800">
-                                <div className="flex items-center justify-between">
-                                  <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">{cm.channels.keywordFilters}</p>
-                                  <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                                    {(() => {
-                                      const f = normalizeChannelFilters(
-                                        configDraft.channelConfigs[configDraft.selectedChannelId]?.channelFilters ?? DEFAULT_CHANNEL_FILTERS,
-                                      )
-                                      const total = channelFilterCategories.reduce(
-                                        (n, c) => n + (f[c.key] === 'ignore' ? 1 : 0), 0,
-                                      )
-                                      return total === 0
-                                        ? cm.channels.allAllowed
-                                        : interpolate(cm.channels.ignoredAcross, { total: String(total) })
-                                    })()}
-                                  </p>
-                                </div>
-                                <p className="text-xs text-neutral-500 dark:text-neutral-400">{cm.channels.filtersIntro}</p>
-                                <ChannelFiltersCard
-                                  channel={selectedChannelOption}
-                                  filters={normalizeChannelFilters(
-                                    configDraft.channelConfigs[configDraft.selectedChannelId]?.channelFilters ?? DEFAULT_CHANNEL_FILTERS,
-                                  )}
-                                  categories={channelFilterCategories}
-                                  labels={cm.channelFilters}
-                                  onChange={(key, value) => setChannelFilter(configDraft.selectedChannelId!, key, value)}
-                                  onReset={() => resetChannelFilters(configDraft.selectedChannelId!)}
-                                  defaultOpen
+                            <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-3 space-y-3">
+                              <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.strategy.signalBehavior}</p>
+                              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                <Select
+                                  label={cm.strategy.reverseSignal}
+                                  value={ms.reverse_signal ? 'yes' : 'no'}
+                                  onChange={e => {
+                                    const v = e.target.value === 'yes'
+                                    if (v && !reverseSignalPlannerGateSettingsOk(ms)) return
+                                    setManual({ reverse_signal: v })
+                                  }}
+                                  options={[{ value: 'no', label: cm.common.no }, { value: 'yes', label: cm.common.yes }]}
                                 />
-                              </section>
-                            ) : null}
+                                <Select
+                                  label={cm.strategy.addToExisting}
+                                  value={ms.add_new_trades_to_existing ? 'yes' : 'no'}
+                                  onChange={e => setManual({ add_new_trades_to_existing: e.target.value === 'yes' })}
+                                  options={[{ value: 'yes', label: cm.common.yes }, { value: 'no', label: cm.common.no }]}
+                                />
+                                <Select
+                                  label={cm.strategy.closeOpposite}
+                                  value={ms.close_on_opposite_signal ? 'yes' : 'no'}
+                                  onChange={e => setManual({ close_on_opposite_signal: e.target.value === 'yes' })}
+                                  options={[{ value: 'no', label: cm.common.no }, { value: 'yes', label: cm.common.yes }]}
+                                />
+                              </div>
+                              <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                                {cm.strategy.reverseHint}
+                              </p>
+                              <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                                {cm.strategy.closeOppositeHint}
+                              </p>
+                              <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                                {cm.strategy.addExistingHint}
+                              </p>
+                            </div>
+
+                            <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-3 space-y-3">
+                              <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.strategy.rrFallbacksTitle}</p>
+                              <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                                {cm.strategy.rrFallbacksIntro}
+                              </p>
+                              <div className="space-y-3">
+                                <div className="rounded-md border border-neutral-200 dark:border-neutral-800 overflow-hidden">
+                                  <div className="flex items-center justify-between gap-3 bg-white dark:bg-neutral-900 px-3 py-2.5">
+                                    <span className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.strategy.enableRrSl}</span>
+                                    <Toggle
+                                      checked={ms.rr_for_sl_enabled === true}
+                                      onChange={v => setManual({ rr_for_sl_enabled: v })}
+                                    />
+                                  </div>
+                                  {ms.rr_for_sl_enabled && (
+                                    <div className="border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/80 px-3 py-3 space-y-1">
+                                      <Input
+                                        label={cm.strategy.slRr}
+                                        type="number"
+                                        hint={cm.strategy.slRrHint}
+                                        value={String(ms.rr_for_sl ?? 1)}
+                                        onChange={e => setManual({ rr_for_sl: Number(e.target.value) })}
+                                      />
+                                    </div>
+                                  )}
+                                </div>
+
+                                <div className="rounded-md border border-neutral-200 dark:border-neutral-800 overflow-hidden">
+                                  <div className="flex items-center justify-between gap-3 bg-white dark:bg-neutral-900 px-3 py-2.5">
+                                    <span className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.strategy.enableRrTps}</span>
+                                    <Toggle
+                                      checked={ms.rr_for_tps_enabled === true}
+                                      onChange={v => setManual({ rr_for_tps_enabled: v })}
+                                    />
+                                  </div>
+                                  {ms.rr_for_tps_enabled && (
+                                    <div className="border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/80 px-3 py-3 space-y-1">
+                                      <Input
+                                        label={cm.strategy.tpRrValues}
+                                        hint={cm.strategy.tpRrHint}
+                                        value={(ms.rr_for_tps ?? []).join(',')}
+                                        onChange={e => setManual({ rr_for_tps: e.target.value.split(',').map(n => Number(n.trim())).filter(Number.isFinite) })}
+                                      />
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-3 space-y-3">
+                              <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.strategy.pendingTitle}</p>
+                              <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                                {cm.strategy.pendingIntro}
+                              </p>
+                              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                <Input
+                                  label={cm.strategy.pendingExpiry}
+                                  type="number"
+                                  min={1}
+                                  max={24}
+                                  step={1}
+                                  hint={cm.strategy.pendingExpiryHint}
+                                  value={String(ms.pending_expiry_hours ?? 1)}
+                                  onChange={e => {
+                                    const n = Number(e.target.value)
+                                    const v = Number.isFinite(n) ? Math.max(1, Math.min(24, Math.floor(n))) : 1
+                                    setManual({ pending_expiry_hours: v })
+                                  }}
+                                />
+                              </div>
+                            </div>
                           </div>
                           )
                         })()}
@@ -2617,119 +2730,6 @@ export function AccountConfigPage() {
                           </div>
                         )}
 
-                        {activeManualSubTab === 'strategy' && (
-                          <div className="space-y-4">
-                            <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-3 space-y-3">
-                              <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.strategy.signalBehavior}</p>
-                              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                                <Select
-                                  label={cm.strategy.reverseSignal}
-                                  value={channelManualSettings.reverse_signal ? 'yes' : 'no'}
-                                  onChange={e => {
-                                    const v = e.target.value === 'yes'
-                                    if (v && !reverseSignalPlannerGateSettingsOk(channelManualSettings)) return
-                                    setManual({ reverse_signal: v })
-                                  }}
-                                  options={[{ value: 'no', label: cm.common.no }, { value: 'yes', label: cm.common.yes }]}
-                                />
-                                <Select
-                                  label={cm.strategy.addToExisting}
-                                  value={channelManualSettings.add_new_trades_to_existing ? 'yes' : 'no'}
-                                  onChange={e => setManual({ add_new_trades_to_existing: e.target.value === 'yes' })}
-                                  options={[{ value: 'yes', label: cm.common.yes }, { value: 'no', label: cm.common.no }]}
-                                />
-                                <Select
-                                  label={cm.strategy.closeOpposite}
-                                  value={channelManualSettings.close_on_opposite_signal ? 'yes' : 'no'}
-                                  onChange={e => setManual({ close_on_opposite_signal: e.target.value === 'yes' })}
-                                  options={[{ value: 'no', label: cm.common.no }, { value: 'yes', label: cm.common.yes }]}
-                                />
-                              </div>
-                              <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                                {cm.strategy.reverseHint}
-                              </p>
-                              <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                                {cm.strategy.closeOppositeHint}
-                              </p>
-                              <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                                {cm.strategy.addExistingHint}
-                              </p>
-                            </div>
-
-                            <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-3 space-y-3">
-                              <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.strategy.rrFallbacksTitle}</p>
-                              <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                                {cm.strategy.rrFallbacksIntro}
-                              </p>
-                              <div className="space-y-3">
-                                <div className="rounded-md border border-neutral-200 dark:border-neutral-800 overflow-hidden">
-                                  <div className="flex items-center justify-between gap-3 bg-white dark:bg-neutral-900 px-3 py-2.5">
-                                    <span className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.strategy.enableRrSl}</span>
-                                    <Toggle
-                                      checked={channelManualSettings.rr_for_sl_enabled === true}
-                                      onChange={v => setManual({ rr_for_sl_enabled: v })}
-                                    />
-                                  </div>
-                                  {channelManualSettings.rr_for_sl_enabled && (
-                                    <div className="border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/80 px-3 py-3 space-y-1">
-                                      <Input
-                                        label={cm.strategy.slRr}
-                                        type="number"
-                                        hint={cm.strategy.slRrHint}
-                                        value={String(channelManualSettings.rr_for_sl ?? 1)}
-                                        onChange={e => setManual({ rr_for_sl: Number(e.target.value) })}
-                                      />
-                                    </div>
-                                  )}
-                                </div>
-
-                                <div className="rounded-md border border-neutral-200 dark:border-neutral-800 overflow-hidden">
-                                  <div className="flex items-center justify-between gap-3 bg-white dark:bg-neutral-900 px-3 py-2.5">
-                                    <span className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.strategy.enableRrTps}</span>
-                                    <Toggle
-                                      checked={channelManualSettings.rr_for_tps_enabled === true}
-                                      onChange={v => setManual({ rr_for_tps_enabled: v })}
-                                    />
-                                  </div>
-                                  {channelManualSettings.rr_for_tps_enabled && (
-                                    <div className="border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/80 px-3 py-3 space-y-1">
-                                      <Input
-                                        label={cm.strategy.tpRrValues}
-                                        hint={cm.strategy.tpRrHint}
-                                        value={(channelManualSettings.rr_for_tps ?? []).join(',')}
-                                        onChange={e => setManual({ rr_for_tps: e.target.value.split(',').map(n => Number(n.trim())).filter(Number.isFinite) })}
-                                      />
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-
-                            <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-3 space-y-3">
-                              <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.strategy.pendingTitle}</p>
-                              <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                                {cm.strategy.pendingIntro}
-                                {/* <code className="text-[11px]">WORKER_BROKER_PENDING_EXPIRY_SWEEP=true</code> on the worker to cancel stale TSCopier broker pendings past this TTL when order open time is available from the API. */}
-                              </p>
-                              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                                <Input
-                                  label={cm.strategy.pendingExpiry}
-                                  type="number"
-                                  min={1}
-                                  max={24}
-                                  step={1}
-                                  hint={cm.strategy.pendingExpiryHint}
-                                  value={String(channelManualSettings.pending_expiry_hours ?? 1)}
-                                  onChange={e => {
-                                    const n = Number(e.target.value)
-                                    const v = Number.isFinite(n) ? Math.max(1, Math.min(24, Math.floor(n))) : 1
-                                    setManual({ pending_expiry_hours: v })
-                                  }}
-                                />
-                              </div>
-                            </div>
-                          </div>
-                        )}
                       </div>
                     )}
 

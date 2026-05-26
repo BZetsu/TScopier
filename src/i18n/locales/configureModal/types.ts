@@ -29,12 +29,12 @@ export interface ConfigureModalTranslations {
     channels: string
   }
   manualSubTabs: {
+    channelInstructions: string
     symbolRouting: string
     risk: string
     stops: string
     management: string
     filters: string
-    strategy: string
   }
   ai: {
     title: string
