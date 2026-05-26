@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { hasMetatraderApiConfigured, getMetatraderApi, mtPlatformFrom } from './metatraderapi'
 import { writeBrokerConnectionStatus } from './brokerConnectionStatus'
+import { hardReconnectBrokerSession } from './brokerHardReconnect'
 import {
   applyShardToQuery,
   hasWorkOnShard,
@@ -22,6 +23,10 @@ interface BrokerRow {
   platform: string
   metaapi_account_id: string | null
   connection_status: string | null
+  account_login?: string | null
+  broker_server?: string | null
+  auto_reconnect_enabled?: boolean | null
+  mt_password_encrypted?: string | null
 }
 
 interface BackoffEntry {
@@ -90,7 +95,7 @@ export class BrokerConnectionMonitor {
       this.supabase,
       this.supabase
         .from('broker_accounts')
-        .select('id,platform,metaapi_account_id,connection_status')
+        .select('id,platform,metaapi_account_id,connection_status,account_login,broker_server,auto_reconnect_enabled,mt_password_encrypted')
         .eq('is_active', true),
     )
     if (!brokersQ) return
@@ -127,23 +132,49 @@ export class BrokerConnectionMonitor {
         if (row.connection_status !== 'connected') {
           await writeBrokerConnectionStatus(this.supabase, row.id, 'connected')
         }
+      } else if (
+        row.auto_reconnect_enabled
+        && row.mt_password_encrypted
+        && row.account_login
+        && row.broker_server
+      ) {
+        const hardOk = await hardReconnectBrokerSession(this.supabase, api, {
+          id: row.id,
+          platform: row.platform,
+          metaapi_account_id: uuid!,
+          account_login: row.account_login,
+          broker_server: row.broker_server,
+          auto_reconnect_enabled: row.auto_reconnect_enabled,
+          mt_password_encrypted: row.mt_password_encrypted,
+        })
+        if (hardOk) {
+          this.backoff.delete(row.id)
+          ok++
+        } else {
+          this.registerFailure(row, now)
+          reconnected++
+        }
       } else {
-        const prev = this.backoff.get(row.id)
-        const fails = (prev?.fails ?? 0) + 1
-        const delay = nextBackoffMs(fails)
-        this.backoff.set(row.id, { fails, lastAttemptAt: now, nextEligibleAt: now + delay })
-
-        if (fails >= 2 && row.connection_status !== 'error') {
-          await writeBrokerConnectionStatus(this.supabase, row.id, 'error')
-        }
-        if (fails <= 3 || fails % 10 === 0) {
-          console.warn(`[brokerConnection] broker=${row.id} down (fails=${fails}, next retry in ${Math.round(delay / 1000)}s)`)
-        }
+        this.registerFailure(row, now)
         reconnected++
       }
     }
     if (ok > 0 || reconnected > 0 || skipped > 0) {
       console.log(`[brokerConnection] tick: ${ok} alive, ${reconnected} failed, ${skipped} in backoff`)
+    }
+  }
+
+  private registerFailure(row: BrokerRow, now: number) {
+    const prev = this.backoff.get(row.id)
+    const fails = (prev?.fails ?? 0) + 1
+    const delay = nextBackoffMs(fails)
+    this.backoff.set(row.id, { fails, lastAttemptAt: now, nextEligibleAt: now + delay })
+
+    if (fails >= 2 && row.connection_status !== 'error') {
+      void writeBrokerConnectionStatus(this.supabase, row.id, 'error')
+    }
+    if (fails <= 3 || fails % 10 === 0) {
+      console.warn(`[brokerConnection] broker=${row.id} down (fails=${fails}, next retry in ${Math.round(delay / 1000)}s)`)
     }
   }
 }

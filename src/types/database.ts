@@ -233,6 +233,10 @@ export interface BrokerAccount {
   day_start_balance?: number | null
   /** Local calendar day (YYYY-MM-DD) for `day_start_balance`. */
   day_start_balance_on?: string | null
+  /** User opted in to encrypted server-side password storage for automatic reconnect. */
+  auto_reconnect_enabled?: boolean | null
+  /** When stored credentials were last written (no password exposed to client). */
+  password_updated_at?: string | null
   is_active: boolean
   /** AI uses balance-scaled sizing; Manual uses defaults unless signal specifies lots. */
   copier_mode?: 'ai' | 'manual'

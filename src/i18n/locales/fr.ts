@@ -197,7 +197,10 @@ export const fr: Translations = {
       mtLoginPlaceholder: 'Numéro de compte de trading',
       passwordLabel: 'Mot de passe',
       passwordPlaceholder: 'Mot de passe du compte de trading',
-      passwordHint: 'Envoyé aux serveurs MT uniquement. Jamais stocké.',
+      passwordHint: 'Envoyé aux serveurs MT uniquement. Non stocké sauf si vous l’activez ci-dessous.',
+      rememberPasswordLabel: 'Mémoriser le mot de passe pour reconnexion automatique',
+      rememberPasswordHint:
+        'Chiffre votre mot de passe MT sur nos serveurs pour rétablir la session sans nouvelle saisie. Vous pouvez le supprimer à tout moment.',
       connectButton: 'Connecter le compte',
       validationRequired: 'Numéro de compte, mot de passe et serveur sont requis',
       connectFailed: 'Échec de la connexion du compte',
@@ -238,8 +241,13 @@ export const fr: Translations = {
       reconnectPasswordBody:
         'La session broker a expiré sur le serveur de trading. Entrez le mot de passe de votre compte MT pour vous reconnecter.',
       reconnectPasswordLabel: 'Mot de passe du compte MT',
-      reconnectPasswordHint: 'Envoyé aux serveurs MT uniquement. Jamais stocké.',
+      reconnectPasswordHint: 'Envoyé aux serveurs MT uniquement. Activez mémoriser ci-dessous pour stockage chiffré et reconnexion auto.',
       reconnectPasswordPlaceholder: 'Mot de passe du compte de trading',
+      rememberPasswordLabel: 'Mémoriser le mot de passe pour reconnexion automatique',
+      rememberPasswordHint:
+        'Conserve une copie chiffrée pour que TSCopier se reconnecte sans redemander. Supprimable dans Configuration du compte.',
+      clearStoredCredentials: 'Oublier le mot de passe enregistré',
+      storedCredentialsActive: 'Reconnexion auto activée',
       deleteFailed: 'Échec de la suppression du compte',
       deleteSessionExpired:
         'Votre session a expiré. Actualisez la page ou reconnectez-vous, puis réessayez.',

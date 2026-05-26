@@ -197,7 +197,10 @@ export const en: Translations = {
       mtLoginPlaceholder: 'Trading account number',
       passwordLabel: 'Password',
       passwordPlaceholder: 'Trading account password',
-      passwordHint: 'Sent to MT servers only. Never stored.',
+      passwordHint: 'Sent to MT servers only. Not stored unless you opt in below.',
+      rememberPasswordLabel: 'Remember password for automatic reconnect',
+      rememberPasswordHint:
+        'Encrypts your MT password on our servers so TSCopier can restore the session without prompting you. You can remove it anytime.',
       connectButton: 'Connect account',
       validationRequired: 'Account number, password, and server are required',
       connectFailed: 'Failed to connect account',
@@ -238,8 +241,13 @@ export const en: Translations = {
       reconnectPasswordBody:
         'Your broker session expired on the trade server. Enter your MT account password to reconnect.',
       reconnectPasswordLabel: 'MT account password',
-      reconnectPasswordHint: 'Sent to MT servers only. Never stored.',
+      reconnectPasswordHint: 'Sent to MT servers only. Enable remember below to store it encrypted for automatic reconnect.',
       reconnectPasswordPlaceholder: 'Trading account password',
+      rememberPasswordLabel: 'Remember password for automatic reconnect',
+      rememberPasswordHint:
+        'Stores an encrypted copy so TSCopier can reconnect without asking again. You can clear it from Account Configuration.',
+      clearStoredCredentials: 'Forget saved password',
+      storedCredentialsActive: 'Auto-reconnect enabled',
       deleteFailed: 'Failed to delete broker',
       deleteSessionExpired:
         'Your sign-in session expired. Refresh the page and try again, or sign out and back in.',

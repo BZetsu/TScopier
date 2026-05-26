@@ -3,11 +3,14 @@ import { createClient } from "npm:@supabase/supabase-js@2"
 import { inferBrokerLabel } from "../_shared/brokerLabel.ts"
 import { accountTodaysProfitFromBalance, resolveDayStartBalance } from "../_shared/dayStartBalance.ts"
 import {
+  clearStoredMtPassword,
   isLegacyBrokerLink,
   makeMtClient,
   parseBrokerSessionId,
   reconnectBrokerSession,
+  stripBrokerSecretFields,
 } from "../_shared/brokerSession.ts"
+import { encryptMtPassword } from "../_shared/brokerCredentialsCrypto.ts"
 import {
   isMtApiAuthConfigured,
   makeClientFromEnv,
@@ -121,6 +124,7 @@ Deno.serve(async (req: Request) => {
       if (!server) return bad(400, "server required")
       if (!login) return bad(400, "login required")
       if (!password) return bad(400, "password required")
+      const rememberPassword = Boolean((body as Record<string, unknown>).remember_password)
 
       const { data: duplicateLogin } = await supabase
         .from("broker_accounts")
@@ -165,7 +169,7 @@ Deno.serve(async (req: Request) => {
         await new Promise(r => setTimeout(r, 600 + i * 400))
       }
 
-      const insertPayload = {
+      const insertPayload: Record<string, unknown> = {
         user_id: userId,
         label: displayLabel,
         platform,
@@ -192,6 +196,14 @@ Deno.serve(async (req: Request) => {
         day_start_balance_on: summary?.balance != null
           ? new Date().toISOString().slice(0, 10)
           : null,
+      }
+      if (rememberPassword) {
+        const enc = await encryptMtPassword(password, Deno.env)
+        if (enc) {
+          insertPayload.mt_password_encrypted = enc
+          insertPayload.auto_reconnect_enabled = true
+          insertPayload.password_updated_at = new Date().toISOString()
+        }
       }
 
       const { data: row, error: insErr } = await supabase
@@ -221,7 +233,10 @@ Deno.serve(async (req: Request) => {
           )
       } catch { /* non-fatal */ }
 
-      return Response.json({ ok: true, broker: row, summary }, { headers: corsHeaders })
+      return Response.json(
+        { ok: true, broker: stripBrokerSecretFields(row as Record<string, unknown>), summary },
+        { headers: corsHeaders },
+      )
     }
 
     if (action === "delete") {
@@ -429,9 +444,13 @@ Deno.serve(async (req: Request) => {
       const brokerId = String((body as Record<string, unknown>).broker_id ?? "")
       if (!brokerId) return bad(400, "broker_id required")
       const password = String((body as Record<string, unknown>).password ?? "").trim()
+      const rememberPasswordRaw = (body as Record<string, unknown>).remember_password
+      const rememberPassword = rememberPasswordRaw === undefined
+        ? undefined
+        : Boolean(rememberPasswordRaw)
       const { data: broker } = await supabase
         .from("broker_accounts")
-        .select("id,user_id,metaapi_account_id,platform,account_login,broker_server,performance_baseline_balance")
+        .select("id,user_id,metaapi_account_id,platform,account_login,broker_server,performance_baseline_balance,auto_reconnect_enabled,mt_password_encrypted")
         .eq("id", brokerId)
         .eq("user_id", userId)
         .maybeSingle()
@@ -439,6 +458,8 @@ Deno.serve(async (req: Request) => {
       const client = makeMtClient(Deno.env, String(broker.platform ?? "MT5"))
       const result = await reconnectBrokerSession(client, supabase, broker, {
         password: password || undefined,
+        remember_password: rememberPassword,
+        env: Deno.env,
       })
       if (!result.ok) {
         return Response.json(
@@ -447,6 +468,29 @@ Deno.serve(async (req: Request) => {
         )
       }
       return Response.json({ ok: true, ...result }, { headers: corsHeaders })
+    }
+
+    if (action === "clear_stored_credentials") {
+      const brokerId = String((body as Record<string, unknown>).broker_id ?? "")
+      if (!brokerId) return bad(400, "broker_id required")
+      const { data: broker } = await supabase
+        .from("broker_accounts")
+        .select("id")
+        .eq("id", brokerId)
+        .eq("user_id", userId)
+        .maybeSingle()
+      if (!broker) return bad(404, "Broker account not found")
+      await clearStoredMtPassword(supabase, brokerId, userId)
+      const { data: row } = await supabase
+        .from("broker_accounts")
+        .select("*")
+        .eq("id", brokerId)
+        .eq("user_id", userId)
+        .maybeSingle()
+      return Response.json(
+        { ok: true, broker: row ? stripBrokerSecretFields(row as Record<string, unknown>) : null },
+        { headers: corsHeaders },
+      )
     }
 
     if (action === "check") {

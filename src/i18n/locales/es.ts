@@ -197,7 +197,10 @@ export const es: Translations = {
       mtLoginPlaceholder: 'Número de cuenta de trading',
       passwordLabel: 'Contraseña',
       passwordPlaceholder: 'Contraseña de la cuenta de trading',
-      passwordHint: 'Se envía solo a los servidores MT. Nunca se almacena.',
+      passwordHint: 'Se envía solo a los servidores MT. No se almacena salvo que lo actives abajo.',
+      rememberPasswordLabel: 'Recordar contraseña para reconexión automática',
+      rememberPasswordHint:
+        'Cifra tu contraseña MT en nuestros servidores para restaurar la sesión sin volver a pedirla. Puedes eliminarla cuando quieras.',
       connectButton: 'Conectar cuenta',
       validationRequired: 'Número de cuenta, contraseña y servidor son obligatorios',
       connectFailed: 'No se pudo conectar la cuenta',
@@ -238,8 +241,13 @@ export const es: Translations = {
       reconnectPasswordBody:
         'La sesión del broker expiró en el servidor de trading. Introduce la contraseña de tu cuenta MT para reconectar.',
       reconnectPasswordLabel: 'Contraseña de la cuenta MT',
-      reconnectPasswordHint: 'Se envía solo a los servidores MT. Nunca se almacena.',
+      reconnectPasswordHint: 'Se envía solo a servidores MT. Activa recordar abajo para guardarla cifrada y reconectar automáticamente.',
       reconnectPasswordPlaceholder: 'Contraseña de la cuenta de trading',
+      rememberPasswordLabel: 'Recordar contraseña para reconexión automática',
+      rememberPasswordHint:
+        'Guarda una copia cifrada para que TSCopier reconecte sin volver a pedirla. Puedes borrarla en Configuración de cuenta.',
+      clearStoredCredentials: 'Olvidar contraseña guardada',
+      storedCredentialsActive: 'Reconexión automática activa',
       deleteFailed: 'No se pudo eliminar la cuenta',
       deleteSessionExpired:
         'Tu sesión expiró. Actualiza la página o vuelve a iniciar sesión e inténtalo de nuevo.',

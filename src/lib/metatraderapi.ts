@@ -60,6 +60,7 @@ export interface RegisterArgs {
   password: string
   label?: string
   signal_channel_ids?: string[]
+  remember_password?: boolean
 }
 
 export interface AccountSummary {
@@ -138,7 +139,10 @@ export const metatraderApi = {
     })
   },
 
-  reconnect(brokerId: string, password?: string): Promise<{
+  reconnect(
+    brokerId: string,
+    opts?: { password?: string; rememberPassword?: boolean },
+  ): Promise<{
     ok: boolean
     connection_status: 'connected' | 'error'
     message?: string
@@ -148,7 +152,10 @@ export const metatraderApi = {
       body: {
         action: 'reconnect',
         broker_id: brokerId,
-        ...(password?.trim() ? { password: password.trim() } : {}),
+        ...(opts?.password?.trim() ? { password: opts.password.trim() } : {}),
+        ...(opts?.rememberPassword !== undefined
+          ? { remember_password: opts.rememberPassword }
+          : {}),
       },
       expect: (b) =>
         b as {
@@ -157,6 +164,13 @@ export const metatraderApi = {
           message?: string
           summary?: AccountSummary | null
         },
+    })
+  },
+
+  clearStoredCredentials(brokerId: string): Promise<{ ok: true; broker: BrokerAccount | null }> {
+    return call({
+      body: { action: 'clear_stored_credentials', broker_id: brokerId },
+      expect: (b) => b as { ok: true; broker: BrokerAccount | null },
     })
   },
 

@@ -1,5 +1,9 @@
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2"
 import {
+  decryptMtPassword,
+  encryptMtPassword,
+} from "./brokerCredentialsCrypto.ts"
+import {
   makeClientFromEnv,
   MetatraderApiClient,
   MetatraderApiError,
@@ -25,6 +29,76 @@ export interface BrokerReconnectResult {
   summary?: Awaited<ReturnType<MetatraderApiClient["accountSummary"]>> | null
 }
 
+export function stripBrokerSecretFields<T extends Record<string, unknown>>(row: T): Omit<T, "mt_password_encrypted"> {
+  const { mt_password_encrypted: _omit, ...rest } = row
+  return rest
+}
+
+export async function resolveStoredMtPassword(
+  broker: {
+    auto_reconnect_enabled?: boolean | null
+    mt_password_encrypted?: string | null
+  },
+  opts: { password?: string },
+  env: { get(name: string): string | undefined },
+): Promise<string | undefined> {
+  const explicit = opts.password?.trim()
+  if (explicit) return explicit
+  if (!broker.auto_reconnect_enabled || !broker.mt_password_encrypted) return undefined
+  const decrypted = await decryptMtPassword(broker.mt_password_encrypted, env)
+  return decrypted?.trim() || undefined
+}
+
+export async function persistMtPasswordIfRequested(
+  supabase: SupabaseClient,
+  brokerId: string,
+  userId: string,
+  password: string | undefined,
+  remember: boolean | undefined,
+  env: { get(name: string): string | undefined },
+): Promise<void> {
+  if (remember === false) {
+    await supabase
+      .from("broker_accounts")
+      .update({
+        mt_password_encrypted: null,
+        auto_reconnect_enabled: false,
+        password_updated_at: null,
+      })
+      .eq("id", brokerId)
+      .eq("user_id", userId)
+    return
+  }
+  if (!remember || !password?.trim()) return
+  const enc = await encryptMtPassword(password.trim(), env)
+  if (!enc) return
+  await supabase
+    .from("broker_accounts")
+    .update({
+      mt_password_encrypted: enc,
+      auto_reconnect_enabled: true,
+      password_updated_at: new Date().toISOString(),
+    })
+    .eq("id", brokerId)
+    .eq("user_id", userId)
+}
+
+export async function clearStoredMtPassword(
+  supabase: SupabaseClient,
+  brokerId: string,
+  userId: string,
+): Promise<void> {
+  await supabase
+    .from("broker_accounts")
+    .update({
+      mt_password_encrypted: null,
+      auto_reconnect_enabled: false,
+      password_updated_at: null,
+    })
+    .eq("id", brokerId)
+    .eq("user_id", userId)
+}
+
 /** Ping session; only calls ConnectByToken when CheckConnect fails. */
 export async function keepBrokerSessionAlive(
   client: MetatraderApiClient,
@@ -43,9 +117,16 @@ export async function reconnectBrokerSession(
     account_login?: string | null
     broker_server?: string | null
     performance_baseline_balance?: number | null
+    auto_reconnect_enabled?: boolean | null
+    mt_password_encrypted?: string | null
   },
-  opts?: { password?: string },
+  opts?: {
+    password?: string
+    remember_password?: boolean
+    env?: { get(name: string): string | undefined }
+  },
 ): Promise<BrokerReconnectResult> {
+  const env = opts?.env ?? Deno.env
   const uuid = parseBrokerSessionId(broker.metaapi_account_id)
   if (!uuid) {
     return {
@@ -59,7 +140,7 @@ export async function reconnectBrokerSession(
 
   try {
     let alive = await keepBrokerSessionAlive(client, uuid)
-    const password = opts?.password?.trim()
+    const password = await resolveStoredMtPassword(broker, opts ?? {}, env)
     if (!alive && password) {
       const login = String(broker.account_login ?? "").trim()
       const server = String(broker.broker_server ?? "").trim()
@@ -147,6 +228,20 @@ export async function reconnectBrokerSession(
       .update(updatePayload)
       .eq("id", broker.id)
       .eq("user_id", broker.user_id)
+
+    if (password && opts?.remember_password !== undefined) {
+      await persistMtPasswordIfRequested(
+        supabase,
+        broker.id,
+        broker.user_id,
+        password,
+        opts.remember_password,
+        env,
+      )
+    } else if (password && broker.auto_reconnect_enabled && opts?.remember_password === undefined) {
+      // Refresh ciphertext when auto-reconnect already enabled and user supplied a new password.
+      await persistMtPasswordIfRequested(supabase, broker.id, broker.user_id, password, true, env)
+    }
 
     return { ok: true, connection_status: "connected", summary }
   } catch (e) {

@@ -16,6 +16,8 @@ export interface BrokerReconnectPasswordModalCopy {
   passwordLabel: string
   passwordHint: string
   passwordPlaceholder: string
+  rememberPasswordLabel: string
+  rememberPasswordHint: string
   detailLogin: string
   detailServer: string
   reconnect: string
@@ -26,7 +28,8 @@ interface BrokerReconnectPasswordModalProps {
   open: boolean
   broker: BrokerAccount | null
   copy: BrokerReconnectPasswordModalCopy
-  onSubmit: (password: string) => void
+  defaultRememberPassword?: boolean
+  onSubmit: (payload: { password: string; rememberPassword: boolean }) => void
   onCancel: () => void
 }
 
@@ -34,15 +37,18 @@ export function BrokerReconnectPasswordModal({
   open,
   broker,
   copy,
+  defaultRememberPassword = false,
   onSubmit,
   onCancel,
 }: BrokerReconnectPasswordModalProps) {
   const [password, setPassword] = useState('')
+  const [rememberPassword, setRememberPassword] = useState(defaultRememberPassword)
   const overlayRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!open) {
       setPassword('')
+      setRememberPassword(defaultRememberPassword)
       return
     }
     const handleKey = (e: KeyboardEvent) => {
@@ -56,7 +62,7 @@ export function BrokerReconnectPasswordModal({
       document.removeEventListener('keydown', handleKey)
       window.clearTimeout(focusTimer)
     }
-  }, [open, onCancel])
+  }, [open, onCancel, defaultRememberPassword])
 
   useEffect(() => {
     document.body.style.overflow = open ? 'hidden' : ''
@@ -71,7 +77,7 @@ export function BrokerReconnectPasswordModal({
     e.preventDefault()
     const trimmed = password.trim()
     if (!trimmed) return
-    onSubmit(trimmed)
+    onSubmit({ password: trimmed, rememberPassword })
   }
 
   return (
@@ -150,6 +156,23 @@ export function BrokerReconnectPasswordModal({
               autoComplete="current-password"
               required
             />
+
+            <label className="flex items-start gap-3 rounded-xl border border-neutral-100 bg-neutral-50 px-3 py-3 dark:border-neutral-800 dark:bg-neutral-800/40 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={rememberPassword}
+                onChange={e => setRememberPassword(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-neutral-300 text-teal-600 focus:ring-teal-500"
+              />
+              <span className="min-w-0">
+                <span className="block text-sm font-medium text-neutral-800 dark:text-neutral-100">
+                  {copy.rememberPasswordLabel}
+                </span>
+                <span className="mt-0.5 block text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed">
+                  {copy.rememberPasswordHint}
+                </span>
+              </span>
+            </label>
 
             <div className="flex justify-end gap-2 pt-1">
               <Button type="button" variant="ghost" onClick={onCancel}>

@@ -7,6 +7,11 @@ const SILENT_RECONNECT_INTERVAL_MS = 45_000
 
 type ReconnectResult = Awaited<ReturnType<typeof metatraderApi.reconnect>>
 
+export interface BrokerPasswordPromptResult {
+  password: string
+  rememberPassword: boolean
+}
+
 export interface UseBrokerReconnectOptions {
   brokers: BrokerAccount[]
   setBrokers: Dispatch<SetStateAction<BrokerAccount[]>>
@@ -16,7 +21,7 @@ export interface UseBrokerReconnectOptions {
   onError?: (message: string) => void
   onClearError?: () => void
   reconnectFailedLabel: string
-  requestPassword?: (brokerId: string) => Promise<string | null>
+  requestPassword?: (brokerId: string) => Promise<BrokerPasswordPromptResult | null>
   onReconnectSuccess?: (brokerId: string) => void
 }
 
@@ -24,11 +29,11 @@ async function reconnectWithOptionalPassword(
   brokerId: string,
   options: {
     allowPasswordPrompt: boolean
-    requestPassword?: (brokerId: string) => Promise<string | null>
+    requestPassword?: (brokerId: string) => Promise<BrokerPasswordPromptResult | null>
     reconnectFailedLabel: string
     onError?: (message: string) => void
   },
-): Promise<ReconnectResult> {
+): Promise<{ result: ReconnectResult; rememberPassword?: boolean }> {
   try {
     let result = await metatraderApi.reconnect(brokerId)
     const needsPassword =
@@ -37,13 +42,17 @@ async function reconnectWithOptionalPassword(
       && brokerNeedsPasswordForReconnect(result.message)
     if (needsPassword && options.requestPassword) {
       const entered = await options.requestPassword(brokerId)
-      if (!entered?.trim()) {
+      if (!entered?.password.trim()) {
         options.onError?.(result.message ?? options.reconnectFailedLabel)
-        return result
+        return { result }
       }
-      result = await metatraderApi.reconnect(brokerId, entered.trim())
+      result = await metatraderApi.reconnect(brokerId, {
+        password: entered.password.trim(),
+        rememberPassword: entered.rememberPassword,
+      })
+      return { result, rememberPassword: entered.rememberPassword }
     }
-    return result
+    return { result }
   } catch (e) {
     const msg = e instanceof Error ? e.message : options.reconnectFailedLabel
     if (
@@ -52,18 +61,26 @@ async function reconnectWithOptionalPassword(
       && options.requestPassword
     ) {
       const entered = await options.requestPassword(brokerId)
-      if (entered?.trim()) {
+      if (entered?.password.trim()) {
         try {
-          return await metatraderApi.reconnect(brokerId, entered.trim())
+          const result = await metatraderApi.reconnect(brokerId, {
+            password: entered.password.trim(),
+            rememberPassword: entered.rememberPassword,
+          })
+          return { result, rememberPassword: entered.rememberPassword }
         } catch (retryErr) {
           const retryMsg = retryErr instanceof Error ? retryErr.message : options.reconnectFailedLabel
           options.onError?.(retryMsg)
-          return { ok: false, connection_status: 'error', message: retryMsg }
+          return {
+            result: { ok: false, connection_status: 'error', message: retryMsg },
+          }
         }
       }
     }
     options.onError?.(msg)
-    return { ok: false, connection_status: 'error', message: msg }
+    return {
+      result: { ok: false, connection_status: 'error', message: msg },
+    }
   }
 }
 
@@ -79,6 +96,7 @@ export function useBrokerReconnect(opts: UseBrokerReconnectOptions) {
   const applyReconnectResult = useCallback((
     brokerId: string,
     result: ReconnectResult,
+    rememberPassword?: boolean,
   ) => {
     opts.setBrokers(prev =>
       prev.map(b => {
@@ -90,6 +108,17 @@ export function useBrokerReconnect(opts: UseBrokerReconnectOptions) {
           ...b,
           connection_status: 'connected' as const,
           last_synced_at: new Date().toISOString(),
+          ...(rememberPassword === true
+            ? {
+                auto_reconnect_enabled: true,
+                password_updated_at: new Date().toISOString(),
+              }
+            : rememberPassword === false
+              ? {
+                  auto_reconnect_enabled: false,
+                  password_updated_at: null,
+                }
+              : {}),
           ...(result.summary
             ? {
                 last_balance: result.summary.balance ?? b.last_balance,
@@ -115,13 +144,13 @@ export function useBrokerReconnect(opts: UseBrokerReconnectOptions) {
     setReconnectingBrokerIds(prev => new Set(prev).add(brokerId))
     opts.onClearError?.()
     try {
-      const result = await reconnectWithOptionalPassword(brokerId, {
+      const { result, rememberPassword } = await reconnectWithOptionalPassword(brokerId, {
         allowPasswordPrompt,
         requestPassword: opts.requestPassword,
         reconnectFailedLabel: opts.reconnectFailedLabel,
         onError: opts.onError,
       })
-      applyReconnectResult(brokerId, result)
+      applyReconnectResult(brokerId, result, rememberPassword)
       return result
     } finally {
       setReconnectingBrokerIds(prev => {
@@ -163,7 +192,6 @@ export function useBrokerReconnect(opts: UseBrokerReconnectOptions) {
     }
   }, [opts])
 
-  // Initial auto-reconnect on mount
   useEffect(() => {
     if (!opts.autoReconnect || opts.autoReconnectPaused) return
     const activeOnly = opts.autoReconnectActiveOnly !== false
@@ -175,7 +203,6 @@ export function useBrokerReconnect(opts: UseBrokerReconnectOptions) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Periodic silent reconnect loop for disconnected brokers
   useEffect(() => {
     if (!opts.autoReconnect || opts.autoReconnectPaused) return
     const activeOnly = opts.autoReconnectActiveOnly !== false

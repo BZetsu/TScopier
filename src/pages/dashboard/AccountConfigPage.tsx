@@ -73,6 +73,7 @@ interface BrokerForm {
   account_number: string
   account_password: string
   broker_server: string
+  remember_password: boolean
 }
 
 const emptyForm: BrokerForm = {
@@ -81,6 +82,7 @@ const emptyForm: BrokerForm = {
   account_number: '',
   account_password: '',
   broker_server: '',
+  remember_password: false,
 }
 
 function normalizeSignalChannelIds(b: BrokerAccount | undefined): string[] {
@@ -477,6 +479,7 @@ export function AccountConfigPage() {
     brokersNeedingReconnect,
     isReconnecting: isBrokerReconnecting,
     setReconnectErrorHandler,
+    clearStoredCredentials,
   } = useBrokerAccounts()
   const [channelOptions, setChannelOptions] = useState<ChannelOption[]>(() =>
     userId ? (channelOptionsCache.get(userId) ?? []) : [],
@@ -909,7 +912,7 @@ export function AccountConfigPage() {
 
   // ── Add account flow ───────────────────────────────────────────────────
 
-  const set = (field: keyof BrokerForm, value: string) =>
+  const set = (field: keyof BrokerForm, value: string | boolean) =>
     setForm(prev => ({ ...prev, [field]: value }))
 
   const addBroker = async (e: React.FormEvent) => {
@@ -939,6 +942,7 @@ export function AccountConfigPage() {
         login,
         password: form.account_password,
         label: form.label.trim() || undefined,
+        remember_password: form.remember_password,
       })
       upsertBroker(broker)
       const registeredType = resolveLinkedAccountType(
@@ -1143,6 +1147,23 @@ export function AccountConfigPage() {
                 />
               </div>
 
+              <label className="flex items-start gap-3 rounded-xl border border-neutral-100 bg-neutral-50 px-3 py-3 dark:border-neutral-800 dark:bg-neutral-800/40 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={form.remember_password}
+                  onChange={e => set('remember_password', e.target.checked)}
+                  className="mt-0.5 h-4 w-4 rounded border-neutral-300 text-teal-600 focus:ring-teal-500"
+                />
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium text-neutral-800 dark:text-neutral-100">
+                    {t.accountConfig.connectForm.rememberPasswordLabel}
+                  </span>
+                  <span className="mt-0.5 block text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed">
+                    {t.accountConfig.connectForm.rememberPasswordHint}
+                  </span>
+                </span>
+              </label>
+
               <div className="flex gap-2 pt-1">
                 <Button type="submit" loading={saving} size="sm">
                   {t.accountConfig.connectForm.connectButton}
@@ -1228,6 +1249,9 @@ export function AccountConfigPage() {
                           {brokerLabel && (
                             <Badge variant="neutral" size="sm">{brokerLabel}</Badge>
                           )}
+                          {broker.auto_reconnect_enabled ? (
+                            <Badge variant="success" size="sm">{bl.storedCredentialsActive}</Badge>
+                          ) : null}
                         </div>
                         {broker.broker_server && (
                           <p className="mt-0.5 truncate text-xs text-neutral-500 dark:text-neutral-400">{broker.broker_server}</p>
@@ -1255,6 +1279,16 @@ export function AccountConfigPage() {
                         >
                           <RefreshCw className="w-3.5 h-3.5" />
                           {bl.reconnect}
+                        </Button>
+                      ) : null}
+                      {broker.auto_reconnect_enabled ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => { void clearStoredCredentials(broker.id).then(r => { if (r.error) setError(r.error) }) }}
+                        >
+                          {bl.clearStoredCredentials}
                         </Button>
                       ) : null}
                       <button

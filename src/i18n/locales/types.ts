@@ -216,6 +216,8 @@ export interface AccountConfigConnectFormTranslations {
   passwordLabel: string
   passwordPlaceholder: string
   passwordHint: string
+  rememberPasswordLabel: string
+  rememberPasswordHint: string
   connectButton: string
   validationRequired: string
   connectFailed: string
@@ -253,6 +255,10 @@ export interface AccountConfigBrokerListTranslations {
   reconnectPasswordLabel: string
   reconnectPasswordHint: string
   reconnectPasswordPlaceholder: string
+  rememberPasswordLabel: string
+  rememberPasswordHint: string
+  clearStoredCredentials: string
+  storedCredentialsActive: string
   deleteFailed: string
   deleteSessionExpired: string
   duplicateMtLogin: string
