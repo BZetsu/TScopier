@@ -92,6 +92,9 @@ export interface BrokerRow {
    * doesn't fire trades that piled up while the broker was disabled.
    */
   last_activated_at?: string | null
+  /** Encrypted MT password for worker hard reconnect (never logged). */
+  auto_reconnect_enabled?: boolean | null
+  mt_password_encrypted?: string | null
 }
 
 export interface SymbolCacheEntry {

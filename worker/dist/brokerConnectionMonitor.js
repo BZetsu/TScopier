@@ -23,8 +23,8 @@ function nextBackoffMs(fails) {
  * Keeps MetatraderAPI sessions alive with lightweight CheckConnect pings.
  * Actively reconnects downed sessions via ConnectByToken with exponential backoff.
  */
-const RECONNECT_ACTIVE_MS = (0, monitorIdleGate_1.monitorActiveIntervalMs)('BROKER_RECONNECT_INTERVAL_MS', Math.max(60000, Number(process.env.BROKER_RECONNECT_INTERVAL_MS ?? 300000) || 300000));
-const RECONNECT_IDLE_MS = (0, monitorIdleGate_1.monitorIdleIntervalMs)('BROKER_RECONNECT_IDLE_MS', 300000);
+const RECONNECT_ACTIVE_MS = (0, monitorIdleGate_1.monitorActiveIntervalMs)('BROKER_RECONNECT_INTERVAL_MS', Math.max(60000, Number(process.env.BROKER_RECONNECT_INTERVAL_MS ?? 120000) || 120000));
+const RECONNECT_IDLE_MS = (0, monitorIdleGate_1.monitorIdleIntervalMs)('BROKER_RECONNECT_IDLE_MS', 180000);
 class BrokerConnectionMonitor {
     constructor(supabase) {
         this.supabase = supabase;
@@ -137,7 +137,7 @@ class BrokerConnectionMonitor {
         const fails = (prev?.fails ?? 0) + 1;
         const delay = nextBackoffMs(fails);
         this.backoff.set(row.id, { fails, lastAttemptAt: now, nextEligibleAt: now + delay });
-        if (fails >= 2 && row.connection_status !== 'error') {
+        if (fails >= 4 && row.connection_status !== 'error') {
             void (0, brokerConnectionStatus_1.writeBrokerConnectionStatus)(this.supabase, row.id, 'error', {
                 rawError: 'keepSessionAlive failed during reconnect sweep',
             });

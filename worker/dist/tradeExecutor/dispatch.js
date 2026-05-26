@@ -274,8 +274,11 @@ async function handleSignal(ctx, row, opts) {
                 return;
             }
         }
-        const userSub = await (0, subscriptionAccess_1.loadCachedUserSubscription)(ctx.supabase, row.user_id);
-        if (!userSub || !(0, subscriptionAccess_1.isSubscriptionActive)(userSub.status)) {
+        const [userSub, isAdmin] = await Promise.all([
+            (0, subscriptionAccess_1.loadCachedUserSubscription)(ctx.supabase, row.user_id),
+            (0, subscriptionAccess_1.loadCachedUserIsAdmin)(ctx.supabase, row.user_id),
+        ]);
+        if (!isAdmin && (!userSub || !(0, subscriptionAccess_1.isSubscriptionActive)(userSub.status))) {
             await ctx.logDispatchSkipped(row, 'subscription_inactive');
             return;
         }
@@ -329,7 +332,7 @@ async function handleSignal(ctx, row, opts) {
             return;
         }
         for (const broker of brokers) {
-            const blockReason = (0, subscriptionAccess_1.subscriptionBlocksSignalExecution)(userSub, (broker.manual_settings ?? null));
+            const blockReason = (0, subscriptionAccess_1.subscriptionBlocksSignalExecution)(userSub, (broker.manual_settings ?? null), isAdmin);
             if (blockReason === 'plan_advanced_feature_required') {
                 await ctx.logDispatchSkipped(row, blockReason);
                 return;
