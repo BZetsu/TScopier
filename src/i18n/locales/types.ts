@@ -248,7 +248,11 @@ export interface AccountConfigBrokerListTranslations {
   reconnectDroppedOne: string
   reconnectDroppedMany: string
   reconnectFailed: string
-  reconnectPasswordPrompt: string
+  reconnectPasswordTitle: string
+  reconnectPasswordBody: string
+  reconnectPasswordLabel: string
+  reconnectPasswordHint: string
+  reconnectPasswordPlaceholder: string
   deleteFailed: string
   deleteSessionExpired: string
   duplicateMtLogin: string

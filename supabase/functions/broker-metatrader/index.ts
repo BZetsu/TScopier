@@ -388,13 +388,38 @@ Deno.serve(async (req: Request) => {
           { headers: corsHeaders },
         )
       } catch (e) {
-        await supabase
-          .from("broker_accounts")
-          .update({ connection_status: "error" })
-          .eq("id", brokerId)
-          .eq("user_id", userId)
-        const status = e instanceof MetatraderApiError ? e.status : 502
         const msg = e instanceof Error ? e.message : "AccountSummary failed"
+        const sessionNotReady =
+          /not connected|session expired|broker session/i.test(msg)
+        if (!sessionNotReady) {
+          await supabase
+            .from("broker_accounts")
+            .update({ connection_status: "error" })
+            .eq("id", brokerId)
+            .eq("user_id", userId)
+        }
+        const status = e instanceof MetatraderApiError ? e.status : 502
+        if (sessionNotReady && broker) {
+          return Response.json(
+            {
+              ok: false,
+              stale: true,
+              summary: {
+                balance: broker.last_balance ?? undefined,
+                equity: broker.last_equity ?? undefined,
+                currency: broker.last_currency ?? undefined,
+              },
+              open_positions: null,
+              performance_baseline_balance: broker.performance_baseline_balance ?? null,
+              day_start_balance: broker.day_start_balance ?? null,
+              day_start_balance_on: broker.day_start_balance_on ?? null,
+              todays_profit_from_balance: null,
+              connection_status: broker.connection_status ?? "connected",
+              message: msg,
+            },
+            { status: 200, headers: corsHeaders },
+          )
+        }
         return bad(status >= 400 && status < 600 ? status : 502, msg)
       }
     }
@@ -416,8 +441,10 @@ Deno.serve(async (req: Request) => {
         password: password || undefined,
       })
       if (!result.ok) {
-        const status = result.message?.includes("legacy") ? 400 : 502
-        return bad(status, result.message ?? "Reconnect failed")
+        return Response.json(
+          { ok: false, ...result },
+          { status: 200, headers: corsHeaders },
+        )
       }
       return Response.json({ ok: true, ...result }, { headers: corsHeaders })
     }

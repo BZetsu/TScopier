@@ -234,8 +234,12 @@ export const fr: Translations = {
       reconnectDroppedMany:
         '{count} comptes ont perdu leur connexion broker. Utilisez Reconnecter sur chaque compte.',
       reconnectFailed: 'Impossible de reconnecter le broker',
-      reconnectPasswordPrompt:
-        'La session broker a expiré sur le serveur de trading. Entrez le mot de passe de votre compte MT pour vous reconnecter :',
+      reconnectPasswordTitle: 'Session broker expirée',
+      reconnectPasswordBody:
+        'La session broker a expiré sur le serveur de trading. Entrez le mot de passe de votre compte MT pour vous reconnecter.',
+      reconnectPasswordLabel: 'Mot de passe du compte MT',
+      reconnectPasswordHint: 'Envoyé aux serveurs MT uniquement. Jamais stocké.',
+      reconnectPasswordPlaceholder: 'Mot de passe du compte de trading',
       deleteFailed: 'Échec de la suppression du compte',
       deleteSessionExpired:
         'Votre session a expiré. Actualisez la page ou reconnectez-vous, puis réessayez.',

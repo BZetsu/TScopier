@@ -5,6 +5,8 @@ import { brokerCanReconnect, brokerNeedsPasswordForReconnect } from '../lib/brok
 
 const SILENT_RECONNECT_INTERVAL_MS = 45_000
 
+type ReconnectResult = Awaited<ReturnType<typeof metatraderApi.reconnect>>
+
 export interface UseBrokerReconnectOptions {
   brokers: BrokerAccount[]
   setBrokers: Dispatch<SetStateAction<BrokerAccount[]>>
@@ -14,8 +16,55 @@ export interface UseBrokerReconnectOptions {
   onError?: (message: string) => void
   onClearError?: () => void
   reconnectFailedLabel: string
-  passwordPrompt?: string
+  requestPassword?: (brokerId: string) => Promise<string | null>
   onReconnectSuccess?: (brokerId: string) => void
+}
+
+async function reconnectWithOptionalPassword(
+  brokerId: string,
+  options: {
+    allowPasswordPrompt: boolean
+    requestPassword?: (brokerId: string) => Promise<string | null>
+    reconnectFailedLabel: string
+    onError?: (message: string) => void
+  },
+): Promise<ReconnectResult> {
+  try {
+    let result = await metatraderApi.reconnect(brokerId)
+    const needsPassword =
+      options.allowPasswordPrompt
+      && result.connection_status !== 'connected'
+      && brokerNeedsPasswordForReconnect(result.message)
+    if (needsPassword && options.requestPassword) {
+      const entered = await options.requestPassword(brokerId)
+      if (!entered?.trim()) {
+        options.onError?.(result.message ?? options.reconnectFailedLabel)
+        return result
+      }
+      result = await metatraderApi.reconnect(brokerId, entered.trim())
+    }
+    return result
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : options.reconnectFailedLabel
+    if (
+      options.allowPasswordPrompt
+      && brokerNeedsPasswordForReconnect(msg)
+      && options.requestPassword
+    ) {
+      const entered = await options.requestPassword(brokerId)
+      if (entered?.trim()) {
+        try {
+          return await metatraderApi.reconnect(brokerId, entered.trim())
+        } catch (retryErr) {
+          const retryMsg = retryErr instanceof Error ? retryErr.message : options.reconnectFailedLabel
+          options.onError?.(retryMsg)
+          return { ok: false, connection_status: 'error', message: retryMsg }
+        }
+      }
+    }
+    options.onError?.(msg)
+    return { ok: false, connection_status: 'error', message: msg }
+  }
 }
 
 export function useBrokerReconnect(opts: UseBrokerReconnectOptions) {
@@ -29,7 +78,7 @@ export function useBrokerReconnect(opts: UseBrokerReconnectOptions) {
 
   const applyReconnectResult = useCallback((
     brokerId: string,
-    result: Awaited<ReturnType<typeof metatraderApi.reconnect>>,
+    result: ReconnectResult,
   ) => {
     opts.setBrokers(prev =>
       prev.map(b => {
@@ -66,32 +115,14 @@ export function useBrokerReconnect(opts: UseBrokerReconnectOptions) {
     setReconnectingBrokerIds(prev => new Set(prev).add(brokerId))
     opts.onClearError?.()
     try {
-      let result = await metatraderApi.reconnect(brokerId)
-      const needsPassword =
-        allowPasswordPrompt
-        && result.connection_status !== 'connected'
-        && brokerNeedsPasswordForReconnect(result.message)
-      if (needsPassword && opts.passwordPrompt) {
-        const entered = window.prompt(opts.passwordPrompt)
-        if (!entered?.trim()) {
-          opts.onError?.(result.message ?? opts.reconnectFailedLabel)
-          applyReconnectResult(brokerId, result)
-          return result
-        }
-        result = await metatraderApi.reconnect(brokerId, entered.trim())
-      }
+      const result = await reconnectWithOptionalPassword(brokerId, {
+        allowPasswordPrompt,
+        requestPassword: opts.requestPassword,
+        reconnectFailedLabel: opts.reconnectFailedLabel,
+        onError: opts.onError,
+      })
       applyReconnectResult(brokerId, result)
-      if (
-        allowPasswordPrompt
-        && result.connection_status !== 'connected'
-        && result.message
-      ) {
-        opts.onError?.(result.message)
-      }
       return result
-    } catch (e) {
-      opts.onError?.(e instanceof Error ? e.message : opts.reconnectFailedLabel)
-      throw e
     } finally {
       setReconnectingBrokerIds(prev => {
         const next = new Set(prev)

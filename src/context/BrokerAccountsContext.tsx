@@ -19,6 +19,7 @@ import { useBrokerAccountsRealtime } from '../hooks/useBrokerAccountsRealtime'
 import { useBrokerConnectionHealth } from '../hooks/useBrokerConnectionHealth'
 import { useBrokerReconnect } from '../hooks/useBrokerReconnect'
 import { useBrokerSessionFailureRealtime } from '../hooks/useBrokerSessionFailureRealtime'
+import { BrokerReconnectPasswordModal } from '../components/broker/BrokerReconnectPasswordModal'
 
 interface BrokerAccountsContextValue {
   brokers: BrokerAccount[]
@@ -59,6 +60,34 @@ export function BrokerAccountsProvider({ children }: { children: ReactNode }) {
 
   const reconnectErrorHandlerRef = useRef<((message: string) => void) | null>(null)
   const reconnectSuccessHandlerRef = useRef<((brokerId: string) => void) | null>(null)
+  const passwordRequestRef = useRef<{
+    brokerId: string
+    resolve: (password: string | null) => void
+  } | null>(null)
+  const [passwordModalBrokerId, setPasswordModalBrokerId] = useState<string | null>(null)
+
+  const requestReconnectPassword = useCallback((brokerId: string): Promise<string | null> => {
+    return new Promise(resolve => {
+      passwordRequestRef.current = { brokerId, resolve }
+      setPasswordModalBrokerId(brokerId)
+    })
+  }, [])
+
+  const finishPasswordRequest = useCallback((password: string | null) => {
+    const pending = passwordRequestRef.current
+    if (!pending) return
+    passwordRequestRef.current = null
+    setPasswordModalBrokerId(null)
+    pending.resolve(password)
+  }, [])
+
+  const handlePasswordModalSubmit = useCallback((password: string) => {
+    finishPasswordRequest(password)
+  }, [finishPasswordRequest])
+
+  const handlePasswordModalCancel = useCallback(() => {
+    finishPasswordRequest(null)
+  }, [finishPasswordRequest])
 
   const refreshBrokers = useCallback(async (options?: { silent?: boolean }) => {
     if (!user?.id) {
@@ -136,7 +165,7 @@ export function BrokerAccountsProvider({ children }: { children: ReactNode }) {
     autoReconnectActiveOnly: true,
     autoReconnectPaused: backgroundConnectivityPaused,
     reconnectFailedLabel: bl.reconnectFailed,
-    passwordPrompt: bl.reconnectPasswordPrompt,
+    requestPassword: requestReconnectPassword,
     onError: message => reconnectErrorHandlerRef.current?.(message),
     onClearError: () => {},
     onReconnectSuccess: brokerId => reconnectSuccessHandlerRef.current?.(brokerId),
@@ -191,7 +220,28 @@ export function BrokerAccountsProvider({ children }: { children: ReactNode }) {
     ],
   )
 
-  return <BrokerAccountsContext.Provider value={value}>{children}</BrokerAccountsContext.Provider>
+  return (
+    <BrokerAccountsContext.Provider value={value}>
+      {children}
+      <BrokerReconnectPasswordModal
+        open={passwordModalBrokerId != null}
+        broker={brokers.find(b => b.id === passwordModalBrokerId) ?? null}
+        copy={{
+          title: bl.reconnectPasswordTitle,
+          body: bl.reconnectPasswordBody,
+          passwordLabel: bl.reconnectPasswordLabel,
+          passwordHint: bl.reconnectPasswordHint,
+          passwordPlaceholder: bl.reconnectPasswordPlaceholder,
+          detailLogin: bl.detailLogin,
+          detailServer: bl.detailServer,
+          reconnect: bl.reconnect,
+          cancel: t.common.cancel,
+        }}
+        onSubmit={handlePasswordModalSubmit}
+        onCancel={handlePasswordModalCancel}
+      />
+    </BrokerAccountsContext.Provider>
+  )
 }
 
 export function useBrokerAccounts(): BrokerAccountsContextValue {

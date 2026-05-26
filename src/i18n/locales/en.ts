@@ -234,8 +234,12 @@ export const en: Translations = {
       reconnectDroppedMany:
         '{count} accounts lost their broker connection and are shown as Disconnected. Use Reconnect on each account.',
       reconnectFailed: 'Could not reconnect broker',
-      reconnectPasswordPrompt:
-        'Your broker session expired on the trade server. Enter your MT account password to reconnect:',
+      reconnectPasswordTitle: 'Broker session expired',
+      reconnectPasswordBody:
+        'Your broker session expired on the trade server. Enter your MT account password to reconnect.',
+      reconnectPasswordLabel: 'MT account password',
+      reconnectPasswordHint: 'Sent to MT servers only. Never stored.',
+      reconnectPasswordPlaceholder: 'Trading account password',
       deleteFailed: 'Failed to delete broker',
       deleteSessionExpired:
         'Your sign-in session expired. Refresh the page and try again, or sign out and back in.',

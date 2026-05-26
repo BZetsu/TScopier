@@ -104,6 +104,8 @@ export const metatraderApi = {
     todays_profit_from_balance?: number | null
     /** True when balance is cached because live AccountSummary failed. */
     stale?: boolean
+    connection_status?: string
+    message?: string
   }> {
     return call({
       body: {
@@ -123,6 +125,8 @@ export const metatraderApi = {
           day_start_balance_on?: string | null
           todays_profit_from_balance?: number | null
           stale?: boolean
+          connection_status?: string
+          message?: string
         },
     })
   },
