@@ -10,7 +10,7 @@ import {
 import { classifyBrokerConnectError } from '../lib/brokerConnectError'
 import { metatraderApi } from '../lib/metatraderapi'
 
-const FAILURES_BEFORE_DISCONNECT = 3
+const FAILURES_BEFORE_DISCONNECT = 4
 const SAME_SERVER_GAP_MS = 1500
 
 function mtServerKey(broker: BrokerAccount): string {

@@ -8,6 +8,8 @@ import {
 } from '../metatraderapi'
 import type { ManualSettings } from '../manualPlanner'
 import { writeBrokerConnectionStatus } from '../brokerConnectionStatus'
+import { hardReconnectBrokerSession } from '../brokerHardReconnect'
+import { pauseIfSameMtServer } from '../mtServerSessionLock'
 import { applySymbolMapping, isMtUuid, parseSymbolToTradeList } from './helpers'
 import {
   SESSION_PING_MIN_INTERVAL_MS,
@@ -19,6 +21,16 @@ import {
   type SymbolCacheEntry,
   type SymbolListCacheEntry,
 } from './types'
+
+const HEARTBEAT_FAILURES_BEFORE_DOWN = Math.max(
+  2,
+  Number(process.env.BROKER_HEARTBEAT_FAILURES_BEFORE_DOWN ?? 4) || 4,
+)
+const heartbeatFailCounts = new Map<string, number>()
+
+export function resetBrokerHeartbeatFailures(brokerId: string): void {
+  heartbeatFailCounts.delete(brokerId)
+}
 
 export function prewarmSymbolsEnabled(ctx: TradeExecutorContext, ): boolean {
     const v = String(process.env.EXECUTOR_PREWARM_SYMBOLS ?? 'true').toLowerCase()
@@ -48,31 +60,77 @@ export async function prewarmBrokerCaches(ctx: TradeExecutorContext, ): Promise<
 
 export async function sessionHeartbeatTick(ctx: TradeExecutorContext, ): Promise<void> {
     if (!hasMetatraderApiConfigured()) return
-    for (const row of ctx.brokersById.values()) {
+
+    const rows = [...ctx.brokersById.values()]
+      .filter(row => isMtUuid(row.metaapi_account_id))
+      .sort((a, b) => {
+        const ak = `${a.platform}:${String(a.broker_server ?? '').trim().toLowerCase()}`
+        const bk = `${b.platform}:${String(b.broker_server ?? '').trim().toLowerCase()}`
+        return ak.localeCompare(bk)
+      })
+
+    let lastServerKey: string | null = null
+
+    for (const row of rows) {
       const uuid = row.metaapi_account_id
       if (!isMtUuid(uuid)) continue
+      lastServerKey = await pauseIfSameMtServer(lastServerKey, row.platform, row.broker_server)
       const api = ctx.apiFor(row)
       if (!api) continue
-      const alive = await api.keepSessionAlive(uuid!)
-      if (alive) {
+
+      const markRecovered = async () => {
+        heartbeatFailCounts.delete(row.id)
         ctx.sessionPingAt.set(uuid!, Date.now())
         if (row.connection_status === 'error') {
           row.connection_status = 'connected'
           await writeBrokerConnectionStatus(ctx.supabase, row.id, 'connected')
         }
-      } else {
-        await new Promise(r => setTimeout(r, 2000))
-        const retryAlive = await api.keepSessionAlive(uuid!)
-        if (retryAlive) {
-          ctx.sessionPingAt.set(uuid!, Date.now())
-          if (row.connection_status === 'error') {
-            row.connection_status = 'connected'
-            await writeBrokerConnectionStatus(ctx.supabase, row.id, 'connected')
-          }
-        } else {
-          await markBrokerSessionDown(ctx, row, uuid!, 'heartbeat keepSessionAlive failed')
+      }
+
+      const alive = await api.keepSessionAlive(uuid!)
+      if (alive) {
+        await markRecovered()
+        continue
+      }
+
+      await new Promise(r => setTimeout(r, 2000))
+      const retryAlive = await api.keepSessionAlive(uuid!)
+      if (retryAlive) {
+        await markRecovered()
+        continue
+      }
+
+      if (
+        row.auto_reconnect_enabled
+        && row.mt_password_encrypted
+        && row.account_login
+        && row.broker_server
+      ) {
+        const hardOk = await hardReconnectBrokerSession(ctx.supabase, api, {
+          id: row.id,
+          platform: row.platform,
+          metaapi_account_id: uuid!,
+          account_login: row.account_login,
+          broker_server: row.broker_server,
+          auto_reconnect_enabled: row.auto_reconnect_enabled,
+          mt_password_encrypted: row.mt_password_encrypted,
+        })
+        if (hardOk) {
+          await markRecovered()
+          continue
         }
       }
+
+      const fails = (heartbeatFailCounts.get(row.id) ?? 0) + 1
+      heartbeatFailCounts.set(row.id, fails)
+      if (fails < HEARTBEAT_FAILURES_BEFORE_DOWN) {
+        console.warn(
+          `[tradeExecutor] broker ${row.id} heartbeat miss (${fails}/${HEARTBEAT_FAILURES_BEFORE_DOWN})`,
+        )
+        continue
+      }
+
+      await markBrokerSessionDown(ctx, row, uuid!, 'heartbeat keepSessionAlive failed')
     }
   }
 
@@ -117,13 +175,24 @@ export async function symbolCacheKeepaliveTick(ctx: TradeExecutorContext, ): Pro
 
 export async function reconnectCachedBrokers(ctx: TradeExecutorContext, ) {
     ctx.sessionOrderBlocked.clear()
-    for (const row of ctx.brokersById.values()) {
+    const rows = [...ctx.brokersById.values()]
+      .filter(row => row.metaapi_account_id && !row.metaapi_account_id.includes('|'))
+      .sort((a, b) => {
+        const ak = `${a.platform}:${String(a.broker_server ?? '').trim().toLowerCase()}`
+        const bk = `${b.platform}:${String(b.broker_server ?? '').trim().toLowerCase()}`
+        return ak.localeCompare(bk)
+      })
+
+    let lastServerKey: string | null = null
+    for (const row of rows) {
+      lastServerKey = await pauseIfSameMtServer(lastServerKey, row.platform, row.broker_server)
       const uuid = row.metaapi_account_id
-      if (!uuid || uuid.includes('|')) continue
+      if (!uuid) continue
       const api = ctx.apiFor(row)
       if (!api) continue
       const alive = await api.keepSessionAlive(uuid)
       if (alive) {
+        heartbeatFailCounts.delete(row.id)
         ctx.sessionPingAt.set(uuid, Date.now())
         if (row.connection_status !== 'connected') {
           console.log(`[tradeExecutor] broker=${row.id} recovered on startup`)
@@ -137,7 +206,6 @@ export async function reconnectCachedBrokers(ctx: TradeExecutorContext, ) {
           rawError: 'session not alive on startup',
         })
       }
-      await new Promise(r => setTimeout(r, 500))
     }
   }
 

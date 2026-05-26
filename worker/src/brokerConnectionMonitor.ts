@@ -49,9 +49,9 @@ function nextBackoffMs(fails: number): number {
  */
 const RECONNECT_ACTIVE_MS = monitorActiveIntervalMs(
   'BROKER_RECONNECT_INTERVAL_MS',
-  Math.max(60_000, Number(process.env.BROKER_RECONNECT_INTERVAL_MS ?? 300_000) || 300_000),
+  Math.max(60_000, Number(process.env.BROKER_RECONNECT_INTERVAL_MS ?? 120_000) || 120_000),
 )
-const RECONNECT_IDLE_MS = monitorIdleIntervalMs('BROKER_RECONNECT_IDLE_MS', 300_000)
+const RECONNECT_IDLE_MS = monitorIdleIntervalMs('BROKER_RECONNECT_IDLE_MS', 180_000)
 
 export class BrokerConnectionMonitor {
   private reconnectLoop: MonitorLoopHandle | null = null
@@ -174,7 +174,7 @@ export class BrokerConnectionMonitor {
     const delay = nextBackoffMs(fails)
     this.backoff.set(row.id, { fails, lastAttemptAt: now, nextEligibleAt: now + delay })
 
-    if (fails >= 2 && row.connection_status !== 'error') {
+    if (fails >= 4 && row.connection_status !== 'error') {
       void writeBrokerConnectionStatus(this.supabase, row.id, 'error', {
         rawError: 'keepSessionAlive failed during reconnect sweep',
       })

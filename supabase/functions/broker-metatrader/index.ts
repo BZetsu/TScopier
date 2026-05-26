@@ -5,6 +5,7 @@ import { accountTodaysProfitFromBalance, resolveDayStartBalance } from "../_shar
 import {
   clearStoredMtPassword,
   isLegacyBrokerLink,
+  keepBrokerSessionAlive,
   makeMtClient,
   markBrokerConnectionError,
   parseBrokerSessionId,
@@ -535,8 +536,8 @@ Deno.serve(async (req: Request) => {
       const client = mtClient(Deno.env, String(broker.platform ?? "MT5"))
 
       try {
-        const ready = await client.verifyTradingReady(uuid)
-        if (!ready) {
+        const alive = await keepBrokerSessionAlive(client, uuid)
+        if (!alive) {
           return Response.json(
             {
               ok: false,

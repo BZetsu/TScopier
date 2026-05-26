@@ -18,6 +18,7 @@ import { metatraderApi } from '../lib/metatraderapi'
 import type { BrokerAccount } from '../types/database'
 import { useBrokerAccountsRealtime } from '../hooks/useBrokerAccountsRealtime'
 import { useBrokerConnectionHealth } from '../hooks/useBrokerConnectionHealth'
+import { useBrokerConnectionRecovery } from '../hooks/useBrokerConnectionRecovery'
 import { useBrokerReconnect, type BrokerPasswordPromptResult } from '../hooks/useBrokerReconnect'
 import { useBrokerSessionFailureRealtime } from '../hooks/useBrokerSessionFailureRealtime'
 import { BrokerReconnectPasswordModal } from '../components/broker/BrokerReconnectPasswordModal'
@@ -60,8 +61,10 @@ export function BrokerAccountsProvider({ children }: { children: ReactNode }) {
   const [manualConnectivityPaused, setManualConnectivityPaused] = useState(false)
   const initialLoadDoneRef = useRef(false)
 
-  const routePausesConnectivity = pathname === '/account-configuration'
-  const backgroundConnectivityPaused = routePausesConnectivity || manualConnectivityPaused
+  /** Pause heavy health polls on Account Config (manual reconnect in progress). Recovery stays on. */
+  const routePausesHealthChecks = pathname === '/account-configuration'
+  const healthChecksPaused = routePausesHealthChecks || manualConnectivityPaused
+  const recoveryPaused = manualConnectivityPaused
 
   const reconnectErrorHandlerRef = useRef<((message: string) => void) | null>(null)
   const reconnectSuccessHandlerRef = useRef<((brokerId: string) => void) | null>(null)
@@ -169,9 +172,9 @@ export function BrokerAccountsProvider({ children }: { children: ReactNode }) {
   } = useBrokerReconnect({
     brokers,
     setBrokers,
-    autoReconnect: false,
+    autoReconnect: true,
     autoReconnectActiveOnly: true,
-    autoReconnectPaused: backgroundConnectivityPaused,
+    autoReconnectPaused: recoveryPaused,
     reconnectFailedLabel: bl.reconnectFailed,
     requestPassword: requestReconnectPassword,
     onError: message => reconnectErrorHandlerRef.current?.(message),
@@ -179,14 +182,13 @@ export function BrokerAccountsProvider({ children }: { children: ReactNode }) {
     onReconnectSuccess: brokerId => reconnectSuccessHandlerRef.current?.(brokerId),
   })
 
-  const connectivityActive = !backgroundConnectivityPaused
-
-  useBrokerAccountsRealtime(user?.id, setBrokers, { silentReconnect: connectivityActive })
+  useBrokerAccountsRealtime(user?.id, setBrokers, { silentReconnect: !recoveryPaused })
   useBrokerConnectionHealth(brokers, setBrokers, {
-    enabled: connectivityActive,
-    refreshOnVisible: connectivityActive,
+    enabled: !healthChecksPaused,
+    refreshOnVisible: !healthChecksPaused,
   })
-  useBrokerSessionFailureRealtime(user?.id, setBrokers, { silentReconnect: connectivityActive })
+  useBrokerConnectionRecovery(brokers, setBrokers, { enabled: !recoveryPaused })
+  useBrokerSessionFailureRealtime(user?.id, setBrokers, { silentReconnect: !recoveryPaused })
 
   const clearStoredCredentials = useCallback(async (brokerId: string) => {
     try {
