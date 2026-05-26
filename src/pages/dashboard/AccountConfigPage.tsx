@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Plus, Trash2, Server, Activity, GitBranch, Eye, DollarSign, RefreshCw,
-  SlidersHorizontal, Radio, Target, Filter, Wallet,
+  SlidersHorizontal, Radio, Target, Filter, Wallet, Link2,
   ArrowLeftRight, ChevronDown, Settings2, Bookmark, Pencil, ScrollText, AlertTriangle,
 } from 'lucide-react'
 import clsx from 'clsx'
@@ -69,6 +69,10 @@ import {
   upsertTradingPreset,
   type ChannelTradingPreset,
 } from '../../lib/tradingPresets'
+import {
+  connectChannelToBroker,
+  getBrokerDisplayLabel,
+} from '../../lib/brokerChannelLink'
 import { DEFAULT_MANUAL_SETTINGS, DEFAULT_MANUAL_TP_LOTS } from '../../lib/defaultManualSettings'
 import type { ConfigureModalTranslations } from '../../i18n/locales/configureModal/types'
 import {
@@ -487,6 +491,7 @@ export function AccountConfigPage() {
   const [activeManualSubTab, setActiveManualSubTab] = useState<ManualSubTabId>('channel_instructions')
   const [symbolMappingText, setSymbolMappingText] = useState('')
   const [configSaving, setConfigSaving] = useState(false)
+  const [channelConnecting, setChannelConnecting] = useState(false)
   const [configSavedAt, setConfigSavedAt] = useState<number | null>(null)
   const [tradingPresets, setTradingPresets] = useState<ChannelTradingPreset[]>([])
   const [presetsLoading, setPresetsLoading] = useState(false)
@@ -544,6 +549,11 @@ export function AccountConfigPage() {
     if (!entry) return false
     return !isChannelConfigDefault(entry)
   }, [configDraft.selectedChannelId, configDraft.channelIds, configDraft.channelConfigs])
+
+  const selectedChannelLinked = Boolean(
+    configDraft.selectedChannelId
+    && configDraft.channelIds.includes(configDraft.selectedChannelId),
+  )
 
   const multiTradePreview = useMemo(() => {
     const ms = channelManualSettings
@@ -745,7 +755,10 @@ export function AccountConfigPage() {
     setConfigAccount(fresh)
     setActiveManualSubTab('channel_instructions')
     const draft = buildChannelConfigDraftFromBroker(fresh, channelIds)
-    setConfigDraft(draft)
+    setConfigDraft({
+      ...draft,
+      selectedChannelId: draft.selectedChannelId ?? channelOptions[0]?.id ?? null,
+    })
     setChannelLinkEditMode(false)
     syncSymbolMappingFromChannel(draft.selectedChannelId, draft.channelConfigs)
     if (userId) void refreshTradingPresets(userId)
@@ -754,6 +767,52 @@ export function AccountConfigPage() {
   const selectConfigureChannel = (channelId: string) => {
     setConfigDraft(prev => ({ ...prev, selectedChannelId: channelId }))
     setActiveManualSubTab('channel_instructions')
+  }
+
+  const connectSelectedChannelToBroker = async () => {
+    if (!configAccount || !user || !configDraft.selectedChannelId) return
+    const channelId = configDraft.selectedChannelId
+    if (configDraft.channelIds.includes(channelId)) return
+
+    setChannelConnecting(true)
+    setError('')
+    try {
+      const { broker: updated, error: connectErr } = await connectChannelToBroker(
+        supabase,
+        user.id,
+        configAccount,
+        channelId,
+      )
+      if (connectErr) {
+        setError(connectErr)
+        return
+      }
+      if (!updated) return
+
+      replaceBroker(updated)
+      setConfigAccount(updated)
+      const linkedIds = normalizeSignalChannelIds(updated).filter(id =>
+        channelOptions.some(c => c.id === id),
+      )
+      setConfigDraft(prev => {
+        const channelConfigs = { ...prev.channelConfigs }
+        if (!channelConfigs[channelId]) {
+          channelConfigs[channelId] = defaultChannelConfigDraft()
+        }
+        return {
+          ...prev,
+          channelIds: linkedIds,
+          channelConfigs,
+          selectedChannelId: channelId,
+        }
+      })
+      syncSymbolMappingFromChannel(channelId, {
+        ...configDraft.channelConfigs,
+        [channelId]: configDraft.channelConfigs[channelId] ?? defaultChannelConfigDraft(),
+      })
+    } finally {
+      setChannelConnecting(false)
+    }
   }
 
   useEffect(() => {
@@ -1673,18 +1732,23 @@ export function AccountConfigPage() {
                           ) : null}
                           <button
                             type="button"
-                            disabled={!linked}
                             onClick={() => selectConfigureChannel(channel.id)}
                             className={clsx(
                               'flex-1 min-w-0 flex items-center gap-2 text-left px-2 py-2 rounded-lg text-sm transition-colors min-h-[44px] sm:min-h-0',
-                              !linked && 'opacity-50 cursor-not-allowed',
-                              selected && linked
+                              selected
                                 ? 'bg-white dark:bg-neutral-900 text-primary-700 shadow-sm border border-primary-100 dark:border-primary-900/50'
-                                : 'text-neutral-600 dark:text-neutral-400 hover:bg-white dark:hover:bg-neutral-900 border border-transparent',
+                                : linked
+                                  ? 'text-neutral-700 dark:text-neutral-300 hover:bg-white dark:hover:bg-neutral-900 border border-transparent'
+                                  : 'text-neutral-600 dark:text-neutral-400 hover:bg-white dark:hover:bg-neutral-900 border border-dashed border-neutral-200 dark:border-neutral-700',
                             )}
                           >
-                            <Radio className={clsx('w-4 h-4 shrink-0', selected ? 'text-primary-600' : 'text-neutral-400')} />
-                            <span className="truncate">{channel.display_name}</span>
+                            <Radio className={clsx('w-4 h-4 shrink-0', selected ? 'text-primary-600' : linked ? 'text-neutral-400' : 'text-neutral-300')} />
+                            <span className="truncate flex-1">{channel.display_name}</span>
+                            {!channelLinkEditMode ? (
+                              <Badge variant={linked ? 'success' : 'neutral'}>
+                                {linked ? cm.channelLinkedBadge : cm.channelNotLinkedBadge}
+                              </Badge>
+                            ) : null}
                           </button>
                         </div>
                       )
@@ -1700,7 +1764,7 @@ export function AccountConfigPage() {
 
               {/* Config body column */}
               <div className="flex-1 flex flex-col min-h-0 min-w-0">
-                {configDraft.selectedChannelId && configDraft.channelIds.includes(configDraft.selectedChannelId) ? (
+                {selectedChannelLinked ? (
                   <div className="shrink-0 px-4 sm:px-6 pt-3 sm:pt-4 bg-white dark:bg-neutral-900 border-b border-neutral-100 dark:border-neutral-800 overflow-x-auto overscroll-x-contain">
                     <div className="flex flex-nowrap items-center gap-1 min-w-max sm:min-w-0 sm:flex-wrap pb-px">
                       {manualSubTabs.map(sub => {
@@ -1730,11 +1794,32 @@ export function AccountConfigPage() {
                 <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 sm:px-6 py-4 sm:py-5 min-h-0 overscroll-y-contain">
                 {error && <Alert className="mb-4">{error}</Alert>}
 
-                {!configDraft.selectedChannelId || !configDraft.channelIds.includes(configDraft.selectedChannelId) ? (
+                {!configDraft.selectedChannelId ? (
                   <div className="py-12 text-center">
                     <Radio className="w-10 h-10 mx-auto mb-3 text-neutral-300 dark:text-neutral-600" />
-                    <p className="text-sm text-neutral-500 dark:text-neutral-400">{cm.selectChannelToConfigure}</p>
-                    <p className="text-xs text-neutral-400 dark:text-neutral-500 mt-1">{cm.channels.pickHint}</p>
+                    <p className="text-sm text-neutral-500 dark:text-neutral-400">{cm.selectChannelPrompt}</p>
+                  </div>
+                ) : !selectedChannelLinked ? (
+                  <div className="py-12 text-center max-w-md mx-auto px-2">
+                    <Link2 className="w-10 h-10 mx-auto mb-3 text-primary-400 dark:text-primary-500" />
+                    <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">
+                      {interpolate(cm.connectChannelPrompt, {
+                        channel: selectedChannelOption?.display_name ?? cm.channelFilters.unnamedChannel,
+                        broker: configAccount ? getBrokerDisplayLabel(configAccount) : '—',
+                      })}
+                    </p>
+                    <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-2">{cm.connectChannelHint}</p>
+                    <Button
+                      className="mt-6 min-h-[44px]"
+                      loading={channelConnecting}
+                      disabled={configSaving || presetSaving}
+                      onClick={() => void connectSelectedChannelToBroker()}
+                    >
+                      {interpolate(cm.connectChannelButton, {
+                        channel: selectedChannelOption?.display_name ?? cm.channelFilters.unnamedChannel,
+                        broker: configAccount ? getBrokerDisplayLabel(configAccount) : '—',
+                      })}
+                    </Button>
                   </div>
                 ) : (
                   <div className="space-y-5">
@@ -2810,7 +2895,7 @@ export function AccountConfigPage() {
                 )}
               </div>
               <Button variant="ghost" className="w-full sm:w-auto min-h-[44px]" onClick={closeConfigureModal} disabled={configSaving || presetSaving}>{cm.cancel}</Button>
-              {configDraft.selectedChannelId && configDraft.channelIds.includes(configDraft.selectedChannelId) ? (
+              {selectedChannelLinked ? (
                 <label className="w-full sm:w-auto min-h-[44px] inline-flex items-stretch rounded-lg border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 shadow-sm overflow-hidden has-[:disabled]:opacity-50">
                   <span className="inline-flex items-center px-3 text-sm font-medium text-neutral-700 dark:text-neutral-200 border-r border-neutral-200 dark:border-neutral-700 whitespace-nowrap">
                     {cm.applyPreset}
@@ -2839,19 +2924,28 @@ export function AccountConfigPage() {
                   </select>
                 </label>
               ) : null}
-              {selectedChannelEditedFromDefault ? (
+              {selectedChannelLinked && selectedChannelEditedFromDefault ? (
                 <Button
                   variant="secondary"
                   className="w-full sm:w-auto min-h-[44px]"
                   loading={presetSaving}
-                  disabled={configSaving}
+                  disabled={configSaving || channelConnecting}
                   onClick={openSavePresetModal}
                 >
                   <Bookmark className="w-4 h-4 mr-1.5" />
                   {cm.saveAsPreset}
                 </Button>
               ) : null}
-              <Button className="w-full sm:w-auto min-h-[44px]" loading={configSaving} disabled={presetSaving} onClick={() => void saveConfigureModal()}>{cm.save}</Button>
+              {selectedChannelLinked ? (
+                <Button
+                  className="w-full sm:w-auto min-h-[44px]"
+                  loading={configSaving}
+                  disabled={presetSaving || channelConnecting}
+                  onClick={() => void saveConfigureModal()}
+                >
+                  {cm.save}
+                </Button>
+              ) : null}
             </div>
 
             {pendingApplyPreset ? (

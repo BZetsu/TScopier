@@ -13,6 +13,12 @@ export interface ConfigureModalTranslations {
   editLinkedChannels: string
   doneEditingLinkedChannels: string
   selectChannelToConfigure: string
+  selectChannelPrompt: string
+  connectChannelPrompt: string
+  connectChannelHint: string
+  connectChannelButton: string
+  channelLinkedBadge: string
+  channelNotLinkedBadge: string
   applyPreset: string
   applyPresetPlaceholder: string
   applyPresetTitle: string
