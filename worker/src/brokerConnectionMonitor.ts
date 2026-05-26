@@ -171,7 +171,9 @@ export class BrokerConnectionMonitor {
     this.backoff.set(row.id, { fails, lastAttemptAt: now, nextEligibleAt: now + delay })
 
     if (fails >= 2 && row.connection_status !== 'error') {
-      void writeBrokerConnectionStatus(this.supabase, row.id, 'error')
+      void writeBrokerConnectionStatus(this.supabase, row.id, 'error', {
+        rawError: 'keepSessionAlive failed during reconnect sweep',
+      })
     }
     if (fails <= 3 || fails % 10 === 0) {
       console.warn(`[brokerConnection] broker=${row.id} down (fails=${fails}, next retry in ${Math.round(delay / 1000)}s)`)

@@ -1,5 +1,8 @@
+import { isMtBridgeGlitchMessage, isSessionDropMessage } from './brokerConnectError'
+
 /** Errors from health checks that should not mark a broker disconnected. */
 export function isTransientBrokerHealthError(message: string): boolean {
+  if (isMtBridgeGlitchMessage(message)) return true
   return /unauthorized|not signed in|503|504|502|timeout|failed to fetch|network error|context deadline|gateway|load failed/i.test(
     message,
   )
@@ -10,3 +13,5 @@ export function brokerHealthPollIntervalMs(connectedCount: number, baseMs = 20_0
   if (connectedCount <= 1) return baseMs
   return Math.min(baseMs * connectedCount, 90_000)
 }
+
+export { isSessionDropMessage }

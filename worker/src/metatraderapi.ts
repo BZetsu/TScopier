@@ -1,4 +1,5 @@
 import { Agent, request } from 'undici'
+import { isMtBridgeGlitchMessage } from './brokerConnectError'
 import { ingestMtHistoryRows, type MtHistoryProfile } from './mtTradeFields'
 
 /**
@@ -658,6 +659,10 @@ export class MetatraderApiClient {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       if (isBrokerDisconnectedMessage(msg) || isMtSessionGoneError(err)) return false
+      if (isMtBridgeGlitchMessage(msg)) {
+        console.warn(`[metatraderapi] verifyTradingReady bridge glitch id=${id}: ${msg}`)
+        return true
+      }
       console.warn(`[metatraderapi] verifyTradingReady failed id=${id}: ${msg}`)
       return false
     }

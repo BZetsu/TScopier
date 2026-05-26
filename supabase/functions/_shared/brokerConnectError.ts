@@ -1,13 +1,13 @@
 /** Classify MetatraderAPI / MT terminal connect failures for user-facing copy. */
 
 export type BrokerConnectErrorKind =
-  | "wrong_password"
-  | "wrong_login"
-  | "wrong_server"
-  | "investor_password"
-  | "account_disabled"
-  | "session_expired"
-  | "unknown"
+  | 'wrong_password'
+  | 'wrong_login'
+  | 'wrong_server'
+  | 'investor_password'
+  | 'account_disabled'
+  | 'session_expired'
+  | 'unknown'
 
 const WRONG_PASSWORD =
   /invalid password|wrong password|incorrect password|bad password|authorization failed|not authorized|invalid credentials|auth(?:entication)? failed|login failed|password (?:is )?invalid|invalid account password/i
@@ -22,47 +22,66 @@ const INVESTOR =
   /investor password|read[- ]?only|trade disabled|not allowed to trade|investor mode/i
 
 const SESSION_EXPIRED =
-  /session expired|client with id|client not found|unknown client|session not found|broker session is not connected|not connected|trading session expired/i
+  /session expired|client with id|client not found|unknown client|session not found|broker session is not connected|not connected|trading session expired|verifytradingready failed|keepsessionalive failed|heartbeat keepsessionalive failed/i
+
+/** MetatraderAPI / MT bridge internal errors — not bad credentials. */
+const BRIDGE_GLITCH =
+  /object reference not set|nullreferenceexception|null reference|unexpected error|internal server error|an error occurred while handling|sequence contains no elements/i
+
+export function isMtBridgeGlitchMessage(message: string | null | undefined): boolean {
+  return BRIDGE_GLITCH.test(String(message ?? '').trim())
+}
+
+export function isSessionDropMessage(message: string | null | undefined): boolean {
+  const m = String(message ?? '').trim()
+  if (!m) return false
+  if (isMtBridgeGlitchMessage(m)) return true
+  return SESSION_EXPIRED.test(m)
+}
 
 export function classifyBrokerConnectError(raw: string | null | undefined): BrokerConnectErrorKind {
-  const message = String(raw ?? "").trim()
-  if (!message) return "unknown"
-  if (INVESTOR.test(message)) return "investor_password"
-  if (WRONG_PASSWORD.test(message)) return "wrong_password"
-  if (WRONG_LOGIN.test(message)) return "wrong_login"
-  if (WRONG_SERVER.test(message)) return "wrong_server"
+  const message = String(raw ?? '').trim()
+  if (!message) return 'unknown'
+  if (INVESTOR.test(message)) return 'investor_password'
+  if (WRONG_PASSWORD.test(message)) return 'wrong_password'
+  if (isMtBridgeGlitchMessage(message)) return 'session_expired'
+  if (SESSION_EXPIRED.test(message)) return 'session_expired'
+  if (WRONG_LOGIN.test(message)) return 'wrong_login'
+  if (WRONG_SERVER.test(message)) return 'wrong_server'
   if (/account disabled|account has been disabled|account blocked|trade account disabled/i.test(message)) {
-    return "account_disabled"
+    return 'account_disabled'
   }
-  if (SESSION_EXPIRED.test(message)) return "session_expired"
-  return "unknown"
+  return 'unknown'
 }
 
 export function isCredentialConnectError(kind: BrokerConnectErrorKind): boolean {
-  return kind === "wrong_password"
-    || kind === "wrong_login"
-    || kind === "wrong_server"
-    || kind === "investor_password"
-    || kind === "account_disabled"
+  return kind === 'wrong_password'
+    || kind === 'wrong_login'
+    || kind === 'wrong_server'
+    || kind === 'investor_password'
+    || kind === 'account_disabled'
 }
 
 export function friendlyBrokerConnectError(raw: string | null | undefined): string {
   switch (classifyBrokerConnectError(raw)) {
-    case "wrong_password":
-      return "The MT account password is incorrect. Check the password in your MetaTrader terminal, then use Reconnect."
-    case "wrong_login":
-      return "The MT login number does not match this linked account. Verify the account number or remove and link the account again."
-    case "wrong_server":
-      return "The broker server name is incorrect or does not match this login. Check the exact server name from MetaTrader."
-    case "investor_password":
-      return "An investor (read-only) password was used. Connect with the main trading password from MetaTrader."
-    case "account_disabled":
-      return "This MT account is disabled or blocked at the broker. Contact your broker or log in via MetaTrader first."
-    case "session_expired":
-      return "Trading session expired on the trade server. Use Reconnect and enter your current MT password."
+    case 'wrong_password':
+      return 'The MT account password is incorrect. Check the password in your MetaTrader terminal, then use Reconnect.'
+    case 'wrong_login':
+      return 'The MT login number does not match this linked account. Verify the account number or remove and link the account again.'
+    case 'wrong_server':
+      return 'The broker server name is incorrect or does not match this login. Check the exact server name from MetaTrader.'
+    case 'investor_password':
+      return 'An investor (read-only) password was used. Connect with the main trading password from MetaTrader.'
+    case 'account_disabled':
+      return 'This MT account is disabled or blocked at the broker. Contact your broker or log in via MetaTrader first.'
+    case 'session_expired':
+      if (isMtBridgeGlitchMessage(raw)) {
+        return 'Broker connection dropped after a trade-server glitch. Use Reconnect — your login details are usually still correct.'
+      }
+      return 'Trading session expired on the trade server. Use Reconnect and enter your current MT password.'
     default:
-      return String(raw ?? "").trim()
-        || "Could not connect to the broker. Check your MT login, password, and server, then use Reconnect."
+      return String(raw ?? '').trim()
+        || 'Broker connection dropped unexpectedly. Use Reconnect — this is usually a temporary session issue, not wrong login details.'
   }
 }
 
@@ -70,6 +89,6 @@ export function brokerNeedsPasswordForReconnectMessage(message: string | undefin
   if (!message?.trim()) return false
   const kind = classifyBrokerConnectError(message)
   if (isCredentialConnectError(kind)) return false
-  return kind === "session_expired"
-    || (/session expired|not connected|broker session/i.test(message) && kind === "unknown")
+  return kind === 'session_expired'
+    || (/session expired|not connected|broker session/i.test(message) && kind === 'unknown')
 }

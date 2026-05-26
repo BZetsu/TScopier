@@ -6,6 +6,7 @@ import {
   clearStoredMtPassword,
   isLegacyBrokerLink,
   makeMtClient,
+  markBrokerConnectionError,
   parseBrokerSessionId,
   reconnectBrokerSession,
   stripBrokerSecretFields,
@@ -426,11 +427,7 @@ Deno.serve(async (req: Request) => {
         const sessionNotReady =
           /not connected|session expired|broker session/i.test(msg)
         if (!sessionNotReady) {
-          await supabase
-            .from("broker_accounts")
-            .update({ connection_status: "error" })
-            .eq("id", brokerId)
-            .eq("user_id", userId)
+          await markBrokerConnectionError(supabase, { id: brokerId, user_id: userId }, msg)
         }
         const status = e instanceof MetatraderApiError ? e.status : 502
         if (sessionNotReady && broker) {

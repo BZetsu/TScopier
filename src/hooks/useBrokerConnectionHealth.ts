@@ -2,10 +2,15 @@ import { useEffect, useMemo, useRef } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
 import type { BrokerAccount } from '../types/database'
 import { isMtSessionUuid } from '../lib/brokerLink'
-import { brokerHealthPollIntervalMs, isTransientBrokerHealthError } from '../lib/brokerHealthCheck'
+import {
+  brokerHealthPollIntervalMs,
+  isSessionDropMessage,
+  isTransientBrokerHealthError,
+} from '../lib/brokerHealthCheck'
+import { classifyBrokerConnectError } from '../lib/brokerConnectError'
 import { metatraderApi } from '../lib/metatraderapi'
 
-const FAILURES_BEFORE_DISCONNECT = 2
+const FAILURES_BEFORE_DISCONNECT = 3
 
 interface UseBrokerConnectionHealthOptions {
   enabled?: boolean
@@ -13,9 +18,29 @@ interface UseBrokerConnectionHealthOptions {
   refreshOnVisible?: boolean
 }
 
+function applyReconnectFailure(
+  setBrokers: Dispatch<SetStateAction<BrokerAccount[]>>,
+  brokerId: string,
+  message: string | undefined,
+  connectionErrorKind: string | undefined,
+) {
+  setBrokers(prev =>
+    prev.map(b => {
+      if (b.id !== brokerId) return b
+      const kind = connectionErrorKind ?? classifyBrokerConnectError(message)
+      return {
+        ...b,
+        connection_status: 'error' as const,
+        connection_error_kind: kind,
+        connection_error_message: message ?? b.connection_error_message ?? null,
+      }
+    }),
+  )
+}
+
 /**
  * Periodically verify brokers marked "connected" can actually reach trading APIs.
- * Ignores auth/platform blips and requires consecutive failures before marking error.
+ * Attempts reconnect before marking disconnected; ignores transient bridge blips.
  */
 export function useBrokerConnectionHealth(
   brokers: BrokerAccount[],
@@ -47,12 +72,12 @@ export function useBrokerConnectionHealth(
     let cancelled = false
     const activeIds = new Set(connectedIds)
 
-    const attemptSilentReconnect = async (brokerId: string) => {
-      if (reconnectingRef.current.has(brokerId)) return
+    const attemptSilentReconnect = async (brokerId: string): Promise<boolean> => {
+      if (reconnectingRef.current.has(brokerId)) return false
       reconnectingRef.current.add(brokerId)
       try {
         const result = await metatraderApi.reconnect(brokerId)
-        if (cancelled) return
+        if (cancelled) return false
         if (result.connection_status === 'connected') {
           failCountsRef.current.delete(brokerId)
           setBrokers(prev =>
@@ -61,6 +86,8 @@ export function useBrokerConnectionHealth(
               return {
                 ...b,
                 connection_status: 'connected' as const,
+                connection_error_kind: null,
+                connection_error_message: null,
                 last_synced_at: new Date().toISOString(),
                 ...(result.summary
                   ? {
@@ -72,9 +99,21 @@ export function useBrokerConnectionHealth(
               }
             }),
           )
+          return true
         }
-      } catch {
-        // Silent — periodic reconnect loop will handle subsequent retries
+        applyReconnectFailure(
+          setBrokers,
+          brokerId,
+          result.message,
+          result.connection_error_kind,
+        )
+        return false
+      } catch (err) {
+        if (!cancelled) {
+          const msg = err instanceof Error ? err.message : String(err)
+          applyReconnectFailure(setBrokers, brokerId, msg, undefined)
+        }
+        return false
       } finally {
         reconnectingRef.current.delete(brokerId)
       }
@@ -95,12 +134,18 @@ export function useBrokerConnectionHealth(
           const prevFails = failCountsRef.current.get(id) ?? 0
           const nextFails = prevFails + 1
           failCountsRef.current.set(id, nextFails)
+
+          if (isSessionDropMessage(msg) && nextFails >= 2) {
+            const recovered = await attemptSilentReconnect(id)
+            if (recovered) continue
+          }
+
           if (nextFails < FAILURES_BEFORE_DISCONNECT) continue
 
-          setBrokers(prev =>
-            prev.map(b => (b.id === id ? { ...b, connection_status: 'error' as const } : b)),
-          )
-          void attemptSilentReconnect(id)
+          const recovered = await attemptSilentReconnect(id)
+          if (!recovered && !cancelled) {
+            applyReconnectFailure(setBrokers, id, msg, undefined)
+          }
         }
         await new Promise(r => setTimeout(r, 800))
       }

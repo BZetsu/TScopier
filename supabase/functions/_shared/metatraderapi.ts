@@ -4,6 +4,7 @@
  */
 
 import { ingestMtHistoryRows, type MtHistoryProfile } from "./mtTradeFields.ts"
+import { isMtBridgeGlitchMessage } from "./brokerConnectError.ts"
 
 const DEFAULT_MT5_BASE = "https://mt5.mt4api.dev"
 const DEFAULT_MT4_BASE = "https://mt4.mt4api.dev"
@@ -372,6 +373,7 @@ export class MetatraderApiClient {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       if (isBrokerDisconnectedMessage(msg) || isMtSessionGoneError(err)) return false
+      if (isMtBridgeGlitchMessage(msg)) return true
       return false
     }
   }

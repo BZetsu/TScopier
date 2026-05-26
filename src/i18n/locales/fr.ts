@@ -262,9 +262,9 @@ export const fr: Translations = {
       connectErrorAccountDisabled:
         'Ce compte MT est désactivé ou bloqué chez le broker. Contactez votre broker ou connectez-vous d’abord via MetaTrader.',
       connectErrorSessionExpired:
-        'La session de trading a expiré sur le serveur. Utilisez Reconnecter et entrez votre mot de passe MT actuel.',
+        'La session broker a été interrompue sur le serveur. Utilisez Reconnecter — c’est en général temporaire, pas un mauvais mot de passe.',
       connectErrorUnknown:
-        'Impossible de se connecter au broker. Vérifiez login, mot de passe et serveur MT, puis utilisez Reconnecter.',
+        'La connexion au broker a été interrompue. Utilisez Reconnecter — il s’agit en général d’un problème de session temporaire, pas d’un mauvais login.',
       reconnectFailed: 'Impossible de reconnecter le broker',
       reconnectPasswordTitle: 'Session broker expirée',
       reconnectPasswordBody:

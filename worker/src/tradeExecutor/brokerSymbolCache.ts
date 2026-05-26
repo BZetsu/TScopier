@@ -133,7 +133,9 @@ export async function reconnectCachedBrokers(ctx: TradeExecutorContext, ) {
       } else {
         console.warn(`[tradeExecutor] session not alive for broker=${row.id} on startup`)
         row.connection_status = 'error'
-        await writeBrokerConnectionStatus(ctx.supabase, row.id, 'error')
+        await writeBrokerConnectionStatus(ctx.supabase, row.id, 'error', {
+          rawError: 'session not alive on startup',
+        })
       }
       await new Promise(r => setTimeout(r, 500))
     }
@@ -144,7 +146,7 @@ export async function markBrokerSessionDown(ctx: TradeExecutorContext, broker: B
     ctx.sessionOrderBlocked.add(broker.id)
     console.warn(`[tradeExecutor] broker ${broker.id} session down: ${reason}`)
     broker.connection_status = 'error'
-    await writeBrokerConnectionStatus(ctx.supabase, broker.id, 'error')
+    await writeBrokerConnectionStatus(ctx.supabase, broker.id, 'error', { rawError: reason })
   }
 
 export async function pingBrokerSession(ctx: TradeExecutorContext, row: BrokerRow): Promise<void> {

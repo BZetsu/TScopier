@@ -22,19 +22,34 @@ const INVESTOR =
   /investor password|read[- ]?only|trade disabled|not allowed to trade|investor mode/i
 
 const SESSION_EXPIRED =
-  /session expired|client with id|client not found|unknown client|session not found|broker session is not connected|not connected|trading session expired/i
+  /session expired|client with id|client not found|unknown client|session not found|broker session is not connected|not connected|trading session expired|verifytradingready failed|keepsessionalive failed|heartbeat keepsessionalive failed/i
+
+const BRIDGE_GLITCH =
+  /object reference not set|nullreferenceexception|null reference|unexpected error|internal server error|an error occurred while handling|sequence contains no elements/i
+
+export function isMtBridgeGlitchMessage(message: string | null | undefined): boolean {
+  return BRIDGE_GLITCH.test(String(message ?? '').trim())
+}
+
+export function isSessionDropMessage(message: string | null | undefined): boolean {
+  const m = String(message ?? '').trim()
+  if (!m) return false
+  if (isMtBridgeGlitchMessage(m)) return true
+  return SESSION_EXPIRED.test(m)
+}
 
 export function classifyBrokerConnectError(raw: string | null | undefined): BrokerConnectErrorKind {
   const message = String(raw ?? '').trim()
   if (!message) return 'unknown'
   if (INVESTOR.test(message)) return 'investor_password'
   if (WRONG_PASSWORD.test(message)) return 'wrong_password'
+  if (isMtBridgeGlitchMessage(message)) return 'session_expired'
+  if (SESSION_EXPIRED.test(message)) return 'session_expired'
   if (WRONG_LOGIN.test(message)) return 'wrong_login'
   if (WRONG_SERVER.test(message)) return 'wrong_server'
   if (/account disabled|account has been disabled|account blocked|trade account disabled/i.test(message)) {
     return 'account_disabled'
   }
-  if (SESSION_EXPIRED.test(message)) return 'session_expired'
   return 'unknown'
 }
 
@@ -44,14 +59,6 @@ export function isCredentialConnectError(kind: BrokerConnectErrorKind): boolean 
     || kind === 'wrong_server'
     || kind === 'investor_password'
     || kind === 'account_disabled'
-}
-
-export function brokerNeedsPasswordForReconnectMessage(message: string | undefined): boolean {
-  if (!message?.trim()) return false
-  const kind = classifyBrokerConnectError(message)
-  if (isCredentialConnectError(kind)) return false
-  return kind === 'session_expired'
-    || (/session expired|not connected|broker session/i.test(message) && kind === 'unknown')
 }
 
 export interface BrokerConnectErrorLabels {
@@ -81,12 +88,23 @@ export function brokerConnectErrorText(
     case 'account_disabled':
       return labels.accountDisabled
     case 'session_expired':
+      if (isMtBridgeGlitchMessage(rawMessage)) {
+        return labels.sessionExpired
+      }
       return labels.sessionExpired
     case 'unknown':
       return rawMessage?.trim() || labels.unknown
     default:
       return rawMessage?.trim() || labels.unknown
   }
+}
+
+export function brokerNeedsPasswordForReconnectMessage(message: string | undefined): boolean {
+  if (!message?.trim()) return false
+  const kind = classifyBrokerConnectError(message)
+  if (isCredentialConnectError(kind)) return false
+  return kind === 'session_expired'
+    || (/session expired|not connected|broker session/i.test(message) && kind === 'unknown')
 }
 
 export function brokerReconnectBannerText(
