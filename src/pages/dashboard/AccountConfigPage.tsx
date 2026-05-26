@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import {
   Plus, Trash2, Server, Activity, GitBranch, Eye, DollarSign, RefreshCw,
   SlidersHorizontal, Radio, Target, Filter, Wallet,
-  ArrowLeftRight, ChevronDown, Brain, Settings2,
+  ArrowLeftRight, ChevronDown, Brain, Settings2, Bookmark, Pencil,
 } from 'lucide-react'
 import clsx from 'clsx'
 import { supabase } from '../../lib/supabase'
@@ -60,6 +60,12 @@ import {
   buildDefaultChannelTradingConfig,
   normalizeChannelTradingConfigsMap,
 } from '../../lib/channelTradingConfig'
+import {
+  listTradingPresets,
+  presetToChannelConfigDraft,
+  upsertTradingPreset,
+  type ChannelTradingPreset,
+} from '../../lib/tradingPresets'
 import { DEFAULT_MANUAL_SETTINGS, DEFAULT_MANUAL_TP_LOTS } from '../../lib/defaultManualSettings'
 import type { ConfigureModalTranslations } from '../../i18n/locales/configureModal/types'
 import {
@@ -352,6 +358,18 @@ function defaultChannelConfigDraft(): ChannelConfigDraft {
   }
 }
 
+function channelConfigDraftSignature(draft: ChannelConfigDraft): string {
+  return JSON.stringify({
+    mode: draft.mode,
+    manualSettings: draft.manualSettings,
+    channelFilters: normalizeChannelFilters(draft.channelFilters),
+  })
+}
+
+function isChannelConfigDefault(draft: ChannelConfigDraft): boolean {
+  return channelConfigDraftSignature(draft) === channelConfigDraftSignature(defaultChannelConfigDraft())
+}
+
 function buildChannelConfigDraftFromBroker(
   broker: BrokerAccount,
   channelIds: string[],
@@ -459,6 +477,13 @@ export function AccountConfigPage() {
   const [symbolMappingText, setSymbolMappingText] = useState('')
   const [configSaving, setConfigSaving] = useState(false)
   const [configSavedAt, setConfigSavedAt] = useState<number | null>(null)
+  const [tradingPresets, setTradingPresets] = useState<ChannelTradingPreset[]>([])
+  const [presetsLoading, setPresetsLoading] = useState(false)
+  const [presetSaving, setPresetSaving] = useState(false)
+  const [presetSavedAt, setPresetSavedAt] = useState<number | null>(null)
+  const [showPresetNameModal, setShowPresetNameModal] = useState(false)
+  const [presetNameDraft, setPresetNameDraft] = useState('')
+  const [channelLinkEditMode, setChannelLinkEditMode] = useState(false)
   const [showPlatformModal, setShowPlatformModal] = useState(false)
   const [showAddBroker, setShowAddBroker] = useState(false)
   const [form, setForm] = useState<BrokerForm>(emptyForm)
@@ -499,6 +524,14 @@ export function AccountConfigPage() {
     () => channelOptions.find(c => c.id === configDraft.selectedChannelId) ?? null,
     [channelOptions, configDraft.selectedChannelId],
   )
+
+  const selectedChannelEditedFromDefault = useMemo(() => {
+    const id = configDraft.selectedChannelId
+    if (!id || !configDraft.channelIds.includes(id)) return false
+    const entry = configDraft.channelConfigs[id]
+    if (!entry) return false
+    return !isChannelConfigDefault(entry)
+  }, [configDraft.selectedChannelId, configDraft.channelIds, configDraft.channelConfigs])
 
   const multiTradePreview = useMemo(() => {
     const ms = channelManualSettings
@@ -624,6 +657,37 @@ export function AccountConfigPage() {
     return () => clearTimeout(t)
   }, [configSavedAt])
 
+  useEffect(() => {
+    if (presetSavedAt == null) return
+    const t = setTimeout(() => setPresetSavedAt(null), 2500)
+    return () => clearTimeout(t)
+  }, [presetSavedAt])
+
+  const syncSymbolMappingFromChannel = (channelId: string | null, configs: AccountConfigDraft['channelConfigs']) => {
+    if (!channelId) {
+      setSymbolMappingText('')
+      return
+    }
+    const ms = configs[channelId]?.manualSettings
+    setSymbolMappingText(
+      Object.entries(ms?.symbol_mapping ?? {})
+        .map(([k, v]) => `${k}=${v}`)
+        .join('\n'),
+    )
+  }
+
+  const refreshTradingPresets = async (uid: string) => {
+    setPresetsLoading(true)
+    try {
+      const rows = await listTradingPresets(uid)
+      setTradingPresets(rows)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load presets')
+    } finally {
+      setPresetsLoading(false)
+    }
+  }
+
   const syncBrokerAccountTypes = async (list: BrokerAccount[]) => {
     const linked = list.filter(b => {
       const uuid = (b.metaapi_account_id ?? '').trim()
@@ -670,14 +734,9 @@ export function AccountConfigPage() {
     setActiveManualSubTab('symbol_routing')
     const draft = buildChannelConfigDraftFromBroker(fresh, channelIds)
     setConfigDraft(draft)
-    const firstMs = draft.selectedChannelId
-      ? draft.channelConfigs[draft.selectedChannelId]?.manualSettings
-      : null
-    setSymbolMappingText(
-      Object.entries(firstMs?.symbol_mapping ?? {})
-        .map(([k, v]) => `${k}=${v}`)
-        .join('\n'),
-    )
+    setChannelLinkEditMode(false)
+    syncSymbolMappingFromChannel(draft.selectedChannelId, draft.channelConfigs)
+    if (userId) void refreshTradingPresets(userId)
   }
 
   const selectConfigureChannel = (channelId: string) => {
@@ -687,18 +746,16 @@ export function AccountConfigPage() {
 
   useEffect(() => {
     if (!configDraft.selectedChannelId) return
-    const ms = configDraft.channelConfigs[configDraft.selectedChannelId]?.manualSettings
-    setSymbolMappingText(
-      Object.entries(ms?.symbol_mapping ?? {})
-        .map(([k, v]) => `${k}=${v}`)
-        .join('\n'),
-    )
+    syncSymbolMappingFromChannel(configDraft.selectedChannelId, configDraft.channelConfigs)
   // eslint-disable-next-line react-hooks/exhaustive-deps -- sync textarea when switching channels only
   }, [configDraft.selectedChannelId])
 
   const closeConfigureModal = () => {
     setConfigAccount(null)
     setSymbolMappingText('')
+    setShowPresetNameModal(false)
+    setPresetNameDraft('')
+    setChannelLinkEditMode(false)
     setError('')
   }
 
@@ -773,18 +830,62 @@ export function AccountConfigPage() {
     })
   }
 
-  const copyConfigFromChannel = (sourceChannelId: string) => {
-    const targetId = configDraft.selectedChannelId
-    if (!targetId || sourceChannelId === targetId) return
-    const source = configDraft.channelConfigs[sourceChannelId]
-    if (!source) return
-    const sourceName = channelOptions.find(c => c.id === sourceChannelId)?.display_name ?? sourceChannelId
-    if (!window.confirm(interpolate(cm.copyFromChannelConfirm, { name: sourceName }))) return
+  const applyPresetToSelectedChannel = (preset: ChannelTradingPreset) => {
+    if (!configDraft.selectedChannelId) return
+    if (!window.confirm(interpolate(cm.applyPresetConfirm, { name: preset.name }))) return
+    const payload = presetToChannelConfigDraft(preset)
     patchSelectedChannel(() => ({
-      mode: source.mode,
-      manualSettings: JSON.parse(JSON.stringify(source.manualSettings)) as ManualSettings,
-      channelFilters: JSON.parse(JSON.stringify(source.channelFilters)) as ChannelFilters,
+      mode: payload.mode,
+      manualSettings: payload.manualSettings,
+      channelFilters: payload.channelFilters,
     }))
+    syncSymbolMappingFromChannel(configDraft.selectedChannelId, {
+      ...configDraft.channelConfigs,
+      [configDraft.selectedChannelId]: {
+        mode: payload.mode,
+        manualSettings: payload.manualSettings,
+        channelFilters: payload.channelFilters,
+      },
+    })
+  }
+
+  const openSavePresetModal = () => {
+    if (!configDraft.selectedChannelId || !configDraft.channelConfigs[configDraft.selectedChannelId]) {
+      setError(cm.presetSelectChannelFirst)
+      return
+    }
+    setError('')
+    setPresetNameDraft(selectedChannelOption?.display_name ?? '')
+    setShowPresetNameModal(true)
+  }
+
+  const confirmSavePreset = async () => {
+    if (!user?.id || !configDraft.selectedChannelId) return
+    const entry = configDraft.channelConfigs[configDraft.selectedChannelId]
+    if (!entry) return
+    const name = presetNameDraft.trim()
+    if (!name) return
+
+    setPresetSaving(true)
+    setError('')
+    try {
+      const saved = await upsertTradingPreset(user.id, name, {
+        mode: entry.mode,
+        manualSettings: entry.manualSettings,
+        channelFilters: entry.channelFilters,
+      })
+      setTradingPresets(prev => {
+        const next = prev.filter(p => p.id !== saved.id && p.name !== saved.name)
+        return [...next, saved].sort((a, b) => a.name.localeCompare(b.name))
+      })
+      setShowPresetNameModal(false)
+      setPresetNameDraft('')
+      setPresetSavedAt(Date.now())
+    } catch (err) {
+      setError(err instanceof Error ? err.message : cm.saveAsPreset)
+    } finally {
+      setPresetSaving(false)
+    }
   }
 
   const setManual = (patch: Partial<ManualSettings>) => {
@@ -1468,7 +1569,7 @@ export function AccountConfigPage() {
             role="dialog"
             aria-modal="true"
             aria-labelledby="configure-trading-title"
-            className="w-full max-w-5xl h-[100dvh] sm:h-[88vh] max-h-[100dvh] sm:max-h-[88vh] flex flex-col rounded-none sm:rounded-2xl bg-white dark:bg-neutral-900 shadow-xl border-0 sm:border border-neutral-200 dark:border-neutral-800 overflow-hidden"
+            className="w-full max-w-5xl h-[100dvh] sm:h-[88vh] max-h-[100dvh] sm:max-h-[88vh] flex flex-col relative rounded-none sm:rounded-2xl bg-white dark:bg-neutral-900 shadow-xl border-0 sm:border border-neutral-200 dark:border-neutral-800 overflow-hidden"
           >
             <div className="px-4 sm:px-6 py-3 sm:py-4 border-b border-neutral-100 dark:border-neutral-800 flex items-start justify-between gap-3 shrink-0">
               <div className="min-w-0 flex-1">
@@ -1492,9 +1593,27 @@ export function AccountConfigPage() {
             <div className="flex flex-col sm:flex-row flex-1 min-h-0 min-w-0">
               {/* Channel sidebar */}
               <nav className="shrink-0 flex sm:flex-col w-full sm:w-56 border-b sm:border-b-0 sm:border-r border-neutral-100 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/50 p-2 sm:p-3 gap-2 sm:gap-1 overflow-x-auto sm:overflow-y-auto overscroll-x-contain">
-                <p className="hidden sm:block px-2 text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
-                  {cm.channelsSidebar}
-                </p>
+                <div className="flex items-center justify-between gap-2 px-2 shrink-0 sm:w-full">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
+                    {cm.channelsSidebar}
+                  </p>
+                  {channelOptions.length > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => setChannelLinkEditMode(v => !v)}
+                      className={clsx(
+                        'shrink-0 rounded-md p-1.5 transition-colors min-h-[32px] min-w-[32px] flex items-center justify-center',
+                        channelLinkEditMode
+                          ? 'bg-primary-100 text-primary-700 dark:bg-teal-950/60 dark:text-teal-300'
+                          : 'text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 dark:hover:text-neutral-300 dark:hover:bg-neutral-800',
+                      )}
+                      aria-label={channelLinkEditMode ? cm.doneEditingLinkedChannels : cm.editLinkedChannels}
+                      aria-pressed={channelLinkEditMode}
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                  ) : null}
+                </div>
                 {channelOptions.length === 0 ? (
                   <p className="text-xs text-neutral-500 dark:text-neutral-400 px-2 py-1">
                     {cm.channels.noneConnected}{' '}
@@ -1507,13 +1626,15 @@ export function AccountConfigPage() {
                       const selected = configDraft.selectedChannelId === channel.id
                       return (
                         <div key={channel.id} className="flex items-center gap-1 shrink-0 sm:w-full">
-                          <label className="flex items-center gap-2 px-2 py-1 shrink-0">
-                            <input
-                              type="checkbox"
-                              checked={linked}
-                              onChange={() => toggleDraftChannel(channel.id)}
-                            />
-                          </label>
+                          {channelLinkEditMode ? (
+                            <label className="flex items-center gap-2 px-2 py-1 shrink-0">
+                              <input
+                                type="checkbox"
+                                checked={linked}
+                                onChange={() => toggleDraftChannel(channel.id)}
+                              />
+                            </label>
+                          ) : null}
                           <button
                             type="button"
                             disabled={!linked}
@@ -1532,9 +1653,11 @@ export function AccountConfigPage() {
                         </div>
                       )
                     })}
-                    <p className="hidden sm:block px-2 pt-2 text-xs text-neutral-500 dark:text-neutral-400">
-                      {interpolate(cm.channels.selected, { count: String(configDraft.channelIds.length) })}
-                    </p>
+                    {channelLinkEditMode ? (
+                      <p className="hidden sm:block px-2 pt-2 text-xs text-neutral-500 dark:text-neutral-400">
+                        {interpolate(cm.channels.selected, { count: String(configDraft.channelIds.length) })}
+                      </p>
+                    ) : null}
                   </>
                 )}
               </nav>
@@ -1543,9 +1666,8 @@ export function AccountConfigPage() {
               <div className="flex-1 flex flex-col min-h-0 min-w-0">
                 {configDraft.selectedChannelId && configDraft.channelIds.includes(configDraft.selectedChannelId) ? (
                   <div className="shrink-0 px-4 sm:px-6 pt-3 sm:pt-4 bg-white dark:bg-neutral-900 border-b border-neutral-100 dark:border-neutral-800 overflow-x-auto overscroll-x-contain">
-                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pb-3 sm:pb-0">
-                      <div className="flex flex-nowrap items-center gap-1 min-w-max sm:min-w-0 sm:flex-wrap pb-px">
-                        {manualSubTabs.map(sub => {
+                    <div className="flex flex-nowrap items-center gap-1 min-w-max sm:min-w-0 sm:flex-wrap pb-px">
+                      {manualSubTabs.map(sub => {
                           const SubIcon = sub.icon
                           const active = sub.id === activeManualSubTab
                           return (
@@ -1565,31 +1687,6 @@ export function AccountConfigPage() {
                             </button>
                           )
                         })}
-                      </div>
-                      {configDraft.channelIds.filter(id => id !== configDraft.selectedChannelId).length > 0 && (
-                        <div className="flex items-center gap-2 shrink-0">
-                          <label className="text-xs text-neutral-500 dark:text-neutral-400 whitespace-nowrap">{cm.copyFromChannel}</label>
-                          <select
-                            className="text-sm rounded-lg border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1.5 min-h-[36px]"
-                            defaultValue=""
-                            onChange={e => {
-                              const v = e.target.value
-                              e.target.value = ''
-                              if (v) copyConfigFromChannel(v)
-                            }}
-                          >
-                            <option value="">{cm.copyFromChannelPlaceholder}</option>
-                            {configDraft.channelIds
-                              .filter(id => id !== configDraft.selectedChannelId)
-                              .map(id => {
-                                const ch = channelOptions.find(c => c.id === id)
-                                return (
-                                  <option key={id} value={id}>{ch?.display_name ?? id}</option>
-                                )
-                              })}
-                          </select>
-                        </div>
-                      )}
                     </div>
                   </div>
                 ) : null}
@@ -2345,6 +2442,39 @@ export function AccountConfigPage() {
                                 {cm.management.trailingSingleOnly}
                               </p>
                             )}
+
+                            {selectedChannelOption && configDraft.selectedChannelId ? (
+                              <section className="space-y-3 pt-2 border-t border-neutral-200 dark:border-neutral-800">
+                                <div className="flex items-center justify-between">
+                                  <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">{cm.channels.keywordFilters}</p>
+                                  <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                                    {(() => {
+                                      const f = normalizeChannelFilters(
+                                        configDraft.channelConfigs[configDraft.selectedChannelId]?.channelFilters ?? DEFAULT_CHANNEL_FILTERS,
+                                      )
+                                      const total = channelFilterCategories.reduce(
+                                        (n, c) => n + (f[c.key] === 'ignore' ? 1 : 0), 0,
+                                      )
+                                      return total === 0
+                                        ? cm.channels.allAllowed
+                                        : interpolate(cm.channels.ignoredAcross, { total: String(total) })
+                                    })()}
+                                  </p>
+                                </div>
+                                <p className="text-xs text-neutral-500 dark:text-neutral-400">{cm.channels.filtersIntro}</p>
+                                <ChannelFiltersCard
+                                  channel={selectedChannelOption}
+                                  filters={normalizeChannelFilters(
+                                    configDraft.channelConfigs[configDraft.selectedChannelId]?.channelFilters ?? DEFAULT_CHANNEL_FILTERS,
+                                  )}
+                                  categories={channelFilterCategories}
+                                  labels={cm.channelFilters}
+                                  onChange={(key, value) => setChannelFilter(configDraft.selectedChannelId!, key, value)}
+                                  onReset={() => resetChannelFilters(configDraft.selectedChannelId!)}
+                                  defaultOpen
+                                />
+                              </section>
+                            ) : null}
                           </div>
                           )
                         })()}
@@ -2603,38 +2733,6 @@ export function AccountConfigPage() {
                       </div>
                     )}
 
-                    {configDraft.selectedChannelId && selectedChannelOption ? (
-                      <div className="space-y-3 pt-4 border-t border-neutral-100 dark:border-neutral-800">
-                        <div className="flex items-center justify-between">
-                          <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">{cm.channels.keywordFilters}</p>
-                          <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                            {(() => {
-                              const f = normalizeChannelFilters(
-                                configDraft.channelConfigs[configDraft.selectedChannelId!]?.channelFilters ?? DEFAULT_CHANNEL_FILTERS,
-                              )
-                              const total = channelFilterCategories.reduce(
-                                (n, c) => n + (f[c.key] === 'ignore' ? 1 : 0), 0,
-                              )
-                              return total === 0
-                                ? cm.channels.allAllowed
-                                : interpolate(cm.channels.ignoredAcross, { total: String(total) })
-                            })()}
-                          </p>
-                        </div>
-                        <p className="text-xs text-neutral-500 dark:text-neutral-400">{cm.channels.filtersIntro}</p>
-                        <ChannelFiltersCard
-                          channel={selectedChannelOption}
-                          filters={normalizeChannelFilters(
-                            configDraft.channelConfigs[configDraft.selectedChannelId!]?.channelFilters ?? DEFAULT_CHANNEL_FILTERS,
-                          )}
-                          categories={channelFilterCategories}
-                          labels={cm.channelFilters}
-                          onChange={(key, value) => setChannelFilter(configDraft.selectedChannelId!, key, value)}
-                          onReset={() => resetChannelFilters(configDraft.selectedChannelId!)}
-                          defaultOpen
-                        />
-                      </div>
-                    ) : null}
                   </div>
                 )}
 
@@ -2643,12 +2741,103 @@ export function AccountConfigPage() {
             </div>
 
             <div className="shrink-0 px-4 sm:px-6 py-3 sm:py-4 border-t border-neutral-100 dark:border-neutral-800 flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-2 sm:gap-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:pb-4">
-              {configSavedAt != null && (
-                <span className="text-xs text-success-600 text-center sm:text-left sm:mr-auto transition-opacity">{cm.saved}</span>
-              )}
-              <Button variant="ghost" className="w-full sm:w-auto min-h-[44px]" onClick={closeConfigureModal} disabled={configSaving}>{cm.cancel}</Button>
-              <Button className="w-full sm:w-auto min-h-[44px]" loading={configSaving} onClick={() => void saveConfigureModal()}>{cm.save}</Button>
+              <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 sm:mr-auto text-center sm:text-left">
+                {configSavedAt != null && (
+                  <span className="text-xs text-success-600 transition-opacity">{cm.saved}</span>
+                )}
+                {presetSavedAt != null && (
+                  <span className="text-xs text-success-600 transition-opacity">{cm.presetSaved}</span>
+                )}
+              </div>
+              <Button variant="ghost" className="w-full sm:w-auto min-h-[44px]" onClick={closeConfigureModal} disabled={configSaving || presetSaving}>{cm.cancel}</Button>
+              {configDraft.selectedChannelId && configDraft.channelIds.includes(configDraft.selectedChannelId) ? (
+                <label className="w-full sm:w-auto min-h-[44px] inline-flex items-stretch rounded-lg border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 shadow-sm overflow-hidden has-[:disabled]:opacity-50">
+                  <span className="inline-flex items-center px-3 text-sm font-medium text-neutral-700 dark:text-neutral-200 border-r border-neutral-200 dark:border-neutral-700 whitespace-nowrap">
+                    {cm.applyPreset}
+                  </span>
+                  <select
+                    className="flex-1 min-w-0 sm:min-w-[8rem] text-sm bg-transparent text-neutral-700 dark:text-neutral-200 px-2 py-2.5 focus:outline-none focus:ring-2 focus:ring-primary-500 disabled:cursor-not-allowed"
+                    defaultValue=""
+                    disabled={configSaving || presetSaving || presetsLoading || tradingPresets.length === 0}
+                    onChange={e => {
+                      const v = e.target.value
+                      e.target.value = ''
+                      const preset = tradingPresets.find(p => p.id === v)
+                      if (preset) applyPresetToSelectedChannel(preset)
+                    }}
+                  >
+                    <option value="" disabled>
+                      {presetsLoading
+                        ? '…'
+                        : tradingPresets.length === 0
+                          ? cm.noPresetsYet
+                          : cm.applyPresetPlaceholder}
+                    </option>
+                    {tradingPresets.map(preset => (
+                      <option key={preset.id} value={preset.id}>{preset.name}</option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+              {selectedChannelEditedFromDefault ? (
+                <Button
+                  variant="secondary"
+                  className="w-full sm:w-auto min-h-[44px]"
+                  loading={presetSaving}
+                  disabled={configSaving}
+                  onClick={openSavePresetModal}
+                >
+                  <Bookmark className="w-4 h-4 mr-1.5" />
+                  {cm.saveAsPreset}
+                </Button>
+              ) : null}
+              <Button className="w-full sm:w-auto min-h-[44px]" loading={configSaving} disabled={presetSaving} onClick={() => void saveConfigureModal()}>{cm.save}</Button>
             </div>
+
+            {showPresetNameModal ? (
+              <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/30 p-4">
+                <div
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="save-preset-title"
+                  className="w-full max-w-md rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 shadow-xl p-5 space-y-4"
+                >
+                  <h4 id="save-preset-title" className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
+                    {cm.saveAsPresetTitle}
+                  </h4>
+                  <Input
+                    label={cm.saveAsPresetNameLabel}
+                    value={presetNameDraft}
+                    placeholder={cm.saveAsPresetNamePlaceholder}
+                    onChange={e => setPresetNameDraft(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') void confirmSavePreset()
+                    }}
+                  />
+                  <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+                    <Button
+                      variant="ghost"
+                      className="w-full sm:w-auto"
+                      disabled={presetSaving}
+                      onClick={() => {
+                        setShowPresetNameModal(false)
+                        setPresetNameDraft('')
+                      }}
+                    >
+                      {cm.cancel}
+                    </Button>
+                    <Button
+                      className="w-full sm:w-auto"
+                      loading={presetSaving}
+                      disabled={!presetNameDraft.trim()}
+                      onClick={() => void confirmSavePreset()}
+                    >
+                      {cm.saveAsPresetAction}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
       )}

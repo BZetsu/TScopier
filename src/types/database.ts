@@ -261,6 +261,17 @@ export interface BrokerAccount {
   updated_at: string
 }
 
+export interface ChannelTradingPreset {
+  id: string
+  user_id: string
+  name: string
+  copier_mode: 'ai' | 'manual'
+  manual_settings: ManualSettings
+  channel_filters: Json
+  created_at: string
+  updated_at: string
+}
+
 export interface TelegramSession {
   id: string
   user_id: string

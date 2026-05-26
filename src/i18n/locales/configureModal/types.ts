@@ -10,10 +10,20 @@ export interface ConfigureModalTranslations {
   cancel: string
   save: string
   channelsSidebar: string
+  editLinkedChannels: string
+  doneEditingLinkedChannels: string
   selectChannelToConfigure: string
-  copyFromChannel: string
-  copyFromChannelPlaceholder: string
-  copyFromChannelConfirm: string
+  applyPreset: string
+  applyPresetPlaceholder: string
+  applyPresetConfirm: string
+  noPresetsYet: string
+  saveAsPreset: string
+  saveAsPresetTitle: string
+  saveAsPresetNameLabel: string
+  saveAsPresetNamePlaceholder: string
+  saveAsPresetAction: string
+  presetSaved: string
+  presetSelectChannelFirst: string
   tabs: {
     trade: string
     channels: string
