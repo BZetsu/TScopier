@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { hasMetatraderApiConfigured, getMetatraderApi, mtPlatformFrom } from './metatraderapi'
 import { writeBrokerConnectionStatus } from './brokerConnectionStatus'
 import { hardReconnectBrokerSession } from './brokerHardReconnect'
+import { pauseIfSameMtServer } from './mtServerSessionLock'
 import {
   applyShardToQuery,
   hasWorkOnShard,
@@ -110,7 +111,10 @@ export class BrokerConnectionMonitor {
     let reconnected = 0
     let skipped = 0
 
+    let lastServerKey: string | null = null
+
     for (const row of rows) {
+      lastServerKey = await pauseIfSameMtServer(lastServerKey, row.platform, row.broker_server)
       const uuid = row.metaapi_account_id?.trim()
       if (!isMtUuid(uuid)) continue
       const api = this.clientFor(row.platform)

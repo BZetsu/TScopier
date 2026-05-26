@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { MetatraderApiClient } from './metatraderapi'
 import { decryptMtPassword } from './brokerCredentialsCrypto'
 import { writeBrokerConnectionStatus } from './brokerConnectionStatus'
+import { withMtServerSessionLock } from './mtServerSessionLock'
 
 export interface BrokerHardReconnectRow {
   id: string
@@ -27,7 +28,9 @@ export async function hardReconnectBrokerSession(
   if (!password || !login || !server || !uuid) return false
 
   try {
-    await api.connectEx({ id: uuid, server, login, password })
+    await withMtServerSessionLock(row.platform, server, () =>
+      api.connectEx({ id: uuid, server, login, password }),
+    )
     const alive = await api.keepSessionAlive(uuid)
     if (!alive) return false
 

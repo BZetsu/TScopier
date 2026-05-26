@@ -14,6 +14,7 @@ import {
   MT_SESSION_EXPIRED_HINT,
   type MtPlatform,
 } from "./metatraderapi.ts"
+import { withMtServerSessionLock } from "./mtServerSessionLock.ts"
 
 export function parseBrokerSessionId(metaapiAccountId: string | null | undefined): string | null {
   const uuid = String(metaapiAccountId ?? "").trim()
@@ -152,6 +153,7 @@ export async function reconnectBrokerSession(
     id: string
     user_id: string
     metaapi_account_id: string | null
+    platform?: string | null
     account_login?: string | null
     broker_server?: string | null
     performance_baseline_balance?: number | null
@@ -184,12 +186,14 @@ export async function reconnectBrokerSession(
       const server = String(broker.broker_server ?? "").trim()
       if (login && server) {
         try {
-          await client.connectEx({
-            id: uuid,
-            server,
-            login,
-            password,
-          })
+          await withMtServerSessionLock(String(broker.platform ?? "MT5"), server, () =>
+            client.connectEx({
+              id: uuid,
+              server,
+              login,
+              password,
+            })
+          )
           alive = await keepBrokerSessionAlive(client, uuid)
         } catch (e) {
           const raw = e instanceof MetatraderApiError ? e.message : e instanceof Error ? e.message : "Connect failed"

@@ -12,7 +12,8 @@ import {
   stripBrokerSecretFields,
 } from "../_shared/brokerSession.ts"
 import { encryptMtPassword } from "../_shared/brokerCredentialsCrypto.ts"
-import { friendlyBrokerConnectError } from "../_shared/brokerConnectError.ts"
+import { friendlyBrokerConnectError, isSessionDropMessage } from "../_shared/brokerConnectError.ts"
+import { withMtServerSessionLock } from "../_shared/mtServerSessionLock.ts"
 import {
   isMtApiAuthConfigured,
   makeClientFromEnv,
@@ -95,7 +96,7 @@ function friendlyMtApiError(e: MetatraderApiError): MetatraderApiError {
  * register / delete / refresh balance / check connection calls, plus the trades read
  * for the Trades page.
  */
-const BUILD_TAG = "broker-metatrader@trades-history-v4-recent-pages"
+const BUILD_TAG = "broker-metatrader@same-server-lock-v1"
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 200, headers: corsHeaders })
 
@@ -159,12 +160,14 @@ Deno.serve(async (req: Request) => {
       const sessionId = crypto.randomUUID()
       let uuid: string
       try {
-        uuid = await client.connectEx({
-          id: sessionId,
-          server,
-          login,
-          password,
-        })
+        uuid = await withMtServerSessionLock(platform, server, () =>
+          client.connectEx({
+            id: sessionId,
+            server,
+            login,
+            password,
+          })
+        )
       } catch (e) {
         const raw = e instanceof MetatraderApiError ? e.message : e instanceof Error ? e.message : "Connect failed"
         return bad(400, friendlyBrokerConnectError(raw))
@@ -510,6 +513,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === "check") {
+      ensureMtApiConfigured(Deno.env)
       const brokerId = String((body as Record<string, unknown>).broker_id ?? "")
       if (!brokerId) return bad(400, "broker_id required")
       const { data: broker } = await supabase
@@ -532,11 +536,26 @@ Deno.serve(async (req: Request) => {
 
       try {
         const ready = await client.verifyTradingReady(uuid)
-        if (!ready) throw new Error("Broker session is not connected")
+        if (!ready) {
+          return Response.json(
+            {
+              ok: false,
+              result: "disconnected",
+              message: "Broker session is not connected",
+            },
+            { status: 200, headers: corsHeaders },
+          )
+        }
         return Response.json({ ok: true, result: "connected" }, { headers: corsHeaders })
       } catch (e) {
-        const status = e instanceof MetatraderApiError ? e.status : 502
         const msg = e instanceof Error ? e.message : "CheckConnect failed"
+        if (isSessionDropMessage(msg)) {
+          return Response.json(
+            { ok: false, result: "disconnected", message: msg },
+            { status: 200, headers: corsHeaders },
+          )
+        }
+        const status = e instanceof MetatraderApiError ? e.status : 502
         return bad(status >= 400 && status < 600 ? status : 502, msg)
       }
     }

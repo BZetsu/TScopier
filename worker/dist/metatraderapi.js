@@ -17,6 +17,7 @@ exports.mtPlatformFrom = mtPlatformFrom;
 exports.hasMetatraderApiConfigured = hasMetatraderApiConfigured;
 exports.getMetatraderApi = getMetatraderApi;
 const undici_1 = require("undici");
+const brokerConnectError_1 = require("./brokerConnectError");
 const mtTradeFields_1 = require("./mtTradeFields");
 /**
  * MetatraderAPI (metatraderapi.dev) Node client tuned for low order-send latency.
@@ -520,6 +521,10 @@ class MetatraderApiClient {
             const msg = err instanceof Error ? err.message : String(err);
             if (isBrokerDisconnectedMessage(msg) || isMtSessionGoneError(err))
                 return false;
+            if ((0, brokerConnectError_1.isMtBridgeGlitchMessage)(msg)) {
+                console.warn(`[metatraderapi] verifyTradingReady bridge glitch id=${id}: ${msg}`);
+                return true;
+            }
             console.warn(`[metatraderapi] verifyTradingReady failed id=${id}: ${msg}`);
             return false;
         }

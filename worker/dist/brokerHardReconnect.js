@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.hardReconnectBrokerSession = hardReconnectBrokerSession;
 const brokerCredentialsCrypto_1 = require("./brokerCredentialsCrypto");
 const brokerConnectionStatus_1 = require("./brokerConnectionStatus");
+const mtServerSessionLock_1 = require("./mtServerSessionLock");
 async function hardReconnectBrokerSession(supabase, api, row) {
     if (!row.auto_reconnect_enabled || !row.mt_password_encrypted)
         return false;
@@ -13,7 +14,7 @@ async function hardReconnectBrokerSession(supabase, api, row) {
     if (!password || !login || !server || !uuid)
         return false;
     try {
-        await api.connectEx({ id: uuid, server, login, password });
+        await (0, mtServerSessionLock_1.withMtServerSessionLock)(row.platform, server, () => api.connectEx({ id: uuid, server, login, password }));
         const alive = await api.keepSessionAlive(uuid);
         if (!alive)
             return false;

@@ -135,10 +135,19 @@ export const metatraderApi = {
     })
   },
 
-  check(brokerId: string): Promise<{ result: string }> {
+  check(brokerId: string): Promise<{ connected: boolean; message?: string }> {
     return call({
       body: { action: 'check', broker_id: brokerId },
-      expect: (b) => b as { result: string },
+      expect: (b) => {
+        const row = b as { ok?: boolean; result?: string; message?: string; error?: string }
+        if (row.ok === false || row.result === 'disconnected') {
+          return {
+            connected: false,
+            message: row.message ?? row.error ?? 'Broker session is not connected',
+          }
+        }
+        return { connected: true }
+      },
     })
   },
 

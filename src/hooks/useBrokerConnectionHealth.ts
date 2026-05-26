@@ -11,6 +11,11 @@ import { classifyBrokerConnectError } from '../lib/brokerConnectError'
 import { metatraderApi } from '../lib/metatraderapi'
 
 const FAILURES_BEFORE_DISCONNECT = 3
+const SAME_SERVER_GAP_MS = 1500
+
+function mtServerKey(broker: BrokerAccount): string {
+  return `${broker.platform}:${(broker.broker_server ?? broker.id).trim().toLowerCase()}`
+}
 
 interface UseBrokerConnectionHealthOptions {
   enabled?: boolean
@@ -40,7 +45,7 @@ function applyReconnectFailure(
 
 /**
  * Periodically verify brokers marked "connected" can actually reach trading APIs.
- * Attempts reconnect before marking disconnected; ignores transient bridge blips.
+ * Accounts on the same MT server are checked sequentially to avoid MetatraderAPI conflicts.
  */
 export function useBrokerConnectionHealth(
   brokers: BrokerAccount[],
@@ -52,25 +57,32 @@ export function useBrokerConnectionHealth(
   const enabled = options?.enabled ?? true
   const refreshOnVisible = options?.refreshOnVisible ?? true
 
-  const connectedKey = useMemo(
+  const connectedBrokers = useMemo(
     () =>
-      brokers
-        .filter(b => b.connection_status === 'connected' && isMtSessionUuid(b.metaapi_account_id))
-        .map(b => b.id)
-        .join(','),
+      brokers.filter(b => b.connection_status === 'connected' && isMtSessionUuid(b.metaapi_account_id)),
     [brokers],
   )
-  const connectedCount = connectedKey ? connectedKey.split(',').length : 0
+
+  const connectedKey = useMemo(
+    () => connectedBrokers.map(b => b.id).join(','),
+    [connectedBrokers],
+  )
+  const connectedCount = connectedBrokers.length
   const baseIntervalMs = options?.baseIntervalMs ?? 20_000
   const pollIntervalMs = brokerHealthPollIntervalMs(connectedCount, baseIntervalMs)
+
+  const sortedForHealth = useMemo(
+    () =>
+      [...connectedBrokers].sort((a, b) => mtServerKey(a).localeCompare(mtServerKey(b))),
+    [connectedBrokers],
+  )
 
   useEffect(() => {
     if (!enabled) return
     if (!connectedKey) return
 
-    const connectedIds = connectedKey.split(',')
     let cancelled = false
-    const activeIds = new Set(connectedIds)
+    const activeIds = new Set(connectedKey.split(','))
 
     const attemptSilentReconnect = async (brokerId: string): Promise<boolean> => {
       if (reconnectingRef.current.has(brokerId)) return false
@@ -119,33 +131,47 @@ export function useBrokerConnectionHealth(
       }
     }
 
+    const handleCheckFailure = async (id: string, msg: string) => {
+      if (cancelled) return
+      if (isTransientBrokerHealthError(msg)) return
+
+      const prevFails = failCountsRef.current.get(id) ?? 0
+      const nextFails = prevFails + 1
+      failCountsRef.current.set(id, nextFails)
+
+      if (isSessionDropMessage(msg) && nextFails >= 2) {
+        const recovered = await attemptSilentReconnect(id)
+        if (recovered) return
+      }
+
+      if (nextFails < FAILURES_BEFORE_DISCONNECT) return
+
+      const recovered = await attemptSilentReconnect(id)
+      if (!recovered && !cancelled) {
+        applyReconnectFailure(setBrokers, id, msg, undefined)
+      }
+    }
+
     const verifyAll = async () => {
       if (cancelled || document.visibilityState !== 'visible') return
-      for (const id of connectedIds) {
+      let lastServerKey: string | null = null
+      for (const broker of sortedForHealth) {
         if (cancelled) return
+        const serverKey = mtServerKey(broker)
+        if (lastServerKey === serverKey) {
+          await new Promise(r => setTimeout(r, SAME_SERVER_GAP_MS))
+        }
+        lastServerKey = serverKey
+
         try {
-          await metatraderApi.check(id)
-          failCountsRef.current.delete(id)
+          const { connected, message } = await metatraderApi.check(broker.id)
+          if (connected) {
+            failCountsRef.current.delete(broker.id)
+          } else {
+            await handleCheckFailure(broker.id, message ?? 'Broker session is not connected')
+          }
         } catch (err) {
-          if (cancelled) return
-          const msg = err instanceof Error ? err.message : String(err)
-          if (isTransientBrokerHealthError(msg)) continue
-
-          const prevFails = failCountsRef.current.get(id) ?? 0
-          const nextFails = prevFails + 1
-          failCountsRef.current.set(id, nextFails)
-
-          if (isSessionDropMessage(msg) && nextFails >= 2) {
-            const recovered = await attemptSilentReconnect(id)
-            if (recovered) continue
-          }
-
-          if (nextFails < FAILURES_BEFORE_DISCONNECT) continue
-
-          const recovered = await attemptSilentReconnect(id)
-          if (!recovered && !cancelled) {
-            applyReconnectFailure(setBrokers, id, msg, undefined)
-          }
+          await handleCheckFailure(broker.id, err instanceof Error ? err.message : String(err))
         }
         await new Promise(r => setTimeout(r, 800))
       }
@@ -170,5 +196,5 @@ export function useBrokerConnectionHealth(
       clearInterval(timer)
       document.removeEventListener('visibilitychange', onVisible)
     }
-  }, [connectedKey, enabled, pollIntervalMs, refreshOnVisible, setBrokers])
+  }, [connectedKey, enabled, pollIntervalMs, refreshOnVisible, setBrokers, sortedForHealth])
 }

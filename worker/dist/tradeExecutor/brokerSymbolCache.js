@@ -148,7 +148,9 @@ async function reconnectCachedBrokers(ctx) {
         else {
             console.warn(`[tradeExecutor] session not alive for broker=${row.id} on startup`);
             row.connection_status = 'error';
-            await (0, brokerConnectionStatus_1.writeBrokerConnectionStatus)(ctx.supabase, row.id, 'error');
+            await (0, brokerConnectionStatus_1.writeBrokerConnectionStatus)(ctx.supabase, row.id, 'error', {
+                rawError: 'session not alive on startup',
+            });
         }
         await new Promise(r => setTimeout(r, 500));
     }
@@ -158,7 +160,7 @@ async function markBrokerSessionDown(ctx, broker, uuid, reason) {
     ctx.sessionOrderBlocked.add(broker.id);
     console.warn(`[tradeExecutor] broker ${broker.id} session down: ${reason}`);
     broker.connection_status = 'error';
-    await (0, brokerConnectionStatus_1.writeBrokerConnectionStatus)(ctx.supabase, broker.id, 'error');
+    await (0, brokerConnectionStatus_1.writeBrokerConnectionStatus)(ctx.supabase, broker.id, 'error', { rawError: reason });
 }
 async function pingBrokerSession(ctx, row) {
     const uuid = row.metaapi_account_id;

@@ -4,6 +4,7 @@ exports.BrokerConnectionMonitor = void 0;
 const metatraderapi_1 = require("./metatraderapi");
 const brokerConnectionStatus_1 = require("./brokerConnectionStatus");
 const brokerHardReconnect_1 = require("./brokerHardReconnect");
+const mtServerSessionLock_1 = require("./mtServerSessionLock");
 const monitorIdleGate_1 = require("./monitorIdleGate");
 function isMtUuid(s) {
     if (!s)
@@ -75,7 +76,9 @@ class BrokerConnectionMonitor {
         let ok = 0;
         let reconnected = 0;
         let skipped = 0;
+        let lastServerKey = null;
         for (const row of rows) {
+            lastServerKey = await (0, mtServerSessionLock_1.pauseIfSameMtServer)(lastServerKey, row.platform, row.broker_server);
             const uuid = row.metaapi_account_id?.trim();
             if (!isMtUuid(uuid))
                 continue;
@@ -135,7 +138,9 @@ class BrokerConnectionMonitor {
         const delay = nextBackoffMs(fails);
         this.backoff.set(row.id, { fails, lastAttemptAt: now, nextEligibleAt: now + delay });
         if (fails >= 2 && row.connection_status !== 'error') {
-            void (0, brokerConnectionStatus_1.writeBrokerConnectionStatus)(this.supabase, row.id, 'error');
+            void (0, brokerConnectionStatus_1.writeBrokerConnectionStatus)(this.supabase, row.id, 'error', {
+                rawError: 'keepSessionAlive failed during reconnect sweep',
+            });
         }
         if (fails <= 3 || fails % 10 === 0) {
             console.warn(`[brokerConnection] broker=${row.id} down (fails=${fails}, next retry in ${Math.round(delay / 1000)}s)`);
