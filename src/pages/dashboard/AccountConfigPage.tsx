@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import {
   Plus, Trash2, Server, Activity, GitBranch, Eye, DollarSign, RefreshCw,
   SlidersHorizontal, Radio, Target, Filter, Wallet, Link2,
-  ArrowLeftRight, ChevronDown, ChevronLeft, ChevronRight, Settings2, Bookmark, Pencil, ScrollText, AlertTriangle,
+  ArrowLeftRight, ChevronDown, ChevronLeft, ChevronRight, Search, Settings2, Bookmark, Pencil, ScrollText, AlertTriangle,
 } from 'lucide-react'
 import clsx from 'clsx'
 import { supabase } from '../../lib/supabase'
@@ -120,6 +120,23 @@ function resolveBrokerFilterLabel(broker: BrokerAccount): string {
     || broker.broker_server
     || '—'
   )
+}
+
+function brokerMatchesSearch(broker: BrokerAccount, query: string): boolean {
+  const q = query.trim().toLowerCase()
+  if (!q) return true
+  const haystack = [
+    broker.label,
+    broker.account_login,
+    broker.broker_server,
+    broker.broker_name,
+    broker.platform,
+    resolveBrokerFilterLabel(broker),
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+  return haystack.includes(q)
 }
 
 function normalizeSignalChannelIds(b: BrokerAccount | undefined): string[] {
@@ -528,6 +545,7 @@ export function AccountConfigPage() {
   const [deleteInProgress, setDeleteInProgress] = useState(false)
   const [togglingBrokerId, setTogglingBrokerId] = useState<string | null>(null)
   const [brokerFilter, setBrokerFilter] = useState('all')
+  const [brokerSearchQuery, setBrokerSearchQuery] = useState('')
   const [brokerPage, setBrokerPage] = useState(1)
   const [brokerAccountTypes, setBrokerAccountTypes] = useState<Record<string, LinkedAccountType>>({})
   const brokerAccountTypeKey = useMemo(
@@ -545,9 +563,11 @@ export function AccountConfigPage() {
   }, [brokers])
 
   const filteredBrokers = useMemo(() => {
-    if (brokerFilter === 'all') return brokers
-    return brokers.filter(broker => resolveBrokerFilterLabel(broker) === brokerFilter)
-  }, [brokers, brokerFilter])
+    return brokers.filter(broker => {
+      if (brokerFilter !== 'all' && resolveBrokerFilterLabel(broker) !== brokerFilter) return false
+      return brokerMatchesSearch(broker, brokerSearchQuery)
+    })
+  }, [brokers, brokerFilter, brokerSearchQuery])
 
   const brokerTotalPages = Math.max(1, Math.ceil(filteredBrokers.length / BROKER_PAGE_SIZE))
   const safeBrokerPage = Math.min(brokerPage, brokerTotalPages)
@@ -567,7 +587,7 @@ export function AccountConfigPage() {
 
   useEffect(() => {
     setBrokerPage(1)
-  }, [brokerFilter])
+  }, [brokerFilter, brokerSearchQuery])
 
   useEffect(() => {
     if (brokerPage > brokerTotalPages) setBrokerPage(brokerTotalPages)
@@ -1519,26 +1539,45 @@ export function AccountConfigPage() {
           </div>
         ) : (
           <>
-            <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <div className="mb-3 flex flex-col gap-3">
               <p className="text-sm font-medium text-neutral-700 dark:text-neutral-300 tabular-nums">
                 {connectedAccountsLabel}
               </p>
-              <div className="w-full sm:w-64">
-                <Select
-                  label={bl.brokerFilterLabel}
-                  value={brokerFilter}
-                  onChange={e => setBrokerFilter(e.target.value)}
-                  options={[
-                    { value: 'all', label: bl.brokerFilterAll },
-                    ...brokerFilterOptions.map(label => ({ value: label, label })),
-                  ]}
-                />
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                <div className="flex-1">
+                  <label className="text-sm font-medium text-neutral-700 dark:text-neutral-300">
+                    {bl.accountSearchLabel}
+                  </label>
+                  <div className="relative mt-1.5">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+                    <input
+                      type="search"
+                      value={brokerSearchQuery}
+                      onChange={e => setBrokerSearchQuery(e.target.value)}
+                      placeholder={bl.accountSearchPlaceholder}
+                      className="w-full rounded-lg border border-neutral-200 bg-white py-2 pl-9 pr-3 text-sm text-neutral-900 placeholder:text-neutral-400 hover:border-neutral-300 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-50"
+                    />
+                  </div>
+                </div>
+                <div className="w-full sm:w-64">
+                  <Select
+                    label={bl.brokerFilterLabel}
+                    value={brokerFilter}
+                    onChange={e => setBrokerFilter(e.target.value)}
+                    options={[
+                      { value: 'all', label: bl.brokerFilterAll },
+                      ...brokerFilterOptions.map(label => ({ value: label, label })),
+                    ]}
+                  />
+                </div>
               </div>
             </div>
 
             {filteredBrokers.length === 0 ? (
               <div className="bg-white dark:bg-neutral-900 rounded-xl border border-dashed border-neutral-200 dark:border-neutral-800 py-8 text-center">
-                <p className="text-sm text-neutral-500 dark:text-neutral-400">{bl.brokerFilterNoMatch}</p>
+                <p className="text-sm text-neutral-500 dark:text-neutral-400">
+                  {brokerSearchQuery.trim() ? bl.accountSearchNoMatch : bl.brokerFilterNoMatch}
+                </p>
               </div>
             ) : (
               <>

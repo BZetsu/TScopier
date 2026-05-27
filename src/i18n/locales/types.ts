@@ -285,6 +285,9 @@ export interface AccountConfigBrokerListTranslations {
   brokerFilterLabel: string
   brokerFilterAll: string
   brokerFilterNoMatch: string
+  accountSearchLabel: string
+  accountSearchPlaceholder: string
+  accountSearchNoMatch: string
 }
 
 export interface AccountConfigTranslations {
