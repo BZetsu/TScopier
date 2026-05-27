@@ -13,6 +13,7 @@ import { channelMatchesBrokerSignal } from '../brokerChannelFilter'
 import { withChannelTradingConfig } from '../channelTradingConfig'
 import {
   isChannelManagementBlocked,
+  managementFilterContextFromParsed,
   normalizeChannelMessageFiltersMap,
 } from '../channelMessageFilters'
 import { shouldRouteAsBasketParameterRefresh, parsedHasSlOrTp } from '../multiTradeMerge'
@@ -404,21 +405,17 @@ export async function handleSignal(ctx: TradeExecutorContext,
       }
 
       if (isManagementAction(action)) {
+        const mgmtCtx = managementFilterContextFromParsed(parsed)
         const mgmtBrokers = brokers.filter(
           b => !isChannelManagementBlocked(
             normalizeChannelMessageFiltersMap(b.channel_message_filters),
             row.channel_id,
             action,
+            mgmtCtx,
           ),
         )
         if (!mgmtBrokers.length) {
-          try {
-            await ctx.supabase
-              .from('signals')
-              .update({ status: 'skipped', skip_reason: 'channel_filter_ignored' })
-              .eq('id', row.id)
-              .eq('status', 'parsed')
-          } catch { /* best-effort */ }
+          await ctx.logDispatchSkipped(row, 'channel_filter_ignored')
           return
         }
         await ctx.applyManagement(row, parsed, mgmtBrokers)

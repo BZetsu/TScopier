@@ -11,6 +11,8 @@ exports.filterKeysForOppositeSignalClose = filterKeysForOppositeSignalClose;
 exports.filterKeysForPendingCancel = filterKeysForPendingCancel;
 exports.isCategoryIgnored = isCategoryIgnored;
 exports.isChannelManagementBlocked = isChannelManagementBlocked;
+exports.managementFilterContextFromParsed = managementFilterContextFromParsed;
+exports.isChannelSlTpUpdateBlocked = isChannelSlTpUpdateBlocked;
 exports.isOppositeSignalCloseBlocked = isOppositeSignalCloseBlocked;
 exports.isPendingCancelBlocked = isPendingCancelBlocked;
 const ALL_KEYS = [
@@ -102,6 +104,15 @@ function isChannelManagementBlocked(filters, channelId, action, ctx = {}) {
     if (!keys.length)
         return false;
     return keys.some(k => isCategoryIgnored(filters, channelId, k));
+}
+function managementFilterContextFromParsed(parsed) {
+    const hasNewSl = typeof parsed.sl === 'number' && Number.isFinite(parsed.sl) && parsed.sl > 0;
+    const hasNewTp = (parsed.tp ?? []).some((t) => typeof t === 'number' && Number.isFinite(t) && t > 0);
+    return { hasNewSl, hasNewTp };
+}
+/** SL/TP basket refresh and modify instructions share the same per-channel filters. */
+function isChannelSlTpUpdateBlocked(filters, channelId, parsed) {
+    return isChannelManagementBlocked(filters, channelId, 'modify', managementFilterContextFromParsed(parsed));
 }
 function isOppositeSignalCloseBlocked(filters, channelId) {
     return filterKeysForOppositeSignalClose().some(k => isCategoryIgnored(filters, channelId, k));

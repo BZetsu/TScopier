@@ -350,16 +350,10 @@ async function handleSignal(ctx, row, opts) {
             return;
         }
         if ((0, tradeSignalActions_1.isManagementAction)(action)) {
-            const mgmtBrokers = brokers.filter(b => !(0, channelMessageFilters_1.isChannelManagementBlocked)((0, channelMessageFilters_1.normalizeChannelMessageFiltersMap)(b.channel_message_filters), row.channel_id, action));
+            const mgmtCtx = (0, channelMessageFilters_1.managementFilterContextFromParsed)(parsed);
+            const mgmtBrokers = brokers.filter(b => !(0, channelMessageFilters_1.isChannelManagementBlocked)((0, channelMessageFilters_1.normalizeChannelMessageFiltersMap)(b.channel_message_filters), row.channel_id, action, mgmtCtx));
             if (!mgmtBrokers.length) {
-                try {
-                    await ctx.supabase
-                        .from('signals')
-                        .update({ status: 'skipped', skip_reason: 'channel_filter_ignored' })
-                        .eq('id', row.id)
-                        .eq('status', 'parsed');
-                }
-                catch { /* best-effort */ }
+                await ctx.logDispatchSkipped(row, 'channel_filter_ignored');
                 return;
             }
             await ctx.applyManagement(row, parsed, mgmtBrokers);

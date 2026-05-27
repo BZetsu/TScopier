@@ -128,6 +128,31 @@ export function isChannelManagementBlocked(
   return keys.some(k => isCategoryIgnored(filters, channelId, k))
 }
 
+export function managementFilterContextFromParsed(parsed: {
+  sl?: number | null
+  tp?: number[] | null | undefined
+}): ManagementFilterContext {
+  const hasNewSl = typeof parsed.sl === 'number' && Number.isFinite(parsed.sl) && parsed.sl > 0
+  const hasNewTp = (parsed.tp ?? []).some(
+    (t): t is number => typeof t === 'number' && Number.isFinite(t) && t > 0,
+  )
+  return { hasNewSl, hasNewTp }
+}
+
+/** SL/TP basket refresh and modify instructions share the same per-channel filters. */
+export function isChannelSlTpUpdateBlocked(
+  filters: ChannelMessageFiltersMap | null | undefined,
+  channelId: string | null | undefined,
+  parsed: { sl?: number | null; tp?: number[] | null | undefined },
+): boolean {
+  return isChannelManagementBlocked(
+    filters,
+    channelId,
+    'modify',
+    managementFilterContextFromParsed(parsed),
+  )
+}
+
 export function isOppositeSignalCloseBlocked(
   filters: ChannelMessageFiltersMap | null | undefined,
   channelId: string | null | undefined,

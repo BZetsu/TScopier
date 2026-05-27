@@ -15,6 +15,8 @@ export type ChannelWorkerLogRow = {
   signals?: {
     parsed_data?: Record<string, unknown> | null
     raw_message?: string | null
+    status?: string | null
+    skip_reason?: string | null
   } | null
 }
 
@@ -265,6 +267,28 @@ export function orderSendOutcomeSuffix(
   return interpolate(cw.errSuffix, { detail: translateBrokerError(err, cw) })
 }
 
+function signalMarkedIgnored(row: ChannelWorkerLogRow): boolean {
+  const sig = row.signals
+  const parsed = getSignalParsedFromLog(row)
+  const action = String(parsed.action ?? '').toLowerCase()
+  const skip = String(sig?.skip_reason ?? row.request_payload?.skip_reason ?? '').toLowerCase()
+  const status = String(sig?.status ?? '').toLowerCase()
+  if (action === 'ignore') return true
+  if (skip === 'channel_filter_ignored') return true
+  if (status === 'skipped' && skip === 'non-trade message') return true
+  return false
+}
+
+function ignoredChannelWorkerReason(row: ChannelWorkerLogRow, cw: ChannelWorkerTranslations): string {
+  const sig = row.signals
+  const parsed = getSignalParsedFromLog(row)
+  const action = String(parsed.action ?? '').toLowerCase()
+  const skip = String(sig?.skip_reason ?? row.request_payload?.skip_reason ?? '').trim()
+  if (skip) return translateSkipReason(skip, cw)
+  if (action === 'ignore') return translateSkipReason('non_trade_message', cw)
+  return translateSkipReason('channel_filter_ignored', cw)
+}
+
 /** Localized line for the dashboard Channel Worker feed. */
 export function channelWorkerLogMessage(row: ChannelWorkerLogRow, cw: ChannelWorkerTranslations): string {
   const instr = resolveInstrumentSymbol(row)
@@ -365,6 +389,12 @@ export function channelWorkerLogMessage(row: ChannelWorkerLogRow, cw: ChannelWor
 
   if (logAction.startsWith('mgmt_') || MANAGEMENT_COPIER_ACTIONS.has(signalAction)) {
     const mgmt = logAction.startsWith('mgmt_') ? logAction.slice(5) : signalAction
+    if (signalMarkedIgnored(row) && status === 'success') {
+      return interpolate(cw.mgmtSkippedReason, {
+        phrase: mgmtSkippedPhrase(mgmt, instr, cw),
+        reason: ignoredChannelWorkerReason(row, cw),
+      })
+    }
     if (status === 'failed' && isBenignStopsAlreadySetMessage(row.error_message)) {
       return mgmtSuccessPhrase(mgmt, instr, parsed, cw)
     }
@@ -457,6 +487,11 @@ export function channelWorkerLogMessage(row: ChannelWorkerLogRow, cw: ChannelWor
     )
   }
   if (logAction === 'merge_routed_modify_only' || logAction === 'merge_modify_summary') {
+    if (status === 'skipped' && String(payload.skip_reason ?? '').toLowerCase() === 'channel_filter_ignored') {
+      return interpolate(cw.dispatchSkipped, {
+        reason: ignoredChannelWorkerReason(row, cw),
+      })
+    }
     const openLegs = Number(payload.openLegs)
     const modified = Number(payload.modified)
     const skipped = Number(payload.skippedNoTicket)

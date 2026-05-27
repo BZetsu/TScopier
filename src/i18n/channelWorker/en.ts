@@ -136,6 +136,8 @@ export const channelWorkerEn: ChannelWorkerTranslations = {
       'no broker account is linked to this channel — open Account Configuration, select each broker, Channels tab, check the signal channel, and Save',
     non_trade_message:
       'message did not look like a trading signal (needs direction, symbol, and price or SL/TP cues)',
+    channel_filter_ignored:
+      'this channel instruction is set to Ignore in Configure Trading',
     telegram_listener_not_live:
       'Telegram listener is not connected — open Copier Engine and reconnect Telegram',
     explicit_stops_required_when_add_to_existing_off:

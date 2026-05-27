@@ -137,6 +137,8 @@ export const channelWorkerEs: ChannelWorkerTranslations = {
       'ninguna cuenta está vinculada a este canal — abra Configuración de cuenta, pestaña Canales, marque el canal y guarde',
     non_trade_message:
       'el mensaje no parece una señal de trading (requiere dirección, símbolo y precio o SL/TP)',
+    channel_filter_ignored:
+      'esta instrucción del canal está en Ignorar en Configurar trading',
     telegram_listener_not_live:
       'listener de Telegram inactivo — abra Copier Engine y reconecte Telegram',
     explicit_stops_required_when_add_to_existing_off:

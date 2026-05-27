@@ -125,6 +125,8 @@ interface AiExpertLogRow {
   signals?: {
     parsed_data?: Record<string, unknown> | null
     raw_message?: string | null
+    status?: string | null
+    skip_reason?: string | null
   } | null
 }
 
@@ -747,7 +749,7 @@ export function DashboardPage() {
           response_payload,
           error_message,
           signal_id,
-          signals ( raw_message, parsed_data )
+          signals ( raw_message, parsed_data, status, skip_reason )
         `,
         )
         .eq('user_id', user!.id)

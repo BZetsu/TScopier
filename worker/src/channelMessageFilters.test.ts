@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import {
   filterKeysForManagementAction,
   isChannelManagementBlocked,
+  isChannelSlTpUpdateBlocked,
   normalizeChannelFilters,
 } from './channelMessageFilters'
 
@@ -36,6 +37,18 @@ test('modify checks sl/tp separately', () => {
   assert.equal(
     isChannelManagementBlocked(filters, 'ch1', 'modify', { hasNewSl: false, hasNewTp: true }),
     false,
+  )
+})
+
+test('isChannelSlTpUpdateBlocked respects parsed SL/TP fields', () => {
+  const filters = { ch1: normalizeChannelFilters({ modify_tp: 'ignore' }) }
+  assert.equal(
+    isChannelSlTpUpdateBlocked(filters, 'ch1', { sl: 1.2, tp: [] }),
+    false,
+  )
+  assert.equal(
+    isChannelSlTpUpdateBlocked(filters, 'ch1', { sl: null, tp: [1.3] }),
+    true,
   )
 })
 

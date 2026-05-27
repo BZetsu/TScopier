@@ -59,6 +59,7 @@ import {
 } from '../../monitorIdleGate'
 import {
   isChannelManagementBlocked,
+  isChannelSlTpUpdateBlocked,
   isOppositeSignalCloseBlocked,
   isPendingCancelBlocked,
   normalizeChannelMessageFiltersMap,
@@ -175,6 +176,26 @@ export async function tryParameterFollowUpMergeModifyOnly(ctx: TradeExecutorCont
     if (!shouldRouteAsBasketParameterRefresh(parsed)) return { handled: false }
     const api = ctx.apiFor(broker)
     if (!api) return { handled: false }
+
+    if (isChannelSlTpUpdateBlocked(
+      normalizeChannelMessageFiltersMap(broker.channel_message_filters),
+      signal.channel_id,
+      parsed,
+    )) {
+      void ctx.supabase.from('trade_execution_logs').insert({
+        user_id: signal.user_id,
+        signal_id: signal.id,
+        broker_account_id: broker.id,
+        action: 'merge_routed_modify_only',
+        status: 'skipped',
+        request_payload: {
+          skip_reason: 'channel_filter_ignored',
+          channel_id: signal.channel_id,
+          symbol,
+        } as unknown as Record<string, unknown>,
+      }).then(() => undefined, () => undefined)
+      return { handled: true, success: false }
+    }
 
     const a = String(parsed.action ?? '').toLowerCase()
     if (a !== 'buy' && a !== 'sell') return { handled: false }
