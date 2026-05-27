@@ -167,6 +167,30 @@ Deno.serve(async (req: Request) => {
     const action = String((body as Record<string, unknown>).action ?? "")
     if (!action) return bad(400, "action required")
 
+    if (action === "search_brokers") {
+      ensureMtApiConfigured(Deno.env)
+      const platform = String((body as Record<string, unknown>).platform ?? "MT5").toUpperCase()
+      if (!PLATFORMS.has(platform)) return bad(400, "platform must be MT4 or MT5")
+      const company = String((body as Record<string, unknown>).company ?? "").trim()
+      if (company.length < 4) {
+        return new Response(JSON.stringify({ ok: true, companies: [] }), {
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        })
+      }
+      const client = mtClient(Deno.env, platform)
+      try {
+        const companies = await client.searchBrokers(company)
+        return new Response(JSON.stringify({ ok: true, companies }), {
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        })
+      } catch (e) {
+        const raw = e instanceof MetatraderApiError ? e.message : e instanceof Error ? e.message : "Search failed"
+        return bad(502, raw)
+      }
+    }
+
     if (action === "register") {
       ensureMtApiConfigured(Deno.env)
       const platform = String((body as Record<string, unknown>).platform ?? "MT5").toUpperCase()

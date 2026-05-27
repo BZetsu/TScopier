@@ -25,7 +25,7 @@ Session `id` is a client-supplied UUID v4 (ConnectEx) or server-returned token; 
 | Order send | GET | `/OrderSendSafe` | `/OrderSend` | Same query params |
 | Order modify | GET | `/OrderModifySafe` | `/OrderModify` | |
 | Order close | GET | `/OrderCloseSafe` | `/OrderClose` | |
-| Broker/server search | GET | `/Search` | `/Search` | Query: `company` (min 4 chars). Response: `[{ companyName, results: [{ name, access }] }]`. Used by `sync-mt-servers` to populate `mt_servers`. |
+| Broker/server search | GET | `/Search` | `/Search` | Query: `company` (min 4 chars). Response: `[{ companyName, results: [{ name, access }] }]`. Used live at connect time via `broker-metatrader` action `search_brokers`, and by `sync-mt-servers` to populate `mt_servers`. |
 
 Swagger: `https://mt5.mt4api.dev/swagger/v1/swagger.json`, `https://mt4.mt4api.dev/swagger/v1/swagger.json` (Basic Auth).
 
@@ -46,3 +46,5 @@ curl -X POST "$SUPABASE_URL/functions/v1/sync-mt-servers" \
 ```
 
 Quick sample (`{"quick":true}`) uses nine search terms; full sync runs ~171 terms on both MT4 and MT5 hosts and upserts into `mt_servers`.
+
+**Live connect search:** the account configuration UI calls `POST /functions/v1/broker-metatrader` with `{ "action": "search_brokers", "platform": "MT5", "company": "icma" }` (authenticated user JWT). The edge function proxies to `/Search` on the matching MT host and returns `{ ok, companies }` for the company → server picker.

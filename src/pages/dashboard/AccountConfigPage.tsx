@@ -20,7 +20,7 @@ import { Button } from '../../components/ui/Button'
 import { Badge } from '../../components/ui/Badge'
 import { Alert } from '../../components/ui/Alert'
 import { AddAccountModal } from '../../components/ui/AddAccountModal'
-import { BrokerServerSelect } from '../../components/ui/BrokerServerSelect'
+import { MtCompanyServerPicker } from '../../components/ui/MtCompanyServerPicker'
 import { formatLocalCalendarDay } from '../../lib/dayStartBalance'
 import { metatraderApi } from '../../lib/metatraderapi'
 import { isLegacyBrokerLink } from '../../lib/brokerLink'
@@ -1370,7 +1370,7 @@ export function AccountConfigPage() {
                 />
               </div>
 
-              <BrokerServerSelect
+              <MtCompanyServerPicker
                 platform={form.platform}
                 value={form.broker_server}
                 onChange={(v) => set('broker_server', v)}

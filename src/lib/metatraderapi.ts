@@ -66,6 +66,16 @@ export interface RegisterArgs {
   remember_password?: boolean
 }
 
+export interface BrokerSearchResult {
+  name?: string
+  access?: string[]
+}
+
+export interface BrokerSearchCompany {
+  companyName?: string
+  results?: BrokerSearchResult[]
+}
+
 export interface AccountSummary {
   balance?: number
   equity?: number
@@ -82,6 +92,19 @@ export interface AccountSummary {
 }
 
 export const metatraderApi = {
+  searchBrokers(args: {
+    platform: 'MT4' | 'MT5'
+    company: string
+  }): Promise<{ companies: BrokerSearchCompany[] }> {
+    return call({
+      body: { action: 'search_brokers', platform: args.platform, company: args.company },
+      expect: (b) => {
+        const row = b as { ok?: boolean; companies?: BrokerSearchCompany[] }
+        return { companies: row.companies ?? [] }
+      },
+    })
+  },
+
   register(args: RegisterArgs): Promise<{ broker: BrokerAccount; summary: AccountSummary | null }> {
     return call({
       body: { action: 'register', ...args },
