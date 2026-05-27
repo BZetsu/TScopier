@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo, type ReactNode } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import {
   Plus, Trash2, Server, Activity, GitBranch, Eye, DollarSign, RefreshCw,
   SlidersHorizontal, Radio, Target, Filter, Wallet, Link2,
@@ -417,6 +417,7 @@ function formatLinkedAccountTypeLabel(
 
 export function AccountConfigPage() {
   const t = useT()
+  const navigate = useNavigate()
   const cm = t.accountConfig.configureModal
   const bl = t.accountConfig.brokerList
 
@@ -1692,22 +1693,35 @@ export function AccountConfigPage() {
                   <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
                     {cm.channelsSidebar}
                   </p>
-                  {channelOptions.length > 0 ? (
+                  <div className="flex items-center gap-0.5 shrink-0">
                     <button
                       type="button"
-                      onClick={() => setChannelLinkEditMode(v => !v)}
-                      className={clsx(
-                        'shrink-0 rounded-md p-1.5 transition-colors min-h-[32px] min-w-[32px] flex items-center justify-center',
-                        channelLinkEditMode
-                          ? 'bg-primary-100 text-primary-700 dark:bg-teal-950/60 dark:text-teal-300'
-                          : 'text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 dark:hover:text-neutral-300 dark:hover:bg-neutral-800',
-                      )}
-                      aria-label={channelLinkEditMode ? cm.doneEditingLinkedChannels : cm.editLinkedChannels}
-                      aria-pressed={channelLinkEditMode}
+                      onClick={() => {
+                        closeConfigureModal()
+                        navigate('/channels')
+                      }}
+                      className="shrink-0 rounded-md p-1.5 transition-colors min-h-[32px] min-w-[32px] flex items-center justify-center text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 dark:hover:text-neutral-300 dark:hover:bg-neutral-800"
+                      aria-label={cm.addChannel}
                     >
-                      <Pencil className="w-3.5 h-3.5" />
+                      <Plus className="w-3.5 h-3.5" />
                     </button>
-                  ) : null}
+                    {channelOptions.length > 0 ? (
+                      <button
+                        type="button"
+                        onClick={() => setChannelLinkEditMode(v => !v)}
+                        className={clsx(
+                          'shrink-0 rounded-md p-1.5 transition-colors min-h-[32px] min-w-[32px] flex items-center justify-center',
+                          channelLinkEditMode
+                            ? 'bg-primary-100 text-primary-700 dark:bg-teal-950/60 dark:text-teal-300'
+                            : 'text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 dark:hover:text-neutral-300 dark:hover:bg-neutral-800',
+                        )}
+                        aria-label={channelLinkEditMode ? cm.doneEditingLinkedChannels : cm.editLinkedChannels}
+                        aria-pressed={channelLinkEditMode}
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
                 {channelOptions.length === 0 ? (
                   <p className="text-xs text-neutral-500 dark:text-neutral-400 px-2 py-1">

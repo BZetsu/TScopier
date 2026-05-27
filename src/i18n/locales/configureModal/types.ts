@@ -10,6 +10,7 @@ export interface ConfigureModalTranslations {
   cancel: string
   save: string
   channelsSidebar: string
+  addChannel: string
   editLinkedChannels: string
   doneEditingLinkedChannels: string
   selectChannelToConfigure: string

@@ -7,6 +7,7 @@ export const configureModalEn: ConfigureModalTranslations = {
   cancel: 'Cancel',
   save: 'Save',
   channelsSidebar: 'Channels',
+  addChannel: 'Add channel',
   editLinkedChannels: 'Edit linked channels',
   doneEditingLinkedChannels: 'Done editing channels',
   selectChannelToConfigure: 'Select or link a channel to configure its trading settings.',

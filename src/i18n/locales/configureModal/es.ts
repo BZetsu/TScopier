@@ -7,6 +7,7 @@ export const configureModalEs: ConfigureModalTranslations = {
   cancel: 'Cancelar',
   save: 'Guardar',
   channelsSidebar: 'Canales',
+  addChannel: 'Añadir canal',
   editLinkedChannels: 'Editar canales vinculados',
   doneEditingLinkedChannels: 'Listo',
   selectChannelToConfigure: 'Selecciona o vincula un canal para configurar su trading.',
