@@ -280,6 +280,11 @@ export interface AccountConfigBrokerListTranslations {
   deleteTitle: string
   deleteBody: string
   deleteConfirm: string
+  connectedAccountsTotal: string
+  connectedAccountsTotalOne: string
+  brokerFilterLabel: string
+  brokerFilterAll: string
+  brokerFilterNoMatch: string
 }
 
 export interface AccountConfigTranslations {

@@ -293,6 +293,11 @@ export const fr: Translations = {
       deleteBody:
         'Cela déconnecte {label} de MetatraderAPI et du copieur. Cette action est irréversible.',
       deleteConfirm: 'Déconnecter',
+      connectedAccountsTotal: '{count} comptes connectés',
+      connectedAccountsTotalOne: '1 compte connecté',
+      brokerFilterLabel: 'Broker',
+      brokerFilterAll: 'Tous les brokers',
+      brokerFilterNoMatch: 'Aucun compte ne correspond à ce broker.',
     },
     configureModal: configureModalFr,
   },

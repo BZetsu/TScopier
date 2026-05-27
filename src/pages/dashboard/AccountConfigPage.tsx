@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import {
   Plus, Trash2, Server, Activity, GitBranch, Eye, DollarSign, RefreshCw,
   SlidersHorizontal, Radio, Target, Filter, Wallet, Link2,
-  ArrowLeftRight, ChevronDown, Settings2, Bookmark, Pencil, ScrollText, AlertTriangle,
+  ArrowLeftRight, ChevronDown, ChevronLeft, ChevronRight, Settings2, Bookmark, Pencil, ScrollText, AlertTriangle,
 } from 'lucide-react'
 import clsx from 'clsx'
 import { supabase } from '../../lib/supabase'
@@ -109,6 +109,17 @@ const emptyForm: BrokerForm = {
   account_password: '',
   broker_server: '',
   remember_password: false,
+}
+
+const BROKER_PAGE_SIZE = 10
+
+function resolveBrokerFilterLabel(broker: BrokerAccount): string {
+  return (
+    broker.broker_name
+    || inferBrokerLabelFromServer(broker.broker_server ?? null)
+    || broker.broker_server
+    || '—'
+  )
 }
 
 function normalizeSignalChannelIds(b: BrokerAccount | undefined): string[] {
@@ -516,11 +527,51 @@ export function AccountConfigPage() {
   const [brokerPendingDelete, setBrokerPendingDelete] = useState<BrokerAccount | null>(null)
   const [deleteInProgress, setDeleteInProgress] = useState(false)
   const [togglingBrokerId, setTogglingBrokerId] = useState<string | null>(null)
+  const [brokerFilter, setBrokerFilter] = useState('all')
+  const [brokerPage, setBrokerPage] = useState(1)
   const [brokerAccountTypes, setBrokerAccountTypes] = useState<Record<string, LinkedAccountType>>({})
   const brokerAccountTypeKey = useMemo(
     () => brokers.map(b => `${b.id}:${b.broker_server ?? ''}`).join('|'),
     [brokers],
   )
+
+  const brokerFilterOptions = useMemo(() => {
+    const labels = new Set<string>()
+    for (const broker of brokers) {
+      const label = resolveBrokerFilterLabel(broker)
+      if (label && label !== '—') labels.add(label)
+    }
+    return [...labels].sort((a, b) => a.localeCompare(b))
+  }, [brokers])
+
+  const filteredBrokers = useMemo(() => {
+    if (brokerFilter === 'all') return brokers
+    return brokers.filter(broker => resolveBrokerFilterLabel(broker) === brokerFilter)
+  }, [brokers, brokerFilter])
+
+  const brokerTotalPages = Math.max(1, Math.ceil(filteredBrokers.length / BROKER_PAGE_SIZE))
+  const safeBrokerPage = Math.min(brokerPage, brokerTotalPages)
+
+  const paginatedBrokers = useMemo(() => {
+    const start = (safeBrokerPage - 1) * BROKER_PAGE_SIZE
+    return filteredBrokers.slice(start, start + BROKER_PAGE_SIZE)
+  }, [filteredBrokers, safeBrokerPage])
+
+  const brokerRangeStart = filteredBrokers.length === 0 ? 0 : (safeBrokerPage - 1) * BROKER_PAGE_SIZE + 1
+  const brokerRangeEnd = Math.min(safeBrokerPage * BROKER_PAGE_SIZE, filteredBrokers.length)
+
+  const connectedAccountsLabel = useMemo(() => {
+    if (brokers.length === 1) return bl.connectedAccountsTotalOne
+    return interpolate(bl.connectedAccountsTotal, { count: String(brokers.length) })
+  }, [brokers.length, bl.connectedAccountsTotal, bl.connectedAccountsTotalOne])
+
+  useEffect(() => {
+    setBrokerPage(1)
+  }, [brokerFilter])
+
+  useEffect(() => {
+    if (brokerPage > brokerTotalPages) setBrokerPage(brokerTotalPages)
+  }, [brokerPage, brokerTotalPages])
 
   useEffect(() => {
     if (brokers.length > 0) void syncBrokerAccountTypes(brokers)
@@ -1467,8 +1518,32 @@ export function AccountConfigPage() {
             <p className="text-xs text-neutral-300 dark:text-neutral-600 mt-0.5">{t.accountConfig.brokersEmptySubtitle}</p>
           </div>
         ) : (
-          <div className="space-y-3">
-            {brokers.map(broker => {
+          <>
+            <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+              <p className="text-sm font-medium text-neutral-700 dark:text-neutral-300 tabular-nums">
+                {connectedAccountsLabel}
+              </p>
+              <div className="w-full sm:w-64">
+                <Select
+                  label={bl.brokerFilterLabel}
+                  value={brokerFilter}
+                  onChange={e => setBrokerFilter(e.target.value)}
+                  options={[
+                    { value: 'all', label: bl.brokerFilterAll },
+                    ...brokerFilterOptions.map(label => ({ value: label, label })),
+                  ]}
+                />
+              </div>
+            </div>
+
+            {filteredBrokers.length === 0 ? (
+              <div className="bg-white dark:bg-neutral-900 rounded-xl border border-dashed border-neutral-200 dark:border-neutral-800 py-8 text-center">
+                <p className="text-sm text-neutral-500 dark:text-neutral-400">{bl.brokerFilterNoMatch}</p>
+              </div>
+            ) : (
+              <>
+                <div className="space-y-3">
+                  {paginatedBrokers.map(broker => {
               const statusVariant = brokerConnectionBadgeVariant(broker)
               const isReconnecting = isBrokerReconnecting(broker.id)
               const statusLabel = brokerConnectionStatusLabel(broker, bl)
@@ -1600,8 +1675,29 @@ export function AccountConfigPage() {
                   </div>
                 </Card>
               )
-            })}
-          </div>
+                  })}
+                </div>
+
+                {filteredBrokers.length > 0 && (
+                  <AccountBrokerPagination
+                    page={safeBrokerPage}
+                    totalPages={brokerTotalPages}
+                    rangeStart={brokerRangeStart}
+                    rangeEnd={brokerRangeEnd}
+                    total={filteredBrokers.length}
+                    onPageChange={setBrokerPage}
+                    previousLabel={t.common.previous}
+                    nextLabel={t.common.next}
+                    showingRange={interpolate(t.common.showingRange, {
+                      start: String(brokerRangeStart),
+                      end: String(brokerRangeEnd),
+                      total: String(filteredBrokers.length),
+                    })}
+                  />
+                )}
+              </>
+            )}
+          </>
         )}
       </section>
 
@@ -3223,3 +3319,115 @@ function CategoryRow({
     </div>
   )
 }
+
+function AccountBrokerPagination({
+  page,
+  totalPages,
+  onPageChange,
+  previousLabel,
+  nextLabel,
+  showingRange,
+}: {
+  page: number
+  totalPages: number
+  rangeStart: number
+  rangeEnd: number
+  total: number
+  onPageChange: (page: number) => void
+  previousLabel: string
+  nextLabel: string
+  showingRange: string
+}) {
+  const pageNumbers = useMemo(() => {
+    const maxButtons = 5
+    if (totalPages <= maxButtons) {
+      return Array.from({ length: totalPages }, (_, i) => i + 1)
+    }
+    let start = Math.max(1, page - 2)
+    let end = Math.min(totalPages, start + maxButtons - 1)
+    start = Math.max(1, end - maxButtons + 1)
+    return Array.from({ length: end - start + 1 }, (_, i) => start + i)
+  }, [page, totalPages])
+
+  return (
+    <div className="mt-3 flex flex-col gap-3 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 sm:px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+      <p className="text-xs text-neutral-500 dark:text-neutral-400 tabular-nums">
+        {showingRange}
+      </p>
+      {totalPages > 1 && (
+        <div className="flex flex-wrap items-center gap-1 justify-center sm:justify-end">
+          <button
+            type="button"
+            onClick={() => onPageChange(page - 1)}
+            disabled={page <= 1}
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-sm rounded-md border border-neutral-200 dark:border-neutral-800 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800/50 disabled:opacity-40 disabled:pointer-events-none"
+            aria-label={previousLabel}
+          >
+            <ChevronLeft className="w-4 h-4" />
+            <span className="hidden sm:inline">{previousLabel}</span>
+          </button>
+          <div className="flex items-center gap-0.5">
+            {pageNumbers[0]! > 1 && (
+              <>
+                <BrokerPageButton n={1} active={page === 1} onClick={() => onPageChange(1)} />
+                {pageNumbers[0]! > 2 && <span className="px-1 text-neutral-400 text-sm">…</span>}
+              </>
+            )}
+            {pageNumbers.map(n => (
+              <BrokerPageButton key={n} n={n} active={page === n} onClick={() => onPageChange(n)} />
+            ))}
+            {pageNumbers[pageNumbers.length - 1]! < totalPages && (
+              <>
+                {pageNumbers[pageNumbers.length - 1]! < totalPages - 1 && (
+                  <span className="px-1 text-neutral-400 text-sm">…</span>
+                )}
+                <BrokerPageButton
+                  n={totalPages}
+                  active={page === totalPages}
+                  onClick={() => onPageChange(totalPages)}
+                />
+              </>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => onPageChange(page + 1)}
+            disabled={page >= totalPages}
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-sm rounded-md border border-neutral-200 dark:border-neutral-800 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800/50 disabled:opacity-40 disabled:pointer-events-none"
+            aria-label={nextLabel}
+          >
+            <span className="hidden sm:inline">{nextLabel}</span>
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function BrokerPageButton({
+  n,
+  active,
+  onClick,
+}: {
+  n: number
+  active: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-current={active ? 'page' : undefined}
+      className={clsx(
+        'min-w-[2rem] px-2 py-1.5 text-sm rounded-md font-medium tabular-nums transition-colors',
+        active
+          ? 'bg-teal-600 text-white'
+          : 'text-neutral-600 dark:text-neutral-400 hover:bg-neutral-50 dark:hover:bg-neutral-800/50 border border-transparent hover:border-neutral-200 dark:hover:border-neutral-800',
+      )}
+    >
+      {n}
+    </button>
+  )
+}
+

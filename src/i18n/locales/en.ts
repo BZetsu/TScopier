@@ -293,6 +293,11 @@ export const en: Translations = {
       deleteBody:
         'This disconnects {label} from MetatraderAPI and the copier. This cannot be undone.',
       deleteConfirm: 'Disconnect',
+      connectedAccountsTotal: '{count} connected accounts',
+      connectedAccountsTotalOne: '1 connected account',
+      brokerFilterLabel: 'Broker',
+      brokerFilterAll: 'All brokers',
+      brokerFilterNoMatch: 'No accounts match this broker.',
     },
     configureModal: configureModalEn,
   },
