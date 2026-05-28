@@ -85,7 +85,11 @@ export function Backtest() {
     canRunBacktest,
     limits,
     refresh: refreshSubscription,
+    loading: subscriptionLoading,
+    isAdmin,
   } = useSubscription()
+
+  const hasBacktestAccess = isAdmin || (hasActiveSubscription && canRunBacktest())
   const defaultDates = useMemo(() => defaultDateRange(), [])
   const [channels, setChannels] = useState<ChannelOption[]>([])
   const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null)
@@ -272,13 +276,15 @@ export function Backtest() {
       setError(!hasValidProfile ? bt.profileFirstError : bt.selectSymbolError)
       return
     }
-    if (!hasActiveSubscription) {
-      setError(pw.subscriptionRequired)
-      return
-    }
-    if (!canRunBacktest()) {
-      setError(interpolate(pw.backtestLimit, { limit: String(limits.maxBacktestsPerMonth ?? 5) }))
-      return
+    if (!isAdmin) {
+      if (!hasActiveSubscription) {
+        setError(pw.subscriptionRequired)
+        return
+      }
+      if (!canRunBacktest()) {
+        setError(interpolate(pw.backtestLimit, { limit: String(limits.maxBacktestsPerMonth ?? 5) }))
+        return
+      }
     }
     setError('')
     setRunning(true)
@@ -303,7 +309,7 @@ export function Backtest() {
 
   const totalPipsTone = totalPips == null ? 'neutral' : totalPips >= 0 ? 'good' : 'bad'
   const canProfile = Boolean(selectedChannelId) && !isBusy
-  const canBacktest = hasValidProfile && Boolean(selectedSymbol) && !isBusy && hasActiveSubscription && canRunBacktest()
+  const canBacktest = hasValidProfile && Boolean(selectedSymbol) && !isBusy && hasBacktestAccess
 
   const openHistoryRun = async (row: BacktestHistoryRow) => {
     setHistoryOpen(false)
@@ -338,7 +344,7 @@ export function Backtest() {
 
   return (
     <PageShell maxWidth="lg" spacing="none" className="space-y-6">
-      {!hasActiveSubscription || !canRunBacktest() ? (
+      {!subscriptionLoading && !hasBacktestAccess ? (
         <UpgradePrompt
           variant="banner"
           reason={

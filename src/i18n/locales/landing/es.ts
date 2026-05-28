@@ -614,7 +614,7 @@ export const landingEs: LandingTranslations = {
       pricing: 'Precios',
       howItWorks: 'Cómo funciona',
       faq: 'Preguntas frecuentes',
-      docs: 'Documentación',
+    docs: 'Documentación',
       status: 'Estado del sistema',
       telegram: 'Soporte en Telegram',
       signIn: 'Iniciar sesión',
