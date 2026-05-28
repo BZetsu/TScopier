@@ -48,6 +48,7 @@ import {
 import { useBrokerAccounts } from '../../context/BrokerAccountsContext'
 import { useSubscription } from '../../context/SubscriptionContext'
 import { normalizeManualSettingsForPlan } from '../../lib/planLimits'
+import type { SubscriptionPlan } from '../../lib/planLimits'
 import { UpgradePrompt } from '../../components/billing/UpgradePrompt'
 import {
   inferBrokerLabelFromServer,
@@ -414,6 +415,33 @@ function channelConfigDraftSignature(draft: ChannelConfigDraft): string {
   })
 }
 
+/** Stable signature of what `saveConfigureModal` persists (linked channels + per-channel settings). */
+function accountConfigDraftPersistSignature(
+  draft: AccountConfigDraft,
+  plan: SubscriptionPlan | null | undefined,
+  status: string | null | undefined,
+  keywordFiltersEnabled: boolean,
+): string {
+  const channelIds = draft.channelIds
+  const channels: Record<string, unknown> = {}
+  for (const id of channelIds) {
+    const entry = draft.channelConfigs[id]
+    const mode = entry?.mode ?? 'manual'
+    channels[id] = {
+      mode: AI_CONFIGURATION_ENABLED && mode === 'ai' ? 'ai' : 'manual',
+      manualSettings: normalizeManualSettingsForPlan(
+        plan,
+        status,
+        (entry?.manualSettings ?? DEFAULT_MANUAL_SETTINGS) as Record<string, unknown>,
+      ),
+      channelFilters: keywordFiltersEnabled
+        ? normalizeChannelFilters(entry?.channelFilters ?? DEFAULT_CHANNEL_FILTERS)
+        : normalizeChannelFilters(DEFAULT_CHANNEL_FILTERS),
+    }
+  }
+  return JSON.stringify({ channelIds, channels })
+}
+
 function isChannelConfigDefault(draft: ChannelConfigDraft): boolean {
   return channelConfigDraftSignature(draft) === channelConfigDraftSignature(defaultChannelConfigDraft())
 }
@@ -541,6 +569,7 @@ export function AccountConfigPage() {
   const [configSaving, setConfigSaving] = useState(false)
   const [channelConnecting, setChannelConnecting] = useState(false)
   const [configSavedAt, setConfigSavedAt] = useState<number | null>(null)
+  const [configSavedSignature, setConfigSavedSignature] = useState('')
   const [tradingPresets, setTradingPresets] = useState<ChannelTradingPreset[]>([])
   const [presetsLoading, setPresetsLoading] = useState(false)
   const [presetSaving, setPresetSaving] = useState(false)
@@ -634,6 +663,26 @@ export function AccountConfigPage() {
     () => channelOptions.find(c => c.id === configDraft.selectedChannelId) ?? null,
     [channelOptions, configDraft.selectedChannelId],
   )
+
+  const keywordFiltersEnabled = canUsePlanFeature('channel_keyword_filters')
+
+  const configureModalDirty = useMemo(() => {
+    if (!configAccount) return false
+    const current = accountConfigDraftPersistSignature(
+      configDraft,
+      subscription?.plan,
+      subscription?.status,
+      keywordFiltersEnabled,
+    )
+    return current !== configSavedSignature
+  }, [
+    configAccount,
+    configDraft,
+    configSavedSignature,
+    subscription?.plan,
+    subscription?.status,
+    keywordFiltersEnabled,
+  ])
 
   const selectedChannelEditedFromDefault = useMemo(() => {
     const id = configDraft.selectedChannelId
@@ -878,10 +927,19 @@ export function AccountConfigPage() {
     setConfigAccount(fresh)
     setActiveManualSubTab('symbols')
     const draft = buildChannelConfigDraftFromBroker(fresh, channelIds)
-    setConfigDraft({
+    const nextDraft = {
       ...draft,
       selectedChannelId: draft.selectedChannelId ?? channelOptions[0]?.id ?? null,
-    })
+    }
+    setConfigDraft(nextDraft)
+    setConfigSavedSignature(
+      accountConfigDraftPersistSignature(
+        nextDraft,
+        subscription?.plan,
+        subscription?.status,
+        keywordFiltersEnabled,
+      ),
+    )
     setChannelLinkEditMode(false)
     setDetectedSymbols([])
     setChannelSignalSampleCount(0)
@@ -971,6 +1029,7 @@ export function AccountConfigPage() {
 
   const closeConfigureModal = () => {
     setConfigAccount(null)
+    setConfigSavedSignature('')
     setDetectedSymbols([])
     setChannelSignalSampleCount(0)
     setShowPresetNameModal(false)
@@ -1269,6 +1328,14 @@ export function AccountConfigPage() {
       replaceBroker(fresh)
       setConfigAccount(fresh)
     }
+    setConfigSavedSignature(
+      accountConfigDraftPersistSignature(
+        configDraft,
+        subscription?.plan,
+        subscription?.status,
+        keywordFiltersEnabled,
+      ),
+    )
     setConfigSavedAt(Date.now())
   }
 
@@ -3243,7 +3310,7 @@ export function AccountConfigPage() {
                 <Button
                   className="w-full sm:w-auto min-h-[44px]"
                   loading={configSaving}
-                  disabled={presetSaving || channelConnecting}
+                  disabled={!configureModalDirty || presetSaving || channelConnecting}
                   onClick={() => void saveConfigureModal()}
                 >
                   {cm.save}
