@@ -47,7 +47,10 @@ import {
 } from '../../lib/channelSymbolDetection'
 import { useBrokerAccounts } from '../../context/BrokerAccountsContext'
 import { useSubscription } from '../../context/SubscriptionContext'
-import { normalizeManualSettingsForPlan } from '../../lib/planLimits'
+import {
+  normalizeManualSettingsForPlan,
+  planContextForManualSettings,
+} from '../../lib/planLimits'
 import type { SubscriptionPlan } from '../../lib/planLimits'
 import { UpgradePrompt } from '../../components/billing/UpgradePrompt'
 import {
@@ -534,6 +537,7 @@ export function AccountConfigPage() {
   } = useBrokerAccounts()
   const {
     subscription,
+    effectivePlan,
     hasActiveSubscription,
     canAddBroker,
     canUseFeature: canUsePlanFeature,
@@ -542,6 +546,10 @@ export function AccountConfigPage() {
     usage,
     usageLoading,
   } = useSubscription()
+  const manualSettingsPlanCtx = useMemo(
+    () => planContextForManualSettings(effectivePlan, subscription),
+    [effectivePlan, subscription],
+  )
   const pw = t.pricing.paywall
   const connectErrorLabels = useMemo(() => brokerConnectErrorLabelsFromI18n(bl), [bl])
   const reconnectBannerText = useMemo(
@@ -670,8 +678,8 @@ export function AccountConfigPage() {
     if (!configAccount) return false
     const current = accountConfigDraftPersistSignature(
       configDraft,
-      subscription?.plan,
-      subscription?.status,
+      manualSettingsPlanCtx.plan,
+      manualSettingsPlanCtx.status,
       keywordFiltersEnabled,
     )
     return current !== configSavedSignature
@@ -679,8 +687,8 @@ export function AccountConfigPage() {
     configAccount,
     configDraft,
     configSavedSignature,
-    subscription?.plan,
-    subscription?.status,
+    manualSettingsPlanCtx.plan,
+    manualSettingsPlanCtx.status,
     keywordFiltersEnabled,
   ])
 
@@ -935,8 +943,8 @@ export function AccountConfigPage() {
     setConfigSavedSignature(
       accountConfigDraftPersistSignature(
         nextDraft,
-        subscription?.plan,
-        subscription?.status,
+        manualSettingsPlanCtx.plan,
+        manualSettingsPlanCtx.status,
         keywordFiltersEnabled,
       ),
     )
@@ -1283,8 +1291,8 @@ export function AccountConfigPage() {
           {
             mode: configDraft.channelConfigs[id]?.mode ?? 'manual',
             manualSettings: normalizeManualSettingsForPlan(
-              subscription?.plan,
-              subscription?.status,
+              manualSettingsPlanCtx.plan,
+              manualSettingsPlanCtx.status,
               (configDraft.channelConfigs[id]?.manualSettings ?? DEFAULT_MANUAL_SETTINGS) as Record<string, unknown>,
             ) as ManualSettings,
           },
@@ -1295,8 +1303,8 @@ export function AccountConfigPage() {
     const firstConfig = firstId ? configDraft.channelConfigs[firstId] : null
     const normalizedFirstManual = firstConfig
       ? normalizeManualSettingsForPlan(
-          subscription?.plan,
-          subscription?.status,
+          manualSettingsPlanCtx.plan,
+          manualSettingsPlanCtx.status,
           {
             ...firstConfig.manualSettings,
             allow_high_impact_news: firstConfig.manualSettings.news_trading_enabled === true,
@@ -1331,8 +1339,8 @@ export function AccountConfigPage() {
     setConfigSavedSignature(
       accountConfigDraftPersistSignature(
         configDraft,
-        subscription?.plan,
-        subscription?.status,
+        manualSettingsPlanCtx.plan,
+        manualSettingsPlanCtx.status,
         keywordFiltersEnabled,
       ),
     )

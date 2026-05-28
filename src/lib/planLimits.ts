@@ -94,6 +94,21 @@ export function canUseFeature(
   }
 }
 
+/** Plan + status for persisting channel manual settings (admin → advanced/active). */
+export function planContextForManualSettings(
+  effectivePlan: SubscriptionPlan | null,
+  subscription: { plan?: SubscriptionPlan; status?: string | null } | null,
+): { plan: SubscriptionPlan | null | undefined; status: string | null | undefined } {
+  if (effectivePlan) {
+    const st = subscription?.status
+    return {
+      plan: effectivePlan,
+      status: st && isSubscriptionActive(st) ? st : 'active',
+    }
+  }
+  return { plan: subscription?.plan, status: subscription?.status ?? null }
+}
+
 export function normalizeManualSettingsForPlan<T extends Record<string, unknown>>(
   plan: SubscriptionPlan | null | undefined,
   status: string | null | undefined,
