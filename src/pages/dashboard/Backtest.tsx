@@ -14,7 +14,7 @@ import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import { interpolate } from '../../i18n/interpolate'
 import { useT } from '../../context/LocaleContext'
-import { backtestApi, loadBacktestRunFromDb } from '../../lib/backtestApi'
+import { backtestApi, loadBacktestRunFromDb, waitForBacktestRunComplete } from '../../lib/backtestApi'
 import type {
   BacktestRunRow,
   BacktestTradeRow,
@@ -28,7 +28,9 @@ import {
   BacktestHistoryModal,
   type BacktestHistoryRow,
 } from '../../components/backtest/BacktestHistoryModal'
+import { backtestDateRangeIso } from '../../lib/backtestDateRange'
 import {
+  filterImportPreviewErrors,
   formatPipValue,
   parseSummary,
   sanitizeBacktestUserError,
@@ -109,6 +111,7 @@ export function Backtest() {
   const [error, setError] = useState('')
   const [historyOpen, setHistoryOpen] = useState(false)
   const [loadingHistoryRun, setLoadingHistoryRun] = useState(false)
+  const activeRunTokenRef = useRef(0)
 
   const summary = parseSummary(activeRun?.summary)
   const isBacktestActive = running || activeRun?.status === 'running' || activeRun?.status === 'pending'
@@ -147,8 +150,7 @@ export function Backtest() {
 
   const loadStoredSignals = useCallback(async (channelId: string, from: string, to: string) => {
     if (!user) return []
-    const fromIso = new Date(from).toISOString()
-    const toIso = new Date(`${to}T23:59:59.999Z`).toISOString()
+    const { fromIso, toIso } = backtestDateRangeIso(from, to)
     const { data, error: qErr } = await supabase
       .from('backtest_channel_signals')
       .select('id, channel_id, symbol, direction, entry_price, sl, tp_levels, signal_at, source')
@@ -218,47 +220,8 @@ export function Backtest() {
     return sanitizeBacktestUserError(raw, bt.errors.rateLimit)
   }, [pw.subscriptionRequired, bt.errors.rateLimit])
 
-  const handleRunFinished = useCallback((run: BacktestRunRow) => {
-    if (run.status === 'completed' || run.status === 'failed' || run.status === 'cancelled') {
-      setRunning(false)
-    }
-  }, [])
-
-  const resultReady = activeRun?.status === 'completed'
+  const resultReady = step === 'symbol' && activeRun?.status === 'completed' && !running
   const showResults = useCallback(() => setStep('results'), [])
-
-  useEffect(() => {
-    if (!activeRun?.id) return
-    if (!isBacktestActive && activeRun.status !== 'running' && activeRun.status !== 'pending') return
-    const runId = activeRun.id
-    const poll = setInterval(() => {
-      void loadRun(runId)
-        .then(run => {
-          if (run.status === 'completed' || run.status === 'failed' || run.status === 'cancelled') {
-            handleRunFinished(run)
-          }
-        })
-        .catch(err => setError(userError(err)))
-    }, 2000)
-    return () => clearInterval(poll)
-  }, [activeRun?.id, activeRun?.status, isBacktestActive, loadRun, handleRunFinished, userError])
-
-  useEffect(() => {
-    if (!activeRun?.id || !isBacktestActive) return
-    const ch = supabase
-      .channel(`backtest-run-${activeRun.id}`)
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'backtest_runs', filter: `id=eq.${activeRun.id}` },
-        () => {
-          void loadRun(activeRun.id)
-            .then(handleRunFinished)
-            .catch(err => setError(userError(err)))
-        },
-      )
-      .subscribe()
-    return () => { void supabase.removeChannel(ch) }
-  }, [activeRun?.id, isBacktestActive, loadRun, handleRunFinished, userError])
 
   const profileSignals = async () => {
     if (!selectedChannelId) {
@@ -275,7 +238,14 @@ export function Backtest() {
     try {
       const config = buildConfig(selectedChannelId, dateFrom, dateTo)
       const result = await backtestApi.sync(config)
-      const signals = await loadStoredSignals(selectedChannelId, dateFrom, dateTo)
+      let signals = await loadStoredSignals(selectedChannelId, dateFrom, dateTo)
+      if (signals.length === 0 && result.imported > 0) {
+        for (let attempt = 0; attempt < 3; attempt++) {
+          await new Promise(r => setTimeout(r, 400))
+          signals = await loadStoredSignals(selectedChannelId, dateFrom, dateTo)
+          if (signals.length > 0) break
+        }
+      }
       setProfiledSignals(signals)
       setProfileKey(`${selectedChannelId}|${dateFrom}|${dateTo}`)
       const msg = result.imported > 0
@@ -286,11 +256,18 @@ export function Backtest() {
         : result.candidates > 0
           ? interpolate(bt.profileCandidates, { candidates: String(result.candidates) })
           : interpolate(bt.profileNoTradeable, { scanned: String(result.messages_scanned) })
-      setProfileNote([msg, ...result.errors].filter(Boolean).join(' '))
-      if (signals.length > 0) {
-        setSelectedSymbol(buildSymbolProfiles(signals)[0]?.symbol ?? null)
-        setStep('symbol')
+      const syncErrors = filterImportPreviewErrors(result.errors)
+      setProfileNote([msg, ...syncErrors].filter(Boolean).join(' '))
+      if (syncErrors.length > 0 && result.imported === 0 && signals.length === 0) {
+        setError(syncErrors.join(' · ') || bt.profileSyncFailed)
       }
+      const profiles = buildSymbolProfiles(signals)
+      if (profiles.length > 0) {
+        setSelectedSymbol(profiles[0]?.symbol ?? null)
+      } else {
+        setSelectedSymbol(null)
+      }
+      setStep('symbol')
     } catch (e) {
       setError(userError(e))
     } finally {
@@ -299,6 +276,7 @@ export function Backtest() {
   }
 
   const startBacktest = async () => {
+    if (!user?.id) return
     if (!selectedChannelId || !hasValidProfile || !selectedSymbol) {
       setError(!hasValidProfile ? bt.profileFirstError : bt.selectSymbolError)
       return
@@ -313,16 +291,40 @@ export function Backtest() {
         return
       }
     }
+    const runToken = ++activeRunTokenRef.current
     setError('')
     setRunning(true)
-    clearResults()
+    setSelectedTrade(null)
+    setActiveRun(null)
+    setTrades([])
     try {
       const config = buildConfig(selectedChannelId, dateFrom, dateTo, [selectedSymbol])
       const { run_id } = await backtestApi.backtestTpsl(config)
-      const run = await loadRun(run_id)
-      handleRunFinished(run)
+      if (runToken !== activeRunTokenRef.current) return
+
+      const { run, trades: finishedTrades } = await waitForBacktestRunComplete(run_id, user.id, {
+        onTick: ({ run: tickRun, trades: tickTrades }) => {
+          if (runToken !== activeRunTokenRef.current) return
+          setActiveRun(tickRun)
+          setTrades(tickTrades)
+        },
+      })
+      if (runToken !== activeRunTokenRef.current) return
+
+      setActiveRun(run)
+      setTrades(finishedTrades)
+      setRunning(false)
+
+      if (run.status === 'completed') {
+        setStep('results')
+      } else if (run.status === 'failed') {
+        setError(
+          sanitizeBacktestUserError(run.error_message ?? 'Backtest failed.', bt.errors.rateLimit),
+        )
+      }
       void refreshSubscription()
     } catch (e) {
+      if (runToken !== activeRunTokenRef.current) return
       setError(userError(e))
       setRunning(false)
     }
@@ -510,29 +512,35 @@ export function Backtest() {
 
           <div>
             <p className="text-xs font-medium text-neutral-500 mb-3">{bt.symbolToBacktest}</p>
-            <div className="flex flex-wrap gap-2">
-              {symbolProfiles.map(({ symbol, count }) => (
-                <button
-                  key={symbol}
-                  type="button"
-                  onClick={() => {
-                    setSelectedSymbol(symbol)
-                    clearResults()
-                  }}
-                  className={clsx(
-                    'px-4 py-2.5 rounded-xl text-sm font-medium border transition-all',
-                    selectedSymbol === symbol
-                      ? 'border-teal-500 bg-teal-500 text-white shadow-md shadow-teal-500/20'
-                      : 'border-neutral-200 dark:border-neutral-700 hover:border-teal-300',
-                  )}
-                >
-                  {symbol}
-                  <span className={clsx('ml-2 tabular-nums text-xs', selectedSymbol === symbol ? 'opacity-90' : 'opacity-60')}>
-                    {count}
-                  </span>
-                </button>
-              ))}
-            </div>
+            {symbolProfiles.length === 0 ? (
+              <p className="text-sm text-neutral-500 rounded-xl border border-dashed border-neutral-200 dark:border-neutral-700 px-4 py-6 text-center">
+                {bt.noSymbolsInRange}
+              </p>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {symbolProfiles.map(({ symbol, count }) => (
+                  <button
+                    key={symbol}
+                    type="button"
+                    onClick={() => {
+                      setSelectedSymbol(symbol)
+                      clearResults()
+                    }}
+                    className={clsx(
+                      'px-4 py-2.5 rounded-xl text-sm font-medium border transition-all',
+                      selectedSymbol === symbol
+                        ? 'border-teal-500 bg-teal-500 text-white shadow-md shadow-teal-500/20'
+                        : 'border-neutral-200 dark:border-neutral-700 hover:border-teal-300',
+                    )}
+                  >
+                    {symbol}
+                    <span className={clsx('ml-2 tabular-nums text-xs', selectedSymbol === symbol ? 'opacity-90' : 'opacity-60')}>
+                      {count}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           {resultReady ? (

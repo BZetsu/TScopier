@@ -661,6 +661,8 @@ export interface BacktestTranslations {
   profileImported: string
   profileCandidates: string
   profileNoTradeable: string
+  profileSyncFailed: string
+  noSymbolsInRange: string
   readyTitle: string
   readyMeta: string
   back: string

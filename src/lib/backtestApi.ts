@@ -83,13 +83,49 @@ export interface BacktestSyncResult {
   errors: string[]
 }
 
+function isTerminalRunStatus(status: string): boolean {
+  return status === 'completed' || status === 'failed' || status === 'cancelled'
+}
+
+/** Poll DB until the edge worker finishes (backtest-run returns before simulation ends). */
+export async function waitForBacktestRunComplete(
+  runId: string,
+  userId: string,
+  options?: {
+    intervalMs?: number
+    timeoutMs?: number
+    onTick?: (payload: { run: BacktestRunRow; trades: BacktestTradeRow[] }) => void
+  },
+): Promise<{ run: BacktestRunRow; trades: BacktestTradeRow[] }> {
+  const intervalMs = options?.intervalMs ?? 1500
+  const timeoutMs = options?.timeoutMs ?? 600_000
+  const started = Date.now()
+
+  while (Date.now() - started < timeoutMs) {
+    const payload = await loadBacktestRunFromDb(runId, userId)
+    options?.onTick?.({ run: payload.run, trades: payload.trades })
+    if (isTerminalRunStatus(payload.run.status)) {
+      return { run: payload.run, trades: payload.trades }
+    }
+    await new Promise(r => setTimeout(r, intervalMs))
+  }
+
+  throw new Error('Backtest is taking longer than expected. Open History to view the run when it completes.')
+}
+
 export const backtestApi = {
   sync(config: SimpleBacktestConfig): Promise<BacktestSyncResult> {
     return call({ action: 'sync', config })
   },
 
-  backtestTpsl(config: SimpleBacktestConfig): Promise<{ run_id: string; run_mode: BacktestRunMode }> {
-    return call({ action: 'backtest_tpsl', config })
+  async backtestTpsl(config: SimpleBacktestConfig): Promise<{ run_id: string; run_mode: BacktestRunMode }> {
+    const data = await call<{ ok?: boolean; run_id?: string; run_mode?: BacktestRunMode }>({
+      action: 'backtest_tpsl',
+      config,
+    })
+    const runId = data?.run_id
+    if (!runId) throw new Error('Backtest started but no run id was returned from the server.')
+    return { run_id: runId, run_mode: data.run_mode ?? 'tpsl' }
   },
 
   getRun(runId: string): Promise<{

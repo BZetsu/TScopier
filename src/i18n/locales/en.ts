@@ -612,6 +612,8 @@ export const en: Translations = {
     profileImported: 'Imported {imported} signal(s) from {scanned} messages.',
     profileCandidates: '{candidates} candidate(s) found; none stored as tradeable.',
     profileNoTradeable: 'No tradeable signals in range ({scanned} messages scanned).',
+    profileSyncFailed: 'Could not import signals from Telegram. Check that your listener worker is running and BACKTEST_WORKER_URL is configured.',
+    noSymbolsInRange: 'No tradeable symbols in this date range. Widen the range, pick another channel, or pull signals again.',
     readyTitle: 'Ready to backtest',
     readyMeta: '{channel} · {count} signals · {from} → {to}',
     back: 'Back',

@@ -612,6 +612,8 @@ export const es: Translations = {
     profileImported: 'Importadas {imported} señal(es) de {scanned} mensajes.',
     profileCandidates: '{candidates} candidata(s) encontrada(s); ninguna guardada como operable.',
     profileNoTradeable: 'Sin señales operables en el rango ({scanned} mensajes revisados).',
+    profileSyncFailed: 'No se pudieron importar señales de Telegram. Comprueba que el worker esté activo y BACKTEST_WORKER_URL configurado.',
+    noSymbolsInRange: 'No hay símbolos operables en este rango. Amplía las fechas, elige otro canal o vuelve a obtener señales.',
     readyTitle: 'Listo para el backtest',
     readyMeta: '{channel} · {count} señales · {from} → {to}',
     back: 'Atrás',
