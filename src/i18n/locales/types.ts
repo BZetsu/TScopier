@@ -666,6 +666,8 @@ export interface BacktestTranslations {
   back: string
   symbolToBacktest: string
   runningDefault: string
+  resultReady: string
+  seeBacktestResult: string
   resultsTitle: string
   resultsSubtitle: string
   newRun: string

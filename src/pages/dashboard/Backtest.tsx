@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft,
   ArrowRight,
+  BarChart3,
   Crosshair,
   History,
   Loader2,
@@ -166,9 +167,6 @@ export function Backtest() {
     if (run.status === 'completed' || run.status === 'failed' || run.status === 'cancelled') {
       setRunning(false)
     }
-    if (run.status === 'completed') {
-      setStep('results')
-    }
     return run
   }, [])
 
@@ -221,13 +219,13 @@ export function Backtest() {
   }, [pw.subscriptionRequired, bt.errors.rateLimit])
 
   const handleRunFinished = useCallback((run: BacktestRunRow) => {
-    if (run.status === 'completed') {
-      setStep('results')
-      setRunning(false)
-    } else if (run.status === 'failed' || run.status === 'cancelled') {
+    if (run.status === 'completed' || run.status === 'failed' || run.status === 'cancelled') {
       setRunning(false)
     }
   }, [])
+
+  const resultReady = activeRun?.status === 'completed'
+  const showResults = useCallback(() => setStep('results'), [])
 
   useEffect(() => {
     if (!activeRun?.id) return
@@ -537,7 +535,15 @@ export function Backtest() {
             </div>
           </div>
 
-          {isBacktestActive ? (
+          {resultReady ? (
+            <div className="space-y-3 rounded-xl border border-teal-200 dark:border-teal-900 bg-teal-50/50 dark:bg-teal-950/20 p-4">
+              <p className="text-sm text-teal-800 dark:text-teal-200">{bt.resultReady}</p>
+              <Button className="w-full" onClick={showResults}>
+                <BarChart3 className="w-4 h-4 mr-2" />
+                {bt.seeBacktestResult}
+              </Button>
+            </div>
+          ) : isBacktestActive ? (
             <div className="space-y-3 rounded-xl border border-teal-200 dark:border-teal-900 bg-teal-50/50 dark:bg-teal-950/20 p-4">
               <div className="flex items-center gap-2 text-sm text-teal-800 dark:text-teal-200">
                 <Loader2 className="w-4 h-4 animate-spin" />

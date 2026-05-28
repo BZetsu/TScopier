@@ -617,6 +617,8 @@ export const en: Translations = {
     back: 'Back',
     symbolToBacktest: 'Symbol to backtest',
     runningDefault: 'Running backtest on market data…',
+    resultReady: 'Your backtest finished. Review pip results and per-signal breakdown.',
+    seeBacktestResult: 'See Backtest Result',
     resultsTitle: 'Backtest results',
     resultsSubtitle: '{symbol} · {channel} · tap a signal for details',
     newRun: 'New run',
