@@ -694,7 +694,7 @@ Deno.serve(async (req: Request) => {
       const limitRaw = Number(bodyRec.limit ?? 0)
       const limit =
         Number.isFinite(limitRaw) && limitRaw > 0
-          ? Math.min(Math.floor(limitRaw), 500)
+          ? Math.min(Math.floor(limitRaw), 2000)
           : 0
       let effectiveHistoryFrom = historyFrom
       if (limit > 0) {
