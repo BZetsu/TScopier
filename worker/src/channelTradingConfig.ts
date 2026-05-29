@@ -41,7 +41,11 @@ export function normalizeChannelTradingConfigsMap(raw: unknown): ChannelTradingC
 export function buildDefaultChannelTradingConfig(): ChannelTradingConfig {
   return {
     copier_mode: 'manual',
-    manual_settings: normalizeManualSettingsForExecution({}) as Record<string, unknown>,
+    manual_settings: normalizeManualSettingsForExecution({
+      fixed_lot: 0.01,
+      trade_style: 'single',
+      risk_mode: 'fixed_lot',
+    }) as Record<string, unknown>,
     ai_settings: {},
   }
 }

@@ -32,7 +32,11 @@ function normalizeChannelTradingConfigsMap(raw) {
 function buildDefaultChannelTradingConfig() {
     return {
         copier_mode: 'manual',
-        manual_settings: (0, normalizeManualSettings_1.normalizeManualSettingsForExecution)({}),
+        manual_settings: (0, normalizeManualSettings_1.normalizeManualSettingsForExecution)({
+            fixed_lot: 0.01,
+            trade_style: 'single',
+            risk_mode: 'fixed_lot',
+        }),
         ai_settings: {},
     };
 }
