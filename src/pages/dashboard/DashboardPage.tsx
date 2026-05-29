@@ -18,7 +18,6 @@ import { Toggle } from '../../components/ui/Toggle'
 import { Button } from '../../components/ui/Button'
 import {
   TRADES_PAGE_HISTORY_DAYS,
-  TRADES_PAGE_MAX_RESULTS,
 } from '../../hooks/useTradesData'
 import { readSessionCache, writeSessionCache } from '../../lib/sessionDataCache'
 import {
@@ -92,6 +91,8 @@ import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { formatMoneyWithCode } from '../../lib/currency'
 import { interpolate } from '../../i18n/interpolate'
 import { SubscriptionBanner } from '../../components/billing/SubscriptionBanner'
+
+const DASHBOARD_MT_HISTORY_LIMIT = 500
 
 /** Shared column template for dashboard Copier Logs header + rows. */
 const DASHBOARD_COPIER_LOG_GRID =
@@ -353,6 +354,7 @@ type DashboardCachePayload = {
   chartTrades?: DashboardChartTrade[]
   aiExpertLogs?: AiExpertLogRow[]
   mtTrades?: MtTrade[]
+  cachedDay?: string
 }
 
 const DEFAULT_DASHBOARD_STATS: DashboardStats = {
@@ -438,33 +440,32 @@ function mergeDashboardStats(
     }
     return { ...prev, ...next }
   }
-  const keepNum = (p: number, n: number) => (Number.isFinite(n) && !(n === 0 && p !== 0) ? n : p)
+  // Balance/equity fields: preserve non-zero to avoid flash during loading
+  const keepBalance = (p: number, n: number) => (Number.isFinite(n) && !(n === 0 && p !== 0) ? n : p)
+  // Daily stats: always accept fresh value (zero is legitimate at start of day)
+  const acceptFresh = (p: number, n: number) => (Number.isFinite(n) ? n : p)
   const keepOpenCount = (p: number, n: number) =>
     opts?.trustOpenTrades ? (Number.isFinite(n) ? n : p) : (Number.isFinite(n) ? n : p)
   const keepStr = (p: string, n: string) => (n === '—' && p !== '—' ? p : n)
   return {
     ...next,
-    totalEquity: keepNum(prev.totalEquity, next.totalEquity),
-    portfolioValue: keepNum(prev.portfolioValue, next.portfolioValue),
-    openPnl: keepNum(prev.openPnl, next.openPnl),
+    totalEquity: keepBalance(prev.totalEquity, next.totalEquity),
+    portfolioValue: keepBalance(prev.portfolioValue, next.portfolioValue),
+    openPnl: keepBalance(prev.openPnl, next.openPnl),
     openPositions: keepOpenCount(prev.openPositions, next.openPositions),
     openTrades: keepOpenCount(prev.openTrades, next.openTrades),
-    todayProfit: keepNum(prev.todayProfit, next.todayProfit),
-    yesterdayProfit: keepNum(prev.yesterdayProfit, next.yesterdayProfit),
-    tradesTaken: keepNum(prev.tradesTaken, next.tradesTaken),
-    tradesWon: keepNum(prev.tradesWon, next.tradesWon),
-    tradesLost: keepNum(prev.tradesLost, next.tradesLost),
-    tradesBreakeven: keepNum(prev.tradesBreakeven, next.tradesBreakeven),
-    totalVolume: keepNum(prev.totalVolume, next.totalVolume),
-    yesterdayTotalVolume: keepNum(prev.yesterdayTotalVolume, next.yesterdayTotalVolume),
-    bestTradeProfit: keepNum(prev.bestTradeProfit, next.bestTradeProfit),
-    yesterdayBestTradeProfit: keepNum(prev.yesterdayBestTradeProfit, next.yesterdayBestTradeProfit),
-    worstTradeProfit:
-      next.worstTradeProfit === 0 && prev.worstTradeProfit < 0 ? prev.worstTradeProfit : next.worstTradeProfit,
-    yesterdayWorstTradeProfit:
-      next.yesterdayWorstTradeProfit === 0 && prev.yesterdayWorstTradeProfit < 0
-        ? prev.yesterdayWorstTradeProfit
-        : next.yesterdayWorstTradeProfit,
+    todayProfit: acceptFresh(prev.todayProfit, next.todayProfit),
+    yesterdayProfit: acceptFresh(prev.yesterdayProfit, next.yesterdayProfit),
+    tradesTaken: acceptFresh(prev.tradesTaken, next.tradesTaken),
+    tradesWon: acceptFresh(prev.tradesWon, next.tradesWon),
+    tradesLost: acceptFresh(prev.tradesLost, next.tradesLost),
+    tradesBreakeven: acceptFresh(prev.tradesBreakeven, next.tradesBreakeven),
+    totalVolume: acceptFresh(prev.totalVolume, next.totalVolume),
+    yesterdayTotalVolume: acceptFresh(prev.yesterdayTotalVolume, next.yesterdayTotalVolume),
+    bestTradeProfit: acceptFresh(prev.bestTradeProfit, next.bestTradeProfit),
+    yesterdayBestTradeProfit: acceptFresh(prev.yesterdayBestTradeProfit, next.yesterdayBestTradeProfit),
+    worstTradeProfit: acceptFresh(prev.worstTradeProfit, next.worstTradeProfit),
+    yesterdayWorstTradeProfit: acceptFresh(prev.yesterdayWorstTradeProfit, next.yesterdayWorstTradeProfit),
     mostTradedAsset: keepStr(prev.mostTradedAsset, next.mostTradedAsset),
     yesterdayMostTradedAsset: keepStr(prev.yesterdayMostTradedAsset, next.yesterdayMostTradedAsset),
     mostProfitableChannel: keepStr(prev.mostProfitableChannel, next.mostProfitableChannel),
@@ -510,7 +511,10 @@ function resolveDashboardTodayProfit(
 
 function writeDashboardCache(userId: string, payload: DashboardCachePayload) {
   sessionStorage.setItem(DASHBOARD_ACTIVE_USER_KEY, userId)
-  sessionStorage.setItem(`${DASHBOARD_CACHE_VERSION}:${userId}`, JSON.stringify(payload))
+  sessionStorage.setItem(`${DASHBOARD_CACHE_VERSION}:${userId}`, JSON.stringify({
+    ...payload,
+    cachedDay: formatLocalCalendarDay(),
+  }))
 }
 
 function readDashboardCache(userId: string): DashboardCachePayload | null {
@@ -522,7 +526,21 @@ function readDashboardCache(userId: string): DashboardCachePayload | null {
     const raw = sessionStorage.getItem(cacheKey)
     if (!raw) continue
     try {
-      return JSON.parse(raw) as DashboardCachePayload
+      const parsed = JSON.parse(raw) as DashboardCachePayload
+      if (parsed.cachedDay && parsed.cachedDay !== formatLocalCalendarDay() && parsed.stats) {
+        parsed.stats.tradesTaken = 0
+        parsed.stats.tradesWon = 0
+        parsed.stats.tradesLost = 0
+        parsed.stats.tradesBreakeven = 0
+        parsed.stats.todayProfit = 0
+        parsed.stats.tradesCopiedToday = 0
+        parsed.stats.totalSignals = 0
+        parsed.stats.totalVolume = 0
+        parsed.stats.bestTradeProfit = 0
+        parsed.stats.worstTradeProfit = 0
+        parsed.stats.mostTradedAsset = '—'
+      }
+      return parsed
     } catch {
       continue
     }
@@ -731,7 +749,9 @@ export function DashboardPage() {
     const chartTradesForHeadline =
       mtRaw.length > 0 ? resolveDashboardChartTrades(mtRaw, []) : effectiveChartTrades
     const chartTodayFromMt = summarizeTodayFromChartTrades(chartTradesForHeadline)
-    const closedTaken = Math.max(chartTodayFromMt.taken, mtTodayStats.taken, stats.tradesTaken)
+    const closedTaken = mtRaw.length > 0
+      ? Math.max(chartTodayFromMt.taken, mtTodayStats.taken)
+      : Math.max(chartTodayFromMt.taken, stats.tradesTaken)
     const chartNet = netPnlFromTradeOutcomeDay(findTodayTradeOutcomeDay(chartTradesForHeadline))
     const chartHasToday = chartTodayFromMt.hasData || mtTodayStats.hasData
     const chartNetForProfit =
@@ -1353,7 +1373,7 @@ export function DashboardPage() {
         historyProfile: 'trades',
         historyFrom: formatMtApiDateTime(historyFrom),
         historyTo: formatMtApiDateTime(dayEnd),
-        limit: TRADES_PAGE_MAX_RESULTS,
+        limit: DASHBOARD_MT_HISTORY_LIMIT,
       })
       trades = res.trades ?? []
     } catch {
