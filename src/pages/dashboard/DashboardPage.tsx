@@ -16,14 +16,10 @@ import { PageShell } from '../../components/layout/PageShell'
 import { AddAccountModal } from '../../components/ui/AddAccountModal'
 import { Toggle } from '../../components/ui/Toggle'
 import { Button } from '../../components/ui/Button'
-import {
-  TRADES_PAGE_HISTORY_DAYS,
-} from '../../hooks/useTradesData'
-import { readSessionCache, writeSessionCache } from '../../lib/sessionDataCache'
+import { readSessionCache } from '../../lib/sessionDataCache'
 import {
   TRADES_CACHE_TTL_MS,
   tradesCacheKey,
-  tradesListFingerprint,
   type TradesCachePayload,
 } from '../../lib/tradesSessionCache'
 import { metatraderApi, type MtTrade } from '../../lib/metatraderapi'
@@ -92,7 +88,8 @@ import { formatMoneyWithCode } from '../../lib/currency'
 import { interpolate } from '../../i18n/interpolate'
 import { SubscriptionBanner } from '../../components/billing/SubscriptionBanner'
 
-const DASHBOARD_MT_HISTORY_LIMIT = 500
+const DASHBOARD_MT_HISTORY_LIMIT = 5000
+const DASHBOARD_HISTORY_DAYS = 7
 
 /** Shared column template for dashboard Copier Logs header + rows. */
 const DASHBOARD_COPIER_LOG_GRID =
@@ -1422,7 +1419,7 @@ export function DashboardPage() {
 
     const { tomorrowStart: dayEnd } = getLocalCalendarDayBounds()
     const historyFrom = new Date()
-    historyFrom.setDate(historyFrom.getDate() - TRADES_PAGE_HISTORY_DAYS)
+    historyFrom.setDate(historyFrom.getDate() - DASHBOARD_HISTORY_DAYS)
     let trades: MtTrade[]
     try {
       const res = await metatraderApi.trades({
@@ -1438,12 +1435,6 @@ export function DashboardPage() {
     }
     if (trades.length > 0) {
       mtTradesRef.current = trades
-      if (user) {
-        writeSessionCache(tradesCacheKey(user.id), {
-          trades,
-          fingerprint: tradesListFingerprint(trades),
-        })
-      }
     }
     const chartNext = resolveDashboardChartTrades(
       trades.length > 0 ? trades : mtTradesRef.current ?? [],

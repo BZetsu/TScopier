@@ -14,7 +14,7 @@ import { useDashboardRealtime } from './useDashboardRealtime'
 const AUTO_REFRESH_MS = 15_000
 const VISIBILITY_STALE_MS = 30_000
 /** Max rows returned for the Account Trades page (newest first). */
-export const TRADES_PAGE_MAX_RESULTS = 100
+export const TRADES_PAGE_MAX_RESULTS = 2000
 /** History window for trades list — enough for recent activity without pulling years of deals. */
 export const TRADES_PAGE_HISTORY_DAYS = 7
 
