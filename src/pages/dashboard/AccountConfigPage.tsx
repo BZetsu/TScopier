@@ -290,6 +290,15 @@ function normalizeManualSettings(raw: unknown): ManualSettings {
   const rangeDistancePips = Math.max(0, readNumber('range_distance_pips', DEFAULT_MANUAL_SETTINGS.range_distance_pips ?? 30))
   const closeWorseEntries = (j as Record<string, unknown>).close_worse_entries === true
   const closeWorseEntriesPips = Math.max(0, readNumber('close_worse_entries_pips', DEFAULT_MANUAL_SETTINGS.close_worse_entries_pips ?? 30))
+  const singleTpTargetRaw = String((j as Record<string, unknown>).single_tp_target ?? 'farthest').toLowerCase()
+  const singleTpTarget: ManualSettings['single_tp_target'] =
+    singleTpTargetRaw === 'tp1'
+      ? 'tp1'
+      : singleTpTargetRaw === 'tp2'
+        ? 'tp2'
+        : singleTpTargetRaw === 'tp3'
+          ? 'tp3'
+          : 'farthest'
 
   // Manual control: keep whatever the user saved. Only seed an equal split when
   // there is literally nothing enabled with a positive percent (empty / legacy row).
@@ -312,6 +321,7 @@ function normalizeManualSettings(raw: unknown): ManualSettings {
     range_distance_pips: rangeDistancePips,
     close_worse_entries: closeWorseEntries,
     close_worse_entries_pips: closeWorseEntriesPips,
+    single_tp_target: singleTpTarget,
     use_signal_entry_price: (j as Record<string, unknown>).use_signal_entry_price === true,
     signal_entry_pip_tolerance: Math.max(0, readNumber('signal_entry_pip_tolerance', DEFAULT_MANUAL_SETTINGS.signal_entry_pip_tolerance ?? 10)),
     symbol_mapping: Object.fromEntries(Object.entries(map).map(([k, v]) => [String(k).toUpperCase(), String(v).toUpperCase()])),
@@ -947,10 +957,10 @@ export function AccountConfigPage() {
       setChannelsLoading(false)
     }
     const channelsRes = await supabase
-      .from('telegram_channels')
-      .select('id,display_name,channel_username,is_active,created_at')
+        .from('telegram_channels')
+        .select('id,display_name,channel_username,is_active,created_at')
       .eq('user_id', uid)
-      .eq('is_active', true)
+        .eq('is_active', true)
       .order('created_at', { ascending: false })
     const next = (channelsRes.data ?? []) as ChannelOption[]
     channelOptionsCache.set(uid, next)
@@ -1126,7 +1136,7 @@ export function AccountConfigPage() {
       const entry = prev.channelConfigs[channelId]
       if (!entry) return prev
       return {
-        ...prev,
+      ...prev,
         channelConfigs: {
           ...prev.channelConfigs,
           [channelId]: { ...entry, channelFilters: { ...DEFAULT_CHANNEL_FILTERS } },
@@ -1304,7 +1314,7 @@ export function AccountConfigPage() {
     const channelIds = configDraft.channelIds
     const restrictChannels = channelIds.length > 0
 
-    if (channelIds.length === 0) {
+      if (channelIds.length === 0) {
       const proceed = window.confirm(bl.channelsEmptySaveWarning)
       if (!proceed) return
     }
@@ -1809,20 +1819,20 @@ export function AccountConfigPage() {
                   <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
                     <div className="flex min-w-0 items-center gap-3">
                       <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-primary-50 dark:bg-teal-950/60">
-                        <PlatformIcon platform={broker.platform} />
-                      </div>
+                      <PlatformIcon platform={broker.platform} />
+                    </div>
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
                           <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">{broker.label}</h3>
-                          <Badge variant={statusVariant} size="sm">{statusLabel}</Badge>
-                          <Badge variant="neutral" size="sm">{broker.platform}</Badge>
-                          {brokerLabel && (
-                            <Badge variant="neutral" size="sm">{brokerLabel}</Badge>
-                          )}
+                        <Badge variant={statusVariant} size="sm">{statusLabel}</Badge>
+                        <Badge variant="neutral" size="sm">{broker.platform}</Badge>
+                        {brokerLabel && (
+                          <Badge variant="neutral" size="sm">{brokerLabel}</Badge>
+                        )}
                           {broker.auto_reconnect_enabled ? (
                             <Badge variant="success" size="sm">{bl.storedCredentialsActive}</Badge>
                           ) : null}
-                        </div>
+                      </div>
                         {broker.broker_server && (
                           <p className="mt-0.5 truncate text-xs text-neutral-500 dark:text-neutral-400">{broker.broker_server}</p>
                         )}
@@ -1832,10 +1842,10 @@ export function AccountConfigPage() {
                               broker.connection_error_kind as BrokerConnectErrorKind | null | undefined,
                               broker.connection_error_message,
                               connectErrorLabels,
-                            )}
-                          </p>
+                          )}
+                        </p>
                         ) : null}
-                      </div>
+                    </div>
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
                       <div className="flex items-center gap-2 pr-1 border-r border-neutral-200 dark:border-neutral-700 mr-1">
@@ -1924,8 +1934,8 @@ export function AccountConfigPage() {
                   </div>
                 </Card>
               )
-                  })}
-                </div>
+            })}
+          </div>
 
                 {filteredBrokers.length > 0 && (
                   <AccountBrokerPagination
@@ -2078,7 +2088,7 @@ export function AccountConfigPage() {
                     {channelOptions.map(channel => {
                       const linked = configDraft.channelIds.includes(channel.id)
                       const selected = configDraft.selectedChannelId === channel.id
-                      return (
+                  return (
                         <div key={channel.id} className="flex items-center gap-1 shrink-0 sm:w-full">
                           {channelLinkEditMode ? (
                             <label className="flex items-center gap-2 px-2 py-1 shrink-0">
@@ -2089,10 +2099,10 @@ export function AccountConfigPage() {
                               />
                             </label>
                           ) : null}
-                          <button
+                    <button
                             type="button"
                             onClick={() => selectConfigureChannel(channel.id)}
-                            className={clsx(
+                      className={clsx(
                               'flex-1 min-w-0 flex items-center gap-2 text-left px-2 py-2 rounded-lg text-sm transition-colors min-h-[44px] sm:min-h-0',
                               selected
                                 ? 'bg-white dark:bg-neutral-900 text-primary-700 shadow-sm border border-primary-100 dark:border-primary-900/50'
@@ -2108,7 +2118,7 @@ export function AccountConfigPage() {
                                 {linked ? cm.channelLinkedBadge : cm.channelNotLinkedBadge}
                               </Badge>
                             ) : null}
-                          </button>
+                    </button>
                         </div>
                       )
                     })}
@@ -2127,25 +2137,25 @@ export function AccountConfigPage() {
                   <div className="shrink-0 px-4 sm:px-6 pt-3 sm:pt-4 bg-white dark:bg-neutral-900 border-b border-neutral-100 dark:border-neutral-800 overflow-x-auto overscroll-x-contain">
                     <div className="flex flex-nowrap items-center gap-1 min-w-max sm:min-w-0 sm:flex-wrap pb-px">
                       {manualSubTabs.map(sub => {
-                          const SubIcon = sub.icon
-                          const active = sub.id === activeManualSubTab
-                          return (
-                            <button
-                              key={sub.id}
-                              type="button"
-                              onClick={() => setActiveManualSubTab(sub.id)}
-                              className={clsx(
+                        const SubIcon = sub.icon
+                        const active = sub.id === activeManualSubTab
+                        return (
+                          <button
+                            key={sub.id}
+                            type="button"
+                            onClick={() => setActiveManualSubTab(sub.id)}
+                            className={clsx(
                                 'shrink-0 flex items-center gap-1.5 px-3 py-2.5 sm:py-2 text-sm transition-colors border-b-2 -mb-px min-h-[44px] sm:min-h-0 whitespace-nowrap',
-                                active
+                              active
                                   ? 'border-primary-600 text-primary-700 dark:text-primary-400'
                                   : 'border-transparent text-neutral-500 dark:text-neutral-400 hover:text-neutral-800 dark:hover:text-neutral-100',
-                              )}
-                            >
+                            )}
+                          >
                               <SubIcon className={clsx('w-3.5 h-3.5 shrink-0', active ? 'text-primary-600' : 'text-neutral-400')} />
-                              {sub.label}
-                            </button>
-                          )
-                        })}
+                            {sub.label}
+                          </button>
+                        )
+                      })}
                     </div>
                   </div>
                 ) : null}
@@ -2227,14 +2237,14 @@ export function AccountConfigPage() {
                           selectedChannelOption && configDraft.selectedChannelId ? (
                             <section className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 space-y-3">
                               <div className="flex flex-wrap items-start justify-between gap-2">
-                                <div>
+                              <div>
                                   <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">
                                     {cm.channelSymbols.title}
                                   </p>
                                   <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5 max-w-xl">
                                     {cm.channelSymbols.intro}
-                                  </p>
-                                </div>
+                                </p>
+                              </div>
                                 <Button
                                   type="button"
                                   variant="secondary"
@@ -2277,7 +2287,7 @@ export function AccountConfigPage() {
                                         total: String(detectedSymbols.length),
                                       })}
                                     </span>
-                                  </div>
+                                </div>
                                   <div className="flex flex-wrap gap-2">
                                     {detectedSymbols.map(({ symbol, count }) => {
                                       const checked = channelSymbolSelection.has(symbol)
@@ -2318,7 +2328,7 @@ export function AccountConfigPage() {
                                         <span className="font-medium text-amber-900 dark:text-amber-100">{symbol}</span>
                                       </label>
                                     ))}
-                                  </div>
+                              </div>
                                   {!parseSymbolToTradeList(channelManualSettings.symbol_to_trade).length
                                   || channelSymbolSelection.size === detectedSymbols.length ? (
                                     <p className="text-xs text-neutral-500 dark:text-neutral-400">
@@ -2359,7 +2369,7 @@ export function AccountConfigPage() {
                                       : interpolate(cm.channels.ignoredAcross, { total: String(total) })
                                   })()}
                                 </p>
-                              </div>
+                            </div>
                               <p className="text-xs text-neutral-500 dark:text-neutral-400">{cm.channels.filtersIntro}</p>
                               <ChannelFiltersCard
                                 filters={normalizeChannelFilters(
@@ -2446,6 +2456,23 @@ export function AccountConfigPage() {
 
                             {channelManualSettings.trade_style !== 'multi' && (
                               <div className="space-y-4">
+                              <Select
+                                label={cm.risk.singleTpTarget}
+                                value={channelManualSettings.single_tp_target ?? 'farthest'}
+                                onChange={e => {
+                                  const v = e.target.value as ManualSettings['single_tp_target']
+                                  setManual({ single_tp_target: v })
+                                }}
+                                options={[
+                                  { value: 'farthest', label: cm.risk.singleTpTargetFarthest },
+                                  { value: 'tp1', label: cm.risk.singleTpTargetTp1 },
+                                  { value: 'tp2', label: cm.risk.singleTpTargetTp2 },
+                                  { value: 'tp3', label: cm.risk.singleTpTargetTp3 },
+                                ]}
+                              />
+                              <p className="text-xs text-neutral-500 dark:text-neutral-400 -mt-2">
+                                {cm.risk.singleTpTargetHint}
+                              </p>
                               <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-3 space-y-3">
                                 <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.risk.signalEntryTitle}</p>
                                 <p className="text-xs text-neutral-500 dark:text-neutral-400">
@@ -2603,19 +2630,19 @@ export function AccountConfigPage() {
                                         {cm.risk.closeWorseBody}
                                       </p>
                                       {channelManualSettings.close_worse_entries && (
-                                        <Input
+                                          <Input
                                           label={cm.risk.closeWorsePips}
-                                          type="number"
-                                          min={1}
-                                          step={1}
-                                          placeholder="30"
-                                          hint={
+                                            type="number"
+                                            min={1}
+                                            step={1}
+                                            placeholder="30"
+                                            hint={
                                             formatPipHint(Number(channelManualSettings.close_worse_entries_pips ?? 30) || 0)
                                             ?? cm.risk.closeWorsePipsFallback
-                                          }
+                                            }
                                           value={String(channelManualSettings.close_worse_entries_pips ?? 30)}
-                                          onChange={e => setManual({ close_worse_entries_pips: Math.max(1, Number(e.target.value) || 1) })}
-                                        />
+                                            onChange={e => setManual({ close_worse_entries_pips: Math.max(1, Number(e.target.value) || 1) })}
+                                          />
                                       )}
                                     </div>
                                   </>
@@ -2722,11 +2749,11 @@ export function AccountConfigPage() {
                                 <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
                                   {cm.stops.predefinedIntro}
                                 </p>
-                              </div>
+                          </div>
                               {predefSummary ? (
                                 <div className="rounded-lg border border-teal-200 bg-teal-50/80 px-3 py-2.5 text-sm text-teal-900 dark:border-teal-900/50 dark:bg-teal-950/40 dark:text-teal-200">
                                   {predefSummary}
-                                </div>
+                            </div>
                               ) : null}
                               <div className="space-y-3">
                                 <div className="rounded-md border border-neutral-200 dark:border-neutral-800 overflow-hidden">
@@ -2745,9 +2772,9 @@ export function AccountConfigPage() {
                                         value={String(ms.predefined_sl_pips ?? 30)}
                                         onChange={e => setManual({ predefined_sl_pips: Math.max(1, Number(e.target.value) || 0) })}
                                       />
-                                    </div>
-                                  )}
-                                </div>
+                          </div>
+                        )}
+                            </div>
                                 <div className="rounded-md border border-neutral-200 dark:border-neutral-800 overflow-hidden">
                                   <div className="flex items-center justify-between gap-3 bg-white dark:bg-neutral-900 px-3 py-2.5">
                                     <span className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.stops.overrideTps}</span>
@@ -2799,12 +2826,12 @@ export function AccountConfigPage() {
                                             </div>
                                             <Button className="col-span-2" variant="ghost" size="sm" onClick={() => removePredefinedTpPipRow(idx)}>{cm.stops.remove}</Button>
                                           </div>
-                                        ))}
-                                      </div>
-                                    </div>
-                                  )}
+                                  ))}
                                 </div>
                               </div>
+                              )}
+                            </div>
+                          </div>
                             </section>
 
                           </div>
@@ -2871,7 +2898,7 @@ export function AccountConfigPage() {
                                   {autoRuleSummary ? (
                                     <div className="rounded-lg border border-teal-200 bg-teal-50/80 px-3 py-2.5 text-sm text-teal-900 dark:border-teal-900/50 dark:bg-teal-950/40 dark:text-teal-200">
                                       {autoRuleSummary}
-                                    </div>
+                            </div>
                                   ) : null}
 
                                   <div className="space-y-3">
@@ -2893,14 +2920,14 @@ export function AccountConfigPage() {
                                           <span className="text-[10px] opacity-75 block mt-0.5">{m.hint}</span>
                                         </button>
                                       ))}
-                                    </div>
+                                </div>
 
                                     {triggerMode === 'pips' && (
-                                      <Input
+                                    <Input
                                         label={cm.management.triggerPips}
-                                        type="number"
-                                        min={0}
-                                        step={1}
+                                      type="number"
+                                      min={0}
+                                      step={1}
                                         hint={cm.management.triggerPipsHint}
                                         value={String(ms.move_sl_to_entry_after_value ?? 10)}
                                         onChange={e => setManual({
@@ -2950,8 +2977,8 @@ export function AccountConfigPage() {
                                         <p className="text-xs text-neutral-500 dark:text-neutral-400">
                                           {cm.management.tpHitHint}
                                         </p>
-                                      </div>
-                                    )}
+                                    </div>
+                                  )}
 
                                     <Input
                                       label={cm.management.breakevenOffset}
@@ -2964,7 +2991,7 @@ export function AccountConfigPage() {
                                         breakeven_offset_pips: Math.max(0, Number(e.target.value) || 0),
                                       })}
                                     />
-                                  </div>
+                                </div>
 
                                   <div className="rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 overflow-hidden">
                                     <div className="px-3 py-2.5 border-b border-neutral-200 dark:border-neutral-800">
@@ -3034,7 +3061,7 @@ export function AccountConfigPage() {
                                     <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
                                       {cm.management.trailingSubtitle}
                                     </p>
-                                  </div>
+                                      </div>
                                   <Toggle
                                     checked={ms.trailing_enabled === true}
                                     onChange={v => setManual({ trailing_enabled: v })}
@@ -3043,11 +3070,11 @@ export function AccountConfigPage() {
                                 {ms.trailing_enabled && (
                                   <div className="border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/80 px-4 py-4">
                                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                                      <Input
+                                              <Input
                                         label={cm.management.trailStart}
-                                        type="number"
-                                        min={0}
-                                        step={1}
+                                                type="number"
+                                                min={0}
+                                                step={1}
                                         hint={cm.management.trailStartHint}
                                         value={String(ms.trailing_start_pips ?? 20)}
                                         onChange={e => setManual({ trailing_start_pips: Math.max(0, Number(e.target.value) || 0) })}
@@ -3070,9 +3097,9 @@ export function AccountConfigPage() {
                                         value={String(ms.trailing_distance_pips ?? 10)}
                                         onChange={e => setManual({ trailing_distance_pips: Math.max(0, Number(e.target.value) || 0) })}
                                       />
+                                      </div>
                                     </div>
-                                  </div>
-                                )}
+                                  )}
                               </section>
                             )}
 
@@ -3117,7 +3144,7 @@ export function AccountConfigPage() {
                               <p className="text-xs text-neutral-500 dark:text-neutral-400">
                                 {cm.strategy.addExistingHint}
                               </p>
-                            </div>
+                                </div>
 
                             <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-3 space-y-3">
                               <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.strategy.rrFallbacksTitle}</p>
@@ -3203,7 +3230,7 @@ export function AccountConfigPage() {
                                   {cm.filters.timeSubtitle}
                                 </p>
                               </div>
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                               <Select label={cm.filters.timeFilter} value={channelManualSettings.time_filter_enabled ? 'yes' : 'no'} onChange={e => setManual({ time_filter_enabled: e.target.value === 'yes' })} options={[{ value: 'no', label: cm.filters.timeNo }, { value: 'yes', label: cm.filters.timeYes }]} />
                               {channelManualSettings.time_filter_enabled && (
                                 <Input label={cm.filters.startTime} type="time" value={channelManualSettings.trade_start_time ?? '00:00'} onChange={e => setManual({ trade_start_time: e.target.value })} />
@@ -3257,7 +3284,7 @@ export function AccountConfigPage() {
                                   {cm.filters.newsSubtitle}
                                 </p>
                               </div>
-                              <Select
+                                  <Select
                                 label={cm.filters.newsTrading}
                                 value={channelManualSettings.news_trading_enabled !== false ? 'yes' : 'no'}
                                 onChange={e => {
@@ -3307,40 +3334,40 @@ export function AccountConfigPage() {
                                     ) : null}
                                   </div>
                                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                    <Input
+                                <Input
                                       label={cm.filters.closeBeforeNews}
-                                      type="number"
+                                  type="number"
                                       min={0}
                                       value={String(channelManualSettings.close_before_news_minutes ?? 30)}
                                       onChange={e =>
                                         setManual({ close_before_news_minutes: Math.max(0, Number(e.target.value) || 0) })
                                       }
-                                    />
-                                    <Input
+                                />
+                                <Input
                                       label={cm.filters.resumeAfterNews}
-                                      type="number"
+                                  type="number"
                                       min={0}
                                       value={String(channelManualSettings.resume_after_news_minutes ?? 15)}
                                       onChange={e =>
                                         setManual({ resume_after_news_minutes: Math.max(0, Number(e.target.value) || 0) })
                                       }
-                                    />
-                                  </div>
+                                />
+                              </div>
                                 </>
-                              )}
-                            </section>
-                          </div>
                         )}
-
+                            </section>
                       </div>
                     )}
 
                   </div>
                 )}
 
-                </div>
-              </div>
-            </div>
+                          </div>
+                )}
+
+                                </div>
+                          </div>
+                    </div>
 
             <div className="shrink-0 px-4 sm:px-6 py-3 sm:py-4 border-t border-neutral-100 dark:border-neutral-800 flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-2 sm:gap-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:pb-4">
               <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 sm:mr-auto text-center sm:text-left">
@@ -3350,7 +3377,7 @@ export function AccountConfigPage() {
                 {presetSavedAt != null && (
                   <span className="text-xs text-success-600 transition-opacity">{cm.presetSaved}</span>
                 )}
-              </div>
+                        </div>
               <Button variant="ghost" className="w-full sm:w-auto min-h-[44px]" onClick={closeConfigureModal} disabled={configSaving || presetSaving}>{cm.cancel}</Button>
               {selectedChannelLinked ? (
                 <label className="w-full sm:w-auto min-h-[44px] inline-flex items-stretch rounded-lg border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 shadow-sm overflow-hidden has-[:disabled]:opacity-50">
@@ -3429,26 +3456,26 @@ export function AccountConfigPage() {
                             name: pendingApplyPreset.name,
                           })}
                         </p>
+                            </div>
                       </div>
-                    </div>
                     <div className="mt-4 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/50 px-3 py-2.5 space-y-2">
                       <div className="flex items-center justify-between gap-3 text-sm">
                         <span className="text-neutral-500 dark:text-neutral-400">{cm.applyPresetChannelLabel}</span>
                         <span className="font-medium text-neutral-900 dark:text-neutral-50 truncate">
                           {selectedChannelOption?.display_name ?? '—'}
                         </span>
-                      </div>
+                  </div>
                       <div className="flex items-center justify-between gap-3 text-sm">
                         <span className="text-neutral-500 dark:text-neutral-400">{cm.applyPresetPresetLabel}</span>
                         <span className="font-medium text-primary-700 dark:text-primary-400 truncate">
                           {pendingApplyPreset.name}
                         </span>
-                      </div>
-                    </div>
+                </div>
+              </div>
                     <p className="mt-4 text-xs text-amber-700 dark:text-amber-400 rounded-lg border border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-950/30 px-3 py-2">
                       {cm.applyPresetWarning}
                     </p>
-                  </div>
+            </div>
                   <div className="px-5 py-4 border-t border-neutral-100 dark:border-neutral-800 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
                     <Button
                       variant="ghost"
@@ -3508,11 +3535,11 @@ export function AccountConfigPage() {
                     >
                       {cm.saveAsPresetAction}
                     </Button>
-                  </div>
-                </div>
-              </div>
-            ) : null}
+            </div>
           </div>
+        </div>
+            ) : null}
+    </div>
         </div>
       )}
     </PageShell>
@@ -3553,32 +3580,32 @@ function ChannelFiltersCard({
   )
   return (
     <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-3 space-y-3">
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {categories.map(cat => (
-          <CategoryRow
-            key={cat.key}
-            label={cat.label}
-            example={cat.example}
+              <CategoryRow
+                key={cat.key}
+                label={cat.label}
+                example={cat.example}
             allowLabel={labels.allow}
             ignoreLabel={labels.ignore}
-            value={filters[cat.key] ?? 'allow'}
-            onChange={v => onChange(cat.key, v)}
-          />
-        ))}
-      </div>
+                value={filters[cat.key] ?? 'allow'}
+                onChange={v => onChange(cat.key, v)}
+              />
+            ))}
+          </div>
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
         <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
           {labels.footer}
-        </p>
-        <button
-          type="button"
+            </p>
+            <button
+              type="button"
           className="text-xs text-primary-600 hover:text-primary-700 hover:underline shrink-0 self-start sm:self-auto"
-          onClick={onReset}
-          disabled={ignoredCount === 0}
-        >
+              onClick={onReset}
+              disabled={ignoredCount === 0}
+            >
           {labels.resetDefaults}
-        </button>
-      </div>
+            </button>
+          </div>
     </div>
   )
 }

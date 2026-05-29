@@ -145,6 +145,7 @@ export interface ManualSettings {
   fixed_lot?: number
   dynamic_balance_percent?: number
   tp_lots?: ManualTpLot[]
+  single_tp_target?: 'tp1' | 'tp2' | 'tp3' | 'farthest'
   /** Multi Trades: per-leg size as a percent of the resolved fixed lot (default 5). */
   multi_trade_leg_percent?: number
   trade_style?: 'single' | 'multi'

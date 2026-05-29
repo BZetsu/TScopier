@@ -42,7 +42,11 @@ export {
 
 export { reverseSignalGateSatisfied } from './manualPlanning/manualStops'
 
-export { planSinglePartialTps } from './manualPlanning/partialTpSchedule'
+export {
+  normalizeSingleTpTarget,
+  planSinglePartialTps,
+  resolveSingleTpTargetIndex,
+} from './manualPlanning/partialTpSchedule'
 
 export { planRangeSplit } from './manualPlanning/rangeSplit'
 

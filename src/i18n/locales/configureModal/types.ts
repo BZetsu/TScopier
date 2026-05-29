@@ -84,6 +84,12 @@ export interface ConfigureModalTranslations {
     tradeStyle: string
     singleTrade: string
     multiTrades: string
+    singleTpTarget: string
+    singleTpTargetHint: string
+    singleTpTargetFarthest: string
+    singleTpTargetTp1: string
+    singleTpTargetTp2: string
+    singleTpTargetTp3: string
     signalEntryTitle: string
     signalEntryBody: string
     useSignalEntryPrice: string

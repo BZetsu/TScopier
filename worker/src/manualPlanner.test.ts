@@ -579,6 +579,57 @@ test('planSinglePartialTps: empty bucket rows → no partials, broker TP=last TP
   assert.equal(r.partials.length, 0)
 })
 
+test('planSinglePartialTps: tp2 target → broker TP=TP2 and only TP1 partial', () => {
+  const r = planSinglePartialTps({
+    manualLot: 1.0,
+    minLot: 0.01,
+    lotStep: 0.01,
+    finalTps: [1.10, 1.20, 1.30],
+    bucketRows: [{ percent: 50 }, { percent: 30 }, { percent: 20 }],
+    singleTpTarget: 'tp2',
+  })
+  assert.equal(r.brokerTp, 1.20)
+  assert.equal(r.partials.length, 1)
+  assert.deepEqual(r.partials[0], { tpIdx: 1, triggerPrice: 1.10, closeLots: 0.50, percent: 50 })
+})
+
+test('planSinglePartialTps: tp1 target → broker TP=TP1 and no partials', () => {
+  const r = planSinglePartialTps({
+    manualLot: 1.0,
+    minLot: 0.01,
+    lotStep: 0.01,
+    finalTps: [1.10, 1.20, 1.30],
+    bucketRows: [{ percent: 50 }, { percent: 30 }, { percent: 20 }],
+    singleTpTarget: 'tp1',
+  })
+  assert.equal(r.brokerTp, 1.10)
+  assert.equal(r.partials.length, 0)
+})
+
+test('planSinglePartialTps: farthest target uses direction-aware price extreme', () => {
+  const buy = planSinglePartialTps({
+    manualLot: 1.0,
+    minLot: 0.01,
+    lotStep: 0.01,
+    finalTps: [1.20, 1.30, 1.10],
+    bucketRows: [{ percent: 40 }, { percent: 30 }, { percent: 30 }],
+    singleTpTarget: 'farthest',
+    isBuy: true,
+  })
+  assert.equal(buy.brokerTp, 1.30)
+
+  const sell = planSinglePartialTps({
+    manualLot: 1.0,
+    minLot: 0.01,
+    lotStep: 0.01,
+    finalTps: [4522, 4514, 4518],
+    bucketRows: [{ percent: 40 }, { percent: 30 }, { percent: 30 }],
+    singleTpTarget: 'farthest',
+    isBuy: false,
+  })
+  assert.equal(sell.brokerTp, 4514)
+})
+
 test('planSinglePartialTps: percentage below minLot is dropped with diagnostic', () => {
   // 5% of 0.10 lot = 0.005 → below 0.01 minLot, must be skipped.
   const r = planSinglePartialTps({

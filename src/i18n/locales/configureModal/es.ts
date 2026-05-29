@@ -87,6 +87,13 @@ export const configureModalEs: ConfigureModalTranslations = {
     tradeStyle: 'Estilo de operación',
     singleTrade: 'Operación única',
     multiTrades: 'Operaciones múltiples',
+    singleTpTarget: 'Objetivo TP en modo único',
+    singleTpTargetHint:
+      'Elige qué TP debe usar la orden del broker en Operación única. Los TP anteriores aún pueden ejecutar cierres parciales según tu distribución %.',
+    singleTpTargetFarthest: 'TP más lejano (auto)',
+    singleTpTargetTp1: 'TP1',
+    singleTpTargetTp2: 'TP2',
+    singleTpTargetTp3: 'TP3',
     signalEntryTitle: 'Ejecución de entrada de señal',
     signalEntryBody:
       'Usar precio de entrada de la señal solo aplica en modo Operación única. Si está activo, la señal debe incluir una entrada explícita parseada (precio, zona, @ precio o etiquetas como «Precio de entrada:»). Tras cualquier retraso del canal, el worker compara la cotización en vivo con esa entrada: en compras ejecuta a mercado solo si el ask está en o por debajo de la entrada; si no, coloca un buy limit en la entrada. En ventas es lo inverso. El take profit del broker apunta al último TP parseado cuando hay varios objetivos, con cierres parciales opcionales según su escalera de TP. El copiador rastrea cada pendiente de entrada estricta para sincronizar los fills con su lista de operaciones; los pendientes se cancelan cuando la cesta queda plana. Los mensajes «comprar ahora» sin entrada se omiten.',

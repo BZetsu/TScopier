@@ -48,6 +48,8 @@ export function planSingleManualOrders(args: PlanSingleManualOrdersArgs): Planne
     lotStep: Number.isFinite(ctx.lotStep) && ctx.lotStep > 0 ? ctx.lotStep : 0.01,
     finalTps,
     bucketRows,
+    singleTpTarget: manual.single_tp_target,
+    isBuy,
   })
   const brokerTp =
     partialPlan.brokerTp

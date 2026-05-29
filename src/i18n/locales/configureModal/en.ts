@@ -87,6 +87,13 @@ export const configureModalEn: ConfigureModalTranslations = {
     tradeStyle: 'Trade Style',
     singleTrade: 'Single Trade',
     multiTrades: 'Multi Trades',
+    singleTpTarget: 'Single TP target',
+    singleTpTargetHint:
+      'Choose which TP the broker order should target in Single Trade mode. Earlier TP levels can still trigger partial closes based on your TP distribution.',
+    singleTpTargetFarthest: 'Farthest TP (auto)',
+    singleTpTargetTp1: 'TP1',
+    singleTpTargetTp2: 'TP2',
+    singleTpTargetTp3: 'TP3',
     signalEntryTitle: 'Signal entry execution',
     signalEntryBody:
       'Use Signal Entry Price applies only in Single Trade mode. When enabled, the signal must include an explicit parsed entry (price, zone, @ price, or labels like "Entry Price:"). After any channel delay, the worker compares the live quote to that entry: Buy fills at market only when ask is at or below the entry; otherwise it places a buy limit at the entry. Sell is the inverse. The broker take-profit targets the last parsed TP when you have several targets, with optional partial closes from your TP ladder. Copier tracks each strict-entry pending so fills sync to your trade list; pendings are cancelled when the basket is flat. Bare "buy now" messages with no entry are skipped.',

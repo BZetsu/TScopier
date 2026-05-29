@@ -12,6 +12,8 @@ function planSingleManualOrders(args) {
         lotStep: Number.isFinite(ctx.lotStep) && ctx.lotStep > 0 ? ctx.lotStep : 0.01,
         finalTps,
         bucketRows,
+        singleTpTarget: manual.single_tp_target,
+        isBuy,
     });
     const brokerTp = partialPlan.brokerTp
         ?? (finalTps.length >= 2 ? (finalTps[finalTps.length - 1] ?? null) : (finalTps[0] ?? null));

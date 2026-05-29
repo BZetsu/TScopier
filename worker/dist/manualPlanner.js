@@ -6,7 +6,7 @@
  * stable public surface so callers (e.g. `tradeExecutor`) keep importing `./manualPlanner`.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.planManualOrders = exports.strictSignalEntryQuoteAllowsImmediate = exports.computeCwOverrideTp = exports.planRangeSplit = exports.planSinglePartialTps = exports.reverseSignalGateSatisfied = exports.SKIP_REASON_SIGNAL_ENTRY_REQUIRED = exports.lastPositiveParsedTpPrice = exports.parsedHasExplicitEntryAnchor = exports.resolvedParsedEntryZone = exports.resolvedParsedEntryPrice = exports.DEFAULT_MANUAL_TP_LOTS = exports.sanitizeTpLots = exports.normalizeManualSettingsForExecution = exports.clampPendingExpiryHours = exports.signalEntryPriceStrictEnabled = exports.manualUseSignalEntryPriceOn = void 0;
+exports.planManualOrders = exports.strictSignalEntryQuoteAllowsImmediate = exports.computeCwOverrideTp = exports.planRangeSplit = exports.resolveSingleTpTargetIndex = exports.planSinglePartialTps = exports.normalizeSingleTpTarget = exports.reverseSignalGateSatisfied = exports.SKIP_REASON_SIGNAL_ENTRY_REQUIRED = exports.lastPositiveParsedTpPrice = exports.parsedHasExplicitEntryAnchor = exports.resolvedParsedEntryZone = exports.resolvedParsedEntryPrice = exports.DEFAULT_MANUAL_TP_LOTS = exports.sanitizeTpLots = exports.normalizeManualSettingsForExecution = exports.clampPendingExpiryHours = exports.signalEntryPriceStrictEnabled = exports.manualUseSignalEntryPriceOn = void 0;
 var manualSettings_1 = require("./manualPlanning/manualSettings");
 Object.defineProperty(exports, "manualUseSignalEntryPriceOn", { enumerable: true, get: function () { return manualSettings_1.manualUseSignalEntryPriceOn; } });
 Object.defineProperty(exports, "signalEntryPriceStrictEnabled", { enumerable: true, get: function () { return manualSettings_1.signalEntryPriceStrictEnabled; } });
@@ -24,7 +24,9 @@ Object.defineProperty(exports, "SKIP_REASON_SIGNAL_ENTRY_REQUIRED", { enumerable
 var manualStops_1 = require("./manualPlanning/manualStops");
 Object.defineProperty(exports, "reverseSignalGateSatisfied", { enumerable: true, get: function () { return manualStops_1.reverseSignalGateSatisfied; } });
 var partialTpSchedule_1 = require("./manualPlanning/partialTpSchedule");
+Object.defineProperty(exports, "normalizeSingleTpTarget", { enumerable: true, get: function () { return partialTpSchedule_1.normalizeSingleTpTarget; } });
 Object.defineProperty(exports, "planSinglePartialTps", { enumerable: true, get: function () { return partialTpSchedule_1.planSinglePartialTps; } });
+Object.defineProperty(exports, "resolveSingleTpTargetIndex", { enumerable: true, get: function () { return partialTpSchedule_1.resolveSingleTpTargetIndex; } });
 var rangeSplit_1 = require("./manualPlanning/rangeSplit");
 Object.defineProperty(exports, "planRangeSplit", { enumerable: true, get: function () { return rangeSplit_1.planRangeSplit; } });
 var cwOverride_1 = require("./manualPlanning/cwOverride");

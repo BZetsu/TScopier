@@ -73,6 +73,15 @@ export function normalizeManualSettingsForExecution(raw: unknown): ManualSetting
   const predefinedTpPips = Array.isArray(j.predefined_tp_pips)
     ? j.predefined_tp_pips.map(Number).filter(Number.isFinite)
     : [20, 40, 60]
+  const singleTpTargetRaw = String(j.single_tp_target ?? 'farthest').toLowerCase()
+  const singleTpTarget: ManualSettings['single_tp_target'] =
+    singleTpTargetRaw === 'tp1'
+      ? 'tp1'
+      : singleTpTargetRaw === 'tp2'
+        ? 'tp2'
+        : singleTpTargetRaw === 'tp3'
+          ? 'tp3'
+          : 'farthest'
 
   return {
     ...(j as ManualSettings),
@@ -81,6 +90,7 @@ export function normalizeManualSettingsForExecution(raw: unknown): ManualSetting
     range_step_pips: rangeStepPips,
     range_distance_pips: rangeDistancePips,
     tp_lots: tpFinal,
+    single_tp_target: singleTpTarget,
     predefined_tp_pips: predefinedTpPips,
     use_signal_entry_price: j.use_signal_entry_price === true,
     trade_style: j.trade_style === 'multi' ? 'multi' : 'single',

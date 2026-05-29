@@ -15,6 +15,7 @@ import {
   clampPendingExpiryHours,
   computeCwOverrideTp,
   parsedHasExplicitEntryAnchor,
+  planSinglePartialTps,
   planManualOrders,
   resolvedParsedEntryPrice,
   resolvedParsedEntryZone,
@@ -99,7 +100,7 @@ import {
 import { syncRangePendingLadderOnBasketRefresh } from '../../rangePendingLadderSync'
 import { loadExistingRangeStepIndices } from '../../rangePendingFireGuard'
 import { channelMatchesBrokerSignal } from '../../brokerChannelFilter'
-import { takeProfitForLegIndex } from '../../manualPlanning/tpBucketDistribution'
+import { resolveTpBucketRows } from '../../manualPlanning/tpBucketDistribution'
 import {
   explicitMgmtSymbol,
   isReplyScopedManagement,
@@ -346,6 +347,20 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
       mergePlanImmediateOrders(plan).length,
       Math.max(0, familyTrades.length - Math.max(0, maxPendingStepIdx - activePendingCount)),
     )
+    const parsedTpLevels = (parsed.tp ?? []).filter(
+      (t): t is number => typeof t === 'number' && Number.isFinite(t) && t > 0,
+    )
+    const singlePartialPlan = manual.trade_style !== 'multi' && parsedTpLevels.length > 0
+      ? planSinglePartialTps({
+          manualLot: baseLot,
+          minLot: Number.isFinite(params?.minLot) && (params?.minLot ?? 0) > 0 ? (params?.minLot as number) : 0.01,
+          lotStep: Number.isFinite(params?.lotStep) && (params?.lotStep ?? 0) > 0 ? (params?.lotStep as number) : 0.01,
+          finalTps: parsedTpLevels,
+          bucketRows: resolveTpBucketRows(parsedTpLevels, manual.tp_lots).bucketRows,
+          singleTpTarget: manual.single_tp_target,
+          isBuy: direction === 'buy',
+        })
+      : null
     let perLegTargets = buildPerLegStopTargets({
       plan,
       parsed,
@@ -354,6 +369,9 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
       immediateLegCount: refreshImmediateLegCount,
       tpLots: manual.tp_lots,
     })
+    if (manual.trade_style !== 'multi' && singlePartialPlan?.brokerTp) {
+      perLegTargets = perLegTargets.map(target => ({ ...target, takeprofit: singlePartialPlan.brokerTp as number }))
+    }
 
     let anchor: number | null = plan.anchor?.value ?? null
     if ((virtualPendings.length > 0 || !!plan.closeWorseEntries) && (anchor == null || anchor <= 0)) {
@@ -422,6 +440,11 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
           immediateLegCount: refreshImmediateLegCount,
           tpLots: manual.tp_lots,
         })
+        if (manual.trade_style !== 'multi' && singlePartialPlan?.brokerTp) {
+          for (let i = 0; i < refreshedTargets.length; i++) {
+            refreshedTargets[i] = { ...refreshedTargets[i]!, takeprofit: singlePartialPlan.brokerTp }
+          }
+        }
         if (refreshedTargets.length) {
           perLegTargets.length = 0
           perLegTargets.push(...refreshedTargets)
@@ -475,6 +498,34 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
       return !Number.isFinite(t) || t <= 0
     }).length
     summary.skippedNoTicket = stillMissingTicket
+
+    if (manual.trade_style !== 'multi' && singlePartialPlan && modifiedTradeIds.size > 0) {
+      const partialRows = [...modifiedTradeIds].flatMap(tradeId =>
+        singlePartialPlan.partials.map(p => ({
+          trade_id: tradeId,
+          signal_id: signal.id,
+          user_id: signal.user_id,
+          broker_account_id: broker.id,
+          metaapi_account_id: uuid,
+          symbol,
+          is_buy: direction === 'buy',
+          tp_idx: p.tpIdx,
+          trigger_price: p.triggerPrice,
+          close_lots: p.closeLots,
+          status: 'pending',
+        })),
+      )
+      if (partialRows.length > 0) {
+        const { error: partialErr } = await ctx.supabase
+          .from('partial_tp_legs')
+          .insert(partialRows)
+        if (partialErr) {
+          console.warn(
+            `[tradeExecutor] basket_refresh partial_tp_legs insert failed signal=${signal.id} broker=${broker.id}: ${partialErr.message}`,
+          )
+        }
+      }
+    }
 
     if (virtualPendings.length > 0 && anchor != null && Number.isFinite(anchor) && anchor > 0) {
       if (overrideTp != null && plan.closeWorseEntries) {

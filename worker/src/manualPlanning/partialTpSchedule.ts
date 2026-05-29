@@ -9,6 +9,10 @@ export interface PlanSinglePartialTpsArgs {
   finalTps: number[]
   /** Targets % rows aligned to finalTps[0..] (from resolveTpBucketRows). */
   bucketRows: Array<{ percent?: number }>
+  /** Preferred broker TP in Single mode. */
+  singleTpTarget?: 'tp1' | 'tp2' | 'tp3' | 'farthest'
+  /** Optional direction hint so "farthest" can use price extremes. */
+  isBuy?: boolean
 }
 
 export interface PlanSinglePartialTpsResult {
@@ -20,6 +24,43 @@ export interface PlanSinglePartialTpsResult {
   partials: PlannerPartialTp[]
   /** Non-fatal note describing why partials were dropped / capped, suitable for logging. */
   fallbackReason?: string
+}
+
+export function normalizeSingleTpTarget(
+  raw: unknown,
+): 'tp1' | 'tp2' | 'tp3' | 'farthest' {
+  const v = String(raw ?? 'farthest').toLowerCase()
+  if (v === 'tp1' || v === 'tp2' || v === 'tp3') return v
+  return 'farthest'
+}
+
+export function resolveSingleTpTargetIndex(args: {
+  finalTps: number[]
+  singleTpTarget?: 'tp1' | 'tp2' | 'tp3' | 'farthest'
+  isBuy?: boolean
+}): number {
+  const { finalTps, isBuy } = args
+  if (!Array.isArray(finalTps) || finalTps.length === 0) return -1
+  const target = normalizeSingleTpTarget(args.singleTpTarget)
+  if (target === 'tp1') return 0
+  if (target === 'tp2') return Math.min(1, finalTps.length - 1)
+  if (target === 'tp3') return Math.min(2, finalTps.length - 1)
+
+  if (isBuy === true) {
+    let idx = 0
+    for (let i = 1; i < finalTps.length; i++) {
+      if ((finalTps[i] ?? 0) > (finalTps[idx] ?? 0)) idx = i
+    }
+    return idx
+  }
+  if (isBuy === false) {
+    let idx = 0
+    for (let i = 1; i < finalTps.length; i++) {
+      if ((finalTps[i] ?? 0) < (finalTps[idx] ?? 0)) idx = i
+    }
+    return idx
+  }
+  return finalTps.length - 1
 }
 
 /**
@@ -40,7 +81,7 @@ export interface PlanSinglePartialTpsResult {
  *     final lot would round to 0 and the broker TP becomes a no-op).
  */
 export function planSinglePartialTps(args: PlanSinglePartialTpsArgs): PlanSinglePartialTpsResult {
-  const { manualLot, minLot, lotStep, finalTps, bucketRows } = args
+  const { manualLot, minLot, lotStep, finalTps, bucketRows, isBuy } = args
 
   if (!Number.isFinite(manualLot) || manualLot <= 0) {
     return { brokerTp: null, partials: [], fallbackReason: 'partial_tp_invalid_lot' }
@@ -48,25 +89,27 @@ export function planSinglePartialTps(args: PlanSinglePartialTpsArgs): PlanSingle
   if (!Array.isArray(finalTps) || finalTps.length === 0) {
     return { brokerTp: null, partials: [], fallbackReason: 'partial_tp_invalid_lot' }
   }
+  const targetIndex = resolveSingleTpTargetIndex({
+    finalTps,
+    singleTpTarget: args.singleTpTarget,
+    isBuy,
+  })
+  const selectedTp = targetIndex >= 0 ? (finalTps[targetIndex] ?? null) : null
+
   if (finalTps.length < 2) {
-    return { brokerTp: finalTps[0] ?? null, partials: [] }
+    return { brokerTp: selectedTp ?? finalTps[0] ?? null, partials: [] }
   }
   if (!bucketRows.length) {
-    const brokerTp = finalTps[finalTps.length - 1] ?? null
+    const brokerTp = selectedTp ?? finalTps[finalTps.length - 1] ?? null
     return { brokerTp, partials: [] }
   }
 
-  const bucketCount = Math.min(bucketRows.length, finalTps.length)
+  const terminalIdxRaw = targetIndex >= 0 ? targetIndex : finalTps.length - 1
+  const terminalIdx = Math.max(0, Math.min(terminalIdxRaw, finalTps.length - 1))
+  const bucketCount = Math.min(bucketRows.length, finalTps.length, terminalIdx + 1)
   const pairedTps = finalTps.slice(0, bucketCount)
   const pairedBuckets = bucketRows.slice(0, bucketCount)
-
-  let brokerTpIndex = bucketCount - 1
-  while (brokerTpIndex > 0) {
-    const pct = Number(pairedBuckets[brokerTpIndex]?.percent)
-    if (Number.isFinite(pct) && pct > 0) break
-    brokerTpIndex -= 1
-  }
-  const brokerTp = pairedTps[brokerTpIndex] ?? null
+  const brokerTp = selectedTp ?? pairedTps[pairedTps.length - 1] ?? null
   if (bucketCount < 2 || brokerTp == null) {
     return { brokerTp, partials: [] }
   }

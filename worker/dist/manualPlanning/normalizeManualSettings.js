@@ -66,6 +66,14 @@ function normalizeManualSettingsForExecution(raw) {
     const predefinedTpPips = Array.isArray(j.predefined_tp_pips)
         ? j.predefined_tp_pips.map(Number).filter(Number.isFinite)
         : [20, 40, 60];
+    const singleTpTargetRaw = String(j.single_tp_target ?? 'farthest').toLowerCase();
+    const singleTpTarget = singleTpTargetRaw === 'tp1'
+        ? 'tp1'
+        : singleTpTargetRaw === 'tp2'
+            ? 'tp2'
+            : singleTpTargetRaw === 'tp3'
+                ? 'tp3'
+                : 'farthest';
     return {
         ...j,
         multi_trade_leg_percent: legPct,
@@ -73,6 +81,7 @@ function normalizeManualSettingsForExecution(raw) {
         range_step_pips: rangeStepPips,
         range_distance_pips: rangeDistancePips,
         tp_lots: tpFinal,
+        single_tp_target: singleTpTarget,
         predefined_tp_pips: predefinedTpPips,
         use_signal_entry_price: j.use_signal_entry_price === true,
         trade_style: j.trade_style === 'multi' ? 'multi' : 'single',

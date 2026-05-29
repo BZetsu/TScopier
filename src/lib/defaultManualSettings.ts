@@ -17,6 +17,7 @@ export const DEFAULT_MANUAL_SETTINGS: ManualSettings = {
   fixed_lot: 0.01,
   dynamic_balance_percent: 1,
   tp_lots: DEFAULT_MANUAL_TP_LOTS,
+  single_tp_target: 'farthest',
   multi_trade_leg_percent: 5,
   trade_style: 'single',
   range_trading: false,
