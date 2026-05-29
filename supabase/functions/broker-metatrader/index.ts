@@ -724,11 +724,16 @@ Deno.serve(async (req: Request) => {
       }
 
       const fromString = (raw: string): { direction: "buy" | "sell" | ""; label: string } | null => {
-        const cleaned = raw.replace(/^(OrderType_|DealType_|DEAL_TYPE_|ORDER_TYPE_)/i, "").trim()
+        const cleaned = raw.replace(/^(OrderType_|DealType_|DEAL_TYPE_|ORDER_TYPE_|POSITION_TYPE_|PositionType_)/i, "").trim()
         if (!cleaned) return null
+        if (/^\d+$/.test(cleaned)) return null
         const lower = cleaned.toLowerCase()
         const direction: "buy" | "sell" | "" =
-          lower.startsWith("buy") ? "buy" : lower.startsWith("sell") ? "sell" : ""
+          lower.startsWith("buy") ? "buy"
+          : lower.startsWith("sell") ? "sell"
+          : lower.includes("buy") ? "buy"
+          : lower.includes("sell") ? "sell"
+          : ""
         const label = cleaned.replace(/([a-z])([A-Z])/g, "$1 $2")
         return { direction, label }
       }
@@ -748,7 +753,7 @@ Deno.serve(async (req: Request) => {
         )
         if (typeof stringCandidate === "string" && stringCandidate.trim()) {
           const parsed = fromString(stringCandidate)
-          if (parsed) return { direction: parsed.direction, type_label: parsed.label }
+          if (parsed?.direction) return { direction: parsed.direction, type_label: parsed.label }
         }
         // Then try numeric-typed fields and any nested 'ex.cmd'.
         const ex = order.ex as Record<string, unknown> | undefined

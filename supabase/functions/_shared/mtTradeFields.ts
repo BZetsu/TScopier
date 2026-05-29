@@ -279,11 +279,16 @@ function invertMtDirection(direction: MtDirection): MtDirection {
 }
 
 function directionFromTypeString(raw: string): { direction: MtDirection; label: string } | null {
-  const cleaned = raw.replace(/^(OrderType_|DealType_|DEAL_TYPE_|ORDER_TYPE_)/i, "").trim()
+  const cleaned = raw.replace(/^(OrderType_|DealType_|DEAL_TYPE_|ORDER_TYPE_|POSITION_TYPE_|PositionType_)/i, "").trim()
   if (!cleaned) return null
+  if (/^\d+$/.test(cleaned)) return null
   const lower = cleaned.toLowerCase()
   const direction: MtDirection =
-    lower.startsWith("buy") ? "buy" : lower.startsWith("sell") ? "sell" : ""
+    lower.startsWith("buy") ? "buy"
+    : lower.startsWith("sell") ? "sell"
+    : lower.includes("buy") ? "buy"
+    : lower.includes("sell") ? "sell"
+    : ""
   const label = cleaned.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/_/g, " ").trim()
   return { direction, label }
 }
