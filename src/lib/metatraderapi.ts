@@ -158,6 +158,17 @@ export const metatraderApi = {
     })
   },
 
+  pnlQuick(brokerIds: string[]): Promise<{
+    accounts: Array<{ id: string; profit: number | null; equity: number | null; balance: number | null }>
+  }> {
+    return call({
+      body: { action: 'pnl_quick', broker_ids: brokerIds },
+      expect: (b) => b as {
+        accounts: Array<{ id: string; profit: number | null; equity: number | null; balance: number | null }>
+      },
+    })
+  },
+
   check(brokerId: string): Promise<{ connected: boolean; message?: string }> {
     return call({
       body: { action: 'check', broker_id: brokerId },

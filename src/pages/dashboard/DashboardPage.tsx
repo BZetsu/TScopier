@@ -615,9 +615,10 @@ export function DashboardPage() {
   const [brokerReconnectError, setBrokerReconnectError] = useState('')
   const loadDashboardLiveRef = useRef<() => void>(() => {})
   /** Background MT/broker poll — DB changes use Supabase Realtime instead. */
-  const MT_LIVE_REFRESH_MS = 45_000
-  const BROKER_SUMMARY_REFRESH_MS = 30_000
+  const MT_LIVE_REFRESH_MS = 15_000
+  const BROKER_SUMMARY_REFRESH_MS = 8_000
   const MT_TRADES_REFRESH_MS = 30_000
+  const PNL_FAST_POLL_MS = 5_000
   const lastBrokerRefreshRef = useRef<number>(0)
   const lastMtTradesRefreshRef = useRef<number>(0)
   /** Ignore stale responses when a newer *fresh* loadDashboard run started. */
@@ -1343,6 +1344,62 @@ export function DashboardPage() {
       document.removeEventListener('visibilitychange', onVisible)
     }
   }, [user])
+
+  useEffect(() => {
+    if (!user) return
+    const hasOpenTrades = statsRef.current.openTrades > 0
+    if (!hasOpenTrades) return
+
+    let cancelled = false
+    const pollPnl = async () => {
+      if (cancelled || document.visibilityState !== 'visible') return
+      const accounts = linkedAccounts.filter(b => {
+        const uuid = (b.metaapi_account_id ?? '').trim()
+        return b.is_active && uuid.length > 0 && !uuid.includes('|') && isBrokerLiveConnected(b)
+      })
+      if (accounts.length === 0) return
+      try {
+        const { accounts: results } = await metatraderApi.pnlQuick(accounts.map(a => a.id))
+        if (cancelled) return
+        setStats(prev => {
+          let openPnl = 0
+          let sawLive = false
+          for (const r of results) {
+            const profit = r.profit ?? (r.equity != null && r.balance != null ? r.equity - r.balance : null)
+            if (profit != null && Number.isFinite(profit)) {
+              openPnl += profit
+              sawLive = true
+            }
+          }
+          if (!sawLive) return prev
+          const next = { ...prev, openPnl }
+          statsRef.current = next
+          return next
+        })
+        setLinkedAccountBalances(prev => {
+          const next = { ...prev }
+          for (const r of results) {
+            if (r.profit == null && r.equity == null) continue
+            const profit = r.profit ?? (r.equity != null && r.balance != null ? r.equity - r.balance : null)
+            next[r.id] = {
+              ...(next[r.id] ?? {}),
+              open_pnl: profit ?? undefined,
+              ...(r.equity != null ? { equity: r.equity } : {}),
+              ...(r.balance != null ? { balance: r.balance } : {}),
+            }
+          }
+          linkedBalancesRef.current = next
+          return next
+        })
+      } catch { /* swallow — full refresh will retry */ }
+    }
+
+    const interval = window.setInterval(() => { void pollPnl() }, PNL_FAST_POLL_MS)
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+    }
+  }, [user, linkedAccounts, stats.openTrades])
 
   /**
    * Pull live trades (open + recent closed) from MetatraderAPI for every linked

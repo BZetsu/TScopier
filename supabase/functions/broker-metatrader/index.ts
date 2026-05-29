@@ -525,6 +525,39 @@ Deno.serve(async (req: Request) => {
       }
     }
 
+    if (action === "pnl_quick") {
+      ensureMtApiConfigured(Deno.env)
+      const brokerIds = (body as Record<string, unknown>).broker_ids
+      if (!Array.isArray(brokerIds) || brokerIds.length === 0) return bad(400, "broker_ids required")
+      const ids = brokerIds.map(String).slice(0, 10)
+      const { data: brokers } = await supabase
+        .from("broker_accounts")
+        .select("id,metaapi_account_id,platform,connection_status")
+        .eq("user_id", userId)
+        .eq("is_active", true)
+        .in("id", ids)
+      if (!brokers || brokers.length === 0) return bad(404, "No broker accounts found")
+      const results = await Promise.all(
+        brokers.map(async (b) => {
+          const uuid = parseBrokerSessionId(b.metaapi_account_id)
+          if (!uuid) return { id: b.id, profit: null, equity: null, balance: null }
+          const client = mtClient(Deno.env, String(b.platform ?? "MT5"))
+          try {
+            const s = await client.accountSummary(uuid)
+            return {
+              id: b.id,
+              profit: s?.profit ?? null,
+              equity: s?.equity ?? null,
+              balance: s?.balance ?? null,
+            }
+          } catch {
+            return { id: b.id, profit: null, equity: null, balance: null }
+          }
+        }),
+      )
+      return Response.json({ ok: true, accounts: results }, { headers: corsHeaders })
+    }
+
     if (action === "reconnect") {
       ensureMtApiConfigured(Deno.env)
       const brokerId = String((body as Record<string, unknown>).broker_id ?? "")
