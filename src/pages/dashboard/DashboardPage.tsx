@@ -1937,7 +1937,7 @@ export function DashboardPage() {
         </div>
 
         {brokerReconnectError ? (
-          <div className="px-4 sm:px-5 py-2 text-sm text-error-600 dark:text-error-400 border-b border-neutral-100 dark:border-neutral-800">
+          <div className="px-4 sm:px-5 py-2 text-sm text-neutral-600 dark:text-neutral-400 border-b border-neutral-100 dark:border-neutral-800">
             {brokerReconnectError}
           </div>
         ) : null}
@@ -2170,7 +2170,7 @@ function LinkedAccountRow({
   const intlLocale = locale === 'en' ? undefined : locale
   const isDisconnected = !isBrokerSessionConnected(account)
   const statusClass = isDisconnected
-    ? 'text-error-700 border-error-200 bg-error-50 dark:text-error-300 dark:border-error-800 dark:bg-error-950/50'
+    ? 'text-neutral-700 border-neutral-200 bg-neutral-100 dark:text-neutral-300 dark:border-neutral-700 dark:bg-neutral-800/80'
     : account.is_active
       ? 'text-teal-700 border-teal-200 bg-teal-50 dark:text-teal-300 dark:border-teal-800 dark:bg-teal-950/50'
       : 'text-neutral-600 border-neutral-200 bg-neutral-100 dark:text-neutral-400 dark:border-neutral-700 dark:bg-neutral-800/80'
@@ -2178,7 +2178,7 @@ function LinkedAccountRow({
   const accountCurrency = (accountSummary?.currency ?? account.last_currency ?? '').trim() || undefined
   const balanceText = formatMoneyWithCode(balance, accountCurrency, { locale: intlLocale })
   const pnl = closedHistoryPnl != null ? closedHistoryPnl : 0
-  const pnlColor = pnl >= 0 ? 'text-teal-600' : 'text-error-600'
+  const pnlColor = pnl >= 0 ? 'text-teal-600' : 'text-neutral-600 dark:text-neutral-400'
   const pnlFormatted = formatMoneyWithCode(Math.abs(pnl), accountCurrency, { locale: intlLocale, nullAsDash: false })
   const openPnl = resolveAccountOpenPnl(account, accountSummary)
   const openPnlColor =
@@ -2186,9 +2186,7 @@ function LinkedAccountRow({
       ? 'text-neutral-900 dark:text-neutral-50'
       : openPnl > 0
         ? 'text-teal-600'
-        : openPnl < 0
-          ? 'text-error-600'
-          : 'text-neutral-600 dark:text-neutral-400'
+        : 'text-neutral-600 dark:text-neutral-400'
   const openPnlFormatted = formatMoneyWithCode(
     openPnl == null ? null : Math.abs(openPnl),
     accountCurrency,
@@ -2228,7 +2226,7 @@ function LinkedAccountRow({
   const winRateColor =
     winRate == null ? 'text-neutral-900 dark:text-neutral-50' : winRate >= 50 ? 'text-teal-600' : 'text-neutral-900 dark:text-neutral-50'
   const ddColor =
-    maxDd == null ? 'text-neutral-900 dark:text-neutral-50' : maxDd > 0 ? 'text-error-600' : 'text-neutral-600 dark:text-neutral-400'
+    maxDd == null ? 'text-neutral-900 dark:text-neutral-50' : 'text-neutral-600 dark:text-neutral-400'
 
   return (
     <div className="grid grid-cols-9 gap-2 px-4 sm:px-5 py-3 items-center hover:bg-neutral-50 dark:hover:bg-neutral-800/50 transition-colors">
