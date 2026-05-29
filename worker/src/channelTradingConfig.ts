@@ -18,6 +18,12 @@ export type BrokerChannelTradingFields = {
   signal_channel_ids?: string[] | null
 }
 
+export type ChannelConfigSource = 'per_channel' | 'broker_fallback' | 'unlinked'
+
+export type ChannelConfigReadyResult =
+  | { ready: true; source: ChannelConfigSource }
+  | { ready: false; reason: 'channel_config_missing' | 'channel_config_incomplete'; channelId: string }
+
 export function normalizeChannelTradingConfigsMap(raw: unknown): ChannelTradingConfigsMap {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
   const out: ChannelTradingConfigsMap = {}
@@ -50,6 +56,46 @@ export function buildDefaultChannelTradingConfig(): ChannelTradingConfig {
   }
 }
 
+/** Per-channel manual_settings must include fixed_lot and trade_style before execution. */
+export function channelManualSettingsComplete(raw: unknown): boolean {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return false
+  const normalized = normalizeManualSettingsForExecution(raw) as Record<string, unknown>
+  const lot = Number(normalized.fixed_lot)
+  const style = normalized.trade_style
+  return Number.isFinite(lot) && lot > 0 && (style === 'single' || style === 'multi')
+}
+
+export function storedPerChannelConfigComplete(
+  configs: ChannelTradingConfigsMap,
+  channelId: string,
+): boolean {
+  const entry = configs[channelId]
+  if (!entry) return false
+  return channelManualSettingsComplete(entry.manual_settings)
+}
+
+export function channelConfigReadyForExecution(
+  broker: BrokerChannelTradingFields,
+  channelId: string | null | undefined,
+): ChannelConfigReadyResult {
+  if (!channelId) {
+    return { ready: true, source: 'unlinked' }
+  }
+  const linked = normalizeSignalChannelIds(broker.signal_channel_ids)
+  if (!linked.includes(channelId)) {
+    return { ready: true, source: 'unlinked' }
+  }
+  const configs = normalizeChannelTradingConfigsMap(broker.channel_trading_configs)
+  const entry = configs[channelId]
+  if (!entry) {
+    return { ready: false, reason: 'channel_config_missing', channelId }
+  }
+  if (!channelManualSettingsComplete(entry.manual_settings)) {
+    return { ready: false, reason: 'channel_config_incomplete', channelId }
+  }
+  return { ready: true, source: 'per_channel' }
+}
+
 export function resolveChannelTradingConfig(
   broker: BrokerChannelTradingFields,
   channelId: string | null | undefined,
@@ -57,6 +103,7 @@ export function resolveChannelTradingConfig(
   copier_mode: 'ai' | 'manual'
   manual_settings: Record<string, unknown>
   ai_settings: Record<string, unknown>
+  config_source: ChannelConfigSource
 } {
   const fallbackMode = (broker.copier_mode ?? 'manual') as 'ai' | 'manual'
   const fallbackManual = normalizeManualSettingsForExecution(broker.manual_settings) as Record<string, unknown>
@@ -67,40 +114,40 @@ export function resolveChannelTradingConfig(
       copier_mode: fallbackMode,
       manual_settings: fallbackManual,
       ai_settings: fallbackAi,
+      config_source: 'unlinked',
     }
   }
 
   const configs = normalizeChannelTradingConfigsMap(broker.channel_trading_configs)
   const channelConfig = configs[channelId]
-  const defaultManual = normalizeManualSettingsForExecution(
-    buildDefaultChannelTradingConfig().manual_settings,
-  ) as Record<string, unknown>
+  const ready = channelConfigReadyForExecution(broker, channelId)
 
-  if (!channelConfig) {
-    const linked = normalizeSignalChannelIds(broker.signal_channel_ids)
-    if (linked.includes(channelId)) {
-      console.warn(
-        `[channelTradingConfig] linked channel ${channelId} has no saved config — using single-trade defaults (not broker-level manual_settings)`,
-      )
-      return {
-        copier_mode: fallbackMode,
-        manual_settings: defaultManual,
-        ai_settings: fallbackAi,
-      }
+  if (ready.ready && ready.source === 'per_channel' && channelConfig) {
+    return {
+      copier_mode: channelConfig.copier_mode ?? fallbackMode,
+      manual_settings: normalizeManualSettingsForExecution(
+        channelConfig.manual_settings,
+      ) as Record<string, unknown>,
+      ai_settings: (channelConfig.ai_settings ?? fallbackAi) as Record<string, unknown>,
+      config_source: 'per_channel',
     }
+  }
+
+  if (ready.ready && ready.source === 'unlinked') {
     return {
       copier_mode: fallbackMode,
       manual_settings: fallbackManual,
       ai_settings: fallbackAi,
+      config_source: 'broker_fallback',
     }
   }
 
+  // Linked channel without complete per-channel config — caller must skip execution.
   return {
-    copier_mode: channelConfig.copier_mode ?? fallbackMode,
-    manual_settings: normalizeManualSettingsForExecution(
-      channelConfig.manual_settings ?? defaultManual,
-    ) as Record<string, unknown>,
-    ai_settings: (channelConfig.ai_settings ?? fallbackAi) as Record<string, unknown>,
+    copier_mode: fallbackMode,
+    manual_settings: fallbackManual,
+    ai_settings: fallbackAi,
+    config_source: 'broker_fallback',
   }
 }
 

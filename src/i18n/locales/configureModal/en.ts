@@ -33,6 +33,11 @@ export const configureModalEn: ConfigureModalTranslations = {
   saveAsPresetAction: 'Save preset',
   presetSaved: 'Preset saved',
   presetSelectChannelFirst: 'Select a channel before saving a preset.',
+  channelConfigNotSaved:
+    'This channel’s trading settings are not saved yet. Click Save or the worker will not use your lot size and trade style.',
+  channelConfigUnsavedChanges: 'You have unsaved changes for this channel. Click Save to apply them.',
+  channelConfigSaveIncomplete:
+    'Each linked channel needs a fixed lot and trade style (Single or Multi) before saving.',
   tabs: {
     trade: 'Trade',
     channels: 'Channels',

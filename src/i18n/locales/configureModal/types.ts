@@ -36,6 +36,9 @@ export interface ConfigureModalTranslations {
   saveAsPresetAction: string
   presetSaved: string
   presetSelectChannelFirst: string
+  channelConfigNotSaved: string
+  channelConfigUnsavedChanges: string
+  channelConfigSaveIncomplete: string
   tabs: {
     trade: string
     channels: string

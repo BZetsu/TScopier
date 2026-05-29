@@ -1,8 +1,9 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { BrokerAccount, TelegramChannel } from '../types/database'
+import type { BrokerAccount, Json, ManualSettings, TelegramChannel } from '../types/database'
 import { BROKER_ACCOUNT_CLIENT_SELECT } from './brokerAccountSelect'
 import {
   buildDefaultChannelTradingConfig,
+  channelManualSettingsComplete,
   normalizeChannelTradingConfigsMap,
   removeChannelTradingConfigKey,
 } from './channelTradingConfig'
@@ -57,7 +58,16 @@ export async function connectChannelToBroker(
   const nextIds = [...ids, channelId]
   const configs = normalizeChannelTradingConfigsMap(broker.channel_trading_configs)
   if (!configs[channelId]) {
-    configs[channelId] = buildDefaultChannelTradingConfig()
+    const legacy = broker.manual_settings && typeof broker.manual_settings === 'object' && !Array.isArray(broker.manual_settings)
+      ? (broker.manual_settings as ManualSettings)
+      : null
+    configs[channelId] = channelManualSettingsComplete(legacy)
+      ? {
+          copier_mode: broker.copier_mode === 'ai' ? 'ai' : 'manual',
+          manual_settings: legacy,
+          ai_settings: (broker.ai_settings ?? {}) as Json,
+        }
+      : buildDefaultChannelTradingConfig()
   }
   const filters = normalizeChannelMessageFiltersMap(broker.channel_message_filters)
   if (!filters[channelId]) {

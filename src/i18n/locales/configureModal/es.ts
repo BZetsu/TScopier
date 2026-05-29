@@ -33,6 +33,11 @@ export const configureModalEs: ConfigureModalTranslations = {
   saveAsPresetAction: 'Guardar preset',
   presetSaved: 'Preset guardado',
   presetSelectChannelFirst: 'Selecciona un canal antes de guardar un preset.',
+  channelConfigNotSaved:
+    'La configuración de trading de este canal no está guardada. Haz clic en Guardar o el worker no usará tu lote ni el estilo de operación.',
+  channelConfigUnsavedChanges: 'Tienes cambios sin guardar en este canal. Haz clic en Guardar para aplicarlos.',
+  channelConfigSaveIncomplete:
+    'Cada canal vinculado necesita un lote fijo y un estilo (Single o Multi) antes de guardar.',
   tabs: {
     trade: 'Operaciones',
     channels: 'Canales',

@@ -79,7 +79,9 @@ import { isAutoManagementEnabled } from '../../lib/autoManagementDisplay'
 import {
   buildChannelTradingConfigsFromDraft,
   buildDefaultChannelTradingConfig,
+  channelManualSettingsComplete,
   normalizeChannelTradingConfigsMap,
+  storedPerChannelConfigComplete,
 } from '../../lib/channelTradingConfig'
 import {
   listTradingPresets,
@@ -475,16 +477,16 @@ function buildChannelConfigDraftFromBroker(
   const storedConfigs = normalizeChannelTradingConfigsMap(broker.channel_trading_configs)
   const persistedFilters = normalizeChannelMessageFiltersMap(broker.channel_message_filters)
   const channelConfigs: Record<string, ChannelConfigDraft> = {}
-  const legacyManual = normalizeManualSettings(broker.manual_settings)
   const legacyMode = AI_CONFIGURATION_ENABLED && broker.copier_mode !== 'manual' ? 'ai' : 'manual'
+  const defaultManual = normalizeManualSettings(buildDefaultChannelTradingConfig().manual_settings)
 
   for (const id of channelIds) {
     const stored = storedConfigs[id]
     channelConfigs[id] = {
       mode: stored?.copier_mode === 'ai' ? 'ai' : stored?.copier_mode === 'manual' ? 'manual' : legacyMode,
-      manualSettings: stored?.manual_settings
+      manualSettings: stored?.manual_settings && channelManualSettingsComplete(stored.manual_settings)
         ? normalizeManualSettings(stored.manual_settings)
-        : legacyManual,
+        : defaultManual,
       channelFilters: normalizeChannelFilters(persistedFilters[id] ?? DEFAULT_CHANNEL_FILTERS),
     }
   }
@@ -715,6 +717,13 @@ export function AccountConfigPage() {
     manualSettingsPlanCtx.status,
     keywordFiltersEnabled,
   ])
+
+  const selectedChannelNeedsPersistedSave = useMemo(() => {
+    const id = configDraft.selectedChannelId
+    if (!id || !configAccount || !configDraft.channelIds.includes(id)) return false
+    const stored = normalizeChannelTradingConfigsMap(configAccount.channel_trading_configs)
+    return !storedPerChannelConfigComplete(stored, id)
+  }, [configDraft.selectedChannelId, configDraft.channelIds, configAccount])
 
   const selectedChannelEditedFromDefault = useMemo(() => {
     const id = configDraft.selectedChannelId
@@ -1298,6 +1307,14 @@ export function AccountConfigPage() {
     if (channelIds.length === 0) {
       const proceed = window.confirm(bl.channelsEmptySaveWarning)
       if (!proceed) return
+    }
+
+    for (const id of channelIds) {
+      const ms = configDraft.channelConfigs[id]?.manualSettings
+      if (!channelManualSettingsComplete(ms)) {
+        setError(cm.channelConfigSaveIncomplete)
+        return
+      }
     }
 
     setConfigSaving(true)
@@ -2135,6 +2152,14 @@ export function AccountConfigPage() {
 
                 <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 sm:px-6 py-4 sm:py-5 min-h-0 overscroll-y-contain">
                 {error && <PaywallErrorAlert message={error} className="mb-4" />}
+
+                {selectedChannelLinked && (selectedChannelNeedsPersistedSave || configureModalDirty) ? (
+                  <Alert variant="warning" className="mb-4">
+                    {selectedChannelNeedsPersistedSave
+                      ? cm.channelConfigNotSaved
+                      : cm.channelConfigUnsavedChanges}
+                  </Alert>
+                ) : null}
 
                 {!configDraft.selectedChannelId ? (
                   <div className="py-12 text-center">

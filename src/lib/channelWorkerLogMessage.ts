@@ -41,6 +41,9 @@ export function resolveChannelNameFromLog(
 
 function shouldOmitChannelSuffix(logAction: string): boolean {
   return logAction === 'pipeline_parse_dispatch'
+    || logAction === 'handle_start'
+    || logAction === 'handle_end'
+    || logAction === 'dispatch_received'
 }
 
 function withFromChannel(
@@ -323,14 +326,15 @@ function ignoredChannelWorkerReason(row: ChannelWorkerLogRow, cw: ChannelWorkerT
   return translateSkipReason('channel_filter_ignored', cw)
 }
 
-/** Localized line for the dashboard Channel Worker feed. */
+/** Localized line for the dashboard Channel Worker feed. Returns null to hide internal pipeline rows. */
 export function channelWorkerLogMessage(
   row: ChannelWorkerLogRow,
   cw: ChannelWorkerTranslations,
   channelDisplayNames?: Record<string, string>,
-): string {
+): string | null {
   const logAction = row.action.toLowerCase()
   const message = buildChannelWorkerLogMessage(row, cw)
+  if (!message.trim()) return null
   const channel = resolveChannelNameFromLog(row, channelDisplayNames)
   if (!channel || shouldOmitChannelSuffix(logAction)) return message
   return withFromChannel(message, channel, cw)
@@ -658,6 +662,14 @@ function buildChannelWorkerLogMessage(row: ChannelWorkerLogRow, cw: ChannelWorke
       s => interpolate(cw.genericFailedNamed, { symbol: s, err }),
       () => interpolate(cw.genericFailedGeneric, { err }),
     )
+  }
+
+  if (
+    logAction === 'handle_start'
+    || logAction === 'handle_end'
+    || logAction === 'dispatch_received'
+  ) {
+    return ''
   }
 
   return messageForSignalAction(signalAction, instr, parsed, 'completed', cw)

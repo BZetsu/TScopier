@@ -18,6 +18,12 @@ export type BrokerChannelTradingFields = {
   signal_channel_ids?: string[] | null
 }
 
+export type ChannelConfigSource = 'per_channel' | 'broker_fallback' | 'unlinked'
+
+export type ChannelConfigReadyResult =
+  | { ready: true; source: ChannelConfigSource }
+  | { ready: false; reason: 'channel_config_missing' | 'channel_config_incomplete'; channelId: string }
+
 export function normalizeChannelTradingConfigsMap(raw: unknown): ChannelTradingConfigsMap {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
   const out: ChannelTradingConfigsMap = {}
@@ -44,6 +50,45 @@ export function buildDefaultChannelTradingConfig(): ChannelTradingConfig {
   }
 }
 
+export function channelManualSettingsComplete(raw: unknown): boolean {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return false
+  const ms = raw as Record<string, unknown>
+  const lot = Number(ms.fixed_lot)
+  const style = ms.trade_style
+  return Number.isFinite(lot) && lot > 0 && (style === 'single' || style === 'multi')
+}
+
+export function storedPerChannelConfigComplete(
+  configs: ChannelTradingConfigsMap,
+  channelId: string,
+): boolean {
+  const entry = configs[channelId]
+  if (!entry) return false
+  return channelManualSettingsComplete(entry.manual_settings)
+}
+
+export function channelConfigReadyForExecution(
+  broker: BrokerChannelTradingFields,
+  channelId: string | null | undefined,
+): ChannelConfigReadyResult {
+  if (!channelId) {
+    return { ready: true, source: 'unlinked' }
+  }
+  const linked = normalizeSignalChannelIds(broker.signal_channel_ids)
+  if (!linked.includes(channelId)) {
+    return { ready: true, source: 'unlinked' }
+  }
+  const configs = normalizeChannelTradingConfigsMap(broker.channel_trading_configs)
+  const entry = configs[channelId]
+  if (!entry) {
+    return { ready: false, reason: 'channel_config_missing', channelId }
+  }
+  if (!channelManualSettingsComplete(entry.manual_settings)) {
+    return { ready: false, reason: 'channel_config_incomplete', channelId }
+  }
+  return { ready: true, source: 'per_channel' }
+}
+
 export function resolveChannelTradingConfig(
   broker: BrokerChannelTradingFields,
   channelId: string | null | undefined,
@@ -51,6 +96,7 @@ export function resolveChannelTradingConfig(
   copier_mode: 'ai' | 'manual'
   manual_settings: ManualSettings
   ai_settings: Json
+  config_source: ChannelConfigSource
 } {
   const fallbackMode = (broker.copier_mode ?? 'manual') as 'ai' | 'manual'
   const fallbackManual = (broker.manual_settings && typeof broker.manual_settings === 'object'
@@ -63,33 +109,37 @@ export function resolveChannelTradingConfig(
       copier_mode: fallbackMode,
       manual_settings: fallbackManual,
       ai_settings: fallbackAi,
+      config_source: 'unlinked',
     }
   }
 
   const configs = normalizeChannelTradingConfigsMap(broker.channel_trading_configs)
   const channelConfig = configs[channelId]
-  const defaultManual = JSON.parse(JSON.stringify(DEFAULT_MANUAL_SETTINGS)) as ManualSettings
+  const ready = channelConfigReadyForExecution(broker, channelId)
 
-  if (!channelConfig) {
-    const linked = normalizeSignalChannelIds(broker.signal_channel_ids)
-    if (linked.includes(channelId)) {
-      return {
-        copier_mode: fallbackMode,
-        manual_settings: defaultManual,
-        ai_settings: fallbackAi,
-      }
+  if (ready.ready && ready.source === 'per_channel' && channelConfig?.manual_settings) {
+    return {
+      copier_mode: channelConfig.copier_mode ?? fallbackMode,
+      manual_settings: channelConfig.manual_settings as ManualSettings,
+      ai_settings: (channelConfig.ai_settings ?? fallbackAi) as Json,
+      config_source: 'per_channel',
     }
+  }
+
+  if (ready.ready && ready.source === 'unlinked') {
     return {
       copier_mode: fallbackMode,
       manual_settings: fallbackManual,
       ai_settings: fallbackAi,
+      config_source: 'broker_fallback',
     }
   }
 
   return {
-    copier_mode: channelConfig.copier_mode ?? fallbackMode,
-    manual_settings: (channelConfig.manual_settings ?? defaultManual) as ManualSettings,
-    ai_settings: (channelConfig.ai_settings ?? fallbackAi) as Json,
+    copier_mode: fallbackMode,
+    manual_settings: fallbackManual,
+    ai_settings: fallbackAi,
+    config_source: 'broker_fallback',
   }
 }
 

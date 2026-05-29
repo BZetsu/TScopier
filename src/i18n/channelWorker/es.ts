@@ -136,6 +136,10 @@ export const channelWorkerEs: ChannelWorkerTranslations = {
       'broker no conectado — abra Configuración de cuenta y use Reconnect para esta cuenta',
     no_broker_channel_match:
       'ninguna cuenta está vinculada a este canal — abra Configuración de cuenta, pestaña Canales, marque el canal y guarde',
+    channel_config_missing:
+      'este canal no tiene configuración de trading guardada — abra Configuración de cuenta, seleccione el canal, configure lote y Single/Multi, y guarde',
+    channel_config_incomplete:
+      'la configuración guardada de este canal está incompleta — abra Configuración de cuenta, configure lote fijo y estilo, y guarde',
     non_trade_message:
       'el mensaje no parece una señal de trading (requiere dirección, símbolo y precio o SL/TP)',
     channel_filter_ignored:

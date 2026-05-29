@@ -29,7 +29,9 @@ import {
   type VirtualPendingLeg,
 } from '../manualPlanner'
 import { normalizeManualSettingsForExecution } from '../manualPlanning/normalizeManualSettings'
-import { normalizeChannelTradingConfigsMap, withChannelTradingConfig } from '../channelTradingConfig'
+import { normalizeChannelTradingConfigsMap, withChannelTradingConfig, channelConfigReadyForExecution, resolveChannelTradingConfig } from '../channelTradingConfig'
+import { manualDispatchAlreadyMaterialized } from './basketMerge/helpers'
+import { claimSignalBrokerDispatch } from './signalBrokerDispatchClaim'
 import { findActiveNewsBlackout } from '../newsTrading/blackout'
 import { getCalendarEventsCached } from '../newsTrading/calendarProvider'
 import { isNewsTradingEnabled } from '../newsTrading/settings'
@@ -1028,8 +1030,29 @@ export class TradeExecutor {
     pipelineT0?: number,
     sendOpts?: { liveEntryFast?: boolean; commentPrefix?: string; messageEditOnly?: boolean },
   ): Promise<SendOrderOutcome>  {
+    const configReady = channelConfigReadyForExecution(broker, signal.channel_id)
+    if (!configReady.ready) {
+      console.warn(
+        `[tradeExecutor] sendOrder blocked signal=${signal.id} broker=${broker.id}`
+        + ` channel=${signal.channel_id ?? 'none'} reason=${configReady.reason}`,
+      )
+      await this.logSendSkipped(signal, broker, configReady.reason, {
+        channel_id: signal.channel_id ?? null,
+      })
+      return { openedOrMerged: false, finalizeSkipReason: configReady.reason }
+    }
+
     const effectiveBroker = withChannelTradingConfig(broker, signal.channel_id) as BrokerRow
+    const resolved = resolveChannelTradingConfig(broker, signal.channel_id)
     const entryKey = `${signal.id}:${effectiveBroker.id}`
+
+    if (await manualDispatchAlreadyMaterialized(this, signal.id, effectiveBroker.id)) {
+      console.warn(
+        `[tradeExecutor] skip already materialized signal=${signal.id} broker=${effectiveBroker.id}`,
+      )
+      return { openedOrMerged: true }
+    }
+
     if (this.entryBrokerInflight.has(entryKey)) {
       console.warn(
         `[tradeExecutor] skip duplicate in-flight sendOrder signal=${signal.id} broker=${effectiveBroker.id}`,
@@ -1038,6 +1061,21 @@ export class TradeExecutor {
     }
     this.entryBrokerInflight.add(entryKey)
     try {
+      const claimed = await claimSignalBrokerDispatch(this.supabase, signal.id, effectiveBroker.id)
+      if (!claimed) {
+        console.warn(
+          `[tradeExecutor] skip duplicate dispatch claim signal=${signal.id} broker=${effectiveBroker.id}`,
+        )
+        return { openedOrMerged: true }
+      }
+
+      const ms = resolved.manual_settings as Record<string, unknown>
+      console.log(
+        `[tradeExecutor] sendOrder signal=${signal.id} broker=${effectiveBroker.id}`
+        + ` channel=${signal.channel_id ?? 'none'} source=${resolved.config_source}`
+        + ` style=${String(ms.trade_style ?? 'single')} fixed_lot=${String(ms.fixed_lot ?? 'missing')}`,
+      )
+
       const isManual = (effectiveBroker.copier_mode ?? 'ai') === 'manual'
       const manual = (effectiveBroker.manual_settings ?? {}) as ManualSettings
       if (isManual && manual.trade_style === 'multi') {

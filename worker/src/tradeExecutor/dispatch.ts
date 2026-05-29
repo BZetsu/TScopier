@@ -10,7 +10,11 @@ import {
 } from '../tradeSignalActions'
 import { workerConfig } from '../workerConfig'
 import { channelMatchesBrokerSignal } from '../brokerChannelFilter'
-import { withChannelTradingConfig, normalizeChannelTradingConfigsMap } from '../channelTradingConfig'
+import {
+  channelConfigReadyForExecution,
+  resolveChannelTradingConfig,
+  withChannelTradingConfig,
+} from '../channelTradingConfig'
 import {
   isChannelManagementBlocked,
   managementFilterContextFromParsed,
@@ -350,12 +354,32 @@ export async function handleSignal(ctx: TradeExecutorContext,
         }
       }
 
-      const allMatchingBrokers = (ctx.brokersByUser.get(row.user_id) ?? []).filter(b =>
+      const rawMatchingBrokers = (ctx.brokersByUser.get(row.user_id) ?? []).filter(b =>
         b.is_active && isMtUuid(b.metaapi_account_id) && channelMatchesBrokerSignal(b, row.channel_id),
-      ).map(b => withChannelTradingConfig(b, row.channel_id))
+      )
+      const configSkipReasons: string[] = []
+      const allMatchingBrokers = rawMatchingBrokers.flatMap(b => {
+        const ready = channelConfigReadyForExecution(b, row.channel_id)
+        if (!ready.ready) {
+          configSkipReasons.push(ready.reason)
+          console.warn(
+            `[tradeExecutor] skip broker ${b.id} signal=${row.id} channel=${row.channel_id ?? 'none'}`
+            + ` reason=${ready.reason}`,
+          )
+          return []
+        }
+        return [withChannelTradingConfig(b, row.channel_id)]
+      })
       const brokers = allMatchingBrokers.filter(b => ctx.brokerEligibleForSignal(b, row))
       if (!brokers.length) {
-        if (allMatchingBrokers.length > 0) {
+        if (configSkipReasons.length > 0 && rawMatchingBrokers.length > 0) {
+          await ctx.logDispatchSkipped(row, configSkipReasons[0] ?? 'channel_config_missing', {
+            channel_id: row.channel_id ?? null,
+            matching_brokers: rawMatchingBrokers.length,
+          })
+          return
+        }
+        if (rawMatchingBrokers.length > 0) {
           // A matching broker exists but it was reactivated AFTER the signal
           // arrived — i.e. the signal piled up while the broker was disabled.
           // Marking as skipped here prevents the 5-min sweep from picking it
@@ -425,16 +449,19 @@ export async function handleSignal(ctx: TradeExecutorContext,
       const op = operationFor(action, parsed)
       if (!op || !parsed.symbol) return
 
+      if (liveFast && !isMessageEdit && await ctx.signalLiveDispatchAlreadyHandled(row.id)) {
+        await ctx.markSignalExecuted(row.id)
+        return
+      }
+
       for (const b of brokers) {
-        const ms = (b.manual_settings ?? {}) as Record<string, unknown>
-        const hasPerChannel = Boolean(
-          row.channel_id
-          && normalizeChannelTradingConfigsMap(b.channel_trading_configs)[row.channel_id],
-        )
+        const resolved = resolveChannelTradingConfig(b, row.channel_id)
+        const ms = resolved.manual_settings
         console.log(
           `[tradeExecutor] channel config signal=${row.id} channel=${row.channel_id ?? 'none'}`
-          + ` broker=${b.id} per_channel=${hasPerChannel} style=${String(ms.trade_style ?? 'single')}`
-          + ` fixed_lot=${String(ms.fixed_lot ?? 'default')}`,
+          + ` broker=${b.id} source=${resolved.config_source}`
+          + ` style=${String(ms.trade_style ?? 'single')}`
+          + ` fixed_lot=${String(ms.fixed_lot ?? 'missing')}`,
         )
       }
 
@@ -513,11 +540,7 @@ export async function handleSignal(ctx: TradeExecutorContext,
           // best-effort
         }
       } else if (anyOpened) {
-        if (liveFast) {
-          void ctx.markSignalExecuted(row.id)
-        } else {
-          await ctx.markSignalExecuted(row.id)
-        }
+        await ctx.markSignalExecuted(row.id)
       } else if (isMessageEdit) {
         await ctx.markSignalExecuted(row.id)
       }

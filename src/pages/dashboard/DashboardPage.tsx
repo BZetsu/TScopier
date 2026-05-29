@@ -2090,6 +2090,7 @@ function AiExpertLogItem({
 }) {
   const t = useT()
   const message = channelWorkerLogMessage(row, t.channelWorker, channelDisplayNames)
+  if (!message) return null
 
   return (
     <div className="px-5 py-3">

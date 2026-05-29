@@ -38,12 +38,14 @@ const metatraderapi_1 = require("../metatraderapi");
 const manualPlanner_1 = require("../manualPlanner");
 const normalizeManualSettings_1 = require("../manualPlanning/normalizeManualSettings");
 const channelTradingConfig_1 = require("../channelTradingConfig");
+const helpers_1 = require("./basketMerge/helpers");
+const signalBrokerDispatchClaim_1 = require("./signalBrokerDispatchClaim");
 const tradeSignalActions_1 = require("../tradeSignalActions");
 const workerConfig_1 = require("../workerConfig");
 const monitorIdleGate_1 = require("../monitorIdleGate");
 const pipelineTimestamps_1 = require("../pipelineTimestamps");
 const channelKeywordsCache_1 = require("../channelKeywordsCache");
-const helpers_1 = require("./helpers");
+const helpers_2 = require("./helpers");
 const types_1 = require("./types");
 const brokerSymbolCache = __importStar(require("./brokerSymbolCache"));
 const dispatch = __importStar(require("./dispatch"));
@@ -621,7 +623,7 @@ class TradeExecutor {
             return;
         if (String(process.env.WORKER_BROKER_PENDING_EXPIRY_SWEEP ?? '').toLowerCase() !== 'true')
             return;
-        const brokers = Array.from(this.brokersById.values()).filter(b => b.is_active && (0, helpers_1.isMtUuid)(b.metaapi_account_id) && (b.copier_mode ?? 'ai') === 'manual');
+        const brokers = Array.from(this.brokersById.values()).filter(b => b.is_active && (0, helpers_2.isMtUuid)(b.metaapi_account_id) && (b.copier_mode ?? 'ai') === 'manual');
         if (!brokers.length)
             return;
         const now = Date.now();
@@ -656,7 +658,7 @@ class TradeExecutor {
                     continue;
                 if (!Number.isFinite(ticket) || ticket <= 0)
                     continue;
-                const openMs = (0, helpers_1.brokerOrderOpenMs)(o);
+                const openMs = (0, helpers_2.brokerOrderOpenMs)(o);
                 if (openMs == null || openMs > cutoff)
                     continue;
                 try {
@@ -712,14 +714,37 @@ class TradeExecutor {
         return await brokerSymbolCache.prewarmBrokersForLiveEntry(this, brokers, signalSymbol);
     }
     async sendOrder(signal, parsed, op, broker, channelKeywords, pipelineT0, sendOpts) {
+        const configReady = (0, channelTradingConfig_1.channelConfigReadyForExecution)(broker, signal.channel_id);
+        if (!configReady.ready) {
+            console.warn(`[tradeExecutor] sendOrder blocked signal=${signal.id} broker=${broker.id}`
+                + ` channel=${signal.channel_id ?? 'none'} reason=${configReady.reason}`);
+            await this.logSendSkipped(signal, broker, configReady.reason, {
+                channel_id: signal.channel_id ?? null,
+            });
+            return { openedOrMerged: false, finalizeSkipReason: configReady.reason };
+        }
         const effectiveBroker = (0, channelTradingConfig_1.withChannelTradingConfig)(broker, signal.channel_id);
+        const resolved = (0, channelTradingConfig_1.resolveChannelTradingConfig)(broker, signal.channel_id);
         const entryKey = `${signal.id}:${effectiveBroker.id}`;
+        if (await (0, helpers_1.manualDispatchAlreadyMaterialized)(this, signal.id, effectiveBroker.id)) {
+            console.warn(`[tradeExecutor] skip already materialized signal=${signal.id} broker=${effectiveBroker.id}`);
+            return { openedOrMerged: true };
+        }
         if (this.entryBrokerInflight.has(entryKey)) {
             console.warn(`[tradeExecutor] skip duplicate in-flight sendOrder signal=${signal.id} broker=${effectiveBroker.id}`);
             return { openedOrMerged: true };
         }
         this.entryBrokerInflight.add(entryKey);
         try {
+            const claimed = await (0, signalBrokerDispatchClaim_1.claimSignalBrokerDispatch)(this.supabase, signal.id, effectiveBroker.id);
+            if (!claimed) {
+                console.warn(`[tradeExecutor] skip duplicate dispatch claim signal=${signal.id} broker=${effectiveBroker.id}`);
+                return { openedOrMerged: true };
+            }
+            const ms = resolved.manual_settings;
+            console.log(`[tradeExecutor] sendOrder signal=${signal.id} broker=${effectiveBroker.id}`
+                + ` channel=${signal.channel_id ?? 'none'} source=${resolved.config_source}`
+                + ` style=${String(ms.trade_style ?? 'single')} fixed_lot=${String(ms.fixed_lot ?? 'missing')}`);
             const isManual = (effectiveBroker.copier_mode ?? 'ai') === 'manual';
             const manual = (effectiveBroker.manual_settings ?? {});
             if (isManual && manual.trade_style === 'multi') {
@@ -758,7 +783,7 @@ class TradeExecutor {
     async cleanupLegacyBrokerPendings() {
         if (!(0, metatraderapi_1.hasMetatraderApiConfigured)())
             return;
-        const brokers = Array.from(this.brokersById.values()).filter(b => b.is_active && (0, helpers_1.isMtUuid)(b.metaapi_account_id));
+        const brokers = Array.from(this.brokersById.values()).filter(b => b.is_active && (0, helpers_2.isMtUuid)(b.metaapi_account_id));
         if (!brokers.length)
             return;
         console.log(`[tradeExecutor] legacy pending cleanup: scanning ${brokers.length} brokers...`);
@@ -860,7 +885,7 @@ class TradeExecutor {
         const nowMs = Date.now();
         const insertRows = [];
         for (const v of virtualPendings) {
-            const triggerPrice = (0, helpers_1.triggerPriceFor)(v, anchor, digits);
+            const triggerPrice = (0, helpers_2.triggerPriceFor)(v, anchor, digits);
             if (zoneHi != null && zoneLo != null && triggerPrice > zoneLo && triggerPrice < zoneHi) {
                 continue;
             }
@@ -875,7 +900,7 @@ class TradeExecutor {
                 symbol,
                 step_idx: v.stepIdx,
                 is_buy: v.isBuy,
-                volume: (0, helpers_1.roundLot)(v.volume, params),
+                volume: (0, helpers_2.roundLot)(v.volume, params),
                 anchor_price: anchor,
                 trigger_price: triggerPrice,
                 stoploss: v.stoploss,

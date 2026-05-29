@@ -59,7 +59,14 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
       : { channelDelayMs, channelDelaySkipped }
   }
 
-  const totalCount = legs.length
+  if (manual.trade_style !== 'multi' && legs.length > 1) {
+    console.error(
+      `[tradeExecutor] single trade_style aborting ${legs.length} legs signal=${signal.id} broker=${broker.id}`,
+    )
+  }
+  const sendLegs = manual.trade_style !== 'multi' && legs.length > 1 ? legs.slice(0, 1) : legs
+
+  const totalCount = sendLegs.length
   const orderLogContext: Record<string, unknown> = {
     signal_symbol: parsed.symbol ?? null,
     trade_symbol: requestedSymbol,
@@ -267,7 +274,7 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
 
   // All immediates fan out in parallel. Virtual pendings are already
   // persisted; the worker monitor + edge sweep will fire them on trigger.
-  const sendResults = await Promise.allSettled(legs.map(sendLeg))
+  const sendResults = await Promise.allSettled(sendLegs.map(sendLeg))
   if (deferVirtualAnchor && virtualPendings.length > 0 && api) {
     void ctx.deferredVirtualPendingMaterialize({
       signal,
@@ -336,7 +343,7 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
   const needsPerLegTpSync = parsedTpCount >= 2 || tpLotBuckets >= 2
   if (syncMultiLegTps
     && anyImmediateOpened
-    && legs.length > 1
+    && sendLegs.length > 1
     && needsPerLegTpSync
   ) {
     const syncArgs = {

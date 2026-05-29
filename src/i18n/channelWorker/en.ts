@@ -135,6 +135,10 @@ export const channelWorkerEn: ChannelWorkerTranslations = {
     broker_session_not_connected: 'broker not connected — open Account Configuration and use Reconnect for this account',
     no_broker_channel_match:
       'no broker account is linked to this channel — open Account Configuration, select each broker, Channels tab, check the signal channel, and Save',
+    channel_config_missing:
+      'this channel has no saved trading settings — open Account Configuration, select the channel, set lot size and Single/Multi, then Save',
+    channel_config_incomplete:
+      'this channel’s saved settings are incomplete — open Account Configuration, set fixed lot and trade style, then Save',
     non_trade_message:
       'message did not look like a trading signal (needs direction, symbol, and price or SL/TP cues)',
     channel_filter_ignored:

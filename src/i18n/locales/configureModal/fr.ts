@@ -33,6 +33,11 @@ export const configureModalFr: ConfigureModalTranslations = {
   saveAsPresetAction: 'Enregistrer le preset',
   presetSaved: 'Preset enregistré',
   presetSelectChannelFirst: 'Sélectionnez un canal avant d’enregistrer un preset.',
+  channelConfigNotSaved:
+    'Les paramètres de trading de ce canal ne sont pas enregistrés. Cliquez sur Enregistrer, sinon le worker n’utilisera pas votre lot ni le style d’opération.',
+  channelConfigUnsavedChanges: 'Modifications non enregistrées pour ce canal. Cliquez sur Enregistrer pour les appliquer.',
+  channelConfigSaveIncomplete:
+    'Chaque canal lié doit avoir un lot fixe et un style (Single ou Multi) avant l’enregistrement.',
   tabs: {
     trade: 'Trading',
     channels: 'Canaux',
