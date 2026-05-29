@@ -690,6 +690,21 @@ export interface BacktestTranslations {
   resultsPerPage: string
   showing: string
   resultModalTitle: string
+  editSignal: string
+  direction: string
+  entry: string
+  stopLoss: string
+  takeProfits: string
+  addTp: string
+  removeTp: string
+  rerunCheck: string
+  rerunning: string
+  deleteResult: string
+  deleteConfirm: string
+  deleteFailed: string
+  rerunFailed: string
+  invalidLevels: string
+  unsavedHint: string
   pips: string
   riskReward: string
   duration: string

@@ -653,7 +653,20 @@ export function Backtest() {
         </section>
       ) : null}
 
-      <BacktestResultModal trade={selectedTrade} onClose={() => setSelectedTrade(null)} />
+      <BacktestResultModal
+        trade={selectedTrade}
+        onClose={() => setSelectedTrade(null)}
+        onTradeUpdated={(updated, run) => {
+          setTrades(prev => prev.map(t => (t.id === updated.id ? updated : t)))
+          if (run) setActiveRun(run)
+          setSelectedTrade(updated)
+        }}
+        onTradeDeleted={(tradeId, run) => {
+          setTrades(prev => prev.filter(t => t.id !== tradeId))
+          if (run) setActiveRun(run)
+          setSelectedTrade(null)
+        }}
+      />
 
       <BacktestHistoryModal
         open={historyOpen}

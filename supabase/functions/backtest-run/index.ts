@@ -6,6 +6,10 @@ import {
   type BacktestRunMode,
 } from "../_shared/backtest/config.ts"
 import { executeBacktestRun } from "../_shared/backtest/runner.ts"
+import {
+  deleteBacktestTrade,
+  resimulateBacktestTrade,
+} from "../_shared/backtest/resimulateTrade.ts"
 import { syncBacktestSignalsViaWorker } from "../_shared/backtest/workerSync.ts"
 import {
   assertBacktestMonthlyLimit,
@@ -180,6 +184,70 @@ Deno.serve(async (req: Request) => {
 
     if (action === "simulate_trades") {
       return bad(400, "Trade simulation is disabled. Use backtest_tpsl for TP/SL and pip analysis.")
+    }
+
+    if (action === "resimulate_trade") {
+      const tradeId = String(body.trade_id ?? "")
+      if (!tradeId) return bad(400, "trade_id required")
+
+      const direction = body.direction != null
+        ? (String(body.direction).toLowerCase() === "sell" ? "sell" : "buy")
+        : undefined
+      const entryRaw = body.entry_price
+      const entry_price = entryRaw != null && entryRaw !== ""
+        ? Number(entryRaw)
+        : undefined
+      const slRaw = body.sl
+      const sl = slRaw === null || slRaw === ""
+        ? null
+        : slRaw !== undefined
+          ? Number(slRaw)
+          : undefined
+      const tp_levels = Array.isArray(body.tp_levels)
+        ? body.tp_levels.map((v: unknown) => Number(v)).filter((n: number) => Number.isFinite(n) && n > 0)
+        : undefined
+
+      if (entry_price !== undefined && !(entry_price > 0)) {
+        return bad(400, "entry_price must be a positive number")
+      }
+      if (sl !== undefined && sl !== null && !(sl > 0)) {
+        return bad(400, "sl must be a positive number or empty")
+      }
+
+      const massiveKey = Deno.env.get("MASSIVE_API_KEY") ?? Deno.env.get("POLYGON_API_KEY") ?? ""
+      if (!massiveKey.trim()) return bad(503, "MASSIVE_API_KEY not configured")
+      const massive = MassiveClient.fromEnv(Deno.env)
+
+      const trade = await resimulateBacktestTrade(supabase, massive, userId, tradeId, {
+        direction,
+        entry_price,
+        sl,
+        tp_levels,
+      })
+
+      const { data: run } = await supabase
+        .from("backtest_runs")
+        .select("*")
+        .eq("id", trade.run_id)
+        .eq("user_id", userId)
+        .maybeSingle()
+
+      return Response.json({ ok: true, trade, run }, { headers: corsHeaders })
+    }
+
+    if (action === "delete_trade") {
+      const tradeId = String(body.trade_id ?? "")
+      if (!tradeId) return bad(400, "trade_id required")
+
+      const { run_id } = await deleteBacktestTrade(supabase, userId, tradeId)
+      const { data: run } = await supabase
+        .from("backtest_runs")
+        .select("*")
+        .eq("id", run_id)
+        .eq("user_id", userId)
+        .maybeSingle()
+
+      return Response.json({ ok: true, run_id, run }, { headers: corsHeaders })
     }
 
     if (action === "backtest_tpsl" || action === "run") {

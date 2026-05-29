@@ -7,6 +7,33 @@ import type {
   SimpleBacktestConfig,
 } from './backtestTypes'
 
+export function normalizeBacktestTradeRow(row: Record<string, unknown>): BacktestTradeRow {
+  const details = (row.details ?? {}) as BacktestTradeRow['details']
+  const tpRaw = row.tp_levels
+  const tp_levels = Array.isArray(tpRaw)
+    ? tpRaw.map(v => Number(v)).filter(n => Number.isFinite(n))
+    : []
+
+  return {
+    id: String(row.id),
+    symbol: String(row.symbol),
+    direction: String(row.direction),
+    signal_at: String(row.signal_at),
+    outcome: String(row.outcome),
+    tps_hit: Number(row.tps_hit ?? 0),
+    pnl: Number(row.pnl ?? 0),
+    pnl_r: row.pnl_r != null ? Number(row.pnl_r) : null,
+    entry_price: Number(row.entry_price),
+    exit_price: row.exit_price != null ? Number(row.exit_price) : null,
+    closed_at: row.closed_at != null ? String(row.closed_at) : null,
+    sl: row.sl != null ? Number(row.sl) : null,
+    tp_levels,
+    lot_size: Number(row.lot_size) > 0 ? Number(row.lot_size) : 0.01,
+    channel_id: row.channel_id != null ? String(row.channel_id) : null,
+    details,
+  }
+}
+
 /** Load run + trades via RLS (reliable while edge run is in progress or after completion). */
 export async function loadBacktestRunFromDb(
   runId: string,
@@ -34,7 +61,7 @@ export async function loadBacktestRunFromDb(
 
   return {
     run: run as BacktestRunRow,
-    trades: (trades ?? []) as BacktestTradeRow[],
+    trades: (trades ?? []).map(r => normalizeBacktestTradeRow(r as Record<string, unknown>)),
     equity: (equity ?? []) as BacktestEquityRow[],
   }
 }
@@ -134,5 +161,30 @@ export const backtestApi = {
     equity: BacktestEquityRow[]
   }> {
     return call({ action: 'get', run_id: runId })
+  },
+
+  async resimulateTrade(payload: {
+    trade_id: string
+    direction: 'buy' | 'sell'
+    entry_price: number
+    sl: number | null
+    tp_levels: number[]
+  }): Promise<{ trade: BacktestTradeRow; run: BacktestRunRow | null }> {
+    const data = await call<{ trade: Record<string, unknown>; run: BacktestRunRow | null }>({
+      action: 'resimulate_trade',
+      ...payload,
+    })
+    return {
+      trade: normalizeBacktestTradeRow(data.trade),
+      run: data.run ?? null,
+    }
+  },
+
+  async deleteTrade(tradeId: string): Promise<{ run_id: string; run: BacktestRunRow | null }> {
+    const data = await call<{ run_id: string; run: BacktestRunRow | null }>({
+      action: 'delete_trade',
+      trade_id: tradeId,
+    })
+    return { run_id: data.run_id, run: data.run ?? null }
   },
 }
