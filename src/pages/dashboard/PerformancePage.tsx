@@ -20,9 +20,11 @@ import {
   periodToDays,
   type PerformancePeriod,
 } from '../../lib/performanceAnalytics'
+import { computePerformanceInsights } from '../../lib/performanceInsights'
 import { usePerformanceData } from '../../hooks/usePerformanceData'
 import { AccountGrowthChart } from '../../components/dashboard/AccountGrowthChart'
 import { AccountPerformanceTable } from '../../components/performance/AccountPerformanceTable'
+import { PerformanceInsightsSection } from '../../components/performance/PerformanceInsightsSection'
 import { PerformancePeriodTabs } from '../../components/performance/PerformancePeriodTabs'
 import { PerformanceStatCard } from '../../components/performance/PerformanceStatCard'
 import { PerformanceTradeOutcomeChart } from '../../components/performance/PerformanceTradeOutcomeChart'
@@ -46,12 +48,13 @@ export function PerformancePage() {
   const t = useT()
   const p = t.performance
   const { user } = useAuth()
-  const { formatSignedMoney } = useFormatMoney()
+  const { formatSignedMoney, formatMoney } = useFormatMoney()
   const [period, setPeriod] = useState<PerformancePeriod>('30d')
 
   const {
     accounts,
     chartTrades,
+    mtTrades,
     hasMtHistory,
     hasMtBrokers,
     perAccountPerformance,
@@ -59,6 +62,7 @@ export function PerformancePage() {
     periodStats,
     equityByAccountId,
     balanceByAccountId,
+    channelLinkMaps,
     loading,
     refreshing,
     error,
@@ -86,6 +90,30 @@ export function PerformancePage() {
   )
 
   const growthEmpty = accountGrowth.series.length === 0
+
+  const insights = useMemo(
+    () =>
+      computePerformanceInsights({
+        mtTrades,
+        chartTrades,
+        period,
+        channelMaps: channelLinkMaps,
+        accountGrowthData: accountGrowth.data,
+        accountGrowthSeries: accountGrowth.series,
+        unlinkedChannelLabel: p.unlinkedChannel,
+        otherSymbolsLabel: p.otherSymbols,
+      }),
+    [
+      mtTrades,
+      chartTrades,
+      period,
+      channelLinkMaps,
+      accountGrowth.data,
+      accountGrowth.series,
+      p.unlinkedChannel,
+      p.otherSymbols,
+    ],
+  )
 
   const periodLabels: Record<PerformancePeriod, string> = {
     '7d': p.period7d,
@@ -214,6 +242,32 @@ export function PerformancePage() {
           stale={refreshing && !loading}
         />
       </div>
+
+      <PerformanceInsightsSection
+        insights={insights}
+        labels={{
+          sectionTitle: p.analysisTitle,
+          sectionSubtitle: p.analysisSubtitle,
+          bestDay: p.bestDay,
+          worstDay: p.worstDay,
+          highestEquity: p.highestEquity,
+          lowestEquity: p.lowestEquity,
+          bestTrade: p.bestTrade,
+          worstTrade: p.worstTrade,
+          profitByChannelTitle: p.profitByChannelTitle,
+          profitByChannelSubtitle: p.profitByChannelSubtitle,
+          symbolDistributionTitle: p.symbolDistributionTitle,
+          symbolDistributionSubtitle: p.symbolDistributionSubtitle,
+          distributionEmpty: p.distributionEmpty,
+          realizedPnl: p.realizedPnl,
+          tradesCount: p.tradesCount,
+          onDate: p.onDate,
+        }}
+        formatSignedMoney={formatSignedMoney}
+        formatMoney={formatMoney}
+        loading={loading}
+        stale={refreshing && !loading}
+      />
 
       <section className="overflow-hidden rounded-xl border border-neutral-200/80 bg-white shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-neutral-200 px-4 py-3 dark:border-neutral-800">

@@ -22,6 +22,10 @@ import {
   mtTradesToStatsRows,
   type PerformancePeriod,
 } from '../lib/performanceAnalytics'
+import {
+  buildPerformanceChannelLinkMaps,
+  type PerformanceChannelLinkMaps,
+} from '../lib/performanceInsights'
 import { BROKER_ACCOUNT_CLIENT_SELECT } from '../lib/brokerAccountSelect'
 import type { BrokerAccount } from '../types/database'
 
@@ -31,11 +35,23 @@ function isMtLinkedBroker(account: BrokerAccount): boolean {
 }
 
 async function fetchPerformancePayload(userId: string): Promise<PerformanceCachePayload> {
-  const brokerRes = await supabase
-    .from('broker_accounts')
-    .select(BROKER_ACCOUNT_CLIENT_SELECT)
-    .eq('user_id', userId)
-    .eq('is_active', true)
+  const [brokerRes, channelsRes, dbTradesRes, signalsRes] = await Promise.all([
+    supabase
+      .from('broker_accounts')
+      .select(BROKER_ACCOUNT_CLIENT_SELECT)
+      .eq('user_id', userId)
+      .eq('is_active', true),
+    supabase
+      .from('telegram_channels')
+      .select('id, display_name, channel_username')
+      .eq('user_id', userId),
+    supabase
+      .from('trades')
+      .select('broker_account_id, metaapi_order_id, signal_id')
+      .eq('user_id', userId)
+      .not('signal_id', 'is', null),
+    supabase.from('signals').select('id, channel_id').eq('user_id', userId),
+  ])
   if (brokerRes.error) throw brokerRes.error
 
   const linked = (brokerRes.data ?? []) as unknown as BrokerAccount[]
@@ -47,13 +63,27 @@ async function fetchPerformancePayload(userId: string): Promise<PerformanceCache
     const historyFrom = new Date()
     historyFrom.setDate(historyFrom.getDate() - PERFORMANCE_MT_HISTORY_DAYS)
     const tradesRes = await metatraderApi.trades({
-      historyProfile: 'dashboard',
+      historyProfile: 'trades',
       scope: 'all',
       historyFrom: formatLocalMtApiDateTime(historyFrom),
       historyTo: formatLocalMtApiDateTime(historyTo),
     })
     trades = tradesRes.trades ?? []
   }
+
+  const channelLinkMaps = buildPerformanceChannelLinkMaps(
+    (channelsRes.data ?? []) as Array<{
+      id: string
+      display_name: string
+      channel_username?: string | null
+    }>,
+    (dbTradesRes.data ?? []) as Array<{
+      broker_account_id: string | null
+      metaapi_order_id: string | null
+      signal_id: string | null
+    }>,
+    (signalsRes.data ?? []) as Array<{ id: string; channel_id: string | null }>,
+  )
 
   const calendarDay = formatLocalCalendarDay()
   const timezoneOffsetMinutes = new Date().getTimezoneOffset()
@@ -97,7 +127,13 @@ async function fetchPerformancePayload(userId: string): Promise<PerformanceCache
     return baseline != null ? { ...a, performance_baseline_balance: baseline } : a
   })
 
-  return { accounts, mtTrades: trades, equityByAccountId: equity, balanceByAccountId: balance }
+  return {
+    accounts,
+    mtTrades: trades,
+    equityByAccountId: equity,
+    balanceByAccountId: balance,
+    channelLinkMaps,
+  }
 }
 
 export function usePerformanceData(userId: string | undefined) {
@@ -105,6 +141,11 @@ export function usePerformanceData(userId: string | undefined) {
   const [mtTrades, setMtTrades] = useState<MtTrade[]>([])
   const [equityByAccountId, setEquityByAccountId] = useState<Record<string, number>>({})
   const [balanceByAccountId, setBalanceByAccountId] = useState<Record<string, number>>({})
+  const [channelLinkMaps, setChannelLinkMaps] = useState<PerformanceChannelLinkMaps>({
+    ticketToChannelId: {},
+    signalPrefixToChannelId: {},
+    channelNames: {},
+  })
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -119,6 +160,13 @@ export function usePerformanceData(userId: string | undefined) {
     setMtTrades(payload.mtTrades)
     setEquityByAccountId(payload.equityByAccountId)
     setBalanceByAccountId(payload.balanceByAccountId)
+    setChannelLinkMaps(
+      payload.channelLinkMaps ?? {
+        ticketToChannelId: {},
+        signalPrefixToChannelId: {},
+        channelNames: {},
+      },
+    )
   }, [])
 
   const load = useCallback(
@@ -236,11 +284,13 @@ export function usePerformanceData(userId: string | undefined) {
 
   return {
     accounts,
+    mtTrades,
     chartTrades,
     hasMtHistory,
     hasMtBrokers,
     equityByAccountId,
     balanceByAccountId,
+    channelLinkMaps,
     perAccountPerformance,
     aggregate,
     periodStats,

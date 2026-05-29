@@ -57,7 +57,6 @@ import {
   clearDashboardSessionCache,
 } from '../../lib/dashboardSessionCache'
 import {
-  buildAccountGrowthSeries,
   buildTradeVolume7Day,
   findTodayTradeOutcomeDay,
   findYesterdayTradeOutcomeDay,
@@ -68,7 +67,12 @@ import {
   sumClosedDealProfitByBroker,
   type DashboardChartTrade,
 } from '../../lib/dashboardCharts'
-import { AccountGrowthChart } from '../../components/dashboard/AccountGrowthChart'
+import {
+  buildPerformanceChannelLinkMaps,
+  computeProfitByChannel,
+  type PerformanceChannelLinkMaps,
+} from '../../lib/performanceInsights'
+import { ChannelProfitChart } from '../../components/dashboard/ChannelProfitChart'
 import { TradeVolumeChart } from '../../components/dashboard/TradeVolumeChart'
 import { useDashboardRealtime } from '../../hooks/useDashboardRealtime'
 import { useBrokerAccounts } from '../../context/BrokerAccountsContext'
@@ -571,6 +575,11 @@ export function DashboardPage() {
     delta: number | null
     ready: boolean
   }>({ delta: null, ready: false })
+  const [channelLinkMaps, setChannelLinkMaps] = useState<PerformanceChannelLinkMaps>({
+    ticketToChannelId: {},
+    signalPrefixToChannelId: {},
+    channelNames: {},
+  })
   const [showPlatformModal, setShowPlatformModal] = useState(false)
   const [togglingBrokerId, setTogglingBrokerId] = useState<string | null>(null)
   const [brokerReconnectError, setBrokerReconnectError] = useState('')
@@ -783,12 +792,15 @@ export function DashboardPage() {
     return out
   }, [linkedAccounts, linkedAccountBalances])
 
-  const accountGrowth = useMemo(
-    () => buildAccountGrowthSeries(linkedAccounts, effectiveChartTrades, balanceByAccountId, 7),
-    [linkedAccounts, effectiveChartTrades, balanceByAccountId],
-  )
-
-  const accountGrowthEmpty = accountGrowth.series.length === 0
+  const channelProfit7d = useMemo(() => {
+    const raw = mtTradesRef.current ?? []
+    return computeProfitByChannel(
+      raw,
+      '7d',
+      channelLinkMaps,
+      t.performance.unlinkedChannel,
+    )
+  }, [chartTrades, channelLinkMaps, t.performance.unlinkedChannel])
 
   const linkedAccountPerformance = useMemo(() => {
     const tradesByAccountId: Record<string, TradeStatsRow[]> = {}
@@ -1109,6 +1121,23 @@ export function DashboardPage() {
     const resolvedOpenTradesCount =
       hasAnyBrokerOpenTradesFromSummary ? totalLiveOpenTradesFromSummary : openTrades.length
     const channelNames = buildChannelDisplayNames((channelsMetaRes.data ?? []) as ChannelNameRow[])
+    setChannelLinkMaps(
+      buildPerformanceChannelLinkMaps(
+        (channelsMetaRes.data ?? []) as Array<{
+          id: string
+          display_name: string
+          channel_username?: string | null
+        }>,
+        allTrades
+          .filter(t => t.signal_id)
+          .map(t => ({
+            broker_account_id: t.broker_account_id,
+            metaapi_order_id: t.metaapi_order_id,
+            signal_id: t.signal_id,
+          })),
+        (allSignalsRes.data ?? []) as Array<{ id: string; channel_id: string | null }>,
+      ),
+    )
     const logs = (logsRes.data ?? []) as Signal[]
     const symbolLookup = await buildSignalSymbolLookup(supabase, user!.id, logs)
     const logSymbols = buildCopierLogSymbolLabels(logs, symbolLookup)
@@ -1669,8 +1698,7 @@ export function DashboardPage() {
   const chartsEmpty = effectiveChartTrades.length === 0 && linkedAccounts.length === 0
   const chartsLoading =
     !dashboardChartsReady &&
-    effectiveChartTrades.length === 0 &&
-    accountGrowth.series.length === 0
+    effectiveChartTrades.length === 0
 
   return (
     <PageShell maxWidth="xl" spacing="none" className="space-y-6">
@@ -1772,11 +1800,9 @@ export function DashboardPage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
         <TradeVolumeChart data={tradeVolume7Day} loading={chartsLoading} />
-        <AccountGrowthChart
-          data={accountGrowth.data}
-          series={accountGrowth.series}
+        <ChannelProfitChart
+          data={channelProfit7d}
           loading={chartsLoading}
-          isEmpty={accountGrowthEmpty && effectiveChartTrades.length === 0}
         />
       </div>
 

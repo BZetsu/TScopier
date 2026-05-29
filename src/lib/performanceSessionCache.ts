@@ -1,4 +1,5 @@
 import { clearSessionCacheKey } from './sessionDataCache'
+import type { PerformanceChannelLinkMaps } from './performanceInsights'
 import type { MtTrade } from './metatraderapi'
 import type { BrokerAccount } from '../types/database'
 
@@ -10,10 +11,11 @@ export type PerformanceCachePayload = {
   mtTrades: MtTrade[]
   equityByAccountId: Record<string, number>
   balanceByAccountId: Record<string, number>
+  channelLinkMaps: PerformanceChannelLinkMaps
 }
 
 export function performanceCacheKey(userId: string): string {
-  return `performance:v1:${userId}`
+  return `performance:v2:${userId}`
 }
 
 export function clearPerformanceSessionCache(userId?: string | null): void {

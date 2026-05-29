@@ -161,6 +161,9 @@ export interface DashboardTranslations {
   accountGrowthTitle: string
   accountGrowthSubtitle: string
   accountGrowthEmpty: string
+  channelProfitTitle: string
+  channelProfitSubtitle: string
+  channelProfitEmpty: string
   channelWorker: string
   noChannelWorkerLogs: string
   noData: string
@@ -439,6 +442,23 @@ export interface PerformanceTranslations {
   colMaxDrawdown: string
   configure: string
   baselineNote: string
+  analysisTitle: string
+  analysisSubtitle: string
+  bestDay: string
+  worstDay: string
+  highestEquity: string
+  lowestEquity: string
+  bestTrade: string
+  worstTrade: string
+  profitByChannelTitle: string
+  profitByChannelSubtitle: string
+  symbolDistributionTitle: string
+  symbolDistributionSubtitle: string
+  distributionEmpty: string
+  tradesCount: string
+  unlinkedChannel: string
+  otherSymbols: string
+  onDate: string
 }
 
 export interface SettingsTranslations {
