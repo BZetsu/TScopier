@@ -879,6 +879,34 @@ export function AccountConfigPage() {
   }, [presetSavedAt])
 
   const CHANNEL_SYMBOL_LOOKBACK_DAYS = 30
+  const TELEGRAM_AUTH_EDGE_FN = `${import.meta.env.VITE_SUPABASE_URL as string}/functions/v1/telegram-auth`
+
+  const backfillChannelSignals = async (channelId: string, lookbackDays: number) => {
+    const token = (await supabase.auth.getSession()).data.session?.access_token
+    if (!token) throw new Error('Not signed in')
+    const res = await fetch(TELEGRAM_AUTH_EDGE_FN, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        action: 'backfill_channel_history',
+        channel_row_id: channelId,
+        days: lookbackDays,
+      }),
+    })
+    const data = await res.json().catch(() => ({})) as { error?: unknown; message?: unknown }
+    if (!res.ok || data.error) {
+      const msg =
+        typeof data.error === 'string'
+          ? data.error
+          : typeof data.message === 'string'
+            ? data.message
+            : 'Failed to import Telegram channel history'
+      throw new Error(msg)
+    }
+  }
 
   const loadChannelSymbols = async (channelId: string, opts?: { runAnalysis?: boolean }) => {
     if (!userId) return
@@ -1040,7 +1068,12 @@ export function AccountConfigPage() {
           selectedChannelId: channelId,
         }
       })
-      void loadChannelSymbols(channelId)
+      try {
+        await backfillChannelSignals(channelId, CHANNEL_SYMBOL_LOOKBACK_DAYS)
+      } catch (syncErr) {
+        console.warn('[account-config] channel backfill failed:', syncErr)
+      }
+      void loadChannelSymbols(channelId, { runAnalysis: true })
     } finally {
       setChannelConnecting(false)
     }
