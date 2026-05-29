@@ -72,7 +72,8 @@ export default function App() {
             <Route path="/backtest" element={<Backtest />} />
             <Route path="/copier-templates" element={<Navigate to="/backtest" replace />} />
             <Route path="/copier-logs" element={<CopierLogsPage />} />
-            <Route path="/signal-history" element={<SignalHistoryPage />} />
+            <Route path="/updates" element={<SignalHistoryPage />} />
+            <Route path="/signal-history" element={<Navigate to="/updates" replace />} />
             <Route path="/market-news" element={<MarketNewsPage />} />
             <Route path="/economic-calendar" element={<EconomicCalendarPage />} />
             <Route path="/contact-support" element={<ContactSupportPage />} />

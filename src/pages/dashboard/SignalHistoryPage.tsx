@@ -8,16 +8,84 @@ import { Card } from '../../components/ui/Card'
 import { Button } from '../../components/ui/Button'
 import type { Signal, TelegramChannel } from '../../types/database'
 
-type TimeFilter = 'all' | 'today' | '7d' | '30d'
+type DatePreset = 'all' | 'today' | '7d' | '30d' | 'custom'
+
+const selectClass =
+  'px-3 py-2.5 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-sm text-neutral-700 dark:text-neutral-300 focus:outline-none focus:ring-2 focus:ring-primary-500 w-full'
+
+const dateInputClass =
+  'px-3 py-2.5 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-sm text-neutral-700 dark:text-neutral-300 focus:outline-none focus:ring-2 focus:ring-primary-500 w-full'
+
+function formatDateInput(date: Date): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function todayInput(): string {
+  return formatDateInput(new Date())
+}
+
+function daysAgoInput(days: number): string {
+  const date = new Date()
+  date.setDate(date.getDate() - days)
+  return formatDateInput(date)
+}
+
+function startOfDay(dateStr: string): Date {
+  const date = new Date(dateStr)
+  date.setHours(0, 0, 0, 0)
+  return date
+}
+
+function endOfDay(dateStr: string): Date {
+  const date = new Date(dateStr)
+  date.setHours(23, 59, 59, 999)
+  return date
+}
+
+function detectPreset(dateFrom: string, dateTo: string): DatePreset {
+  if (!dateFrom && !dateTo) return 'all'
+  const today = todayInput()
+  if (dateFrom === today && dateTo === today) return 'today'
+  if (dateFrom === daysAgoInput(7) && dateTo === today) return '7d'
+  if (dateFrom === daysAgoInput(30) && dateTo === today) return '30d'
+  return 'custom'
+}
+
+function applyPreset(preset: Exclude<DatePreset, 'custom'>): { dateFrom: string; dateTo: string } {
+  const today = todayInput()
+  switch (preset) {
+    case 'all':
+      return { dateFrom: '', dateTo: '' }
+    case 'today':
+      return { dateFrom: today, dateTo: today }
+    case '7d':
+      return { dateFrom: daysAgoInput(7), dateTo: today }
+    case '30d':
+      return { dateFrom: daysAgoInput(30), dateTo: today }
+  }
+}
+
+function signalInDateRange(createdAt: Date, dateFrom: string, dateTo: string): boolean {
+  if (dateFrom && createdAt < startOfDay(dateFrom)) return false
+  if (dateTo && createdAt > endOfDay(dateTo)) return false
+  return true
+}
 
 export function SignalHistoryPage() {
   const t = useT()
+  const sh = t.signalHistoryPage
   const { user } = useAuth()
   const [signals, setSignals] = useState<Signal[]>([])
   const [channels, setChannels] = useState<TelegramChannel[]>([])
   const [loading, setLoading] = useState(true)
   const [channelFilter, setChannelFilter] = useState('all')
-  const [timeFilter, setTimeFilter] = useState<TimeFilter>('all')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
+
+  const datePreset = useMemo(() => detectPreset(dateFrom, dateTo), [dateFrom, dateTo])
 
   useEffect(() => {
     if (!user) return
@@ -61,23 +129,11 @@ export function SignalHistoryPage() {
   }, [signals, channelById])
 
   const filteredSignals = useMemo(() => {
-    const now = new Date()
-    const startOfToday = new Date(now)
-    startOfToday.setHours(0, 0, 0, 0)
-    const start7d = new Date(now)
-    start7d.setDate(now.getDate() - 7)
-    const start30d = new Date(now)
-    start30d.setDate(now.getDate() - 30)
-
     return baseSignals.filter(signal => {
       if (channelFilter !== 'all' && signal.channel_id !== channelFilter) return false
-      const createdAt = new Date(signal.created_at)
-      if (timeFilter === 'today') return createdAt >= startOfToday
-      if (timeFilter === '7d') return createdAt >= start7d
-      if (timeFilter === '30d') return createdAt >= start30d
-      return true
+      return signalInDateRange(new Date(signal.created_at), dateFrom, dateTo)
     })
-  }, [baseSignals, channelFilter, timeFilter])
+  }, [baseSignals, channelFilter, dateFrom, dateTo])
 
   const stats = useMemo(() => {
     const now = new Date()
@@ -105,7 +161,22 @@ export function SignalHistoryPage() {
 
   const resetFilters = () => {
     setChannelFilter('all')
-    setTimeFilter('all')
+    setDateFrom('')
+    setDateTo('')
+  }
+
+  const handlePresetChange = (preset: Exclude<DatePreset, 'custom'>) => {
+    const next = applyPreset(preset)
+    setDateFrom(next.dateFrom)
+    setDateTo(next.dateTo)
+  }
+
+  const presetLabels: Record<DatePreset, string> = {
+    all: sh.presetAll,
+    today: sh.presetToday,
+    '7d': sh.preset7d,
+    '30d': sh.preset30d,
+    custom: sh.presetCustom,
   }
 
   return (
@@ -114,14 +185,14 @@ export function SignalHistoryPage() {
 
       <Card className="mb-6" padding="none">
         <div className="grid grid-cols-4 gap-0 divide-x divide-neutral-100 dark:divide-neutral-800">
-          <StatCell label="Signals received (Today)" value={stats.today} />
-          <StatCell label="Signals received (Last 7 days)" value={stats.last7d} />
-          <StatCell label="Signals received (Last 30 days)" value={stats.last30d} />
-          <StatCell label="Signals received (Total)" value={stats.total} />
+          <StatCell label={sh.updatesReceivedToday} value={stats.today} />
+          <StatCell label={sh.updatesReceivedLast7d} value={stats.last7d} />
+          <StatCell label={sh.updatesReceivedLast30d} value={stats.last30d} />
+          <StatCell label={sh.updatesReceivedTotal} value={stats.total} />
         </div>
         <div className="grid grid-cols-4 gap-0 divide-x divide-neutral-100 dark:divide-neutral-800 border-t border-neutral-100 dark:border-neutral-800">
-          <StatCell label="Signals received (This week)" value={stats.thisWeek} />
-          <StatCell label="Signals received (This month)" value={stats.thisMonth} />
+          <StatCell label={sh.updatesReceivedThisWeek} value={stats.thisWeek} />
+          <StatCell label={sh.updatesReceivedThisMonth} value={stats.thisMonth} />
           <StatCell label="Total channels" value={stats.totalChannels} />
           <div className="px-6 py-4 flex items-center justify-start">
             <span className="text-primary-600 text-sm font-medium">Channel Details</span>
@@ -131,35 +202,68 @@ export function SignalHistoryPage() {
 
       <Card padding="none">
         <div className="p-4 border-b border-neutral-100 dark:border-neutral-800">
-          <div className="grid grid-cols-[1fr_1fr_auto] gap-3">
-            <select
-              value={channelFilter}
-              onChange={e => setChannelFilter(e.target.value)}
-              className="px-3 py-2.5 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-sm text-neutral-700 dark:text-neutral-300 focus:outline-none focus:ring-2 focus:ring-primary-500"
-            >
-              <option value="all">All Channels</option>
-              {channels.map(ch => (
-                <option key={ch.id} value={ch.id}>{ch.display_name}</option>
-              ))}
-            </select>
-            <select
-              value={timeFilter}
-              onChange={e => setTimeFilter(e.target.value as TimeFilter)}
-              className="px-3 py-2.5 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-sm text-neutral-700 dark:text-neutral-300 focus:outline-none focus:ring-2 focus:ring-primary-500"
-            >
-              <option value="all">All Time</option>
-              <option value="today">Today</option>
-              <option value="7d">Last 7 days</option>
-              <option value="30d">Last 30 days</option>
-            </select>
-            <Button onClick={resetFilters} className="px-8">
-              Reset Filters
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_1fr_auto] gap-3 items-end">
+            <label className="flex flex-col gap-1">
+              <span className="text-xs font-medium text-neutral-500 dark:text-neutral-400 sr-only">Channel</span>
+              <select
+                value={channelFilter}
+                onChange={e => setChannelFilter(e.target.value)}
+                className={selectClass}
+              >
+                <option value="all">{sh.allChannels}</option>
+                {channels.map(ch => (
+                  <option key={ch.id} value={ch.id}>{ch.display_name}</option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-xs font-medium text-neutral-500 dark:text-neutral-400">{sh.dateFrom}</span>
+              <input
+                type="date"
+                value={dateFrom}
+                max={dateTo || undefined}
+                onChange={e => setDateFrom(e.target.value)}
+                className={dateInputClass}
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-xs font-medium text-neutral-500 dark:text-neutral-400">{sh.dateTo}</span>
+              <input
+                type="date"
+                value={dateTo}
+                min={dateFrom || undefined}
+                onChange={e => setDateTo(e.target.value)}
+                className={dateInputClass}
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-xs font-medium text-neutral-500 dark:text-neutral-400 sr-only">Preset</span>
+              <select
+                value={datePreset}
+                onChange={e => {
+                  const preset = e.target.value
+                  if (preset !== 'custom') handlePresetChange(preset as Exclude<DatePreset, 'custom'>)
+                }}
+                className={selectClass}
+              >
+                {datePreset === 'custom' ? (
+                  <option value="custom">{sh.presetCustom}</option>
+                ) : null}
+                {(['all', 'today', '7d', '30d'] as const).map(key => (
+                  <option key={key} value={key}>
+                    {presetLabels[key]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <Button onClick={resetFilters} className="px-8 whitespace-nowrap">
+              {sh.resetFilters}
             </Button>
           </div>
         </div>
 
         <div className="px-4 py-2.5 bg-success-50 border-b border-success-100 text-center text-success-800 font-medium">
-          Total found: {filteredSignals.length}
+          {sh.totalFound.replace('{count}', String(filteredSignals.length))}
         </div>
 
         <div className="grid grid-cols-[60px_1.2fr_1fr_2.6fr_1fr_1fr] gap-3 px-4 py-3 border-b border-neutral-100 dark:border-neutral-800 text-xs font-semibold text-neutral-500 dark:text-neutral-400 uppercase tracking-wide">
@@ -182,7 +286,7 @@ export function SignalHistoryPage() {
             ))}
           </div>
         ) : filteredSignals.length === 0 ? (
-          <div className="py-16 text-center text-neutral-400 text-sm">No signals found for selected filters.</div>
+          <div className="py-16 text-center text-neutral-400 text-sm">{sh.noSignals}</div>
         ) : (
           <div className="divide-y divide-neutral-50 max-h-[560px] overflow-y-auto">
             {filteredSignals.map((signal, index) => {
@@ -226,4 +330,3 @@ function StatCell({ label, value }: { label: string; value: number }) {
     </div>
   )
 }
-

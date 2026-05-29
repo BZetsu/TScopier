@@ -167,6 +167,26 @@ export interface DashboardTranslations {
   linkedAccounts: DashboardLinkedAccountsTranslations
 }
 
+export interface SignalHistoryPageTranslations {
+  allChannels: string
+  dateFrom: string
+  dateTo: string
+  presetAll: string
+  presetToday: string
+  preset7d: string
+  preset30d: string
+  presetCustom: string
+  resetFilters: string
+  totalFound: string
+  noSignals: string
+  updatesReceivedToday: string
+  updatesReceivedLast7d: string
+  updatesReceivedLast30d: string
+  updatesReceivedTotal: string
+  updatesReceivedThisWeek: string
+  updatesReceivedThisMonth: string
+}
+
 export interface CopierLogsTranslations {
   title: string
   subtitle: string
@@ -840,6 +860,7 @@ export interface Translations {
   accountConfig: AccountConfigTranslations
   dashboard: DashboardTranslations
   copierLogs: CopierLogsTranslations
+  signalHistoryPage: SignalHistoryPageTranslations
   trades: TradesTranslations
   channelsPage: ChannelsPageTranslations
   copierEnginePage: CopierEnginePageTranslations

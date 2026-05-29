@@ -52,7 +52,7 @@ const PAGE_ICONS: Record<string, typeof LayoutDashboard> = {
   '/channels': Send,
   '/backtest': LayoutTemplate,
   '/copier-logs': ScrollText,
-  '/signal-history': ChartNoAxesColumn,
+  '/updates': ChartNoAxesColumn,
   '/performance': BarChart2,
   '/market-news': Newspaper,
   '/economic-calendar': Calendar,

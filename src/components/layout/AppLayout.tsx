@@ -107,7 +107,7 @@ export function AppLayout() {
           { to: '/channels', icon: Send, label: t.nav.items.channels },
           { to: '/backtest', icon: LayoutTemplate, label: t.nav.items.backtest },
           { to: '/copier-logs', icon: ScrollText, label: t.nav.items.copierLogs },
-          { to: '/signal-history', icon: ChartNoAxesColumn, label: t.nav.items.signalHistory },
+          { to: '/updates', icon: ChartNoAxesColumn, label: t.nav.items.signalHistory },
           { to: '/performance', icon: BarChart2, label: t.nav.items.performance },
         ],
       },
