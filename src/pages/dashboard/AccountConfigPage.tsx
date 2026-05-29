@@ -198,6 +198,24 @@ function clonePredefinedTpPips(list: number[] | undefined): number[] {
   return src.map(n => (Number.isFinite(Number(n)) ? Number(n) : 0))
 }
 
+function numberFieldDisplay(
+  stored: number | undefined,
+  draft: string | null,
+  fallback: number,
+): string {
+  if (draft !== null) return draft
+  const value = stored ?? fallback
+  return Number.isFinite(value) ? String(value) : ''
+}
+
+function commitPositiveNumber(raw: string, fallback: number): number {
+  const trimmed = raw.trim()
+  if (trimmed === '') return fallback
+  const n = Number(trimmed)
+  if (!Number.isFinite(n) || n <= 0) return fallback
+  return n
+}
+
 /** Sum percent across enabled rows. Disabled rows always contribute 0. */
 function sumEnabledTpPercents(rows: ManualTpLot[]): number {
   return rows.reduce((s, r) => s + (r.enabled ? Math.max(0, Number(r.percent) || 0) : 0), 0)
@@ -604,6 +622,7 @@ export function AccountConfigPage() {
   const [brokerFilter, setBrokerFilter] = useState('all')
   const [brokerSearchQuery, setBrokerSearchQuery] = useState('')
   const [brokerPage, setBrokerPage] = useState(1)
+  const [fixedLotDraft, setFixedLotDraft] = useState<string | null>(null)
   const [brokerAccountTypes, setBrokerAccountTypes] = useState<Record<string, LinkedAccountType>>({})
   const brokerAccountTypeKey = useMemo(
     () => brokers.map(b => `${b.id}:${b.broker_server ?? ''}`).join('|'),
@@ -661,6 +680,10 @@ export function AccountConfigPage() {
     if (!id) return DEFAULT_MANUAL_SETTINGS
     return configDraft.channelConfigs[id]?.manualSettings ?? DEFAULT_MANUAL_SETTINGS
   }, [configDraft.selectedChannelId, configDraft.channelConfigs])
+
+  useEffect(() => {
+    setFixedLotDraft(null)
+  }, [configDraft.selectedChannelId])
 
   const channelMode = useMemo(() => {
     const id = configDraft.selectedChannelId
@@ -2340,7 +2363,31 @@ export function AccountConfigPage() {
                               {channelManualSettings.risk_mode === 'dynamic_balance_percent' ? (
                                 <Input label={cm.risk.dynamicBalance} type="number" value={String(channelManualSettings.dynamic_balance_percent ?? 1)} onChange={e => setManual({ dynamic_balance_percent: Number(e.target.value) })} />
                               ) : (
-                                <Input label={cm.risk.fixedLot} type="number" value={String(channelManualSettings.fixed_lot ?? 0.01)} onChange={e => setManual({ fixed_lot: Number(e.target.value) })} />
+                                <Input
+                                  label={cm.risk.fixedLot}
+                                  type="text"
+                                  inputMode="decimal"
+                                  value={numberFieldDisplay(
+                                    channelManualSettings.fixed_lot,
+                                    fixedLotDraft,
+                                    DEFAULT_MANUAL_SETTINGS.fixed_lot ?? 0.01,
+                                  )}
+                                  onChange={e => setFixedLotDraft(e.target.value)}
+                                  onBlur={() => {
+                                    const raw = fixedLotDraft ?? numberFieldDisplay(
+                                      channelManualSettings.fixed_lot,
+                                      null,
+                                      DEFAULT_MANUAL_SETTINGS.fixed_lot ?? 0.01,
+                                    )
+                                    setFixedLotDraft(null)
+                                    setManual({
+                                      fixed_lot: commitPositiveNumber(
+                                        raw,
+                                        DEFAULT_MANUAL_SETTINGS.fixed_lot ?? 0.01,
+                                      ),
+                                    })
+                                  }}
+                                />
                               )}
                               <Select
                                 label={cm.risk.tradeStyle}
