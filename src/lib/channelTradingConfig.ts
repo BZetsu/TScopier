@@ -1,5 +1,6 @@
 import type { Json, ManualSettings } from '../types/database'
 import { DEFAULT_MANUAL_SETTINGS } from './defaultManualSettings'
+import { normalizeSignalChannelIds } from './brokerChannelLink'
 
 export interface ChannelTradingConfig {
   copier_mode?: 'ai' | 'manual'
@@ -14,6 +15,7 @@ export type BrokerChannelTradingFields = {
   manual_settings?: Json | null
   ai_settings?: Json | null
   channel_trading_configs?: Json | null
+  signal_channel_ids?: string[] | null
 }
 
 export function normalizeChannelTradingConfigsMap(raw: unknown): ChannelTradingConfigsMap {
@@ -66,7 +68,17 @@ export function resolveChannelTradingConfig(
 
   const configs = normalizeChannelTradingConfigsMap(broker.channel_trading_configs)
   const channelConfig = configs[channelId]
+  const defaultManual = JSON.parse(JSON.stringify(DEFAULT_MANUAL_SETTINGS)) as ManualSettings
+
   if (!channelConfig) {
+    const linked = normalizeSignalChannelIds(broker.signal_channel_ids)
+    if (linked.includes(channelId)) {
+      return {
+        copier_mode: fallbackMode,
+        manual_settings: defaultManual,
+        ai_settings: fallbackAi,
+      }
+    }
     return {
       copier_mode: fallbackMode,
       manual_settings: fallbackManual,
@@ -76,7 +88,7 @@ export function resolveChannelTradingConfig(
 
   return {
     copier_mode: channelConfig.copier_mode ?? fallbackMode,
-    manual_settings: (channelConfig.manual_settings ?? fallbackManual) as ManualSettings,
+    manual_settings: (channelConfig.manual_settings ?? defaultManual) as ManualSettings,
     ai_settings: (channelConfig.ai_settings ?? fallbackAi) as Json,
   }
 }

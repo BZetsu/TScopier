@@ -7,17 +7,31 @@ import {
   withChannelTradingConfig,
 } from './channelTradingConfig'
 
-test('resolveChannelTradingConfig falls back to broker-level settings', () => {
+test('resolveChannelTradingConfig falls back to broker-level settings when channel is not linked', () => {
   const broker = {
     copier_mode: 'manual' as const,
     manual_settings: { fixed_lot: 0.05, trade_style: 'single' },
     ai_settings: { risk_percent_per_trade: 2 },
     channel_trading_configs: {},
+    signal_channel_ids: ['other-ch'],
   }
   const resolved = resolveChannelTradingConfig(broker, 'ch-1')
   assert.equal(resolved.copier_mode, 'manual')
   assert.equal(resolved.manual_settings.fixed_lot, 0.05)
   assert.equal(resolved.ai_settings.risk_percent_per_trade, 2)
+})
+
+test('resolveChannelTradingConfig uses single-trade defaults for linked channel missing config', () => {
+  const broker = {
+    copier_mode: 'manual' as const,
+    manual_settings: { fixed_lot: 0.02, trade_style: 'multi' },
+    ai_settings: {},
+    channel_trading_configs: {},
+    signal_channel_ids: ['signal-tester'],
+  }
+  const resolved = resolveChannelTradingConfig(broker, 'signal-tester')
+  assert.equal(resolved.manual_settings.trade_style, 'single')
+  assert.equal(resolved.manual_settings.fixed_lot, 0.01)
 })
 
 test('resolveChannelTradingConfig uses per-channel override', () => {

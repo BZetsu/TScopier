@@ -7,6 +7,7 @@ exports.withChannelTradingConfig = withChannelTradingConfig;
 exports.cloneChannelTradingConfig = cloneChannelTradingConfig;
 exports.removeChannelTradingConfigKey = removeChannelTradingConfigKey;
 const normalizeManualSettings_1 = require("./manualPlanning/normalizeManualSettings");
+const brokerChannelFilter_1 = require("./brokerChannelFilter");
 function normalizeChannelTradingConfigsMap(raw) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw))
         return {};
@@ -48,7 +49,17 @@ function resolveChannelTradingConfig(broker, channelId) {
     }
     const configs = normalizeChannelTradingConfigsMap(broker.channel_trading_configs);
     const channelConfig = configs[channelId];
+    const defaultManual = (0, normalizeManualSettings_1.normalizeManualSettingsForExecution)(buildDefaultChannelTradingConfig().manual_settings);
     if (!channelConfig) {
+        const linked = (0, brokerChannelFilter_1.normalizeSignalChannelIds)(broker.signal_channel_ids);
+        if (linked.includes(channelId)) {
+            console.warn(`[channelTradingConfig] linked channel ${channelId} has no saved config — using single-trade defaults (not broker-level manual_settings)`);
+            return {
+                copier_mode: fallbackMode,
+                manual_settings: defaultManual,
+                ai_settings: fallbackAi,
+            };
+        }
         return {
             copier_mode: fallbackMode,
             manual_settings: fallbackManual,
@@ -57,8 +68,8 @@ function resolveChannelTradingConfig(broker, channelId) {
     }
     return {
         copier_mode: channelConfig.copier_mode ?? fallbackMode,
-        manual_settings: (0, normalizeManualSettings_1.normalizeManualSettingsForExecution)(channelConfig.manual_settings ?? broker.manual_settings),
-        ai_settings: (channelConfig.ai_settings ?? broker.ai_settings ?? {}),
+        manual_settings: (0, normalizeManualSettings_1.normalizeManualSettingsForExecution)(channelConfig.manual_settings ?? defaultManual),
+        ai_settings: (channelConfig.ai_settings ?? fallbackAi),
     };
 }
 function withChannelTradingConfig(broker, channelId) {

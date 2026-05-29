@@ -1,5 +1,6 @@
 import { normalizeManualSettingsForExecution } from './manualPlanning/normalizeManualSettings'
 import type { ManualSettings } from './manualPlanning/types'
+import { normalizeSignalChannelIds } from './brokerChannelFilter'
 
 export interface ChannelTradingConfig {
   copier_mode?: 'ai' | 'manual'
@@ -14,6 +15,7 @@ export type BrokerChannelTradingFields = {
   manual_settings?: Record<string, unknown> | null
   ai_settings?: Record<string, unknown> | null
   channel_trading_configs?: unknown
+  signal_channel_ids?: string[] | null
 }
 
 export function normalizeChannelTradingConfigsMap(raw: unknown): ChannelTradingConfigsMap {
@@ -66,7 +68,22 @@ export function resolveChannelTradingConfig(
 
   const configs = normalizeChannelTradingConfigsMap(broker.channel_trading_configs)
   const channelConfig = configs[channelId]
+  const defaultManual = normalizeManualSettingsForExecution(
+    buildDefaultChannelTradingConfig().manual_settings,
+  ) as Record<string, unknown>
+
   if (!channelConfig) {
+    const linked = normalizeSignalChannelIds(broker.signal_channel_ids)
+    if (linked.includes(channelId)) {
+      console.warn(
+        `[channelTradingConfig] linked channel ${channelId} has no saved config — using single-trade defaults (not broker-level manual_settings)`,
+      )
+      return {
+        copier_mode: fallbackMode,
+        manual_settings: defaultManual,
+        ai_settings: fallbackAi,
+      }
+    }
     return {
       copier_mode: fallbackMode,
       manual_settings: fallbackManual,
@@ -77,9 +94,9 @@ export function resolveChannelTradingConfig(
   return {
     copier_mode: channelConfig.copier_mode ?? fallbackMode,
     manual_settings: normalizeManualSettingsForExecution(
-      channelConfig.manual_settings ?? broker.manual_settings,
+      channelConfig.manual_settings ?? defaultManual,
     ) as Record<string, unknown>,
-    ai_settings: (channelConfig.ai_settings ?? broker.ai_settings ?? {}) as Record<string, unknown>,
+    ai_settings: (channelConfig.ai_settings ?? fallbackAi) as Record<string, unknown>,
   }
 }
 

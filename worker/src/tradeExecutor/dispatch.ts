@@ -10,7 +10,7 @@ import {
 } from '../tradeSignalActions'
 import { workerConfig } from '../workerConfig'
 import { channelMatchesBrokerSignal } from '../brokerChannelFilter'
-import { withChannelTradingConfig } from '../channelTradingConfig'
+import { withChannelTradingConfig, normalizeChannelTradingConfigsMap } from '../channelTradingConfig'
 import {
   isChannelManagementBlocked,
   managementFilterContextFromParsed,
@@ -424,6 +424,19 @@ export async function handleSignal(ctx: TradeExecutorContext,
 
       const op = operationFor(action, parsed)
       if (!op || !parsed.symbol) return
+
+      for (const b of brokers) {
+        const ms = (b.manual_settings ?? {}) as Record<string, unknown>
+        const hasPerChannel = Boolean(
+          row.channel_id
+          && normalizeChannelTradingConfigsMap(b.channel_trading_configs)[row.channel_id],
+        )
+        console.log(
+          `[tradeExecutor] channel config signal=${row.id} channel=${row.channel_id ?? 'none'}`
+          + ` broker=${b.id} per_channel=${hasPerChannel} style=${String(ms.trade_style ?? 'single')}`
+          + ` fixed_lot=${String(ms.fixed_lot ?? 'default')}`,
+        )
+      }
 
       if (liveFast) {
         // Hot-path skip: when session is freshly pinged AND symbol caches are

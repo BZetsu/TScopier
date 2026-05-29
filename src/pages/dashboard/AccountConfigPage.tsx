@@ -1323,6 +1323,12 @@ export function AccountConfigPage() {
         ]),
       ),
     )
+    const existingConfigs = normalizeChannelTradingConfigsMap(configAccount.channel_trading_configs)
+    for (const id of channelIds) {
+      if (!channelTradingConfigs[id] && existingConfigs[id]) {
+        channelTradingConfigs[id] = existingConfigs[id]
+      }
+    }
     const firstId = channelIds[0]
     const firstConfig = firstId ? configDraft.channelConfigs[firstId] : null
     const normalizedFirstManual = firstConfig

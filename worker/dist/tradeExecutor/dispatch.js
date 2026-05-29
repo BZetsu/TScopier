@@ -362,6 +362,14 @@ async function handleSignal(ctx, row, opts) {
         const op = (0, helpers_1.operationFor)(action, parsed);
         if (!op || !parsed.symbol)
             return;
+        for (const b of brokers) {
+            const ms = (b.manual_settings ?? {});
+            const hasPerChannel = Boolean(row.channel_id
+                && (0, channelTradingConfig_1.normalizeChannelTradingConfigsMap)(b.channel_trading_configs)[row.channel_id]);
+            console.log(`[tradeExecutor] channel config signal=${row.id} channel=${row.channel_id ?? 'none'}`
+                + ` broker=${b.id} per_channel=${hasPerChannel} style=${String(ms.trade_style ?? 'single')}`
+                + ` fixed_lot=${String(ms.fixed_lot ?? 'default')}`);
+        }
         if (liveFast) {
             // Hot-path skip: when session is freshly pinged AND symbol caches are
             // warm, sendOrder will hit cached values inline (sub-ms). Skipping

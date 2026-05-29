@@ -29,7 +29,7 @@ import {
   type VirtualPendingLeg,
 } from '../manualPlanner'
 import { normalizeManualSettingsForExecution } from '../manualPlanning/normalizeManualSettings'
-import { normalizeChannelTradingConfigsMap } from '../channelTradingConfig'
+import { normalizeChannelTradingConfigsMap, withChannelTradingConfig } from '../channelTradingConfig'
 import { findActiveNewsBlackout } from '../newsTrading/blackout'
 import { getCalendarEventsCached } from '../newsTrading/calendarProvider'
 import { isNewsTradingEnabled } from '../newsTrading/settings'
@@ -1028,21 +1028,22 @@ export class TradeExecutor {
     pipelineT0?: number,
     sendOpts?: { liveEntryFast?: boolean; commentPrefix?: string; messageEditOnly?: boolean },
   ): Promise<SendOrderOutcome>  {
-    const entryKey = `${signal.id}:${broker.id}`
+    const effectiveBroker = withChannelTradingConfig(broker, signal.channel_id) as BrokerRow
+    const entryKey = `${signal.id}:${effectiveBroker.id}`
     if (this.entryBrokerInflight.has(entryKey)) {
       console.warn(
-        `[tradeExecutor] skip duplicate in-flight sendOrder signal=${signal.id} broker=${broker.id}`,
+        `[tradeExecutor] skip duplicate in-flight sendOrder signal=${signal.id} broker=${effectiveBroker.id}`,
       )
       return { openedOrMerged: true }
     }
     this.entryBrokerInflight.add(entryKey)
     try {
-      const isManual = (broker.copier_mode ?? 'ai') === 'manual'
-      const manual = (broker.manual_settings ?? {}) as ManualSettings
+      const isManual = (effectiveBroker.copier_mode ?? 'ai') === 'manual'
+      const manual = (effectiveBroker.manual_settings ?? {}) as ManualSettings
       if (isManual && manual.trade_style === 'multi') {
-        return await runRangeEntry(this, { signal, parsed, op, broker, channelKeywords, pipelineT0, sendOpts })
+        return await runRangeEntry(this, { signal, parsed, op, broker: effectiveBroker, channelKeywords, pipelineT0, sendOpts })
       }
-      return await runSingleEntry(this, { signal, parsed, op, broker, channelKeywords, pipelineT0, sendOpts })
+      return await runSingleEntry(this, { signal, parsed, op, broker: effectiveBroker, channelKeywords, pipelineT0, sendOpts })
     } finally {
       this.entryBrokerInflight.delete(entryKey)
     }
