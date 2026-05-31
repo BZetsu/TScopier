@@ -53,9 +53,7 @@ export const fr: Translations = {
     helpMenu: {
       title: 'Aide et support',
       documentation: 'Documentation',
-      liveChat: 'Chat en direct',
-      whatsapp: 'WhatsApp',
-      telegram: 'Telegram',
+      liveChat: 'Aide et support',
       status: 'État du service',
       statusOperational: 'Tous les systèmes sont opérationnels',
     },
@@ -137,6 +135,7 @@ export const fr: Translations = {
       freePlanSummary: 'Navigation seule — abonnez-vous pour connecter des brokers et copier des signaux',
       basicPlanSummary: '1 broker · 5 canaux · 3 TP · Mode position unique',
       advancedPlanSummary: '5+ comptes · Canaux illimités · Outils copieur avancés',
+      adminPlanSummary: 'Comptes illimités · Canaux illimités · Outils copieur avancés',
       statusLine: 'Statut : {status}',
       invoices: 'Factures',
       invoicesHint: 'Téléchargez vos factures passées au format PDF.',

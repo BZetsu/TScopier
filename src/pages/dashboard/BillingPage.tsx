@@ -141,7 +141,7 @@ export function BillingPage() {
 
   const planDisplay = useMemo(() => {
     if (isAdmin) {
-      return { name: 'Admin', summary: bt.advancedPlanSummary }
+      return { name: 'Admin', summary: bt.adminPlanSummary }
     }
     if (!hasActiveSubscription || !effectivePlan) {
       return { name: bt.freePlan, summary: bt.freePlanSummary }

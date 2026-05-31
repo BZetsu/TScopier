@@ -78,20 +78,6 @@ export function HelpMenuDropdown({ open, onClose }: HelpMenuDropdownProps) {
           icon: MessageCircle,
           internalPath: '/contact-support',
         },
-    {
-      id: 'whatsapp',
-      label: hm.whatsapp,
-      iconSrc: '/WhatsApp-icon.svg',
-      href: HELP_LINKS.whatsapp || undefined,
-      internalPath: HELP_LINKS.whatsapp ? undefined : '/contact-support',
-    },
-    {
-      id: 'telegram',
-      label: hm.telegram,
-      iconSrc: '/Telegram.svg',
-      href: HELP_LINKS.telegram || undefined,
-      internalPath: HELP_LINKS.telegram ? undefined : '/contact-support',
-    },
   ]
 
   const handleSelect = (item: HelpItem) => {

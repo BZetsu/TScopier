@@ -52,8 +52,6 @@ export interface NavTranslations {
     title: string
     documentation: string
     liveChat: string
-    whatsapp: string
-    telegram: string
     status: string
     statusOperational: string
   }
@@ -850,6 +848,7 @@ export interface PricingTranslations {
     freePlanSummary: string
     basicPlanSummary: string
     advancedPlanSummary: string
+    adminPlanSummary: string
     statusLine: string
     invoices: string
     invoicesHint: string
