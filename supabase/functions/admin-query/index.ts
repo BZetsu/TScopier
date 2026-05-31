@@ -262,5 +262,59 @@ Deno.serve(async (req: Request) => {
     return Response.json({ logs }, { headers: corsHeaders });
   }
 
+  if (action === "affiliate_payouts_overview") {
+    const status = String(body.status ?? "pending");
+    const ledger = await optionalRows(
+      supabase
+        .from("commission_ledger")
+        .select("*")
+        .eq("status", status)
+        .order("created_at", { ascending: true })
+        .limit(500),
+    ) as Array<Record<string, unknown>>;
+
+    const affiliateIds = [...new Set(ledger.map((r) => String(r.affiliate_user_id ?? "")).filter(Boolean))];
+    const referredIds = [...new Set(ledger.map((r) => String(r.referred_user_id ?? "")).filter(Boolean))];
+    const allUserIds = [...new Set([...affiliateIds, ...referredIds])];
+
+    const profiles = allUserIds.length > 0
+      ? await optionalRows(
+        supabase
+          .from("user_profiles")
+          .select("user_id,display_name,first_name,last_name")
+          .in("user_id", allUserIds),
+      ) as Array<Record<string, unknown>>
+      : [];
+
+    const profileName = new Map<string, string>();
+    for (const p of profiles) {
+      const id = String(p.user_id ?? "");
+      if (!id) continue;
+      const first = String(p.first_name ?? "").trim();
+      const last = String(p.last_name ?? "").trim();
+      const display = String(p.display_name ?? "").trim();
+      const name = [first, last].filter(Boolean).join(" ").trim() || display || "User";
+      profileName.set(id, name);
+    }
+
+    const payouts = ledger.map((row) => ({
+      ...row,
+      affiliate_name: profileName.get(String(row.affiliate_user_id ?? "")) ?? "User",
+      referred_name: profileName.get(String(row.referred_user_id ?? "")) ?? "User",
+    }));
+    const totalPendingCents = payouts.reduce((sum, row) => sum + (Number(row.commission_cents ?? 0) || 0), 0);
+
+    return Response.json(
+      {
+        payouts,
+        totals: {
+          count: payouts.length,
+          total_pending_cents: totalPendingCents,
+        },
+      },
+      { headers: corsHeaders },
+    );
+  }
+
   return bad(400, "Unknown action");
 });

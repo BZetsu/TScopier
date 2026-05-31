@@ -28,6 +28,7 @@ import { PortfolioPage } from './pages/dashboard/PortfolioPage'
 import { AnalysisHubPage } from './pages/dashboard/AnalysisHubPage'
 import { SignalHistoryPage } from './pages/dashboard/SignalHistoryPage'
 import { SettingsPage } from './pages/dashboard/SettingsPage'
+import { WelcomePage } from './pages/onboarding/WelcomePage'
 
 export default function App() {
   return (
@@ -65,6 +66,7 @@ export default function App() {
             }
           >
             <Route path="/dashboard" element={<DashboardPage />} />
+            <Route path="/welcome" element={<WelcomePage />} />
             <Route path="/account-configuration" element={<AccountConfigPage />} />
             <Route path="/account-trades" element={<TradesPage />} />
             <Route path="/channels" element={<CopierEnginePage />} />
@@ -89,7 +91,7 @@ export default function App() {
 
             {/* Legacy redirects */}
             <Route path="/trades" element={<Navigate to="/account-trades" replace />} />
-            <Route path="/onboarding" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/onboarding" element={<Navigate to="/welcome" replace />} />
             <Route path="/integrations" element={<Navigate to="/dashboard" replace />} />
             <Route path="/sentiments" element={<Navigate to="/market-news" replace />} />
           </Route>

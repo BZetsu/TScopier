@@ -16,10 +16,7 @@ export function PartnerWithUsPage() {
   return <PlaceholderPage title={t.pages.partnerWithUs.title} description={t.pages.partnerWithUs.description} />
 }
 
-export function AffiliateProgramPage() {
-  const t = useT()
-  return <PlaceholderPage title={t.pages.affiliateProgram.title} description={t.pages.affiliateProgram.description} />
-}
+export { AffiliateProgramPage } from './AffiliateProgramPage'
 
 export { BillingPage } from './BillingPage'
 

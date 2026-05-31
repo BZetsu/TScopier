@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
 import { supabase } from '../../lib/supabase'
 import { PasswordInput } from '../../components/auth/PasswordInput'
@@ -10,6 +10,12 @@ import { AuthBackHome } from '../../components/auth/AuthBackHome'
 import { useLocale } from '../../context/LocaleContext'
 import { EMPTY_USER_PROFILE, saveUserProfile } from '../../lib/userProfile'
 import { sendVerificationEmail } from '../../lib/sendVerificationEmail'
+import {
+  captureReferralFromUrl,
+  loadStoredReferralCode,
+  normalizeReferralCode,
+  referralCodeLooksValid,
+} from '../../lib/referralCapture'
 
 function GoogleIcon({ className }: { className?: string }) {
   return (
@@ -36,6 +42,7 @@ function GoogleIcon({ className }: { className?: string }) {
 
 export function SignupPage() {
   const navigate = useNavigate()
+  const location = useLocation()
   const { auth } = useLocale()
   const signupT = auth.signup
 
@@ -44,17 +51,29 @@ export function SignupPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
+  const [referralCode, setReferralCode] = useState('')
   const [loading, setLoading] = useState(false)
   const [googleLoading, setGoogleLoading] = useState(false)
   const [error, setError] = useState('')
 
+  useEffect(() => {
+    const fromUrl = captureReferralFromUrl(location.search)
+    const stored = fromUrl ?? loadStoredReferralCode()
+    if (stored) setReferralCode(stored)
+  }, [location.search])
+
   const handleGoogleSignIn = async () => {
     setError('')
     setGoogleLoading(true)
+    const normalizedRef = normalizeReferralCode(referralCode)
+    const redirectUrl = new URL(`${window.location.origin}/welcome`)
+    if (referralCodeLooksValid(normalizedRef)) {
+      redirectUrl.searchParams.set('ref', normalizedRef)
+    }
     const { error: oauthError } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: `${window.location.origin}/dashboard`,
+        redirectTo: redirectUrl.toString(),
       },
     })
     if (oauthError) {
@@ -80,7 +99,12 @@ export function SignupPage() {
 
     const trimmedFirst = firstName.trim()
     const trimmedLast = lastName.trim()
-    const redirectTo = `${window.location.origin}/dashboard`
+    const normalizedRef = normalizeReferralCode(referralCode)
+    const redirectUrl = new URL(`${window.location.origin}/welcome`)
+    if (referralCodeLooksValid(normalizedRef)) {
+      redirectUrl.searchParams.set('ref', normalizedRef)
+    }
+    const redirectTo = redirectUrl.toString()
     const { data, error: signUpError } = await supabase.auth.signUp({
       email,
       password,
@@ -89,6 +113,7 @@ export function SignupPage() {
         data: {
           first_name: trimmedFirst,
           last_name: trimmedLast,
+          referral_code: referralCodeLooksValid(normalizedRef) ? normalizedRef : null,
         },
       },
     })
@@ -108,6 +133,7 @@ export function SignupPage() {
             last_name: trimmedLast,
             display_name: displayName,
             username: email.split('@')[0] ?? '',
+            onboarding_completed_at: null,
           })
         } catch {
           // Profile save is non-blocking for verification flow
@@ -232,6 +258,14 @@ export function SignupPage() {
           onChange={e => setConfirmPassword(e.target.value)}
           required
           autoComplete="new-password"
+        />
+
+        <Input
+          label="Referral code (optional)"
+          type="text"
+          placeholder="Enter referral code"
+          value={referralCode}
+          onChange={e => setReferralCode(normalizeReferralCode(e.target.value))}
         />
 
         <Button type="submit" loading={loading} className="w-full !mt-6" size="lg">

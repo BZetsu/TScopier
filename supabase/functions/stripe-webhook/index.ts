@@ -6,6 +6,7 @@ import {
   subscriptionRowFromStripe,
   mapStripeSubscriptionStatus,
 } from "../_shared/stripeSubscriptionSync.ts";
+import { DEFAULT_AFFILIATE_COMMISSION_RATE } from "../_shared/affiliate.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -42,6 +43,135 @@ async function resolveUserIdFromSubscription(
     .eq("stripe_subscription_id", subscription.id)
     .maybeSingle();
   return data?.user_id ?? null;
+}
+
+function resolveInvoiceServicePeriod(
+  invoice: Stripe.Invoice,
+): { periodStart: string | null; periodEnd: string | null } {
+  const lines = invoice.lines?.data ?? [];
+  const subscriptionLines = lines.filter((line) =>
+    line.type === "subscription" || (line.subscription != null && line.proration !== true)
+  );
+  const candidates = subscriptionLines.length > 0 ? subscriptionLines : lines;
+
+  let start: number | null = null;
+  let end: number | null = null;
+  for (const line of candidates) {
+    const ps = line.period?.start;
+    const pe = line.period?.end;
+    if (ps == null || pe == null) continue;
+    if (start == null || ps < start) start = ps;
+    if (end == null || pe > end) end = pe;
+  }
+  if (start == null || end == null) {
+    start = invoice.period_start ?? null;
+    end = invoice.period_end ?? null;
+  }
+  return {
+    periodStart: start != null ? new Date(start * 1000).toISOString() : null,
+    periodEnd: end != null ? new Date(end * 1000).toISOString() : null,
+  };
+}
+
+async function accrueInvoiceCommission(
+  stripe: Stripe,
+  supabase: ReturnType<typeof createClient>,
+  invoice: Stripe.Invoice,
+): Promise<void> {
+  if (!invoice.id) return;
+  const amountPaid = Number(invoice.amount_paid ?? 0);
+  if (amountPaid <= 0) return;
+  const subscriptionId = typeof invoice.subscription === "string"
+    ? invoice.subscription
+    : invoice.subscription?.id ?? null;
+  if (!subscriptionId) return;
+
+  const { data: existingRow } = await supabase
+    .from("commission_ledger")
+    .select("id")
+    .eq("stripe_invoice_id", invoice.id)
+    .maybeSingle();
+  if (existingRow) return;
+
+  const { data: subRow } = await supabase
+    .from("subscriptions")
+    .select("user_id")
+    .eq("stripe_subscription_id", subscriptionId)
+    .maybeSingle();
+  const referredUserId = subRow?.user_id ?? null;
+  if (!referredUserId) return;
+
+  const { data: attribution } = await supabase
+    .from("referral_attributions")
+    .select("affiliate_user_id")
+    .eq("referred_user_id", referredUserId)
+    .maybeSingle();
+  const affiliateUserId = attribution?.affiliate_user_id ?? null;
+  if (!affiliateUserId) return;
+  const { data: affiliateProfile } = await supabase
+    .from("affiliate_profiles")
+    .select("stripe_connect_account_id")
+    .eq("user_id", affiliateUserId)
+    .maybeSingle();
+
+  const commissionCents = Math.round(amountPaid * DEFAULT_AFFILIATE_COMMISSION_RATE);
+  if (commissionCents <= 0) return;
+  const shouldAutoPayout = Deno.env.get("AFFILIATE_CONNECT_AUTOPAYOUT") === "true" &&
+    Boolean(affiliateProfile?.stripe_connect_account_id);
+  let status: "pending" | "paid" = "pending";
+
+  if (shouldAutoPayout) {
+    try {
+      await stripe.transfers.create({
+        amount: commissionCents,
+        currency: String(invoice.currency ?? "usd"),
+        destination: String(affiliateProfile?.stripe_connect_account_id),
+        transfer_group: subscriptionId,
+        description: `Affiliate commission for invoice ${invoice.id}`,
+        metadata: {
+          stripe_invoice_id: invoice.id,
+          affiliate_user_id: affiliateUserId,
+          referred_user_id: referredUserId,
+        },
+      });
+      status = "paid";
+    } catch (err) {
+      console.warn(
+        `[stripe-webhook] affiliate transfer failed for invoice ${invoice.id}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  }
+
+  const period = resolveInvoiceServicePeriod(invoice);
+  await supabase
+    .from("commission_ledger")
+    .insert({
+      affiliate_user_id: affiliateUserId,
+      referred_user_id: referredUserId,
+      stripe_invoice_id: invoice.id,
+      stripe_subscription_id: subscriptionId,
+      invoice_amount_cents: amountPaid,
+      commission_rate: DEFAULT_AFFILIATE_COMMISSION_RATE,
+      commission_cents: commissionCents,
+      currency: invoice.currency ?? "usd",
+      status,
+      period_start: period.periodStart,
+      period_end: period.periodEnd,
+    });
+}
+
+async function reverseInvoiceCommission(
+  supabase: ReturnType<typeof createClient>,
+  invoiceId: string | null,
+): Promise<void> {
+  if (!invoiceId) return;
+  await supabase
+    .from("commission_ledger")
+    .update({ status: "reversed" })
+    .eq("stripe_invoice_id", invoiceId)
+    .in("status", ["pending", "approved", "paid"]);
 }
 
 Deno.serve(async (req: Request) => {
@@ -181,6 +311,39 @@ Deno.serve(async (req: Request) => {
             })
             .eq("stripe_subscription_id", subscriptionId);
         }
+        break;
+      }
+
+      case "invoice.paid": {
+        const invoice = event.data.object as Stripe.Invoice;
+        const subscriptionId = typeof invoice.subscription === "string"
+          ? invoice.subscription
+          : invoice.subscription?.id ?? null;
+        if (subscriptionId) {
+          await supabase
+            .from("subscriptions")
+            .update({
+              status: "active",
+              updated_at: new Date().toISOString(),
+            })
+            .eq("stripe_subscription_id", subscriptionId);
+        }
+        await accrueInvoiceCommission(stripe, supabase, invoice);
+        break;
+      }
+
+      case "invoice.voided": {
+        const invoice = event.data.object as Stripe.Invoice;
+        await reverseInvoiceCommission(supabase, invoice.id ?? null);
+        break;
+      }
+
+      case "charge.refunded": {
+        const charge = event.data.object as Stripe.Charge;
+        const invoiceId = typeof charge.invoice === "string"
+          ? charge.invoice
+          : charge.invoice?.id ?? null;
+        await reverseInvoiceCommission(supabase, invoiceId);
         break;
       }
     }

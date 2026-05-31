@@ -43,6 +43,26 @@ export interface Database {
         Insert: Omit<UserProfileRow, 'created_at' | 'updated_at'> & { created_at?: string; updated_at?: string }
         Update: Partial<Omit<UserProfileRow, 'user_id' | 'created_at'>>
       }
+      affiliate_profiles: {
+        Row: AffiliateProfileRow
+        Insert: Omit<AffiliateProfileRow, 'created_at' | 'updated_at'> & { created_at?: string; updated_at?: string }
+        Update: Partial<Omit<AffiliateProfileRow, 'user_id' | 'created_at'>>
+      }
+      referral_attributions: {
+        Row: ReferralAttributionRow
+        Insert: Omit<ReferralAttributionRow, 'id' | 'created_at'> & { id?: string; created_at?: string }
+        Update: Partial<Omit<ReferralAttributionRow, 'id' | 'created_at'>>
+      }
+      commission_ledger: {
+        Row: CommissionLedgerRow
+        Insert: Omit<CommissionLedgerRow, 'id' | 'created_at'> & { id?: string; created_at?: string }
+        Update: Partial<Omit<CommissionLedgerRow, 'id' | 'created_at'>>
+      }
+      payout_batches: {
+        Row: PayoutBatchRow
+        Insert: Omit<PayoutBatchRow, 'id' | 'created_at' | 'updated_at'> & { id?: string; created_at?: string; updated_at?: string }
+        Update: Partial<Omit<PayoutBatchRow, 'id' | 'created_at'>>
+      }
     }
   }
 }
@@ -61,6 +81,58 @@ export interface UserProfileRow {
   timezone: string
   is_admin: boolean
   subscription_status: string | null
+  onboarding_completed_at: string | null
+  referred_by_user_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface AffiliateProfileRow {
+  user_id: string
+  referral_code: string
+  is_active: boolean
+  payout_email: string | null
+  stripe_connect_account_id: string | null
+  total_earned_cents: number
+  total_paid_cents: number
+  created_at: string
+  updated_at: string
+}
+
+export interface ReferralAttributionRow {
+  id: string
+  referred_user_id: string
+  affiliate_user_id: string
+  referral_code: string
+  attribution_source: 'signup_url' | 'signup_form' | 'onboarding' | 'admin'
+  created_at: string
+}
+
+export interface CommissionLedgerRow {
+  id: string
+  affiliate_user_id: string
+  referred_user_id: string
+  stripe_invoice_id: string
+  stripe_subscription_id: string | null
+  invoice_amount_cents: number
+  commission_rate: number
+  commission_cents: number
+  currency: string
+  status: 'pending' | 'approved' | 'paid' | 'reversed'
+  payout_batch_id: string | null
+  period_start: string | null
+  period_end: string | null
+  created_at: string
+}
+
+export interface PayoutBatchRow {
+  id: string
+  period_label: string
+  total_cents: number
+  status: 'draft' | 'processing' | 'paid' | 'cancelled'
+  paid_at: string | null
+  notes: string | null
+  created_by_admin: string | null
   created_at: string
   updated_at: string
 }

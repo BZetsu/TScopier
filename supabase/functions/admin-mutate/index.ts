@@ -260,5 +260,59 @@ Deno.serve(async (req: Request) => {
     return Response.json({ ok: true, broker: data }, { headers: corsHeaders });
   }
 
+  if (action === "affiliate_mark_paid") {
+    const ledgerIds = Array.isArray(body.ledger_ids)
+      ? body.ledger_ids.map((id) => String(id).trim()).filter(Boolean)
+      : [];
+    if (ledgerIds.length === 0) return bad(400, "ledger_ids is required");
+    const periodLabel = String(body.period_label ?? "").trim() || new Date().toISOString().slice(0, 7);
+    const notes = String(body.notes ?? "").trim() || null;
+
+    const { data: rows, error: loadErr } = await supabase
+      .from("commission_ledger")
+      .select("*")
+      .in("id", ledgerIds);
+    if (loadErr) return bad(400, loadErr.message);
+    const pendingRows = (rows ?? []).filter((r) =>
+      r.status === "pending" || r.status === "approved"
+    );
+    if (pendingRows.length === 0) return bad(400, "No payable commission rows found");
+    const totalCents = pendingRows.reduce((sum, row) => sum + (Number(row.commission_cents ?? 0) || 0), 0);
+
+    const { data: batch, error: batchErr } = await supabase
+      .from("payout_batches")
+      .insert({
+        period_label: periodLabel,
+        total_cents: totalCents,
+        status: "paid",
+        paid_at: new Date().toISOString(),
+        notes,
+        created_by_admin: adminUser.id,
+      })
+      .select("*")
+      .single();
+    if (batchErr) return bad(400, batchErr.message);
+
+    const { error: upErr } = await supabase
+      .from("commission_ledger")
+      .update({ status: "paid", payout_batch_id: batch.id })
+      .in("id", pendingRows.map((r) => String(r.id)));
+    if (upErr) return bad(400, upErr.message);
+
+    await writeAdminAudit(supabase, {
+      actor_user_id: adminUser.id,
+      target_user_id: null,
+      action,
+      entity_type: "commission_ledger",
+      entity_id: String(batch.id),
+      reason,
+      request_payload: { ledger_ids: ledgerIds, period_label: periodLabel, notes },
+      before_state: { count: pendingRows.length, total_cents: totalCents },
+      after_state: { payout_batch_id: batch.id, status: "paid" },
+      correlation_id: correlationId,
+    });
+    return Response.json({ ok: true, payout_batch: batch }, { headers: corsHeaders });
+  }
+
   return bad(400, "Unknown action");
 });

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import clsx from 'clsx'
 import { supabase } from '../../lib/supabase'
@@ -8,6 +8,11 @@ import { Button } from '../../components/ui/Button'
 import { Alert } from '../../components/ui/Alert'
 import { AuthBackHome } from '../../components/auth/AuthBackHome'
 import { useLocale } from '../../context/LocaleContext'
+import {
+  captureReferralFromUrl,
+  loadStoredReferralCode,
+  referralCodeLooksValid,
+} from '../../lib/referralCapture'
 
 function GoogleIcon({ className }: { className?: string }) {
   return (
@@ -44,14 +49,25 @@ export function AuthPage() {
   const [loading, setLoading] = useState(false)
   const [googleLoading, setGoogleLoading] = useState(false)
   const [error, setError] = useState('')
+  const [storedReferralCode, setStoredReferralCode] = useState<string | null>(null)
+
+  useEffect(() => {
+    const fromUrl = captureReferralFromUrl(window.location.search)
+    const stored = fromUrl ?? loadStoredReferralCode()
+    setStoredReferralCode(stored)
+  }, [])
 
   const handleGoogleSignIn = async () => {
     setError('')
     setGoogleLoading(true)
+    const redirectTo = new URL(`${window.location.origin}/welcome`)
+    if (storedReferralCode && referralCodeLooksValid(storedReferralCode)) {
+      redirectTo.searchParams.set('ref', storedReferralCode)
+    }
     const { error: oauthError } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: `${window.location.origin}/dashboard`,
+        redirectTo: redirectTo.toString(),
       },
     })
     if (oauthError) {

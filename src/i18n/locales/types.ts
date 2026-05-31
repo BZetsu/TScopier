@@ -911,6 +911,44 @@ export interface PricingTranslations {
   }
 }
 
+export interface AffiliateTranslations {
+  title: string
+  subtitle: string
+  refresh: string
+  totalEarned: string
+  pendingPayout: string
+  paidOut: string
+  activeReferrals: string
+  yourReferralCode: string
+  copyCode: string
+  copied: string
+  yourReferralLink: string
+  copyLink: string
+  payoutEmail: string
+  payoutEmailHint: string
+  savePayoutEmail: string
+  referrals: string
+  commissions: string
+  noReferrals: string
+  noCommissions: string
+  source: string
+  date: string
+  invoice: string
+  gross: string
+  commission: string
+  status: string
+  howItWorks: string
+  stepShare: string
+  stepSubscribe: string
+  stepEarn: string
+  policyTitle: string
+  policyLifetime: string
+  policyFirstTouch: string
+  policySelfReferral: string
+  policyRefunds: string
+  policyMinimumPayout: string
+}
+
 export interface Translations {
   auth: AuthTranslations
   channelWorker: ChannelWorkerTranslations
@@ -931,6 +969,7 @@ export interface Translations {
   economicCalendar: EconomicCalendarTranslations
   performance: PerformanceTranslations
   settings: SettingsTranslations
+  affiliate: AffiliateTranslations
   pages: {
     accountConfiguration: PageMeta
     contactSupport: PageMeta
