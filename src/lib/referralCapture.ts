@@ -1,17 +1,19 @@
 const REF_KEY = 'tsc_ref'
 const REF_TS_KEY = 'tsc_ref_ts'
 const REF_TTL_MS = 90 * 24 * 60 * 60 * 1000
+export const REFERRAL_CODE_MIN_LENGTH = 3
+export const REFERRAL_CODE_MAX_LENGTH = 32
 
 function nowMs(): number {
   return Date.now()
 }
 
 export function normalizeReferralCode(code: string): string {
-  return code.trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '')
+  return code.trim()
 }
 
 export function referralCodeLooksValid(code: string): boolean {
-  return /^[A-Z0-9_-]{4,64}$/.test(code)
+  return new RegExp(`^\\S{${REFERRAL_CODE_MIN_LENGTH},${REFERRAL_CODE_MAX_LENGTH}}$`, 'u').test(code)
 }
 
 export function captureReferralFromUrl(search: string): string | null {

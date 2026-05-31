@@ -8,13 +8,15 @@ export const affiliateCorsHeaders = {
 };
 
 export const DEFAULT_AFFILIATE_COMMISSION_RATE = 0.10;
+export const REFERRAL_CODE_MIN_LENGTH = 3;
+export const REFERRAL_CODE_MAX_LENGTH = 32;
 
 export function normalizeReferralCode(input: string): string {
-  return input.trim().toUpperCase().replace(/[^A-Z0-9_-]/g, "");
+  return input.trim();
 }
 
 export function codeLooksValid(code: string): boolean {
-  return /^[A-Z0-9_-]{4,64}$/.test(code);
+  return new RegExp(`^\\S{${REFERRAL_CODE_MIN_LENGTH},${REFERRAL_CODE_MAX_LENGTH}}$`, "u").test(code);
 }
 
 export async function requireAuthedUser(

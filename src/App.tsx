@@ -29,6 +29,7 @@ import { AnalysisHubPage } from './pages/dashboard/AnalysisHubPage'
 import { SignalHistoryPage } from './pages/dashboard/SignalHistoryPage'
 import { SettingsPage } from './pages/dashboard/SettingsPage'
 import { WelcomePage } from './pages/onboarding/WelcomePage'
+import { ReferralCodeRedirect } from './pages/auth/ReferralCodeRedirect'
 
 export default function App() {
   return (
@@ -45,6 +46,7 @@ export default function App() {
           <Route path="/verify-email" element={<AuthLayout />} />
           <Route path="/forgot-password" element={<AuthLayout />} />
           <Route path="/reset-password" element={<AuthLayout />} />
+          <Route path="/:referralCode" element={<ReferralCodeRedirect />} />
 
           {/* Legacy pricing URL — opens plan modal on dashboard */}
           <Route

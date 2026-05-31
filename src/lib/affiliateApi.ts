@@ -64,14 +64,21 @@ export async function updateAffiliatePayoutEmail(
   accessToken: string,
   payoutEmail: string,
 ): Promise<void> {
+  await updateAffiliateProfileSettings(accessToken, { payout_email: payoutEmail })
+}
+
+export async function updateAffiliateProfileSettings(
+  accessToken: string,
+  patch: { payout_email?: string; referral_code?: string },
+): Promise<void> {
   const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/affiliate-profile`
   const res = await fetch(apiUrl, {
     method: 'PATCH',
     headers: authHeaders(accessToken),
-    body: JSON.stringify({ payout_email: payoutEmail }),
+    body: JSON.stringify(patch),
   })
   const data = (await res.json().catch(() => ({}))) as { error?: string }
-  if (!res.ok) throw new Error(data.error || 'Failed to save payout email')
+  if (!res.ok) throw new Error(data.error || 'Failed to save affiliate settings')
 }
 
 export async function startAffiliateConnectOnboarding(accessToken: string): Promise<string> {

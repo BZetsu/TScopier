@@ -920,13 +920,21 @@ export interface AffiliateTranslations {
   paidOut: string
   activeReferrals: string
   yourReferralCode: string
+  editReferralCode: string
+  cancelEditReferralCode: string
   copyCode: string
   copied: string
   yourReferralLink: string
   copyLink: string
-  payoutEmail: string
-  payoutEmailHint: string
-  savePayoutEmail: string
+  payoutWalletAddress: string
+  payoutWalletHint: string
+  saveWalletAddress: string
+  customCodeLabel: string
+  customCodePlaceholder: string
+  customCodeHint: string
+  saveCustomCode: string
+  customCodeInvalid: string
+  customCodeSaveFailed: string
   referrals: string
   commissions: string
   noReferrals: string

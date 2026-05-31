@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Copy, DollarSign, Link2, Users, Wallet } from 'lucide-react'
+import { Copy, DollarSign, Link2, Pencil, Users, Wallet } from 'lucide-react'
 import { PageShell } from '../../components/layout/PageShell'
 import { PageHeader } from '../../components/layout/PageHeader'
 import { Card } from '../../components/ui/Card'
@@ -11,10 +11,10 @@ import { useT } from '../../context/LocaleContext'
 import {
   centsToMoney,
   fetchAffiliateProfile,
-  startAffiliateConnectOnboarding,
-  updateAffiliatePayoutEmail,
+  updateAffiliateProfileSettings,
   type AffiliateProfileResponse,
 } from '../../lib/affiliateApi'
+import { normalizeReferralCode, referralCodeLooksValid } from '../../lib/referralCapture'
 
 function StatCard({ title, value }: { title: string; value: string }) {
   return (
@@ -33,11 +33,13 @@ export function AffiliateProgramPage() {
   const { session } = useAuth()
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [connectLoading, setConnectLoading] = useState(false)
+  const [codeSaving, setCodeSaving] = useState(false)
   const [error, setError] = useState('')
   const [copied, setCopied] = useState<'code' | 'link' | null>(null)
   const [data, setData] = useState<AffiliateProfileResponse | null>(null)
-  const [payoutEmail, setPayoutEmail] = useState('')
+  const [walletAddress, setWalletAddress] = useState('')
+  const [customCode, setCustomCode] = useState('')
+  const [isEditingCode, setIsEditingCode] = useState(false)
 
   const locale = typeof navigator !== 'undefined' ? navigator.language : 'en-US'
   const currency = 'USD'
@@ -49,7 +51,8 @@ export function AffiliateProgramPage() {
     try {
       const next = await fetchAffiliateProfile(session.access_token)
       setData(next)
-      setPayoutEmail(next.profile.payout_email ?? '')
+      setWalletAddress(next.profile.payout_email ?? '')
+      setCustomCode(next.profile.referral_code ?? '')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load affiliate profile')
     } finally {
@@ -90,30 +93,41 @@ export function AffiliateProgramPage() {
     }
   }
 
-  const savePayout = async () => {
+  const saveWalletAddress = async () => {
     if (!session?.access_token) return
     setSaving(true)
     setError('')
     try {
-      await updateAffiliatePayoutEmail(session.access_token, payoutEmail)
+      await updateAffiliateProfileSettings(session.access_token, {
+        payout_email: walletAddress,
+      })
       await refresh()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to save payout email')
+      setError(e instanceof Error ? e.message : at.walletAddressSaveFailed)
     } finally {
       setSaving(false)
     }
   }
 
-  const connectStripeAccount = async () => {
+  const saveCustomCode = async () => {
     if (!session?.access_token) return
-    setConnectLoading(true)
+    const normalized = normalizeReferralCode(customCode)
+    if (!referralCodeLooksValid(normalized)) {
+      setError(at.customCodeInvalid)
+      return
+    }
+    setCodeSaving(true)
     setError('')
     try {
-      const url = await startAffiliateConnectOnboarding(session.access_token)
-      window.location.href = url
+      await updateAffiliateProfileSettings(session.access_token, {
+        referral_code: normalized,
+      })
+      setIsEditingCode(false)
+      await refresh()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not start Stripe Connect onboarding')
-      setConnectLoading(false)
+      setError(e instanceof Error ? e.message : at.customCodeSaveFailed)
+    } finally {
+      setCodeSaving(false)
     }
   }
 
@@ -145,19 +159,64 @@ export function AffiliateProgramPage() {
               <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-neutral-900 dark:text-neutral-100">
                 <Wallet className="h-4 w-4 text-teal-600" />
                 {at.yourReferralCode}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCustomCode(data?.profile.referral_code ?? '')
+                    setIsEditingCode(prev => !prev)
+                  }}
+                  className="inline-flex items-center justify-center rounded p-1 text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-200"
+                  aria-label={at.editReferralCode}
+                  title={at.editReferralCode}
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                </button>
               </div>
-              <p className="text-xl font-semibold tracking-wide text-neutral-900 dark:text-neutral-50">
-                {data?.profile.referral_code ?? '—'}
-              </p>
-              <Button
-                variant="ghost"
-                className="mt-2 gap-2"
-                disabled={!data?.profile.referral_code}
-                onClick={() => data?.profile.referral_code && void copyText('code', data.profile.referral_code)}
-              >
-                <Copy className="h-4 w-4" />
-                {copied === 'code' ? at.copied : at.copyCode}
-              </Button>
+              {isEditingCode ? (
+                <div className="space-y-2">
+                  <Input
+                    label=""
+                    type="text"
+                    value={customCode}
+                    onChange={(e) => setCustomCode(normalizeReferralCode(e.target.value))}
+                    placeholder={at.customCodePlaceholder}
+                  />
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      onClick={() => void saveCustomCode()}
+                      loading={codeSaving}
+                      disabled={customCode.trim() === (data?.profile.referral_code ?? '').trim()}
+                    >
+                      {at.saveCustomCode}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      onClick={() => {
+                        setCustomCode(data?.profile.referral_code ?? '')
+                        setIsEditingCode(false)
+                      }}
+                    >
+                      {at.cancelEditReferralCode}
+                    </Button>
+                  </div>
+                  <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">{at.customCodeHint}</p>
+                </div>
+              ) : (
+                <>
+                  <p className="text-xl font-semibold tracking-wide text-neutral-900 dark:text-neutral-50">
+                    {data?.profile.referral_code ?? '—'}
+                  </p>
+                  <Button
+                    variant="ghost"
+                    className="mt-2 gap-2"
+                    disabled={!data?.profile.referral_code}
+                    onClick={() => data?.profile.referral_code && void copyText('code', data.profile.referral_code)}
+                  >
+                    <Copy className="h-4 w-4" />
+                    {copied === 'code' ? at.copied : at.copyCode}
+                  </Button>
+                </>
+              )}
             </div>
 
             <div className="rounded-xl border border-neutral-200 p-4 dark:border-neutral-800">
@@ -178,40 +237,23 @@ export function AffiliateProgramPage() {
                 {copied === 'link' ? at.copied : at.copyLink}
               </Button>
             </div>
+
           </div>
 
           <div className="rounded-xl border border-neutral-200 p-4 dark:border-neutral-800">
-            <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">{at.payoutEmail}</p>
+            <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">{at.payoutWalletAddress}</p>
             <div className="mt-3 flex flex-wrap gap-2">
               <Input
                 label=""
-                type="email"
-                value={payoutEmail}
-                onChange={(e) => setPayoutEmail(e.target.value)}
-                placeholder="you@paypal.com"
+                type="text"
+                value={walletAddress}
+                onChange={(e) => setWalletAddress(e.target.value.trim())}
+                placeholder="T...."
                 className="min-w-[18rem] flex-1"
               />
-              <Button onClick={() => void savePayout()} loading={saving}>{at.savePayoutEmail}</Button>
+              <Button onClick={() => void saveWalletAddress()} loading={saving}>{at.saveWalletAddress}</Button>
             </div>
-            <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">{at.payoutEmailHint}</p>
-          </div>
-
-          <div className="rounded-xl border border-neutral-200 p-4 dark:border-neutral-800">
-            <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">Stripe Connect</p>
-            <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
-              {data?.profile.stripe_connect_account_id
-                ? 'Connected for automated payouts.'
-                : 'Connect a Stripe account to receive automated affiliate transfers.'}
-            </p>
-            <div className="mt-3">
-              <Button
-                variant={data?.profile.stripe_connect_account_id ? 'secondary' : 'primary'}
-                onClick={() => void connectStripeAccount()}
-                loading={connectLoading}
-              >
-                {data?.profile.stripe_connect_account_id ? 'Reconnect Stripe account' : 'Connect Stripe account'}
-              </Button>
-            </div>
+            <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">{at.payoutWalletHint}</p>
           </div>
         </Card>
 
