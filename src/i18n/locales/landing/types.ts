@@ -377,4 +377,9 @@ export interface LandingTranslations {
     copyright: string
     disclaimer: string
   }
+  cookieConsent: {
+    message: string
+    accept: string
+    dismiss: string
+  }
 }
