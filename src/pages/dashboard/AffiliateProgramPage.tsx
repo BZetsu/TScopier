@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Copy, DollarSign, Link2, Pencil, Users, Wallet } from 'lucide-react'
+import { Copy, DollarSign, Link2, Pencil, Wallet } from 'lucide-react'
 import { PageShell } from '../../components/layout/PageShell'
 import { PageHeader } from '../../components/layout/PageHeader'
 import { Card } from '../../components/ui/Card'
@@ -385,16 +385,13 @@ export function AffiliateProgramPage() {
         </Card>
 
         <Card padding="lg">
-          <div className="flex items-start gap-3">
-            <Users className="mt-0.5 h-5 w-5 text-teal-600" />
-            <div>
-              <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-50">{at.howItWorks}</h3>
-              <ul className="mt-2 space-y-1 text-sm text-neutral-600 dark:text-neutral-400">
-                <li>{at.stepShare}</li>
-                <li>{at.stepSubscribe}</li>
-                <li>{at.stepEarn}</li>
-              </ul>
-            </div>
+          <div>
+            <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-50">{at.howItWorks}</h3>
+            <ul className="mt-2 space-y-1 text-sm text-neutral-600 dark:text-neutral-400">
+              <li>{at.stepShare}</li>
+              <li>{at.stepSubscribe}</li>
+              <li>{at.stepEarn}</li>
+            </ul>
           </div>
         </Card>
 
