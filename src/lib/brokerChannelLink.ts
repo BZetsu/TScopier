@@ -10,6 +10,7 @@ import {
 import {
   DEFAULT_CHANNEL_FILTERS,
   normalizeChannelMessageFiltersMap,
+  type ChannelFilters,
 } from './channelMessageFilters'
 
 export type BrokerChannelFilterFields = {
@@ -49,6 +50,7 @@ export async function connectChannelToBroker(
   userId: string,
   broker: BrokerAccount,
   channelId: string,
+  options?: { defaultChannelFilters?: ChannelFilters },
 ): Promise<{ broker: BrokerAccount | null; error: string | null }> {
   const ids = normalizeSignalChannelIds(broker.signal_channel_ids)
   if (ids.includes(channelId)) {
@@ -71,7 +73,7 @@ export async function connectChannelToBroker(
   }
   const filters = normalizeChannelMessageFiltersMap(broker.channel_message_filters)
   if (!filters[channelId]) {
-    filters[channelId] = { ...DEFAULT_CHANNEL_FILTERS }
+    filters[channelId] = { ...(options?.defaultChannelFilters ?? DEFAULT_CHANNEL_FILTERS) }
   }
 
   const { data, error } = await supabase
@@ -97,6 +99,7 @@ export async function linkChannelToAllActiveBrokers(
   userId: string,
   channelId: string,
   brokers: BrokerAccount[],
+  options?: { defaultChannelFilters?: ChannelFilters },
 ): Promise<{ brokers: BrokerAccount[]; error: string | null }> {
   const active = brokers.filter(b => b.is_active)
   if (active.length === 0) return { brokers, error: null }
@@ -104,7 +107,7 @@ export async function linkChannelToAllActiveBrokers(
   let nextBrokers = [...brokers]
   for (const broker of active) {
     if (channelMatchesBrokerSignal(broker, channelId)) continue
-    const { broker: updated, error } = await connectChannelToBroker(supabase, userId, broker, channelId)
+    const { broker: updated, error } = await connectChannelToBroker(supabase, userId, broker, channelId, options)
     if (error) return { brokers: nextBrokers, error }
     if (updated) {
       nextBrokers = nextBrokers.map(b => (b.id === updated.id ? updated : b))

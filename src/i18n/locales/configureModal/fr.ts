@@ -129,6 +129,8 @@ export const configureModalFr: ConfigureModalTranslations = {
       'Lorsque le prix atteint +X pips depuis l’entrée du signal (ancre), le worker ferme automatiquement les jambes instantanées via /OrderClose. Un message du canal comme « Fermer les entrées défavorables » ferme chaque jambe ouverte dont l’entrée est à X pips du prix en direct à ce moment (ex. exécutions instantanées près du signal, pas les couches profondes). Aucun TP courtier sur les jambes CWE — seul le SL reste chez le courtier.',
     closeWorsePips: 'Fermer les profits depuis entrée défavorable (pips)',
     closeWorsePipsFallback: 'Distance depuis le prix en direct (instruction) ou ancre + X pips (auto).',
+    basicPlanTradeStyleLimit:
+      'Seul le mode Single Trade est autorisé. Multi-Trade et Range Layering sont disponibles avec le plan Advanced.',
   },
   stops: {
     predefinedTitle: 'SL et TP prédéfinis',

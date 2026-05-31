@@ -129,6 +129,8 @@ export const configureModalEs: ConfigureModalTranslations = {
       'Cuando el precio alcanza +X pips desde la entrada de la señal (ancla), el worker cierra automáticamente las piernas instantáneas vía /OrderClose. Un mensaje del canal como «Cerrar entradas peores» cierra cada pierna abierta cuya entrada esté a X pips del precio en vivo en ese momento (p. ej. fills instantáneos cerca de la señal, no capas profundas). En piernas CWE no hay TP en el broker: solo el SL permanece en el broker.',
     closeWorsePips: 'Cerrar beneficios desde entrada peor (pips)',
     closeWorsePipsFallback: 'Distancia desde precio en vivo (instrucción) o ancla + X pips (automático).',
+    basicPlanTradeStyleLimit:
+      'Solo se permite el modo Single Trade. Multi-Trade y Range Layering están disponibles en el plan Advanced.',
   },
   stops: {
     predefinedTitle: 'SL y TP predefinidos',

@@ -12,6 +12,7 @@ import { useAuth } from '../../context/AuthContext'
 import { useT } from '../../context/LocaleContext'
 import { interpolate } from '../../i18n/interpolate'
 import { Card } from '../../components/ui/Card'
+import { PasswordInput } from '../../components/auth/PasswordInput'
 import { Input } from '../../components/ui/Input'
 import { Select } from '../../components/ui/Select'
 import { Toggle } from '../../components/ui/Toggle'
@@ -68,6 +69,8 @@ import { formatMoneyWithCode } from '../../lib/currency'
 import type { BrokerAccount, ManualSettings, ManualTpLot } from '../../types/database'
 import {
   DEFAULT_CHANNEL_FILTERS,
+  BASIC_PLAN_CHANNEL_FILTERS,
+  defaultChannelFiltersForPlan,
   normalizeChannelFilters,
   normalizeChannelMessageFiltersMap,
   type ChannelFilterDecision,
@@ -433,11 +436,11 @@ interface ManualSubTabDef {
   icon: typeof SlidersHorizontal
 }
 
-function defaultChannelConfigDraft(): ChannelConfigDraft {
+function defaultChannelConfigDraft(keywordFiltersEnabled = true): ChannelConfigDraft {
   return {
     mode: 'manual',
     manualSettings: normalizeManualSettings(buildDefaultChannelTradingConfig().manual_settings),
-    channelFilters: { ...DEFAULT_CHANNEL_FILTERS },
+    channelFilters: defaultChannelFiltersForPlan(keywordFiltersEnabled),
   }
 }
 
@@ -470,19 +473,20 @@ function accountConfigDraftPersistSignature(
       ),
       channelFilters: keywordFiltersEnabled
         ? normalizeChannelFilters(entry?.channelFilters ?? DEFAULT_CHANNEL_FILTERS)
-        : normalizeChannelFilters(DEFAULT_CHANNEL_FILTERS),
+        : normalizeChannelFilters(BASIC_PLAN_CHANNEL_FILTERS),
     }
   }
   return JSON.stringify({ channelIds, channels })
 }
 
-function isChannelConfigDefault(draft: ChannelConfigDraft): boolean {
-  return channelConfigDraftSignature(draft) === channelConfigDraftSignature(defaultChannelConfigDraft())
+function isChannelConfigDefault(draft: ChannelConfigDraft, keywordFiltersEnabled = true): boolean {
+  return channelConfigDraftSignature(draft) === channelConfigDraftSignature(defaultChannelConfigDraft(keywordFiltersEnabled))
 }
 
 function buildChannelConfigDraftFromBroker(
   broker: BrokerAccount,
   channelIds: string[],
+  keywordFiltersEnabled = true,
 ): AccountConfigDraft {
   const storedConfigs = normalizeChannelTradingConfigsMap(broker.channel_trading_configs)
   const persistedFilters = normalizeChannelMessageFiltersMap(broker.channel_message_filters)
@@ -497,7 +501,9 @@ function buildChannelConfigDraftFromBroker(
       manualSettings: stored?.manual_settings && channelManualSettingsComplete(stored.manual_settings)
         ? normalizeManualSettings(stored.manual_settings)
         : defaultManual,
-      channelFilters: normalizeChannelFilters(persistedFilters[id] ?? DEFAULT_CHANNEL_FILTERS),
+      channelFilters: keywordFiltersEnabled
+        ? normalizeChannelFilters(persistedFilters[id] ?? DEFAULT_CHANNEL_FILTERS)
+        : normalizeChannelFilters(BASIC_PLAN_CHANNEL_FILTERS),
     }
   }
 
@@ -709,6 +715,7 @@ export function AccountConfigPage() {
   )
 
   const keywordFiltersEnabled = canUsePlanFeature('channel_keyword_filters')
+  const multiTradeStyleEnabled = canUsePlanFeature('multi_trade_style')
 
   const configureModalDirty = useMemo(() => {
     if (!configAccount) return false
@@ -740,8 +747,8 @@ export function AccountConfigPage() {
     if (!id || !configDraft.channelIds.includes(id)) return false
     const entry = configDraft.channelConfigs[id]
     if (!entry) return false
-    return !isChannelConfigDefault(entry)
-  }, [configDraft.selectedChannelId, configDraft.channelIds, configDraft.channelConfigs])
+    return !isChannelConfigDefault(entry, keywordFiltersEnabled)
+  }, [configDraft.selectedChannelId, configDraft.channelIds, configDraft.channelConfigs, keywordFiltersEnabled])
 
   const selectedChannelLinked = Boolean(
     configDraft.selectedChannelId
@@ -1005,7 +1012,7 @@ export function AccountConfigPage() {
     )
     setConfigAccount(fresh)
     setActiveManualSubTab('symbols')
-    const draft = buildChannelConfigDraftFromBroker(fresh, channelIds)
+    const draft = buildChannelConfigDraftFromBroker(fresh, channelIds, keywordFiltersEnabled)
     const nextDraft = {
       ...draft,
       selectedChannelId: draft.selectedChannelId ?? channelOptions[0]?.id ?? null,
@@ -1044,6 +1051,7 @@ export function AccountConfigPage() {
         user.id,
         configAccount,
         channelId,
+        { defaultChannelFilters: defaultChannelFiltersForPlan(keywordFiltersEnabled) },
       )
       if (connectErr) {
         setError(connectErr)
@@ -1059,7 +1067,7 @@ export function AccountConfigPage() {
       setConfigDraft(prev => {
         const channelConfigs = { ...prev.channelConfigs }
         if (!channelConfigs[channelId]) {
-          channelConfigs[channelId] = defaultChannelConfigDraft()
+          channelConfigs[channelId] = defaultChannelConfigDraft(keywordFiltersEnabled)
         }
         return {
           ...prev,
@@ -1131,7 +1139,7 @@ export function AccountConfigPage() {
         : prev.channelIds.filter(id => id !== channelId)
       const channelConfigs = { ...prev.channelConfigs }
       if (willEnable && !channelConfigs[channelId]) {
-        channelConfigs[channelId] = defaultChannelConfigDraft()
+        channelConfigs[channelId] = defaultChannelConfigDraft(keywordFiltersEnabled)
       }
       let selectedChannelId = prev.selectedChannelId
       if (willEnable && !selectedChannelId) selectedChannelId = channelId
@@ -1172,7 +1180,7 @@ export function AccountConfigPage() {
       ...prev,
         channelConfigs: {
           ...prev.channelConfigs,
-          [channelId]: { ...entry, channelFilters: { ...DEFAULT_CHANNEL_FILTERS } },
+          [channelId]: { ...entry, channelFilters: defaultChannelFiltersForPlan(keywordFiltersEnabled) },
         },
       }
     })
@@ -1365,7 +1373,7 @@ export function AccountConfigPage() {
     for (const id of channelIds) {
       channelMessageFilters[id] = canUsePlanFeature('channel_keyword_filters')
         ? configDraft.channelConfigs[id]?.channelFilters ?? { ...DEFAULT_CHANNEL_FILTERS }
-        : { ...DEFAULT_CHANNEL_FILTERS }
+        : { ...BASIC_PLAN_CHANNEL_FILTERS }
     }
     const channelTradingConfigs = buildChannelTradingConfigsFromDraft(
       channelIds,
@@ -1694,9 +1702,8 @@ export function AccountConfigPage() {
                   onChange={e => set('account_number', e.target.value)}
                   required
                 />
-                <Input
+                <PasswordInput
                   label={t.accountConfig.connectForm.passwordLabel}
-                  type="password"
                   placeholder={t.accountConfig.connectForm.passwordPlaceholder}
                   value={form.account_password}
                   onChange={e => set('account_password', e.target.value)}
@@ -2385,38 +2392,52 @@ export function AccountConfigPage() {
 
                         {activeManualSubTab === 'channel_instructions' && (
                           selectedChannelOption && configDraft.selectedChannelId ? (
-                            canUsePlanFeature('channel_keyword_filters') ? (
-                            <section className="space-y-3">
-                              <div className="flex items-center justify-between">
-                                <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">{cm.channels.keywordFilters}</p>
-                                <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                                  {(() => {
-                                    const f = normalizeChannelFilters(
-                                      configDraft.channelConfigs[configDraft.selectedChannelId]?.channelFilters ?? DEFAULT_CHANNEL_FILTERS,
-                                    )
-                                    const total = channelFilterCategories.reduce(
-                                      (n, c) => n + (f[c.key] === 'ignore' ? 1 : 0), 0,
-                                    )
-                                    return total === 0
-                                      ? cm.channels.allAllowed
-                                      : interpolate(cm.channels.ignoredAcross, { total: String(total) })
-                                  })()}
-                                </p>
-                            </div>
-                              <p className="text-xs text-neutral-500 dark:text-neutral-400">{cm.channels.filtersIntro}</p>
-                              <ChannelFiltersCard
-                                filters={normalizeChannelFilters(
-                                  configDraft.channelConfigs[configDraft.selectedChannelId]?.channelFilters ?? DEFAULT_CHANNEL_FILTERS,
+                            <div className="relative">
+                              <section
+                                className={clsx(
+                                  'space-y-3',
+                                  !keywordFiltersEnabled && 'pointer-events-none select-none opacity-60',
                                 )}
-                                categories={channelFilterCategories}
-                                labels={cm.channelFilters}
-                                onChange={(key, value) => setChannelFilter(configDraft.selectedChannelId!, key, value)}
-                                onReset={() => resetChannelFilters(configDraft.selectedChannelId!)}
-                              />
-                            </section>
-                            ) : (
-                              <UpgradePrompt reason={pw.advancedFeature} />
-                            )
+                                aria-disabled={!keywordFiltersEnabled}
+                              >
+                                <div className="flex items-center justify-between">
+                                  <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">{cm.channels.keywordFilters}</p>
+                                  <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                                    {(() => {
+                                      const f = normalizeChannelFilters(
+                                        configDraft.channelConfigs[configDraft.selectedChannelId]?.channelFilters
+                                          ?? defaultChannelFiltersForPlan(keywordFiltersEnabled),
+                                      )
+                                      const total = channelFilterCategories.reduce(
+                                        (n, c) => n + (f[c.key] === 'ignore' ? 1 : 0), 0,
+                                      )
+                                      return total === 0
+                                        ? cm.channels.allAllowed
+                                        : interpolate(cm.channels.ignoredAcross, { total: String(total) })
+                                    })()}
+                                  </p>
+                                </div>
+                                <p className="text-xs text-neutral-500 dark:text-neutral-400">{cm.channels.filtersIntro}</p>
+                                <ChannelFiltersCard
+                                  filters={normalizeChannelFilters(
+                                    configDraft.channelConfigs[configDraft.selectedChannelId]?.channelFilters
+                                      ?? defaultChannelFiltersForPlan(keywordFiltersEnabled),
+                                  )}
+                                  categories={channelFilterCategories}
+                                  labels={cm.channelFilters}
+                                  disabled={!keywordFiltersEnabled}
+                                  onChange={(key, value) => setChannelFilter(configDraft.selectedChannelId!, key, value)}
+                                  onReset={() => resetChannelFilters(configDraft.selectedChannelId!)}
+                                />
+                              </section>
+                              {!keywordFiltersEnabled ? (
+                                <div className="absolute inset-0 z-10 flex items-center justify-center p-4">
+                                  <div className="pointer-events-auto w-full max-w-md">
+                                    <UpgradePrompt reason={pw.advancedFeature} />
+                                  </div>
+                                </div>
+                              ) : null}
+                            </div>
                           ) : (
                             <p className="text-sm text-neutral-500 dark:text-neutral-400">{cm.channels.selectChannelFirst}</p>
                           )
@@ -2468,7 +2489,6 @@ export function AccountConfigPage() {
                                 value={channelManualSettings.trade_style ?? 'single'}
                                 onChange={e => {
                                   const v = e.target.value as ManualSettings['trade_style']
-                                  if (v === 'multi' && !canUsePlanFeature('multi_trade_style')) return
                                   if (v === 'multi') {
                                     setManual({ trade_style: v, use_signal_entry_price: false })
                                   } else {
@@ -2477,14 +2497,9 @@ export function AccountConfigPage() {
                                 }}
                                 options={[
                                   { value: 'single', label: cm.risk.singleTrade },
-                                  ...(canUsePlanFeature('multi_trade_style')
-                                    ? [{ value: 'multi', label: cm.risk.multiTrades }]
-                                    : []),
+                                  { value: 'multi', label: cm.risk.multiTrades },
                                 ]}
                               />
-                              {!canUsePlanFeature('multi_trade_style') ? (
-                                <UpgradePrompt variant="compact" reason={pw.advancedFeature} />
-                              ) : null}
                             </div>
 
                             {channelManualSettings.trade_style !== 'multi' && (
@@ -2538,6 +2553,14 @@ export function AccountConfigPage() {
                             )}
 
                             {channelManualSettings.trade_style === 'multi' && (
+                              <div className="relative">
+                                <div
+                                  className={clsx(
+                                    'space-y-4',
+                                    !multiTradeStyleEnabled && 'pointer-events-none select-none opacity-60',
+                                  )}
+                                  aria-disabled={!multiTradeStyleEnabled}
+                                >
                               <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-3 space-y-3">
                                 <p className="text-xs text-neutral-600 dark:text-neutral-400">
                                   {cm.risk.multiIntro}
@@ -2595,9 +2618,7 @@ export function AccountConfigPage() {
                                   </div>
                                 </div>
                               </div>
-                            )}
 
-                            {channelManualSettings.trade_style === 'multi' && (
                               <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-3 space-y-3">
                                 <div className="flex items-center justify-between">
                                   <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.risk.rangeLayering}</p>
@@ -2680,6 +2701,15 @@ export function AccountConfigPage() {
                                     </div>
                                   </>
                                 )}
+                              </div>
+                                </div>
+                                {!multiTradeStyleEnabled ? (
+                                  <div className="absolute inset-0 z-10 flex items-center justify-center p-4">
+                                    <div className="pointer-events-auto w-full max-w-md">
+                                      <UpgradePrompt reason={cm.risk.basicPlanTradeStyleLimit} />
+                                    </div>
+                                  </div>
+                                ) : null}
                               </div>
                             )}
 
@@ -3598,12 +3628,14 @@ function ChannelFiltersCard({
   filters,
   categories,
   labels,
+  disabled = false,
   onChange,
   onReset,
 }: {
   filters: ChannelFilters
   categories: ReturnType<typeof getChannelFilterCategories>
   labels: ConfigureModalTranslations['channelFilters']
+  disabled?: boolean
   onChange: (key: ChannelFilterKey, value: ChannelFilterDecision) => void
   onReset: () => void
 }) {
@@ -3622,6 +3654,7 @@ function ChannelFiltersCard({
             allowLabel={labels.allow}
             ignoreLabel={labels.ignore}
                 value={filters[cat.key] ?? 'allow'}
+                disabled={disabled}
                 onChange={v => onChange(cat.key, v)}
               />
             ))}
@@ -3632,9 +3665,9 @@ function ChannelFiltersCard({
             </p>
             <button
               type="button"
-          className="text-xs text-primary-600 hover:text-primary-700 hover:underline shrink-0 self-start sm:self-auto"
+          className="text-xs text-primary-600 hover:text-primary-700 hover:underline shrink-0 self-start sm:self-auto disabled:cursor-not-allowed disabled:opacity-50 disabled:no-underline"
               onClick={onReset}
-              disabled={ignoredCount === 0}
+              disabled={disabled || ignoredCount === 0}
             >
           {labels.resetDefaults}
             </button>
@@ -3649,6 +3682,7 @@ function CategoryRow({
   allowLabel,
   ignoreLabel,
   value,
+  disabled = false,
   onChange,
 }: {
   label: string
@@ -3656,6 +3690,7 @@ function CategoryRow({
   allowLabel: string
   ignoreLabel: string
   value: ChannelFilterDecision
+  disabled?: boolean
   onChange: (v: ChannelFilterDecision) => void
 }) {
   return (
@@ -3667,8 +3702,9 @@ function CategoryRow({
       <div className="inline-flex items-center rounded-md border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/50 p-0.5 shrink-0">
         <button
           type="button"
+          disabled={disabled}
           className={clsx(
-            'px-2.5 py-1 text-xs rounded',
+            'px-2.5 py-1 text-xs rounded disabled:cursor-not-allowed disabled:opacity-60',
             value === 'allow' ? 'bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-50 shadow-sm' : 'text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:text-neutral-300',
           )}
           onClick={() => onChange('allow')}
@@ -3678,8 +3714,9 @@ function CategoryRow({
         </button>
         <button
           type="button"
+          disabled={disabled}
           className={clsx(
-            'px-2.5 py-1 text-xs rounded',
+            'px-2.5 py-1 text-xs rounded disabled:cursor-not-allowed disabled:opacity-60',
             value === 'ignore' ? 'bg-amber-50 text-amber-700 shadow-sm' : 'text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:text-neutral-300',
           )}
           onClick={() => onChange('ignore')}

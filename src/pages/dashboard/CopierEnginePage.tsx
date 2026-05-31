@@ -15,6 +15,7 @@ import {
   linkChannelToAllActiveBrokers,
   pruneStaleBrokerChannelIds,
 } from '../../lib/brokerChannelLink'
+import { defaultChannelFiltersForPlan } from '../../lib/channelMessageFilters'
 import {
   hasValidTelegramChannelIdentity,
   isNumericTelegramChatId,
@@ -103,7 +104,10 @@ export function CopierEnginePage() {
     canAddChannel,
     limits,
     refresh: refreshSubscription,
+    canUseFeature: canUsePlanFeature,
   } = useSubscription()
+  const keywordFiltersEnabled = canUsePlanFeature('channel_keyword_filters')
+  const channelLinkDefaultFilters = defaultChannelFiltersForPlan(keywordFiltersEnabled)
   const pw = t.pricing.paywall
   const [channels, setChannels] = useState<TelegramChannel[]>([])
   const [connectMenuChannelId, setConnectMenuChannelId] = useState<string | null>(null)
@@ -350,6 +354,7 @@ export function CopierEnginePage() {
       user.id,
       broker,
       channelId,
+      { defaultChannelFilters: channelLinkDefaultFilters },
     )
     setConnectingBrokerId(null)
     if (linkErr) {
@@ -369,6 +374,7 @@ export function CopierEnginePage() {
       user.id,
       channelRowId,
       brokerSnapshot,
+      { defaultChannelFilters: channelLinkDefaultFilters },
     )
     if (linkErr) setError(linkErr)
     else setBrokers(linked)
@@ -390,6 +396,7 @@ export function CopierEnginePage() {
         user.id,
         broker,
         channelId,
+        { defaultChannelFilters: channelLinkDefaultFilters },
       )
       if (linkErr) {
         setError(linkErr)

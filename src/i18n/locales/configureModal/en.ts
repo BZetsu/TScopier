@@ -129,6 +129,8 @@ export const configureModalEn: ConfigureModalTranslations = {
       'When price reaches +X pips from the signal entry (anchor), the worker auto-closes instant legs via /OrderClose. A channel message such as "Close worse entries" closes every open leg whose entry is within X pips of the live price at that moment (e.g. instant fills near the signal, not deep layers). No broker TP is set on CWE legs — only the SL rides on the broker.',
     closeWorsePips: 'Close profits from worse entry (pips)',
     closeWorsePipsFallback: 'Distance from live price (instruction) or anchor + X pips (auto).',
+    basicPlanTradeStyleLimit:
+      'Only Single trade mode allowed. Multi-Trade and Range Layering settings are available on the Advanced plan.',
   },
   stops: {
     predefinedTitle: 'Predefined SL & TP',

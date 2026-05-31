@@ -35,6 +35,17 @@ export const DEFAULT_CHANNEL_FILTERS: ChannelFilters = Object.fromEntries(
   CHANNEL_FILTER_CATEGORY_KEYS.map(k => [k, 'allow']),
 ) as ChannelFilters
 
+/** Basic plan default — all instruction categories ignored until Advanced upgrade. */
+export const BASIC_PLAN_CHANNEL_FILTERS: ChannelFilters = Object.fromEntries(
+  CHANNEL_FILTER_CATEGORY_KEYS.map(k => [k, 'ignore']),
+) as ChannelFilters
+
+export function defaultChannelFiltersForPlan(keywordFiltersEnabled: boolean): ChannelFilters {
+  return keywordFiltersEnabled
+    ? { ...DEFAULT_CHANNEL_FILTERS }
+    : { ...BASIC_PLAN_CHANNEL_FILTERS }
+}
+
 export function normalizeChannelFilters(raw: unknown): ChannelFilters {
   const base = { ...DEFAULT_CHANNEL_FILTERS }
   if (!raw || typeof raw !== 'object') return base

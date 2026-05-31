@@ -11,6 +11,16 @@ export function isSubscriptionRequiredError(message: string, localizedLabel: str
   return /active subscription is required/i.test(trimmed)
 }
 
+/** True when the error should show an upgrade CTA (subscription required or plan limits). */
+export function shouldShowPaywallUpgradeCta(message: string, subscriptionRequiredLabel: string): boolean {
+  const trimmed = message.trim()
+  if (!trimmed) return false
+  if (isSubscriptionRequiredError(trimmed, subscriptionRequiredLabel)) return true
+  if (/upgrade to advanced/i.test(trimmed)) return true
+  if (/upgrade for unlimited/i.test(trimmed)) return true
+  return false
+}
+
 interface PaywallErrorAlertProps {
   message: string
   className?: string
@@ -24,7 +34,7 @@ export function PaywallErrorAlert({ message, className, variant = 'error' }: Pay
   const { openUpgrade, isPastDue } = useSubscription()
   const upgradeLabel = isPastDue ? pw.updatePayment : pw.upgradeCta
 
-  if (!isSubscriptionRequiredError(message, pw.subscriptionRequired)) {
+  if (!shouldShowPaywallUpgradeCta(message, pw.subscriptionRequired)) {
     return (
       <Alert variant={variant} className={className}>
         {message}

@@ -116,6 +116,7 @@ export interface ConfigureModalTranslations {
     closeWorseBody: string
     closeWorsePips: string
     closeWorsePipsFallback: string
+    basicPlanTradeStyleLimit: string
   }
   stops: {
     predefinedTitle: string
