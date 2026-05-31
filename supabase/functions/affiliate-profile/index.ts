@@ -15,6 +15,25 @@ function bad(status: number, message: string): Response {
   });
 }
 
+function resolveMarketingBase(): string {
+  const fallback = "https://tscopier.ai";
+  const raw = Deno.env.get("MARKETING_URL")
+    || Deno.env.get("PUBLIC_SITE_URL")
+    || fallback;
+
+  try {
+    const url = new URL(raw);
+    const host = url.hostname.toLowerCase();
+    // Guard against accidental app-domain env config in production.
+    if (host === "app.tscopier.ai") {
+      return `${url.protocol}//tscopier.ai`;
+    }
+    return `${url.protocol}//${url.host}`;
+  } catch {
+    return fallback;
+  }
+}
+
 async function ensureAffiliateProfile(
   supabase: ReturnType<typeof createClient>,
   user: { id: string; email?: string | null; user_metadata?: Record<string, unknown> },
@@ -155,9 +174,7 @@ Deno.serve(async (req: Request) => {
       namesByUser.set(row.user_id, name);
     }
 
-    const appBase = Deno.env.get("MARKETING_URL")
-      || Deno.env.get("PUBLIC_SITE_URL")
-      || "https://tscopier.ai";
+    const appBase = resolveMarketingBase();
     return Response.json({
       profile: latestProfile,
       referral_link: `${appBase.replace(/\/+$/, "")}/${encodeURIComponent(latestProfile.referral_code)}`,
