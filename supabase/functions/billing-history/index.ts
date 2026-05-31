@@ -9,6 +9,40 @@ const corsHeaders = {
     "Content-Type, Authorization, X-Client-Info, Apikey",
 };
 
+/** Service period the customer paid for — from subscription line items, not invoice accrual window. */
+function resolveInvoiceServicePeriod(inv: Stripe.Invoice): {
+  start: number | null;
+  end: number | null;
+} {
+  const lines = inv.lines?.data ?? [];
+  const subscriptionLines = lines.filter(
+    (line) =>
+      line.type === "subscription"
+      || (line.subscription != null && line.proration !== true),
+  );
+  const candidates = subscriptionLines.length > 0 ? subscriptionLines : lines;
+
+  let start: number | null = null;
+  let end: number | null = null;
+
+  for (const line of candidates) {
+    const ps = line.period?.start;
+    const pe = line.period?.end;
+    if (ps == null || pe == null) continue;
+    if (start == null || ps < start) start = ps;
+    if (end == null || pe > end) end = pe;
+  }
+
+  if (start == null || end == null) {
+    return {
+      start: inv.period_start ?? null,
+      end: inv.period_end ?? null,
+    };
+  }
+
+  return { start, end };
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 200, headers: corsHeaders });
@@ -76,6 +110,7 @@ Deno.serve(async (req: Request) => {
         customer: subscription.stripe_customer_id,
         limit,
         starting_after: startingAfter,
+        expand: ["data.lines.data"],
       }),
     ]);
 
@@ -102,22 +137,21 @@ Deno.serve(async (req: Request) => {
       }, 0);
     }
 
-    const invoices = invoiceList.data.map((inv) => ({
-      id: inv.id,
-      number: inv.number,
-      periodStart: inv.period_start
-        ? new Date(inv.period_start * 1000).toISOString()
-        : null,
-      periodEnd: inv.period_end
-        ? new Date(inv.period_end * 1000).toISOString()
-        : null,
-      created: new Date(inv.created * 1000).toISOString(),
-      amountPaid: inv.amount_paid ?? 0,
-      currency: inv.currency ?? "usd",
-      status: inv.status ?? "draft",
-      pdfUrl: inv.invoice_pdf,
-      hostedUrl: inv.hosted_invoice_url,
-    }));
+    const invoices = invoiceList.data.map((inv) => {
+      const { start, end } = resolveInvoiceServicePeriod(inv);
+      return {
+        id: inv.id,
+        number: inv.number,
+        periodStart: start != null ? new Date(start * 1000).toISOString() : null,
+        periodEnd: end != null ? new Date(end * 1000).toISOString() : null,
+        created: new Date(inv.created * 1000).toISOString(),
+        amountPaid: inv.amount_paid ?? 0,
+        currency: inv.currency ?? "usd",
+        status: inv.status ?? "draft",
+        pdfUrl: inv.invoice_pdf,
+        hostedUrl: inv.hosted_invoice_url,
+      };
+    });
 
     return new Response(
       JSON.stringify({

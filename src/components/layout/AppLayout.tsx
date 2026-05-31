@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
-import { LayoutDashboard, Settings, History, Send, LayoutTemplate, ScrollText, Newspaper, Calendar, ChartBar as BarChart2, CircleHelp, ChevronDown, ChartNoAxesColumn, PanelLeftClose, PanelLeftOpen, Menu, X } from 'lucide-react'
+import { LayoutDashboard, Settings, History, Send, LayoutTemplate, ScrollText, Newspaper, Calendar, ChartBar as BarChart2, CircleHelp, ChevronDown, ChartNoAxesColumn, PanelLeftClose, PanelLeftOpen, Menu, X, CreditCard, Share2 } from 'lucide-react'
 import clsx from 'clsx'
 import { TscopierLogo } from '../ui/TscopierLogo'
 import { AppSearchDesktop, AppSearchMobileTrigger, AppSearchProvider } from './AppSearch'
@@ -116,6 +116,13 @@ export function AppLayout() {
         items: [
           { to: '/market-news', icon: Newspaper, label: t.nav.items.marketNews },
           { to: '/economic-calendar', icon: Calendar, label: t.nav.items.economicCalendar },
+        ],
+      },
+      {
+        label: t.nav.sections.membership,
+        items: [
+          { to: '/billing', icon: CreditCard, label: t.nav.userMenu.subscriptionBilling },
+          { to: '/affiliate-program', icon: Share2, label: t.nav.userMenu.affiliateProgram },
         ],
       },
     ],

@@ -37,6 +37,32 @@ export function formatBillingMoney(cents: number, currency = 'usd', locale?: str
   }).format(amount)
 }
 
+/** Format Stripe service period; period end is exclusive (last day = end − 1). */
+export function formatInvoicePeriod(
+  startIso: string | null,
+  endIso: string | null,
+  locale: string,
+): string {
+  if (!startIso || !endIso) return '—'
+
+  const startMs = new Date(startIso).getTime()
+  const endExclusiveMs = new Date(endIso).getTime()
+  if (!Number.isFinite(startMs) || !Number.isFinite(endExclusiveMs)) return '—'
+
+  const endInclusiveMs = endExclusiveMs - 1
+  const fmt = (ms: number) =>
+    new Date(ms).toLocaleDateString(locale, {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      timeZone: 'UTC',
+    })
+
+  const startStr = fmt(startMs)
+  const endStr = fmt(endInclusiveMs)
+  return startStr === endStr ? startStr : `${startStr} – ${endStr}`
+}
+
 export async function fetchBillingHistory(
   accessToken: string,
   options?: { startingAfter?: string; limit?: number },

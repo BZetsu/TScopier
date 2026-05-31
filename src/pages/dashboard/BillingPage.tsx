@@ -19,11 +19,12 @@ import { Button } from '../../components/ui/Button'
 import { Card } from '../../components/ui/Card'
 import { PageShell } from '../../components/layout/PageShell'
 import { PageHeader } from '../../components/layout/PageHeader'
-import { PricingPlansPanel } from '../../components/billing/PricingPlansPanel'
+import { BillingPricingTable } from '../../components/billing/BillingPricingTable'
 import {
   customerRefFromUserId,
   fetchBillingHistory,
   formatBillingMoney,
+  formatInvoicePeriod,
   type BillingHistoryResponse,
   type BillingInvoice,
 } from '../../lib/billingApi'
@@ -35,21 +36,6 @@ function formatShortDate(iso: string, locale: string): string {
     month: 'short',
     year: 'numeric',
   })
-}
-
-function formatInvoicePeriod(
-  start: string | null,
-  end: string | null,
-  locale: string,
-): string {
-  if (!start || !end) return '—'
-  const fmt = (iso: string) =>
-    new Date(iso).toLocaleDateString(locale, {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-    })
-  return `${fmt(start)} – ${fmt(end)}`
 }
 
 function invoiceStatusLabel(status: string, bt: ReturnType<typeof useT>['pricing']['billing']) {
@@ -565,7 +551,7 @@ export function BillingPage() {
               </p>
             </div>
           </div>
-          <PricingPlansPanel showSkip={false} showIntro={false} />
+          <BillingPricingTable />
         </section>
       </div>
     </PageShell>

@@ -868,6 +868,17 @@ export interface PricingTranslations {
     loadInvoicesFailed: string
     subscriptionPlans: string
     subscriptionPlansIntro: string
+    pricingTablePlans: string
+    pricingTableIncludes: string
+    pricingTableMonthly: string
+    pricingTableAnnual: string
+    pricingTableAction: string
+    pricingTableCategory: string
+    pricingTableBestValue: string
+    pricingTablePurchase: string
+    pricingTableSave: string
+    pricingTableAdvancedIncludes: string
+    pricingTableHint: string
     back: string
     next: string
     nextBilling: string

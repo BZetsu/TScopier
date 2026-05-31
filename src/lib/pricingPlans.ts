@@ -33,3 +33,30 @@ export function pricingDisplayPrices(
     extraAccountMonthly,
   }
 }
+
+/** Total saved vs paying monthly for 12 months. */
+export function annualSavingsVsMonthly(monthlyRate: number, annualTotal: number): number {
+  return Math.max(0, +(monthlyRate * 12 - annualTotal).toFixed(2))
+}
+
+export function billingTablePrices(extraAccounts: number) {
+  const monthly = pricingDisplayPrices('monthly', extraAccounts)
+  const annual = pricingDisplayPrices('annual', extraAccounts)
+  return {
+    basic: {
+      monthly: monthly.basicMonthly,
+      annualTotal: annual.basicAnnualTotal,
+      annualPerMonth: annual.basicMonthly,
+      annualSavings: annualSavingsVsMonthly(PRICING_MONTHLY_BASIC, PRICING_ANNUAL_BASIC),
+    },
+    advanced: {
+      monthly: monthly.advancedMonthly,
+      annualTotal: annual.advancedAnnualTotal,
+      annualPerMonth: annual.advancedMonthly,
+      annualSavings: annualSavingsVsMonthly(
+        PRICING_MONTHLY_ADVANCED + extraAccounts * PRICING_MONTHLY_EXTRA_ACCOUNT,
+        PRICING_ANNUAL_ADVANCED + extraAccounts * PRICING_ANNUAL_EXTRA_ACCOUNT,
+      ),
+    },
+  }
+}
