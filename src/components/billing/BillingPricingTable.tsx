@@ -101,7 +101,7 @@ export function BillingPricingTable() {
                 <th className="px-5 py-3 bg-teal-50/70 dark:bg-teal-950/20">
                   <span className="inline-flex items-center gap-2">
                     {bt.pricingTableAnnual}
-                    <span className="rounded-full bg-teal-100 px-2 py-0.5 text-[10px] font-bold normal-case tracking-normal text-teal-800 dark:bg-teal-900/50 dark:text-teal-200">
+                    <span className="whitespace-nowrap rounded-full bg-teal-100 px-10 py-0.5 text-[10px] font-bold normal-case text-teal-800 dark:bg-teal-900/50 dark:text-teal-200">
                       {bt.pricingTableBestValue}
                     </span>
                   </span>
