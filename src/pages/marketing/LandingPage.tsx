@@ -12,7 +12,7 @@ import { PricingTeaserSection } from '../../components/marketing/sections/Pricin
 import { captureReferralFromUrl } from '../../lib/referralCapture'
 import { trackMarketingEvent } from '../../lib/analytics'
 
-const GTM_ID = 'GTM-586ZL4KF'
+const GTM_ID = 'G-6TQBY0FKX3'
 const GTM_SCRIPT_URL = `https://www.googletagmanager.com/gtm.js?id=${GTM_ID}`
 
 export function LandingPage() {
