@@ -334,6 +334,15 @@ function ignoredChannelWorkerReason(row: ChannelWorkerLogRow, cw: ChannelWorkerT
   return translateSkipReason('channel_filter_ignored', cw)
 }
 
+function isTradeUpdateAction(logAction: string, signalAction: string): boolean {
+  if (logAction === 'merge_routed_modify_only' || logAction === 'merge_modify_summary') return true
+  if (logAction === 'trailing_stop' || logAction === 'auto_be' || logAction === 'cwe_close') return true
+  if (logAction === 'opposite_signal_close' || logAction === 'partial_tp_fired') return true
+  if (logAction.startsWith('mgmt_')) return true
+  if (MANAGEMENT_COPIER_ACTIONS.has(signalAction)) return true
+  return false
+}
+
 /** Localized line for the dashboard Channel Worker feed. Returns null to hide internal pipeline rows. */
 export function channelWorkerLogMessage(
   row: ChannelWorkerLogRow,
@@ -342,8 +351,11 @@ export function channelWorkerLogMessage(
 ): string | null {
   const skipReason = row.signals?.skip_reason ?? row.request_payload?.skip_reason ?? row.error_message
   if (isNonTradeSkipReason(skipReason)) return null
-  if (String(getSignalParsedFromLog(row).action ?? '').toLowerCase() === 'ignore') return null
   const logAction = row.action.toLowerCase()
+  const signalAction = signalActionFromLog(row)
+  if (signalAction === 'ignore') return null
+  const signalStatus = String(row.signals?.status ?? '').toLowerCase()
+  if (isTradeUpdateAction(logAction, signalAction) && signalStatus !== 'executed') return null
   const message = buildChannelWorkerLogMessage(row, cw)
   if (!message.trim()) return null
   const channel = resolveChannelNameFromLog(row, channelDisplayNames)
