@@ -49,6 +49,7 @@ import {
 import { useBrokerAccounts } from '../../context/BrokerAccountsContext'
 import { useSubscription } from '../../context/SubscriptionContext'
 import {
+  effectivePlan as resolveEffectivePlan,
   normalizeManualSettingsForPlan,
   planContextForManualSettings,
 } from '../../lib/planLimits'
@@ -97,6 +98,11 @@ import {
   getBrokerDisplayLabel,
 } from '../../lib/brokerChannelLink'
 import { DEFAULT_MANUAL_SETTINGS, DEFAULT_MANUAL_TP_LOTS } from '../../lib/defaultManualSettings'
+import {
+  choosePersistedSelectedChannelId,
+  hasRequestedMultiTradeStyle,
+  shouldBlockMultiTradeSave,
+} from './accountConfigPersistence'
 import type { ConfigureModalTranslations } from '../../i18n/locales/configureModal/types'
 import {
   describeAutoManagementRuleI18n,
@@ -514,6 +520,46 @@ function buildChannelConfigDraftFromBroker(
   }
 }
 
+async function resolveLatestManualSettingsPlanContext(args: {
+  userId: string
+  isAdmin: boolean
+  fallback: { plan: SubscriptionPlan | null | undefined; status: string | null | undefined }
+}): Promise<{
+  plan: SubscriptionPlan | null | undefined
+  status: string | null | undefined
+  effectivePlan: SubscriptionPlan | null
+}> {
+  if (args.isAdmin) {
+    return {
+      plan: 'advanced',
+      status: 'active',
+      effectivePlan: 'advanced',
+    }
+  }
+
+  const { data, error } = await supabase
+    .from('subscriptions')
+    .select('plan,status')
+    .eq('user_id', args.userId)
+    .maybeSingle()
+
+  if (error) {
+    const fallbackEffective = resolveEffectivePlan(args.fallback.plan, args.fallback.status)
+    return {
+      ...args.fallback,
+      effectivePlan: fallbackEffective,
+    }
+  }
+
+  const subscription = data as { plan?: SubscriptionPlan; status?: string | null } | null
+  const effective = resolveEffectivePlan(subscription?.plan, subscription?.status ?? null)
+  const planCtx = planContextForManualSettings(effective, subscription ?? null)
+  return {
+    ...planCtx,
+    effectivePlan: effective,
+  }
+}
+
 function formatLinkedAccountTypeLabel(
   type: LinkedAccountType | undefined,
   labels: { demo: string; live: string },
@@ -575,6 +621,7 @@ export function AccountConfigPage() {
   const {
     subscription,
     effectivePlan,
+    refresh: refreshSubscription,
     hasActiveSubscription,
     canAddBroker,
     canUseFeature: canUsePlanFeature,
@@ -1368,6 +1415,18 @@ export function AccountConfigPage() {
       }
     }
 
+    await refreshSubscription()
+    const savePlanCtx = await resolveLatestManualSettingsPlanContext({
+      userId: user.id,
+      isAdmin,
+      fallback: manualSettingsPlanCtx,
+    })
+    const requestedMulti = hasRequestedMultiTradeStyle(channelIds, configDraft.channelConfigs)
+    if (shouldBlockMultiTradeSave({ requestedMulti, effectivePlan: savePlanCtx.effectivePlan })) {
+      setError(`${cm.risk.basicPlanTradeStyleLimit} Subscription upgrade may still be syncing. Please wait a few seconds and save again.`)
+      return
+    }
+
     setConfigSaving(true)
     const channelMessageFilters: ChannelMessageFiltersMap = {}
     for (const id of channelIds) {
@@ -1383,8 +1442,8 @@ export function AccountConfigPage() {
           {
             mode: configDraft.channelConfigs[id]?.mode ?? 'manual',
             manualSettings: normalizeManualSettingsForPlan(
-              manualSettingsPlanCtx.plan,
-              manualSettingsPlanCtx.status,
+              savePlanCtx.plan,
+              savePlanCtx.status,
               (configDraft.channelConfigs[id]?.manualSettings ?? DEFAULT_MANUAL_SETTINGS) as Record<string, unknown>,
             ) as ManualSettings,
           },
@@ -1401,8 +1460,8 @@ export function AccountConfigPage() {
     const firstConfig = firstId ? configDraft.channelConfigs[firstId] : null
     const normalizedFirstManual = firstConfig
       ? normalizeManualSettingsForPlan(
-          manualSettingsPlanCtx.plan,
-          manualSettingsPlanCtx.status,
+          savePlanCtx.plan,
+          savePlanCtx.status,
           {
             ...firstConfig.manualSettings,
             allow_high_impact_news: firstConfig.manualSettings.news_trading_enabled === true,
@@ -1429,16 +1488,34 @@ export function AccountConfigPage() {
 
     if (upErr) { setError(upErr.message); return }
 
+    let persistedDraft = configDraft
     if (data) {
       const fresh = data as unknown as BrokerAccount
       replaceBroker(fresh)
       setConfigAccount(fresh)
+      const persistedChannelIds = normalizeSignalChannelIds(fresh).filter(id =>
+        channelOptions.some(c => c.id === id),
+      )
+      const rebuilt = buildChannelConfigDraftFromBroker(fresh, persistedChannelIds, keywordFiltersEnabled)
+      const selectedChannelId = choosePersistedSelectedChannelId({
+        preferredSelectedId: configDraft.selectedChannelId,
+        persistedChannelIds,
+        fallbackSelectedId: rebuilt.selectedChannelId ?? channelOptions[0]?.id ?? null,
+      })
+      setConfigDraft({
+        ...rebuilt,
+        selectedChannelId,
+      })
+      persistedDraft = {
+        ...rebuilt,
+        selectedChannelId,
+      }
     }
     setConfigSavedSignature(
       accountConfigDraftPersistSignature(
-        configDraft,
-        manualSettingsPlanCtx.plan,
-        manualSettingsPlanCtx.status,
+        persistedDraft,
+        savePlanCtx.plan,
+        savePlanCtx.status,
         keywordFiltersEnabled,
       ),
     )
@@ -2487,18 +2564,27 @@ export function AccountConfigPage() {
                               <Select
                                 label={cm.risk.tradeStyle}
                                 value={channelManualSettings.trade_style ?? 'single'}
+                                disabled={!multiTradeStyleEnabled}
                                 onChange={e => {
                                   const v = e.target.value as ManualSettings['trade_style']
+                                  if (v === 'multi' && !multiTradeStyleEnabled) {
+                                    setError(cm.risk.basicPlanTradeStyleLimit)
+                                    return
+                                  }
                                   if (v === 'multi') {
                                     setManual({ trade_style: v, use_signal_entry_price: false })
                                   } else {
                                     setManual({ trade_style: v })
                                   }
                                 }}
-                                options={[
-                                  { value: 'single', label: cm.risk.singleTrade },
-                                  { value: 'multi', label: cm.risk.multiTrades },
-                                ]}
+                                options={multiTradeStyleEnabled
+                                  ? [
+                                      { value: 'single', label: cm.risk.singleTrade },
+                                      { value: 'multi', label: cm.risk.multiTrades },
+                                    ]
+                                  : [
+                                      { value: 'single', label: cm.risk.singleTrade },
+                                    ]}
                               />
                             </div>
 

@@ -71,6 +71,8 @@ const emptyUsage: SubscriptionUsage = {
   backtestsThisMonth: 0,
 }
 
+const CHECKOUT_SYNC_PENDING_KEY = 'tscopier.checkout.sync.pending'
+
 const SubscriptionContext = createContext<SubscriptionContextValue>({
   subscription: null,
   loading: true,
@@ -176,6 +178,7 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     if (params.get('checkout') === 'success') {
+      window.sessionStorage.setItem(CHECKOUT_SYNC_PENDING_KEY, '1')
       void fetchSubscription({ background: true })
       params.delete('checkout')
     }
@@ -189,6 +192,43 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
       window.history.replaceState({}, '', next)
     }
   }, [fetchSubscription])
+
+  useEffect(() => {
+    if (!userId) return
+    if (window.sessionStorage.getItem(CHECKOUT_SYNC_PENDING_KEY) !== '1') return
+
+    let done = false
+    const markDone = () => {
+      done = true
+      window.sessionStorage.removeItem(CHECKOUT_SYNC_PENDING_KEY)
+    }
+    const runRefresh = () => {
+      if (done) return
+      void fetchSubscription({ background: true })
+    }
+    const completeRefresh = () => {
+      runRefresh()
+      markDone()
+    }
+
+    const interactionEvents: Array<keyof WindowEventMap> = ['focus', 'pointerdown', 'keydown']
+    for (const evt of interactionEvents) {
+      window.addEventListener(evt, completeRefresh, { once: true })
+    }
+
+    const retryTimers = [2000, 6000, 12000].map(delay =>
+      window.setTimeout(runRefresh, delay),
+    )
+    const clearTimer = window.setTimeout(markDone, 20_000)
+
+    return () => {
+      for (const evt of interactionEvents) {
+        window.removeEventListener(evt, completeRefresh)
+      }
+      retryTimers.forEach(window.clearTimeout)
+      window.clearTimeout(clearTimer)
+    }
+  }, [fetchSubscription, userId])
 
   const openPricingModal = useCallback(() => {
     setPricingModalOpen(true)
