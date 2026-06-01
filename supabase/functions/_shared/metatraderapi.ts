@@ -215,6 +215,15 @@ export function isMtSessionGoneError(err: unknown): boolean {
   return isMtSessionGoneMessage(String(err))
 }
 
+export function isTransientMtApiError(err: unknown): boolean {
+  if (err instanceof MetatraderApiError) {
+    const s = err.status
+    if (s === 502 || s === 503 || s === 504) return true
+  }
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase()
+  return /timeout|fetch failed|network error|connection reset|econnreset|econnrefused|socket hang up|epipe|ehostunreach/.test(msg)
+}
+
 /** OrderSend/CheckConnect rejected because the MT terminal session is offline. */
 export function isBrokerDisconnectedMessage(message: string): boolean {
   const m = message.trim().toLowerCase()
@@ -225,6 +234,11 @@ export function isBrokerDisconnectedMessage(message: string): boolean {
 
 export const MT_SESSION_EXPIRED_HINT =
   "Trading session expired on the broker API. In Account Configuration, use Reconnect and enter your MT password (or remove and link the account again)."
+
+export type KeepSessionAliveStatus =
+  | "alive"
+  | "session_gone"
+  | "token_reconnect_failed"
 
 function assertNoApiError(body: unknown): void {
   if (body == null || typeof body !== "object") return
@@ -340,20 +354,34 @@ export class MetatraderApiClient {
 
   /** Ping session; ConnectByToken only when the session still exists on the bridge. */
   async keepSessionAlive(id: string): Promise<boolean> {
+    const status = await this.keepSessionAliveDetailed(id)
+    return status === "alive"
+  }
+
+  async keepSessionAliveDetailed(id: string): Promise<KeepSessionAliveStatus> {
     try {
       await this.checkConnect(id)
-      return true
+      return "alive"
     } catch (first) {
-      if (isMtSessionGoneError(first)) return false
+      if (isMtSessionGoneError(first)) return "session_gone"
     }
-    try {
-      await this.connectByToken(id)
-      await this.checkConnect(id)
-      return true
-    } catch (second) {
-      if (isMtSessionGoneError(second)) return false
-      return false
+    const MAX_RETRIES = 3
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      try {
+        await this.connectByToken(id)
+        await this.checkConnect(id)
+        return "alive"
+      } catch (err) {
+        if (isMtSessionGoneError(err)) return "session_gone"
+        if (attempt < MAX_RETRIES - 1 && isTransientMtApiError(err)) {
+          const jitterMs = 1000 + Math.random() * 2000
+          await new Promise(r => setTimeout(r, jitterMs))
+          continue
+        }
+        return "token_reconnect_failed"
+      }
     }
+    return "token_reconnect_failed"
   }
 
   /**

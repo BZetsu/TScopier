@@ -9,6 +9,11 @@ const IV_LEN = 12;
 function trimEnv(key) {
     return String(process.env[key] ?? '').trim();
 }
+function resolveEncryptionKeyRaw() {
+    return (trimEnv('BROKER_CREDENTIALS_ENCRYPTION_KEY')
+        || trimEnv('BROKER_CREDENTIALS_KEY')
+        || trimEnv('MT_PASSWORD_ENCRYPTION_KEY'));
+}
 function decodeKeyMaterial(raw) {
     const trimmed = raw.trim();
     if (!trimmed)
@@ -27,13 +32,13 @@ function decodeKeyMaterial(raw) {
     return (0, crypto_1.createHash)('sha256').update(trimmed, 'utf8').digest();
 }
 function isBrokerCredentialsCryptoConfigured() {
-    return Boolean(trimEnv('BROKER_CREDENTIALS_ENCRYPTION_KEY'));
+    return Boolean(resolveEncryptionKeyRaw());
 }
 function encryptMtPassword(plaintext) {
     const password = plaintext.trim();
     if (!password)
         return null;
-    const keyRaw = trimEnv('BROKER_CREDENTIALS_ENCRYPTION_KEY');
+    const keyRaw = resolveEncryptionKeyRaw();
     if (!keyRaw)
         return null;
     const key = decodeKeyMaterial(keyRaw);
@@ -53,7 +58,7 @@ function decryptMtPassword(stored) {
     const parts = value.split(':');
     if (parts.length !== 3 || parts[0] !== PREFIX)
         return null;
-    const keyRaw = trimEnv('BROKER_CREDENTIALS_ENCRYPTION_KEY');
+    const keyRaw = resolveEncryptionKeyRaw();
     if (!keyRaw)
         return null;
     const key = decodeKeyMaterial(keyRaw);

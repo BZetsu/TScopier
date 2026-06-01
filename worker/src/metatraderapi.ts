@@ -450,6 +450,11 @@ export function isTransientMtApiError(err: unknown): boolean {
 export const MT_SESSION_EXPIRED_HINT =
   'Trading session expired on the broker API. In Account Configuration, use Reconnect and enter your MT password (or remove and link the account again).'
 
+export type KeepSessionAliveStatus =
+  | 'alive'
+  | 'session_gone'
+  | 'token_reconnect_failed'
+
 function parseToken(body: unknown, fallbackId: string): string {
   if (typeof body === 'string') {
     const t = body.trim().replace(/^"|"$/g, '')
@@ -606,13 +611,18 @@ export class MetatraderApiClient {
    * ConnectByToken cannot recreate the session — user must ConnectEx with password.
    */
   async keepSessionAlive(id: string): Promise<boolean> {
+    const status = await this.keepSessionAliveDetailed(id)
+    return status === 'alive'
+  }
+
+  async keepSessionAliveDetailed(id: string): Promise<KeepSessionAliveStatus> {
     try {
       await this.checkConnect(id)
-      return true
+      return 'alive'
     } catch (first) {
       if (isMtSessionGoneError(first)) {
         console.warn(`[metatraderapi] MT session gone id=${id} — ${MT_SESSION_EXPIRED_HINT}`)
-        return false
+        return 'session_gone'
       }
       const msg = first instanceof Error ? first.message : String(first)
       console.warn(`[metatraderapi] CheckConnect failed id=${id}: ${msg}; trying ConnectByToken`)
@@ -623,11 +633,11 @@ export class MetatraderApiClient {
       try {
         await this.connectByToken(id)
         await this.checkConnect(id)
-        return true
+        return 'alive'
       } catch (err) {
         if (isMtSessionGoneError(err)) {
           console.warn(`[metatraderapi] MT session gone id=${id} (ConnectByToken attempt ${attempt + 1}) — ${MT_SESSION_EXPIRED_HINT}`)
-          return false
+          return 'session_gone'
         }
         if (attempt < MAX_RETRIES - 1 && isTransientMtApiError(err)) {
           const jitterMs = 1000 + Math.random() * 2000
@@ -636,10 +646,10 @@ export class MetatraderApiClient {
         }
         const msg = err instanceof Error ? err.message : String(err)
         console.warn(`[metatraderapi] keepSessionAlive failed id=${id} (attempt ${attempt + 1}): ${msg}`)
-        return false
+        return 'token_reconnect_failed'
       }
     }
-    return false
+    return 'token_reconnect_failed'
   }
 
   /**

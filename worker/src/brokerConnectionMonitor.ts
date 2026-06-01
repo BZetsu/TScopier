@@ -37,7 +37,14 @@ interface BackoffEntry {
 }
 
 const BACKOFF_BASE_MS = 60_000
-const BACKOFF_MAX_MS = 600_000
+const BACKOFF_MAX_MS = Math.max(
+  BACKOFF_BASE_MS,
+  Math.min(30 * 60_000, Number(process.env.BROKER_RECONNECT_BACKOFF_MAX_MS ?? 300_000) || 300_000),
+)
+const BACKOFF_RESET_AFTER_MS = Math.max(
+  BACKOFF_BASE_MS,
+  Math.min(6 * 60 * 60_000, Number(process.env.BROKER_RECONNECT_BACKOFF_RESET_MS ?? 30 * 60_000) || 30 * 60_000),
+)
 
 function nextBackoffMs(fails: number): number {
   return Math.min(BACKOFF_BASE_MS * Math.pow(2, Math.min(fails - 1, 8)), BACKOFF_MAX_MS)
@@ -52,9 +59,15 @@ const RECONNECT_ACTIVE_MS = monitorActiveIntervalMs(
   Math.max(60_000, Number(process.env.BROKER_RECONNECT_INTERVAL_MS ?? 120_000) || 120_000),
 )
 const RECONNECT_IDLE_MS = monitorIdleIntervalMs('BROKER_RECONNECT_IDLE_MS', 180_000)
+const HARD_RECONNECT_SWEEP_MS = Math.max(
+  60_000,
+  Math.min(6 * 60 * 60_000, Number(process.env.BROKER_HARD_RECONNECT_SWEEP_MS ?? 15 * 60_000) || 15 * 60_000),
+)
 
 export class BrokerConnectionMonitor {
   private reconnectLoop: MonitorLoopHandle | null = null
+  private hardReconnectSweepTimer: NodeJS.Timeout | null = null
+  private hardReconnectSweepInFlight = false
   private readonly backoff = new Map<string, BackoffEntry>()
 
   constructor(private readonly supabase: SupabaseClient) {}
@@ -71,11 +84,24 @@ export class BrokerConnectionMonitor {
       })
       console.log(`[brokerConnection] reconnect sweep active=${RECONNECT_ACTIVE_MS}ms idle=${RECONNECT_IDLE_MS}ms`)
     }
+    if (!this.hardReconnectSweepTimer) {
+      this.hardReconnectSweepTimer = setInterval(() => {
+        void this.hardReconnectSweepTick()
+      }, HARD_RECONNECT_SWEEP_MS)
+      this.hardReconnectSweepTimer.unref?.()
+      // One startup nudge so weekend-open recoveries don't wait for the full interval.
+      setTimeout(() => {
+        void this.hardReconnectSweepTick()
+      }, 30_000).unref?.()
+      console.log(`[brokerConnection] hard reconnect sweep every ${HARD_RECONNECT_SWEEP_MS}ms`)
+    }
   }
 
   stop() {
     this.reconnectLoop?.stop()
     this.reconnectLoop = null
+    if (this.hardReconnectSweepTimer) clearInterval(this.hardReconnectSweepTimer)
+    this.hardReconnectSweepTimer = null
   }
 
   getLoopHandles(): MonitorLoopHandle[] {
@@ -120,14 +146,19 @@ export class BrokerConnectionMonitor {
       const api = this.clientFor(row.platform)
       if (!api) continue
 
+      const existing = this.backoff.get(row.id)
+      if (existing && now - existing.lastAttemptAt >= BACKOFF_RESET_AFTER_MS) {
+        this.backoff.delete(row.id)
+      }
+
       const entry = this.backoff.get(row.id)
       if (entry && now < entry.nextEligibleAt) {
         skipped++
         continue
       }
 
-      const alive = await api.keepSessionAlive(uuid!)
-      if (alive) {
+      const keepalive = await api.keepSessionAliveDetailed(uuid!)
+      if (keepalive === 'alive') {
         if (this.backoff.has(row.id)) {
           console.log(`[brokerConnection] broker=${row.id} recovered after backoff`)
         }
@@ -155,11 +186,11 @@ export class BrokerConnectionMonitor {
           this.backoff.delete(row.id)
           ok++
         } else {
-          this.registerFailure(row, now)
+          this.registerFailure(row, now, 'hard reconnect failed')
           reconnected++
         }
       } else {
-        this.registerFailure(row, now)
+        this.registerFailure(row, now, keepalive)
         reconnected++
       }
     }
@@ -168,7 +199,7 @@ export class BrokerConnectionMonitor {
     }
   }
 
-  private registerFailure(row: BrokerRow, now: number) {
+  private registerFailure(row: BrokerRow, now: number, reason: string) {
     const prev = this.backoff.get(row.id)
     const fails = (prev?.fails ?? 0) + 1
     const delay = nextBackoffMs(fails)
@@ -180,7 +211,68 @@ export class BrokerConnectionMonitor {
       })
     }
     if (fails <= 3 || fails % 10 === 0) {
-      console.warn(`[brokerConnection] broker=${row.id} down (fails=${fails}, next retry in ${Math.round(delay / 1000)}s)`)
+      console.warn(
+        `[brokerConnection] broker=${row.id} down reason=${reason} (fails=${fails}, next retry in ${Math.round(delay / 1000)}s)`,
+      )
+    }
+  }
+
+  private async hardReconnectSweepTick() {
+    if (!hasMetatraderApiConfigured()) return
+    if (this.hardReconnectSweepInFlight) return
+    this.hardReconnectSweepInFlight = true
+    try {
+      const brokersQ = await applyShardToQuery(
+        this.supabase,
+        this.supabase
+          .from('broker_accounts')
+          .select('id,platform,metaapi_account_id,connection_status,account_login,broker_server,auto_reconnect_enabled,mt_password_encrypted')
+          .eq('is_active', true)
+          .eq('connection_status', 'error')
+          .eq('auto_reconnect_enabled', true)
+          .not('mt_password_encrypted', 'is', null),
+      )
+      if (!brokersQ) return
+      const { data, error } = await brokersQ
+      if (error) {
+        console.warn('[brokerConnection] hard sweep load failed:', error.message)
+        return
+      }
+      const rows = (data ?? []) as BrokerRow[]
+      if (rows.length === 0) return
+      let recovered = 0
+      let failed = 0
+      let lastServerKey: string | null = null
+      const now = Date.now()
+
+      for (const row of rows) {
+        const uuid = row.metaapi_account_id?.trim()
+        if (!isMtUuid(uuid)) continue
+        if (!row.account_login || !row.broker_server || !row.mt_password_encrypted) continue
+        const api = this.clientFor(row.platform)
+        if (!api) continue
+        lastServerKey = await pauseIfSameMtServer(lastServerKey, row.platform, row.broker_server)
+        const hardOk = await hardReconnectBrokerSession(this.supabase, api, {
+          id: row.id,
+          platform: row.platform,
+          metaapi_account_id: uuid!,
+          account_login: row.account_login,
+          broker_server: row.broker_server,
+          auto_reconnect_enabled: row.auto_reconnect_enabled,
+          mt_password_encrypted: row.mt_password_encrypted,
+        })
+        if (hardOk) {
+          this.backoff.delete(row.id)
+          recovered += 1
+        } else {
+          failed += 1
+          this.registerFailure(row, now, 'scheduled_hard_reconnect_failed')
+        }
+      }
+
+      console.log(`[brokerConnection] hard sweep done: recovered=${recovered} failed=${failed}`)
+    } finally {
+      this.hardReconnectSweepInFlight = false
     }
   }
 }

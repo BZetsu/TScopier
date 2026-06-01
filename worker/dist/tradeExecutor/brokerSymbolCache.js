@@ -84,16 +84,18 @@ async function sessionHeartbeatTick(ctx) {
                 await (0, brokerConnectionStatus_1.writeBrokerConnectionStatus)(ctx.supabase, row.id, 'connected');
             }
         };
-        const alive = await api.keepSessionAlive(uuid);
-        if (alive) {
+        const initialStatus = await api.keepSessionAliveDetailed(uuid);
+        if (initialStatus === 'alive') {
             await markRecovered();
             continue;
         }
-        await new Promise(r => setTimeout(r, 2000));
-        const retryAlive = await api.keepSessionAlive(uuid);
-        if (retryAlive) {
-            await markRecovered();
-            continue;
+        if (initialStatus !== 'session_gone') {
+            await new Promise(r => setTimeout(r, 2000));
+            const retryStatus = await api.keepSessionAliveDetailed(uuid);
+            if (retryStatus === 'alive') {
+                await markRecovered();
+                continue;
+            }
         }
         if (row.auto_reconnect_enabled
             && row.mt_password_encrypted

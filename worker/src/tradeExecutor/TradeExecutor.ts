@@ -187,6 +187,8 @@ export class TradeExecutor {
   /** Cancels TSCopier broker pendings past `pending_expiry_hours` (1–24) when env enabled. */
   private brokerPendingSweepTimer: NodeJS.Timeout | null = null
   private sessionHeartbeatTimer: NodeJS.Timeout | null = null
+  private sessionHeartbeatInFlight = false
+  private sessionHeartbeatSkipped = 0
   private symbolCacheKeepaliveTimer: NodeJS.Timeout | null = null
   private signalsChannel: RealtimeChannel | null = null
   private brokersChannel: RealtimeChannel | null = null
@@ -282,7 +284,7 @@ export class TradeExecutor {
     }
     void this.prewarmBrokerCaches()
     this.sessionHeartbeatTimer = setInterval(() => {
-      void this.sessionHeartbeatTick()
+      void this.runSessionHeartbeatTick()
     }, BROKER_SESSION_HEARTBEAT_MS)
     this.sessionHeartbeatTimer.unref?.()
     // Re-fetch every cached symbol list / params entry before its TTL expires
@@ -374,6 +376,25 @@ export class TradeExecutor {
 
   async sessionHeartbeatTick(): Promise<void> {
     return await brokerSymbolCache.sessionHeartbeatTick(this)
+  }
+
+  private async runSessionHeartbeatTick(): Promise<void> {
+    if (this.sessionHeartbeatInFlight) {
+      this.sessionHeartbeatSkipped += 1
+      if (this.sessionHeartbeatSkipped <= 3 || this.sessionHeartbeatSkipped % 20 === 0) {
+        console.warn(
+          `[tradeExecutor] heartbeat tick skipped; previous sweep still running (skipped=${this.sessionHeartbeatSkipped})`,
+        )
+      }
+      return
+    }
+    this.sessionHeartbeatInFlight = true
+    try {
+      await this.sessionHeartbeatTick()
+    } finally {
+      this.sessionHeartbeatInFlight = false
+      this.sessionHeartbeatSkipped = 0
+    }
   }
 
   /**

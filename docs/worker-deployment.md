@@ -197,7 +197,14 @@ Tune via env (see `worker/.env.example`):
 | virtual pending / partial TP / auto-mgmt / trail / CWE / signal entry | 1500ms | 60000ms |
 | basket reconcile | 15000ms | 120000ms |
 | executor parsed sweep | 3000ms | 60000ms |
-| broker heartbeat | 15000ms | 120000ms |
+| broker reconnect sweep | 120000ms | 300000ms |
+| forced hard-reconnect sweep | 900000ms | n/a |
+
+Broker keepalive notes:
+
+- `BROKER_SESSION_HEARTBEAT_MS` runs as a fixed interval with single-flight protection (no overlapping heartbeat sweeps).
+- `BROKER_RECONNECT_BACKOFF_MAX_MS` and `BROKER_RECONNECT_BACKOFF_RESET_MS` tune weekend/off-hours retry starvation.
+- `BROKER_HARD_RECONNECT_SWEEP_MS` periodically retries errored accounts with stored credentials even when normal backoff is active.
 
 **`connection_status`** is written only by the worker (`brokerConnectionMonitor`, session-down paths), debounced to at most once per 60s per broker when status unchanged. Edge `check` and frontend health polls are read-only for DB status (local UI state only).
 
