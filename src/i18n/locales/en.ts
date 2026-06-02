@@ -182,9 +182,10 @@ export const en: Translations = {
     checkoutFailed: 'Could not start checkout. Please try again.',
     paywall: {
       noPlanTitle: 'Subscribe to start copying signals',
-      noPlanReason: 'Browse the dashboard freely, but connect brokers, channels, and backtests require an active plan.',
+      noPlanReason: "You're on view only mode. Purchase a subscription plan to connect brokers, Telegram channels and backtests",
       upgradeTitle: 'Upgrade required',
       upgradeCta: 'Upgrade to Advanced',
+      purchaseSubscriptionCta: 'Purchase a Subscription',
       manageBilling: 'Manage billing',
       updatePaymentTitle: 'Update your payment method',
       updatePaymentReason: 'Your subscription is past due. Update billing to restore full access.',

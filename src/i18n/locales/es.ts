@@ -185,6 +185,7 @@ export const es: Translations = {
       noPlanReason: 'Explora el panel libremente; conectar brokers, canales y backtests requiere un plan activo.',
       upgradeTitle: 'Actualización requerida',
       upgradeCta: 'Actualizar a Advanced',
+      purchaseSubscriptionCta: 'Comprar una suscripción',
       manageBilling: 'Gestionar facturación',
       updatePaymentTitle: 'Actualiza tu método de pago',
       updatePaymentReason: 'Tu suscripción está vencida. Actualiza la facturación para restaurar el acceso.',

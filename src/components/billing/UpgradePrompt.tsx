@@ -23,8 +23,13 @@ export function UpgradePrompt({
 }: UpgradePromptProps) {
   const t = useT()
   const pw = t.pricing.paywall
-  const { isPastDue, openUpgrade } = useSubscription()
+  const { isPastDue, openUpgrade, effectivePlan } = useSubscription()
   const heading = title ?? (isPastDue ? pw.updatePaymentTitle : pw.upgradeTitle)
+  const upgradeCta = isPastDue
+    ? pw.updatePayment
+    : effectivePlan === 'basic'
+      ? pw.upgradeCta
+      : pw.purchaseSubscriptionCta
 
   const manageBilling = showManageBilling ?? isPastDue
 
@@ -51,7 +56,7 @@ export function UpgradePrompt({
               </Link>
             ) : null}
             <Button size="sm" onClick={() => openUpgrade('advanced')}>
-              {isPastDue ? pw.updatePayment : pw.upgradeCta}
+              {upgradeCta}
             </Button>
           </div>
         </div>
@@ -68,7 +73,7 @@ export function UpgradePrompt({
           onClick={() => openUpgrade('advanced')}
           className="font-medium text-teal-600 hover:text-teal-700 dark:text-teal-400"
         >
-          {isPastDue ? pw.updatePayment : pw.upgradeCta}
+          {upgradeCta}
         </button>
       </p>
     )
@@ -94,7 +99,7 @@ export function UpgradePrompt({
             </Link>
           ) : null}
           <Button size="sm" onClick={() => openUpgrade('advanced')}>
-            {isPastDue ? pw.updatePayment : pw.upgradeCta}
+            {upgradeCta}
           </Button>
         </div>
       </div>

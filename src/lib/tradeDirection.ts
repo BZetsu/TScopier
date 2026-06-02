@@ -35,7 +35,11 @@ export function resolveTradeDisplayDirection(input: {
 }): 'buy' | 'sell' | '' {
   const fromPrices = inferDirectionFromStopPrices(input.entry_price, input.sl, input.tp)
   const raw = String(input.direction ?? '').toLowerCase()
-  const fromField = raw === 'buy' || raw === 'sell' ? raw : ''
+  const fromField = (() => {
+    if (raw === 'buy' || raw === 'long' || raw.startsWith('buy_')) return 'buy'
+    if (raw === 'sell' || raw === 'short' || raw.startsWith('sell_')) return 'sell'
+    return ''
+  })()
   if (fromPrices && fromField && fromPrices !== fromField) return fromPrices
   return fromField || fromPrices
 }
