@@ -195,6 +195,20 @@ Make sure to secure 30% profits by closing partial lotsize`
     assert.equal(result.parsed.sl, 4505)
   })
 
+  it('skips commentary "short of TP2" chatter with gold mention', () => {
+    const msg = 'Hmmmm 6 pips short of TP2.... Funny you gold. Funny you.'
+    const result = parseChannelMessageSync(msg, DEFAULT_CHANNEL_KEYWORDS, lexicon)
+    assert.equal(result.status, 'skipped')
+    assert.equal(result.parsed.action, 'ignore')
+  })
+
+  it('does not parse bare TP tier references as executable targets', () => {
+    const msg = 'Gold is close to TP2 now'
+    const result = parseChannelMessageSync(msg, DEFAULT_CHANNEL_KEYWORDS, lexicon)
+    assert.equal(result.status, 'skipped')
+    assert.equal(result.parsed.action, 'ignore')
+  })
+
   it('does not close on prose "close to our entry"', () => {
     const msg = `Beforehand? Yes... beforehand.
 You receive signals in here once a day, for free, randomly timed.

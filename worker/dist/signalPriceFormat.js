@@ -31,5 +31,5 @@ function parseSignalPriceListBlock(block) {
 }
 /** Global regex for scanning unlabeled price tokens in free text. */
 function signalPriceTokenRegex(flags = 'g') {
-    return new RegExp(exports.SIGNAL_PRICE_NUM, flags);
+    return new RegExp(`(?<![A-Za-z])${exports.SIGNAL_PRICE_NUM}(?![A-Za-z])`, flags);
 }

@@ -234,7 +234,7 @@ function parseSideFromKeywords(text: string, words: string[]): boolean {
 function buildTpRegex(extraLabels: string[] = []): RegExp {
   const base = ["tp", "take\\s*profit", "target(?:\\s+level)?"]
   const custom = extraLabels.map((x) => escapeRegExp(x.trim())).filter(Boolean)
-  return new RegExp(`\\b(?:${[...base, ...custom].join("|")})\\s*\\d*\\s*[:=\\-]?\\s*(${SIGNAL_PRICE_NUM})`, "gi")
+  return new RegExp(`\\b(?:${[...base, ...custom].join("|")})(?:\\s*[:=\\-]\\s*|\\s+)(${SIGNAL_PRICE_NUM})`, "gi")
 }
 
 function extractTpLevels(message: string, extraLabels: string[] = []): number[] {
@@ -253,6 +253,7 @@ function extractTpLevels(message: string, extraLabels: string[] = []): number[] 
   collect(buildTpRegex(extraLabels))
   collect(new RegExp(`\\b(?:tp|take\\s*profit|target(?:\\s+level)?)\\s*#\\s*\\d+\\s*[:=\\-]\\s*(${SIGNAL_PRICE_NUM})`, 'gi'))
   collect(new RegExp(`\\b(?:tp|take\\s*profit|target(?:\\s+level)?)\\s+\\d+\\s*[:=\\-]\\s*(${SIGNAL_PRICE_NUM})`, 'gi'))
+  collect(new RegExp(`\\b(?:tp|target(?:\\s+level)?)\\s*\\d+\\s*[:=\\-]\\s*(${SIGNAL_PRICE_NUM})`, 'gi'))
   collect(new RegExp(`\\b(?:tp|target(?:\\s+level)?)\\s*\\d+\\s+(${SIGNAL_PRICE_NUM})`, 'gi'))
   for (const m of text.matchAll(
     /\b(?:tp|take\s*profit|target(?:\s+level)?)\s*[:=]?\s*((?:\d+(?:\.\d+)?(?:\s*(?:\/|\band\b|\|)\s*)+)+\d+(?:\.\d+)?)/gi,
@@ -723,7 +724,7 @@ function applyDirectionalPriceInference(
   const hasTp = (parsed.tp ?? []).some(t => typeof t === 'number' && Number.isFinite(t) && t > 0)
   if (hasSl && hasTp) return parsed
 
-  const bare = extractUnlabeledPrices(rawMessage)
+  const bare = bareTradePricesExcludingPips(rawMessage, extractUnlabeledPrices(rawMessage))
   if (!bare.length) return parsed
 
   const classified = classifyPricesByDirection(
@@ -868,6 +869,7 @@ function parseEntryFromKeywords(
 
   const isBuy = parseSideFromKeywords(message, buyAliases)
   const isSell = parseSideFromKeywords(message, sellAliases)
+  if (!isBuy && isSell && /\bshort\s+of\b/i.test(text)) return null
   if (isBuy === isSell) return null
 
   const instrument = extractTradableSymbolFromMessage(message)
@@ -895,7 +897,7 @@ function parseEntryFromKeywords(
     (sl != null && Number.isFinite(sl)) ||
     tp.length > 0 ||
     /\b(limit|pending|@)\b/i.test(text) ||
-    new RegExp(SIGNAL_PRICE_NUM).test(text)
+    bareTradePricesExcludingPips(message, extractUnlabeledPrices(message)).length > 0
 
   if (!hasPriceEvidence) return null
 

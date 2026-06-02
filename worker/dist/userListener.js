@@ -19,6 +19,7 @@ const workerMetrics_1 = require("./workerMetrics");
 const workerConfig_1 = require("./workerConfig");
 const telegramMessageEdit_1 = require("./telegramMessageEdit");
 const multiTradeMerge_1 = require("./multiTradeMerge");
+const signalExecutionEligibility_1 = require("./signalExecutionEligibility");
 const SUPABASE_URL = process.env.SUPABASE_URL ?? '';
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? '';
 const PARSE_SIGNAL_URL = process.env.PARSE_SIGNAL_URL ?? (SUPABASE_URL ? `${SUPABASE_URL.replace(/\/$/, '')}/functions/v1/parse-signal` : '');
@@ -1112,7 +1113,20 @@ class UserListener {
             return false;
         }
         pipelineTs.t_parse_done = Date.now();
-        if (parseResult.status !== 'parsed') {
+        const executionEligibility = (0, signalExecutionEligibility_1.evaluateParsedSignalExecutionEligibility)(parseResult.parsed, rawMessage);
+        const effectiveParseResult = (parseResult.status === 'parsed' && !executionEligibility.eligible)
+            ? {
+                ...parseResult,
+                parsed: {
+                    ...parseResult.parsed,
+                    action: 'ignore',
+                    confidence: 0,
+                },
+                status: 'skipped',
+                skip_reason: executionEligibility.skipReason ?? parseResult.skip_reason,
+            }
+            : parseResult;
+        if (effectiveParseResult.status !== 'parsed') {
             void this.persistSignalBackground({
                 signalId,
                 channelRow,
@@ -1121,7 +1135,7 @@ class UserListener {
                 parentSignalId,
                 replyToMessageId,
                 isReply,
-                parseResult,
+                parseResult: effectiveParseResult,
             });
             return true;
         }
@@ -1133,7 +1147,7 @@ class UserListener {
             parentSignalId,
             replyToMessageId,
             isReply,
-            parseResult,
+            parseResult: effectiveParseResult,
         });
         if (!persisted)
             return false;
@@ -1142,8 +1156,8 @@ class UserListener {
             id: signalId,
             user_id: this.userId,
             channel_id: channelRow.id,
-            parsed_data: parseResult.parsed,
-            status: parseResult.status,
+            parsed_data: effectiveParseResult.parsed,
+            status: effectiveParseResult.status,
             parent_signal_id: parentSignalId,
             is_modification: isReply,
             telegram_message_id: messageId,

@@ -28,6 +28,7 @@ import {
   updateSignalAfterTelegramEdit,
 } from './telegramMessageEdit'
 import { parsedHasSlOrTp } from './multiTradeMerge'
+import { evaluateParsedSignalExecutionEligibility } from './signalExecutionEligibility'
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? ''
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? ''
@@ -1334,7 +1335,23 @@ export class UserListener {
     }
     pipelineTs.t_parse_done = Date.now()
 
-    if (parseResult.status !== 'parsed') {
+    const executionEligibility = evaluateParsedSignalExecutionEligibility(parseResult.parsed, rawMessage)
+    const effectiveParseResult = (
+      parseResult.status === 'parsed' && !executionEligibility.eligible
+    )
+      ? {
+          ...parseResult,
+          parsed: {
+            ...parseResult.parsed,
+            action: 'ignore',
+            confidence: 0,
+          },
+          status: 'skipped',
+          skip_reason: executionEligibility.skipReason ?? parseResult.skip_reason,
+        }
+      : parseResult
+
+    if (effectiveParseResult.status !== 'parsed') {
       void this.persistSignalBackground({
         signalId,
         channelRow,
@@ -1343,7 +1360,7 @@ export class UserListener {
         parentSignalId,
         replyToMessageId,
         isReply,
-        parseResult,
+        parseResult: effectiveParseResult,
       })
       return true
     }
@@ -1356,7 +1373,7 @@ export class UserListener {
       parentSignalId,
       replyToMessageId,
       isReply,
-      parseResult,
+      parseResult: effectiveParseResult,
     })
     if (!persisted) return false
 
@@ -1365,8 +1382,8 @@ export class UserListener {
       id: signalId,
       user_id: this.userId,
       channel_id: channelRow.id,
-      parsed_data: parseResult.parsed as SignalRow['parsed_data'],
-      status: parseResult.status,
+      parsed_data: effectiveParseResult.parsed as SignalRow['parsed_data'],
+      status: effectiveParseResult.status,
       parent_signal_id: parentSignalId,
       is_modification: isReply,
       telegram_message_id: messageId,

@@ -137,7 +137,7 @@ function parseSideFromKeywords(text, words) {
 function buildTpRegex(extraLabels = []) {
     const base = ["tp", "take\\s*profit", "target(?:\\s+level)?"];
     const custom = extraLabels.map((x) => escapeRegExp(x.trim())).filter(Boolean);
-    return new RegExp(`\\b(?:${[...base, ...custom].join("|")})\\s*\\d*\\s*[:=\\-]?\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, "gi");
+    return new RegExp(`\\b(?:${[...base, ...custom].join("|")})(?:\\s*[:=\\-]\\s*|\\s+)(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, "gi");
 }
 function extractTpLevels(message, extraLabels = []) {
     const text = String(message ?? "");
@@ -155,6 +155,8 @@ function extractTpLevels(message, extraLabels = []) {
     collect(new RegExp(`\\b(?:tp|take\\s*profit|target(?:\\s+level)?)\\s*#\\s*\\d+\\s*[:=\\-]\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'gi'));
     // TP 1: 4564 (numbered without hash)
     collect(new RegExp(`\\b(?:tp|take\\s*profit|target(?:\\s+level)?)\\s+\\d+\\s*[:=\\-]\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'gi'));
+    // TP1: 4564 (numbered without space)
+    collect(new RegExp(`\\b(?:tp|target(?:\\s+level)?)\\s*\\d+\\s*[:=\\-]\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'gi'));
     // TP1 4564 (space-separated tier number)
     collect(new RegExp(`\\b(?:tp|target(?:\\s+level)?)\\s*\\d+\\s+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'gi'));
     // TP: 4557 / 4527 (slash-separated tiers on one label — not thousands commas)
@@ -600,7 +602,7 @@ function applyDirectionalPriceInference(parsed, rawMessage) {
     const hasTp = (parsed.tp ?? []).some(t => typeof t === 'number' && Number.isFinite(t) && t > 0);
     if (hasSl && hasTp)
         return parsed;
-    const bare = (0, signalPriceInference_1.extractUnlabeledPrices)(rawMessage);
+    const bare = (0, signalManagementIntent_1.bareTradePricesExcludingPips)(rawMessage, (0, signalPriceInference_1.extractUnlabeledPrices)(rawMessage));
     if (!bare.length)
         return parsed;
     const classified = (0, signalPriceInference_1.classifyPricesByDirection)(action, (0, signalPriceInference_1.entryReferenceFromParsed)(parsed), bare);
@@ -720,6 +722,8 @@ function parseEntryFromKeywords(message, lexicon, channelKeywords) {
         return null;
     const isBuy = parseSideFromKeywords(message, buyAliases);
     const isSell = parseSideFromKeywords(message, sellAliases);
+    if (!isBuy && isSell && /\bshort\s+of\b/i.test(text))
+        return null;
     if (isBuy === isSell)
         return null;
     const instrument = (0, tradableSymbol_1.extractTradableSymbolFromMessage)(message);
@@ -745,7 +749,7 @@ function parseEntryFromKeywords(message, lexicon, channelKeywords) {
         (sl != null && Number.isFinite(sl)) ||
         tp.length > 0 ||
         /\b(limit|pending|@)\b/i.test(text) ||
-        new RegExp(signalPriceFormat_1.SIGNAL_PRICE_NUM).test(text);
+        (0, signalManagementIntent_1.bareTradePricesExcludingPips)(message, (0, signalPriceInference_1.extractUnlabeledPrices)(message)).length > 0;
     if (!hasPriceEvidence)
         return null;
     const { entry_price, entry_zone_low, entry_zone_high } = extractOptionalEntryAnchor(message, channelKeywords);

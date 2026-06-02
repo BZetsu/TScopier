@@ -30,6 +30,7 @@ const helpers_1 = require("./helpers");
 const types_1 = require("./types");
 const telegramMessageEdit_1 = require("../telegramMessageEdit");
 const subscriptionAccess_1 = require("../subscriptionAccess");
+const signalExecutionEligibility_1 = require("../signalExecutionEligibility");
 function shouldUseEntryFastPath(ctx, row) {
     const mode = workerConfig_1.workerConfig.tradeExecutorMode;
     if (mode !== 'entry' && mode !== 'all')
@@ -289,6 +290,11 @@ async function handleSignal(ctx, row, opts) {
         const action = String(parsed.action).toLowerCase();
         if (action === 'ignore')
             return;
+        const executionEligibility = (0, signalExecutionEligibility_1.evaluateParsedSignalExecutionEligibility)(parsed);
+        if (!executionEligibility.eligible) {
+            await ctx.logDispatchSkipped(row, executionEligibility.skipReason ?? 'entry_not_execution_eligible');
+            return;
+        }
         if (isMessageEdit) {
             if (!(0, multiTradeMerge_1.parsedHasSlOrTp)(parsed)) {
                 await ctx.logDispatchSkipped(row, 'message_edit_no_sl_tp');

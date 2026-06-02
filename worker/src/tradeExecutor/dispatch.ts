@@ -40,6 +40,7 @@ import {
   subscriptionBlocksSignalExecution,
   isSubscriptionActive,
 } from '../subscriptionAccess'
+import { evaluateParsedSignalExecutionEligibility } from '../signalExecutionEligibility'
 
 export function shouldUseEntryFastPath(ctx: TradeExecutorContext, row: SignalRow): boolean {
     const mode = workerConfig.tradeExecutorMode
@@ -333,6 +334,11 @@ export async function handleSignal(ctx: TradeExecutorContext,
       if (!parsed || !parsed.action) return
       const action = String(parsed.action).toLowerCase()
       if (action === 'ignore') return
+      const executionEligibility = evaluateParsedSignalExecutionEligibility(parsed)
+      if (!executionEligibility.eligible) {
+        await ctx.logDispatchSkipped(row, executionEligibility.skipReason ?? 'entry_not_execution_eligible')
+        return
+      }
 
       if (isMessageEdit) {
         if (!parsedHasSlOrTp(parsed)) {

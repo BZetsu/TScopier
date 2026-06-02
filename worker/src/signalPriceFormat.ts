@@ -26,5 +26,5 @@ export function parseSignalPriceListBlock(block: string): number[] {
 
 /** Global regex for scanning unlabeled price tokens in free text. */
 export function signalPriceTokenRegex(flags = 'g'): RegExp {
-  return new RegExp(SIGNAL_PRICE_NUM, flags)
+  return new RegExp(`(?<![A-Za-z])${SIGNAL_PRICE_NUM}(?![A-Za-z])`, flags)
 }
