@@ -33,6 +33,21 @@ type ChannelProfile = {
   meta: Record<string, unknown>
 }
 
+type SignalTrainingSchema = {
+  entry_cues: string[]
+  buy_cues: string[]
+  sell_cues: string[]
+  stop_loss_cues: string[]
+  take_profit_cues: string[]
+  take_profit_tier_cues: string[]
+  management_cues: string[]
+  signal_order_pattern: "signal_then_price" | "price_then_signal" | "mixed" | "unknown"
+  signal_requires_price: boolean | null
+  language_hints: string[]
+  sample_signal_examples: string[]
+  notes: string
+}
+
 const FX_QUOTES = new Set(["USD", "EUR", "GBP", "JPY", "CHF", "AUD", "NZD", "CAD"])
 const KNOWN_SYMBOL_ALIASES: Record<string, string> = {
   GOLD: "XAUUSD",
@@ -124,6 +139,101 @@ function inferActionAliases(rows: Array<{ raw_message: string }>): Record<string
     if (/\b(breakeven|break\s*even|sl\s+to\s+entry)\b/.test(msg)) map.breakeven.add("breakeven")
   }
   return Object.fromEntries(Object.entries(map).map(([k, v]) => [k, Array.from(v)]))
+}
+
+function cleanTokens(tokens: unknown): string[] {
+  if (!Array.isArray(tokens)) return []
+  const out = new Set<string>()
+  for (const token of tokens) {
+    const value = String(token ?? "").trim().toLowerCase()
+    if (!value) continue
+    out.add(value)
+  }
+  return Array.from(out)
+}
+
+function normalizeTrainingSchema(raw: unknown): SignalTrainingSchema {
+  const src = raw && typeof raw === "object" ? raw as Record<string, unknown> : {}
+  const orderRaw = String(src.signal_order_pattern ?? "unknown")
+  const signal_order_pattern = (
+    orderRaw === "signal_then_price"
+    || orderRaw === "price_then_signal"
+    || orderRaw === "mixed"
+    || orderRaw === "unknown"
+  ) ? orderRaw : "unknown"
+  const signal_requires_price = typeof src.signal_requires_price === "boolean"
+    ? src.signal_requires_price
+    : null
+  return {
+    entry_cues: cleanTokens(src.entry_cues),
+    buy_cues: cleanTokens(src.buy_cues),
+    sell_cues: cleanTokens(src.sell_cues),
+    stop_loss_cues: cleanTokens(src.stop_loss_cues),
+    take_profit_cues: cleanTokens(src.take_profit_cues),
+    take_profit_tier_cues: cleanTokens(src.take_profit_tier_cues),
+    management_cues: cleanTokens(src.management_cues),
+    signal_order_pattern,
+    signal_requires_price,
+    language_hints: cleanTokens(src.language_hints),
+    sample_signal_examples: cleanTokens(src.sample_signal_examples).slice(0, 8),
+    notes: String(src.notes ?? "").trim().slice(0, 1000),
+  }
+}
+
+function defaultTrainingSchemaFromRows(rows: Array<{ raw_message: string }>): SignalTrainingSchema {
+  const buy = new Set<string>(["buy", "long"])
+  const sell = new Set<string>(["sell", "short"])
+  const entry = new Set<string>(["entry", "@", "at", "price", "now"])
+  const sl = new Set<string>(["sl", "stop loss"])
+  const tp = new Set<string>(["tp", "take profit", "target"])
+  const tpTier = new Set<string>(["tp1", "tp2", "tp3"])
+  const management = new Set<string>(["breakeven", "partial", "close"])
+  const languageHints = new Set<string>()
+  const sampleSignalExamples: string[] = []
+  let signalThenPrice = 0
+  let priceThenSignal = 0
+
+  for (const row of rows.slice(0, 120)) {
+    const msg = String(row.raw_message ?? "").trim()
+    if (!msg) continue
+    const low = msg.toLowerCase()
+    if (/[a-z]/.test(low)) languageHints.add("latin")
+    if (/\b(comprar|venta|acheter|vendre)\b/.test(low)) languageHints.add("romance")
+    if (/\bкупить|продать\b/.test(low)) languageHints.add("cyrillic")
+    if (sampleSignalExamples.length < 6 && /\b(buy|sell|long|short|tp|sl|entry)\b/i.test(msg)) {
+      sampleSignalExamples.push(msg.slice(0, 200))
+    }
+    if (/\b(tp\d+|target\s*\d+)\b/i.test(msg)) tpTier.add("tp1")
+    const firstPriceIdx = msg.search(/\d+(?:\.\d+)?/)
+    const firstSignalIdx = msg.search(/\b(buy|sell|long|short)\b/i)
+    if (firstPriceIdx >= 0 && firstSignalIdx >= 0) {
+      if (firstSignalIdx < firstPriceIdx) signalThenPrice += 1
+      else priceThenSignal += 1
+    }
+  }
+
+  const signal_order_pattern = signalThenPrice > 0 && priceThenSignal > 0
+    ? "mixed"
+    : signalThenPrice > 0
+      ? "signal_then_price"
+      : priceThenSignal > 0
+        ? "price_then_signal"
+        : "unknown"
+
+  return {
+    entry_cues: Array.from(entry),
+    buy_cues: Array.from(buy),
+    sell_cues: Array.from(sell),
+    stop_loss_cues: Array.from(sl),
+    take_profit_cues: Array.from(tp),
+    take_profit_tier_cues: Array.from(tpTier),
+    management_cues: Array.from(management),
+    signal_order_pattern,
+    signal_requires_price: null,
+    language_hints: Array.from(languageHints),
+    sample_signal_examples: sampleSignalExamples,
+    notes: "",
+  }
 }
 
 function pipSize(symbolRaw: string | null, price: number): number {
@@ -315,7 +425,6 @@ Use these categories when possible:
 - sl_style: "fixed_sl" | "mixed_sl_usage" | "no_sl"
 - entry_type: "no_entry_price" | "single" | "range" | "mixed"
 Keep summary concise (max 220 chars).`
-
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -355,6 +464,118 @@ Keep summary concise (max 220 chars).`
   }
 }
 
+async function aiExtractTrainingSchema(
+  rows: Array<{ raw_message: string; parsed_data: unknown }>,
+): Promise<SignalTrainingSchema | null> {
+  if (!OPENAI_API_KEY || !rows.length) return null
+  const sample = rows.slice(0, 80).map((r) => String(r.raw_message ?? "").trim()).filter(Boolean)
+  const prompt = `You extract per-channel signal training schema for a trading copier.
+Return strict JSON only with keys:
+{
+  "entry_cues": string[],
+  "buy_cues": string[],
+  "sell_cues": string[],
+  "stop_loss_cues": string[],
+  "take_profit_cues": string[],
+  "take_profit_tier_cues": string[],
+  "management_cues": string[],
+  "signal_order_pattern": "signal_then_price" | "price_then_signal" | "mixed" | "unknown",
+  "signal_requires_price": boolean | null,
+  "language_hints": string[],
+  "sample_signal_examples": string[],
+  "notes": string
+}
+Rules:
+- Include channel-native words/synonyms from any language.
+- No prose outside JSON.
+- Keep arrays deduplicated and concise.`
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${OPENAI_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "gpt-4o-mini",
+      temperature: 0,
+      max_tokens: 800,
+      messages: [
+        { role: "system", content: prompt },
+        { role: "user", content: JSON.stringify({ sample_messages: sample }) },
+      ],
+    }),
+  })
+  if (!res.ok) return null
+  const data = await res.json()
+  const content = data?.choices?.[0]?.message?.content ?? ""
+  try {
+    return normalizeTrainingSchema(JSON.parse(content))
+  } catch {
+    return null
+  }
+}
+
+async function persistTrainingSchema(args: {
+  supabase: ReturnType<typeof createClient>
+  userId: string
+  channelId: string
+  training: SignalTrainingSchema
+}): Promise<void> {
+  const { supabase, userId, channelId, training } = args
+  const { data: channelRes } = await supabase
+    .from("telegram_channels")
+    .select("channel_keywords")
+    .eq("id", channelId)
+    .eq("user_id", userId)
+    .maybeSingle()
+  const currentKeywords = channelRes?.channel_keywords && typeof channelRes.channel_keywords === "object"
+    ? channelRes.channel_keywords as Record<string, unknown>
+    : {}
+  const signal = currentKeywords.signal && typeof currentKeywords.signal === "object"
+    ? currentKeywords.signal as Record<string, unknown>
+    : {}
+  const updateSignal = {
+    ...signal,
+    entry_point: training.entry_cues.join("|") || String(signal.entry_point ?? "ENTRY"),
+    buy: training.buy_cues.join("|") || String(signal.buy ?? "BUY"),
+    sell: training.sell_cues.join("|") || String(signal.sell ?? "SELL"),
+    sl: training.stop_loss_cues.join("|") || String(signal.sl ?? "SL"),
+    tp: training.take_profit_cues.join("|") || String(signal.tp ?? "TP"),
+  }
+  const additional = currentKeywords.additional && typeof currentKeywords.additional === "object"
+    ? currentKeywords.additional as Record<string, unknown>
+    : {}
+  const updatedKeywords = {
+    ...currentKeywords,
+    signal: updateSignal,
+    additional: {
+      ...additional,
+      ai_signal_order_pattern: training.signal_order_pattern,
+      ai_signal_requires_price: training.signal_requires_price,
+    },
+  }
+  await supabase
+    .from("telegram_channels")
+    .update({ channel_keywords: updatedKeywords })
+    .eq("id", channelId)
+    .eq("user_id", userId)
+
+  await supabase
+    .from("channel_signal_lexicon")
+    .upsert({
+      user_id: userId,
+      channel_id: channelId,
+      action_aliases: {
+        buy: training.buy_cues,
+        sell: training.sell_cues,
+        modify: training.management_cues,
+      },
+      tp_aliases: training.take_profit_tier_cues.length ? training.take_profit_tier_cues : training.take_profit_cues,
+      target_aliases: training.take_profit_cues,
+      unknown_tokens: training.language_hints,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "channel_id" })
+}
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 200, headers: corsHeaders })
 
@@ -371,6 +592,7 @@ Deno.serve(async (req: Request) => {
     const userId = authData.user.id
 
     const body = await req.json()
+    const action = String(body?.action ?? "analyze")
     const channelId = String(body?.channel_id ?? "")
     const lookbackDays = Math.max(1, Math.min(90, Number(body?.lookback_days ?? 30)))
     const historicalMessages = Array.isArray(body?.historical_messages)
@@ -466,8 +688,45 @@ Deno.serve(async (req: Request) => {
       .filter((s) => s.length > 0)
       .sort((a, b) => (symbolCounts[b] ?? 0) - (symbolCounts[a] ?? 0) || a.localeCompare(b))
 
+    if (action === "save_training") {
+      const schema = normalizeTrainingSchema(body?.training_schema)
+      await persistTrainingSchema({ supabase, userId, channelId, training: schema })
+      await supabase
+        .from("channel_signal_profiles")
+        .update({
+          meta: {
+            ...(upserted?.meta && typeof upserted.meta === "object" ? upserted.meta as Record<string, unknown> : {}),
+            ai_training_schema: schema,
+            ai_training_saved_at: new Date().toISOString(),
+          },
+          updated_at: new Date().toISOString(),
+        })
+        .eq("channel_id", channelId)
+        .eq("user_id", userId)
+      return Response.json({ ok: true, training_schema: schema }, { headers: corsHeaders })
+    }
+
+    const trainingSchema = action === "train"
+      ? (await aiExtractTrainingSchema(mergedRows) ?? defaultTrainingSchemaFromRows(mergedRows))
+      : null
+    if (trainingSchema) {
+      await persistTrainingSchema({ supabase, userId, channelId, training: trainingSchema })
+      await supabase
+        .from("channel_signal_profiles")
+        .update({
+          meta: {
+            ...(upserted?.meta && typeof upserted.meta === "object" ? upserted.meta as Record<string, unknown> : {}),
+            ai_training_schema: trainingSchema,
+            ai_training_trained_at: new Date().toISOString(),
+          },
+          updated_at: new Date().toISOString(),
+        })
+        .eq("channel_id", channelId)
+        .eq("user_id", userId)
+    }
+
     return Response.json(
-      { ok: true, profile: upserted, detected_symbols },
+      { ok: true, profile: upserted, detected_symbols, ...(trainingSchema ? { training_schema: trainingSchema } : {}) },
       { headers: corsHeaders },
     )
   } catch (e: unknown) {

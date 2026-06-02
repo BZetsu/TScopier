@@ -18,6 +18,30 @@ export type AnalyzeChannelProfileResult = {
   error?: string
 }
 
+export type SignalTrainingSchema = {
+  entry_cues: string[]
+  buy_cues: string[]
+  sell_cues: string[]
+  stop_loss_cues: string[]
+  take_profit_cues: string[]
+  take_profit_tier_cues: string[]
+  management_cues: string[]
+  signal_order_pattern: 'signal_then_price' | 'price_then_signal' | 'mixed' | 'unknown'
+  signal_requires_price: boolean | null
+  language_hints: string[]
+  sample_signal_examples: string[]
+  notes: string
+}
+
+export type TrainChannelSignalsResult = {
+  ok: boolean
+  training_schema?: SignalTrainingSchema
+  profile?: {
+    meta?: Record<string, unknown>
+  }
+  error?: string
+}
+
 async function callAnalyzeChannelProfile(body: Record<string, unknown>): Promise<AnalyzeChannelProfileResult> {
   const session = (await supabase.auth.getSession()).data.session
   const token = session?.access_token
@@ -65,6 +89,28 @@ export async function analyzeChannelProfile(
   lookbackDays = 30,
 ): Promise<AnalyzeChannelProfileResult> {
   return callAnalyzeChannelProfile({ channel_id: channelId, lookback_days: lookbackDays })
+}
+
+export async function trainChannelSignals(
+  channelId: string,
+  lookbackDays = 30,
+): Promise<TrainChannelSignalsResult> {
+  return callAnalyzeChannelProfile({
+    channel_id: channelId,
+    lookback_days: lookbackDays,
+    action: 'train',
+  }) as Promise<TrainChannelSignalsResult>
+}
+
+export async function saveChannelTraining(
+  channelId: string,
+  trainingSchema: SignalTrainingSchema,
+): Promise<TrainChannelSignalsResult> {
+  return callAnalyzeChannelProfile({
+    channel_id: channelId,
+    action: 'save_training',
+    training_schema: trainingSchema,
+  }) as Promise<TrainChannelSignalsResult>
 }
 
 export function detectedSymbolsFromProfileResponse(

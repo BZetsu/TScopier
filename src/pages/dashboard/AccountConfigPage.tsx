@@ -37,6 +37,9 @@ import { BROKER_ACCOUNT_CLIENT_SELECT } from '../../lib/brokerAccountSelect'
 import {
   analyzeChannelProfile,
   detectedSymbolsFromProfileResponse,
+  saveChannelTraining,
+  trainChannelSignals,
+  type SignalTrainingSchema,
 } from '../../lib/analyzeChannelProfile'
 import {
   detectChannelSymbols,
@@ -188,6 +191,34 @@ interface AccountConfigDraft {
   channelIds: string[]
   selectedChannelId: string | null
   channelConfigs: Record<string, ChannelConfigDraft>
+}
+
+function defaultSignalTrainingSchema(): SignalTrainingSchema {
+  return {
+    entry_cues: ['entry', '@', 'at', 'price', 'now'],
+    buy_cues: ['buy', 'long'],
+    sell_cues: ['sell', 'short'],
+    stop_loss_cues: ['sl', 'stop loss'],
+    take_profit_cues: ['tp', 'take profit', 'target'],
+    take_profit_tier_cues: ['tp1', 'tp2', 'tp3'],
+    management_cues: ['breakeven', 'partial', 'close'],
+    signal_order_pattern: 'unknown',
+    signal_requires_price: null,
+    language_hints: [],
+    sample_signal_examples: [],
+    notes: '',
+  }
+}
+
+function csvToTokens(raw: string): string[] {
+  return raw
+    .split(',')
+    .map(v => v.trim())
+    .filter(Boolean)
+}
+
+function tokensToCsv(values: string[]): string {
+  return values.join(', ')
 }
 
 /** Split `total` across `count` slots as non-negative integers that sum exactly to `total`. */
@@ -434,7 +465,7 @@ function AccountDetailCell({
   )
 }
 
-type ManualSubTabId = 'symbols' | 'channel_instructions' | 'risk' | 'stops' | 'management' | 'filters'
+type ManualSubTabId = 'symbols' | 'channel_instructions' | 'risk' | 'stops' | 'management' | 'filters' | 'ai_training'
 
 interface ManualSubTabDef {
   id: ManualSubTabId
@@ -584,6 +615,7 @@ export function AccountConfigPage() {
       { id: 'stops', label: cm.manualSubTabs.stops, icon: Target },
       { id: 'management', label: cm.manualSubTabs.management, icon: Settings2 },
       { id: 'filters', label: cm.manualSubTabs.filters, icon: Filter },
+      { id: 'ai_training', label: cm.manualSubTabs.aiTraining, icon: Activity },
     ],
     [
       cm.manualSubTabs.symbols,
@@ -592,6 +624,7 @@ export function AccountConfigPage() {
       cm.manualSubTabs.stops,
       cm.manualSubTabs.management,
       cm.manualSubTabs.filters,
+      cm.manualSubTabs.aiTraining,
     ],
   )
 
@@ -658,6 +691,10 @@ export function AccountConfigPage() {
   const [channelSymbolsLoading, setChannelSymbolsLoading] = useState(false)
   const [channelSymbolsRefreshing, setChannelSymbolsRefreshing] = useState(false)
   const [channelSignalSampleCount, setChannelSignalSampleCount] = useState(0)
+  const [trainingByChannel, setTrainingByChannel] = useState<Record<string, SignalTrainingSchema>>({})
+  const [trainingLoading, setTrainingLoading] = useState(false)
+  const [trainingRunning, setTrainingRunning] = useState(false)
+  const [trainingSaving, setTrainingSaving] = useState(false)
   const [configSaving, setConfigSaving] = useState(false)
   const [channelConnecting, setChannelConnecting] = useState(false)
   const [configSavedAt, setConfigSavedAt] = useState<number | null>(null)
@@ -801,6 +838,12 @@ export function AccountConfigPage() {
     configDraft.selectedChannelId
     && configDraft.channelIds.includes(configDraft.selectedChannelId),
   )
+
+  const activeTrainingDraft = useMemo(() => {
+    const channelId = configDraft.selectedChannelId
+    if (!channelId) return defaultSignalTrainingSchema()
+    return trainingByChannel[channelId] ?? defaultSignalTrainingSchema()
+  }, [configDraft.selectedChannelId, trainingByChannel])
 
   const multiTradePreview = useMemo(() => {
     const ms = channelManualSettings
@@ -1003,6 +1046,79 @@ export function AccountConfigPage() {
     }
   }
 
+  const loadChannelTrainingDraft = async (channelId: string) => {
+    if (!userId) return
+    setTrainingLoading(true)
+    try {
+      const { data, error: profileErr } = await supabase
+        .from('channel_signal_profiles')
+        .select('meta')
+        .eq('channel_id', channelId)
+        .eq('user_id', userId)
+        .maybeSingle()
+      if (profileErr) throw new Error(profileErr.message)
+      const meta = data?.meta && typeof data.meta === 'object'
+        ? data.meta as Record<string, unknown>
+        : {}
+      const raw = meta.ai_training_schema
+      const base = defaultSignalTrainingSchema()
+      const training = raw && typeof raw === 'object'
+        ? {
+            ...base,
+            ...(raw as Partial<SignalTrainingSchema>),
+            entry_cues: Array.isArray((raw as Record<string, unknown>).entry_cues) ? (raw as Record<string, unknown>).entry_cues as string[] : base.entry_cues,
+            buy_cues: Array.isArray((raw as Record<string, unknown>).buy_cues) ? (raw as Record<string, unknown>).buy_cues as string[] : base.buy_cues,
+            sell_cues: Array.isArray((raw as Record<string, unknown>).sell_cues) ? (raw as Record<string, unknown>).sell_cues as string[] : base.sell_cues,
+            stop_loss_cues: Array.isArray((raw as Record<string, unknown>).stop_loss_cues) ? (raw as Record<string, unknown>).stop_loss_cues as string[] : base.stop_loss_cues,
+            take_profit_cues: Array.isArray((raw as Record<string, unknown>).take_profit_cues) ? (raw as Record<string, unknown>).take_profit_cues as string[] : base.take_profit_cues,
+            take_profit_tier_cues: Array.isArray((raw as Record<string, unknown>).take_profit_tier_cues) ? (raw as Record<string, unknown>).take_profit_tier_cues as string[] : base.take_profit_tier_cues,
+            management_cues: Array.isArray((raw as Record<string, unknown>).management_cues) ? (raw as Record<string, unknown>).management_cues as string[] : base.management_cues,
+            language_hints: Array.isArray((raw as Record<string, unknown>).language_hints) ? (raw as Record<string, unknown>).language_hints as string[] : base.language_hints,
+            sample_signal_examples: Array.isArray((raw as Record<string, unknown>).sample_signal_examples) ? (raw as Record<string, unknown>).sample_signal_examples as string[] : base.sample_signal_examples,
+            notes: String((raw as Record<string, unknown>).notes ?? ''),
+          }
+        : base
+      setTrainingByChannel(prev => ({ ...prev, [channelId]: training }))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load AI training')
+      setTrainingByChannel(prev => ({ ...prev, [channelId]: defaultSignalTrainingSchema() }))
+    } finally {
+      setTrainingLoading(false)
+    }
+  }
+
+  const runAiTraining = async (channelId: string) => {
+    setTrainingRunning(true)
+    setError('')
+    try {
+      const result = await trainChannelSignals(channelId, CHANNEL_SYMBOL_LOOKBACK_DAYS)
+      if (!result.ok || !result.training_schema) {
+        throw new Error(result.error || 'AI training failed')
+      }
+      setTrainingByChannel(prev => ({ ...prev, [channelId]: result.training_schema! }))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'AI training failed')
+    } finally {
+      setTrainingRunning(false)
+    }
+  }
+
+  const saveAiTrainingDraft = async (channelId: string) => {
+    const schema = trainingByChannel[channelId]
+    if (!schema) return
+    setTrainingSaving(true)
+    setError('')
+    try {
+      const result = await saveChannelTraining(channelId, schema)
+      if (!result.ok) throw new Error(result.error || 'Failed to save AI training')
+      setConfigSavedAt(Date.now())
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save AI training')
+    } finally {
+      setTrainingSaving(false)
+    }
+  }
+
   const refreshTradingPresets = async (uid: string) => {
     setPresetsLoading(true)
     try {
@@ -1138,6 +1254,12 @@ export function AccountConfigPage() {
     if (!configAccount || !configDraft.selectedChannelId || !userId) return
     void loadChannelSymbols(configDraft.selectedChannelId)
   // eslint-disable-next-line react-hooks/exhaustive-deps -- reload symbols when switching channels in modal
+  }, [configDraft.selectedChannelId, configAccount?.id, userId])
+
+  useEffect(() => {
+    if (!configAccount || !configDraft.selectedChannelId || !userId) return
+    void loadChannelTrainingDraft(configDraft.selectedChannelId)
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- reload training when switching channels in modal
   }, [configDraft.selectedChannelId, configAccount?.id, userId])
 
   const channelSymbolSelection = useMemo(() => {
@@ -1307,6 +1429,16 @@ export function AccountConfigPage() {
     patchSelectedChannel(current => ({
       ...current,
       manualSettings: { ...current.manualSettings, ...patch },
+    }))
+  }
+
+  const setTrainingDraft = (channelId: string, patch: Partial<SignalTrainingSchema>) => {
+    setTrainingByChannel(prev => ({
+      ...prev,
+      [channelId]: {
+        ...(prev[channelId] ?? defaultSignalTrainingSchema()),
+        ...patch,
+      },
     }))
   }
 
@@ -2515,6 +2647,142 @@ export function AccountConfigPage() {
                                 </div>
                               ) : null}
                             </div>
+                          ) : (
+                            <p className="text-sm text-neutral-500 dark:text-neutral-400">{cm.channels.selectChannelFirst}</p>
+                          )
+                        )}
+
+                        {activeManualSubTab === 'ai_training' && (
+                          selectedChannelOption && configDraft.selectedChannelId ? (
+                            <section className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 space-y-4">
+                              <div className="flex flex-wrap items-start justify-between gap-3">
+                                <div>
+                                  <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">
+                                    {cm.aiTraining.title}
+                                  </p>
+                                  <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1 max-w-2xl">
+                                    {cm.aiTraining.intro}
+                                  </p>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <Button
+                                    type="button"
+                                    variant="secondary"
+                                    size="sm"
+                                    loading={trainingRunning}
+                                    disabled={trainingSaving || configSaving || presetSaving}
+                                    onClick={() => void runAiTraining(configDraft.selectedChannelId!)}
+                                  >
+                                    <RefreshCw className="w-3.5 h-3.5" />
+                                    {trainingRunning ? cm.aiTraining.training : cm.aiTraining.trainButton}
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    loading={trainingSaving}
+                                    disabled={trainingRunning || configSaving || presetSaving}
+                                    onClick={() => void saveAiTrainingDraft(configDraft.selectedChannelId!)}
+                                  >
+                                    {cm.aiTraining.saveButton}
+                                  </Button>
+                                </div>
+                              </div>
+                              {trainingLoading ? (
+                                <p className="text-xs text-neutral-500 dark:text-neutral-400">{cm.aiTraining.loadingExisting}</p>
+                              ) : (
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                  <Input
+                                    label={cm.aiTraining.entryCues}
+                                    value={tokensToCsv(activeTrainingDraft.entry_cues)}
+                                    hint={cm.aiTraining.commaSeparatedHint}
+                                    onChange={e => setTrainingDraft(configDraft.selectedChannelId!, { entry_cues: csvToTokens(e.target.value) })}
+                                  />
+                                  <Input
+                                    label={cm.aiTraining.buyCues}
+                                    value={tokensToCsv(activeTrainingDraft.buy_cues)}
+                                    hint={cm.aiTraining.commaSeparatedHint}
+                                    onChange={e => setTrainingDraft(configDraft.selectedChannelId!, { buy_cues: csvToTokens(e.target.value) })}
+                                  />
+                                  <Input
+                                    label={cm.aiTraining.sellCues}
+                                    value={tokensToCsv(activeTrainingDraft.sell_cues)}
+                                    hint={cm.aiTraining.commaSeparatedHint}
+                                    onChange={e => setTrainingDraft(configDraft.selectedChannelId!, { sell_cues: csvToTokens(e.target.value) })}
+                                  />
+                                  <Input
+                                    label={cm.aiTraining.stopLossCues}
+                                    value={tokensToCsv(activeTrainingDraft.stop_loss_cues)}
+                                    hint={cm.aiTraining.commaSeparatedHint}
+                                    onChange={e => setTrainingDraft(configDraft.selectedChannelId!, { stop_loss_cues: csvToTokens(e.target.value) })}
+                                  />
+                                  <Input
+                                    label={cm.aiTraining.takeProfitCues}
+                                    value={tokensToCsv(activeTrainingDraft.take_profit_cues)}
+                                    hint={cm.aiTraining.commaSeparatedHint}
+                                    onChange={e => setTrainingDraft(configDraft.selectedChannelId!, { take_profit_cues: csvToTokens(e.target.value) })}
+                                  />
+                                  <Input
+                                    label={cm.aiTraining.takeProfitTierCues}
+                                    value={tokensToCsv(activeTrainingDraft.take_profit_tier_cues)}
+                                    hint={cm.aiTraining.commaSeparatedHint}
+                                    onChange={e => setTrainingDraft(configDraft.selectedChannelId!, { take_profit_tier_cues: csvToTokens(e.target.value) })}
+                                  />
+                                  <Input
+                                    label={cm.aiTraining.managementCues}
+                                    value={tokensToCsv(activeTrainingDraft.management_cues)}
+                                    hint={cm.aiTraining.commaSeparatedHint}
+                                    onChange={e => setTrainingDraft(configDraft.selectedChannelId!, { management_cues: csvToTokens(e.target.value) })}
+                                  />
+                                  <Input
+                                    label={cm.aiTraining.languageHints}
+                                    value={tokensToCsv(activeTrainingDraft.language_hints)}
+                                    hint={cm.aiTraining.commaSeparatedHint}
+                                    onChange={e => setTrainingDraft(configDraft.selectedChannelId!, { language_hints: csvToTokens(e.target.value) })}
+                                  />
+                                  <Select
+                                    label={cm.aiTraining.signalOrderPattern}
+                                    value={activeTrainingDraft.signal_order_pattern}
+                                    onChange={e => setTrainingDraft(configDraft.selectedChannelId!, { signal_order_pattern: e.target.value as SignalTrainingSchema['signal_order_pattern'] })}
+                                    options={[
+                                      { value: 'signal_then_price', label: cm.aiTraining.signalOrderPatternOptions.signalThenPrice },
+                                      { value: 'price_then_signal', label: cm.aiTraining.signalOrderPatternOptions.priceThenSignal },
+                                      { value: 'mixed', label: cm.aiTraining.signalOrderPatternOptions.mixed },
+                                      { value: 'unknown', label: cm.aiTraining.signalOrderPatternOptions.unknown },
+                                    ]}
+                                  />
+                                  <Select
+                                    label={cm.aiTraining.signalRequiresPrice}
+                                    value={
+                                      activeTrainingDraft.signal_requires_price == null
+                                        ? 'unknown'
+                                        : activeTrainingDraft.signal_requires_price ? 'yes' : 'no'
+                                    }
+                                    onChange={e =>
+                                      setTrainingDraft(configDraft.selectedChannelId!, {
+                                        signal_requires_price: e.target.value === 'unknown' ? null : e.target.value === 'yes',
+                                      })
+                                    }
+                                    options={[
+                                      { value: 'unknown', label: cm.aiTraining.requiresPriceOptions.unknown },
+                                      { value: 'yes', label: cm.aiTraining.requiresPriceOptions.yes },
+                                      { value: 'no', label: cm.aiTraining.requiresPriceOptions.no },
+                                    ]}
+                                  />
+                                  <Input
+                                    label={cm.aiTraining.sampleExamples}
+                                    value={tokensToCsv(activeTrainingDraft.sample_signal_examples)}
+                                    hint={cm.aiTraining.commaSeparatedHint}
+                                    onChange={e => setTrainingDraft(configDraft.selectedChannelId!, { sample_signal_examples: csvToTokens(e.target.value) })}
+                                  />
+                                  <Input
+                                    label={cm.aiTraining.notes}
+                                    value={activeTrainingDraft.notes}
+                                    onChange={e => setTrainingDraft(configDraft.selectedChannelId!, { notes: e.target.value })}
+                                  />
+                                </div>
+                              )}
+                              <p className="text-xs text-neutral-500 dark:text-neutral-400">{cm.aiTraining.trainHint}</p>
+                            </section>
                           ) : (
                             <p className="text-sm text-neutral-500 dark:text-neutral-400">{cm.channels.selectChannelFirst}</p>
                           )

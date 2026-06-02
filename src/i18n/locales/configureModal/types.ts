@@ -50,6 +50,40 @@ export interface ConfigureModalTranslations {
     stops: string
     management: string
     filters: string
+    aiTraining: string
+  }
+  aiTraining: {
+    title: string
+    intro: string
+    trainButton: string
+    training: string
+    saveButton: string
+    loadingExisting: string
+    trainHint: string
+    entryCues: string
+    buyCues: string
+    sellCues: string
+    stopLossCues: string
+    takeProfitCues: string
+    takeProfitTierCues: string
+    managementCues: string
+    languageHints: string
+    sampleExamples: string
+    signalOrderPattern: string
+    signalRequiresPrice: string
+    notes: string
+    signalOrderPatternOptions: {
+      signalThenPrice: string
+      priceThenSignal: string
+      mixed: string
+      unknown: string
+    }
+    requiresPriceOptions: {
+      unknown: string
+      yes: string
+      no: string
+    }
+    commaSeparatedHint: string
   }
   channelSymbols: {
     title: string

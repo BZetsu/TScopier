@@ -238,4 +238,34 @@ My private community, receives more trades, for free as well, but receive it bef
     assert.equal(result.parsed.sl, 4590.01)
     assert.deepEqual(result.parsed.tp, [4535.53])
   })
+
+  it('parses trained non-English cues via channel keywords and lexicon aliases', () => {
+    const trainedKeywords = {
+      ...DEFAULT_CHANNEL_KEYWORDS,
+      signal: {
+        ...DEFAULT_CHANNEL_KEYWORDS.signal,
+        buy: 'ACHETER',
+        sell: 'VENDRE',
+        sl: 'STOP',
+        tp: 'OBJECTIF',
+        entry_point: 'ENTRÉE|ENTRY',
+      },
+    }
+    const trainedLexicon: ChannelLexiconRow = {
+      user_id: 'u1',
+      channel_id: 'c1',
+      action_aliases: null,
+      tp_aliases: ['objectif', 'cible'],
+      target_aliases: ['cible'],
+      unknown_tokens: null,
+    }
+    const msg = 'ACHETER GOLD ENTRÉE 4500 STOP 4488 OBJECTIF 4520'
+    const result = parseChannelMessageSync(msg, trainedKeywords, trainedLexicon)
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.action, 'buy')
+    assert.equal(result.parsed.symbol, 'XAUUSD')
+    assert.equal(result.parsed.entry_price, 4500)
+    assert.equal(result.parsed.sl, 4488)
+    assert.deepEqual(result.parsed.tp, [4520])
+  })
 })
