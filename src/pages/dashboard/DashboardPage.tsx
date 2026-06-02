@@ -823,6 +823,13 @@ export function DashboardPage() {
     )
   }, [chartTrades, channelLinkMaps, t.performance.unlinkedChannel])
 
+  const visibleChannelWorkerLogs = useMemo(
+    () => aiExpertLogs.filter(
+      row => channelWorkerLogMessage(row, t.channelWorker, channelDisplayNames) != null,
+    ),
+    [aiExpertLogs, channelDisplayNames, t.channelWorker],
+  )
+
   const linkedAccountPerformance = useMemo(() => {
     const tradesByAccountId: Record<string, TradeStatsRow[]> = {}
     const mtTrades = mtTradesRef.current
@@ -1913,7 +1920,7 @@ export function DashboardPage() {
             </button>
           </div>
 
-          {aiExpertLogs.length === 0 && chartsEmpty ? (
+          {visibleChannelWorkerLogs.length === 0 && chartsEmpty && aiExpertLogs.length === 0 ? (
             <div className="divide-y divide-neutral-100 dark:divide-neutral-800">
               {[...Array(5)].map((_, i) => (
                 <div key={i} className="px-5 py-3">
@@ -1922,11 +1929,11 @@ export function DashboardPage() {
                 </div>
               ))}
             </div>
-          ) : aiExpertLogs.length === 0 ? (
+          ) : visibleChannelWorkerLogs.length === 0 ? (
             <div className="px-5 py-10 text-sm text-neutral-400">{t.dashboard.noChannelWorkerLogs}</div>
           ) : (
             <div className="divide-y divide-neutral-100 dark:divide-neutral-800 max-h-96 overflow-y-auto">
-              {aiExpertLogs.map(row => (
+              {visibleChannelWorkerLogs.map(row => (
                 <AiExpertLogItem key={row.id} row={row} channelDisplayNames={channelDisplayNames} />
               ))}
             </div>

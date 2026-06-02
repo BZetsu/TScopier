@@ -355,7 +355,18 @@ export function channelWorkerLogMessage(
   const signalAction = signalActionFromLog(row)
   if (signalAction === 'ignore') return null
   const signalStatus = String(row.signals?.status ?? '').toLowerCase()
-  if (isTradeUpdateAction(logAction, signalAction) && signalStatus !== 'executed') return null
+  const logStatus = row.status.toLowerCase()
+  // Show skipped/failed management and SL/TP updates; only suppress in-flight rows for
+  // still-pending entry signals (avoids duplicate noise before execution completes).
+  if (
+    isTradeUpdateAction(logAction, signalAction)
+    && signalStatus !== 'executed'
+    && logStatus !== 'skipped'
+    && logStatus !== 'failed'
+    && logStatus !== 'success'
+  ) {
+    return null
+  }
   const message = buildChannelWorkerLogMessage(row, cw)
   if (!message.trim()) return null
   const channel = resolveChannelNameFromLog(row, channelDisplayNames)
