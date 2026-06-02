@@ -217,8 +217,27 @@ function csvToTokens(raw: string): string[] {
     .filter(Boolean)
 }
 
+function csvToUpperTokens(raw: string): string[] {
+  return csvToTokens(raw.toUpperCase())
+}
+
 function tokensToCsv(values: string[]): string {
   return values.join(', ')
+}
+
+function linesToTokens(raw: string): string[] {
+  return raw
+    .split(/\r?\n/)
+    .map(v => v.trim())
+    .filter(Boolean)
+}
+
+function linesToUpperTokens(raw: string): string[] {
+  return linesToTokens(raw.toUpperCase())
+}
+
+function tokensToLines(values: string[]): string {
+  return values.join('\n')
 }
 
 /** Split `total` across `count` slots as non-negative integers that sum exactly to `total`. */
@@ -2763,51 +2782,51 @@ export function AccountConfigPage() {
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                   <Input
                                     label={cm.aiTraining.entryCues}
-                                    value={tokensToCsv(activeTrainingDraft.entry_cues)}
+                                    value={tokensToCsv(activeTrainingDraft.entry_cues).toUpperCase()}
                                     hint={cm.aiTraining.commaSeparatedHint}
-                                    onChange={e => setTrainingDraft(configDraft.selectedChannelId!, { entry_cues: csvToTokens(e.target.value) })}
+                                    onChange={e => setTrainingDraft(configDraft.selectedChannelId!, { entry_cues: csvToUpperTokens(e.target.value) })}
                                   />
                                   <Input
                                     label={cm.aiTraining.buyCues}
-                                    value={tokensToCsv(activeTrainingDraft.buy_cues)}
+                                    value={tokensToCsv(activeTrainingDraft.buy_cues).toUpperCase()}
                                     hint={cm.aiTraining.commaSeparatedHint}
-                                    onChange={e => setTrainingDraft(configDraft.selectedChannelId!, { buy_cues: csvToTokens(e.target.value) })}
+                                    onChange={e => setTrainingDraft(configDraft.selectedChannelId!, { buy_cues: csvToUpperTokens(e.target.value) })}
                                   />
                                   <Input
                                     label={cm.aiTraining.sellCues}
-                                    value={tokensToCsv(activeTrainingDraft.sell_cues)}
+                                    value={tokensToCsv(activeTrainingDraft.sell_cues).toUpperCase()}
                                     hint={cm.aiTraining.commaSeparatedHint}
-                                    onChange={e => setTrainingDraft(configDraft.selectedChannelId!, { sell_cues: csvToTokens(e.target.value) })}
+                                    onChange={e => setTrainingDraft(configDraft.selectedChannelId!, { sell_cues: csvToUpperTokens(e.target.value) })}
                                   />
                                   <Input
                                     label={cm.aiTraining.stopLossCues}
-                                    value={tokensToCsv(activeTrainingDraft.stop_loss_cues)}
+                                    value={tokensToCsv(activeTrainingDraft.stop_loss_cues).toUpperCase()}
                                     hint={cm.aiTraining.commaSeparatedHint}
-                                    onChange={e => setTrainingDraft(configDraft.selectedChannelId!, { stop_loss_cues: csvToTokens(e.target.value) })}
+                                    onChange={e => setTrainingDraft(configDraft.selectedChannelId!, { stop_loss_cues: csvToUpperTokens(e.target.value) })}
                                   />
                                   <Input
                                     label={cm.aiTraining.takeProfitCues}
-                                    value={tokensToCsv(activeTrainingDraft.take_profit_cues)}
+                                    value={tokensToCsv(activeTrainingDraft.take_profit_cues).toUpperCase()}
                                     hint={cm.aiTraining.commaSeparatedHint}
-                                    onChange={e => setTrainingDraft(configDraft.selectedChannelId!, { take_profit_cues: csvToTokens(e.target.value) })}
+                                    onChange={e => setTrainingDraft(configDraft.selectedChannelId!, { take_profit_cues: csvToUpperTokens(e.target.value) })}
                                   />
                                   <Input
                                     label={cm.aiTraining.takeProfitTierCues}
-                                    value={tokensToCsv(activeTrainingDraft.take_profit_tier_cues)}
+                                    value={tokensToCsv(activeTrainingDraft.take_profit_tier_cues).toUpperCase()}
                                     hint={cm.aiTraining.commaSeparatedHint}
-                                    onChange={e => setTrainingDraft(configDraft.selectedChannelId!, { take_profit_tier_cues: csvToTokens(e.target.value) })}
+                                    onChange={e => setTrainingDraft(configDraft.selectedChannelId!, { take_profit_tier_cues: csvToUpperTokens(e.target.value) })}
                                   />
                                   <Input
                                     label={cm.aiTraining.managementCues}
-                                    value={tokensToCsv(activeTrainingDraft.management_cues)}
+                                    value={tokensToCsv(activeTrainingDraft.management_cues).toUpperCase()}
                                     hint={cm.aiTraining.commaSeparatedHint}
-                                    onChange={e => setTrainingDraft(configDraft.selectedChannelId!, { management_cues: csvToTokens(e.target.value) })}
+                                    onChange={e => setTrainingDraft(configDraft.selectedChannelId!, { management_cues: csvToUpperTokens(e.target.value) })}
                                   />
                                   <Input
                                     label={cm.aiTraining.languageHints}
-                                    value={tokensToCsv(activeTrainingDraft.language_hints)}
+                                    value={tokensToCsv(activeTrainingDraft.language_hints).toUpperCase()}
                                     hint={cm.aiTraining.commaSeparatedHint}
-                                    onChange={e => setTrainingDraft(configDraft.selectedChannelId!, { language_hints: csvToTokens(e.target.value) })}
+                                    onChange={e => setTrainingDraft(configDraft.selectedChannelId!, { language_hints: csvToUpperTokens(e.target.value) })}
                                   />
                                   <Select
                                     label={cm.aiTraining.signalOrderPattern}
@@ -2838,17 +2857,29 @@ export function AccountConfigPage() {
                                       { value: 'no', label: cm.aiTraining.requiresPriceOptions.no },
                                     ]}
                                   />
-                                  <Input
-                                    label={cm.aiTraining.sampleExamples}
-                                    value={tokensToCsv(activeTrainingDraft.sample_signal_examples)}
-                                    hint={cm.aiTraining.commaSeparatedHint}
-                                    onChange={e => setTrainingDraft(configDraft.selectedChannelId!, { sample_signal_examples: csvToTokens(e.target.value) })}
-                                  />
-                                  <Input
-                                    label={cm.aiTraining.notes}
-                                    value={activeTrainingDraft.notes}
-                                    onChange={e => setTrainingDraft(configDraft.selectedChannelId!, { notes: e.target.value })}
-                                  />
+                                  <div className="flex flex-col gap-1.5 md:col-span-2">
+                                    <label className="text-sm font-medium text-neutral-700 dark:text-neutral-300">
+                                      {cm.aiTraining.sampleExamples}
+                                    </label>
+                                    <textarea
+                                      value={tokensToLines(activeTrainingDraft.sample_signal_examples).toUpperCase()}
+                                      rows={5}
+                                      placeholder="One signal example per line"
+                                      className="w-full px-3 py-2 text-base md:text-sm rounded-lg border transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 hover:border-neutral-300 dark:hover:border-neutral-600"
+                                      onChange={e => setTrainingDraft(configDraft.selectedChannelId!, { sample_signal_examples: linesToUpperTokens(e.target.value) })}
+                                    />
+                                  </div>
+                                  <div className="flex flex-col gap-1.5 md:col-span-2">
+                                    <label className="text-sm font-medium text-neutral-700 dark:text-neutral-300">
+                                      {cm.aiTraining.notes}
+                                    </label>
+                                    <textarea
+                                      value={activeTrainingDraft.notes.toUpperCase()}
+                                      rows={4}
+                                      className="w-full px-3 py-2 text-base md:text-sm rounded-lg border transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 hover:border-neutral-300 dark:hover:border-neutral-600"
+                                      onChange={e => setTrainingDraft(configDraft.selectedChannelId!, { notes: e.target.value.toUpperCase() })}
+                                    />
+                                  </div>
                                 </div>
                               )}
                               <p className="text-xs text-neutral-500 dark:text-neutral-400">{cm.aiTraining.trainHint}</p>

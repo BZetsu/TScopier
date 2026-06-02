@@ -152,6 +152,35 @@ function cleanTokens(tokens: unknown): string[] {
   return Array.from(out)
 }
 
+const NON_LANGUAGE_HINT_TERMS = new Set<string>([
+  "forex",
+  "fx",
+  "crypto",
+  "cryptocurrency",
+  "gold",
+  "xau",
+  "xag",
+  "btc",
+  "eth",
+  "indices",
+  "index",
+  "commodities",
+  "stocks",
+  "xauusd",
+  "eurusd",
+  "gbpusd",
+])
+
+function cleanLanguageHints(tokens: unknown): string[] {
+  const hints = cleanTokens(tokens)
+  const out = new Set<string>()
+  for (const hint of hints) {
+    if (NON_LANGUAGE_HINT_TERMS.has(hint)) continue
+    out.add(hint)
+  }
+  return Array.from(out)
+}
+
 function normalizeTrainingSchema(raw: unknown): SignalTrainingSchema {
   const src = raw && typeof raw === "object" ? raw as Record<string, unknown> : {}
   const orderRaw = String(src.signal_order_pattern ?? "unknown")
@@ -174,7 +203,7 @@ function normalizeTrainingSchema(raw: unknown): SignalTrainingSchema {
     management_cues: cleanTokens(src.management_cues),
     signal_order_pattern,
     signal_requires_price,
-    language_hints: cleanTokens(src.language_hints),
+    language_hints: cleanLanguageHints(src.language_hints),
     sample_signal_examples: cleanTokens(src.sample_signal_examples).slice(0, 8),
     notes: String(src.notes ?? "").trim().slice(0, 1000),
   }
@@ -487,6 +516,8 @@ Return strict JSON only with keys:
 }
 Rules:
 - Include channel-native words/synonyms from any language.
+- For "language_hints", include only real languages/scripts (example: "english", "arabic", "latin", "cyrillic").
+- Do not include market-domain words (example: "forex", "crypto", "gold") in "language_hints".
 - No prose outside JSON.
 - Keep arrays deduplicated and concise.`
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
