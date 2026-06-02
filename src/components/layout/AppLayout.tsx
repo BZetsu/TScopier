@@ -326,7 +326,7 @@ export function AppLayout() {
                 onClick={() => openUpgrade('advanced')}
                 className="hidden sm:inline-flex items-center rounded-full border border-teal-200 bg-teal-50 px-2.5 py-1 text-xs font-semibold text-teal-700 transition-colors hover:bg-teal-100 dark:border-teal-800 dark:bg-teal-950/40 dark:text-teal-300 dark:hover:bg-teal-950/60"
               >
-                {!hasActiveSubscription ? 'Purchase subscription' : t.pricing.paywall.upgradeCta}
+                {!hasActiveSubscription ? t.pricing.paywall.purchaseSubscriptionCta : t.pricing.paywall.upgradeCta}
               </button>
             ) : null}
             <AppSearchMobileTrigger />
