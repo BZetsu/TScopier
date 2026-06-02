@@ -12,7 +12,6 @@ import {
   connectChannelToBroker,
   disconnectChannelFromBroker,
   getBrokerDisplayLabel,
-  linkChannelToAllActiveBrokers,
   pruneStaleBrokerChannelIds,
 } from '../../lib/brokerChannelLink'
 import { defaultChannelFiltersForPlan } from '../../lib/channelMessageFilters'
@@ -367,19 +366,6 @@ export function CopierEnginePage() {
     setConnectMenuChannelId(null)
   }
 
-  const autoLinkChannelToBrokers = async (channelRowId: string, brokerSnapshot = brokers) => {
-    if (!user) return
-    const { brokers: linked, error: linkErr } = await linkChannelToAllActiveBrokers(
-      supabase,
-      user.id,
-      channelRowId,
-      brokerSnapshot,
-      { defaultChannelFilters: channelLinkDefaultFilters },
-    )
-    if (linkErr) setError(linkErr)
-    else setBrokers(linked)
-  }
-
   const handleConnectAllBrokersToChannel = async (channelId: string) => {
     if (!user) return
     const toLink = brokersNotMatchingChannel(
@@ -475,7 +461,7 @@ export function CopierEnginePage() {
           ? withoutStale.map(c => (c.channel_id === ch.id ? upserted : c))
           : [upserted, ...withoutStale]
       })
-      await autoLinkChannelToBrokers(upserted.id)
+      setConnectMenuChannelId(upserted.id)
       void refreshSubscription()
     }
   }
