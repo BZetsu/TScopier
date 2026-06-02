@@ -10,6 +10,8 @@ const signalPriceInference_1 = require("./signalPriceInference");
 const signalManagementIntent_1 = require("./signalManagementIntent");
 const signalPriceFormat_1 = require("./signalPriceFormat");
 const tradableSymbol_1 = require("./tradableSymbol");
+const signalCommentaryGuard_1 = require("./signalCommentaryGuard");
+const signalEntryNowRequirement_1 = require("./signalEntryNowRequirement");
 exports.DEFAULT_CHANNEL_KEYWORDS = {
     signal: {
         entry_point: "ENTRY",
@@ -604,7 +606,7 @@ function applyDirectionalPriceInference(parsed, rawMessage) {
     const hasTp = (parsed.tp ?? []).some(t => typeof t === 'number' && Number.isFinite(t) && t > 0);
     if (hasSl && hasTp)
         return parsed;
-    const bare = (0, signalManagementIntent_1.bareTradePricesExcludingPips)(rawMessage, (0, signalPriceInference_1.extractUnlabeledPrices)(rawMessage));
+    const bare = (0, signalManagementIntent_1.bareTradePricesExcludingPips)(rawMessage, (0, tradableSymbol_1.filterPlausibleInstrumentPrices)(parsed.symbol, (0, signalPriceInference_1.extractUnlabeledPrices)(rawMessage)));
     if (!bare.length)
         return parsed;
     const classified = (0, signalPriceInference_1.classifyPricesByDirection)(action, (0, signalPriceInference_1.entryReferenceFromParsed)(parsed), bare);
@@ -622,6 +624,8 @@ function applyReEnterFlag(parsed, rawMessage) {
     return { ...parsed, re_enter: true };
 }
 function parseSimpleSignal(message, lexicon, channelKeywords) {
+    if ((0, signalCommentaryGuard_1.looksLikeCasualNonTradeMessage)(message))
+        return null;
     const text = message.toLowerCase().replace(/\s+/g, " ").trim();
     if (!text)
         return null;
@@ -697,6 +701,8 @@ function parseSimpleSignal(message, lexicon, channelKeywords) {
 }
 /** Entry when channel BUY/SELL + instrument + at least one price level appear (no “market” word required). */
 function parseEntryFromKeywords(message, lexicon, channelKeywords) {
+    if ((0, signalCommentaryGuard_1.looksLikeCasualNonTradeMessage)(message))
+        return null;
     const text = message.replace(/\s+/g, " ").trim();
     if (!text)
         return null;
@@ -751,7 +757,7 @@ function parseEntryFromKeywords(message, lexicon, channelKeywords) {
         (sl != null && Number.isFinite(sl)) ||
         tp.length > 0 ||
         /\b(limit|pending|@)\b/i.test(text) ||
-        (0, signalManagementIntent_1.bareTradePricesExcludingPips)(message, (0, signalPriceInference_1.extractUnlabeledPrices)(message)).length > 0;
+        (0, tradableSymbol_1.filterPlausibleInstrumentPrices)(instrument, (0, signalManagementIntent_1.bareTradePricesExcludingPips)(message, (0, signalPriceInference_1.extractUnlabeledPrices)(message))).length > 0;
     if (!hasPriceEvidence)
         return null;
     const { entry_price, entry_zone_low, entry_zone_high } = extractOptionalEntryAnchor(message, channelKeywords);
@@ -893,7 +899,21 @@ function parseChannelMessageSync(rawMessage, channelKeywords, lexicon) {
             open_tp: false,
         };
     const enriched = applyReEnterFlag(applyDirectionalPriceInference(normalizeParsedFromModel(rawParsed, rawMessage), rawMessage), rawMessage);
-    const parsed = dropInvalidTradeSymbol(applyRawSymbolRepair(enriched, rawMessage));
+    const repaired = applyRawSymbolRepair(enriched, rawMessage);
+    const dropped = dropInvalidTradeSymbol(repaired);
+    if ((0, signalEntryNowRequirement_1.entryMissingSlTpRequiresNow)(dropped, rawMessage, channelKeywords)) {
+        return {
+            parsed: {
+                ...dropped,
+                action: 'ignore',
+                symbol: null,
+                confidence: 0,
+            },
+            status: 'skipped',
+            skip_reason: 'Entry requires NOW (or MARKET) when SL and TP are absent',
+        };
+    }
+    const parsed = dropped;
     const status = parsed.action === "ignore" ? "skipped" : "parsed";
     const skip_reason = parsed.action === "ignore"
         ? (explicitIgnore ? "Non-trade message" : "No matching channel keywords or price pattern")

@@ -161,3 +161,26 @@ export function sanitizeParsedSymbol(symbol: string | null | undefined): string 
   const cleaned = cleanInstrumentSymbol(String(symbol).trim())
   return isTradableInstrumentSymbol(cleaned) ? cleaned : null
 }
+
+/** Minimum plausible quote price — filters commentary percentages mistaken for SL/TP. */
+export function minPlausibleQuotePrice(symbol: string | null | undefined): number | null {
+  const s = sanitizeParsedSymbol(symbol ?? null)
+  if (!s) return null
+  if (s === 'XAUUSD' || s.startsWith('XAU')) return 500
+  if (s === 'XAGUSD' || s.startsWith('XAG')) return 5
+  if (s.startsWith('BTC')) return 1000
+  if (s.startsWith('ETH')) return 50
+  const cls = classifyTradableInstrument(s)
+  if (cls === 'forex') return 0.01
+  if (cls === 'index') return 100
+  return null
+}
+
+export function filterPlausibleInstrumentPrices(
+  symbol: string | null | undefined,
+  prices: number[],
+): number[] {
+  const min = minPlausibleQuotePrice(symbol)
+  if (min == null) return prices
+  return prices.filter(p => Number.isFinite(p) && p >= min)
+}

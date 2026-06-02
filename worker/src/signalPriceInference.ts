@@ -3,6 +3,7 @@
  */
 
 import { SIGNAL_PRICE_NUM, parseSignalPriceListBlock, parseSignalPriceToken, signalPriceTokenRegex } from './signalPriceFormat'
+import { isPercentagePriceAt } from './signalCommentaryGuard'
 
 export type TradeDirection = 'buy' | 'sell'
 
@@ -158,6 +159,7 @@ export function extractUnlabeledPrices(message: string): number[] {
     const index = m.index ?? 0
     if (isInsideSpan(index, raw.length, labeled)) continue
     if (isInsideParenthetical(index, text)) continue
+    if (isPercentagePriceAt(text, index, raw.length)) continue
 
     // Skip parenthetical duplicates: 4577 (4577.10)
     const after = text.slice(index + raw.length).trimStart()

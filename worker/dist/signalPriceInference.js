@@ -9,6 +9,7 @@ exports.classifyPricesByDirection = classifyPricesByDirection;
 exports.extractUnlabeledPrices = extractUnlabeledPrices;
 exports.entryReferenceFromParsed = entryReferenceFromParsed;
 const signalPriceFormat_1 = require("./signalPriceFormat");
+const signalCommentaryGuard_1 = require("./signalCommentaryGuard");
 /** True when the channel explicitly asks to add a new trade (not modify existing). */
 function detectReEnterIntent(message) {
     return /\bre[-\s]?enter\b/i.test(String(message ?? ''));
@@ -130,6 +131,8 @@ function extractUnlabeledPrices(message) {
         if (isInsideSpan(index, raw.length, labeled))
             continue;
         if (isInsideParenthetical(index, text))
+            continue;
+        if ((0, signalCommentaryGuard_1.isPercentagePriceAt)(text, index, raw.length))
             continue;
         // Skip parenthetical duplicates: 4577 (4577.10)
         const after = text.slice(index + raw.length).trimStart();

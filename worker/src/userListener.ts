@@ -29,6 +29,7 @@ import {
 } from './telegramMessageEdit'
 import { parsedHasSlOrTp } from './multiTradeMerge'
 import { evaluateParsedSignalExecutionEligibility } from './signalExecutionEligibility'
+import { looksLikeCasualNonTradeMessage } from './signalCommentaryGuard'
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? ''
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? ''
@@ -164,6 +165,8 @@ function looksLikeTradingSignal(text: string, isReply: boolean): boolean {
     .trim()
 
   if (!normalized) return false
+
+  if (looksLikeCasualNonTradeMessage(text)) return false
 
   const hasInstrument = hasTradableInstrumentInText(text)
 

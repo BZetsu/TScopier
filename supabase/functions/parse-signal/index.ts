@@ -2,9 +2,12 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { createClient } from "npm:@supabase/supabase-js@2"
 import {
   extractTradableSymbolFromMessage,
+  filterPlausibleInstrumentPrices,
   isTradableInstrumentSymbol,
   sanitizeParsedSymbol,
 } from "../_shared/tradableSymbol.ts"
+import { looksLikeCasualNonTradeMessage } from "../_shared/signalCommentaryGuard.ts"
+import { entryMissingSlTpRequiresNow } from "../_shared/signalEntryNowRequirement.ts"
 import {
   classifyPricesByDirection,
   detectReEnterIntent,
@@ -727,7 +730,10 @@ function applyDirectionalPriceInference(
   const hasTp = (parsed.tp ?? []).some(t => typeof t === 'number' && Number.isFinite(t) && t > 0)
   if (hasSl && hasTp) return parsed
 
-  const bare = bareTradePricesExcludingPips(rawMessage, extractUnlabeledPrices(rawMessage))
+  const bare = bareTradePricesExcludingPips(
+    rawMessage,
+    filterPlausibleInstrumentPrices(parsed.symbol, extractUnlabeledPrices(rawMessage)),
+  )
   if (!bare.length) return parsed
 
   const classified = classifyPricesByDirection(
@@ -754,6 +760,7 @@ function parseSimpleSignal(
   lexicon: ChannelLexiconRow | null,
   channelKeywords: ChannelKeywords,
 ): ParsedSignal | null {
+  if (looksLikeCasualNonTradeMessage(message)) return null
   const text = message.toLowerCase().replace(/\s+/g, " ").trim()
   if (!text) return null
   const delim = channelKeywords.additional.delimiters
@@ -846,6 +853,7 @@ function parseEntryFromKeywords(
   lexicon: ChannelLexiconRow | null,
   channelKeywords: ChannelKeywords,
 ): ParsedSignal | null {
+  if (looksLikeCasualNonTradeMessage(message)) return null
   const text = message.replace(/\s+/g, " ").trim()
   if (!text) return null
   const delim = channelKeywords.additional.delimiters
@@ -900,7 +908,10 @@ function parseEntryFromKeywords(
     (sl != null && Number.isFinite(sl)) ||
     tp.length > 0 ||
     /\b(limit|pending|@)\b/i.test(text) ||
-    bareTradePricesExcludingPips(message, extractUnlabeledPrices(message)).length > 0
+    filterPlausibleInstrumentPrices(
+      instrument,
+      bareTradePricesExcludingPips(message, extractUnlabeledPrices(message)),
+    ).length > 0
 
   if (!hasPriceEvidence) return null
 
@@ -1070,9 +1081,22 @@ async function parseRawChannelMessage(
     rawMessage,
   )
 
-  const parsed = dropInvalidTradeSymbol(
-    applyRawSymbolRepair(enriched, rawMessage),
-  )
+  const repaired = applyRawSymbolRepair(enriched, rawMessage)
+  const dropped = dropInvalidTradeSymbol(repaired)
+  if (entryMissingSlTpRequiresNow(dropped, rawMessage, channelKeywords)) {
+    return {
+      parsed: {
+        ...dropped,
+        action: "ignore",
+        symbol: null,
+        confidence: 0,
+      },
+      status: "skipped",
+      skip_reason: "Entry requires NOW (or MARKET) when SL and TP are absent",
+    }
+  }
+
+  const parsed = dropped
 
   const status = parsed.action === "ignore" ? "skipped" : "parsed"
   const skip_reason = parsed.action === "ignore"

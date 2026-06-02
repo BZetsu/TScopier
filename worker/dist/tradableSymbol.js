@@ -10,6 +10,8 @@ exports.isTradableInstrumentSymbol = isTradableInstrumentSymbol;
 exports.hasTradableInstrumentInText = hasTradableInstrumentInText;
 exports.extractTradableSymbolFromMessage = extractTradableSymbolFromMessage;
 exports.sanitizeParsedSymbol = sanitizeParsedSymbol;
+exports.minPlausibleQuotePrice = minPlausibleQuotePrice;
+exports.filterPlausibleInstrumentPrices = filterPlausibleInstrumentPrices;
 const FX_CURRENCY_CODES = new Set([
     'USD', 'EUR', 'GBP', 'JPY', 'CHF', 'AUD', 'NZD', 'CAD',
     'SEK', 'NOK', 'DKK', 'ZAR', 'MXN', 'SGD', 'HKD', 'TRY',
@@ -167,4 +169,30 @@ function sanitizeParsedSymbol(symbol) {
         return null;
     const cleaned = cleanInstrumentSymbol(String(symbol).trim());
     return isTradableInstrumentSymbol(cleaned) ? cleaned : null;
+}
+/** Minimum plausible quote price — filters commentary percentages mistaken for SL/TP. */
+function minPlausibleQuotePrice(symbol) {
+    const s = sanitizeParsedSymbol(symbol ?? null);
+    if (!s)
+        return null;
+    if (s === 'XAUUSD' || s.startsWith('XAU'))
+        return 500;
+    if (s === 'XAGUSD' || s.startsWith('XAG'))
+        return 5;
+    if (s.startsWith('BTC'))
+        return 1000;
+    if (s.startsWith('ETH'))
+        return 50;
+    const cls = classifyTradableInstrument(s);
+    if (cls === 'forex')
+        return 0.01;
+    if (cls === 'index')
+        return 100;
+    return null;
+}
+function filterPlausibleInstrumentPrices(symbol, prices) {
+    const min = minPlausibleQuotePrice(symbol);
+    if (min == null)
+        return prices;
+    return prices.filter(p => Number.isFinite(p) && p >= min);
 }

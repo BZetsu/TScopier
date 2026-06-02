@@ -20,6 +20,7 @@ const workerConfig_1 = require("./workerConfig");
 const telegramMessageEdit_1 = require("./telegramMessageEdit");
 const multiTradeMerge_1 = require("./multiTradeMerge");
 const signalExecutionEligibility_1 = require("./signalExecutionEligibility");
+const signalCommentaryGuard_1 = require("./signalCommentaryGuard");
 const SUPABASE_URL = process.env.SUPABASE_URL ?? '';
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? '';
 const PARSE_SIGNAL_URL = process.env.PARSE_SIGNAL_URL ?? (SUPABASE_URL ? `${SUPABASE_URL.replace(/\/$/, '')}/functions/v1/parse-signal` : '');
@@ -90,6 +91,8 @@ function looksLikeTradingSignal(text, isReply) {
         .replace(/\s+/g, ' ')
         .trim();
     if (!normalized)
+        return false;
+    if ((0, signalCommentaryGuard_1.looksLikeCasualNonTradeMessage)(text))
         return false;
     const hasInstrument = (0, tradableSymbol_1.hasTradableInstrumentInText)(text);
     const hasDirectionOrAction = /\b(buy|sell|long|short|tp|take profit|sl|stop loss|breakeven|be)\b/.test(normalized)

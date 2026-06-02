@@ -64,3 +64,8 @@ test('extractUnlabeledPrices skips parenthetical duplicate', () => {
   const msg = 'SL: 4577 (4577.10)'
   assert.deepEqual(extractUnlabeledPrices(msg), [])
 })
+
+test('extractUnlabeledPrices skips percentage values', () => {
+  const msg = 'GOLD watches price rise of 5% from Monday'
+  assert.deepEqual(extractUnlabeledPrices(msg), [])
+})

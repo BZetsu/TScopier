@@ -81,6 +81,14 @@ describe('parseChannelMessageSync', () => {
     assert.equal(result.parsed.symbol, 'XAUUSD')
   })
 
+  it('skips buy/sell without SL, TP, or NOW', () => {
+    const msg = 'BUY XAUUSD @ 4500'
+    const result = parseChannelMessageSync(msg, DEFAULT_CHANNEL_KEYWORDS, lexicon)
+    assert.equal(result.status, 'skipped')
+    assert.equal(result.parsed.action, 'ignore')
+    assert.match(result.skip_reason ?? '', /NOW/i)
+  })
+
   it('parses entry without NOW when SL/TP present (parseEntryFromKeywords path)', () => {
     const msg = 'BUY EURUSD\nEntry 1.0850\nSL 1.0820\nTP 1.0900'
     const result = parseChannelMessageSync(msg, DEFAULT_CHANNEL_KEYWORDS, lexicon)
@@ -255,6 +263,19 @@ My private community, receives more trades, for free as well, but receive it bef
     assert.equal(result.parsed.entry_price, 4572.25)
     assert.equal(result.parsed.sl, 4590.01)
     assert.deepEqual(result.parsed.tp, [4535.53])
+  })
+
+  it('skips weekend watch commentary with gold and colloquial buy', () => {
+    const msg = `Before I leave you for the weekend... a bit of insider scoop
+
+Major watch brands (Patek/Rolex etc) have just announced a surprise price rise on only GOLD watches of 5% from Monday.
+
+They buy. We buy.
+
+Have a great weekend.`
+    const result = parseChannelMessageSync(msg, DEFAULT_CHANNEL_KEYWORDS, lexicon)
+    assert.equal(result.status, 'skipped')
+    assert.equal(result.parsed.action, 'ignore')
   })
 
   it('parses trained non-English cues via channel keywords and lexicon aliases', () => {

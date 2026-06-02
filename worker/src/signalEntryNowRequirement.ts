@@ -1,0 +1,60 @@
+/** Channel keyword shape needed to detect trained market-order aliases. */
+export type MarketNowKeywordFields = {
+  signal?: { market_order?: string }
+  additional?: { delimiters?: string }
+}
+
+export const ENTRY_REQUIRES_NOW_REASON = 'entry_requires_now_without_sl_tp'
+
+function positivePrice(v: unknown): number | null {
+  const n = Number(v)
+  return Number.isFinite(n) && n > 0 ? n : null
+}
+
+export function parsedHasSlOrTp(parsed: { sl?: unknown; tp?: unknown }): boolean {
+  const sl = positivePrice(parsed.sl)
+  const tp = Array.isArray(parsed.tp)
+    ? parsed.tp.map(positivePrice).filter((n): n is number => n != null)
+    : []
+  return sl != null || tp.length > 0
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function keywordRegex(phrase: string): RegExp {
+  const p = escapeRegExp(phrase.trim()).replace(/\s+/g, '\\s+')
+  return new RegExp(`(?:^|\\b)${p}(?:\\b|$)`, 'i')
+}
+
+function splitKeywordAliases(raw: string, delim: string): string[] {
+  return String(raw ?? '').split(delim).map(s => s.trim()).filter(Boolean)
+}
+
+/** True when the message declares an immediate / market entry (NOW, MARKET, etc.). */
+export function messageHasMarketNowIntent(
+  message: string,
+  channelKeywords?: MarketNowKeywordFields | null,
+): boolean {
+  const raw = String(message ?? '')
+  if (/\b(at\s+market|@\s*market)\b/i.test(raw)) return true
+  const defaults = ['now', 'instant', 'market', 'mkt']
+  const delim = channelKeywords?.additional?.delimiters ?? '|'
+  const custom = channelKeywords?.signal?.market_order
+    ? splitKeywordAliases(channelKeywords.signal.market_order, delim)
+    : []
+  return [...defaults, ...custom].some(token => token && keywordRegex(token).test(raw))
+}
+
+/** Buy/sell without SL or TP must include a market-now cue. */
+export function entryMissingSlTpRequiresNow(
+  parsed: { action?: unknown; sl?: unknown; tp?: unknown },
+  rawMessage: string,
+  channelKeywords?: MarketNowKeywordFields | null,
+): boolean {
+  const action = String(parsed.action ?? '').toLowerCase()
+  if (action !== 'buy' && action !== 'sell') return false
+  if (parsedHasSlOrTp(parsed)) return false
+  return !messageHasMarketNowIntent(rawMessage, channelKeywords)
+}

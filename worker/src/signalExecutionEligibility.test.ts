@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import {
   COMMENTARY_NOT_SIGNAL_REASON,
   ENTRY_MISSING_STRUCTURE_REASON,
+  ENTRY_REQUIRES_NOW_REASON,
   evaluateParsedSignalExecutionEligibility,
 } from './signalExecutionEligibility'
 
@@ -47,6 +48,29 @@ describe('evaluateParsedSignalExecutionEligibility', () => {
       tp: [],
     }, 'Gold maybe going down')
     assert.equal(eligibility.eligible, false)
-    assert.equal(eligibility.skipReason, ENTRY_MISSING_STRUCTURE_REASON)
+    assert.equal(eligibility.skipReason, ENTRY_REQUIRES_NOW_REASON)
+  })
+
+  it('rejects buy without SL, TP, or NOW', () => {
+    const eligibility = evaluateParsedSignalExecutionEligibility({
+      action: 'buy',
+      symbol: 'XAUUSD',
+      entry_price: 4500,
+      sl: null,
+      tp: [],
+    }, 'BUY XAUUSD 4500')
+    assert.equal(eligibility.eligible, false)
+    assert.equal(eligibility.skipReason, ENTRY_REQUIRES_NOW_REASON)
+  })
+
+  it('rejects implausible metal tp from commentary percentages', () => {
+    const eligibility = evaluateParsedSignalExecutionEligibility({
+      action: 'buy',
+      symbol: 'XAUUSD',
+      sl: null,
+      tp: [5],
+    }, 'GOLD watches up 5%')
+    assert.equal(eligibility.eligible, false)
+    assert.equal(eligibility.skipReason, COMMENTARY_NOT_SIGNAL_REASON)
   })
 })
