@@ -1200,13 +1200,37 @@ export function AccountConfigPage() {
     if (linked.length === 0) return
 
     const fromServer: Record<string, LinkedAccountType> = {}
-    for (const b of list) {
+    for (const b of linked) {
       const inferred = resolveLinkedAccountType(undefined, resolveMtServerCandidate(b, b.broker_server))
       if (inferred) fromServer[b.id] = inferred
     }
     setBrokerAccountTypes(prev => ({ ...fromServer, ...prev }))
 
-    // Account type from server name only — avoid summary() here (it can mark brokers disconnected).
+    const needSummary = linked.filter(b => !fromServer[b.id])
+    if (needSummary.length === 0) return
+
+    const results = await Promise.all(
+      needSummary.map(async b => {
+        try {
+          const { summary } = await metatraderApi.summary(b.id)
+          const accountType = resolveLinkedAccountType(
+            summary?.type,
+            resolveMtServerCandidate(b, b.broker_server),
+          )
+          return accountType ? { id: b.id, accountType } as const : null
+        } catch {
+          return null
+        }
+      }),
+    )
+
+    const fromSummary: Record<string, LinkedAccountType> = {}
+    for (const row of results) {
+      if (row) fromSummary[row.id] = row.accountType
+    }
+    if (Object.keys(fromSummary).length > 0) {
+      setBrokerAccountTypes(prev => ({ ...prev, ...fromSummary }))
+    }
   }
 
   const loadData = async (uid: string) => {
