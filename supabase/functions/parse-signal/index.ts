@@ -234,7 +234,10 @@ function parseSideFromKeywords(text: string, words: string[]): boolean {
 function buildTpRegex(extraLabels: string[] = []): RegExp {
   const base = ["tp", "take\\s*profit", "target(?:\\s+level)?"]
   const custom = extraLabels.map((x) => escapeRegExp(x.trim())).filter(Boolean)
-  return new RegExp(`\\b(?:${[...base, ...custom].join("|")})(?:\\s*[:=\\-]\\s*|\\s+)(${SIGNAL_PRICE_NUM})`, "gi")
+  return new RegExp(
+    `\\b(?:${[...base, ...custom].join("|")})(?:\\s*[:=\\-]\\s*|\\s+)(${SIGNAL_PRICE_NUM})(?!\\s*[:=\\-]\\s*${SIGNAL_PRICE_NUM})`,
+    "gi",
+  )
 }
 
 function extractTpLevels(message: string, extraLabels: string[] = []): number[] {

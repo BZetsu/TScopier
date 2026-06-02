@@ -143,6 +143,24 @@ SL: 4577 (4577.10)`
     assert.deepEqual(result.parsed.tp, [4564, 4527])
   })
 
+  it('parses "Take Profit 1/2/3" values as prices, not ordinal tiers', () => {
+    const msg = `🔔🔔🔔 **NEW SIGNAL** 🔔🔔🔔
+
+**XAUUSD SELL**
+
+Entry Zone: 4518.00-4516.00
+Stop loss: 4523.00
+Take Profit 1: 4514.00
+Take Profit 2: 4512.00
+Take Profit 3: 4510.00`
+    const result = parseChannelMessageSync(msg, DEFAULT_CHANNEL_KEYWORDS, lexicon)
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.action, 'sell')
+    assert.equal(result.parsed.symbol, 'XAUUSD')
+    assert.equal(result.parsed.sl, 4523)
+    assert.deepEqual(result.parsed.tp, [4514, 4512, 4510])
+  })
+
   it('parses symbol-less parameter follow-up as modify', () => {
     const msg = `Entry price: 4567
 TP1: 4564
