@@ -18,15 +18,14 @@ describe('evaluateParsedSignalExecutionEligibility', () => {
     assert.equal(eligibility.skipReason, COMMENTARY_NOT_SIGNAL_REASON)
   })
 
-  it('rejects entry payload with missing SL/TP structure', () => {
+  it('accepts minimal market entry with symbol and side intent', () => {
     const eligibility = evaluateParsedSignalExecutionEligibility({
       action: 'buy',
       symbol: 'XAUUSD',
       sl: null,
       tp: [],
     }, 'Gold buy now')
-    assert.equal(eligibility.eligible, false)
-    assert.equal(eligibility.skipReason, ENTRY_MISSING_STRUCTURE_REASON)
+    assert.equal(eligibility.eligible, true)
   })
 
   it('accepts structured entry signal', () => {
@@ -38,5 +37,16 @@ describe('evaluateParsedSignalExecutionEligibility', () => {
       entry_price: 4567,
     }, 'Gold sell now @ 4567 TP1: 4564 TP2: 4527 SL: 4577')
     assert.equal(eligibility.eligible, true)
+  })
+
+  it('rejects entry lacking structure and market intent', () => {
+    const eligibility = evaluateParsedSignalExecutionEligibility({
+      action: 'sell',
+      symbol: 'XAUUSD',
+      sl: null,
+      tp: [],
+    }, 'Gold maybe going down')
+    assert.equal(eligibility.eligible, false)
+    assert.equal(eligibility.skipReason, ENTRY_MISSING_STRUCTURE_REASON)
   })
 })

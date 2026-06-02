@@ -1,5 +1,6 @@
 import { tradeableFromParsed } from './backtestSignal'
 import { looksLikeChannelManagementUpdate } from './signalManagementIntent'
+import { sanitizeParsedSymbol } from './tradableSymbol'
 
 export const COMMENTARY_NOT_SIGNAL_REASON = 'commentary_not_trade_signal'
 export const ENTRY_MISSING_STRUCTURE_REASON = 'entry_missing_sl_tp_structure'
@@ -32,8 +33,24 @@ export function evaluateParsedSignalExecutionEligibility(
     }
   }
 
-  if (!tradeableFromParsed(parsed)) {
-    return { eligible: false, skipReason: ENTRY_MISSING_STRUCTURE_REASON }
-  }
-  return { eligible: true }
+  if (tradeableFromParsed(parsed)) return { eligible: true }
+
+  const symbol = sanitizeParsedSymbol(
+    typeof parsed.symbol === 'string' ? parsed.symbol : null,
+  )
+  const hasEntryAnchor =
+    positive(parsed.entry_price) != null
+    || positive(parsed.entry_zone_low) != null
+    || positive(parsed.entry_zone_high) != null
+  const looksLikeMarketEntry =
+    /\b(now|market|instant|mkt)\b/i.test(raw)
+    && /\b(buy|sell|long|short)\b/i.test(raw)
+  if (symbol && (hasEntryAnchor || looksLikeMarketEntry)) return { eligible: true }
+
+  return { eligible: false, skipReason: ENTRY_MISSING_STRUCTURE_REASON }
+}
+
+function positive(v: unknown): number | null {
+  const n = Number(v)
+  return Number.isFinite(n) && n > 0 ? n : null
 }
