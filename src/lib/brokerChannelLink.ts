@@ -5,7 +5,9 @@ import {
   buildDefaultChannelTradingConfig,
   channelManualSettingsComplete,
   normalizeChannelTradingConfigsMap,
+  normalizeChannelUuid,
   removeChannelTradingConfigKey,
+  resolveChannelConfigEntry,
 } from './channelTradingConfig'
 import {
   DEFAULT_CHANNEL_FILTERS,
@@ -52,18 +54,22 @@ export async function connectChannelToBroker(
   channelId: string,
   options?: { defaultChannelFilters?: ChannelFilters },
 ): Promise<{ broker: BrokerAccount | null; error: string | null }> {
+  const normalizedChannelId = normalizeChannelUuid(channelId)
+  if (!normalizedChannelId) {
+    return { broker: null, error: 'Invalid channel id' }
+  }
   const ids = normalizeSignalChannelIds(broker.signal_channel_ids)
-  if (ids.includes(channelId)) {
+  if (ids.includes(normalizedChannelId)) {
     return { broker, error: null }
   }
 
-  const nextIds = [...ids, channelId]
+  const nextIds = [...ids, normalizedChannelId]
   const configs = normalizeChannelTradingConfigsMap(broker.channel_trading_configs)
-  if (!configs[channelId]) {
+  if (!resolveChannelConfigEntry(configs, normalizedChannelId)) {
     const legacy = broker.manual_settings && typeof broker.manual_settings === 'object' && !Array.isArray(broker.manual_settings)
       ? (broker.manual_settings as ManualSettings)
       : null
-    configs[channelId] = channelManualSettingsComplete(legacy)
+    configs[normalizedChannelId] = channelManualSettingsComplete(legacy)
       ? {
           copier_mode: broker.copier_mode === 'ai' ? 'ai' : 'manual',
           manual_settings: legacy,
@@ -72,8 +78,8 @@ export async function connectChannelToBroker(
       : buildDefaultChannelTradingConfig()
   }
   const filters = normalizeChannelMessageFiltersMap(broker.channel_message_filters)
-  if (!filters[channelId]) {
-    filters[channelId] = { ...(options?.defaultChannelFilters ?? DEFAULT_CHANNEL_FILTERS) }
+  if (!filters[normalizedChannelId]) {
+    filters[normalizedChannelId] = { ...(options?.defaultChannelFilters ?? DEFAULT_CHANNEL_FILTERS) }
   }
 
   const { data, error } = await supabase

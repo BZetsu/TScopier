@@ -63,6 +63,22 @@ export function resolveChannelConfigEntry(
   return undefined
 }
 
+function mergeHealedChannelManualSettings(
+  existing: Record<string, unknown> | null | undefined,
+  brokerFallback: Record<string, unknown>,
+  defaultManual: Record<string, unknown>,
+): Record<string, unknown> {
+  const base = channelManualSettingsComplete(brokerFallback) ? brokerFallback : defaultManual
+  const partial = existing && typeof existing === 'object' && !Array.isArray(existing)
+    && !isMinimalSeedManualSettings(existing)
+    ? existing
+    : {}
+  return normalizeManualSettingsForExecution({
+    ...base,
+    ...partial,
+  }) as Record<string, unknown>
+}
+
 export function healChannelTradingConfigsMap(
   broker: BrokerChannelTradingFields,
 ): ChannelTradingConfigsMap {
@@ -80,23 +96,20 @@ export function healChannelTradingConfigsMap(
     if (storedPerChannelConfigComplete(configs, key)) continue
 
     const existing = resolveChannelConfigEntry(configs, key)
-    let manual: Record<string, unknown>
-    if (channelManualSettingsComplete(existing?.manual_settings)) {
-      manual = normalizeManualSettingsForExecution(existing?.manual_settings) as Record<string, unknown>
-    } else if (
-      channelManualSettingsComplete(fallbackManual)
-      && (linkedIds.length === 1 || normalizeChannelUuid(linkedIds[0]) === key)
-    ) {
-      manual = fallbackManual
+    const manual = mergeHealedChannelManualSettings(
+      existing?.manual_settings as Record<string, unknown> | undefined,
+      fallbackManual,
+      defaultManual,
+    )
+    if (!channelManualSettingsComplete(manual)) {
       console.warn(
-        `[channelTradingConfig] healed missing per-channel config for ${key}`
-        + ' from broker manual_settings — re-save Account Configuration for this channel',
+        `[channelTradingConfig] healed incomplete per-channel config for ${key}`
+        + ' — open Account Configuration, set lot + Single/Multi, Save',
       )
-    } else {
-      manual = defaultManual
+    } else if (!existing?.manual_settings || !channelManualSettingsComplete(existing.manual_settings)) {
       console.warn(
         `[channelTradingConfig] healed missing per-channel config for ${key}`
-        + ' with defaults — open Account Configuration, set lot + Single/Multi, Save',
+        + ' from broker manual_settings / defaults — re-save Account Configuration for this channel',
       )
     }
 
@@ -130,12 +143,31 @@ export function channelManualSettingsComplete(raw: unknown): boolean {
   return Number.isFinite(lot) && lot > 0 && (style === 'single' || style === 'multi')
 }
 
+/**
+ * Migration/connect paths persist a tiny default row ({ fixed_lot: 0.01, trade_style: single, … })
+ * that looks "complete" but was never configured in the UI. Treat as incomplete so broker
+ * manual_settings can heal it.
+ */
+export function isMinimalSeedManualSettings(raw: unknown): boolean {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return true
+  const row = raw as Record<string, unknown>
+  if ('schema_version' in row) return false
+  if (!channelManualSettingsComplete(row)) return true
+  const keys = Object.keys(row).filter(k => row[k] !== undefined && row[k] !== null)
+  if (keys.length > 4) return false
+  const lot = Number(row.fixed_lot)
+  const style = row.trade_style
+  const risk = row.risk_mode
+  return lot === 0.01 && style === 'single' && (risk === 'fixed_lot' || risk == null)
+}
+
 export function storedPerChannelConfigComplete(
   configs: ChannelTradingConfigsMap,
   channelId: string,
 ): boolean {
   const entry = resolveChannelConfigEntry(configs, channelId)
   if (!entry) return false
+  if (isMinimalSeedManualSettings(entry.manual_settings)) return false
   return channelManualSettingsComplete(entry.manual_settings)
 }
 

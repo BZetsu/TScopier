@@ -40,10 +40,24 @@ test('linked channel missing config heals from broker manual_settings when sole 
   assert.equal(resolved.manual_settings.trade_style, 'single')
 })
 
-test('linked channel missing config stays blocked when broker manual_settings incomplete and multi-channel', () => {
+test('linked channel missing config heals from broker manual_settings for every linked channel', () => {
   const broker = {
     copier_mode: 'manual' as const,
-    manual_settings: { fixed_lot: 0.03, trade_style: 'single' },
+    manual_settings: { fixed_lot: 0.03, trade_style: 'single', risk_mode: 'fixed_lot' },
+    channel_trading_configs: {},
+    signal_channel_ids: ['channel-a', 'channel-b'],
+  }
+  const ready = channelConfigReadyForExecution(broker, 'channel-b')
+  assert.equal(ready.ready, true)
+  const resolved = resolveChannelTradingConfig(broker, 'channel-b')
+  assert.equal(resolved.manual_settings.fixed_lot, 0.03)
+  assert.equal(resolved.manual_settings.trade_style, 'single')
+})
+
+test('linked channel missing config falls back to defaults when broker manual_settings incomplete', () => {
+  const broker = {
+    copier_mode: 'manual' as const,
+    manual_settings: {},
     channel_trading_configs: {},
     signal_channel_ids: ['channel-a', 'channel-b'],
   }
@@ -51,6 +65,7 @@ test('linked channel missing config stays blocked when broker manual_settings in
   assert.equal(ready.ready, true)
   const resolved = resolveChannelTradingConfig(broker, 'channel-b')
   assert.equal(resolved.manual_settings.fixed_lot, 0.01)
+  assert.equal(resolved.manual_settings.trade_style, 'single')
 })
 
 test('linked channel with empty manual_settings heals from broker manual_settings', () => {
@@ -133,6 +148,50 @@ test('buildDefaultChannelTradingConfig seeds manual defaults', () => {
   assert.equal(cfg.copier_mode, 'manual')
   assert.equal(cfg.manual_settings?.trade_style, 'single')
   assert.equal(cfg.manual_settings?.fixed_lot, 0.01)
+})
+
+test('linked channel with migration seed manual_settings heals from broker manual_settings', () => {
+  const broker = {
+    copier_mode: 'manual' as const,
+    manual_settings: { fixed_lot: 0.05, trade_style: 'multi', risk_mode: 'fixed_lot', schema_version: 1 },
+    channel_trading_configs: {
+      'signal-tester': {
+        copier_mode: 'manual' as const,
+        manual_settings: { fixed_lot: 0.01, trade_style: 'single', risk_mode: 'fixed_lot' },
+      },
+      'other-ch': {
+        copier_mode: 'manual' as const,
+        manual_settings: { fixed_lot: 0.01, trade_style: 'single', risk_mode: 'fixed_lot' },
+      },
+    },
+    signal_channel_ids: ['signal-tester', 'other-ch'],
+  }
+  const resolved = resolveChannelTradingConfig(broker, 'signal-tester')
+  assert.equal(resolved.manual_settings.fixed_lot, 0.05)
+  assert.equal(resolved.manual_settings.trade_style, 'multi')
+  assert.equal(resolved.config_source, 'per_channel')
+})
+
+test('linked channel with full per-channel save keeps its own lot and style', () => {
+  const broker = {
+    copier_mode: 'manual' as const,
+    manual_settings: { fixed_lot: 0.05, trade_style: 'single', schema_version: 1 },
+    channel_trading_configs: {
+      'signal-tester': {
+        copier_mode: 'manual' as const,
+        manual_settings: {
+          schema_version: 1,
+          fixed_lot: 0.03,
+          trade_style: 'single',
+          risk_mode: 'fixed_lot',
+          tp_lots: [],
+        },
+      },
+    },
+    signal_channel_ids: ['signal-tester'],
+  }
+  const resolved = resolveChannelTradingConfig(broker, 'signal-tester')
+  assert.equal(resolved.manual_settings.fixed_lot, 0.03)
 })
 
 test('normalizeChannelTradingConfigsMap skips invalid entries', () => {

@@ -87,7 +87,9 @@ import {
   buildChannelTradingConfigsFromDraft,
   buildDefaultChannelTradingConfig,
   channelManualSettingsComplete,
+  healChannelTradingConfigsMap,
   normalizeChannelTradingConfigsMap,
+  resolveChannelConfigEntry,
   storedPerChannelConfigComplete,
 } from '../../lib/channelTradingConfig'
 import {
@@ -544,7 +546,7 @@ function buildChannelConfigDraftFromBroker(
   channelIds: string[],
   keywordFiltersEnabled = true,
 ): AccountConfigDraft {
-  const storedConfigs = normalizeChannelTradingConfigsMap(broker.channel_trading_configs)
+  const storedConfigs = healChannelTradingConfigsMap(broker)
   const persistedFilters = normalizeChannelMessageFiltersMap(broker.channel_message_filters)
   const channelConfigs: Record<string, ChannelConfigDraft> = {}
   const legacyMode = AI_CONFIGURATION_ENABLED && broker.copier_mode !== 'manual' ? 'ai' : 'manual'
@@ -556,10 +558,10 @@ function buildChannelConfigDraftFromBroker(
   const defaultManual = normalizeManualSettings(buildDefaultChannelTradingConfig().manual_settings)
 
   for (const id of channelIds) {
-    const stored = storedConfigs[id]
+    const stored = resolveChannelConfigEntry(storedConfigs, id)
     channelConfigs[id] = {
       mode: stored?.copier_mode === 'ai' ? 'ai' : stored?.copier_mode === 'manual' ? 'manual' : legacyMode,
-      manualSettings: stored?.manual_settings && channelManualSettingsComplete(stored.manual_settings)
+      manualSettings: stored?.manual_settings && storedPerChannelConfigComplete(storedConfigs, id)
         ? normalizeManualSettings(stored.manual_settings)
         : fallbackManual ?? defaultManual,
       channelFilters: keywordFiltersEnabled
@@ -848,7 +850,7 @@ export function AccountConfigPage() {
   const selectedChannelNeedsPersistedSave = useMemo(() => {
     const id = configDraft.selectedChannelId
     if (!id || !configAccount || !configDraft.channelIds.includes(id)) return false
-    const stored = normalizeChannelTradingConfigsMap(configAccount.channel_trading_configs)
+    const stored = healChannelTradingConfigsMap(configAccount)
     return !storedPerChannelConfigComplete(stored, id)
   }, [configDraft.selectedChannelId, configDraft.channelIds, configAccount])
 
@@ -1666,8 +1668,15 @@ export function AccountConfigPage() {
     )
     const existingConfigs = normalizeChannelTradingConfigsMap(configAccount.channel_trading_configs)
     for (const id of channelIds) {
-      if (!channelTradingConfigs[id] && existingConfigs[id]) {
-        channelTradingConfigs[id] = existingConfigs[id]
+      const key = id.toLowerCase()
+      if (!channelTradingConfigs[key] && resolveChannelConfigEntry(existingConfigs, id)) {
+        channelTradingConfigs[key] = resolveChannelConfigEntry(existingConfigs, id)!
+      }
+    }
+    // Preserve configs for linked channels not currently shown in the modal draft.
+    for (const [storedKey, storedCfg] of Object.entries(existingConfigs)) {
+      if (!channelTradingConfigs[storedKey]) {
+        channelTradingConfigs[storedKey] = storedCfg
       }
     }
     const selectedId = configDraft.selectedChannelId && channelIds.includes(configDraft.selectedChannelId)

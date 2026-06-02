@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.shouldUseEntryFastPath = shouldUseEntryFastPath;
+exports.messageEditSkipReason = messageEditSkipReason;
 exports.enqueueSignal = enqueueSignal;
 exports.scheduleQueueDrain = scheduleQueueDrain;
 exports.dequeueQueuedSignal = dequeueQueuedSignal;
@@ -42,6 +43,14 @@ function shouldUseEntryFastPath(ctx, row) {
     if ((0, multiTradeMerge_1.shouldRouteAsBasketParameterRefresh)(parsed))
         return false;
     return (0, tradeSignalActions_1.isEntryAction)((0, tradeSignalActions_1.parsedAction)(parsed));
+}
+function messageEditSkipReason(parsed, action) {
+    if (!parsed || !(0, multiTradeMerge_1.parsedHasSlOrTp)(parsed))
+        return 'message_edit_no_sl_tp';
+    if (!(0, multiTradeMerge_1.shouldRouteAsBasketParameterRefresh)(parsed) && !(0, tradeSignalActions_1.isManagementAction)(action)) {
+        return 'message_edit_not_parameter_refresh';
+    }
+    return null;
 }
 function enqueueSignal(ctx, row, opts) {
     if (!types_1.PARSED_STATUSES.has(row.status))
@@ -296,12 +305,9 @@ async function handleSignal(ctx, row, opts) {
             return;
         }
         if (isMessageEdit) {
-            if (!(0, multiTradeMerge_1.parsedHasSlOrTp)(parsed)) {
-                await ctx.logDispatchSkipped(row, 'message_edit_no_sl_tp');
-                return;
-            }
-            if (!(0, multiTradeMerge_1.shouldRouteAsBasketParameterRefresh)(parsed) && !(0, tradeSignalActions_1.isManagementAction)(action)) {
-                await ctx.logDispatchSkipped(row, 'message_edit_not_parameter_refresh');
+            const reason = messageEditSkipReason(parsed, action);
+            if (reason) {
+                await ctx.logDispatchSkipped(row, reason);
                 return;
             }
         }

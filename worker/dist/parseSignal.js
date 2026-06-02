@@ -137,7 +137,9 @@ function parseSideFromKeywords(text, words) {
 function buildTpRegex(extraLabels = []) {
     const base = ["tp", "take\\s*profit", "target(?:\\s+level)?"];
     const custom = extraLabels.map((x) => escapeRegExp(x.trim())).filter(Boolean);
-    return new RegExp(`\\b(?:${[...base, ...custom].join("|")})(?:\\s*[:=\\-]\\s*|\\s+)(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, "gi");
+    // Guard against tier ordinals being mistaken for TP prices in shapes like:
+    // "Take Profit 1: 4514.00" (capture 4514, not the ordinal 1).
+    return new RegExp(`\\b(?:${[...base, ...custom].join("|")})(?:\\s*[:=\\-]\\s*|\\s+)(${signalPriceFormat_1.SIGNAL_PRICE_NUM})(?!\\s*[:=\\-]\\s*${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, "gi");
 }
 function extractTpLevels(message, extraLabels = []) {
     const text = String(message ?? "");
