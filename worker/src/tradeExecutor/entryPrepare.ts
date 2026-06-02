@@ -283,7 +283,12 @@ export async function prepareEntryExecution(
       messageEditOnly,
     })
     if (messageEditOnly) {
-      return { ok: false, outcome: { openedOrMerged: paramOutcome.success === true } }
+      return {
+        ok: false,
+        outcome: {
+          openedOrMerged: paramOutcome.handled === true && paramOutcome.success === true,
+        },
+      }
     }
     if (paramOutcome.handled && paramOutcome.success) {
       return { ok: false, outcome: { openedOrMerged: true } }

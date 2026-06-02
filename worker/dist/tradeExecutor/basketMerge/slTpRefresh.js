@@ -158,7 +158,9 @@ async function applyBasketSlTpRefresh(ctx, args) {
             virtualPendings = (0, channelActiveTradeParams_1.applyChannelParamsToVirtualPendingList)(virtualPendings, channelParamsForLadder, immediateEstimate, manual.tp_lots, basketTotalPlannedLegs);
         }
     }
-    const refreshImmediateLegCount = Math.max((0, multiTradeMerge_1.mergePlanImmediateOrders)(plan).length, Math.max(0, familyTrades.length - Math.max(0, maxPendingStepIdx - activePendingCount)));
+    const refreshImmediateLegCount = messageEditOnly
+        ? familyTrades.length
+        : Math.max((0, multiTradeMerge_1.mergePlanImmediateOrders)(plan).length, Math.max(0, familyTrades.length - Math.max(0, maxPendingStepIdx - activePendingCount)));
     const parsedTpLevels = (parsed.tp ?? []).filter((t) => typeof t === 'number' && Number.isFinite(t) && t > 0);
     const singlePartialPlan = manual.trade_style !== 'multi' && parsedTpLevels.length > 0
         ? (0, manualPlanner_1.planSinglePartialTps)({

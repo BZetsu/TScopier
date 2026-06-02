@@ -167,6 +167,7 @@ async function prepareEntryExecution(ctx, args) {
     }
     // Basket SL/TP refresh — always before OrderSend (not deferred to post-fill).
     if (isManual && (0, multiTradeMerge_1.shouldRouteAsBasketParameterRefresh)(parsed)) {
+        const messageEditOnly = sendOpts?.messageEditOnly === true;
         const paramOutcome = await ctx.tryParameterFollowUpMergeModifyOnly({
             signal,
             parsed,
@@ -178,8 +179,16 @@ async function prepareEntryExecution(ctx, args) {
             uuid,
             strictEntryPrefetch,
             commentPrefix,
-            messageEditOnly: sendOpts?.messageEditOnly === true,
+            messageEditOnly,
         });
+        if (messageEditOnly) {
+            return {
+                ok: false,
+                outcome: {
+                    openedOrMerged: paramOutcome.handled === true && paramOutcome.success === true,
+                },
+            };
+        }
         if (paramOutcome.handled && paramOutcome.success) {
             return { ok: false, outcome: { openedOrMerged: true } };
         }
