@@ -15,10 +15,10 @@ export const landingEn: LandingTranslations = {
   hero: {
     trustedBy: '30,000+ Traders from 156 Countries Already Joined',
     avatarAlts: ['TScopier trader', 'TScopier trader', 'TScopier trader'],
-    headline: 'Ultra-Fast Telegram Signal Copier',
-    headlineAccent: 'Powered by AI.',
+    headline: 'Turn Telegram Signals Into Live Trades,',
+    headlineAccent: '100% On Autopilot.',
     subheadline:
-      'Connect your MT4/MT5 account, pick signal channels, and let TScopier execute entries, layering, and management — with full control over risk and filters.',
+      'Copy trading instructions from your signal providers to your MT4/MT5 in under 2 minutes - No complicated setups, no EA, and no VPS required. ',
     primaryCta: 'Try it for free',
     secondaryCta: 'Sign in',
     imageAlt:

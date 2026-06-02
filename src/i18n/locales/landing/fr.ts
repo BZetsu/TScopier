@@ -15,8 +15,8 @@ export const landingFr: LandingTranslations = {
   hero: {
     trustedBy: 'Plus de 30 000 traders de 156 pays ont déjà rejoint',
     avatarAlts: ['Avatar de trader', 'Avatar de trader', 'Avatar de trader'],
-    headline: 'Copieur de signaux Telegram ultra-rapide',
-    headlineAccent: 'Propulsé par l’IA.',
+    headline: 'Transformez les signaux Telegram en trades en direct,',
+    headlineAccent: '100 % en autopilote.',
     subheadline:
       'Connectez votre compte MT4/MT5, choisissez vos canaux de signaux et laissez TSCopier exécuter entrées, couches et gestion — avec un contrôle total du risque et des filtres.',
     primaryCta: 'Essayez gratuitement',
