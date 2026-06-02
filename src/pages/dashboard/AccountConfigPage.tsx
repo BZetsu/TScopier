@@ -686,7 +686,7 @@ export function AccountConfigPage() {
     selectedChannelId: null,
     channelConfigs: {},
   })
-  const [activeManualSubTab, setActiveManualSubTab] = useState<ManualSubTabId>('symbols')
+  const [activeManualSubTab, setActiveManualSubTab] = useState<ManualSubTabId>('ai_training')
   const [detectedSymbols, setDetectedSymbols] = useState<DetectedChannelSymbol[]>([])
   const [channelSymbolsLoading, setChannelSymbolsLoading] = useState(false)
   const [channelSymbolsRefreshing, setChannelSymbolsRefreshing] = useState(false)
@@ -1209,7 +1209,7 @@ export function AccountConfigPage() {
       channelOptions.some(c => c.id === id),
     )
     setConfigAccount(fresh)
-    setActiveManualSubTab('symbols')
+    setActiveManualSubTab('ai_training')
     const draft = buildChannelConfigDraftFromBroker(fresh, channelIds, keywordFiltersEnabled)
     const nextDraft = {
       ...draft,
@@ -1233,7 +1233,7 @@ export function AccountConfigPage() {
 
   const selectConfigureChannel = (channelId: string) => {
     setConfigDraft(prev => ({ ...prev, selectedChannelId: channelId }))
-    setActiveManualSubTab('symbols')
+    setActiveManualSubTab('ai_training')
   }
 
   const connectSelectedChannelToBroker = async () => {
