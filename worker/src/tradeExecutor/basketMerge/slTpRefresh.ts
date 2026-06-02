@@ -343,10 +343,12 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
         )
       }
     }
-    const refreshImmediateLegCount = Math.max(
-      mergePlanImmediateOrders(plan).length,
-      Math.max(0, familyTrades.length - Math.max(0, maxPendingStepIdx - activePendingCount)),
-    )
+    const refreshImmediateLegCount = messageEditOnly
+      ? familyTrades.length
+      : Math.max(
+          mergePlanImmediateOrders(plan).length,
+          Math.max(0, familyTrades.length - Math.max(0, maxPendingStepIdx - activePendingCount)),
+        )
     const parsedTpLevels = (parsed.tp ?? []).filter(
       (t): t is number => typeof t === 'number' && Number.isFinite(t) && t > 0,
     )

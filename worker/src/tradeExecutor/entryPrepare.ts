@@ -268,6 +268,7 @@ export async function prepareEntryExecution(
 
   // Basket SL/TP refresh — always before OrderSend (not deferred to post-fill).
   if (isManual && shouldRouteAsBasketParameterRefresh(parsed)) {
+    const messageEditOnly = sendOpts?.messageEditOnly === true
     const paramOutcome = await ctx.tryParameterFollowUpMergeModifyOnly({
       signal,
       parsed,
@@ -279,8 +280,11 @@ export async function prepareEntryExecution(
       uuid,
       strictEntryPrefetch,
       commentPrefix,
-      messageEditOnly: sendOpts?.messageEditOnly === true,
+      messageEditOnly,
     })
+    if (messageEditOnly) {
+      return { ok: false, outcome: { openedOrMerged: paramOutcome.success === true } }
+    }
     if (paramOutcome.handled && paramOutcome.success) {
       return { ok: false, outcome: { openedOrMerged: true } }
     }

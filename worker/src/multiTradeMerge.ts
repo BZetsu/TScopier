@@ -226,6 +226,66 @@ export async function resolveLatestOpenBasketAnchor(
 const PARAMETER_FOLLOW_UP_ANCHOR_RETRY_MS = 3_000
 const PARAMETER_FOLLOW_UP_ANCHOR_POLL_MS = 150
 
+/**
+ * Telegram message edits re-parse the same `signals` row — anchor SL/TP refresh
+ * on that signal's open legs, not the newest unrelated basket on the channel.
+ */
+export async function resolveOpenBasketAnchorForMessageEdit(
+  supabase: SupabaseClient,
+  args: {
+    userId: string
+    brokerAccountId: string
+    signalId: string
+    brokerSymbol: string
+    signalSymbol?: string | null
+    direction: 'buy' | 'sell'
+    channelId?: string | null
+  },
+): Promise<LatestBasketAnchor | null> {
+  const { data: rows, error } = await supabase
+    .from('trades')
+    .select('opened_at,symbol')
+    .eq('user_id', args.userId)
+    .eq('broker_account_id', args.brokerAccountId)
+    .eq('signal_id', args.signalId)
+    .eq('status', 'open')
+    .eq('direction', args.direction)
+    .order('opened_at', { ascending: false })
+    .limit(500)
+
+  if (error) {
+    console.warn(
+      `[multiTradeMerge] message-edit anchor load failed signal=${args.signalId}: ${error.message}`,
+    )
+    return null
+  }
+
+  const symHint = args.signalSymbol ?? args.brokerSymbol
+  let newestOpenedAt: string | null = null
+  for (const row of rows ?? []) {
+    const trSym = String((row as { symbol?: string }).symbol ?? '')
+    if (
+      trSym
+      && !symbolsCompatibleForBasket(symHint, trSym)
+      && !symbolsCompatibleForBasket(args.brokerSymbol, trSym)
+    ) {
+      continue
+    }
+    const openedAt = String((row as { opened_at?: string }).opened_at ?? '')
+    if (!openedAt) continue
+    if (!newestOpenedAt || new Date(openedAt).getTime() > new Date(newestOpenedAt).getTime()) {
+      newestOpenedAt = openedAt
+    }
+  }
+  if (!newestOpenedAt) return null
+
+  return {
+    anchorSignalId: args.signalId,
+    channelId: args.channelId ?? null,
+    newestOpenedAt,
+  }
+}
+
 /** Wait briefly for the entry leg to land in DB before opening a duplicate trade. */
 export async function resolveOpenBasketAnchorForParameterFollowUp(
   supabase: SupabaseClient,

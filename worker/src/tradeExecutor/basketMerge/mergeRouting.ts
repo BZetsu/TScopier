@@ -80,6 +80,7 @@ import {
   legacyMergeLinkingEnabled,
   mergePlanImmediateOrders,
   resolveLatestOpenBasketAnchor,
+  resolveOpenBasketAnchorForMessageEdit,
   resolveOpenBasketAnchorForParameterFollowUp,
   shouldRouteAsBasketParameterRefresh,
   type MergeModifySummary,
@@ -201,18 +202,32 @@ export async function tryParameterFollowUpMergeModifyOnly(ctx: TradeExecutorCont
     const a = String(parsed.action ?? '').toLowerCase()
     if (a !== 'buy' && a !== 'sell') return { handled: false }
     const direction = a === 'buy' ? 'buy' : 'sell'
+    const messageEditOnly = args.messageEditOnly === true
 
-    const anchor = await resolveOpenBasketAnchorForParameterFollowUp(ctx.supabase, {
-      userId: signal.user_id,
-      brokerAccountId: broker.id,
-      brokerSymbol: symbol,
-      signalSymbol: parsed.symbol,
-      direction,
-      channelId: signal.channel_id,
-    }, {
-      currentSignalId: signal.id,
-      currentSignalCreatedAt: signal.created_at ?? null,
-    })
+    let anchor = messageEditOnly
+      ? await resolveOpenBasketAnchorForMessageEdit(ctx.supabase, {
+          userId: signal.user_id,
+          brokerAccountId: broker.id,
+          signalId: signal.id,
+          brokerSymbol: symbol,
+          signalSymbol: parsed.symbol,
+          direction,
+          channelId: signal.channel_id,
+        })
+      : null
+    if (!anchor) {
+      anchor = await resolveOpenBasketAnchorForParameterFollowUp(ctx.supabase, {
+        userId: signal.user_id,
+        brokerAccountId: broker.id,
+        brokerSymbol: symbol,
+        signalSymbol: parsed.symbol,
+        direction,
+        channelId: signal.channel_id,
+      }, {
+        currentSignalId: signal.id,
+        currentSignalCreatedAt: signal.created_at ?? null,
+      })
+    }
     if (!anchor) {
       // Fire-and-forget: this is a diagnostic-only log on the live-entry hot
       // path; awaiting it adds ~50–150 ms to send_plan_ms for no functional
@@ -258,45 +273,50 @@ export async function tryParameterFollowUpMergeModifyOnly(ctx: TradeExecutorCont
     // Exception: when add_new_trades_to_existing=false, the strategy is "single slot";
     // a same-direction signal carrying explicit stops should refresh that live slot.
     const manual = (broker.manual_settings ?? {}) as ManualSettings
+    const sameSignalMessageEdit =
+      messageEditOnly && anchor.anchorSignalId === signal.id
     const allowUnlinkedRefresh =
-      (manual.add_new_trades_to_existing === false && parsedSignalHasExplicitStops(parsed))
+      sameSignalMessageEdit
+      || (manual.add_new_trades_to_existing === false && parsedSignalHasExplicitStops(parsed))
       || link.parameterRefreshSameChannel
       || (link.implicitBundleWithinTightWindow && link.implicitSameChannelBundle && parsedSignalHasExplicitStops(parsed))
-    if (!link.replyOk && !link.threadLinksAnchor && !link.parentLinksAnchor && !allowUnlinkedRefresh) {
-      void ctx.supabase.from('trade_execution_logs').insert({
-        user_id: signal.user_id,
-        signal_id: signal.id,
-        broker_account_id: broker.id,
-        action: 'merge_routed_modify_only',
-        status: 'skipped',
-        request_payload: {
-          skip_reason: 'parameter_follow_up_requires_explicit_link',
-          symbol,
-          direction,
-          channel_id: signal.channel_id,
-          anchor_signal_id: anchor.anchorSignalId,
-          dt_ms: link.dtMs,
-        } as unknown as Record<string, unknown>,
-      }).then(() => undefined, () => undefined)
-      return { handled: false }
-    }
-    if (!link.isLinked) {
-      void ctx.supabase.from('trade_execution_logs').insert({
-        user_id: signal.user_id,
-        signal_id: signal.id,
-        broker_account_id: broker.id,
-        action: 'merge_routed_modify_only',
-        status: 'skipped',
-        request_payload: {
-          skip_reason: 'parameter_follow_up_not_linked',
-          symbol,
-          direction,
-          channel_id: signal.channel_id,
-          anchor_signal_id: anchor.anchorSignalId,
-          dt_ms: link.dtMs,
-        } as unknown as Record<string, unknown>,
-      }).then(() => undefined, () => undefined)
-      return { handled: false }
+    if (!sameSignalMessageEdit) {
+      if (!link.replyOk && !link.threadLinksAnchor && !link.parentLinksAnchor && !allowUnlinkedRefresh) {
+        void ctx.supabase.from('trade_execution_logs').insert({
+          user_id: signal.user_id,
+          signal_id: signal.id,
+          broker_account_id: broker.id,
+          action: 'merge_routed_modify_only',
+          status: 'skipped',
+          request_payload: {
+            skip_reason: 'parameter_follow_up_requires_explicit_link',
+            symbol,
+            direction,
+            channel_id: signal.channel_id,
+            anchor_signal_id: anchor.anchorSignalId,
+            dt_ms: link.dtMs,
+          } as unknown as Record<string, unknown>,
+        }).then(() => undefined, () => undefined)
+        return { handled: false }
+      }
+      if (!link.isLinked) {
+        void ctx.supabase.from('trade_execution_logs').insert({
+          user_id: signal.user_id,
+          signal_id: signal.id,
+          broker_account_id: broker.id,
+          action: 'merge_routed_modify_only',
+          status: 'skipped',
+          request_payload: {
+            skip_reason: 'parameter_follow_up_not_linked',
+            symbol,
+            direction,
+            channel_id: signal.channel_id,
+            anchor_signal_id: anchor.anchorSignalId,
+            dt_ms: link.dtMs,
+          } as unknown as Record<string, unknown>,
+        }).then(() => undefined, () => undefined)
+        return { handled: false }
+      }
     }
 
     console.log(
@@ -368,6 +388,7 @@ export async function tryParameterFollowUpMergeModifyOnly(ctx: TradeExecutorCont
         implicit_bundle_within_tight_window: link.implicitBundleWithinTightWindow,
         implicit_same_channel_bundle: link.implicitSameChannelBundle,
         parameter_refresh_same_channel: link.parameterRefreshSameChannel,
+        message_edit_same_signal: sameSignalMessageEdit,
         implicit_bundle_dt_ms: link.dtMs,
         merge_implicit_tight_window_ms: MERGE_IMPLICIT_CHANNEL_BUNDLE_MS,
         legacy_merge_linking: legacyMergeLinkingEnabled(),

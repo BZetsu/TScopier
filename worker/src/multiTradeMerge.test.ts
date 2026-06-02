@@ -204,6 +204,26 @@ test('buildPerLegStopTargets: split pools keep instant vs range TP slots', () =>
   assert.equal(targets[2]!.takeprofit, 4510)
 })
 
+test('buildPerLegStopTargets: message-edit refresh treats all open legs as immediate', () => {
+  const plan: PlannerResult = { orders: [], delay_ms: 0, virtualPendings: [] }
+  const targets = buildPerLegStopTargets({
+    plan,
+    parsed: { sl: 4524.3, tp: [4535, 4538] },
+    openLegCount: 2,
+    totalPlannedLegCount: 5,
+    immediateLegCount: 2,
+    tpLots: [
+      { label: 'TP1', lot: 0, percent: 50, enabled: true },
+      { label: 'TP2', lot: 0, percent: 50, enabled: true },
+    ],
+  })
+  assert.equal(targets.length, 2)
+  assert.equal(targets[0]!.stoploss, 4524.3)
+  assert.equal(targets[1]!.stoploss, 4524.3)
+  assert.equal(targets[0]!.takeprofit, 4535)
+  assert.equal(targets[1]!.takeprofit, 4538)
+})
+
 test('mergePlanImmediateOrders: includes limits', () => {
   const plan: PlannerResult = {
     orders: [
