@@ -6,7 +6,7 @@ import {
   Minus,
   Plus,
   Receipt,
-  Sparkles,
+  Zap,
   ChevronLeft,
   ChevronRight,
   Info,
@@ -303,7 +303,7 @@ export function BillingPage() {
               </div>
             </div>
             <Button onClick={openPricingModal} className="gap-2">
-              <Sparkles className="h-4 w-4" />
+              <Zap className="h-4 w-4" />
               {bt.purchaseSubscription}
             </Button>
           </div>
