@@ -312,6 +312,79 @@ export function orderSendOutcomeSuffix(
   return interpolate(cw.errSuffix, { detail: translateBrokerError(err, cw) })
 }
 
+function signalWasSkipped(row: ChannelWorkerLogRow): boolean {
+  return String(row.signals?.status ?? '').toLowerCase() === 'skipped'
+}
+
+function skipReasonForSignal(row: ChannelWorkerLogRow, cw: ChannelWorkerTranslations): string {
+  const raw = String(
+    row.signals?.skip_reason ?? row.request_payload?.skip_reason ?? row.error_message ?? '',
+  ).trim()
+  return raw ? translateSkipReason(raw, cw) : cw.notPlaced
+}
+
+/** Remap success-style execution logs when the linked signal was ultimately skipped. */
+function applySkippedSignalOverride(
+  row: ChannelWorkerLogRow,
+  cw: ChannelWorkerTranslations,
+  message: string,
+): string {
+  if (!message.trim()) return message
+  if (!signalWasSkipped(row) || row.status.toLowerCase() !== 'success') return message
+
+  const logAction = row.action.toLowerCase()
+  if (logAction === 'dispatch_skipped') return message
+  if (
+    logAction === 'pipeline_parse_dispatch'
+    || logAction === 'keyword_parse'
+    || logAction === 'handle_start'
+    || logAction === 'handle_end'
+    || logAction === 'dispatch_received'
+  ) {
+    return message
+  }
+
+  const reason = skipReasonForSignal(row, cw)
+  const instr = resolveInstrumentSymbol(row)
+  const signalAction = signalActionFromLog(row)
+
+  if (logAction.startsWith('mgmt_') || MANAGEMENT_COPIER_ACTIONS.has(signalAction)) {
+    const mgmt = logAction.startsWith('mgmt_') ? logAction.slice(5) : signalAction
+    return interpolate(cw.mgmtSkippedReason, {
+      phrase: mgmtSkippedPhrase(mgmt, instr, cw),
+      reason,
+    })
+  }
+
+  if (
+    logAction === 'virtual_pending_fired'
+    || logAction === 'virtual_pending_inserted'
+    || logAction === 'order_send'
+    || logAction === 'signal_entry_pending_placed'
+    || logAction === 'signal_entry_pending_filled'
+  ) {
+    return interpolate(cw.orderDidNotPlaceSkipped, { on: onInstrument(instr, cw), reason })
+  }
+
+  if (
+    logAction === 'merge_routed_modify_only'
+    || logAction === 'merge_modify_summary'
+    || logAction === 'signal_merge_into_open_trade'
+    || logAction === 'merge_anchor_selected'
+  ) {
+    return interpolate(cw.mgmtSkippedReason, {
+      phrase: mgmtSkippedPhrase('modify', instr, cw),
+      reason,
+    })
+  }
+
+  if (signalAction === 'buy' || signalAction === 'sell' || signalAction === 'close') {
+    return interpolate(cw.dispatchSkipped, { reason })
+  }
+
+  return interpolate(cw.dispatchSkipped, { reason })
+}
+
 function signalMarkedIgnored(row: ChannelWorkerLogRow): boolean {
   const sig = row.signals
   const parsed = getSignalParsedFromLog(row)
@@ -367,7 +440,7 @@ export function channelWorkerLogMessage(
   ) {
     return null
   }
-  const message = buildChannelWorkerLogMessage(row, cw)
+  const message = applySkippedSignalOverride(row, cw, buildChannelWorkerLogMessage(row, cw))
   if (!message.trim()) return null
   const channel = resolveChannelNameFromLog(row, channelDisplayNames)
   if (!channel || shouldOmitChannelSuffix(logAction)) return message
@@ -473,10 +546,13 @@ function buildChannelWorkerLogMessage(row: ChannelWorkerLogRow, cw: ChannelWorke
 
   if (logAction.startsWith('mgmt_') || MANAGEMENT_COPIER_ACTIONS.has(signalAction)) {
     const mgmt = logAction.startsWith('mgmt_') ? logAction.slice(5) : signalAction
-    if (signalMarkedIgnored(row) && status === 'success') {
+    if ((signalMarkedIgnored(row) || signalWasSkipped(row)) && status === 'success') {
+      const reason = signalWasSkipped(row)
+        ? skipReasonForSignal(row, cw)
+        : ignoredChannelWorkerReason(row, cw)
       return interpolate(cw.mgmtSkippedReason, {
         phrase: mgmtSkippedPhrase(mgmt, instr, cw),
-        reason: ignoredChannelWorkerReason(row, cw),
+        reason,
       })
     }
     if (status === 'failed' && isBenignStopsAlreadySetMessage(row.error_message)) {

@@ -46,6 +46,99 @@ test('channelWorkerLogMessage: shows skipped modify via mgmt log', () => {
   assert.match(message!, /modify|stop|open trade/i)
 })
 
+test('channelWorkerLogMessage: virtual_pending_fired success remaps when signal skipped', () => {
+  const message = channelWorkerLogMessage(
+    {
+      action: 'virtual_pending_fired',
+      status: 'success',
+      request_payload: { symbol: 'XAUUSD' },
+      response_payload: null,
+      error_message: null,
+      signals: {
+        channel_id: 'ch-1',
+        parsed_data: { action: 'buy', symbol: 'XAUUSD' },
+        status: 'skipped',
+        skip_reason: 'channel_config_incomplete',
+      },
+    },
+    channelWorkerEn,
+    { 'ch-1': 'James VIP Signals' },
+  )
+  assert.ok(message)
+  assert.doesNotMatch(message!, /Layered entry order triggered/i)
+  assert.match(message!, /Did not place an order/i)
+  assert.match(message!, /incomplete/i)
+})
+
+test('channelWorkerLogMessage: mgmt success remaps when signal skipped', () => {
+  const message = channelWorkerLogMessage(
+    {
+      action: 'mgmt_modify',
+      status: 'success',
+      request_payload: { symbol: 'XAUUSD' },
+      response_payload: null,
+      error_message: null,
+      signals: {
+        channel_id: 'ch-1',
+        parsed_data: { action: 'modify', symbol: 'XAUUSD' },
+        status: 'skipped',
+        skip_reason: 'no_matching_open_trade',
+      },
+    },
+    channelWorkerEn,
+    { 'ch-1': 'James VIP Signals' },
+  )
+  assert.ok(message)
+  assert.doesNotMatch(message!, /Applied the update/i)
+  assert.match(message!, /Skipped the XAUUSD update/i)
+  assert.match(message!, /no matching open trade/i)
+})
+
+test('channelWorkerLogMessage: completed sell fallback remaps when signal skipped', () => {
+  const message = channelWorkerLogMessage(
+    {
+      action: 'handle_end',
+      status: 'success',
+      request_payload: null,
+      response_payload: null,
+      error_message: null,
+      signals: {
+        channel_id: 'ch-1',
+        parsed_data: { action: 'sell', symbol: 'EURUSD' },
+        status: 'skipped',
+        skip_reason: 'broker_session_not_connected',
+      },
+    },
+    channelWorkerEn,
+    { 'ch-1': 'James VIP Signals' },
+  )
+  assert.equal(message, null)
+})
+
+test('channelWorkerLogMessage: unknown success action remaps sell when signal skipped', () => {
+  const message = channelWorkerLogMessage(
+    {
+      action: 'some_internal_step',
+      status: 'success',
+      request_payload: null,
+      response_payload: null,
+      error_message: null,
+      signals: {
+        channel_id: 'ch-1',
+        parsed_data: { action: 'sell', symbol: 'EURUSD' },
+        status: 'skipped',
+        skip_reason: 'broker_session_not_connected',
+      },
+    },
+    channelWorkerEn,
+    { 'ch-1': 'James VIP Signals' },
+  )
+  assert.ok(message)
+  assert.doesNotMatch(message!, /^Completed: sell/i)
+  assert.match(message!, /Did not copy this signal/i)
+  assert.match(message!, /broker not connected/i)
+})
+
 test('channelWorkerLogMessage: still hides non-trade commentary', () => {
   const message = channelWorkerLogMessage(
     {
