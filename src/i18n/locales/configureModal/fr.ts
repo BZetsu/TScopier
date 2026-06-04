@@ -152,7 +152,7 @@ export const configureModalFr: ConfigureModalTranslations = {
     previewCweLegs: ' {count} jambe(s) instantanée(s) se ferment à +{pips}p de l’ancre.',
     rangeLayering: 'Échelonnement en range',
     rangeIntro:
-      'Réserve une part des jambes planifiées en ordres Limit en attente, espacés depuis l’ancre en direct par un intervalle fixe en pips (moyenne à la baisse). Si le signal n’a pas de prix d’entrée, le worker récupère le bid/ask en direct via /Quote et y ancre l’échelle. Le stop-loss et la distribution des TP reflètent les jambes immédiates. Si distance ÷ pas limite le nombre, le total effectif des ordres en attente est réduit.',
+      'Configurez une partie des opérations en ordres en attente virtuels espacés à intervalles depuis le prix de départ (moyenne à la baisse). S’il n’y a pas de prix d’entrée précis, utilisez le cours du marché en direct actuel (bid/ask) comme point de départ. Tous les ordres en attente reprennent les réglages de stop loss et de take-profit de vos opérations immédiates.',
     reservedLot: 'Lot réservé (% du total)',
     reservedLotHint: 'Part des jambes totales réservées en ordres en attente.',
     stepPips: 'Pas (pips par échelon)',
@@ -162,7 +162,7 @@ export const configureModalFr: ConfigureModalTranslations = {
       'Portée cible indicative. Portée réelle de l’échelle = nombre d’ordres en attente × pas (le total des positions ouvertes n’est pas plafonné par cela).',
     closeWorseEntries: 'Fermer les entrées défavorables',
     closeWorseBody:
-      'Lorsque le prix atteint +X pips depuis l’entrée du signal (ancre), le worker ferme automatiquement les jambes instantanées via /OrderClose. Un message du canal comme « Fermer les entrées défavorables » ferme chaque jambe ouverte dont l’entrée est à X pips du prix en direct à ce moment (ex. exécutions instantanées près du signal, pas les couches profondes). Aucun TP courtier sur les jambes CWE — seul le SL reste chez le courtier.',
+      'Lorsque le prix évolue de +X pips en votre faveur depuis l’entrée initiale, le système ferme automatiquement vos opérations immédiates. Lorsqu’un message « Fermer les entrées défavorables » est activé et déclenché, le système ferme toute opération ouverte située à moins de X pips du cours du marché actuel. Les opérations concernées par « Fermer les entrées défavorables » n’ont pas de take-profit (TP) défini côté courtier. Seul le stop loss (SL) est envoyé au courtier.',
     closeWorsePips: 'Fermer les profits depuis entrée défavorable (pips)',
     closeWorsePipsFallback: 'Distance depuis le prix en direct (instruction) ou ancre + X pips (auto).',
     basicPlanTradeStyleLimit:

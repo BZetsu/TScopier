@@ -152,7 +152,7 @@ export const configureModalEn: ConfigureModalTranslations = {
     previewCweLegs: ' {count} instant leg(s) close at +{pips}p from anchor.',
     rangeLayering: 'Range Layering',
     rangeIntro:
-      'Reserve a share of the planned legs as pending Limit orders stepped away from the live anchor by a fixed pip interval (averaging-down). When the signal carries no entry price, the worker fetches a live /Quote bid/ask and anchors the ladder there. Stop-loss and TP distribution mirror the immediate legs. If distance ÷ step caps the count, the effective pending total is reduced.',
+      'Set some trades as virtual pending orders spaced at intervals from the starting price (averaging down). If there is no specific entry price given, use the current live market price (bid/ask) as the starting point. All pending orders copy the Stop-Loss and Take-Profit settings of your immediate trades.',
     reservedLot: 'Reserved lot (% of total)',
     reservedLotHint: 'Share of total legs reserved as pendings.',
     stepPips: 'Step (pips per layering)',
@@ -162,7 +162,7 @@ export const configureModalEn: ConfigureModalTranslations = {
       'Advisory target span. Actual ladder reach = pending count × step (Total Open Trades is not capped by this).',
     closeWorseEntries: 'Close worse entries',
     closeWorseBody:
-      'When price reaches +X pips from the signal entry (anchor), the worker auto-closes instant legs via /OrderClose. A channel message such as "Close worse entries" closes every open leg whose entry is within X pips of the live price at that moment (e.g. instant fills near the signal, not deep layers). No broker TP is set on CWE legs — only the SL rides on the broker.',
+      'When the price moves +X pips in your favor from the starting entry, the system automatically closes your immediate trades. When a "Close worse entries" message is enabled and triggered, the system closes any open trade that is within X pips of the current market price. Trades affected by "Close worse entries" do not have a Take-Profit (TP) set on the broker\'s side. Only the Stop-Loss (SL) is sent to the broker.',
     closeWorsePips: 'Close profits from worse entry (pips)',
     closeWorsePipsFallback: 'Distance from live price (instruction) or anchor + X pips (auto).',
     basicPlanTradeStyleLimit:

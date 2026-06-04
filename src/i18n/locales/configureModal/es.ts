@@ -152,7 +152,7 @@ export const configureModalEs: ConfigureModalTranslations = {
     previewCweLegs: ' {count} pierna(s) instantánea(s) cierran a +{pips}p del ancla.',
     rangeLayering: 'Escalonado en rango',
     rangeIntro:
-      'Reserva una parte de las piernas planificadas como órdenes Limit pendientes escalonadas desde el ancla en vivo por un intervalo fijo en pips (promedio a la baja). Si la señal no trae precio de entrada, el worker obtiene bid/ask en vivo vía /Quote y ancla la escalera ahí. El stop-loss y la distribución de TP replican las piernas inmediatas. Si distancia ÷ paso limita el recuento, se reduce el total efectivo de pendientes.',
+      'Defina algunas operaciones como órdenes pendientes virtuales espaciadas a intervalos desde el precio inicial (promedio a la baja). Si no se indica un precio de entrada concreto, utilice el precio de mercado en vivo actual (bid/ask) como punto de partida. Todas las órdenes pendientes copian los ajustes de stop loss y take-profit de sus operaciones inmediatas.',
     reservedLot: 'Lote reservado (% del total)',
     reservedLotHint: 'Porción de piernas totales reservadas como pendientes.',
     stepPips: 'Paso (pips por escalón)',
@@ -162,7 +162,7 @@ export const configureModalEs: ConfigureModalTranslations = {
       'Alcance objetivo orientativo. Alcance real de la escalera = número de pendientes × paso (el total de operaciones abiertas no queda limitado por esto).',
     closeWorseEntries: 'Cerrar entradas peores',
     closeWorseBody:
-      'Cuando el precio alcanza +X pips desde la entrada de la señal (ancla), el worker cierra automáticamente las piernas instantáneas vía /OrderClose. Un mensaje del canal como «Cerrar entradas peores» cierra cada pierna abierta cuya entrada esté a X pips del precio en vivo en ese momento (p. ej. fills instantáneos cerca de la señal, no capas profundas). En piernas CWE no hay TP en el broker: solo el SL permanece en el broker.',
+      'Cuando el precio avanza +X pips a su favor desde la entrada inicial, el sistema cierra automáticamente sus operaciones inmediatas. Cuando la opción « Cerrar entradas peores » está activada y se dispara, el sistema cierra cualquier operación abierta que esté a X pips del precio de mercado actual. Las operaciones afectadas por « Cerrar entradas peores » no tienen take-profit (TP) establecido en el broker. Solo se envía el stop loss (SL) al broker.',
     closeWorsePips: 'Cerrar beneficios desde entrada peor (pips)',
     closeWorsePipsFallback: 'Distancia desde precio en vivo (instrucción) o ancla + X pips (automático).',
     basicPlanTradeStyleLimit:
