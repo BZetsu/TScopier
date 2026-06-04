@@ -128,6 +128,55 @@ test('computeProfitByChannel: maps via comment channel slug not display name sub
   assert.equal(rows[0]!.key, 'ch-2')
 })
 
+test('computeProfitByChannel: excludes MT4 balance top-up rows', () => {
+  const maps = buildPerformanceChannelLinkMaps(
+    [{ id: 'ch-1', display_name: 'VIP Gold Signals' }],
+    [
+      {
+        broker_account_id: 'broker-1',
+        metaapi_order_id: '888',
+        signal_id: 'sig-1',
+        telegram_channel_id: 'ch-1',
+      },
+      {
+        broker_account_id: 'broker-1',
+        metaapi_order_id: '889',
+        signal_id: 'sig-1',
+        telegram_channel_id: 'ch-1',
+      },
+    ],
+    [{ id: 'sig-1', channel_id: 'ch-1' }],
+    [],
+  )
+  const rows = computeProfitByChannel(
+    [
+      mtTrade({
+        broker_id: 'broker-1',
+        ticket: 888,
+        direction: 'buy',
+        type: 'Buy Stop Limit',
+        lot_size: 0,
+        profit: 50_000,
+        closed_at: TEST_CLOSED_AT,
+      }),
+      mtTrade({
+        broker_id: 'broker-1',
+        ticket: 889,
+        profit: 75,
+        closed_at: TEST_CLOSED_AT,
+      }),
+    ],
+    'all',
+    maps,
+    'Unlinked',
+    TEST_NOW,
+  )
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0]!.key, 'ch-1')
+  assert.equal(rows[0]!.pnl, 75)
+  assert.equal(rows[0]!.count, 1)
+})
+
 test('computeProfitByChannel: uses durable attribution when ticket differs in formatting', () => {
   const maps = buildPerformanceChannelLinkMaps(
     [{ id: 'ch-1', display_name: 'Alpha' }],

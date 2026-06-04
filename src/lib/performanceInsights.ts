@@ -5,6 +5,7 @@ import {
   type DashboardChartTrade,
   type TradeVolumeDay,
 } from './dashboardCharts'
+import { isTradeableClosedRow } from './dashboardTradeStats'
 import { displayTradeProfit } from './tradeDisplay'
 import { parseTscopierComment, sanitizeChannelCommentSlug } from './tscopierComment'
 import type { MtTrade } from './metatraderapi'
@@ -140,6 +141,17 @@ function closedMtTradesInPeriod(trades: MtTrade[], period: PerformancePeriod, no
   const { inRange } = periodRange(period, now)
   return trades.filter(t => {
     if (t.status !== 'closed') return false
+    if (
+      !isTradeableClosedRow({
+        status: t.status,
+        symbol: t.symbol,
+        lot_size: t.lot_size,
+        direction: t.direction,
+        type: t.type,
+      })
+    ) {
+      return false
+    }
     const closeIso = t.closed_at ?? t.opened_at
     return closeIso != null && inRange(closeIso)
   })
@@ -306,8 +318,9 @@ export function computeProfitByChannel(
   const byChannel = new Map<string, { count: number; pnl: number }>()
 
   for (const trade of closed) {
+    const pnl = displayTradeProfit(trade)
+    if (pnl == null || !Number.isFinite(pnl)) continue
     const channelId = resolveChannelIdForTrade(trade, maps)
-    const pnl = displayTradeProfit(trade) ?? 0
     const prev = byChannel.get(channelId) ?? { count: 0, pnl: 0 }
     byChannel.set(channelId, { count: prev.count + 1, pnl: prev.pnl + pnl })
   }
