@@ -121,8 +121,10 @@ export const configureModalEn: ConfigureModalTranslations = {
     fixedLot: 'Fixed Lot',
     dynamicBalance: 'Dynamic (% Balance)',
     tradeStyle: 'Trade Style',
-    singleTrade: 'Single Trade',
-    multiTrades: 'Multi Trades',
+    tradeStyleHint:
+      'Single Entry: one order at your full configured lot. Range Trading: splits that lot into many smaller orders across the signal\'s take-profit levels.',
+    singleTrade: 'Single Entry',
+    multiTrades: 'Range Trading',
     singleTpTarget: 'Single TP target',
     singleTpTargetHint:
       'Choose which TP the broker order should target in Single Trade mode. Earlier TP levels can still trigger partial closes based on your TP distribution.',
@@ -138,13 +140,13 @@ export const configureModalEn: ConfigureModalTranslations = {
     pipToleranceHint:
       'Unused for strict entry routing; kept for backward compatibility with saved settings.',
     multiIntro:
-      'Multi Trades splits your fixed lot into many smaller orders (e.g. 1.0 lot @ 5%/leg = 20 trades of 0.05). Legs are distributed across the signal\'s TPs using the percent rows below. If the per-leg size falls below the broker\'s symbol minimum, the planner falls back to a single full-size trade and logs the reason.',
+      'Range Trading splits your fixed lot into many smaller orders (e.g. 1.0 lot @ 5%/leg = 20 trades of 0.05). Legs are distributed across the signal\'s TPs using the percent rows below. If the per-leg size falls below the broker\'s symbol minimum, the planner falls back to a single full-size trade and logs the reason.',
     perLegSize: 'Per-leg size (% of fixed lot)',
     totalOpenTrades: 'Total Open Trades',
     previewFallbackSingle: '1 (split not possible at 0.01 min / 0.01 step preview)',
     previewInstantPending: '{total} ({immediate} instant + {pending} for layering)',
     previewFooter:
-      'Estimated from Fixed Lot and per-leg %. Live execution uses the symbol\'s min lot and step (may differ slightly). Capped at 500 orders per signal. Telegram-reported lots on each signal do not resize multi-trade baskets—they always split your Fixed Lot.',
+      'Estimated from Fixed Lot and per-leg %. Live execution uses the symbol\'s min lot and step (may differ slightly). Capped at 500 orders per signal. Telegram-reported lots on each signal do not resize range trading baskets—they always split your Fixed Lot.',
     previewDynamicRisk:
       ' With Dynamic (% Balance) risk, the resolved lot at runtime can differ from Fixed Lot.',
     previewLadderSpan:
@@ -157,9 +159,9 @@ export const configureModalEn: ConfigureModalTranslations = {
     reservedLotHint: 'Share of total legs reserved as pendings.',
     stepPips: 'Step (pips per layering)',
     stepPipsFallback: 'Pips between pendings.',
-    rangeDistance: 'Range distance (pips from entry)',
+    rangeDistance: 'Range distance (pips)',
     rangeDistanceFallback:
-      'Advisory target span. Actual ladder reach = pending count × step (Total Open Trades is not capped by this).',
+      'The distance of the range provided by your signal provider. This determines how far the trade is layered.',
     closeWorseEntries: 'Close worse entries',
     closeWorseBody:
       'When the price moves +X pips in your favor from the starting entry, the system automatically closes your immediate trades. When a "Close worse entries" message is enabled and triggered, the system closes any open trade that is within X pips of the current market price. Trades affected by "Close worse entries" do not have a Take-Profit (TP) set on the broker\'s side. Only the Stop-Loss (SL) is sent to the broker.',
@@ -184,7 +186,7 @@ export const configureModalEn: ConfigureModalTranslations = {
     tpDistributionIntro:
       'Set each enabled TP\'s share manually. The total across enabled rows cannot exceed 100% — any input is capped to the remaining budget. Disabled rows are pinned at 0%.',
     multiTradeNote:
-      'Multi-trade: distributes the planned legs across TPs by these percentages (e.g. 50/30/20 of 20 legs → 10/6/4 at TP1/TP2/TP3).',
+      'Range Trading: distributes the planned legs across TPs by these percentages (e.g. 50/30/20 of 20 legs → 10/6/4 at TP1/TP2/TP3).',
     singleTradeNote:
       'Single-trade: the order rides to the last enabled TP at the broker; the worker auto-partial-closes the configured percentage at every earlier TP (e.g. 50/30/20 on a 1.0 lot → close 0.50 at TP1, 0.30 at TP2, remaining 0.20 closes at TP3 via the broker).',
     enabledTotal: 'Enabled total:',

@@ -121,8 +121,10 @@ export const configureModalEs: ConfigureModalTranslations = {
     fixedLot: 'Lote fijo',
     dynamicBalance: 'Dinámico (% del balance)',
     tradeStyle: 'Estilo de operación',
-    singleTrade: 'Operación única',
-    multiTrades: 'Operaciones múltiples',
+    tradeStyleHint:
+      'Entrada única: una orden con su lote configurado completo. Range Trading: divide ese lote en varias órdenes más pequeñas entre los take-profit de la señal.',
+    singleTrade: 'Entrada única',
+    multiTrades: 'Range Trading',
     singleTpTarget: 'Objetivo TP en modo único',
     singleTpTargetHint:
       'Elige qué TP debe usar la orden del broker en Operación única. Los TP anteriores aún pueden ejecutar cierres parciales según tu distribución %.',
@@ -138,13 +140,13 @@ export const configureModalEs: ConfigureModalTranslations = {
     pipToleranceHint:
       'Sin uso en el enrutamiento de entrada estricta; se conserva por compatibilidad con ajustes guardados.',
     multiIntro:
-      'Operaciones múltiples divide su lote fijo en muchas órdenes más pequeñas (p. ej. 1,0 lote al 5 %/pierna = 20 operaciones de 0,05). Las piernas se reparten entre los TP de la señal según los porcentajes de abajo. Si el tamaño por pierna queda por debajo del mínimo del símbolo en el broker, el planificador recurre a una sola operación a tamaño completo y registra el motivo.',
+      'Range Trading divide su lote fijo en muchas órdenes más pequeñas (p. ej. 1,0 lote al 5 %/pierna = 20 operaciones de 0,05). Las piernas se reparten entre los TP de la señal según los porcentajes de abajo. Si el tamaño por pierna queda por debajo del mínimo del símbolo en el broker, el planificador recurre a una sola operación a tamaño completo y registra el motivo.',
     perLegSize: 'Tamaño por pierna (% del lote fijo)',
     totalOpenTrades: 'Total de operaciones abiertas',
     previewFallbackSingle: '1 (división imposible con vista previa mín. 0,01 / paso 0,01)',
     previewInstantPending: '{total} ({immediate} instantáneas + {pending} para escalonado)',
     previewFooter:
-      'Estimado a partir del lote fijo y el % por pierna. La ejecución en vivo usa el lote mínimo y el paso del símbolo (puede variar ligeramente). Máximo 500 órdenes por señal. Los lotes reportados por Telegram en cada señal no redimensionan las cestas multi-operación: siempre dividen su lote fijo.',
+      'Estimado a partir del lote fijo y el % por pierna. La ejecución en vivo usa el lote mínimo y el paso del símbolo (puede variar ligeramente). Máximo 500 órdenes por señal. Los lotes reportados por Telegram en cada señal no redimensionan las cestas de Range Trading: siempre dividen su lote fijo.',
     previewDynamicRisk:
       ' Con riesgo dinámico (% del balance), el lote resuelto en tiempo de ejecución puede diferir del lote fijo.',
     previewLadderSpan:
@@ -157,9 +159,9 @@ export const configureModalEs: ConfigureModalTranslations = {
     reservedLotHint: 'Porción de piernas totales reservadas como pendientes.',
     stepPips: 'Paso (pips por escalón)',
     stepPipsFallback: 'Pips entre pendientes.',
-    rangeDistance: 'Distancia de rango (pips desde la entrada)',
+    rangeDistance: 'Distancia de rango (pips)',
     rangeDistanceFallback:
-      'Alcance objetivo orientativo. Alcance real de la escalera = número de pendientes × paso (el total de operaciones abiertas no queda limitado por esto).',
+      'La distancia del rango indicada por su proveedor de señales. Determina hasta dónde se escalona la operación.',
     closeWorseEntries: 'Cerrar entradas peores',
     closeWorseBody:
       'Cuando el precio avanza +X pips a su favor desde la entrada inicial, el sistema cierra automáticamente sus operaciones inmediatas. Cuando la opción « Cerrar entradas peores » está activada y se dispara, el sistema cierra cualquier operación abierta que esté a X pips del precio de mercado actual. Las operaciones afectadas por « Cerrar entradas peores » no tienen take-profit (TP) establecido en el broker. Solo se envía el stop loss (SL) al broker.',
@@ -184,7 +186,7 @@ export const configureModalEs: ConfigureModalTranslations = {
     tpDistributionIntro:
       'Defina manualmente la cuota de cada TP activo. El total de filas activas no puede superar el 100 %; cualquier valor se limita al presupuesto restante. Las filas desactivadas quedan en 0 %.',
     multiTradeNote:
-      'Multi-operación: reparte las piernas planificadas entre TP según estos porcentajes (p. ej. 50/30/20 de 20 piernas → 10/6/4 en TP1/TP2/TP3).',
+      'Range Trading: reparte las piernas planificadas entre TP según estos porcentajes (p. ej. 50/30/20 de 20 piernas → 10/6/4 en TP1/TP2/TP3).',
     singleTradeNote:
       'Operación única: la orden llega al último TP activo en el broker; el worker cierra parcialmente el porcentaje configurado en cada TP anterior (p. ej. 50/30/20 en 1,0 lote → cierra 0,50 en TP1, 0,30 en TP2 y el 0,20 restante en TP3 vía el broker).',
     enabledTotal: 'Total activado:',

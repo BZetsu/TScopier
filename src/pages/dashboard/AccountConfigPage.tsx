@@ -23,6 +23,7 @@ import { Button } from '../../components/ui/Button'
 import { Badge } from '../../components/ui/Badge'
 import { Alert } from '../../components/ui/Alert'
 import { AddAccountModal } from '../../components/ui/AddAccountModal'
+import { ConfigTitle, ConfigToggleLabel, ConfigureInput, ConfigureSelect, InfoTooltip } from '../../components/ui/InfoTooltip'
 import { MtCompanyServerPicker } from '../../components/ui/MtCompanyServerPicker'
 import { formatLocalCalendarDay } from '../../lib/dayStartBalance'
 import { metatraderApi } from '../../lib/metatraderapi'
@@ -913,6 +914,32 @@ export function AccountConfigPage() {
     channelManualSettings.range_step_pips,
     channelManualSettings.range_distance_pips,
   ])
+
+  const multiTradePreviewTooltip = useMemo(() => {
+    const ms = channelManualSettings
+    let text = cm.risk.previewFooter
+    if (ms.risk_mode === 'dynamic_balance_percent') text += cm.risk.previewDynamicRisk
+    if (
+      ms.range_trading
+      && multiTradePreview.effectiveDistancePips != null
+      && (multiTradePreview.pending ?? 0) > 0
+      && Math.abs(multiTradePreview.effectiveDistancePips - (Number(ms.range_distance_pips ?? 0) || 0)) >= 1
+    ) {
+      text += interpolate(cm.risk.previewLadderSpan, {
+        pending: String(multiTradePreview.pending),
+        step: String(Number(ms.range_step_pips ?? 0) || 0),
+        distance: String(multiTradePreview.effectiveDistancePips),
+        configured: String(Number(ms.range_distance_pips ?? 0) || 0),
+      })
+    }
+    if (ms.close_worse_entries && (multiTradePreview.immediate ?? 0) > 0) {
+      text += interpolate(cm.risk.previewCweLegs, {
+        count: String(multiTradePreview.immediate),
+        pips: String(Number(ms.close_worse_entries_pips ?? 20) || 0),
+      })
+    }
+    return text
+  }, [channelManualSettings, cm.risk, multiTradePreview])
 
   const brokersNeedingRelink = useMemo(
     () => brokers.filter(b => isLegacyBrokerLink(b.metaapi_account_id)),
@@ -2578,13 +2605,13 @@ export function AccountConfigPage() {
                 ) : !selectedChannelLinked ? (
                   <div className="py-12 text-center max-w-md mx-auto px-2">
                     <Link2 className="w-10 h-10 mx-auto mb-3 text-primary-400 dark:text-primary-500" />
-                    <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">
+                    <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100 inline-flex items-center justify-center gap-1.5 flex-wrap">
                       {interpolate(cm.connectChannelPrompt, {
                         channel: selectedChannelOption?.display_name ?? cm.channelFilters.unnamedChannel,
                         broker: configAccount ? getBrokerDisplayLabel(configAccount) : '—',
                       })}
+                      <InfoTooltip text={cm.connectChannelHint} />
                     </p>
-                    <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-2">{cm.connectChannelHint}</p>
                     <Button
                       className="mt-6 min-h-[44px]"
                       loading={channelConnecting}
@@ -2619,10 +2646,7 @@ export function AccountConfigPage() {
 
                     {AI_CONFIGURATION_ENABLED && channelMode === 'ai' ? (
                       <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 space-y-3">
-                        <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">{cm.ai.title}</p>
-                        <p className="text-sm text-neutral-600 dark:text-neutral-400">
-                          {cm.ai.intro}
-                        </p>
+                        <ConfigTitle variant="semibold" info={cm.ai.intro}>{cm.ai.title}</ConfigTitle>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                           <FeatureBullet icon={DollarSign} title={cm.ai.moneyManagementTitle} body={cm.ai.moneyManagementBody} />
                           <FeatureBullet icon={Eye} title={cm.ai.signalTitle} body={cm.ai.signalBody} />
@@ -2637,12 +2661,9 @@ export function AccountConfigPage() {
                             <section className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 space-y-3">
                               <div className="flex flex-wrap items-start justify-between gap-2">
                               <div>
-                                  <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">
+                                  <ConfigTitle variant="semibold" info={`${cm.channelSymbols.intro}\n\n${cm.channelSymbols.tradeAllHint}`}>
                                     {cm.channelSymbols.title}
-                                  </p>
-                                  <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5 max-w-xl">
-                                    {cm.channelSymbols.intro}
-                                </p>
+                                  </ConfigTitle>
                               </div>
                                 <Button
                                   type="button"
@@ -2728,12 +2749,7 @@ export function AccountConfigPage() {
                                       </label>
                                     ))}
                               </div>
-                                  {!parseSymbolToTradeList(channelManualSettings.symbol_to_trade).length
-                                  || channelSymbolSelection.size === detectedSymbols.length ? (
-                                    <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                                      {cm.channelSymbols.tradeAllHint}
-                                    </p>
-                                  ) : null}
+
                                   {staleSavedSymbols.length > 0 ? (
                                     <p className="text-xs text-amber-700 dark:text-amber-300">
                                       {interpolate(cm.channelSymbols.staleSymbolNote, {
@@ -2760,7 +2776,7 @@ export function AccountConfigPage() {
                                 aria-disabled={!keywordFiltersEnabled}
                               >
                                 <div className="flex items-center justify-between">
-                                  <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">{cm.channels.keywordFilters}</p>
+                                  <ConfigTitle variant="semibold" info={`${cm.channels.filtersIntro}\n\n${cm.channelFilters.footer}`}>{cm.channels.keywordFilters}</ConfigTitle>
                                   <p className="text-xs text-neutral-500 dark:text-neutral-400">
                                     {(() => {
                                       const f = normalizeChannelFilters(
@@ -2776,7 +2792,7 @@ export function AccountConfigPage() {
                                     })()}
                                   </p>
                                 </div>
-                                <p className="text-xs text-neutral-500 dark:text-neutral-400">{cm.channels.filtersIntro}</p>
+                                
                                 <ChannelFiltersCard
                                   filters={normalizeChannelFilters(
                                     configDraft.channelConfigs[configDraft.selectedChannelId]?.channelFilters
@@ -2807,12 +2823,9 @@ export function AccountConfigPage() {
                             <section className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 space-y-4">
                               <div className="flex flex-wrap items-start justify-between gap-3">
                                 <div>
-                                  <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">
+                                  <ConfigTitle variant="semibold" info={`${cm.aiTraining.intro}\n\n${cm.aiTraining.trainHint}`}>
                                     {cm.aiTraining.title}
-                                  </p>
-                                  <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1 max-w-2xl">
-                                    {cm.aiTraining.intro}
-                                  </p>
+                                  </ConfigTitle>
                                 </div>
                                 <div className="flex items-center gap-2">
                                   <Button
@@ -2832,55 +2845,55 @@ export function AccountConfigPage() {
                                 <p className="text-xs text-neutral-500 dark:text-neutral-400">{cm.aiTraining.loadingExisting}</p>
                               ) : (
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                  <Input
+                                  <ConfigureInput
                                     label={cm.aiTraining.entryCues}
                                     value={tokensToCsv(activeTrainingDraft.entry_cues).toUpperCase()}
                                     hint={cm.aiTraining.commaSeparatedHint}
                                     onChange={e => setTrainingDraft(configDraft.selectedChannelId!, { entry_cues: csvToUpperTokens(e.target.value) })}
                                   />
-                                  <Input
+                                  <ConfigureInput
                                     label={cm.aiTraining.buyCues}
                                     value={tokensToCsv(activeTrainingDraft.buy_cues).toUpperCase()}
                                     hint={cm.aiTraining.commaSeparatedHint}
                                     onChange={e => setTrainingDraft(configDraft.selectedChannelId!, { buy_cues: csvToUpperTokens(e.target.value) })}
                                   />
-                                  <Input
+                                  <ConfigureInput
                                     label={cm.aiTraining.sellCues}
                                     value={tokensToCsv(activeTrainingDraft.sell_cues).toUpperCase()}
                                     hint={cm.aiTraining.commaSeparatedHint}
                                     onChange={e => setTrainingDraft(configDraft.selectedChannelId!, { sell_cues: csvToUpperTokens(e.target.value) })}
                                   />
-                                  <Input
+                                  <ConfigureInput
                                     label={cm.aiTraining.stopLossCues}
                                     value={tokensToCsv(activeTrainingDraft.stop_loss_cues).toUpperCase()}
                                     hint={cm.aiTraining.commaSeparatedHint}
                                     onChange={e => setTrainingDraft(configDraft.selectedChannelId!, { stop_loss_cues: csvToUpperTokens(e.target.value) })}
                                   />
-                                  <Input
+                                  <ConfigureInput
                                     label={cm.aiTraining.takeProfitCues}
                                     value={tokensToCsv(activeTrainingDraft.take_profit_cues).toUpperCase()}
                                     hint={cm.aiTraining.commaSeparatedHint}
                                     onChange={e => setTrainingDraft(configDraft.selectedChannelId!, { take_profit_cues: csvToUpperTokens(e.target.value) })}
                                   />
-                                  <Input
+                                  <ConfigureInput
                                     label={cm.aiTraining.takeProfitTierCues}
                                     value={tokensToCsv(activeTrainingDraft.take_profit_tier_cues).toUpperCase()}
                                     hint={cm.aiTraining.commaSeparatedHint}
                                     onChange={e => setTrainingDraft(configDraft.selectedChannelId!, { take_profit_tier_cues: csvToUpperTokens(e.target.value) })}
                                   />
-                                  <Input
+                                  <ConfigureInput
                                     label={cm.aiTraining.managementCues}
                                     value={tokensToCsv(activeTrainingDraft.management_cues).toUpperCase()}
                                     hint={cm.aiTraining.commaSeparatedHint}
                                     onChange={e => setTrainingDraft(configDraft.selectedChannelId!, { management_cues: csvToUpperTokens(e.target.value) })}
                                   />
-                                  <Input
+                                  <ConfigureInput
                                     label={cm.aiTraining.languageHints}
                                     value={tokensToCsv(activeTrainingDraft.language_hints).toUpperCase()}
                                     hint={cm.aiTraining.commaSeparatedHint}
                                     onChange={e => setTrainingDraft(configDraft.selectedChannelId!, { language_hints: csvToUpperTokens(e.target.value) })}
                                   />
-                                  <Select
+                                  <ConfigureSelect
                                     label={cm.aiTraining.signalOrderPattern}
                                     value={activeTrainingDraft.signal_order_pattern}
                                     onChange={e => setTrainingDraft(configDraft.selectedChannelId!, { signal_order_pattern: e.target.value as SignalTrainingSchema['signal_order_pattern'] })}
@@ -2891,7 +2904,7 @@ export function AccountConfigPage() {
                                       { value: 'unknown', label: cm.aiTraining.signalOrderPatternOptions.unknown },
                                     ]}
                                   />
-                                  <Select
+                                  <ConfigureSelect
                                     label={cm.aiTraining.signalRequiresPrice}
                                     value={
                                       activeTrainingDraft.signal_requires_price == null
@@ -2934,7 +2947,7 @@ export function AccountConfigPage() {
                                   </div>
                                 </div>
                               )}
-                              <p className="text-xs text-neutral-500 dark:text-neutral-400">{cm.aiTraining.trainHint}</p>
+                              
                             </section>
                           ) : (
                             <p className="text-sm text-neutral-500 dark:text-neutral-400">{cm.channels.selectChannelFirst}</p>
@@ -2944,7 +2957,7 @@ export function AccountConfigPage() {
                         {activeManualSubTab === 'risk' && (
                           <div className="space-y-4">
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                              <Select
+                              <ConfigureSelect
                                 label={cm.risk.riskMode}
                                 value={channelManualSettings.risk_mode ?? 'fixed_lot'}
                                 onChange={e => setManual({ risk_mode: e.target.value as ManualSettings['risk_mode'] })}
@@ -2954,9 +2967,9 @@ export function AccountConfigPage() {
                                 ]}
                               />
                               {channelManualSettings.risk_mode === 'dynamic_balance_percent' ? (
-                                <Input label={cm.risk.dynamicBalance} type="number" value={String(channelManualSettings.dynamic_balance_percent ?? 1)} onChange={e => setManual({ dynamic_balance_percent: Number(e.target.value) })} />
+                                <ConfigureInput label={cm.risk.dynamicBalance} type="number" value={String(channelManualSettings.dynamic_balance_percent ?? 1)} onChange={e => setManual({ dynamic_balance_percent: Number(e.target.value) })} />
                               ) : (
-                                <Input
+                                <ConfigureInput
                                   label={cm.risk.fixedLot}
                                   type="text"
                                   inputMode="decimal"
@@ -2982,8 +2995,9 @@ export function AccountConfigPage() {
                                   }}
                                 />
                               )}
-                              <Select
+                              <ConfigureSelect
                                 label={cm.risk.tradeStyle}
+                                hint={cm.risk.tradeStyleHint}
                                 value={channelManualSettings.trade_style ?? 'single'}
                                 disabled={!multiTradeStyleEnabled}
                                 onChange={e => {
@@ -3011,8 +3025,9 @@ export function AccountConfigPage() {
 
                             {channelManualSettings.trade_style !== 'multi' && (
                               <div className="space-y-4">
-                              <Select
+                              <ConfigureSelect
                                 label={cm.risk.singleTpTarget}
+                                hint={cm.risk.singleTpTargetHint}
                                 value={channelManualSettings.single_tp_target ?? 'farthest'}
                                 onChange={e => {
                                   const v = e.target.value as ManualSettings['single_tp_target']
@@ -3025,17 +3040,11 @@ export function AccountConfigPage() {
                                   { value: 'tp3', label: cm.risk.singleTpTargetTp3 },
                                 ]}
                               />
-                              <p className="text-xs text-neutral-500 dark:text-neutral-400 -mt-2">
-                                {cm.risk.singleTpTargetHint}
-                              </p>
                               <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-3 space-y-3">
-                                <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.risk.signalEntryTitle}</p>
-                                <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                                  {cm.risk.signalEntryBody}
-                                </p>
+                                <ConfigTitle info={cm.risk.signalEntryBody}>{cm.risk.signalEntryTitle}</ConfigTitle>
                                 <div className="rounded-md border border-neutral-200 dark:border-neutral-800 overflow-hidden">
                                   <div className="flex items-center justify-between gap-3 bg-white dark:bg-neutral-900 px-3 py-2.5">
-                                    <span className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.risk.useSignalEntryPrice}</span>
+                                    <ConfigToggleLabel>{cm.risk.useSignalEntryPrice}</ConfigToggleLabel>
                                     <Toggle
                                       checked={channelManualSettings.use_signal_entry_price === true}
                                       onChange={v => setManual({ use_signal_entry_price: v })}
@@ -3043,7 +3052,7 @@ export function AccountConfigPage() {
                                   </div>
                                   {channelManualSettings.use_signal_entry_price && (
                                     <div className="border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/80 px-3 py-3 space-y-2">
-                                      <Input
+                                      <ConfigureInput
                                         label={cm.risk.pipToleranceLegacy}
                                         type="number"
                                         min={0}
@@ -3069,11 +3078,9 @@ export function AccountConfigPage() {
                                   aria-disabled={!multiTradeStyleEnabled}
                                 >
                               <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-3 space-y-3">
-                                <p className="text-xs text-neutral-600 dark:text-neutral-400">
-                                  {cm.risk.multiIntro}
-                                </p>
+                                <ConfigTitle info={cm.risk.multiIntro}>{cm.risk.multiTrades}</ConfigTitle>
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                  <Input
+                                  <ConfigureInput
                                     label={cm.risk.perLegSize}
                                     type="number"
                                     min={0.1}
@@ -3083,7 +3090,7 @@ export function AccountConfigPage() {
                                     onChange={e => setManual({ multi_trade_leg_percent: Number(e.target.value) })}
                                   />
                                   <div>
-                                    <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100 mb-1">{cm.risk.totalOpenTrades}</p>
+                                    <ConfigTitle className="mb-1" info={multiTradePreviewTooltip}>{cm.risk.totalOpenTrades}</ConfigTitle>
                                     <div className="rounded-md border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/50 px-3 py-2 text-sm font-mono text-neutral-900 dark:text-neutral-50">
                                       {multiTradePreview.fallsBackSingle
                                         ? cm.risk.previewFallbackSingle
@@ -3095,52 +3102,22 @@ export function AccountConfigPage() {
                                             })
                                           : multiTradePreview.totalOrders}
                                     </div>
-                                    <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
-                                      {cm.risk.previewFooter}
-                                      {channelManualSettings.risk_mode === 'dynamic_balance_percent' && (
-                                        <>{cm.risk.previewDynamicRisk}</>
-                                      )}
-                                      {channelManualSettings.range_trading
-                                        && multiTradePreview.effectiveDistancePips != null
-                                        && (multiTradePreview.pending ?? 0) > 0
-                                        && Math.abs(multiTradePreview.effectiveDistancePips - (Number(channelManualSettings.range_distance_pips ?? 0) || 0)) >= 1 && (
-                                        <>
-                                          {interpolate(cm.risk.previewLadderSpan, {
-                                            pending: String(multiTradePreview.pending),
-                                            step: String(Number(channelManualSettings.range_step_pips ?? 0) || 0),
-                                            distance: String(multiTradePreview.effectiveDistancePips),
-                                            configured: String(Number(channelManualSettings.range_distance_pips ?? 0) || 0),
-                                          })}
-                                        </>
-                                      )}
-                                      {channelManualSettings.close_worse_entries && (multiTradePreview.immediate ?? 0) > 0 && (
-                                        <>
-                                          {interpolate(cm.risk.previewCweLegs, {
-                                            count: String(multiTradePreview.immediate),
-                                            pips: String(Number(channelManualSettings.close_worse_entries_pips ?? 20) || 0),
-                                          })}
-                                        </>
-                                      )}
-                                    </p>
                                   </div>
                                 </div>
                               </div>
 
                               <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-3 space-y-3">
                                 <div className="flex items-center justify-between">
-                                  <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.risk.rangeLayering}</p>
+                                  <ConfigToggleLabel info={cm.risk.rangeIntro}>{cm.risk.rangeLayering}</ConfigToggleLabel>
                                   <Toggle
                                     checked={channelManualSettings.range_trading === true}
                                     onChange={v => setManual({ range_trading: v })}
                                   />
                                 </div>
-                                <p className="text-xs text-neutral-600 dark:text-neutral-400">
-                                  {cm.risk.rangeIntro}
-                                </p>
                                 {channelManualSettings.range_trading && (
                                   <>
                                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                                      <Input
+                                      <ConfigureInput
                                         label={cm.risk.reservedLot}
                                         type="number"
                                         min={0}
@@ -3151,7 +3128,7 @@ export function AccountConfigPage() {
                                         value={String(channelManualSettings.range_percent ?? 50)}
                                         onChange={e => setManual({ range_percent: Math.max(0, Math.min(100, Number(e.target.value) || 0)) })}
                                       />
-                                      <Input
+                                      <ConfigureInput
                                         label={cm.risk.stepPips}
                                         type="number"
                                         min={1}
@@ -3164,7 +3141,7 @@ export function AccountConfigPage() {
                                         value={String(channelManualSettings.range_step_pips ?? DEFAULT_MANUAL_SETTINGS.range_step_pips)}
                                         onChange={e => setManual({ range_step_pips: Math.max(1, Number(e.target.value) || 1) })}
                                       />
-                                      <Input
+                                      <ConfigureInput
                                         label={cm.risk.rangeDistance}
                                         type="number"
                                         min={1}
@@ -3181,17 +3158,14 @@ export function AccountConfigPage() {
 
                                     <div className="rounded-md border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/50 p-3 space-y-3">
                                       <div className="flex items-center justify-between">
-                                        <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.risk.closeWorseEntries}</p>
+                                        <ConfigToggleLabel info={cm.risk.closeWorseBody}>{cm.risk.closeWorseEntries}</ConfigToggleLabel>
                                         <Toggle
                                           checked={channelManualSettings.close_worse_entries === true}
                                           onChange={v => setManual({ close_worse_entries: v })}
                                         />
                                       </div>
-                                      <p className="text-xs text-neutral-600 dark:text-neutral-400">
-                                        {cm.risk.closeWorseBody}
-                                      </p>
                                       {channelManualSettings.close_worse_entries && (
-                                          <Input
+                                          <ConfigureInput
                                           label={cm.risk.closeWorsePips}
                                             type="number"
                                             min={1}
@@ -3230,7 +3204,7 @@ export function AccountConfigPage() {
                           <div className="space-y-6">
                             <section className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-3 space-y-3">
                               <div className="flex items-center justify-between">
-                                <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.stops.tpDistributionTitle}</p>
+                                <ConfigTitle info={`${cm.stops.tpDistributionIntro}\n\n${cm.stops.multiTradeNote}\n\n${cm.stops.singleTradeNote}`}>{cm.stops.tpDistributionTitle}</ConfigTitle>
                                 <Button
                                   variant="ghost"
                                   size="sm"
@@ -3247,14 +3221,6 @@ export function AccountConfigPage() {
                                 && (channelManualSettings.tp_lots ?? DEFAULT_MANUAL_TP_LOTS).length >= limits.maxTpRows ? (
                                   <UpgradePrompt variant="compact" reason={cm.stops.basicPlanMoreTpsLimit} />
                               ) : null}
-                              <p className="text-xs text-neutral-600 dark:text-neutral-400">
-                                {cm.stops.tpDistributionIntro}
-                              </p>
-                              <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                                {cm.stops.multiTradeNote}
-                                <br />
-                                {cm.stops.singleTradeNote}
-                              </p>
                               <div className="flex items-center justify-between text-xs">
                                 <span className="text-neutral-600 dark:text-neutral-400">
                                   {cm.stops.enabledTotal}{' '}
@@ -3314,12 +3280,7 @@ export function AccountConfigPage() {
                             </section>
 
                             <section className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-4 space-y-3">
-                              <div>
-                                <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.stops.predefinedTitle}</p>
-                                <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
-                                  {cm.stops.predefinedIntro}
-                                </p>
-                          </div>
+                              <ConfigTitle info={cm.stops.predefinedIntro}>{cm.stops.predefinedTitle}</ConfigTitle>
                               {predefSummary ? (
                                 <div className="rounded-lg border border-teal-200 bg-teal-50/80 px-3 py-2.5 text-sm text-teal-900 dark:border-teal-900/50 dark:bg-teal-950/40 dark:text-teal-200">
                                   {predefSummary}
@@ -3328,12 +3289,12 @@ export function AccountConfigPage() {
                               <div className="space-y-3">
                                 <div className="rounded-md border border-neutral-200 dark:border-neutral-800 overflow-hidden">
                                   <div className="flex items-center justify-between gap-3 bg-white dark:bg-neutral-900 px-3 py-2.5">
-                                    <span className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.stops.overrideSl}</span>
+                                    <ConfigToggleLabel>{cm.stops.overrideSl}</ConfigToggleLabel>
                                     <Toggle checked={ms.use_predefined_sl_pips === true} onChange={v => setManual({ use_predefined_sl_pips: v })} />
                                   </div>
                                   {ms.use_predefined_sl_pips && (
                                     <div className="border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/80 px-3 py-3">
-                                      <Input
+                                      <ConfigureInput
                                         label={cm.stops.slPips}
                                         type="number"
                                         min={1}
@@ -3347,7 +3308,7 @@ export function AccountConfigPage() {
                             </div>
                                 <div className="rounded-md border border-neutral-200 dark:border-neutral-800 overflow-hidden">
                                   <div className="flex items-center justify-between gap-3 bg-white dark:bg-neutral-900 px-3 py-2.5">
-                                    <span className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.stops.overrideTps}</span>
+                                    <ConfigToggleLabel info={cm.stops.tpRowsIntro}>{cm.stops.overrideTps}</ConfigToggleLabel>
                                     <Toggle
                                       checked={ms.use_predefined_tp_pips === true}
                                       onChange={v => {
@@ -3374,17 +3335,14 @@ export function AccountConfigPage() {
                                   </div>
                                   {ms.use_predefined_tp_pips && (
                                     <div className="border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/80 px-3 py-3 space-y-3">
-                                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                                        <p className="text-xs text-neutral-600 dark:text-neutral-400">
-                                          {cm.stops.tpRowsIntro}
-                                        </p>
+                                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
                                         <Button variant="ghost" size="sm" className="shrink-0 self-start sm:self-auto" onClick={addPredefinedTpPipRow}>{cm.stops.addTp}</Button>
                                       </div>
                                       <div className="space-y-2">
                                         {clonePredefinedTpPips(ms.predefined_tp_pips).map((pips, idx) => (
                                           <div key={`predef-tp-${idx}`} className="grid grid-cols-12 gap-2 items-end">
                                             <div className="col-span-10">
-                                              <Input
+                                              <ConfigureInput
                                                 label={interpolate(cm.stops.tpPipsLabel, { index: String(idx + 1) })}
                                                 type="number"
                                                 min={1}
@@ -3435,20 +3393,17 @@ export function AccountConfigPage() {
 
                           return (
                           <div className="space-y-6">
-                            {!isSingleTrade ? (
-                              <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                                {cm.management.monitorIntroMulti}
-                              </p>
-                            ) : null}
-
                             <section className="rounded-lg border border-neutral-200 dark:border-neutral-800 overflow-hidden">
                               <div className="flex items-center justify-between gap-3 bg-white dark:bg-neutral-900 px-4 py-3">
-                                <div>
-                                  <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.management.moveSlTitle}</p>
-                                  <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
-                                    {cm.management.moveSlSubtitle}
-                                  </p>
-                                </div>
+                                <ConfigTitle
+                                  info={
+                                    !isSingleTrade
+                                      ? `${cm.management.monitorIntroMulti}\n\n${cm.management.moveSlSubtitle}`
+                                      : cm.management.moveSlSubtitle
+                                  }
+                                >
+                                  {cm.management.moveSlTitle}
+                                </ConfigTitle>
                                 <Toggle
                                   checked={autoMgmtEnabled}
                                   onChange={v => {
@@ -3488,14 +3443,16 @@ export function AccountConfigPage() {
                                               : 'border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300',
                                           )}
                                         >
-                                          <span className="font-medium block">{m.label}</span>
-                                          <span className="text-[10px] opacity-75 block mt-0.5">{m.hint}</span>
+                                          <span className="font-medium inline-flex items-center gap-1">
+                                            {m.label}
+                                            <InfoTooltip text={m.hint} />
+                                          </span>
                                         </button>
                                       ))}
                                 </div>
 
                                     {triggerMode === 'pips' && (
-                                    <Input
+                                    <ConfigureInput
                                         label={cm.management.triggerPips}
                                       type="number"
                                       min={0}
@@ -3509,7 +3466,7 @@ export function AccountConfigPage() {
                                     )}
 
                                     {triggerMode === 'rr' && (
-                                      <Input
+                                      <ConfigureInput
                                         label={cm.management.triggerRrLabel}
                                         type="number"
                                         min={0}
@@ -3523,7 +3480,7 @@ export function AccountConfigPage() {
                                     )}
 
                                     {triggerMode === 'money' && (
-                                      <Input
+                                      <ConfigureInput
                                         label={cm.management.triggerMoney}
                                         type="number"
                                         min={0}
@@ -3537,22 +3494,18 @@ export function AccountConfigPage() {
                                     )}
 
                                     {triggerMode === 'tp_hit' && (
-                                      <div className="space-y-1.5">
-                                        <Select
+                                        <ConfigureSelect
                                           label={cm.management.takeProfit}
+                                          hint={cm.management.tpHitHint}
                                           value={String(ms.move_sl_to_entry_tp_index ?? 1)}
                                           onChange={e => setManual({
                                             move_sl_to_entry_tp_index: Math.max(1, Number(e.target.value) || 1),
                                           })}
                                           options={tpOptions}
                                         />
-                                        <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                                          {cm.management.tpHitHint}
-                                        </p>
-                                    </div>
-                                  )}
+                                    )}
 
-                                    <Input
+                                    <ConfigureInput
                                       label={cm.management.breakevenOffset}
                                       type="number"
                                       min={0}
@@ -3567,10 +3520,7 @@ export function AccountConfigPage() {
 
                                   <div className="rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 overflow-hidden">
                                     <div className="px-3 py-2.5 border-b border-neutral-200 dark:border-neutral-800">
-                                      <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.management.breakevenTypeTitle}</p>
-                                      <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
-                                        {cm.management.breakevenTypeSubtitle}
-                                      </p>
+                                      <ConfigTitle info={cm.management.breakevenTypeSubtitle}>{cm.management.breakevenTypeTitle}</ConfigTitle>
                                     </div>
                                     <div className="p-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
                                       <button
@@ -3583,9 +3533,9 @@ export function AccountConfigPage() {
                                             : 'border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 hover:border-neutral-300 dark:hover:border-neutral-600',
                                         )}
                                       >
-                                        <span className="font-medium">{cm.management.moveOnly}</span>
-                                        <span className="block text-xs mt-0.5 opacity-80">
-                                          {cm.management.moveOnlyHint}
+                                        <span className="font-medium inline-flex items-center gap-1">
+                                          {cm.management.moveOnly}
+                                          <InfoTooltip text={cm.management.moveOnlyHint} />
                                         </span>
                                       </button>
                                       <button
@@ -3598,14 +3548,14 @@ export function AccountConfigPage() {
                                             : 'border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 hover:border-neutral-300 dark:hover:border-neutral-600',
                                         )}
                                       >
-                                        <span className="font-medium">{cm.management.moveAndPartial}</span>
-                                        <span className="block text-xs mt-0.5 opacity-80">
-                                          {cm.management.moveAndPartialHint}
+                                        <span className="font-medium inline-flex items-center gap-1">
+                                          {cm.management.moveAndPartial}
+                                          <InfoTooltip text={cm.management.moveAndPartialHint} />
                                         </span>
                                       </button>
                                     </div>
                                     {beType === 'sl_and_close_half' && (
-                                      <Input
+                                      <ConfigureInput
                                         label={cm.management.partialClose}
                                         type="number"
                                         min={1}
@@ -3628,12 +3578,7 @@ export function AccountConfigPage() {
                             {isSingleTrade && (
                               <section className="rounded-lg border border-neutral-200 dark:border-neutral-800 overflow-hidden">
                                 <div className="flex items-center justify-between gap-3 bg-white dark:bg-neutral-900 px-4 py-3">
-                                  <div>
-                                    <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.management.trailingTitle}</p>
-                                    <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
-                                      {cm.management.trailingSubtitle}
-                                    </p>
-                                      </div>
+                                  <ConfigTitle info={cm.management.trailingSubtitle}>{cm.management.trailingTitle}</ConfigTitle>
                                   <Toggle
                                     checked={ms.trailing_enabled === true}
                                     onChange={v => setManual({ trailing_enabled: v })}
@@ -3642,7 +3587,7 @@ export function AccountConfigPage() {
                                 {ms.trailing_enabled && (
                                   <div className="border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/80 px-4 py-4">
                                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                                              <Input
+                                              <ConfigureInput
                                         label={cm.management.trailStart}
                                                 type="number"
                                                 min={0}
@@ -3651,7 +3596,7 @@ export function AccountConfigPage() {
                                         value={String(ms.trailing_start_pips ?? 20)}
                                         onChange={e => setManual({ trailing_start_pips: Math.max(0, Number(e.target.value) || 0) })}
                                       />
-                                      <Input
+                                      <ConfigureInput
                                         label={cm.management.trailStep}
                                         type="number"
                                         min={0}
@@ -3660,7 +3605,7 @@ export function AccountConfigPage() {
                                         value={String(ms.trailing_step_pips ?? 5)}
                                         onChange={e => setManual({ trailing_step_pips: Math.max(0, Number(e.target.value) || 0) })}
                                       />
-                                      <Input
+                                      <ConfigureInput
                                         label={cm.management.trailDistance}
                                         type="number"
                                         min={0}
@@ -3682,10 +3627,11 @@ export function AccountConfigPage() {
                             )}
 
                             <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-3 space-y-3">
-                              <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.strategy.signalBehavior}</p>
+                              <ConfigTitle>{cm.strategy.signalBehavior}</ConfigTitle>
                               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                                <Select
+                                <ConfigureSelect
                                   label={cm.strategy.reverseSignal}
+                                  hint={cm.strategy.reverseHint}
                                   value={ms.reverse_signal ? 'yes' : 'no'}
                                   onChange={e => {
                                     const v = e.target.value === 'yes'
@@ -3694,35 +3640,25 @@ export function AccountConfigPage() {
                                   }}
                                   options={[{ value: 'no', label: cm.common.no }, { value: 'yes', label: cm.common.yes }]}
                                 />
-                                <Select
+                                <ConfigureSelect
                                   label={cm.strategy.addToExisting}
+                                  hint={cm.strategy.addExistingHint}
                                   value={ms.add_new_trades_to_existing ? 'yes' : 'no'}
                                   onChange={e => setManual({ add_new_trades_to_existing: e.target.value === 'yes' })}
                                   options={[{ value: 'yes', label: cm.common.yes }, { value: 'no', label: cm.common.no }]}
                                 />
-                                <Select
+                                <ConfigureSelect
                                   label={cm.strategy.closeOpposite}
+                                  hint={cm.strategy.closeOppositeHint}
                                   value={ms.close_on_opposite_signal ? 'yes' : 'no'}
                                   onChange={e => setManual({ close_on_opposite_signal: e.target.value === 'yes' })}
                                   options={[{ value: 'no', label: cm.common.no }, { value: 'yes', label: cm.common.yes }]}
                                 />
                               </div>
-                              <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                                {cm.strategy.reverseHint}
-                              </p>
-                              <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                                {cm.strategy.closeOppositeHint}
-                              </p>
-                              <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                                {cm.strategy.addExistingHint}
-                              </p>
                                 </div>
 
                             <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-3 space-y-3">
-                              <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.strategy.rrFallbacksTitle}</p>
-                              <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                                {cm.strategy.rrFallbacksIntro}
-                              </p>
+                              <ConfigTitle info={cm.strategy.rrFallbacksIntro}>{cm.strategy.rrFallbacksTitle}</ConfigTitle>
                               <div className="space-y-3">
                                 <div className="rounded-md border border-neutral-200 dark:border-neutral-800 overflow-hidden">
                                   <div className="flex items-center justify-between gap-3 bg-white dark:bg-neutral-900 px-3 py-2.5">
@@ -3734,7 +3670,7 @@ export function AccountConfigPage() {
                                   </div>
                                   {ms.rr_for_sl_enabled && (
                                     <div className="border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/80 px-3 py-3 space-y-1">
-                                      <Input
+                                      <ConfigureInput
                                         label={cm.strategy.slRr}
                                         type="number"
                                         hint={cm.strategy.slRrHint}
@@ -3755,7 +3691,7 @@ export function AccountConfigPage() {
                                   </div>
                                   {ms.rr_for_tps_enabled && (
                                     <div className="border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/80 px-3 py-3 space-y-1">
-                                      <Input
+                                      <ConfigureInput
                                         label={cm.strategy.tpRrValues}
                                         hint={cm.strategy.tpRrHint}
                                         value={(ms.rr_for_tps ?? []).join(',')}
@@ -3768,12 +3704,9 @@ export function AccountConfigPage() {
                             </div>
 
                             <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-3 space-y-3">
-                              <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.strategy.pendingTitle}</p>
-                              <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                                {cm.strategy.pendingIntro}
-                              </p>
+                              <ConfigTitle info={cm.strategy.pendingIntro}>{cm.strategy.pendingTitle}</ConfigTitle>
                               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                                <Input
+                                <ConfigureInput
                                   label={cm.strategy.pendingExpiry}
                                   type="number"
                                   min={1}
@@ -3796,31 +3729,21 @@ export function AccountConfigPage() {
                         {activeManualSubTab === 'filters' && (
                           <div className="space-y-6">
                             <section className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-4 space-y-3">
-                              <div>
-                                <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.filters.timeTitle}</p>
-                                <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
-                                  {cm.filters.timeSubtitle}
-                                </p>
-                              </div>
+                              <ConfigTitle info={cm.filters.timeSubtitle}>{cm.filters.timeTitle}</ConfigTitle>
                               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                              <Select label={cm.filters.timeFilter} value={channelManualSettings.time_filter_enabled ? 'yes' : 'no'} onChange={e => setManual({ time_filter_enabled: e.target.value === 'yes' })} options={[{ value: 'no', label: cm.filters.timeNo }, { value: 'yes', label: cm.filters.timeYes }]} />
+                              <ConfigureSelect label={cm.filters.timeFilter} value={channelManualSettings.time_filter_enabled ? 'yes' : 'no'} onChange={e => setManual({ time_filter_enabled: e.target.value === 'yes' })} options={[{ value: 'no', label: cm.filters.timeNo }, { value: 'yes', label: cm.filters.timeYes }]} />
                               {channelManualSettings.time_filter_enabled && (
-                                <Input label={cm.filters.startTime} type="time" value={channelManualSettings.trade_start_time ?? '00:00'} onChange={e => setManual({ trade_start_time: e.target.value })} />
+                                <ConfigureInput label={cm.filters.startTime} type="time" value={channelManualSettings.trade_start_time ?? '00:00'} onChange={e => setManual({ trade_start_time: e.target.value })} />
                               )}
                               {channelManualSettings.time_filter_enabled && (
-                                <Input label={cm.filters.endTime} type="time" value={channelManualSettings.trade_end_time ?? '23:59'} onChange={e => setManual({ trade_end_time: e.target.value })} />
+                                <ConfigureInput label={cm.filters.endTime} type="time" value={channelManualSettings.trade_end_time ?? '23:59'} onChange={e => setManual({ trade_end_time: e.target.value })} />
                               )}
                             </div>
                             </section>
 
                             <section className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-4 space-y-3">
-                              <div>
-                                <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.filters.daysTitle}</p>
-                                <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
-                                  {cm.filters.daysSubtitle}
-                                </p>
-                              </div>
-                              <Select label={cm.filters.daysFilter} value={channelManualSettings.days_filter_enabled ? 'yes' : 'no'} onChange={e => setManual({ days_filter_enabled: e.target.value === 'yes' })} options={[{ value: 'no', label: cm.filters.daysNo }, { value: 'yes', label: cm.filters.daysYes }]} />
+                              <ConfigTitle info={cm.filters.daysSubtitle}>{cm.filters.daysTitle}</ConfigTitle>
+                              <ConfigureSelect label={cm.filters.daysFilter} value={channelManualSettings.days_filter_enabled ? 'yes' : 'no'} onChange={e => setManual({ days_filter_enabled: e.target.value === 'yes' })} options={[{ value: 'no', label: cm.filters.daysNo }, { value: 'yes', label: cm.filters.daysYes }]} />
                             {channelManualSettings.days_filter_enabled && (
                               <div>
                                 <p className="text-xs text-neutral-600 dark:text-neutral-400 mb-2">{cm.filters.tradingDays}</p>
@@ -3850,13 +3773,8 @@ export function AccountConfigPage() {
                             </section>
 
                             <section className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-4 space-y-3">
-                              <div>
-                                <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{cm.filters.newsTitle}</p>
-                                <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
-                                  {cm.filters.newsSubtitle}
-                                </p>
-                              </div>
-                                  <Select
+                              <ConfigTitle info={cm.filters.newsSubtitle}>{cm.filters.newsTitle}</ConfigTitle>
+                                  <ConfigureSelect
                                 label={cm.filters.newsTrading}
                                 value={channelManualSettings.news_trading_enabled !== false ? 'yes' : 'no'}
                                 onChange={e => {
@@ -3906,7 +3824,7 @@ export function AccountConfigPage() {
                                     ) : null}
                                   </div>
                                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                <Input
+                                <ConfigureInput
                                       label={cm.filters.closeBeforeNews}
                                   type="number"
                                       min={0}
@@ -3915,7 +3833,7 @@ export function AccountConfigPage() {
                                         setManual({ close_before_news_minutes: Math.max(0, Number(e.target.value) || 0) })
                                       }
                                 />
-                                <Input
+                                <ConfigureInput
                                       label={cm.filters.resumeAfterNews}
                                   type="number"
                                       min={0}
@@ -4078,7 +3996,7 @@ export function AccountConfigPage() {
                   <h4 id="save-preset-title" className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
                     {cm.saveAsPresetTitle}
                   </h4>
-                  <Input
+                  <ConfigureInput
                     label={cm.saveAsPresetNameLabel}
                     value={presetNameDraft}
                     placeholder={cm.saveAsPresetNamePlaceholder}
@@ -4124,11 +4042,11 @@ export function AccountConfigPage() {
 function FeatureBullet({ icon: Icon, title, body }: { icon: typeof DollarSign; title: string; body: string }) {
   return (
     <div className="rounded-lg bg-neutral-50 dark:bg-neutral-800/50 border border-neutral-200 dark:border-neutral-800 p-3">
-      <p className="text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-1 flex items-center gap-1.5">
+      <p className="text-xs font-medium text-neutral-700 dark:text-neutral-300 flex items-center gap-1.5">
         <Icon className="w-3.5 h-3.5 text-primary-600" />
         {title}
+        <InfoTooltip text={body} />
       </p>
-      <p className="text-xs text-neutral-500 dark:text-neutral-400">{body}</p>
     </div>
   )
 }
@@ -4169,10 +4087,7 @@ function ChannelFiltersCard({
               />
             ))}
           </div>
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-        <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
-          {labels.footer}
-            </p>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-end gap-2">
             <button
               type="button"
           className="text-xs text-primary-600 hover:text-primary-700 hover:underline shrink-0 self-start sm:self-auto disabled:cursor-not-allowed disabled:opacity-50 disabled:no-underline"
@@ -4206,8 +4121,10 @@ function CategoryRow({
   return (
     <div className="flex items-center justify-between gap-3 rounded-md border border-neutral-200 dark:border-neutral-800 px-3 py-2">
       <div className="min-w-0">
-        <p className="text-sm text-neutral-800 dark:text-neutral-100 truncate">{label}</p>
-        <p className="text-[11px] text-neutral-500 dark:text-neutral-400 truncate">{example}</p>
+        <p className="text-sm text-neutral-800 dark:text-neutral-100 truncate inline-flex items-center gap-1">
+          {label}
+          <InfoTooltip text={example} />
+        </p>
       </div>
       <div className="inline-flex items-center rounded-md border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/50 p-0.5 shrink-0">
         <button

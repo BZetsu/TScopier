@@ -121,8 +121,10 @@ export const configureModalFr: ConfigureModalTranslations = {
     fixedLot: 'Lot fixe',
     dynamicBalance: 'Dynamique (% du solde)',
     tradeStyle: 'Style de trading',
-    singleTrade: 'Position unique',
-    multiTrades: 'Positions multiples',
+    tradeStyleHint:
+      'Entrée unique : un ordre à la taille de lot configurée. Range Trading : répartit ce lot en plusieurs ordres plus petits sur les take-profit du signal.',
+    singleTrade: 'Entrée unique',
+    multiTrades: 'Range Trading',
     singleTpTarget: 'Objectif TP en mode unique',
     singleTpTargetHint:
       'Choisissez quel TP la position broker doit viser en Position unique. Les TP précédents peuvent toujours déclencher des fermetures partielles selon votre répartition %.',
@@ -138,13 +140,13 @@ export const configureModalFr: ConfigureModalTranslations = {
     pipToleranceHint:
       'Non utilisée pour le routage d’entrée stricte ; conservée pour compatibilité avec les réglages enregistrés.',
     multiIntro:
-      'Positions multiples divise votre lot fixe en de nombreux ordres plus petits (ex. 1,0 lot à 5 %/jambe = 20 trades de 0,05). Les jambes sont réparties sur les TP du signal selon les pourcentages ci-dessous. Si la taille par jambe est inférieure au minimum du symbole chez le courtier, le planificateur revient à une seule position pleine taille et enregistre la raison.',
+      'Range Trading divise votre lot fixe en de nombreux ordres plus petits (ex. 1,0 lot à 5 %/jambe = 20 trades de 0,05). Les jambes sont réparties sur les TP du signal selon les pourcentages ci-dessous. Si la taille par jambe est inférieure au minimum du symbole chez le courtier, le planificateur revient à une seule position pleine taille et enregistre la raison.',
     perLegSize: 'Taille par jambe (% du lot fixe)',
     totalOpenTrades: 'Total des positions ouvertes',
     previewFallbackSingle: '1 (répartition impossible avec aperçu min. 0,01 / pas 0,01)',
     previewInstantPending: '{total} ({immediate} instantanées + {pending} pour échelonnement)',
     previewFooter:
-      'Estimé à partir du lot fixe et du % par jambe. L’exécution en direct utilise le lot minimum et le pas du symbole (peut différer légèrement). Plafond de 500 ordres par signal. Les lots signalés par Telegram sur chaque signal ne redimensionnent pas les paniers multi-positions — ils divisent toujours votre lot fixe.',
+      'Estimé à partir du lot fixe et du % par jambe. L’exécution en direct utilise le lot minimum et le pas du symbole (peut différer légèrement). Plafond de 500 ordres par signal. Les lots signalés par Telegram sur chaque signal ne redimensionnent pas les paniers Range Trading — ils divisent toujours votre lot fixe.',
     previewDynamicRisk:
       ' Avec un risque dynamique (% du solde), le lot résolu à l’exécution peut différer du lot fixe.',
     previewLadderSpan:
@@ -157,9 +159,9 @@ export const configureModalFr: ConfigureModalTranslations = {
     reservedLotHint: 'Part des jambes totales réservées en ordres en attente.',
     stepPips: 'Pas (pips par échelon)',
     stepPipsFallback: 'Pips entre les ordres en attente.',
-    rangeDistance: 'Distance de range (pips depuis l’entrée)',
+    rangeDistance: 'Distance de range (pips)',
     rangeDistanceFallback:
-      'Portée cible indicative. Portée réelle de l’échelle = nombre d’ordres en attente × pas (le total des positions ouvertes n’est pas plafonné par cela).',
+      'La distance du range fournie par votre fournisseur de signaux. Elle détermine jusqu’où la position est échelonnée.',
     closeWorseEntries: 'Fermer les entrées défavorables',
     closeWorseBody:
       'Lorsque le prix évolue de +X pips en votre faveur depuis l’entrée initiale, le système ferme automatiquement vos opérations immédiates. Lorsqu’un message « Fermer les entrées défavorables » est activé et déclenché, le système ferme toute opération ouverte située à moins de X pips du cours du marché actuel. Les opérations concernées par « Fermer les entrées défavorables » n’ont pas de take-profit (TP) défini côté courtier. Seul le stop loss (SL) est envoyé au courtier.',
@@ -184,7 +186,7 @@ export const configureModalFr: ConfigureModalTranslations = {
     tpDistributionIntro:
       'Définissez manuellement la part de chaque TP activé. Le total des lignes activées ne peut pas dépasser 100 % — toute saisie est plafonnée au budget restant. Les lignes désactivées restent à 0 %.',
     multiTradeNote:
-      'Multi-positions : répartit les jambes planifiées sur les TP selon ces pourcentages (ex. 50/30/20 sur 20 jambes → 10/6/4 sur TP1/TP2/TP3).',
+      'Range Trading : répartit les jambes planifiées sur les TP selon ces pourcentages (ex. 50/30/20 sur 20 jambes → 10/6/4 sur TP1/TP2/TP3).',
     singleTradeNote:
       'Position unique : l’ordre vise le dernier TP activé chez le courtier ; le worker ferme partiellement le pourcentage configuré à chaque TP antérieur (ex. 50/30/20 sur 1,0 lot → ferme 0,50 à TP1, 0,30 à TP2, le 0,20 restant à TP3 via le courtier).',
     enabledTotal: 'Total activé :',

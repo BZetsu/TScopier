@@ -118,6 +118,7 @@ export interface ConfigureModalTranslations {
     fixedLot: string
     dynamicBalance: string
     tradeStyle: string
+    tradeStyleHint: string
     singleTrade: string
     multiTrades: string
     singleTpTarget: string
