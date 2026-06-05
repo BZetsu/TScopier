@@ -432,7 +432,7 @@ export const en: Translations = {
       currentBalance: 'Current balance',
       currentEquity: 'Current equity',
       totalProfit: 'Total profit / loss',
-      totalProfitHint: 'Sum of realized P/L from all closed trades in loaded history.',
+      totalProfitHint: 'Current balance minus initial balance when this account was first linked.',
       todayProfit: 'Profit today',
       todayProfitHint: 'Realized P/L from closed trades today (local calendar day).',
       winRate: 'Win rate',

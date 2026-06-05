@@ -6,6 +6,7 @@ import {
   resolveChannelIdForTrade,
 } from './performanceInsights'
 import {
+  computeBrokerBalanceProfit,
   computeBrokerStatsSnapshot,
   computeBrokerTodayProfit,
   computeBrokerTotalProfit,
@@ -60,6 +61,12 @@ test('resolveChannelIdForTrade is exported and resolves ticket attribution', () 
     maps,
   )
   assert.equal(channelId, 'ch-1')
+})
+
+test('computeBrokerBalanceProfit is current balance minus initial balance', () => {
+  assert.equal(computeBrokerBalanceProfit(10_000, 10_120), 120)
+  assert.equal(computeBrokerBalanceProfit(10_000, 9_850), -150)
+  assert.equal(computeBrokerBalanceProfit(null, 10_120), null)
 })
 
 test('computeBrokerTodayProfit and total exclude balance rows', () => {

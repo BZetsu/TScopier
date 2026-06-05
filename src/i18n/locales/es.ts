@@ -432,7 +432,7 @@ export const es: Translations = {
       currentBalance: 'Saldo actual',
       currentEquity: 'Equidad actual',
       totalProfit: 'Beneficio / pérdida total',
-      totalProfitHint: 'Suma del P/L realizado de todas las operaciones cerradas en el historial cargado.',
+      totalProfitHint: 'Saldo actual menos el saldo inicial cuando se vinculó la cuenta.',
       todayProfit: 'Beneficio hoy',
       todayProfitHint: 'P/L realizado de operaciones cerradas hoy (día calendario local).',
       winRate: 'Tasa de acierto',

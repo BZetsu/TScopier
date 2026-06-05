@@ -104,6 +104,23 @@ export function computeBrokerTodayProfit(
   return net
 }
 
+/** Total P/L from balance change since the account was first linked (includes deposits/withdrawals). */
+export function computeBrokerBalanceProfit(
+  initialBalance: number | null | undefined,
+  currentBalance: number | null | undefined,
+): number | null {
+  const initial =
+    initialBalance != null && Number.isFinite(Number(initialBalance))
+      ? Number(initialBalance)
+      : null
+  const balance =
+    currentBalance != null && Number.isFinite(Number(currentBalance))
+      ? Number(currentBalance)
+      : null
+  if (initial == null || balance == null) return null
+  return balance - initial
+}
+
 export function computeBrokerTotalProfit(
   brokerId: string,
   mtTrades: MtTrade[],
@@ -278,7 +295,9 @@ export function computeBrokerStatsSnapshot(opts: {
     initialBalance: initial,
     currentBalance: balance,
     currentEquity: equity,
-    totalProfit: computeBrokerTotalProfit(opts.brokerId, opts.mtTrades, opts.chartTrades),
+    totalProfit:
+      computeBrokerBalanceProfit(initial, balance)
+      ?? computeBrokerTotalProfit(opts.brokerId, opts.mtTrades, opts.chartTrades),
     todayProfit: computeBrokerTodayProfit(opts.brokerId, opts.mtTrades, opts.chartTrades, opts.now),
     closedDealCount,
     connectedChannelCount: profitByChannel.length,
