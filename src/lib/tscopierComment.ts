@@ -20,6 +20,13 @@ export function sanitizeChannelCommentSlug(raw: string): string {
   return collapsed.slice(0, CHANNEL_COMMENT_SLUG_MAX) || 'ch'
 }
 
+/** True when a full signal UUID starts with the 8-char hex prefix from MT comments. */
+export function signalIdMatchesPrefix(signalId: string, prefix: string): boolean {
+  const norm = prefix.toLowerCase()
+  if (norm.length !== 8 || !/^[a-f0-9]+$/.test(norm)) return false
+  return signalId.toLowerCase().startsWith(norm)
+}
+
 /** Parse `TSCopier:ChannelSlug:abc12345` or `TSCopier:abc12345` from MT order comment. */
 export function parseTscopierComment(comment: string | null | undefined): ParsedTscopierComment | null {
   if (!comment?.trim()) return null

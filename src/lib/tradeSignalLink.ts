@@ -1,7 +1,7 @@
 import { supabase } from './supabase'
 import type { MtTrade } from './metatraderapi'
 import type { Signal, TelegramChannel } from '../types/database'
-import { parseTscopierComment } from './tscopierComment'
+import { parseTscopierComment, signalIdMatchesPrefix } from './tscopierComment'
 
 export type { ParsedTscopierComment } from './tscopierComment'
 export { parseTscopierComment, sanitizeChannelCommentSlug, CHANNEL_COMMENT_SLUG_MAX } from './tscopierComment'
@@ -110,15 +110,20 @@ async function loadSignalById(signalId: string): Promise<Signal | null> {
 }
 
 async function loadSignalByIdPrefix(userId: string, prefix: string): Promise<Signal | null> {
+  const norm = prefix.toLowerCase()
+  if (!/^[a-f0-9]{8}$/.test(norm)) return null
+
+  // signals.id is UUID — ILIKE on uuid throws "operator does not exist: uuid ~~* unknown".
+  // Cast to text in PostgREST filter so prefix match works for TSCopier comment fallback.
   const { data, error } = await supabase
     .from('signals')
     .select('*')
     .eq('user_id', userId)
-    .ilike('id', `${prefix}%`)
+    .filter('id::text', 'ilike', `${norm}%`)
     .order('created_at', { ascending: false })
     .limit(5)
   if (error) throw new Error(error.message)
-  const rows = (data ?? []) as Signal[]
+  const rows = ((data ?? []) as Signal[]).filter(row => signalIdMatchesPrefix(row.id, norm))
   if (rows.length === 0) return null
   if (rows.length === 1) return rows[0]!
   // Prefer signal referenced by a trades row
