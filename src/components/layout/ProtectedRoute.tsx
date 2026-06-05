@@ -1,6 +1,7 @@
 import { Navigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import { useUserProfile } from '../../context/UserProfileContext'
+import { isEmailVerified, verifyEmailPath } from '../../lib/emailVerification'
 
 export function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth()
@@ -16,9 +17,13 @@ export function ProtectedRoute({ children }: { children: React.ReactNode }) {
   }
 
   if (!user) return <Navigate to="/login" replace />
+
+  if (!isEmailVerified(user)) {
+    return <Navigate to={verifyEmailPath(user.email)} replace />
+  }
+
   const allowedWithoutOnboarding = new Set([
     '/welcome',
-    '/verify-email',
     '/forgot-password',
     '/reset-password',
     '/login',

@@ -13,6 +13,11 @@ import {
   loadStoredReferralCode,
   referralCodeLooksValid,
 } from '../../lib/referralCapture'
+import {
+  isEmailVerified,
+  isUnconfirmedEmailAuthError,
+  verifyEmailPath,
+} from '../../lib/emailVerification'
 
 function GoogleIcon({ className }: { className?: string }) {
   return (
@@ -81,9 +86,21 @@ export function AuthPage() {
     setError('')
     setLoading(true)
 
-    const { error: signInError } = await supabase.auth.signInWithPassword({ email, password })
+    const { data, error: signInError } = await supabase.auth.signInWithPassword({ email, password })
     if (signInError) {
+      if (isUnconfirmedEmailAuthError(signInError)) {
+        navigate(verifyEmailPath(email))
+        setLoading(false)
+        return
+      }
       setError(signInError.message)
+      setLoading(false)
+      return
+    }
+
+    if (data.user && !isEmailVerified(data.user)) {
+      await supabase.auth.signOut()
+      navigate(verifyEmailPath(email))
       setLoading(false)
       return
     }

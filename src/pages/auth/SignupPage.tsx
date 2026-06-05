@@ -16,6 +16,7 @@ import {
   normalizeReferralCode,
   referralCodeLooksValid,
 } from '../../lib/referralCapture'
+import { isEmailVerified } from '../../lib/emailVerification'
 
 function GoogleIcon({ className }: { className?: string }) {
   return (
@@ -158,6 +159,10 @@ export function SignupPage() {
           return
         }
       }
+    }
+
+    if (data.user && !isEmailVerified(data.user)) {
+      await supabase.auth.signOut()
     }
 
     navigate(`/verify-email?email=${encodeURIComponent(email)}`)

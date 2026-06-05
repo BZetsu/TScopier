@@ -1,25 +1,38 @@
-import { useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Mail } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { sendVerificationEmail } from '../../lib/sendVerificationEmail'
 import { useAuth } from '../../context/AuthContext'
+import { useUserProfile } from '../../context/UserProfileContext'
+import { isEmailVerified } from '../../lib/emailVerification'
 import { Button } from '../../components/ui/Button'
 import { Alert } from '../../components/ui/Alert'
 import { AuthBackHome } from '../../components/auth/AuthBackHome'
 import { useLocale } from '../../context/LocaleContext'
 
 export function VerifyEmailPage() {
+  const navigate = useNavigate()
   const { auth } = useLocale()
   const verifyT = auth.verify
-  const { session } = useAuth()
+  const { user, session } = useAuth()
+  const { onboardingCompletedAt, hasProfileRow, loading: profileLoading } = useUserProfile()
   const [searchParams] = useSearchParams()
-  const email = searchParams.get('email') ?? ''
+  const email = searchParams.get('email') ?? user?.email ?? ''
   const redirectTo = `${window.location.origin}/dashboard`
 
   const [resending, setResending] = useState(false)
   const [resent, setResent] = useState(false)
   const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (profileLoading || !user || !isEmailVerified(user)) return
+    if (hasProfileRow && !onboardingCompletedAt) {
+      navigate('/welcome', { replace: true })
+      return
+    }
+    navigate('/dashboard', { replace: true })
+  }, [user, profileLoading, hasProfileRow, onboardingCompletedAt, navigate])
 
   const handleResend = async () => {
     if (!email) return
