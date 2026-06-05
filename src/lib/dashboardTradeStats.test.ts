@@ -3,8 +3,10 @@ import { test } from 'node:test'
 import {
   computeLinkedAccountPerformance,
   countClosedTradeOutcomesInRange,
+  isBalanceCashFlowRow,
   isTradeableClosedRow,
   isTradeableOpenRow,
+  sumBalanceCashFlow,
   isTimestampInRange,
   netClosedLegProfit,
   sumClosedWinningProfitInRange,
@@ -43,6 +45,53 @@ test('isTradeableClosedRow: excludes balance/deposit and zero-lot buy mislabels'
       type: 'Buy',
     }),
     true,
+  )
+})
+
+test('isBalanceCashFlowRow: detects deposits and ignores tradeable closes', () => {
+  assert.equal(
+    isBalanceCashFlowRow({
+      status: 'closed',
+      symbol: '',
+      lot_size: 0,
+      direction: '',
+      type: 'Balance',
+      profit: 10_000,
+    }),
+    true,
+  )
+  assert.equal(
+    isBalanceCashFlowRow({
+      status: 'closed',
+      symbol: 'XAUUSD',
+      lot_size: 0.1,
+      direction: 'buy',
+      type: 'Buy',
+      profit: 80,
+    }),
+    false,
+  )
+  assert.equal(
+    sumBalanceCashFlow([
+      {
+        status: 'closed',
+        symbol: '',
+        lot_size: 0,
+        type: 'Balance',
+        profit: 10_000,
+        closed_at: '2026-06-01',
+      },
+      {
+        status: 'closed',
+        symbol: 'XAUUSD',
+        lot_size: 0.1,
+        direction: 'buy',
+        type: 'Buy',
+        profit: 120,
+        closed_at: '2026-06-02',
+      },
+    ]),
+    10_000,
   )
 })
 

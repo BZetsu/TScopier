@@ -2,6 +2,7 @@ import { useEffect, useRef, type Dispatch, type SetStateAction } from 'react'
 import { supabase } from '../lib/supabase'
 import type { BrokerAccount } from '../types/database'
 import { metatraderApi } from '../lib/metatraderapi'
+import { sortBrokerAccountsNewestFirst } from '../lib/brokerAccountSelect'
 import { isMtSessionUuid } from '../lib/brokerLink'
 
 const RECONNECT_DEBOUNCE_MS = 3_000
@@ -38,7 +39,7 @@ export function useBrokerAccountsRealtime(
               if (idx >= 0) {
                 return prev.map(b => (b.id === row.id ? { ...b, ...row } : b))
               }
-              return [...prev, row]
+              return sortBrokerAccountsNewestFirst([...prev, row])
             }
             // UPDATE — do not re-add rows the user just removed locally.
             if (idx < 0) return prev

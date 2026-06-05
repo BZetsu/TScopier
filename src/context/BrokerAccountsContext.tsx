@@ -22,7 +22,10 @@ import { useBrokerConnectionRecovery } from '../hooks/useBrokerConnectionRecover
 import { useBrokerReconnect, type BrokerPasswordPromptResult } from '../hooks/useBrokerReconnect'
 import { useBrokerSessionFailureRealtime } from '../hooks/useBrokerSessionFailureRealtime'
 import { BrokerReconnectPasswordModal } from '../components/broker/BrokerReconnectPasswordModal'
-import { BROKER_ACCOUNT_CLIENT_SELECT } from '../lib/brokerAccountSelect'
+import {
+  BROKER_ACCOUNT_CLIENT_SELECT,
+  sortBrokerAccountsNewestFirst,
+} from '../lib/brokerAccountSelect'
 
 interface BrokerAccountsContextValue {
   brokers: BrokerAccount[]
@@ -112,13 +115,13 @@ export function BrokerAccountsProvider({ children }: { children: ReactNode }) {
       .from('broker_accounts')
       .select(BROKER_ACCOUNT_CLIENT_SELECT)
       .eq('user_id', user.id)
-      .order('created_at')
+      .order('created_at', { ascending: false })
     if (error) {
       setLoadError(error.message)
       if (!silent) setLoading(false)
       return []
     }
-    const next = (data ?? []) as unknown as BrokerAccount[]
+    const next = sortBrokerAccountsNewestFirst((data ?? []) as unknown as BrokerAccount[])
     setBrokers(next)
     initialLoadDoneRef.current = true
     setLoading(false)
@@ -137,7 +140,7 @@ export function BrokerAccountsProvider({ children }: { children: ReactNode }) {
   const upsertBroker = useCallback((broker: BrokerAccount) => {
     setBrokers(prev => {
       const idx = prev.findIndex(b => b.id === broker.id)
-      if (idx < 0) return [...prev, broker]
+      if (idx < 0) return sortBrokerAccountsNewestFirst([...prev, broker])
       return prev.map(b => (b.id === broker.id ? broker : b))
     })
   }, [])

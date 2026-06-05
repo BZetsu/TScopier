@@ -284,11 +284,25 @@ export function computeSymbolDistribution(
   ]
 }
 
+function channelAttributionTicketKeys(trade: MtTrade): string[] {
+  const keys = new Set<string>()
+  for (const key of brokerTicketLookupKeys(trade.broker_id, trade.ticket)) {
+    keys.add(key)
+  }
+  const positionTicket = trade.position_ticket
+  if (positionTicket != null && positionTicket > 0) {
+    for (const key of brokerTicketLookupKeys(trade.broker_id, positionTicket)) {
+      keys.add(key)
+    }
+  }
+  return [...keys]
+}
+
 export function resolveChannelIdForTrade(
   trade: MtTrade,
   maps: PerformanceChannelLinkMaps,
 ): string {
-  for (const key of brokerTicketLookupKeys(trade.broker_id, trade.ticket)) {
+  for (const key of channelAttributionTicketKeys(trade)) {
     const fromTicket = maps.ticketToChannelId[key]
     if (fromTicket) return fromTicket
   }

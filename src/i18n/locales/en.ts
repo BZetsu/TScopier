@@ -432,7 +432,7 @@ export const en: Translations = {
       currentBalance: 'Current balance',
       currentEquity: 'Current equity',
       totalProfit: 'Total profit / loss',
-      totalProfitHint: 'Current balance minus initial balance when this account was first linked.',
+      totalProfitHint: 'Current balance minus initial balance, excluding deposits and withdrawals.',
       todayProfit: 'Profit today',
       todayProfitHint: 'Realized P/L from closed trades today (local calendar day).',
       winRate: 'Win rate',
@@ -440,7 +440,8 @@ export const en: Translations = {
       roi: 'ROI',
       closedDeals: 'Closed deals',
       connectedChannels: 'Connected signal channels',
-      connectedChannelsHint: 'Telegram channels with at least one attributed closed trade on this account.',
+      connectedChannelsHint:
+        'Lifetime P/L from trades copied from each connected Telegram channel (realized closed deals plus open positions).',
       noChannels: 'No attributed signal-channel trades yet.',
       tradesCount: '{count} trades',
       activeSignalTrade: 'Active signal trade',

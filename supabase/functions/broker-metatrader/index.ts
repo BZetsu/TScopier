@@ -28,6 +28,7 @@ import {
   reconcileTradeDirectionWithStops,
   resolveMtDealProfit,
   resolveMtLots,
+  resolveMtPositionTicket,
   type MtHistoryProfile,
 } from "../_shared/mtTradeFields.ts"
 import {
@@ -838,6 +839,8 @@ Deno.serve(async (req: Request) => {
       ) => {
         const row = historyProfile === "trades" ? flattenMtOrder(order, "trades") : order
         const ticket = Number(pick(row, "ticket", "Ticket") ?? 0)
+        const positionTicket =
+          historyProfile === "trades" ? resolveMtPositionTicket(order, "trades") : null
         const platform = String(broker.platform ?? "MT4")
         const resolved = resolveDirection(row, platform)
         const adjusted =
@@ -868,6 +871,7 @@ Deno.serve(async (req: Request) => {
           broker_label: broker.label,
           broker_name: broker.broker_name,
           ticket,
+          position_ticket: positionTicket,
           symbol: String(pick(row, "symbol", "Symbol") ?? ""),
           direction,
           type: type_label,

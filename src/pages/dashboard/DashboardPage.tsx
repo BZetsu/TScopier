@@ -68,7 +68,10 @@ import { ChannelProfitChart } from '../../components/dashboard/ChannelProfitChar
 import { TradeVolumeChart } from '../../components/dashboard/TradeVolumeChart'
 import { useDashboardRealtime } from '../../hooks/useDashboardRealtime'
 import { useBrokerAccounts } from '../../context/BrokerAccountsContext'
-import { BROKER_ACCOUNT_CLIENT_SELECT } from '../../lib/brokerAccountSelect'
+import {
+  BROKER_ACCOUNT_CLIENT_SELECT,
+  sortBrokerAccountsNewestFirst,
+} from '../../lib/brokerAccountSelect'
 import {
   brokerCanReconnect,
   brokerConnectionStatusLabel,
@@ -1245,7 +1248,8 @@ export function DashboardPage() {
     setCopierLogs(logs)
     setCopierLogSymbols(logSymbols)
     setChannelDisplayNames(channelNames)
-    setBrokers(brokerAccounts)
+    const sortedBrokerAccounts = sortBrokerAccountsNewestFirst(brokerAccounts)
+    setBrokers(sortedBrokerAccounts)
     linkedBalancesRef.current = mergedBalances
     setLinkedAccountBalances(mergedBalances)
     setAiExpertLogs(aiLogs)
@@ -1268,7 +1272,7 @@ export function DashboardPage() {
           copierLogs: logs,
           copierLogSymbols: logSymbols,
           channelDisplayNames: channelNames,
-          linkedAccounts: brokerAccounts,
+          linkedAccounts: sortedBrokerAccounts,
           linkedAccountBalances: linkedBalancesRef.current,
           chartTrades: chartFromMt.length > 0 ? chartFromMt : chartFromDb,
           aiExpertLogs: aiLogs,
@@ -1282,7 +1286,7 @@ export function DashboardPage() {
         copierLogs: logs,
         copierLogSymbols: logSymbols,
         channelDisplayNames: channelNames,
-        linkedAccounts: brokerAccounts,
+        linkedAccounts: sortedBrokerAccounts,
         linkedAccountBalances: mergedBalances,
         chartTrades: chartFromDb,
         aiExpertLogs: aiLogs,

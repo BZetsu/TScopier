@@ -1,3 +1,15 @@
+import type { BrokerAccount } from '../types/database'
+
+/** Linked accounts: newest added first (stable tie-break by id). */
+export function sortBrokerAccountsNewestFirst(accounts: BrokerAccount[]): BrokerAccount[] {
+  return [...accounts].sort((a, b) => {
+    const ta = Date.parse(a.created_at) || 0
+    const tb = Date.parse(b.created_at) || 0
+    if (tb !== ta) return tb - ta
+    return a.id.localeCompare(b.id)
+  })
+}
+
 /** Columns safe to read from the browser (excludes mt_password_encrypted). */
 export const BROKER_ACCOUNT_CLIENT_SELECT = [
   'id',

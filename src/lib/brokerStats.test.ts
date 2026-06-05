@@ -7,6 +7,7 @@ import {
 } from './performanceInsights'
 import {
   computeBrokerBalanceProfit,
+  computeBrokerProfitByChannel,
   computeBrokerStatsSnapshot,
   computeBrokerTodayProfit,
   computeBrokerTotalProfit,
@@ -63,10 +64,30 @@ test('resolveChannelIdForTrade is exported and resolves ticket attribution', () 
   assert.equal(channelId, 'ch-1')
 })
 
-test('computeBrokerBalanceProfit is current balance minus initial balance', () => {
+test('computeBrokerBalanceProfit is balance delta minus deposit/withdrawal cash flows', () => {
   assert.equal(computeBrokerBalanceProfit(10_000, 10_120), 120)
   assert.equal(computeBrokerBalanceProfit(10_000, 9_850), -150)
   assert.equal(computeBrokerBalanceProfit(null, 10_120), null)
+
+  const withDeposit = [
+    mtTrade({
+      broker_id: 'broker-1',
+      ticket: 1,
+      direction: 'buy',
+      type: 'Balance',
+      lot_size: 0,
+      symbol: '',
+      profit: 10_000,
+      closed_at: TEST_CLOSED_OLD,
+    }),
+    mtTrade({
+      broker_id: 'broker-1',
+      ticket: 2,
+      profit: 500,
+      closed_at: TEST_CLOSED_TODAY,
+    }),
+  ]
+  assert.equal(computeBrokerBalanceProfit(10_000, 20_500, withDeposit, 'broker-1'), 500)
 })
 
 test('computeBrokerTodayProfit and total exclude balance rows', () => {
@@ -232,6 +253,55 @@ test('findActiveAttributedSignalTrades aggregates open positions per signal chan
   assert.equal(active[1]?.positionCount, 2)
 })
 
+test('computeBrokerProfitByChannel sums closed and open P/L per channel', () => {
+  const maps = buildPerformanceChannelLinkMaps(
+    [{ id: 'ch-1', display_name: 'VIP' }, { id: 'ch-2', display_name: 'Beta' }],
+    [
+      {
+        broker_account_id: 'broker-1',
+        metaapi_order_id: '7',
+        signal_id: 'sig-1',
+        telegram_channel_id: 'ch-1',
+      },
+      {
+        broker_account_id: 'broker-1',
+        metaapi_order_id: '50',
+        signal_id: 'sig-2',
+        telegram_channel_id: 'ch-2',
+      },
+    ],
+    [
+      { id: 'sig-1', channel_id: 'ch-1' },
+      { id: 'sig-2', channel_id: 'ch-2' },
+    ],
+    [],
+  )
+  const rows = computeBrokerProfitByChannel({
+    brokerId: 'broker-1',
+    connectedChannelIds: ['ch-1', 'ch-2'],
+    mtTrades: [
+      mtTrade({ broker_id: 'broker-1', ticket: 7, profit: 120, closed_at: TEST_CLOSED_TODAY }),
+      mtTrade({
+        broker_id: 'broker-1',
+        ticket: 50,
+        status: 'open',
+        profit: 35,
+        opened_at: '2026-06-02T11:00:00',
+        closed_at: null,
+      }),
+    ],
+    channelLinkMaps: maps,
+    unlinkedChannelLabel: 'Unlinked',
+    now: TEST_NOW,
+  })
+  assert.equal(rows.length, 2)
+  const vip = rows.find(r => r.key === 'ch-1')
+  const beta = rows.find(r => r.key === 'ch-2')
+  assert.equal(vip?.pnl, 120)
+  assert.equal(beta?.pnl, 35)
+  assert.equal(beta?.count, 0)
+})
+
 test('computeBrokerStatsSnapshot includes initial balance and channel rows', () => {
   const maps = buildPerformanceChannelLinkMaps(
     [{ id: 'ch-1', display_name: 'VIP' }],
@@ -252,6 +322,7 @@ test('computeBrokerStatsSnapshot includes initial balance and channel rows', () 
     mtTrades: [mtTrade({ broker_id: 'broker-1', ticket: 7, profit: 120, closed_at: TEST_CLOSED_TODAY })],
     chartTrades: [],
     channelLinkMaps: maps,
+    connectedChannelIds: ['ch-1'],
     unlinkedChannelLabel: 'Unlinked',
     now: TEST_NOW,
   })

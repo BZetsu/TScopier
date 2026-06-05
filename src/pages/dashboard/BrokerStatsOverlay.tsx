@@ -135,6 +135,7 @@ export function BrokerStatsOverlay() {
       mtTrades,
       chartTrades,
       channelLinkMaps,
+      connectedChannelIds: account.signal_channel_ids,
       unlinkedChannelLabel: t.performance.unlinkedChannel,
     })
   }, [

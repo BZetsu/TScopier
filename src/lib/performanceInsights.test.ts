@@ -4,6 +4,7 @@ import type { MtTrade } from './metatraderapi'
 import {
   buildPerformanceChannelLinkMaps,
   computeProfitByChannel,
+  resolveChannelIdForTrade,
   UNLINKED_CHANNEL_KEY,
 } from './performanceInsights'
 
@@ -197,6 +198,60 @@ test('computeProfitByChannel: omits unlinked manual trades from chart rows', () 
     TEST_NOW,
   )
   assert.equal(rows.length, 0)
+})
+
+test('resolveChannelIdForTrade: attributes MT5 close deal via position_ticket', () => {
+  const maps = buildPerformanceChannelLinkMaps(
+    [{ id: 'ch-1', display_name: 'Alpha' }],
+    [{
+      broker_account_id: 'broker-1',
+      metaapi_order_id: '5001',
+      signal_id: 'sig-1',
+      telegram_channel_id: 'ch-1',
+    }],
+    [{ id: 'sig-1', channel_id: 'ch-1' }],
+    [],
+  )
+  const channelId = resolveChannelIdForTrade(
+    mtTrade({
+      broker_id: 'broker-1',
+      ticket: 9009,
+      position_ticket: 5001,
+      profit: 30,
+      closed_at: TEST_CLOSED_AT,
+    }),
+    maps,
+  )
+  assert.equal(channelId, 'ch-1')
+})
+
+test('computeProfitByChannel: attributes close deal profit via position_ticket', () => {
+  const maps = buildPerformanceChannelLinkMaps(
+    [{ id: 'ch-1', display_name: 'Alpha' }],
+    [{
+      broker_account_id: 'broker-1',
+      metaapi_order_id: '5001',
+      signal_id: 'sig-1',
+      telegram_channel_id: 'ch-1',
+    }],
+    [{ id: 'sig-1', channel_id: 'ch-1' }],
+    [],
+  )
+  const rows = computeProfitByChannel(
+    [mtTrade({
+      broker_id: 'broker-1',
+      ticket: 9009,
+      position_ticket: 5001,
+      profit: 30,
+      closed_at: TEST_CLOSED_AT,
+    })],
+    'all',
+    maps,
+    'Unlinked',
+    TEST_NOW,
+  )
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0]!.pnl, 30)
 })
 
 test('computeProfitByChannel: uses durable attribution when ticket differs in formatting', () => {

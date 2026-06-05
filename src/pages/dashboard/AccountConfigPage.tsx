@@ -35,7 +35,10 @@ import {
   brokerReconnectBannerText,
   type BrokerConnectErrorKind,
 } from '../../lib/brokerConnectError'
-import { BROKER_ACCOUNT_CLIENT_SELECT } from '../../lib/brokerAccountSelect'
+import {
+  BROKER_ACCOUNT_CLIENT_SELECT,
+  sortBrokerAccountsNewestFirst,
+} from '../../lib/brokerAccountSelect'
 import {
   saveChannelTraining,
   trainChannelSignals,
@@ -1932,9 +1935,7 @@ export function AccountConfigPage() {
       if (stillThere) {
         setBrokers(prev => {
           if (prev.some(b => b.id === id)) return prev
-          return [...prev, removed].sort(
-            (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
-          )
+          return sortBrokerAccountsNewestFirst([...prev, removed])
         })
         setError(/unauthorized/i.test(msg) ? bl.deleteSessionExpired : msg)
       }

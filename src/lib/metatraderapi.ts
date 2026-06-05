@@ -257,6 +257,8 @@ export interface MtTrade {
   broker_label: string
   broker_name: string | null
   ticket: number
+  /** Opening position ticket on MT5 close deals (for channel attribution). */
+  position_ticket?: number | null
   symbol: string
   /** Normalized direction. 'buy' or 'sell' for tradeable orders, '' for non-trade entries (e.g. balance). */
   direction: 'buy' | 'sell' | ''

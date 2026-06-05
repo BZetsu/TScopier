@@ -59,6 +59,40 @@ export function isTradeableOpenRow(row: {
   return isTradeableMtRow(row)
 }
 
+/** Closed MT row that moves account cash (deposit, withdrawal, balance op) — not trade P/L. */
+export function isBalanceCashFlowRow(row: {
+  status?: string
+  symbol: string
+  lot_size: number
+  direction?: string
+  type?: string
+  profit: number | null
+}): boolean {
+  if ((row.status ?? 'closed') !== 'closed') return false
+  if (isTradeableClosedRow(row)) return false
+  const profit = row.profit
+  if (typeof profit !== 'number' || !Number.isFinite(profit) || profit === 0) return false
+
+  const type = (row.type ?? '').toLowerCase()
+  if (
+    type.includes('balance') ||
+    type.includes('credit') ||
+    type.includes('deposit') ||
+    type.includes('withdraw') ||
+    type.includes('correction') ||
+    type.includes('transfer')
+  ) {
+    return true
+  }
+  return (row.lot_size ?? 0) <= 0 && !(row.symbol ?? '').trim()
+}
+
+export function sumBalanceCashFlow(rows: TradeStatsRow[]): number {
+  return rows
+    .filter(isBalanceCashFlowRow)
+    .reduce((sum, t) => sum + (t.profit ?? 0), 0)
+}
+
 /** Minimum |deal profit| to classify a close as won or lost (not breakeven). */
 export const CLOSED_TRADE_OUTCOME_EPSILON = 0.01
 

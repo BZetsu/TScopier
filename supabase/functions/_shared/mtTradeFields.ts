@@ -198,6 +198,24 @@ export function resolveMtTicket(order: RawMtOrder, profile: MtHistoryProfile): n
   return Number.isFinite(ticket) && ticket > 0 ? ticket : 0
 }
 
+/** Opening / position ticket on MT5 close deals (differs from the closing deal ticket). */
+export function resolveMtPositionTicket(
+  order: RawMtOrder,
+  profile: MtHistoryProfile,
+): number | null {
+  const flat = profile === "trades" ? flattenMtOrder(order, "trades") : order
+  for (const key of ["dealInternalIn", "DealInternalIn", "position", "Position"] as const) {
+    const nested = flat[key]
+    if (!isPlainObject(nested)) continue
+    const ticket = resolveMtTicket(nested as RawMtOrder, profile)
+    if (ticket > 0) return ticket
+  }
+  const positionId = Number(
+    pickMtField(flat, profile, "positionId", "PositionId", "position", "Position", "order", "Order") ?? 0,
+  )
+  return Number.isFinite(positionId) && positionId > 0 ? positionId : null
+}
+
 function closeTimeKey(order: RawMtOrder, profile: MtHistoryProfile): string {
   const ct = pickMtField(
     order,

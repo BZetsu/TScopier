@@ -4,11 +4,13 @@ import {
   getLocalCalendarDayBounds,
   isTradeableClosedRow,
   isTradeableOpenRow,
+  sumBalanceCashFlow,
   sumRealizedClosedDealProfit,
   type TradeStatsRow,
 } from './dashboardTradeStats'
 import { displayTradeProfit } from './tradeDisplay'
 import type { MtTrade } from './metatraderapi'
+import { normalizeSignalChannelIds } from './brokerChannelLink'
 import {
   computeProfitByChannel,
   resolveChannelIdForTrade,
@@ -104,10 +106,15 @@ export function computeBrokerTodayProfit(
   return net
 }
 
-/** Total P/L from balance change since the account was first linked (includes deposits/withdrawals). */
+/**
+ * Total P/L from balance change since link, minus deposit/withdrawal cash flows
+ * detected in MT history (so a 10K deposit does not inflate trading P/L).
+ */
 export function computeBrokerBalanceProfit(
   initialBalance: number | null | undefined,
   currentBalance: number | null | undefined,
+  mtTrades: MtTrade[] = [],
+  brokerId?: string,
 ): number | null {
   const initial =
     initialBalance != null && Number.isFinite(Number(initialBalance))
@@ -118,7 +125,10 @@ export function computeBrokerBalanceProfit(
       ? Number(currentBalance)
       : null
   if (initial == null || balance == null) return null
-  return balance - initial
+  const rawDelta = balance - initial
+  if (!brokerId || !mtTrades.length) return rawDelta
+  const cashFlow = sumBalanceCashFlow(statsRowsForBroker(mtTradesForBroker(mtTrades, brokerId)))
+  return rawDelta - cashFlow
 }
 
 export function computeBrokerTotalProfit(
@@ -188,6 +198,74 @@ function parseOpenMs(iso: string | null | undefined): number {
   return Number.isFinite(ms) ? ms : 0
 }
 
+function canonicalChannelId(
+  channelId: string,
+  maps: PerformanceChannelLinkMaps,
+): string {
+  const lower = channelId.trim().toLowerCase()
+  if (!lower) return channelId
+  for (const key of Object.keys(maps.channelNames)) {
+    if (key.toLowerCase() === lower) return key
+  }
+  return channelId
+}
+
+/** Lifetime P/L per connected signal channel (realized closed + open unrealized). */
+export function computeBrokerProfitByChannel(opts: {
+  brokerId: string
+  connectedChannelIds?: string[] | null
+  mtTrades: MtTrade[]
+  channelLinkMaps: PerformanceChannelLinkMaps
+  unlinkedChannelLabel: string
+  now?: Date
+}): PerformanceDistributionRow[] {
+  const brokerMt = mtTradesForBroker(opts.mtTrades, opts.brokerId)
+  const closedRows = computeProfitByChannel(
+    brokerMt,
+    'all',
+    opts.channelLinkMaps,
+    opts.unlinkedChannelLabel,
+    opts.now,
+  )
+  const openRows = findActiveAttributedSignalTrades(
+    opts.brokerId,
+    opts.mtTrades,
+    opts.channelLinkMaps,
+  )
+
+  const merged = new Map<string, PerformanceDistributionRow>()
+  for (const row of closedRows) {
+    merged.set(row.key, { ...row })
+  }
+  for (const row of openRows) {
+    const key = row.channelId
+    const existing = merged.get(key)
+    if (existing) {
+      existing.pnl = Math.round((existing.pnl + row.pnl) * 100) / 100
+      continue
+    }
+    merged.set(key, {
+      key,
+      label: row.channelLabel,
+      count: 0,
+      pnl: row.pnl,
+    })
+  }
+
+  for (const rawId of normalizeSignalChannelIds(opts.connectedChannelIds)) {
+    const channelId = canonicalChannelId(rawId, opts.channelLinkMaps)
+    if (merged.has(channelId)) continue
+    merged.set(channelId, {
+      key: channelId,
+      label: opts.channelLinkMaps.channelNames[channelId] ?? opts.unlinkedChannelLabel,
+      count: 0,
+      pnl: 0,
+    })
+  }
+
+  return [...merged.values()].sort((a, b) => b.pnl - a.pnl || a.label.localeCompare(b.label))
+}
+
 export function findActiveAttributedSignalTrades(
   brokerId: string,
   mtTrades: MtTrade[],
@@ -254,17 +332,19 @@ export function computeBrokerStatsSnapshot(opts: {
   mtTrades: MtTrade[]
   chartTrades: DashboardChartTrade[]
   channelLinkMaps: PerformanceChannelLinkMaps
+  connectedChannelIds?: string[] | null
   unlinkedChannelLabel: string
   now?: Date
 }): BrokerStatsSnapshot {
   const brokerMt = mtTradesForBroker(opts.mtTrades, opts.brokerId)
-  const profitByChannel = computeProfitByChannel(
-    brokerMt,
-    'all',
-    opts.channelLinkMaps,
-    opts.unlinkedChannelLabel,
-    opts.now,
-  )
+  const profitByChannel = computeBrokerProfitByChannel({
+    brokerId: opts.brokerId,
+    connectedChannelIds: opts.connectedChannelIds,
+    mtTrades: opts.mtTrades,
+    channelLinkMaps: opts.channelLinkMaps,
+    unlinkedChannelLabel: opts.unlinkedChannelLabel,
+    now: opts.now,
+  })
   const closedDealCount = brokerMt.filter(
     t =>
       t.status === 'closed' &&
@@ -296,7 +376,7 @@ export function computeBrokerStatsSnapshot(opts: {
     currentBalance: balance,
     currentEquity: equity,
     totalProfit:
-      computeBrokerBalanceProfit(initial, balance)
+      computeBrokerBalanceProfit(initial, balance, opts.mtTrades, opts.brokerId)
       ?? computeBrokerTotalProfit(opts.brokerId, opts.mtTrades, opts.chartTrades),
     todayProfit: computeBrokerTodayProfit(opts.brokerId, opts.mtTrades, opts.chartTrades, opts.now),
     closedDealCount,

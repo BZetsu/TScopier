@@ -432,7 +432,7 @@ export const es: Translations = {
       currentBalance: 'Saldo actual',
       currentEquity: 'Equidad actual',
       totalProfit: 'Beneficio / pérdida total',
-      totalProfitHint: 'Saldo actual menos el saldo inicial cuando se vinculó la cuenta.',
+      totalProfitHint: 'Saldo actual menos saldo inicial, excluyendo depósitos y retiros.',
       todayProfit: 'Beneficio hoy',
       todayProfitHint: 'P/L realizado de operaciones cerradas hoy (día calendario local).',
       winRate: 'Tasa de acierto',
@@ -440,7 +440,8 @@ export const es: Translations = {
       roi: 'ROI',
       closedDeals: 'Operaciones cerradas',
       connectedChannels: 'Canales de señales conectados',
-      connectedChannelsHint: 'Canales de Telegram con al menos una operación cerrada atribuida en esta cuenta.',
+      connectedChannelsHint:
+        'P/L acumulado de operaciones copiadas desde cada canal de Telegram conectado (cerradas realizadas y posiciones abiertas).',
       noChannels: 'Aún no hay operaciones atribuidas a canales.',
       tradesCount: '{count} operaciones',
       activeSignalTrade: 'Operación activa por señal',
