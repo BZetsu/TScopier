@@ -75,6 +75,10 @@ function moneyPerPip(quote: PipQuote, lots: number): number {
   return pipValueForLots(quote, lots)
 }
 
+export function roundLots2(lots: number): number {
+  return Number(lots.toFixed(2))
+}
+
 function isTpRowEnabled(row: ManualTpLot | null | undefined): boolean {
   if (!row) return false
   return row.enabled !== false
@@ -267,7 +271,7 @@ function computeSingleReward(args: {
     if (fallbackPips <= 0) return { rows: [], total: 0 }
     const reward = moneyPerPip(quote, fixedLot) * fallbackPips
     return {
-      rows: [{ label: 'TP1', lots: fixedLot, pips: fallbackPips, percent: 100, reward }],
+      rows: [{ label: 'TP1', lots: roundLots2(fixedLot), pips: fallbackPips, percent: 100, reward }],
       total: reward,
     }
   }
@@ -278,7 +282,7 @@ function computeSingleReward(args: {
     return {
       rows: [{
         label: only.row.label,
-        lots: fixedLot,
+        lots: roundLots2(fixedLot),
         pips: only.pips,
         percent: only.row.percent,
         reward,
@@ -305,7 +309,7 @@ function computeSingleReward(args: {
       if (units < minUnits) continue
     }
     remainingUnits -= units
-    const lots = unitsToLot(units, lotStep)
+    const lots = roundLots2(unitsToLot(units, lotStep))
     rows.push({
       label: entry.row.label,
       lots,
@@ -316,7 +320,7 @@ function computeSingleReward(args: {
     if (remainingUnits < minUnits) break
   }
 
-  const remLots = +(fixedLot - rows.reduce((s, r) => s + r.lots, 0)).toFixed(8)
+  const remLots = roundLots2(+(fixedLot - rows.reduce((s, r) => s + r.lots, 0)).toFixed(8))
   if (remLots >= minLot) {
     rows.push({
       label: brokerBucket.row.label,
@@ -374,7 +378,7 @@ function computeMultiReward(args: {
     const reward = moneyPerPip(quote, bucket.lots) * bucket.pips
     rows.push({
       label: bucket.label,
-      lots: bucket.lots,
+      lots: roundLots2(bucket.lots),
       pips: bucket.pips,
       percent: bucket.percent,
       reward,
@@ -572,6 +576,8 @@ export interface RiskLotCalculatorFormState {
   accountBalance: number
   symbol: string
   slPips: number
+  usePredefinedSl: boolean
+  usePredefinedTp: boolean
   tpPips: number[]
   tradeStyle: 'single' | 'multi'
   legPercent: number
@@ -613,6 +619,8 @@ export function riskCalcStateFromManualSettings(
     accountBalance: accountBalance != null && Number.isFinite(accountBalance) ? accountBalance : 10000,
     symbol: (ms.symbol_to_trade ?? '').trim().split(/[,;\s]+/).filter(Boolean)[0]?.toUpperCase() ?? '',
     slPips: Number(ms.predefined_sl_pips ?? 30) || 30,
+    usePredefinedSl: ms.use_predefined_sl_pips === true,
+    usePredefinedTp: ms.use_predefined_tp_pips === true,
     tpPips,
     tradeStyle: ms.trade_style === 'multi' ? 'multi' : 'single',
     legPercent: Number(ms.multi_trade_leg_percent ?? 5) || 5,
@@ -648,9 +656,9 @@ export function manualSettingsFromRiskCalc(form: RiskLotCalculatorFormState): Pa
     range_percent: form.rangePercent,
     range_step_pips: form.rangeStepPips,
     range_distance_pips: form.rangeDistancePips,
-    use_predefined_sl_pips: true,
+    use_predefined_sl_pips: form.usePredefinedSl,
     predefined_sl_pips: Math.max(1, Math.round(form.slPips)),
-    use_predefined_tp_pips: true,
+    use_predefined_tp_pips: form.usePredefinedTp,
     predefined_tp_pips: form.tpPips.map(p => Math.max(1, Math.round(p))),
     tp_lots: form.tpLots.map((r, i) => ({
       label: String(r.label ?? `TP${i + 1}`),

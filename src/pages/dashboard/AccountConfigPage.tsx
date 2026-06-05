@@ -2873,6 +2873,17 @@ export function AccountConfigPage() {
 
                         {activeManualSubTab === 'risk' && (
                           <div className="space-y-4">
+                            {channelManualSettings.risk_mode === 'fixed_lot' && (
+                              <div className="flex justify-end">
+                                <button
+                                  type="button"
+                                  className="text-sm text-teal-600 hover:text-teal-700 hover:underline dark:text-teal-400 dark:hover:text-teal-300"
+                                  onClick={() => setRiskCalcOpen(true)}
+                                >
+                                  {cm.risk.openLotCalculator}
+                                </button>
+                              </div>
+                            )}
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                               <ConfigureSelect
                                 label={cm.risk.riskMode}
@@ -2886,40 +2897,31 @@ export function AccountConfigPage() {
                               {channelManualSettings.risk_mode === 'dynamic_balance_percent' ? (
                                 <ConfigureInput label={cm.risk.dynamicBalance} type="number" value={String(channelManualSettings.dynamic_balance_percent ?? 1)} onChange={e => setManual({ dynamic_balance_percent: Number(e.target.value) })} />
                               ) : (
-                                <div className="space-y-1">
-                                  <ConfigureInput
-                                    label={cm.risk.fixedLot}
-                                    type="text"
-                                    inputMode="decimal"
-                                    value={numberFieldDisplay(
+                                <ConfigureInput
+                                  label={cm.risk.fixedLot}
+                                  type="text"
+                                  inputMode="decimal"
+                                  value={numberFieldDisplay(
+                                    channelManualSettings.fixed_lot,
+                                    fixedLotDraft,
+                                    DEFAULT_MANUAL_SETTINGS.fixed_lot ?? 0.01,
+                                  )}
+                                  onChange={e => setFixedLotDraft(e.target.value)}
+                                  onBlur={() => {
+                                    const raw = fixedLotDraft ?? numberFieldDisplay(
                                       channelManualSettings.fixed_lot,
-                                      fixedLotDraft,
+                                      null,
                                       DEFAULT_MANUAL_SETTINGS.fixed_lot ?? 0.01,
-                                    )}
-                                    onChange={e => setFixedLotDraft(e.target.value)}
-                                    onBlur={() => {
-                                      const raw = fixedLotDraft ?? numberFieldDisplay(
-                                        channelManualSettings.fixed_lot,
-                                        null,
+                                    )
+                                    setFixedLotDraft(null)
+                                    setManual({
+                                      fixed_lot: commitPositiveNumber(
+                                        raw,
                                         DEFAULT_MANUAL_SETTINGS.fixed_lot ?? 0.01,
-                                      )
-                                      setFixedLotDraft(null)
-                                      setManual({
-                                        fixed_lot: commitPositiveNumber(
-                                          raw,
-                                          DEFAULT_MANUAL_SETTINGS.fixed_lot ?? 0.01,
-                                        ),
-                                      })
-                                    }}
-                                  />
-                                  <button
-                                    type="button"
-                                    className="text-sm text-teal-600 hover:text-teal-700 hover:underline dark:text-teal-400 dark:hover:text-teal-300"
-                                    onClick={() => setRiskCalcOpen(true)}
-                                  >
-                                    {cm.risk.openLotCalculator}
-                                  </button>
-                                </div>
+                                      ),
+                                    })
+                                  }}
+                                />
                               )}
                               <ConfigureSelect
                                 label={cm.risk.tradeStyle}

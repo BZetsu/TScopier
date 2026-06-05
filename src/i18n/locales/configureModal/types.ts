@@ -165,6 +165,8 @@ export interface ConfigureModalTranslations {
       symbol: string
       symbolHint: string
       slPips: string
+      usePredefinedSl: string
+      usePredefinedTp: string
       tpLevelsTitle: string
       tpLevelsHint: string
       tpPipsCol: string

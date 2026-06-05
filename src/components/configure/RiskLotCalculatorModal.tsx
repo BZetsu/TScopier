@@ -14,6 +14,7 @@ import {
   computeRiskLotCalculator,
   manualSettingsFromRiskCalc,
   riskCalcStateFromManualSettings,
+  roundLots2,
   type RiskLotCalculatorFormState,
 } from '../../lib/riskLotCalculator'
 import type { ManualSettings } from '../../types/database'
@@ -263,9 +264,8 @@ function RiskLotCalculatorModalInner({
           </div>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          <div className="grid grid-cols-1 gap-0 md:grid-cols-5">
-            <div className="space-y-4 border-b border-neutral-100 p-5 md:col-span-3 md:border-b-0 md:border-r dark:border-neutral-800">
+        <div className="min-h-0 flex-1 overflow-y-auto md:flex md:overflow-hidden">
+          <div className="space-y-4 border-b border-neutral-100 p-5 md:min-h-0 md:flex-[3] md:overflow-y-auto md:border-b-0 md:border-r dark:border-neutral-800">
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <ConfigureInput
                   label={copy.accountBalance}
@@ -284,22 +284,152 @@ function RiskLotCalculatorModalInner({
                 />
               </div>
 
-              <ConfigureInput
-                label={copy.slPips}
-                type="number"
-                min={1}
-                step={1}
-                value={String(form.slPips)}
-                onChange={e => patchForm({ slPips: Math.max(1, Number(e.target.value) || 1) })}
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <ConfigureInput
+                  label={copy.fixedLot}
+                  type="number"
+                  min={0.01}
+                  step={0.01}
+                  value={String(form.fixedLot)}
+                  onChange={e => patchForm({ fixedLot: Math.max(0.01, Number(e.target.value) || 0.01) })}
+                />
+                <ConfigureInput
+                  label={copy.targetRiskPct}
+                  type="number"
+                  min={0}
+                  max={100}
+                  step={0.1}
+                  hint={copy.targetRiskHint}
+                  value={form.targetRiskPct != null ? String(form.targetRiskPct) : ''}
+                  onChange={e => {
+                    const raw = e.target.value
+                    patchForm({
+                      targetRiskPct: raw === '' ? null : Math.max(0, Number(raw) || 0),
+                    })
+                  }}
+                />
+              </div>
+
+              {result.suggestedLot != null && form.targetRiskPct != null && (
+                <div className="flex flex-wrap items-center gap-2 rounded-lg border border-teal-200 bg-teal-50/80 px-3 py-2 text-sm dark:border-teal-900/50 dark:bg-teal-950/30">
+                  <span className="text-teal-900 dark:text-teal-200">
+                    {copy.useSuggestedLot}: <strong>{result.suggestedLot.toFixed(2)}</strong>
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => patchForm({ fixedLot: result.suggestedLot!, targetRiskPct: null })}
+                  >
+                    {copy.useSuggestedLot}
+                  </Button>
+                </div>
+              )}
+
+              <ConfigureSelect
+                label={copy.tradeStyle}
+                value={form.tradeStyle}
+                onChange={e => {
+                  const v = e.target.value as 'single' | 'multi'
+                  patchForm({
+                    tradeStyle: v,
+                    rangeTrading: v === 'multi' ? form.rangeTrading : false,
+                  })
+                }}
+                options={[
+                  { value: 'single', label: copy.singleTrade },
+                  { value: 'multi', label: copy.multiTrades },
+                ]}
               />
+
+              {form.tradeStyle === 'multi' && (
+                <div className="space-y-3 rounded-lg border border-neutral-200 p-3 dark:border-neutral-800">
+                  <ConfigureInput
+                    label={copy.perLegSize}
+                    type="number"
+                    min={0.1}
+                    max={100}
+                    step={0.5}
+                    value={String(form.legPercent)}
+                    onChange={e => patchForm({ legPercent: Number(e.target.value) || 5 })}
+                  />
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-sm text-neutral-800 dark:text-neutral-100">{copy.rangeLayering}</span>
+                    <Toggle
+                      checked={form.rangeTrading}
+                      onChange={v => patchForm({ rangeTrading: v })}
+                    />
+                  </div>
+                  {form.rangeTrading && (
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                      <ConfigureInput
+                        label={copy.rangePercent}
+                        type="number"
+                        min={0}
+                        max={100}
+                        value={String(form.rangePercent)}
+                        onChange={e => patchForm({ rangePercent: Number(e.target.value) || 0 })}
+                      />
+                      <ConfigureInput
+                        label={copy.rangeStep}
+                        type="number"
+                        min={1}
+                        value={String(form.rangeStepPips)}
+                        onChange={e => patchForm({ rangeStepPips: Math.max(1, Number(e.target.value) || 1) })}
+                      />
+                      <ConfigureInput
+                        label={copy.rangeDistance}
+                        type="number"
+                        min={1}
+                        value={String(form.rangeDistancePips)}
+                        onChange={e => patchForm({ rangeDistancePips: Math.max(1, Number(e.target.value) || 1) })}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="flex flex-col gap-1.5">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-sm font-medium text-neutral-700 dark:text-neutral-300">
+                    {copy.slPips}
+                  </span>
+                  <label className="flex shrink-0 items-center gap-2 text-sm text-neutral-700 dark:text-neutral-300">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 rounded border-neutral-300 text-teal-600 focus:ring-teal-500"
+                      checked={form.usePredefinedSl}
+                      onChange={e => patchForm({ usePredefinedSl: e.target.checked })}
+                    />
+                    <span className="leading-snug">{copy.usePredefinedSl}</span>
+                  </label>
+                </div>
+                <ConfigureInput
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={String(form.slPips)}
+                  onChange={e => patchForm({ slPips: Math.max(1, Number(e.target.value) || 1) })}
+                />
+              </div>
 
               <div className="space-y-2 rounded-lg border border-neutral-200 p-3 dark:border-neutral-800">
                 <div className="flex items-start justify-between gap-2">
-                  <div>
+                  <div className="min-w-0">
                     <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{copy.tpLevelsTitle}</p>
                     <p className="mt-0.5 text-xs text-neutral-500 dark:text-neutral-400">{copy.tpLevelsHint}</p>
                   </div>
-                  <Button variant="ghost" size="sm" className="shrink-0" onClick={addTpRow}>{copy.addTp}</Button>
+                  <div className="flex shrink-0 flex-col items-end gap-2 sm:flex-row sm:items-center">
+                    <label className="flex items-center gap-2 text-sm text-neutral-700 dark:text-neutral-300">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 rounded border-neutral-300 text-teal-600 focus:ring-teal-500"
+                        checked={form.usePredefinedTp}
+                        onChange={e => patchForm({ usePredefinedTp: e.target.checked })}
+                      />
+                      <span className="max-w-[9rem] leading-snug sm:max-w-none">{copy.usePredefinedTp}</span>
+                    </label>
+                    <Button variant="ghost" size="sm" onClick={addTpRow}>{copy.addTp}</Button>
+                  </div>
                 </div>
 
                 <div className="hidden sm:grid sm:grid-cols-12 sm:gap-2 sm:px-1 text-xs font-medium text-neutral-500 dark:text-neutral-400">
@@ -386,110 +516,6 @@ function RiskLotCalculatorModalInner({
                 </div>
               </div>
 
-              <ConfigureSelect
-                label={copy.tradeStyle}
-                value={form.tradeStyle}
-                onChange={e => {
-                  const v = e.target.value as 'single' | 'multi'
-                  patchForm({
-                    tradeStyle: v,
-                    rangeTrading: v === 'multi' ? form.rangeTrading : false,
-                  })
-                }}
-                options={[
-                  { value: 'single', label: copy.singleTrade },
-                  { value: 'multi', label: copy.multiTrades },
-                ]}
-              />
-
-              {form.tradeStyle === 'multi' && (
-                <div className="space-y-3 rounded-lg border border-neutral-200 p-3 dark:border-neutral-800">
-                  <ConfigureInput
-                    label={copy.perLegSize}
-                    type="number"
-                    min={0.1}
-                    max={100}
-                    step={0.5}
-                    value={String(form.legPercent)}
-                    onChange={e => patchForm({ legPercent: Number(e.target.value) || 5 })}
-                  />
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-sm text-neutral-800 dark:text-neutral-100">{copy.rangeLayering}</span>
-                    <Toggle
-                      checked={form.rangeTrading}
-                      onChange={v => patchForm({ rangeTrading: v })}
-                    />
-                  </div>
-                  {form.rangeTrading && (
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                      <ConfigureInput
-                        label={copy.rangePercent}
-                        type="number"
-                        min={0}
-                        max={100}
-                        value={String(form.rangePercent)}
-                        onChange={e => patchForm({ rangePercent: Number(e.target.value) || 0 })}
-                      />
-                      <ConfigureInput
-                        label={copy.rangeStep}
-                        type="number"
-                        min={1}
-                        value={String(form.rangeStepPips)}
-                        onChange={e => patchForm({ rangeStepPips: Math.max(1, Number(e.target.value) || 1) })}
-                      />
-                      <ConfigureInput
-                        label={copy.rangeDistance}
-                        type="number"
-                        min={1}
-                        value={String(form.rangeDistancePips)}
-                        onChange={e => patchForm({ rangeDistancePips: Math.max(1, Number(e.target.value) || 1) })}
-                      />
-                    </div>
-                  )}
-                </div>
-              )}
-
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <ConfigureInput
-                  label={copy.fixedLot}
-                  type="number"
-                  min={0.01}
-                  step={0.01}
-                  value={String(form.fixedLot)}
-                  onChange={e => patchForm({ fixedLot: Math.max(0.01, Number(e.target.value) || 0.01) })}
-                />
-                <ConfigureInput
-                  label={copy.targetRiskPct}
-                  type="number"
-                  min={0}
-                  max={100}
-                  step={0.1}
-                  hint={copy.targetRiskHint}
-                  value={form.targetRiskPct != null ? String(form.targetRiskPct) : ''}
-                  onChange={e => {
-                    const raw = e.target.value
-                    patchForm({
-                      targetRiskPct: raw === '' ? null : Math.max(0, Number(raw) || 0),
-                    })
-                  }}
-                />
-              </div>
-
-              {result.suggestedLot != null && form.targetRiskPct != null && (
-                <div className="flex flex-wrap items-center gap-2 rounded-lg border border-teal-200 bg-teal-50/80 px-3 py-2 text-sm dark:border-teal-900/50 dark:bg-teal-950/30">
-                  <span className="text-teal-900 dark:text-teal-200">
-                    {copy.useSuggestedLot}: <strong>{result.suggestedLot.toFixed(2)}</strong>
-                  </span>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => patchForm({ fixedLot: result.suggestedLot!, targetRiskPct: null })}
-                  >
-                    {copy.useSuggestedLot}
-                  </Button>
-                </div>
-              )}
-
               <div className="rounded-lg border border-neutral-200 dark:border-neutral-800">
                 <button
                   type="button"
@@ -521,8 +547,12 @@ function RiskLotCalculatorModalInner({
               </div>
             </div>
 
-            <div className="space-y-3 bg-neutral-50 p-5 md:col-span-2 md:sticky md:top-0 dark:bg-neutral-800/30">
-              <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">{copy.resultsTitle}</h3>
+            <aside className="flex flex-col bg-neutral-50 dark:bg-neutral-800/30 md:min-h-0 md:flex-[2] md:overflow-hidden">
+              <h3 className="shrink-0 border-b border-neutral-200 px-5 py-3 text-sm font-semibold text-neutral-900 dark:border-neutral-700 dark:text-neutral-50">
+                {copy.resultsTitle}
+              </h3>
+
+              <div className="space-y-3 overflow-y-auto p-5 md:min-h-0 md:flex-1 md:overscroll-contain">
 
               <div className={clsx('rounded-lg border px-3 py-2.5', riskPctTone(result.riskPctFull))}>
                 <p className="text-xs uppercase tracking-wide opacity-80">{copy.riskPct}</p>
@@ -601,9 +631,9 @@ function RiskLotCalculatorModalInner({
                     {result.rewardRows.map(row => (
                       <li key={`${row.label}-${row.pips}-${row.percent}`} className="flex justify-between gap-2 tabular-nums">
                         <span>
-                          {row.label}: {row.lots} lots @ {row.pips}p ({row.percent}%)
+                          {row.label}: {roundLots2(row.lots)} lots @ {row.pips}p ({row.percent}%)
                         </span>
-                        <span>{fmtMoney(row.reward)}</span>
+                        <span>{fmtMoney(Number(row.reward.toFixed(2)))}</span>
                       </li>
                     ))}
                   </ul>
@@ -614,8 +644,8 @@ function RiskLotCalculatorModalInner({
                 <p className="text-xs text-amber-700 dark:text-amber-300">{copy.fallbackSingleNote}</p>
               )}
               <p className="text-xs text-neutral-500 dark:text-neutral-400">{copy.brokerPreviewNote}</p>
-            </div>
-          </div>
+              </div>
+            </aside>
         </div>
 
         <div className="shrink-0 flex justify-end gap-2 border-t border-neutral-100 px-5 py-4 dark:border-neutral-800">

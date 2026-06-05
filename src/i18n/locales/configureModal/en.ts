@@ -184,6 +184,8 @@ export const configureModalEn: ConfigureModalTranslations = {
       symbol: 'Symbol',
       symbolHint: 'Used for pip value estimates. Defaults from Symbol to Trade when set.',
       slPips: 'Stop loss (pips)',
+      usePredefinedSl: 'Use as Predefined SL',
+      usePredefinedTp: 'Use as Predefined TP',
       tpLevelsTitle: 'Take-profit levels',
       tpLevelsHint:
         'Pips = distance from entry for each TP. % target = share of volume (single) or legs (multi) closed at that TP.',

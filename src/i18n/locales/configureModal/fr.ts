@@ -184,6 +184,8 @@ export const configureModalFr: ConfigureModalTranslations = {
       symbol: 'Symbole',
       symbolHint: 'Pour estimer la valeur du pip. Par défaut depuis Symbole à trader si défini.',
       slPips: 'Stop loss (pips)',
+      usePredefinedSl: 'Utiliser comme SL prédéfini',
+      usePredefinedTp: 'Utiliser comme TP prédéfini',
       tpLevelsTitle: 'Niveaux de take-profit',
       tpLevelsHint:
         'Pips = distance depuis l’entrée pour chaque TP. % cible = part du volume (single) ou des jambes (multi) fermée à ce TP.',
