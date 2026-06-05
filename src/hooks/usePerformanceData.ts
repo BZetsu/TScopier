@@ -12,6 +12,7 @@ import {
   performanceCacheKey,
   type PerformanceCachePayload,
 } from '../lib/performanceSessionCache'
+import { performancePayloadFromDashboardCache } from '../lib/performanceCacheBridge'
 import { readSessionCache, writeSessionCache } from '../lib/sessionDataCache'
 import { metatraderApi, type MtTrade } from '../lib/metatraderapi'
 import {
@@ -165,8 +166,18 @@ export function usePerformanceData(userId: string | undefined) {
   const inflightRef = useRef(false)
   const mtTradesRef = useRef<MtTrade[]>([])
   const hydratedUserRef = useRef<string | null>(null)
+  const payloadRef = useRef<PerformanceCachePayload | null>(null)
+
+  const persistPayload = useCallback(
+    (payload: PerformanceCachePayload) => {
+      payloadRef.current = payload
+      if (userId) writeSessionCache(performanceCacheKey(userId), payload)
+    },
+    [userId],
+  )
 
   const applyPayload = useCallback((payload: PerformanceCachePayload) => {
+    payloadRef.current = payload
     setAccounts(payload.accounts)
     mtTradesRef.current = payload.mtTrades
     setMtTrades(payload.mtTrades)
@@ -198,7 +209,9 @@ export function usePerformanceData(userId: string | undefined) {
       }
 
       inflightRef.current = true
-      if (opts?.force || cached) {
+      if (opts?.background) {
+        /* Keep cached UI visible; no header spinner. */
+      } else if (opts?.force || cached) {
         setRefreshing(true)
       } else {
         setLoading(true)
@@ -209,6 +222,7 @@ export function usePerformanceData(userId: string | undefined) {
         const payload = await fetchPerformancePayload(userId)
         const fetchedAt = writeSessionCache(key, payload)
         applyPayload(payload)
+        payloadRef.current = payload
         setLastUpdated(new Date(fetchedAt))
       } catch (e) {
         if (!cached) {
@@ -233,7 +247,14 @@ export function usePerformanceData(userId: string | undefined) {
     if (hydratedUserRef.current !== userId) {
       hydratedUserRef.current = userId
       const key = performanceCacheKey(userId)
-      const cached = readSessionCache<PerformanceCachePayload>(key, PERFORMANCE_CACHE_TTL_MS)
+      let cached = readSessionCache<PerformanceCachePayload>(key, PERFORMANCE_CACHE_TTL_MS)
+      if (!cached) {
+        const bridged = performancePayloadFromDashboardCache(userId)
+        if (bridged) {
+          writeSessionCache(key, bridged)
+          cached = { data: bridged, fetchedAt: Date.now() }
+        }
+      }
       if (cached) {
         applyPayload(cached.data)
         setLastUpdated(new Date(cached.fetchedAt))
@@ -295,6 +316,90 @@ export function usePerformanceData(userId: string | undefined) {
 
   const hasMtBrokers = accounts.some(isMtLinkedBroker)
 
+  const refreshBroker = useCallback(
+    async (brokerId: string, opts?: { silent?: boolean }) => {
+      if (!userId) return
+      const account = payloadRef.current?.accounts.find(a => a.id === brokerId)
+      const uuid = (account?.metaapi_account_id ?? '').trim()
+      if (!account?.is_active || !uuid || uuid.includes('|')) return
+
+      if (!opts?.silent) {
+        setRefreshing(true)
+        setError(null)
+      }
+
+      try {
+        const calendarDay = formatLocalCalendarDay()
+        const timezoneOffsetMinutes = new Date().getTimezoneOffset()
+        const { tomorrowStart: historyTo } = getLocalCalendarDayBounds()
+        const historyFrom = new Date()
+        historyFrom.setDate(historyFrom.getDate() - PERFORMANCE_MT_HISTORY_DAYS)
+
+        const [summaryRes, tradesRes] = await Promise.all([
+          metatraderApi.summary(brokerId, { calendarDay, timezoneOffsetMinutes }),
+          metatraderApi.trades({
+            brokerId,
+            historyProfile: 'trades',
+            scope: 'all',
+            historyFrom: formatLocalMtApiDateTime(historyFrom),
+            historyTo: formatLocalMtApiDateTime(historyTo),
+          }),
+        ])
+
+        const { summary, performance_baseline_balance } = summaryRes
+        const eq = summary.equity ?? summary.balance
+        const bal = summary.balance ?? summary.equity
+        const baseline = Number(performance_baseline_balance)
+        const brokerTrades = tradesRes.trades ?? []
+        const basePayload = payloadRef.current
+        const priorTrades = basePayload?.mtTrades ?? mtTradesRef.current
+        const mergedTrades = [
+          ...priorTrades.filter(t => t.broker_id !== brokerId),
+          ...brokerTrades,
+        ]
+
+        const nextAccounts = (basePayload?.accounts ?? []).map(a => {
+          if (a.id !== brokerId) return a
+          return Number.isFinite(baseline) && baseline > 0
+            ? { ...a, performance_baseline_balance: baseline }
+            : a
+        })
+        const nextEquity = {
+          ...(basePayload?.equityByAccountId ?? {}),
+          ...(eq != null && Number.isFinite(Number(eq)) ? { [brokerId]: Number(eq) } : {}),
+        }
+        const nextBalance = {
+          ...(basePayload?.balanceByAccountId ?? {}),
+          ...(bal != null && Number.isFinite(Number(bal)) ? { [brokerId]: Number(bal) } : {}),
+        }
+
+        const nextPayload: PerformanceCachePayload = {
+          accounts: nextAccounts.length > 0 ? nextAccounts : basePayload?.accounts ?? [],
+          mtTrades: mergedTrades,
+          equityByAccountId: nextEquity,
+          balanceByAccountId: nextBalance,
+          channelLinkMaps: basePayload?.channelLinkMaps ?? {
+            ticketToChannelId: {},
+            signalPrefixToChannelId: {},
+            channelSlugToChannelId: {},
+            channelNames: {},
+          },
+        }
+
+        applyPayload(nextPayload)
+        persistPayload(nextPayload)
+        setLastUpdated(new Date())
+      } catch (e) {
+        if (!opts?.silent) {
+          setError(e instanceof Error ? e.message : 'Failed to refresh broker')
+        }
+      } finally {
+        if (!opts?.silent) setRefreshing(false)
+      }
+    },
+    [userId, applyPayload, persistPayload],
+  )
+
   return {
     accounts,
     mtTrades,
@@ -312,5 +417,6 @@ export function usePerformanceData(userId: string | undefined) {
     error,
     lastUpdated,
     refresh: () => void load({ force: true }),
+    refreshBroker,
   }
 }

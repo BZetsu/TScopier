@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, Outlet, useNavigate } from 'react-router-dom'
 import { Clock, ChevronRight, Info, Plus, RefreshCw } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
@@ -46,6 +46,8 @@ import {
   DASHBOARD_CACHE_VERSION,
   clearDashboardSessionCache,
 } from '../../lib/dashboardSessionCache'
+import { brokerStatsPreviewFromAccount } from '../../lib/brokerStatsNavigation'
+import { syncPerformanceCacheFromDashboard } from '../../lib/performanceCacheBridge'
 import {
   buildTradeVolume7Day,
   findTodayTradeOutcomeDay,
@@ -353,6 +355,7 @@ type DashboardCachePayload = {
   chartTrades?: DashboardChartTrade[]
   aiExpertLogs?: AiExpertLogRow[]
   mtTrades?: MtTrade[]
+  channelLinkMaps?: PerformanceChannelLinkMaps
   cachedDay?: string
 }
 
@@ -514,6 +517,7 @@ function writeDashboardCache(userId: string, payload: DashboardCachePayload) {
     ...payload,
     cachedDay: formatLocalCalendarDay(),
   }))
+  syncPerformanceCacheFromDashboard(userId)
 }
 
 function readDashboardCache(userId: string): DashboardCachePayload | null {
@@ -610,6 +614,8 @@ export function DashboardPage() {
     channelSlugToChannelId: {},
     channelNames: {},
   })
+  const channelLinkMapsRef = useRef(channelLinkMaps)
+  channelLinkMapsRef.current = channelLinkMaps
   const [showPlatformModal, setShowPlatformModal] = useState(false)
   const [togglingBrokerId, setTogglingBrokerId] = useState<string | null>(null)
   const [brokerReconnectError, setBrokerReconnectError] = useState('')
@@ -684,6 +690,8 @@ export function DashboardPage() {
       }
       if (cached.aiExpertLogs?.length) setAiExpertLogs(cached.aiExpertLogs)
       if (cached.mtTrades?.length) mtTradesRef.current = cached.mtTrades
+      if (cached.channelLinkMaps) setChannelLinkMaps(cached.channelLinkMaps)
+      syncPerformanceCacheFromDashboard(user.id)
       seedLiveBrokerStateFromBalances(balances, liveBrokerStateRef.current, cached.linkedAccounts)
       if ((cached.chartTrades?.length ?? 0) > 0 || (cached.mtTrades?.length ?? 0) > 0) {
         setDashboardChartsReady(true)
@@ -1162,31 +1170,30 @@ export function DashboardPage() {
     const resolvedOpenTradesCount =
       hasAnyBrokerOpenTradesFromSummary ? totalLiveOpenTradesFromSummary : openTrades.length
     const channelNames = buildChannelDisplayNames((channelsMetaRes.data ?? []) as ChannelNameRow[])
-    setChannelLinkMaps(
-      buildPerformanceChannelLinkMaps(
-        (channelsMetaRes.data ?? []) as Array<{
-          id: string
-          display_name: string
-          channel_username?: string | null
-        }>,
-        allTrades
-          .filter(t => t.metaapi_order_id && t.broker_account_id)
-          .map(t => ({
-            broker_account_id: t.broker_account_id,
-            metaapi_order_id: t.metaapi_order_id,
-            signal_id: t.signal_id,
-            telegram_channel_id: t.telegram_channel_id,
-          })),
-        (allSignalsRes.data ?? []) as Array<{ id: string; channel_id: string | null }>,
-        (attributionRes.data ?? []) as Array<{
-          broker_account_id: string | null
-          metaapi_order_id: string | null
-          signal_id: string | null
-          channel_id: string | null
-          channel_label: string | null
-        }>,
-      ),
+    const channelMaps = buildPerformanceChannelLinkMaps(
+      (channelsMetaRes.data ?? []) as Array<{
+        id: string
+        display_name: string
+        channel_username?: string | null
+      }>,
+      allTrades
+        .filter(t => t.metaapi_order_id && t.broker_account_id)
+        .map(t => ({
+          broker_account_id: t.broker_account_id,
+          metaapi_order_id: t.metaapi_order_id,
+          signal_id: t.signal_id,
+          telegram_channel_id: t.telegram_channel_id,
+        })),
+      (allSignalsRes.data ?? []) as Array<{ id: string; channel_id: string | null }>,
+      (attributionRes.data ?? []) as Array<{
+        broker_account_id: string | null
+        metaapi_order_id: string | null
+        signal_id: string | null
+        channel_id: string | null
+        channel_label: string | null
+      }>,
     )
+    setChannelLinkMaps(channelMaps)
     const logs = ((logsRes.data ?? []) as Signal[]).filter(s => !isNonTradeSkipReason(s.skip_reason))
     const symbolLookup = await buildSignalSymbolLookup(supabase, user!.id, logs)
     const logSymbols = buildCopierLogSymbolLabels(logs, symbolLookup)
@@ -1266,6 +1273,7 @@ export function DashboardPage() {
           chartTrades: chartFromMt.length > 0 ? chartFromMt : chartFromDb,
           aiExpertLogs: aiLogs,
           mtTrades: mtTradesRef.current ?? undefined,
+          channelLinkMaps: channelMaps,
         })
       }
     } else if (user) {
@@ -1279,6 +1287,7 @@ export function DashboardPage() {
         chartTrades: chartFromDb,
         aiExpertLogs: aiLogs,
         mtTrades: mtTradesRef.current ?? undefined,
+        channelLinkMaps: channelMaps,
       })
     }
     if (fresh && generation !== loadGenerationRef.current) return
@@ -2086,6 +2095,11 @@ export function DashboardPage() {
                 showReconnect={brokerCanReconnect(account)}
                 isReconnecting={isBrokerReconnecting(account.id)}
                 onReconnect={() => { void reconnectBroker(account.id) }}
+                onOpenStats={() =>
+                  navigate(`/dashboard/broker/${account.id}`, {
+                    state: { accountPreview: brokerStatsPreviewFromAccount(account) },
+                  })
+                }
               />
             ))}
           </div>
@@ -2102,6 +2116,7 @@ export function DashboardPage() {
           navigate('/account-configuration')
         }}
       />
+      <Outlet />
     </PageShell>
   )
 }
@@ -2249,6 +2264,7 @@ function LinkedAccountRow({
   showReconnect,
   isReconnecting,
   onReconnect,
+  onOpenStats,
 }: {
   account: BrokerAccount
   accountSummary?: { balance?: number; equity?: number; currency?: string; broker?: string; mt_server_hint?: string; account_type?: 'Live' | 'Demo'; open_pnl?: number }
@@ -2260,6 +2276,7 @@ function LinkedAccountRow({
   showReconnect?: boolean
   isReconnecting?: boolean
   onReconnect?: () => void
+  onOpenStats: () => void
 }) {
   const t = useT()
   const la = t.dashboard.linkedAccounts
@@ -2326,7 +2343,18 @@ function LinkedAccountRow({
     maxDd == null ? 'text-neutral-900 dark:text-neutral-50' : 'text-neutral-600 dark:text-neutral-400'
 
   return (
-    <div className="grid grid-cols-9 gap-2 px-4 sm:px-5 py-3 items-center hover:bg-neutral-50 dark:hover:bg-neutral-800/50 transition-colors">
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onOpenStats}
+      onKeyDown={e => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onOpenStats()
+        }
+      }}
+      className="grid grid-cols-9 gap-2 px-4 sm:px-5 py-3 items-center hover:bg-neutral-50 dark:hover:bg-neutral-800/50 transition-colors cursor-pointer"
+    >
       <div className="flex flex-col min-w-0">
         <span className="text-sm font-semibold text-neutral-900 dark:text-neutral-50 truncate">{accountLabel}</span>
         <span className="text-[11px] font-medium text-primary-600 uppercase tabular-nums">{platformLine}</span>
@@ -2359,17 +2387,22 @@ function LinkedAccountRow({
             size="sm"
             variant="secondary"
             loading={isReconnecting}
-            onClick={onReconnect}
+            onClick={e => {
+              e.stopPropagation()
+              onReconnect?.()
+            }}
           >
             <RefreshCw className="w-3.5 h-3.5" />
             {la.reconnect}
           </Button>
         ) : null}
-        <Toggle
-          checked={account.is_active}
-          onChange={onToggleActive}
-          disabled={toggleDisabled}
-        />
+        <span onClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}>
+          <Toggle
+            checked={account.is_active}
+            onChange={onToggleActive}
+            disabled={toggleDisabled}
+          />
+        </span>
         <span className={`inline-flex items-center px-2.5 py-1 rounded-lg border text-xs font-semibold ${statusClass}`}>
           {brokerConnectionStatusLabel(account, la)}
         </span>

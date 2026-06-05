@@ -9,6 +9,7 @@ import { ProtectedRoute } from './components/layout/ProtectedRoute'
 import { SubscriptionGuard } from './components/layout/SubscriptionGuard'
 import { PricingPageRedirect } from './pages/pricing/PricingPageRedirect'
 import { DashboardPage } from './pages/dashboard/DashboardPage'
+import { BrokerStatsOverlay } from './pages/dashboard/BrokerStatsOverlay'
 import { AccountConfigPage } from './pages/dashboard/AccountConfigPage'
 import { CopierEnginePage } from './pages/dashboard/CopierEnginePage'
 import { CopierLogsPage } from './pages/dashboard/CopierLogsPage'
@@ -71,7 +72,9 @@ export default function App() {
               </ProtectedRoute>
             }
           >
-            <Route path="/dashboard" element={<DashboardPage />} />
+            <Route path="/dashboard" element={<DashboardPage />}>
+              <Route path="broker/:brokerId" element={<BrokerStatsOverlay />} />
+            </Route>
             <Route path="/welcome" element={<WelcomePage />} />
             <Route path="/account-configuration" element={<AccountConfigPage />} />
             <Route path="/account-trades" element={<TradesPage />} />

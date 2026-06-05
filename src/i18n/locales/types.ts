@@ -102,6 +102,42 @@ export interface PageMeta {
   description: string
 }
 
+export interface DashboardBrokerStatsTranslations {
+  close: string
+  refresh: string
+  notFound: string
+  initialBalance: string
+  initialBalanceHint: string
+  currentBalance: string
+  currentEquity: string
+  totalProfit: string
+  totalProfitHint: string
+  todayProfit: string
+  todayProfitHint: string
+  winRate: string
+  maxDrawdown: string
+  roi: string
+  closedDeals: string
+  connectedChannels: string
+  connectedChannelsHint: string
+  noChannels: string
+  tradesCount: string
+  activeSignalTrade: string
+  activeSignalTradeHint: string
+  noActiveSignalTrade: string
+  openPnl: string
+  openedAt: string
+  direction: string
+  lots: string
+  lastSignalTrade: string
+  lastSignalTradeHint: string
+  noLastSignalTrade: string
+  channel: string
+  symbol: string
+  profit: string
+  closedAt: string
+}
+
 export interface DashboardLinkedAccountsTranslations {
   title: string
   subtitle: string
@@ -171,6 +207,7 @@ export interface DashboardTranslations {
   noChannelWorkerLogs: string
   noData: string
   linkedAccounts: DashboardLinkedAccountsTranslations
+  brokerStats: DashboardBrokerStatsTranslations
 }
 
 export interface SignalHistoryPageTranslations {

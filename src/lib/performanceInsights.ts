@@ -284,7 +284,7 @@ export function computeSymbolDistribution(
   ]
 }
 
-function resolveChannelIdForTrade(
+export function resolveChannelIdForTrade(
   trade: MtTrade,
   maps: PerformanceChannelLinkMaps,
 ): string {

@@ -14,14 +14,12 @@ export type TradeStatsRow = {
   commission?: number | null
 }
 
-export function isTradeableClosedRow(row: {
-  status?: string
+function isTradeableMtRow(row: {
   symbol: string
   lot_size: number
   direction?: string
   type?: string
 }): boolean {
-  if ((row.status ?? 'closed') !== 'closed') return false
   if (!(row.symbol ?? '').trim()) return false
   const type = (row.type ?? '').toLowerCase()
   if (
@@ -37,6 +35,28 @@ export function isTradeableClosedRow(row: {
   const dir = (row.direction ?? '').toLowerCase()
   if ((row.lot_size ?? 0) <= 0) return false
   return dir === 'buy' || dir === 'sell'
+}
+
+export function isTradeableClosedRow(row: {
+  status?: string
+  symbol: string
+  lot_size: number
+  direction?: string
+  type?: string
+}): boolean {
+  if ((row.status ?? 'closed') !== 'closed') return false
+  return isTradeableMtRow(row)
+}
+
+export function isTradeableOpenRow(row: {
+  status?: string
+  symbol: string
+  lot_size: number
+  direction?: string
+  type?: string
+}): boolean {
+  if ((row.status ?? 'open') !== 'open') return false
+  return isTradeableMtRow(row)
 }
 
 /** Minimum |deal profit| to classify a close as won or lost (not breakeven). */

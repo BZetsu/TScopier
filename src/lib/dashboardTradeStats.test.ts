@@ -4,6 +4,7 @@ import {
   computeLinkedAccountPerformance,
   countClosedTradeOutcomesInRange,
   isTradeableClosedRow,
+  isTradeableOpenRow,
   isTimestampInRange,
   netClosedLegProfit,
   sumClosedWinningProfitInRange,
@@ -42,6 +43,39 @@ test('isTradeableClosedRow: excludes balance/deposit and zero-lot buy mislabels'
       type: 'Buy',
     }),
     true,
+  )
+})
+
+test('isTradeableOpenRow: excludes balance and zero-lot open rows', () => {
+  assert.equal(
+    isTradeableOpenRow({
+      status: 'open',
+      symbol: 'XAUUSD',
+      lot_size: 0,
+      direction: 'buy',
+      type: 'Buy Stop Limit',
+    }),
+    false,
+  )
+  assert.equal(
+    isTradeableOpenRow({
+      status: 'open',
+      symbol: 'EURUSD',
+      lot_size: 0.1,
+      direction: 'sell',
+      type: 'Sell',
+    }),
+    true,
+  )
+  assert.equal(
+    isTradeableOpenRow({
+      status: 'closed',
+      symbol: 'EURUSD',
+      lot_size: 0.1,
+      direction: 'sell',
+      type: 'Sell',
+    }),
+    false,
   )
 })
 
