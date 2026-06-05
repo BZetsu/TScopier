@@ -2360,10 +2360,25 @@ function LinkedAccountRow({
       className="grid grid-cols-9 gap-2 px-4 sm:px-5 py-3 items-center hover:bg-neutral-50 dark:hover:bg-neutral-800/50 transition-colors cursor-pointer"
     >
       <div className="flex flex-col min-w-0">
-        <span className="text-sm font-semibold text-neutral-900 dark:text-neutral-50 truncate">{accountLabel}</span>
-        <span className="text-[11px] font-medium text-primary-600 uppercase tabular-nums">{platformLine}</span>
+        <span
+          className="text-sm font-semibold text-neutral-900 dark:text-neutral-50 truncate"
+          title={accountLabel}
+        >
+          {accountLabel}
+        </span>
+        <span
+          className="text-[11px] font-medium text-primary-600 uppercase tabular-nums truncate"
+          title={platformLine}
+        >
+          {platformLine}
+        </span>
       </div>
-      <span className="text-sm font-medium text-neutral-900 dark:text-neutral-50">{brokerText}</span>
+      <span
+        className="min-w-0 text-sm font-medium text-neutral-900 dark:text-neutral-50 truncate"
+        title={brokerText}
+      >
+        {brokerText}
+      </span>
       <span className={`text-sm font-semibold ${accountTypeClass}`}>{accountTypeLabel}</span>
       <span className="text-sm font-medium text-neutral-900 dark:text-neutral-50">{balanceText}</span>
       <span className={`text-sm font-semibold ${pnlColor}`}>
