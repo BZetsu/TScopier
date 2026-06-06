@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link, Outlet, useNavigate } from 'react-router-dom'
-import { Clock, ChevronRight, Info, Plus, RefreshCw } from 'lucide-react'
+import { ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, Clock, Info, Plus, RefreshCw } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import type { BrokerAccount, Signal, Trade } from '../../types/database'
@@ -86,6 +86,11 @@ import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { formatMoneyWithCode } from '../../lib/currency'
 import { interpolate } from '../../i18n/interpolate'
 import { SubscriptionBanner } from '../../components/billing/SubscriptionBanner'
+import {
+  sortLinkedAccounts,
+  type LinkedAccountSortKey,
+  type SortDirection,
+} from '../../lib/linkedAccountSort'
 
 const DASHBOARD_MT_HISTORY_LIMIT = 5000
 const DASHBOARD_HISTORY_DAYS = 7
@@ -844,6 +849,19 @@ export function DashboardPage() {
     [aiExpertLogs, channelDisplayNames, t.channelWorker],
   )
 
+  const [linkedAccountSortKey, setLinkedAccountSortKey] = useState<LinkedAccountSortKey | null>(null)
+  const [linkedAccountSortDir, setLinkedAccountSortDir] = useState<SortDirection>('asc')
+
+  const onLinkedAccountSort = (key: LinkedAccountSortKey) => {
+    if (linkedAccountSortKey === key) {
+      setLinkedAccountSortKey(null)
+      setLinkedAccountSortDir('asc')
+      return
+    }
+    setLinkedAccountSortKey(key)
+    setLinkedAccountSortDir('asc')
+  }
+
   const linkedAccountPerformance = useMemo(() => {
     const tradesByAccountId: Record<string, TradeStatsRow[]> = {}
     const mtTrades = mtTradesRef.current
@@ -882,6 +900,24 @@ export function DashboardPage() {
     }
     return computeLinkedAccountPerformanceMap(linkedAccounts, tradesByAccountId, equityByAccountId)
   }, [linkedAccounts, effectiveChartTrades, equityByAccountId])
+
+  const displayedLinkedAccounts = useMemo(() => {
+    if (!linkedAccountSortKey) return linkedAccounts
+    return sortLinkedAccounts(linkedAccounts, linkedAccountSortKey, linkedAccountSortDir, {
+      balances: linkedAccountBalances,
+      performance: linkedAccountPerformance,
+      closedProfitByAccountId,
+      hasMtTradeHistory,
+    })
+  }, [
+    linkedAccounts,
+    linkedAccountSortKey,
+    linkedAccountSortDir,
+    linkedAccountBalances,
+    linkedAccountPerformance,
+    closedProfitByAccountId,
+    hasMtTradeHistory,
+  ])
 
   const formatVsYesterdayMoney = (yesterdayValue: number | null | undefined) => {
     if (yesterdayValue == null || !Number.isFinite(yesterdayValue)) return ''
@@ -2060,15 +2096,72 @@ export function DashboardPage() {
         <div className="overflow-x-auto">
         <div className="min-w-[52rem] lg:min-w-0">
         <div className="hidden lg:grid grid-cols-9 gap-2 px-4 sm:px-5 py-3 border-b border-neutral-100 dark:border-neutral-800 text-xs font-medium text-neutral-400">
-          <span>{la.colAccount}</span>
-          <span>{la.colBroker}</span>
-          <span>{la.colAccountType}</span>
-          <span>{la.colBalance}</span>
-          <span title={la.colPnlHint}>{la.colPnl}</span>
-          <span title={la.colOpenPnlHint}>{la.colOpenPnl}</span>
-          <span>{la.colWinRate}</span>
-          <span>{la.colDd}</span>
-          <span className="text-right">{la.colStatus}</span>
+          <LinkedAccountSortHeader
+            label={la.colAccount}
+            sortKey="account"
+            activeKey={linkedAccountSortKey}
+            direction={linkedAccountSortDir}
+            onSort={onLinkedAccountSort}
+          />
+          <LinkedAccountSortHeader
+            label={la.colBroker}
+            sortKey="broker"
+            activeKey={linkedAccountSortKey}
+            direction={linkedAccountSortDir}
+            onSort={onLinkedAccountSort}
+          />
+          <LinkedAccountSortHeader
+            label={la.colAccountType}
+            sortKey="accountType"
+            activeKey={linkedAccountSortKey}
+            direction={linkedAccountSortDir}
+            onSort={onLinkedAccountSort}
+          />
+          <LinkedAccountSortHeader
+            label={la.colBalance}
+            sortKey="balance"
+            activeKey={linkedAccountSortKey}
+            direction={linkedAccountSortDir}
+            onSort={onLinkedAccountSort}
+          />
+          <LinkedAccountSortHeader
+            label={la.colPnl}
+            sortKey="pnl"
+            activeKey={linkedAccountSortKey}
+            direction={linkedAccountSortDir}
+            onSort={onLinkedAccountSort}
+            title={la.colPnlHint}
+          />
+          <LinkedAccountSortHeader
+            label={la.colOpenPnl}
+            sortKey="openPnl"
+            activeKey={linkedAccountSortKey}
+            direction={linkedAccountSortDir}
+            onSort={onLinkedAccountSort}
+            title={la.colOpenPnlHint}
+          />
+          <LinkedAccountSortHeader
+            label={la.colWinRate}
+            sortKey="winRate"
+            activeKey={linkedAccountSortKey}
+            direction={linkedAccountSortDir}
+            onSort={onLinkedAccountSort}
+          />
+          <LinkedAccountSortHeader
+            label={la.colDd}
+            sortKey="dd"
+            activeKey={linkedAccountSortKey}
+            direction={linkedAccountSortDir}
+            onSort={onLinkedAccountSort}
+          />
+          <LinkedAccountSortHeader
+            label={la.colStatus}
+            sortKey="status"
+            activeKey={linkedAccountSortKey}
+            direction={linkedAccountSortDir}
+            onSort={onLinkedAccountSort}
+            align="right"
+          />
         </div>
 
         {linkedAccounts.length === 0 && chartsEmpty ? (
@@ -2085,7 +2178,7 @@ export function DashboardPage() {
           <div className="px-5 py-8 text-sm text-neutral-400">{la.empty}</div>
         ) : (
           <div className="divide-y divide-neutral-100 dark:divide-neutral-800"> 
-            {linkedAccounts.map(account => (
+            {displayedLinkedAccounts.map(account => (
               <LinkedAccountRow
                 key={account.id}
                 account={account}
@@ -2256,6 +2349,48 @@ function LogRow({ signal, channelName, symbol }: { signal: Signal; channelName: 
 function formatPerformancePct(value: number | null | undefined, digits = 1): string {
   if (value == null || !Number.isFinite(value)) return '—'
   return `${value.toFixed(digits)}%`
+}
+
+function LinkedAccountSortHeader({
+  label,
+  sortKey,
+  activeKey,
+  direction,
+  onSort,
+  title,
+  align = 'left',
+}: {
+  label: string
+  sortKey: LinkedAccountSortKey
+  activeKey: LinkedAccountSortKey | null
+  direction: SortDirection
+  onSort: (key: LinkedAccountSortKey) => void
+  title?: string
+  align?: 'left' | 'right'
+}) {
+  const isActive = activeKey === sortKey
+  const SortIcon = isActive
+    ? direction === 'asc'
+      ? ChevronUp
+      : ChevronDown
+    : ChevronsUpDown
+
+  return (
+    <button
+      type="button"
+      onClick={() => onSort(sortKey)}
+      title={title}
+      className={`inline-flex min-w-0 items-center gap-0.5 rounded-md transition-colors hover:text-neutral-600 dark:hover:text-neutral-300 ${
+        align === 'right' ? 'ml-auto justify-end' : 'justify-start'
+      } ${isActive ? 'text-neutral-700 dark:text-neutral-200' : 'text-neutral-400'}`}
+    >
+      <span className="truncate">{label}</span>
+      <SortIcon
+        className={`h-3.5 w-3.5 shrink-0 ${isActive ? 'text-teal-600 dark:text-teal-400' : 'opacity-50'}`}
+        aria-hidden
+      />
+    </button>
+  )
 }
 
 function LinkedAccountRow({
