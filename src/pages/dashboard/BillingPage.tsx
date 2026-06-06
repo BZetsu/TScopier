@@ -14,6 +14,7 @@ import {
 import { useT, useLocale } from '../../context/LocaleContext'
 import { useAuth } from '../../context/AuthContext'
 import { useSubscription } from '../../context/SubscriptionContext'
+import { getSubscribeCtaLabel } from '../../lib/subscriptionCta'
 import { interpolate } from '../../i18n/interpolate'
 import { Button } from '../../components/ui/Button'
 import { Card } from '../../components/ui/Card'
@@ -103,7 +104,11 @@ export function BillingPage() {
     refresh,
     openPricingModal,
     isAdmin,
+    isPastDue,
+    hasTrialExpired,
   } = useSubscription()
+
+  const subscribeCta = getSubscribeCtaLabel(t, { isPastDue, effectivePlan, hasTrialExpired })
 
   const [portalLoading, setPortalLoading] = useState(false)
   const [extraCount, setExtraCount] = useState<number | null>(null)
@@ -304,7 +309,7 @@ export function BillingPage() {
             </div>
             <Button onClick={openPricingModal} className="gap-2">
               <Zap className="h-4 w-4" />
-              {bt.purchaseSubscription}
+              {subscribeCta}
             </Button>
           </div>
         }

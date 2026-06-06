@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom'
 import clsx from 'clsx'
 import { useT } from '../../context/LocaleContext'
 import { useSubscription } from '../../context/SubscriptionContext'
+import { getSubscribeCtaLabel } from '../../lib/subscriptionCta'
 import { Button } from '../ui/Button'
 
 export type UpgradePromptVariant = 'inline' | 'banner' | 'compact'
@@ -23,13 +24,9 @@ export function UpgradePrompt({
 }: UpgradePromptProps) {
   const t = useT()
   const pw = t.pricing.paywall
-  const { isPastDue, openUpgrade, effectivePlan } = useSubscription()
+  const { isPastDue, openUpgrade, effectivePlan, hasTrialExpired } = useSubscription()
   const heading = title ?? (isPastDue ? pw.updatePaymentTitle : pw.upgradeTitle)
-  const upgradeCta = isPastDue
-    ? pw.updatePayment
-    : effectivePlan === 'basic'
-      ? pw.upgradeCta
-      : pw.purchaseSubscriptionCta
+  const upgradeCta = getSubscribeCtaLabel(t, { isPastDue, effectivePlan, hasTrialExpired })
 
   const manageBilling = showManageBilling ?? isPastDue
 

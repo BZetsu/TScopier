@@ -22,6 +22,7 @@ import {
   type PlanLimitsSnapshot,
   type SubscriptionPlan,
 } from '../lib/planLimits'
+import { hasTrialExpired as subscriptionHasTrialExpired } from '../lib/subscriptionCta'
 
 export interface Subscription {
   id: string
@@ -50,6 +51,8 @@ interface SubscriptionContextValue {
   usageLoading: boolean
   hasActiveSubscription: boolean
   isPastDue: boolean
+  /** User previously had a trial period (expired or converted); show Purchase Subscription. */
+  hasTrialExpired: boolean
   effectivePlan: SubscriptionPlan | null
   limits: PlanLimitsSnapshot
   planName: string
@@ -81,6 +84,7 @@ const SubscriptionContext = createContext<SubscriptionContextValue>({
   usageLoading: true,
   hasActiveSubscription: false,
   isPastDue: false,
+  hasTrialExpired: false,
   effectivePlan: null,
   limits: {
     maxBrokerAccounts: 0,
@@ -240,6 +244,8 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
 
   const hasActiveSubscription = isAdmin || isSubscriptionActive(subscription?.status)
   const isPastDue = !isAdmin && subscription?.status === 'past_due'
+  const hasTrialExpired =
+    !isAdmin && !hasActiveSubscription && subscriptionHasTrialExpired(subscription?.trial_ends_at)
   const activePlan: SubscriptionPlan | null = isAdmin
     ? 'advanced'
     : effectivePlan(subscription?.plan, subscription?.status)
@@ -309,6 +315,7 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
         usageLoading,
         hasActiveSubscription,
         isPastDue,
+        hasTrialExpired,
         effectivePlan: activePlan,
         limits,
         planName,

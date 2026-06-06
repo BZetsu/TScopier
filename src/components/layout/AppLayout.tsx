@@ -6,6 +6,7 @@ import { TscopierLogo } from '../ui/TscopierLogo'
 import { AppSearchDesktop, AppSearchMobileTrigger, AppSearchProvider } from './AppSearch'
 import { useAuth } from '../../context/AuthContext'
 import { useT } from '../../context/LocaleContext'
+import { getSubscribeCtaLabel } from '../../lib/subscriptionCta'
 import { ThemeToggle } from '../ui/ThemeToggle'
 import { LanguageSwitcher } from '../auth/LanguageSwitcher'
 import { HelpSidebarNav } from './HelpSidebarNav'
@@ -37,7 +38,13 @@ export function AppLayout() {
   const userMenuRef = useRef<HTMLDivElement>(null)
   const userMenuCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const { profile } = useUserProfile()
-  const { planName, hasActiveSubscription, effectivePlan, openUpgrade } = useSubscription()
+  const { planName, hasActiveSubscription, effectivePlan, openUpgrade, isPastDue, hasTrialExpired } =
+    useSubscription()
+  const subscribeCta = getSubscribeCtaLabel(t, {
+    isPastDue,
+    effectivePlan,
+    hasTrialExpired,
+  })
   const hasOpenTrades = useHasOpenTrades(user?.id)
   const hasHighImpactNewsToday = useHasHighImpactNewsToday(Boolean(user?.id))
 
@@ -350,7 +357,7 @@ export function AppLayout() {
                 onClick={() => openUpgrade('advanced')}
                 className="hidden sm:inline-flex items-center rounded-full border border-teal-200 bg-teal-50 px-2.5 py-1 text-xs font-semibold text-teal-700 transition-colors hover:bg-teal-100 dark:border-teal-800 dark:bg-teal-950/40 dark:text-teal-300 dark:hover:bg-teal-950/60"
               >
-                {!hasActiveSubscription ? t.pricing.paywall.purchaseSubscriptionCta : t.pricing.paywall.upgradeCta}
+                {subscribeCta}
               </button>
             ) : null}
             <AppSearchMobileTrigger />
