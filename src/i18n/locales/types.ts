@@ -1,5 +1,6 @@
 import type { AuthTranslations } from '../auth/types'
 import type { ChannelWorkerTranslations } from '../channelWorker/types'
+import type { ContactSupportPageTranslations } from '../contactSupport/types'
 import type { TradeNotificationsTranslations } from '../tradeNotifications/types'
 import type { ConfigureModalTranslations } from './configureModal/types'
 import type { LandingTranslations } from './landing/types'
@@ -1041,6 +1042,7 @@ export interface Translations {
   backtest: BacktestTranslations
   marketNews: MarketNewsTranslations
   economicCalendar: EconomicCalendarTranslations
+  contactSupportPage: ContactSupportPageTranslations
   performance: PerformanceTranslations
   settings: SettingsTranslations
   affiliate: AffiliateTranslations

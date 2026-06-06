@@ -282,6 +282,8 @@ export interface LandingTranslations {
     product: string
     features: string
     pricing: string
+    faq: string
+    docs: string
     signIn: string
     getStarted: string
     dashboard: string

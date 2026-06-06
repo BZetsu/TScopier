@@ -6,6 +6,8 @@ export const landingEn: LandingTranslations = {
     product: 'Product',
     features: 'Features',
     pricing: 'Pricing',
+    faq: 'FAQ',
+    docs: 'Docs',
     signIn: 'Sign in',
     getStarted: 'Get started',
     dashboard: 'Dashboard',

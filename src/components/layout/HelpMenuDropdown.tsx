@@ -73,7 +73,7 @@ export function HelpMenuDropdown({ open, onClose }: HelpMenuDropdownProps) {
           href: HELP_LINKS.liveChat,
         }
       : {
-          id: 'liveChatInternal',
+          id: 'contactSupport',
           label: hm.liveChat,
           icon: MessageCircle,
           internalPath: '/contact-support',

@@ -1,6 +1,7 @@
 import { authEn } from '../auth/en'
 import { channelWorkerEn } from '../channelWorker/en'
 import { tradeNotificationsEn } from '../tradeNotifications/en'
+import { contactSupportEn } from '../contactSupport/en'
 import { landingEn } from './landing/en'
 import type { Translations } from './types'
 import { configureModalEn } from './configureModal/en'
@@ -9,6 +10,7 @@ export const en: Translations = {
   auth: authEn,
   channelWorker: channelWorkerEn,
   tradeNotifications: tradeNotificationsEn,
+  contactSupportPage: contactSupportEn,
   nav: {
     sections: {
       general: 'GENERAL',

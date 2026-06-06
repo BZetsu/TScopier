@@ -1,6 +1,7 @@
 import { authEs } from '../auth/es'
 import { channelWorkerEs } from '../channelWorker/es'
 import { tradeNotificationsEs } from '../tradeNotifications/es'
+import { contactSupportEs } from '../contactSupport/es'
 import { landingEs } from './landing/es'
 import type { Translations } from './types'
 import { configureModalEs } from './configureModal/es'
@@ -9,6 +10,7 @@ export const es: Translations = {
   auth: authEs,
   channelWorker: channelWorkerEs,
   tradeNotifications: tradeNotificationsEs,
+  contactSupportPage: contactSupportEs,
   nav: {
     sections: {
       general: 'GENERAL',

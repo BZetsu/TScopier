@@ -1,6 +1,7 @@
 import { authFr } from '../auth/fr'
 import { channelWorkerFr } from '../channelWorker/fr'
 import { tradeNotificationsFr } from '../tradeNotifications/fr'
+import { contactSupportFr } from '../contactSupport/fr'
 import { landingFr } from './landing/fr'
 import type { Translations } from './types'
 import { configureModalFr } from './configureModal/fr'
@@ -9,6 +10,7 @@ export const fr: Translations = {
   auth: authFr,
   channelWorker: channelWorkerFr,
   tradeNotifications: tradeNotificationsFr,
+  contactSupportPage: contactSupportFr,
   nav: {
     sections: {
       general: 'GÉNÉRAL',
