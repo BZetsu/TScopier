@@ -1,11 +1,14 @@
 import { BrokerAccountsProvider } from '../../context/BrokerAccountsContext'
+import { NotificationsProvider } from '../../context/NotificationsContext'
 import { AppLayout } from './AppLayout'
 
 /** Authenticated app shell: shared broker state + dashboard layout. */
 export function AppShell() {
   return (
     <BrokerAccountsProvider>
-      <AppLayout />
+      <NotificationsProvider>
+        <AppLayout />
+      </NotificationsProvider>
     </BrokerAccountsProvider>
   )
 }

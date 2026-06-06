@@ -1,5 +1,6 @@
 import { authEn } from '../auth/en'
 import { channelWorkerEn } from '../channelWorker/en'
+import { tradeNotificationsEn } from '../tradeNotifications/en'
 import { landingEn } from './landing/en'
 import type { Translations } from './types'
 import { configureModalEn } from './configureModal/en'
@@ -7,6 +8,7 @@ import { configureModalEn } from './configureModal/en'
 export const en: Translations = {
   auth: authEn,
   channelWorker: channelWorkerEn,
+  tradeNotifications: tradeNotificationsEn,
   nav: {
     sections: {
       general: 'GENERAL',
@@ -40,9 +42,21 @@ export const en: Translations = {
     closeMenu: 'Close menu',
     expandSidebar: 'Expand sidebar',
     collapseSidebar: 'Collapse sidebar',
+    openTradesActive: 'Open trades active',
     planFree: 'Free',
     settings: 'Settings',
     help: 'Help',
+    notifications: {
+      title: 'Notifications',
+      close: 'Close notifications',
+      loading: 'Loading activity…',
+      empty: 'No recent trade activity yet.',
+      kindExecuted: 'Trade executed',
+      kindModified: 'Trade modified',
+      kindClosed: 'Trade closed',
+      markAllRead: 'Mark all read',
+      viewTrades: 'View trades',
+    },
     userMenu: {
       menuLabel: 'Account menu',
       profileSettings: 'Profile & Settings',
@@ -978,6 +992,8 @@ export const en: Translations = {
       timezone: 'Timezone',
       newPassword: 'New password',
       confirmPassword: 'Confirm password',
+      notificationSound: 'Trade notification sound',
+      notificationSoundDescription: 'Play a sound when a trade is executed, modified, or closed.',
     },
     placeholders: {
       address: 'Street, building, postal code…',

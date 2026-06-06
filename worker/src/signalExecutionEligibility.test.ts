@@ -73,4 +73,21 @@ describe('evaluateParsedSignalExecutionEligibility', () => {
     assert.equal(eligibility.eligible, false)
     assert.equal(eligibility.skipReason, COMMENTARY_NOT_SIGNAL_REASON)
   })
+
+  it('rejects profit testimonial with inferred tp from currency amount', () => {
+    const msg = `**INSANE RESULT** 🔥
+
+**Darryl** from **the UK **🇬🇧 took my **GOLD BUY** from today and made** £1110** **PROFIT!** 💰
+
+**Truly amazing to see ❤️**🔥`
+    const eligibility = evaluateParsedSignalExecutionEligibility({
+      action: 'buy',
+      symbol: 'XAUUSD',
+      sl: null,
+      tp: [1110],
+      raw_instruction: msg,
+    }, msg)
+    assert.equal(eligibility.eligible, false)
+    assert.equal(eligibility.skipReason, COMMENTARY_NOT_SIGNAL_REASON)
+  })
 })

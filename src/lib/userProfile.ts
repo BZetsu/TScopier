@@ -16,6 +16,7 @@ export interface UserProfile {
   subscription_status?: string | null
   onboarding_completed_at?: string | null
   referred_by_user_id?: string | null
+  notification_sound_enabled?: boolean
   created_at?: string
   updated_at?: string
 }
@@ -33,6 +34,7 @@ export const EMPTY_USER_PROFILE: Omit<UserProfile, 'user_id'> = {
   timezone: typeof Intl !== 'undefined'
     ? Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
     : 'UTC',
+  notification_sound_enabled: true,
 }
 
 /** Admin bypass: DB flag or Supabase Auth app_metadata (matches edge subscriptionAccess). */

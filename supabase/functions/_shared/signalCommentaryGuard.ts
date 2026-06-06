@@ -18,6 +18,53 @@ export function looksLikeCasualNonTradeMessage(message: string): boolean {
     return true
   }
 
+  if (looksLikeProfitResultCommentary(text)) return true
+
+  return false
+}
+
+/** Profit/testimonial posts that mention a past signal side but are not new entries. */
+export function looksLikeProfitResultCommentary(message: string): boolean {
+  const text = String(message ?? '').replace(/\s+/g, ' ').trim()
+  if (!text) return false
+
+  if (/\binsane\s+result\b/i.test(text)) return true
+
+  if (
+    /\b(?:£|\$|€)\s*\d[\d,]*(?:\.\d+)?\b/i.test(text)
+    && /\bprofit\b/i.test(text)
+    && !/\b(?:sl|tp|stop\s+loss|take\s+profit)\s*[:=\-]/i.test(text)
+  ) {
+    return true
+  }
+
+  if (
+    /\b\d[\d,]*(?:\.\d+)?\s*(?:usd|gbp|eur|pounds?|dollars?)\b/i.test(text)
+    && /\bprofit\b/i.test(text)
+    && !/\b(?:sl|tp|stop\s+loss|take\s+profit)\s*[:=\-]/i.test(text)
+  ) {
+    return true
+  }
+
+  if (
+    /\btook my\b/i.test(text)
+    && /\b(gold|xauusd|xau|buy|sell)\b/i.test(text)
+    && /\b(from today|profit|made|result)\b/i.test(text)
+    && !/\b(buy|sell)\s+now\b/i.test(text)
+  ) {
+    return true
+  }
+
+  if (
+    /\b(made|earned|banked|secured)\b/i.test(text)
+    && /\b(profit|pips?\s+profit|gains?)\b/i.test(text)
+    && /\b(gold|xauusd|xau|buy|sell)\b/i.test(text)
+    && !/\b(buy|sell)\s+now\b/i.test(text)
+    && !/\b(?:sl|tp|stop\s+loss|take\s+profit)\s*[:=\-]/i.test(text)
+  ) {
+    return true
+  }
+
   return false
 }
 

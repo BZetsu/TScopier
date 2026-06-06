@@ -345,7 +345,10 @@ export async function handleSignal(ctx: TradeExecutorContext,
       if (!parsed || !parsed.action) return
       const action = String(parsed.action).toLowerCase()
       if (action === 'ignore') return
-      const executionEligibility = evaluateParsedSignalExecutionEligibility(parsed)
+      const executionEligibility = evaluateParsedSignalExecutionEligibility(
+        parsed,
+        String((row as { raw_message?: string | null }).raw_message ?? parsed.raw_instruction ?? ''),
+      )
       if (!executionEligibility.eligible) {
         await ctx.logDispatchSkipped(row, executionEligibility.skipReason ?? 'entry_not_execution_eligible')
         return

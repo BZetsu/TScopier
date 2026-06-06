@@ -1,5 +1,6 @@
 import { authFr } from '../auth/fr'
 import { channelWorkerFr } from '../channelWorker/fr'
+import { tradeNotificationsFr } from '../tradeNotifications/fr'
 import { landingFr } from './landing/fr'
 import type { Translations } from './types'
 import { configureModalFr } from './configureModal/fr'
@@ -7,6 +8,7 @@ import { configureModalFr } from './configureModal/fr'
 export const fr: Translations = {
   auth: authFr,
   channelWorker: channelWorkerFr,
+  tradeNotifications: tradeNotificationsFr,
   nav: {
     sections: {
       general: 'GÉNÉRAL',
@@ -40,9 +42,21 @@ export const fr: Translations = {
     closeMenu: 'Fermer le menu',
     expandSidebar: 'Développer la barre',
     collapseSidebar: 'Réduire la barre',
+    openTradesActive: 'Trades ouverts actifs',
     planFree: 'Gratuit',
     settings: 'Paramètres',
     help: 'Aide',
+    notifications: {
+      title: 'Notifications',
+      close: 'Fermer les notifications',
+      loading: 'Chargement de l\'activité…',
+      empty: 'Aucune activité de trading récente.',
+      kindExecuted: 'Trade exécuté',
+      kindModified: 'Trade modifié',
+      kindClosed: 'Trade clôturé',
+      markAllRead: 'Tout marquer comme lu',
+      viewTrades: 'Voir les trades',
+    },
     userMenu: {
       menuLabel: 'Menu du compte',
       profileSettings: 'Profil et paramètres',
@@ -978,6 +992,8 @@ export const fr: Translations = {
       timezone: 'Fuseau horaire',
       newPassword: 'Nouveau mot de passe',
       confirmPassword: 'Confirmer le mot de passe',
+      notificationSound: 'Son des notifications de trade',
+      notificationSoundDescription: 'Jouer un son lorsqu\'un trade est exécuté, modifié ou clôturé.',
     },
     placeholders: {
       address: 'Rue, bâtiment, code postal…',

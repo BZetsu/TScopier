@@ -43,6 +43,7 @@ function sanitizeProfile(row: Partial<ProfileFields> | null | undefined): Profil
     ...base,
     base_currency: BASE_CURRENCY_CODES.has(currency) ? currency : 'USD',
     timezone: base.timezone?.trim() || EMPTY_USER_PROFILE.timezone,
+    notification_sound_enabled: base.notification_sound_enabled !== false,
   }
 }
 
@@ -85,6 +86,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
             address: row.address ?? '',
             base_currency: row.base_currency,
             timezone: row.timezone,
+            notification_sound_enabled: row.notification_sound_enabled ?? true,
           }),
         )
       } else {

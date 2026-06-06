@@ -83,6 +83,7 @@ export interface UserProfileRow {
   subscription_status: string | null
   onboarding_completed_at: string | null
   referred_by_user_id: string | null
+  notification_sound_enabled: boolean
   created_at: string
   updated_at: string
 }

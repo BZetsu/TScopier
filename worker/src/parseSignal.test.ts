@@ -265,6 +265,17 @@ My private community, receives more trades, for free as well, but receive it bef
     assert.deepEqual(result.parsed.tp, [4535.53])
   })
 
+  it('skips profit testimonial that mentions past gold buy', () => {
+    const msg = `**INSANE RESULT** 🔥
+
+**Darryl** from **the UK **🇬🇧 took my **GOLD BUY** from today and made** £1110** **PROFIT!** 💰
+
+**Truly amazing to see ❤️**🔥`
+    const result = parseChannelMessageSync(msg, DEFAULT_CHANNEL_KEYWORDS, lexicon)
+    assert.equal(result.status, 'skipped')
+    assert.equal(result.parsed.action, 'ignore')
+  })
+
   it('skips weekend watch commentary with gold and colloquial buy', () => {
     const msg = `Before I leave you for the weekend... a bit of insider scoop
 

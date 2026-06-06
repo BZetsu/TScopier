@@ -1,5 +1,6 @@
 import type { AuthTranslations } from '../auth/types'
 import type { ChannelWorkerTranslations } from '../channelWorker/types'
+import type { TradeNotificationsTranslations } from '../tradeNotifications/types'
 import type { ConfigureModalTranslations } from './configureModal/types'
 import type { LandingTranslations } from './landing/types'
 
@@ -45,9 +46,21 @@ export interface NavTranslations {
   closeMenu: string
   expandSidebar: string
   collapseSidebar: string
+  openTradesActive: string
   planFree: string
   settings: string
   help: string
+  notifications: {
+    title: string
+    close: string
+    loading: string
+    empty: string
+    kindExecuted: string
+    kindModified: string
+    kindClosed: string
+    markAllRead: string
+    viewTrades: string
+  }
   helpMenu: {
     title: string
     documentation: string
@@ -536,6 +549,8 @@ export interface SettingsTranslations {
     timezone: string
     newPassword: string
     confirmPassword: string
+    notificationSound: string
+    notificationSoundDescription: string
   }
   placeholders: {
     address: string
@@ -1007,6 +1022,7 @@ export interface AffiliateTranslations {
 export interface Translations {
   auth: AuthTranslations
   channelWorker: ChannelWorkerTranslations
+  tradeNotifications: TradeNotificationsTranslations
   nav: NavTranslations
   globalSearch: GlobalSearchTranslations
   common: CommonTranslations

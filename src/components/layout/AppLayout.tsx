@@ -9,9 +9,11 @@ import { useT } from '../../context/LocaleContext'
 import { ThemeToggle } from '../ui/ThemeToggle'
 import { LanguageSwitcher } from '../auth/LanguageSwitcher'
 import { HelpMenuDropdown } from './HelpMenuDropdown'
+import { NotificationBell } from './NotificationBell'
 import { UserMenuDropdown } from './UserMenuDropdown'
 import { useUserProfile } from '../../context/UserProfileContext'
 import { useSubscription } from '../../context/SubscriptionContext'
+import { useHasOpenTrades } from '../../hooks/useHasOpenTrades'
 
 export function AppLayout() {
   const t = useT()
@@ -21,6 +23,7 @@ export function AppLayout() {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [helpMenuOpen, setHelpMenuOpen] = useState(false)
+  const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [headerEl, setHeaderEl] = useState<HTMLElement | null>(null)
   const helpMenuRef = useRef<HTMLDivElement>(null)
@@ -29,6 +32,7 @@ export function AppLayout() {
   const userMenuCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const { profile } = useUserProfile()
   const { planName, hasActiveSubscription, effectivePlan, openUpgrade } = useSubscription()
+  const hasOpenTrades = useHasOpenTrades(user?.id)
 
   const openHelpMenu = () => {
     if (helpMenuCloseTimerRef.current) {
@@ -98,7 +102,7 @@ export function AppLayout() {
         items: [
           { to: '/dashboard', icon: LayoutDashboard, label: t.nav.items.dashboard },
           { to: '/account-configuration', icon: Settings, label: t.nav.items.configuration },
-          { to: '/account-trades', icon: History, label: t.nav.items.trades },
+          { to: '/account-trades', icon: History, label: t.nav.items.trades, showOpenTradesIndicator: true },
         ],
       },
       {
@@ -131,6 +135,7 @@ export function AppLayout() {
 
   useEffect(() => {
     setMobileNavOpen(false)
+    setNotificationsOpen(false)
   }, [location.pathname])
 
   useEffect(() => {
@@ -190,27 +195,45 @@ export function AppLayout() {
             {section.label}
           </p>
           <div className="space-y-0.5">
-            {section.items.map(({ to, icon: Icon, label }) => (
-              <NavLink
-                key={to}
-                to={to}
-                title={label}
-                onClick={opts.onNavigate}
-                className={navLinkClass(opts.collapsed)}
-              >
-                {({ isActive }) => (
-                  <>
-                    <Icon
-                      className={clsx(
-                        'w-4 h-4 flex-shrink-0',
-                        isActive ? 'text-teal-600 dark:text-teal-400' : '',
-                      )}
-                    />
-                    <span className={clsx(opts.collapsed && 'lg:hidden')}>{label}</span>
-                  </>
-                )}
-              </NavLink>
-            ))}
+            {section.items.map(({ to, icon: Icon, label, showOpenTradesIndicator }) => {
+              const showIndicator = Boolean(showOpenTradesIndicator && hasOpenTrades)
+              return (
+                <NavLink
+                  key={to}
+                  to={to}
+                  title={label}
+                  aria-label={showIndicator ? `${label} — ${t.nav.openTradesActive}` : label}
+                  onClick={opts.onNavigate}
+                  className={navLinkClass(opts.collapsed)}
+                >
+                  {({ isActive }) => (
+                    <>
+                      <span className="relative inline-flex shrink-0">
+                        <Icon
+                          className={clsx(
+                            'w-4 h-4',
+                            isActive ? 'text-teal-600 dark:text-teal-400' : '',
+                          )}
+                        />
+                        {showIndicator && opts.collapsed ? (
+                          <span
+                            className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-teal-500 ring-2 ring-white dark:ring-neutral-900"
+                            aria-hidden
+                          />
+                        ) : null}
+                      </span>
+                      <span className={clsx(opts.collapsed && 'lg:hidden')}>{label}</span>
+                      {showIndicator && !opts.collapsed ? (
+                        <span
+                          className="ml-auto h-2 w-2 shrink-0 rounded-full bg-teal-500"
+                          aria-hidden
+                        />
+                      ) : null}
+                    </>
+                  )}
+                </NavLink>
+              )
+            })}
           </div>
         </div>
       ))}
@@ -342,6 +365,7 @@ export function AppLayout() {
                 type="button"
                 onClick={() => {
                   if (!window.matchMedia('(hover: hover)').matches) {
+                    setNotificationsOpen(false)
                     setHelpMenuOpen(open => !open)
                   }
                 }}
@@ -361,6 +385,16 @@ export function AppLayout() {
               <HelpMenuDropdown open={helpMenuOpen} onClose={() => setHelpMenuOpen(false)} />
             </div>
 
+            <NotificationBell
+              open={notificationsOpen}
+              onOpen={() => {
+                setUserMenuOpen(false)
+                setHelpMenuOpen(false)
+                setNotificationsOpen(true)
+              }}
+              onClose={() => setNotificationsOpen(false)}
+            />
+
             <div
               ref={userMenuRef}
               className="relative"
@@ -371,6 +405,7 @@ export function AppLayout() {
                 type="button"
                 onClick={() => {
                   if (!window.matchMedia('(hover: hover)').matches) {
+                    setNotificationsOpen(false)
                     setUserMenuOpen(open => !open)
                   }
                 }}

@@ -2,7 +2,9 @@ import { tradeableFromParsed } from './backtestSignal'
 import { looksLikeCasualNonTradeMessage } from './signalCommentaryGuard'
 import {
   ENTRY_REQUIRES_NOW_REASON,
+  entryMissingSlTpRequiresNow,
   messageHasMarketNowIntent,
+  messageHasExplicitSlTpLabels,
   parsedHasSlOrTp,
 } from './signalEntryNowRequirement'
 import { looksLikeChannelManagementUpdate } from './signalManagementIntent'
@@ -43,7 +45,12 @@ export function evaluateParsedSignalExecutionEligibility(
     }
   }
 
-  if (tradeableFromParsed(parsed)) return { eligible: true }
+  if (tradeableFromParsed(parsed)) {
+    if (entryMissingSlTpRequiresNow(parsed, raw)) {
+      return { eligible: false, skipReason: ENTRY_REQUIRES_NOW_REASON }
+    }
+    return { eligible: true }
+  }
 
   const symbol = sanitizeParsedSymbol(
     typeof parsed.symbol === 'string' ? parsed.symbol : null,
@@ -62,6 +69,10 @@ export function evaluateParsedSignalExecutionEligibility(
   }
 
   if (symbol && messageHasMarketNowIntent(raw)) {
+    return { eligible: true }
+  }
+
+  if (symbol && messageHasExplicitSlTpLabels(raw) && parsedHasSlOrTp(parsed)) {
     return { eligible: true }
   }
 
