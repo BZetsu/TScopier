@@ -19,6 +19,7 @@ export const en: Translations = {
       feedback: 'FEEDBACK',
       growth: 'GROWTH & MONETIZATION',
       membership: 'MEMBERSHIP',
+      help: 'HELP',
     },
     items: {
       dashboard: 'Dashboard',
@@ -74,7 +75,7 @@ export const en: Translations = {
       documentation: 'Documentation',
       liveChat: 'Help & Support',
       status: 'Status',
-      statusOperational: 'All system operational',
+      statusOperational: 'All systems operational',
     },
   },
   globalSearch: {
@@ -416,6 +417,8 @@ export const en: Translations = {
     channelProfitSubtitle: 'Realized P/L from closed trades linked to each Telegram channel',
     channelProfitEmpty: 'No linked closed trades in the last 7 days',
     channelWorker: 'Channel Worker',
+    channelWorkerHint:
+      'Live parser activity from your Telegram signal channels — how messages were read, skipped, or turned into trade plans.',
     noChannelWorkerLogs: 'No channel worker logs yet.',
     noData: 'No Data',
     linkedAccounts: {

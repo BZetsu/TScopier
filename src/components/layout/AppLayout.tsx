@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
-import { LayoutDashboard, Settings, History, Send, LayoutTemplate, ScrollText, Newspaper, Calendar, ChartBar as BarChart2, CircleHelp, ChevronDown, ChartNoAxesColumn, PanelLeftClose, PanelLeftOpen, Menu, X, CreditCard, Share2 } from 'lucide-react'
+import { LayoutDashboard, Settings, History, Send, LayoutTemplate, ScrollText, Newspaper, Calendar, ChartBar as BarChart2, ChevronDown, ChartNoAxesColumn, PanelLeftClose, PanelLeftOpen, Menu, X, CreditCard, Share2 } from 'lucide-react'
 import clsx from 'clsx'
 import { TscopierLogo } from '../ui/TscopierLogo'
 import { AppSearchDesktop, AppSearchMobileTrigger, AppSearchProvider } from './AppSearch'
@@ -8,7 +8,7 @@ import { useAuth } from '../../context/AuthContext'
 import { useT } from '../../context/LocaleContext'
 import { ThemeToggle } from '../ui/ThemeToggle'
 import { LanguageSwitcher } from '../auth/LanguageSwitcher'
-import { HelpMenuDropdown } from './HelpMenuDropdown'
+import { HelpSidebarNav } from './HelpSidebarNav'
 import { NotificationBell } from './NotificationBell'
 import { UserMenuDropdown } from './UserMenuDropdown'
 import { useUserProfile } from '../../context/UserProfileContext'
@@ -31,34 +31,15 @@ export function AppLayout() {
   const location = useLocation()
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
-  const [helpMenuOpen, setHelpMenuOpen] = useState(false)
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [headerEl, setHeaderEl] = useState<HTMLElement | null>(null)
-  const helpMenuRef = useRef<HTMLDivElement>(null)
   const userMenuRef = useRef<HTMLDivElement>(null)
-  const helpMenuCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const userMenuCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const { profile } = useUserProfile()
   const { planName, hasActiveSubscription, effectivePlan, openUpgrade } = useSubscription()
   const hasOpenTrades = useHasOpenTrades(user?.id)
   const hasHighImpactNewsToday = useHasHighImpactNewsToday(Boolean(user?.id))
-
-  const openHelpMenu = () => {
-    if (helpMenuCloseTimerRef.current) {
-      clearTimeout(helpMenuCloseTimerRef.current)
-      helpMenuCloseTimerRef.current = null
-    }
-    setHelpMenuOpen(true)
-  }
-
-  const scheduleCloseHelpMenu = () => {
-    if (helpMenuCloseTimerRef.current) clearTimeout(helpMenuCloseTimerRef.current)
-    helpMenuCloseTimerRef.current = setTimeout(() => {
-      setHelpMenuOpen(false)
-      helpMenuCloseTimerRef.current = null
-    }, 150)
-  }
 
   const openUserMenu = () => {
     if (userMenuCloseTimerRef.current) {
@@ -78,21 +59,9 @@ export function AppLayout() {
 
   useEffect(() => {
     return () => {
-      if (helpMenuCloseTimerRef.current) clearTimeout(helpMenuCloseTimerRef.current)
       if (userMenuCloseTimerRef.current) clearTimeout(userMenuCloseTimerRef.current)
     }
   }, [])
-
-  useEffect(() => {
-    if (!helpMenuOpen) return
-    const onDoc = (e: MouseEvent) => {
-      if (!helpMenuRef.current?.contains(e.target as Node)) {
-        setHelpMenuOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', onDoc)
-    return () => document.removeEventListener('mousedown', onDoc)
-  }, [helpMenuOpen])
 
   useEffect(() => {
     if (!userMenuOpen) return
@@ -335,8 +304,11 @@ export function AppLayout() {
             collapsed: !sidebarExpanded,
             onNavigate: () => setMobileNavOpen(false),
           })}
+          <HelpSidebarNav
+            collapsed={!sidebarExpanded}
+            onNavigate={() => setMobileNavOpen(false)}
+          />
         </nav>
-
       </aside>
 
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden overscroll-none">
@@ -384,41 +356,10 @@ export function AppLayout() {
             <AppSearchMobileTrigger />
             <LanguageSwitcher />
             <ThemeToggle />
-            <div
-              ref={helpMenuRef}
-              className="relative"
-              onMouseEnter={openHelpMenu}
-              onMouseLeave={scheduleCloseHelpMenu}
-            >
-              <button
-                type="button"
-                onClick={() => {
-                  if (!window.matchMedia('(hover: hover)').matches) {
-                    setNotificationsOpen(false)
-                    setHelpMenuOpen(open => !open)
-                  }
-                }}
-                title={t.nav.help}
-                aria-label={t.nav.help}
-                aria-haspopup="menu"
-                aria-expanded={helpMenuOpen}
-                className={clsx(
-                  'p-2 rounded-lg transition-colors',
-                  helpMenuOpen
-                    ? 'text-teal-600 bg-teal-50 dark:text-teal-400 dark:bg-teal-950/50'
-                    : 'text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800',
-                )}
-              >
-                <CircleHelp className="w-5 h-5" />
-              </button>
-              <HelpMenuDropdown open={helpMenuOpen} onClose={() => setHelpMenuOpen(false)} />
-            </div>
-
             <NotificationBell
               open={notificationsOpen}
               onOpen={() => {
                 setUserMenuOpen(false)
-                setHelpMenuOpen(false)
                 setNotificationsOpen(true)
               }}
               onClose={() => setNotificationsOpen(false)}

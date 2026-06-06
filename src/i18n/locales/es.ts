@@ -19,6 +19,7 @@ export const es: Translations = {
       feedback: 'COMENTARIOS',
       growth: 'CRECIMIENTO',
       membership: 'MEMBRESÍA',
+      help: 'AYUDA',
     },
     items: {
       dashboard: 'Panel',
@@ -416,6 +417,8 @@ export const es: Translations = {
     channelProfitSubtitle: 'P/L realizado de operaciones cerradas vinculadas a cada canal de Telegram',
     channelProfitEmpty: 'Sin operaciones cerradas vinculadas en los últimos 7 días',
     channelWorker: 'Worker de canales',
+    channelWorkerHint:
+      'Actividad en vivo del analizador en tus canales de Telegram: lectura de mensajes, motivos de omisión y planes de operación generados.',
     noChannelWorkerLogs: 'Aún no hay registros del worker de canales.',
     noData: 'Sin datos',
     linkedAccounts: {

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link, Outlet, useNavigate } from 'react-router-dom'
-import { ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, Clock, Info, Plus, RefreshCw } from 'lucide-react'
+import { ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, Clock, Plus, RefreshCw } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import type { BrokerAccount, Signal, Trade } from '../../types/database'
@@ -13,9 +13,10 @@ import {
 } from '../../lib/brokerFromServer'
 import { PageHeader } from '../../components/layout/PageHeader'
 import { PageShell } from '../../components/layout/PageShell'
-import { AddAccountModal } from '../../components/ui/AddAccountModal'
+import { useAddTradingAccount } from '../../context/AddTradingAccountContext'
 import { Toggle } from '../../components/ui/Toggle'
 import { Button } from '../../components/ui/Button'
+import { InfoTooltip } from '../../components/ui/InfoTooltip'
 import { metatraderApi, type MtTrade } from '../../lib/metatraderapi'
 import {
   aggregateTodaysProfitFromDayStart,
@@ -594,6 +595,7 @@ export function DashboardPage() {
     setReconnectErrorHandler,
     setReconnectSuccessHandler,
   } = useBrokerAccounts()
+  const { openAddTradingAccount } = useAddTradingAccount()
   const { formatMoney, formatSignedMoney } = useFormatMoney()
   const navigate = useNavigate()
   const bootCache = useMemo(() => readBootstrapDashboardCache(user?.id), [user?.id])
@@ -624,7 +626,6 @@ export function DashboardPage() {
   })
   const channelLinkMapsRef = useRef(channelLinkMaps)
   channelLinkMapsRef.current = channelLinkMaps
-  const [showPlatformModal, setShowPlatformModal] = useState(false)
   const [togglingBrokerId, setTogglingBrokerId] = useState<string | null>(null)
   const [brokerReconnectError, setBrokerReconnectError] = useState('')
   const loadDashboardLiveRef = useRef<() => void>(() => {})
@@ -1932,7 +1933,7 @@ export function DashboardPage() {
             label={t.dashboard.tradingAccountsConnected}
             value={String(stats.accounts)}
             // sub={interpolate(t.dashboard.acrossAccounts, { count: stats.accounts })}
-            addTo="/account-configuration"
+            onAdd={openAddTradingAccount}
             addLabel={t.dashboard.addOrManageAccounts}
           />
           <OverviewStat
@@ -1959,9 +1960,7 @@ export function DashboardPage() {
             <div className="flex items-center gap-2">
               <Clock className="w-4 h-4 text-teal-500" />
               <span className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">{t.dashboard.channelWorker}</span>
-              <button className="text-neutral-300 hover:text-neutral-500 dark:text-neutral-400">
-                <Info className="w-3.5 h-3.5" />
-              </button>
+              <InfoTooltip text={t.dashboard.channelWorkerHint} />
             </div>
             <button
               onClick={() => navigate('/channels')}
@@ -1998,9 +1997,7 @@ export function DashboardPage() {
             <div className="flex items-center gap-2">
               <Clock className="w-4 h-4 text-teal-500" />
               <span className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">{t.dashboard.copierLogs}</span>
-              <button className="text-neutral-300 hover:text-neutral-500 dark:text-neutral-400">
-                <Info className="w-3.5 h-3.5" />
-              </button>
+              <InfoTooltip text={t.copierLogs.subtitle} />
             </div>
             <button
               onClick={() => navigate('/copier-logs')}
@@ -2073,7 +2070,8 @@ export function DashboardPage() {
             </div>
           </div>
           <button
-            onClick={() => setShowPlatformModal(true)}
+            type="button"
+            onClick={openAddTradingAccount}
             className="flex items-center gap-1.5 px-3 py-1.5 border border-teal-500 dark:border-teal-600 text-teal-600 dark:text-teal-400 rounded-lg text-xs font-medium hover:bg-teal-50 dark:hover:bg-teal-950/50 transition-colors"
           >
             <Plus className="w-3.5 h-3.5" />
@@ -2205,14 +2203,6 @@ export function DashboardPage() {
         </div>
       </div>
 
-      <AddAccountModal
-        open={showPlatformModal}
-        onClose={() => setShowPlatformModal(false)}
-        onSelect={() => {
-          setShowPlatformModal(false)
-          navigate('/account-configuration')
-        }}
-      />
       <Outlet />
     </PageShell>
   )
@@ -2228,14 +2218,9 @@ function StatBlock({ label, labelHint, value, sub, subColor, valueColor = 'text-
 }) {
   return (
     <div className="px-4 py-4 sm:px-6 sm:py-5">
-      <p
-        className="text-xs sm:text-sm text-neutral-500 dark:text-neutral-400 mb-1.5 sm:mb-2 inline-flex items-center gap-1"
-        title={labelHint}
-      >
+      <p className="text-xs sm:text-sm text-neutral-500 dark:text-neutral-400 mb-1.5 sm:mb-2 inline-flex items-center gap-1">
         {label}
-        {labelHint ? (
-          <Info className="w-3.5 h-3.5 shrink-0 opacity-60" aria-hidden />
-        ) : null}
+        {labelHint ? <InfoTooltip text={labelHint} /> : null}
       </p>
       <p className={`text-xl sm:text-2xl font-semibold mb-1 sm:mb-1.5 ${valueColor}`}>{value}</p>
       {sub === '' ? null : typeof sub === 'string' ? (
@@ -2252,19 +2237,30 @@ function OverviewStat({
   value,
   sub,
   addTo,
+  onAdd,
   addLabel,
 }: {
   label: string
   value: string
   sub?: string
   addTo?: string
+  onAdd?: () => void
   addLabel?: string
 }) {
   return (
     <div>
       <div className="flex items-center justify-between gap-2 mb-1">
         <p className="text-xs text-neutral-500 dark:text-neutral-400 min-w-0">{label}</p>
-        {addTo ? (
+        {onAdd ? (
+          <button
+            type="button"
+            onClick={onAdd}
+            aria-label={addLabel ?? `Add ${label}`}
+            className="shrink-0 flex items-center justify-center w-6 h-6 rounded-md border border-teal-200 dark:border-teal-800 text-teal-600 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-950/50 hover:border-teal-300 dark:hover:border-teal-700 transition-colors"
+          >
+            <Plus className="w-3.5 h-3.5" />
+          </button>
+        ) : addTo ? (
           <Link
             to={addTo}
             aria-label={addLabel ?? `Go to ${label}`}

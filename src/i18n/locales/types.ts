@@ -22,6 +22,7 @@ export interface NavTranslations {
     feedback: string
     growth: string
     membership: string
+    help: string
   }
   items: {
     dashboard: string
@@ -221,6 +222,7 @@ export interface DashboardTranslations {
   channelProfitSubtitle: string
   channelProfitEmpty: string
   channelWorker: string
+  channelWorkerHint: string
   noChannelWorkerLogs: string
   noData: string
   linkedAccounts: DashboardLinkedAccountsTranslations

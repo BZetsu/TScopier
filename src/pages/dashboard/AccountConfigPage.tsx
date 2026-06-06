@@ -13,8 +13,6 @@ import { useAuth } from '../../context/AuthContext'
 import { useT } from '../../context/LocaleContext'
 import { interpolate } from '../../i18n/interpolate'
 import { Card } from '../../components/ui/Card'
-import { PasswordInput } from '../../components/auth/PasswordInput'
-import { Input } from '../../components/ui/Input'
 import { Select } from '../../components/ui/Select'
 import { Toggle } from '../../components/ui/Toggle'
 import { PageHeader } from '../../components/layout/PageHeader'
@@ -22,11 +20,9 @@ import { PageShell } from '../../components/layout/PageShell'
 import { Button } from '../../components/ui/Button'
 import { Badge } from '../../components/ui/Badge'
 import { Alert } from '../../components/ui/Alert'
-import { AddAccountModal } from '../../components/ui/AddAccountModal'
+import { useAddTradingAccount } from '../../context/AddTradingAccountContext'
 import { RiskLotCalculatorModal } from '../../components/configure/RiskLotCalculatorModal'
 import { ConfigTitle, ConfigToggleLabel, ConfigureInput, ConfigureSelect, InfoTooltip } from '../../components/ui/InfoTooltip'
-import { MtCompanyServerPicker } from '../../components/ui/MtCompanyServerPicker'
-import { formatLocalCalendarDay } from '../../lib/dayStartBalance'
 import { metatraderApi } from '../../lib/metatraderapi'
 import { isLegacyBrokerLink } from '../../lib/brokerLink'
 import { brokerCanReconnect, brokerConnectionBadgeVariant, brokerConnectionStatusLabel } from '../../lib/brokerReconnect'
@@ -123,24 +119,6 @@ interface ChannelOption {
 
 /** Survives route unmount so sidebar navigation does not flash the loading skeleton. */
 const channelOptionsCache = new Map<string, ChannelOption[]>()
-
-interface BrokerForm {
-  label: string
-  platform: 'MT4' | 'MT5'
-  account_number: string
-  account_password: string
-  broker_server: string
-  remember_password: boolean
-}
-
-const emptyForm: BrokerForm = {
-  label: '',
-  platform: 'MT5',
-  account_number: '',
-  account_password: '',
-  broker_server: '',
-  remember_password: false,
-}
 
 const BROKER_PAGE_SIZE = 10
 
@@ -693,10 +671,8 @@ export function AccountConfigPage() {
     brokers,
     loading: brokersLoading,
     loadError: brokersLoadError,
-    upsertBroker,
     replaceBroker,
     removeBroker,
-    patchBroker,
     setBrokers,
     toggleBrokerActive: toggleBrokerActiveInStore,
     reconnectBroker,
@@ -706,12 +682,11 @@ export function AccountConfigPage() {
     setReconnectErrorHandler,
     clearStoredCredentials,
   } = useBrokerAccounts()
+  const { openAddTradingAccount } = useAddTradingAccount()
   const {
     subscription,
     effectivePlan,
     refresh: refreshSubscription,
-    hasActiveSubscription,
-    canAddBroker,
     canUseFeature: canUsePlanFeature,
     limits,
     isAdmin,
@@ -760,10 +735,6 @@ export function AccountConfigPage() {
   const [presetNameDraft, setPresetNameDraft] = useState('')
   const [pendingApplyPreset, setPendingApplyPreset] = useState<ChannelTradingPreset | null>(null)
   const [channelLinkEditMode, setChannelLinkEditMode] = useState(false)
-  const [showPlatformModal, setShowPlatformModal] = useState(false)
-  const [showAddBroker, setShowAddBroker] = useState(false)
-  const [form, setForm] = useState<BrokerForm>(emptyForm)
-  const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [channelsLoading, setChannelsLoading] = useState(() =>
     !(userId && channelOptionsCache.has(userId)),
@@ -1781,128 +1752,7 @@ export function AccountConfigPage() {
     return bl.channelsNoneSelected
   }
 
-  // ── Add account flow ───────────────────────────────────────────────────
-
-  const set = (field: keyof BrokerForm, value: string | boolean) =>
-    setForm(prev => ({ ...prev, [field]: value }))
-
-  const addBroker = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setError('')
-    if (!hasActiveSubscription) {
-      setError(pw.subscriptionRequired)
-      return
-    }
-    if (!canAddBroker()) {
-      setError(interpolate(pw.brokerLimit, { limit: String(limits.maxBrokerAccounts) }))
-      return
-    }
-    if (!form.account_number.trim() || !form.broker_server.trim() || !form.account_password) {
-      setError(t.accountConfig.connectForm.validationRequired)
-      return
-    }
-
-    setSaving(true)
-    const login = form.account_number.trim()
-    const server = form.broker_server.trim()
-    const duplicate = brokers.find(
-      b => b.account_login === login && b.broker_server === server,
-    )
-    if (duplicate) {
-      setError(bl.duplicateMtLogin)
-      setSaving(false)
-      return
-    }
-
-    const serverUpper = server.toUpperCase()
-    const serverSuggestsMt4 = /MT4|METATRADER\s*4/.test(serverUpper) && !/MT5/.test(serverUpper)
-    const serverSuggestsMt5 = /MT5|METATRADER\s*5/.test(serverUpper) && !/MT4/.test(serverUpper)
-    if (form.platform === 'MT5' && serverSuggestsMt4) {
-      const proceed = window.confirm(bl.platformServerMismatchMt4)
-      if (!proceed) {
-        setSaving(false)
-        return
-      }
-    }
-    if (form.platform === 'MT4' && serverSuggestsMt5) {
-      const proceed = window.confirm(bl.platformServerMismatchMt5)
-      if (!proceed) {
-        setSaving(false)
-        return
-      }
-    }
-
-    try {
-      const { broker, summary } = await metatraderApi.register({
-        platform: form.platform,
-        server,
-        login,
-        password: form.account_password,
-        label: form.label.trim() || undefined,
-        remember_password: form.remember_password,
-      })
-      upsertBroker(broker)
-      const registeredType = resolveLinkedAccountType(
-        summary?.type,
-        resolveMtServerCandidate(broker, broker.broker_server),
-      )
-      if (registeredType) {
-        setBrokerAccountTypes(prev => ({ ...prev, [broker.id]: registeredType }))
-      }
-      setForm(emptyForm)
-      setShowAddBroker(false)
-      // If the register endpoint couldn't pull a summary inside its short
-      // request window (MT5 sometimes needs a few extra seconds for the
-      // session to come up), keep tailing for it client-side so the card
-      // is populated without the user having to click Refresh.
-      if (broker?.id && (broker.last_balance == null && broker.last_equity == null)) {
-        void tailRefreshBrokerSummary(broker.id)
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : t.accountConfig.connectForm.connectFailed)
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  /** Poll AccountSummary for a freshly-registered broker until numbers arrive or we give up. */
-  const tailRefreshBrokerSummary = async (brokerId: string) => {
-    const delays = [1500, 2500, 4000, 6000, 8000]
-    for (const delay of delays) {
-      await new Promise(r => setTimeout(r, delay))
-      try {
-        const { summary, performance_baseline_balance } = await metatraderApi.summary(brokerId, {
-          calendarDay: formatLocalCalendarDay(),
-          timezoneOffsetMinutes: new Date().getTimezoneOffset(),
-        })
-        if (summary && (summary.balance != null || summary.equity != null || summary.currency)) {
-          const patch = {
-            last_balance: summary.balance ?? null,
-            last_equity: summary.equity ?? null,
-            last_currency: summary.currency ?? null,
-            last_synced_at: new Date().toISOString(),
-            connection_status: 'connected' as const,
-            ...(performance_baseline_balance != null && Number.isFinite(Number(performance_baseline_balance))
-              ? { performance_baseline_balance: Number(performance_baseline_balance) }
-              : {}),
-          }
-          const match = brokers.find(b => b.id === brokerId)
-          const accountType = resolveLinkedAccountType(
-            summary.type,
-            match ? resolveMtServerCandidate(match, match.broker_server) : null,
-          )
-          patchBroker(brokerId, patch)
-          if (accountType) {
-            setBrokerAccountTypes(types => ({ ...types, [brokerId]: accountType }))
-          }
-          setConfigAccount(prev => prev && prev.id === brokerId ? { ...prev, ...patch } : prev)
-          return
-        }
-      } catch {
-        // Keep trying — the MT5 server may still be authenticating.
-      }
-    }
-  }
+  // ── Delete broker ──────────────────────────────────────────────────────
 
   const confirmDeleteBroker = async () => {
     if (!brokerPendingDelete || !user) return
@@ -1978,7 +1828,7 @@ export function AccountConfigPage() {
         title={t.pages.accountConfiguration.title}
         subtitle={t.pages.accountConfiguration.description}
         actions={(
-          <Button size="sm" onClick={() => setShowPlatformModal(true)}>
+          <Button size="sm" onClick={openAddTradingAccount}>
             <Plus className="w-3.5 h-3.5" />
             {t.accountConfig.connectForm.addAccountButton}
           </Button>
@@ -1993,93 +1843,6 @@ export function AccountConfigPage() {
 
       {/* ── Broker Accounts ── */}
       <section>
-
-        {showAddBroker && (
-          <Card className="mb-3">
-            <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-50 mb-4">
-              {interpolate(t.accountConfig.connectForm.title, { platform: form.platform })}
-            </h3>
-            {error && <PaywallErrorAlert message={error} className="mb-3" />}
-            <form onSubmit={addBroker} className="space-y-3">
-              <div className="grid grid-cols-2 gap-3">
-                <Input
-                  label={t.accountConfig.connectForm.accountLabel}
-                  placeholder={interpolate(t.accountConfig.connectForm.accountLabelPlaceholder, {
-                    platform: form.platform,
-                  })}
-                  value={form.label}
-                  onChange={e => set('label', e.target.value)}
-                />
-                <Select
-                  label={t.accountConfig.connectForm.platformLabel}
-                  value={form.platform}
-                  onChange={e => set('platform', e.target.value as 'MT4' | 'MT5')}
-                  options={[
-                    { value: 'MT5', label: t.accountConfig.connectForm.platformMt5 },
-                    { value: 'MT4', label: t.accountConfig.connectForm.platformMt4 },
-                  ]}
-                />
-              </div>
-
-              <MtCompanyServerPicker
-                platform={form.platform}
-                value={form.broker_server}
-                onChange={(v) => set('broker_server', v)}
-                hint={t.accountConfig.connectForm.brokerServerHint}
-                required
-              />
-
-              <div className="grid grid-cols-2 gap-3">
-                <Input
-                  label={t.accountConfig.connectForm.mtLoginLabel}
-                  placeholder={t.accountConfig.connectForm.mtLoginPlaceholder}
-                  value={form.account_number}
-                  onChange={e => set('account_number', e.target.value)}
-                  required
-                />
-                <PasswordInput
-                  label={t.accountConfig.connectForm.passwordLabel}
-                  placeholder={t.accountConfig.connectForm.passwordPlaceholder}
-                  value={form.account_password}
-                  onChange={e => set('account_password', e.target.value)}
-                  hint={t.accountConfig.connectForm.passwordHint}
-                  required
-                />
-              </div>
-
-              <label className="flex items-start gap-3 rounded-xl border border-neutral-100 bg-neutral-50 px-3 py-3 dark:border-neutral-800 dark:bg-neutral-800/40 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={form.remember_password}
-                  onChange={e => set('remember_password', e.target.checked)}
-                  className="mt-0.5 h-4 w-4 rounded border-neutral-300 text-teal-600 focus:ring-teal-500"
-                />
-                <span className="min-w-0">
-                  <span className="block text-sm font-medium text-neutral-800 dark:text-neutral-100">
-                    {t.accountConfig.connectForm.rememberPasswordLabel}
-                  </span>
-                  <span className="mt-0.5 block text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed">
-                    {t.accountConfig.connectForm.rememberPasswordHint}
-                  </span>
-                </span>
-              </label>
-
-              <div className="flex gap-2 pt-1">
-                <Button type="submit" loading={saving} size="sm">
-                  {t.accountConfig.connectForm.connectButton}
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => { setShowAddBroker(false); setForm(emptyForm); setError('') }}
-                >
-                  {t.common.cancel}
-                </Button>
-              </div>
-            </form>
-          </Card>
-        )}
 
         {brokersNeedingRelink.length > 0 && (
           <Alert variant="warning" className="mb-3">
@@ -2334,21 +2097,6 @@ export function AccountConfigPage() {
           </>
         )}
       </section>
-
-      <AddAccountModal
-        open={showPlatformModal}
-        onClose={() => setShowPlatformModal(false)}
-        onSelect={(platform) => {
-          if (platform !== 'MT4' && platform !== 'MT5') {
-            setError(interpolate(t.accountConfig.addAccount.comingSoonPlatform, { platform }))
-            setShowPlatformModal(false)
-            return
-          }
-          setForm(prev => ({ ...prev, platform: platform as 'MT4' | 'MT5' }))
-          setShowPlatformModal(false)
-          setShowAddBroker(true)
-        }}
-      />
 
       <RiskLotCalculatorModal
         open={riskCalcOpen && configAccount != null}
