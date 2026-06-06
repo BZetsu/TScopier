@@ -43,6 +43,7 @@ export const es: Translations = {
     expandSidebar: 'Expandir barra',
     collapseSidebar: 'Contraer barra',
     openTradesActive: 'Trades abiertos activos',
+    highImpactNewsToday: 'Noticias de alto impacto hoy',
     planFree: 'Gratis',
     settings: 'Ajustes',
     help: 'Ayuda',

@@ -47,6 +47,7 @@ export interface NavTranslations {
   expandSidebar: string
   collapseSidebar: string
   openTradesActive: string
+  highImpactNewsToday: string
   planFree: string
   settings: string
   help: string

@@ -14,6 +14,15 @@ import { UserMenuDropdown } from './UserMenuDropdown'
 import { useUserProfile } from '../../context/UserProfileContext'
 import { useSubscription } from '../../context/SubscriptionContext'
 import { useHasOpenTrades } from '../../hooks/useHasOpenTrades'
+import { useHasHighImpactNewsToday } from '../../hooks/useHasHighImpactNewsToday'
+
+type NavItem = {
+  to: string
+  icon: typeof LayoutDashboard
+  label: string
+  showOpenTradesIndicator?: boolean
+  showHighImpactNewsIndicator?: boolean
+}
 
 export function AppLayout() {
   const t = useT()
@@ -33,6 +42,7 @@ export function AppLayout() {
   const { profile } = useUserProfile()
   const { planName, hasActiveSubscription, effectivePlan, openUpgrade } = useSubscription()
   const hasOpenTrades = useHasOpenTrades(user?.id)
+  const hasHighImpactNewsToday = useHasHighImpactNewsToday(Boolean(user?.id))
 
   const openHelpMenu = () => {
     if (helpMenuCloseTimerRef.current) {
@@ -96,7 +106,7 @@ export function AppLayout() {
   }, [userMenuOpen])
 
   const navSections = useMemo(
-    () => [
+    (): Array<{ label: string; items: NavItem[] }> => [
       {
         label: t.nav.sections.general,
         items: [
@@ -119,7 +129,7 @@ export function AppLayout() {
         label: t.nav.sections.tradingTools,
         items: [
           { to: '/market-news', icon: Newspaper, label: t.nav.items.marketNews },
-          { to: '/economic-calendar', icon: Calendar, label: t.nav.items.economicCalendar },
+          { to: '/economic-calendar', icon: Calendar, label: t.nav.items.economicCalendar, showHighImpactNewsIndicator: true },
         ],
       },
       {
@@ -195,14 +205,20 @@ export function AppLayout() {
             {section.label}
           </p>
           <div className="space-y-0.5">
-            {section.items.map(({ to, icon: Icon, label, showOpenTradesIndicator }) => {
-              const showIndicator = Boolean(showOpenTradesIndicator && hasOpenTrades)
+            {section.items.map(({ to, icon: Icon, label, showOpenTradesIndicator, showHighImpactNewsIndicator }) => {
+              const showOpenIndicator = Boolean(showOpenTradesIndicator && hasOpenTrades)
+              const showFireIndicator = Boolean(showHighImpactNewsIndicator && hasHighImpactNewsToday)
+              const ariaExtra = showOpenIndicator
+                ? t.nav.openTradesActive
+                : showFireIndicator
+                  ? t.nav.highImpactNewsToday
+                  : null
               return (
                 <NavLink
                   key={to}
                   to={to}
                   title={label}
-                  aria-label={showIndicator ? `${label} — ${t.nav.openTradesActive}` : label}
+                  aria-label={ariaExtra ? `${label} — ${ariaExtra}` : label}
                   onClick={opts.onNavigate}
                   className={navLinkClass(opts.collapsed)}
                 >
@@ -215,19 +231,32 @@ export function AppLayout() {
                             isActive ? 'text-teal-600 dark:text-teal-400' : '',
                           )}
                         />
-                        {showIndicator && opts.collapsed ? (
+                        {showOpenIndicator && opts.collapsed ? (
                           <span
                             className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-teal-500 ring-2 ring-white dark:ring-neutral-900"
                             aria-hidden
                           />
                         ) : null}
+                        {showFireIndicator && opts.collapsed && !showOpenIndicator ? (
+                          <span
+                            className="absolute -right-1 -top-1 text-[10px] leading-none"
+                            aria-hidden
+                          >
+                            🔥
+                          </span>
+                        ) : null}
                       </span>
                       <span className={clsx(opts.collapsed && 'lg:hidden')}>{label}</span>
-                      {showIndicator && !opts.collapsed ? (
+                      {showOpenIndicator && !opts.collapsed ? (
                         <span
                           className="ml-auto h-2 w-2 shrink-0 rounded-full bg-teal-500"
                           aria-hidden
                         />
+                      ) : null}
+                      {showFireIndicator && !opts.collapsed && !showOpenIndicator ? (
+                        <span className="ml-auto shrink-0 text-sm leading-none" aria-hidden>
+                          🔥
+                        </span>
                       ) : null}
                     </>
                   )}
