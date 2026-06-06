@@ -60,6 +60,8 @@ export interface NavTranslations {
     kindClosed: string
     markAllRead: string
     viewTrades: string
+    dayToday: string
+    dayYesterday: string
   }
   helpMenu: {
     title: string

@@ -1,10 +1,11 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import clsx from 'clsx'
 import { ArrowDownRight, ArrowUpRight, CircleCheck, Layers, Loader2, Pencil, X } from 'lucide-react'
 import { useNotifications } from '../../context/NotificationsContext'
-import { useT } from '../../context/LocaleContext'
+import { useLocale, useT } from '../../context/LocaleContext'
 import { formatRelative } from '../../lib/formatRelative'
+import { groupNotificationsByDay } from '../../lib/notificationDayGroups'
 import type { TradeNotificationHeadline } from '../../lib/tradeNotifications'
 
 interface NotificationDropdownProps {
@@ -28,11 +29,28 @@ function headlineMeta(headline: TradeNotificationHeadline): {
   }
 }
 
+const LOCALE_BCP: Record<string, string> = {
+  en: 'en-US',
+  fr: 'fr-FR',
+  es: 'es-ES',
+}
+
 export function NotificationDropdown({ open, onClose }: NotificationDropdownProps) {
   const t = useT()
+  const { locale } = useLocale()
   const nn = t.nav.notifications
   const { items, loading, markAllRead } = useNotifications()
   const panelRef = useRef<HTMLDivElement>(null)
+
+  const dayGroups = useMemo(
+    () =>
+      groupNotificationsByDay(items, {
+        today: nn.dayToday,
+        yesterday: nn.dayYesterday,
+        locale: LOCALE_BCP[locale] ?? locale,
+      }),
+    [items, nn.dayToday, nn.dayYesterday, locale],
+  )
 
   useEffect(() => {
     if (!open) return
@@ -81,50 +99,56 @@ export function NotificationDropdown({ open, onClose }: NotificationDropdownProp
             <p className="mt-2 text-sm text-neutral-500 dark:text-neutral-400">{nn.empty}</p>
           </div>
         ) : (
-          <ul className="divide-y divide-neutral-100 dark:divide-neutral-800">
-            {items.map(item => {
-              const meta = headlineMeta(item.headline)
-              const Icon = meta.icon
-              return (
-                <li key={item.id} role="none">
-                  <div
-                    role="menuitem"
-                    className="flex gap-3 px-4 py-3"
-                  >
-                    <span
-                      className={clsx(
-                        'mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
-                        meta.className,
-                      )}
-                    >
-                      <Icon className="h-4 w-4" aria-hidden />
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-start justify-between gap-2">
-                        <p className="text-xs font-semibold uppercase tracking-wide text-neutral-700 dark:text-neutral-200">
-                          {item.title}
-                          {item.symbol ? (
-                            <span className="ml-1.5 font-mono normal-case tracking-normal text-neutral-500 dark:text-neutral-400">
-                              {item.symbol}
-                            </span>
-                          ) : null}
-                        </p>
-                        <time
-                          className="shrink-0 text-[11px] tabular-nums text-neutral-400 dark:text-neutral-500"
-                          dateTime={item.createdAt}
-                        >
-                          {formatRelative(Date.parse(item.createdAt))}
-                        </time>
-                      </div>
-                      <p className="mt-1 text-sm leading-snug text-neutral-600 dark:text-neutral-300">
-                        {item.body}
-                      </p>
-                    </div>
-                  </div>
-                </li>
-              )
-            })}
-          </ul>
+          <div>
+            {dayGroups.map(group => (
+              <section key={group.dayKey} aria-label={group.label}>
+                <p className="sticky top-0 z-10 border-b border-neutral-100 bg-neutral-50/95 px-4 py-2 text-[11px] font-semibold uppercase tracking-wide text-neutral-500 backdrop-blur-sm dark:border-neutral-800 dark:bg-neutral-900/95 dark:text-neutral-400">
+                  {group.label}
+                </p>
+                <ul className="divide-y divide-neutral-100 dark:divide-neutral-800">
+                  {group.items.map(item => {
+                    const meta = headlineMeta(item.headline)
+                    const Icon = meta.icon
+                    return (
+                      <li key={item.id} role="none">
+                        <div role="menuitem" className="flex gap-3 px-4 py-3">
+                          <span
+                            className={clsx(
+                              'mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
+                              meta.className,
+                            )}
+                          >
+                            <Icon className="h-4 w-4" aria-hidden />
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-start justify-between gap-2">
+                              <p className="text-xs font-semibold uppercase tracking-wide text-neutral-700 dark:text-neutral-200">
+                                {item.title}
+                                {item.symbol ? (
+                                  <span className="ml-1.5 font-mono normal-case tracking-normal text-neutral-500 dark:text-neutral-400">
+                                    {item.symbol}
+                                  </span>
+                                ) : null}
+                              </p>
+                              <time
+                                className="shrink-0 text-[11px] tabular-nums text-neutral-400 dark:text-neutral-500"
+                                dateTime={item.createdAt}
+                              >
+                                {formatRelative(Date.parse(item.createdAt))}
+                              </time>
+                            </div>
+                            <p className="mt-1 text-sm leading-snug text-neutral-600 dark:text-neutral-300">
+                              {item.body}
+                            </p>
+                          </div>
+                        </div>
+                      </li>
+                    )
+                  })}
+                </ul>
+              </section>
+            ))}
+          </div>
         )}
       </div>
 

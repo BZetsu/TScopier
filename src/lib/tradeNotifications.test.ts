@@ -106,6 +106,14 @@ describe('aggregateTradeNotificationEvents', () => {
     assert.equal(events[0].count, 2)
   })
 
+  it('ignores automated trailing_stop monitor logs', () => {
+    const rows = [
+      baseRow({ id: 'trail-1', action: 'trailing_stop', request_payload: { new_sl: 4500 } }),
+      baseRow({ id: 'trail-2', action: 'trailing_stop', created_at: '2026-06-05T12:00:01.000Z' }),
+    ]
+    assert.equal(aggregateTradeNotificationEvents(rows).length, 0)
+  })
+
   it('ignores pipeline and non-success logs', () => {
     const rows = [
       baseRow({ id: 'pipe', action: 'pipeline_parse_dispatch' }),
@@ -114,6 +122,34 @@ describe('aggregateTradeNotificationEvents', () => {
     ]
     assert.equal(aggregateTradeNotificationEvents(rows).length, 0)
   })
+
+  it('returns execution and modification when both exist', () => {
+    const rows = [
+      ...Array.from({ length: 5 }, (_, i) =>
+        baseRow({
+          id: `exec-${i}`,
+          action: 'order_send',
+          created_at: `2026-06-05T12:00:0${i}.000Z`,
+          request_payload: { operation: 'buy' },
+        }),
+      ),
+      baseRow({
+        id: 'mod-1',
+        action: 'merge_modify_summary',
+        created_at: '2026-06-05T12:00:10.000Z',
+        request_payload: { modified: 3 },
+      }),
+      baseRow({
+        id: 'close-1',
+        action: 'partial_tp_fired',
+        created_at: '2026-06-05T12:00:20.000Z',
+        request_payload: { tp_idx: 1 },
+      }),
+    ]
+    const events = aggregateTradeNotificationEvents(rows)
+    const headlines = events.map(e => e.headline).sort()
+    assert.deepEqual(headlines, ['execution_completed', 'modification_completed', 'trades_closed'])
+  })
 })
 
 describe('formatHolisticNotification', () => {
@@ -121,7 +157,7 @@ describe('formatHolisticNotification', () => {
     const event = aggregateTradeNotificationEvents([
       baseRow({
         id: 'mod-1',
-        action: 'trailing_stop',
+        action: 'mgmt_modify',
         request_payload: { old_sl: 4505, new_sl: 4503, operation: 'sell' },
       }),
     ])[0]

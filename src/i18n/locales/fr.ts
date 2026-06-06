@@ -56,6 +56,8 @@ export const fr: Translations = {
       kindClosed: 'Trade clôturé',
       markAllRead: 'Tout marquer comme lu',
       viewTrades: 'Voir les trades',
+      dayToday: "Aujourd'hui",
+      dayYesterday: 'Hier',
     },
     userMenu: {
       menuLabel: 'Menu du compte',

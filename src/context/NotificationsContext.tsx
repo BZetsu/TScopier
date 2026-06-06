@@ -18,13 +18,14 @@ import {
   readNotificationsLastReadAt,
   tradeNotificationsFromLogs,
   TRADE_EXECUTION_LOG_NOTIFICATION_SELECT,
+  TRADE_NOTIFICATION_LOG_ACTIONS,
   writeNotificationsLastReadAt,
   type TradeExecutionLogRow,
   type TradeNotification,
 } from '../lib/tradeNotifications'
 
 const MAX_NOTIFICATIONS = 30
-const FETCH_LIMIT = 50
+const FETCH_LIMIT = 120
 const REALTIME_DEBOUNCE_MS = 300
 
 function buildChannelDisplayNames(
@@ -120,6 +121,8 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
           .from('trade_execution_logs')
           .select(TRADE_EXECUTION_LOG_NOTIFICATION_SELECT)
           .eq('user_id', user.id)
+          .eq('status', 'success')
+          .in('action', [...TRADE_NOTIFICATION_LOG_ACTIONS])
           .order('created_at', { ascending: false })
           .limit(FETCH_LIMIT),
       ])

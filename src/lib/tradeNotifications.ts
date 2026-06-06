@@ -50,15 +50,17 @@ export interface TradeNotificationContext {
 const EXECUTION_ACTIONS = new Set(['order_send', 'signal_entry_pending_filled'])
 const LAYERING_ACTIONS = new Set(['virtual_pending_fired'])
 const MODIFY_SUMMARY_ACTIONS = new Set(['merge_modify_summary'])
-const MODIFY_LEG_ACTIONS = new Set([
+const SIGNAL_MODIFY_ACTIONS = new Set([
   'mgmt_modify',
   'mgmt_breakeven',
   'mgmt_partial_breakeven',
   'merge_routed_modify_only',
+  'signal_merge_into_open_trade',
   'basket_leg_modify',
-  'trailing_stop',
-  'auto_be',
 ])
+/** Automated monitors — logged for copier history but too noisy for the bell. */
+const AUTOMATED_MODIFY_ACTIONS = new Set(['trailing_stop', 'auto_be'])
+const MODIFY_LEG_ACTIONS = new Set([...SIGNAL_MODIFY_ACTIONS, ...AUTOMATED_MODIFY_ACTIONS])
 const CLOSED_ACTIONS = new Set([
   'mgmt_close',
   'mgmt_close_worse_entries',
@@ -143,10 +145,11 @@ function classifyRow(row: TradeExecutionLogRow): TradeNotificationHeadline | nul
   if (!isSuccessStatus(row.status)) return null
   const action = row.action.toLowerCase()
   if (SUPPRESSED_ACTIONS.has(action)) return null
+  if (AUTOMATED_MODIFY_ACTIONS.has(action)) return null
   if (['attempt', 'failed', 'skipped'].includes(row.status.toLowerCase())) return null
   if (EXECUTION_ACTIONS.has(action)) return 'execution_completed'
   if (LAYERING_ACTIONS.has(action)) return 'layering_completed'
-  if (MODIFY_SUMMARY_ACTIONS.has(action) || MODIFY_LEG_ACTIONS.has(action)) return 'modification_completed'
+  if (MODIFY_SUMMARY_ACTIONS.has(action) || SIGNAL_MODIFY_ACTIONS.has(action)) return 'modification_completed'
   if (CLOSED_ACTIONS.has(action)) return 'trades_closed'
   if (action.startsWith('pipeline_') || action.startsWith('dispatch_')) return null
   return null
@@ -399,7 +402,7 @@ export function formatHolisticNotification(
   }
 
   return {
-    id: event.id,
+    id: `${event.headline}:${event.id}`,
     headline: event.headline,
     title,
     body,
@@ -407,6 +410,15 @@ export function formatHolisticNotification(
     createdAt: event.createdAt,
   }
 }
+
+/** Success log actions that can produce a bell notification (excludes monitor noise). */
+export const TRADE_NOTIFICATION_LOG_ACTIONS = [
+  ...EXECUTION_ACTIONS,
+  ...LAYERING_ACTIONS,
+  ...MODIFY_SUMMARY_ACTIONS,
+  ...SIGNAL_MODIFY_ACTIONS,
+  ...CLOSED_ACTIONS,
+] as const
 
 export function tradeNotificationsFromLogs(
   rows: TradeExecutionLogRow[],
