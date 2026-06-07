@@ -709,6 +709,12 @@ export const landingEn: LandingTranslations = {
       },
     ],
   },
+  pricingSocialProof: {
+    banner: '{count} traders purchased today',
+    purchaseToast: 'A trader from {country} just purchased {plan} subscription.',
+    timeAgoJustNow: 'Just now',
+    timeAgoOneMinute: '1 minute ago',
+  },
   pricingSnippet: {
     basic: 'Basic — $9.99/month',
     advanced: 'Advanced — 10 days free, then $39.99/month',

@@ -710,6 +710,12 @@ export const landingEs: LandingTranslations = {
       },
     ],
   },
+  pricingSocialProof: {
+    banner: '{count} traders compraron hoy',
+    purchaseToast: 'Un trader de {country} acaba de comprar la suscripción {plan}.',
+    timeAgoJustNow: 'Ahora mismo',
+    timeAgoOneMinute: 'Hace 1 minuto',
+  },
   pricingSnippet: {
     basic: 'Basic — 9,99 $/mes',
     advanced: 'Advanced — 10 días gratis, luego 39,99 $/mes',

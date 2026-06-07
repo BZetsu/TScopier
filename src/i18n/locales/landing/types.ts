@@ -369,6 +369,12 @@ export interface LandingTranslations {
     subtitle: string
     items: LandingFaqItem[]
   }
+  pricingSocialProof: {
+    banner: string
+    purchaseToast: string
+    timeAgoJustNow: string
+    timeAgoOneMinute: string
+  }
   pricingSnippet: {
     basic: string
     advanced: string
