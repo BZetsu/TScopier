@@ -73,7 +73,6 @@ const emptyUsage: SubscriptionUsage = {
 }
 
 const CHECKOUT_SYNC_PENDING_KEY = 'tscopier.checkout.sync.pending'
-const BILLING_PLANS_HASH = '#subscription-plans'
 
 const SubscriptionContext = createContext<SubscriptionContextValue>({
   subscription: null,
@@ -109,9 +108,9 @@ function monthStartUtcIso(): string {
   return monthStart.toISOString()
 }
 
-function scrollToBillingPlans() {
+function scrollToPricingTop() {
   window.requestAnimationFrame(() => {
-    document.getElementById('subscription-plans')?.scrollIntoView({ behavior: 'smooth' })
+    window.scrollTo({ top: 0, behavior: 'smooth' })
   })
 }
 
@@ -233,12 +232,12 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
     }
   }, [fetchSubscription, userId])
 
-  const openBillingPlans = useCallback(() => {
-    if (window.location.pathname === '/billing') {
-      scrollToBillingPlans()
+  const openPricingPage = useCallback(() => {
+    if (window.location.pathname === '/pricing') {
+      scrollToPricingTop()
       return
     }
-    navigate(`/billing${BILLING_PLANS_HASH}`)
+    navigate('/pricing')
   }, [navigate])
 
   const hasActiveSubscription = isAdmin || isSubscriptionActive(subscription?.status)
@@ -267,15 +266,15 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
 
   const requireSubscription = useCallback(() => {
     if (hasActiveSubscription) return true
-    openBillingPlans()
+    openPricingPage()
     return false
-  }, [hasActiveSubscription, openBillingPlans])
+  }, [hasActiveSubscription, openPricingPage])
 
   const openUpgrade = useCallback(
     (_target?: 'advanced') => {
-      openBillingPlans()
+      openPricingPage()
     },
-    [openBillingPlans],
+    [openPricingPage],
   )
 
   const canUseFeatureFn = useCallback(
@@ -324,7 +323,7 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
         refresh: () => fetchSubscription({ background: true }),
         requireSubscription,
         openUpgrade,
-        openPricingModal: openBillingPlans,
+        openPricingModal: openPricingPage,
         canUseFeature: canUseFeatureFn,
         canAddBroker,
         canAddChannel,

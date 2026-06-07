@@ -1,36 +1,86 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import clsx from 'clsx'
 import { Check, Zap } from 'lucide-react'
 import { useT } from '../../../context/LocaleContext'
+import { useAuth } from '../../../context/AuthContext'
+import { useSubscription } from '../../../context/SubscriptionContext'
 import { interpolate } from '../../../i18n/interpolate'
 import { appUrl } from '../../../lib/site'
 import { HELP_LINKS } from '../../../lib/helpLinks'
+import { startPlanCheckout } from '../../../lib/planCheckout'
+import { Button } from '../../ui/Button'
 import {
   PRICING_ADVANCED_INCLUDED_ACCOUNTS,
   pricingDisplayPrices,
 } from '../../../lib/pricingPlans'
 
-export function PricingPlansSection() {
+interface PricingPlansSectionProps {
+  variant?: 'marketing' | 'app'
+}
+
+export function PricingPlansSection({ variant = 'marketing' }: PricingPlansSectionProps) {
   const t = useT()
   const lp = t.landing.pricing
   const pt = t.pricing
   const [interval, setInterval] = useState<'monthly' | 'annual'>('monthly')
   const [extraAccounts, setExtraAccounts] = useState(0)
 
+  const { session } = useAuth()
+  const { effectivePlan } = useSubscription()
+  const [checkoutLoading, setCheckoutLoading] = useState<'basic' | 'advanced' | null>(null)
+  const [checkoutError, setCheckoutError] = useState('')
+
+  const isApp = variant === 'app'
   const isAnnual = interval === 'annual'
   const prices = pricingDisplayPrices(interval, extraAccounts)
 
   const formatMoney = (amount: number) => `$${amount.toFixed(2)}`
 
-  const contactHref = HELP_LINKS.telegram || appUrl('/contact-support')
+  const contactHref = isApp
+    ? HELP_LINKS.telegram || '/contact-support'
+    : HELP_LINKS.telegram || appUrl('/contact-support')
+
+  const startCheckout = async (plan: 'basic' | 'advanced') => {
+    if (!session?.access_token || effectivePlan === plan) return
+    setCheckoutError('')
+    setCheckoutLoading(plan)
+    try {
+      const url = await startPlanCheckout({
+        accessToken: session.access_token,
+        plan,
+        interval,
+        extraAccounts: plan === 'advanced' ? extraAccounts : 0,
+        cancelUrl: `${window.location.origin}/pricing`,
+      })
+      window.location.href = url
+    } catch (err) {
+      setCheckoutError(err instanceof Error ? err.message : pt.checkoutFailed)
+      setCheckoutLoading(null)
+    }
+  }
+
+  const sectionClass = clsx(
+    'mx-auto max-w-6xl scroll-mt-28',
+    isApp ? 'px-0 py-4 sm:py-6' : 'px-5 py-16 sm:px-8 sm:py-24',
+  )
 
   return (
-    <section className="mx-auto max-w-6xl scroll-mt-28 px-5 py-16 sm:px-8 sm:py-24">
+    <section className={sectionClass}>
       <div className="text-center">
         <h1 className="text-3xl font-bold tracking-tight text-neutral-900 dark:text-neutral-50 sm:text-4xl">
           {lp.title}
         </h1>
         <p className="mt-3 text-base text-neutral-500 dark:text-neutral-400">{lp.subtitle}</p>
+
+        {checkoutError ? (
+          <div
+            role="alert"
+            className="mx-auto mt-4 max-w-lg rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-200"
+          >
+            {checkoutError}
+          </div>
+        ) : null}
 
         <div className="mt-8 inline-flex items-center rounded-full border border-neutral-200 bg-white p-1 dark:border-neutral-700 dark:bg-neutral-900">
           <button
@@ -85,12 +135,24 @@ export function PricingPlansSection() {
             <div className="mb-6" />
           )}
 
-          <a
-            href={appUrl('/signup')}
-            className="inline-flex w-full items-center justify-center rounded-xl bg-teal-600 px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-teal-700"
-          >
-            {pt.subscribe}
-          </a>
+          {isApp ? (
+            <Button
+              size="lg"
+              className="w-full"
+              loading={checkoutLoading === 'basic'}
+              disabled={checkoutLoading !== null || effectivePlan === 'basic'}
+              onClick={() => void startCheckout('basic')}
+            >
+              {effectivePlan === 'basic' ? pt.billing.currentPlan : pt.subscribe}
+            </Button>
+          ) : (
+            <a
+              href={appUrl('/signup')}
+              className="inline-flex w-full items-center justify-center rounded-xl bg-teal-600 px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-teal-700"
+            >
+              {pt.subscribe}
+            </a>
+          )}
 
           <div className="mt-8">
             <p className="text-xs font-semibold uppercase tracking-wider text-neutral-400 dark:text-neutral-500">
@@ -147,7 +209,7 @@ export function PricingPlansSection() {
                 <button
                   type="button"
                   onClick={() => setExtraAccounts((v) => Math.max(0, v - 1))}
-                  disabled={extraAccounts === 0}
+                  disabled={extraAccounts === 0 || (isApp && checkoutLoading !== null)}
                   className="flex h-8 w-8 items-center justify-center rounded-md border border-neutral-300 text-neutral-600 transition-colors hover:bg-neutral-100 disabled:opacity-40 dark:border-neutral-600 dark:text-neutral-300 dark:hover:bg-neutral-700"
                 >
                   −
@@ -166,7 +228,7 @@ export function PricingPlansSection() {
                 <button
                   type="button"
                   onClick={() => setExtraAccounts((v) => Math.min(95, v + 1))}
-                  disabled={extraAccounts >= 95}
+                  disabled={extraAccounts >= 95 || (isApp && checkoutLoading !== null)}
                   className="flex h-8 w-8 items-center justify-center rounded-md border border-neutral-300 text-neutral-600 transition-colors hover:bg-neutral-100 disabled:opacity-40 dark:border-neutral-600 dark:text-neutral-300 dark:hover:bg-neutral-700"
                 >
                   +
@@ -184,12 +246,24 @@ export function PricingPlansSection() {
             ) : null}
           </div>
 
-          <a
-            href={appUrl('/signup')}
-            className="inline-flex w-full items-center justify-center rounded-xl bg-teal-600 px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-teal-700"
-          >
-            {pt.startTrial}
-          </a>
+          {isApp ? (
+            <Button
+              size="lg"
+              className="w-full"
+              loading={checkoutLoading === 'advanced'}
+              disabled={checkoutLoading !== null || effectivePlan === 'advanced'}
+              onClick={() => void startCheckout('advanced')}
+            >
+              {effectivePlan === 'advanced' ? pt.billing.currentPlan : pt.startTrial}
+            </Button>
+          ) : (
+            <a
+              href={appUrl('/signup')}
+              className="inline-flex w-full items-center justify-center rounded-xl bg-teal-600 px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-teal-700"
+            >
+              {pt.startTrial}
+            </a>
+          )}
           <p className="mt-2 text-center text-xs text-neutral-400 dark:text-neutral-500">{pt.trialDays}</p>
 
           <div className="mt-8">
@@ -217,13 +291,22 @@ export function PricingPlansSection() {
             <span className="text-4xl font-bold text-neutral-900 dark:text-neutral-50">{pt.contactUs}</span>
           </div>
 
-          <a
-            href={contactHref}
-            {...(HELP_LINKS.telegram ? { target: '_blank', rel: 'noopener noreferrer' } : undefined)}
-            className="inline-flex w-full items-center justify-center rounded-xl border border-neutral-300 bg-white px-4 py-3 text-sm font-semibold text-neutral-800 transition-colors hover:bg-neutral-50 dark:border-neutral-600 dark:bg-neutral-800 dark:text-neutral-100 dark:hover:bg-neutral-700"
-          >
-            {pt.contactSales}
-          </a>
+          {isApp && !HELP_LINKS.telegram ? (
+            <Link
+              to={contactHref}
+              className="inline-flex w-full items-center justify-center rounded-xl border border-neutral-300 bg-white px-4 py-3 text-sm font-semibold text-neutral-800 transition-colors hover:bg-neutral-50 dark:border-neutral-600 dark:bg-neutral-800 dark:text-neutral-100 dark:hover:bg-neutral-700"
+            >
+              {pt.contactSales}
+            </Link>
+          ) : (
+            <a
+              href={contactHref}
+              {...(HELP_LINKS.telegram ? { target: '_blank', rel: 'noopener noreferrer' } : undefined)}
+              className="inline-flex w-full items-center justify-center rounded-xl border border-neutral-300 bg-white px-4 py-3 text-sm font-semibold text-neutral-800 transition-colors hover:bg-neutral-50 dark:border-neutral-600 dark:bg-neutral-800 dark:text-neutral-100 dark:hover:bg-neutral-700"
+            >
+              {pt.contactSales}
+            </a>
+          )}
 
           <div className="mt-8">
             <p className="text-xs font-semibold uppercase tracking-wider text-neutral-400 dark:text-neutral-500">

@@ -69,11 +69,17 @@ function MobilePlanCard({
   )
 }
 
-export function PlanComparisonSection() {
+export function PlanComparisonSection({ variant = 'marketing' }: { variant?: 'marketing' | 'app' }) {
   const c = useT().landing.planComparison
+  const isApp = variant === 'app'
 
   return (
-    <section className="mx-auto max-w-6xl px-5 py-16 sm:px-8 sm:py-24">
+    <section
+      className={clsx(
+        'mx-auto max-w-6xl',
+        isApp ? 'px-0 py-8 sm:py-10' : 'px-5 py-16 sm:px-8 sm:py-24',
+      )}
+    >
       <div className="mx-auto max-w-2xl text-center">
         <p className="text-xs font-semibold uppercase tracking-wider text-teal-600 dark:text-teal-400">
           {c.eyebrow}

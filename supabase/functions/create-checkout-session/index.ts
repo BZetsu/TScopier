@@ -113,7 +113,7 @@ Deno.serve(async (req: Request) => {
       line_items: lineItems,
       success_url:
         successUrl || `${origin}/dashboard?checkout=success`,
-      cancel_url: cancelUrl || `${origin}/billing`,
+      cancel_url: cancelUrl || `${origin}/pricing`,
       metadata: {
         supabase_user_id: user.id,
         plan,

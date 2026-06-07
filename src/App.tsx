@@ -7,7 +7,7 @@ import { AuthLayout } from './components/layout/AuthLayout'
 import { AppShell } from './components/layout/AppShell'
 import { ProtectedRoute } from './components/layout/ProtectedRoute'
 import { SubscriptionGuard } from './components/layout/SubscriptionGuard'
-import { PricingPageRedirect } from './pages/pricing/PricingPageRedirect'
+import { AppPricingPage } from './pages/pricing/AppPricingPage'
 import { DashboardPage } from './pages/dashboard/DashboardPage'
 import { BrokerStatsOverlay } from './pages/dashboard/BrokerStatsOverlay'
 import { AccountConfigPage } from './pages/dashboard/AccountConfigPage'
@@ -53,16 +53,6 @@ export default function App() {
           <Route path="/reset-password" element={<AuthLayout />} />
           <Route path="/:referralCode" element={<ReferralCodeRedirect />} />
 
-          {/* Legacy pricing URL — redirects to billing plans */}
-          <Route
-            path="/pricing"
-            element={
-              <ProtectedRoute>
-                <PricingPageRedirect />
-              </ProtectedRoute>
-            }
-          />
-
           <Route
             element={
               <ProtectedRoute>
@@ -72,6 +62,7 @@ export default function App() {
               </ProtectedRoute>
             }
           >
+            <Route path="/pricing" element={<AppPricingPage />} />
             <Route path="/dashboard" element={<DashboardPage />}>
               <Route path="broker/:brokerId" element={<BrokerStatsOverlay />} />
             </Route>

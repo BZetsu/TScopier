@@ -1,11 +1,19 @@
+import clsx from 'clsx'
 import { ChevronDown } from 'lucide-react'
 import { useT } from '../../../context/LocaleContext'
 
-export function PricingFaqSection() {
+export function PricingFaqSection({ variant = 'marketing' }: { variant?: 'marketing' | 'app' }) {
   const f = useT().landing.pricingFaq
+  const isApp = variant === 'app'
 
   return (
-    <section id="pricing-faq" className="mx-auto max-w-6xl scroll-mt-28 px-5 py-16 sm:px-8 sm:py-24">
+    <section
+      id="pricing-faq"
+      className={clsx(
+        'mx-auto max-w-6xl scroll-mt-28',
+        isApp ? 'px-0 py-8 sm:py-10' : 'px-5 py-16 sm:px-8 sm:py-24',
+      )}
+    >
       <div className="mx-auto max-w-2xl text-center">
         <p className="text-xs font-semibold uppercase tracking-wider text-teal-600 dark:text-teal-400">
           {f.eyebrow}
