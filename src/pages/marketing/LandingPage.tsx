@@ -8,7 +8,6 @@ import { FeaturesSection } from '../../components/marketing/sections/FeaturesSec
 import { StepsSection } from '../../components/marketing/sections/StepsSection'
 import { FaqSection } from '../../components/marketing/sections/FaqSection'
 import { ReviewsSection } from '../../components/marketing/sections/ReviewsSection'
-import { PricingTeaserSection } from '../../components/marketing/sections/PricingTeaserSection'
 import { captureReferralFromUrl } from '../../lib/referralCapture'
 import { trackMarketingEvent } from '../../lib/analytics'
 
@@ -28,7 +27,6 @@ export function LandingPage() {
       <WhyChooseSection />
       <FeaturesSection />
       <ComparisonSection />
-      <PricingTeaserSection />
       <StepsSection />
       <FaqSection />
       <ReviewsSection />

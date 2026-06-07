@@ -213,6 +213,15 @@ export interface LandingFaqItem {
   answer: string
 }
 
+export type LandingPlanComparisonValue = 'yes' | 'no' | 'partial' | string
+
+export interface LandingPlanComparisonRow {
+  feature: string
+  basic: LandingPlanComparisonValue
+  advanced: LandingPlanComparisonValue
+  custom: LandingPlanComparisonValue
+}
+
 export type LandingHeroStatTone = 'good' | 'bad' | 'neutral'
 
 export type LandingHeroHeadlineStatKey =
@@ -344,6 +353,21 @@ export interface LandingTranslations {
   pricing: {
     title: string
     subtitle: string
+  }
+  planComparison: {
+    eyebrow: string
+    title: string
+    subtitle: string
+    basicColumn: string
+    advancedColumn: string
+    customColumn: string
+    rows: LandingPlanComparisonRow[]
+  }
+  pricingFaq: {
+    eyebrow: string
+    title: string
+    subtitle: string
+    items: LandingFaqItem[]
   }
   pricingSnippet: {
     basic: string

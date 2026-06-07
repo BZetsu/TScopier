@@ -4,12 +4,13 @@ import { Check, Zap } from 'lucide-react'
 import { useT } from '../../../context/LocaleContext'
 import { interpolate } from '../../../i18n/interpolate'
 import { appUrl } from '../../../lib/site'
+import { HELP_LINKS } from '../../../lib/helpLinks'
 import {
   PRICING_ADVANCED_INCLUDED_ACCOUNTS,
   pricingDisplayPrices,
 } from '../../../lib/pricingPlans'
 
-export function PricingTeaserSection() {
+export function PricingPlansSection() {
   const t = useT()
   const lp = t.landing.pricing
   const pt = t.pricing
@@ -21,12 +22,14 @@ export function PricingTeaserSection() {
 
   const formatMoney = (amount: number) => `$${amount.toFixed(2)}`
 
+  const contactHref = HELP_LINKS.telegram || appUrl('/contact-support')
+
   return (
-    <section id="pricing" className="mx-auto max-w-5xl scroll-mt-28 px-5 py-16 sm:px-8 sm:py-24">
+    <section className="mx-auto max-w-6xl scroll-mt-28 px-5 py-16 sm:px-8 sm:py-24">
       <div className="text-center">
-        <h2 className="text-3xl font-bold tracking-tight text-neutral-900 dark:text-neutral-50 sm:text-4xl">
+        <h1 className="text-3xl font-bold tracking-tight text-neutral-900 dark:text-neutral-50 sm:text-4xl">
           {lp.title}
-        </h2>
+        </h1>
         <p className="mt-3 text-base text-neutral-500 dark:text-neutral-400">{lp.subtitle}</p>
 
         <div className="mt-8 inline-flex items-center rounded-full border border-neutral-200 bg-white p-1 dark:border-neutral-700 dark:bg-neutral-900">
@@ -60,10 +63,10 @@ export function PricingTeaserSection() {
         </div>
       </div>
 
-      <div className="mt-12 grid gap-8 lg:grid-cols-2">
+      <div className="mt-12 grid gap-8 lg:grid-cols-3">
         <div className="relative rounded-2xl border border-neutral-200 bg-white p-8 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
           <div className="mb-6">
-            <h3 className="text-lg font-semibold text-neutral-900 dark:text-neutral-50">{pt.basic.name}</h3>
+            <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-50">{pt.basic.name}</h2>
             <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">{pt.basic.description}</p>
           </div>
 
@@ -104,14 +107,14 @@ export function PricingTeaserSection() {
           </div>
         </div>
 
-        <div className="relative rounded-2xl border-2 border-teal-500 bg-white p-8 shadow-md dark:bg-neutral-900">
+        <div className="relative rounded-2xl border-2 border-teal-500 bg-white p-8 shadow-md dark:bg-neutral-900 lg:-mt-2 lg:mb-2">
           <div className="absolute -top-3 left-6 inline-flex items-center gap-1 rounded-full bg-teal-500 px-3 py-1 text-xs font-semibold text-white">
             <Zap className="h-3 w-3" aria-hidden />
             {pt.popular}
           </div>
 
           <div className="mb-6">
-            <h3 className="text-lg font-semibold text-neutral-900 dark:text-neutral-50">{pt.advanced.name}</h3>
+            <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-50">{pt.advanced.name}</h2>
             <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">{pt.advanced.description}</p>
           </div>
 
@@ -195,6 +198,39 @@ export function PricingTeaserSection() {
             </p>
             <ul className="mt-4 space-y-3">
               {pt.advancedFeatures.map((feature) => (
+                <li key={feature} className="flex items-start gap-3">
+                  <Check className="mt-0.5 h-4 w-4 shrink-0 text-teal-500" aria-hidden />
+                  <span className="text-sm text-neutral-700 dark:text-neutral-300">{feature}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+
+        <div className="relative rounded-2xl border border-neutral-200 bg-white p-8 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
+          <div className="mb-6">
+            <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-50">{pt.custom.name}</h2>
+            <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">{pt.custom.description}</p>
+          </div>
+
+          <div className="mb-6">
+            <span className="text-4xl font-bold text-neutral-900 dark:text-neutral-50">{pt.contactUs}</span>
+          </div>
+
+          <a
+            href={contactHref}
+            {...(HELP_LINKS.telegram ? { target: '_blank', rel: 'noopener noreferrer' } : undefined)}
+            className="inline-flex w-full items-center justify-center rounded-xl border border-neutral-300 bg-white px-4 py-3 text-sm font-semibold text-neutral-800 transition-colors hover:bg-neutral-50 dark:border-neutral-600 dark:bg-neutral-800 dark:text-neutral-100 dark:hover:bg-neutral-700"
+          >
+            {pt.contactSales}
+          </a>
+
+          <div className="mt-8">
+            <p className="text-xs font-semibold uppercase tracking-wider text-neutral-400 dark:text-neutral-500">
+              {pt.features}
+            </p>
+            <ul className="mt-4 space-y-3">
+              {pt.customFeatures.map((feature) => (
                 <li key={feature} className="flex items-start gap-3">
                   <Check className="mt-0.5 h-4 w-4 shrink-0 text-teal-500" aria-hidden />
                   <span className="text-sm text-neutral-700 dark:text-neutral-300">{feature}</span>

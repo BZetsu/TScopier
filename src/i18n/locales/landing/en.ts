@@ -518,7 +518,7 @@ export const landingEn: LandingTranslations = {
       {
         question: 'What is included in Basic vs Advanced?',
         answer:
-          'Basic covers core copying on one account with backtests and essential filters. Advanced adds multi-account copying, range layering, auto-management features, and unlimited Telegram channels. See Pricing for current plan details.',
+          'Basic covers core copying on one account with backtests and essential filters. Advanced adds multi-account copying, range layering, auto-management features, and unlimited Telegram channels. See our pricing page for full plan details.',
       },
     ],
   },
@@ -590,6 +590,124 @@ export const landingEn: LandingTranslations = {
   pricing: {
     title: 'Choose your plan',
     subtitle: 'Start copying signals to your trading accounts today.',
+  },
+  planComparison: {
+    eyebrow: 'Compare plans',
+    title: 'Find the right fit',
+    subtitle: 'Side-by-side look at what each plan includes.',
+    basicColumn: 'Basic',
+    advancedColumn: 'Advanced',
+    customColumn: 'Custom',
+    rows: [
+      {
+        feature: 'Broker accounts',
+        basic: '1',
+        advanced: '5 (up to 100)',
+        custom: 'Custom',
+      },
+      {
+        feature: 'Signal backtests',
+        basic: '5 / month',
+        advanced: 'Unlimited',
+        custom: 'Custom',
+      },
+      {
+        feature: 'Telegram channels',
+        basic: '5',
+        advanced: 'Unlimited',
+        custom: 'Custom',
+      },
+      {
+        feature: 'Take-profit levels',
+        basic: '3 TPs',
+        advanced: 'Unlimited TPs/SLs',
+        custom: 'Custom',
+      },
+      {
+        feature: 'Range trading & layering',
+        basic: 'no',
+        advanced: 'yes',
+        custom: 'yes',
+      },
+      {
+        feature: 'Auto breakeven & management',
+        basic: 'no',
+        advanced: 'yes',
+        custom: 'yes',
+      },
+      {
+        feature: 'Channel keyword follow',
+        basic: 'no',
+        advanced: 'yes',
+        custom: 'yes',
+      },
+      {
+        feature: 'Priority support',
+        basic: 'no',
+        advanced: 'no',
+        custom: 'yes',
+      },
+      {
+        feature: 'Dedicated onboarding',
+        basic: 'no',
+        advanced: 'no',
+        custom: 'yes',
+      },
+      {
+        feature: 'Free trial',
+        basic: 'no',
+        advanced: '10 days',
+        custom: 'Custom',
+      },
+      {
+        feature: 'Starting price',
+        basic: '$9.99 / month',
+        advanced: '$39.99 / month',
+        custom: 'Contact us',
+      },
+    ],
+  },
+  pricingFaq: {
+    eyebrow: 'Pricing FAQ',
+    title: 'Pricing questions',
+    subtitle: 'Billing, trials, and plan changes explained.',
+    items: [
+      {
+        question: 'Is there a free trial?',
+        answer:
+          'Advanced includes a 10-day free trial when you subscribe. Basic is billed from day one at $9.99/month (or $95.90/year with annual billing). You can explore the dashboard before subscribing, but live copying requires an active plan.',
+      },
+      {
+        question: 'What is the difference between monthly and annual billing?',
+        answer:
+          'Annual billing saves 20% compared to paying monthly for a full year. Basic drops from $9.99/month to $7.99/month effective ($95.90/year). Advanced drops from $39.99/month to $31.99/month effective ($383.90/year). Extra accounts on Advanced are also discounted on annual billing.',
+      },
+      {
+        question: 'How do extra accounts on Advanced work?',
+        answer:
+          'Advanced includes 5 demo/live broker accounts. You can add up to 95 more at $10/account/month (or $96/account/year on annual billing), for a maximum of 100 connected accounts per user.',
+      },
+      {
+        question: 'Can I switch plans later?',
+        answer:
+          'Yes. Upgrade or downgrade anytime from Billing in your dashboard. Changes take effect according to your billing cycle, and Stripe handles proration when you move between plans.',
+      },
+      {
+        question: 'What payment methods do you accept?',
+        answer:
+          'We accept major credit and debit cards through Stripe. Invoices and payment history are available for download from your Billing page.',
+      },
+      {
+        question: 'When should I choose Custom?',
+        answer:
+          'Custom is for prop firms, trading teams, or high-volume operators who need account limits, billing, or onboarding tailored to their workflow. Contact sales and we will put together a plan that fits.',
+      },
+      {
+        question: 'Can I cancel anytime?',
+        answer:
+          'Yes. Cancel from Billing or the Stripe customer portal. You keep access through the end of your current billing period. There are no long-term contracts on Basic or Advanced.',
+      },
+    ],
   },
   pricingSnippet: {
     basic: 'Basic — $9.99/month',

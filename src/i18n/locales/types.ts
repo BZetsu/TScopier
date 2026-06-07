@@ -898,6 +898,13 @@ export interface PricingTranslations {
     name: string
     description: string
   }
+  custom: {
+    name: string
+    description: string
+  }
+  contactUs: string
+  contactSales: string
+  customFeatures: string[]
   billing: {
     title: string
     subtitle: string

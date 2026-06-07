@@ -53,7 +53,7 @@ export default function App() {
           <Route path="/reset-password" element={<AuthLayout />} />
           <Route path="/:referralCode" element={<ReferralCodeRedirect />} />
 
-          {/* Legacy pricing URL — opens plan modal on dashboard */}
+          {/* Legacy pricing URL — redirects to billing plans */}
           <Route
             path="/pricing"
             element={

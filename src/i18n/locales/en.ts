@@ -140,6 +140,21 @@ export const en: Translations = {
       name: 'Advanced',
       description: 'For serious traders copying signals to 1 or multiple accounts with advanced strategies.',
     },
+    custom: {
+      name: 'Custom',
+      description:
+        'For prop firms, teams, and high-volume traders who need tailored account limits and dedicated support.',
+    },
+    contactUs: 'Contact us',
+    contactSales: 'Contact sales',
+    customFeatures: [
+      'Custom account limits',
+      'Dedicated onboarding',
+      'Priority support',
+      'Tailored billing & invoicing',
+      'All Advanced copier features',
+      'Volume & team pricing',
+    ],
     billing: {
       title: 'Subscription & Billing',
       subtitle: 'Manage your plan, payment methods, and invoice history.',

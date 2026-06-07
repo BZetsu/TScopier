@@ -20,7 +20,7 @@ type NavItem = {
 const NAV_ITEMS: NavItem[] = [
   { key: 'product', href: '#product' },
   { key: 'features', href: '#features' },
-  { key: 'pricing', href: '#pricing' },
+  { key: 'pricing', href: '/pricing' },
   { key: 'faq', href: '#faq' },
   { key: 'docs', href: HELP_LINKS.documentation, external: true },
 ]
@@ -50,6 +50,14 @@ function MarketingNavLink({
       >
         {label}
       </a>
+    )
+  }
+
+  if (item.href.startsWith('/')) {
+    return (
+      <Link to={item.href} className={className} onClick={onClick}>
+        {label}
+      </Link>
     )
   }
 

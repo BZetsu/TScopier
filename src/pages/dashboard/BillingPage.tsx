@@ -548,7 +548,7 @@ export function BillingPage() {
           </Card>
         ) : null}
 
-        <section>
+        <section id="subscription-plans">
           <div className="mb-6 flex items-start gap-3">
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-teal-50 dark:bg-teal-950/40">
               <CreditCard className="h-4 w-4 text-teal-600 dark:text-teal-400" />

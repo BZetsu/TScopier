@@ -6,10 +6,10 @@ import {
   useMemo,
   useState,
 } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from './AuthContext'
 import { useUserProfile } from './UserProfileContext'
-import { PricingModal } from '../components/billing/PricingModal'
 import {
   canUseFeature,
   effectivePlan,
@@ -59,9 +59,7 @@ interface SubscriptionContextValue {
   refresh: () => Promise<void>
   requireSubscription: () => boolean
   openUpgrade: (target?: 'advanced') => void
-  pricingModalOpen: boolean
   openPricingModal: () => void
-  closePricingModal: () => void
   canUseFeature: (feature: PlanFeatureKey) => boolean
   canAddBroker: () => boolean
   canAddChannel: () => boolean
@@ -75,6 +73,7 @@ const emptyUsage: SubscriptionUsage = {
 }
 
 const CHECKOUT_SYNC_PENDING_KEY = 'tscopier.checkout.sync.pending'
+const BILLING_PLANS_HASH = '#subscription-plans'
 
 const SubscriptionContext = createContext<SubscriptionContextValue>({
   subscription: null,
@@ -96,9 +95,7 @@ const SubscriptionContext = createContext<SubscriptionContextValue>({
   refresh: async () => {},
   requireSubscription: () => false,
   openUpgrade: () => {},
-  pricingModalOpen: false,
   openPricingModal: () => {},
-  closePricingModal: () => {},
   canUseFeature: () => false,
   canAddBroker: () => false,
   canAddChannel: () => false,
@@ -112,7 +109,14 @@ function monthStartUtcIso(): string {
   return monthStart.toISOString()
 }
 
+function scrollToBillingPlans() {
+  window.requestAnimationFrame(() => {
+    document.getElementById('subscription-plans')?.scrollIntoView({ behavior: 'smooth' })
+  })
+}
+
 export function SubscriptionProvider({ children }: { children: React.ReactNode }) {
+  const navigate = useNavigate()
   const { user } = useAuth()
   const { isAdmin, loading: profileLoading } = useUserProfile()
   const userId = user?.id ?? null
@@ -120,7 +124,6 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
   const [loading, setLoading] = useState(true)
   const [usage, setUsage] = useState<SubscriptionUsage>(emptyUsage)
   const [usageLoading, setUsageLoading] = useState(true)
-  const [pricingModalOpen, setPricingModalOpen] = useState(false)
 
   const fetchSubscription = useCallback(async (options?: { background?: boolean }) => {
     if (!userId) {
@@ -186,10 +189,6 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
       void fetchSubscription({ background: true })
       params.delete('checkout')
     }
-    if (params.get('pricing') != null) {
-      setPricingModalOpen(true)
-      params.delete('pricing')
-    }
     const qs = params.toString()
     const next = `${window.location.pathname}${qs ? `?${qs}` : ''}${window.location.hash}`
     if (next !== `${window.location.pathname}${window.location.search}${window.location.hash}`) {
@@ -234,13 +233,13 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
     }
   }, [fetchSubscription, userId])
 
-  const openPricingModal = useCallback(() => {
-    setPricingModalOpen(true)
-  }, [])
-
-  const closePricingModal = useCallback(() => {
-    setPricingModalOpen(false)
-  }, [])
+  const openBillingPlans = useCallback(() => {
+    if (window.location.pathname === '/billing') {
+      scrollToBillingPlans()
+      return
+    }
+    navigate(`/billing${BILLING_PLANS_HASH}`)
+  }, [navigate])
 
   const hasActiveSubscription = isAdmin || isSubscriptionActive(subscription?.status)
   const isPastDue = !isAdmin && subscription?.status === 'past_due'
@@ -268,13 +267,16 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
 
   const requireSubscription = useCallback(() => {
     if (hasActiveSubscription) return true
-    setPricingModalOpen(true)
+    openBillingPlans()
     return false
-  }, [hasActiveSubscription])
+  }, [hasActiveSubscription, openBillingPlans])
 
-  const openUpgrade = useCallback((_target?: 'advanced') => {
-    setPricingModalOpen(true)
-  }, [])
+  const openUpgrade = useCallback(
+    (_target?: 'advanced') => {
+      openBillingPlans()
+    },
+    [openBillingPlans],
+  )
 
   const canUseFeatureFn = useCallback(
     (feature: PlanFeatureKey) =>
@@ -322,9 +324,7 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
         refresh: () => fetchSubscription({ background: true }),
         requireSubscription,
         openUpgrade,
-        pricingModalOpen,
-        openPricingModal,
-        closePricingModal,
+        openPricingModal: openBillingPlans,
         canUseFeature: canUseFeatureFn,
         canAddBroker,
         canAddChannel,
@@ -332,7 +332,6 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
       }}
     >
       {children}
-      <PricingModal open={pricingModalOpen} onClose={closePricingModal} />
     </SubscriptionContext.Provider>
   )
 }

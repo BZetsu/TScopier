@@ -21,6 +21,33 @@ interface FooterLink {
   highlight?: boolean
 }
 
+function FooterNavLink({ link }: { link: FooterLink }) {
+  const className = clsx(
+    'text-sm transition-colors',
+    link.highlight
+      ? 'font-medium text-teal-600 hover:text-teal-700 dark:text-teal-400 dark:hover:text-teal-300'
+      : 'text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100',
+  )
+
+  if (link.href.startsWith('/') && !link.external) {
+    return (
+      <Link to={link.href} className={className}>
+        {link.label}
+      </Link>
+    )
+  }
+
+  return (
+    <a
+      href={link.href}
+      className={className}
+      {...(link.external ? { target: '_blank', rel: 'noopener noreferrer' } : undefined)}
+    >
+      {link.label}
+    </a>
+  )
+}
+
 function FooterNavColumn({
   title,
   links,
@@ -36,20 +63,7 @@ function FooterNavColumn({
       <ul className="mt-4 space-y-2.5">
         {links.map((link) => (
           <li key={link.label}>
-            <a
-              href={link.href}
-              className={clsx(
-                'text-sm transition-colors',
-                link.highlight
-                  ? 'font-medium text-teal-600 hover:text-teal-700 dark:text-teal-400 dark:hover:text-teal-300'
-                  : 'text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100',
-              )}
-              {...(link.external
-                ? { target: '_blank', rel: 'noopener noreferrer' }
-                : undefined)}
-            >
-              {link.label}
-            </a>
+            <FooterNavLink link={link} />
           </li>
         ))}
       </ul>
@@ -67,7 +81,7 @@ export function MarketingFooter() {
   const productLinks: FooterLink[] = [
     { label: f.links.overview, href: '#product' },
     { label: f.links.features, href: '#features' },
-    { label: f.links.pricing, href: '#pricing' },
+    { label: f.links.pricing, href: '/pricing' },
     { label: f.links.howItWorks, href: '#how-it-works' },
     { label: f.links.faq, href: '#faq' },
   ]

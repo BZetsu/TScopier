@@ -140,6 +140,21 @@ export const fr: Translations = {
       name: 'Avancé',
       description: 'Pour les traders sérieux copiant des signaux vers 1 ou plusieurs comptes avec des stratégies avancées.',
     },
+    custom: {
+      name: 'Sur mesure',
+      description:
+        'Pour les prop firms, équipes et traders à fort volume qui ont besoin de limites de comptes et d’un support dédié.',
+    },
+    contactUs: 'Contactez-nous',
+    contactSales: 'Contacter les ventes',
+    customFeatures: [
+      'Limites de comptes personnalisées',
+      'Onboarding dédié',
+      'Support prioritaire',
+      'Facturation sur mesure',
+      'Toutes les fonctions copieur Avancé',
+      'Tarifs volume et équipe',
+    ],
     billing: {
       title: 'Abonnement et facturation',
       subtitle: 'Gérez votre offre, vos moyens de paiement et l\'historique des factures.',

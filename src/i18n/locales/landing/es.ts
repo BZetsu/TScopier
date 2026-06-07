@@ -592,6 +592,124 @@ export const landingEs: LandingTranslations = {
     title: 'Elige tu plan',
     subtitle: 'Comienza a copiar señales a tus cuentas de trading hoy.',
   },
+  planComparison: {
+    eyebrow: 'Comparar planes',
+    title: 'Encuentra el plan ideal',
+    subtitle: 'Comparación lado a lado de lo que incluye cada plan.',
+    basicColumn: 'Basic',
+    advancedColumn: 'Advanced',
+    customColumn: 'Personalizado',
+    rows: [
+      {
+        feature: 'Cuentas de broker',
+        basic: '1',
+        advanced: '5 (hasta 100)',
+        custom: 'Personalizado',
+      },
+      {
+        feature: 'Backtests de señales',
+        basic: '5 / mes',
+        advanced: 'Ilimitados',
+        custom: 'Personalizado',
+      },
+      {
+        feature: 'Canales de Telegram',
+        basic: '5',
+        advanced: 'Ilimitados',
+        custom: 'Personalizado',
+      },
+      {
+        feature: 'Niveles de take profit',
+        basic: '3 TPs',
+        advanced: 'TPs/SLs ilimitados',
+        custom: 'Personalizado',
+      },
+      {
+        feature: 'Trading en rango y layering',
+        basic: 'no',
+        advanced: 'yes',
+        custom: 'yes',
+      },
+      {
+        feature: 'Breakeven y gestión automática',
+        basic: 'no',
+        advanced: 'yes',
+        custom: 'yes',
+      },
+      {
+        feature: 'Seguimiento por palabras clave',
+        basic: 'no',
+        advanced: 'yes',
+        custom: 'yes',
+      },
+      {
+        feature: 'Soporte prioritario',
+        basic: 'no',
+        advanced: 'no',
+        custom: 'yes',
+      },
+      {
+        feature: 'Onboarding dedicado',
+        basic: 'no',
+        advanced: 'no',
+        custom: 'yes',
+      },
+      {
+        feature: 'Prueba gratuita',
+        basic: 'no',
+        advanced: '10 días',
+        custom: 'Personalizado',
+      },
+      {
+        feature: 'Precio inicial',
+        basic: '9,99 $ / mes',
+        advanced: '39,99 $ / mes',
+        custom: 'Contáctanos',
+      },
+    ],
+  },
+  pricingFaq: {
+    eyebrow: 'FAQ de precios',
+    title: 'Preguntas sobre precios',
+    subtitle: 'Facturación, pruebas y cambios de plan explicados.',
+    items: [
+      {
+        question: '¿Hay prueba gratuita?',
+        answer:
+          'Advanced incluye 10 días de prueba gratuita al suscribirte. Basic se factura desde el primer día a 9,99 $/mes (o 95,90 $/año con facturación anual). Puedes explorar el panel antes de suscribirte, pero la copia en vivo requiere un plan activo.',
+      },
+      {
+        question: '¿Cuál es la diferencia entre facturación mensual y anual?',
+        answer:
+          'La facturación anual ahorra un 20 % frente a pagar mes a mes durante un año. Basic baja de 9,99 $/mes a 7,99 $/mes efectivos (95,90 $/año). Advanced baja de 39,99 $/mes a 31,99 $/mes efectivos (383,90 $/año). Las cuentas extra en Advanced también tienen descuento anual.',
+      },
+      {
+        question: '¿Cómo funcionan las cuentas extra en Advanced?',
+        answer:
+          'Advanced incluye 5 cuentas demo/en vivo. Puedes añadir hasta 95 más a 10 $/cuenta/mes (o 96 $/cuenta/año con facturación anual), hasta un máximo de 100 cuentas conectadas por usuario.',
+      },
+      {
+        question: '¿Puedo cambiar de plan más tarde?',
+        answer:
+          'Sí. Mejora o reduce tu plan en cualquier momento desde Facturación en tu panel. Los cambios se aplican según tu ciclo de facturación y Stripe gestiona la prorrateo al cambiar de plan.',
+      },
+      {
+        question: '¿Qué métodos de pago aceptáis?',
+        answer:
+          'Aceptamos las principales tarjetas de crédito y débito a través de Stripe. Las facturas e historial de pagos están disponibles en tu página de Facturación.',
+      },
+      {
+        question: '¿Cuándo debería elegir Personalizado?',
+        answer:
+          'Personalizado es para firmas prop, equipos de trading u operadores de alto volumen que necesitan límites, facturación u onboarding adaptados. Contacta con ventas y prepararemos un plan a medida.',
+      },
+      {
+        question: '¿Puedo cancelar en cualquier momento?',
+        answer:
+          'Sí. Cancela desde Facturación o el portal de cliente de Stripe. Mantienes el acceso hasta el final del periodo de facturación actual. No hay contratos a largo plazo en Basic o Advanced.',
+      },
+    ],
+  },
   pricingSnippet: {
     basic: 'Basic — 9,99 $/mes',
     advanced: 'Advanced — 10 días gratis, luego 39,99 $/mes',

@@ -592,6 +592,124 @@ export const landingFr: LandingTranslations = {
     title: 'Choisissez votre plan',
     subtitle: 'Commencez à copier des signaux vers vos comptes de trading aujourd\'hui.',
   },
+  planComparison: {
+    eyebrow: 'Comparer les plans',
+    title: 'Trouvez le bon plan',
+    subtitle: 'Comparaison côte à côte de ce que chaque plan inclut.',
+    basicColumn: 'Basic',
+    advancedColumn: 'Advanced',
+    customColumn: 'Sur mesure',
+    rows: [
+      {
+        feature: 'Comptes broker',
+        basic: '1',
+        advanced: '5 (jusqu\'à 100)',
+        custom: 'Sur mesure',
+      },
+      {
+        feature: 'Backtests de signaux',
+        basic: '5 / mois',
+        advanced: 'Illimités',
+        custom: 'Sur mesure',
+      },
+      {
+        feature: 'Canaux Telegram',
+        basic: '5',
+        advanced: 'Illimités',
+        custom: 'Sur mesure',
+      },
+      {
+        feature: 'Niveaux de take profit',
+        basic: '3 TPs',
+        advanced: 'TPs/SLs illimités',
+        custom: 'Sur mesure',
+      },
+      {
+        feature: 'Trading range et layering',
+        basic: 'no',
+        advanced: 'yes',
+        custom: 'yes',
+      },
+      {
+        feature: 'Breakeven et gestion auto',
+        basic: 'no',
+        advanced: 'yes',
+        custom: 'yes',
+      },
+      {
+        feature: 'Suivi par mots-clés',
+        basic: 'no',
+        advanced: 'yes',
+        custom: 'yes',
+      },
+      {
+        feature: 'Support prioritaire',
+        basic: 'no',
+        advanced: 'no',
+        custom: 'yes',
+      },
+      {
+        feature: 'Onboarding dédié',
+        basic: 'no',
+        advanced: 'no',
+        custom: 'yes',
+      },
+      {
+        feature: 'Essai gratuit',
+        basic: 'no',
+        advanced: '10 jours',
+        custom: 'Sur mesure',
+      },
+      {
+        feature: 'Prix de départ',
+        basic: '9,99 $ / mois',
+        advanced: '39,99 $ / mois',
+        custom: 'Contactez-nous',
+      },
+    ],
+  },
+  pricingFaq: {
+    eyebrow: 'FAQ tarifs',
+    title: 'Questions sur les tarifs',
+    subtitle: 'Facturation, essais et changements de plan expliqués.',
+    items: [
+      {
+        question: 'Y a-t-il un essai gratuit ?',
+        answer:
+          'Advanced inclut un essai gratuit de 10 jours à l\'abonnement. Basic est facturé dès le premier jour à 9,99 $/mois (ou 95,90 $/an en facturation annuelle). Vous pouvez explorer le tableau de bord avant de vous abonner, mais la copie live nécessite un plan actif.',
+      },
+      {
+        question: 'Quelle est la différence entre facturation mensuelle et annuelle ?',
+        answer:
+          'La facturation annuelle économise 20 % par rapport au paiement mensuel sur une année. Basic passe de 9,99 $/mois à 7,99 $/mois effectif (95,90 $/an). Advanced passe de 39,99 $/mois à 31,99 $/mois effectif (383,90 $/an). Les comptes supplémentaires sur Advanced sont aussi remisés en annuel.',
+      },
+      {
+        question: 'Comment fonctionnent les comptes supplémentaires sur Advanced ?',
+        answer:
+          'Advanced inclut 5 comptes demo/live. Vous pouvez en ajouter jusqu\'à 95 de plus à 10 $/compte/mois (ou 96 $/compte/an en annuel), pour un maximum de 100 comptes connectés par utilisateur.',
+      },
+      {
+        question: 'Puis-je changer de plan plus tard ?',
+        answer:
+          'Oui. Passez à un plan supérieur ou inférieur à tout moment depuis Facturation dans votre tableau de bord. Les changements s\'appliquent selon votre cycle de facturation et Stripe gère le prorata entre les plans.',
+      },
+      {
+        question: 'Quels moyens de paiement acceptez-vous ?',
+        answer:
+          'Nous acceptons les principales cartes de crédit et débit via Stripe. Factures et historique de paiement sont disponibles sur votre page Facturation.',
+      },
+      {
+        question: 'Quand choisir Sur mesure ?',
+        answer:
+          'Sur mesure est pour les prop firms, équipes de trading ou opérateurs à fort volume qui ont besoin de limites, facturation ou onboarding adaptés. Contactez les ventes et nous établirons un plan sur mesure.',
+      },
+      {
+        question: 'Puis-je annuler à tout moment ?',
+        answer:
+          'Oui. Annulez depuis Facturation ou le portail client Stripe. Vous conservez l\'accès jusqu\'à la fin de votre période de facturation en cours. Pas de contrat long terme sur Basic ou Advanced.',
+      },
+    ],
+  },
   pricingSnippet: {
     basic: 'Basic — 9,99 $/mois',
     advanced: 'Advanced — 10 jours gratuits, puis 39,99 $/mois',
