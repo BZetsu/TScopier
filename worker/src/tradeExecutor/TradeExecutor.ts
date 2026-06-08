@@ -435,8 +435,7 @@ export class TradeExecutor {
     return await brokerSymbolCache.reconnectCachedBrokers(this)
   }
 
-  private upsertBrokerCache(row: BrokerRow) {
-    if (!userBelongsToShard(row.user_id)) return
+  private applyBrokerCacheRow(row: BrokerRow) {
     const normalized = this.normalizeBrokerRow(row)
     const previous = this.brokersById.get(row.id)
     this.brokersById.set(row.id, normalized)
@@ -452,6 +451,28 @@ export class TradeExecutor {
       const prev = (this.brokersByUser.get(previous.user_id) ?? []).filter(b => b.id !== row.id)
       this.brokersByUser.set(previous.user_id, prev)
     }
+  }
+
+  private async mergeBrokerRowWithTableConfigs(row: BrokerRow): Promise<BrokerRow> {
+    const tableRows = await fetchBrokerChannelTradingConfigRows(this.supabase, [row.id])
+    if (!tableRows.length) return row
+    return {
+      ...row,
+      channel_trading_configs: mergeChannelTradingConfigsFromTable(
+        row.channel_trading_configs,
+        tableRows,
+      ),
+    }
+  }
+
+  private upsertBrokerCache(row: BrokerRow) {
+    if (!userBelongsToShard(row.user_id)) return
+    void this.mergeBrokerRowWithTableConfigs(row)
+      .then(merged => this.applyBrokerCacheRow(merged))
+      .catch(err => {
+        console.error('[tradeExecutor] upsertBrokerCache table config merge failed:', err)
+        this.applyBrokerCacheRow(row)
+      })
   }
 
   private removeBrokerCache(id: string) {
