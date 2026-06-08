@@ -111,8 +111,7 @@ async function prepareEntryExecution(ctx, args) {
     const requestedSymbol = mapping.symbol;
     const isManual = (broker.copier_mode ?? 'ai') === 'manual';
     const manual = (broker.manual_settings ?? {});
-    const needsQuotePrefetch = !liveEntryFast
-        && isManual
+    const needsQuotePrefetch = isManual
         && (0, manualPlanner_1.signalEntryPriceStrictEnabled)(manual)
         && (0, manualPlanner_1.parsedHasExplicitEntryAnchor)(parsed);
     const stampOnResolve = liveEntryFast && !!signal.pipeline_ts;
@@ -393,16 +392,20 @@ async function prepareEntryExecution(ctx, args) {
     // Buy: immediate market only when ask ≤ entry; else one virtual pending at entry.
     // Sell: immediate only when bid ≥ entry; else virtual at entry. Quote failure → defer.
     let strictDeferred = false;
-    if (isManual && plan.strictEntry && api && !liveEntryFast) {
+    if (isManual && plan.strictEntry && api) {
         const se = plan.strictEntry;
+        const pipTol = Math.max(0, Number(manual.signal_entry_pip_tolerance ?? 0));
+        const pipSize = plan.pip ?? params?.point ?? 0.00001;
         try {
-            const q = await api.quote(uuid, symbol);
+            const q = strictEntryPrefetch ?? await api.quote(uuid, symbol);
             strictEntryPrefetch = q;
             strictDeferred = !(0, manualPlanner_1.strictSignalEntryQuoteAllowsImmediate)({
                 isBuy: se.isBuy,
                 entryPrice: se.entryPrice,
                 bid: q.bid,
                 ask: q.ask,
+                tolerancePips: pipTol,
+                pipSize,
             });
             if (strictDeferred) {
                 console.log(`[tradeExecutor] strict entry deferred signal=${signal.id} broker=${broker.id} symbol=${symbol}`
@@ -416,6 +419,13 @@ async function prepareEntryExecution(ctx, args) {
         }
     }
     const effectiveCapped = strictDeferred ? [] : capped;
+    if (!strictDeferred && plan.strictEntry) {
+        for (const o of effectiveCapped) {
+            if (o.operation === 'Buy' || o.operation === 'Sell') {
+                o.price = 0;
+            }
+        }
+    }
     // Build immediate legs with rounded volumes. Immediates already carry the
     // planner's intended entry price (signal entry or zero for true market orders).
     //

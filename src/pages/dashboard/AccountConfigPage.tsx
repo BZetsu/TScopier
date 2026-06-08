@@ -832,6 +832,17 @@ export function AccountConfigPage() {
     [channelOptions, configDraft.selectedChannelId],
   )
 
+  const configureAccountType = useMemo((): LinkedAccountType | undefined => {
+    if (!configAccount) return undefined
+    return (
+      brokerAccountTypes[configAccount.id]
+      ?? resolveLinkedAccountType(
+        undefined,
+        resolveMtServerCandidate(configAccount, configAccount.broker_server),
+      )
+    )
+  }, [configAccount, brokerAccountTypes])
+
   const keywordFiltersEnabled = canUsePlanFeature('channel_keyword_filters')
   const multiTradeStyleEnabled = canUsePlanFeature('multi_trade_style')
 
@@ -2167,9 +2178,34 @@ export function AccountConfigPage() {
                 <h3 id="configure-trading-title" className="text-base sm:text-lg font-semibold text-neutral-900 dark:text-neutral-50 truncate">
                   {cm.title}
                 </h3>
-                <p className="text-xs sm:text-sm text-neutral-500 dark:text-neutral-400 mt-0.5 truncate">
-                  {configAccount.label} · {configAccount.platform}
-                  {selectedChannelOption ? ` · ${selectedChannelOption.display_name}` : ''}
+                <p className="text-xs sm:text-sm text-neutral-500 dark:text-neutral-400 mt-0.5 flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
+                  <span className="font-medium text-neutral-700 dark:text-neutral-300">
+                    {configAccount.label}
+                  </span>
+                  <span className="text-neutral-300 dark:text-neutral-600" aria-hidden>·</span>
+                  <span>
+                    {bl.detailLogin}: {configAccount.account_login || '—'}
+                  </span>
+                  <span className="text-neutral-300 dark:text-neutral-600" aria-hidden>·</span>
+                  <span>
+                    {bl.detailAccountType}:{' '}
+                    <span className={accountTypeValueClass(configureAccountType)}>
+                      {formatLinkedAccountTypeLabel(configureAccountType, {
+                        demo: bl.accountTypeDemo,
+                        live: bl.accountTypeLive,
+                      })}
+                    </span>
+                  </span>
+                  <span className="text-neutral-300 dark:text-neutral-600" aria-hidden>·</span>
+                  <span>
+                    {bl.detailBalance}: {formatBrokerMoney(configAccount.last_balance, configAccount.last_currency)}
+                  </span>
+                  {selectedChannelOption ? (
+                    <>
+                      <span className="text-neutral-300 dark:text-neutral-600" aria-hidden>·</span>
+                      <span className="truncate">{selectedChannelOption.display_name}</span>
+                    </>
+                  ) : null}
                 </p>
               </div>
               <button

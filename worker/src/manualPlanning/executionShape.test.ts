@@ -33,7 +33,7 @@ test('resolveOpExecAndStrict: strict + explicit entry → market Buy/Sell', () =
     hasExplicitEntry: true,
   })
   assert.equal(r.opExec, 'Buy')
-  assert.ok(r.orderPrice > 0)
+  assert.equal(r.orderPrice, 0)
   assert.ok(r.strictEntry)
   assert.equal(r.strictEntry?.entryPrice, 1.1)
 })

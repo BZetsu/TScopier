@@ -418,6 +418,32 @@ test('strictSignalEntryQuoteAllowsImmediate: sell false when bid below entry', (
   assert.equal(strictSignalEntryQuoteAllowsImmediate({ isBuy: false, entryPrice: 4500, bid: 4499.99, ask: 4501 }), false)
 })
 
+test('strictSignalEntryQuoteAllowsImmediate: pip tolerance widens immediate window', () => {
+  const pip = 0.1
+  assert.equal(
+    strictSignalEntryQuoteAllowsImmediate({
+      isBuy: true,
+      entryPrice: 4500,
+      bid: 4499,
+      ask: 4500.5,
+      tolerancePips: 10,
+      pipSize: pip,
+    }),
+    true,
+  )
+  assert.equal(
+    strictSignalEntryQuoteAllowsImmediate({
+      isBuy: false,
+      entryPrice: 4500,
+      bid: 4499.5,
+      ask: 4501,
+      tolerancePips: 10,
+      pipSize: pip,
+    }),
+    true,
+  )
+})
+
 test('planManualOrders: use_signal_entry_price emits strictEntry + always Buy (executor gates quote)', () => {
   const plan = planManualOrders({
     parsed: { ...baseParsed, entry_price: 4500 },
@@ -437,6 +463,7 @@ test('planManualOrders: use_signal_entry_price emits strictEntry + always Buy (e
   })
   assert.equal(plan.orders.length, 1)
   assert.equal(plan.orders[0]!.operation, 'Buy')
+  assert.equal(plan.orders[0]!.price, 0)
   assert.ok(plan.strictEntry)
   assert.equal(plan.strictEntry!.entryPrice, 4500)
   assert.equal(plan.strictEntry!.isBuy, true)
