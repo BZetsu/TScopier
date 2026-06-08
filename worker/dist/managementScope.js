@@ -9,6 +9,7 @@ exports.mgmtHasPriceLevels = mgmtHasPriceLevels;
 exports.filterTradesBySymbolFilter = filterTradesBySymbolFilter;
 exports.filterTradesByPlausibleMgmtLevels = filterTradesByPlausibleMgmtLevels;
 exports.resolveNewestOpenSymbolTrades = resolveNewestOpenSymbolTrades;
+exports.isMgmtEligibleTradeStatus = isMgmtEligibleTradeStatus;
 exports.loadOpenTradesForManagement = loadOpenTradesForManagement;
 exports.resolveChannelModifyTargets = resolveChannelModifyTargets;
 const basketModFollowUp_1 = require("./basketModFollowUp");
@@ -133,6 +134,12 @@ function resolveNewestOpenSymbolTrades(trades) {
     const anchorSym = newest.symbol;
     return trades.filter(t => (0, basketModFollowUp_1.symbolsCompatibleForBasket)(anchorSym, t.symbol));
 }
+const MGMT_TRADE_SELECT = 'id,signal_id,broker_account_id,metaapi_order_id,symbol,direction,lot_size,status,sl,tp,entry_price,opened_at,cwe_close_price';
+/** Active legs eligible for management (open + broker-pending strict entries). */
+function isMgmtEligibleTradeStatus(status) {
+    const s = String(status ?? '').toLowerCase();
+    return s === 'open' || s === 'pending';
+}
 async function loadOpenTradesForManagement(supabase, args) {
     const { userId, channelId, brokerAccountIds } = args;
     if (!channelId || !brokerAccountIds.length)
@@ -146,26 +153,54 @@ async function loadOpenTradesForManagement(supabase, args) {
     const signalIds = (channelSignals ?? []).map((r) => r.id);
     const { data: byChannelCol } = await supabase
         .from('trades')
-        .select('id,signal_id,broker_account_id,metaapi_order_id,symbol,direction,lot_size,status,sl,tp,entry_price,opened_at,cwe_close_price')
+        .select(MGMT_TRADE_SELECT)
         .eq('user_id', userId)
         .in('broker_account_id', brokerAccountIds)
-        .eq('status', 'open')
+        .in('status', ['open', 'pending'])
         .eq('telegram_channel_id', channelId)
         .order('opened_at', { ascending: true })
         .limit(500);
     const { data: bySignalId } = signalIds.length
         ? await supabase
             .from('trades')
-            .select('id,signal_id,broker_account_id,metaapi_order_id,symbol,direction,lot_size,status,sl,tp,entry_price,opened_at,cwe_close_price')
+            .select(MGMT_TRADE_SELECT)
             .eq('user_id', userId)
             .in('broker_account_id', brokerAccountIds)
-            .eq('status', 'open')
+            .in('status', ['open', 'pending'])
             .in('signal_id', signalIds)
             .order('opened_at', { ascending: true })
             .limit(500)
         : { data: [] };
+    const { data: attribRows } = await supabase
+        .from('trade_channel_attributions')
+        .select('trade_id')
+        .eq('user_id', userId)
+        .eq('channel_id', channelId)
+        .in('broker_account_id', brokerAccountIds)
+        .limit(500);
+    const attribTradeIds = (attribRows ?? []).map((r) => r.trade_id).filter(Boolean);
+    const { data: byAttribution } = attribTradeIds.length
+        ? await supabase
+            .from('trades')
+            .select(MGMT_TRADE_SELECT)
+            .eq('user_id', userId)
+            .in('broker_account_id', brokerAccountIds)
+            .in('status', ['open', 'pending'])
+            .in('id', attribTradeIds)
+            .order('opened_at', { ascending: true })
+            .limit(500)
+        : { data: [] };
     const merged = new Map();
-    for (const row of [...(byChannelCol ?? []), ...(bySignalId ?? [])]) {
+    for (const row of [
+        ...(byChannelCol ?? []),
+        ...(bySignalId ?? []),
+        ...(byAttribution ?? []),
+    ]) {
+        if (row.status === 'pending') {
+            const ticket = Number(row.metaapi_order_id);
+            if (!Number.isFinite(ticket) || ticket <= 0)
+                continue;
+        }
         merged.set(row.id, row);
     }
     let rows = [...merged.values()];

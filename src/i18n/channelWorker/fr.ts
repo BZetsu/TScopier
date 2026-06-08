@@ -129,6 +129,9 @@ export const channelWorkerFr: ChannelWorkerTranslations = {
   skipReasons: {
     no_matching_open_trade: 'aucune position ouverte correspondante',
     mgmt_no_open_trades: 'aucune position ouverte correspondante',
+    mgmt_no_open_trades_db: 'aucune position correspondante dans la base du copier',
+    mgmt_no_open_trades_broker: 'aucune position ouverte sur le courtier pour ce canal',
+    mgmt_no_open_trades_symbol: 'le symbole du message de clôture ne correspond à aucune jambe ouverte',
     mgmt_ambiguous_modify: 'aucune position ouverte correspondante',
     not_placed: 'non placé',
     symbol_exempted_from_trading: 'symbole exempté du trading',
@@ -159,4 +162,5 @@ export const channelWorkerFr: ChannelWorkerTranslations = {
   errorBridgeGlitch:
     'Panne temporaire du serveur de trading — les entrées échelonnées seront réessayées automatiquement. Utilisez Reconnect si cela continue.',
   errorStopsAlreadySet: 'Le SL et le TP étaient déjà définis sur le courtier (aucun changement requis).',
+  errorSignalLinkFailed: 'Impossible de lier ce trade à son signal.',
 }

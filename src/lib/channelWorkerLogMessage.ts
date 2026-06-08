@@ -174,6 +174,9 @@ function signalActionFromLog(row: ChannelWorkerLogRow): string {
 }
 
 function translateBrokerError(message: string, cw: ChannelWorkerTranslations): string {
+  if (/uuid\s*~~\*|operator does not exist.*uuid/i.test(message)) {
+    return cw.errorSignalLinkFailed ?? 'Could not link this trade to its signal.'
+  }
   const ticket = message.match(/Ticket\s+(\d+)\s+not found/i)
   if (ticket) return interpolate(cw.errorTicketNotFound, { ticket: ticket[1] })
   const sym = message.match(/symbol not found:\s*([A-Z0-9._#+]+)/i)
@@ -323,6 +326,21 @@ function skipReasonForSignal(row: ChannelWorkerLogRow, cw: ChannelWorkerTranslat
   return raw ? translateSkipReason(raw, cw) : cw.notPlaced
 }
 
+function isMgmtNoOpenSkipReason(row: ChannelWorkerLogRow): boolean {
+  const skip = String(row.signals?.skip_reason ?? row.request_payload?.skip_reason ?? '').toLowerCase()
+  return skip === 'mgmt_no_open_trades'
+    || skip.startsWith('mgmt_no_open_trades_')
+    || skip === 'mgmt_ambiguous_modify'
+}
+
+function isMgmtPipelineNoiseLogAction(logAction: string): boolean {
+  return logAction === 'pipeline_parse_dispatch'
+    || logAction === 'keyword_parse'
+    || logAction === 'handle_start'
+    || logAction === 'handle_end'
+    || logAction === 'dispatch_received'
+}
+
 /** Remap success-style execution logs when the linked signal was ultimately skipped. */
 function applySkippedSignalOverride(
   row: ChannelWorkerLogRow,
@@ -333,14 +351,12 @@ function applySkippedSignalOverride(
   if (!signalWasSkipped(row) || row.status.toLowerCase() !== 'success') return message
 
   const logAction = row.action.toLowerCase()
+  if (isMgmtNoOpenSkipReason(row) && isMgmtPipelineNoiseLogAction(logAction)) {
+    return message
+  }
+
   if (logAction === 'dispatch_skipped') return message
-  if (
-    logAction === 'pipeline_parse_dispatch'
-    || logAction === 'keyword_parse'
-    || logAction === 'handle_start'
-    || logAction === 'handle_end'
-    || logAction === 'dispatch_received'
-  ) {
+  if (isMgmtPipelineNoiseLogAction(logAction)) {
     return message
   }
 
@@ -378,7 +394,10 @@ function applySkippedSignalOverride(
     })
   }
 
-  if (signalAction === 'buy' || signalAction === 'sell' || signalAction === 'close') {
+  if (
+    (signalAction === 'buy' || signalAction === 'sell' || signalAction === 'close')
+    && !isMgmtNoOpenSkipReason(row)
+  ) {
     return interpolate(cw.dispatchSkipped, { reason })
   }
 
@@ -427,6 +446,16 @@ export function channelWorkerLogMessage(
   const logAction = row.action.toLowerCase()
   const signalAction = signalActionFromLog(row)
   if (signalAction === 'ignore') return null
+
+  if (
+    signalWasSkipped(row)
+    && isMgmtNoOpenSkipReason(row)
+    && isMgmtPipelineNoiseLogAction(logAction)
+    && row.status.toLowerCase() === 'success'
+  ) {
+    return null
+  }
+
   const signalStatus = String(row.signals?.status ?? '').toLowerCase()
   const logStatus = row.status.toLowerCase()
   // Show skipped/failed management and SL/TP updates; only suppress in-flight rows for
@@ -456,6 +485,18 @@ function buildChannelWorkerLogMessage(row: ChannelWorkerLogRow, cw: ChannelWorke
   const parsed = getSignalParsedFromLog(row)
   const forInstr = forInstrument(instr, cw)
   const err = errSuffix(row, cw)
+
+  if (logAction === 'mgmt_skip') {
+    const reason = translateSkipReason(
+      String(payload.skip_reason ?? row.error_message ?? cw.noMatchingOpenTrade),
+      cw,
+    )
+    const mgmt = signalAction === 'close' ? 'close' : signalAction || 'modify'
+    return interpolate(cw.mgmtSkippedReason, {
+      phrase: mgmtSkippedPhrase(mgmt, instr, cw),
+      reason,
+    })
+  }
 
   if (logAction === 'dispatch_skipped') {
     const reason = translateSkipReason(

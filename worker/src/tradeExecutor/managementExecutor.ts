@@ -107,6 +107,7 @@ import {
   resolveChannelModifyTargets,
   type MgmtTradeRow,
 } from '../managementScope'
+import { tryBrokerFallbackClose } from '../managementBrokerClose'
 import {
   applyChannelParamsToVirtualPendingList,
   estimateBasketTotalPlannedLegs,
@@ -228,6 +229,25 @@ export async function skipMgmtSignal(ctx: TradeExecutorContext, signalId: string
     } catch { /* best-effort */ }
   }
 
+async function skipMgmtSignalWithLog(
+  ctx: TradeExecutorContext,
+  signal: SignalRow,
+  reason: string,
+  extra?: Record<string, unknown>,
+): Promise<void> {
+  await skipMgmtSignal(ctx, signal.id, reason)
+  try {
+    await ctx.supabase.from('trade_execution_logs').insert({
+      user_id: signal.user_id,
+      signal_id: signal.id,
+      broker_account_id: null,
+      action: 'mgmt_skip',
+      status: 'skipped',
+      request_payload: { skip_reason: reason, ...extra } as unknown as Record<string, unknown>,
+    })
+  } catch { /* best-effort */ }
+}
+
 export async function applyManagement(ctx: TradeExecutorContext, signal: SignalRow, parsed: ParsedSignal, brokers: BrokerRow[]): Promise<void> {
     if (!hasMetatraderApiConfigured()) return
 
@@ -258,7 +278,7 @@ export async function applyManagement(ctx: TradeExecutorContext, signal: SignalR
         .select('id', { count: 'exact', head: true })
         .eq('signal_id', signal.parent_signal_id)
         .in('broker_account_id', brokerAccountIds)
-        .eq('status', 'open')
+        .in('status', ['open', 'pending'])
       if ((parentOpenCount ?? 0) === 0) {
         const mgmtAction = String(parsed.action ?? '').toLowerCase()
         const mgmtDir = mgmtAction === 'buy' || mgmtAction === 'sell'
@@ -287,7 +307,7 @@ export async function applyManagement(ctx: TradeExecutorContext, signal: SignalR
         }
       }
       if (!basketAnchorId) {
-        await ctx.skipMgmtSignal(signal.id, 'mgmt_no_open_trades')
+        await skipMgmtSignalWithLog(ctx, signal, 'mgmt_no_open_trades_db', { scope: 'reply_basket' })
         return
       }
 
@@ -297,13 +317,13 @@ export async function applyManagement(ctx: TradeExecutorContext, signal: SignalR
           'id,signal_id,broker_account_id,metaapi_order_id,symbol,direction,lot_size,status,sl,tp,entry_price,opened_at,cwe_close_price',
         )
         .eq('signal_id', basketAnchorId)
-        .eq('status', 'open')
+        .in('status', ['open', 'pending'])
         .order('opened_at', { ascending: true })
         .limit(500)
       rows = (data ?? []) as MgmtTradeRow[]
     } else {
       if (!signal.channel_id) {
-        await ctx.skipMgmtSignal(signal.id, 'mgmt_no_open_trades')
+        await skipMgmtSignalWithLog(ctx, signal, 'mgmt_no_open_trades_db', { scope: 'no_channel' })
         return
       }
       const actionPre = String(parsed.action ?? '').toLowerCase()
@@ -369,7 +389,7 @@ export async function applyManagement(ctx: TradeExecutorContext, signal: SignalR
 
     if (action === 'close_worse_entries') {
       if (!rows.length) {
-        await ctx.skipMgmtSignal(signal.id, 'mgmt_no_open_trades')
+        await skipMgmtSignalWithLog(ctx, signal, 'mgmt_no_open_trades_db', { action: 'close_worse_entries' })
         return
       }
       const eligibleBrokers = brokers.filter(
@@ -398,10 +418,62 @@ export async function applyManagement(ctx: TradeExecutorContext, signal: SignalR
     }
 
     if (!rows.length && !pendingLegs.length) {
-      const skipReason = action === 'modify' && !symbolFromText && !replyScoped
+      if (action === 'close' && signal.channel_id) {
+        const channelMeta = await ctx.getChannelMeta(signal.channel_id)
+        let brokerClosed = 0
+        await Promise.allSettled(brokers.map(async broker => {
+          const api = ctx.apiFor(broker)
+          const uuid = broker.metaapi_account_id
+          if (!api || !uuid || uuid.includes('|')) return
+          const one = await tryBrokerFallbackClose({
+            supabase: ctx.supabase,
+            api,
+            signal,
+            parsed,
+            brokers: [broker],
+            channelDisplayName: channelMeta.commentSlug,
+            channelUsername: null,
+            closeWithVerification: (a, u, ticket) =>
+              closeWithVerification(a, u, ticket, { maxAttempts: 2, slippageEscalation: 50 }),
+          })
+          brokerClosed += one.closed
+        }))
+        if (brokerClosed > 0) {
+          try {
+            await ctx.supabase
+              .from('signals')
+              .update({ status: 'executed' })
+              .eq('id', signal.id)
+              .eq('status', 'parsed')
+          } catch { /* best-effort */ }
+          return
+        }
+      }
+
+      let skipReason = action === 'modify' && !symbolFromText && !replyScoped
         ? 'mgmt_ambiguous_modify'
-        : 'mgmt_no_open_trades'
-      await ctx.skipMgmtSignal(signal.id, skipReason)
+        : 'mgmt_no_open_trades_broker'
+      if (
+        action === 'close'
+        && symbolFromText
+        && signal.channel_id
+      ) {
+        const unfiltered = await loadOpenTradesForManagement(ctx.supabase, {
+          userId: signal.user_id,
+          channelId: signal.channel_id,
+          brokerAccountIds,
+          symbolFilter: null,
+        })
+        if (unfiltered.length > 0) skipReason = 'mgmt_no_open_trades_symbol'
+        else skipReason = 'mgmt_no_open_trades_broker'
+      } else if (action !== 'modify' || symbolFromText || replyScoped) {
+        skipReason = 'mgmt_no_open_trades_db'
+      }
+      await skipMgmtSignalWithLog(ctx, signal, skipReason, {
+        action,
+        symbol_filter: symbolFromText,
+        reply_scoped: replyScoped,
+      })
       return
     }
 

@@ -129,6 +129,9 @@ export const channelWorkerEn: ChannelWorkerTranslations = {
   skipReasons: {
     no_matching_open_trade: 'no matching open trade',
     mgmt_no_open_trades: 'no matching open trade',
+    mgmt_no_open_trades_db: 'no matching open trade in the copier database',
+    mgmt_no_open_trades_broker: 'no open position on the broker for this channel',
+    mgmt_no_open_trades_symbol: 'symbol on the close message did not match any open leg',
     mgmt_ambiguous_modify: 'no matching open trade',
     not_placed: 'not placed',
     symbol_exempted_from_trading: 'symbol exempted from trading',
@@ -158,4 +161,5 @@ export const channelWorkerEn: ChannelWorkerTranslations = {
   errorBridgeGlitch:
     'Temporary broker trade-server glitch — layered entries will retry automatically. Use Reconnect if this keeps happening.',
   errorStopsAlreadySet: 'Stop loss and take profit were already set on the broker (no change needed).',
+  errorSignalLinkFailed: 'Could not link this trade to its signal.',
 }

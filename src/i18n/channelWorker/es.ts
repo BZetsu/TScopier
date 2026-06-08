@@ -129,6 +129,9 @@ export const channelWorkerEs: ChannelWorkerTranslations = {
   skipReasons: {
     no_matching_open_trade: 'sin operación abierta coincidente',
     mgmt_no_open_trades: 'sin operación abierta coincidente',
+    mgmt_no_open_trades_db: 'sin operación abierta coincidente en la base del copier',
+    mgmt_no_open_trades_broker: 'sin posición abierta en el broker para este canal',
+    mgmt_no_open_trades_symbol: 'el símbolo del cierre no coincidió con ninguna pierna abierta',
     mgmt_ambiguous_modify: 'sin operación abierta coincidente',
     not_placed: 'no colocada',
     symbol_exempted_from_trading: 'símbolo exento de trading',
@@ -159,4 +162,5 @@ export const channelWorkerEs: ChannelWorkerTranslations = {
   errorBridgeGlitch:
     'Fallo temporal del servidor de trading — las entradas escalonadas se reintentarán solas. Use Reconnect si persiste.',
   errorStopsAlreadySet: 'El SL y el TP ya estaban configurados en el broker (no se requirió cambio).',
+  errorSignalLinkFailed: 'No se pudo vincular esta operación con su señal.',
 }

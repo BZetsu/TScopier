@@ -168,6 +168,15 @@ export function resolveNewestOpenSymbolTrades(trades: MgmtTradeRow[]): MgmtTrade
   return trades.filter(t => symbolsCompatibleForBasket(anchorSym, t.symbol))
 }
 
+const MGMT_TRADE_SELECT =
+  'id,signal_id,broker_account_id,metaapi_order_id,symbol,direction,lot_size,status,sl,tp,entry_price,opened_at,cwe_close_price'
+
+/** Active legs eligible for management (open + broker-pending strict entries). */
+export function isMgmtEligibleTradeStatus(status: string): boolean {
+  const s = String(status ?? '').toLowerCase()
+  return s === 'open' || s === 'pending'
+}
+
 export async function loadOpenTradesForManagement(
   supabase: SupabaseClient,
   args: {
@@ -191,12 +200,10 @@ export async function loadOpenTradesForManagement(
 
   const { data: byChannelCol } = await supabase
     .from('trades')
-    .select(
-      'id,signal_id,broker_account_id,metaapi_order_id,symbol,direction,lot_size,status,sl,tp,entry_price,opened_at,cwe_close_price',
-    )
+    .select(MGMT_TRADE_SELECT)
     .eq('user_id', userId)
     .in('broker_account_id', brokerAccountIds)
-    .eq('status', 'open')
+    .in('status', ['open', 'pending'])
     .eq('telegram_channel_id', channelId)
     .order('opened_at', { ascending: true })
     .limit(500)
@@ -204,19 +211,46 @@ export async function loadOpenTradesForManagement(
   const { data: bySignalId } = signalIds.length
     ? await supabase
       .from('trades')
-      .select(
-        'id,signal_id,broker_account_id,metaapi_order_id,symbol,direction,lot_size,status,sl,tp,entry_price,opened_at,cwe_close_price',
-      )
+      .select(MGMT_TRADE_SELECT)
       .eq('user_id', userId)
       .in('broker_account_id', brokerAccountIds)
-      .eq('status', 'open')
+      .in('status', ['open', 'pending'])
       .in('signal_id', signalIds)
       .order('opened_at', { ascending: true })
       .limit(500)
     : { data: [] as MgmtTradeRow[] }
 
+  const { data: attribRows } = await supabase
+    .from('trade_channel_attributions')
+    .select('trade_id')
+    .eq('user_id', userId)
+    .eq('channel_id', channelId)
+    .in('broker_account_id', brokerAccountIds)
+    .limit(500)
+
+  const attribTradeIds = (attribRows ?? []).map((r: { trade_id: string }) => r.trade_id).filter(Boolean)
+  const { data: byAttribution } = attribTradeIds.length
+    ? await supabase
+      .from('trades')
+      .select(MGMT_TRADE_SELECT)
+      .eq('user_id', userId)
+      .in('broker_account_id', brokerAccountIds)
+      .in('status', ['open', 'pending'])
+      .in('id', attribTradeIds)
+      .order('opened_at', { ascending: true })
+      .limit(500)
+    : { data: [] as MgmtTradeRow[] }
+
   const merged = new Map<string, MgmtTradeRow>()
-  for (const row of [...(byChannelCol ?? []), ...(bySignalId ?? [])] as MgmtTradeRow[]) {
+  for (const row of [
+    ...(byChannelCol ?? []),
+    ...(bySignalId ?? []),
+    ...(byAttribution ?? []),
+  ] as MgmtTradeRow[]) {
+    if (row.status === 'pending') {
+      const ticket = Number(row.metaapi_order_id)
+      if (!Number.isFinite(ticket) || ticket <= 0) continue
+    }
     merged.set(row.id, row)
   }
 

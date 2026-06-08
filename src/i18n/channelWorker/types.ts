@@ -132,4 +132,5 @@ export interface ChannelWorkerTranslations {
   errorBrokerNotConnected: string
   errorBridgeGlitch: string
   errorStopsAlreadySet: string
+  errorSignalLinkFailed: string
 }

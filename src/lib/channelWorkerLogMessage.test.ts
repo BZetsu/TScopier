@@ -159,6 +159,50 @@ test('channelWorkerLogMessage: pipeline_summary does not show false Completed se
   assert.equal(message, null)
 })
 
+test('channelWorkerLogMessage: hides pipeline success when mgmt close found no open trades', () => {
+  const message = channelWorkerLogMessage(
+    {
+      action: 'pipeline_parse_dispatch',
+      status: 'success',
+      request_payload: { symbol: 'XAUUSD' },
+      response_payload: null,
+      error_message: null,
+      signals: {
+        channel_id: 'ch-1',
+        parsed_data: { action: 'close', symbol: 'XAUUSD' },
+        status: 'skipped',
+        skip_reason: 'mgmt_no_open_trades_broker',
+      },
+    },
+    channelWorkerEn,
+    { 'ch-1': 'SIGNALS PRO' },
+  )
+  assert.equal(message, null)
+})
+
+test('channelWorkerLogMessage: mgmt_skip shows single close skipped line', () => {
+  const message = channelWorkerLogMessage(
+    {
+      action: 'mgmt_skip',
+      status: 'skipped',
+      request_payload: { skip_reason: 'mgmt_no_open_trades_broker' },
+      response_payload: null,
+      error_message: null,
+      signals: {
+        channel_id: 'ch-1',
+        parsed_data: { action: 'close', symbol: 'XAUUSD' },
+        status: 'skipped',
+        skip_reason: 'mgmt_no_open_trades_broker',
+      },
+    },
+    channelWorkerEn,
+    { 'ch-1': 'SIGNALS PRO' },
+  )
+  assert.ok(message)
+  assert.match(message!, /Did not close/i)
+  assert.match(message!, /no open position on the broker/i)
+})
+
 test('channelWorkerLogMessage: still hides non-trade commentary', () => {
   const message = channelWorkerLogMessage(
     {
