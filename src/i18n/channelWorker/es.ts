@@ -123,11 +123,13 @@ export const channelWorkerEs: ChannelWorkerTranslations = {
   mgmtCloseSkippedNamed: 'No se cerró {symbol}',
   mgmtCloseSkippedGeneric: 'No se cerró tu operación abierta',
   mgmtSkippedNamed: 'Actualización de {symbol} omitida',
-  mgmtSkippedGeneric: 'Actualización de tu operación omitida',
+  mgmtSkippedGeneric: 'Omitido!',
   mgmtSkippedReason: '{phrase} ({reason}).',
 
   skipReasons: {
     no_matching_open_trade: 'sin operación abierta coincidente',
+    mgmt_no_open_trades: 'sin operación abierta coincidente',
+    mgmt_ambiguous_modify: 'sin operación abierta coincidente',
     not_placed: 'no colocada',
     symbol_exempted_from_trading: 'símbolo exento de trading',
     symbol_not_in_whitelist: 'símbolo no en lista blanca',
