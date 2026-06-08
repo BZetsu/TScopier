@@ -85,6 +85,10 @@ export type ApplyPostFillFollowUpArgs = {
   params: PlannerContext | null
   filledLegs: PostFillTradeLeg[]
   hooks: PostFillExecutorHooks
+  /** Broker TP from single-mode planner (deepest target when partial schedule exists). */
+  plannedBrokerTp?: number | null
+  /** When true, do not overwrite broker TP with a shallower parsed/channel target. */
+  hasPartialTpSchedule?: boolean
 }
 
 function newsBlackoutPreFillEnabled(): boolean {
@@ -93,7 +97,10 @@ function newsBlackoutPreFillEnabled(): boolean {
 }
 
 async function applyPipAndChannelStops(args: ApplyPostFillFollowUpArgs): Promise<void> {
-  const { api, uuid, signal, parsed, broker, channelKeywords, symbol, params, filledLegs } = args
+  const {
+    api, uuid, signal, parsed, broker, channelKeywords, symbol, params, filledLegs,
+    plannedBrokerTp, hasPartialTpSchedule,
+  } = args
   const manual = (broker.manual_settings ?? {}) as ManualSettings
   const isSingleTradeStyle = (manual.trade_style ?? 'single') !== 'multi'
   if (!isSingleTradeStyle) {
@@ -135,7 +142,9 @@ async function applyPipAndChannelStops(args: ApplyPostFillFollowUpArgs): Promise
 
     let targetSl = leg.openSl
     let targetTp = leg.openTp
-    if (usesPredefinedStops(manual)) {
+    if (hasPartialTpSchedule && plannedBrokerTp != null && plannedBrokerTp > 0) {
+      targetTp = plannedBrokerTp
+    } else if (usesPredefinedStops(manual)) {
       const derived = deriveManualStopsWithClamp({
         parsed: plannerParsed,
         manual,

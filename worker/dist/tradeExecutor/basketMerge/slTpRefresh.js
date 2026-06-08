@@ -7,7 +7,6 @@ const multiTradeMerge_1 = require("../../multiTradeMerge");
 const basketModFollowUp_1 = require("../../basketModFollowUp");
 const basketSlTpReconcile_1 = require("../../basketSlTpReconcile");
 const rangePendingLadderSync_1 = require("../../rangePendingLadderSync");
-const tpBucketDistribution_1 = require("../../manualPlanning/tpBucketDistribution");
 const channelActiveTradeParams_1 = require("../../channelActiveTradeParams");
 const helpers_1 = require("../helpers");
 const helpers_2 = require("./helpers");
@@ -180,17 +179,12 @@ async function applyBasketSlTpRefresh(ctx, args) {
     const refreshImmediateLegCount = messageEditOnly
         ? familyTrades.length
         : Math.max((0, multiTradeMerge_1.mergePlanImmediateOrders)(plan).length, Math.max(0, familyTrades.length - Math.max(0, maxPendingStepIdx - activePendingCount)));
-    const parsedTpLevels = (effectiveParsed.tp ?? []).filter((t) => typeof t === 'number' && Number.isFinite(t) && t > 0);
-    const singlePartialPlan = manual.trade_style !== 'multi' && parsedTpLevels.length > 0
-        ? (0, manualPlanner_1.planSinglePartialTps)({
-            manualLot: baseLot,
-            minLot: Number.isFinite(params?.minLot) && (params?.minLot ?? 0) > 0 ? params?.minLot : 0.01,
-            lotStep: Number.isFinite(params?.lotStep) && (params?.lotStep ?? 0) > 0 ? params?.lotStep : 0.01,
-            finalTps: parsedTpLevels,
-            bucketRows: (0, tpBucketDistribution_1.resolveTpBucketRows)(parsedTpLevels, manual.tp_lots).bucketRows,
-            singleTpTarget: manual.single_tp_target,
-            isBuy: direction === 'buy',
-        })
+    // Single-mode partial schedule comes from planManualOrders (uses derived finalTps,
+    // predefined TP pips, Targets %, single_tp_target — not raw parsed.tp alone).
+    const singlePartialPartials = manual.trade_style !== 'multi' ? (plan.partialTps ?? []) : [];
+    const singleBrokerTpRaw = manual.trade_style !== 'multi' ? plan.orders[0]?.takeprofit : undefined;
+    const singleBrokerTp = typeof singleBrokerTpRaw === 'number' && Number.isFinite(singleBrokerTpRaw) && singleBrokerTpRaw > 0
+        ? singleBrokerTpRaw
         : null;
     let perLegTargets = (0, multiTradeMerge_1.buildPerLegStopTargets)({
         plan,
@@ -200,8 +194,8 @@ async function applyBasketSlTpRefresh(ctx, args) {
         immediateLegCount: refreshImmediateLegCount,
         tpLots: manual.tp_lots,
     });
-    if (manual.trade_style !== 'multi' && singlePartialPlan?.brokerTp) {
-        perLegTargets = perLegTargets.map(target => ({ ...target, takeprofit: singlePartialPlan.brokerTp }));
+    if (manual.trade_style !== 'multi' && singleBrokerTp != null) {
+        perLegTargets = perLegTargets.map(target => ({ ...target, takeprofit: singleBrokerTp }));
     }
     let anchor = plan.anchor?.value ?? null;
     if ((virtualPendings.length > 0 || !!plan.closeWorseEntries) && (anchor == null || anchor <= 0)) {
@@ -219,12 +213,6 @@ async function applyBasketSlTpRefresh(ctx, args) {
             if (perLegTargets[i])
                 perLegTargets[i].takeprofit = 0;
         }
-    }
-    for (const t of familyTrades) {
-        try {
-            await ctx.supabase.from('partial_tp_legs').delete().eq('trade_id', t.id);
-        }
-        catch { /* best-effort */ }
     }
     const basketParams = params
         ? {
@@ -266,9 +254,9 @@ async function applyBasketSlTpRefresh(ctx, args) {
                 immediateLegCount: refreshImmediateLegCount,
                 tpLots: manual.tp_lots,
             });
-            if (manual.trade_style !== 'multi' && singlePartialPlan?.brokerTp) {
+            if (manual.trade_style !== 'multi' && singleBrokerTp != null) {
                 for (let i = 0; i < refreshedTargets.length; i++) {
-                    refreshedTargets[i] = { ...refreshedTargets[i], takeprofit: singlePartialPlan.brokerTp };
+                    refreshedTargets[i] = { ...refreshedTargets[i], takeprofit: singleBrokerTp };
                 }
             }
             if (refreshedTargets.length) {
@@ -324,26 +312,34 @@ async function applyBasketSlTpRefresh(ctx, args) {
         return !Number.isFinite(t) || t <= 0;
     }).length;
     summary.skippedNoTicket = stillMissingTicket;
-    if (manual.trade_style !== 'multi' && singlePartialPlan && modifiedTradeIds.size > 0) {
-        const partialRows = [...modifiedTradeIds].flatMap(tradeId => singlePartialPlan.partials.map(p => ({
-            trade_id: tradeId,
-            signal_id: signal.id,
-            user_id: signal.user_id,
-            broker_account_id: broker.id,
-            metaapi_account_id: uuid,
-            symbol,
-            is_buy: direction === 'buy',
-            tp_idx: p.tpIdx,
-            trigger_price: p.triggerPrice,
-            close_lots: p.closeLots,
-            status: 'pending',
-        })));
-        if (partialRows.length > 0) {
-            const { error: partialErr } = await ctx.supabase
-                .from('partial_tp_legs')
-                .insert(partialRows);
-            if (partialErr) {
-                console.warn(`[tradeExecutor] basket_refresh partial_tp_legs insert failed signal=${signal.id} broker=${broker.id}: ${partialErr.message}`);
+    if (manual.trade_style !== 'multi' && modifiedTradeIds.size > 0) {
+        for (const tradeId of modifiedTradeIds) {
+            try {
+                await ctx.supabase.from('partial_tp_legs').delete().eq('trade_id', tradeId);
+            }
+            catch { /* best-effort */ }
+        }
+        if (singlePartialPartials.length > 0) {
+            const partialRows = [...modifiedTradeIds].flatMap(tradeId => singlePartialPartials.map(p => ({
+                trade_id: tradeId,
+                signal_id: signal.id,
+                user_id: signal.user_id,
+                broker_account_id: broker.id,
+                metaapi_account_id: uuid,
+                symbol,
+                is_buy: direction === 'buy',
+                tp_idx: p.tpIdx,
+                trigger_price: p.triggerPrice,
+                close_lots: p.closeLots,
+                status: 'pending',
+            })));
+            if (partialRows.length > 0) {
+                const { error: partialErr } = await ctx.supabase
+                    .from('partial_tp_legs')
+                    .insert(partialRows);
+                if (partialErr) {
+                    console.warn(`[tradeExecutor] basket_refresh partial_tp_legs insert failed signal=${signal.id} broker=${broker.id}: ${partialErr.message}`);
+                }
             }
         }
     }

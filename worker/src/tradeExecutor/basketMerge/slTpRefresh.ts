@@ -15,7 +15,6 @@ import {
   clampPendingExpiryHours,
   computeCwOverrideTp,
   parsedHasExplicitEntryAnchor,
-  planSinglePartialTps,
   planManualOrders,
   resolvedParsedEntryPrice,
   resolvedParsedEntryZone,
@@ -383,20 +382,15 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
           mergePlanImmediateOrders(plan).length,
           Math.max(0, familyTrades.length - Math.max(0, maxPendingStepIdx - activePendingCount)),
         )
-    const parsedTpLevels = (effectiveParsed.tp ?? []).filter(
-      (t): t is number => typeof t === 'number' && Number.isFinite(t) && t > 0,
-    )
-    const singlePartialPlan = manual.trade_style !== 'multi' && parsedTpLevels.length > 0
-      ? planSinglePartialTps({
-          manualLot: baseLot,
-          minLot: Number.isFinite(params?.minLot) && (params?.minLot ?? 0) > 0 ? (params?.minLot as number) : 0.01,
-          lotStep: Number.isFinite(params?.lotStep) && (params?.lotStep ?? 0) > 0 ? (params?.lotStep as number) : 0.01,
-          finalTps: parsedTpLevels,
-          bucketRows: resolveTpBucketRows(parsedTpLevels, manual.tp_lots).bucketRows,
-          singleTpTarget: manual.single_tp_target,
-          isBuy: direction === 'buy',
-        })
-      : null
+    // Single-mode partial schedule comes from planManualOrders (uses derived finalTps,
+    // predefined TP pips, Targets %, single_tp_target — not raw parsed.tp alone).
+    const singlePartialPartials: PlannerPartialTp[] =
+      manual.trade_style !== 'multi' ? (plan.partialTps ?? []) : []
+    const singleBrokerTpRaw = manual.trade_style !== 'multi' ? plan.orders[0]?.takeprofit : undefined
+    const singleBrokerTp =
+      typeof singleBrokerTpRaw === 'number' && Number.isFinite(singleBrokerTpRaw) && singleBrokerTpRaw > 0
+        ? singleBrokerTpRaw
+        : null
     let perLegTargets = buildPerLegStopTargets({
       plan,
       parsed: effectiveParsed,
@@ -405,8 +399,8 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
       immediateLegCount: refreshImmediateLegCount,
       tpLots: manual.tp_lots,
     })
-    if (manual.trade_style !== 'multi' && singlePartialPlan?.brokerTp) {
-      perLegTargets = perLegTargets.map(target => ({ ...target, takeprofit: singlePartialPlan.brokerTp as number }))
+    if (manual.trade_style !== 'multi' && singleBrokerTp != null) {
+      perLegTargets = perLegTargets.map(target => ({ ...target, takeprofit: singleBrokerTp }))
     }
 
     let anchor: number | null = plan.anchor?.value ?? null
@@ -423,12 +417,6 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
       for (let i = 0; i < nImmCwe; i++) {
         if (perLegTargets[i]) perLegTargets[i]!.takeprofit = 0
       }
-    }
-
-    for (const t of familyTrades) {
-      try {
-        await ctx.supabase.from('partial_tp_legs').delete().eq('trade_id', t.id)
-      } catch { /* best-effort */ }
     }
 
     const basketParams: BasketSymbolParams | null = params
@@ -476,9 +464,9 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
           immediateLegCount: refreshImmediateLegCount,
           tpLots: manual.tp_lots,
         })
-        if (manual.trade_style !== 'multi' && singlePartialPlan?.brokerTp) {
+        if (manual.trade_style !== 'multi' && singleBrokerTp != null) {
           for (let i = 0; i < refreshedTargets.length; i++) {
-            refreshedTargets[i] = { ...refreshedTargets[i]!, takeprofit: singlePartialPlan.brokerTp }
+            refreshedTargets[i] = { ...refreshedTargets[i]!, takeprofit: singleBrokerTp }
           }
         }
         if (refreshedTargets.length) {
@@ -535,30 +523,37 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
     }).length
     summary.skippedNoTicket = stillMissingTicket
 
-    if (manual.trade_style !== 'multi' && singlePartialPlan && modifiedTradeIds.size > 0) {
-      const partialRows = [...modifiedTradeIds].flatMap(tradeId =>
-        singlePartialPlan.partials.map(p => ({
-          trade_id: tradeId,
-          signal_id: signal.id,
-          user_id: signal.user_id,
-          broker_account_id: broker.id,
-          metaapi_account_id: uuid,
-          symbol,
-          is_buy: direction === 'buy',
-          tp_idx: p.tpIdx,
-          trigger_price: p.triggerPrice,
-          close_lots: p.closeLots,
-          status: 'pending',
-        })),
-      )
-      if (partialRows.length > 0) {
-        const { error: partialErr } = await ctx.supabase
-          .from('partial_tp_legs')
-          .insert(partialRows)
-        if (partialErr) {
-          console.warn(
-            `[tradeExecutor] basket_refresh partial_tp_legs insert failed signal=${signal.id} broker=${broker.id}: ${partialErr.message}`,
-          )
+    if (manual.trade_style !== 'multi' && modifiedTradeIds.size > 0) {
+      for (const tradeId of modifiedTradeIds) {
+        try {
+          await ctx.supabase.from('partial_tp_legs').delete().eq('trade_id', tradeId)
+        } catch { /* best-effort */ }
+      }
+      if (singlePartialPartials.length > 0) {
+        const partialRows = [...modifiedTradeIds].flatMap(tradeId =>
+          singlePartialPartials.map(p => ({
+            trade_id: tradeId,
+            signal_id: signal.id,
+            user_id: signal.user_id,
+            broker_account_id: broker.id,
+            metaapi_account_id: uuid,
+            symbol,
+            is_buy: direction === 'buy',
+            tp_idx: p.tpIdx,
+            trigger_price: p.triggerPrice,
+            close_lots: p.closeLots,
+            status: 'pending',
+          })),
+        )
+        if (partialRows.length > 0) {
+          const { error: partialErr } = await ctx.supabase
+            .from('partial_tp_legs')
+            .insert(partialRows)
+          if (partialErr) {
+            console.warn(
+              `[tradeExecutor] basket_refresh partial_tp_legs insert failed signal=${signal.id} broker=${broker.id}: ${partialErr.message}`,
+            )
+          }
         }
       }
     }

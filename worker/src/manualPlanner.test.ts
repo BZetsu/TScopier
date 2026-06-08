@@ -562,6 +562,39 @@ test('planManualOrders: single+strict off+bare Buy stays Buy (no redundant op fl
   assert.equal(plan.orders[0]!.price, 0)
 })
 
+test('planManualOrders: single trade + 3 TPs + 50/30/20 → partial_tp schedule on plan', () => {
+  const plan = planManualOrders({
+    parsed: {
+      ...baseParsed,
+      action: 'sell',
+      entry_price: 4292,
+      sl: 4299,
+      tp: [4290, 4288, 4286],
+    },
+    resolvedSymbol: 'XAUUSD',
+    baseOperation: 'Sell',
+    manual: {
+      ...baseManual,
+      trade_style: 'single',
+      range_trading: false,
+      tp_lots: [
+        { label: 'TP1', lot: 0.01, percent: 50, enabled: true },
+        { label: 'TP2', lot: 0.01, percent: 30, enabled: true },
+        { label: 'TP3', lot: 0.01, percent: 20, enabled: true },
+      ],
+    },
+    channelKeywords: null,
+    manualLot: 1.0,
+    ctx: baseCtx,
+    commentPrefix: 'TSCopier:abc',
+  })
+  assert.equal(plan.orders.length, 1)
+  assert.equal(plan.orders[0]!.takeprofit, 4286)
+  assert.equal(plan.partialTps?.length, 2)
+  assert.equal(plan.partialTps![0]!.closeLots, 0.5)
+  assert.equal(plan.partialTps![1]!.closeLots, 0.3)
+})
+
 // ── planSinglePartialTps ───────────────────────────────────────────────────
 // The pure helper that turns the user's percent rows (50 / 30 / 20) into a
 // concrete partial-close schedule for single-mode trades. Verifies that the

@@ -251,6 +251,8 @@ async function sendImmediateLegs(input) {
             baseLot,
             params: plannerCtx,
             filledLegs,
+            plannedBrokerTp: plan.orders[0]?.takeprofit ?? null,
+            hasPartialTpSchedule: (plan.partialTps?.length ?? 0) > 0,
             hooks: {
                 closeOppositeDirectionTrades: (s, p, _b, sym) => ctx.closeOppositeDirectionTrades(s, p, broker, sym),
                 tryParameterFollowUpMergeModifyOnly: async () => ({ handled: false }),
