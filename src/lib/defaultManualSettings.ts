@@ -6,6 +6,19 @@ export const DEFAULT_MANUAL_TP_LOTS: ManualTpLot[] = [
   { label: 'TP3', lot: 0.01, percent: 20, enabled: true },
 ]
 
+/** Stamp configs saved from the UI so migration seeds are not mistaken for user settings. */
+export function ensurePersistedManualSettings(
+  settings: ManualSettings | Record<string, unknown>,
+): ManualSettings {
+  const schemaVersion = Number(
+    (settings as ManualSettings).schema_version ?? DEFAULT_MANUAL_SETTINGS.schema_version ?? 1,
+  )
+  return {
+    ...(settings as ManualSettings),
+    schema_version: Number.isFinite(schemaVersion) && schemaVersion > 0 ? schemaVersion : 1,
+  }
+}
+
 export const DEFAULT_MANUAL_SETTINGS: ManualSettings = {
   schema_version: 1,
   symbol_mapping: {},

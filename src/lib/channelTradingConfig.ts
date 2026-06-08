@@ -1,5 +1,5 @@
 import type { Json, ManualSettings } from '../types/database'
-import { DEFAULT_MANUAL_SETTINGS } from './defaultManualSettings'
+import { DEFAULT_MANUAL_SETTINGS, ensurePersistedManualSettings } from './defaultManualSettings'
 import { normalizeSignalChannelIds } from './brokerChannelLink'
 
 export interface ChannelTradingConfig {
@@ -258,10 +258,10 @@ export function buildChannelTradingConfigsFromDraft(
     if (!draft) continue
     out[key] = {
       copier_mode: draft.mode,
-      manual_settings: {
+      manual_settings: ensurePersistedManualSettings({
         ...draft.manualSettings,
         allow_high_impact_news: draft.manualSettings.news_trading_enabled === true,
-      },
+      }),
       ai_settings: {} as Json,
     }
   }

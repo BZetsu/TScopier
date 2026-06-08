@@ -38,6 +38,7 @@ const metatraderapi_1 = require("../metatraderapi");
 const manualPlanner_1 = require("../manualPlanner");
 const normalizeManualSettings_1 = require("../manualPlanning/normalizeManualSettings");
 const channelTradingConfig_1 = require("../channelTradingConfig");
+const brokerChannelTradingConfigs_1 = require("../brokerChannelTradingConfigs");
 const helpers_1 = require("./basketMerge/helpers");
 const signalBrokerDispatchClaim_1 = require("./signalBrokerDispatchClaim");
 const tradeSignalActions_1 = require("../tradeSignalActions");
@@ -206,11 +207,27 @@ class TradeExecutor {
             console.error('[tradeExecutor] loadBrokers failed:', error.message);
             return;
         }
+        const brokerRows = (data ?? []);
+        const brokerIds = brokerRows.map(row => row.id);
+        const tableConfigRows = await (0, brokerChannelTradingConfigs_1.fetchBrokerChannelTradingConfigRows)(this.supabase, brokerIds);
+        const configsByBroker = new Map();
+        for (const cfgRow of tableConfigRows) {
+            const list = configsByBroker.get(cfgRow.broker_account_id) ?? [];
+            list.push(cfgRow);
+            configsByBroker.set(cfgRow.broker_account_id, list);
+        }
         this.brokersByUser.clear();
         this.brokersById.clear();
         this.brokerActivatedAt.clear();
-        for (const row of (data ?? [])) {
-            const normalized = this.normalizeBrokerRow(row);
+        for (const row of brokerRows) {
+            const tableRows = configsByBroker.get(row.id) ?? [];
+            const mergedRow = tableRows.length
+                ? {
+                    ...row,
+                    channel_trading_configs: (0, brokerChannelTradingConfigs_1.mergeChannelTradingConfigsFromTable)(row.channel_trading_configs, tableRows),
+                }
+                : row;
+            const normalized = this.normalizeBrokerRow(mergedRow);
             this.brokersById.set(row.id, normalized);
             const arr = this.brokersByUser.get(row.user_id) ?? [];
             arr.push(normalized);

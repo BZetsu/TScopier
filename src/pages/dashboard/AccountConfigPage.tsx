@@ -84,6 +84,12 @@ import {
   resolveChannelConfigEntry,
   storedPerChannelConfigComplete,
 } from '../../lib/channelTradingConfig'
+import {
+  deleteBrokerChannelTradingConfigsExcept,
+  fetchBrokerChannelTradingConfigRows,
+  mergeBrokerWithChannelTradingConfigRows,
+  upsertBrokerChannelTradingConfigs,
+} from '../../lib/brokerChannelTradingConfigs'
 import { parseSymbolToTradeList } from '../../lib/channelSymbolDetection'
 import {
   listTradingPresets,
@@ -1262,14 +1268,20 @@ export function AccountConfigPage() {
 
   // ── Configure modal ────────────────────────────────────────────────────
 
-  const openConfigureModal = (broker: BrokerAccount) => {
+  const openConfigureModal = async (broker: BrokerAccount) => {
     const fresh = brokers.find(b => b.id === broker.id) ?? broker
-    const channelIds = normalizeSignalChannelIds(fresh).filter(id =>
+    const { rows, error: configLoadErr } = await fetchBrokerChannelTradingConfigRows(supabase, fresh.id)
+    if (configLoadErr) {
+      setError(configLoadErr)
+      return
+    }
+    const merged = mergeBrokerWithChannelTradingConfigRows(fresh, rows)
+    const channelIds = normalizeSignalChannelIds(merged).filter(id =>
       channelOptions.some(c => c.id === id),
     )
-    setConfigAccount(fresh)
+    setConfigAccount(merged)
     setActiveManualSubTab('ai_training')
-    const draft = buildChannelConfigDraftFromBroker(fresh, channelIds, keywordFiltersEnabled)
+    const draft = buildChannelConfigDraftFromBroker(merged, channelIds, keywordFiltersEnabled)
     const nextDraft = {
       ...draft,
       selectedChannelId: draft.selectedChannelId ?? channelOptions[0]?.id ?? null,
@@ -1688,13 +1700,33 @@ export function AccountConfigPage() {
           } as Record<string, unknown>,
         )
       : (configAccount.manual_settings ?? {})
+    const { error: tableErr } = await upsertBrokerChannelTradingConfigs(
+      supabase,
+      user.id,
+      configAccount.id,
+      channelTradingConfigs,
+    )
+    if (tableErr) {
+      setConfigSaving(false)
+      setError(tableErr)
+      return
+    }
+    const { error: pruneErr } = await deleteBrokerChannelTradingConfigsExcept(
+      supabase,
+      configAccount.id,
+      channelIds,
+    )
+    if (pruneErr) {
+      setConfigSaving(false)
+      setError(pruneErr)
+      return
+    }
     const { data, error: upErr } = await supabase
       .from('broker_accounts')
       .update({
         copier_mode: AI_CONFIGURATION_ENABLED && fallbackManualConfig?.mode === 'ai' ? 'ai' : 'manual',
         signal_channel_ids: channelIds,
         enforce_signal_channel_filter: restrictChannels,
-        channel_trading_configs: channelTradingConfigs,
         manual_settings: normalizedFallbackManual,
         channel_message_filters: channelMessageFilters,
       })
@@ -1714,7 +1746,10 @@ export function AccountConfigPage() {
 
     let persistedDraft = configDraft
     if (data) {
-      const fresh = data as unknown as BrokerAccount
+      const fresh = mergeBrokerWithChannelTradingConfigRows(
+        data as unknown as BrokerAccount,
+        (await fetchBrokerChannelTradingConfigRows(supabase, configAccount.id)).rows,
+      )
       replaceBroker(fresh)
       setConfigAccount(fresh)
       const persistedChannelIds = normalizeSignalChannelIds(fresh).filter(id =>

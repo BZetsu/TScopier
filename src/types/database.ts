@@ -351,6 +351,19 @@ export interface ChannelTradingPreset {
   updated_at: string
 }
 
+/** Authoritative per-broker, per-channel trading configuration row. */
+export interface BrokerChannelTradingConfig {
+  id: string
+  user_id: string
+  broker_account_id: string
+  channel_id: string
+  copier_mode: 'ai' | 'manual'
+  manual_settings: ManualSettings
+  ai_settings: Json
+  created_at: string
+  updated_at: string
+}
+
 export interface TelegramSession {
   id: string
   user_id: string

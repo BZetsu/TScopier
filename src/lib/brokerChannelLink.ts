@@ -6,9 +6,12 @@ import {
   channelManualSettingsComplete,
   normalizeChannelTradingConfigsMap,
   normalizeChannelUuid,
-  removeChannelTradingConfigKey,
   resolveChannelConfigEntry,
 } from './channelTradingConfig'
+import {
+  deleteBrokerChannelTradingConfig,
+  upsertBrokerChannelTradingConfigs,
+} from './brokerChannelTradingConfigs'
 import {
   DEFAULT_CHANNEL_FILTERS,
   normalizeChannelMessageFiltersMap,
@@ -77,6 +80,13 @@ export async function connectChannelToBroker(
           ai_settings: (broker.ai_settings ?? {}) as Json,
         }
       : buildDefaultChannelTradingConfig()
+    const { error: configErr } = await upsertBrokerChannelTradingConfigs(
+      supabase,
+      userId,
+      broker.id,
+      { [normalizedChannelId]: configs[normalizedChannelId]! },
+    )
+    if (configErr) return { broker: null, error: configErr }
   }
   const filters = normalizeChannelMessageFiltersMap(broker.channel_message_filters)
   if (!filters[normalizedChannelId]) {
@@ -88,7 +98,6 @@ export async function connectChannelToBroker(
     .update({
       signal_channel_ids: nextIds,
       enforce_signal_channel_filter: true,
-      channel_trading_configs: configs,
       channel_message_filters: filters,
     })
     .eq('id', broker.id)
@@ -135,10 +144,8 @@ export async function disconnectChannelFromBroker(
   }
 
   const nextIds = ids.filter(id => id !== channelId)
-  const configs = removeChannelTradingConfigKey(
-    normalizeChannelTradingConfigsMap(broker.channel_trading_configs),
-    channelId,
-  )
+  const { error: configErr } = await deleteBrokerChannelTradingConfig(supabase, broker.id, channelId)
+  if (configErr) return { broker: null, error: configErr }
   const filters = normalizeChannelMessageFiltersMap(broker.channel_message_filters)
   delete filters[channelId]
 
@@ -147,7 +154,6 @@ export async function disconnectChannelFromBroker(
     .update({
       signal_channel_ids: nextIds,
       enforce_signal_channel_filter: nextIds.length > 0,
-      channel_trading_configs: configs,
       channel_message_filters: filters,
     })
     .eq('id', broker.id)
@@ -178,10 +184,9 @@ export async function pruneStaleBrokerChannelIds(
     if (validIds.length === ids.length) continue
 
     const removedIds = ids.filter(id => !channelIdSet.has(id))
-    let configs = normalizeChannelTradingConfigsMap(broker.channel_trading_configs)
     let filters = normalizeChannelMessageFiltersMap(broker.channel_message_filters)
     for (const removedId of removedIds) {
-      configs = removeChannelTradingConfigKey(configs, removedId)
+      await deleteBrokerChannelTradingConfig(supabase, broker.id, removedId)
       delete filters[removedId]
     }
 
@@ -189,7 +194,6 @@ export async function pruneStaleBrokerChannelIds(
       .from('broker_accounts')
       .update({
         signal_channel_ids: validIds,
-        channel_trading_configs: configs,
         channel_message_filters: filters,
       })
       .eq('id', broker.id)

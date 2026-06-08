@@ -30,6 +30,10 @@ import {
 } from '../manualPlanner'
 import { normalizeManualSettingsForExecution } from '../manualPlanning/normalizeManualSettings'
 import { normalizeChannelTradingConfigsMap, withChannelTradingConfig, channelConfigReadyForExecution, resolveChannelTradingConfig, healChannelTradingConfigsMap } from '../channelTradingConfig'
+import {
+  fetchBrokerChannelTradingConfigRows,
+  mergeChannelTradingConfigsFromTable,
+} from '../brokerChannelTradingConfigs'
 import { manualDispatchAlreadyMaterialized } from './basketMerge/helpers'
 import { claimSignalBrokerDispatch } from './signalBrokerDispatchClaim'
 import { findActiveNewsBlackout } from '../newsTrading/blackout'
@@ -349,11 +353,30 @@ export class TradeExecutor {
       console.error('[tradeExecutor] loadBrokers failed:', error.message)
       return
     }
+    const brokerRows = (data ?? []) as BrokerRow[]
+    const brokerIds = brokerRows.map(row => row.id)
+    const tableConfigRows = await fetchBrokerChannelTradingConfigRows(this.supabase, brokerIds)
+    const configsByBroker = new Map<string, typeof tableConfigRows>()
+    for (const cfgRow of tableConfigRows) {
+      const list = configsByBroker.get(cfgRow.broker_account_id) ?? []
+      list.push(cfgRow)
+      configsByBroker.set(cfgRow.broker_account_id, list)
+    }
     this.brokersByUser.clear()
     this.brokersById.clear()
     this.brokerActivatedAt.clear()
-    for (const row of (data ?? []) as BrokerRow[]) {
-      const normalized = this.normalizeBrokerRow(row)
+    for (const row of brokerRows) {
+      const tableRows = configsByBroker.get(row.id) ?? []
+      const mergedRow = tableRows.length
+        ? {
+            ...row,
+            channel_trading_configs: mergeChannelTradingConfigsFromTable(
+              row.channel_trading_configs,
+              tableRows,
+            ),
+          }
+        : row
+      const normalized = this.normalizeBrokerRow(mergedRow)
       this.brokersById.set(row.id, normalized)
       const arr = this.brokersByUser.get(row.user_id) ?? []
       arr.push(normalized)
