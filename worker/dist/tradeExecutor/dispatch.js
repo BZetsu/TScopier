@@ -24,6 +24,8 @@ const brokerChannelFilter_1 = require("../brokerChannelFilter");
 const channelTradingConfig_1 = require("../channelTradingConfig");
 const channelMessageFilters_1 = require("../channelMessageFilters");
 const multiTradeMerge_1 = require("../multiTradeMerge");
+const channelActiveTradeParams_1 = require("../channelActiveTradeParams");
+const signalPriceInference_1 = require("../signalPriceInference");
 const manualPlanner_1 = require("../manualPlanner");
 const pipelineTimestamps_1 = require("../pipelineTimestamps");
 const tradeComment_1 = require("../tradeComment");
@@ -47,10 +49,16 @@ function shouldUseEntryFastPath(ctx, row) {
 function messageEditSkipReason(parsed, action) {
     if (!parsed || !(0, multiTradeMerge_1.parsedHasSlOrTp)(parsed))
         return 'message_edit_no_sl_tp';
-    if (!(0, multiTradeMerge_1.shouldRouteAsBasketParameterRefresh)(parsed) && !(0, tradeSignalActions_1.isManagementAction)(action)) {
+    if ((0, tradeSignalActions_1.isManagementAction)(action))
+        return null;
+    if ((0, signalPriceInference_1.parsedHasReEnterIntent)(parsed))
         return 'message_edit_not_parameter_refresh';
-    }
-    return null;
+    if ((0, multiTradeMerge_1.shouldRouteAsBasketParameterRefresh)(parsed))
+        return null;
+    // Edited full-entry messages (zone + SL/TP) are SL/TP corrections — not new OrderSend.
+    if ((0, channelActiveTradeParams_1.isFullEntrySignalWithStops)(parsed))
+        return null;
+    return 'message_edit_not_parameter_refresh';
 }
 function enqueueSignal(ctx, row, opts) {
     if (!types_1.PARSED_STATUSES.has(row.status))

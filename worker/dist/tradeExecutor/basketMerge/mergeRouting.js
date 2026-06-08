@@ -237,8 +237,6 @@ async function tryMergeSignalIntoExistingOpenTrade(ctx, args) {
     const manual = (broker.manual_settings ?? {});
     if (manual.add_new_trades_to_existing !== true)
         return { handled: false };
-    if ((0, multiTradeMerge_1.shouldRouteAsBasketParameterRefresh)(parsed))
-        return { handled: false };
     if ((0, manualPlanner_1.signalEntryPriceStrictEnabled)(manual) && !(0, manualPlanner_1.parsedHasExplicitEntryAnchor)(parsed)) {
         return { handled: false };
     }
@@ -258,11 +256,19 @@ async function tryMergeSignalIntoExistingOpenTrade(ctx, args) {
         .limit(64);
     if (openErr || !openDesc?.length)
         return { handled: false };
-    const newest = openDesc[0];
+    let channelOpenLegs = openDesc;
+    if (signal.channel_id) {
+        const allowedSignalIds = await (0, multiTradeMerge_1.filterSignalIdsByChannel)(ctx.supabase, signal.user_id, signal.channel_id, channelOpenLegs.map(t => t.signal_id).filter(Boolean));
+        channelOpenLegs = channelOpenLegs.filter(t => allowedSignalIds.has(t.signal_id));
+    }
+    if (!channelOpenLegs.length)
+        return { handled: false };
+    channelOpenLegs.sort((a, b) => new Date(b.opened_at).getTime() - new Date(a.opened_at).getTime());
+    const newest = channelOpenLegs[0];
     const anchorSignalId = newest.signal_id;
     if (!anchorSignalId)
         return { handled: false };
-    const familyTrades = openDesc
+    const familyTrades = channelOpenLegs
         .filter(t => t.signal_id === anchorSignalId)
         .sort((a, b) => new Date(a.opened_at).getTime() - new Date(b.opened_at).getTime());
     if (!familyTrades.length)

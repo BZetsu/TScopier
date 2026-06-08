@@ -67,9 +67,13 @@ function mergeHealedChannelManualSettings(existing, brokerFallback, defaultManua
 function healChannelTradingConfigsMap(broker) {
     const configs = { ...normalizeChannelTradingConfigsMap(broker.channel_trading_configs) };
     const linkedIds = (0, brokerChannelFilter_1.normalizeSignalChannelIds)(broker.signal_channel_ids);
-    const fallbackManual = (0, normalizeManualSettings_1.normalizeManualSettingsForExecution)(broker.manual_settings);
+    const multiChannel = linkedIds.length > 1;
+    const brokerFallbackManual = (0, normalizeManualSettings_1.normalizeManualSettingsForExecution)(broker.manual_settings);
     const defaultManual = (0, normalizeManualSettings_1.normalizeManualSettingsForExecution)(buildDefaultChannelTradingConfig().manual_settings);
     const fallbackMode = (broker.copier_mode ?? 'manual');
+    // broker.manual_settings mirrors the last channel saved in Account Configuration —
+    // never use it to heal other linked channels or lot/style bleed across providers.
+    const healBrokerFallback = multiChannel ? defaultManual : brokerFallbackManual;
     for (const channelId of linkedIds) {
         const key = normalizeChannelUuid(channelId);
         if (!key)
@@ -77,14 +81,16 @@ function healChannelTradingConfigsMap(broker) {
         if (storedPerChannelConfigComplete(configs, key))
             continue;
         const existing = resolveChannelConfigEntry(configs, key);
-        const manual = mergeHealedChannelManualSettings(existing?.manual_settings, fallbackManual, defaultManual);
+        const manual = mergeHealedChannelManualSettings(existing?.manual_settings, healBrokerFallback, defaultManual);
         if (!channelManualSettingsComplete(manual)) {
             console.warn(`[channelTradingConfig] healed incomplete per-channel config for ${key}`
                 + ' — open Account Configuration, set lot + Single/Multi, Save');
         }
         else if (!existing?.manual_settings || !channelManualSettingsComplete(existing.manual_settings)) {
             console.warn(`[channelTradingConfig] healed missing per-channel config for ${key}`
-                + ' from broker manual_settings / defaults — re-save Account Configuration for this channel');
+                + (multiChannel
+                    ? ' from defaults — re-save Account Configuration for this channel'
+                    : ' from broker manual_settings / defaults — re-save Account Configuration for this channel'));
         }
         configs[key] = {
             copier_mode: existing?.copier_mode ?? fallbackMode,

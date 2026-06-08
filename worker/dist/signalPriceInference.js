@@ -97,6 +97,20 @@ function collectLabeledSpans(message) {
     addMatches(new RegExp(`@\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'g'));
     addMatches(new RegExp(`\\b(?:buy|sell)\\s+at\\s+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'gi'));
     addMatches(new RegExp(`\\bentry\\s+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'gi'));
+    const addTwoPriceZone = (rx) => {
+        for (const m of text.matchAll(rx)) {
+            const spanStart = m.index ?? 0;
+            const spanEnd = spanStart + m[0].length;
+            for (let i = 1; i <= 2; i++) {
+                const value = (0, signalPriceFormat_1.parseSignalPriceToken)(m[i]);
+                if (value == null)
+                    continue;
+                spans.push({ start: spanStart, end: spanEnd, value });
+            }
+        }
+    };
+    addTwoPriceZone(new RegExp(`\\b(?:between|from)\\s+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\s+(?:and|to|-|–)\\s+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'gi'));
+    addTwoPriceZone(new RegExp(`\\b(?:now|instant|market|mkt)\\s+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\s*(?:-|–|to)\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'gi'));
     // TP: 4557 / 4527 — each slash-separated value is labeled
     for (const m of text.matchAll(/\b(?:tp|take\s*profit|target(?:\s+level)?)\s*[:=]?\s*((?:\d+(?:\.\d+)?(?:\s*(?:\/|\band\b|\|)\s*)+)+\d+(?:\.\d+)?)/gi)) {
         const block = m[1] ?? '';

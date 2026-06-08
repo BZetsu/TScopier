@@ -660,7 +660,7 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
       ) {
         const openLegCountByBasket = new Map<string, number>()
         for (const tr of familyTrades) {
-          const key = `${tr.signal_id}|${tr.broker_account_id}`
+          const key = `${tr.signal_id}|${broker.id}`
           openLegCountByBasket.set(key, (openLegCountByBasket.get(key) ?? 0) + 1)
         }
         pendingPatched = await reapplyChannelParamsToPendingLegs({

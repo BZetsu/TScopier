@@ -170,6 +170,7 @@ async function prepareEntryExecution(ctx, args) {
         }
     }
     // Basket SL/TP refresh — always before OrderSend (not deferred to post-fill).
+    let basketRefreshSucceeded = false;
     if (isManual && (0, multiTradeMerge_1.shouldRouteAsBasketParameterRefresh)(parsed)) {
         const messageEditOnly = sendOpts?.messageEditOnly === true;
         const paramOutcome = await ctx.tryParameterFollowUpMergeModifyOnly({
@@ -194,6 +195,7 @@ async function prepareEntryExecution(ctx, args) {
             };
         }
         if (paramOutcome.handled && paramOutcome.success) {
+            basketRefreshSucceeded = true;
             return { ok: false, outcome: { openedOrMerged: true } };
         }
         if (paramOutcome.handled) {
@@ -203,7 +205,7 @@ async function prepareEntryExecution(ctx, args) {
     // Stack-into-basket — before OrderSend on every path (not post-fill only).
     if (isManual
         && manual.add_new_trades_to_existing === true
-        && !(0, multiTradeMerge_1.shouldRouteAsBasketParameterRefresh)(parsed)) {
+        && !basketRefreshSucceeded) {
         const mergeOutcome = await ctx.tryMergeSignalIntoExistingOpenTrade({
             signal,
             parsed,
@@ -282,6 +284,7 @@ async function prepareEntryExecution(ctx, args) {
                 brokerAccountId: broker.id,
                 symbol,
                 plannerParsed,
+                signalId: signal.id,
             });
             plannerParsed = resolved.plannerParsed;
             mergedChannelParams = resolved.mergedChannelParams;

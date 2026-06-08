@@ -435,6 +435,22 @@ class VirtualPendingMonitor {
         }
         if (!claimed)
             return false;
+        // SL/TP may have been refreshed after this tick's queue SELECT (mgmt / basket refresh).
+        try {
+            const { data: freshRow } = await this.supabase
+                .from('range_pending_legs')
+                .select('stoploss,takeprofit,cwe_close_price')
+                .eq('id', leg.id)
+                .maybeSingle();
+            if (freshRow) {
+                leg.stoploss = freshRow.stoploss ?? leg.stoploss;
+                leg.takeprofit = freshRow.takeprofit ?? leg.takeprofit;
+                leg.cwe_close_price = freshRow.cwe_close_price ?? leg.cwe_close_price;
+            }
+        }
+        catch {
+            // best-effort — fire with stops from the tick snapshot
+        }
         const staleReason = await this.getStaleLegReason(leg, api, leg.metaapi_account_id);
         if (staleReason) {
             await (0, rangePendingBasketCleanup_1.deleteRangePendingLegsForBasket)(this.supabase, { signalId: leg.signal_id, brokerAccountId: leg.broker_account_id }, staleReason);

@@ -55,8 +55,9 @@ function computeThreadLinksAnchor(args) {
  */
 function isMergeFollowUpLinked(args) {
     const implicitPath = args.implicitBundleWithinTightWindow && args.implicitSameChannelBundle;
+    const sameChannel = args.sameChannel === true;
     return (args.replyOk ||
-        (args.withinWindow && args.threadLinksAnchor) ||
+        (args.withinWindow && args.threadLinksAnchor && sameChannel) ||
         implicitPath ||
         (args.withinWindow && args.parameterRefreshSameChannel === true) ||
         args.messageEditSameSignal === true);
@@ -91,6 +92,7 @@ function computeBasketMergeLinkContext(input) {
         && (input.hasSl || input.hasTp));
     const mergeSignalId = String(input.mergeSignalId ?? '').trim();
     const messageEditSameSignal = Boolean(mergeSignalId && mergeSignalId === input.anchorSignalId && (input.hasSl || input.hasTp));
+    const sameChannel = Boolean(mergeCh && anchorCh && mergeCh === anchorCh);
     const flags = {
         replyOk,
         withinWindow,
@@ -99,6 +101,7 @@ function computeBasketMergeLinkContext(input) {
         implicitSameChannelBundle,
         parameterRefreshSameChannel,
         messageEditSameSignal,
+        sameChannel,
     };
     return {
         ...flags,
