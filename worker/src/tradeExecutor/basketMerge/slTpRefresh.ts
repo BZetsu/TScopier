@@ -98,7 +98,10 @@ import {
   type BasketOpenLeg,
   type BasketSymbolParams,
 } from '../../basketSlTpReconcile'
-import { syncRangePendingLadderOnBasketRefresh } from '../../rangePendingLadderSync'
+import {
+  patchActiveRangePendingLegStops,
+  syncRangePendingLadderOnBasketRefresh,
+} from '../../rangePendingLadderSync'
 import { loadExistingRangeStepIndices } from '../../rangePendingFireGuard'
 import { channelMatchesBrokerSignal } from '../../brokerChannelFilter'
 import { resolveTpBucketRows } from '../../manualPlanning/tpBucketDistribution'
@@ -628,6 +631,62 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
           `[tradeExecutor] basket_refresh ladder sync signal=${signal.id} anchor=${anchorSignalId}`
           + ` updated=${ladderSync.updated} inserted=${ladderSync.inserted}`
           + ` skip_consumed=${ladderSync.skippedConsumed} skip_cap=${ladderSync.skippedCap}`,
+        )
+      }
+    }
+
+    const refreshedSl = typeof effectiveParsed.sl === 'number' && effectiveParsed.sl > 0
+      ? effectiveParsed.sl
+      : null
+    const shouldSyncPendingStops =
+      refreshedSl != null
+      || refreshTpLevels.length > 0
+      || (channelParamsForLadder != null
+        && (channelParamsForLadder.stoploss != null || channelParamsForLadder.tpLevels.length > 0))
+    if (shouldSyncPendingStops) {
+      if (signal.channel_id && !channelParamsForLadder) {
+        channelParamsForLadder = await loadChannelActiveTradeParamsForSymbol(
+          ctx.supabase,
+          signal.user_id,
+          signal.channel_id,
+          symbol,
+        )
+      }
+      let pendingPatched = 0
+      if (
+        signal.channel_id
+        && channelParamsForLadder
+        && (channelParamsForLadder.stoploss != null || channelParamsForLadder.tpLevels.length > 0)
+      ) {
+        const openLegCountByBasket = new Map<string, number>()
+        for (const tr of familyTrades) {
+          const key = `${tr.signal_id}|${tr.broker_account_id}`
+          openLegCountByBasket.set(key, (openLegCountByBasket.get(key) ?? 0) + 1)
+        }
+        pendingPatched = await reapplyChannelParamsToPendingLegs({
+          supabase: ctx.supabase,
+          userId: signal.user_id,
+          channelId: signal.channel_id,
+          brokerAccountIds: [broker.id],
+          symbolHint: symbol,
+          signalIds: [anchorSignalId],
+          tpLotsByBroker: new Map([[broker.id, manual.tp_lots]]),
+          openLegCountByBasket,
+        })
+      } else if (refreshedSl != null) {
+        pendingPatched = await patchActiveRangePendingLegStops({
+          supabase: ctx.supabase,
+          scope: { signalId: anchorSignalId, brokerAccountId: broker.id, symbol },
+          stoploss: refreshedSl,
+          channelParams: channelParamsForLadder,
+          tpLots: manual.tp_lots,
+          plannedRangeLegs: virtualPendings.length,
+        })
+      }
+      if (pendingPatched > 0) {
+        console.log(
+          `[tradeExecutor] basket_refresh pending SL/TP sync signal=${signal.id} anchor=${anchorSignalId}`
+          + ` broker=${broker.id} updated=${pendingPatched}`,
         )
       }
     }
