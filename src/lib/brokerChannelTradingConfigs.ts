@@ -111,11 +111,16 @@ export async function upsertBrokerChannelTradingConfigs(
     .map(([channelId, config]) => toUpsertRow(userId, brokerAccountId, channelId, config))
   if (!rows.length) return { error: null }
 
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('broker_channel_trading_configs')
     .upsert(rows, { onConflict: 'broker_account_id,channel_id' })
+    .select('id')
 
-  return { error: error?.message ?? null }
+  if (error) return { error: error.message }
+  if (!data?.length) {
+    return { error: 'Channel configuration was not saved. Please try again.' }
+  }
+  return { error: null }
 }
 
 export async function deleteBrokerChannelTradingConfig(

@@ -26,8 +26,12 @@ create index if not exists broker_channel_trading_configs_user_idx
 comment on table public.broker_channel_trading_configs is
   'Authoritative per-channel copier settings for a linked broker account. JSONB on broker_accounts is synced from this table.';
 
+grant select, insert, update, delete on public.broker_channel_trading_configs to authenticated;
+
 alter table public.broker_channel_trading_configs enable row level security;
 
+drop policy if exists "Users can view own broker channel trading configs"
+  on public.broker_channel_trading_configs;
 create policy "Users can view own broker channel trading configs"
   on public.broker_channel_trading_configs for select
   to authenticated
@@ -40,6 +44,8 @@ create policy "Users can view own broker channel trading configs"
     )
   );
 
+drop policy if exists "Users can insert own broker channel trading configs"
+  on public.broker_channel_trading_configs;
 create policy "Users can insert own broker channel trading configs"
   on public.broker_channel_trading_configs for insert
   to authenticated
@@ -53,6 +59,8 @@ create policy "Users can insert own broker channel trading configs"
     )
   );
 
+drop policy if exists "Users can update own broker channel trading configs"
+  on public.broker_channel_trading_configs;
 create policy "Users can update own broker channel trading configs"
   on public.broker_channel_trading_configs for update
   to authenticated
@@ -74,6 +82,8 @@ create policy "Users can update own broker channel trading configs"
     )
   );
 
+drop policy if exists "Users can delete own broker channel trading configs"
+  on public.broker_channel_trading_configs;
 create policy "Users can delete own broker channel trading configs"
   on public.broker_channel_trading_configs for delete
   to authenticated

@@ -280,6 +280,32 @@ function commitPositiveNumber(raw: string, fallback: number): number {
   return n
 }
 
+/** Commit in-progress number inputs (e.g. fixed lot) before save or dirty checks. */
+function applyPendingConfigureDraftFields(
+  draft: AccountConfigDraft,
+  fixedLotDraft: string | null,
+): AccountConfigDraft {
+  if (fixedLotDraft === null) return draft
+  const id = draft.selectedChannelId
+  if (!id || !draft.channelConfigs[id]) return draft
+  const entry = draft.channelConfigs[id]
+  const fixedLot = commitPositiveNumber(
+    fixedLotDraft,
+    entry.manualSettings.fixed_lot ?? DEFAULT_MANUAL_SETTINGS.fixed_lot ?? 0.01,
+  )
+  if (fixedLot === entry.manualSettings.fixed_lot) return draft
+  return {
+    ...draft,
+    channelConfigs: {
+      ...draft.channelConfigs,
+      [id]: {
+        ...entry,
+        manualSettings: { ...entry.manualSettings, fixed_lot: fixedLot },
+      },
+    },
+  }
+}
+
 /** Sum percent across enabled rows. Disabled rows always contribute 0. */
 function sumEnabledTpPercents(rows: ManualTpLot[]): number {
   return rows.reduce((s, r) => s + (r.enabled ? Math.max(0, Number(r.percent) || 0) : 0), 0)
@@ -854,8 +880,9 @@ export function AccountConfigPage() {
 
   const configureModalDirty = useMemo(() => {
     if (!configAccount) return false
+    const draftForSignature = applyPendingConfigureDraftFields(configDraft, fixedLotDraft)
     const current = accountConfigDraftPersistSignature(
-      configDraft,
+      draftForSignature,
       manualSettingsPlanCtx.plan,
       manualSettingsPlanCtx.status,
       keywordFiltersEnabled,
@@ -864,6 +891,7 @@ export function AccountConfigPage() {
   }, [
     configAccount,
     configDraft,
+    fixedLotDraft,
     configSavedSignature,
     manualSettingsPlanCtx.plan,
     manualSettingsPlanCtx.status,
@@ -876,6 +904,8 @@ export function AccountConfigPage() {
     const stored = healChannelTradingConfigsMap(configAccount)
     return !storedPerChannelConfigComplete(stored, id)
   }, [configDraft.selectedChannelId, configDraft.channelIds, configAccount])
+
+  const canSaveConfigureModal = configureModalDirty || selectedChannelNeedsPersistedSave
 
   const selectedChannelEditedFromDefault = useMemo(() => {
     const id = configDraft.selectedChannelId
@@ -1619,7 +1649,14 @@ export function AccountConfigPage() {
   const saveConfigureModal = async () => {
     if (!configAccount || !user) return
     setError('')
-    const channelIds = configDraft.channelIds
+    const committedDraft = applyPendingConfigureDraftFields(configDraft, fixedLotDraft)
+    if (committedDraft !== configDraft) {
+      setConfigDraft(committedDraft)
+    }
+    if (fixedLotDraft !== null) {
+      setFixedLotDraft(null)
+    }
+    const channelIds = committedDraft.channelIds
     const restrictChannels = channelIds.length > 0
 
       if (channelIds.length === 0) {
@@ -1628,7 +1665,7 @@ export function AccountConfigPage() {
     }
 
     for (const id of channelIds) {
-      const ms = configDraft.channelConfigs[id]?.manualSettings
+      const ms = committedDraft.channelConfigs[id]?.manualSettings
       if (!channelManualSettingsComplete(ms)) {
         setError(cm.channelConfigSaveIncomplete)
         return
@@ -1641,7 +1678,7 @@ export function AccountConfigPage() {
       isAdmin,
       fallback: manualSettingsPlanCtx,
     })
-    const requestedMulti = hasRequestedMultiTradeStyle(channelIds, configDraft.channelConfigs)
+    const requestedMulti = hasRequestedMultiTradeStyle(channelIds, committedDraft.channelConfigs)
     if (shouldBlockMultiTradeSave({ requestedMulti, effectivePlan: savePlanCtx.effectivePlan })) {
       setError(`${cm.risk.basicPlanTradeStyleLimit} Subscription upgrade may still be syncing. Please wait a few seconds and save again.`)
       return
@@ -1651,7 +1688,7 @@ export function AccountConfigPage() {
     const channelMessageFilters: ChannelMessageFiltersMap = {}
     for (const id of channelIds) {
       channelMessageFilters[id] = canUsePlanFeature('channel_keyword_filters')
-        ? configDraft.channelConfigs[id]?.channelFilters ?? { ...DEFAULT_CHANNEL_FILTERS }
+        ? committedDraft.channelConfigs[id]?.channelFilters ?? { ...DEFAULT_CHANNEL_FILTERS }
         : { ...BASIC_PLAN_CHANNEL_FILTERS }
     }
     const channelTradingConfigs = buildChannelTradingConfigsFromDraft(
@@ -1660,11 +1697,11 @@ export function AccountConfigPage() {
         channelIds.map(id => [
           id,
           {
-            mode: configDraft.channelConfigs[id]?.mode ?? 'manual',
+            mode: committedDraft.channelConfigs[id]?.mode ?? 'manual',
             manualSettings: normalizeManualSettingsForPlan(
               savePlanCtx.plan,
               savePlanCtx.status,
-              (configDraft.channelConfigs[id]?.manualSettings ?? DEFAULT_MANUAL_SETTINGS) as Record<string, unknown>,
+              (committedDraft.channelConfigs[id]?.manualSettings ?? DEFAULT_MANUAL_SETTINGS) as Record<string, unknown>,
             ) as ManualSettings,
           },
         ]),
@@ -1683,12 +1720,12 @@ export function AccountConfigPage() {
         channelTradingConfigs[storedKey] = storedCfg
       }
     }
-    const selectedId = configDraft.selectedChannelId && channelIds.includes(configDraft.selectedChannelId)
-      ? configDraft.selectedChannelId
+    const selectedId = committedDraft.selectedChannelId && channelIds.includes(committedDraft.selectedChannelId)
+      ? committedDraft.selectedChannelId
       : null
     const fallbackManualChannelId = selectedId ?? channelIds[0] ?? null
     const fallbackManualConfig = fallbackManualChannelId
-      ? configDraft.channelConfigs[fallbackManualChannelId]
+      ? committedDraft.channelConfigs[fallbackManualChannelId]
       : null
     const normalizedFallbackManual = fallbackManualConfig
       ? normalizeManualSettingsForPlan(
@@ -1727,6 +1764,7 @@ export function AccountConfigPage() {
         copier_mode: AI_CONFIGURATION_ENABLED && fallbackManualConfig?.mode === 'ai' ? 'ai' : 'manual',
         signal_channel_ids: channelIds,
         enforce_signal_channel_filter: restrictChannels,
+        channel_trading_configs: channelTradingConfigs,
         manual_settings: normalizedFallbackManual,
         channel_message_filters: channelMessageFilters,
       })
@@ -1744,7 +1782,7 @@ export function AccountConfigPage() {
       await saveAiTrainingDraft(channelId, { silent: true })
     }
 
-    let persistedDraft = configDraft
+    let persistedDraft = committedDraft
     if (data) {
       const fresh = mergeBrokerWithChannelTradingConfigRows(
         data as unknown as BrokerAccount,
@@ -1757,7 +1795,7 @@ export function AccountConfigPage() {
       )
       const rebuilt = buildChannelConfigDraftFromBroker(fresh, persistedChannelIds, keywordFiltersEnabled)
       const selectedChannelId = choosePersistedSelectedChannelId({
-        preferredSelectedId: configDraft.selectedChannelId,
+        preferredSelectedId: committedDraft.selectedChannelId,
         persistedChannelIds,
         fallbackSelectedId: rebuilt.selectedChannelId ?? channelOptions[0]?.id ?? null,
       })
@@ -2740,6 +2778,11 @@ export function AccountConfigPage() {
                                       ),
                                     })
                                   }}
+                                  onKeyDown={e => {
+                                    if (e.key !== 'Enter') return
+                                    e.preventDefault()
+                                    ;(e.target as HTMLInputElement).blur()
+                                  }}
                                 />
                               )}
                               <ConfigureSelect
@@ -3669,7 +3712,7 @@ export function AccountConfigPage() {
                 <Button
                   className="w-full sm:w-auto min-h-[44px]"
                   loading={configSaving}
-                  disabled={!configureModalDirty || presetSaving || channelConnecting}
+                  disabled={!canSaveConfigureModal || presetSaving || channelConnecting}
                   onClick={() => void saveConfigureModal()}
                 >
                   {cm.save}
