@@ -148,6 +148,28 @@ export function legacyMergeLinkingEnabled(): boolean {
  * Latest open basket for broker + symbol + direction, optionally scoped to channel.
  * When multiple signal_ids have open legs, picks the one with the newest `opened_at`.
  */
+/** Keep basket merge / anchor selection scoped to one Telegram channel. */
+export async function filterSignalIdsByChannel(
+  supabase: SupabaseClient,
+  userId: string,
+  channelId: string,
+  signalIds: string[],
+): Promise<Set<string>> {
+  const unique = [...new Set(signalIds.filter(Boolean))]
+  if (!unique.length) return new Set()
+  const { data, error } = await supabase
+    .from('signals')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('channel_id', channelId)
+    .in('id', unique)
+  if (error) {
+    console.warn(`[multiTradeMerge] channel signal filter failed: ${error.message}`)
+    return new Set()
+  }
+  return new Set((data ?? []).map((r: { id: string }) => r.id))
+}
+
 export async function resolveLatestOpenBasketAnchor(
   supabase: SupabaseClient,
   args: {

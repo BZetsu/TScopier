@@ -79,6 +79,7 @@ import {
   buildPerLegStopTargets,
   legacyMergeLinkingEnabled,
   mergePlanImmediateOrders,
+  filterSignalIdsByChannel,
   resolveLatestOpenBasketAnchor,
   resolveOpenBasketAnchorForMessageEdit,
   resolveOpenBasketAnchorForParameterFollowUp,
@@ -442,11 +443,26 @@ export async function tryMergeSignalIntoExistingOpenTrade(ctx: TradeExecutorCont
     if (openErr || !openDesc?.length) return { handled: false }
 
     type OpenLeg = (typeof openDesc)[0]
-    const newest = openDesc[0] as OpenLeg
+    let channelOpenLegs = openDesc as OpenLeg[]
+    if (signal.channel_id) {
+      const allowedSignalIds = await filterSignalIdsByChannel(
+        ctx.supabase,
+        signal.user_id,
+        signal.channel_id,
+        channelOpenLegs.map(t => t.signal_id).filter(Boolean),
+      )
+      channelOpenLegs = channelOpenLegs.filter(t => allowedSignalIds.has(t.signal_id))
+    }
+    if (!channelOpenLegs.length) return { handled: false }
+
+    channelOpenLegs.sort(
+      (a, b) => new Date(b.opened_at).getTime() - new Date(a.opened_at).getTime(),
+    )
+    const newest = channelOpenLegs[0] as OpenLeg
     const anchorSignalId = newest.signal_id
     if (!anchorSignalId) return { handled: false }
 
-    const familyTrades = (openDesc as OpenLeg[])
+    const familyTrades = channelOpenLegs
       .filter(t => t.signal_id === anchorSignalId)
       .sort((a, b) => new Date(a.opened_at).getTime() - new Date(b.opened_at).getTime())
     if (!familyTrades.length) return { handled: false }

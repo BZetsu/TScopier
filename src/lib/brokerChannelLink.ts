@@ -66,10 +66,11 @@ export async function connectChannelToBroker(
   const nextIds = [...ids, normalizedChannelId]
   const configs = normalizeChannelTradingConfigsMap(broker.channel_trading_configs)
   if (!resolveChannelConfigEntry(configs, normalizedChannelId)) {
+    const isSoleChannel = nextIds.length === 1
     const legacy = broker.manual_settings && typeof broker.manual_settings === 'object' && !Array.isArray(broker.manual_settings)
       ? (broker.manual_settings as ManualSettings)
       : null
-    configs[normalizedChannelId] = channelManualSettingsComplete(legacy)
+    configs[normalizedChannelId] = isSoleChannel && channelManualSettingsComplete(legacy)
       ? {
           copier_mode: broker.copier_mode === 'ai' ? 'ai' : 'manual',
           manual_settings: legacy,

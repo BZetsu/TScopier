@@ -84,11 +84,15 @@ export function healChannelTradingConfigsMap(
 ): ChannelTradingConfigsMap {
   const configs = { ...normalizeChannelTradingConfigsMap(broker.channel_trading_configs) }
   const linkedIds = normalizeSignalChannelIds(broker.signal_channel_ids)
-  const fallbackManual = normalizeManualSettingsForExecution(broker.manual_settings) as Record<string, unknown>
+  const multiChannel = linkedIds.length > 1
+  const brokerFallbackManual = normalizeManualSettingsForExecution(broker.manual_settings) as Record<string, unknown>
   const defaultManual = normalizeManualSettingsForExecution(
     buildDefaultChannelTradingConfig().manual_settings,
   ) as Record<string, unknown>
   const fallbackMode = (broker.copier_mode ?? 'manual') as 'ai' | 'manual'
+  // broker.manual_settings mirrors the last channel saved in Account Configuration —
+  // never use it to heal other linked channels or lot/style bleed across providers.
+  const healBrokerFallback = multiChannel ? defaultManual : brokerFallbackManual
 
   for (const channelId of linkedIds) {
     const key = normalizeChannelUuid(channelId)
@@ -98,7 +102,7 @@ export function healChannelTradingConfigsMap(
     const existing = resolveChannelConfigEntry(configs, key)
     const manual = mergeHealedChannelManualSettings(
       existing?.manual_settings as Record<string, unknown> | undefined,
-      fallbackManual,
+      healBrokerFallback,
       defaultManual,
     )
     if (!channelManualSettingsComplete(manual)) {
@@ -109,7 +113,9 @@ export function healChannelTradingConfigsMap(
     } else if (!existing?.manual_settings || !channelManualSettingsComplete(existing.manual_settings)) {
       console.warn(
         `[channelTradingConfig] healed missing per-channel config for ${key}`
-        + ' from broker manual_settings / defaults — re-save Account Configuration for this channel',
+        + (multiChannel
+          ? ' from defaults — re-save Account Configuration for this channel'
+          : ' from broker manual_settings / defaults — re-save Account Configuration for this channel'),
       )
     }
 

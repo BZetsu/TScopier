@@ -80,11 +80,13 @@ export function healChannelTradingConfigsMap(
 ): ChannelTradingConfigsMap {
   const configs = { ...normalizeChannelTradingConfigsMap(broker.channel_trading_configs) }
   const linkedIds = normalizeSignalChannelIds(broker.signal_channel_ids)
-  const fallbackManual = (broker.manual_settings && typeof broker.manual_settings === 'object'
+  const multiChannel = linkedIds.length > 1
+  const brokerFallbackManual = (broker.manual_settings && typeof broker.manual_settings === 'object'
     ? broker.manual_settings
     : DEFAULT_MANUAL_SETTINGS) as ManualSettings
   const defaultManual = buildDefaultChannelTradingConfig().manual_settings as ManualSettings
   const fallbackMode = (broker.copier_mode ?? 'manual') as 'ai' | 'manual'
+  const healBrokerFallback = multiChannel ? defaultManual : brokerFallbackManual
 
   for (const channelId of linkedIds) {
     const key = normalizeChannelUuid(channelId)
@@ -94,7 +96,7 @@ export function healChannelTradingConfigsMap(
     const existing = resolveChannelConfigEntry(configs, key)
     const manual = mergeHealedChannelManualSettings(
       existing?.manual_settings,
-      fallbackManual,
+      healBrokerFallback,
       defaultManual,
     )
     configs[key] = {
