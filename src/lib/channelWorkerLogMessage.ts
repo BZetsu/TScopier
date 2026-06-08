@@ -778,6 +778,9 @@ function buildChannelWorkerLogMessage(row: ChannelWorkerLogRow, cw: ChannelWorke
     logAction === 'handle_start'
     || logAction === 'handle_end'
     || logAction === 'dispatch_received'
+    || logAction === 'pipeline_summary'
+    || logAction === 'multi_range_plan'
+    || logAction === 'stale_basket_reconciled'
   ) {
     return ''
   }

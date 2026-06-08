@@ -1120,19 +1120,23 @@ export class TradeExecutor {
     }
 
     if (this.entryBrokerInflight.has(entryKey)) {
+      const materialized = await manualDispatchAlreadyMaterialized(this, signal.id, effectiveBroker.id)
       console.warn(
-        `[tradeExecutor] skip duplicate in-flight sendOrder signal=${signal.id} broker=${effectiveBroker.id}`,
+        `[tradeExecutor] skip duplicate in-flight sendOrder signal=${signal.id} broker=${effectiveBroker.id}`
+        + ` materialized=${materialized}`,
       )
-      return { openedOrMerged: true }
+      return { openedOrMerged: materialized }
     }
     this.entryBrokerInflight.add(entryKey)
     try {
       const claimed = await claimSignalBrokerDispatch(this.supabase, signal.id, effectiveBroker.id)
       if (!claimed) {
+        const materialized = await manualDispatchAlreadyMaterialized(this, signal.id, effectiveBroker.id)
         console.warn(
-          `[tradeExecutor] skip duplicate dispatch claim signal=${signal.id} broker=${effectiveBroker.id}`,
+          `[tradeExecutor] skip duplicate dispatch claim signal=${signal.id} broker=${effectiveBroker.id}`
+          + ` materialized=${materialized}`,
         )
-        return { openedOrMerged: true }
+        return { openedOrMerged: materialized }
       }
 
       const ms = resolved.manual_settings as Record<string, unknown>

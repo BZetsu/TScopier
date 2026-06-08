@@ -139,6 +139,26 @@ test('channelWorkerLogMessage: unknown success action remaps sell when signal sk
   assert.match(message!, /broker not connected/i)
 })
 
+test('channelWorkerLogMessage: pipeline_summary does not show false Completed sell', () => {
+  const message = channelWorkerLogMessage(
+    {
+      action: 'pipeline_summary',
+      status: 'success',
+      request_payload: { pipeline_ms: 1200 },
+      response_payload: null,
+      error_message: null,
+      signals: {
+        channel_id: 'ch-1',
+        parsed_data: { action: 'sell', symbol: 'XAUUSD' },
+        status: 'parsed',
+      },
+    },
+    channelWorkerEn,
+    { 'ch-1': 'SIGNALS PRO' },
+  )
+  assert.equal(message, null)
+})
+
 test('channelWorkerLogMessage: still hides non-trade commentary', () => {
   const message = channelWorkerLogMessage(
     {

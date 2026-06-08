@@ -70,6 +70,10 @@ export function shouldRouteAsBasketParameterRefresh(parsed: ParsedSignalLike): b
   if (act === 'modify') return true
   if (act === 'buy' || act === 'sell') {
     if (isBareEntryFollowUp(parsed)) return false
+    // Full entry alerts (priced entry or zone) must open a trade — not SL/TP-only refresh.
+    if (parsedHasExplicitEntryAnchor(parsed as Parameters<typeof parsedHasExplicitEntryAnchor>[0])) {
+      return false
+    }
     return true
   }
   return false

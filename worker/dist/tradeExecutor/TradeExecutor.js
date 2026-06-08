@@ -785,15 +785,19 @@ class TradeExecutor {
             return { openedOrMerged: true };
         }
         if (this.entryBrokerInflight.has(entryKey)) {
-            console.warn(`[tradeExecutor] skip duplicate in-flight sendOrder signal=${signal.id} broker=${effectiveBroker.id}`);
-            return { openedOrMerged: true };
+            const materialized = await (0, helpers_1.manualDispatchAlreadyMaterialized)(this, signal.id, effectiveBroker.id);
+            console.warn(`[tradeExecutor] skip duplicate in-flight sendOrder signal=${signal.id} broker=${effectiveBroker.id}`
+                + ` materialized=${materialized}`);
+            return { openedOrMerged: materialized };
         }
         this.entryBrokerInflight.add(entryKey);
         try {
             const claimed = await (0, signalBrokerDispatchClaim_1.claimSignalBrokerDispatch)(this.supabase, signal.id, effectiveBroker.id);
             if (!claimed) {
-                console.warn(`[tradeExecutor] skip duplicate dispatch claim signal=${signal.id} broker=${effectiveBroker.id}`);
-                return { openedOrMerged: true };
+                const materialized = await (0, helpers_1.manualDispatchAlreadyMaterialized)(this, signal.id, effectiveBroker.id);
+                console.warn(`[tradeExecutor] skip duplicate dispatch claim signal=${signal.id} broker=${effectiveBroker.id}`
+                    + ` materialized=${materialized}`);
+                return { openedOrMerged: materialized };
             }
             const ms = resolved.manual_settings;
             console.log(`[tradeExecutor] sendOrder signal=${signal.id} broker=${effectiveBroker.id}`

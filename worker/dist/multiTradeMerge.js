@@ -46,6 +46,10 @@ function shouldRouteAsBasketParameterRefresh(parsed) {
     if (act === 'buy' || act === 'sell') {
         if (isBareEntryFollowUp(parsed))
             return false;
+        // Full entry alerts (priced entry or zone) must open a trade — not SL/TP-only refresh.
+        if ((0, manualPlanner_1.parsedHasExplicitEntryAnchor)(parsed)) {
+            return false;
+        }
         return true;
     }
     return false;
