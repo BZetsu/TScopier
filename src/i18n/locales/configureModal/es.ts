@@ -122,6 +122,9 @@ export const configureModalEs: ConfigureModalTranslations = {
     riskMode: 'Modo de riesgo',
     fixedLot: 'Lote fijo',
     dynamicBalance: 'Dinámico (% del balance)',
+    dynamicBalanceLotSize: 'Tamaño de lote por señal',
+    dynamicBalanceLotSizeHint: '{lot} lotes con {percent}% de un balance de {balance}',
+    dynamicBalanceLotSizeFallback: '{lot} lotes (respaldo de lote fijo — balance de cuenta no cargado)',
     tradeStyle: 'Estilo de operación',
     tradeStyleHint:
       'Entrada única: una orden con su lote configurado completo. Range Trading: divide ese lote en varias órdenes más pequeñas entre los take-profit de la señal.',
@@ -148,9 +151,9 @@ export const configureModalEs: ConfigureModalTranslations = {
     previewFallbackSingle: '1 (división imposible con vista previa mín. 0,01 / paso 0,01)',
     previewInstantPending: '{total} ({immediate} instantáneas + {pending} para escalonado)',
     previewFooter:
-      'Cuántas operaciones planea abrir el copiador por señal. Según su lote fijo y el tamaño por pierna. El broker puede abrir menos si el mercado no cubrió la zona durante el escalonado.',
+      'Cuántas operaciones planea abrir el copiador por señal. Según su tamaño de lote configurado y el tamaño por pierna. El broker puede abrir menos si el mercado no cubrió la zona durante el escalonado.',
     previewDynamicRisk:
-      ' Con riesgo dinámico (% del balance), el tamaño sigue el saldo de su cuenta.',
+      ' El tamaño de lote se calcula desde el balance de la cuenta y el porcentaje dinámico (% del balance).',
     previewLadderSpan:
       ' Escalonado en rango: {pending} órdenes pendientes, cada {step} pips (unos {distance} pips en total).',
     previewCweLegs:

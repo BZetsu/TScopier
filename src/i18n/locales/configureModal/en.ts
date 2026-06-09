@@ -122,6 +122,9 @@ export const configureModalEn: ConfigureModalTranslations = {
     riskMode: 'Risk Mode',
     fixedLot: 'Fixed Lot',
     dynamicBalance: 'Dynamic (% Balance)',
+    dynamicBalanceLotSize: 'Lot size for this signal',
+    dynamicBalanceLotSizeHint: '{lot} lots from {percent}% of {balance} balance',
+    dynamicBalanceLotSizeFallback: '{lot} lots (using fixed-lot fallback — account balance not loaded)',
     tradeStyle: 'Trade Style',
     tradeStyleHint:
       'Single Entry: one order at your full configured lot. Range Trading: splits that lot into many smaller orders across the signal\'s take-profit levels.',
@@ -148,9 +151,9 @@ export const configureModalEn: ConfigureModalTranslations = {
     previewFallbackSingle: '1 (split not possible at 0.01 min / 0.01 step preview)',
     previewInstantPending: '{total} ({immediate} instant + {pending} for layering)',
     previewFooter:
-      'How many trades the copier plans to open for one signal. Based on your Fixed Lot and per-leg size. Your broker may open fewer if the market did not cover the zone during layering.',
+      'How many trades the copier plans to open for one signal. Based on your configured lot size and per-leg size. Your broker may open fewer if the market did not cover the zone during layering.',
     previewDynamicRisk:
-      ' With Dynamic (% Balance) risk, trade size follows your account balance.',
+      ' Lot size is computed from your account balance and Dynamic (% Balance) percent.',
     previewLadderSpan:
       ' Range Layering: {pending} pending orders, {step} pips apart (about {distance} pips wide).',
     previewCweLegs:

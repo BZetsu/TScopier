@@ -118,6 +118,9 @@ export interface ConfigureModalTranslations {
     riskMode: string
     fixedLot: string
     dynamicBalance: string
+    dynamicBalanceLotSize: string
+    dynamicBalanceLotSizeHint: string
+    dynamicBalanceLotSizeFallback: string
     tradeStyle: string
     tradeStyleHint: string
     singleTrade: string

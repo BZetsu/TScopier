@@ -58,7 +58,7 @@ import {
   type LinkedAccountType,
 } from '../../lib/brokerFromServer'
 import { estimateMultiTradeOrderCount } from '../../lib/estimateMultiTradeOrders'
-import { resolvePreviewManualLot } from '../../lib/manualLotSizing'
+import { formatPreviewLotSize, resolvePreviewManualLot } from '../../lib/manualLotSizing'
 import { pipCalculator, pipValueForLots, type PipQuote } from '../../lib/pipCalculator'
 import { classifySymbol } from '../../lib/pipMath'
 import { pipsToPriceOffset, signalPipPrice } from '../../lib/signalPip'
@@ -935,6 +935,33 @@ export function AccountConfigPage() {
   const activeChannelTrainingProgress = configDraft.selectedChannelId
     ? Math.max(0, Math.min(100, Math.round(trainingProgressByChannel[configDraft.selectedChannelId] ?? 0)))
     : 0
+
+  const dynamicBalanceLotPreview = useMemo(() => {
+    if (channelManualSettings.risk_mode !== 'dynamic_balance_percent') return null
+    const lot = resolvePreviewManualLot({
+      manualSettings: channelManualSettings,
+      accountBalance: configAccount?.last_balance,
+    })
+    const balance = Number(configAccount?.last_balance ?? 0)
+    const percent = Number(channelManualSettings.dynamic_balance_percent ?? 1) || 1
+    const lotLabel = formatPreviewLotSize(lot)
+    const hint = balance > 0
+      ? interpolate(cm.risk.dynamicBalanceLotSizeHint, {
+          lot: lotLabel,
+          percent: String(percent),
+          balance: formatBrokerMoney(balance, configAccount?.last_currency),
+        })
+      : interpolate(cm.risk.dynamicBalanceLotSizeFallback, { lot: lotLabel })
+    return { lot, lotLabel, hint }
+  }, [
+    channelManualSettings.risk_mode,
+    channelManualSettings.dynamic_balance_percent,
+    channelManualSettings.fixed_lot,
+    configAccount?.last_balance,
+    configAccount?.last_currency,
+    cm.risk.dynamicBalanceLotSizeHint,
+    cm.risk.dynamicBalanceLotSizeFallback,
+  ])
 
   const multiTradePreview = useMemo(() => {
     const ms = channelManualSettings
@@ -2759,7 +2786,29 @@ export function AccountConfigPage() {
                                 ]}
                               />
                               {channelManualSettings.risk_mode === 'dynamic_balance_percent' ? (
-                                <ConfigureInput label={cm.risk.dynamicBalance} type="number" value={String(channelManualSettings.dynamic_balance_percent ?? 1)} onChange={e => setManual({ dynamic_balance_percent: Number(e.target.value) })} />
+                                <>
+                                  <ConfigureInput
+                                    label={cm.risk.dynamicBalance}
+                                    type="number"
+                                    min={0.1}
+                                    step={0.1}
+                                    value={String(channelManualSettings.dynamic_balance_percent ?? 1)}
+                                    onChange={e => setManual({ dynamic_balance_percent: Number(e.target.value) })}
+                                  />
+                                  <div>
+                                    <ConfigTitle className="mb-1" info={dynamicBalanceLotPreview?.hint}>
+                                      {cm.risk.dynamicBalanceLotSize}
+                                    </ConfigTitle>
+                                    <div className="rounded-md border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/50 px-3 py-2 text-sm font-mono text-neutral-900 dark:text-neutral-50">
+                                      {dynamicBalanceLotPreview?.lotLabel ?? '—'}
+                                    </div>
+                                    {dynamicBalanceLotPreview?.hint ? (
+                                      <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                                        {dynamicBalanceLotPreview.hint}
+                                      </p>
+                                    ) : null}
+                                  </div>
+                                </>
                               ) : (
                                 <ConfigureInput
                                   label={cm.risk.fixedLot}

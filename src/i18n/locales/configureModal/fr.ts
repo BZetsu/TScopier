@@ -122,6 +122,9 @@ export const configureModalFr: ConfigureModalTranslations = {
     riskMode: 'Mode de risque',
     fixedLot: 'Lot fixe',
     dynamicBalance: 'Dynamique (% du solde)',
+    dynamicBalanceLotSize: 'Taille de lot par signal',
+    dynamicBalanceLotSizeHint: '{lot} lots à {percent}% d\'un solde de {balance}',
+    dynamicBalanceLotSizeFallback: '{lot} lots (repli sur lot fixe — solde du compte non chargé)',
     tradeStyle: 'Style de trading',
     tradeStyleHint:
       'Entrée unique : un ordre à la taille de lot configurée. Range Trading : répartit ce lot en plusieurs ordres plus petits sur les take-profit du signal.',
@@ -148,9 +151,9 @@ export const configureModalFr: ConfigureModalTranslations = {
     previewFallbackSingle: '1 (répartition impossible avec aperçu min. 0,01 / pas 0,01)',
     previewInstantPending: '{total} ({immediate} instantanées + {pending} pour échelonnement)',
     previewFooter:
-      'Nombre de trades que le copieur prévoit d’ouvrir pour un signal. Basé sur votre lot fixe et la taille par jambe. Le courtier peut en ouvrir moins si le marché n’a pas couvert la zone pendant l’échelonnement.',
+      'Nombre de trades que le copieur prévoit d’ouvrir pour un signal. Basé sur votre taille de lot configurée et la taille par jambe. Le courtier peut en ouvrir moins si le marché n’a pas couvert la zone pendant l’échelonnement.',
     previewDynamicRisk:
-      ' Avec le risque dynamique (% du solde), la taille suit votre solde de compte.',
+      ' La taille de lot est calculée à partir du solde du compte et du pourcentage dynamique (% du solde).',
     previewLadderSpan:
       ' Échelonnement en range : {pending} ordres en attente, espacés de {step} pips (environ {distance} pips au total).',
     previewCweLegs:

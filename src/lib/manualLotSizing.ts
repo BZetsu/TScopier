@@ -34,3 +34,9 @@ export function resolvePreviewManualLot(args: {
   }
   return fixedFallback
 }
+
+/** Display lot size with up to 2 decimal places (broker-style). */
+export function formatPreviewLotSize(lot: number): string {
+  if (!Number.isFinite(lot) || lot <= 0) return '—'
+  return lot.toFixed(2)
+}
