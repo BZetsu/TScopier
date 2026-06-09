@@ -2,6 +2,7 @@ import { authEs } from '../auth/es'
 import { channelWorkerEs } from '../channelWorker/es'
 import { tradeNotificationsEs } from '../tradeNotifications/es'
 import { contactSupportEs } from '../contactSupport/es'
+import { riskDisclaimerEs } from '../riskDisclaimer/es'
 import { landingEs } from './landing/es'
 import type { Translations } from './types'
 import { configureModalEs } from './configureModal/es'
@@ -11,6 +12,7 @@ export const es: Translations = {
   channelWorker: channelWorkerEs,
   tradeNotifications: tradeNotificationsEs,
   contactSupportPage: contactSupportEs,
+  riskDisclaimerPage: riskDisclaimerEs,
   nav: {
     sections: {
       general: 'GENERAL',
@@ -1086,6 +1088,10 @@ export const es: Translations = {
     contactSupport: {
       title: 'Contactar soporte',
       description: 'Ayuda con tu cuenta, copiador o problemas técnicos.',
+    },
+    riskDisclaimer: {
+      title: 'Aviso de riesgo',
+      description: 'Riesgos importantes de la copia de señales y la ejecución automática.',
     },
     featureRequest: {
       title: 'Solicitar función',

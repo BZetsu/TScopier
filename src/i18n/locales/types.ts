@@ -1,6 +1,7 @@
 import type { AuthTranslations } from '../auth/types'
 import type { ChannelWorkerTranslations } from '../channelWorker/types'
 import type { ContactSupportPageTranslations } from '../contactSupport/types'
+import type { RiskDisclaimerPageTranslations } from '../riskDisclaimer/types'
 import type { TradeNotificationsTranslations } from '../tradeNotifications/types'
 import type { ConfigureModalTranslations } from './configureModal/types'
 import type { LandingTranslations } from './landing/types'
@@ -1053,12 +1054,14 @@ export interface Translations {
   marketNews: MarketNewsTranslations
   economicCalendar: EconomicCalendarTranslations
   contactSupportPage: ContactSupportPageTranslations
+  riskDisclaimerPage: RiskDisclaimerPageTranslations
   performance: PerformanceTranslations
   settings: SettingsTranslations
   affiliate: AffiliateTranslations
   pages: {
     accountConfiguration: PageMeta
     contactSupport: PageMeta
+    riskDisclaimer: PageMeta
     featureRequest: PageMeta
     partnerWithUs: PageMeta
     affiliateProgram: PageMeta

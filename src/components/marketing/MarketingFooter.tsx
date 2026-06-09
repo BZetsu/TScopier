@@ -87,6 +87,7 @@ export function MarketingFooter() {
   ]
 
   const resourceLinks: FooterLink[] = [
+    { label: f.links.riskDisclaimer, href: '/risk-disclaimer' },
     { label: f.links.docs, href: HELP_LINKS.documentation, external: true },
     { label: f.links.status, href: HELP_LINKS.status, external: true },
     ...(HELP_LINKS.telegram

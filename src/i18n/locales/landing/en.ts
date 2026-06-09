@@ -742,6 +742,7 @@ export const landingEn: LandingTranslations = {
       docs: 'Documentation',
       status: 'System status',
       telegram: 'Telegram support',
+      riskDisclaimer: 'Risk disclaimer',
       signIn: 'Sign in',
       signUp: 'Create account',
       openApp: 'Open dashboard',

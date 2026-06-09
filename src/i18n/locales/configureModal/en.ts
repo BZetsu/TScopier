@@ -497,4 +497,8 @@ export const configureModalEn: ConfigureModalTranslations = {
     yes: 'Yes',
     no: 'No',
   },
+  riskDisclaimer: {
+    warning: 'Warning! Your capital is at risk. Only copy signal providers you trust.',
+    fullLink: 'See full risk disclaimer',
+  },
 }

@@ -401,6 +401,7 @@ export interface LandingTranslations {
       docs: string
       status: string
       telegram: string
+      riskDisclaimer: string
       signIn: string
       signUp: string
       openApp: string

@@ -2,6 +2,7 @@ import { authEn } from '../auth/en'
 import { channelWorkerEn } from '../channelWorker/en'
 import { tradeNotificationsEn } from '../tradeNotifications/en'
 import { contactSupportEn } from '../contactSupport/en'
+import { riskDisclaimerEn } from '../riskDisclaimer/en'
 import { landingEn } from './landing/en'
 import type { Translations } from './types'
 import { configureModalEn } from './configureModal/en'
@@ -11,6 +12,7 @@ export const en: Translations = {
   channelWorker: channelWorkerEn,
   tradeNotifications: tradeNotificationsEn,
   contactSupportPage: contactSupportEn,
+  riskDisclaimerPage: riskDisclaimerEn,
   nav: {
     sections: {
       general: 'GENERAL',
@@ -1086,6 +1088,10 @@ export const en: Translations = {
     contactSupport: {
       title: 'Contact Support',
       description: 'Get help from the TSCopier team with your account, copier setup, or technical issues.',
+    },
+    riskDisclaimer: {
+      title: 'Risk disclaimer',
+      description: 'Important risks of copy trading, signal providers, and automated execution.',
     },
     featureRequest: {
       title: 'Feature Request',

@@ -106,6 +106,7 @@ import {
   getBrokerDisplayLabel,
 } from '../../lib/brokerChannelLink'
 import { DEFAULT_MANUAL_SETTINGS, DEFAULT_MANUAL_TP_LOTS } from '../../lib/defaultManualSettings'
+import { marketingUrl } from '../../lib/site'
 import {
   choosePersistedSelectedChannelId,
   hasRequestedMultiTradeStyle,
@@ -3797,6 +3798,18 @@ export function AccountConfigPage() {
                 </Button>
               ) : null}
             </div>
+
+            <p className="shrink-0 text-center px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] text-xs leading-relaxed text-neutral-500 dark:text-neutral-400">
+              {cm.riskDisclaimer.warning}{' '}
+              <a
+                href={marketingUrl('/risk-disclaimer')}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-teal-600 hover:underline dark:text-teal-400"
+              >
+                {cm.riskDisclaimer.fullLink}
+              </a>
+            </p>
 
             {pendingApplyPreset ? (
               <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/40 p-4">

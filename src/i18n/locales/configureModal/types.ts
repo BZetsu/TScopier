@@ -417,4 +417,8 @@ export interface ConfigureModalTranslations {
     yes: string
     no: string
   }
+  riskDisclaimer: {
+    warning: string
+    fullLink: string
+  }
 }

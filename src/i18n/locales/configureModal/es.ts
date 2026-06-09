@@ -498,4 +498,8 @@ export const configureModalEs: ConfigureModalTranslations = {
     yes: 'Sí',
     no: 'No',
   },
+  riskDisclaimer: {
+    warning: '¡Advertencia! Su capital está en riesgo. Copie solo proveedores de señales en los que confíe.',
+    fullLink: 'Ver aviso de riesgo completo',
+  },
 }

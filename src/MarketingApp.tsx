@@ -3,6 +3,7 @@ import { AuthProvider } from './context/AuthContext'
 import { LocaleProvider } from './context/LocaleContext'
 import { LandingPage } from './pages/marketing/LandingPage'
 import { PricingPage } from './pages/marketing/PricingPage'
+import { RiskDisclaimerPage } from './pages/marketing/RiskDisclaimerPage'
 import { ReferralLandingRedirect } from './pages/marketing/ReferralLandingRedirect'
 import { appUrl } from './lib/site'
 import { GoogleAnalyticsRouteTracker } from './components/analytics/GoogleAnalyticsRouteTracker'
@@ -25,6 +26,7 @@ export default function MarketingApp() {
           <Routes>
             <Route path="/" element={<LandingPage />} />
             <Route path="/pricing" element={<PricingPage />} />
+            <Route path="/risk-disclaimer" element={<RiskDisclaimerPage />} />
             <Route path="/:referralCode" element={<ReferralLandingRedirect />} />
             <Route path="*" element={<MarketingCatchAll />} />
           </Routes>

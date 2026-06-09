@@ -743,6 +743,7 @@ export const landingFr: LandingTranslations = {
       docs: 'Documentation',
       status: 'État du système',
       telegram: 'Support Telegram',
+      riskDisclaimer: 'Avertissement sur les risques',
       signIn: 'Se connecter',
       signUp: 'Créer un compte',
       openApp: 'Ouvrir le tableau de bord',
