@@ -7,6 +7,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.TERMINAL_RANGE_LEG_STATUSES = void 0;
 exports.loadRangeLegRows = loadRangeLegRows;
+exports.resolveExistingRangeLadderAnchor = resolveExistingRangeLadderAnchor;
 exports.consumedStepIndices = consumedStepIndices;
 exports.maxConsumedStepIndex = maxConsumedStepIndex;
 exports.pendingLegStopsForBasketRefresh = pendingLegStopsForBasketRefresh;
@@ -42,6 +43,29 @@ async function loadRangeLegRows(supabase, scope) {
         return [];
     }
     return (data ?? []);
+}
+/**
+ * Anchor of the existing ladder for this basket scope (rows share one anchor from the
+ * original materialization). Basket-refresh inserts MUST reuse it: re-anchoring at the
+ * newest fill or live quote walks the ladder in the favorable direction and fires new
+ * layers while the basket is in profit — layering is averaging *against* the position.
+ */
+async function resolveExistingRangeLadderAnchor(supabase, scope) {
+    const { data, error } = await supabase
+        .from('range_pending_legs')
+        .select('anchor_price')
+        .eq('signal_id', scope.signalId)
+        .eq('broker_account_id', scope.brokerAccountId)
+        .eq('symbol', scope.symbol)
+        .gt('anchor_price', 0)
+        .order('step_idx', { ascending: true })
+        .limit(1);
+    if (error) {
+        console.warn(`[rangePendingLadderSync] anchor lookup failed signal=${scope.signalId} broker=${scope.brokerAccountId}: ${error.message}`);
+        return null;
+    }
+    const v = Number(data?.[0]?.anchor_price);
+    return Number.isFinite(v) && v > 0 ? v : null;
 }
 function consumedStepIndices(rows) {
     const out = new Set();

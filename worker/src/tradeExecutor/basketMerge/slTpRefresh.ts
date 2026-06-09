@@ -35,7 +35,11 @@ import {
 import { MtOperation } from '../../metatraderapi'
 import { buildPerLegStopTargets, mergePlanImmediateOrders, type MergeModifySummary } from '../../multiTradeMerge'
 import { isRangeLayerTillCloseEnabled } from '../../rangeLayerTillClose'
-import { patchActiveRangePendingLegStops, syncRangePendingLadderOnBasketRefresh } from '../../rangePendingLadderSync'
+import {
+  patchActiveRangePendingLegStops,
+  resolveExistingRangeLadderAnchor,
+  syncRangePendingLadderOnBasketRefresh,
+} from '../../rangePendingLadderSync'
 import { type TradeExecutorContext } from '../context'
 import { computeCweTp, roundLot, triggerPriceFor } from '../helpers'
 import {
@@ -333,6 +337,19 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
         anchor = plan.isBuy === false ? q.bid : q.ask
       } catch { /* drop virtuals below */ }
     }
+    // An existing ladder keeps its original anchor. The re-planned anchor above can fall
+    // back to the newest fill or the live quote, which — when the basket is in profit —
+    // would re-anchor new rungs in the favorable direction and fire fresh layers on tiny
+    // pullbacks. Layering must only average against the basket's original entry.
+    let ladderAnchor: number | null = anchor
+    if (virtualPendings.length > 0) {
+      const existingLadderAnchor = await resolveExistingRangeLadderAnchor(ctx.supabase, {
+        signalId: anchorSignalId,
+        brokerAccountId: broker.id,
+        symbol,
+      })
+      if (existingLadderAnchor != null) ladderAnchor = existingLadderAnchor
+    }
     const overrideTp = computeCweTp(plan, anchor, params)
     let nImmCwe = 0
     if (overrideTp != null && plan.closeWorseEntries) {
@@ -481,7 +498,8 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
       }
     }
 
-    if (virtualPendings.length > 0 && anchor != null && Number.isFinite(anchor) && anchor > 0) {
+    if (virtualPendings.length > 0 && ladderAnchor != null && Number.isFinite(ladderAnchor) && ladderAnchor > 0) {
+      const insertAnchor = ladderAnchor
       if (overrideTp != null && plan.closeWorseEntries) {
         const nVirt = virtualPendings.length
         for (let i = 0; i < nVirt; i++) {
@@ -495,8 +513,8 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
       }
         const digits = Math.max(0, Math.min(8, Number(params?.digits) || 5))
         const safe = Math.max(Number(params?.stopsLevel) || 0, Number(params?.freezeLevel) || 0)
-        const zoneHi = safe > 0 ? anchor + (safe + 2) * (params?.point ?? 0) : null
-        const zoneLo = safe > 0 ? anchor - (safe + 2) * (params?.point ?? 0) : null
+        const zoneHi = safe > 0 ? insertAnchor + (safe + 2) * (params?.point ?? 0) : null
+        const zoneLo = safe > 0 ? insertAnchor - (safe + 2) * (params?.point ?? 0) : null
         const nowMs = Date.now()
       const plannedImmediateLegs = Math.max(
         mergePlanImmediateOrders(plan).length,
@@ -512,7 +530,7 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
         channelParams: channelParamsForLadder,
         tpLots: manual.tp_lots,
         buildInsertRow: (v) => {
-          const triggerPrice = triggerPriceFor(v, anchor, digits)
+          const triggerPrice = triggerPriceFor(v, insertAnchor, digits)
           if (zoneHi != null && zoneLo != null && triggerPrice > zoneLo && triggerPrice < zoneHi) {
             return null
           }
@@ -528,7 +546,7 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
             step_idx: v.stepIdx,
             is_buy: v.isBuy,
             volume: roundLot(v.volume, params),
-            anchor_price: anchor,
+            anchor_price: insertAnchor,
             trigger_price: triggerPrice,
             stoploss: v.stoploss,
             takeprofit: v.takeprofit,

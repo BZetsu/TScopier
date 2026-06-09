@@ -1,10 +1,23 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import type { SupabaseClient } from '@supabase/supabase-js'
 import {
   consumedStepIndices,
   maxConsumedStepIndex,
   pendingLegStopsForBasketRefresh,
+  resolveExistingRangeLadderAnchor,
 } from './rangePendingLadderSync'
+
+function supabaseReturningAnchorRows(rows: Array<{ anchor_price: number }>): SupabaseClient {
+  const builder: Record<string, unknown> = {}
+  const chain = () => builder
+  builder.select = chain
+  builder.eq = chain
+  builder.gt = chain
+  builder.order = chain
+  builder.limit = () => Promise.resolve({ data: rows, error: null })
+  return { from: () => builder } as unknown as SupabaseClient
+}
 
 describe('consumedStepIndices', () => {
   it('includes fired and expired, not pending', () => {
@@ -21,6 +34,20 @@ describe('maxConsumedStepIndex', () => {
   it('returns highest consumed step', () => {
     assert.equal(maxConsumedStepIndex(new Set([1, 4, 2])), 4)
     assert.equal(maxConsumedStepIndex(new Set()), 0)
+  })
+})
+
+describe('resolveExistingRangeLadderAnchor', () => {
+  const scope = { signalId: 's1', brokerAccountId: 'b1', symbol: 'XAUUSD' }
+
+  it('returns the original ladder anchor when rows exist', async () => {
+    const supabase = supabaseReturningAnchorRows([{ anchor_price: 4300 }])
+    assert.equal(await resolveExistingRangeLadderAnchor(supabase, scope), 4300)
+  })
+
+  it('returns null when no ladder rows exist', async () => {
+    const supabase = supabaseReturningAnchorRows([])
+    assert.equal(await resolveExistingRangeLadderAnchor(supabase, scope), null)
   })
 })
 
