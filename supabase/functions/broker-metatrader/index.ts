@@ -727,7 +727,7 @@ Deno.serve(async (req: Request) => {
           .from("broker_accounts")
           .select("id,label,metaapi_account_id,broker_name,platform")
           .eq("user_id", userId)
-          .eq("is_active", true)
+          .not("metaapi_account_id", "is", null)
         brokers = ((data ?? []) as typeof brokers)
       }
 

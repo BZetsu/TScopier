@@ -81,7 +81,7 @@ class BrokerConnectionMonitor {
         const brokersQ = await (0, monitorIdleGate_1.applyShardToQuery)(this.supabase, this.supabase
             .from('broker_accounts')
             .select('id,platform,metaapi_account_id,connection_status,account_login,broker_server,auto_reconnect_enabled,mt_password_encrypted')
-            .eq('is_active', true));
+            .not('metaapi_account_id', 'is', null));
         if (!brokersQ)
             return;
         const { data, error } = await brokersQ;
@@ -178,7 +178,7 @@ class BrokerConnectionMonitor {
             const brokersQ = await (0, monitorIdleGate_1.applyShardToQuery)(this.supabase, this.supabase
                 .from('broker_accounts')
                 .select('id,platform,metaapi_account_id,connection_status,account_login,broker_server,auto_reconnect_enabled,mt_password_encrypted')
-                .eq('is_active', true)
+                .not('metaapi_account_id', 'is', null)
                 .eq('connection_status', 'error')
                 .eq('auto_reconnect_enabled', true)
                 .not('mt_password_encrypted', 'is', null));

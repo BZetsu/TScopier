@@ -177,7 +177,7 @@ export function BrokerAccountsProvider({ children }: { children: ReactNode }) {
     brokers,
     setBrokers,
     autoReconnect: true,
-    autoReconnectActiveOnly: true,
+    autoReconnectActiveOnly: false,
     autoReconnectPaused: recoveryPaused,
     reconnectFailedLabel: bl.reconnectFailed,
     requestPassword: requestReconnectPassword,

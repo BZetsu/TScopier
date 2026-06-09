@@ -31,7 +31,7 @@ export function useBrokerConnectionRecovery(
   const targets = useMemo(
     () =>
       brokers
-        .filter(b => b.is_active && brokerCanReconnect(b) && isMtSessionUuid(b.metaapi_account_id))
+        .filter(b => brokerCanReconnect(b) && isMtSessionUuid(b.metaapi_account_id))
         .sort((a, b) => mtServerKey(a).localeCompare(mtServerKey(b))),
     [brokers],
   )

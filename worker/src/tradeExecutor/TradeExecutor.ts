@@ -341,7 +341,7 @@ export class TradeExecutor {
   private async loadBrokers() {
     const brokersQ = await applyShardToQuery(
       this.supabase,
-      this.supabase.from('broker_accounts').select('*').eq('is_active', true),
+      this.supabase.from('broker_accounts').select('*').not('metaapi_account_id', 'is', null),
     )
     if (!brokersQ) {
       this.brokersByUser.clear()
@@ -366,6 +366,7 @@ export class TradeExecutor {
     this.brokersById.clear()
     this.brokerActivatedAt.clear()
     for (const row of brokerRows) {
+      if (!isMtUuid(row.metaapi_account_id)) continue
       const tableRows = configsByBroker.get(row.id) ?? []
       const mergedRow = tableRows.length
         ? {
@@ -378,10 +379,12 @@ export class TradeExecutor {
         : row
       const normalized = this.normalizeBrokerRow(mergedRow)
       this.brokersById.set(row.id, normalized)
-      const arr = this.brokersByUser.get(row.user_id) ?? []
-      arr.push(normalized)
-      this.brokersByUser.set(row.user_id, arr)
-      this.trackBrokerActivation(normalized)
+      if (normalized.is_active) {
+        const arr = this.brokersByUser.get(row.user_id) ?? []
+        arr.push(normalized)
+        this.brokersByUser.set(row.user_id, arr)
+        this.trackBrokerActivation(normalized)
+      }
     }
     console.log(`[tradeExecutor] cached ${this.brokersById.size} broker accounts across ${this.brokersByUser.size} users`)
     const pingOnStart = String(process.env.BROKER_PING_ON_WORKER_START ?? 'true').toLowerCase()
@@ -554,9 +557,12 @@ export class TradeExecutor {
           const row = payload.new as BrokerRow | undefined
           if (!row) return
           if (!userBelongsToShard(row.user_id)) return
-          if (row.is_active === false) this.removeBrokerCache(row.id)
-          else {
-            this.upsertBrokerCache(row)
+          if (!isMtUuid(row.metaapi_account_id)) {
+            this.removeBrokerCache(row.id)
+            return
+          }
+          this.upsertBrokerCache(row)
+          if (row.is_active) {
             void this.pingBrokerSession(row)
           }
         },

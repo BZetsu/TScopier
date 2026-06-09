@@ -49,7 +49,6 @@ export function useBrokerAccountsRealtime(
           if (
             silentReconnect
             && row.connection_status === 'error'
-            && row.is_active
             && isMtSessionUuid(row.metaapi_account_id)
             && !reconnectTimeouts.current.has(row.id)
           ) {

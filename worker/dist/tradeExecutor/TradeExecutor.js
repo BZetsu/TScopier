@@ -196,7 +196,7 @@ class TradeExecutor {
         return this.sweepLoop;
     }
     async loadBrokers() {
-        const brokersQ = await (0, monitorIdleGate_1.applyShardToQuery)(this.supabase, this.supabase.from('broker_accounts').select('*').eq('is_active', true));
+        const brokersQ = await (0, monitorIdleGate_1.applyShardToQuery)(this.supabase, this.supabase.from('broker_accounts').select('*').not('metaapi_account_id', 'is', null));
         if (!brokersQ) {
             this.brokersByUser.clear();
             this.brokersById.clear();
@@ -220,6 +220,8 @@ class TradeExecutor {
         this.brokersById.clear();
         this.brokerActivatedAt.clear();
         for (const row of brokerRows) {
+            if (!(0, helpers_2.isMtUuid)(row.metaapi_account_id))
+                continue;
             const tableRows = configsByBroker.get(row.id) ?? [];
             const mergedRow = tableRows.length
                 ? {
@@ -229,10 +231,12 @@ class TradeExecutor {
                 : row;
             const normalized = this.normalizeBrokerRow(mergedRow);
             this.brokersById.set(row.id, normalized);
-            const arr = this.brokersByUser.get(row.user_id) ?? [];
-            arr.push(normalized);
-            this.brokersByUser.set(row.user_id, arr);
-            this.trackBrokerActivation(normalized);
+            if (normalized.is_active) {
+                const arr = this.brokersByUser.get(row.user_id) ?? [];
+                arr.push(normalized);
+                this.brokersByUser.set(row.user_id, arr);
+                this.trackBrokerActivation(normalized);
+            }
         }
         console.log(`[tradeExecutor] cached ${this.brokersById.size} broker accounts across ${this.brokersByUser.size} users`);
         const pingOnStart = String(process.env.BROKER_PING_ON_WORKER_START ?? 'true').toLowerCase();
@@ -393,10 +397,12 @@ class TradeExecutor {
                 return;
             if (!(0, workerConfig_1.userBelongsToShard)(row.user_id))
                 return;
-            if (row.is_active === false)
+            if (!(0, helpers_2.isMtUuid)(row.metaapi_account_id)) {
                 this.removeBrokerCache(row.id);
-            else {
-                this.upsertBrokerCache(row);
+                return;
+            }
+            this.upsertBrokerCache(row);
+            if (row.is_active) {
                 void this.pingBrokerSession(row);
             }
         })

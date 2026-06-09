@@ -25,7 +25,12 @@ export function brokerConnectionStatusLabel(
   account: Pick<BrokerAccount, 'is_active' | 'connection_status'>,
   labels: { statusPaused: string; statusConnected: string; statusDisconnected: string },
 ): string {
-  if (!account.is_active) return labels.statusPaused
+  if (!account.is_active) {
+    if (isBrokerSessionConnected(account)) {
+      return `${labels.statusPaused} · ${labels.statusConnected}`
+    }
+    return labels.statusPaused
+  }
   if (isBrokerSessionConnected(account)) return labels.statusConnected
   return labels.statusDisconnected
 }
