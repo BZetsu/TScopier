@@ -22,6 +22,9 @@ import { Badge } from '../../components/ui/Badge'
 import { Alert } from '../../components/ui/Alert'
 import { useAddTradingAccount } from '../../context/AddTradingAccountContext'
 import { RiskLotCalculatorModal } from '../../components/configure/RiskLotCalculatorModal'
+import { CopyLimitsTargetsSection } from '../../components/configure/CopyLimitsTargetsSection'
+import { useUserProfile } from '../../context/UserProfileContext'
+import { normalizeCopyLimitState, type CopyLimitState } from '../../lib/copyLimitTypes'
 import { ConfigTitle, ConfigToggleLabel, ConfigureInput, ConfigureSelect, InfoTooltip } from '../../components/ui/InfoTooltip'
 import { metatraderApi } from '../../lib/metatraderapi'
 import { isLegacyBrokerLink } from '../../lib/brokerLink'
@@ -699,6 +702,7 @@ export function AccountConfigPage() {
     [cm],
   )
   const { user } = useAuth()
+  const { profile } = useUserProfile()
   const userId = user?.id ?? null
   const {
     brokers,
@@ -744,6 +748,7 @@ export function AccountConfigPage() {
     userId ? (channelOptionsCache.get(userId) ?? []) : [],
   )
   const [configAccount, setConfigAccount] = useState<BrokerAccount | null>(null)
+  const [channelCopyLimitState, setChannelCopyLimitState] = useState<Record<string, CopyLimitState>>({})
   const [configDraft, setConfigDraft] = useState<AccountConfigDraft>({
     channelIds: [],
     selectedChannelId: null,
@@ -1344,6 +1349,11 @@ export function AccountConfigPage() {
       channelOptions.some(c => c.id === id),
     )
     setConfigAccount(merged)
+    const limitStateMap: Record<string, CopyLimitState> = {}
+    for (const row of rows) {
+      limitStateMap[row.channel_id] = normalizeCopyLimitState(row.copy_limit_state)
+    }
+    setChannelCopyLimitState(limitStateMap)
     setActiveManualSubTab('ai_training')
     const draft = buildChannelConfigDraftFromBroker(merged, channelIds, keywordFiltersEnabled)
     const nextDraft = {
@@ -3056,6 +3066,17 @@ export function AccountConfigPage() {
                           const predefSummary = describePredefinedStopsOverrideI18n(ms, cm.stops)
                           return (
                           <div className="space-y-6">
+                            <CopyLimitsTargetsSection
+                              copyLimits={ms.copy_limits}
+                              copyLimitState={
+                                configDraft.selectedChannelId
+                                  ? channelCopyLimitState[configDraft.selectedChannelId]
+                                  : undefined
+                              }
+                              profileTimezone={profile.timezone || 'UTC'}
+                              labels={cm.stops}
+                              onChange={next => setManual({ copy_limits: next })}
+                            />
                             <section className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-3 space-y-3">
                               <div className="flex items-center justify-between">
                                 <ConfigTitle info={`${cm.stops.tpDistributionIntro}\n\n${cm.stops.multiTradeNote}\n\n${cm.stops.singleTradeNote}`}>{cm.stops.tpDistributionTitle}</ConfigTitle>

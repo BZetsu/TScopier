@@ -1,0 +1,101 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.fetchChannelRealizedPnl = fetchChannelRealizedPnl;
+exports.fetchChannelFloatingPnl = fetchChannelFloatingPnl;
+exports.buildChannelPnlSnapshot = buildChannelPnlSnapshot;
+exports.resolveReferenceEquity = resolveReferenceEquity;
+const copyLimitPeriods_1 = require("./copyLimitPeriods");
+const metatraderapi_1 = require("./metatraderapi");
+async function fetchChannelRealizedPnl(supabase, brokerAccountId, channelId, startIso, endIso) {
+    const { data, error } = await supabase
+        .from('trades')
+        .select('profit')
+        .eq('broker_account_id', brokerAccountId)
+        .eq('telegram_channel_id', channelId)
+        .eq('status', 'closed')
+        .gte('closed_at', startIso)
+        .lt('closed_at', endIso);
+    if (error) {
+        console.warn(`[copyLimitMetrics] realized pnl query failed: ${error.message}`);
+        return 0;
+    }
+    let sum = 0;
+    for (const row of data ?? []) {
+        const p = Number(row.profit);
+        if (Number.isFinite(p))
+            sum += p;
+    }
+    return sum;
+}
+async function fetchChannelFloatingPnl(supabase, brokerAccountId, channelId, metaapiAccountId, platform) {
+    const { data: openRows, error } = await supabase
+        .from('trades')
+        .select('metaapi_order_id,profit')
+        .eq('broker_account_id', brokerAccountId)
+        .eq('telegram_channel_id', channelId)
+        .eq('status', 'open');
+    if (error || !openRows?.length)
+        return 0;
+    const tickets = openRows
+        .map(r => String(r.metaapi_order_id ?? '').trim())
+        .filter(Boolean);
+    if (!tickets.length)
+        return 0;
+    let sum = 0;
+    const dbProfitByTicket = new Map();
+    for (const row of openRows) {
+        const ticket = String(row.metaapi_order_id ?? '').trim();
+        const p = Number(row.profit);
+        if (ticket && Number.isFinite(p))
+            dbProfitByTicket.set(ticket, p);
+    }
+    if ((0, metatraderapi_1.hasMetatraderApiConfigured)()) {
+        try {
+            const api = (0, metatraderapi_1.getMetatraderApi)((0, metatraderapi_1.mtPlatformFrom)(platform));
+            if (api) {
+                const orders = await api.openedOrders(metaapiAccountId);
+                const ticketSet = new Set(tickets);
+                for (const o of orders ?? []) {
+                    const rec = o;
+                    const ticket = String(rec.ticket ?? rec.Ticket ?? rec.order ?? rec.Order ?? '').trim();
+                    if (!ticketSet.has(ticket))
+                        continue;
+                    const profit = Number(rec.profit ?? rec.Profit);
+                    if (Number.isFinite(profit)) {
+                        sum += profit;
+                        continue;
+                    }
+                    const fromDb = dbProfitByTicket.get(ticket);
+                    if (fromDb != null)
+                        sum += fromDb;
+                }
+                return sum;
+            }
+        }
+        catch (err) {
+            console.warn('[copyLimitMetrics] openedOrders failed:', err instanceof Error ? err.message : String(err));
+        }
+    }
+    for (const p of dbProfitByTicket.values())
+        sum += p;
+    return sum;
+}
+async function buildChannelPnlSnapshot(args) {
+    const window = (0, copyLimitPeriods_1.periodWindowUtc)(args.period, args.timeZone, args.at);
+    const realizedPnl = await fetchChannelRealizedPnl(args.supabase, args.brokerAccountId, args.channelId, window.startIso, window.endIso);
+    const floatingPnl = await fetchChannelFloatingPnl(args.supabase, args.brokerAccountId, args.channelId, args.metaapiAccountId, args.platform);
+    return {
+        realizedPnl,
+        floatingPnl,
+        totalPnl: realizedPnl + floatingPnl,
+    };
+}
+function resolveReferenceEquity(lastEquity, lastBalance) {
+    const eq = Number(lastEquity);
+    if (Number.isFinite(eq) && eq > 0)
+        return eq;
+    const bal = Number(lastBalance);
+    if (Number.isFinite(bal) && bal > 0)
+        return bal;
+    return 0;
+}

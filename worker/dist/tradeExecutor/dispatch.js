@@ -34,6 +34,7 @@ const types_1 = require("./types");
 const telegramMessageEdit_1 = require("../telegramMessageEdit");
 const subscriptionAccess_1 = require("../subscriptionAccess");
 const signalExecutionEligibility_1 = require("../signalExecutionEligibility");
+const copyLimitDispatch_1 = require("../copyLimitDispatch");
 function shouldUseEntryFastPath(ctx, row) {
     const mode = workerConfig_1.workerConfig.tradeExecutorMode;
     if (mode !== 'entry' && mode !== 'all')
@@ -331,7 +332,25 @@ async function handleSignal(ctx, row, opts) {
             }
             return [(0, channelTradingConfig_1.withChannelTradingConfig)(b, row.channel_id)];
         });
-        const brokers = allMatchingBrokers.filter(b => ctx.brokerEligibleForSignal(b, row));
+        let brokers = allMatchingBrokers.filter(b => ctx.brokerEligibleForSignal(b, row));
+        if ((0, tradeSignalActions_1.isEntryAction)(action) && brokers.length > 0 && row.channel_id) {
+            const profileTz = ctx.userTimezoneById.get(row.user_id);
+            const allowed = [];
+            for (const broker of brokers) {
+                const state = await ctx.fetchCopyLimitState(broker.id, row.channel_id);
+                const pause = (0, copyLimitDispatch_1.evaluateChannelCopyLimitPauseForBroker)(broker, row.channel_id, profileTz, state);
+                if (pause.paused && pause.reason) {
+                    await ctx.logDispatchSkipped(row, pause.reason, {
+                        broker_id: broker.id,
+                        channel_id: row.channel_id,
+                        pause_key: pause.pauseKey ?? null,
+                    });
+                    continue;
+                }
+                allowed.push(broker);
+            }
+            brokers = allowed;
+        }
         if (!brokers.length) {
             if (configSkipReasons.length > 0 && rawMatchingBrokers.length > 0) {
                 await ctx.logDispatchSkipped(row, configSkipReasons[0] ?? 'channel_config_missing', {

@@ -106,6 +106,8 @@ import { syncRangePendingLadderOnBasketRefresh } from '../rangePendingLadderSync
 import { loadExistingRangeStepIndices } from '../rangePendingFireGuard'
 import { channelMatchesBrokerSignal } from '../brokerChannelFilter'
 import { replayParsedSignalsForBroker } from '../brokerSignalReplay'
+import { normalizeChannelUuid } from '../channelTradingConfig'
+import { normalizeCopyLimitState, type CopyLimitState } from '../copyLimitTypes'
 import { takeProfitForLegIndex } from '../manualPlanning/tpBucketDistribution'
 import {
   explicitMgmtSymbol,
@@ -234,6 +236,8 @@ export class TradeExecutor {
    * that piled up while the broker was disabled.
    */
   brokerActivatedAt = new Map<string, number>()
+  userTimezoneById = new Map<string, string>()
+  private copyLimitStateCache = new Map<string, { state: CopyLimitState; at: number }>()
   constructor(
     readonly supabase: SupabaseClient,
     readonly sessionManager?: UserSessionManager,
@@ -366,6 +370,19 @@ export class TradeExecutor {
     this.brokersByUser.clear()
     this.brokersById.clear()
     this.brokerActivatedAt.clear()
+    this.userTimezoneById.clear()
+    const userIds = [...new Set(brokerRows.map(r => r.user_id).filter(Boolean))]
+    if (userIds.length) {
+      const { data: profiles } = await this.supabase
+        .from('user_profiles')
+        .select('user_id,timezone')
+        .in('user_id', userIds)
+      for (const p of profiles ?? []) {
+        const uid = String((p as { user_id?: string }).user_id ?? '')
+        const tz = String((p as { timezone?: string }).timezone ?? 'UTC').trim() || 'UTC'
+        if (uid) this.userTimezoneById.set(uid, tz)
+      }
+    }
     for (const row of brokerRows) {
       if (!isMtUuid(row.metaapi_account_id)) continue
       const tableRows = configsByBroker.get(row.id) ?? []
@@ -1402,5 +1419,30 @@ export class TradeExecutor {
     opts?: { userDecorated?: boolean },
   ): Promise<string> {
     return await brokerSymbolCache.resolveBrokerSymbol(this, uuid, requested, opts)
+  }
+
+  async fetchCopyLimitState(brokerId: string, channelId: string): Promise<CopyLimitState> {
+    const key = `${brokerId}:${normalizeChannelUuid(channelId) ?? channelId}`
+    const hit = this.copyLimitStateCache.get(key)
+    if (hit && Date.now() - hit.at < 20_000) return hit.state
+
+    const channelKey = normalizeChannelUuid(channelId)
+    if (!channelKey) return { paused_period_keys: [], periods: {} }
+
+    const { data, error } = await this.supabase
+      .from('broker_channel_trading_configs')
+      .select('copy_limit_state')
+      .eq('broker_account_id', brokerId)
+      .eq('channel_id', channelKey)
+      .maybeSingle()
+
+    if (error) {
+      console.warn(`[tradeExecutor] fetchCopyLimitState failed: ${error.message}`)
+    }
+    const state = normalizeCopyLimitState(
+      (data as { copy_limit_state?: unknown } | null)?.copy_limit_state,
+    )
+    this.copyLimitStateCache.set(key, { state, at: Date.now() })
+    return state
   }
 }

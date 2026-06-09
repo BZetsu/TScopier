@@ -44,6 +44,7 @@ import {
   isSubscriptionActive,
 } from '../subscriptionAccess'
 import { evaluateParsedSignalExecutionEligibility } from '../signalExecutionEligibility'
+import { evaluateChannelCopyLimitPauseForBroker } from '../copyLimitDispatch'
 
 export function shouldUseEntryFastPath(ctx: TradeExecutorContext, row: SignalRow): boolean {
     const mode = workerConfig.tradeExecutorMode
@@ -383,7 +384,30 @@ export async function handleSignal(ctx: TradeExecutorContext,
         }
         return [withChannelTradingConfig(b, row.channel_id)]
       })
-      const brokers = allMatchingBrokers.filter(b => ctx.brokerEligibleForSignal(b, row))
+      let brokers = allMatchingBrokers.filter(b => ctx.brokerEligibleForSignal(b, row))
+      if (isEntryAction(action) && brokers.length > 0 && row.channel_id) {
+        const profileTz = ctx.userTimezoneById.get(row.user_id)
+        const allowed: BrokerRow[] = []
+        for (const broker of brokers) {
+          const state = await ctx.fetchCopyLimitState(broker.id, row.channel_id)
+          const pause = evaluateChannelCopyLimitPauseForBroker(
+            broker,
+            row.channel_id,
+            profileTz,
+            state,
+          )
+          if (pause.paused && pause.reason) {
+            await ctx.logDispatchSkipped(row, pause.reason, {
+              broker_id: broker.id,
+              channel_id: row.channel_id,
+              pause_key: pause.pauseKey ?? null,
+            })
+            continue
+          }
+          allowed.push(broker)
+        }
+        brokers = allowed
+      }
       if (!brokers.length) {
         if (configSkipReasons.length > 0 && rawMatchingBrokers.length > 0) {
           await ctx.logDispatchSkipped(row, configSkipReasons[0] ?? 'channel_config_missing', {

@@ -4,7 +4,8 @@ exports.channelTradingConfigsMapFromRows = channelTradingConfigsMapFromRows;
 exports.mergeChannelTradingConfigsFromTable = mergeChannelTradingConfigsFromTable;
 exports.fetchBrokerChannelTradingConfigRows = fetchBrokerChannelTradingConfigRows;
 const channelTradingConfig_1 = require("./channelTradingConfig");
-const BROKER_CHANNEL_TRADING_CONFIG_SELECT = 'broker_account_id,channel_id,copier_mode,manual_settings,ai_settings';
+const copyLimitTypes_1 = require("./copyLimitTypes");
+const BROKER_CHANNEL_TRADING_CONFIG_SELECT = 'broker_account_id,channel_id,copier_mode,manual_settings,ai_settings,copy_limit_state';
 function ensurePersistedManualSettings(settings) {
     const schemaVersion = Number(settings.schema_version ?? 1);
     return {
@@ -24,6 +25,7 @@ function channelTradingConfigsMapFromRows(rows) {
                 ? row.manual_settings
                 : {}),
             ai_settings: row.ai_settings && typeof row.ai_settings === 'object' ? row.ai_settings : {},
+            copy_limit_state: (0, copyLimitTypes_1.normalizeCopyLimitState)(row.copy_limit_state),
         };
     }
     return out;

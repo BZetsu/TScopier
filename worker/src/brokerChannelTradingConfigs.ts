@@ -4,6 +4,7 @@ import {
   normalizeChannelTradingConfigsMap,
   normalizeChannelUuid,
 } from './channelTradingConfig'
+import { normalizeCopyLimitState } from './copyLimitTypes'
 
 export interface BrokerChannelTradingConfigRow {
   broker_account_id: string
@@ -11,10 +12,11 @@ export interface BrokerChannelTradingConfigRow {
   copier_mode: 'ai' | 'manual' | string
   manual_settings: Record<string, unknown>
   ai_settings: Record<string, unknown>
+  copy_limit_state?: Record<string, unknown>
 }
 
 const BROKER_CHANNEL_TRADING_CONFIG_SELECT =
-  'broker_account_id,channel_id,copier_mode,manual_settings,ai_settings'
+  'broker_account_id,channel_id,copier_mode,manual_settings,ai_settings,copy_limit_state'
 
 function ensurePersistedManualSettings(settings: Record<string, unknown>): Record<string, unknown> {
   const schemaVersion = Number(settings.schema_version ?? 1)
@@ -39,6 +41,7 @@ export function channelTradingConfigsMapFromRows(
           : {},
       ),
       ai_settings: row.ai_settings && typeof row.ai_settings === 'object' ? row.ai_settings : {},
+      copy_limit_state: normalizeCopyLimitState(row.copy_limit_state),
     }
   }
   return out

@@ -45,6 +45,8 @@ const tradeSignalActions_1 = require("../tradeSignalActions");
 const workerConfig_1 = require("../workerConfig");
 const monitorIdleGate_1 = require("../monitorIdleGate");
 const brokerSignalReplay_1 = require("../brokerSignalReplay");
+const channelTradingConfig_2 = require("../channelTradingConfig");
+const copyLimitTypes_1 = require("../copyLimitTypes");
 const pipelineTimestamps_1 = require("../pipelineTimestamps");
 const channelKeywordsCache_1 = require("../channelKeywordsCache");
 const helpers_2 = require("./helpers");
@@ -100,6 +102,8 @@ class TradeExecutor {
          * that piled up while the broker was disabled.
          */
         this.brokerActivatedAt = new Map();
+        this.userTimezoneById = new Map();
+        this.copyLimitStateCache = new Map();
         if (!(0, metatraderapi_1.hasMetatraderApiConfigured)()) {
             console.warn('[tradeExecutor] MT4API_BASIC_USER/PASSWORD missing — trade execution disabled.');
         }
@@ -220,6 +224,20 @@ class TradeExecutor {
         this.brokersByUser.clear();
         this.brokersById.clear();
         this.brokerActivatedAt.clear();
+        this.userTimezoneById.clear();
+        const userIds = [...new Set(brokerRows.map(r => r.user_id).filter(Boolean))];
+        if (userIds.length) {
+            const { data: profiles } = await this.supabase
+                .from('user_profiles')
+                .select('user_id,timezone')
+                .in('user_id', userIds);
+            for (const p of profiles ?? []) {
+                const uid = String(p.user_id ?? '');
+                const tz = String(p.timezone ?? 'UTC').trim() || 'UTC';
+                if (uid)
+                    this.userTimezoneById.set(uid, tz);
+            }
+        }
         for (const row of brokerRows) {
             if (!(0, helpers_2.isMtUuid)(row.metaapi_account_id))
                 continue;
@@ -1000,6 +1018,27 @@ class TradeExecutor {
      */
     async resolveBrokerSymbol(uuid, requested, opts) {
         return await brokerSymbolCache.resolveBrokerSymbol(this, uuid, requested, opts);
+    }
+    async fetchCopyLimitState(brokerId, channelId) {
+        const key = `${brokerId}:${(0, channelTradingConfig_2.normalizeChannelUuid)(channelId) ?? channelId}`;
+        const hit = this.copyLimitStateCache.get(key);
+        if (hit && Date.now() - hit.at < 20000)
+            return hit.state;
+        const channelKey = (0, channelTradingConfig_2.normalizeChannelUuid)(channelId);
+        if (!channelKey)
+            return { paused_period_keys: [], periods: {} };
+        const { data, error } = await this.supabase
+            .from('broker_channel_trading_configs')
+            .select('copy_limit_state')
+            .eq('broker_account_id', brokerId)
+            .eq('channel_id', channelKey)
+            .maybeSingle();
+        if (error) {
+            console.warn(`[tradeExecutor] fetchCopyLimitState failed: ${error.message}`);
+        }
+        const state = (0, copyLimitTypes_1.normalizeCopyLimitState)(data?.copy_limit_state);
+        this.copyLimitStateCache.set(key, { state, at: Date.now() });
+        return state;
     }
 }
 exports.TradeExecutor = TradeExecutor;

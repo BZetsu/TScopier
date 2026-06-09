@@ -245,6 +245,29 @@ export interface ConfigureModalTranslations {
     summaryJoin: string
     summaryPrefix: string
     basicPlanMoreTpsLimit: string
+    profitTargetsTitle: string
+    profitTargetsIntro: string
+    profitTargetsToggle: string
+    maxRiskTitle: string
+    maxRiskIntro: string
+    maxRiskToggle: string
+    addTarget: string
+    periodDaily: string
+    periodWeekly: string
+    periodMonthly: string
+    periodOverall: string
+    valueTypeAmount: string
+    valueTypePercent: string
+    targetValue: string
+    periodLabel: string
+    typeLabel: string
+    timezoneTitle: string
+    timezoneProfile: string
+    timezoneCustom: string
+    timezoneHint: string
+    pausedProfitBanner: string
+    pausedRiskBanner: string
+    pausedOverallBanner: string
   }
   management: {
     monitorIntroMulti: string

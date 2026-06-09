@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { BrokerAccount, Json, ManualSettings } from '../types/database'
+import type { BrokerAccount, CopyLimitState, Json, ManualSettings } from '../types/database'
+import { normalizeCopyLimitState } from './copyLimitTypes'
 import { DEFAULT_MANUAL_SETTINGS, ensurePersistedManualSettings } from './defaultManualSettings'
 import {
   type ChannelTradingConfig,
@@ -9,7 +10,7 @@ import {
 } from './channelTradingConfig'
 
 export const BROKER_CHANNEL_TRADING_CONFIG_SELECT =
-  'id,broker_account_id,channel_id,copier_mode,manual_settings,ai_settings,updated_at'
+  'id,broker_account_id,channel_id,copier_mode,manual_settings,ai_settings,copy_limit_state,updated_at'
 
 export interface BrokerChannelTradingConfigRow {
   id: string
@@ -18,6 +19,7 @@ export interface BrokerChannelTradingConfigRow {
   copier_mode: 'ai' | 'manual'
   manual_settings: ManualSettings
   ai_settings: Json
+  copy_limit_state?: CopyLimitState
   updated_at: string
 }
 
@@ -36,6 +38,7 @@ export function channelTradingConfigsMapFromRows(
         (row.manual_settings ?? {}) as ManualSettings,
       ),
       ai_settings: (row.ai_settings ?? {}) as Json,
+      copy_limit_state: normalizeCopyLimitState(row.copy_limit_state),
     }
   }
   return out

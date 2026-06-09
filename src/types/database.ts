@@ -208,6 +208,45 @@ export interface ManualChannelKeywords {
 
 export type ChannelKeywords = ManualChannelKeywords
 
+export type CopyLimitPeriod = 'daily' | 'weekly' | 'monthly' | 'overall'
+export type CopyLimitValueType = 'amount' | 'percent'
+export type CopyLimitTimezoneMode = 'profile' | 'custom'
+
+export interface ProfitTargetRule {
+  id: string
+  enabled: boolean
+  period: CopyLimitPeriod
+  value_type: CopyLimitValueType
+  value: number
+}
+
+export interface MaxRiskRule {
+  period: CopyLimitPeriod
+  value_type: CopyLimitValueType
+  value: number
+}
+
+export interface CopyLimitsConfig {
+  profit_targets_enabled: boolean
+  profit_targets: ProfitTargetRule[]
+  max_risk_enabled: boolean
+  max_risk?: MaxRiskRule
+  timezone_mode: CopyLimitTimezoneMode
+  timezone?: string
+}
+
+export interface CopyLimitPeriodSnapshot {
+  period_key: string
+  reference_equity: number
+  peak_channel_pnl: number
+  last_evaluated_at: string
+}
+
+export interface CopyLimitState {
+  paused_period_keys: string[]
+  periods: Record<string, CopyLimitPeriodSnapshot>
+}
+
 export interface ManualSettings {
   schema_version?: number
   symbol_mapping?: Record<string, string>
@@ -281,6 +320,8 @@ export interface ManualSettings {
   allow_high_impact_news?: boolean
   close_before_news_minutes?: number
   resume_after_news_minutes?: number
+  /** Per-channel profit targets and max risk (Targets tab). */
+  copy_limits?: CopyLimitsConfig
 }
 
 export interface BrokerAccount {

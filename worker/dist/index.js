@@ -20,6 +20,7 @@ const basketSlTpReconcileMonitor_1 = require("./basketSlTpReconcileMonitor");
 const newsTradingMonitor_1 = require("./newsTradingMonitor");
 const brokerConnectionMonitor_1 = require("./brokerConnectionMonitor");
 const openTradeReconcileMonitor_1 = require("./openTradeReconcileMonitor");
+const copyLimitMonitor_1 = require("./copyLimitMonitor");
 const workerConfig_1 = require("./workerConfig");
 const tradeSignalPush_1 = require("./tradeSignalPush");
 const signalQueueConsumer_1 = require("./queue/signalQueueConsumer");
@@ -71,8 +72,11 @@ function startTradeMonitors() {
     }
     if (workerConfig_1.workerConfig.runsTrade) {
         const brokerConnectionMonitor = new brokerConnectionMonitor_1.BrokerConnectionMonitor(supabase);
+        const copyLimitMonitor = new copyLimitMonitor_1.CopyLimitMonitor(supabase);
         brokerConnectionMonitor.start();
+        copyLimitMonitor.start();
         trackMonitor(brokerConnectionMonitor);
+        trackMonitor(copyLimitMonitor);
     }
     if (workerConfig_1.workerConfig.runsManagementMonitors) {
         const trailingStopMonitor = new trailingStopMonitor_1.TrailingStopMonitor(supabase);

@@ -1,4 +1,5 @@
 import type { ManualSettings, ManualTpLot } from '../types/database'
+import { DEFAULT_COPY_LIMITS } from './copyLimitTypes'
 
 export const DEFAULT_MANUAL_TP_LOTS: ManualTpLot[] = [
   { label: 'TP1', lot: 0.01, percent: 50, enabled: true },
@@ -75,4 +76,5 @@ export const DEFAULT_MANUAL_SETTINGS: ManualSettings = {
   allow_high_impact_news: true,
   close_before_news_minutes: 30,
   resume_after_news_minutes: 15,
+  copy_limits: DEFAULT_COPY_LIMITS,
 }

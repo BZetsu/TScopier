@@ -15,6 +15,7 @@ import { BasketSlTpReconcileMonitor } from './basketSlTpReconcileMonitor'
 import { NewsTradingMonitor } from './newsTradingMonitor'
 import { BrokerConnectionMonitor } from './brokerConnectionMonitor'
 import { OpenTradeReconcileMonitor } from './openTradeReconcileMonitor'
+import { CopyLimitMonitor } from './copyLimitMonitor'
 import { workerConfig } from './workerConfig'
 import { validateListenerTradeShardConfig, validateListenerQueueConfig } from './tradeSignalPush'
 import { SignalQueueConsumerManager } from './queue/signalQueueConsumer'
@@ -77,8 +78,11 @@ function startTradeMonitors() {
 
   if (workerConfig.runsTrade) {
     const brokerConnectionMonitor = new BrokerConnectionMonitor(supabase)
+    const copyLimitMonitor = new CopyLimitMonitor(supabase)
     brokerConnectionMonitor.start()
+    copyLimitMonitor.start()
     trackMonitor(brokerConnectionMonitor)
+    trackMonitor(copyLimitMonitor)
   }
 
   if (workerConfig.runsManagementMonitors) {

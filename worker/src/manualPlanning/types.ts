@@ -74,6 +74,7 @@ export interface ManualSettings {
   move_sl_to_entry_tp_index?: number
   move_sl_to_entry_type?: 'sl_only' | 'sl_and_close_half'
   breakeven_offset_pips?: number
+  copy_limits?: Record<string, unknown>
 }
 
 export interface ChannelKeywords {

@@ -1,11 +1,12 @@
 import type { Json, ManualSettings } from '../types/database'
+import { normalizeCopyLimitState } from './copyLimitTypes'
 import { DEFAULT_MANUAL_SETTINGS, ensurePersistedManualSettings } from './defaultManualSettings'
 import { normalizeSignalChannelIds } from './brokerChannelLink'
-
 export interface ChannelTradingConfig {
   copier_mode?: 'ai' | 'manual'
   manual_settings?: ManualSettings | null
   ai_settings?: Json | null
+  copy_limit_state?: CopyLimitState
 }
 
 export type ChannelTradingConfigsMap = Record<string, ChannelTradingConfig>
@@ -43,6 +44,9 @@ export function normalizeChannelTradingConfigsMap(raw: unknown): ChannelTradingC
         ? (row.manual_settings as ManualSettings)
         : undefined,
       ai_settings: (row.ai_settings ?? undefined) as Json | undefined,
+      copy_limit_state: row.copy_limit_state && typeof row.copy_limit_state === 'object'
+        ? normalizeCopyLimitState(row.copy_limit_state)
+        : undefined,
     }
   }
   return out
@@ -103,6 +107,7 @@ export function healChannelTradingConfigsMap(
       copier_mode: existing?.copier_mode ?? fallbackMode,
       manual_settings: manual,
       ai_settings: (existing?.ai_settings ?? broker.ai_settings ?? {}) as Json,
+      copy_limit_state: existing?.copy_limit_state,
     }
   }
   return configs
@@ -129,6 +134,7 @@ export function isMinimalSeedManualSettings(raw: unknown): boolean {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return true
   const row = raw as Record<string, unknown>
   if ('schema_version' in row) return false
+  if (row.copy_limits != null && typeof row.copy_limits === 'object') return false
   if (!channelManualSettingsComplete(row)) return true
   const keys = Object.keys(row).filter(k => row[k] !== undefined && row[k] !== null)
   if (keys.length > 4) return false

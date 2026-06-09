@@ -15,6 +15,7 @@ exports.cloneChannelTradingConfig = cloneChannelTradingConfig;
 exports.removeChannelTradingConfigKey = removeChannelTradingConfigKey;
 const normalizeManualSettings_1 = require("./manualPlanning/normalizeManualSettings");
 const brokerChannelFilter_1 = require("./brokerChannelFilter");
+const copyLimitTypes_1 = require("./copyLimitTypes");
 function normalizeChannelUuid(id) {
     const s = String(id ?? '').trim();
     return s ? s.toLowerCase() : null;
@@ -36,6 +37,9 @@ function normalizeChannelTradingConfigsMap(raw) {
                 : undefined,
             ai_settings: row.ai_settings && typeof row.ai_settings === 'object'
                 ? row.ai_settings
+                : undefined,
+            copy_limit_state: row.copy_limit_state && typeof row.copy_limit_state === 'object'
+                ? (0, copyLimitTypes_1.normalizeCopyLimitState)(row.copy_limit_state)
                 : undefined,
         };
     }
@@ -96,6 +100,7 @@ function healChannelTradingConfigsMap(broker) {
             copier_mode: existing?.copier_mode ?? fallbackMode,
             manual_settings: manual,
             ai_settings: (existing?.ai_settings ?? broker.ai_settings ?? {}),
+            copy_limit_state: existing?.copy_limit_state,
         };
     }
     return configs;
@@ -130,6 +135,8 @@ function isMinimalSeedManualSettings(raw) {
         return true;
     const row = raw;
     if ('schema_version' in row)
+        return false;
+    if (row.copy_limits != null && typeof row.copy_limits === 'object')
         return false;
     if (!channelManualSettingsComplete(row))
         return true;
