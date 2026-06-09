@@ -4,6 +4,7 @@ import {
   evaluateCopyLimitBreaches,
   mergeBreachesIntoState,
   periodEquitySnapshot,
+  reconcilePausedKeysWithConfig,
   resolveCopyLimitTimezone,
   updatePeriodSnapshots,
 } from './copyLimitEvaluate'
@@ -157,6 +158,15 @@ export class CopyLimitMonitor {
           timeZone,
         }))
       }
+
+      // Drop pauses whose rule was edited/removed since the breach (e.g. the
+      // user raised the profit target); still-breaching rules are re-added
+      // below with their current fingerprint.
+      state = reconcilePausedKeysWithConfig(
+        state,
+        config,
+        new Set(breaches.map(b => b.pauseKey)),
+      )
 
       if (breaches.length) {
         const prevPaused = new Set(state.paused_period_keys)

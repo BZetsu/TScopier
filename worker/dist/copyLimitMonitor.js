@@ -120,6 +120,10 @@ class CopyLimitMonitor {
                     timeZone,
                 }));
             }
+            // Drop pauses whose rule was edited/removed since the breach (e.g. the
+            // user raised the profit target); still-breaching rules are re-added
+            // below with their current fingerprint.
+            state = (0, copyLimitEvaluate_1.reconcilePausedKeysWithConfig)(state, config, new Set(breaches.map(b => b.pauseKey)));
             if (breaches.length) {
                 const prevPaused = new Set(state.paused_period_keys);
                 const flattened = new Set(state.flattened_pause_keys ?? []);

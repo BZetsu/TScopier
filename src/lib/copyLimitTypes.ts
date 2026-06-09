@@ -42,7 +42,23 @@ export interface CopyLimitState {
   paused_period_keys: string[]
   /** Pause keys that already triggered an automatic channel flatten. */
   flattened_pause_keys?: string[]
+  /**
+   * pauseKey → fingerprint of the rule (period|type|value) at breach time.
+   * Lets evaluation drop a pause when the user has since changed the rule
+   * (e.g. raised the profit target), instead of staying paused until the
+   * period resets.
+   */
+  pause_rule_fingerprints?: Record<string, string>
   periods: Record<string, CopyLimitPeriodSnapshot>
+}
+
+/** Identity of a rule's thresholds — changing any of these invalidates old pauses. */
+export function ruleFingerprint(rule: {
+  period: CopyLimitPeriod
+  value_type: CopyLimitValueType
+  value: number
+}): string {
+  return `${rule.period}|${rule.value_type}|${rule.value}`
 }
 
 export const DEFAULT_COPY_LIMITS: CopyLimitsConfig = {
@@ -149,7 +165,18 @@ export function normalizeCopyLimitState(raw: unknown): CopyLimitState {
   const flattened = Array.isArray(j.flattened_pause_keys)
     ? j.flattened_pause_keys.map(k => String(k)).filter(Boolean)
     : []
-  return { paused_period_keys: paused, flattened_pause_keys: flattened, periods }
+  const fingerprints: Record<string, string> = {}
+  if (j.pause_rule_fingerprints && typeof j.pause_rule_fingerprints === 'object') {
+    for (const [key, val] of Object.entries(j.pause_rule_fingerprints as Record<string, unknown>)) {
+      if (typeof val === 'string' && val) fingerprints[key] = val
+    }
+  }
+  return {
+    paused_period_keys: paused,
+    flattened_pause_keys: flattened,
+    pause_rule_fingerprints: fingerprints,
+    periods,
+  }
 }
 
 export function pauseKey(kind: 'profit' | 'risk', period: CopyLimitPeriod, periodKey: string, ruleId?: string): string {

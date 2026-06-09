@@ -4,8 +4,9 @@ import {
   evaluateCopyLimitBreaches,
   equityDelta,
   isChannelCopyLimitPaused,
+  reconcilePausedKeysWithConfig,
 } from './copyLimitEvaluate'
-import { DEFAULT_COPY_LIMITS, pauseKey } from './copyLimitTypes'
+import { DEFAULT_COPY_LIMITS, pauseKey, ruleFingerprint } from './copyLimitTypes'
 import { periodKeyFor } from './copyLimitPeriods'
 
 describe('copyLimitEvaluate', () => {
@@ -154,5 +155,178 @@ describe('copyLimitEvaluate', () => {
     })
     assert.ok(pause)
     assert.equal(pause!.reason, 'channel_profit_target_hit')
+  })
+
+  it('clears the pause when the user raises the profit target', () => {
+    const at = new Date('2026-06-08T12:00:00Z')
+    const pk = periodKeyFor('daily', 'UTC', at)
+    const oldRule = {
+      id: 't1',
+      enabled: true,
+      period: 'daily' as const,
+      value_type: 'amount' as const,
+      value: 1000,
+    }
+    const key = pauseKey('profit', 'daily', pk, 't1')
+    // Paused at $1000, then the user raises the target to $5000.
+    const config = {
+      ...DEFAULT_COPY_LIMITS,
+      profit_targets_enabled: true,
+      profit_targets: [{ ...oldRule, value: 5000 }],
+    }
+    const pause = isChannelCopyLimitPaused({
+      config,
+      state: {
+        paused_period_keys: [key],
+        pause_rule_fingerprints: { [key]: ruleFingerprint(oldRule) },
+        periods: {},
+      },
+      timeZone: 'UTC',
+      at,
+    })
+    assert.equal(pause, null)
+  })
+
+  it('clears the pause when the user raises the max loss', () => {
+    const at = new Date('2026-06-08T12:00:00Z')
+    const pk = periodKeyFor('daily', 'UTC', at)
+    const oldRule = {
+      id: 'r1',
+      enabled: true,
+      period: 'daily' as const,
+      value_type: 'amount' as const,
+      value: 500,
+    }
+    const key = pauseKey('risk', 'daily', pk, 'r1')
+    const config = {
+      ...DEFAULT_COPY_LIMITS,
+      max_risk_enabled: true,
+      max_risks: [{ ...oldRule, value: 2000 }],
+    }
+    const pause = isChannelCopyLimitPaused({
+      config,
+      state: {
+        paused_period_keys: [key],
+        pause_rule_fingerprints: { [key]: ruleFingerprint(oldRule) },
+        periods: {},
+      },
+      timeZone: 'UTC',
+      at,
+    })
+    assert.equal(pause, null)
+  })
+
+  it('keeps the pause when the rule is unchanged', () => {
+    const at = new Date('2026-06-08T12:00:00Z')
+    const pk = periodKeyFor('daily', 'UTC', at)
+    const rule = {
+      id: 't1',
+      enabled: true,
+      period: 'daily' as const,
+      value_type: 'amount' as const,
+      value: 1000,
+    }
+    const key = pauseKey('profit', 'daily', pk, 't1')
+    const config = {
+      ...DEFAULT_COPY_LIMITS,
+      profit_targets_enabled: true,
+      profit_targets: [rule],
+    }
+    const pause = isChannelCopyLimitPaused({
+      config,
+      state: {
+        paused_period_keys: [key],
+        pause_rule_fingerprints: { [key]: ruleFingerprint(rule) },
+        periods: {},
+      },
+      timeZone: 'UTC',
+      at,
+    })
+    assert.ok(pause)
+  })
+
+  it('clears the pause when the rule is deleted or disabled', () => {
+    const at = new Date('2026-06-08T12:00:00Z')
+    const pk = periodKeyFor('daily', 'UTC', at)
+    const key = pauseKey('profit', 'daily', pk, 't1')
+    const state = {
+      paused_period_keys: [key],
+      periods: {},
+    }
+    const otherRule = {
+      id: 't2',
+      enabled: true,
+      period: 'weekly' as const,
+      value_type: 'amount' as const,
+      value: 100,
+    }
+    const config = {
+      ...DEFAULT_COPY_LIMITS,
+      profit_targets_enabled: true,
+      profit_targets: [otherRule],
+    }
+    assert.equal(isChannelCopyLimitPaused({ config, state, timeZone: 'UTC', at }), null)
+  })
+
+  describe('reconcilePausedKeysWithConfig', () => {
+    const at = new Date('2026-06-08T12:00:00Z')
+    const pk = periodKeyFor('daily', 'UTC', at)
+    const rule = {
+      id: 't1',
+      enabled: true,
+      period: 'daily' as const,
+      value_type: 'amount' as const,
+      value: 1000,
+    }
+    const key = pauseKey('profit', 'daily', pk, 't1')
+    const config = {
+      ...DEFAULT_COPY_LIMITS,
+      profit_targets_enabled: true,
+      profit_targets: [rule],
+    }
+
+    it('keeps legacy un-fingerprinted pauses that still breach', () => {
+      const next = reconcilePausedKeysWithConfig(
+        { paused_period_keys: [key], flattened_pause_keys: [key], periods: {} },
+        config,
+        new Set([key]),
+      )
+      assert.deepEqual(next.paused_period_keys, [key])
+      assert.deepEqual(next.flattened_pause_keys, [key])
+    })
+
+    it('drops legacy un-fingerprinted pauses that no longer breach', () => {
+      const next = reconcilePausedKeysWithConfig(
+        { paused_period_keys: [key], flattened_pause_keys: [key], periods: {} },
+        config,
+        new Set<string>(),
+      )
+      assert.deepEqual(next.paused_period_keys, [])
+      assert.deepEqual(next.flattened_pause_keys, [])
+    })
+
+    it('keeps legacy pauses when no live breach info is available', () => {
+      const next = reconcilePausedKeysWithConfig(
+        { paused_period_keys: [key], periods: {} },
+        config,
+      )
+      assert.deepEqual(next.paused_period_keys, [key])
+    })
+
+    it('drops the flatten marker together with a fingerprint-mismatched pause', () => {
+      const next = reconcilePausedKeysWithConfig(
+        {
+          paused_period_keys: [key],
+          flattened_pause_keys: [key],
+          pause_rule_fingerprints: { [key]: ruleFingerprint({ ...rule, value: 500 }) },
+          periods: {},
+        },
+        config,
+        new Set([key]),
+      )
+      assert.deepEqual(next.paused_period_keys, [])
+      assert.deepEqual(next.flattened_pause_keys, [])
+      assert.deepEqual(next.pause_rule_fingerprints, {})
+    })
   })
 })

@@ -6,7 +6,7 @@ import type {
   MaxRiskRule,
   ProfitTargetRule,
 } from './copyLimitTypes'
-import { pauseKey } from './copyLimitTypes'
+import { pauseKey, ruleFingerprint } from './copyLimitTypes'
 
 /** Account equity relative to period-start baseline. */
 export type EquitySnapshot = {
@@ -20,6 +20,8 @@ export type CopyLimitBreach = {
   reason: 'channel_profit_target_hit' | 'channel_max_risk_hit'
   pauseKey: string
   ruleId?: string
+  /** Fingerprint of the breached rule, recorded so later config edits can clear the pause. */
+  fingerprint?: string
 }
 
 export function resolveCopyLimitTimezone(
@@ -91,6 +93,7 @@ export function evaluateCopyLimitBreaches(args: {
         reason: 'channel_profit_target_hit',
         pauseKey: pauseKey('profit', rule.period, pk, rule.id),
         ruleId: rule.id,
+        fingerprint: ruleFingerprint(rule),
       })
     }
   }
@@ -104,6 +107,7 @@ export function evaluateCopyLimitBreaches(args: {
         reason: 'channel_max_risk_hit',
         pauseKey: pauseKey('risk', rule.period, pk, rule.id),
         ruleId: rule.id,
+        fingerprint: ruleFingerprint(rule),
       })
     }
   }
@@ -161,8 +165,23 @@ export function updatePeriodSnapshots(args: {
 
   const paused_period_keys = pruneExpiredPauseKeys(args.state.paused_period_keys, args.timeZone, at)
   const flattened_pause_keys = pruneExpiredPauseKeys(args.state.flattened_pause_keys ?? [], args.timeZone, at)
+  const pause_rule_fingerprints = pickFingerprints(
+    args.state.pause_rule_fingerprints,
+    new Set([...paused_period_keys, ...flattened_pause_keys]),
+  )
 
-  return { paused_period_keys, flattened_pause_keys, periods }
+  return { paused_period_keys, flattened_pause_keys, pause_rule_fingerprints, periods }
+}
+
+function pickFingerprints(
+  fingerprints: Record<string, string> | undefined,
+  keys: Set<string>,
+): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const [key, fp] of Object.entries(fingerprints ?? {})) {
+    if (keys.has(key)) out[key] = fp
+  }
+  return out
 }
 
 export function mergeBreachesIntoState(
@@ -170,8 +189,67 @@ export function mergeBreachesIntoState(
   breaches: CopyLimitBreach[],
 ): CopyLimitState {
   const set = new Set(state.paused_period_keys)
-  for (const b of breaches) set.add(b.pauseKey)
-  return { ...state, paused_period_keys: [...set] }
+  const fingerprints = { ...(state.pause_rule_fingerprints ?? {}) }
+  for (const b of breaches) {
+    set.add(b.pauseKey)
+    if (b.fingerprint) fingerprints[b.pauseKey] = b.fingerprint
+  }
+  return { ...state, paused_period_keys: [...set], pause_rule_fingerprints: fingerprints }
+}
+
+function ruleForPauseKey(
+  config: CopyLimitsConfig,
+  key: string,
+): ProfitTargetRule | MaxRiskRule | null {
+  const parts = key.split(':')
+  const kind = parts[0]
+  const period = parts[1]
+  if (!kind || !period) return null
+  const list = kind === 'risk'
+    ? (config.max_risk_enabled ? config.max_risks : [])
+    : (config.profit_targets_enabled ? config.profit_targets : [])
+  const ruleId = period === 'overall' ? parts[2] : parts[3]
+  const rule = ruleId
+    ? list.find(r => r.id === ruleId)
+    : list.find(r => r.period === period && r.enabled)
+  if (!rule || !rule.enabled || rule.value <= 0) return null
+  return rule
+}
+
+/**
+ * Drop pause keys that no longer correspond to the current config:
+ *   - the rule (or its whole section) was deleted or disabled, or
+ *   - the rule's thresholds changed since the breach (fingerprint mismatch) —
+ *     e.g. the user raised the profit target / max loss, or
+ *   - legacy pauses without a recorded fingerprint, when `currentBreachKeys`
+ *     is provided (worker path with live equity) and the rule is not
+ *     currently breaching.
+ *
+ * Pauses for unchanged, still-valid rules stay sticky until the period resets.
+ */
+export function reconcilePausedKeysWithConfig(
+  state: CopyLimitState,
+  config: CopyLimitsConfig,
+  currentBreachKeys?: Set<string> | null,
+): CopyLimitState {
+  const fingerprints = state.pause_rule_fingerprints ?? {}
+  const kept = state.paused_period_keys.filter(key => {
+    const rule = ruleForPauseKey(config, key)
+    if (!rule) return false
+    const recorded = fingerprints[key]
+    if (recorded) return recorded === ruleFingerprint(rule)
+    if (currentBreachKeys) return currentBreachKeys.has(key)
+    return true
+  })
+  if (kept.length === state.paused_period_keys.length) return state
+
+  const keptSet = new Set(kept)
+  return {
+    ...state,
+    paused_period_keys: kept,
+    flattened_pause_keys: (state.flattened_pause_keys ?? []).filter(k => keptSet.has(k)),
+    pause_rule_fingerprints: pickFingerprints(state.pause_rule_fingerprints, keptSet),
+  }
 }
 
 export function isChannelCopyLimitPaused(args: {
@@ -181,7 +259,10 @@ export function isChannelCopyLimitPaused(args: {
   at?: Date
 }): CopyLimitBreach | null {
   if (!copyLimitsActive(args.config)) return null
-  const state = args.state ?? { paused_period_keys: [], periods: {} }
+  const rawState = args.state ?? { paused_period_keys: [], periods: {} }
+  // Ignore pauses from rules that were since edited/removed — e.g. the user
+  // raised the profit target after it was hit.
+  const state = reconcilePausedKeysWithConfig(rawState, args.config!)
   const at = args.at ?? new Date()
   const active = pruneExpiredPauseKeys(state.paused_period_keys, args.timeZone, at)
   if (!active.length) return null

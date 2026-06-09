@@ -1,9 +1,14 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DEFAULT_COPY_LIMIT_STATE = exports.DEFAULT_COPY_LIMITS = void 0;
+exports.ruleFingerprint = ruleFingerprint;
 exports.normalizeCopyLimits = normalizeCopyLimits;
 exports.normalizeCopyLimitState = normalizeCopyLimitState;
 exports.pauseKey = pauseKey;
+/** Identity of a rule's thresholds — changing any of these invalidates old pauses. */
+function ruleFingerprint(rule) {
+    return `${rule.period}|${rule.value_type}|${rule.value}`;
+}
 exports.DEFAULT_COPY_LIMITS = {
     profit_targets_enabled: false,
     profit_targets: [],
@@ -102,7 +107,19 @@ function normalizeCopyLimitState(raw) {
     const flattened = Array.isArray(j.flattened_pause_keys)
         ? j.flattened_pause_keys.map(k => String(k)).filter(Boolean)
         : [];
-    return { paused_period_keys: paused, flattened_pause_keys: flattened, periods };
+    const fingerprints = {};
+    if (j.pause_rule_fingerprints && typeof j.pause_rule_fingerprints === 'object') {
+        for (const [key, val] of Object.entries(j.pause_rule_fingerprints)) {
+            if (typeof val === 'string' && val)
+                fingerprints[key] = val;
+        }
+    }
+    return {
+        paused_period_keys: paused,
+        flattened_pause_keys: flattened,
+        pause_rule_fingerprints: fingerprints,
+        periods,
+    };
 }
 function pauseKey(kind, period, periodKey, ruleId) {
     if (period === 'overall') {
