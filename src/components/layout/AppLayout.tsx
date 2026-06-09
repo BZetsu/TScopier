@@ -9,6 +9,7 @@ import { useT } from '../../context/LocaleContext'
 import { getSubscribeCtaLabel } from '../../lib/subscriptionCta'
 import { ThemeToggle } from '../ui/ThemeToggle'
 import { LanguageSwitcher } from '../auth/LanguageSwitcher'
+import { AppBanner } from './AppBanner'
 import { HelpSidebarNav } from './HelpSidebarNav'
 import { NotificationBell } from './NotificationBell'
 import { UserMenuDropdown } from './UserMenuDropdown'
@@ -246,7 +247,9 @@ export function AppLayout() {
   )
 
   return (
-    <div className="flex h-[100dvh] min-h-0 w-full overflow-hidden overscroll-none bg-neutral-50 dark:bg-neutral-950">
+    <div className="flex h-[100dvh] min-h-0 w-full flex-col overflow-hidden overscroll-none bg-neutral-50 dark:bg-neutral-950">
+      <AppBanner />
+      <div className="flex min-h-0 w-full flex-1 overflow-hidden overscroll-none">
       {mobileNavOpen && (
         <button
           type="button"
@@ -324,7 +327,7 @@ export function AppLayout() {
           ref={setHeaderEl}
           className={clsx(
             'z-30 flex shrink-0 touch-none items-center gap-2 border-b border-neutral-100 bg-white px-3 dark:border-neutral-800 dark:bg-neutral-900 sm:gap-4 sm:px-6',
-            'fixed inset-x-0 top-0 h-[calc(3.5rem+env(safe-area-inset-top,0px))] pt-[env(safe-area-inset-top,0px)] sm:h-[calc(4rem+env(safe-area-inset-top,0px))]',
+            'fixed inset-x-0 top-[var(--app-banner-h,0px)] h-[calc(3.5rem+env(safe-area-inset-top,0px))] pt-[env(safe-area-inset-top,0px)] sm:h-[calc(4rem+env(safe-area-inset-top,0px))]',
             'lg:static lg:z-20 lg:h-16 lg:min-h-0 lg:pt-0 lg:touch-auto',
           )}
         >
@@ -431,6 +434,7 @@ export function AppLayout() {
         >
           <Outlet />
         </main>
+      </div>
       </div>
     </div>
   )
