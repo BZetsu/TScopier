@@ -185,7 +185,8 @@ import * as brokerSymbolCache from './brokerSymbolCache'
 import * as dispatch from './dispatch'
 import * as basketMerge from './basketMerge'
 import * as managementExecutor from './managementExecutor'
-import { runSingleEntry, runRangeEntry } from './entryRouter'
+import { runSingleEntry } from './singleEntryExecutor'
+import { runRangeEntry } from './rangeTradeExecutor'
 
 export type { SignalRow } from './types'
 

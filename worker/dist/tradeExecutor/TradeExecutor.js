@@ -55,7 +55,8 @@ const brokerSymbolCache = __importStar(require("./brokerSymbolCache"));
 const dispatch = __importStar(require("./dispatch"));
 const basketMerge = __importStar(require("./basketMerge"));
 const managementExecutor = __importStar(require("./managementExecutor"));
-const entryRouter_1 = require("./entryRouter");
+const singleEntryExecutor_1 = require("./singleEntryExecutor");
+const rangeTradeExecutor_1 = require("./rangeTradeExecutor");
 class TradeExecutor {
     constructor(supabase, sessionManager) {
         this.supabase = supabase;
@@ -837,9 +838,9 @@ class TradeExecutor {
             const isManual = (effectiveBroker.copier_mode ?? 'ai') === 'manual';
             const manual = (effectiveBroker.manual_settings ?? {});
             if (isManual && manual.trade_style === 'multi') {
-                return await (0, entryRouter_1.runRangeEntry)(this, { signal, parsed, op, broker: effectiveBroker, channelKeywords, pipelineT0, sendOpts });
+                return await (0, rangeTradeExecutor_1.runRangeEntry)(this, { signal, parsed, op, broker: effectiveBroker, channelKeywords, pipelineT0, sendOpts });
             }
-            return await (0, entryRouter_1.runSingleEntry)(this, { signal, parsed, op, broker: effectiveBroker, channelKeywords, pipelineT0, sendOpts });
+            return await (0, singleEntryExecutor_1.runSingleEntry)(this, { signal, parsed, op, broker: effectiveBroker, channelKeywords, pipelineT0, sendOpts });
         }
         finally {
             this.entryBrokerInflight.delete(entryKey);

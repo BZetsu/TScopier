@@ -7,7 +7,7 @@ import {
   isManagementAction,
   parsedAction,
 } from '../tradeSignalActions'
-import { shardForUserId, workerConfig } from '../workerConfig'
+import { parseEnvBool, shardForUserId, workerConfig } from '../workerConfig'
 
 export type SignalQueueLane = 'entry' | 'mgmt'
 
@@ -27,14 +27,6 @@ export type SignalQueueConfig = {
   pushFallbackOnQueueFail: boolean
   redisRestUrl: string
   redisRestToken: string
-}
-
-function parseEnvBool(raw: string | undefined, defaultValue: boolean): boolean {
-  if (raw === undefined || raw === '') return defaultValue
-  const v = raw.toLowerCase().trim()
-  if (v === '0' || v === 'false' || v === 'no') return false
-  if (v === '1' || v === 'true' || v === 'yes') return true
-  return defaultValue
 }
 
 function parseCanaryShards(raw: string | undefined): Set<number> | null {

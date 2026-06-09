@@ -11,8 +11,6 @@ exports.storedPerChannelConfigComplete = storedPerChannelConfigComplete;
 exports.channelConfigReadyForExecution = channelConfigReadyForExecution;
 exports.resolveChannelTradingConfig = resolveChannelTradingConfig;
 exports.withChannelTradingConfig = withChannelTradingConfig;
-exports.cloneChannelTradingConfig = cloneChannelTradingConfig;
-exports.removeChannelTradingConfigKey = removeChannelTradingConfigKey;
 const normalizeManualSettings_1 = require("./manualPlanning/normalizeManualSettings");
 const brokerChannelFilter_1 = require("./brokerChannelFilter");
 const copyLimitTypes_1 = require("./copyLimitTypes");
@@ -223,20 +221,4 @@ function withChannelTradingConfig(broker, channelId) {
         manual_settings: resolved.manual_settings,
         ai_settings: resolved.ai_settings,
     };
-}
-function cloneChannelTradingConfig(from) {
-    return {
-        copier_mode: from.copier_mode ?? 'manual',
-        manual_settings: from.manual_settings
-            ? JSON.parse(JSON.stringify(from.manual_settings))
-            : buildDefaultChannelTradingConfig().manual_settings,
-        ai_settings: from.ai_settings
-            ? JSON.parse(JSON.stringify(from.ai_settings))
-            : {},
-    };
-}
-function removeChannelTradingConfigKey(configs, channelId) {
-    const next = { ...configs };
-    delete next[channelId];
-    return next;
 }

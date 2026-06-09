@@ -5,7 +5,6 @@
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.parsedHasSlOrTp = parsedHasSlOrTp;
-exports.isParameterFollowUpSignal = isParameterFollowUpSignal;
 exports.shouldRouteAsBasketParameterRefresh = shouldRouteAsBasketParameterRefresh;
 exports.mergePlanImmediateOrders = mergePlanImmediateOrders;
 exports.buildPerLegStopTargets = buildPerLegStopTargets;
@@ -14,7 +13,6 @@ exports.filterSignalIdsByChannel = filterSignalIdsByChannel;
 exports.resolveLatestOpenBasketAnchor = resolveLatestOpenBasketAnchor;
 exports.resolveOpenBasketAnchorForMessageEdit = resolveOpenBasketAnchorForMessageEdit;
 exports.resolveOpenBasketAnchorForParameterFollowUp = resolveOpenBasketAnchorForParameterFollowUp;
-exports.isBareEntryFollowUp = isBareEntryFollowUp;
 const manualPlanner_1 = require("./manualPlanner");
 const signalPriceInference_1 = require("./signalPriceInference");
 const tpBucketDistribution_1 = require("./manualPlanning/tpBucketDistribution");
@@ -26,10 +24,6 @@ function parsedHasSlOrTp(parsed) {
     const hasTp = Array.isArray(parsed.tp)
         && parsed.tp.some(t => typeof t === 'number' && Number.isFinite(t) && t > 0);
     return hasSl || hasTp;
-}
-/** @alias {@link parsedHasSlOrTp} */
-function isParameterFollowUpSignal(parsed) {
-    return parsedHasSlOrTp(parsed);
 }
 /**
  * True when this signal should refresh SL/TP on an existing basket (modify-only),

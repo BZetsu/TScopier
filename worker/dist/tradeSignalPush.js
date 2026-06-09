@@ -4,7 +4,6 @@
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.parseTradeWorkerShardUrls = parseTradeWorkerShardUrls;
-exports.pushParsedSignalToTradeWorker = pushParsedSignalToTradeWorker;
 exports.pushParsedSignalToTradeWorkerAwait = pushParsedSignalToTradeWorkerAwait;
 exports.validateListenerTradeShardConfig = validateListenerTradeShardConfig;
 exports.validateListenerQueueConfig = validateListenerQueueConfig;
@@ -205,14 +204,6 @@ async function pushParsedSignalToTradeWorkerInner(row, opts) {
         await sleep(backoffMs);
     }
     return false;
-}
-/**
- * Fire-and-forget POST to trade worker with short retry on transient failures.
- */
-function pushParsedSignalToTradeWorker(row) {
-    void pushParsedSignalToTradeWorkerInner(row).catch(err => {
-        console.warn('[tradeSignalPush] push failed:', err instanceof Error ? err.message : err);
-    });
 }
 /** Awaitable push — used after signals row is persisted (durable handoff). */
 async function pushParsedSignalToTradeWorkerAwait(row, opts) {

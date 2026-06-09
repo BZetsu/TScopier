@@ -12,7 +12,7 @@
 
 import { tradeExecutorModeForRole, type TradeExecutorMode } from './tradeSignalActions'
 
-export type WorkerRole =
+type WorkerRole =
   | 'all'
   | 'listener'
   | 'trade'
@@ -66,7 +66,7 @@ export const workerConfig = {
     parseEnvBool(process.env.EXECUTOR_REALTIME_SIGNALS, role === 'all' || role === 'trade'),
 }
 
-function parseEnvBool(raw: string | undefined, defaultValue: boolean): boolean {
+export function parseEnvBool(raw: string | undefined, defaultValue: boolean): boolean {
   if (raw === undefined || raw === '') return defaultValue
   const v = raw.toLowerCase().trim()
   if (v === '0' || v === 'false' || v === 'no') return false

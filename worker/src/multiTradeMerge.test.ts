@@ -2,28 +2,15 @@ import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
 import {
   buildPerLegStopTargets,
-  isBareEntryFollowUp,
-  isParameterFollowUpSignal,
   mergePlanImmediateOrders,
   parsedHasSlOrTp,
   shouldRouteAsBasketParameterRefresh,
 } from './multiTradeMerge'
 import type { PlannerResult } from './manualPlanner'
 
-test('isParameterFollowUpSignal: SL only', () => {
-  assert.equal(isParameterFollowUpSignal({ sl: 78100, tp: null }), true)
-})
-
-test('isParameterFollowUpSignal: TP only', () => {
-  assert.equal(isParameterFollowUpSignal({ sl: null, tp: [79300, 79600] }), true)
-})
-
-test('isParameterFollowUpSignal: bare buy now', () => {
-  assert.equal(isParameterFollowUpSignal({ action: 'buy', sl: null, tp: null }), false)
-})
-
-test('parsedHasSlOrTp aliases isParameterFollowUpSignal', () => {
+test('parsedHasSlOrTp: SL or TP levels', () => {
   assert.equal(parsedHasSlOrTp({ sl: 100, tp: null }), true)
+  assert.equal(parsedHasSlOrTp({ sl: null, tp: [79300, 79600] }), true)
   assert.equal(parsedHasSlOrTp({ action: 'buy', sl: null, tp: null }), false)
 })
 
@@ -70,7 +57,6 @@ test('shouldRouteAsBasketParameterRefresh: bare NOW is not parameter refresh', (
     shouldRouteAsBasketParameterRefresh({ action: 'sell', sl: null, tp: null }),
     false,
   )
-  assert.equal(isBareEntryFollowUp({ action: 'sell', sl: null, tp: null }), true)
 })
 
 test('shouldRouteAsBasketParameterRefresh: SL/TP without entry is follow-up candidate', () => {

@@ -1,116 +1,15 @@
-import { RealtimeChannel, SupabaseClient } from '@supabase/supabase-js'
-import {
-  getMetatraderApi,
-  hasMetatraderApiConfigured,
-  isBrokerDisconnectedMessage,
-  MT_SESSION_EXPIRED_HINT,
-  mtPlatformFrom,
-  MetatraderApiClient,
-  MtOperation,
-  normalizeSymbolParams,
-  OrderSendArgs,
-  SymbolParams,
-} from '../../metatraderapi'
-import {
-  clampPendingExpiryHours,
-  computeCwOverrideTp,
-  parsedHasExplicitEntryAnchor,
-  planManualOrders,
-  resolvedParsedEntryPrice,
-  resolvedParsedEntryZone,
-  signalEntryPriceStrictEnabled,
-  SKIP_REASON_SIGNAL_ENTRY_REQUIRED,
-  strictSignalEntryQuoteAllowsImmediate,
-  lastPositiveParsedTpPrice,
-  type ChannelKeywords,
-  type ManualSettings,
-  type ParsedSignal as PlannerParsedSignal,
-  type PlannerPartialTp,
-  type PlannerResult,
-  type VirtualPendingLeg,
-} from '../../manualPlanner'
-import { normalizeManualSettingsForExecution } from '../../manualPlanning/normalizeManualSettings'
-import { isRangeLayerTillCloseEnabled } from '../../rangeLayerTillClose'
-import { findActiveNewsBlackout } from '../../newsTrading/blackout'
-import { getCalendarEventsCached } from '../../newsTrading/calendarProvider'
-import { isNewsTradingEnabled } from '../../newsTrading/settings'
-import { autoManagementTradeSnapshot } from '../../autoManagement'
-import {
-  referencePriceForDirection,
-  cweInstructionGroupKey,
-  parseCweInstructionGroupKey,
-  selectTradesForCweInstruction,
-} from '../../closeWorseEntries'
-import {
-  dispatchPriorityForAction,
-  isEntryAction,
-  isManagementAction,
-  parsedAction,
-  signalMatchesExecutorMode,
-} from '../../tradeSignalActions'
-import { workerConfig, userBelongsToShard } from '../../workerConfig'
-import { writeBrokerConnectionStatus } from '../../brokerConnectionStatus'
-import {
-  applyShardToQuery,
-  hasWorkOnShard,
-  monitorActiveIntervalMs,
-  monitorIdleIntervalMs,
-  startMonitorLoop,
-  type MonitorLoopHandle,
-} from '../../monitorIdleGate'
-import {
-  isChannelManagementBlocked,
-  isOppositeSignalCloseBlocked,
-  isPendingCancelBlocked,
-  normalizeChannelMessageFiltersMap,
-  type ChannelMessageFiltersMap,
-} from '../../channelMessageFilters'
-import { signalPipPrice } from '../../signalPip'
-import { trailingTradeRowSnapshot } from '../../trailingStop'
-import { isPostgresDuplicateKeyError } from '../../rangePendingLegPersist'
-import { cancelSignalEntryRowAtBroker, type SignalEntryPendingRow } from '../../signalEntryPendingHelpers'
-import {
-  computeBasketMergeLinkContext,
-  type BasketMergeLinkContext,
-  MERGE_IMPLICIT_CHANNEL_BUNDLE_MS,
-} from '../../signalMergeLink'
-import type { UserSessionManager } from '../../sessionManager'
-import {
-  buildPerLegStopTargets,
-  legacyMergeLinkingEnabled,
-  mergePlanImmediateOrders,
-  resolveLatestOpenBasketAnchor,
-  shouldRouteAsBasketParameterRefresh,
-  type MergeModifySummary,
-} from '../../multiTradeMerge'
 import { symbolsCompatibleForBasket } from '../../basketModFollowUp'
 import {
-  classifyGhostBasketLegs,
   closeStaleOpenTrades,
   fetchOpenBrokerTickets,
-  fetchOpenBrokerTicketsStrict,
   GHOST_BASKET_CLOSED_USER_MESSAGE,
   markBasketReconcileDone,
   markBasketReconcileDoneForAnchor,
   runBasketLegModifies,
   upsertBasketReconcileJob,
   type BasketOpenLeg,
-  type BasketSymbolParams,
+  type BasketSymbolParams
 } from '../../basketSlTpReconcile'
-import {
-  patchActiveRangePendingLegStops,
-  syncRangePendingLadderOnBasketRefresh,
-} from '../../rangePendingLadderSync'
-import { loadExistingRangeStepIndices } from '../../rangePendingFireGuard'
-import { channelMatchesBrokerSignal } from '../../brokerChannelFilter'
-import { resolveTpBucketRows } from '../../manualPlanning/tpBucketDistribution'
-import {
-  explicitMgmtSymbol,
-  isReplyScopedManagement,
-  loadOpenTradesForManagement,
-  resolveChannelModifyTargets,
-  type MgmtTradeRow,
-} from '../../managementScope'
 import {
   applyChannelParamsToVirtualPendingList,
   estimateBasketTotalPlannedLegs,
@@ -118,40 +17,33 @@ import {
   mergeParsedWithChannelParams,
   reapplyChannelParamsToPendingLegs,
   parsedSignalHasExplicitStops,
-  shouldMergeChannelParamsForEntry,
   shouldOverlayChannelParamsOnBasketRefresh,
   shouldPreferSignalStopsOverChannelMemory,
-  stripInvalidStopsForSide,
-  symbolsForChannelParamsPersist,
   upsertChannelActiveTradeParams,
-  type ChannelActiveTradeParams,
+  type ChannelActiveTradeParams
 } from '../../channelActiveTradeParams'
 import {
-  loadRangePendingLegsInMgmtScope,
-  pendingLegsToCancelScopes,
-  updateRangePendingLegsForManagement,
-} from '../../managementPendingLegs'
-import { parsePipelineTimestamps, pipelineSummaryPayload, type PipelineTimestamps } from '../../pipelineTimestamps'
-import {
-  buildTscopierCommentPrefix,
-  resolveChannelLabelForComment,
-  sanitizeChannelCommentSlug,
-} from '../../tradeComment'
-import { applyPostFillFollowUp, type PostFillTradeLeg } from '../../postFillFollowUp'
-import { isBenignOrderModifyError } from '../../orderModifyBenign'
-import { invalidateChannelParseCache } from '../../channelKeywordsCache'
-import type { TradeExecutorContext } from '../context'
-import type {
-  BrokerRow,
-  MergeOutcome,
-  ParsedSignal,
-  RangePendingCancelScope,
-  SignalRow,
-  SymbolCacheEntry,
-} from '../types'
+  parsedHasExplicitEntryAnchor,
+  planManualOrders,
+  resolvedParsedEntryPrice,
+  resolvedParsedEntryZone,
+  type ChannelKeywords,
+  type ManualSettings,
+  type ParsedSignal as PlannerParsedSignal,
+  type PlannerPartialTp
+} from '../../manualPlanner'
+import { MtOperation } from '../../metatraderapi'
+import { buildPerLegStopTargets, mergePlanImmediateOrders, type MergeModifySummary } from '../../multiTradeMerge'
+import { isRangeLayerTillCloseEnabled } from '../../rangeLayerTillClose'
+import { patchActiveRangePendingLegStops, syncRangePendingLadderOnBasketRefresh } from '../../rangePendingLadderSync'
+import { type TradeExecutorContext } from '../context'
 import { computeCweTp, roundLot, triggerPriceFor } from '../helpers'
-
-import { cancelRangePendingLegsForScopes } from './pendingCancel'
+import {
+  type BrokerRow,
+  type ParsedSignal,
+  type SignalRow,
+  type SymbolCacheEntry
+} from '../types'
 import { persistRangePendingLegRows } from './helpers'
 
 export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {

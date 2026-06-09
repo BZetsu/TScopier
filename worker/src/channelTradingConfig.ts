@@ -275,24 +275,3 @@ export function withChannelTradingConfig<T extends BrokerChannelTradingFields>(
     ai_settings: resolved.ai_settings,
   }
 }
-
-export function cloneChannelTradingConfig(from: ChannelTradingConfig): ChannelTradingConfig {
-  return {
-    copier_mode: from.copier_mode ?? 'manual',
-    manual_settings: from.manual_settings
-      ? JSON.parse(JSON.stringify(from.manual_settings))
-      : buildDefaultChannelTradingConfig().manual_settings,
-    ai_settings: from.ai_settings
-      ? JSON.parse(JSON.stringify(from.ai_settings))
-      : {},
-  }
-}
-
-export function removeChannelTradingConfigKey(
-  configs: ChannelTradingConfigsMap,
-  channelId: string,
-): ChannelTradingConfigsMap {
-  const next = { ...configs }
-  delete next[channelId]
-  return next
-}

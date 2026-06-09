@@ -54,11 +54,6 @@ export function parsedHasSlOrTp(parsed: ParsedSignalLike): boolean {
   return hasSl || hasTp
 }
 
-/** @alias {@link parsedHasSlOrTp} */
-export function isParameterFollowUpSignal(parsed: ParsedSignalLike): boolean {
-  return parsedHasSlOrTp(parsed)
-}
-
 /**
  * True when this signal should refresh SL/TP on an existing basket (modify-only),
  * not open a new trade. False for one-shot entry alerts (priced entry or bare NOW).
@@ -390,7 +385,7 @@ async function resolveRecentEntrySignalAnchor(
 }
 
 /** Entry-shaped follow-up without SL/TP is not a parameter refresh. */
-export function isBareEntryFollowUp(parsed: ParsedSignalLike): boolean {
+function isBareEntryFollowUp(parsed: ParsedSignalLike): boolean {
   return (
     !parsedHasSlOrTp(parsed)
     && !parsedHasExplicitEntryAnchor(parsed as Parameters<typeof parsedHasExplicitEntryAnchor>[0])

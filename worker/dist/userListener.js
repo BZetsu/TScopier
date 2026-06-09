@@ -931,7 +931,6 @@ class UserListener {
         if (shouldPush) {
             const pushed = await (0, tradeSignalPush_1.pushParsedSignalToTradeWorkerAwait)({
                 ...dispatchRow,
-                parsed_data: dispatchRow.parsed_data,
                 dispatch_source: telegramMessageEdit_1.MESSAGE_EDIT_DISPATCH_SOURCE,
             }, { source: telegramMessageEdit_1.MESSAGE_EDIT_DISPATCH_SOURCE });
             if (!pushed)

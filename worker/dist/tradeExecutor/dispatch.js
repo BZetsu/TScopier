@@ -193,7 +193,7 @@ async function markSignalExecuted(ctx, signalId) {
         /* best-effort */
     }
 }
-async function signalLiveDispatchAlreadyHandled(ctx, signalId) {
+async function signalDispatchAlreadyHandled(ctx, signalId) {
     const [trades, range, entry, logs] = await Promise.all([
         ctx.supabase
             .from('trades')
@@ -219,31 +219,11 @@ async function signalLiveDispatchAlreadyHandled(ctx, signalId) {
         || (entry.count ?? 0) > 0
         || (logs.count ?? 0) > 0);
 }
+async function signalLiveDispatchAlreadyHandled(ctx, signalId) {
+    return signalDispatchAlreadyHandled(ctx, signalId);
+}
 async function signalAlreadyHandled(ctx, signalId) {
-    const [trades, range, entry, logs] = await Promise.all([
-        ctx.supabase
-            .from('trades')
-            .select('id', { count: 'exact', head: true })
-            .eq('signal_id', signalId),
-        ctx.supabase
-            .from('range_pending_legs')
-            .select('id', { count: 'exact', head: true })
-            .eq('signal_id', signalId),
-        ctx.supabase
-            .from('signal_entry_pending_orders')
-            .select('id', { count: 'exact', head: true })
-            .eq('signal_id', signalId),
-        ctx.supabase
-            .from('trade_execution_logs')
-            .select('id', { count: 'exact', head: true })
-            .eq('signal_id', signalId)
-            .eq('status', 'success')
-            .in('action', [...types_1.EXECUTION_LOG_ACTIONS_HANDLED]),
-    ]);
-    return ((trades.count ?? 0) > 0
-        || (range.count ?? 0) > 0
-        || (entry.count ?? 0) > 0
-        || (logs.count ?? 0) > 0);
+    return signalDispatchAlreadyHandled(ctx, signalId);
 }
 function signalTooOldForReplay(ctx, row) {
     if (!row.created_at)

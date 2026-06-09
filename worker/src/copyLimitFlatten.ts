@@ -8,7 +8,7 @@ import {
   type SignalEntryPendingRow,
 } from './signalEntryPendingHelpers'
 
-export type CopyLimitFlattenResult = {
+type CopyLimitFlattenResult = {
   closed: number
   failed: number
   pendingCancelled: number

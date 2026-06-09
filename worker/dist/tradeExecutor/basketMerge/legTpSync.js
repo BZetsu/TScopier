@@ -1,8 +1,8 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.syncMultiBasketLegTakeProfits = syncMultiBasketLegTakeProfits;
-const multiTradeMerge_1 = require("../../multiTradeMerge");
 const basketSlTpReconcile_1 = require("../../basketSlTpReconcile");
+const multiTradeMerge_1 = require("../../multiTradeMerge");
 async function syncMultiBasketLegTakeProfits(ctx, args) {
     const { signal, parsed, broker, plan, symbol, uuid, params, manual, direction } = args;
     const api = ctx.apiFor(broker);

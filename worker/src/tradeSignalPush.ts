@@ -2,6 +2,7 @@
  * Listener → trade worker HTTP push (split deploy). Supabase Realtime remains fallback.
  */
 
+import type { ParsedSignal } from './manualPlanning/types'
 import { dispatchPriorityForAction, isManagementAction, parsedAction } from './tradeSignalActions'
 import type { PipelineTimestamps } from './pipelineTimestamps'
 import { deployedTradeShardCount, redisQueueConfigured, signalQueueConfig } from './queue/signalQueueConfig'
@@ -11,7 +12,7 @@ export type TradeSignalPushPayload = {
   id: string
   user_id: string
   channel_id: string | null
-  parsed_data: Record<string, unknown> | null
+  parsed_data: ParsedSignal | null
   status: string
   parent_signal_id?: string | null
   is_modification?: boolean
@@ -266,15 +267,6 @@ async function pushParsedSignalToTradeWorkerInner(
     await sleep(backoffMs)
   }
   return false
-}
-
-/**
- * Fire-and-forget POST to trade worker with short retry on transient failures.
- */
-export function pushParsedSignalToTradeWorker(row: TradeSignalPushPayload): void {
-  void pushParsedSignalToTradeWorkerInner(row).catch(err => {
-    console.warn('[tradeSignalPush] push failed:', err instanceof Error ? err.message : err)
-  })
 }
 
 /** Awaitable push — used after signals row is persisted (durable handoff). */

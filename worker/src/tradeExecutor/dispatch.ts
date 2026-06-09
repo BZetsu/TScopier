@@ -220,7 +220,7 @@ export async function markSignalExecuted(ctx: TradeExecutorContext, signalId: st
     }
   }
 
-export async function signalLiveDispatchAlreadyHandled(ctx: TradeExecutorContext, signalId: string): Promise<boolean> {
+async function signalDispatchAlreadyHandled(ctx: TradeExecutorContext, signalId: string): Promise<boolean> {
     const [trades, range, entry, logs] = await Promise.all([
       ctx.supabase
         .from('trades')
@@ -249,33 +249,12 @@ export async function signalLiveDispatchAlreadyHandled(ctx: TradeExecutorContext
     )
   }
 
+export async function signalLiveDispatchAlreadyHandled(ctx: TradeExecutorContext, signalId: string): Promise<boolean> {
+    return signalDispatchAlreadyHandled(ctx, signalId)
+  }
+
 export async function signalAlreadyHandled(ctx: TradeExecutorContext, signalId: string): Promise<boolean> {
-    const [trades, range, entry, logs] = await Promise.all([
-      ctx.supabase
-        .from('trades')
-        .select('id', { count: 'exact', head: true })
-        .eq('signal_id', signalId),
-      ctx.supabase
-        .from('range_pending_legs')
-        .select('id', { count: 'exact', head: true })
-        .eq('signal_id', signalId),
-      ctx.supabase
-        .from('signal_entry_pending_orders')
-        .select('id', { count: 'exact', head: true })
-        .eq('signal_id', signalId),
-      ctx.supabase
-        .from('trade_execution_logs')
-        .select('id', { count: 'exact', head: true })
-        .eq('signal_id', signalId)
-        .eq('status', 'success')
-        .in('action', [...EXECUTION_LOG_ACTIONS_HANDLED]),
-    ])
-    return (
-      (trades.count ?? 0) > 0
-      || (range.count ?? 0) > 0
-      || (entry.count ?? 0) > 0
-      || (logs.count ?? 0) > 0
-    )
+    return signalDispatchAlreadyHandled(ctx, signalId)
   }
 
 export function signalTooOldForReplay(ctx: TradeExecutorContext, row: SignalRow): boolean {
@@ -361,7 +340,7 @@ export async function handleSignal(ctx: TradeExecutorContext,
       }
 
       if (isMessageEdit) {
-        const reason = messageEditSkipReason(parsed as Record<string, unknown> | null, action)
+        const reason = messageEditSkipReason(parsed as unknown as Record<string, unknown> | null, action)
         if (reason) {
           await ctx.logDispatchSkipped(row, reason)
           return

@@ -1133,7 +1133,6 @@ export class UserListener {
       const pushed = await pushParsedSignalToTradeWorkerAwait(
         {
           ...dispatchRow,
-          parsed_data: dispatchRow.parsed_data as Record<string, unknown> | null,
           dispatch_source: MESSAGE_EDIT_DISPATCH_SOURCE,
         },
         { source: MESSAGE_EDIT_DISPATCH_SOURCE },

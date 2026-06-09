@@ -12,6 +12,7 @@
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.workerConfig = void 0;
+exports.parseEnvBool = parseEnvBool;
 exports.shardForUserId = shardForUserId;
 exports.userBelongsToShard = userBelongsToShard;
 exports.listenerWorkerId = listenerWorkerId;

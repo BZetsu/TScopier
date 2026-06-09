@@ -4,7 +4,6 @@ exports.isoWeekKey = isoWeekKey;
 exports.periodKeyFor = periodKeyFor;
 exports.periodStorageKey = periodStorageKey;
 exports.periodWindowUtc = periodWindowUtc;
-exports.activePauseKeysForNow = activePauseKeysForNow;
 exports.pruneExpiredPauseKeys = pruneExpiredPauseKeys;
 function zonedParts(timeZone, at) {
     try {
@@ -131,22 +130,6 @@ function getTimezoneOffsetMinutesSafe(timeZone, at) {
     catch {
         return 0;
     }
-}
-function activePauseKeysForNow(pausedKeys, timeZone, at = new Date()) {
-    return pausedKeys.filter(key => {
-        const parts = key.split(':');
-        if (parts.length < 2)
-            return false;
-        const kind = parts[0];
-        const period = parts[1];
-        if (period === 'overall')
-            return true;
-        const keyPeriod = parts[2];
-        if (!keyPeriod)
-            return false;
-        const current = periodKeyFor(period, timeZone, at);
-        return keyPeriod === current;
-    });
 }
 function pruneExpiredPauseKeys(pausedKeys, timeZone, at = new Date()) {
     return pausedKeys.filter(key => {

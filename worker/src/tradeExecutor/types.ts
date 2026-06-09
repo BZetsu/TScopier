@@ -1,6 +1,9 @@
 import type { ChannelMessageFiltersMap } from '../channelMessageFilters'
+import type { ParsedSignal } from '../manualPlanning/types'
 import { monitorActiveIntervalMs, monitorIdleIntervalMs } from '../monitorIdleGate'
 import type { PipelineTimestamps } from '../pipelineTimestamps'
+
+export type { ParsedSignal }
 
 /** When true (default), channel-attached signals only execute if MTProto is connected in this process. */
 export function telegramLiveTradeGateEnabled(): boolean {
@@ -20,21 +23,6 @@ export type SendOrderOutcome = {
 }
 
 export const PARSED_STATUSES = new Set(['parsed'])
-
-export type ParsedSignal = {
-  action: string
-  symbol: string | null
-  entry_price: number | null
-  entry_zone_low: number | null
-  entry_zone_high: number | null
-  sl: number | null
-  tp: number[] | null
-  lot_size: number | null
-  open_tp?: boolean
-  partial_close_fraction?: number | null
-  raw_instruction?: string
-  re_enter?: boolean
-}
 
 export interface SignalRow {
   id: string

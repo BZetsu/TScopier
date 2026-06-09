@@ -91,8 +91,3 @@ export async function getCalendarEventsCached(now = new Date()): Promise<Economi
     return cache?.events ?? []
   }
 }
-
-export function clearCalendarCacheForTests(): void {
-  cache = null
-  warnedNoKey = false
-}

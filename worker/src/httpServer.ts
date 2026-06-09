@@ -306,14 +306,6 @@ export function startTradeHttpServer(
   return server
 }
 
-/** @deprecated Use startTradeHttpServer */
-export function startHealthOnlyServer(
-  sessionManager: UserSessionManager,
-  tradeExecutor?: TradeExecutor | null,
-): Server {
-  return startTradeHttpServer(sessionManager, tradeExecutor ?? null)
-}
-
 async function readJson(req: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = []
   for await (const c of req) chunks.push(c as Buffer)

@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { applySymbolMapping } from './helpers'
 import { resolveBrokerSymbolFromInventory } from './brokerSymbolCache'
-import type { SymbolListCacheEntry } from './types'
+import type { BrokerRow, SymbolListCacheEntry } from './types'
 
 function inventory(symbols: string[]): SymbolListCacheEntry {
   const list = [...symbols]
@@ -14,7 +14,7 @@ const noopCtx = {} as Parameters<typeof resolveBrokerSymbolFromInventory>[0]
 test('applySymbolMapping: suffix marks userDecorated', () => {
   const broker = {
     manual_settings: { symbol_suffix: '+' },
-  } as Parameters<typeof applySymbolMapping>[1]
+  } as unknown as BrokerRow
   const r = applySymbolMapping('XAUUSD', broker)
   assert.equal(r.symbol, 'XAUUSD+')
   assert.equal(r.userDecorated, true)

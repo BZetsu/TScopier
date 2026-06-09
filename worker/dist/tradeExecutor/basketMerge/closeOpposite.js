@@ -1,8 +1,8 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.closeOppositeDirectionTrades = closeOppositeDirectionTrades;
-const metatraderapi_1 = require("../../metatraderapi");
 const channelMessageFilters_1 = require("../../channelMessageFilters");
+const metatraderapi_1 = require("../../metatraderapi");
 const pendingCancel_1 = require("./pendingCancel");
 async function closeOppositeDirectionTrades(ctx, signal, parsed, broker, symbol) {
     if (!(0, metatraderapi_1.hasMetatraderApiConfigured)())

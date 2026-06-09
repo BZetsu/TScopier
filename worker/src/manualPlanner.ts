@@ -7,30 +7,15 @@
 
 export type {
   ParsedSignal,
-  ManualTpLot,
   ManualSettings,
   ChannelKeywords,
   PlannerContext,
   VirtualPendingLeg,
-  PlannerCloseWorseEntries,
-  PlannerAnchor,
-  PlannerStrictEntry,
   PlannerPartialTp,
   PlannerResult,
-  PlanRangeSplitArgs,
-  PlanRangeSplitResult,
-  ComputeCwOverrideTpArgs,
 } from './manualPlanning/types'
 
-export type { PlanSinglePartialTpsArgs, PlanSinglePartialTpsResult } from './manualPlanning/partialTpSchedule'
-
-export { manualUseSignalEntryPriceOn, signalEntryPriceStrictEnabled, clampPendingExpiryHours } from './manualPlanning/manualSettings'
-
-export {
-  normalizeManualSettingsForExecution,
-  sanitizeTpLots,
-  DEFAULT_MANUAL_TP_LOTS,
-} from './manualPlanning/normalizeManualSettings'
+export { signalEntryPriceStrictEnabled, clampPendingExpiryHours } from './manualPlanning/manualSettings'
 
 export {
   resolvedParsedEntryPrice,
@@ -42,11 +27,7 @@ export {
 
 export { reverseSignalGateSatisfied } from './manualPlanning/manualStops'
 
-export {
-  normalizeSingleTpTarget,
-  planSinglePartialTps,
-  resolveSingleTpTargetIndex,
-} from './manualPlanning/partialTpSchedule'
+export { planSinglePartialTps } from './manualPlanning/partialTpSchedule'
 
 export { planRangeSplit } from './manualPlanning/rangeSplit'
 

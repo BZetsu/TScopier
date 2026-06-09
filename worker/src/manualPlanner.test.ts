@@ -14,9 +14,9 @@ import {
   strictSignalEntryQuoteAllowsImmediate,
   type ManualSettings,
   type ParsedSignal,
-  type PlannerCloseWorseEntries,
   type PlannerContext,
 } from './manualPlanner'
+import type { PlannerCloseWorseEntries } from './manualPlanning/types'
 import { triggerPriceFor } from './tradeExecutor/helpers'
 import { pipCalculator } from './pipCalculator'
 import { signalPipPrice } from './signalPip'

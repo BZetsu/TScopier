@@ -18,16 +18,6 @@ exports.deployedTradeShardCount = deployedTradeShardCount;
 exports.buildIdempotencyKey = buildIdempotencyKey;
 const tradeSignalActions_1 = require("../tradeSignalActions");
 const workerConfig_1 = require("../workerConfig");
-function parseEnvBool(raw, defaultValue) {
-    if (raw === undefined || raw === '')
-        return defaultValue;
-    const v = raw.toLowerCase().trim();
-    if (v === '0' || v === 'false' || v === 'no')
-        return false;
-    if (v === '1' || v === 'true' || v === 'yes')
-        return true;
-    return defaultValue;
-}
 function parseCanaryShards(raw) {
     if (!raw?.trim())
         return null;
@@ -43,7 +33,7 @@ function queueShardCount() {
 }
 function loadSignalQueueConfig() {
     return {
-        enabled: parseEnvBool(process.env.TRADE_SIGNAL_QUEUE_ENABLED, false),
+        enabled: (0, workerConfig_1.parseEnvBool)(process.env.TRADE_SIGNAL_QUEUE_ENABLED, false),
         canaryShardIds: parseCanaryShards(process.env.TRADE_SIGNAL_QUEUE_CANARY_SHARDS),
         entryStreamBase: String(process.env.TRADE_SIGNAL_QUEUE_ENTRY_STREAM ?? 'signals:entry').trim(),
         mgmtStreamBase: String(process.env.TRADE_SIGNAL_QUEUE_MGMT_STREAM ?? 'signals:mgmt').trim(),
@@ -56,7 +46,7 @@ function loadSignalQueueConfig() {
         consumerConcurrency: Math.max(1, Math.min(32, Number(process.env.TRADE_SIGNAL_QUEUE_CONSUMER_CONCURRENCY
             ?? process.env.EXECUTOR_MAX_CONCURRENT_SIGNALS
             ?? 8))),
-        pushFallbackOnQueueFail: parseEnvBool(process.env.TRADE_SIGNAL_PUSH_FALLBACK_ON_QUEUE_FAIL, true),
+        pushFallbackOnQueueFail: (0, workerConfig_1.parseEnvBool)(process.env.TRADE_SIGNAL_PUSH_FALLBACK_ON_QUEUE_FAIL, true),
         redisRestUrl: String(process.env.UPSTASH_REDIS_REST_URL ?? process.env.REDIS_REST_URL ?? '').trim(),
         redisRestToken: String(process.env.UPSTASH_REDIS_REST_TOKEN ?? process.env.REDIS_REST_TOKEN ?? '').trim(),
     };

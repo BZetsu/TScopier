@@ -1,6 +1,5 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.resetBrokerHeartbeatFailures = resetBrokerHeartbeatFailures;
 exports.prewarmSymbolsEnabled = prewarmSymbolsEnabled;
 exports.prewarmBrokerCaches = prewarmBrokerCaches;
 exports.sessionHeartbeatTick = sessionHeartbeatTick;
@@ -29,9 +28,6 @@ const helpers_1 = require("./helpers");
 const types_1 = require("./types");
 const HEARTBEAT_FAILURES_BEFORE_DOWN = Math.max(2, Number(process.env.BROKER_HEARTBEAT_FAILURES_BEFORE_DOWN ?? 4) || 4);
 const heartbeatFailCounts = new Map();
-function resetBrokerHeartbeatFailures(brokerId) {
-    heartbeatFailCounts.delete(brokerId);
-}
 function prewarmSymbolsEnabled(ctx) {
     const v = String(process.env.EXECUTOR_PREWARM_SYMBOLS ?? 'true').toLowerCase();
     return v !== '0' && v !== 'false' && v !== 'no';

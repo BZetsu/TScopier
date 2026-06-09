@@ -2,7 +2,6 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.startHttpServer = startHttpServer;
 exports.startTradeHttpServer = startTradeHttpServer;
-exports.startHealthOnlyServer = startHealthOnlyServer;
 const http_1 = require("http");
 const telegramClient_1 = require("./telegramClient");
 const workerConfig_1 = require("./workerConfig");
@@ -233,10 +232,6 @@ function startTradeHttpServer(sessionManager, tradeExecutor) {
         console.log(`[httpServer] trade API listening on :${PORT}`);
     });
     return server;
-}
-/** @deprecated Use startTradeHttpServer */
-function startHealthOnlyServer(sessionManager, tradeExecutor) {
-    return startTradeHttpServer(sessionManager, tradeExecutor ?? null);
 }
 async function readJson(req) {
     const chunks = [];

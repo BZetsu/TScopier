@@ -152,24 +152,6 @@ function getTimezoneOffsetMinutesSafe(timeZone: string, at: Date): number {
   }
 }
 
-export function activePauseKeysForNow(
-  pausedKeys: string[],
-  timeZone: string,
-  at = new Date(),
-): string[] {
-  return pausedKeys.filter(key => {
-    const parts = key.split(':')
-    if (parts.length < 2) return false
-    const kind = parts[0]
-    const period = parts[1] as CopyLimitPeriod
-    if (period === 'overall') return true
-    const keyPeriod = parts[2]
-    if (!keyPeriod) return false
-    const current = periodKeyFor(period, timeZone, at)
-    return keyPeriod === current
-  })
-}
-
 export function pruneExpiredPauseKeys(
   pausedKeys: string[],
   timeZone: string,

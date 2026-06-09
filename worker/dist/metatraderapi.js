@@ -1,13 +1,9 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.MetatraderApiClient = exports.MT_SESSION_EXPIRED_HINT = exports.MetatraderApiError = void 0;
-exports.orderOperationRequiresPrice = orderOperationRequiresPrice;
 exports.normalizeOrderResponse = normalizeOrderResponse;
 exports.normalizeSymbolParams = normalizeSymbolParams;
-exports.formatMtApiDateTime = formatMtApiDateTime;
 exports.unwrapOrderList = unwrapOrderList;
-exports.resolveBasicAuthHeader = resolveBasicAuthHeader;
-exports.isMtApiAuthConfigured = isMtApiAuthConfigured;
 exports.isCheckConnectOk = isCheckConnectOk;
 exports.isMtSessionGoneMessage = isMtSessionGoneMessage;
 exports.isBrokerDisconnectedMessage = isBrokerDisconnectedMessage;

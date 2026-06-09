@@ -9,7 +9,7 @@ import { finishEntrySend, type EntryArgs } from './entryExecution'
 export type { EntryArgs } from './entryPrepare'
 
 /** Log `multi_range_plan` diagnostics for manual multi / range ladder entries. */
-export async function logMultiRangePlan(
+async function logMultiRangePlan(
   ctx: TradeExecutorContext,
   prep: PreparedEntry,
 ): Promise<void> {

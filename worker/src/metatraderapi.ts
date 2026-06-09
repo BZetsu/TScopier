@@ -37,7 +37,7 @@ export type MtOperation =
   | 'SellStopLimit'
 
 /** Pending / stop entry types require a positive limit/stop price on OrderSend. */
-export function orderOperationRequiresPrice(operation: string): boolean {
+function orderOperationRequiresPrice(operation: string): boolean {
   return (
     operation === 'BuyLimit'
     || operation === 'SellLimit'
@@ -298,7 +298,7 @@ function buildQuery(params: Record<string, string | number | undefined | null>):
 }
 
 /** MetatraderAPI date query format (yyyy-MM-ddTHH:mm:ss). */
-export function formatMtApiDateTime(d: Date): string {
+function formatMtApiDateTime(d: Date): string {
   return d.toISOString().slice(0, 19)
 }
 
@@ -355,7 +355,7 @@ function normalizeAuthorizationHeader(value: string): string {
  * Optional: MT4API_BASIC_TOKEN = already-encoded base64(user:pass), or
  * MT4API_AUTHORIZATION = full header value ("Basic …").
  */
-export function resolveBasicAuthHeader(env: NodeJS.ProcessEnv): string {
+function resolveBasicAuthHeader(env: NodeJS.ProcessEnv): string {
   const authorization = trimEnv(env.MT4API_AUTHORIZATION)
   if (authorization) return normalizeAuthorizationHeader(authorization)
 
@@ -370,7 +370,7 @@ export function resolveBasicAuthHeader(env: NodeJS.ProcessEnv): string {
   return basicAuthHeaderFromUserPass(user, password)
 }
 
-export function isMtApiAuthConfigured(env: NodeJS.ProcessEnv = process.env): boolean {
+function isMtApiAuthConfigured(env: NodeJS.ProcessEnv = process.env): boolean {
   try {
     resolveBasicAuthHeader(env)
     return true
@@ -450,7 +450,7 @@ export function isTransientMtApiError(err: unknown): boolean {
 export const MT_SESSION_EXPIRED_HINT =
   'Trading session expired on the broker API. In Account Configuration, use Reconnect and enter your MT password (or remove and link the account again).'
 
-export type KeepSessionAliveStatus =
+type KeepSessionAliveStatus =
   | 'alive'
   | 'session_gone'
   | 'token_reconnect_failed'

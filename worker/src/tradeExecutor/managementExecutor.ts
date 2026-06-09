@@ -1,143 +1,40 @@
-import { RealtimeChannel, SupabaseClient } from '@supabase/supabase-js'
 import {
-  getMetatraderApi,
-  hasMetatraderApiConfigured,
-  isBrokerDisconnectedMessage,
-  MT_SESSION_EXPIRED_HINT,
-  mtPlatformFrom,
-  MetatraderApiClient,
-  MtOperation,
-  normalizeSymbolParams,
-  OrderSendArgs,
-  SymbolParams,
-} from '../metatraderapi'
-import {
-  clampPendingExpiryHours,
-  computeCwOverrideTp,
-  parsedHasExplicitEntryAnchor,
-  planManualOrders,
-  resolvedParsedEntryPrice,
-  resolvedParsedEntryZone,
-  signalEntryPriceStrictEnabled,
-  SKIP_REASON_SIGNAL_ENTRY_REQUIRED,
-  strictSignalEntryQuoteAllowsImmediate,
-  lastPositiveParsedTpPrice,
-  type ChannelKeywords,
-  type ManualSettings,
-  type ParsedSignal as PlannerParsedSignal,
-  type PlannerPartialTp,
-  type PlannerResult,
-  type VirtualPendingLeg,
-} from '../manualPlanner'
-import { normalizeManualSettingsForExecution } from '../manualPlanning/normalizeManualSettings'
-import { findActiveNewsBlackout } from '../newsTrading/blackout'
-import { getCalendarEventsCached } from '../newsTrading/calendarProvider'
-import { isNewsTradingEnabled } from '../newsTrading/settings'
-import { autoManagementTradeSnapshot } from '../autoManagement'
+  clearChannelActiveTradeParamsWhenFlat,
+  symbolsForChannelParamsPersist,
+  upsertChannelActiveTradeParams,
+  type ChannelActiveTradeParams
+} from '../channelActiveTradeParams'
+import { isChannelManagementBlocked, isPendingCancelBlocked, normalizeChannelMessageFiltersMap } from '../channelMessageFilters'
 import {
   referencePriceForDirection,
   cweInstructionGroupKey,
   parseCweInstructionGroupKey,
-  selectTradesForCweInstruction,
+  selectTradesForCweInstruction
 } from '../closeWorseEntries'
-import {
-  dispatchPriorityForAction,
-  isEntryAction,
-  isManagementAction,
-  parsedAction,
-  signalMatchesExecutorMode,
-} from '../tradeSignalActions'
-import { workerConfig, userBelongsToShard } from '../workerConfig'
-import { writeBrokerConnectionStatus } from '../brokerConnectionStatus'
-import {
-  applyShardToQuery,
-  hasWorkOnShard,
-  monitorActiveIntervalMs,
-  monitorIdleIntervalMs,
-  startMonitorLoop,
-  type MonitorLoopHandle,
-} from '../monitorIdleGate'
-import {
-  isChannelManagementBlocked,
-  isOppositeSignalCloseBlocked,
-  isPendingCancelBlocked,
-  normalizeChannelMessageFiltersMap,
-  type ChannelMessageFiltersMap,
-} from '../channelMessageFilters'
-import { signalPipPrice } from '../signalPip'
-import { trailingTradeRowSnapshot } from '../trailingStop'
-import { isPostgresDuplicateKeyError } from '../rangePendingLegPersist'
-import { cancelSignalEntryRowAtBroker, type SignalEntryPendingRow } from '../signalEntryPendingHelpers'
-import {
-  computeBasketMergeLinkContext,
-  type BasketMergeLinkContext,
-  MERGE_IMPLICIT_CHANNEL_BUNDLE_MS,
-} from '../signalMergeLink'
-import type { UserSessionManager } from '../sessionManager'
-import {
-  buildPerLegStopTargets,
-  legacyMergeLinkingEnabled,
-  mergePlanImmediateOrders,
-  resolveLatestOpenBasketAnchor,
-  shouldRouteAsBasketParameterRefresh,
-  type MergeModifySummary,
-} from '../multiTradeMerge'
-import { symbolsCompatibleForBasket } from '../basketModFollowUp'
-import {
-  classifyGhostBasketLegs,
-  closeStaleOpenTrades,
-  fetchOpenBrokerTickets,
-  fetchOpenBrokerTicketsStrict,
-  GHOST_BASKET_CLOSED_USER_MESSAGE,
-  markBasketReconcileDone,
-  markBasketReconcileDoneForAnchor,
-  runBasketLegModifies,
-  upsertBasketReconcileJob,
-  type BasketOpenLeg,
-  type BasketSymbolParams,
-} from '../basketSlTpReconcile'
-import { patchActiveRangePendingLegStops, syncRangePendingLadderOnBasketRefresh } from '../rangePendingLadderSync'
-import { loadExistingRangeStepIndices } from '../rangePendingFireGuard'
-import { channelMatchesBrokerSignal } from '../brokerChannelFilter'
+import { tryBrokerFallbackClose } from '../managementBrokerClose'
+import { applyMgmtModifyToBasketGroups } from '../managementModifyBaskets'
+import { loadRangePendingLegsInMgmtScope, pendingLegsToCancelScopes, updateRangePendingLegsForManagement } from '../managementPendingLegs'
 import {
   explicitMgmtSymbol,
   isReplyScopedManagement,
   loadOpenTradesForManagement,
   resolveChannelModifyTargets,
-  type MgmtTradeRow,
+  type MgmtTradeRow
 } from '../managementScope'
-import { tryBrokerFallbackClose } from '../managementBrokerClose'
-import {
-  applyChannelParamsToVirtualPendingList,
-  clearChannelActiveTradeParamsWhenFlat,
-  estimateBasketTotalPlannedLegs,
-  loadChannelActiveTradeParamsForSymbol,
-  mergeParsedWithChannelParams,
-  parsedSignalHasExplicitStops,
-  shouldMergeChannelParamsForEntry,
-  stripInvalidStopsForSide,
-  symbolsForChannelParamsPersist,
-  upsertChannelActiveTradeParams,
-  type ChannelActiveTradeParams,
-} from '../channelActiveTradeParams'
-import {
-  loadRangePendingLegsInMgmtScope,
-  pendingLegsToCancelScopes,
-  updateRangePendingLegsForManagement,
-} from '../managementPendingLegs'
-import { applyMgmtModifyToBasketGroups } from '../managementModifyBaskets'
-import { parsePipelineTimestamps, pipelineSummaryPayload, type PipelineTimestamps } from '../pipelineTimestamps'
-import {
-  buildTscopierCommentPrefix,
-  resolveChannelLabelForComment,
-  sanitizeChannelCommentSlug,
-} from '../tradeComment'
-import { applyPostFillFollowUp, type PostFillTradeLeg } from '../postFillFollowUp'
+import { type ManualSettings } from '../manualPlanner'
+import { hasMetatraderApiConfigured, type MetatraderApiClient } from '../metatraderapi'
+import { resolveLatestOpenBasketAnchor } from '../multiTradeMerge'
 import { isBenignOrderModifyError } from '../orderModifyBenign'
-import { invalidateChannelParseCache } from '../channelKeywordsCache'
-import type { TradeExecutorContext } from './context'
-import type { BrokerRow, ParsedSignal, RangePendingCancelScope, SignalRow } from './types'
+import { patchActiveRangePendingLegStops } from '../rangePendingLadderSync'
+import { signalPipPrice } from '../signalPip'
+import { type TradeExecutorContext } from './context'
 import { isMtUuid } from './helpers'
+import {
+  type BrokerRow,
+  type ParsedSignal,
+  type RangePendingCancelScope,
+  type SignalRow
+} from './types'
 
 interface CloseVerificationResult {
   confirmed: boolean

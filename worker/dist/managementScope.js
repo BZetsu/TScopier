@@ -5,7 +5,6 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.isReplyScopedManagement = isReplyScopedManagement;
 exports.explicitMgmtSymbol = explicitMgmtSymbol;
-exports.mgmtHasPriceLevels = mgmtHasPriceLevels;
 exports.filterTradesBySymbolFilter = filterTradesBySymbolFilter;
 exports.filterTradesByPlausibleMgmtLevels = filterTradesByPlausibleMgmtLevels;
 exports.resolveNewestOpenSymbolTrades = resolveNewestOpenSymbolTrades;

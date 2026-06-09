@@ -1,7 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getCalendarEventsCached = getCalendarEventsCached;
-exports.clearCalendarCacheForTests = clearCalendarCacheForTests;
 const undici_1 = require("undici");
 const CACHE_TTL_MS = 15 * 60000;
 let cache = null;
@@ -91,8 +90,4 @@ async function getCalendarEventsCached(now = new Date()) {
         console.warn(`[newsTrading] calendar fetch failed: ${msg}`);
         return cache?.events ?? [];
     }
-}
-function clearCalendarCacheForTests() {
-    cache = null;
-    warnedNoKey = false;
 }

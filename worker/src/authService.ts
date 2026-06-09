@@ -41,7 +41,7 @@ function normalizeVerificationCode(raw: string): string {
   return String(raw ?? '').replace(/\D/g, '')
 }
 
-export type VerifyResult =
+type VerifyResult =
   | { ok: true; session_id: string; channels?: ChannelInfo[] }
   | { requires_password: true }
 

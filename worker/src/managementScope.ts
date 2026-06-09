@@ -45,7 +45,7 @@ export function explicitMgmtSymbol(parsed: MgmtParsedLike): string | null {
   return sanitizeParsedSymbol(parsed.symbol)
 }
 
-export function mgmtHasPriceLevels(parsed: MgmtParsedLike): boolean {
+function mgmtHasPriceLevels(parsed: MgmtParsedLike): boolean {
   const hasSl = typeof parsed.sl === 'number' && Number.isFinite(parsed.sl) && parsed.sl > 0
   const hasTp = (parsed.tp ?? []).some(
     t => typeof t === 'number' && Number.isFinite(t) && (t as number) > 0,

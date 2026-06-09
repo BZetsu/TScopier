@@ -29,10 +29,6 @@ const HEARTBEAT_FAILURES_BEFORE_DOWN = Math.max(
 )
 const heartbeatFailCounts = new Map<string, number>()
 
-export function resetBrokerHeartbeatFailures(brokerId: string): void {
-  heartbeatFailCounts.delete(brokerId)
-}
-
 export function prewarmSymbolsEnabled(ctx: TradeExecutorContext, ): boolean {
     const v = String(process.env.EXECUTOR_PREWARM_SYMBOLS ?? 'true').toLowerCase()
     return v !== '0' && v !== 'false' && v !== 'no'

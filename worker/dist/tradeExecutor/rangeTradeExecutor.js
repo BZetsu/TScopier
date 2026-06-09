@@ -1,6 +1,5 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.logMultiRangePlan = logMultiRangePlan;
 exports.runRangeEntry = runRangeEntry;
 const entryPrepare_1 = require("./entryPrepare");
 const strictEntryPending_1 = require("./strictEntryPending");
