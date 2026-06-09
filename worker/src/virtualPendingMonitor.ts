@@ -8,6 +8,7 @@ import {
 } from './metatraderapi'
 import { apiForMetaapiAccount, loadPlatformByMetaapiId, type PlatformByMetaapiId } from './mtApiByAccount'
 import { tryApplyBasketFollowUpToNewFill } from './basketModFollowUp'
+import { loadChannelActiveTradeParamsForSymbol } from './channelActiveTradeParams'
 import { markRangeLegFired, markRangeLegsExpired } from './rangePendingLadderSync'
 import {
   hasWorkOnShard,
@@ -614,6 +615,29 @@ export class VirtualPendingMonitor {
       }
     } catch {
       // best-effort — fire with stops from the tick snapshot
+    }
+
+    // Channel memory may hold a newer SL than the leg row (e.g. symbol-less Adjust SL).
+    try {
+      const { data: sigMeta } = await this.supabase
+        .from('signals')
+        .select('channel_id')
+        .eq('id', leg.signal_id)
+        .maybeSingle()
+      const channelId = (sigMeta as { channel_id?: string } | null)?.channel_id
+      if (channelId) {
+        const channelParams = await loadChannelActiveTradeParamsForSymbol(
+          this.supabase,
+          leg.user_id,
+          channelId,
+          leg.symbol,
+        )
+        if (channelParams?.stoploss != null && channelParams.stoploss > 0) {
+          leg.stoploss = channelParams.stoploss
+        }
+      }
+    } catch {
+      // best-effort — fire with stops from pending leg row
     }
 
     const staleReason = await this.getStaleLegReason(leg, api, leg.metaapi_account_id)

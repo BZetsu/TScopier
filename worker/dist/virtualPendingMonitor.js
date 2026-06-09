@@ -11,6 +11,7 @@ const node_os_1 = __importDefault(require("node:os"));
 const metatraderapi_1 = require("./metatraderapi");
 const mtApiByAccount_1 = require("./mtApiByAccount");
 const basketModFollowUp_1 = require("./basketModFollowUp");
+const channelActiveTradeParams_1 = require("./channelActiveTradeParams");
 const rangePendingLadderSync_1 = require("./rangePendingLadderSync");
 const monitorIdleGate_1 = require("./monitorIdleGate");
 const rangeLayerTillClose_1 = require("./rangeLayerTillClose");
@@ -450,6 +451,24 @@ class VirtualPendingMonitor {
         }
         catch {
             // best-effort — fire with stops from the tick snapshot
+        }
+        // Channel memory may hold a newer SL than the leg row (e.g. symbol-less Adjust SL).
+        try {
+            const { data: sigMeta } = await this.supabase
+                .from('signals')
+                .select('channel_id')
+                .eq('id', leg.signal_id)
+                .maybeSingle();
+            const channelId = sigMeta?.channel_id;
+            if (channelId) {
+                const channelParams = await (0, channelActiveTradeParams_1.loadChannelActiveTradeParamsForSymbol)(this.supabase, leg.user_id, channelId, leg.symbol);
+                if (channelParams?.stoploss != null && channelParams.stoploss > 0) {
+                    leg.stoploss = channelParams.stoploss;
+                }
+            }
+        }
+        catch {
+            // best-effort — fire with stops from pending leg row
         }
         const staleReason = await this.getStaleLegReason(leg, api, leg.metaapi_account_id);
         if (staleReason) {
