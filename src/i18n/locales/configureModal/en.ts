@@ -274,11 +274,11 @@ export const configureModalEn: ConfigureModalTranslations = {
     basicPlanMoreTpsLimit: 'More TPs are available on the Advanced plan.',
     profitTargetsTitle: 'Profit targets',
     profitTargetsIntro:
-      'When enabled, reaching a target closes all open channel trades automatically and stops the copier from processing further instructions until the period resets. Limits use trades attributed to this channel only.',
+      'When enabled, reaching a target closes all open channel trades automatically and stops the copier from processing further instructions until the period resets. Amount targets use account equity change from the period start (e.g. $1,000 closes when equity is up $1,000).',
     profitTargetsToggle: 'Enable profit targets',
     maxRiskTitle: 'Maximum Loss',
     maxRiskIntro:
-      'When channel loss or drawdown hits your limit, all open channel trades are closed automatically and the copier stops processing further instructions until the period resets.',
+      'When account equity falls by your loss limit from the period start (or drawdown from the period peak for percent rules), all open channel trades are closed automatically and the copier stops processing further instructions until the period resets.',
     maxRiskToggle: 'Enable maximum loss',
     addTarget: 'Add target',
     addRiskRule: 'Add loss limit',

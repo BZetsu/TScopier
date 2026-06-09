@@ -85,35 +85,17 @@ class CopyLimitMonitor {
             const config = (0, copyLimitTypes_1.normalizeCopyLimits)(row.manual_settings?.copy_limits);
             const profileTz = await this.resolveUserTimezone(broker.user_id);
             const timeZone = (0, copyLimitEvaluate_1.resolveCopyLimitTimezone)(config, profileTz);
-            const referenceEquity = (0, copyLimitMetrics_1.resolveReferenceEquity)(broker.last_equity, broker.last_balance);
-            if (referenceEquity <= 0)
+            const fallbackEquity = (0, copyLimitMetrics_1.resolveReferenceEquity)(broker.last_equity, broker.last_balance);
+            if (fallbackEquity <= 0)
+                continue;
+            const currentEquity = await (0, copyLimitMetrics_1.fetchLiveAccountEquity)(broker.metaapi_account_id, broker.platform, fallbackEquity);
+            if (currentEquity <= 0)
                 continue;
             let state = (0, copyLimitTypes_1.normalizeCopyLimitState)(row.copy_limit_state);
-            const pnlByPeriod = new Map();
-            const loadPnl = async (period) => {
-                const key = period;
-                if (!pnlByPeriod.has(key)) {
-                    pnlByPeriod.set(key, await (0, copyLimitMetrics_1.buildChannelPnlSnapshot)({
-                        supabase: this.supabase,
-                        brokerAccountId: broker.id,
-                        channelId,
-                        metaapiAccountId: broker.metaapi_account_id,
-                        platform: broker.platform,
-                        period,
-                        timeZone,
-                    }));
-                }
-                return pnlByPeriod.get(key);
-            };
-            const primaryPeriod = config.profit_targets.find(t => t.enabled)?.period
-                ?? config.max_risks.find(r => r.enabled)?.period
-                ?? 'daily';
-            const primaryPnl = await loadPnl(primaryPeriod);
             state = (0, copyLimitEvaluate_1.updatePeriodSnapshots)({
                 state,
                 config,
-                pnl: primaryPnl,
-                referenceEquity,
+                currentEquity,
                 timeZone,
             });
             const breaches = [];
@@ -123,8 +105,7 @@ class CopyLimitMonitor {
                     ? config.max_risks.filter(r => r.enabled).map(r => r.period)
                     : []),
             ])) {
-                const pnl = await loadPnl(period);
-                const peak = Math.max((0, copyLimitEvaluate_1.peakChannelPnlForPeriod)(state, period, timeZone), pnl.totalPnl);
+                const equity = (0, copyLimitEvaluate_1.periodEquitySnapshot)(state, period, currentEquity, timeZone);
                 const periodMaxRisks = config.max_risks.filter(r => r.enabled && r.period === period);
                 const subset = {
                     ...config,
@@ -135,9 +116,7 @@ class CopyLimitMonitor {
                 breaches.push(...(0, copyLimitEvaluate_1.evaluateCopyLimitBreaches)({
                     config: subset,
                     state,
-                    pnl,
-                    referenceEquity,
-                    peakChannelPnl: peak,
+                    equity,
                     timeZone,
                 }));
             }
@@ -169,6 +148,7 @@ class CopyLimitMonitor {
                     };
                 }
                 console.log(`[copyLimitMonitor] limit hit broker=${broker.id} channel=${channelId}`
+                    + ` equity=${currentEquity.toFixed(2)}`
                     + ` breaches=${breaches.map(b => b.pauseKey).join(',')}`
                     + ` flattened=${shouldFlatten}`);
             }

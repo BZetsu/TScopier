@@ -2,11 +2,12 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.resolveCopyLimitTimezone = resolveCopyLimitTimezone;
 exports.copyLimitsActive = copyLimitsActive;
+exports.equityDelta = equityDelta;
 exports.evaluateCopyLimitBreaches = evaluateCopyLimitBreaches;
 exports.updatePeriodSnapshots = updatePeriodSnapshots;
 exports.mergeBreachesIntoState = mergeBreachesIntoState;
 exports.isChannelCopyLimitPaused = isChannelCopyLimitPaused;
-exports.peakChannelPnlForPeriod = peakChannelPnlForPeriod;
+exports.periodEquitySnapshot = periodEquitySnapshot;
 const copyLimitPeriods_1 = require("./copyLimitPeriods");
 const copyLimitTypes_1 = require("./copyLimitTypes");
 function resolveCopyLimitTimezone(config, profileTimezone) {
@@ -24,33 +25,38 @@ function copyLimitsActive(config) {
         && config.max_risks.some(t => t.enabled && t.value > 0);
     return profitOn || riskOn;
 }
-function profitTargetHit(rule, pnl, referenceEquity) {
-    if (!rule.enabled || rule.value <= 0)
-        return false;
-    if (rule.value_type === 'amount') {
-        return pnl.totalPnl >= rule.value;
-    }
-    if (referenceEquity <= 0)
-        return false;
-    return (pnl.totalPnl / referenceEquity) * 100 >= rule.value;
+function equityDelta(equity) {
+    return equity.currentEquity - equity.periodStartEquity;
 }
-function maxRiskHit(rule, pnl, referenceEquity, peakChannelPnl) {
+function profitTargetHit(rule, equity) {
     if (!rule.enabled || rule.value <= 0)
         return false;
+    const delta = equityDelta(equity);
     if (rule.value_type === 'amount') {
-        return pnl.totalPnl <= -rule.value;
+        return delta >= rule.value;
     }
-    if (referenceEquity <= 0)
+    if (equity.periodStartEquity <= 0)
         return false;
-    const drawdown = Math.max(0, peakChannelPnl - pnl.totalPnl);
-    return (drawdown / referenceEquity) * 100 >= rule.value;
+    return (delta / equity.periodStartEquity) * 100 >= rule.value;
+}
+function maxRiskHit(rule, equity) {
+    if (!rule.enabled || rule.value <= 0)
+        return false;
+    const delta = equityDelta(equity);
+    if (rule.value_type === 'amount') {
+        return delta <= -rule.value;
+    }
+    if (equity.periodStartEquity <= 0)
+        return false;
+    const drawdown = Math.max(0, equity.peakEquity - equity.currentEquity);
+    return (drawdown / equity.periodStartEquity) * 100 >= rule.value;
 }
 function evaluateCopyLimitBreaches(args) {
     const at = args.at ?? new Date();
     const breaches = [];
     if (args.config.profit_targets_enabled) {
         for (const rule of args.config.profit_targets) {
-            if (!profitTargetHit(rule, args.pnl, args.referenceEquity))
+            if (!profitTargetHit(rule, args.equity))
                 continue;
             const pk = (0, copyLimitPeriods_1.periodKeyFor)(rule.period, args.timeZone, at);
             breaches.push({
@@ -63,7 +69,7 @@ function evaluateCopyLimitBreaches(args) {
     }
     if (args.config.max_risk_enabled) {
         for (const rule of args.config.max_risks) {
-            if (!maxRiskHit(rule, args.pnl, args.referenceEquity, args.peakChannelPnl))
+            if (!maxRiskHit(rule, args.equity))
                 continue;
             const pk = (0, copyLimitPeriods_1.periodKeyFor)(rule.period, args.timeZone, at);
             breaches.push({
@@ -84,13 +90,14 @@ function updatePeriodSnapshots(args) {
         const pk = (0, copyLimitPeriods_1.periodKeyFor)(period, args.timeZone, at);
         const storageKey = (0, copyLimitPeriods_1.periodStorageKey)(period, pk);
         const prev = periods[storageKey];
-        const peak = Math.max(prev?.peak_channel_pnl ?? args.pnl.totalPnl, args.pnl.totalPnl);
+        const periodStart = prev?.reference_equity && prev.reference_equity > 0
+            ? prev.reference_equity
+            : args.currentEquity;
+        const peak = Math.max(prev?.peak_equity ?? args.currentEquity, args.currentEquity);
         periods[storageKey] = {
             period_key: pk,
-            reference_equity: prev?.reference_equity && prev.reference_equity > 0
-                ? prev.reference_equity
-                : args.referenceEquity,
-            peak_channel_pnl: peak,
+            reference_equity: periodStart,
+            peak_equity: peak,
             last_evaluated_at: at.toISOString(),
         };
     };
@@ -140,8 +147,13 @@ function isChannelCopyLimitPaused(args) {
     }
     return { kind: 'profit', reason: 'channel_profit_target_hit', pauseKey: key };
 }
-function peakChannelPnlForPeriod(state, period, timeZone, at = new Date()) {
+function periodEquitySnapshot(state, period, currentEquity, timeZone, at = new Date()) {
     const pk = (0, copyLimitPeriods_1.periodKeyFor)(period, timeZone, at);
     const storageKey = (0, copyLimitPeriods_1.periodStorageKey)(period, pk);
-    return state.periods[storageKey]?.peak_channel_pnl ?? 0;
+    const snap = state.periods[storageKey];
+    const periodStartEquity = snap?.reference_equity && snap.reference_equity > 0
+        ? snap.reference_equity
+        : currentEquity;
+    const peakEquity = Math.max(snap?.peak_equity ?? currentEquity, currentEquity);
+    return { currentEquity, periodStartEquity, peakEquity };
 }

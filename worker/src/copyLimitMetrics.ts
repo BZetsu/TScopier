@@ -1,8 +1,13 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { periodWindowUtc } from './copyLimitPeriods'
-import type { ChannelPnlSnapshot } from './copyLimitEvaluate'
 import type { CopyLimitPeriod } from './copyLimitTypes'
 import { getMetatraderApi, hasMetatraderApiConfigured, mtPlatformFrom } from './metatraderapi'
+
+export type ChannelPnlSnapshot = {
+  realizedPnl: number
+  floatingPnl: number
+  totalPnl: number
+}
 
 export async function fetchChannelRealizedPnl(
   supabase: SupabaseClient,
@@ -133,4 +138,29 @@ export function resolveReferenceEquity(
   const bal = Number(lastBalance)
   if (Number.isFinite(bal) && bal > 0) return bal
   return 0
+}
+
+/** Live broker account equity; falls back to cached broker row when API is unavailable. */
+export async function fetchLiveAccountEquity(
+  metaapiAccountId: string,
+  platform: string,
+  fallbackEquity: number,
+): Promise<number> {
+  if (!metaapiAccountId || metaapiAccountId.includes('|')) return fallbackEquity
+  if (hasMetatraderApiConfigured()) {
+    try {
+      const api = getMetatraderApi(mtPlatformFrom(platform))
+      if (api) {
+        const summary = await api.accountSummary(metaapiAccountId)
+        const eq = Number(summary.equity)
+        if (Number.isFinite(eq) && eq > 0) return eq
+      }
+    } catch (err) {
+      console.warn(
+        '[copyLimitMetrics] accountSummary failed:',
+        err instanceof Error ? err.message : String(err),
+      )
+    }
+  }
+  return fallbackEquity
 }

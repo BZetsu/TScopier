@@ -3,11 +3,11 @@ import {
   copyLimitsActive,
   evaluateCopyLimitBreaches,
   mergeBreachesIntoState,
-  peakChannelPnlForPeriod,
+  periodEquitySnapshot,
   resolveCopyLimitTimezone,
   updatePeriodSnapshots,
 } from './copyLimitEvaluate'
-import { buildChannelPnlSnapshot, resolveReferenceEquity } from './copyLimitMetrics'
+import { fetchLiveAccountEquity, resolveReferenceEquity } from './copyLimitMetrics'
 import type { CopyLimitPeriod } from './copyLimitTypes'
 import { flattenChannelTradesForCopyLimit } from './copyLimitFlatten'
 import { normalizeCopyLimitState, normalizeCopyLimits } from './copyLimitTypes'
@@ -117,37 +117,21 @@ export class CopyLimitMonitor {
       const config = normalizeCopyLimits(row.manual_settings?.copy_limits)
       const profileTz = await this.resolveUserTimezone(broker.user_id)
       const timeZone = resolveCopyLimitTimezone(config, profileTz)
-      const referenceEquity = resolveReferenceEquity(broker.last_equity, broker.last_balance)
-      if (referenceEquity <= 0) continue
+      const fallbackEquity = resolveReferenceEquity(broker.last_equity, broker.last_balance)
+      if (fallbackEquity <= 0) continue
+
+      const currentEquity = await fetchLiveAccountEquity(
+        broker.metaapi_account_id,
+        broker.platform,
+        fallbackEquity,
+      )
+      if (currentEquity <= 0) continue
 
       let state = normalizeCopyLimitState(row.copy_limit_state)
-      const pnlByPeriod = new Map<string, Awaited<ReturnType<typeof buildChannelPnlSnapshot>>>()
-
-      const loadPnl = async (period: CopyLimitPeriod) => {
-        const key = period
-        if (!pnlByPeriod.has(key)) {
-          pnlByPeriod.set(key, await buildChannelPnlSnapshot({
-            supabase: this.supabase,
-            brokerAccountId: broker.id,
-            channelId,
-            metaapiAccountId: broker.metaapi_account_id,
-            platform: broker.platform,
-            period,
-            timeZone,
-          }))
-        }
-        return pnlByPeriod.get(key)!
-      }
-
-      const primaryPeriod = config.profit_targets.find(t => t.enabled)?.period
-        ?? config.max_risks.find(r => r.enabled)?.period
-        ?? 'daily'
-      const primaryPnl = await loadPnl(primaryPeriod)
       state = updatePeriodSnapshots({
         state,
         config,
-        pnl: primaryPnl,
-        referenceEquity,
+        currentEquity,
         timeZone,
       })
 
@@ -157,9 +141,8 @@ export class CopyLimitMonitor {
         ...(config.max_risk_enabled
           ? config.max_risks.filter(r => r.enabled).map(r => r.period)
           : []),
-      ])) {
-        const pnl = await loadPnl(period)
-        const peak = Math.max(peakChannelPnlForPeriod(state, period, timeZone), pnl.totalPnl)
+      ] as CopyLimitPeriod[])) {
+        const equity = periodEquitySnapshot(state, period, currentEquity, timeZone)
         const periodMaxRisks = config.max_risks.filter(r => r.enabled && r.period === period)
         const subset = {
           ...config,
@@ -170,9 +153,7 @@ export class CopyLimitMonitor {
         breaches.push(...evaluateCopyLimitBreaches({
           config: subset,
           state,
-          pnl,
-          referenceEquity,
-          peakChannelPnl: peak,
+          equity,
           timeZone,
         }))
       }
@@ -208,6 +189,7 @@ export class CopyLimitMonitor {
 
         console.log(
           `[copyLimitMonitor] limit hit broker=${broker.id} channel=${channelId}`
+          + ` equity=${currentEquity.toFixed(2)}`
           + ` breaches=${breaches.map(b => b.pauseKey).join(',')}`
           + ` flattened=${shouldFlatten}`,
         )

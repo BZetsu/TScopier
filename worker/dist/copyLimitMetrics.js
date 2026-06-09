@@ -4,6 +4,7 @@ exports.fetchChannelRealizedPnl = fetchChannelRealizedPnl;
 exports.fetchChannelFloatingPnl = fetchChannelFloatingPnl;
 exports.buildChannelPnlSnapshot = buildChannelPnlSnapshot;
 exports.resolveReferenceEquity = resolveReferenceEquity;
+exports.fetchLiveAccountEquity = fetchLiveAccountEquity;
 const copyLimitPeriods_1 = require("./copyLimitPeriods");
 const metatraderapi_1 = require("./metatraderapi");
 async function fetchChannelRealizedPnl(supabase, brokerAccountId, channelId, startIso, endIso) {
@@ -98,4 +99,24 @@ function resolveReferenceEquity(lastEquity, lastBalance) {
     if (Number.isFinite(bal) && bal > 0)
         return bal;
     return 0;
+}
+/** Live broker account equity; falls back to cached broker row when API is unavailable. */
+async function fetchLiveAccountEquity(metaapiAccountId, platform, fallbackEquity) {
+    if (!metaapiAccountId || metaapiAccountId.includes('|'))
+        return fallbackEquity;
+    if ((0, metatraderapi_1.hasMetatraderApiConfigured)()) {
+        try {
+            const api = (0, metatraderapi_1.getMetatraderApi)((0, metatraderapi_1.mtPlatformFrom)(platform));
+            if (api) {
+                const summary = await api.accountSummary(metaapiAccountId);
+                const eq = Number(summary.equity);
+                if (Number.isFinite(eq) && eq > 0)
+                    return eq;
+            }
+        }
+        catch (err) {
+            console.warn('[copyLimitMetrics] accountSummary failed:', err instanceof Error ? err.message : String(err));
+        }
+    }
+    return fallbackEquity;
 }

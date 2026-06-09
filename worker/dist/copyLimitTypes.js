@@ -86,11 +86,15 @@ function normalizeCopyLimitState(raw) {
                 continue;
             const row = val;
             const ref = Number(row.reference_equity);
-            const peak = Number(row.peak_channel_pnl);
+            const peakEquity = Number(row.peak_equity);
+            const legacyPeakPnl = Number(row.peak_channel_pnl);
+            const peak = Number.isFinite(peakEquity) && peakEquity > 0
+                ? peakEquity
+                : (Number.isFinite(legacyPeakPnl) && legacyPeakPnl > 0 ? legacyPeakPnl : ref);
             periods[key] = {
                 period_key: String(row.period_key ?? key),
                 reference_equity: Number.isFinite(ref) ? ref : 0,
-                peak_channel_pnl: Number.isFinite(peak) ? peak : 0,
+                peak_equity: Number.isFinite(peak) ? peak : 0,
                 last_evaluated_at: String(row.last_evaluated_at ?? ''),
             };
         }

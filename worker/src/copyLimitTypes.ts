@@ -29,8 +29,12 @@ export interface CopyLimitsConfig {
 
 export interface CopyLimitPeriodSnapshot {
   period_key: string
+  /** Account equity at period start (baseline for delta targets). */
   reference_equity: number
-  peak_channel_pnl: number
+  /** Peak account equity seen during the period (drawdown reference). */
+  peak_equity: number
+  /** @deprecated Legacy channel P/L peak — migrated to peak_equity on read. */
+  peak_channel_pnl?: number
   last_evaluated_at: string
 }
 
@@ -129,11 +133,15 @@ export function normalizeCopyLimitState(raw: unknown): CopyLimitState {
       if (!val || typeof val !== 'object') continue
       const row = val as Record<string, unknown>
       const ref = Number(row.reference_equity)
-      const peak = Number(row.peak_channel_pnl)
+      const peakEquity = Number(row.peak_equity)
+      const legacyPeakPnl = Number(row.peak_channel_pnl)
+      const peak = Number.isFinite(peakEquity) && peakEquity > 0
+        ? peakEquity
+        : (Number.isFinite(legacyPeakPnl) && legacyPeakPnl > 0 ? legacyPeakPnl : ref)
       periods[key] = {
         period_key: String(row.period_key ?? key),
         reference_equity: Number.isFinite(ref) ? ref : 0,
-        peak_channel_pnl: Number.isFinite(peak) ? peak : 0,
+        peak_equity: Number.isFinite(peak) ? peak : 0,
         last_evaluated_at: String(row.last_evaluated_at ?? ''),
       }
     }

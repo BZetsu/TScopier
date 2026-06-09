@@ -240,7 +240,8 @@ export interface CopyLimitsConfig {
 export interface CopyLimitPeriodSnapshot {
   period_key: string
   reference_equity: number
-  peak_channel_pnl: number
+  peak_equity: number
+  peak_channel_pnl?: number
   last_evaluated_at: string
 }
 

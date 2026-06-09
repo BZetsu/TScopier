@@ -274,11 +274,11 @@ export const configureModalEs: ConfigureModalTranslations = {
     basicPlanMoreTpsLimit: 'Hay más TPs disponibles en el plan Advanced.',
     profitTargetsTitle: 'Objetivos de beneficio',
     profitTargetsIntro:
-      'Cuando está activo, al alcanzar un objetivo se cierran automáticamente todas las operaciones del canal y el copiador deja de procesar instrucciones hasta el siguiente periodo. Solo cuenta el P/L atribuido a este canal.',
+      'Cuando está activo, al alcanzar un objetivo se cierran automáticamente todas las operaciones del canal y el copiador deja de procesar instrucciones hasta el siguiente periodo. Los importes usan el cambio de equity de la cuenta desde el inicio del periodo (p. ej. $1.000 cierra cuando el equity sube $1.000).',
     profitTargetsToggle: 'Activar objetivos de beneficio',
     maxRiskTitle: 'Pérdida máxima',
     maxRiskIntro:
-      'Cuando la pérdida o el drawdown del canal alcance el límite, se cierran automáticamente todas las operaciones del canal y el copiador deja de procesar instrucciones hasta el siguiente periodo.',
+      'Cuando el equity de la cuenta caiga por el límite de pérdida desde el inicio del periodo (o el drawdown desde el pico del periodo en reglas porcentuales), se cierran automáticamente todas las operaciones del canal y el copiador deja de procesar instrucciones hasta el siguiente periodo.',
     maxRiskToggle: 'Activar pérdida máxima',
     addTarget: 'Añadir objetivo',
     addRiskRule: 'Añadir límite de pérdida',

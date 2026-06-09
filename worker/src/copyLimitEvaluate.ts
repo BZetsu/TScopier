@@ -8,10 +8,11 @@ import type {
 } from './copyLimitTypes'
 import { pauseKey } from './copyLimitTypes'
 
-export type ChannelPnlSnapshot = {
-  realizedPnl: number
-  floatingPnl: number
-  totalPnl: number
+/** Account equity relative to period-start baseline. */
+export type EquitySnapshot = {
+  currentEquity: number
+  periodStartEquity: number
+  peakEquity: number
 }
 
 export type CopyLimitBreach = {
@@ -40,40 +41,41 @@ export function copyLimitsActive(config: CopyLimitsConfig | null | undefined): b
   return profitOn || riskOn
 }
 
+export function equityDelta(equity: EquitySnapshot): number {
+  return equity.currentEquity - equity.periodStartEquity
+}
+
 function profitTargetHit(
   rule: ProfitTargetRule,
-  pnl: ChannelPnlSnapshot,
-  referenceEquity: number,
+  equity: EquitySnapshot,
 ): boolean {
   if (!rule.enabled || rule.value <= 0) return false
+  const delta = equityDelta(equity)
   if (rule.value_type === 'amount') {
-    return pnl.totalPnl >= rule.value
+    return delta >= rule.value
   }
-  if (referenceEquity <= 0) return false
-  return (pnl.totalPnl / referenceEquity) * 100 >= rule.value
+  if (equity.periodStartEquity <= 0) return false
+  return (delta / equity.periodStartEquity) * 100 >= rule.value
 }
 
 function maxRiskHit(
   rule: MaxRiskRule,
-  pnl: ChannelPnlSnapshot,
-  referenceEquity: number,
-  peakChannelPnl: number,
+  equity: EquitySnapshot,
 ): boolean {
   if (!rule.enabled || rule.value <= 0) return false
+  const delta = equityDelta(equity)
   if (rule.value_type === 'amount') {
-    return pnl.totalPnl <= -rule.value
+    return delta <= -rule.value
   }
-  if (referenceEquity <= 0) return false
-  const drawdown = Math.max(0, peakChannelPnl - pnl.totalPnl)
-  return (drawdown / referenceEquity) * 100 >= rule.value
+  if (equity.periodStartEquity <= 0) return false
+  const drawdown = Math.max(0, equity.peakEquity - equity.currentEquity)
+  return (drawdown / equity.periodStartEquity) * 100 >= rule.value
 }
 
 export function evaluateCopyLimitBreaches(args: {
   config: CopyLimitsConfig
   state: CopyLimitState
-  pnl: ChannelPnlSnapshot
-  referenceEquity: number
-  peakChannelPnl: number
+  equity: EquitySnapshot
   timeZone: string
   at?: Date
 }): CopyLimitBreach[] {
@@ -82,7 +84,7 @@ export function evaluateCopyLimitBreaches(args: {
 
   if (args.config.profit_targets_enabled) {
     for (const rule of args.config.profit_targets) {
-      if (!profitTargetHit(rule, args.pnl, args.referenceEquity)) continue
+      if (!profitTargetHit(rule, args.equity)) continue
       const pk = periodKeyFor(rule.period, args.timeZone, at)
       breaches.push({
         kind: 'profit',
@@ -95,7 +97,7 @@ export function evaluateCopyLimitBreaches(args: {
 
   if (args.config.max_risk_enabled) {
     for (const rule of args.config.max_risks) {
-      if (!maxRiskHit(rule, args.pnl, args.referenceEquity, args.peakChannelPnl)) continue
+      if (!maxRiskHit(rule, args.equity)) continue
       const pk = periodKeyFor(rule.period, args.timeZone, at)
       breaches.push({
         kind: 'risk',
@@ -112,8 +114,7 @@ export function evaluateCopyLimitBreaches(args: {
 export function updatePeriodSnapshots(args: {
   state: CopyLimitState
   config: CopyLimitsConfig
-  pnl: ChannelPnlSnapshot
-  referenceEquity: number
+  currentEquity: number
   timeZone: string
   at?: Date
 }): CopyLimitState {
@@ -125,13 +126,14 @@ export function updatePeriodSnapshots(args: {
     const pk = periodKeyFor(period, args.timeZone, at)
     const storageKey = periodStorageKey(period, pk)
     const prev = periods[storageKey]
-    const peak = Math.max(prev?.peak_channel_pnl ?? args.pnl.totalPnl, args.pnl.totalPnl)
+    const periodStart = prev?.reference_equity && prev.reference_equity > 0
+      ? prev.reference_equity
+      : args.currentEquity
+    const peak = Math.max(prev?.peak_equity ?? args.currentEquity, args.currentEquity)
     periods[storageKey] = {
       period_key: pk,
-      reference_equity: prev?.reference_equity && prev.reference_equity > 0
-        ? prev.reference_equity
-        : args.referenceEquity,
-      peak_channel_pnl: peak,
+      reference_equity: periodStart,
+      peak_equity: peak,
       last_evaluated_at: at.toISOString(),
     }
   }
@@ -191,13 +193,19 @@ export function isChannelCopyLimitPaused(args: {
   return { kind: 'profit', reason: 'channel_profit_target_hit', pauseKey: key }
 }
 
-export function peakChannelPnlForPeriod(
+export function periodEquitySnapshot(
   state: CopyLimitState,
   period: CopyLimitPeriod,
+  currentEquity: number,
   timeZone: string,
   at = new Date(),
-): number {
+): EquitySnapshot {
   const pk = periodKeyFor(period, timeZone, at)
   const storageKey = periodStorageKey(period, pk)
-  return state.periods[storageKey]?.peak_channel_pnl ?? 0
+  const snap = state.periods[storageKey]
+  const periodStartEquity = snap?.reference_equity && snap.reference_equity > 0
+    ? snap.reference_equity
+    : currentEquity
+  const peakEquity = Math.max(snap?.peak_equity ?? currentEquity, currentEquity)
+  return { currentEquity, periodStartEquity, peakEquity }
 }
