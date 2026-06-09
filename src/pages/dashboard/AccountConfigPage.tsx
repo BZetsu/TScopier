@@ -1001,18 +1001,24 @@ export function AccountConfigPage() {
     const ms = channelManualSettings
     let text = cm.risk.previewFooter
     if (ms.risk_mode === 'dynamic_balance_percent') text += cm.risk.previewDynamicRisk
+    const activePending = multiTradePreview.activePending ?? multiTradePreview.pending ?? 0
     if (
       ms.range_trading
       && multiTradePreview.effectiveDistancePips != null
-      && (multiTradePreview.pending ?? 0) > 0
-      && Math.abs(multiTradePreview.effectiveDistancePips - (Number(ms.range_distance_pips ?? 0) || 0)) >= 1
+      && activePending > 0
     ) {
       text += interpolate(cm.risk.previewLadderSpan, {
-        pending: String(multiTradePreview.pending),
+        active: String(activePending),
         step: String(Number(ms.range_step_pips ?? 0) || 0),
         distance: String(multiTradePreview.effectiveDistancePips),
-        configured: String(Number(ms.range_distance_pips ?? 0) || 0),
       })
+      const reservedPending = multiTradePreview.pending ?? 0
+      if (activePending < reservedPending) {
+        text += interpolate(cm.risk.previewLadderDistanceCap, {
+          active: String(activePending),
+          pending: String(reservedPending),
+        })
+      }
     }
     if (ms.close_worse_entries && (multiTradePreview.immediate ?? 0) > 0) {
       text += interpolate(cm.risk.previewCweLegs, {

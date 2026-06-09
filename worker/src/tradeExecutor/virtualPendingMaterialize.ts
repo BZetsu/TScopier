@@ -12,7 +12,7 @@ export async function materializeVirtualPendingLegs(
 ): Promise<boolean> {
   const {
     signal, broker, uuid, symbol, virtualPendings, deferVirtualAnchor, anchor, anchorSource,
-    params, liveEntryFast, strictDeferred,
+    params, plan, liveEntryFast, strictDeferred,
   } = prep
 
   const insertRows: Record<string, unknown>[] = []
@@ -113,6 +113,7 @@ export async function materializeVirtualPendingLegs(
         symbol,
         stepIdxs: insertRows.map(r => r.step_idx),
         triggers: insertRows.map(r => r.trigger_price),
+        range_layering: plan.rangeLayering ?? null,
         strict_deferred: strictDeferred,
         strict_broker_pending: strictBrokerPlaced,
       } as unknown as Record<string, unknown>,

@@ -144,6 +144,7 @@ export interface ConfigureModalTranslations {
     previewFooter: string
     previewDynamicRisk: string
     previewLadderSpan: string
+    previewLadderDistanceCap: string
     previewCweLegs: string
     rangeLayering: string
     rangeIntro: string

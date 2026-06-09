@@ -155,7 +155,9 @@ export const configureModalEn: ConfigureModalTranslations = {
     previewDynamicRisk:
       ' Lot size is computed from your account balance and Dynamic (% Balance) percent.',
     previewLadderSpan:
-      ' Range Layering: {pending} pending orders, {step} pips apart (about {distance} pips wide).',
+      ' Range Layering: {active} order(s) at {step}-pip steps (ladder spans up to {distance} pips from entry).',
+    previewLadderDistanceCap:
+      ' Range distance caps layering to {active} of {pending} orders reserved by %.',
     previewCweLegs:
       ' {count} trade(s) open right away and may close when price moves {pips} pips in your favor.',
     rangeLayering: 'Range Layering',

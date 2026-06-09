@@ -155,7 +155,9 @@ export const configureModalEs: ConfigureModalTranslations = {
     previewDynamicRisk:
       ' El tamaño de lote se calcula desde el balance de la cuenta y el porcentaje dinámico (% del balance).',
     previewLadderSpan:
-      ' Escalonado en rango: {pending} órdenes pendientes, cada {step} pips (unos {distance} pips en total).',
+      ' Escalonado en rango: {active} orden(es) cada {step} pips (escalera hasta {distance} pips desde la entrada).',
+    previewLadderDistanceCap:
+      ' La distancia de rango limita el escalonado a {active} de {pending} órdenes reservadas por %.',
     previewCweLegs:
       ' {count} operación(es) se abren de inmediato y pueden cerrarse si el precio avanza {pips} pips a su favor.',
     rangeLayering: 'Escalonado en rango',

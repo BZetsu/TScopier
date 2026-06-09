@@ -6,7 +6,7 @@ const helpers_1 = require("./helpers");
  * Persist virtual pending ladder rows to `range_pending_legs` for the worker monitor.
  */
 async function materializeVirtualPendingLegs(ctx, prep, strictBrokerPlaced) {
-    const { signal, broker, uuid, symbol, virtualPendings, deferVirtualAnchor, anchor, anchorSource, params, liveEntryFast, strictDeferred, } = prep;
+    const { signal, broker, uuid, symbol, virtualPendings, deferVirtualAnchor, anchor, anchorSource, params, plan, liveEntryFast, strictDeferred, } = prep;
     const insertRows = [];
     if (virtualPendings.length > 0 && !deferVirtualAnchor) {
         if (anchor == null || !Number.isFinite(anchor) || anchor <= 0) {
@@ -94,6 +94,7 @@ async function materializeVirtualPendingLegs(ctx, prep, strictBrokerPlaced) {
                 symbol,
                 stepIdxs: insertRows.map(r => r.step_idx),
                 triggers: insertRows.map(r => r.trigger_price),
+                range_layering: plan.rangeLayering ?? null,
                 strict_deferred: strictDeferred,
                 strict_broker_pending: strictBrokerPlaced,
             },

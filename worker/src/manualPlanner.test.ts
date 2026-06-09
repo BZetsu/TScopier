@@ -17,6 +17,7 @@ import {
   type PlannerCloseWorseEntries,
   type PlannerContext,
 } from './manualPlanner'
+import { triggerPriceFor } from './tradeExecutor/helpers'
 import { pipCalculator } from './pipCalculator'
 import { signalPipPrice } from './signalPip'
 
@@ -55,34 +56,35 @@ test('planRangeSplit: 50% × 20 legs → 10 pendings @ 10 pip step', () => {
   const r = planRangeSplit(baseSplit)
   assert.equal(r.immediateLegs, 10)
   assert.equal(r.pendingLegs, 10)
+  assert.equal(r.activePendingLegs, 10)
+  assert.equal(r.maxStepIdx, 10)
   assert.equal(r.effectiveStepPips, 10)
   assert.ok(Math.abs(r.stepPriceOffset - 1.0) < 1e-9) // 10 × 0.1
   assert.equal(r.fallbackReason, undefined)
 })
 
-test('planRangeSplit: distance does NOT cap pending count (May-12 UX fix)', () => {
-  // Even when step × pending (10 × 10 = 100) overshoots the configured
-  // distance (30), the count stays at 10. The user explicitly asked that
-  // Total Open Trades remain stable when Step is adjusted; distance is
-  // now an advisory target, not a cap.
+test('planRangeSplit: distance caps active legs but reserved count stays stable', () => {
   const r = planRangeSplit({ ...baseSplit, distPips: 30 })
   assert.equal(r.pendingLegs, 10)
   assert.equal(r.immediateLegs, 10)
-  // And step itself is preserved (user controls placement spacing).
+  assert.equal(r.maxStepIdx, 3)
+  assert.equal(r.activePendingLegs, 3)
   assert.equal(r.effectiveStepPips, 10)
+  assert.equal(r.fallbackReason, 'range_trading_distance_capped')
 })
 
-test('planRangeSplit: step changes spacing but not count', () => {
-  // Same baseLegs=20, range_percent=50 → 10 pendings regardless of step.
+test('planRangeSplit: step changes spacing but not reserved count', () => {
   const small = planRangeSplit({ ...baseSplit, stepPips: 5 })
   const big = planRangeSplit({ ...baseSplit, stepPips: 25 })
   assert.equal(small.pendingLegs, 10)
   assert.equal(big.pendingLegs, 10)
   assert.equal(small.immediateLegs, 10)
   assert.equal(big.immediateLegs, 10)
-  // Spacing differs:
+  assert.equal(small.activePendingLegs, 10)
+  assert.equal(big.activePendingLegs, 4)
   assert.equal(small.effectiveStepPips, 5)
   assert.equal(big.effectiveStepPips, 25)
+  assert.equal(big.fallbackReason, 'range_trading_distance_capped')
 })
 
 test('planRangeSplit: auto-expands step when below broker minimum', () => {
@@ -201,6 +203,8 @@ test('planManualOrders: range emits virtualPendings (not OrderSendArgs)', () => 
   // 10 legs total, 50% pendings → 5 immediates + 5 virtuals.
   assert.equal(plan.orders.length, 5)
   assert.equal(plan.virtualPendings?.length, 5)
+  assert.equal(plan.rangeLayering?.reservedPendingLegs, 5)
+  assert.equal(plan.rangeLayering?.activePendingLegs, 5)
   // No pending operations leaked into plan.orders.
   for (const o of plan.orders) {
     assert.ok(!String(o.operation).includes('Limit'))
@@ -215,6 +219,71 @@ test('planManualOrders: range emits virtualPendings (not OrderSendArgs)', () => 
     assert.ok(v.stepPriceOffset > 0)
     assert.equal(v.expiryHours, 4)
   }
+})
+
+test('planManualOrders: XAUUSD range 30/3/50% spans 30 pips across 10 layering legs', () => {
+  const manual: ManualSettings = {
+    ...baseManual,
+    multi_trade_leg_percent: 5,
+    range_step_pips: 3,
+    range_distance_pips: 30,
+  }
+  const plan = planManualOrders({
+    parsed: { ...baseParsed, entry_price: 2650 },
+    resolvedSymbol: 'XAUUSD',
+    baseOperation: 'Buy',
+    manual,
+    channelKeywords: null,
+    manualLot: 1.0,
+    ctx: baseCtx,
+    commentPrefix: 'TSCopier:abc',
+  })
+  assert.equal(plan.orders.length, 10)
+  assert.equal(plan.virtualPendings?.length, 10)
+  const rl = plan.rangeLayering
+  assert.ok(rl)
+  assert.equal(rl.rangeStepPips, 3)
+  assert.equal(rl.rangeDistancePips, 30)
+  assert.equal(rl.effectiveStepPips, 3)
+  assert.equal(rl.maxStepIdx, 10)
+  assert.equal(rl.reservedPendingLegs, 10)
+  assert.equal(rl.activePendingLegs, 10)
+  assert.ok(Math.abs(rl.stepPriceOffset - 0.3) < 1e-9)
+
+  const virtuals = plan.virtualPendings!
+  assert.equal(virtuals[0]!.stepIdx, 1)
+  assert.equal(virtuals[9]!.stepIdx, 10)
+  assert.ok(Math.abs(virtuals[0]!.stepPriceOffset - 0.3) < 1e-9)
+
+  const first = triggerPriceFor(virtuals[0]!, 2650, 2)
+  const last = triggerPriceFor(virtuals[9]!, 2650, 2)
+  assert.equal(first, 2649.7)
+  assert.equal(last, 2647)
+})
+
+test('planManualOrders: range distance caps layering when reserved exceeds floor(dist/step)', () => {
+  const manual: ManualSettings = {
+    ...baseManual,
+    multi_trade_leg_percent: 2.5,
+    range_percent: 50,
+    range_step_pips: 3,
+    range_distance_pips: 30,
+  }
+  const plan = planManualOrders({
+    parsed: { ...baseParsed, entry_price: 2650 },
+    resolvedSymbol: 'XAUUSD',
+    baseOperation: 'Buy',
+    manual,
+    channelKeywords: null,
+    manualLot: 4.0,
+    ctx: baseCtx,
+    commentPrefix: 'TSCopier:abc',
+  })
+  // 4.0 lot @ 2.5% → 40 legs; 50% reserved → 20 pending; floor(30/3) → 10 active.
+  assert.equal(plan.rangeLayering?.reservedPendingLegs, 20)
+  assert.equal(plan.rangeLayering?.activePendingLegs, 10)
+  assert.equal(plan.virtualPendings?.length, 10)
+  assert.equal(plan.fallback_reason, 'range_trading_distance_capped')
 })
 
 test('planManualOrders: multi + BuyLimit + range uses market immediates but still emits virtual pendings', () => {

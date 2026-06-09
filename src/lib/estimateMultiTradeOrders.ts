@@ -15,12 +15,12 @@ export interface EstimateMultiTradeOrderResult {
   fallsBackSingle: boolean
   /** Populated only when range.enabled. */
   immediate?: number
-  /** Populated only when range.enabled. */
+  /** Reserved pending count from range_percent (Total Open Trades preview). */
   pending?: number
+  /** Pending legs actually layered after range_distance depth cap. */
+  activePending?: number
   /**
-   * Computed ladder span (`pending × stepPips`). When the user-set
-   * `range.distancePips` differs, this is the actual reach the planner will
-   * use — exposed so the UI can surface the discrepancy as an advisory.
+   * Ladder span in pips: activePending × stepPips, capped by range.distancePips.
    * Populated only when range.enabled.
    */
   effectiveDistancePips?: number
@@ -38,11 +38,9 @@ export interface EstimateMultiTradeOrderResult {
  * Preview-only: multi-trade sizing at execution uses **Fixed Lot** from settings
  * (signal-parsed telegram lots are ignored in multi-trade mode so counts match UI).
  *
- * **Step does NOT affect the count.** The pending count is purely
- * `round(baseLegs × percent / 100)`. The `range.stepPips` is the pip spacing
- * the planner will use to place each pending; `range.distancePips` is the
- * advisory target span the user expects the ladder to reach (computed as
- * `pendingCount × stepPips`). Neither caps the pending count anymore.
+ * **Step does NOT affect the reserved pending count** (range_percent drives Total Open
+ * Trades). Step sets pip spacing; range_distance caps depth via
+ * `activePending = min(pending, floor(distance / step))`.
  */
 export function estimateMultiTradeOrderCount(args: {
   manualLot: number
@@ -87,14 +85,12 @@ export function estimateMultiTradeOrderCount(args: {
 
   if (rangeValid && range) {
     const pct = Math.max(0, Math.min(100, Number(range.percent)))
-    // Pending count is fixed by range_percent × baseLegs. Step changes
-    // affect spacing only — not how many pendings the planner emits.
-    // (Previously this was further capped by floor(distance / step), which
-    // meant raising the step shrank the Total Open Trades count — see UX
-    // feedback from May 12.)
     const pending = Math.max(0, Math.round((baseLegs * pct) / 100))
     const immediate = Math.max(0, baseLegs - pending)
+    const maxStepIdx = Math.max(0, Math.floor(range.distancePips / range.stepPips))
+    const activePending = Math.min(pending, maxStepIdx)
     const total = Math.min(MULTI_TRADE_ABS_MAX_LEGS, immediate + pending)
+    const rawSpan = activePending * range.stepPips
     return {
       baseLegs,
       extraRemainderLeg: false,
@@ -102,7 +98,8 @@ export function estimateMultiTradeOrderCount(args: {
       fallsBackSingle: false,
       immediate,
       pending,
-      effectiveDistancePips: pending * range.stepPips,
+      activePending,
+      effectiveDistancePips: Math.min(rawSpan, range.distancePips),
     }
   }
 

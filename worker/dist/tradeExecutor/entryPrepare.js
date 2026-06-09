@@ -546,6 +546,19 @@ async function prepareEntryExecution(ctx, args) {
         const contractSize = plan.pipQuote?.contractSize;
         const quoteCcy = plan.pipQuote?.quoteCurrency ?? '';
         const partialCount = plan.partialTps?.length ?? 0;
+        let rangeLayerLog = '';
+        if (plan.rangeLayering) {
+            const rl = plan.rangeLayering;
+            rangeLayerLog = ` range_step=${rl.rangeStepPips} range_dist=${rl.rangeDistancePips}`
+                + ` eff_step=${rl.effectiveStepPips} step_offset=${rl.stepPriceOffset}`
+                + ` max_step_idx=${rl.maxStepIdx} reserved_pending=${rl.reservedPendingLegs} active_pending=${rl.activePendingLegs}`;
+            if (anchor != null && virtualPendings.length > 0) {
+                const logDigits = Math.max(0, Math.min(8, Number(params?.digits) || 5));
+                const first = (0, helpers_1.triggerPriceFor)(virtualPendings[0], anchor, logDigits);
+                const last = (0, helpers_1.triggerPriceFor)(virtualPendings[virtualPendings.length - 1], anchor, logDigits);
+                rangeLayerLog += ` trigger_first=${first} trigger_last=${last}`;
+            }
+        }
         console.log(`[tradeExecutor] manual plan signal=${signal.id} broker=${broker.id} symbol=${symbol}`
             + ` style=${manual.trade_style ?? 'single'} legs=${legs.length + virtualPendings.length}`
             + ` (immediate=${legs.length}, virtual_pending=${virtualPendings.length}${partialCount > 0 ? `, partial_tp=${partialCount}` : ''})`
@@ -556,6 +569,7 @@ async function prepareEntryExecution(ctx, args) {
             + (contractSize != null ? ` contractSize=${contractSize}` : '')
             + ` anchorSource=${anchorSource} anchor=${anchor ?? 'n/a'}`
             + ` stops_level=${stopsLevel} freeze_level=${freezeLevel} point=${point}`
+            + rangeLayerLog
             + (plan.fallback_reason ? ` fallback=${plan.fallback_reason}` : ''));
     }
     return {

@@ -144,6 +144,16 @@ export interface PlannerPartialTp {
   percent: number
 }
 
+export interface PlannerRangeLayering {
+  rangeStepPips: number
+  rangeDistancePips: number
+  effectiveStepPips: number
+  stepPriceOffset: number
+  maxStepIdx: number
+  reservedPendingLegs: number
+  activePendingLegs: number
+}
+
 export interface PlannerResult {
   orders: OrderSendArgs[]
   virtualPendings?: VirtualPendingLeg[]
@@ -154,6 +164,7 @@ export interface PlannerResult {
   closeWorseEntries?: PlannerCloseWorseEntries
   partialTps?: PlannerPartialTp[]
   strictEntry?: PlannerStrictEntry
+  rangeLayering?: PlannerRangeLayering
   skip_reason?: string
   fallback_reason?: string
   delay_ms: number
@@ -173,7 +184,12 @@ export interface PlanRangeSplitArgs {
 
 export interface PlanRangeSplitResult {
   immediateLegs: number
+  /** Legs reserved by range_percent (preview count). */
   pendingLegs: number
+  /** Legs actually emitted after range_distance depth cap. */
+  activePendingLegs: number
+  /** Deepest step index allowed: floor(distPips / effectiveStepPips). */
+  maxStepIdx: number
   effectiveStepPips: number
   stepPriceOffset: number
   fallbackReason?: string

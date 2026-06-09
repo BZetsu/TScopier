@@ -155,7 +155,9 @@ export const configureModalFr: ConfigureModalTranslations = {
     previewDynamicRisk:
       ' La taille de lot est calculée à partir du solde du compte et du pourcentage dynamique (% du solde).',
     previewLadderSpan:
-      ' Échelonnement en range : {pending} ordres en attente, espacés de {step} pips (environ {distance} pips au total).',
+      ' Échelonnement en range : {active} ordre(s) par pas de {step} pips (échelle jusqu’à {distance} pips depuis l’entrée).',
+    previewLadderDistanceCap:
+      ' La distance de range limite l’échelonnement à {active} sur {pending} ordres réservés par %.',
     previewCweLegs:
       ' {count} trade(s) ouverts tout de suite, pouvant se fermer si le prix avance de {pips} pips en votre faveur.',
     rangeLayering: 'Échelonnement en range',

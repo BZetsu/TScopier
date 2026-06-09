@@ -118,9 +118,10 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
     hasSignalAnchor: entryAnchor != null,
   })
   const immediateLegs = split.immediateLegs
-  const effectiveRangeLegs = split.pendingLegs
+  const reservedRangeLegs = split.pendingLegs
+  const effectiveRangeLegs = split.activePendingLegs
   const stepPriceOffset = split.stepPriceOffset
-  const rangeFallbackReason = split.fallbackReason
+  let rangeFallbackReason = split.fallbackReason
 
   const totalLegsForTp = immediateLegs + effectiveRangeLegs
   const immediateTpPrices = buildDistributedPerLegTakeProfits({
@@ -239,6 +240,19 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
     isBuy,
     ...(strictEntry ? { strictEntry } : {}),
     ...(closeWorseEntries ? { closeWorseEntries } : {}),
+    ...(manual.range_trading === true && reservedRangeLegs > 0
+      ? {
+          rangeLayering: {
+            rangeStepPips: Math.max(0, Number(manual.range_step_pips ?? 0)),
+            rangeDistancePips: Math.max(0, Number(manual.range_distance_pips ?? 0)),
+            effectiveStepPips: split.effectiveStepPips,
+            stepPriceOffset: split.stepPriceOffset,
+            maxStepIdx: split.maxStepIdx,
+            reservedPendingLegs: reservedRangeLegs,
+            activePendingLegs: effectiveRangeLegs,
+          },
+        }
+      : {}),
     delay_ms,
     ...(rangeFallbackReason ? { fallback_reason: rangeFallbackReason } : {}),
   }
