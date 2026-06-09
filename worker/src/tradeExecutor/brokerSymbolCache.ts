@@ -10,6 +10,7 @@ import type { ManualSettings } from '../manualPlanner'
 import { writeBrokerConnectionStatus } from '../brokerConnectionStatus'
 import { hardReconnectBrokerSession } from '../brokerHardReconnect'
 import { pauseIfSameMtServer } from '../mtServerSessionLock'
+import { clearBrokerSessionBlock, replayParsedSignalsForBroker } from '../brokerSignalReplay'
 import { applySymbolMapping, isMtUuid, parseSymbolToTradeList } from './helpers'
 import {
   SESSION_PING_MIN_INTERVAL_MS,
@@ -81,9 +82,12 @@ export async function sessionHeartbeatTick(ctx: TradeExecutorContext, ): Promise
       const markRecovered = async () => {
         heartbeatFailCounts.delete(row.id)
         ctx.sessionPingAt.set(uuid!, Date.now())
-        if (row.connection_status === 'error') {
-          row.connection_status = 'connected'
+        const wasDown = row.connection_status === 'error' || ctx.sessionOrderBlocked.has(row.id)
+        clearBrokerSessionBlock(ctx, row)
+        if (wasDown) {
+          if (row.connection_status === 'error') row.connection_status = 'connected'
           await writeBrokerConnectionStatus(ctx.supabase, row.id, 'connected')
+          void replayParsedSignalsForBroker(ctx, row)
         }
       }
 
@@ -175,7 +179,6 @@ export async function symbolCacheKeepaliveTick(ctx: TradeExecutorContext, ): Pro
   }
 
 export async function reconnectCachedBrokers(ctx: TradeExecutorContext, ) {
-    ctx.sessionOrderBlocked.clear()
     const rows = [...ctx.brokersById.values()]
       .filter(row => row.metaapi_account_id && !row.metaapi_account_id.includes('|'))
       .sort((a, b) => {
@@ -195,10 +198,13 @@ export async function reconnectCachedBrokers(ctx: TradeExecutorContext, ) {
       if (alive) {
         heartbeatFailCounts.delete(row.id)
         ctx.sessionPingAt.set(uuid, Date.now())
-        if (row.connection_status !== 'connected') {
+        const wasDown = row.connection_status !== 'connected' || ctx.sessionOrderBlocked.has(row.id)
+        clearBrokerSessionBlock(ctx, row)
+        if (wasDown) {
+          if (row.connection_status === 'error') row.connection_status = 'connected'
           console.log(`[tradeExecutor] broker=${row.id} recovered on startup`)
-          row.connection_status = 'connected'
           await writeBrokerConnectionStatus(ctx.supabase, row.id, 'connected')
+          void replayParsedSignalsForBroker(ctx, row)
         }
       } else {
         console.warn(`[tradeExecutor] session not alive for broker=${row.id} on startup`)
@@ -226,6 +232,10 @@ export async function pingBrokerSession(ctx: TradeExecutorContext, row: BrokerRo
     const ready = await api.verifyTradingReady(uuid!)
     if (ready) {
       ctx.sessionPingAt.set(uuid!, Date.now())
+      const wasBlocked = ctx.sessionOrderBlocked.delete(row.id)
+      if (wasBlocked) {
+        void replayParsedSignalsForBroker(ctx, row)
+      }
       return
     }
     await ctx.markBrokerSessionDown(row, uuid!, 'verifyTradingReady failed')
@@ -237,19 +247,24 @@ export async function ensureBrokerSession(ctx: TradeExecutorContext,
     broker: BrokerRow,
     opts?: { force?: boolean },
   ): Promise<boolean> {
-    if (ctx.sessionOrderBlocked.has(broker.id)) {
-      await ctx.markBrokerSessionDown(broker, uuid, 'session blocked after prior OrderSend disconnect')
-      return false
-    }
     const now = Date.now()
     const last = ctx.sessionPingAt.get(uuid) ?? 0
-    if (!opts?.force && now - last < SESSION_PING_MIN_INTERVAL_MS) return true
+    const blocked = ctx.sessionOrderBlocked.has(broker.id)
+    if (!opts?.force && !blocked && now - last < SESSION_PING_MIN_INTERVAL_MS) return true
     const ready = await api.verifyTradingReady(uuid)
     if (ready) {
       ctx.sessionPingAt.set(uuid, now)
+      if (blocked) void replayParsedSignalsForBroker(ctx, broker)
+      ctx.sessionOrderBlocked.delete(broker.id)
       return true
     }
-    await ctx.markBrokerSessionDown(broker, uuid, 'verifyTradingReady failed before OrderSend')
+    await ctx.markBrokerSessionDown(
+      broker,
+      uuid,
+      blocked
+        ? 'session blocked after prior OrderSend disconnect'
+        : 'verifyTradingReady failed before OrderSend',
+    )
     return false
   }
 
@@ -258,13 +273,10 @@ export async function ensureBrokerSessionLiveFast(ctx: TradeExecutorContext,
     uuid: string,
     broker: BrokerRow,
   ): Promise<boolean> {
-    if (ctx.sessionOrderBlocked.has(broker.id)) {
-      await ctx.markBrokerSessionDown(broker, uuid, 'session blocked after prior OrderSend disconnect')
-      return false
-    }
     const now = Date.now()
     const last = ctx.sessionPingAt.get(uuid) ?? 0
-    if (now - last < SESSION_PING_MIN_INTERVAL_MS) return true
+    const blocked = ctx.sessionOrderBlocked.has(broker.id)
+    if (!blocked && now - last < SESSION_PING_MIN_INTERVAL_MS) return true
 
     const inflight = ctx.sessionCheckInflight.get(uuid)
     if (inflight) return inflight
@@ -274,9 +286,17 @@ export async function ensureBrokerSessionLiveFast(ctx: TradeExecutorContext,
         const alive = await api.keepSessionAlive(uuid)
         if (alive) {
           ctx.sessionPingAt.set(uuid, Date.now())
+          if (blocked) void replayParsedSignalsForBroker(ctx, broker)
+          ctx.sessionOrderBlocked.delete(broker.id)
           return true
         }
-        await ctx.markBrokerSessionDown(broker, uuid, 'keepSessionAlive failed before live OrderSend')
+        await ctx.markBrokerSessionDown(
+          broker,
+          uuid,
+          blocked
+            ? 'session blocked after prior OrderSend disconnect'
+            : 'keepSessionAlive failed before live OrderSend',
+        )
         return false
       } finally {
         ctx.sessionCheckInflight.delete(uuid)

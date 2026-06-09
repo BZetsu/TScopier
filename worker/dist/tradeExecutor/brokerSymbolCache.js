@@ -24,6 +24,7 @@ const metatraderapi_1 = require("../metatraderapi");
 const brokerConnectionStatus_1 = require("../brokerConnectionStatus");
 const brokerHardReconnect_1 = require("../brokerHardReconnect");
 const mtServerSessionLock_1 = require("../mtServerSessionLock");
+const brokerSignalReplay_1 = require("../brokerSignalReplay");
 const helpers_1 = require("./helpers");
 const types_1 = require("./types");
 const HEARTBEAT_FAILURES_BEFORE_DOWN = Math.max(2, Number(process.env.BROKER_HEARTBEAT_FAILURES_BEFORE_DOWN ?? 4) || 4);
@@ -79,9 +80,13 @@ async function sessionHeartbeatTick(ctx) {
         const markRecovered = async () => {
             heartbeatFailCounts.delete(row.id);
             ctx.sessionPingAt.set(uuid, Date.now());
-            if (row.connection_status === 'error') {
-                row.connection_status = 'connected';
+            const wasDown = row.connection_status === 'error' || ctx.sessionOrderBlocked.has(row.id);
+            (0, brokerSignalReplay_1.clearBrokerSessionBlock)(ctx, row);
+            if (wasDown) {
+                if (row.connection_status === 'error')
+                    row.connection_status = 'connected';
                 await (0, brokerConnectionStatus_1.writeBrokerConnectionStatus)(ctx.supabase, row.id, 'connected');
+                void (0, brokerSignalReplay_1.replayParsedSignalsForBroker)(ctx, row);
             }
         };
         const initialStatus = await api.keepSessionAliveDetailed(uuid);
@@ -169,7 +174,6 @@ async function symbolCacheKeepaliveTick(ctx) {
     }));
 }
 async function reconnectCachedBrokers(ctx) {
-    ctx.sessionOrderBlocked.clear();
     const rows = [...ctx.brokersById.values()]
         .filter(row => row.metaapi_account_id && !row.metaapi_account_id.includes('|'))
         .sort((a, b) => {
@@ -190,10 +194,14 @@ async function reconnectCachedBrokers(ctx) {
         if (alive) {
             heartbeatFailCounts.delete(row.id);
             ctx.sessionPingAt.set(uuid, Date.now());
-            if (row.connection_status !== 'connected') {
+            const wasDown = row.connection_status !== 'connected' || ctx.sessionOrderBlocked.has(row.id);
+            (0, brokerSignalReplay_1.clearBrokerSessionBlock)(ctx, row);
+            if (wasDown) {
+                if (row.connection_status === 'error')
+                    row.connection_status = 'connected';
                 console.log(`[tradeExecutor] broker=${row.id} recovered on startup`);
-                row.connection_status = 'connected';
                 await (0, brokerConnectionStatus_1.writeBrokerConnectionStatus)(ctx.supabase, row.id, 'connected');
+                void (0, brokerSignalReplay_1.replayParsedSignalsForBroker)(ctx, row);
             }
         }
         else {
@@ -222,35 +230,38 @@ async function pingBrokerSession(ctx, row) {
     const ready = await api.verifyTradingReady(uuid);
     if (ready) {
         ctx.sessionPingAt.set(uuid, Date.now());
+        const wasBlocked = ctx.sessionOrderBlocked.delete(row.id);
+        if (wasBlocked) {
+            void (0, brokerSignalReplay_1.replayParsedSignalsForBroker)(ctx, row);
+        }
         return;
     }
     await ctx.markBrokerSessionDown(row, uuid, 'verifyTradingReady failed');
 }
 async function ensureBrokerSession(ctx, api, uuid, broker, opts) {
-    if (ctx.sessionOrderBlocked.has(broker.id)) {
-        await ctx.markBrokerSessionDown(broker, uuid, 'session blocked after prior OrderSend disconnect');
-        return false;
-    }
     const now = Date.now();
     const last = ctx.sessionPingAt.get(uuid) ?? 0;
-    if (!opts?.force && now - last < types_1.SESSION_PING_MIN_INTERVAL_MS)
+    const blocked = ctx.sessionOrderBlocked.has(broker.id);
+    if (!opts?.force && !blocked && now - last < types_1.SESSION_PING_MIN_INTERVAL_MS)
         return true;
     const ready = await api.verifyTradingReady(uuid);
     if (ready) {
         ctx.sessionPingAt.set(uuid, now);
+        if (blocked)
+            void (0, brokerSignalReplay_1.replayParsedSignalsForBroker)(ctx, broker);
+        ctx.sessionOrderBlocked.delete(broker.id);
         return true;
     }
-    await ctx.markBrokerSessionDown(broker, uuid, 'verifyTradingReady failed before OrderSend');
+    await ctx.markBrokerSessionDown(broker, uuid, blocked
+        ? 'session blocked after prior OrderSend disconnect'
+        : 'verifyTradingReady failed before OrderSend');
     return false;
 }
 async function ensureBrokerSessionLiveFast(ctx, api, uuid, broker) {
-    if (ctx.sessionOrderBlocked.has(broker.id)) {
-        await ctx.markBrokerSessionDown(broker, uuid, 'session blocked after prior OrderSend disconnect');
-        return false;
-    }
     const now = Date.now();
     const last = ctx.sessionPingAt.get(uuid) ?? 0;
-    if (now - last < types_1.SESSION_PING_MIN_INTERVAL_MS)
+    const blocked = ctx.sessionOrderBlocked.has(broker.id);
+    if (!blocked && now - last < types_1.SESSION_PING_MIN_INTERVAL_MS)
         return true;
     const inflight = ctx.sessionCheckInflight.get(uuid);
     if (inflight)
@@ -260,9 +271,14 @@ async function ensureBrokerSessionLiveFast(ctx, api, uuid, broker) {
             const alive = await api.keepSessionAlive(uuid);
             if (alive) {
                 ctx.sessionPingAt.set(uuid, Date.now());
+                if (blocked)
+                    void (0, brokerSignalReplay_1.replayParsedSignalsForBroker)(ctx, broker);
+                ctx.sessionOrderBlocked.delete(broker.id);
                 return true;
             }
-            await ctx.markBrokerSessionDown(broker, uuid, 'keepSessionAlive failed before live OrderSend');
+            await ctx.markBrokerSessionDown(broker, uuid, blocked
+                ? 'session blocked after prior OrderSend disconnect'
+                : 'keepSessionAlive failed before live OrderSend');
             return false;
         }
         finally {

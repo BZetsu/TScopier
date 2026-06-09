@@ -44,6 +44,7 @@ const signalBrokerDispatchClaim_1 = require("./signalBrokerDispatchClaim");
 const tradeSignalActions_1 = require("../tradeSignalActions");
 const workerConfig_1 = require("../workerConfig");
 const monitorIdleGate_1 = require("../monitorIdleGate");
+const brokerSignalReplay_1 = require("../brokerSignalReplay");
 const pipelineTimestamps_1 = require("../pipelineTimestamps");
 const channelKeywordsCache_1 = require("../channelKeywordsCache");
 const helpers_2 = require("./helpers");
@@ -285,9 +286,15 @@ class TradeExecutor {
     applyBrokerCacheRow(row) {
         const normalized = this.normalizeBrokerRow(row);
         const previous = this.brokersById.get(row.id);
+        const wasSessionDown = Boolean(previous
+            && (previous.connection_status === 'error'
+                || this.sessionOrderBlocked.has(row.id)));
         this.brokersById.set(row.id, normalized);
         if (normalized.connection_status === 'connected') {
             this.sessionOrderBlocked.delete(row.id);
+            if (wasSessionDown) {
+                void (0, brokerSignalReplay_1.replayParsedSignalsForBroker)(this, normalized);
+            }
         }
         this.trackBrokerActivation(normalized, previous);
         const userId = row.user_id;

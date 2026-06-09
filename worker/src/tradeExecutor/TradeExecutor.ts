@@ -105,6 +105,7 @@ import {
 import { syncRangePendingLadderOnBasketRefresh } from '../rangePendingLadderSync'
 import { loadExistingRangeStepIndices } from '../rangePendingFireGuard'
 import { channelMatchesBrokerSignal } from '../brokerChannelFilter'
+import { replayParsedSignalsForBroker } from '../brokerSignalReplay'
 import { takeProfitForLegIndex } from '../manualPlanning/tpBucketDistribution'
 import {
   explicitMgmtSymbol,
@@ -441,9 +442,19 @@ export class TradeExecutor {
   private applyBrokerCacheRow(row: BrokerRow) {
     const normalized = this.normalizeBrokerRow(row)
     const previous = this.brokersById.get(row.id)
+    const wasSessionDown = Boolean(
+      previous
+      && (
+        previous.connection_status === 'error'
+        || this.sessionOrderBlocked.has(row.id)
+      ),
+    )
     this.brokersById.set(row.id, normalized)
     if (normalized.connection_status === 'connected') {
       this.sessionOrderBlocked.delete(row.id)
+      if (wasSessionDown) {
+        void replayParsedSignalsForBroker(this, normalized)
+      }
     }
     this.trackBrokerActivation(normalized, previous)
     const userId = row.user_id
