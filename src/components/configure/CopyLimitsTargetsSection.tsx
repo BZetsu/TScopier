@@ -1,9 +1,6 @@
-import { useMemo } from 'react'
 import { Button } from '../ui/Button'
 import { Toggle } from '../ui/Toggle'
-import { Select } from '../ui/Select'
 import { ConfigTitle, ConfigToggleLabel, ConfigureInput, ConfigureSelect } from '../ui/InfoTooltip'
-import { interpolate } from '../../i18n/interpolate'
 import type { ConfigureModalTranslations } from '../../i18n/locales/configureModal/types'
 import {
   DEFAULT_COPY_LIMITS,
@@ -16,7 +13,6 @@ import {
   type ProfitTargetRule,
 } from '../../lib/copyLimitTypes'
 import { isChannelCopyLimitPaused, resolveCopyLimitTimezone } from '../../lib/copyLimitEvaluate'
-import { buildTimezoneOptions } from '../../lib/timezoneOptions'
 
 type StopsCopy = ConfigureModalTranslations['stops']
 
@@ -26,6 +22,28 @@ const PERIOD_OPTIONS: Array<{ value: CopyLimitPeriod; labelKey: keyof StopsCopy 
   { value: 'monthly', labelKey: 'periodMonthly' },
   { value: 'overall', labelKey: 'periodOverall' },
 ]
+
+function firstAvailablePeriod(used: Iterable<CopyLimitPeriod>): CopyLimitPeriod {
+  const taken = new Set(used)
+  return PERIOD_OPTIONS.find(o => !taken.has(o.value))?.value ?? 'daily'
+}
+
+function periodOptionsForRow(
+  labels: StopsCopy,
+  rows: Array<{ period: CopyLimitPeriod }>,
+  rowIdx: number,
+): Array<{ value: string; label: string }> {
+  const usedByOthers = new Set(
+    rows.filter((_, i) => i !== rowIdx).map(r => r.period),
+  )
+  const current = rows[rowIdx]?.period
+  return PERIOD_OPTIONS
+    .filter(o => o.value === current || !usedByOthers.has(o.value))
+    .map(o => ({
+      value: o.value,
+      label: labels[o.labelKey] as string,
+    }))
+}
 
 function newTargetId(): string {
   return `pt-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
@@ -45,7 +63,6 @@ export function CopyLimitsTargetsSection(props: {
   const limits = normalizeCopyLimits(props.copyLimits ?? DEFAULT_COPY_LIMITS)
   const state = props.copyLimitState ?? { paused_period_keys: [], periods: {} }
   const tz = resolveCopyLimitTimezone(limits, props.profileTimezone)
-  const timezoneOptions = useMemo(() => buildTimezoneOptions(), [])
 
   const pause = isChannelCopyLimitPaused({ config: limits, state, timeZone: tz })
   const pauseBanner = pause?.reason === 'channel_max_risk_hit'
@@ -56,16 +73,12 @@ export function CopyLimitsTargetsSection(props: {
         ? props.labels.pausedProfitBanner
         : null
 
-  const needsTimezone = limits.profit_targets_enabled || limits.max_risk_enabled
-
   const patchLimits = (patch: Partial<CopyLimitsConfig>) => {
     props.onChange(normalizeCopyLimits({ ...limits, ...patch }))
   }
 
-  const periodSelectOptions = PERIOD_OPTIONS.map(o => ({
-    value: o.value,
-    label: props.labels[o.labelKey] as string,
-  }))
+  const canAddProfitTarget = limits.profit_targets.length < PERIOD_OPTIONS.length
+  const canAddMaxRisk = limits.max_risks.length < PERIOD_OPTIONS.length
 
   const valueTypeOptions = [
     { value: 'amount', label: props.labels.valueTypeAmount },
@@ -90,6 +103,7 @@ export function CopyLimitsTargetsSection(props: {
         </div>
       ) : null}
 
+      {/* Period timezone — hidden for now; limits still use profile timezone via resolveCopyLimitTimezone
       {needsTimezone ? (
         <section className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-4 space-y-3">
           <ConfigTitle info={props.labels.timezoneHint}>{props.labels.timezoneTitle}</ConfigTitle>
@@ -125,6 +139,7 @@ export function CopyLimitsTargetsSection(props: {
           ) : null}
         </section>
       ) : null}
+      */}
 
       <section className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-4 space-y-3">
         <div className="flex items-center justify-between gap-3">
@@ -138,7 +153,7 @@ export function CopyLimitsTargetsSection(props: {
                   profit_targets: [{
                     id: newTargetId(),
                     enabled: true,
-                    period: 'daily',
+                    period: firstAvailablePeriod([]),
                     value_type: 'amount',
                     value: 100,
                   }],
@@ -156,18 +171,22 @@ export function CopyLimitsTargetsSection(props: {
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => patchLimits({
-                  profit_targets: [
-                    ...limits.profit_targets,
-                    {
-                      id: newTargetId(),
-                      enabled: true,
-                      period: 'daily',
-                      value_type: 'amount',
-                      value: 100,
-                    },
-                  ],
-                })}
+                disabled={!canAddProfitTarget}
+                onClick={() => {
+                  if (!canAddProfitTarget) return
+                  patchLimits({
+                    profit_targets: [
+                      ...limits.profit_targets,
+                      {
+                        id: newTargetId(),
+                        enabled: true,
+                        period: firstAvailablePeriod(limits.profit_targets.map(t => t.period)),
+                        value_type: 'amount',
+                        value: 100,
+                      },
+                    ],
+                  })
+                }}
               >
                 {props.labels.addTarget}
               </Button>
@@ -189,7 +208,7 @@ export function CopyLimitsTargetsSection(props: {
                     label={props.labels.periodLabel}
                     value={row.period}
                     onChange={e => updateTarget(idx, { period: e.target.value as CopyLimitPeriod })}
-                    options={periodSelectOptions}
+                    options={periodOptionsForRow(props.labels, limits.profit_targets, idx)}
                   />
                 </div>
                 <div className="col-span-6 sm:col-span-3">
@@ -238,7 +257,7 @@ export function CopyLimitsTargetsSection(props: {
                   max_risks: [{
                     id: newRiskId(),
                     enabled: true,
-                    period: 'daily',
+                    period: firstAvailablePeriod([]),
                     value_type: 'amount',
                     value: 100,
                   }],
@@ -256,18 +275,22 @@ export function CopyLimitsTargetsSection(props: {
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => patchLimits({
-                  max_risks: [
-                    ...limits.max_risks,
-                    {
-                      id: newRiskId(),
-                      enabled: true,
-                      period: 'daily',
-                      value_type: 'amount',
-                      value: 100,
-                    },
-                  ],
-                })}
+                disabled={!canAddMaxRisk}
+                onClick={() => {
+                  if (!canAddMaxRisk) return
+                  patchLimits({
+                    max_risks: [
+                      ...limits.max_risks,
+                      {
+                        id: newRiskId(),
+                        enabled: true,
+                        period: firstAvailablePeriod(limits.max_risks.map(r => r.period)),
+                        value_type: 'amount',
+                        value: 100,
+                      },
+                    ],
+                  })
+                }}
               >
                 {props.labels.addRiskRule}
               </Button>
@@ -289,7 +312,7 @@ export function CopyLimitsTargetsSection(props: {
                     label={props.labels.periodLabel}
                     value={row.period}
                     onChange={e => updateRisk(idx, { period: e.target.value as CopyLimitPeriod })}
-                    options={periodSelectOptions}
+                    options={periodOptionsForRow(props.labels, limits.max_risks, idx)}
                   />
                 </div>
                 <div className="col-span-6 sm:col-span-3">

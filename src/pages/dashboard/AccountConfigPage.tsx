@@ -3066,17 +3066,6 @@ export function AccountConfigPage() {
                           const predefSummary = describePredefinedStopsOverrideI18n(ms, cm.stops)
                           return (
                           <div className="space-y-6">
-                            <CopyLimitsTargetsSection
-                              copyLimits={ms.copy_limits}
-                              copyLimitState={
-                                configDraft.selectedChannelId
-                                  ? channelCopyLimitState[configDraft.selectedChannelId]
-                                  : undefined
-                              }
-                              profileTimezone={profile.timezone || 'UTC'}
-                              labels={cm.stops}
-                              onChange={next => setManual({ copy_limits: next })}
-                            />
                             <section className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-3 space-y-3">
                               <div className="flex items-center justify-between">
                                 <ConfigTitle info={`${cm.stops.tpDistributionIntro}\n\n${cm.stops.multiTradeNote}\n\n${cm.stops.singleTradeNote}`}>{cm.stops.tpDistributionTitle}</ConfigTitle>
@@ -3153,6 +3142,18 @@ export function AccountConfigPage() {
                                 })}
                               </div>
                             </section>
+
+                            <CopyLimitsTargetsSection
+                              copyLimits={ms.copy_limits}
+                              copyLimitState={
+                                configDraft.selectedChannelId
+                                  ? channelCopyLimitState[configDraft.selectedChannelId]
+                                  : undefined
+                              }
+                              profileTimezone={profile.timezone || 'UTC'}
+                              labels={cm.stops}
+                              onChange={next => setManual({ copy_limits: next })}
+                            />
 
                             <section className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-4 space-y-3">
                               <ConfigTitle info={cm.stops.predefinedIntro}>{cm.stops.predefinedTitle}</ConfigTitle>
