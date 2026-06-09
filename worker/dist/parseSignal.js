@@ -38,8 +38,11 @@ exports.DEFAULT_CHANNEL_KEYWORDS = {
         set_tp5: "SET TP5",
         set_tp: "SET TP",
         adjust_tp: "ADJUST TP",
-        set_sl: "SET SL",
-        adjust_sl: "ADJUST SL",
+        set_sl: "SET SL|SET STOP LOSS|SET STOPLOSS|SET RISK",
+        adjust_sl: "ADJUST SL|ADJUST STOP LOSS|ADJUST STOPLOSS|ADJUST RISK"
+            + "|MOVE SL|MOVE STOP LOSS|MOVE STOPLOSS|MOVE RISK"
+            + "|CHANGE SL|CHANGE STOP LOSS|CHANGE STOPLOSS|CHANGE RISK"
+            + "|UPDATE SL|UPDATE STOP LOSS|UPDATE STOPLOSS|UPDATE RISK",
         delete: "DELETE",
     },
     additional: {
@@ -285,23 +288,47 @@ function wantsExplicitFullClose(message, kwClose) {
         return true;
     return hasAnyKeyword(message, kwClose);
 }
+/** Stop-loss labels used in management updates (providers often say "risk" or "stoploss"). */
+const SL_TEXT_LABELS = 'sl|stop\\s*loss|stoploss|risk';
+const TP_TEXT_LABELS = 'tp|take\\s*profit|target';
+const SL_MGMT_VERBS = 'set|move|adjust|bring|change|update';
+function slPriceFromClause(clause) {
+    const slClauseTo = clause.match(new RegExp(`\\bto\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'i'));
+    if (slClauseTo?.[1])
+        return (0, signalPriceFormat_1.parseSignalPriceToken)(slClauseTo[1]);
+    const candidates = (0, signalManagementIntent_1.bareTradePricesExcludingPips)(clause, (0, signalPriceInference_1.extractUnlabeledPrices)(clause));
+    const tail = candidates.length > 0 ? candidates[candidates.length - 1] : null;
+    if (tail != null && Number.isFinite(tail) && tail > 0)
+        return tail;
+    return null;
+}
+function looksLikeStopOrTpAdjustCommand(text) {
+    const t = text.replace(/\s+/g, ' ').trim();
+    if (!t)
+        return false;
+    return (new RegExp(`\\b(?:${SL_MGMT_VERBS})\\s+(?:${SL_TEXT_LABELS}|${TP_TEXT_LABELS})\\b`, 'i').test(t)
+        || new RegExp(`\\b(?:${SL_TEXT_LABELS}|${TP_TEXT_LABELS})\\s*(?:to|=)\\s*\\d`, 'i').test(t));
+}
 function parseSlFromText(text) {
-    const slMatchStandard = text.match(new RegExp(`\\b(?:sl|stop\\s*loss)\\s*[:=]?\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'i'));
+    const slMatchStandard = text.match(new RegExp(`\\b(?:${SL_TEXT_LABELS})\\s*[:=]?\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'i'));
     if (slMatchStandard?.[1])
         return (0, signalPriceFormat_1.parseSignalPriceToken)(slMatchStandard[1]);
-    const slMatchTo = text.match(new RegExp(`\\b(?:sl|stop\\s*loss)\\s+to\\s+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'i'));
+    const slMatchTo = text.match(new RegExp(`\\b(?:${SL_TEXT_LABELS})\\s+to\\s+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'i'));
     if (slMatchTo?.[1])
         return (0, signalPriceFormat_1.parseSignalPriceToken)(slMatchTo[1]);
+    // "Adjust Risk/SL/Stoploss … (+ pips) … to 4505"
+    const mgmtAdjust = text.match(new RegExp(`\\b(?:${SL_MGMT_VERBS})\\s+(?:${SL_TEXT_LABELS})\\b([^\\n\\r]{0,120})`, 'i'));
+    if (mgmtAdjust?.[1]) {
+        const fromMgmt = slPriceFromClause(mgmtAdjust[1]);
+        if (fromMgmt != null)
+            return fromMgmt;
+    }
     // Handles verbose updates like "Adjust SL + 20 pips for now to 4505".
-    const slClause = text.match(/\b(?:sl|stop\s*loss)\b([^\n\r]{0,96})/i)?.[1] ?? '';
+    const slClause = text.match(new RegExp(`\\b(?:${SL_TEXT_LABELS})\\b([^\\n\\r]{0,96})`, 'i'))?.[1] ?? '';
     if (slClause) {
-        const slClauseTo = slClause.match(new RegExp(`\\bto\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'i'));
-        if (slClauseTo?.[1])
-            return (0, signalPriceFormat_1.parseSignalPriceToken)(slClauseTo[1]);
-        const candidates = (0, signalManagementIntent_1.bareTradePricesExcludingPips)(slClause, (0, signalPriceInference_1.extractUnlabeledPrices)(slClause));
-        const tail = candidates.length > 0 ? candidates[candidates.length - 1] : null;
-        if (tail != null && Number.isFinite(tail) && tail > 0)
-            return tail;
+        const fromClause = slPriceFromClause(slClause);
+        if (fromClause != null)
+            return fromClause;
     }
     return null;
 }
@@ -393,8 +420,7 @@ function parseDeterministicManagement(message, lexicon, channelKeywords) {
         action = "breakeven";
     else if (wantsExplicitFullClose(t, kwClose))
         action = "close";
-    else if (/\b(set|move|adjust|bring)\s+(sl|tp|target|stop\s*loss|take\s*profit)\b|\b(stop\s*loss|take\s*profit|target)\s*(to|=)\s*[\d.]+/i
-        .test(t) || hasAnyKeyword(t, kwModify))
+    else if (looksLikeStopOrTpAdjustCommand(t) || hasAnyKeyword(t, kwModify))
         action = "modify";
     if (!action)
         return null;
@@ -662,7 +688,8 @@ function parseSimpleSignal(message, lexicon, channelKeywords) {
         ...splitKeywordAliases(channelKeywords.update.close_tp3, delim),
         ...splitKeywordAliases(channelKeywords.update.close_tp4, delim),
     ];
-    if (/\b(flatten|exit\s+trade|breakeven|break\s+even|partial|move\s+(sl|tp))\b/i.test(text)
+    if (/\b(flatten|exit\s+trade|breakeven|break\s+even|partial|move\s+(?:sl|tp|risk|stop\s*loss|stoploss))\b/i.test(text)
+        || looksLikeStopOrTpAdjustCommand(message)
         || (0, signalManagementIntent_1.looksLikeExplicitFullCloseCommand)(message)
         || hasAnyKeyword(message, mgmtAliases)) {
         return null;

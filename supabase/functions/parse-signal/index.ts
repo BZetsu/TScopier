@@ -129,8 +129,12 @@ const DEFAULT_CHANNEL_KEYWORDS: ChannelKeywords = {
     set_tp5: "SET TP5",
     set_tp: "SET TP",
     adjust_tp: "ADJUST TP",
-    set_sl: "SET SL",
-    adjust_sl: "ADJUST SL",
+    set_sl: "SET SL|SET STOP LOSS|SET STOPLOSS|SET RISK",
+    adjust_sl:
+      "ADJUST SL|ADJUST STOP LOSS|ADJUST STOPLOSS|ADJUST RISK"
+      + "|MOVE SL|MOVE STOP LOSS|MOVE STOPLOSS|MOVE RISK"
+      + "|CHANGE SL|CHANGE STOP LOSS|CHANGE STOPLOSS|CHANGE RISK"
+      + "|UPDATE SL|UPDATE STOP LOSS|UPDATE STOPLOSS|UPDATE RISK",
     delete: "DELETE",
   },
   additional: {
@@ -312,19 +316,49 @@ function extractPriceByLabels(message: string, labels: string[]): number | null 
   return null
 }
 
+/** Stop-loss labels used in management updates (providers often say "risk" or "stoploss"). */
+const SL_TEXT_LABELS = 'sl|stop\\s*loss|stoploss|risk'
+const TP_TEXT_LABELS = 'tp|take\\s*profit|target'
+const SL_MGMT_VERBS = 'set|move|adjust|bring|change|update'
+
+function slPriceFromClause(clause: string): number | null {
+  const slClauseTo = clause.match(new RegExp(`\\bto\\s*(${SIGNAL_PRICE_NUM})\\b`, 'i'))
+  if (slClauseTo?.[1]) return parseSignalPriceToken(slClauseTo[1])
+  const candidates = bareTradePricesExcludingPips(clause, extractUnlabeledPrices(clause))
+  const tail = candidates.length > 0 ? candidates[candidates.length - 1] : null
+  if (tail != null && Number.isFinite(tail) && tail > 0) return tail
+  return null
+}
+
+function looksLikeStopOrTpAdjustCommand(text: string): boolean {
+  const t = text.replace(/\s+/g, ' ').trim()
+  if (!t) return false
+  return (
+    new RegExp(`\\b(?:${SL_MGMT_VERBS})\\s+(?:${SL_TEXT_LABELS}|${TP_TEXT_LABELS})\\b`, 'i').test(t)
+    || new RegExp(`\\b(?:${SL_TEXT_LABELS}|${TP_TEXT_LABELS})\\s*(?:to|=)\\s*\\d`, 'i').test(t)
+  )
+}
+
 function parseSlFromText(text: string): number | null {
-  const slMatchStandard = text.match(new RegExp(`\\b(?:sl|stop\\s*loss)\\s*[:=]?\\s*(${SIGNAL_PRICE_NUM})`, 'i'))
+  const slMatchStandard = text.match(
+    new RegExp(`\\b(?:${SL_TEXT_LABELS})\\s*[:=]?\\s*(${SIGNAL_PRICE_NUM})`, 'i'),
+  )
   if (slMatchStandard?.[1]) return parseSignalPriceToken(slMatchStandard[1])
-  const slMatchTo = text.match(new RegExp(`\\b(?:sl|stop\\s*loss)\\s+to\\s+(${SIGNAL_PRICE_NUM})`, 'i'))
+  const slMatchTo = text.match(
+    new RegExp(`\\b(?:${SL_TEXT_LABELS})\\s+to\\s+(${SIGNAL_PRICE_NUM})`, 'i'),
+  )
   if (slMatchTo?.[1]) return parseSignalPriceToken(slMatchTo[1])
-  // Handles verbose updates like "Adjust SL + 20 pips for now to 4505".
-  const slClause = text.match(/\b(?:sl|stop\s*loss)\b([^\n\r]{0,96})/i)?.[1] ?? ''
+  const mgmtAdjust = text.match(
+    new RegExp(`\\b(?:${SL_MGMT_VERBS})\\s+(?:${SL_TEXT_LABELS})\\b([^\\n\\r]{0,120})`, 'i'),
+  )
+  if (mgmtAdjust?.[1]) {
+    const fromMgmt = slPriceFromClause(mgmtAdjust[1])
+    if (fromMgmt != null) return fromMgmt
+  }
+  const slClause = text.match(new RegExp(`\\b(?:${SL_TEXT_LABELS})\\b([^\\n\\r]{0,96})`, 'i'))?.[1] ?? ''
   if (slClause) {
-    const slClauseTo = slClause.match(new RegExp(`\\bto\\s*(${SIGNAL_PRICE_NUM})\\b`, 'i'))
-    if (slClauseTo?.[1]) return parseSignalPriceToken(slClauseTo[1])
-    const candidates = bareTradePricesExcludingPips(slClause, extractUnlabeledPrices(slClause))
-    const tail = candidates.length > 0 ? candidates[candidates.length - 1] : null
-    if (tail != null && Number.isFinite(tail) && tail > 0) return tail
+    const fromClause = slPriceFromClause(slClause)
+    if (fromClause != null) return fromClause
   }
   return null
 }
@@ -504,10 +538,7 @@ function parseDeterministicManagement(
     }
   } else if (wantsBreakeven) action = "breakeven"
   else if (wantsExplicitFullClose(t, kwClose)) action = "close"
-  else if (
-    /\b(set|move|adjust|bring)\s+(sl|tp|target|stop\s*loss|take\s*profit)\b|\b(stop\s*loss|take\s*profit|target)\s*(to|=)\s*[\d.]+/i
-      .test(t) || hasAnyKeyword(t, kwModify)
-  ) action = "modify"
+  else if (looksLikeStopOrTpAdjustCommand(t) || hasAnyKeyword(t, kwModify)) action = "modify"
 
   if (!action) return null
   const looksEntry = ENTRY_KW.test(t) &&
@@ -801,7 +832,8 @@ function parseSimpleSignal(
   ]
 
   if (
-    /\b(flatten|exit\s+trade|breakeven|break\s+even|partial|move\s+(sl|tp))\b/i.test(text)
+    /\b(flatten|exit\s+trade|breakeven|break\s+even|partial|move\s+(?:sl|tp|risk|stop\s*loss|stoploss))\b/i.test(text)
+    || looksLikeStopOrTpAdjustCommand(message)
     || looksLikeExplicitFullCloseCommand(message)
     || hasAnyKeyword(message, mgmtAliases)
   ) {

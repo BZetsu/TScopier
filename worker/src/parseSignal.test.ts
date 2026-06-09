@@ -261,6 +261,25 @@ Make sure to secure 30% profits by closing partial lotsize`
     assert.equal(result.parsed.sl, 4505)
   })
 
+  it('parses stop-loss adjust phrasing variants (risk, stop loss, stoploss)', () => {
+    const cases = [
+      'Adjust Risk to 4505',
+      'Adjust Stop Loss to 4505',
+      'Adjust Stoploss to 4505',
+      'Adjust SL + 15pips to 4505',
+      'Move risk to 4505',
+      'Change stop loss to 4505',
+      'Update stoploss to 4505',
+      'Set risk to 4505',
+    ]
+    for (const msg of cases) {
+      const result = parseChannelMessageSync(msg, DEFAULT_CHANNEL_KEYWORDS, lexicon)
+      assert.equal(result.status, 'parsed', msg)
+      assert.equal(result.parsed.action, 'modify', msg)
+      assert.equal(result.parsed.sl, 4505, msg)
+    }
+  })
+
   it('skips commentary "short of TP2" chatter with gold mention', () => {
     const msg = 'Hmmmm 6 pips short of TP2.... Funny you gold. Funny you.'
     const result = parseChannelMessageSync(msg, DEFAULT_CHANNEL_KEYWORDS, lexicon)

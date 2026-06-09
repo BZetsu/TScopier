@@ -29,7 +29,9 @@ function looksLikeChannelManagementUpdate(text) {
     const t = String(text ?? '').replace(/\s+/g, ' ').trim();
     if (!t)
         return false;
-    return (/\b(move\s+stop|move\s+sl|stop\s+to\s+breakeven|breakeven|break\s*even)\b/i.test(t)
+    return (/\b(move\s+stop|move\s+sl|move\s+risk|stop\s+to\s+breakeven|breakeven|break\s*even)\b/i.test(t)
+        || /\b(?:adjust|move|set|change|update)\s+(?:sl|stop\s*loss|stoploss|risk)\b/i.test(t)
+        || /\b(?:sl|stop\s*loss|stoploss|risk)\s+to\s+\d/i.test(t)
         || /\b(close\s+partial|closing\s+partial|take\s+partial|partial\s+(?:lot|lots|lotsize|position|trade))\b/i.test(t)
         || /\bsecure\s+\d+\s*%\s*profit/i.test(t)
         || /\btake\s+profit\s+(?:target\s+)?(?:is\s+)?hit\b/i.test(t)
