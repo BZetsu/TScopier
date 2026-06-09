@@ -2,10 +2,12 @@ import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import {
   applyChannelParamsToVirtualLeg,
+  clearChannelActiveTradeParamsWhenFlat,
   estimateBasketTotalPlannedLegs,
   isFullEntrySignalWithStops,
   mergeParsedWithChannelParams,
   parsedSignalHasExplicitStops,
+  resolveEntryChannelStops,
   shouldMergeChannelParamsForEntry,
   shouldOverlayChannelParamsOnBasketRefresh,
   shouldPreferSignalStopsOverChannelMemory,
@@ -14,6 +16,62 @@ import {
   symbolsForChannelParamsPersist,
   upsertChannelActiveTradeParams,
 } from './channelActiveTradeParams'
+
+function chainQuery<T>(data: T, error: { message: string } | null = null) {
+  const result = Promise.resolve({ data, error })
+  const chain = {
+    eq: () => chain,
+    in: () => chain,
+    limit: () => result,
+    then: result.then.bind(result),
+    catch: result.catch.bind(result),
+  }
+  return chain
+}
+
+function makeClearMockSupabase(config: {
+  signals?: { id: string }[]
+  openTrades?: { symbol: string }[]
+  pendingLegs?: { symbol: string }[]
+  entryPending?: { symbol: string }[]
+  paramsRows?: { symbol: string }[]
+}) {
+  const deleted: string[] = []
+  const mock = {
+    from: (table: string) => {
+      if (table === 'signals') {
+        return { select: () => chainQuery(config.signals ?? []) }
+      }
+      if (table === 'trades') {
+        return { select: () => chainQuery(config.openTrades ?? []) }
+      }
+      if (table === 'range_pending_legs') {
+        return { select: () => chainQuery(config.pendingLegs ?? []) }
+      }
+      if (table === 'signal_entry_pending_orders') {
+        return { select: () => chainQuery(config.entryPending ?? []) }
+      }
+      if (table === 'channel_active_trade_params') {
+        return {
+          select: () => chainQuery(config.paramsRows ?? []),
+          delete: () => ({
+            eq: () => ({
+              eq: () => ({
+                eq: (_col: string, sym: string) => {
+                  deleted.push(sym)
+                  return Promise.resolve({ error: null })
+                },
+              }),
+            }),
+          }),
+        }
+      }
+      throw new Error(`unexpected table ${table}`)
+    },
+    deleted,
+  }
+  return mock
+}
 
 describe('channelActiveTradeParams', () => {
   test('mergeParsedWithChannelParams fills gaps only by default', () => {
@@ -331,5 +389,92 @@ describe('channelActiveTradeParams', () => {
     })
     assert.equal(upserted[0]!.stoploss, 4312)
     assert.deepEqual(upserted[0]!.tp_levels, [4306, 4304, 4300])
+  })
+
+  test('clearChannelActiveTradeParamsWhenFlat deletes rows when no open activity', async () => {
+    const mock = makeClearMockSupabase({
+      signals: [{ id: 'sig-1' }],
+      paramsRows: [{ symbol: 'XAUUSD' }],
+    })
+    const result = await clearChannelActiveTradeParamsWhenFlat(mock as never, {
+      userId: 'user-1',
+      channelId: 'channel-1',
+      symbolHint: 'XAUUSD',
+    })
+    assert.equal(result.cleared, true)
+    assert.deepEqual(result.deletedSymbols, ['XAUUSD'])
+    assert.deepEqual(mock.deleted, ['XAUUSD'])
+  })
+
+  test('clearChannelActiveTradeParamsWhenFlat no-ops when open trade exists', async () => {
+    const mock = makeClearMockSupabase({
+      signals: [{ id: 'sig-1' }],
+      openTrades: [{ symbol: 'XAUUSD' }],
+      paramsRows: [{ symbol: 'XAUUSD' }],
+    })
+    const result = await clearChannelActiveTradeParamsWhenFlat(mock as never, {
+      userId: 'user-1',
+      channelId: 'channel-1',
+      symbolHint: 'XAUUSD',
+    })
+    assert.equal(result.cleared, false)
+    assert.deepEqual(result.deletedSymbols, [])
+    assert.deepEqual(mock.deleted, [])
+  })
+
+  test('clearChannelActiveTradeParamsWhenFlat deletes compatible symbol alias rows', async () => {
+    const mock = makeClearMockSupabase({
+      signals: [{ id: 'sig-1' }],
+      paramsRows: [{ symbol: 'XAUUSD' }, { symbol: 'XAUUSDm' }],
+    })
+    const result = await clearChannelActiveTradeParamsWhenFlat(mock as never, {
+      userId: 'user-1',
+      channelId: 'channel-1',
+      symbolHint: 'XAUUSDm',
+    })
+    assert.equal(result.cleared, true)
+    assert.equal(result.deletedSymbols.length, 2)
+    assert.ok(result.deletedSymbols.includes('XAUUSD'))
+    assert.ok(result.deletedSymbols.includes('XAUUSDm'))
+  })
+
+  test('resolveEntryChannelStops does not gap-fill stale channel memory when basket is flat', async () => {
+    const staleParams = [{ symbol: 'XAUUSD', stoploss: 4458, tp_levels: [4467, 4469] }]
+    const mock = {
+      from: (table: string) => {
+        if (table === 'channel_active_trade_params') {
+          return { select: () => chainQuery(staleParams) }
+        }
+        if (table === 'signals') {
+          return { select: () => chainQuery([{ id: 'sig-1' }]) }
+        }
+        if (table === 'trades') {
+          return { select: () => chainQuery([]) }
+        }
+        if (table === 'range_pending_legs') {
+          return { select: () => chainQuery([]) }
+        }
+        throw new Error(`unexpected table ${table}`)
+      },
+    }
+    const resolved = await resolveEntryChannelStops(mock as never, {
+      userId: 'user-1',
+      channelId: 'channel-1',
+      brokerAccountId: 'broker-1',
+      symbol: 'XAUUSD',
+      plannerParsed: {
+        action: 'buy',
+        symbol: 'XAUUSD',
+        entry_price: 4500,
+        entry_zone_low: null,
+        entry_zone_high: null,
+        sl: null,
+        tp: null,
+        lot_size: null,
+      },
+    })
+    assert.equal(resolved.plannerParsed.sl, null)
+    assert.equal(resolved.plannerParsed.tp, null)
+    assert.equal(resolved.mergedChannelParams, false)
   })
 })

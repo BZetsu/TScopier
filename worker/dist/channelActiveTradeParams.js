@@ -13,6 +13,8 @@ exports.shouldOverlayChannelParamsOnBasketRefresh = shouldOverlayChannelParamsOn
 exports.refreshChannelParamsFromSignal = refreshChannelParamsFromSignal;
 exports.shouldMergeChannelParamsForEntry = shouldMergeChannelParamsForEntry;
 exports.channelHasOpenActivityForSymbol = channelHasOpenActivityForSymbol;
+exports.channelHasOpenActivityForChannelSymbol = channelHasOpenActivityForChannelSymbol;
+exports.clearChannelActiveTradeParamsWhenFlat = clearChannelActiveTradeParamsWhenFlat;
 exports.shouldSeedChannelParamsFromEntrySignal = shouldSeedChannelParamsFromEntrySignal;
 exports.resolveEntryChannelStops = resolveEntryChannelStops;
 exports.mergeParsedWithChannelParams = mergeParsedWithChannelParams;
@@ -191,6 +193,86 @@ async function channelHasOpenActivityForSymbol(supabase, args) {
         .limit(200);
     return (pending ?? []).some((l) => (0, basketModFollowUp_1.symbolsCompatibleForBasket)(args.symbolHint, l.symbol));
 }
+/** Open trades or pendings on this channel+symbol across all broker accounts. */
+async function channelHasOpenActivityForChannelSymbol(supabase, args) {
+    const { data: sigs, error: sigErr } = await supabase
+        .from('signals')
+        .select('id')
+        .eq('user_id', args.userId)
+        .eq('channel_id', args.channelId)
+        .limit(2000);
+    if (sigErr || !sigs?.length)
+        return false;
+    const signalIds = sigs.map((r) => r.id);
+    const { data: trades } = await supabase
+        .from('trades')
+        .select('symbol')
+        .eq('user_id', args.userId)
+        .in('status', ['open', 'pending'])
+        .in('signal_id', signalIds)
+        .limit(500);
+    if ((trades ?? []).some((t) => (0, basketModFollowUp_1.symbolsCompatibleForBasket)(args.symbolHint, t.symbol))) {
+        return true;
+    }
+    const { data: pending } = await supabase
+        .from('range_pending_legs')
+        .select('symbol')
+        .eq('user_id', args.userId)
+        .in('signal_id', signalIds)
+        .in('status', ['pending', 'claimed'])
+        .limit(500);
+    if ((pending ?? []).some((l) => (0, basketModFollowUp_1.symbolsCompatibleForBasket)(args.symbolHint, l.symbol))) {
+        return true;
+    }
+    const { data: entryPending } = await supabase
+        .from('signal_entry_pending_orders')
+        .select('symbol')
+        .in('signal_id', signalIds)
+        .eq('status', 'broker_pending')
+        .limit(500);
+    return (entryPending ?? []).some((r) => (0, basketModFollowUp_1.symbolsCompatibleForBasket)(args.symbolHint, r.symbol));
+}
+/** Delete channel SL/TP memory when no open activity remains for the symbol family. */
+async function clearChannelActiveTradeParamsWhenFlat(supabase, args) {
+    const hasActivity = await channelHasOpenActivityForChannelSymbol(supabase, args);
+    if (hasActivity) {
+        return { cleared: false, deletedSymbols: [] };
+    }
+    const { data: rows, error } = await supabase
+        .from('channel_active_trade_params')
+        .select('symbol')
+        .eq('user_id', args.userId)
+        .eq('channel_id', args.channelId);
+    if (error) {
+        console.warn(`[channelActiveTradeParams] clear load failed: ${error.message}`);
+        return { cleared: false, deletedSymbols: [] };
+    }
+    const toDelete = (rows ?? []).filter((r) => (0, basketModFollowUp_1.symbolsCompatibleForBasket)(args.symbolHint, r.symbol));
+    if (!toDelete.length) {
+        return { cleared: false, deletedSymbols: [] };
+    }
+    const deletedSymbols = [];
+    for (const row of toDelete) {
+        const sym = row.symbol;
+        const { error: delErr } = await supabase
+            .from('channel_active_trade_params')
+            .delete()
+            .eq('user_id', args.userId)
+            .eq('channel_id', args.channelId)
+            .eq('symbol', sym);
+        if (!delErr) {
+            deletedSymbols.push(sym);
+        }
+        else {
+            console.warn(`[channelActiveTradeParams] delete ${sym} failed: ${delErr.message}`);
+        }
+    }
+    if (deletedSymbols.length) {
+        console.log(`[channelActiveTradeParams] cleared channel=${args.channelId}`
+            + ` symbol_hint=${args.symbolHint} deleted=${deletedSymbols.join(',')}`);
+    }
+    return { cleared: deletedSymbols.length > 0, deletedSymbols };
+}
 /**
  * When a basket is already live, stale SL/TP copied from the provider template must not
  * overwrite Adjust SL memory or seed new range legs.
@@ -234,7 +316,7 @@ async function resolveEntryChannelStops(supabase, args) {
             replace: preferSignalStops,
         });
     }
-    else if (channelParams && !applyOverlay) {
+    else if (channelParams && hasActiveBasket && !applyOverlay) {
         plannerParsed = mergeParsedWithChannelParams(plannerParsed, channelParams);
         mergedChannelParams = true;
     }

@@ -109,6 +109,7 @@ import {
 import { tryBrokerFallbackClose } from '../managementBrokerClose'
 import {
   applyChannelParamsToVirtualPendingList,
+  clearChannelActiveTradeParamsWhenFlat,
   estimateBasketTotalPlannedLegs,
   loadChannelActiveTradeParamsForSymbol,
   mergeParsedWithChannelParams,
@@ -534,6 +535,13 @@ export async function applyManagement(ctx: TradeExecutorContext, signal: SignalR
             )
           }
           await ctx.supabase.from('trades').update({ status: 'closed', closed_at: new Date().toISOString() }).eq('id', trade.id)
+          if (signal.channel_id) {
+            await clearChannelActiveTradeParamsWhenFlat(ctx.supabase, {
+              userId: signal.user_id,
+              channelId: signal.channel_id,
+              symbolHint: trade.symbol,
+            })
+          }
           cancelledPendingScopes.add(JSON.stringify({
             signalId: trade.signal_id,
             brokerAccountId: trade.broker_account_id,
@@ -552,6 +560,13 @@ export async function applyManagement(ctx: TradeExecutorContext, signal: SignalR
               closed_at: new Date().toISOString(),
               lot_size: 0,
             }).eq('id', trade.id)
+            if (signal.channel_id) {
+              await clearChannelActiveTradeParamsWhenFlat(ctx.supabase, {
+                userId: signal.user_id,
+                channelId: signal.channel_id,
+                symbolHint: trade.symbol,
+              })
+            }
           } else {
             await ctx.supabase.from('trades').update({ lot_size: remaining }).eq('id', trade.id)
           }
@@ -848,6 +863,13 @@ export async function applyCloseWorseEntriesInstruction(ctx: TradeExecutorContex
               cwe_close_price: null,
             })
             .eq('id', trade.id)
+          if (signal.channel_id) {
+            await clearChannelActiveTradeParamsWhenFlat(ctx.supabase, {
+              userId: signal.user_id,
+              channelId: signal.channel_id,
+              symbolHint: trade.symbol,
+            })
+          }
           await ctx.supabase.from('trade_execution_logs').insert({
             user_id: signal.user_id,
             signal_id: signal.id,
@@ -876,6 +898,13 @@ export async function applyCloseWorseEntriesInstruction(ctx: TradeExecutorContex
                 cwe_close_price: null,
               })
               .eq('id', trade.id)
+            if (signal.channel_id) {
+              await clearChannelActiveTradeParamsWhenFlat(ctx.supabase, {
+                userId: signal.user_id,
+                channelId: signal.channel_id,
+                symbolHint: trade.symbol,
+              })
+            }
           } else {
             await ctx.supabase.from('trade_execution_logs').insert({
               user_id: signal.user_id,

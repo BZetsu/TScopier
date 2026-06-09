@@ -5,6 +5,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { MetatraderApiClient } from './metatraderapi'
 import { symbolsCompatibleForBasket } from './basketModFollowUp'
+import { clearChannelActiveTradeParamsWhenFlat } from './channelActiveTradeParams'
 import { parseTscopierComment, tscopierCommentMatchesChannelSlug } from './tscopierComment'
 import { sanitizeChannelCommentSlug } from './tradeComment'
 import type { BrokerRow } from './tradeExecutor/types'
@@ -130,6 +131,13 @@ export async function tryBrokerFallbackClose(args: {
           .eq('broker_account_id', broker.id)
           .eq('metaapi_order_id', String(order.ticket))
           .in('status', ['open', 'pending'])
+        if (signal.channel_id) {
+          await clearChannelActiveTradeParamsWhenFlat(supabase, {
+            userId: signal.user_id,
+            channelId: signal.channel_id,
+            symbolHint: order.symbol,
+          })
+        }
         await supabase.from('trade_execution_logs').insert({
           user_id: signal.user_id,
           signal_id: signal.id,

@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.flattenChannelTradesForCopyLimit = flattenChannelTradesForCopyLimit;
+const channelActiveTradeParams_1 = require("./channelActiveTradeParams");
 const managementScope_1 = require("./managementScope");
 const metatraderapi_1 = require("./metatraderapi");
 const rangePendingLegDelete_1 = require("./rangePendingLegDelete");
@@ -57,6 +58,11 @@ async function flattenChannelTradesForCopyLimit(args) {
             .update({ status: terminalStatus, closed_at: now })
             .eq('id', trade.id)
             .in('status', ['open', 'pending']);
+        await (0, channelActiveTradeParams_1.clearChannelActiveTradeParamsWhenFlat)(args.supabase, {
+            userId: args.userId,
+            channelId: args.channelId,
+            symbolHint: trade.symbol,
+        });
     }
     const { data: channelSignals } = await args.supabase
         .from('signals')

@@ -7,6 +7,7 @@ exports.extractOpenOrderFromBrokerRaw = extractOpenOrderFromBrokerRaw;
 exports.filterTscopierOrdersForChannelClose = filterTscopierOrdersForChannelClose;
 exports.tryBrokerFallbackClose = tryBrokerFallbackClose;
 const basketModFollowUp_1 = require("./basketModFollowUp");
+const channelActiveTradeParams_1 = require("./channelActiveTradeParams");
 const tscopierComment_1 = require("./tscopierComment");
 const tradeComment_1 = require("./tradeComment");
 function extractOpenOrderFromBrokerRaw(raw) {
@@ -103,6 +104,13 @@ async function tryBrokerFallbackClose(args) {
                     .eq('broker_account_id', broker.id)
                     .eq('metaapi_order_id', String(order.ticket))
                     .in('status', ['open', 'pending']);
+                if (signal.channel_id) {
+                    await (0, channelActiveTradeParams_1.clearChannelActiveTradeParamsWhenFlat)(supabase, {
+                        userId: signal.user_id,
+                        channelId: signal.channel_id,
+                        symbolHint: order.symbol,
+                    });
+                }
                 await supabase.from('trade_execution_logs').insert({
                     user_id: signal.user_id,
                     signal_id: signal.id,

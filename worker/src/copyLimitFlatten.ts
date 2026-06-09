@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { clearChannelActiveTradeParamsWhenFlat } from './channelActiveTradeParams'
 import { loadOpenTradesForManagement } from './managementScope'
 import { getMetatraderApi, hasMetatraderApiConfigured, mtPlatformFrom } from './metatraderapi'
 import { deleteRangePendingLegsForBasket } from './rangePendingLegDelete'
@@ -81,6 +82,11 @@ export async function flattenChannelTradesForCopyLimit(args: {
       .update({ status: terminalStatus, closed_at: now })
       .eq('id', trade.id)
       .in('status', ['open', 'pending'])
+    await clearChannelActiveTradeParamsWhenFlat(args.supabase, {
+      userId: args.userId,
+      channelId: args.channelId,
+      symbolHint: trade.symbol,
+    })
   }
 
   const { data: channelSignals } = await args.supabase

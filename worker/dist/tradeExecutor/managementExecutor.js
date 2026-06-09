@@ -362,6 +362,13 @@ async function applyManagement(ctx, signal, parsed, brokers) {
                     throw new Error(closeResult.reason ?? 'orderClose succeeded but ticket still open on broker');
                 }
                 await ctx.supabase.from('trades').update({ status: 'closed', closed_at: new Date().toISOString() }).eq('id', trade.id);
+                if (signal.channel_id) {
+                    await (0, channelActiveTradeParams_1.clearChannelActiveTradeParamsWhenFlat)(ctx.supabase, {
+                        userId: signal.user_id,
+                        channelId: signal.channel_id,
+                        symbolHint: trade.symbol,
+                    });
+                }
                 cancelledPendingScopes.add(JSON.stringify({
                     signalId: trade.signal_id,
                     brokerAccountId: trade.broker_account_id,
@@ -381,6 +388,13 @@ async function applyManagement(ctx, signal, parsed, brokers) {
                         closed_at: new Date().toISOString(),
                         lot_size: 0,
                     }).eq('id', trade.id);
+                    if (signal.channel_id) {
+                        await (0, channelActiveTradeParams_1.clearChannelActiveTradeParamsWhenFlat)(ctx.supabase, {
+                            userId: signal.user_id,
+                            channelId: signal.channel_id,
+                            symbolHint: trade.symbol,
+                        });
+                    }
                 }
                 else {
                     await ctx.supabase.from('trades').update({ lot_size: remaining }).eq('id', trade.id);
@@ -641,6 +655,13 @@ async function applyCloseWorseEntriesInstruction(ctx, signal, parsed, rows, byBr
                     cwe_close_price: null,
                 })
                     .eq('id', trade.id);
+                if (signal.channel_id) {
+                    await (0, channelActiveTradeParams_1.clearChannelActiveTradeParamsWhenFlat)(ctx.supabase, {
+                        userId: signal.user_id,
+                        channelId: signal.channel_id,
+                        symbolHint: trade.symbol,
+                    });
+                }
                 await ctx.supabase.from('trade_execution_logs').insert({
                     user_id: signal.user_id,
                     signal_id: signal.id,
@@ -670,6 +691,13 @@ async function applyCloseWorseEntriesInstruction(ctx, signal, parsed, rows, byBr
                         cwe_close_price: null,
                     })
                         .eq('id', trade.id);
+                    if (signal.channel_id) {
+                        await (0, channelActiveTradeParams_1.clearChannelActiveTradeParamsWhenFlat)(ctx.supabase, {
+                            userId: signal.user_id,
+                            channelId: signal.channel_id,
+                            symbolHint: trade.symbol,
+                        });
+                    }
                 }
                 else {
                     await ctx.supabase.from('trade_execution_logs').insert({
