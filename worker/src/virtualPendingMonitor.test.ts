@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
-import { evaluateTpTouch, isTriggered } from './virtualPendingMonitor'
+import { evaluateTpTouch, fillWithinTriggerBand, isTriggered } from './virtualPendingMonitor'
 
 // Buy ladder = averaging DOWN: trigger fires when bid drops to / below trigger_price.
 test('isTriggered: buy fires when bid <= trigger', () => {
@@ -38,6 +38,59 @@ test('isTriggered: realistic XAUUSD buy ladder fires correctly', () => {
   assert.equal(trigger, 1847)
   assert.equal(isTriggered(true, trigger, 1846.95, 1847.05), true)
   assert.equal(isTriggered(true, trigger, 1847.05, 1847.15), false)
+})
+
+// XAUUSD: point=0.01, slippage 20 points ⇒ tolerance $0.20 around the rung.
+test('fillWithinTriggerBand: buy fill at/near the rung is allowed', () => {
+  assert.deepEqual(
+    fillWithinTriggerBand({ isBuy: true, triggerPrice: 4109.63, bid: 4109.50, ask: 4109.70, slippagePoints: 20, point: 0.01 }),
+    { ok: true },
+  )
+})
+
+test('fillWithinTriggerBand: buy fill BELOW the rung (better entry) is allowed', () => {
+  assert.deepEqual(
+    fillWithinTriggerBand({ isBuy: true, triggerPrice: 4109.63, bid: 4105.10, ask: 4105.30, slippagePoints: 20, point: 0.01 }),
+    { ok: true },
+  )
+})
+
+// Regression for the "layer fired at the top of a rally" bug: trigger crossed
+// on a dip, but by send time ask rallied $2 above the rung — must NOT fire.
+test('fillWithinTriggerBand: buy fill far above the rung is rejected', () => {
+  const out = fillWithinTriggerBand({ isBuy: true, triggerPrice: 4109.63, bid: 4111.60, ask: 4111.81, slippagePoints: 20, point: 0.01 })
+  assert.equal(out.ok, false)
+  assert.equal(out.reason, 'no_longer_triggered')
+})
+
+test('fillWithinTriggerBand: buy still triggered on bid but ask outside slippage band is rejected', () => {
+  const out = fillWithinTriggerBand({ isBuy: true, triggerPrice: 4109.63, bid: 4109.60, ask: 4110.40, slippagePoints: 20, point: 0.01 })
+  assert.equal(out.ok, false)
+  assert.equal(out.reason, 'fill_outside_trigger_band')
+})
+
+test('fillWithinTriggerBand: sell fill below the rung beyond slippage is rejected', () => {
+  const out = fillWithinTriggerBand({ isBuy: false, triggerPrice: 4120, bid: 4118.90, ask: 4120.05, slippagePoints: 20, point: 0.01 })
+  assert.equal(out.ok, false)
+  assert.equal(out.reason, 'fill_outside_trigger_band')
+})
+
+test('fillWithinTriggerBand: sell fill at/above the rung is allowed', () => {
+  assert.deepEqual(
+    fillWithinTriggerBand({ isBuy: false, triggerPrice: 4120, bid: 4120.10, ask: 4120.30, slippagePoints: 20, point: 0.01 }),
+    { ok: true },
+  )
+})
+
+test('fillWithinTriggerBand: without symbol point only re-checks the trigger', () => {
+  assert.deepEqual(
+    fillWithinTriggerBand({ isBuy: true, triggerPrice: 4109.63, bid: 4109.60, ask: 4112.00, slippagePoints: 20, point: null }),
+    { ok: true },
+  )
+  assert.equal(
+    fillWithinTriggerBand({ isBuy: true, triggerPrice: 4109.63, bid: 4111.00, ask: 4111.20, slippagePoints: 20, point: null }).ok,
+    false,
+  )
 })
 
 test('evaluateTpTouch: buy basket locks at nearest TP touch', () => {

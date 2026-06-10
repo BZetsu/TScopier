@@ -418,17 +418,58 @@ async function fireLeg(
     return true
   }
 
+  let params: { point: number; digits: number; stopsLevel: number; freezeLevel: number } | null = null
+  try {
+    params = await api.symbolParams(leg.metaapi_account_id, leg.symbol)
+  } catch { /* clamp + band become best-effort without params */ }
+
+  // The group quote can be many seconds old by now. Re-quote just before send
+  // and require the leg is STILL triggered AND the fill side sits within
+  // slippage of the rung — otherwise release the claim back to pending so the
+  // leg only fires when price genuinely returns to its level. Without this, a
+  // buy rung that triggered on a brief dip fills at the top of a rally with a
+  // WORSE entry than the basket it was meant to average down.
+  let fireBid = bid
+  let fireAsk = ask
+  try {
+    const fresh = await api.quote(leg.metaapi_account_id, leg.symbol)
+    if (Number.isFinite(fresh.bid) && Number.isFinite(fresh.ask)) {
+      fireBid = fresh.bid
+      fireAsk = fresh.ask
+    }
+  } catch { /* fall back to group quote */ }
+  const stillTriggered = leg.is_buy ? fireBid <= leg.trigger_price : fireAsk >= leg.trigger_price
+  let withinBand = true
+  if (params && params.point > 0) {
+    const tol = Math.max(2, Math.max(0, leg.slippage ?? 20)) * params.point
+    const fillSide = leg.is_buy ? fireAsk : fireBid
+    withinBand = leg.is_buy
+      ? fillSide <= leg.trigger_price + tol
+      : fillSide >= leg.trigger_price - tol
+  }
+  if (!stillTriggered || !withinBand) {
+    await sb
+      .from("range_pending_legs")
+      .update({ status: "pending", claimed_at: null, claimed_by: null })
+      .eq("id", leg.id)
+      .eq("status", "claimed")
+    console.log(
+      `[range-pending-sweep] defer fire leg=${leg.id} signal=${leg.signal_id} step=${leg.step_idx}: `
+      + `${stillTriggered ? "fill_outside_trigger_band" : "no_longer_triggered"} trigger=${leg.trigger_price} bid=${fireBid} ask=${fireAsk}`,
+    )
+    return false
+  }
+
   // Last-second SL/TP clamp. The original anchor's clamp may be too tight if
   // freeze/stops_level widened in the meantime; pulling SymbolParams here keeps
   // us aligned with current broker constraints.
   let sl = leg.stoploss ?? 0
   let tp = leg.takeprofit ?? 0
-  try {
-    const params = await api.symbolParams(leg.metaapi_account_id, leg.symbol)
+  if (params) {
     const minLevel = Math.max(params.stopsLevel, params.freezeLevel)
     const minDist = (minLevel + 2) * params.point
     if (minDist > 0) {
-      const ref = leg.is_buy ? ask : bid
+      const ref = leg.is_buy ? fireAsk : fireBid
       const digits = Math.max(0, Math.min(8, Math.floor(params.digits)))
       const round = (v: number) => Number(v.toFixed(digits))
       if (leg.is_buy) {
@@ -439,9 +480,9 @@ async function fireLeg(
         if (tp > 0 && ref - tp < minDist) tp = round(ref - minDist)
       }
     }
-  } catch { /* clamp is best-effort; if SymbolParams fails we fire as-is */ }
+  }
 
-  const refPrice = leg.is_buy ? ask : bid
+  const refPrice = leg.is_buy ? fireAsk : fireBid
   try {
     const result = await api.orderSend(leg.metaapi_account_id, {
       symbol: leg.symbol,

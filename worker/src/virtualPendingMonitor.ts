@@ -181,6 +181,33 @@ export function isBlockedByShallowerStep(
   return false
 }
 
+/**
+ * A layer must fill at (or better than) its planned rung price, within the
+ * configured slippage. Guards against the fire-time price racing away from the
+ * tick-time trigger check — without it, a buy rung that triggered on a brief
+ * dip can fill seconds later at the top of a rally, printing a WORSE entry
+ * than the immediates it was supposed to average down from and ignoring the
+ * step-pips ladder spacing.
+ */
+export function fillWithinTriggerBand(args: {
+  isBuy: boolean
+  triggerPrice: number
+  bid: number
+  ask: number
+  slippagePoints: number
+  point: number | null
+}): { ok: boolean; reason?: string } {
+  const { isBuy, triggerPrice, bid, ask, slippagePoints, point } = args
+  if (!isTriggered(isBuy, triggerPrice, bid, ask)) {
+    return { ok: false, reason: 'no_longer_triggered' }
+  }
+  if (point == null || !(point > 0)) return { ok: true }
+  const tol = Math.max(2, Math.max(0, slippagePoints)) * point
+  const fillSide = isBuy ? ask : bid
+  const ok = isBuy ? fillSide <= triggerPrice + tol : fillSide >= triggerPrice - tol
+  return ok ? { ok: true } : { ok: false, reason: 'fill_outside_trigger_band' }
+}
+
 export function evaluateTpTouch(args: {
   direction: string
   tps: number[]
@@ -215,6 +242,8 @@ export class VirtualPendingMonitor {
   private firstTickLogged = false
   /** Throttle basket_in_profit skip logs — legs re-check every tick. */
   private profitSkipLogAt = new Map<string, number>()
+  /** Throttle trigger-band defer logs — legs re-check every tick. */
+  private bandSkipLogAt = new Map<string, number>()
   private static readonly PROFIT_SKIP_LOG_MS = 60_000
 
   constructor(private readonly supabase: SupabaseClient) {
@@ -561,6 +590,18 @@ export class VirtualPendingMonitor {
     return touched
   }
 
+  /** Undo a CAS claim when the fire-time price check fails — leg stays live. */
+  private async releaseClaimedLegToPending(legId: string): Promise<void> {
+    const { error } = await this.supabase
+      .from('range_pending_legs')
+      .update({ status: 'pending', claimed_at: null, claimed_by: null })
+      .eq('id', legId)
+      .eq('status', 'claimed')
+    if (error) {
+      console.warn(`[virtualPendingMonitor] release claim failed leg=${legId}: ${error.message}`)
+    }
+  }
+
   private async markLegFiredWithRetry(
     legId: string,
     ticket: number | string | null,
@@ -683,6 +724,45 @@ export class VirtualPendingMonitor {
       return true
     }
 
+    const params = await this.getSymbolParams(leg.metaapi_account_id, leg.symbol)
+
+    // The tick's quote can be seconds old by now (claim + guard round-trips).
+    // Re-quote just before send and require the leg is STILL triggered AND the
+    // fill side sits within slippage of the rung — otherwise release the claim
+    // and let the leg fire when price genuinely returns to its level.
+    let fireBid = bid
+    let fireAsk = ask
+    try {
+      const fresh = await api.quote(leg.metaapi_account_id, leg.symbol)
+      if (Number.isFinite(fresh.bid) && Number.isFinite(fresh.ask)) {
+        fireBid = fresh.bid
+        fireAsk = fresh.ask
+      }
+    } catch {
+      // fall back to the tick quote
+    }
+    const band = fillWithinTriggerBand({
+      isBuy: leg.is_buy,
+      triggerPrice: leg.trigger_price,
+      bid: fireBid,
+      ask: fireAsk,
+      slippagePoints: leg.slippage ?? 20,
+      point: params?.point ?? null,
+    })
+    if (!band.ok) {
+      await this.releaseClaimedLegToPending(leg.id)
+      const now = Date.now()
+      const last = this.bandSkipLogAt.get(leg.id) ?? 0
+      if (now - last >= VirtualPendingMonitor.PROFIT_SKIP_LOG_MS) {
+        this.bandSkipLogAt.set(leg.id, now)
+        console.log(
+          `[virtualPendingMonitor] defer fire leg=${leg.id} signal=${leg.signal_id} step=${leg.step_idx}: `
+          + `${band.reason} trigger=${leg.trigger_price} bid=${fireBid} ask=${fireAsk}`,
+        )
+      }
+      return false
+    }
+
     // Build a MARKET order. We DO NOT send `price` for Buy/Sell — the broker
     // fills at the current bid/ask. Stops were precomputed at planning time
     // against the live anchor; SL/TP from the original ladder stand.
@@ -704,10 +784,8 @@ export class VirtualPendingMonitor {
       expertID: leg.expert_id ?? 909090,
     }
 
-    // Last-second SL/TP clamp using the live quote as the reference. Pulls
-    // SymbolParams once per (account, symbol) every 10 minutes.
-    const params = await this.getSymbolParams(leg.metaapi_account_id, leg.symbol)
-    const refPrice = leg.is_buy ? ask : bid
+    // Last-second SL/TP clamp using the fire-time quote as the reference.
+    const refPrice = leg.is_buy ? fireAsk : fireBid
     if (params) {
       const clamped = this.clampOrderStops(args, refPrice, params)
       if (clamped.adjustments.length) {
