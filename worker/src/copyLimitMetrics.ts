@@ -140,27 +140,66 @@ export function resolveReferenceEquity(
   return 0
 }
 
-/** Live broker account equity; falls back to cached broker row when API is unavailable. */
+/**
+ * Live broker account equity. Tries hard before falling back to the cached
+ * broker row, because a stale equity here silently disables profit/risk
+ * limits exactly when they matter (floating P/L running up):
+ *   1. AccountSummary
+ *   2. keepSessionAlive (token reconnect) + AccountSummary retry
+ *   3. last_balance + live floating P/L from /OpenedOrders
+ *   4. cached fallbackEquity
+ */
 export async function fetchLiveAccountEquity(
   metaapiAccountId: string,
   platform: string,
   fallbackEquity: number,
+  opts?: { lastBalance?: number | null },
 ): Promise<number> {
   if (!metaapiAccountId || metaapiAccountId.includes('|')) return fallbackEquity
-  if (hasMetatraderApiConfigured()) {
+  if (!hasMetatraderApiConfigured()) return fallbackEquity
+  const api = getMetatraderApi(mtPlatformFrom(platform))
+  if (!api) return fallbackEquity
+
+  const readEquity = async (): Promise<number | null> => {
+    const summary = await api.accountSummary(metaapiAccountId)
+    const eq = Number(summary.equity)
+    return Number.isFinite(eq) && eq > 0 ? eq : null
+  }
+
+  try {
+    const eq = await readEquity()
+    if (eq != null) return eq
+  } catch (err) {
+    console.warn(
+      '[copyLimitMetrics] accountSummary failed:',
+      err instanceof Error ? err.message : String(err),
+    )
     try {
-      const api = getMetatraderApi(mtPlatformFrom(platform))
-      if (api) {
-        const summary = await api.accountSummary(metaapiAccountId)
-        const eq = Number(summary.equity)
-        if (Number.isFinite(eq) && eq > 0) return eq
+      const alive = await api.keepSessionAlive(metaapiAccountId)
+      if (alive) {
+        const eq = await readEquity()
+        if (eq != null) return eq
       }
-    } catch (err) {
-      console.warn(
-        '[copyLimitMetrics] accountSummary failed:',
-        err instanceof Error ? err.message : String(err),
-      )
+    } catch {
+      /* fall through to balance + floating */
     }
   }
+
+  const bal = Number(opts?.lastBalance)
+  if (Number.isFinite(bal) && bal > 0) {
+    try {
+      const orders = await api.openedOrders(metaapiAccountId)
+      let floating = 0
+      for (const o of orders ?? []) {
+        const rec = o as Record<string, unknown>
+        const profit = Number(rec.profit ?? rec.Profit)
+        if (Number.isFinite(profit)) floating += profit
+      }
+      return bal + floating
+    } catch {
+      /* fall through to cached */
+    }
+  }
+
   return fallbackEquity
 }

@@ -50,28 +50,37 @@ export function equityDelta(equity: EquitySnapshot): number {
 function profitTargetHit(
   rule: ProfitTargetRule,
   equity: EquitySnapshot,
+  channelPnl?: number | null,
 ): boolean {
   if (!rule.enabled || rule.value <= 0) return false
   const delta = equityDelta(equity)
   if (rule.value_type === 'amount') {
-    return delta >= rule.value
+    if (delta >= rule.value) return true
+    return channelPnl != null && channelPnl >= rule.value
   }
   if (equity.periodStartEquity <= 0) return false
-  return (delta / equity.periodStartEquity) * 100 >= rule.value
+  if ((delta / equity.periodStartEquity) * 100 >= rule.value) return true
+  return channelPnl != null
+    && (channelPnl / equity.periodStartEquity) * 100 >= rule.value
 }
 
 function maxRiskHit(
   rule: MaxRiskRule,
   equity: EquitySnapshot,
+  channelPnl?: number | null,
 ): boolean {
   if (!rule.enabled || rule.value <= 0) return false
   const delta = equityDelta(equity)
   if (rule.value_type === 'amount') {
-    return delta <= -rule.value
+    if (delta <= -rule.value) return true
+    return channelPnl != null && channelPnl <= -rule.value
   }
   if (equity.periodStartEquity <= 0) return false
   const drawdown = Math.max(0, equity.peakEquity - equity.currentEquity)
-  return (drawdown / equity.periodStartEquity) * 100 >= rule.value
+  if ((drawdown / equity.periodStartEquity) * 100 >= rule.value) return true
+  return channelPnl != null
+    && channelPnl < 0
+    && (-channelPnl / equity.periodStartEquity) * 100 >= rule.value
 }
 
 export function evaluateCopyLimitBreaches(args: {
@@ -80,13 +89,19 @@ export function evaluateCopyLimitBreaches(args: {
   equity: EquitySnapshot
   timeZone: string
   at?: Date
+  /**
+   * Channel-scoped period P/L (realized + live floating). Secondary trigger:
+   * fires the limit even when the account-equity delta is skewed by earlier
+   * losses, other channels, or a stale equity read.
+   */
+  channelPnl?: number | null
 }): CopyLimitBreach[] {
   const at = args.at ?? new Date()
   const breaches: CopyLimitBreach[] = []
 
   if (args.config.profit_targets_enabled) {
     for (const rule of args.config.profit_targets) {
-      if (!profitTargetHit(rule, args.equity)) continue
+      if (!profitTargetHit(rule, args.equity, args.channelPnl)) continue
       const pk = periodKeyFor(rule.period, args.timeZone, at)
       breaches.push({
         kind: 'profit',
@@ -100,7 +115,7 @@ export function evaluateCopyLimitBreaches(args: {
 
   if (args.config.max_risk_enabled) {
     for (const rule of args.config.max_risks) {
-      if (!maxRiskHit(rule, args.equity)) continue
+      if (!maxRiskHit(rule, args.equity, args.channelPnl)) continue
       const pk = periodKeyFor(rule.period, args.timeZone, at)
       breaches.push({
         kind: 'risk',

@@ -330,3 +330,79 @@ describe('copyLimitEvaluate', () => {
     })
   })
 })
+
+describe('copyLimitEvaluate channelPnl secondary trigger', () => {
+  const profitConfig = {
+    ...DEFAULT_COPY_LIMITS,
+    profit_targets_enabled: true,
+    profit_targets: [{
+      id: 't1',
+      enabled: true,
+      period: 'daily' as const,
+      value_type: 'amount' as const,
+      value: 1000,
+    }],
+  }
+
+  it('fires profit target from channel floating P/L when equity delta lags', () => {
+    // Equity read is stale (delta 0) but the channel's open trades are +1045.
+    const breaches = evaluateCopyLimitBreaches({
+      config: profitConfig,
+      state: { paused_period_keys: [], periods: {} },
+      equity: {
+        currentEquity: 49_580,
+        periodStartEquity: 49_580,
+        peakEquity: 49_580,
+      },
+      timeZone: 'UTC',
+      at: new Date('2026-06-10T04:28:00Z'),
+      channelPnl: 1_045.95,
+    })
+    assert.equal(breaches.length, 1)
+    assert.equal(breaches[0]!.reason, 'channel_profit_target_hit')
+  })
+
+  it('does not fire when neither equity delta nor channel P/L reach the target', () => {
+    const breaches = evaluateCopyLimitBreaches({
+      config: profitConfig,
+      state: { paused_period_keys: [], periods: {} },
+      equity: {
+        currentEquity: 49_900,
+        periodStartEquity: 49_580,
+        peakEquity: 49_900,
+      },
+      timeZone: 'UTC',
+      at: new Date('2026-06-10T04:28:00Z'),
+      channelPnl: 700,
+    })
+    assert.equal(breaches.length, 0)
+  })
+
+  it('fires max risk from channel P/L losses', () => {
+    const config = {
+      ...DEFAULT_COPY_LIMITS,
+      max_risk_enabled: true,
+      max_risks: [{
+        id: 'r1',
+        enabled: true,
+        period: 'daily' as const,
+        value_type: 'amount' as const,
+        value: 500,
+      }],
+    }
+    const breaches = evaluateCopyLimitBreaches({
+      config,
+      state: { paused_period_keys: [], periods: {} },
+      equity: {
+        currentEquity: 10_000,
+        periodStartEquity: 10_000,
+        peakEquity: 10_000,
+      },
+      timeZone: 'UTC',
+      at: new Date('2026-06-10T04:28:00Z'),
+      channelPnl: -520,
+    })
+    assert.equal(breaches.length, 1)
+    assert.equal(breaches[0]!.reason, 'channel_max_risk_hit')
+  })
+})

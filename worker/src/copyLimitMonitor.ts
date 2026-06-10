@@ -8,13 +8,17 @@ import {
   resolveCopyLimitTimezone,
   updatePeriodSnapshots,
 } from './copyLimitEvaluate'
-import { fetchLiveAccountEquity, resolveReferenceEquity } from './copyLimitMetrics'
+import {
+  buildChannelPnlSnapshot,
+  fetchLiveAccountEquity,
+  resolveReferenceEquity,
+} from './copyLimitMetrics'
 import type { CopyLimitPeriod } from './copyLimitTypes'
 import { flattenChannelTradesForCopyLimit } from './copyLimitFlatten'
 import { normalizeCopyLimitState, normalizeCopyLimits } from './copyLimitTypes'
 import { normalizeChannelUuid } from './channelTradingConfig'
 
-const TICK_MS = 60_000
+const TICK_MS = 30_000
 
 interface BrokerAccountRow {
   id: string
@@ -125,6 +129,7 @@ export class CopyLimitMonitor {
         broker.metaapi_account_id,
         broker.platform,
         fallbackEquity,
+        { lastBalance: broker.last_balance },
       )
       if (currentEquity <= 0) continue
 
@@ -151,11 +156,23 @@ export class CopyLimitMonitor {
           max_risk_enabled: config.max_risk_enabled && periodMaxRisks.length > 0,
           max_risks: periodMaxRisks,
         }
+        // Channel-scoped P/L (realized + live floating) as a secondary trigger —
+        // fires the limit even when the account-equity delta lags or is skewed.
+        const channelSnapshot = await buildChannelPnlSnapshot({
+          supabase: this.supabase,
+          brokerAccountId: broker.id,
+          channelId,
+          metaapiAccountId: broker.metaapi_account_id,
+          platform: broker.platform,
+          period,
+          timeZone,
+        })
         breaches.push(...evaluateCopyLimitBreaches({
           config: subset,
           state,
           equity,
           timeZone,
+          channelPnl: channelSnapshot.totalPnl,
         }))
       }
 
