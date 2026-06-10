@@ -41,6 +41,14 @@ export interface SignalRow {
   dispatch_source?: string
 }
 
+/** In-process priority-queue entry: signal plus the dispatch flags it arrived with. */
+export interface QueuedSignal {
+  row: SignalRow
+  liveDispatch?: boolean
+  source?: string
+  dispatchReceivedAt?: number
+}
+
 export interface RangePendingCancelScope {
   signalId: string
   brokerAccountId: string

@@ -2,13 +2,13 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { clearBrokerSessionBlock, replayParsedSignalsForBroker } from './brokerSignalReplay'
 import type { TradeExecutorContext } from './tradeExecutor/context'
-import type { BrokerRow, SignalRow } from './tradeExecutor/types'
+import type { BrokerRow, QueuedSignal, SignalRow } from './tradeExecutor/types'
 
 const chA = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
 
 function mockExecutor(overrides?: Partial<TradeExecutorContext>): TradeExecutorContext {
-  const highPriorityQueue: SignalRow[] = []
-  const normalPriorityQueue: SignalRow[] = []
+  const highPriorityQueue: QueuedSignal[] = []
+  const normalPriorityQueue: QueuedSignal[] = []
   const queuedIds = new Set<string>()
   const sessionOrderBlocked = new Set<string>()
   const brokerActivatedAt = new Map<string, number>()

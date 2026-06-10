@@ -1,6 +1,6 @@
 import type { TradeExecutorContext } from './context'
 import { hasMetatraderApiConfigured } from '../metatraderapi'
-import type { BrokerRow, SignalRow } from './types'
+import type { BrokerRow, QueuedSignal, SignalRow } from './types'
 import {
   dispatchPriorityForAction,
   isEntryAction,
@@ -86,10 +86,16 @@ export function enqueueSignal(ctx: TradeExecutorContext,
     const high = (opts?.priority ?? dispatchPriorityForAction(action)) === 'high'
 
     ctx.queuedIds.add(row.id)
+    const item: QueuedSignal = {
+      row,
+      liveDispatch: opts?.liveDispatch,
+      source: opts?.source,
+      dispatchReceivedAt: opts?.dispatchReceivedAt,
+    }
     if (high) {
-      ctx.highPriorityQueue.push(row)
+      ctx.highPriorityQueue.push(item)
     } else {
-      ctx.normalPriorityQueue.push(row)
+      ctx.normalPriorityQueue.push(item)
     }
     ctx.scheduleQueueDrain()
   }
@@ -103,7 +109,7 @@ export function scheduleQueueDrain(ctx: TradeExecutorContext, ): void {
     })
   }
 
-export function dequeueQueuedSignal(ctx: TradeExecutorContext, ): SignalRow | null {
+export function dequeueQueuedSignal(ctx: TradeExecutorContext, ): QueuedSignal | null {
     return ctx.highPriorityQueue.shift() ?? ctx.normalPriorityQueue.shift() ?? null
   }
 
@@ -117,10 +123,16 @@ export async function drainSignalQueues(ctx: TradeExecutorContext, ): Promise<vo
           inFlight.size < EXECUTOR_MAX_CONCURRENT_SIGNALS
           && (ctx.highPriorityQueue.length > 0 || ctx.normalPriorityQueue.length > 0)
         ) {
-          const row = ctx.dequeueQueuedSignal()
-          if (!row) break
+          const item = ctx.dequeueQueuedSignal()
+          if (!item) break
+          const row = item.row
           ctx.queuedIds.delete(row.id)
-          const job = ctx.handleSignal(row, { liveDispatch: false, lightIdempotency: false })
+          const job = ctx.handleSignal(row, {
+            liveDispatch: item.liveDispatch === true,
+            lightIdempotency: false,
+            dispatchSource: item.source,
+            dispatchReceivedAt: item.dispatchReceivedAt,
+          })
             .catch(err => console.error(`[tradeExecutor] handleSignal failed for ${row.id}:`, err))
           inFlight.add(job)
           void job.finally(() => {

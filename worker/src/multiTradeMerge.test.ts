@@ -59,6 +59,32 @@ test('shouldRouteAsBasketParameterRefresh: bare NOW is not parameter refresh', (
   )
 })
 
+test('shouldRouteAsBasketParameterRefresh: BUY NOW with SL/TP opens trade (not refresh)', () => {
+  assert.equal(
+    shouldRouteAsBasketParameterRefresh({
+      action: 'buy',
+      symbol: 'XAUUSD',
+      sl: 4090,
+      tp: [4115],
+      raw_instruction: 'XAUUSD BUY NOW\nSL 4090\nTP 4115',
+    }),
+    false,
+  )
+})
+
+test('shouldRouteAsBasketParameterRefresh: sell at market with SL/TP opens trade (not refresh)', () => {
+  assert.equal(
+    shouldRouteAsBasketParameterRefresh({
+      action: 'sell',
+      symbol: 'XAUUSD',
+      sl: 4120,
+      tp: [4100],
+      raw_instruction: 'GOLD SELL AT MARKET, SL 4120 TP 4100',
+    }),
+    false,
+  )
+})
+
 test('shouldRouteAsBasketParameterRefresh: SL/TP without entry is follow-up candidate', () => {
   assert.equal(
     shouldRouteAsBasketParameterRefresh({

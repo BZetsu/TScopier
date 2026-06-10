@@ -8,6 +8,7 @@ import type { OrderSendArgs } from './metatraderapi'
 import type { PlannerResult } from './manualPlanner'
 import { parsedHasExplicitEntryAnchor } from './manualPlanner'
 import { parsedHasReEnterIntent } from './signalPriceInference'
+import { messageHasMarketNowIntent } from './signalEntryNowRequirement'
 import { takeProfitForSplitBasketLeg } from './manualPlanning/tpBucketDistribution'
 import type { ManualTpLot } from './manualPlanning/types'
 import {
@@ -69,6 +70,9 @@ export function shouldRouteAsBasketParameterRefresh(parsed: ParsedSignalLike): b
     if (parsedHasExplicitEntryAnchor(parsed as Parameters<typeof parsedHasExplicitEntryAnchor>[0])) {
       return false
     }
+    // "BUY NOW + SL/TP" (no priced entry) is an explicit market entry, not a
+    // follow-up refresh — must open a trade and stay on the entry fast path.
+    if (messageHasMarketNowIntent(parsed.raw_instruction ?? '')) return false
     return true
   }
   return false

@@ -175,6 +175,7 @@ import {
   type BrokerRow,
   type MergeOutcome,
   type ParsedSignal,
+  type QueuedSignal,
   type RangePendingCancelScope,
   type SendOrderOutcome,
   type SignalRow,
@@ -207,8 +208,8 @@ export class TradeExecutor {
   /** Prevents overlapping sendOrder for the same signal+broker (live-fast race). */
   private entryBrokerInflight = new Set<string>()
   queuedIds = new Set<string>()
-  highPriorityQueue: SignalRow[] = []
-  normalPriorityQueue: SignalRow[] = []
+  highPriorityQueue: QueuedSignal[] = []
+  normalPriorityQueue: QueuedSignal[] = []
   queueDrainScheduled = false
   queueDraining = false
   symbolCache = new Map<string, SymbolCacheEntry>()
@@ -770,7 +771,7 @@ export class TradeExecutor {
     return dispatch.scheduleQueueDrain(this)
   }
 
-  dequeueQueuedSignal(): SignalRow | null {
+  dequeueQueuedSignal(): QueuedSignal | null {
     return dispatch.dequeueQueuedSignal(this)
   }
 
