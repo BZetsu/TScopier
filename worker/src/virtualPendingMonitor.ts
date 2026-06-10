@@ -213,6 +213,9 @@ export class VirtualPendingMonitor {
    *  and how far the live quote sits from the nearest trigger. */
   private quietTicks = 0
   private firstTickLogged = false
+  /** Throttle basket_in_profit skip logs — legs re-check every tick. */
+  private profitSkipLogAt = new Map<string, number>()
+  private static readonly PROFIT_SKIP_LOG_MS = 60_000
 
   constructor(private readonly supabase: SupabaseClient) {
     this.hostId = `worker:${os.hostname()}:${process.pid}`
@@ -584,9 +587,23 @@ export class VirtualPendingMonitor {
       leg.signal_id,
       leg.broker_account_id,
     )
-    const block = await shouldBlockVirtualLegFire(this.supabase, leg, { layerTillClose })
+    const block = await shouldBlockVirtualLegFire(this.supabase, leg, {
+      layerTillClose,
+      quote: { bid, ask },
+      isBuy: leg.is_buy,
+    })
     if (block.block) {
-      if (block.reason) {
+      if (block.reason === 'basket_in_profit') {
+        const bk = `${leg.signal_id}|${leg.broker_account_id}`
+        const now = Date.now()
+        const last = this.profitSkipLogAt.get(bk) ?? 0
+        if (now - last >= VirtualPendingMonitor.PROFIT_SKIP_LOG_MS) {
+          this.profitSkipLogAt.set(bk, now)
+          console.log(
+            `[virtualPendingMonitor] skip fire leg=${leg.id} signal=${leg.signal_id} step=${leg.step_idx}: basket_in_profit`,
+          )
+        }
+      } else if (block.reason) {
         console.log(
           `[virtualPendingMonitor] skip fire leg=${leg.id} signal=${leg.signal_id} step=${leg.step_idx}: ${block.reason}`,
         )

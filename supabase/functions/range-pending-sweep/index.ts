@@ -385,11 +385,17 @@ async function fireLeg(
     leg.signal_id,
     leg.broker_account_id,
   )
-  const block = await shouldBlockVirtualLegFire(sb, leg, { layerTillClose })
+  const block = await shouldBlockVirtualLegFire(sb, leg, {
+    layerTillClose,
+    quote: { bid, ask },
+    isBuy: leg.is_buy,
+  })
   if (block.block) {
-    console.log(
-      `[range-pending-sweep] skip fire leg=${leg.id} signal=${leg.signal_id} step=${leg.step_idx}: ${block.reason ?? "blocked"}`,
-    )
+    if (block.reason !== "basket_in_profit") {
+      console.log(
+        `[range-pending-sweep] skip fire leg=${leg.id} signal=${leg.signal_id} step=${leg.step_idx}: ${block.reason ?? "blocked"}`,
+      )
+    }
     return false
   }
 
