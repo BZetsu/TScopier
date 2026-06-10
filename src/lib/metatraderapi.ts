@@ -125,6 +125,7 @@ export const metatraderApi = {
   ): Promise<{
     summary: AccountSummary
     open_positions: number | null
+    reconciled_closed?: number
     performance_baseline_balance?: number | null
     day_start_balance?: number | null
     day_start_balance_on?: string | null
@@ -147,6 +148,7 @@ export const metatraderApi = {
         b as {
           summary: AccountSummary
           open_positions: number | null
+          reconciled_closed?: number
           performance_baseline_balance?: number | null
           day_start_balance?: number | null
           day_start_balance_on?: string | null

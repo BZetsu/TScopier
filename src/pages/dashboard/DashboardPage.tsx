@@ -1650,6 +1650,7 @@ export function DashboardPage() {
           const {
             summary,
             open_positions,
+            reconciled_closed,
             performance_baseline_balance,
             day_start_balance,
             day_start_balance_on,
@@ -1660,6 +1661,7 @@ export function DashboardPage() {
             id: b.id,
             summary,
             open_positions,
+            reconciled_closed: reconciled_closed ?? 0,
             stale: stale === true,
             performance_baseline_balance: performance_baseline_balance ?? null,
             day_start_balance: day_start_balance ?? null,
@@ -1672,6 +1674,7 @@ export function DashboardPage() {
             id: b.id,
             summary: null,
             open_positions: null as number | null,
+            reconciled_closed: 0,
             stale: false,
             performance_baseline_balance: null as number | null,
             day_start_balance: null as number | null,
@@ -1758,6 +1761,10 @@ export function DashboardPage() {
 
     const sawOpenPosCount = successes.length > 0
     const mtOpenTotal = sumConnectedOpenTrades(sourceAccounts, mergedForDisplay)
+    const reconciledTotal = results.reduce((sum, r) => sum + (r.reconciled_closed ?? 0), 0)
+    if (reconciledTotal > 0) {
+      void loadDashboard({ syncLive: false })
+    }
 
     // Recompute portfolio value (pure balance), equity, and open PnL from the freshest snapshot.
     setStats(prev => {

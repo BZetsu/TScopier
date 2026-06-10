@@ -120,13 +120,6 @@ export class OpenTradeReconcileMonitor {
       if (!openForBroker.length) continue
 
       try {
-        try {
-          const alive = await api.keepSessionAlive(uuid)
-          if (!alive) continue
-        } catch {
-          continue
-        }
-
         const closed = await reconcileOpenTradesForBroker(
           this.supabase,
           api,

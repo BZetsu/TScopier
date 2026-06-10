@@ -35,6 +35,10 @@ import {
   assertBrokerAccountLimit,
   loadUserSubscription,
 } from "../_shared/subscriptionAccess.ts"
+import {
+  ingestBrokerTickets,
+  reconcileOpenTradesForBroker,
+} from "../_shared/openTradeReconcile.ts"
 
 function mtClient(env: { get(name: string): string | undefined }, platform: string): ReturnType<typeof makeClientFromEnv> {
   const p: MtPlatform = platform === "MT4" ? "MT4" : "MT5"
@@ -435,9 +439,18 @@ Deno.serve(async (req: Request) => {
           throw new Error(failMsg)
         }
         let openPositions: number | null = null
+        let reconciledClosed = 0
         try {
           const orders = await client.openedOrders(uuid)
           openPositions = Array.isArray(orders) ? orders.length : 0
+          if (Array.isArray(orders)) {
+            reconciledClosed = await reconcileOpenTradesForBroker(
+              supabase,
+              userId,
+              brokerId,
+              ingestBrokerTickets(orders),
+            )
+          }
         } catch {
           openPositions = null
         }
@@ -503,6 +516,7 @@ Deno.serve(async (req: Request) => {
             ok: true,
             summary,
             open_positions: openPositions,
+            reconciled_closed: reconciledClosed > 0 ? reconciledClosed : undefined,
             performance_baseline_balance: updatedRow?.performance_baseline_balance ?? null,
             day_start_balance: resolvedDayStart,
             day_start_balance_on: resolvedDayOn,
