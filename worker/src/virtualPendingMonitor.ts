@@ -108,6 +108,7 @@ interface BasketOpenTpRow {
   user_id: string
   direction: string
   tp: number | null
+  status?: string | null
 }
 
 interface SymbolCacheEntry {
@@ -226,6 +227,42 @@ export function evaluateTpTouch(args: {
     return { touched: ask <= triggerPrice, triggerPrice, triggerSide: 'ask' }
   }
   return { touched: false, triggerPrice: null, triggerSide: null }
+}
+
+/**
+ * Decide whether a basket's layering must be locked when "layer till close"
+ * is OFF. Two independent triggers:
+ *  1. live quote touches an open trade's TP (catches the touch in real time)
+ *  2. the basket is PARTIALLY closed — some trades closed while others remain
+ *     open. A broker-side TP fill closes its trades within seconds, so by the
+ *     time the monitor scans, the touched TP rows are no longer 'open' and
+ *     trigger (1) can never fire. A partial close is sticky evidence that a
+ *     TP/CWE/partial close happened and survives that race.
+ */
+export function shouldLockBasketLayering(args: {
+  direction: string
+  openTps: number[]
+  openCount: number
+  closedCount: number
+  bid: number
+  ask: number
+}): {
+  lock: boolean
+  reason: 'tp_touched' | 'basket_partially_closed' | null
+  triggerPrice: number | null
+  triggerSide: 'bid' | 'ask' | null
+} {
+  const { direction, openTps, openCount, closedCount, bid, ask } = args
+  if (openCount <= 0) return { lock: false, reason: null, triggerPrice: null, triggerSide: null }
+
+  const touch = evaluateTpTouch({ direction, tps: openTps, bid, ask })
+  if (touch.touched) {
+    return { lock: true, reason: 'tp_touched', triggerPrice: touch.triggerPrice, triggerSide: touch.triggerSide }
+  }
+  if (closedCount > 0) {
+    return { lock: true, reason: 'basket_partially_closed', triggerPrice: null, triggerSide: null }
+  }
+  return { lock: false, reason: null, triggerPrice: null, triggerSide: null }
 }
 
 export class VirtualPendingMonitor {
@@ -512,14 +549,16 @@ export class VirtualPendingMonitor {
     const symbol = legs[0]?.symbol ?? null
     if (!symbol) return touched
 
+    // Scan open AND closed trades: a TP fill closes its rows at the broker
+    // within seconds, so an open-only scan misses the touch (the remaining
+    // open trades carry deeper TPs that were never reached).
     const { data, error } = await this.supabase
       .from('trades')
-      .select('signal_id,broker_account_id,user_id,direction,tp')
+      .select('signal_id,broker_account_id,user_id,direction,tp,status')
       .in('signal_id', signalIds)
       .in('broker_account_id', brokerIds)
       .eq('symbol', symbol)
-      .eq('status', 'open')
-      .not('tp', 'is', null)
+      .in('status', ['open', 'closed'])
 
     if (error) {
       console.warn(`[virtualPendingMonitor] tp-touch scan failed: ${error.message}`)
@@ -528,25 +567,32 @@ export class VirtualPendingMonitor {
 
     const byBasket = new Map<string, BasketOpenTpRow[]>()
     for (const row of (data ?? []) as BasketOpenTpRow[]) {
-      const tp = Number(row.tp)
-      if (!Number.isFinite(tp) || tp <= 0) continue
       const basketKey = `${row.signal_id}|${row.broker_account_id}`
       const arr = byBasket.get(basketKey) ?? []
-      arr.push({ ...row, tp })
+      arr.push(row)
       byBasket.set(basketKey, arr)
     }
 
     for (const [basketKey, rows] of byBasket) {
-      const direction = String(rows[0]?.direction ?? '').toLowerCase()
-      const tps = rows
+      const openRows = rows.filter(r => r.status === 'open')
+      const closedCount = rows.length - openRows.length
+      const direction = String((openRows[0] ?? rows[0])?.direction ?? '').toLowerCase()
+      const openTps = openRows
         .map(r => Number(r.tp))
         .filter(tp => Number.isFinite(tp) && tp > 0)
-      const touch = evaluateTpTouch({ direction, tps, bid, ask })
-      if (!touch.touched) continue
+      const decision = shouldLockBasketLayering({
+        direction,
+        openTps,
+        openCount: openRows.length,
+        closedCount,
+        bid,
+        ask,
+      })
+      if (!decision.lock) continue
 
       const [signalId, brokerAccountId] = basketKey.split('|')
       if (!signalId || !brokerAccountId) continue
-      const userId = rows[0]?.user_id
+      const userId = (openRows[0] ?? rows[0])?.user_id
       if (!userId) continue
 
       const layerTillClose = await loadRangeLayerTillCloseForSignal(
@@ -559,7 +605,7 @@ export class VirtualPendingMonitor {
       const { stopped, deleted } = await stopRangeLayeringUnlessEnabled(
         this.supabase,
         { signalId, brokerAccountId, symbol, userId },
-        'tp_touched',
+        decision.reason ?? 'tp_touched',
       )
       if (!stopped) continue
       touched.add(basketKey)
@@ -574,8 +620,11 @@ export class VirtualPendingMonitor {
           request_payload: {
             symbol,
             direction,
-            trigger_price: touch.triggerPrice,
-            trigger_side: touch.triggerSide,
+            trigger_price: decision.triggerPrice,
+            trigger_side: decision.triggerSide,
+            lock_trigger: decision.reason,
+            closed_trades: closedCount,
+            open_trades: openRows.length,
             bid,
             ask,
             deleted_rows: deleted,

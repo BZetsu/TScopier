@@ -1,6 +1,11 @@
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
-import { evaluateTpTouch, fillWithinTriggerBand, isTriggered } from './virtualPendingMonitor'
+import {
+  evaluateTpTouch,
+  fillWithinTriggerBand,
+  isTriggered,
+  shouldLockBasketLayering,
+} from './virtualPendingMonitor'
 
 // Buy ladder = averaging DOWN: trigger fires when bid drops to / below trigger_price.
 test('isTriggered: buy fires when bid <= trigger', () => {
@@ -127,4 +132,59 @@ test('evaluateTpTouch: ignores invalid TP direction/noise', () => {
   assert.equal(out.touched, false)
   assert.equal(out.triggerPrice, null)
   assert.equal(out.triggerSide, null)
+})
+
+test('shouldLockBasketLayering: live TP touch locks (sell)', () => {
+  const out = shouldLockBasketLayering({
+    direction: 'sell',
+    openTps: [4089.8, 4087.1, 4074.5],
+    openCount: 3,
+    closedCount: 0,
+    bid: 4090,
+    ask: 4089.7,
+  })
+  assert.equal(out.lock, true)
+  assert.equal(out.reason, 'tp_touched')
+  assert.equal(out.triggerPrice, 4089.8)
+})
+
+test('shouldLockBasketLayering: partially closed basket locks even when quote is far from remaining TPs', () => {
+  // TP1 trades closed at the broker; only deep-TP trades remain open and the
+  // quote has reversed away — the open-only touch check can never fire.
+  const out = shouldLockBasketLayering({
+    direction: 'sell',
+    openTps: [4074.5],
+    openCount: 5,
+    closedCount: 16,
+    bid: 4094.5,
+    ask: 4094.8,
+  })
+  assert.equal(out.lock, true)
+  assert.equal(out.reason, 'basket_partially_closed')
+  assert.equal(out.triggerPrice, null)
+})
+
+test('shouldLockBasketLayering: fully open basket with no touch stays unlocked', () => {
+  const out = shouldLockBasketLayering({
+    direction: 'buy',
+    openTps: [4120, 4140],
+    openCount: 4,
+    closedCount: 0,
+    bid: 4095,
+    ask: 4095.3,
+  })
+  assert.equal(out.lock, false)
+  assert.equal(out.reason, null)
+})
+
+test('shouldLockBasketLayering: flat basket (no open trades) does not lock', () => {
+  const out = shouldLockBasketLayering({
+    direction: 'sell',
+    openTps: [],
+    openCount: 0,
+    closedCount: 12,
+    bid: 4094.5,
+    ask: 4094.8,
+  })
+  assert.equal(out.lock, false)
 })

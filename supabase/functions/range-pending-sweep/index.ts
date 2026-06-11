@@ -72,6 +72,7 @@ interface BasketOpenTpRow {
   user_id: string
   direction: string
   tp: number | null
+  status?: string | null
 }
 
 function isTriggeredSweep(leg: PendingRow, bid: number, ask: number): boolean {
@@ -109,14 +110,17 @@ async function detectAndLockTpTouchedBasketsSweep(
   const symbol = legs[0]?.symbol ?? null
   if (!symbol) return touched
 
+  // Scan open AND closed trades: a broker-side TP fill closes its rows within
+  // seconds, so an open-only scan misses the touch (remaining open trades
+  // carry deeper TPs that were never reached). A partially closed basket is
+  // sticky evidence that a TP/CWE/partial close happened.
   const { data, error } = await sb
     .from("trades")
-    .select("signal_id,broker_account_id,user_id,direction,tp")
+    .select("signal_id,broker_account_id,user_id,direction,tp,status")
     .in("signal_id", signalIds)
     .in("broker_account_id", brokerIds)
     .eq("symbol", symbol)
-    .eq("status", "open")
-    .not("tp", "is", null)
+    .in("status", ["open", "closed"])
   if (error) {
     console.warn(`[range-pending-sweep] tp-touch scan failed: ${error.message}`)
     return touched
@@ -124,38 +128,43 @@ async function detectAndLockTpTouchedBasketsSweep(
 
   const byBasket = new Map<string, BasketOpenTpRow[]>()
   for (const row of (data ?? []) as BasketOpenTpRow[]) {
-    const tp = Number(row.tp)
-    if (!Number.isFinite(tp) || tp <= 0) continue
     const basketKey = `${row.signal_id}|${row.broker_account_id}`
     const arr = byBasket.get(basketKey) ?? []
-    arr.push({ ...row, tp })
+    arr.push(row)
     byBasket.set(basketKey, arr)
   }
 
   for (const [basketKey, rows] of byBasket) {
-    const direction = String(rows[0]?.direction ?? "").toLowerCase()
-    const tps = rows
+    const openRows = rows.filter(r => r.status === "open")
+    const closedCount = rows.length - openRows.length
+    if (!openRows.length) continue
+    const direction = String(openRows[0]?.direction ?? "").toLowerCase()
+    const tps = openRows
       .map(r => Number(r.tp))
       .filter(tp => Number.isFinite(tp) && tp > 0)
-    if (!tps.length) continue
 
-    let touchedNow = false
+    let lockTrigger: "tp_touched" | "basket_partially_closed" | null = null
     let triggerPrice: number | null = null
     let triggerSide: "bid" | "ask" | null = null
-    if (direction === "buy") {
+    if (tps.length && direction === "buy") {
       triggerPrice = Math.min(...tps)
-      touchedNow = bid >= triggerPrice
+      if (bid >= triggerPrice) lockTrigger = "tp_touched"
       triggerSide = "bid"
-    } else if (direction === "sell") {
+    } else if (tps.length && direction === "sell") {
       triggerPrice = Math.max(...tps)
-      touchedNow = ask <= triggerPrice
+      if (ask <= triggerPrice) lockTrigger = "tp_touched"
       triggerSide = "ask"
     }
-    if (!touchedNow) continue
+    if (!lockTrigger && closedCount > 0) {
+      lockTrigger = "basket_partially_closed"
+      triggerPrice = null
+      triggerSide = null
+    }
+    if (!lockTrigger) continue
 
     const [signalId, brokerAccountId] = basketKey.split("|")
     if (!signalId || !brokerAccountId) continue
-    const userId = rows[0]?.user_id
+    const userId = openRows[0]?.user_id
     if (!userId) continue
 
     const layerTillClose = await loadRangeLayerTillCloseForSignal(sb, signalId, brokerAccountId)
@@ -164,7 +173,7 @@ async function detectAndLockTpTouchedBasketsSweep(
     const { stopped, deleted } = await stopRangeLayeringUnlessEnabled(
       sb,
       { signalId, brokerAccountId, symbol, userId },
-      "tp_touched",
+      lockTrigger,
     )
     if (!stopped) continue
     touched.add(basketKey)
@@ -180,6 +189,9 @@ async function detectAndLockTpTouchedBasketsSweep(
           direction,
           trigger_price: triggerPrice,
           trigger_side: triggerSide,
+          lock_trigger: lockTrigger,
+          closed_trades: closedCount,
+          open_trades: openRows.length,
           bid,
           ask,
           deleted_rows: deleted,
