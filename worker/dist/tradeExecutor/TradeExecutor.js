@@ -44,6 +44,7 @@ const signalBrokerDispatchClaim_1 = require("./signalBrokerDispatchClaim");
 const tradeSignalActions_1 = require("../tradeSignalActions");
 const workerConfig_1 = require("../workerConfig");
 const monitorIdleGate_1 = require("../monitorIdleGate");
+const brokerChannelFilter_1 = require("../brokerChannelFilter");
 const brokerSignalReplay_1 = require("../brokerSignalReplay");
 const channelTradingConfig_2 = require("../channelTradingConfig");
 const copyLimitTypes_1 = require("../copyLimitTypes");
@@ -495,6 +496,8 @@ class TradeExecutor {
         // cache hit by the time it runs.
         this.prewarmForDispatch(rowWithTs);
         const entryFast = this.shouldUseEntryFastPath(rowWithTs);
+        if (entryFast)
+            this.kickLiveEntryPrewarm(rowWithTs);
         const listenerTs = (0, pipelineTimestamps_1.parsePipelineTimestamps)(rowWithTs.pipeline_ts);
         if (source === 'listener_push'
             && !listenerTs?.t_listener_received) {
@@ -544,6 +547,8 @@ class TradeExecutor {
         };
         this.prewarmForDispatch(rowWithTs);
         const entryFast = this.shouldUseEntryFastPath(rowWithTs);
+        if (entryFast)
+            this.kickLiveEntryPrewarm(rowWithTs);
         if (!entryFast) {
             await this.logPipelineStage(rowWithTs, 'dispatch_received', { source, priority: opts?.priority ?? null });
         }
@@ -795,6 +800,17 @@ class TradeExecutor {
     prewarmForDispatch(row) {
         return brokerSymbolCache.prewarmForDispatch(this, row);
     }
+    /** Session + symbol cache warmup for channel-matched brokers on the live fast path. */
+    kickLiveEntryPrewarm(row) {
+        const parsed = row.parsed_data;
+        const signalSymbol = parsed?.symbol?.trim();
+        if (!signalSymbol)
+            return;
+        const warmBrokers = (this.brokersByUser.get(row.user_id) ?? []).filter(b => b.is_active && (0, helpers_2.isMtUuid)(b.metaapi_account_id) && (0, brokerChannelFilter_1.channelMatchesBrokerSignal)(b, row.channel_id));
+        if (warmBrokers.length > 0) {
+            void this.prewarmBrokersForLiveEntry(warmBrokers, signalSymbol);
+        }
+    }
     /** Warm session + symbol caches once per live signal before OrderSend. */
     async prewarmBrokersForLiveEntry(brokers, signalSymbol) {
         return await brokerSymbolCache.prewarmBrokersForLiveEntry(this, brokers, signalSymbol);
@@ -812,12 +828,17 @@ class TradeExecutor {
         const effectiveBroker = (0, channelTradingConfig_1.withChannelTradingConfig)(broker, signal.channel_id);
         const resolved = (0, channelTradingConfig_1.resolveChannelTradingConfig)(broker, signal.channel_id);
         const entryKey = `${signal.id}:${effectiveBroker.id}`;
-        if (await (0, helpers_1.manualDispatchAlreadyMaterialized)(this, signal.id, effectiveBroker.id)) {
-            console.warn(`[tradeExecutor] skip already materialized signal=${signal.id} broker=${effectiveBroker.id}`);
-            return { openedOrMerged: true };
+        const liveFast = sendOpts?.liveEntryFast === true;
+        if (!liveFast) {
+            if (await (0, helpers_1.manualDispatchAlreadyMaterialized)(this, signal.id, effectiveBroker.id)) {
+                console.warn(`[tradeExecutor] skip already materialized signal=${signal.id} broker=${effectiveBroker.id}`);
+                return { openedOrMerged: true };
+            }
         }
         if (this.entryBrokerInflight.has(entryKey)) {
-            const materialized = await (0, helpers_1.manualDispatchAlreadyMaterialized)(this, signal.id, effectiveBroker.id);
+            const materialized = liveFast
+                ? true
+                : await (0, helpers_1.manualDispatchAlreadyMaterialized)(this, signal.id, effectiveBroker.id);
             console.warn(`[tradeExecutor] skip duplicate in-flight sendOrder signal=${signal.id} broker=${effectiveBroker.id}`
                 + ` materialized=${materialized}`);
             return { openedOrMerged: materialized };

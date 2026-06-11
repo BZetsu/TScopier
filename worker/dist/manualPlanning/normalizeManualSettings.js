@@ -46,6 +46,10 @@ function normalizeManualSettingsForExecution(raw) {
     });
     const legPctRaw = Number(j.multi_trade_leg_percent);
     const legPct = Number.isFinite(legPctRaw) && legPctRaw > 0 ? Math.min(100, legPctRaw) : 5;
+    const maxOrdersRaw = Number(j.multi_trade_max_orders);
+    const maxOrders = Number.isFinite(maxOrdersRaw) && maxOrdersRaw > 0
+        ? Math.max(1, Math.min(500, Math.floor(maxOrdersRaw)))
+        : 500;
     const readNumber = (key, fallback) => {
         const v = Number(j[key]);
         return Number.isFinite(v) ? v : fallback;
@@ -77,6 +81,7 @@ function normalizeManualSettingsForExecution(raw) {
     return {
         ...j,
         multi_trade_leg_percent: legPct,
+        multi_trade_max_orders: maxOrders,
         range_percent: rangePercent,
         range_step_pips: rangeStepPips,
         range_distance_pips: rangeDistancePips,

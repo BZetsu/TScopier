@@ -3,6 +3,7 @@
  * Persist and apply channel-level SL/TP from management / parameter refresh.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.channelParamsPredateBasket = channelParamsPredateBasket;
 exports.symbolsForChannelParamsPersist = symbolsForChannelParamsPersist;
 exports.loadChannelActiveTradeParamsForSymbol = loadChannelActiveTradeParamsForSymbol;
 exports.upsertChannelActiveTradeParams = upsertChannelActiveTradeParams;
@@ -29,6 +30,20 @@ exports.reapplyChannelParamsToPendingLegs = reapplyChannelParamsToPendingLegs;
 const basketModFollowUp_1 = require("./basketModFollowUp");
 const tpBucketDistribution_1 = require("./manualPlanning/tpBucketDistribution");
 const parsedEntry_1 = require("./manualPlanning/parsedEntry");
+/**
+ * Channel memory written before the basket's anchor signal belongs to an older
+ * trade cycle (e.g. SL/TP from last week's signal). Applying it to a fresh
+ * basket produces wrong-side stops the broker rejects as "Invalid stops".
+ */
+function channelParamsPredateBasket(params, basketCreatedAt) {
+    if (!params?.updatedAt || !basketCreatedAt)
+        return false;
+    const updated = Date.parse(params.updatedAt);
+    const anchor = Date.parse(basketCreatedAt);
+    if (!Number.isFinite(updated) || !Number.isFinite(anchor))
+        return false;
+    return updated < anchor;
+}
 function positiveLevel(v) {
     const n = typeof v === 'number' ? v : Number(v ?? 0);
     return Number.isFinite(n) && n > 0 ? n : null;
@@ -53,7 +68,7 @@ function symbolsForChannelParamsPersist(args) {
 async function loadChannelActiveTradeParamsForSymbol(supabase, userId, channelId, symbolHint) {
     const { data, error } = await supabase
         .from('channel_active_trade_params')
-        .select('symbol,stoploss,tp_levels')
+        .select('symbol,stoploss,tp_levels,updated_at')
         .eq('user_id', userId)
         .eq('channel_id', channelId)
         .limit(200);
@@ -69,6 +84,7 @@ async function loadChannelActiveTradeParamsForSymbol(supabase, userId, channelId
         symbol: match.symbol,
         stoploss: positiveLevel(match.stoploss),
         tpLevels: normalizeTpLevels(match.tp_levels),
+        updatedAt: match.updated_at ?? null,
     };
 }
 async function upsertChannelActiveTradeParams(supabase, args) {

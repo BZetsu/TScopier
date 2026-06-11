@@ -6,7 +6,7 @@ const copyLimitMetrics_1 = require("./copyLimitMetrics");
 const copyLimitFlatten_1 = require("./copyLimitFlatten");
 const copyLimitTypes_1 = require("./copyLimitTypes");
 const channelTradingConfig_1 = require("./channelTradingConfig");
-const TICK_MS = 60000;
+const TICK_MS = 30000;
 class CopyLimitMonitor {
     constructor(supabase) {
         this.supabase = supabase;
@@ -88,7 +88,7 @@ class CopyLimitMonitor {
             const fallbackEquity = (0, copyLimitMetrics_1.resolveReferenceEquity)(broker.last_equity, broker.last_balance);
             if (fallbackEquity <= 0)
                 continue;
-            const currentEquity = await (0, copyLimitMetrics_1.fetchLiveAccountEquity)(broker.metaapi_account_id, broker.platform, fallbackEquity);
+            const currentEquity = await (0, copyLimitMetrics_1.fetchLiveAccountEquity)(broker.metaapi_account_id, broker.platform, fallbackEquity, { lastBalance: broker.last_balance });
             if (currentEquity <= 0)
                 continue;
             let state = (0, copyLimitTypes_1.normalizeCopyLimitState)(row.copy_limit_state);
@@ -113,11 +113,23 @@ class CopyLimitMonitor {
                     max_risk_enabled: config.max_risk_enabled && periodMaxRisks.length > 0,
                     max_risks: periodMaxRisks,
                 };
+                // Channel-scoped P/L (realized + live floating) as a secondary trigger —
+                // fires the limit even when the account-equity delta lags or is skewed.
+                const channelSnapshot = await (0, copyLimitMetrics_1.buildChannelPnlSnapshot)({
+                    supabase: this.supabase,
+                    brokerAccountId: broker.id,
+                    channelId,
+                    metaapiAccountId: broker.metaapi_account_id,
+                    platform: broker.platform,
+                    period,
+                    timeZone,
+                });
                 breaches.push(...(0, copyLimitEvaluate_1.evaluateCopyLimitBreaches)({
                     config: subset,
                     state,
                     equity,
                     timeZone,
+                    channelPnl: channelSnapshot.totalPnl,
                 }));
             }
             // Drop pauses whose rule was edited/removed since the breach (e.g. the

@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import { messageEditDirectionFlippedFromActions } from '../telegramMessageEdit'
 import { messageEditSkipReason } from './dispatch'
 
 describe('messageEditSkipReason', () => {
@@ -43,5 +44,11 @@ describe('messageEditSkipReason', () => {
       re_enter: true,
     }
     assert.equal(messageEditSkipReason(parsed, 'buy'), 'message_edit_not_parameter_refresh')
+  })
+
+  it('direction flip detection gates close-before-refresh path', () => {
+    assert.equal(messageEditDirectionFlippedFromActions('buy', 'sell'), true)
+    assert.equal(messageEditDirectionFlippedFromActions('sell', 'sell'), false)
+    assert.equal(messageEditDirectionFlippedFromActions('buy', 'modify'), false)
   })
 })

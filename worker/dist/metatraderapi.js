@@ -444,6 +444,7 @@ class MetatraderApiClient {
             password: args.password,
             server: args.server,
         });
+        assertNoApiError(raw);
         return parseToken(raw, args.id);
     }
     async connectByToken(id) {

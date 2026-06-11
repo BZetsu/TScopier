@@ -32,6 +32,7 @@ const tradeComment_1 = require("../tradeComment");
 const helpers_1 = require("./helpers");
 const types_1 = require("./types");
 const telegramMessageEdit_1 = require("../telegramMessageEdit");
+const messageEditDirectionFlipClose_1 = require("./messageEditDirectionFlipClose");
 const subscriptionAccess_1 = require("../subscriptionAccess");
 const signalExecutionEligibility_1 = require("../signalExecutionEligibility");
 const copyLimitDispatch_1 = require("../copyLimitDispatch");
@@ -71,11 +72,17 @@ function enqueueSignal(ctx, row, opts) {
     const action = (0, tradeSignalActions_1.parsedAction)(row.parsed_data);
     const high = (opts?.priority ?? (0, tradeSignalActions_1.dispatchPriorityForAction)(action)) === 'high';
     ctx.queuedIds.add(row.id);
+    const item = {
+        row,
+        liveDispatch: opts?.liveDispatch,
+        source: opts?.source,
+        dispatchReceivedAt: opts?.dispatchReceivedAt,
+    };
     if (high) {
-        ctx.highPriorityQueue.push(row);
+        ctx.highPriorityQueue.push(item);
     }
     else {
-        ctx.normalPriorityQueue.push(row);
+        ctx.normalPriorityQueue.push(item);
     }
     ctx.scheduleQueueDrain();
 }
@@ -100,11 +107,17 @@ async function drainSignalQueues(ctx) {
         while (ctx.highPriorityQueue.length > 0 || ctx.normalPriorityQueue.length > 0 || inFlight.size > 0) {
             while (inFlight.size < types_1.EXECUTOR_MAX_CONCURRENT_SIGNALS
                 && (ctx.highPriorityQueue.length > 0 || ctx.normalPriorityQueue.length > 0)) {
-                const row = ctx.dequeueQueuedSignal();
-                if (!row)
+                const item = ctx.dequeueQueuedSignal();
+                if (!item)
                     break;
+                const row = item.row;
                 ctx.queuedIds.delete(row.id);
-                const job = ctx.handleSignal(row, { liveDispatch: false, lightIdempotency: false })
+                const job = ctx.handleSignal(row, {
+                    liveDispatch: item.liveDispatch === true,
+                    lightIdempotency: false,
+                    dispatchSource: item.source,
+                    dispatchReceivedAt: item.dispatchReceivedAt,
+                })
                     .catch(err => console.error(`[tradeExecutor] handleSignal failed for ${row.id}:`, err));
                 inFlight.add(job);
                 void job.finally(() => {
@@ -244,6 +257,9 @@ async function handleSignal(ctx, row, opts) {
         return;
     const handleStartMs = Date.now();
     const liveFast = opts?.liveDispatch === true && opts?.lightIdempotency === true;
+    const channelMetaPromise = liveFast && row.channel_id
+        ? ctx.getChannelMeta(row.channel_id)
+        : null;
     const queueWaitMs = opts?.dispatchReceivedAt != null
         ? Math.max(0, handleStartMs - opts.dispatchReceivedAt)
         : null;
@@ -259,24 +275,46 @@ async function handleSignal(ctx, row, opts) {
                 queue_wait_ms: queueWaitMs,
             });
         }
-        if (!isMessageEdit && await ctx.signalAlreadyHandled(row.id)) {
+        if (!isMessageEdit && !liveFast && await ctx.signalAlreadyHandled(row.id)) {
             await ctx.markSignalExecuted(row.id);
             return;
         }
-        if ((0, types_1.telegramLiveTradeGateEnabled)() && row.channel_id) {
-            const live = ctx.sessionManager
-                ? await ctx.sessionManager.canExecuteTelegramCopierTradesAsync(row.user_id)
-                : false;
-            if (!live) {
+        let userSub;
+        let isAdmin;
+        if (liveFast
+            && (0, types_1.telegramLiveTradeGateEnabled)()
+            && row.channel_id
+            && ctx.sessionManager) {
+            const [teleLive, sub, admin] = await Promise.all([
+                ctx.sessionManager.canExecuteTelegramCopierTradesAsync(row.user_id),
+                (0, subscriptionAccess_1.loadCachedUserSubscription)(ctx.supabase, row.user_id),
+                (0, subscriptionAccess_1.loadCachedUserIsAdmin)(ctx.supabase, row.user_id),
+            ]);
+            if (!teleLive) {
                 console.warn(`[tradeExecutor] skip signal ${row.id} (user ${row.user_id}): telegram listener not live for channel-backed copier`);
                 await ctx.logDispatchSkipped(row, 'telegram_listener_not_live');
                 return;
             }
+            userSub = sub;
+            isAdmin = admin;
         }
-        const [userSub, isAdmin] = await Promise.all([
-            (0, subscriptionAccess_1.loadCachedUserSubscription)(ctx.supabase, row.user_id),
-            (0, subscriptionAccess_1.loadCachedUserIsAdmin)(ctx.supabase, row.user_id),
-        ]);
+        else {
+            if ((0, types_1.telegramLiveTradeGateEnabled)() && row.channel_id) {
+                const live = ctx.sessionManager
+                    ? await ctx.sessionManager.canExecuteTelegramCopierTradesAsync(row.user_id)
+                    : false;
+                if (!live) {
+                    console.warn(`[tradeExecutor] skip signal ${row.id} (user ${row.user_id}): telegram listener not live for channel-backed copier`);
+                    await ctx.logDispatchSkipped(row, 'telegram_listener_not_live');
+                    return;
+                }
+            }
+            ;
+            [userSub, isAdmin] = await Promise.all([
+                (0, subscriptionAccess_1.loadCachedUserSubscription)(ctx.supabase, row.user_id),
+                (0, subscriptionAccess_1.loadCachedUserIsAdmin)(ctx.supabase, row.user_id),
+            ]);
+        }
         if (!isAdmin && (!userSub || !(0, subscriptionAccess_1.isSubscriptionActive)(userSub.status))) {
             await ctx.logDispatchSkipped(row, 'subscription_inactive');
             return;
@@ -315,21 +353,28 @@ async function handleSignal(ctx, row, opts) {
         let brokers = allMatchingBrokers.filter(b => ctx.brokerEligibleForSignal(b, row));
         if (brokers.length > 0 && row.channel_id) {
             const profileTz = ctx.userTimezoneById.get(row.user_id);
-            const allowed = [];
-            for (const broker of brokers) {
-                const state = await ctx.fetchCopyLimitState(broker.id, row.channel_id);
-                const pause = (0, copyLimitDispatch_1.evaluateChannelCopyLimitPauseForBroker)(broker, row.channel_id, profileTz, state);
+            const channelId = row.channel_id;
+            if (liveFast && parsed.symbol) {
+                void ctx.prewarmBrokersForLiveEntry(brokers, parsed.symbol);
+            }
+            const pauseResults = await Promise.all(brokers.map(async (broker) => {
+                const state = await ctx.fetchCopyLimitState(broker.id, channelId);
+                const pause = (0, copyLimitDispatch_1.evaluateChannelCopyLimitPauseForBroker)(broker, channelId, profileTz, state);
                 if (pause.paused && pause.reason) {
-                    await ctx.logDispatchSkipped(row, pause.reason, {
+                    const skipLog = ctx.logDispatchSkipped(row, pause.reason, {
                         broker_id: broker.id,
-                        channel_id: row.channel_id,
+                        channel_id: channelId,
                         pause_key: pause.pauseKey ?? null,
                     });
-                    continue;
+                    if (liveFast)
+                        void skipLog;
+                    else
+                        await skipLog;
+                    return null;
                 }
-                allowed.push(broker);
-            }
-            brokers = allowed;
+                return broker;
+            }));
+            brokers = pauseResults.filter((b) => b != null);
         }
         if (!brokers.length) {
             if (configSkipReasons.length > 0 && rawMatchingBrokers.length > 0) {
@@ -366,8 +411,25 @@ async function handleSignal(ctx, row, opts) {
                 return;
             }
         }
+        if (isMessageEdit
+            && row.message_edit_prior_action
+            && (0, telegramMessageEdit_1.messageEditDirectionFlippedFromActions)(row.message_edit_prior_action, action)) {
+            const flipClose = await (0, messageEditDirectionFlipClose_1.closeBasketForMessageEditDirectionFlip)(ctx, row, brokers);
+            await (0, messageEditDirectionFlipClose_1.waitForSignalBasketFlat)(ctx, row, brokers);
+            if (flipClose.closed === 0 && flipClose.failed > 0) {
+                await ctx.logDispatchSkipped(row, 'message_edit_direction_flip_close_failed');
+                return;
+            }
+            if (!(0, multiTradeMerge_1.parsedHasSlOrTp)(parsed)) {
+                await ctx.logDispatchSkipped(row, 'message_edit_direction_flip_closed');
+                await ctx.markSignalExecuted(row.id);
+                return;
+            }
+        }
         // Pre-fetch channel keywords + comment slug once per signal.
-        const { keywords: channelKeywords, commentSlug } = await ctx.getChannelMeta(row.channel_id);
+        const { keywords: channelKeywords, commentSlug } = channelMetaPromise
+            ? await channelMetaPromise
+            : await ctx.getChannelMeta(row.channel_id);
         const commentPrefix = (0, tradeComment_1.buildTscopierCommentPrefix)(row.id, commentSlug);
         const rawText = String(parsed.raw_instruction ?? '').toLowerCase();
         const ignoreKw = channelKeywords?.additional?.ignore_keyword?.trim().toLowerCase();
@@ -390,27 +452,14 @@ async function handleSignal(ctx, row, opts) {
         const op = (0, helpers_1.operationFor)(action, parsed);
         if (!op || !parsed.symbol)
             return;
-        if (liveFast && !isMessageEdit && await ctx.signalLiveDispatchAlreadyHandled(row.id)) {
-            await ctx.markSignalExecuted(row.id);
-            return;
-        }
-        for (const b of brokers) {
-            const resolved = (0, channelTradingConfig_1.resolveChannelTradingConfig)(b, row.channel_id);
-            const ms = resolved.manual_settings;
-            console.log(`[tradeExecutor] channel config signal=${row.id} channel=${row.channel_id ?? 'none'}`
-                + ` broker=${b.id} source=${resolved.config_source}`
-                + ` style=${String(ms.trade_style ?? 'single')}`
-                + ` fixed_lot=${String(ms.fixed_lot ?? 'missing')}`);
-        }
-        if (liveFast) {
-            // Hot-path skip: when session is freshly pinged AND symbol caches are
-            // warm, sendOrder will hit cached values inline (sub-ms). Skipping
-            // prewarm entirely keeps prep_ms ~0 instead of paying for a needless
-            // round-trip. When cold, kick prewarm off in the background so
-            // sendOrder's internal Promise.all (deduped via inflight maps) does
-            // the awaiting — we no longer double-block before t_order_send_start.
-            if (!ctx.brokersWarmForLiveEntry(brokers, parsed.symbol ?? '')) {
-                void ctx.prewarmBrokersForLiveEntry(brokers, parsed.symbol ?? '');
+        if (!liveFast) {
+            for (const b of brokers) {
+                const resolved = (0, channelTradingConfig_1.resolveChannelTradingConfig)(b, row.channel_id);
+                const ms = resolved.manual_settings;
+                console.log(`[tradeExecutor] channel config signal=${row.id} channel=${row.channel_id ?? 'none'}`
+                    + ` broker=${b.id} source=${resolved.config_source}`
+                    + ` style=${String(ms.trade_style ?? 'single')}`
+                    + ` fixed_lot=${String(ms.fixed_lot ?? 'missing')}`);
             }
         }
         if (liveFast && row.pipeline_ts) {

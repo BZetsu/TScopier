@@ -4,6 +4,7 @@
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.parseTradeWorkerShardUrls = parseTradeWorkerShardUrls;
+exports.pushParsedSignalToTradeWorker = pushParsedSignalToTradeWorker;
 exports.pushParsedSignalToTradeWorkerAwait = pushParsedSignalToTradeWorkerAwait;
 exports.validateListenerTradeShardConfig = validateListenerTradeShardConfig;
 exports.validateListenerQueueConfig = validateListenerQueueConfig;
@@ -166,8 +167,9 @@ async function pushParsedSignalToTradeWorkerInner(row, opts) {
         reply_to_message_id: row.reply_to_message_id ?? null,
         created_at: row.created_at,
         pipeline_ts: row.pipeline_ts,
+        message_edit_prior_action: row.message_edit_prior_action ?? null,
     };
-    await logPushAttemptToDb(row, 'success', {
+    void logPushAttemptToDb(row, 'success', {
         run_id: 'latency-v3',
         phase: 'start',
         action,
@@ -180,7 +182,7 @@ async function pushParsedSignalToTradeWorkerInner(row, opts) {
     for (let attempt = 1; attempt <= PUSH_MAX_ATTEMPTS; attempt++) {
         const attemptStartedAt = Date.now();
         const result = await postDispatchSignal(url, token, signalBody, priority, timeoutMs, opts?.awaitExecution === true, dispatchSource);
-        await logPushAttemptToDb(row, result.ok ? 'success' : 'failed', {
+        void logPushAttemptToDb(row, result.ok ? 'success' : 'failed', {
             run_id: 'latency-v3',
             phase: 'attempt',
             action,
@@ -205,7 +207,14 @@ async function pushParsedSignalToTradeWorkerInner(row, opts) {
     }
     return false;
 }
-/** Awaitable push — used after signals row is persisted (durable handoff). */
+/** Fire-and-forget push — listener must not block on trade completion. */
+function pushParsedSignalToTradeWorker(row, opts) {
+    void pushParsedSignalToTradeWorkerInner(row, {
+        awaitExecution: false,
+        source: opts?.source ?? row.dispatch_source,
+    });
+}
+/** Awaitable push — used when caller needs confirmation of HTTP accept (not full execution). */
 async function pushParsedSignalToTradeWorkerAwait(row, opts) {
     return pushParsedSignalToTradeWorkerInner(row, {
         awaitExecution: true,

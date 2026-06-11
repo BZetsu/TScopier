@@ -15,6 +15,7 @@ exports.resolveOpenBasketAnchorForMessageEdit = resolveOpenBasketAnchorForMessag
 exports.resolveOpenBasketAnchorForParameterFollowUp = resolveOpenBasketAnchorForParameterFollowUp;
 const manualPlanner_1 = require("./manualPlanner");
 const signalPriceInference_1 = require("./signalPriceInference");
+const signalEntryNowRequirement_1 = require("./signalEntryNowRequirement");
 const tpBucketDistribution_1 = require("./manualPlanning/tpBucketDistribution");
 const signalMergeLink_1 = require("./signalMergeLink");
 const basketModFollowUp_1 = require("./basketModFollowUp");
@@ -44,6 +45,10 @@ function shouldRouteAsBasketParameterRefresh(parsed) {
         if ((0, manualPlanner_1.parsedHasExplicitEntryAnchor)(parsed)) {
             return false;
         }
+        // "BUY NOW + SL/TP" (no priced entry) is an explicit market entry, not a
+        // follow-up refresh — must open a trade and stay on the entry fast path.
+        if ((0, signalEntryNowRequirement_1.messageHasMarketNowIntent)(parsed.raw_instruction ?? ''))
+            return false;
         return true;
     }
     return false;

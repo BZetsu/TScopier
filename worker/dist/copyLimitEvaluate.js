@@ -29,35 +29,46 @@ function copyLimitsActive(config) {
 function equityDelta(equity) {
     return equity.currentEquity - equity.periodStartEquity;
 }
-function profitTargetHit(rule, equity) {
+function profitTargetHit(rule, equity, channelPnl) {
     if (!rule.enabled || rule.value <= 0)
         return false;
     const delta = equityDelta(equity);
     if (rule.value_type === 'amount') {
-        return delta >= rule.value;
+        if (delta >= rule.value)
+            return true;
+        return channelPnl != null && channelPnl >= rule.value;
     }
     if (equity.periodStartEquity <= 0)
         return false;
-    return (delta / equity.periodStartEquity) * 100 >= rule.value;
+    if ((delta / equity.periodStartEquity) * 100 >= rule.value)
+        return true;
+    return channelPnl != null
+        && (channelPnl / equity.periodStartEquity) * 100 >= rule.value;
 }
-function maxRiskHit(rule, equity) {
+function maxRiskHit(rule, equity, channelPnl) {
     if (!rule.enabled || rule.value <= 0)
         return false;
     const delta = equityDelta(equity);
     if (rule.value_type === 'amount') {
-        return delta <= -rule.value;
+        if (delta <= -rule.value)
+            return true;
+        return channelPnl != null && channelPnl <= -rule.value;
     }
     if (equity.periodStartEquity <= 0)
         return false;
     const drawdown = Math.max(0, equity.peakEquity - equity.currentEquity);
-    return (drawdown / equity.periodStartEquity) * 100 >= rule.value;
+    if ((drawdown / equity.periodStartEquity) * 100 >= rule.value)
+        return true;
+    return channelPnl != null
+        && channelPnl < 0
+        && (-channelPnl / equity.periodStartEquity) * 100 >= rule.value;
 }
 function evaluateCopyLimitBreaches(args) {
     const at = args.at ?? new Date();
     const breaches = [];
     if (args.config.profit_targets_enabled) {
         for (const rule of args.config.profit_targets) {
-            if (!profitTargetHit(rule, args.equity))
+            if (!profitTargetHit(rule, args.equity, args.channelPnl))
                 continue;
             const pk = (0, copyLimitPeriods_1.periodKeyFor)(rule.period, args.timeZone, at);
             breaches.push({
@@ -71,7 +82,7 @@ function evaluateCopyLimitBreaches(args) {
     }
     if (args.config.max_risk_enabled) {
         for (const rule of args.config.max_risks) {
-            if (!maxRiskHit(rule, args.equity))
+            if (!maxRiskHit(rule, args.equity, args.channelPnl))
                 continue;
             const pk = (0, copyLimitPeriods_1.periodKeyFor)(rule.period, args.timeZone, at);
             breaches.push({

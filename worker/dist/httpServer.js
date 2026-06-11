@@ -212,9 +212,9 @@ function startTradeHttpServer(sessionManager, tradeExecutor) {
                     priority: body.priority,
                     source: body.source ?? 'listener_push',
                 };
+                const awaitByDefault = String(process.env.TRADE_DISPATCH_AWAIT_DEFAULT ?? 'false').toLowerCase() === 'true';
                 const shouldAwait = body.await === true
-                    || body.source === 'listener_push'
-                    || String(process.env.TRADE_DISPATCH_AWAIT_DEFAULT ?? 'true').toLowerCase() !== 'false';
+                    || (body.await !== false && awaitByDefault);
                 const accepted = shouldAwait
                     ? await tradeExecutor.acceptDispatchSignalAwait(signalRow, dispatchOpts)
                     : tradeExecutor.acceptDispatchSignal(signalRow, dispatchOpts);

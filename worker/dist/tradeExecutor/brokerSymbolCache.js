@@ -323,8 +323,12 @@ function prewarmForDispatch(ctx, row) {
         const uuid = broker.metaapi_account_id;
         if (!(0, helpers_1.isMtUuid)(uuid))
             continue;
+        const api = ctx.apiFor(broker);
+        if (!api)
+            continue;
         const mapping = (0, helpers_1.applySymbolMapping)(signalSymbol, broker);
         const requested = mapping.symbol;
+        void ctx.ensureBrokerSessionLiveFast(api, uuid, broker);
         void ctx.getSymbolList(uuid).catch(() => null);
         void ctx.getSymbolParams(uuid, requested).catch(() => null);
     }

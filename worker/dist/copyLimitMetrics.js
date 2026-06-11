@@ -100,22 +100,62 @@ function resolveReferenceEquity(lastEquity, lastBalance) {
         return bal;
     return 0;
 }
-/** Live broker account equity; falls back to cached broker row when API is unavailable. */
-async function fetchLiveAccountEquity(metaapiAccountId, platform, fallbackEquity) {
+/**
+ * Live broker account equity. Tries hard before falling back to the cached
+ * broker row, because a stale equity here silently disables profit/risk
+ * limits exactly when they matter (floating P/L running up):
+ *   1. AccountSummary
+ *   2. keepSessionAlive (token reconnect) + AccountSummary retry
+ *   3. last_balance + live floating P/L from /OpenedOrders
+ *   4. cached fallbackEquity
+ */
+async function fetchLiveAccountEquity(metaapiAccountId, platform, fallbackEquity, opts) {
     if (!metaapiAccountId || metaapiAccountId.includes('|'))
         return fallbackEquity;
-    if ((0, metatraderapi_1.hasMetatraderApiConfigured)()) {
+    if (!(0, metatraderapi_1.hasMetatraderApiConfigured)())
+        return fallbackEquity;
+    const api = (0, metatraderapi_1.getMetatraderApi)((0, metatraderapi_1.mtPlatformFrom)(platform));
+    if (!api)
+        return fallbackEquity;
+    const readEquity = async () => {
+        const summary = await api.accountSummary(metaapiAccountId);
+        const eq = Number(summary.equity);
+        return Number.isFinite(eq) && eq > 0 ? eq : null;
+    };
+    try {
+        const eq = await readEquity();
+        if (eq != null)
+            return eq;
+    }
+    catch (err) {
+        console.warn('[copyLimitMetrics] accountSummary failed:', err instanceof Error ? err.message : String(err));
         try {
-            const api = (0, metatraderapi_1.getMetatraderApi)((0, metatraderapi_1.mtPlatformFrom)(platform));
-            if (api) {
-                const summary = await api.accountSummary(metaapiAccountId);
-                const eq = Number(summary.equity);
-                if (Number.isFinite(eq) && eq > 0)
+            const alive = await api.keepSessionAlive(metaapiAccountId);
+            if (alive) {
+                const eq = await readEquity();
+                if (eq != null)
                     return eq;
             }
         }
-        catch (err) {
-            console.warn('[copyLimitMetrics] accountSummary failed:', err instanceof Error ? err.message : String(err));
+        catch {
+            /* fall through to balance + floating */
+        }
+    }
+    const bal = Number(opts?.lastBalance);
+    if (Number.isFinite(bal) && bal > 0) {
+        try {
+            const orders = await api.openedOrders(metaapiAccountId);
+            let floating = 0;
+            for (const o of orders ?? []) {
+                const rec = o;
+                const profit = Number(rec.profit ?? rec.Profit);
+                if (Number.isFinite(profit))
+                    floating += profit;
+            }
+            return bal + floating;
+        }
+        catch {
+            /* fall through to cached */
         }
     }
     return fallbackEquity;

@@ -2,6 +2,8 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   buildMessageEditDispatchRow,
+  messageEditDirectionFlipped,
+  messageEditDirectionFlippedFromActions,
   messageEditParseEligible,
   type ExistingSignalRow,
 } from './telegramMessageEdit'
@@ -70,6 +72,28 @@ describe('telegramMessageEdit', () => {
       }),
       false,
     )
+  })
+
+  it('messageEditDirectionFlipped detects buy to sell changes', () => {
+    const parseResult = {
+      status: 'parsed' as const,
+      skip_reason: null,
+      parsed: {
+        action: 'sell',
+        symbol: 'XAUUSD',
+        entry_price: null,
+        entry_zone_low: null,
+        entry_zone_high: null,
+        sl: 4520,
+        tp: [4500],
+        lot_size: null,
+        confidence: 0,
+        raw_instruction: 'Gold sell now',
+      },
+    }
+    assert.equal(messageEditDirectionFlipped(existing, parseResult), true)
+    assert.equal(messageEditDirectionFlippedFromActions('buy', 'buy'), false)
+    assert.equal(messageEditDirectionFlippedFromActions('buy', 'sell'), true)
   })
 
   it('buildMessageEditDispatchRow keeps signal id and sets parsed status', () => {
