@@ -10,6 +10,9 @@ export type ListenerEventType =
   | 'message_edit_parse_failed'
   | 'message_edit_no_sl_tp'
   | 'message_edit_applied'
+  | 'message_edit_sweep_detected'
+  | 'message_edit_sweep_no_change'
+  | 'message_edit_sweep_error'
 
 export async function persistListenerEvent(
   supabase: SupabaseClient,

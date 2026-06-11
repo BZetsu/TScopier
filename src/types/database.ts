@@ -462,6 +462,7 @@ export interface Signal {
   is_modification: boolean
   parent_signal_id: string | null
   telegram_message_edited_at?: string | null
+  telegram_message_edit_date?: number | null
   created_at: string
 }
 

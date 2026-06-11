@@ -25,8 +25,20 @@ import {
   buildMessageEditDispatchRow,
   loadSignalByTelegramMessage,
   messageEditParseEligible,
+  storedMessageDiffersFromTelegram,
   updateSignalAfterTelegramEdit,
 } from './telegramMessageEdit'
+import {
+  EDIT_POLL_HOOK_MAX_SIGNALS,
+  EDIT_POLL_HOOK_WINDOW_MS,
+  EDIT_SWEEP_INTERVAL_MS,
+  chunkTelegramMessageIds,
+  findEditedSignals,
+  groupSignalsByChannel,
+  loadSignalsForEditSweep,
+  snapshotsFromTelegramMessages,
+  telegramEditDateSec,
+} from './telegramMessageEditSweep'
 import { parsedHasSlOrTp } from './multiTradeMerge'
 import { evaluateParsedSignalExecutionEligibility } from './signalExecutionEligibility'
 import { looksLikeCasualNonTradeMessage } from './signalCommentaryGuard'
@@ -153,6 +165,8 @@ interface MessageLike {
   text?: string | null
   message?: string | null
   replyTo?: unknown
+  editDate?: number | Date | null
+  edit_date?: number | Date | null
 }
 
 interface ChatIdentity {
@@ -269,6 +283,8 @@ export class UserListener {
   private watchdogTimer: NodeJS.Timeout | null = null
   private sessionPersistTimer: NodeJS.Timeout | null = null
   private replyChainSweepTimer: NodeJS.Timeout | null = null
+  private messageEditSweepTimer: NodeJS.Timeout | null = null
+  private messageEditSweepInFlight = false
   private entityWarmupTimer: NodeJS.Timeout | null = null
   private catchUpInFlight = false
   private catchUpParseActive = 0
@@ -344,6 +360,7 @@ export class UserListener {
     )
     this.startSessionPersist()
     this.startReplyChainSweep()
+    this.startMessageEditSweep()
     this.startEntityWarmup()
   }
 
@@ -354,6 +371,7 @@ export class UserListener {
       this.stopTimer('fastPollTimer')
       this.stopTimer('sessionPersistTimer')
       this.stopTimer('replyChainSweepTimer')
+      this.stopTimer('messageEditSweepTimer')
       this.stopTimer('entityWarmupTimer')
       this.removeCurrentHandler()
       await this.persistSessionIfChanged()
@@ -371,7 +389,7 @@ export class UserListener {
     this.dialogsCacheAt = 0
   }
 
-  private stopTimer(field: 'watchdogTimer' | 'safetyPollTimer' | 'fastPollTimer' | 'sessionPersistTimer' | 'replyChainSweepTimer' | 'entityWarmupTimer') {
+  private stopTimer(field: 'watchdogTimer' | 'safetyPollTimer' | 'fastPollTimer' | 'sessionPersistTimer' | 'replyChainSweepTimer' | 'messageEditSweepTimer' | 'entityWarmupTimer') {
     const t = this[field]
     if (t) {
       clearInterval(t)
@@ -1036,6 +1054,7 @@ export class UserListener {
       messageId: String(message.id),
       rawMessage,
       source: 'live_edit',
+      telegramMessageEditDate: telegramEditDateSec(message),
     })
     void this.bumpLastLive(channelRow.id)
   }
@@ -1060,15 +1079,16 @@ export class UserListener {
     messageId: string
     rawMessage: string
     source: string
+    telegramMessageEditDate?: number | null
   }): Promise<boolean> {
-    const { channelRow, messageId, rawMessage, source } = args
+    const { channelRow, messageId, rawMessage, source, telegramMessageEditDate } = args
     const existing = await loadSignalByTelegramMessage(this.supabase, {
       userId: this.userId,
       channelRowId: channelRow.id,
       telegramMessageId: messageId,
     })
     if (!existing) return false
-    if (existing.raw_message.trim() === rawMessage.trim()) return false
+    if (!storedMessageDiffersFromTelegram(existing.raw_message, rawMessage)) return false
 
     let parseResult: Awaited<ReturnType<typeof parseChannelMessageSync>>
     try {
@@ -1109,6 +1129,7 @@ export class UserListener {
       signalId: existing.id,
       rawMessage,
       parseResult,
+      telegramMessageEditDate,
     })
     if (!updated) {
       console.error(
@@ -1123,6 +1144,9 @@ export class UserListener {
       t_dispatch_sent: tEditReceived,
     })
     dispatchRow.dispatch_source = MESSAGE_EDIT_DISPATCH_SOURCE
+    if (existing.parsed_data?.action) {
+      dispatchRow.message_edit_prior_action = String(existing.parsed_data.action)
+    }
 
     console.log(
       `[userListener] message edit dispatch user=${this.userId} signalId=${existing.id}`
@@ -1309,6 +1333,7 @@ export class UserListener {
         messageId,
         rawMessage,
         source: opts?.source === 'catchup' ? 'catchup' : 'duplicate_fallback',
+        telegramMessageEditDate: telegramEditDateSec(message),
       })
       if (edited) return true
       console.log(
@@ -1428,6 +1453,7 @@ export class UserListener {
       replyToMessageId,
       isReply,
       parseResult: effectiveParseResult,
+      telegramMessageEditDate: telegramEditDateSec(message),
     })
 
     return true
@@ -1608,6 +1634,7 @@ export class UserListener {
     replyToMessageId: string | null
     isReply: boolean
     parseResult: Awaited<ReturnType<typeof parseChannelMessageSync>>
+    telegramMessageEditDate?: number | null
   }): void {
     const {
       signalId,
@@ -1618,23 +1645,28 @@ export class UserListener {
       replyToMessageId,
       isReply,
       parseResult,
+      telegramMessageEditDate,
     } = args
     void (async () => {
+      const rowPatch: Record<string, unknown> = {
+        id: signalId,
+        user_id: this.userId,
+        channel_id: channelRow.id,
+        raw_message: rawMessage,
+        raw_image_url: null,
+        status: parseResult.status,
+        parsed_data: parseResult.parsed,
+        skip_reason: parseResult.skip_reason,
+        telegram_message_id: messageId,
+        is_modification: isReply,
+        parent_signal_id: parentSignalId,
+        reply_to_message_id: replyToMessageId,
+      }
+      if (telegramMessageEditDate != null && telegramMessageEditDate > 0) {
+        rowPatch.telegram_message_edit_date = Math.floor(telegramMessageEditDate)
+      }
       const { error: insertErr } = await this.supabase.from('signals').upsert(
-        {
-          id: signalId,
-          user_id: this.userId,
-          channel_id: channelRow.id,
-          raw_message: rawMessage,
-          raw_image_url: null,
-          status: parseResult.status,
-          parsed_data: parseResult.parsed,
-          skip_reason: parseResult.skip_reason,
-          telegram_message_id: messageId,
-          is_modification: isReply,
-          parent_signal_id: parentSignalId,
-          reply_to_message_id: replyToMessageId,
-        },
+        rowPatch,
         { onConflict: 'user_id,channel_id,telegram_message_id', ignoreDuplicates: true },
       )
       if (insertErr) {
@@ -1696,6 +1728,130 @@ export class UserListener {
       )
     }, REPLY_CHAIN_SWEEP_MS)
     this.replyChainSweepTimer.unref?.()
+  }
+
+  private startMessageEditSweep() {
+    if (this.messageEditSweepTimer) return
+    this.messageEditSweepTimer = setInterval(() => {
+      this.runMessageEditSweep('edit_sweep').catch(err =>
+        console.error(`[userListener] message-edit sweep error for ${this.userId}:`, err),
+      )
+    }, EDIT_SWEEP_INTERVAL_MS)
+    this.messageEditSweepTimer.unref?.()
+    console.log(
+      `[userListener] message-edit sweep started user=${this.userId} intervalMs=${EDIT_SWEEP_INTERVAL_MS}`,
+    )
+  }
+
+  private async runMessageEditSweep(source: 'edit_sweep' | 'edit_poll_hook', channelRow?: ChannelRow) {
+    if (this.messageEditSweepInFlight) return
+    this.messageEditSweepInFlight = true
+    try {
+      const windowMs = source === 'edit_poll_hook' ? EDIT_POLL_HOOK_WINDOW_MS : undefined
+      const maxSignals = source === 'edit_poll_hook' ? EDIT_POLL_HOOK_MAX_SIGNALS : undefined
+      const signals = await loadSignalsForEditSweep(this.supabase, {
+        userId: this.userId,
+        windowMs,
+        maxSignals,
+        channelRowId: channelRow?.id,
+      })
+      if (!signals.length) return
+
+      const grouped = groupSignalsByChannel(signals)
+      for (const [channelRowId, rows] of grouped) {
+        const row = channelRow?.id === channelRowId
+          ? channelRow
+          : this.fastPollRows.find(r => r.id === channelRowId)
+            ?? (await this.supabase
+              .from('telegram_channels')
+              .select('id, channel_id, channel_username, last_seen_message_id, last_seen_at, last_live_at')
+              .eq('id', channelRowId)
+              .maybeSingle()).data as ChannelRow | null
+        if (!row) continue
+        await this.runEditSweepForChannel(row, rows, source)
+      }
+    } finally {
+      this.messageEditSweepInFlight = false
+    }
+  }
+
+  private async runEditSweepForChannel(
+    channelRow: ChannelRow,
+    signals: Awaited<ReturnType<typeof loadSignalsForEditSweep>>,
+    source: 'edit_sweep' | 'edit_poll_hook',
+  ) {
+    let peer: unknown
+    try {
+      peer = await this.resolveChannelPeer(channelRow)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      void persistListenerEvent(this.supabase, {
+        userId: this.userId,
+        eventType: 'message_edit_sweep_error',
+        channelRowId: channelRow.id,
+        detail: { source, error: msg.slice(0, 300), phase: 'peer_resolve' },
+      })
+      return
+    }
+
+    const ids = signals.map(s => s.telegram_message_id)
+    const snapshots = new Map<string, { text: string; editDateSec: number | null }>()
+    for (const chunk of chunkTelegramMessageIds(ids)) {
+      const numericIds = chunk
+        .map(id => Number(id))
+        .filter(n => Number.isFinite(n) && n > 0)
+      if (!numericIds.length) continue
+      try {
+        const batch = (await this.client.getMessages(peer as never, {
+          ids: numericIds,
+        })) as unknown[]
+        for (const [id, snap] of snapshotsFromTelegramMessages(batch ?? [])) {
+          snapshots.set(id, snap)
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        incMetric('message_edit_sweep_get_messages_failed')
+        void persistListenerEvent(this.supabase, {
+          userId: this.userId,
+          eventType: 'message_edit_sweep_error',
+          channelRowId: channelRow.id,
+          detail: {
+            source,
+            error: msg.slice(0, 300),
+            phase: 'get_messages',
+            ids: chunk.slice(0, 10),
+          },
+        })
+      }
+    }
+
+    const edited = findEditedSignals(signals, snapshots)
+    if (!edited.length) {
+      incMetric('message_edit_sweep_no_change')
+      return
+    }
+
+    for (const candidate of edited) {
+      incMetric('message_edit_sweep_detected')
+      void persistListenerEvent(this.supabase, {
+        userId: this.userId,
+        eventType: 'message_edit_sweep_detected',
+        channelRowId: channelRow.id,
+        telegramMessageId: candidate.signal.telegram_message_id,
+        detail: {
+          source,
+          signal_id: candidate.signal.id,
+          edit_date_sec: candidate.editDateSec,
+        },
+      })
+      await this.tryApplyTelegramMessageEdit({
+        channelRow,
+        messageId: candidate.signal.telegram_message_id,
+        rawMessage: candidate.rawMessage,
+        source,
+        telegramMessageEditDate: candidate.editDateSec,
+      })
+    }
   }
 
   /** Re-resolve `parent_signal_id` for recent replies (parent may have arrived later). */
@@ -1936,7 +2092,10 @@ export class UserListener {
     }
 
     const toProcess = sorted.filter(m => Number(m.id) > minId)
-    if (!toProcess.length) return
+    if (!toProcess.length) {
+      await this.runMessageEditSweep('edit_poll_hook', row)
+      return
+    }
 
     for (const m of toProcess) {
       await this.logSignal(row, m, { source: 'catchup' })

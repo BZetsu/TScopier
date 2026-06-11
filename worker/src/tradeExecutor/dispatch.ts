@@ -36,7 +36,14 @@ import {
   telegramLiveTradeGateEnabled,
 } from './types'
 import type { ChannelKeywords } from '../manualPlanner'
-import { MESSAGE_EDIT_DISPATCH_SOURCE } from '../telegramMessageEdit'
+import {
+  MESSAGE_EDIT_DISPATCH_SOURCE,
+  messageEditDirectionFlippedFromActions,
+} from '../telegramMessageEdit'
+import {
+  closeBasketForMessageEditDirectionFlip,
+  waitForSignalBasketFlat,
+} from './messageEditDirectionFlipClose'
 import {
   loadCachedUserSubscription,
   loadCachedUserIsAdmin,
@@ -473,6 +480,24 @@ export async function handleSignal(ctx: TradeExecutorContext,
         )
         if (blockReason === 'plan_advanced_feature_required') {
           await ctx.logDispatchSkipped(row, blockReason)
+          return
+        }
+      }
+
+      if (
+        isMessageEdit
+        && row.message_edit_prior_action
+        && messageEditDirectionFlippedFromActions(row.message_edit_prior_action, action)
+      ) {
+        const flipClose = await closeBasketForMessageEditDirectionFlip(ctx, row, brokers)
+        await waitForSignalBasketFlat(ctx, row, brokers)
+        if (flipClose.closed === 0 && flipClose.failed > 0) {
+          await ctx.logDispatchSkipped(row, 'message_edit_direction_flip_close_failed')
+          return
+        }
+        if (!parsedHasSlOrTp(parsed as unknown as Record<string, unknown>)) {
+          await ctx.logDispatchSkipped(row, 'message_edit_direction_flip_closed')
+          await ctx.markSignalExecuted(row.id)
           return
         }
       }

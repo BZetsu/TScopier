@@ -20,6 +20,16 @@ from . import metrics
 from .config import Config
 from .listener_events import persist_listener_event
 from .signal_heuristic import looks_like_trading_signal
+from .telegram_message_edit_sweep import (
+    EDIT_POLL_HOOK_MAX_SIGNALS,
+    EDIT_POLL_HOOK_WINDOW_MS,
+    EDIT_SWEEP_INTERVAL_MS,
+    chunk_telegram_message_ids,
+    find_edited_signals,
+    load_signals_for_edit_sweep,
+    telegram_edit_date_sec,
+    telegram_message_text,
+)
 from .trade_client import TradeClient
 
 
@@ -100,6 +110,8 @@ class UserListener:
     last_successful_poll_at: float = 0
     is_connected: bool = False
     _poll_task: asyncio.Task | None = None
+    _edit_sweep_task: asyncio.Task | None = None
+    _edit_sweep_in_flight: bool = False
     _handler_registered: bool = False
 
     async def start(self, *, already_connected: bool = False) -> None:
@@ -122,8 +134,15 @@ class UserListener:
         await self.warm_all_monitored_entities()
         asyncio.create_task(self.run_catchup())
         self._poll_task = asyncio.create_task(self._poll_loop())
+        self._edit_sweep_task = asyncio.create_task(self._edit_sweep_loop())
 
     async def stop(self) -> None:
+        if self._edit_sweep_task:
+            self._edit_sweep_task.cancel()
+            try:
+                await self._edit_sweep_task
+            except asyncio.CancelledError:
+                pass
         if self._poll_task:
             self._poll_task.cancel()
             try:
@@ -260,7 +279,13 @@ class UserListener:
         raw = (message.message or message.text or "").strip()
         if not raw:
             return
-        await self._try_apply_message_edit(row, str(message.id), raw, "live_edit")
+        await self._try_apply_message_edit(
+            row,
+            str(message.id),
+            raw,
+            "live_edit",
+            telegram_message_edit_date=telegram_edit_date_sec(message),
+        )
         await self._bump_last_live(row.id)
 
     async def _on_message(self, event: events.NewMessage.Event) -> None:
@@ -383,7 +408,13 @@ class UserListener:
             .execute()
         )
         if (dup.count or 0) > 0:
-            if await self._try_apply_message_edit(row, message_id, raw, source):
+            if await self._try_apply_message_edit(
+                row,
+                message_id,
+                raw,
+                source,
+                telegram_message_edit_date=telegram_edit_date_sec(message),
+            ):
                 return
             persist_listener_event(
                 self.supabase,
@@ -453,7 +484,13 @@ class UserListener:
             metrics.inc("dispatch_push_exhausted")
 
     async def _try_apply_message_edit(
-        self, row: ChannelRow, message_id: str, raw: str, source: str
+        self,
+        row: ChannelRow,
+        message_id: str,
+        raw: str,
+        source: str,
+        *,
+        telegram_message_edit_date: int | None = None,
     ) -> bool:
         existing = (
             self.supabase.table("signals")
@@ -502,15 +539,16 @@ class UserListener:
             return False
 
         edited_at = datetime.now(timezone.utc).isoformat()
-        self.supabase.table("signals").update(
-            {
-                "raw_message": raw,
-                "parsed_data": parsed_data,
-                "status": "parsed",
-                "skip_reason": None,
-                "telegram_message_edited_at": edited_at,
-            }
-        ).eq("id", signal_row["id"]).execute()
+        update_payload: dict[str, Any] = {
+            "raw_message": raw,
+            "parsed_data": parsed_data,
+            "status": "parsed",
+            "skip_reason": None,
+            "telegram_message_edited_at": edited_at,
+        }
+        if telegram_message_edit_date and telegram_message_edit_date > 0:
+            update_payload["telegram_message_edit_date"] = int(telegram_message_edit_date)
+        self.supabase.table("signals").update(update_payload).eq("id", signal_row["id"]).execute()
 
         persist_listener_event(
             self.supabase,
@@ -521,6 +559,10 @@ class UserListener:
             detail={"signal_id": signal_row["id"], "source": source},
         )
 
+        prior_action = None
+        prior_parsed = signal_row.get("parsed_data")
+        if isinstance(prior_parsed, dict) and prior_parsed.get("action"):
+            prior_action = str(prior_parsed.get("action"))
         dispatch_row = {
             "id": signal_row["id"],
             "user_id": self.user_id,
@@ -533,6 +575,7 @@ class UserListener:
             "reply_to_message_id": signal_row.get("reply_to_message_id"),
             "created_at": signal_row.get("created_at"),
             "pipeline_ts": {"t_message_edit_received": int(datetime.now(timezone.utc).timestamp() * 1000)},
+            "message_edit_prior_action": prior_action,
         }
         ok = await self.trade.dispatch_signal(dispatch_row, source=MESSAGE_EDIT_DISPATCH_SOURCE)
         if not ok:
@@ -610,6 +653,131 @@ class UserListener:
         key = normalize_username(row.channel_username) or row.channel_id
         return await self.client.get_input_entity(key)
 
+    async def _edit_sweep_loop(self) -> None:
+        interval = EDIT_SWEEP_INTERVAL_MS / 1000
+        while self.is_connected:
+            try:
+                await self.run_message_edit_sweep("edit_sweep")
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                print(f"[user_listener] edit sweep loop error user={self.user_id}: {exc}")
+            await asyncio.sleep(interval)
+
+    async def run_message_edit_sweep(
+        self, source: str, channel_row: ChannelRow | None = None
+    ) -> None:
+        if self._edit_sweep_in_flight:
+            return
+        self._edit_sweep_in_flight = True
+        try:
+            window_ms = EDIT_POLL_HOOK_WINDOW_MS if source == "edit_poll_hook" else None
+            max_signals = EDIT_POLL_HOOK_MAX_SIGNALS if source == "edit_poll_hook" else None
+            signals = load_signals_for_edit_sweep(
+                self.supabase,
+                user_id=self.user_id,
+                window_ms=window_ms,
+                max_signals=max_signals,
+                channel_row_id=channel_row.id if channel_row else None,
+            )
+            if not signals:
+                return
+
+            by_channel: dict[str, list[dict[str, Any]]] = {}
+            for signal in signals:
+                cid = str(signal.get("channel_id") or "")
+                if not cid:
+                    continue
+                by_channel.setdefault(cid, []).append(signal)
+
+            for channel_row_id, rows in by_channel.items():
+                row = channel_row if channel_row and channel_row.id == channel_row_id else next(
+                    (r for r in self.channel_rows if r.id == channel_row_id), None
+                )
+                if not row:
+                    continue
+                await self._run_edit_sweep_for_channel(row, rows, source)
+        finally:
+            self._edit_sweep_in_flight = False
+
+    async def _run_edit_sweep_for_channel(
+        self, row: ChannelRow, signals: list[dict[str, Any]], source: str
+    ) -> None:
+        assert self.client
+        try:
+            peer = await self._resolve_peer(row)
+        except Exception as exc:
+            persist_listener_event(
+                self.supabase,
+                user_id=self.user_id,
+                event_type="message_edit_sweep_error",
+                channel_row_id=row.id,
+                detail={"source": source, "error": str(exc)[:300], "phase": "peer_resolve"},
+            )
+            return
+
+        snapshots: dict[str, tuple[str, int | None]] = {}
+        ids = [str(s.get("telegram_message_id") or "") for s in signals]
+        for chunk in chunk_telegram_message_ids(ids):
+            numeric_ids = [int(x) for x in chunk if x.isdigit()]
+            if not numeric_ids:
+                continue
+            try:
+                messages = await self.client.get_messages(peer, ids=numeric_ids)
+                if not messages:
+                    continue
+                if not isinstance(messages, list):
+                    messages = [messages]
+                for message in messages:
+                    mid = str(getattr(message, "id", "") or "").strip()
+                    if not mid:
+                        continue
+                    snapshots[mid] = (
+                        telegram_message_text(message),
+                        telegram_edit_date_sec(message),
+                    )
+            except Exception as exc:
+                metrics.inc("message_edit_sweep_get_messages_failed")
+                persist_listener_event(
+                    self.supabase,
+                    user_id=self.user_id,
+                    event_type="message_edit_sweep_error",
+                    channel_row_id=row.id,
+                    detail={
+                        "source": source,
+                        "error": str(exc)[:300],
+                        "phase": "get_messages",
+                        "ids": chunk[:10],
+                    },
+                )
+
+        edited = find_edited_signals(signals, snapshots)
+        if not edited:
+            metrics.inc("message_edit_sweep_no_change")
+            return
+
+        for signal, raw, edit_date in edited:
+            metrics.inc("message_edit_sweep_detected")
+            persist_listener_event(
+                self.supabase,
+                user_id=self.user_id,
+                event_type="message_edit_sweep_detected",
+                channel_row_id=row.id,
+                telegram_message_id=str(signal.get("telegram_message_id") or ""),
+                detail={
+                    "source": source,
+                    "signal_id": signal.get("id"),
+                    "edit_date_sec": edit_date,
+                },
+            )
+            await self._try_apply_message_edit(
+                row,
+                str(signal.get("telegram_message_id") or ""),
+                raw,
+                source,
+                telegram_message_edit_date=edit_date,
+            )
+
     async def poll_channel(self, row: ChannelRow) -> None:
         assert self.client
         try:
@@ -639,6 +807,7 @@ class UserListener:
             return
         self.last_successful_poll_at = asyncio.get_event_loop().time()
         if not messages:
+            await self.run_message_edit_sweep("edit_poll_hook", row)
             return
         sorted_msgs = sorted(messages, key=lambda m: m.id)
         if min_id == 0 and sorted_msgs:
@@ -649,9 +818,12 @@ class UserListener:
                 if m.date and (now - m.date.replace(tzinfo=timezone.utc)).total_seconds() <= 15 * 60:
                     await self.process_message(row, m, source="catchup")
             return
-        for m in sorted_msgs:
-            if m.id > min_id:
-                await self.process_message(row, m, source="catchup")
+        new_msgs = [m for m in sorted_msgs if m.id > min_id]
+        if not new_msgs:
+            await self.run_message_edit_sweep("edit_poll_hook", row)
+            return
+        for m in new_msgs:
+            await self.process_message(row, m, source="catchup")
 
     async def _poll_loop(self) -> None:
         interval = self.cfg.safety_poll_interval_ms / 1000
