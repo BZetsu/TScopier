@@ -36,6 +36,13 @@ export interface ManualSettings {
   tp_lots?: ManualTpLot[]
   single_tp_target?: 'tp1' | 'tp2' | 'tp3' | 'farthest'
   multi_trade_leg_percent?: number
+  /**
+   * Max simultaneous market orders per entry burst. The MT bridge executes
+   * OrderSends serially per account (~0.5-0.7s each), so an uncapped burst of
+   * N legs takes ~0.6*N seconds. Legs beyond the cap are consolidated into
+   * fewer, larger orders (total volume and TP distribution preserved).
+   */
+  multi_trade_max_orders?: number
   trade_style?: 'single' | 'multi'
   range_trading?: boolean
   range_percent?: number

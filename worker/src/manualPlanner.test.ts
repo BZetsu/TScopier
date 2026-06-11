@@ -181,6 +181,9 @@ const baseManual: ManualSettings = {
   fixed_lot: 1.0,
   trade_style: 'multi',
   multi_trade_leg_percent: 10,       // 10% per leg → 10 legs from 1.0 lot
+  // These tests verify range/leg geometry — disable burst consolidation so
+  // immediate order counts equal granular leg counts.
+  multi_trade_max_orders: 100,
   range_trading: true,
   range_percent: 50,                  // half immediates, half virtual pendings
   range_step_pips: 10,
@@ -188,6 +191,117 @@ const baseManual: ManualSettings = {
   tp_lots: [{ label: 'TP1', lot: 0, percent: 100, enabled: true }],
   pending_expiry_hours: 4,
 }
+
+// ── Burst consolidation (multi_trade_max_orders) ────────────────────────────
+
+test('planMultiManualOrders: default cap consolidates 20 legs into 8 orders, volume + TP split preserved', () => {
+  const manual: ManualSettings = {
+    ...baseManual,
+    multi_trade_max_orders: undefined, // default cap = 8
+    multi_trade_leg_percent: 5,        // 5% per leg → 20 legs from 1.0 lot
+    range_trading: false,
+    tp_lots: [
+      { label: 'TP1', lot: 0, percent: 50, enabled: true },
+      { label: 'TP2', lot: 0, percent: 50, enabled: true },
+    ],
+  }
+  const plan = planManualOrders({
+    parsed: { ...baseParsed, tp: [1900, 1910] },
+    resolvedSymbol: 'XAUUSD',
+    baseOperation: 'Buy',
+    manual,
+    channelKeywords: null,
+    manualLot: 1.0,
+    ctx: baseCtx,
+    commentPrefix: 'TSCopier:abc',
+  })
+  assert.equal(plan.orders.length, 8)
+  const totalVolume = plan.orders.reduce((s, o) => s + Number(o.volume), 0)
+  assert.ok(Math.abs(totalVolume - 1.0) < 1e-9)
+  const byTp = new Map<number, number>()
+  for (const o of plan.orders) {
+    const tp = Number(o.takeprofit)
+    byTp.set(tp, (byTp.get(tp) ?? 0) + Number(o.volume))
+  }
+  assert.equal(byTp.size, 2)
+  assert.ok(Math.abs((byTp.get(1900) ?? 0) - 0.5) < 1e-9)
+  assert.ok(Math.abs((byTp.get(1910) ?? 0) - 0.5) < 1e-9)
+})
+
+test('planMultiManualOrders: cap of 2 emits one consolidated order per TP', () => {
+  const manual: ManualSettings = {
+    ...baseManual,
+    multi_trade_max_orders: 2,
+    multi_trade_leg_percent: 10, // 10 legs
+    range_trading: false,
+    tp_lots: [
+      { label: 'TP1', lot: 0, percent: 50, enabled: true },
+      { label: 'TP2', lot: 0, percent: 50, enabled: true },
+    ],
+  }
+  const plan = planManualOrders({
+    parsed: { ...baseParsed, tp: [1900, 1910] },
+    resolvedSymbol: 'XAUUSD',
+    baseOperation: 'Buy',
+    manual,
+    channelKeywords: null,
+    manualLot: 1.0,
+    ctx: baseCtx,
+    commentPrefix: 'TSCopier:abc',
+  })
+  assert.equal(plan.orders.length, 2)
+  assert.ok(Math.abs(Number(plan.orders[0]!.volume) - 0.5) < 1e-9)
+  assert.ok(Math.abs(Number(plan.orders[1]!.volume) - 0.5) < 1e-9)
+  assert.equal(Number(plan.orders[0]!.takeprofit), 1900)
+  assert.equal(Number(plan.orders[1]!.takeprofit), 1910)
+})
+
+test('planMultiManualOrders: cap never drops below distinct TP count', () => {
+  const manual: ManualSettings = {
+    ...baseManual,
+    multi_trade_max_orders: 1, // fewer than distinct TPs — must still emit 2
+    multi_trade_leg_percent: 10,
+    range_trading: false,
+    tp_lots: [
+      { label: 'TP1', lot: 0, percent: 50, enabled: true },
+      { label: 'TP2', lot: 0, percent: 50, enabled: true },
+    ],
+  }
+  const plan = planManualOrders({
+    parsed: { ...baseParsed, tp: [1900, 1910] },
+    resolvedSymbol: 'XAUUSD',
+    baseOperation: 'Buy',
+    manual,
+    channelKeywords: null,
+    manualLot: 1.0,
+    ctx: baseCtx,
+    commentPrefix: 'TSCopier:abc',
+  })
+  assert.equal(plan.orders.length, 2)
+})
+
+test('planMultiManualOrders: cap larger than leg count leaves granular legs untouched', () => {
+  const manual: ManualSettings = {
+    ...baseManual,
+    multi_trade_max_orders: 100,
+    multi_trade_leg_percent: 10,
+    range_trading: false,
+  }
+  const plan = planManualOrders({
+    parsed: { ...baseParsed, tp: [1900] },
+    resolvedSymbol: 'XAUUSD',
+    baseOperation: 'Buy',
+    manual,
+    channelKeywords: null,
+    manualLot: 1.0,
+    ctx: baseCtx,
+    commentPrefix: 'TSCopier:abc',
+  })
+  assert.equal(plan.orders.length, 10)
+  for (const o of plan.orders) {
+    assert.ok(Math.abs(Number(o.volume) - 0.1) < 1e-9)
+  }
+})
 
 test('planManualOrders: range emits virtualPendings (not OrderSendArgs)', () => {
   const plan = planManualOrders({

@@ -48,6 +48,11 @@ export function normalizeManualSettingsForExecution(raw: unknown): ManualSetting
   const legPctRaw = Number(j.multi_trade_leg_percent)
   const legPct = Number.isFinite(legPctRaw) && legPctRaw > 0 ? Math.min(100, legPctRaw) : 5
 
+  const maxOrdersRaw = Number(j.multi_trade_max_orders)
+  const maxOrders = Number.isFinite(maxOrdersRaw) && maxOrdersRaw > 0
+    ? Math.max(1, Math.min(100, Math.floor(maxOrdersRaw)))
+    : 8
+
   const readNumber = (key: string, fallback: number): number => {
     const v = Number(j[key])
     return Number.isFinite(v) ? v : fallback
@@ -86,6 +91,7 @@ export function normalizeManualSettingsForExecution(raw: unknown): ManualSetting
   return {
     ...(j as ManualSettings),
     multi_trade_leg_percent: legPct,
+    multi_trade_max_orders: maxOrders,
     range_percent: rangePercent,
     range_step_pips: rangeStepPips,
     range_distance_pips: rangeDistancePips,

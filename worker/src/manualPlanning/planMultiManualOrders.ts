@@ -147,17 +147,67 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
     return finalTps[finalTps.length - 1] ?? null
   }
 
-  const orders: OrderSendArgs[] = []
+  // Assign a TP to every granular leg first (preserves the tp_lots volume
+  // distribution exactly), then consolidate legs sharing the same TP into at
+  // most `multi_trade_max_orders` orders. The MT bridge executes OrderSends
+  // serially per account (~0.5-0.7s each), so an uncapped burst of 25 legs
+  // takes ~18s — consolidation keeps total volume and the per-TP volume split
+  // identical while bounding placement time to a few seconds.
+  const burstCapRaw = Number(manual.multi_trade_max_orders ?? 8)
+  const burstCap = Number.isFinite(burstCapRaw) && burstCapRaw > 0
+    ? Math.max(1, Math.min(100, Math.floor(burstCapRaw)))
+    : 8
+
+  type BurstGroup = { tpPrice: number | null; legCount: number }
+  const burstGroups: BurstGroup[] = []
   for (let i = 0; i < immediateLegs; i++) {
     const tpPrice = tpForImmediateIndex(i)
-    orders.push({
-      ...orderBase,
-      volume: targetLeg,
-      stoploss: roundPrice(finalSl),
-      takeprofit: roundPrice(tpPrice),
-      ...expirationFields,
-      comment: `${commentPrefix}:tp${i + 1}`,
-    })
+    const last = burstGroups[burstGroups.length - 1]
+    if (last && last.tpPrice === tpPrice) last.legCount += 1
+    else burstGroups.push({ tpPrice, legCount: 1 })
+  }
+
+  const orders: OrderSendArgs[] = []
+  if (burstGroups.length > 0) {
+    // Every distinct TP keeps at least one order; spare slots go to the
+    // groups carrying the most volume so order sizes stay balanced.
+    const cap = Math.max(burstGroups.length, Math.min(burstCap, immediateLegs))
+    const alloc = burstGroups.map(g => ({ g, orders: 1 }))
+    let used = burstGroups.length
+    while (used < cap) {
+      let best = -1
+      for (let i = 0; i < alloc.length; i++) {
+        if (alloc[i].orders >= alloc[i].g.legCount) continue
+        if (best < 0
+          || alloc[i].g.legCount / alloc[i].orders > alloc[best].g.legCount / alloc[best].orders) {
+          best = i
+        }
+      }
+      if (best < 0) break
+      alloc[best].orders += 1
+      used += 1
+    }
+
+    let orderNo = 0
+    for (const { g, orders: orderCount } of alloc) {
+      const groupUnits = g.legCount * targetUnits
+      const baseUnits = Math.floor(groupUnits / orderCount)
+      let remainder = groupUnits - baseUnits * orderCount
+      for (let k = 0; k < orderCount; k++) {
+        const units = baseUnits + (remainder > 0 ? 1 : 0)
+        if (remainder > 0) remainder -= 1
+        if (units <= 0) continue
+        orderNo += 1
+        orders.push({
+          ...orderBase,
+          volume: unitsToLot(units),
+          stoploss: roundPrice(finalSl),
+          takeprofit: roundPrice(g.tpPrice),
+          ...expirationFields,
+          comment: `${commentPrefix}:tp${orderNo}`,
+        })
+      }
+    }
   }
 
   const virtualPendings: VirtualPendingLeg[] = []
@@ -201,11 +251,11 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
   }
 
   let closeWorseEntries: PlannerCloseWorseEntries | undefined
-  if (manual.close_worse_entries === true && immediateLegs > 0) {
+  if (manual.close_worse_entries === true && orders.length > 0) {
     const cwPips = Math.max(0, Number(manual.close_worse_entries_pips ?? 0))
     if (cwPips > 0) {
       closeWorseEntries = {
-        immediates: immediateLegs,
+        immediates: orders.length,
         pipsFromAnchor: cwPips,
       }
     }
