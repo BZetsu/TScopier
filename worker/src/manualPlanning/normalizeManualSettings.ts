@@ -50,8 +50,8 @@ export function normalizeManualSettingsForExecution(raw: unknown): ManualSetting
 
   const maxOrdersRaw = Number(j.multi_trade_max_orders)
   const maxOrders = Number.isFinite(maxOrdersRaw) && maxOrdersRaw > 0
-    ? Math.max(1, Math.min(100, Math.floor(maxOrdersRaw)))
-    : 8
+    ? Math.max(1, Math.min(500, Math.floor(maxOrdersRaw)))
+    : 500
 
   const readNumber = (key: string, fallback: number): number => {
     const v = Number(j[key])

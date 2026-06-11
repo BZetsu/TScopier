@@ -194,11 +194,37 @@ const baseManual: ManualSettings = {
 
 // ── Burst consolidation (multi_trade_max_orders) ────────────────────────────
 
-test('planMultiManualOrders: default cap consolidates 20 legs into 8 orders, volume + TP split preserved', () => {
+test('planMultiManualOrders: default sends one order per granular leg (no consolidation)', () => {
   const manual: ManualSettings = {
     ...baseManual,
-    multi_trade_max_orders: undefined, // default cap = 8
-    multi_trade_leg_percent: 5,        // 5% per leg → 20 legs from 1.0 lot
+    multi_trade_max_orders: undefined,
+    multi_trade_leg_percent: 5, // 5% per leg → 20 legs from 1.0 lot
+    range_trading: false,
+    tp_lots: [
+      { label: 'TP1', lot: 0, percent: 50, enabled: true },
+      { label: 'TP2', lot: 0, percent: 50, enabled: true },
+    ],
+  }
+  const plan = planManualOrders({
+    parsed: { ...baseParsed, tp: [1900, 1910] },
+    resolvedSymbol: 'XAUUSD',
+    baseOperation: 'Buy',
+    manual,
+    channelKeywords: null,
+    manualLot: 1.0,
+    ctx: baseCtx,
+    commentPrefix: 'TSCopier:abc',
+  })
+  assert.equal(plan.orders.length, 20)
+  const totalVolume = plan.orders.reduce((s, o) => s + Number(o.volume), 0)
+  assert.ok(Math.abs(totalVolume - 1.0) < 1e-9)
+})
+
+test('planMultiManualOrders: explicit cap consolidates legs, volume + TP split preserved', () => {
+  const manual: ManualSettings = {
+    ...baseManual,
+    multi_trade_max_orders: 8,
+    multi_trade_leg_percent: 5,
     range_trading: false,
     tp_lots: [
       { label: 'TP1', lot: 0, percent: 50, enabled: true },

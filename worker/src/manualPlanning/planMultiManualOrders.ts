@@ -153,10 +153,10 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
   // serially per account (~0.5-0.7s each), so an uncapped burst of 25 legs
   // takes ~18s — consolidation keeps total volume and the per-TP volume split
   // identical while bounding placement time to a few seconds.
-  const burstCapRaw = Number(manual.multi_trade_max_orders ?? 8)
+  const burstCapRaw = Number(manual.multi_trade_max_orders ?? ABS_MAX_LEGS)
   const burstCap = Number.isFinite(burstCapRaw) && burstCapRaw > 0
-    ? Math.max(1, Math.min(100, Math.floor(burstCapRaw)))
-    : 8
+    ? Math.max(1, Math.min(ABS_MAX_LEGS, Math.floor(burstCapRaw)))
+    : ABS_MAX_LEGS
 
   type BurstGroup = { tpPrice: number | null; legCount: number }
   const burstGroups: BurstGroup[] = []
