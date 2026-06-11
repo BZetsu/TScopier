@@ -232,11 +232,16 @@ export async function prepareEntryExecution(
     }
     return r
   })
-  const [sessionOk, symbol] = await Promise.all([
+  const paramsPromise = ctx.getSymbolParams(uuid, requestedSymbol).catch(() => null)
+  const [sessionOk, symbol, paramsFromRequested] = await Promise.all([
     sessionPromise,
     symbolPromise,
+    paramsPromise,
   ])
-  let params = await ctx.getSymbolParams(uuid, symbol).catch(() => null)
+  let params = paramsFromRequested
+  if (symbol.toUpperCase() !== requestedSymbol.toUpperCase()) {
+    params = await ctx.getSymbolParams(uuid, symbol).catch(() => params)
+  }
   if (stampOnResolve && signal.pipeline_ts && signal.pipeline_ts.t_params_resolved == null) {
     signal.pipeline_ts.t_params_resolved = Date.now()
   }
@@ -470,26 +475,31 @@ export async function prepareEntryExecution(
     console.warn(
       `[tradeExecutor] plan_fallback signal=${signal.id} broker=${broker.id} symbol=${symbol} reason=${plan.fallback_reason}`,
     )
-    try {
-      await ctx.supabase.from('trade_execution_logs').insert({
-        user_id: signal.user_id,
-        signal_id: signal.id,
-        broker_account_id: broker.id,
-        action: 'plan_fallback',
-        status: 'success',
-        request_payload: {
-          reason: plan.fallback_reason,
-          manual_lot: baseLot,
-          target_leg: +(baseLot * ((Number(manual.multi_trade_leg_percent ?? 5)) / 100)).toFixed(4),
-          min_lot: params?.minLot ?? null,
-          lot_step: params?.lotStep ?? null,
-          stops_level: params?.stopsLevel ?? null,
-          freeze_level: params?.freezeLevel ?? null,
-          symbol,
-        } as unknown as Record<string, unknown>,
-      })
-    } catch {
-      // Logging failure is non-fatal.
+    const fallbackRow = {
+      user_id: signal.user_id,
+      signal_id: signal.id,
+      broker_account_id: broker.id,
+      action: 'plan_fallback',
+      status: 'success',
+      request_payload: {
+        reason: plan.fallback_reason,
+        manual_lot: baseLot,
+        target_leg: +(baseLot * ((Number(manual.multi_trade_leg_percent ?? 5)) / 100)).toFixed(4),
+        min_lot: params?.minLot ?? null,
+        lot_step: params?.lotStep ?? null,
+        stops_level: params?.stopsLevel ?? null,
+        freeze_level: params?.freezeLevel ?? null,
+        symbol,
+      } as unknown as Record<string, unknown>,
+    }
+    if (liveEntryFast) {
+      void ctx.supabase.from('trade_execution_logs').insert(fallbackRow)
+    } else {
+      try {
+        await ctx.supabase.from('trade_execution_logs').insert(fallbackRow)
+      } catch {
+        // Logging failure is non-fatal.
+      }
     }
   }
 
@@ -532,12 +542,16 @@ export async function prepareEntryExecution(
     )
   }
 
-  const already = await ctx.manualDispatchAlreadyMaterialized(signal.id, broker.id)
-  if (already) {
-    console.warn(
-      `[tradeExecutor] skip duplicate entry dispatch signal=${signal.id} broker=${broker.id}`,
-    )
-    return { ok: false, outcome: { openedOrMerged: true } }
+  // sendOrder already claims + dedupes on the live fast path — skip the extra
+  // four-table materialized probe here so we don't pay a second DB round-trip.
+  if (!liveEntryFast) {
+    const already = await ctx.manualDispatchAlreadyMaterialized(signal.id, broker.id)
+    if (already) {
+      console.warn(
+        `[tradeExecutor] skip duplicate entry dispatch signal=${signal.id} broker=${broker.id}`,
+      )
+      return { ok: false, outcome: { openedOrMerged: true } }
+    }
   }
 
   // ── Strict signal entry (post-delay live quote) ───────────────────────

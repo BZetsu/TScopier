@@ -670,6 +670,7 @@ export class TradeExecutor {
     // cache hit by the time it runs.
     this.prewarmForDispatch(rowWithTs)
     const entryFast = this.shouldUseEntryFastPath(rowWithTs)
+    if (entryFast) this.kickLiveEntryPrewarm(rowWithTs)
     const listenerTs = parsePipelineTimestamps(rowWithTs.pipeline_ts)
     if (
       source === 'listener_push'
@@ -727,6 +728,7 @@ export class TradeExecutor {
     }
     this.prewarmForDispatch(rowWithTs)
     const entryFast = this.shouldUseEntryFastPath(rowWithTs)
+    if (entryFast) this.kickLiveEntryPrewarm(rowWithTs)
 
     if (!entryFast) {
       await this.logPipelineStage(rowWithTs, 'dispatch_received', { source, priority: opts?.priority ?? null })
@@ -1118,6 +1120,19 @@ export class TradeExecutor {
     return brokerSymbolCache.prewarmForDispatch(this, row)
   }
 
+  /** Session + symbol cache warmup for channel-matched brokers on the live fast path. */
+  private kickLiveEntryPrewarm(row: SignalRow): void {
+    const parsed = row.parsed_data as PlannerParsedSignal | null
+    const signalSymbol = parsed?.symbol?.trim()
+    if (!signalSymbol) return
+    const warmBrokers = (this.brokersByUser.get(row.user_id) ?? []).filter(b =>
+      b.is_active && isMtUuid(b.metaapi_account_id) && channelMatchesBrokerSignal(b, row.channel_id),
+    )
+    if (warmBrokers.length > 0) {
+      void this.prewarmBrokersForLiveEntry(warmBrokers, signalSymbol)
+    }
+  }
+
   /** Warm session + symbol caches once per live signal before OrderSend. */
   async prewarmBrokersForLiveEntry(brokers: BrokerRow[], signalSymbol: string): Promise<void> {
     return await brokerSymbolCache.prewarmBrokersForLiveEntry(this, brokers, signalSymbol)
@@ -1147,16 +1162,21 @@ export class TradeExecutor {
     const effectiveBroker = withChannelTradingConfig(broker, signal.channel_id) as BrokerRow
     const resolved = resolveChannelTradingConfig(broker, signal.channel_id)
     const entryKey = `${signal.id}:${effectiveBroker.id}`
+    const liveFast = sendOpts?.liveEntryFast === true
 
-    if (await manualDispatchAlreadyMaterialized(this, signal.id, effectiveBroker.id)) {
-      console.warn(
-        `[tradeExecutor] skip already materialized signal=${signal.id} broker=${effectiveBroker.id}`,
-      )
-      return { openedOrMerged: true }
+    if (!liveFast) {
+      if (await manualDispatchAlreadyMaterialized(this, signal.id, effectiveBroker.id)) {
+        console.warn(
+          `[tradeExecutor] skip already materialized signal=${signal.id} broker=${effectiveBroker.id}`,
+        )
+        return { openedOrMerged: true }
+      }
     }
 
     if (this.entryBrokerInflight.has(entryKey)) {
-      const materialized = await manualDispatchAlreadyMaterialized(this, signal.id, effectiveBroker.id)
+      const materialized = liveFast
+        ? true
+        : await manualDispatchAlreadyMaterialized(this, signal.id, effectiveBroker.id)
       console.warn(
         `[tradeExecutor] skip duplicate in-flight sendOrder signal=${signal.id} broker=${effectiveBroker.id}`
         + ` materialized=${materialized}`,

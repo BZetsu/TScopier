@@ -332,8 +332,11 @@ export function prewarmForDispatch(ctx: TradeExecutorContext, row: SignalRow): v
     for (const broker of brokers) {
       const uuid = broker.metaapi_account_id
       if (!isMtUuid(uuid)) continue
+      const api = ctx.apiFor(broker)
+      if (!api) continue
       const mapping = applySymbolMapping(signalSymbol, broker)
       const requested = mapping.symbol
+      void ctx.ensureBrokerSessionLiveFast(api, uuid!, broker)
       void ctx.getSymbolList(uuid!).catch(() => null)
       void ctx.getSymbolParams(uuid!, requested).catch(() => null)
     }

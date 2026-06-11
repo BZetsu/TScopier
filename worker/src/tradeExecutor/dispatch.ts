@@ -295,6 +295,9 @@ export async function handleSignal(ctx: TradeExecutorContext,
 
     const handleStartMs = Date.now()
     const liveFast = opts?.liveDispatch === true && opts?.lightIdempotency === true
+    const channelMetaPromise = liveFast && row.channel_id
+      ? ctx.getChannelMeta(row.channel_id)
+      : null
     const queueWaitMs = opts?.dispatchReceivedAt != null
       ? Math.max(0, handleStartMs - (opts.dispatchReceivedAt as number))
       : null
@@ -315,23 +318,46 @@ export async function handleSignal(ctx: TradeExecutorContext,
         await ctx.markSignalExecuted(row.id)
         return
       }
-      if (telegramLiveTradeGateEnabled() && row.channel_id) {
-        const live = ctx.sessionManager
-          ? await ctx.sessionManager.canExecuteTelegramCopierTradesAsync(row.user_id)
-          : false
-        if (!live) {
+      let userSub: Awaited<ReturnType<typeof loadCachedUserSubscription>>
+      let isAdmin: boolean
+      if (
+        liveFast
+        && telegramLiveTradeGateEnabled()
+        && row.channel_id
+        && ctx.sessionManager
+      ) {
+        const [teleLive, sub, admin] = await Promise.all([
+          ctx.sessionManager.canExecuteTelegramCopierTradesAsync(row.user_id),
+          loadCachedUserSubscription(ctx.supabase, row.user_id),
+          loadCachedUserIsAdmin(ctx.supabase, row.user_id),
+        ])
+        if (!teleLive) {
           console.warn(
             `[tradeExecutor] skip signal ${row.id} (user ${row.user_id}): telegram listener not live for channel-backed copier`,
           )
           await ctx.logDispatchSkipped(row, 'telegram_listener_not_live')
           return
         }
+        userSub = sub
+        isAdmin = admin
+      } else {
+        if (telegramLiveTradeGateEnabled() && row.channel_id) {
+          const live = ctx.sessionManager
+            ? await ctx.sessionManager.canExecuteTelegramCopierTradesAsync(row.user_id)
+            : false
+          if (!live) {
+            console.warn(
+              `[tradeExecutor] skip signal ${row.id} (user ${row.user_id}): telegram listener not live for channel-backed copier`,
+            )
+            await ctx.logDispatchSkipped(row, 'telegram_listener_not_live')
+            return
+          }
+        }
+        ;[userSub, isAdmin] = await Promise.all([
+          loadCachedUserSubscription(ctx.supabase, row.user_id),
+          loadCachedUserIsAdmin(ctx.supabase, row.user_id),
+        ])
       }
-
-      const [userSub, isAdmin] = await Promise.all([
-        loadCachedUserSubscription(ctx.supabase, row.user_id),
-        loadCachedUserIsAdmin(ctx.supabase, row.user_id),
-      ])
       if (!isAdmin && (!userSub || !isSubscriptionActive(userSub.status))) {
         await ctx.logDispatchSkipped(row, 'subscription_inactive')
         return
@@ -379,6 +405,9 @@ export async function handleSignal(ctx: TradeExecutorContext,
       if (brokers.length > 0 && row.channel_id) {
         const profileTz = ctx.userTimezoneById.get(row.user_id)
         const channelId = row.channel_id
+        if (liveFast && parsed.symbol) {
+          void ctx.prewarmBrokersForLiveEntry(brokers, parsed.symbol)
+        }
         const pauseResults = await Promise.all(
           brokers.map(async broker => {
             const state = await ctx.fetchCopyLimitState(broker.id, channelId)
@@ -389,11 +418,13 @@ export async function handleSignal(ctx: TradeExecutorContext,
               state,
             )
             if (pause.paused && pause.reason) {
-              await ctx.logDispatchSkipped(row, pause.reason, {
+              const skipLog = ctx.logDispatchSkipped(row, pause.reason, {
                 broker_id: broker.id,
                 channel_id: channelId,
                 pause_key: pause.pauseKey ?? null,
               })
+              if (liveFast) void skipLog
+              else await skipLog
               return null
             }
             return broker
@@ -447,7 +478,9 @@ export async function handleSignal(ctx: TradeExecutorContext,
       }
 
       // Pre-fetch channel keywords + comment slug once per signal.
-      const { keywords: channelKeywords, commentSlug } = await ctx.getChannelMeta(row.channel_id)
+      const { keywords: channelKeywords, commentSlug } = channelMetaPromise
+        ? await channelMetaPromise
+        : await ctx.getChannelMeta(row.channel_id)
       const commentPrefix = buildTscopierCommentPrefix(row.id, commentSlug)
       const rawText = String(parsed.raw_instruction ?? '').toLowerCase()
       const ignoreKw = channelKeywords?.additional?.ignore_keyword?.trim().toLowerCase()
@@ -492,17 +525,6 @@ export async function handleSignal(ctx: TradeExecutorContext,
         }
       }
 
-      if (liveFast) {
-        // Hot-path skip: when session is freshly pinged AND symbol caches are
-        // warm, sendOrder will hit cached values inline (sub-ms). Skipping
-        // prewarm entirely keeps prep_ms ~0 instead of paying for a needless
-        // round-trip. When cold, kick prewarm off in the background so
-        // sendOrder's internal Promise.all (deduped via inflight maps) does
-        // the awaiting — we no longer double-block before t_order_send_start.
-        if (!ctx.brokersWarmForLiveEntry(brokers, parsed.symbol ?? '')) {
-          void ctx.prewarmBrokersForLiveEntry(brokers, parsed.symbol ?? '')
-        }
-      }
       if (liveFast && row.pipeline_ts) {
         row.pipeline_ts.t_order_send_start = Date.now()
       }
