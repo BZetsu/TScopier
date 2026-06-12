@@ -180,6 +180,29 @@ export function startHttpServer(
         }
       }
 
+      if (url === '/internal/reconcile-signals') {
+        const body = (await readJson(req)) as {
+          user_id?: string
+          channel_row_id?: string
+        }
+        if (body.user_id) {
+          if (!userBelongsToShard(body.user_id)) {
+            return sendJson(res, 200, { ok: false, reason: 'wrong_shard' })
+          }
+          try {
+            const result = await sessionManager.reconcileUserSignals(body.user_id, {
+              channelRowId: body.channel_row_id,
+            })
+            return sendJson(res, 200, result)
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : 'reconcile failed'
+            return sendJson(res, 500, { error: msg })
+          }
+        }
+        const result = await sessionManager.reconcileAllListenersOnShard()
+        return sendJson(res, 200, { ok: true, ...result })
+      }
+
       return sendJson(res, 404, { error: 'Unknown route' })
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Internal error'

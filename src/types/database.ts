@@ -461,6 +461,8 @@ export interface Signal {
   reply_to_message_id?: string | null
   is_modification: boolean
   parent_signal_id: string | null
+  telegram_reconciled_at?: string | null
+  telegram_edit_date_seen?: number | null
   created_at: string
 }
 

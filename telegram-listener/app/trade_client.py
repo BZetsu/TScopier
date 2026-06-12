@@ -53,6 +53,26 @@ class TradeClient:
             res.raise_for_status()
             return res.json()
 
+    async def reconcile_signals(
+        self, *, user_id: str, channel_row_id: str | None = None
+    ) -> dict[str, Any]:
+        base = self._trade_url()
+        if not base:
+            raise RuntimeError("TRADE_WORKER_URL not configured")
+        url = f"{base}/internal/reconcile-signals"
+        timeout = max(self.cfg.trade_signal_push_timeout_ms / 1000, 8.0)
+        body: dict[str, Any] = {"user_id": user_id}
+        if channel_row_id:
+            body["channel_row_id"] = channel_row_id
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            res = await client.post(
+                url,
+                headers={"x-internal-token": self._token, "Content-Type": "application/json"},
+                json=body,
+            )
+            res.raise_for_status()
+            return res.json()
+
     async def parse_signal(
         self, *, channel_row_id: str, raw_message: str, user_id: str
     ) -> dict[str, Any]:

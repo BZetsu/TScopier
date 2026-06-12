@@ -4,6 +4,8 @@ import { TelegramClient } from 'telegram'
 import { utils } from 'telegram'
 import { NewMessage } from 'telegram/events'
 import type { NewMessageEvent } from 'telegram/events/NewMessage'
+import { EditedMessage } from 'telegram/events/EditedMessage'
+import type { EditedMessageEvent } from 'telegram/events/EditedMessage'
 import { Api } from 'telegram/tl'
 import { buildClient, isAuthKeyUnregistered, rethrowIfSessionInvalid, TelegramSessionInvalidError, tgInvoke } from './telegramClient'
 import { tradeableFromParsed } from './backtestSignal'
@@ -26,6 +28,18 @@ import {
   updateSignalAfterRevision,
 } from './signalRevision'
 import { aiParseModification, aiResultToParseResult } from './aiParseModification'
+import {
+  RECONCILE_POLL_HOOK_MAX_SIGNALS,
+  RECONCILE_POLL_HOOK_WINDOW_MS,
+  RECONCILE_SWEEP_INTERVAL_MS,
+  chunkTelegramMessageIds,
+  findSignalsNeedingReconcile,
+  groupSignalsByChannel,
+  loadSignalsForReconcile,
+  markSignalsReconciled,
+  snapshotsFromTelegramMessages,
+  telegramEditDateSec,
+} from './signalTelegramReconcile'
 import { evaluateParsedSignalExecutionEligibility } from './signalExecutionEligibility'
 import { looksLikeCasualNonTradeMessage } from './signalCommentaryGuard'
 
@@ -144,6 +158,14 @@ interface ChannelRow {
 }
 
 type Handler = (event: NewMessageEvent) => void
+type EditHandler = (event: EditedMessageEvent) => void
+
+export type SignalReconcileStats = {
+  checked: number
+  mismatches: number
+  revised: number
+  errors: number
+}
 
 interface MessageLike {
   id: number | bigint
@@ -249,6 +271,8 @@ export class UserListener {
   private monitoredChannels = new Set<string>()
   private currentHandler: Handler | null = null
   private currentEventBuilder: NewMessage | null = null
+  private currentEditHandler: EditHandler | null = null
+  private currentEditEventBuilder: EditedMessage | null = null
   private startedAt = 0
   /** Set when start() reuses the auth-time client (no second connect). */
   private startedWithLiveClient = false
@@ -264,6 +288,8 @@ export class UserListener {
   private watchdogTimer: NodeJS.Timeout | null = null
   private sessionPersistTimer: NodeJS.Timeout | null = null
   private replyChainSweepTimer: NodeJS.Timeout | null = null
+  private signalReconcileSweepTimer: NodeJS.Timeout | null = null
+  private signalReconcileInFlight = false
   private entityWarmupTimer: NodeJS.Timeout | null = null
   private catchUpInFlight = false
   private catchUpParseActive = 0
@@ -339,6 +365,7 @@ export class UserListener {
     )
     this.startSessionPersist()
     this.startReplyChainSweep()
+    this.startSignalReconcileSweep()
     this.startEntityWarmup()
   }
 
@@ -349,6 +376,7 @@ export class UserListener {
       this.stopTimer('fastPollTimer')
       this.stopTimer('sessionPersistTimer')
       this.stopTimer('replyChainSweepTimer')
+      this.stopTimer('signalReconcileSweepTimer')
       this.stopTimer('entityWarmupTimer')
       this.removeCurrentHandler()
       await this.persistSessionIfChanged()
@@ -366,7 +394,7 @@ export class UserListener {
     this.dialogsCacheAt = 0
   }
 
-  private stopTimer(field: 'watchdogTimer' | 'safetyPollTimer' | 'fastPollTimer' | 'sessionPersistTimer' | 'replyChainSweepTimer' | 'entityWarmupTimer') {
+  private stopTimer(field: 'watchdogTimer' | 'safetyPollTimer' | 'fastPollTimer' | 'sessionPersistTimer' | 'replyChainSweepTimer' | 'signalReconcileSweepTimer' | 'entityWarmupTimer') {
     const t = this[field]
     if (t) {
       clearInterval(t)
@@ -510,10 +538,19 @@ export class UserListener {
     // and apply strict user/channel filtering in handleMessage() instead.
     // Important: do not use `incoming: true` here — channel posts are not
     // always classified as "incoming", which can cause silent drops.
+    const editHandler: EditHandler = (event: EditedMessageEvent) => {
+      this.handleEditedMessage(event).catch(err => {
+        console.error(`[userListener] handleEditedMessage error for ${this.userId}:`, err)
+      })
+    }
     const builder = new NewMessage({})
+    const editBuilder = new EditedMessage({})
     this.client.addEventHandler(handler, builder)
+    this.client.addEventHandler(editHandler, editBuilder)
     this.currentHandler = handler
     this.currentEventBuilder = builder
+    this.currentEditHandler = editHandler
+    this.currentEditEventBuilder = editBuilder
   }
 
   private removeCurrentHandler() {
@@ -524,8 +561,17 @@ export class UserListener {
         // ignore
       }
     }
+    if (this.currentEditHandler && this.currentEditEventBuilder) {
+      try {
+        this.client.removeEventHandler(this.currentEditHandler, this.currentEditEventBuilder)
+      } catch {
+        // ignore
+      }
+    }
     this.currentHandler = null
     this.currentEventBuilder = null
+    this.currentEditHandler = null
+    this.currentEditEventBuilder = null
   }
 
   private setsEqual(a: Set<string>, b: Set<string>) {
@@ -983,11 +1029,43 @@ export class UserListener {
     void this.bumpLastLive(channelRow.id)
   }
 
+  private async handleEditedMessage(event: EditedMessageEvent) {
+    this.lastEventAt = Date.now()
+    incMetric('telegram_edit_events')
+
+    const message = event.message
+    if (!message) return
+
+    const { chatId, chatIdVariants, chatUsername } = await this.resolveChatIdentity(event)
+    if (!chatId && !chatUsername) return
+
+    const isMonitored =
+      chatIdVariants.some(v => this.monitoredChannels.has(v)) ||
+      (!!chatUsername && this.monitoredChannels.has(chatUsername))
+    if (!isMonitored) return
+
+    const channelRow = await this.resolveChannelRowForChat(chatIdVariants, chatUsername)
+    if (!channelRow) return
+
+    const rawMessage = (message.text ?? message.message ?? '') as string
+    if (!rawMessage.trim()) return
+
+    await this.tryApplyMessageRevision({
+      channelRow,
+      messageId: String(message.id),
+      rawMessage,
+      source: 'live_edit',
+      telegramEditDateSeen: telegramEditDateSec(message),
+    })
+    void this.bumpLastLive(channelRow.id)
+  }
+
   private async tryApplyMessageRevision(args: {
     channelRow: ChannelRow
     messageId: string
     rawMessage: string
     source: string
+    telegramEditDateSeen?: number | null
   }): Promise<boolean> {
     const { channelRow, messageId, rawMessage, source } = args
     const existing = await loadSignalByTelegramMessage(this.supabase, {
@@ -1048,6 +1126,7 @@ export class UserListener {
       signalId: existing.id,
       rawMessage,
       parseResult,
+      telegramEditDateSeen: args.telegramEditDateSeen,
     })
     if (!updated) {
       console.error(
@@ -1153,7 +1232,7 @@ export class UserListener {
    * Resolve chat identity for an update without depending solely on
    * getChat(), which can fail transiently when gramjs entity cache is cold.
    */
-  private async resolveChatIdentity(event: NewMessageEvent): Promise<ChatIdentity> {
+  private async resolveChatIdentity(event: NewMessageEvent | EditedMessageEvent): Promise<ChatIdentity> {
     const message = event.message
     const fallbackId = event.chatId != null ? String(event.chatId) : ''
     let chatId = fallbackId
@@ -1713,6 +1792,174 @@ export class UserListener {
     this.replyChainSweepTimer.unref?.()
   }
 
+  private startSignalReconcileSweep() {
+    if (this.signalReconcileSweepTimer) return
+    this.signalReconcileSweepTimer = setInterval(() => {
+      this.runSignalTelegramReconcile('reconcile_sweep').catch(err =>
+        console.error(`[userListener] signal reconcile sweep error for ${this.userId}:`, err),
+      )
+    }, RECONCILE_SWEEP_INTERVAL_MS)
+    this.signalReconcileSweepTimer.unref?.()
+    console.log(
+      `[userListener] signal reconcile sweep started user=${this.userId}`
+      + ` intervalMs=${RECONCILE_SWEEP_INTERVAL_MS}`,
+    )
+  }
+
+  /**
+   * Fetch live Telegram text for recent signals and reconcile mismatches with AI revision.
+   */
+  async runSignalTelegramReconcile(
+    source: 'reconcile_sweep' | 'reconcile_poll_hook' | 'cron' | 'live_edit',
+    channelRow?: ChannelRow,
+  ): Promise<SignalReconcileStats> {
+    const stats: SignalReconcileStats = { checked: 0, mismatches: 0, revised: 0, errors: 0 }
+    if (this.signalReconcileInFlight) return stats
+    this.signalReconcileInFlight = true
+    try {
+      const windowMs = source === 'reconcile_poll_hook' ? RECONCILE_POLL_HOOK_WINDOW_MS : undefined
+      const maxSignals = source === 'reconcile_poll_hook' ? RECONCILE_POLL_HOOK_MAX_SIGNALS : undefined
+      const signals = await loadSignalsForReconcile(this.supabase, {
+        userId: this.userId,
+        windowMs,
+        maxSignals,
+        channelRowId: channelRow?.id,
+      })
+      if (!signals.length) return stats
+
+      const grouped = groupSignalsByChannel(signals)
+      for (const [channelRowId, rows] of grouped) {
+        const row = channelRow?.id === channelRowId
+          ? channelRow
+          : this.fastPollRows.find(r => r.id === channelRowId)
+            ?? (await this.supabase
+              .from('telegram_channels')
+              .select('id, channel_id, channel_username, last_seen_message_id, last_seen_at, last_live_at')
+              .eq('id', channelRowId)
+              .maybeSingle()).data as ChannelRow | null
+        if (!row) continue
+
+        const channelStats = await this.runSignalReconcileForChannel(row, rows, source)
+        stats.checked += channelStats.checked
+        stats.mismatches += channelStats.mismatches
+        stats.revised += channelStats.revised
+        stats.errors += channelStats.errors
+      }
+      return stats
+    } finally {
+      this.signalReconcileInFlight = false
+    }
+  }
+
+  private async runSignalReconcileForChannel(
+    channelRow: ChannelRow,
+    signals: Awaited<ReturnType<typeof loadSignalsForReconcile>>,
+    source: string,
+  ): Promise<SignalReconcileStats> {
+    const stats: SignalReconcileStats = { checked: 0, mismatches: 0, revised: 0, errors: 0 }
+    let peer: unknown
+    try {
+      peer = await this.resolveChannelPeer(channelRow)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      stats.errors += 1
+      void persistListenerEvent(this.supabase, {
+        userId: this.userId,
+        eventType: 'signal_reconcile_sweep_error',
+        channelRowId: channelRow.id,
+        detail: { source, error: msg.slice(0, 300), phase: 'peer_resolve' },
+      })
+      return stats
+    }
+
+    const snapshots = new Map<string, { text: string; editDateSec: number | null }>()
+    const ids = signals.map(s => s.telegram_message_id)
+    for (const chunk of chunkTelegramMessageIds(ids)) {
+      const numericIds = chunk
+        .map(id => Number(id))
+        .filter(n => Number.isFinite(n) && n > 0)
+      if (!numericIds.length) continue
+      try {
+        const batch = (await this.client.getMessages(peer as never, {
+          ids: numericIds,
+        })) as unknown[]
+        for (const [id, snap] of snapshotsFromTelegramMessages(batch ?? [])) {
+          snapshots.set(id, snap)
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        stats.errors += 1
+        incMetric('signal_reconcile_get_messages_failed')
+        void persistListenerEvent(this.supabase, {
+          userId: this.userId,
+          eventType: 'signal_reconcile_sweep_error',
+          channelRowId: channelRow.id,
+          detail: {
+            source,
+            error: msg.slice(0, 300),
+            phase: 'get_messages',
+            ids: chunk.slice(0, 10),
+          },
+        })
+      }
+    }
+
+    const checkedIds: string[] = []
+    const editDateBySignalId = new Map<string, number | null>()
+    for (const signal of signals) {
+      const mid = signal.telegram_message_id?.trim()
+      const snap = mid ? snapshots.get(mid) : undefined
+      if (!snap) continue
+      checkedIds.push(signal.id)
+      editDateBySignalId.set(signal.id, snap.editDateSec)
+    }
+    if (checkedIds.length) {
+      await markSignalsReconciled(this.supabase, { signalIds: checkedIds, editDateBySignalId })
+    }
+    stats.checked = checkedIds.length
+
+    const mismatches = findSignalsNeedingReconcile(signals, snapshots)
+    if (!mismatches.length) {
+      if (stats.checked > 0) {
+        void persistListenerEvent(this.supabase, {
+          userId: this.userId,
+          eventType: 'signal_reconcile_checked',
+          channelRowId: channelRow.id,
+          detail: { source, checked: stats.checked, mismatches: 0 },
+        })
+      }
+      return stats
+    }
+
+    stats.mismatches = mismatches.length
+    for (const candidate of mismatches) {
+      void persistListenerEvent(this.supabase, {
+        userId: this.userId,
+        eventType: 'signal_reconcile_mismatch',
+        channelRowId: channelRow.id,
+        telegramMessageId: candidate.signal.telegram_message_id,
+        detail: {
+          source,
+          signal_id: candidate.signal.id,
+          edit_date_sec: candidate.editDateSec,
+        },
+      })
+      try {
+        const revised = await this.tryApplyMessageRevision({
+          channelRow,
+          messageId: candidate.signal.telegram_message_id,
+          rawMessage: candidate.rawMessage,
+          source: `reconcile_${source}`,
+          telegramEditDateSeen: candidate.editDateSec,
+        })
+        if (revised) stats.revised += 1
+      } catch {
+        stats.errors += 1
+      }
+    }
+    return stats
+  }
+
   /** Re-resolve `parent_signal_id` for recent replies (parent may have arrived later). */
   private async runReplyChainSweep() {
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
@@ -1926,6 +2173,7 @@ export class UserListener {
     this.lastSuccessfulPollAt = Date.now()
 
     if (!batch.length) {
+      await this.runSignalTelegramReconcile('reconcile_poll_hook', row)
       return
     }
 
@@ -1954,6 +2202,7 @@ export class UserListener {
 
     const toProcess = sorted.filter(m => Number(m.id) > minId)
     if (!toProcess.length) {
+      await this.runSignalTelegramReconcile('reconcile_poll_hook', row)
       return
     }
 
@@ -1963,6 +2212,7 @@ export class UserListener {
     // Advance the caller's row in place so cached rows (fast poll) don't
     // refetch the same batch on the next tick while the DB bump lags.
     row.last_seen_message_id = latestId
+    await this.runSignalTelegramReconcile('reconcile_poll_hook', row)
   }
 
   private async catchUpChannelRecent(row: ChannelRow): Promise<void> {

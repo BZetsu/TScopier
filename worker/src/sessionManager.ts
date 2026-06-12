@@ -2,7 +2,7 @@ import { RealtimeChannel, SupabaseClient } from '@supabase/supabase-js'
 import { TelegramClient } from 'telegram'
 import { runEphemeralBacktestSync, runWithEphemeralListener } from './backtestSync'
 import { TelegramSessionInvalidError } from './telegramClient'
-import { ChannelInfo, ListenerStatus, UserListener } from './userListener'
+import { ChannelInfo, ListenerStatus, UserListener, type SignalReconcileStats } from './userListener'
 import {
   acquireSessionLease,
   listActiveLeases,
@@ -593,6 +593,48 @@ export class UserSessionManager {
     await this.withConnectionLock(userId, async () => {
       await this.disconnectListener(userId)
     })
+  }
+
+  async reconcileUserSignals(
+    userId: string,
+    opts?: { channelRowId?: string },
+  ): Promise<{ ok: boolean; reason?: string; stats?: SignalReconcileStats }> {
+    if (!userBelongsToShard(userId)) {
+      return { ok: false, reason: 'wrong_shard' }
+    }
+    const listener = this.listeners.get(userId)
+    if (!listener) {
+      return { ok: false, reason: 'listener_not_running' }
+    }
+    let channelRow: { id: string; channel_id: string; channel_username: string } | undefined
+    if (opts?.channelRowId) {
+      const { data } = await this.supabase
+        .from('telegram_channels')
+        .select('id, channel_id, channel_username, last_seen_message_id, last_seen_at, last_live_at')
+        .eq('id', opts.channelRowId)
+        .eq('user_id', userId)
+        .maybeSingle()
+      if (data) channelRow = data as typeof channelRow
+    }
+    const stats = await listener.runSignalTelegramReconcile('cron', channelRow as never)
+    return { ok: true, stats }
+  }
+
+  async reconcileAllListenersOnShard(): Promise<{
+    users: number
+    stats: SignalReconcileStats
+  }> {
+    const totals: SignalReconcileStats = { checked: 0, mismatches: 0, revised: 0, errors: 0 }
+    let users = 0
+    for (const [, listener] of this.listeners) {
+      users += 1
+      const stats = await listener.runSignalTelegramReconcile('cron')
+      totals.checked += stats.checked
+      totals.mismatches += stats.mismatches
+      totals.revised += stats.revised
+      totals.errors += stats.errors
+    }
+    return { users, stats: totals }
   }
 
   async disconnectAll() {

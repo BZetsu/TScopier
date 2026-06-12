@@ -70,16 +70,22 @@ export async function updateSignalAfterRevision(
     signalId: string
     rawMessage: string
     parseResult: ParseChannelMessageResult
+    telegramEditDateSeen?: number | null
   },
 ): Promise<boolean> {
+  const patch: Record<string, unknown> = {
+    raw_message: args.rawMessage,
+    parsed_data: args.parseResult.parsed,
+    status: 'parsed',
+    skip_reason: null,
+    telegram_reconciled_at: new Date().toISOString(),
+  }
+  if (args.telegramEditDateSeen != null && args.telegramEditDateSeen > 0) {
+    patch.telegram_edit_date_seen = Math.floor(args.telegramEditDateSeen)
+  }
   const { error } = await supabase
     .from('signals')
-    .update({
-      raw_message: args.rawMessage,
-      parsed_data: args.parseResult.parsed,
-      status: 'parsed',
-      skip_reason: null,
-    })
+    .update(patch)
     .eq('id', args.signalId)
   return !error
 }

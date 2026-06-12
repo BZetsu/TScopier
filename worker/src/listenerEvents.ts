@@ -11,6 +11,9 @@ export type ListenerEventType =
   | 'ai_modification_skipped'
   | 'ai_modification_failed'
   | 'message_revision_applied'
+  | 'signal_reconcile_mismatch'
+  | 'signal_reconcile_sweep_error'
+  | 'signal_reconcile_checked'
 
 export async function persistListenerEvent(
   supabase: SupabaseClient,
