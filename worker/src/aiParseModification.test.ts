@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { parseModificationDeterministic, DEFAULT_CHANNEL_KEYWORDS } from './parseSignal'
+import { parseModificationDeterministic, parseChannelMessageSync, DEFAULT_CHANNEL_KEYWORDS } from './parseSignal'
 
 function mapActionToIntent(action: string) {
   const a = String(action ?? '').toLowerCase()
@@ -40,5 +40,24 @@ describe('ai modification intent mapping', () => {
   it('maps buy with SL to parameter_refresh intent', () => {
     assert.equal(mapActionToIntent('buy'), 'parameter_refresh')
     assert.equal(mapActionToIntent('modify'), 'modify')
+  })
+})
+
+describe('revision deterministic entry re-parse', () => {
+  it('parses SIGNALS PRO edited entry with SL/TP without AI', () => {
+    const msg = `Gold buy now 4207 - 4204
+
+SL: 4200
+
+TP: 4215
+TP: 4220
+TP: 4225
+TP: 4240
+TP: open`
+    const result = parseChannelMessageSync(msg, DEFAULT_CHANNEL_KEYWORDS, null)
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.action, 'buy')
+    assert.equal(result.parsed.sl, 4200)
+    assert.deepEqual(result.parsed.tp, [4215, 4220, 4225, 4240])
   })
 })

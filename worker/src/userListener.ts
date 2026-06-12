@@ -23,6 +23,7 @@ import { workerConfig } from './workerConfig'
 import {
   MESSAGE_REVISION_DISPATCH_SOURCE,
   buildRevisionDispatchRow,
+  entryDispatchLooksSettleable,
   loadSignalByTelegramMessage,
   storedMessageDiffersFromTelegram,
   updateSignalAfterRevision,
@@ -39,6 +40,7 @@ import {
   markSignalsReconciled,
   snapshotsFromTelegramMessages,
   telegramEditDateSec,
+  telegramMessageText,
 } from './signalTelegramReconcile'
 import { evaluateParsedSignalExecutionEligibility } from './signalExecutionEligibility'
 import { looksLikeCasualNonTradeMessage } from './signalCommentaryGuard'
@@ -85,6 +87,11 @@ const CATCHUP_BACKPRESSURE_MS = 250
 const CATCHUP_PER_CHANNEL_CAP = 200
 const BACKFILL_PER_CHANNEL_CAP = 1000
 const REPLY_CHAIN_SWEEP_MS = 60_000
+/** Re-fetch teaser entries (e.g. "Gold buy now") after channel adds SL/TP via edit. */
+const ENTRY_MESSAGE_SETTLE_MS = Math.max(
+  3_000,
+  Math.min(30_000, Number(process.env.ENTRY_MESSAGE_SETTLE_MS ?? 10_000)),
+)
 const ENTITY_WARMUP_INTERVAL_MS = Math.max(
   60_000,
   Math.min(30 * 60_000, Number(process.env.TELEGRAM_ENTITY_WARMUP_INTERVAL_MS ?? 10 * 60_000)),
@@ -1169,6 +1176,52 @@ export class UserListener {
     return true
   }
 
+  private scheduleEntryMessageSettlePoll(channelRow: ChannelRow, messageId: string) {
+    setTimeout(() => {
+      this.pollEntryMessageRevision(channelRow, messageId).catch(err => {
+        console.error(
+          `[userListener] entry settle poll failed user=${this.userId} messageId=${messageId}:`,
+          err instanceof Error ? err.message : err,
+        )
+      })
+    }, ENTRY_MESSAGE_SETTLE_MS)
+  }
+
+  private async pollEntryMessageRevision(channelRow: ChannelRow, messageId: string) {
+    const existing = await loadSignalByTelegramMessage(this.supabase, {
+      userId: this.userId,
+      channelRowId: channelRow.id,
+      telegramMessageId: messageId,
+    })
+    if (!existing) return
+
+    let peer: unknown
+    try {
+      peer = await this.resolveChannelPeer(channelRow)
+    } catch {
+      return
+    }
+
+    const numericId = Number(messageId)
+    if (!Number.isFinite(numericId) || numericId <= 0) return
+
+    const batch = (await this.client.getMessages(peer as never, {
+      ids: [numericId],
+    })) as unknown[]
+    const message = batch?.[0]
+    const rawMessage = telegramMessageText(message)
+    if (!rawMessage.trim()) return
+    if (!storedMessageDiffersFromTelegram(existing.raw_message, rawMessage)) return
+
+    await this.tryApplyMessageRevision({
+      channelRow,
+      messageId,
+      rawMessage,
+      source: 'entry_settle_poll',
+      telegramEditDateSeen: telegramEditDateSec(message),
+    })
+  }
+
   private async dispatchRevisionSignal(dispatchRow: SignalRow): Promise<void> {
     const dispatchedInProcess = this.onSignalParsed
       ? this.onSignalParsed(dispatchRow) === true
@@ -1511,6 +1564,10 @@ export class UserListener {
 
     const dispatchedInProcess = this.onSignalParsed ? this.onSignalParsed(dispatchRow) === true : false
     this.routeDispatchToTradeWorker(dispatchRow, dispatchedInProcess)
+
+    if (entryDispatchLooksSettleable(effectiveParseResult.parsed)) {
+      this.scheduleEntryMessageSettlePoll(channelRow, messageId)
+    }
 
     void this.persistSignalBackground({
       signalId,
@@ -1913,12 +1970,17 @@ export class UserListener {
       checkedIds.push(signal.id)
       editDateBySignalId.set(signal.id, snap.editDateSec)
     }
-    if (checkedIds.length) {
-      await markSignalsReconciled(this.supabase, { signalIds: checkedIds, editDateBySignalId })
-    }
     stats.checked = checkedIds.length
 
     const mismatches = findSignalsNeedingReconcile(signals, snapshots)
+    const mismatchIds = new Set(mismatches.map(m => m.signal.id))
+    const reconciledIds = checkedIds.filter(id => !mismatchIds.has(id))
+    if (reconciledIds.length) {
+      await markSignalsReconciled(this.supabase, {
+        signalIds: reconciledIds,
+        editDateBySignalId,
+      })
+    }
     if (!mismatches.length) {
       if (stats.checked > 0) {
         void persistListenerEvent(this.supabase, {
@@ -1952,7 +2014,13 @@ export class UserListener {
           source: `reconcile_${source}`,
           telegramEditDateSeen: candidate.editDateSec,
         })
-        if (revised) stats.revised += 1
+        if (revised) {
+          stats.revised += 1
+          await markSignalsReconciled(this.supabase, {
+            signalIds: [candidate.signal.id],
+            editDateBySignalId,
+          })
+        }
       } catch {
         stats.errors += 1
       }

@@ -109,3 +109,23 @@ export function revisionDirectionFlippedFromActions(
 export function storedMessageDiffersFromTelegram(stored: string, fetched: string): boolean {
   return messageTextChanged(stored, fetched)
 }
+
+/** Bare market teaser (e.g. "Gold buy now") that channels often edit seconds later with SL/TP. */
+export function entryDispatchLooksSettleable(parsed: {
+  action?: unknown
+  sl?: unknown
+  tp?: unknown
+  entry_price?: unknown
+  entry_zone_low?: unknown
+  entry_zone_high?: unknown
+} | null | undefined): boolean {
+  const action = String(parsed?.action ?? '').toLowerCase()
+  if (action !== 'buy' && action !== 'sell') return false
+  if (parsed?.sl != null && Number(parsed.sl) > 0) return false
+  const tps = Array.isArray(parsed?.tp) ? parsed!.tp : []
+  if (tps.some(t => Number(t) > 0)) return false
+  if (parsed?.entry_price != null && Number(parsed.entry_price) > 0) return false
+  if (parsed?.entry_zone_low != null && Number(parsed.entry_zone_low) > 0) return false
+  if (parsed?.entry_zone_high != null && Number(parsed.entry_zone_high) > 0) return false
+  return true
+}

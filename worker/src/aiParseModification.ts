@@ -6,8 +6,10 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { ParsedSignal } from './manualPlanning/types'
 import {
   normalizeAiParsedOutput,
+  parseChannelMessageSync,
   parseModificationDeterministic,
   type ChannelKeywords,
+  type ChannelLexiconRow,
   type ParseChannelMessageResult,
 } from './parseSignal'
 import { getChannelParseContext } from './channelKeywordsCache'
@@ -280,6 +282,49 @@ function buildAiResult(
   }
 }
 
+/** Full entry + management re-parse when AI is unavailable (message revisions). */
+function revisionDeterministicParse(
+  rawMessage: string,
+  keywords: ChannelKeywords,
+  lexicon: ChannelLexiconRow | null,
+  priorParsed: Record<string, unknown> | null | undefined,
+): AiModificationResult | null {
+  const entry = parseChannelMessageSync(rawMessage, keywords, lexicon)
+  if (entry.status === 'parsed' && entry.parsed.action !== 'ignore') {
+    const action = entry.parsed.action
+    const priorAction = priorParsed?.action
+    const intent =
+      (action === 'buy' || action === 'sell')
+      && priorAction
+      && String(priorAction).toLowerCase() === action
+        ? 'parameter_refresh'
+        : mapActionToIntent(action)
+    return {
+      parsed: entry.parsed as ParsedSignal,
+      status: 'parsed',
+      skip_reason: null,
+      intent,
+      typo_corrected: false,
+      confidence: deterministicFastPathConfidence(entry.parsed),
+      source: 'deterministic',
+    }
+  }
+
+  const mod = parseModificationDeterministic(rawMessage, keywords, lexicon)
+  if (mod.status === 'parsed' && mod.parsed.action !== 'ignore') {
+    return {
+      parsed: mod.parsed as ParsedSignal,
+      status: 'parsed',
+      skip_reason: null,
+      intent: mapActionToIntent(mod.parsed.action),
+      typo_corrected: false,
+      confidence: deterministicFastPathConfidence(mod.parsed),
+      source: 'deterministic',
+    }
+  }
+  return null
+}
+
 function fallbackIgnore(rawMessage: string, reason: string): AiModificationResult {
   return {
     parsed: {
@@ -353,6 +398,16 @@ export async function aiParseModification(
   }
 
   if (!aiModificationParseEnabled() || !OPENAI_API_KEY) {
+    if (args.revision) {
+      const revised = revisionDeterministicParse(
+        args.rawMessage,
+        keywords,
+        lexicon,
+        args.revision.prior_parsed_data,
+      )
+      if (revised) return revised
+      return fallbackIgnore(args.rawMessage, 'AI unavailable for message revision')
+    }
     const det = parseModificationDeterministic(args.rawMessage, keywords, lexicon)
     if (det.status === 'parsed' && det.parsed.action !== 'ignore') {
       return {
@@ -364,9 +419,6 @@ export async function aiParseModification(
         confidence: deterministicFastPathConfidence(det.parsed),
         source: 'deterministic',
       }
-    }
-    if (args.revision) {
-      return fallbackIgnore(args.rawMessage, 'AI unavailable for message revision')
     }
     return fallbackIgnore(args.rawMessage, det.skip_reason ?? 'Modification parse failed')
   }
@@ -374,6 +426,16 @@ export async function aiParseModification(
   const context = await buildAiModificationContext(supabase, args)
   const aiRaw = await callOpenAiModification(context)
   if (!aiRaw) {
+    if (args.revision) {
+      const revised = revisionDeterministicParse(
+        args.rawMessage,
+        keywords,
+        lexicon,
+        args.revision.prior_parsed_data,
+      )
+      if (revised) return revised
+      return fallbackIgnore(args.rawMessage, 'AI request failed for message revision')
+    }
     const det = parseModificationDeterministic(args.rawMessage, keywords, lexicon)
     if (det.status === 'parsed' && det.parsed.action !== 'ignore') {
       return {
@@ -385,9 +447,6 @@ export async function aiParseModification(
         confidence: deterministicFastPathConfidence(det.parsed),
         source: 'deterministic',
       }
-    }
-    if (args.revision) {
-      return fallbackIgnore(args.rawMessage, 'AI request failed for message revision')
     }
     return fallbackIgnore(args.rawMessage, 'AI modification parse failed')
   }

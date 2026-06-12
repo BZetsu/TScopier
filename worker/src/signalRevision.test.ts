@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  entryDispatchLooksSettleable,
   messageTextChanged,
   revisionDirectionFlippedFromActions,
   storedMessageDiffersFromTelegram,
@@ -20,5 +21,18 @@ describe('signalRevision', () => {
     assert.equal(revisionDirectionFlippedFromActions('buy', 'sell'), true)
     assert.equal(revisionDirectionFlippedFromActions('buy', 'buy'), false)
     assert.equal(revisionDirectionFlippedFromActions('modify', 'sell'), false)
+  })
+
+  it('entryDispatchLooksSettleable flags bare Gold buy now teaser', () => {
+    assert.equal(entryDispatchLooksSettleable({
+      action: 'buy',
+      sl: null,
+      tp: [],
+    }), true)
+    assert.equal(entryDispatchLooksSettleable({
+      action: 'buy',
+      sl: 4200,
+      tp: [4215],
+    }), false)
   })
 })
