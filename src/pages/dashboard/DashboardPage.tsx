@@ -35,7 +35,7 @@ import {
   buildCopierLogSymbolLabels,
   buildSignalSymbolLookup,
 } from '../../lib/copierLogDisplay'
-import { channelWorkerLogMessage } from '../../lib/channelWorkerLogMessage'
+import { channelWorkerLogMessage, filterChannelWorkerDisplayLogs } from '../../lib/channelWorkerLogMessage'
 import {
   DASHBOARD_ACTIVE_USER_KEY,
   DASHBOARD_CACHE_LEGACY_KEYS,
@@ -773,7 +773,7 @@ export function DashboardPage() {
   }, [linkedAccounts, linkedAccountBalances])
 
   const visibleChannelWorkerLogs = useMemo(
-    () => aiExpertLogs.filter(
+    () => filterChannelWorkerDisplayLogs(aiExpertLogs).filter(
       row => channelWorkerLogMessage(row, t.channelWorker, channelDisplayNames) != null,
     ),
     [aiExpertLogs, channelDisplayNames, t.channelWorker],

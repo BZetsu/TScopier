@@ -426,6 +426,46 @@ function ignoredChannelWorkerReason(row: ChannelWorkerLogRow, cw: ChannelWorkerT
   return translateSkipReason('channel_filter_ignored', cw)
 }
 
+/** Internal modify pipeline rows — hidden from the Channel Worker feed (see merge_modify_summary). */
+const CHANNEL_WORKER_HIDDEN_LOG_ACTIONS = new Set([
+  'merge_routed_modify_only',
+  'merge_anchor_selected',
+])
+
+export type ChannelWorkerDisplayLogRow = ChannelWorkerLogRow & {
+  id: string
+  created_at: string
+  signal_id?: string | null
+  broker_account_id?: string | null
+}
+
+/**
+ * Drop duplicate / internal rows before rendering the Channel Worker feed.
+ * Newest-first input is preserved.
+ */
+export function filterChannelWorkerDisplayLogs<T extends ChannelWorkerDisplayLogRow>(rows: T[]): T[] {
+  const sorted = [...rows].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
+  const recentMergeOk = new Map<string, number>()
+
+  return sorted.filter(row => {
+    const action = row.action.toLowerCase()
+    if (CHANNEL_WORKER_HIDDEN_LOG_ACTIONS.has(action)) return false
+
+    if (action === 'merge_modify_summary' && row.status.toLowerCase() === 'success') {
+      const payload = row.request_payload ?? {}
+      const anchor = String(payload.parent_signal_id ?? row.signal_id ?? '')
+      const broker = String(row.broker_account_id ?? '')
+      const rowMs = Date.parse(row.created_at)
+      if (!anchor || !Number.isFinite(rowMs)) return true
+      const key = `${anchor}|${broker}`
+      const lastMs = recentMergeOk.get(key)
+      if (lastMs != null && Math.abs(rowMs - lastMs) <= 30_000) return false
+      recentMergeOk.set(key, rowMs)
+    }
+    return true
+  })
+}
+
 function isTradeUpdateAction(logAction: string, signalAction: string): boolean {
   if (logAction === 'merge_routed_modify_only' || logAction === 'merge_modify_summary') return true
   if (logAction === 'trailing_stop' || logAction === 'auto_be' || logAction === 'cwe_close') return true
@@ -445,6 +485,7 @@ export function channelWorkerLogMessage(
   if (isNonTradeSkipReason(skipReason)) return null
   const logAction = row.action.toLowerCase()
   const signalAction = signalActionFromLog(row)
+  if (CHANNEL_WORKER_HIDDEN_LOG_ACTIONS.has(logAction)) return null
   if (signalAction === 'ignore') return null
 
   if (

@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
 import { channelWorkerEn } from '../i18n/channelWorker/en'
-import { channelWorkerLogMessage } from './channelWorkerLogMessage'
+import { channelWorkerLogMessage, filterChannelWorkerDisplayLogs } from './channelWorkerLogMessage'
 
 test('channelWorkerLogMessage: shows skipped breakeven management', () => {
   const message = channelWorkerLogMessage(
@@ -201,6 +201,64 @@ test('channelWorkerLogMessage: mgmt_skip shows single close skipped line', () =>
   assert.ok(message)
   assert.match(message!, /Did not close/i)
   assert.match(message!, /no open position on the broker/i)
+})
+
+test('filterChannelWorkerDisplayLogs: hides duplicate merge summary and internal modify rows', () => {
+  const rows = filterChannelWorkerDisplayLogs([
+    {
+      id: '1',
+      created_at: '2026-06-12T15:08:45.000Z',
+      action: 'merge_routed_modify_only',
+      status: 'success',
+      signal_id: 'edit-1',
+      broker_account_id: 'broker-1',
+      request_payload: { parent_signal_id: 'anchor-1', openLegs: 19, modified: 19 },
+      response_payload: null,
+      error_message: null,
+    },
+    {
+      id: '2',
+      created_at: '2026-06-12T15:08:45.000Z',
+      action: 'merge_modify_summary',
+      status: 'success',
+      signal_id: 'edit-1',
+      broker_account_id: 'broker-1',
+      request_payload: { parent_signal_id: 'anchor-1', openLegs: 19, modified: 19, symbol: 'XAUUSD' },
+      response_payload: null,
+      error_message: null,
+      signals: { parsed_data: { action: 'buy', symbol: 'XAUUSD' } },
+    },
+    {
+      id: '3',
+      created_at: '2026-06-12T15:08:44.500Z',
+      action: 'merge_anchor_selected',
+      status: 'success',
+      signal_id: 'edit-1',
+      broker_account_id: 'broker-1',
+      request_payload: { anchor_signal_id: 'anchor-1', symbol: 'XAUUSD' },
+      response_payload: null,
+      error_message: null,
+    },
+    {
+      id: '4',
+      created_at: '2026-06-12T15:08:43.000Z',
+      action: 'merge_modify_summary',
+      status: 'success',
+      signal_id: 'edit-2',
+      broker_account_id: 'broker-1',
+      request_payload: { parent_signal_id: 'anchor-1', openLegs: 18, modified: 18, symbol: 'XAUUSD' },
+      response_payload: null,
+      error_message: null,
+      signals: { parsed_data: { action: 'buy', symbol: 'XAUUSD' } },
+    },
+  ])
+
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0]!.id, '2')
+  assert.equal(
+    channelWorkerLogMessage(rows[0]!, channelWorkerEn, { 'ch-1': 'Test Signal Channel' }),
+    'Updated stop loss and take profit on 19 open XAUUSD legs (no new trades opened).',
+  )
 })
 
 test('channelWorkerLogMessage: still hides non-trade commentary', () => {

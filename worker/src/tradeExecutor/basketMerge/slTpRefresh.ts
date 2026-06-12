@@ -482,6 +482,7 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
         strictEntryPrefetch,
         openedTickets,
         alreadyModified: modifiedTradeIds,
+        skipAlreadySynced: true,
       })
       for (const id of pass.modifiedTradeIds) modifiedTradeIds.add(id)
       summary = pass.summary
@@ -745,52 +746,41 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
       }
     }
 
+    const alreadySyncedNoBrokerWork =
+      !mergeFailed
+      && summary.openLegs > 0
+      && summary.modified >= summary.openLegs
+      && summary.attempted === 0
+
     console.log(
       `[tradeExecutor] merge_modify_summary signal=${signal.id} broker=${broker.id} anchor=${anchorSignalId}`
       + ` open=${summary.openLegs} attempted=${summary.attempted} modified=${summary.modified}`
-      + ` failed=${summary.failed} no_ticket=${summary.skippedNoTicket}`,
+      + ` failed=${summary.failed} no_ticket=${summary.skippedNoTicket}`
+      + `${alreadySyncedNoBrokerWork ? ' already_synced' : ''}`,
     )
 
-    try {
-      await ctx.supabase.from('trade_execution_logs').insert({
-        user_id: signal.user_id,
-        signal_id: signal.id,
-        broker_account_id: broker.id,
-        action: 'merge_modify_summary',
-        status: mergeFailed ? 'failed' : 'success',
-        error_message: partialMsg,
-        request_payload: {
-          parent_signal_id: anchorSignalId,
-        symbol,
-          user_message: partialMsg,
-          ...summary,
-          virtual_pendings: virtualPendings.length,
-          leg_errors: legErrors.slice(0, 10),
-          ...(mergeLinkMeta ?? {}),
-        } as unknown as Record<string, unknown>,
-      })
-    } catch { /* best-effort */ }
-
-    try {
-      await ctx.supabase.from('trade_execution_logs').insert({
-        user_id: signal.user_id,
-        signal_id: signal.id,
-        broker_account_id: broker.id,
-        action: logAction,
-        status: mergeFailed ? 'failed' : 'success',
-        error_message: partialMsg,
-        request_payload: {
-          parent_signal_id: anchorSignalId,
-          symbol,
-          modify_only: true,
-          user_message: partialMsg,
-          ...summary,
-          virtual_pendings: virtualPendings.length,
-          leg_errors: legErrors.slice(0, 10),
-          ...(mergeLinkMeta ?? {}),
-        } as unknown as Record<string, unknown>,
-      })
-    } catch { /* best-effort */ }
+    if (!alreadySyncedNoBrokerWork) {
+      try {
+        await ctx.supabase.from('trade_execution_logs').insert({
+          user_id: signal.user_id,
+          signal_id: signal.id,
+          broker_account_id: broker.id,
+          action: 'merge_modify_summary',
+          status: mergeFailed ? 'failed' : 'success',
+          error_message: partialMsg,
+          request_payload: {
+            parent_signal_id: anchorSignalId,
+            symbol,
+            modify_only: logAction === 'merge_routed_modify_only',
+            user_message: partialMsg,
+            ...summary,
+            virtual_pendings: virtualPendings.length,
+            leg_errors: legErrors.slice(0, 10),
+            ...(mergeLinkMeta ?? {}),
+          } as unknown as Record<string, unknown>,
+        })
+      } catch { /* best-effort */ }
+    }
 
     if (!mergeFailed) {
       try {
