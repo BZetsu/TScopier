@@ -31,8 +31,11 @@ import {
 import { normalizeManualSettingsForExecution } from '../manualPlanning/normalizeManualSettings'
 import { normalizeChannelTradingConfigsMap, withChannelTradingConfig, channelConfigReadyForExecution, resolveChannelTradingConfig, healChannelTradingConfigsMap } from '../channelTradingConfig'
 import {
+  applyBrokerChannelTradingConfigRow,
   fetchBrokerChannelTradingConfigRows,
+  fetchFreshBrokerForChannel,
   mergeChannelTradingConfigsFromTable,
+  type BrokerChannelTradingConfigRow,
 } from '../brokerChannelTradingConfigs'
 import { manualDispatchAlreadyMaterialized } from './basketMerge/helpers'
 import { claimSignalBrokerDispatch } from './signalBrokerDispatchClaim'
@@ -202,6 +205,7 @@ export class TradeExecutor {
   private symbolCacheKeepaliveTimer: NodeJS.Timeout | null = null
   private signalsChannel: RealtimeChannel | null = null
   private brokersChannel: RealtimeChannel | null = null
+  private channelTradingConfigsChannel: RealtimeChannel | null = null
   private channelsChannel: RealtimeChannel | null = null
   brokersByUser = new Map<string, BrokerRow[]>()
   brokersById = new Map<string, BrokerRow>()
@@ -266,6 +270,7 @@ export class TradeExecutor {
     await this.loadBrokers()
     this.subscribeSignals()
     this.subscribeBrokers()
+    this.subscribeChannelTradingConfigs()
     this.subscribeChannelKeywords()
     const replaySince = () =>
       new Date(Date.now() - EXECUTOR_REPLAY_MAX_AGE_MS).toISOString()
@@ -321,6 +326,10 @@ export class TradeExecutor {
     this.symbolCacheKeepaliveTimer = null
     if (this.signalsChannel) { void this.supabase.removeChannel(this.signalsChannel); this.signalsChannel = null }
     if (this.brokersChannel) { void this.supabase.removeChannel(this.brokersChannel); this.brokersChannel = null }
+    if (this.channelTradingConfigsChannel) {
+      void this.supabase.removeChannel(this.channelTradingConfigsChannel)
+      this.channelTradingConfigsChannel = null
+    }
     if (this.channelsChannel) { void this.supabase.removeChannel(this.channelsChannel); this.channelsChannel = null }
   }
 
@@ -596,6 +605,41 @@ export class TradeExecutor {
           if (row.is_active) {
             void this.pingBrokerSession(row)
           }
+        },
+      )
+      .subscribe()
+  }
+
+  private subscribeChannelTradingConfigs() {
+    if (this.channelTradingConfigsChannel) return
+    this.channelTradingConfigsChannel = this.supabase
+      .channel('trade_executor_broker_channel_configs')
+      .on(
+        'postgres_changes' as never,
+        { event: '*', schema: 'public', table: 'broker_channel_trading_configs' } as never,
+        (payload: {
+          eventType?: string
+          new?: Record<string, unknown>
+          old?: Record<string, unknown>
+        }) => {
+          const evt = payload.eventType
+          if (evt === 'DELETE') {
+            const brokerId = String(payload.old?.broker_account_id ?? '')
+            if (!brokerId) return
+            const cached = this.brokersById.get(brokerId)
+            if (!cached) return
+            void this.mergeBrokerRowWithTableConfigs(cached)
+              .then(merged => this.applyBrokerCacheRow(merged))
+              .catch(err => {
+                console.error('[tradeExecutor] channel config delete refresh failed:', err)
+              })
+            return
+          }
+          const row = payload.new as BrokerChannelTradingConfigRow | undefined
+          if (!row?.broker_account_id) return
+          const cached = this.brokersById.get(row.broker_account_id)
+          if (!cached) return
+          this.applyBrokerCacheRow(applyBrokerChannelTradingConfigRow(cached, row))
         },
       )
       .subscribe()
@@ -1181,8 +1225,17 @@ export class TradeExecutor {
       return { openedOrMerged: false, finalizeSkipReason: configReady.reason }
     }
 
-    const effectiveBroker = withChannelTradingConfig(broker, signal.channel_id) as BrokerRow
-    const resolved = resolveChannelTradingConfig(broker, signal.channel_id)
+    let executionBroker = broker
+    if (signal.channel_id) {
+      const fresh = await fetchFreshBrokerForChannel(this.supabase, broker, signal.channel_id)
+      if (fresh.channel_trading_configs !== broker.channel_trading_configs) {
+        this.applyBrokerCacheRow(fresh)
+        executionBroker = this.brokersById.get(broker.id) ?? fresh
+      }
+    }
+
+    const effectiveBroker = withChannelTradingConfig(executionBroker, signal.channel_id) as BrokerRow
+    const resolved = resolveChannelTradingConfig(executionBroker, signal.channel_id)
     const entryKey = `${signal.id}:${effectiveBroker.id}`
     const liveFast = sendOpts?.liveEntryFast === true
 
@@ -1231,7 +1284,8 @@ export class TradeExecutor {
       console.log(
         `[tradeExecutor] sendOrder signal=${signal.id} broker=${effectiveBroker.id}`
         + ` channel=${signal.channel_id ?? 'none'} source=${resolved.config_source}`
-        + ` style=${String(ms.trade_style ?? 'single')} fixed_lot=${String(ms.fixed_lot ?? 'missing')}`,
+        + ` style=${String(ms.trade_style ?? 'single')} fixed_lot=${String(ms.fixed_lot ?? 'missing')}`
+        + ` range_trading=${ms.range_trading === true}`,
       )
 
       const isManual = (effectiveBroker.copier_mode ?? 'ai') === 'manual'
