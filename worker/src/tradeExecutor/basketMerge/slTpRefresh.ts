@@ -34,6 +34,7 @@ import {
   type ParsedSignal as PlannerParsedSignal,
   type PlannerPartialTp
 } from '../../manualPlanner'
+import { isMtBridgeGlitchMessage } from '../../brokerConnectError'
 import { MtOperation } from '../../metatraderapi'
 import { buildPerLegStopTargets, mergePlanImmediateOrders, type MergeModifySummary } from '../../multiTradeMerge'
 import { isRangeLayerTillCloseEnabled } from '../../rangeLayerTillClose'
@@ -329,12 +330,17 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
         )
       }
     }
-    const refreshImmediateLegCount = sameSignalRefresh
-      ? familyTrades.length
-      : Math.max(
-          mergePlanImmediateOrders(plan).length,
-          Math.max(0, familyTrades.length - Math.max(0, maxPendingStepIdx - activePendingCount)),
-        )
+    // Modify-only refreshes (message edits on an existing basket) must spread TPs
+    // across every open leg. Using the entry-plan instant/range split after extra
+    // range legs have fired leaves trailing legs with takeprofit=0 and can crash
+    // the MT bridge when OrderModify sends TP=0 on a ticket that already has TP.
+    const refreshImmediateLegCount =
+      sameSignalRefresh || logAction === 'merge_routed_modify_only'
+        ? familyTrades.length
+        : Math.max(
+            mergePlanImmediateOrders(plan).length,
+            Math.max(0, familyTrades.length - Math.max(0, maxPendingStepIdx - activePendingCount)),
+          )
     // Single-mode partial schedule comes from planManualOrders (uses derived finalTps,
     // predefined TP pips, Targets %, single_tp_target — not raw parsed.tp alone).
     const singlePartialPartials: PlannerPartialTp[] =
@@ -481,6 +487,18 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
       summary = pass.summary
       legErrors = pass.legErrors.map(e => ({ error: e.error, leg_index: e.leg_index }))
       if (modifiedTradeIds.size >= familyTrades.length) break
+      const pendingErrors = pass.legErrors.filter(e => e.error && !e.skip_reason)
+      if (
+        pendingErrors.length > 0
+        && pendingErrors.every(e => isMtBridgeGlitchMessage(e.error))
+        && modifiedTradeIds.size === 0
+      ) {
+        console.warn(
+          `[tradeExecutor] basket refresh bridge glitch — deferring straggler rounds`
+          + ` signal=${signal.id} broker=${broker.id} legs=${familyTrades.length}`,
+        )
+        break
+      }
     }
 
     const stillMissingTicket = familyTrades.filter(tr => {

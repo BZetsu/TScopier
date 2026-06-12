@@ -258,6 +258,26 @@ test('buildPerLegStopTargets: split pools keep instant vs range TP slots', () =>
   assert.equal(targets[2]!.takeprofit, 4510)
 })
 
+test('buildPerLegStopTargets: modify-only refresh spreads TPs across all open legs', () => {
+  const plan: PlannerResult = { orders: [], delay_ms: 0, virtualPendings: [] }
+  const targets = buildPerLegStopTargets({
+    plan,
+    parsed: { sl: 4185, tp: [4220, 4230, 4240, 4245] },
+    openLegCount: 13,
+    totalPlannedLegCount: 13,
+    immediateLegCount: 13,
+    tpLots: [
+      { label: 'TP1', lot: 0, percent: 40, enabled: true },
+      { label: 'TP2', lot: 0, percent: 30, enabled: true },
+      { label: 'TP3', lot: 0, percent: 20, enabled: true },
+      { label: 'TP4', lot: 0, percent: 10, enabled: true },
+    ],
+  })
+  assert.equal(targets.length, 13)
+  assert.equal(targets.every(t => t.takeprofit > 0), true)
+  assert.equal(targets[12]!.takeprofit, 4245)
+})
+
 test('buildPerLegStopTargets: message-edit refresh treats all open legs as immediate', () => {
   const plan: PlannerResult = { orders: [], delay_ms: 0, virtualPendings: [] }
   const targets = buildPerLegStopTargets({
