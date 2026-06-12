@@ -214,6 +214,13 @@ export const landingFr: LandingTranslations = {
         visual: 'filters',
       },
       {
+        eyebrow: 'Messages modifiés',
+        title: 'Modification de signal depuis les messages édités',
+        description:
+          'Quand un fournisseur modifie un message Telegram pour changer le stop ou les take-profits, TSCopier détecte la révision et met à jour votre panier ouvert chez le broker — pas de nouvelles entrées, seulement des SL/TP synchronisés sur chaque jambe.',
+        visual: 'signalEdit',
+      },
+      {
         eyebrow: 'Backtest',
         title: 'Rejouez l’historique avant le live',
         description:
@@ -279,6 +286,21 @@ export const landingFr: LandingTranslations = {
             decision: 'allow',
           },
         ],
+      },
+      signalEdit: {
+        channelName: 'Gold Signals Pro',
+        channelMeta: 'Telegram · message modifié',
+        editedLabel: 'Modifié',
+        messageBuy: 'ACHAT XAUUSD',
+        beforeLabel: 'Avant',
+        beforeSl: 'SL 4190',
+        beforeTp: 'TP1 4220',
+        afterLabel: 'Mis à jour',
+        afterSl: 'SL 4175',
+        afterTp: 'TP1 4230 · TP2 4240',
+        workerTitle: 'Channel worker',
+        workerMessage: 'SL/TP mis à jour sur 7 jambes XAUUSD ouvertes (aucun nouveau trade)',
+        workerTime: 'À l’instant',
       },
       backtest: {
         resultsTitle: 'Résultats du backtest',
@@ -580,6 +602,20 @@ export const landingFr: LandingTranslations = {
         aspect: 'Plateforme',
         other: 'Fonctions clés vendues en modules ou upgrades séparés.',
         tscopier: 'Copieur, backtest, journaux, actualités et calendrier dans un abonnement.',
+      },
+      {
+        aspect: 'Fusion de trades',
+        other:
+          '« Gold buy now » ouvre des positions, puis « Gold buy now » avec SL/TP en ouvre d’autres — doublons ou corrections manuelles.',
+        tscopier:
+          '« Gold buy now » ouvre le trade. Quand le SL et le TP arrivent dans le message suivant, nous mettons à jour ces positions — nous n’ouvrons pas Gold une deuxième fois.',
+      },
+      {
+        aspect: 'Messages modifiés',
+        other:
+          'Les messages Telegram modifiés sont ignorés — vous ratez les mises à jour SL/TP ou corrigez à la main.',
+        tscopier:
+          'Modification de signal depuis les messages édités : SL et TPs synchronisés sur le panier ouvert, sans nouvelles entrées.',
       },
       {
         aspect: 'Backtest',

@@ -6,6 +6,7 @@ export interface LandingFeatureTranslation {
 export type LandingFeatureVisualId =
   | 'copier'
   | 'filters'
+  | 'signalEdit'
   | 'backtest'
   | 'logs'
   | 'news'
@@ -93,6 +94,22 @@ export interface LandingBacktestVisualCopy {
   signals: LandingBacktestSignalVisual[]
 }
 
+export interface LandingSignalEditVisualCopy {
+  channelName: string
+  channelMeta: string
+  editedLabel: string
+  messageBuy: string
+  beforeLabel: string
+  beforeSl: string
+  beforeTp: string
+  afterLabel: string
+  afterSl: string
+  afterTp: string
+  workerTitle: string
+  workerMessage: string
+  workerTime: string
+}
+
 export interface LandingFeatureVisualsCopy {
   copier: {
     telegramLabel: string
@@ -112,6 +129,7 @@ export interface LandingFeatureVisualsCopy {
     ignoreLabel: string
     rules: LandingFilterRuleVisual[]
   }
+  signalEdit: LandingSignalEditVisualCopy
   backtest: LandingBacktestVisualCopy
   logs: LandingCopierLogsVisualCopy
   news: {

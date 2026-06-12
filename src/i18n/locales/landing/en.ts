@@ -214,6 +214,13 @@ export const landingEn: LandingTranslations = {
         visual: 'filters',
       },
       {
+        eyebrow: 'Message edits',
+        title: 'Signal modification from edited messages',
+        description:
+          'When a provider edits a Telegram message to change stop loss or take-profit levels, TScopier picks up the revision and updates your open basket on the broker—no new entries, just synchronized SL/TP across every leg.',
+        visual: 'signalEdit',
+      },
+      {
         eyebrow: 'Backtest',
         title: 'Replay channel history before going live',
         description:
@@ -279,6 +286,21 @@ export const landingEn: LandingTranslations = {
             decision: 'allow',
           },
         ],
+      },
+      signalEdit: {
+        channelName: 'Gold Signals Pro',
+        channelMeta: 'Telegram · message edited',
+        editedLabel: 'Edited',
+        messageBuy: 'BUY XAUUSD',
+        beforeLabel: 'Previous',
+        beforeSl: 'SL 4190',
+        beforeTp: 'TP1 4220',
+        afterLabel: 'Updated',
+        afterSl: 'SL 4175',
+        afterTp: 'TP1 4230 · TP2 4240',
+        workerTitle: 'Channel worker',
+        workerMessage: 'Updated SL/TP on 7 open XAUUSD legs (no new trades opened)',
+        workerTime: 'Just now',
       },
       backtest: {
         resultsTitle: 'Backtest results',
@@ -579,6 +601,19 @@ export const landingEn: LandingTranslations = {
         aspect: 'Platform',
         other: 'Key capabilities sold as separate products or upgrades.',
         tscopier: 'Copier, backtest, logs, news, and calendar in one subscription.',
+      },
+      {
+        aspect: 'Trade merging',
+        other:
+          '"Gold buy now" opens trades, then "Gold buy now" with SL/TP opens again—you double up or fix it manually.',
+        tscopier:
+          '"Gold buy now" opens the trade. When SL and TP come in the next message, we update those trades—we do not open Gold again.',
+      },
+      {
+        aspect: 'Edited messages',
+        other: 'Edited Telegram messages are ignored—you miss SL/TP updates or fix trades by hand.',
+        tscopier:
+          'Signal modification from edited messages syncs stop loss and take-profits across your open basket—no new trades.',
       },
       {
         aspect: 'Backtesting',

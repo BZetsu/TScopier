@@ -214,6 +214,13 @@ export const landingEs: LandingTranslations = {
         visual: 'filters',
       },
       {
+        eyebrow: 'Ediciones de mensaje',
+        title: 'Modificación de señal desde mensajes editados',
+        description:
+          'Cuando un proveedor edita un mensaje de Telegram para cambiar el stop loss o los take-profits, TSCopier detecta la revisión y actualiza tu cesta abierta en el broker — sin nuevas entradas, solo SL/TP sincronizados en cada pierna.',
+        visual: 'signalEdit',
+      },
+      {
         eyebrow: 'Backtest',
         title: 'Reproduce el historial antes de ir en vivo',
         description:
@@ -279,6 +286,21 @@ export const landingEs: LandingTranslations = {
             decision: 'allow',
           },
         ],
+      },
+      signalEdit: {
+        channelName: 'Gold Signals Pro',
+        channelMeta: 'Telegram · mensaje editado',
+        editedLabel: 'Editado',
+        messageBuy: 'COMPRA XAUUSD',
+        beforeLabel: 'Anterior',
+        beforeSl: 'SL 4190',
+        beforeTp: 'TP1 4220',
+        afterLabel: 'Actualizado',
+        afterSl: 'SL 4175',
+        afterTp: 'TP1 4230 · TP2 4240',
+        workerTitle: 'Channel worker',
+        workerMessage: 'SL/TP actualizados en 7 piernas XAUUSD abiertas (sin nuevos trades)',
+        workerTime: 'Ahora mismo',
       },
       backtest: {
         resultsTitle: 'Resultados del backtest',
@@ -580,6 +602,20 @@ export const landingEs: LandingTranslations = {
         aspect: 'Plataforma',
         other: 'Funciones clave vendidas como productos o upgrades aparte.',
         tscopier: 'Copiador, backtest, logs, noticias y calendario en una suscripción.',
+      },
+      {
+        aspect: 'Fusión de trades',
+        other:
+          '"Gold buy now" abre trades y luego "Gold buy now" con SL/TP abre otra vez: duplicas o lo arreglas a mano.',
+        tscopier:
+          '"Gold buy now" abre el trade. Cuando el SL y el TP llegan en el siguiente mensaje, actualizamos esas operaciones — no abrimos Gold otra vez.',
+      },
+      {
+        aspect: 'Mensajes editados',
+        other:
+          'Los mensajes de Telegram editados se ignoran: pierdes actualizaciones de SL/TP o corriges a mano.',
+        tscopier:
+          'Modificación de señal desde mensajes editados: SL y TPs sincronizados en la cesta abierta, sin nuevos trades.',
       },
       {
         aspect: 'Backtest',
