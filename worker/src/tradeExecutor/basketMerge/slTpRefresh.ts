@@ -18,6 +18,7 @@ import {
   reapplyChannelParamsToPendingLegs,
   parsedSignalHasExplicitStops,
   shouldOverlayChannelParamsOnBasketRefresh,
+  shouldPreferParsedStopsOnEntry,
   shouldPreferSignalStopsOverChannelMemory,
   upsertChannelActiveTradeParams,
   type ChannelActiveTradeParams
@@ -142,10 +143,7 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
         plannerParsed = mergeParsedWithChannelParams(plannerParsed, channelParamsForLadder, {
           overlay: true,
         })
-      } else if (
-        shouldPreferSignalStopsOverChannelMemory(plannerParsed)
-        && parsedSignalHasExplicitStops(plannerParsed)
-      ) {
+      } else if (shouldPreferParsedStopsOnEntry(plannerParsed)) {
         const refreshTpLevels = (plannerParsed.tp ?? []).filter(
           (t): t is number => typeof t === 'number' && Number.isFinite(t) && t > 0,
         )
@@ -240,6 +238,7 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
       && (typeof effectiveParsed.sl === 'number' && effectiveParsed.sl > 0 || refreshTpLevels.length > 0)
       && (
         logAction === 'merge_routed_modify_only'
+        || shouldPreferParsedStopsOnEntry(plannerParsed)
         || shouldPreferSignalStopsOverChannelMemory(plannerParsed)
       )
     ) {
@@ -249,7 +248,8 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
         symbols: [symbol],
         stoploss: effectiveParsed.sl,
         tpLevels: refreshTpLevels,
-        replace: shouldPreferSignalStopsOverChannelMemory(plannerParsed)
+        replace: shouldPreferParsedStopsOnEntry(plannerParsed)
+          || shouldPreferSignalStopsOverChannelMemory(plannerParsed)
           || logAction === 'merge_routed_modify_only',
       })
       channelParamsForLadder = await loadChannelActiveTradeParamsForSymbol(

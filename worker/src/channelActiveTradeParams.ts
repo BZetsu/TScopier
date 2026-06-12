@@ -186,6 +186,8 @@ export function shouldOverlayChannelParamsOnBasketRefresh(
   logAction: 'merge_routed_modify_only' | 'signal_merge_into_open_trade',
 ): boolean {
   if (logAction !== 'signal_merge_into_open_trade') return false
+  // "Gold buy now" + SL/TP must not inherit stale Adjust SL from channel memory.
+  if (shouldPreferParsedStopsOnEntry(parsed)) return false
   return !shouldPreferSignalStopsOverChannelMemory(parsed)
 }
 

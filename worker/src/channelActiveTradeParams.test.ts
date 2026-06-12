@@ -336,7 +336,7 @@ describe('channelActiveTradeParams', () => {
     )
   })
 
-  test('shouldOverlayChannelParamsOnBasketRefresh allows overlay for parameter follow-ups', () => {
+  test('shouldOverlayChannelParamsOnBasketRefresh blocks overlay when message carries SL/TP', () => {
     const slTpOnly = {
       action: 'sell' as const,
       symbol: 'XAUUSD',
@@ -348,13 +348,32 @@ describe('channelActiveTradeParams', () => {
       lot_size: null,
     }
     assert.equal(shouldPreferSignalStopsOverChannelMemory(slTpOnly), false)
+    assert.equal(shouldPreferParsedStopsOnEntry(slTpOnly), true)
     assert.equal(
       shouldOverlayChannelParamsOnBasketRefresh(slTpOnly, 'signal_merge_into_open_trade'),
-      true,
+      false,
     )
     assert.equal(
       shouldOverlayChannelParamsOnBasketRefresh(slTpOnly, 'merge_routed_modify_only'),
       false,
+    )
+  })
+
+  test('shouldOverlayChannelParamsOnBasketRefresh allows overlay for naked merge without message stops', () => {
+    const naked = {
+      action: 'buy' as const,
+      symbol: 'XAUUSD',
+      entry_price: null,
+      entry_zone_low: null,
+      entry_zone_high: null,
+      sl: null,
+      tp: [],
+      lot_size: null,
+    }
+    assert.equal(shouldPreferParsedStopsOnEntry(naked), false)
+    assert.equal(
+      shouldOverlayChannelParamsOnBasketRefresh(naked, 'signal_merge_into_open_trade'),
+      true,
     )
   })
 
