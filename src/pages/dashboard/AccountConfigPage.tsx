@@ -750,7 +750,7 @@ export function AccountConfigPage() {
     setReconnectErrorHandler,
     clearStoredCredentials,
   } = useBrokerAccounts()
-  const { openAddTradingAccount } = useAddTradingAccount()
+  const { openAddTradingAccount, pendingConfigureBrokerId, clearPendingConfigureBroker } = useAddTradingAccount()
   const {
     subscription,
     effectivePlan,
@@ -1409,6 +1409,28 @@ export function AccountConfigPage() {
     setChannelLinkEditMode(false)
     if (userId) void refreshTradingPresets(userId)
   }
+
+  useEffect(() => {
+    if (!pendingConfigureBrokerId || brokersLoading) return
+    const broker = brokers.find(b => b.id === pendingConfigureBrokerId)
+    if (!broker) return
+    if (configAccount?.id === pendingConfigureBrokerId) {
+      clearPendingConfigureBroker()
+      return
+    }
+    if (channelsLoading && channelOptions.length === 0) return
+    void openConfigureModal(broker)
+    clearPendingConfigureBroker()
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- open configure once when broker connect success requests it
+  }, [
+    pendingConfigureBrokerId,
+    brokers,
+    brokersLoading,
+    channelsLoading,
+    channelOptions.length,
+    configAccount?.id,
+    clearPendingConfigureBroker,
+  ])
 
   const selectConfigureChannel = (channelId: string) => {
     setConfigDraft(prev => ({ ...prev, selectedChannelId: channelId }))

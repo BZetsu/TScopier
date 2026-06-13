@@ -17,13 +17,15 @@ import { Select } from '../ui/Select'
 import { Button } from '../ui/Button'
 import { MtCompanyServerPicker } from '../ui/MtCompanyServerPicker'
 import { useOverlayDismiss } from '../../hooks/useOverlayDismiss'
+import type { BrokerAccount } from '../../types/database'
 
 type ConnectTradingAccountModalProps = {
   open: boolean
   onClose: () => void
+  onSuccess?: (broker: BrokerAccount) => void
 }
 
-export function ConnectTradingAccountModal({ open, onClose }: ConnectTradingAccountModalProps) {
+export function ConnectTradingAccountModal({ open, onClose, onSuccess }: ConnectTradingAccountModalProps) {
   const t = useT()
   const bl = t.accountConfig.brokerList
   const pw = t.pricing.paywall
@@ -132,7 +134,12 @@ export function ConnectTradingAccountModal({ open, onClose }: ConnectTradingAcco
           patchBroker(broker.id, patch)
         })
       }
-      handleClose()
+      reset()
+      if (onSuccess) {
+        onSuccess(broker)
+      } else {
+        onClose()
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : t.accountConfig.connectForm.connectFailed)
     } finally {

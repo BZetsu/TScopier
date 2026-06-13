@@ -401,6 +401,12 @@ export const fr: Translations = {
       accountSearchPlaceholder: 'Libellé, identifiant, serveur, broker…',
       accountSearchNoMatch: 'Aucun compte ne correspond à votre recherche.',
     },
+    brokerConnectedSuccess: {
+      title: 'Broker connecté',
+      body: '{account} est connecté et prêt à copier les signaux.',
+      addChannel: 'Ajouter un canal',
+      configure: 'Configurer',
+    },
     configureModal: configureModalFr,
   },
   dashboard: {

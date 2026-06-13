@@ -401,6 +401,12 @@ export const es: Translations = {
       accountSearchPlaceholder: 'Etiqueta, login, servidor, broker…',
       accountSearchNoMatch: 'Ninguna cuenta coincide con tu búsqueda.',
     },
+    brokerConnectedSuccess: {
+      title: 'Broker conectado',
+      body: '{account} está conectado y listo para copiar señales.',
+      addChannel: 'Añadir canal',
+      configure: 'Configurar',
+    },
     configureModal: configureModalEs,
   },
   dashboard: {

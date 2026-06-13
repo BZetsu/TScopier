@@ -381,6 +381,13 @@ export interface AccountConfigBrokerListTranslations {
   accountSearchNoMatch: string
 }
 
+export interface AccountConfigBrokerConnectedSuccessTranslations {
+  title: string
+  body: string
+  addChannel: string
+  configure: string
+}
+
 export interface AccountConfigTranslations {
   brokersEmptyTitle: string
   brokersEmptySubtitle: string
@@ -388,6 +395,7 @@ export interface AccountConfigTranslations {
   connectForm: AccountConfigConnectFormTranslations
   brokerList: AccountConfigBrokerListTranslations
   configureModal: ConfigureModalTranslations
+  brokerConnectedSuccess: AccountConfigBrokerConnectedSuccessTranslations
 }
 
 export interface TradesTranslations {
