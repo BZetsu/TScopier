@@ -2026,7 +2026,7 @@ export function AccountConfigPage() {
               loading={reconnectingBrokerIds.size > 0}
               onClick={() => {
                 for (const b of brokersNeedingReconnect) {
-                  void reconnectBroker(b.id)
+                  void reconnectBroker(b.id, { forcePasswordPrompt: true })
                 }
               }}
             >
@@ -2165,7 +2165,7 @@ export function AccountConfigPage() {
                           size="sm"
                           variant="secondary"
                           loading={isReconnecting}
-                          onClick={() => void reconnectBroker(broker.id)}
+                          onClick={() => void reconnectBroker(broker.id, { forcePasswordPrompt: true })}
                         >
                           <RefreshCw className="w-3.5 h-3.5" />
                           {bl.reconnect}

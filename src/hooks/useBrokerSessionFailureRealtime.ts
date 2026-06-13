@@ -2,6 +2,11 @@ import { useEffect, useRef, type Dispatch, type SetStateAction } from 'react'
 import { supabase } from '../lib/supabase'
 import type { BrokerAccount } from '../types/database'
 import { metatraderApi } from '../lib/metatraderapi'
+import {
+  brokerReconnectInFlight,
+  endBrokerReconnect,
+  tryBeginBrokerReconnect,
+} from '../lib/brokerReconnectCoordinator'
 
 const RECONNECT_DEBOUNCE_MS = 3_000
 
@@ -66,9 +71,10 @@ export function useBrokerSessionFailureRealtime(
             ),
           )
 
-          if (silentReconnect && !reconnectTimeouts.current.has(brokerId)) {
+          if (silentReconnect && !reconnectTimeouts.current.has(brokerId) && !brokerReconnectInFlight(brokerId)) {
             const timeout = setTimeout(async () => {
               reconnectTimeouts.current.delete(brokerId)
+              if (!tryBeginBrokerReconnect(brokerId)) return
               try {
                 const result = await metatraderApi.reconnect(brokerId)
                 if (result.connection_status === 'connected') {
@@ -92,6 +98,8 @@ export function useBrokerSessionFailureRealtime(
                 }
               } catch {
                 // Silent — periodic reconnect loop will handle retries
+              } finally {
+                endBrokerReconnect(brokerId)
               }
             }, RECONNECT_DEBOUNCE_MS)
             reconnectTimeouts.current.set(brokerId, timeout)

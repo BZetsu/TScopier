@@ -191,7 +191,8 @@ export function BrokerAccountsProvider({ children }: { children: ReactNode }) {
     enabled: !healthChecksPaused,
     refreshOnVisible: !healthChecksPaused,
   })
-  useBrokerConnectionRecovery(brokers, setBrokers, { enabled: !recoveryPaused })
+  // Recovery sweep disabled — useBrokerReconnect silent sweep + worker BrokerConnectionMonitor cover this.
+  useBrokerConnectionRecovery(brokers, setBrokers, { enabled: false })
   useBrokerSessionFailureRealtime(user?.id, setBrokers, { silentReconnect: !recoveryPaused })
 
   const clearStoredCredentials = useCallback(async (brokerId: string) => {

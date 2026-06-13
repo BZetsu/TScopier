@@ -14,6 +14,7 @@ import { TrailingStopMonitor } from './trailingStopMonitor'
 import { BasketSlTpReconcileMonitor } from './basketSlTpReconcileMonitor'
 import { NewsTradingMonitor } from './newsTradingMonitor'
 import { BrokerConnectionMonitor } from './brokerConnectionMonitor'
+import { isBrokerCredentialsCryptoConfigured } from './brokerCredentialsCrypto'
 import { OpenTradeReconcileMonitor } from './openTradeReconcileMonitor'
 import { CopyLimitMonitor } from './copyLimitMonitor'
 import { workerConfig } from './workerConfig'
@@ -79,6 +80,12 @@ function startTradeMonitors() {
   if (workerConfig.runsTrade) {
     const brokerConnectionMonitor = new BrokerConnectionMonitor(supabase)
     const copyLimitMonitor = new CopyLimitMonitor(supabase)
+    if (!isBrokerCredentialsCryptoConfigured()) {
+      console.warn(
+        '[worker] BROKER_CREDENTIALS_ENCRYPTION_KEY not set — stored-password auto reconnect disabled;'
+        + ' set the same key in Supabase Edge secrets',
+      )
+    }
     brokerConnectionMonitor.start()
     copyLimitMonitor.start()
     trackMonitor(brokerConnectionMonitor)

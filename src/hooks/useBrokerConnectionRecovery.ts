@@ -4,6 +4,11 @@ import type { BrokerAccount } from '../types/database'
 import { isMtSessionUuid } from '../lib/brokerLink'
 import { brokerCanReconnect } from '../lib/brokerReconnect'
 import { metatraderApi } from '../lib/metatraderapi'
+import {
+  brokerReconnectInFlight,
+  endBrokerReconnect,
+  tryBeginBrokerReconnect,
+} from '../lib/brokerReconnectCoordinator'
 
 const RECOVERY_INTERVAL_MS = 30_000
 const SAME_SERVER_GAP_MS = 1500
@@ -44,7 +49,8 @@ export function useBrokerConnectionRecovery(
     let cancelled = false
 
     const recoverOne = async (broker: BrokerAccount): Promise<void> => {
-      if (recoveringRef.current.has(broker.id)) return
+      if (recoveringRef.current.has(broker.id) || brokerReconnectInFlight(broker.id)) return
+      if (!tryBeginBrokerReconnect(broker.id)) return
       recoveringRef.current.add(broker.id)
       try {
         const result = await metatraderApi.reconnect(broker.id)
@@ -72,6 +78,7 @@ export function useBrokerConnectionRecovery(
         // Silent — next sweep retries
       } finally {
         recoveringRef.current.delete(broker.id)
+        endBrokerReconnect(broker.id)
       }
     }
 

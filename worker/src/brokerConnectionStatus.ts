@@ -1,7 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import {
   classifyBrokerConnectError,
-  friendlyBrokerConnectError,
   type BrokerConnectErrorKind,
 } from './brokerConnectError'
 
@@ -36,11 +35,12 @@ export async function writeBrokerConnectionStatus(
     patch.connection_error_kind = null
     patch.connection_error_message = null
   } else if (opts?.rawError) {
-    patch.connection_error_kind = opts.errorKind ?? classifyBrokerConnectError(opts.rawError)
-    patch.connection_error_message = friendlyBrokerConnectError(opts.rawError)
+    const raw = String(opts.rawError).trim() || 'Broker session is not connected'
+    patch.connection_error_kind = opts.errorKind ?? classifyBrokerConnectError(raw)
+    patch.connection_error_message = raw
   } else if (status === 'error') {
     patch.connection_error_kind = 'session_expired'
-    patch.connection_error_message = friendlyBrokerConnectError('session expired')
+    patch.connection_error_message = 'session expired'
   }
 
   const { error } = await supabase

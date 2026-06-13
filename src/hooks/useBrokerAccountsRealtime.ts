@@ -2,6 +2,11 @@ import { useEffect, useRef, type Dispatch, type SetStateAction } from 'react'
 import { supabase } from '../lib/supabase'
 import type { BrokerAccount } from '../types/database'
 import { metatraderApi } from '../lib/metatraderapi'
+import {
+  brokerReconnectInFlight,
+  endBrokerReconnect,
+  tryBeginBrokerReconnect,
+} from '../lib/brokerReconnectCoordinator'
 import { sortBrokerAccountsNewestFirst } from '../lib/brokerAccountSelect'
 import { isMtSessionUuid } from '../lib/brokerLink'
 
@@ -51,9 +56,11 @@ export function useBrokerAccountsRealtime(
             && row.connection_status === 'error'
             && isMtSessionUuid(row.metaapi_account_id)
             && !reconnectTimeouts.current.has(row.id)
+            && !brokerReconnectInFlight(row.id)
           ) {
             const timeout = setTimeout(async () => {
               reconnectTimeouts.current.delete(row.id)
+              if (!tryBeginBrokerReconnect(row.id)) return
               try {
                 const result = await metatraderApi.reconnect(row.id)
                 if (result.connection_status === 'connected') {
@@ -77,6 +84,8 @@ export function useBrokerAccountsRealtime(
                 }
               } catch {
                 // Silent — periodic loop will continue retrying
+              } finally {
+                endBrokerReconnect(row.id)
               }
             }, RECONNECT_DEBOUNCE_MS)
             reconnectTimeouts.current.set(row.id, timeout)

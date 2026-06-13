@@ -2100,7 +2100,7 @@ export function DashboardPage() {
                 toggleDisabled={togglingBrokerId === account.id}
                 showReconnect={brokerCanReconnect(account)}
                 isReconnecting={isBrokerReconnecting(account.id)}
-                onReconnect={() => { void reconnectBroker(account.id) }}
+                onReconnect={() => { void reconnectBroker(account.id, { forcePasswordPrompt: true }) }}
                 onOpenStats={() =>
                   navigate(`/dashboard/broker/${account.id}`, {
                     state: { accountPreview: brokerStatsPreviewFromAccount(account) },

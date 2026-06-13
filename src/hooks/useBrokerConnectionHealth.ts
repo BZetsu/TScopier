@@ -9,6 +9,11 @@ import {
 } from '../lib/brokerHealthCheck'
 import { classifyBrokerConnectError } from '../lib/brokerConnectError'
 import { metatraderApi } from '../lib/metatraderapi'
+import {
+  brokerReconnectInFlight,
+  endBrokerReconnect,
+  tryBeginBrokerReconnect,
+} from '../lib/brokerReconnectCoordinator'
 
 const FAILURES_BEFORE_DISCONNECT = 4
 const SAME_SERVER_GAP_MS = 1500
@@ -85,7 +90,8 @@ export function useBrokerConnectionHealth(
     const activeIds = new Set(connectedKey.split(','))
 
     const attemptSilentReconnect = async (brokerId: string): Promise<boolean> => {
-      if (reconnectingRef.current.has(brokerId)) return false
+      if (reconnectingRef.current.has(brokerId) || brokerReconnectInFlight(brokerId)) return false
+      if (!tryBeginBrokerReconnect(brokerId)) return false
       reconnectingRef.current.add(brokerId)
       try {
         const result = await metatraderApi.reconnect(brokerId)
@@ -128,6 +134,7 @@ export function useBrokerConnectionHealth(
         return false
       } finally {
         reconnectingRef.current.delete(brokerId)
+        endBrokerReconnect(brokerId)
       }
     }
 

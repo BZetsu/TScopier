@@ -16,7 +16,7 @@ import {
   MT_SESSION_EXPIRED_HINT,
   type MtPlatform,
 } from "./metatraderapi.ts"
-import { withMtServerSessionLock } from "./mtServerSessionLock.ts"
+import { withDistributedMtServerConnectLock } from "./mtServerConnectLock.ts"
 
 export function parseBrokerSessionId(metaapiAccountId: string | null | undefined): string | null {
   const uuid = String(metaapiAccountId ?? "").trim()
@@ -53,7 +53,14 @@ export async function resolveStoredMtPassword(
   const explicit = opts.password?.trim()
   if (explicit) return explicit
   if (!broker.auto_reconnect_enabled || !broker.mt_password_encrypted) return undefined
+  if (!isBrokerCredentialsCryptoConfigured(env)) {
+    console.warn("[brokerSession] auto_reconnect enabled but BROKER_CREDENTIALS_ENCRYPTION_KEY is not configured")
+    return undefined
+  }
   const decrypted = await decryptMtPassword(broker.mt_password_encrypted, env)
+  if (!decrypted?.trim()) {
+    console.warn("[brokerSession] stored MT password could not be decrypted — check BROKER_CREDENTIALS_ENCRYPTION_KEY matches worker")
+  }
   return decrypted?.trim() || undefined
 }
 
@@ -172,13 +179,14 @@ export async function markBrokerConnectionError(
   rawMessage: string,
   opts?: BrokerConnectErrorOptions,
 ): Promise<{ kind: string; message: string }> {
-  const { kind, message } = connectionErrorFromRaw(rawMessage, opts)
+  const raw = String(rawMessage ?? "").trim() || "Broker reconnect failed"
+  const { kind, message } = connectionErrorFromRaw(raw, opts)
   await supabase
     .from("broker_accounts")
     .update({
       connection_status: "error",
       connection_error_kind: kind,
-      connection_error_message: message,
+      connection_error_message: raw,
     })
     .eq("id", broker.id)
     .eq("user_id", broker.user_id)
@@ -204,6 +212,62 @@ export async function keepBrokerSessionAlive(
   uuid: string,
 ): Promise<boolean> {
   return client.keepSessionAlive(uuid)
+}
+
+async function fetchAccountSummaryWithRetry(
+  client: MetatraderApiClient,
+  uuid: string,
+): Promise<{ summary: Awaited<ReturnType<MetatraderApiClient["accountSummary"]>> | null; lastErr: unknown }> {
+  let summary: Awaited<ReturnType<MetatraderApiClient["accountSummary"]>> | null = null
+  let lastErr: unknown = null
+  for (let i = 0; i < 4; i++) {
+    try {
+      const s = await client.accountSummary(uuid)
+      if (s && (s.balance != null || s.equity != null || s.currency)) {
+        summary = s
+        break
+      }
+    } catch (err) {
+      lastErr = err
+    }
+    await new Promise((r) => setTimeout(r, 400 + i * 350))
+  }
+  return { summary, lastErr }
+}
+
+async function attemptConnectExReconnect(
+  client: MetatraderApiClient,
+  supabase: SupabaseClient,
+  broker: {
+    id: string
+    platform?: string | null
+    account_login?: string | null
+    broker_server?: string | null
+  },
+  uuid: string,
+  password: string,
+  credentialOpts: BrokerConnectErrorOptions | undefined,
+): Promise<{ ok: true } | { ok: false; raw: string }> {
+  const login = String(broker.account_login ?? "").trim()
+  const server = String(broker.broker_server ?? "").trim()
+  if (!login || !server) {
+    return { ok: false, raw: "Broker login or server missing for reconnect" }
+  }
+  try {
+    await withDistributedMtServerConnectLock(
+      supabase,
+      String(broker.platform ?? "MT5"),
+      server,
+      () => client.connectEx({ id: uuid, server, login, password }),
+    )
+    const verified = await verifyBrokerCredentialConnect(client, uuid)
+    if (!verified.ok) return { ok: false, raw: verified.raw }
+    console.log(`[brokerSession] broker=${broker.id} reconnect path=connectEx`)
+    return { ok: true }
+  } catch (e) {
+    const raw = e instanceof MetatraderApiError ? e.message : e instanceof Error ? e.message : "Connect failed"
+    return { ok: false, raw }
+  }
 }
 
 export async function reconnectBrokerSession(
@@ -241,68 +305,61 @@ export async function reconnectBrokerSession(
   try {
     let alive = await keepBrokerSessionAlive(client, uuid)
     const password = await resolveStoredMtPassword(broker, opts ?? {}, env)
-    // Only treat ambiguous errors as credential problems when the user just
-    // typed the password. Stored-password retries can fail transiently and
-    // must not be reported as "your login details are wrong".
     const credentialOpts: BrokerConnectErrorOptions | undefined = opts?.password?.trim()
       ? { credentialConnect: true }
       : undefined
+
     if (!alive && password) {
-      const login = String(broker.account_login ?? "").trim()
-      const server = String(broker.broker_server ?? "").trim()
-      if (login && server) {
-        try {
-          await withMtServerSessionLock(String(broker.platform ?? "MT5"), server, () =>
-            client.connectEx({
-              id: uuid,
-              server,
-              login,
-              password,
-            })
-          )
-          const verified = await verifyBrokerCredentialConnect(client, uuid)
-          if (!verified.ok) {
-            const failure = await markBrokerConnectionError(supabase, broker, verified.raw, credentialOpts)
-            return failure
-          }
-          alive = true
-        } catch (e) {
-          const raw = e instanceof MetatraderApiError ? e.message : e instanceof Error ? e.message : "Connect failed"
-          const failure = await markBrokerConnectionError(supabase, broker, raw, credentialOpts)
-          return failure
-        }
+      const connectResult = await attemptConnectExReconnect(
+        client,
+        supabase,
+        broker,
+        uuid,
+        password,
+        credentialOpts,
+      )
+      if (!connectResult.ok) {
+        const failure = await markBrokerConnectionError(supabase, broker, connectResult.raw, credentialOpts)
+        return failure
       }
+      alive = true
     }
+
     if (!alive) {
       const failure = await markBrokerConnectionError(supabase, broker, MT_SESSION_EXPIRED_HINT)
       return failure
     }
 
-    const tradingReady = await client.verifyTradingReady(uuid)
-    if (!tradingReady) {
-      const failure = await markBrokerConnectionError(supabase, broker, MT_SESSION_EXPIRED_HINT)
-      return failure
-    }
-
-    let summary: Awaited<ReturnType<MetatraderApiClient["accountSummary"]>> | null = null
-    let lastErr: unknown = null
-    for (let i = 0; i < 4; i++) {
-      try {
-        const s = await client.accountSummary(uuid)
-        if (s && (s.balance != null || s.equity != null || s.currency)) {
-          summary = s
-          break
-        }
-      } catch (err) {
-        lastErr = err
+    let tradingReady = await client.verifyTradingReady(uuid)
+    if (!tradingReady && password) {
+      const connectResult = await attemptConnectExReconnect(
+        client,
+        supabase,
+        broker,
+        uuid,
+        password,
+        credentialOpts,
+      )
+      if (connectResult.ok) {
+        tradingReady = await client.verifyTradingReady(uuid)
+      } else {
+        console.warn(`[brokerSession] broker=${broker.id} verifyTradingReady ConnectEx fallback failed: ${connectResult.raw}`)
       }
-      await new Promise((r) => setTimeout(r, 400 + i * 350))
     }
 
+    const { summary, lastErr } = await fetchAccountSummaryWithRetry(client, uuid)
     if (!summary) {
       const raw = lastErr instanceof Error ? lastErr.message : "AccountSummary returned no data"
       const failure = await markBrokerConnectionError(supabase, broker, raw)
       return failure
+    }
+
+    if (!tradingReady) {
+      console.warn(
+        `[brokerSession] broker=${broker.id} verifyTradingReady failed but AccountSummary ok — accepting reconnect`,
+      )
+    } else {
+      console.log(`[brokerSession] broker=${broker.id} reconnect path=token`)
     }
 
     const updatePayload: Record<string, unknown> = {
