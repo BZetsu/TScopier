@@ -44,7 +44,7 @@ import {
   syncRangePendingLadderOnBasketRefresh,
 } from '../../rangePendingLadderSync'
 import { type TradeExecutorContext } from '../context'
-import { computeCweTp, roundLot, triggerPriceFor } from '../helpers'
+import { roundLot, triggerPriceFor } from '../helpers'
 import {
   type BrokerRow,
   type ParsedSignal,
@@ -363,7 +363,7 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
     }
 
     let anchor: number | null = plan.anchor?.value ?? null
-    if ((virtualPendings.length > 0 || !!plan.closeWorseEntries) && (anchor == null || anchor <= 0)) {
+    if (virtualPendings.length > 0 && (anchor == null || anchor <= 0)) {
       try {
         const q = strictEntryPrefetch ?? await api.quote(uuid, symbol)
         anchor = plan.isBuy === false ? q.bid : q.ask
@@ -382,14 +382,8 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
       })
       if (existingLadderAnchor != null) ladderAnchor = existingLadderAnchor
     }
-    const overrideTp = computeCweTp(plan, anchor, params)
-    let nImmCwe = 0
-    if (overrideTp != null && plan.closeWorseEntries) {
-      nImmCwe = Math.max(0, Math.min(perLegTargets.length, plan.closeWorseEntries.immediates))
-      for (let i = 0; i < nImmCwe; i++) {
-        if (perLegTargets[i]) perLegTargets[i]!.takeprofit = 0
-      }
-    }
+    const nImmCwe = 0
+    const overrideTp: number | null = null
 
     const basketParams: BasketSymbolParams | null = params
       ? {
@@ -545,26 +539,12 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
 
     if (virtualPendings.length > 0 && ladderAnchor != null && Number.isFinite(ladderAnchor) && ladderAnchor > 0) {
       const insertAnchor = ladderAnchor
-      if (overrideTp != null && plan.closeWorseEntries) {
-        const nVirt = virtualPendings.length
-        for (let i = 0; i < nVirt; i++) {
-          virtualPendings[i] = {
-            ...virtualPendings[i]!,
-            takeprofit: null,
-            comment: `${virtualPendings[i]!.comment}.cw`,
-            cweClosePrice: overrideTp,
-          }
-        }
-      }
         const digits = Math.max(0, Math.min(8, Number(params?.digits) || 5))
         const safe = Math.max(Number(params?.stopsLevel) || 0, Number(params?.freezeLevel) || 0)
         const zoneHi = safe > 0 ? insertAnchor + (safe + 2) * (params?.point ?? 0) : null
         const zoneLo = safe > 0 ? insertAnchor - (safe + 2) * (params?.point ?? 0) : null
         const nowMs = Date.now()
-      const plannedImmediateLegs = Math.max(
-        mergePlanImmediateOrders(plan).length,
-        plan.closeWorseEntries?.immediates ?? 0,
-      )
+      const plannedImmediateLegs = mergePlanImmediateOrders(plan).length
       const ladderSync = await syncRangePendingLadderOnBasketRefresh({
         supabase: ctx.supabase,
         scope: { signalId: anchorSignalId, brokerAccountId: broker.id, symbol },

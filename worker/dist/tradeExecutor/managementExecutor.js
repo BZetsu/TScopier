@@ -15,7 +15,6 @@ const metatraderapi_1 = require("../metatraderapi");
 const multiTradeMerge_1 = require("../multiTradeMerge");
 const orderModifyBenign_1 = require("../orderModifyBenign");
 const rangePendingLadderSync_1 = require("../rangePendingLadderSync");
-const signalPip_1 = require("../signalPip");
 const helpers_1 = require("./helpers");
 async function closeWithVerification(api, uuid, ticket, opts = {}) {
     const maxAttempts = opts.maxAttempts ?? 2;
@@ -595,7 +594,7 @@ async function applyCloseWorseEntriesInstruction(ctx, signal, parsed, rows, byBr
         if (!broker || !(0, helpers_1.isMtUuid)(broker.metaapi_account_id))
             return;
         const manual = (broker.manual_settings ?? {});
-        if (manual.trade_style !== 'multi' || manual.close_worse_entries !== true) {
+        if (manual.trade_style !== 'multi') {
             await ctx.supabase.from('trade_execution_logs').insert({
                 user_id: signal.user_id,
                 signal_id: signal.id,
@@ -603,41 +602,30 @@ async function applyCloseWorseEntriesInstruction(ctx, signal, parsed, rows, byBr
                 action: 'mgmt_close_worse_entries',
                 status: 'skipped',
                 request_payload: {
-                    reason: 'close_worse_entries_disabled',
+                    reason: 'cwe_requires_multi_trade',
                     trade_style: manual.trade_style ?? 'single',
-                    close_worse_entries: manual.close_worse_entries === true,
                 },
             });
             return;
         }
-        const pips = Math.max(1, Number(manual.close_worse_entries_pips ?? 30));
         const uuid = broker.metaapi_account_id;
         const api = ctx.apiFor(broker);
         if (!api)
             return;
-        const pipSize = (0, signalPip_1.signalPipPrice)(symbol);
-        if (!Number.isFinite(pipSize) || pipSize <= 0) {
-            console.warn(`[tradeExecutor] cwe instruction skip: invalid pip size symbol=${symbol}`);
-            return;
-        }
-        let q;
-        try {
-            q = await api.quote(uuid, symbol);
-        }
-        catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            console.warn(`[tradeExecutor] cwe instruction /Quote failed symbol=${symbol}: ${msg}`);
-            return;
-        }
-        const ref = (0, closeWorseEntries_1.referencePriceForDirection)(direction, q.bid, q.ask);
-        const toClose = (0, closeWorseEntries_1.selectTradesForCweInstruction)({
-            trades: groupTrades,
-            referencePrice: ref,
-            pips,
-            pipSize,
+        const signalIds = [
+            ...new Set(groupTrades
+                .map(t => String(t.signal_id ?? '').trim())
+                .filter(Boolean)),
+        ];
+        const layeringTickets = await (0, closeWorseEntries_1.loadFiredRangeLayeringTickets)(ctx.supabase, {
+            signalIds,
+            brokerAccountId: brokerId,
+            symbol,
         });
+        const toClose = (0, closeWorseEntries_1.selectImmediateLegsForCweInstruction)(groupTrades, layeringTickets);
         console.log(`[tradeExecutor] cwe instruction signal=${signal.id} broker=${broker.id} symbol=${symbol}`
-            + ` ref=${ref} pips=${pips} matched=${toClose.length}/${groupTrades.length}`);
+            + ` mode=instruction_immediate_only matched=${toClose.length}/${groupTrades.length}`
+            + ` layering_tickets=${layeringTickets.size}`);
         for (const trade of toClose) {
             const ticket = Number(trade.metaapi_order_id);
             if (!Number.isFinite(ticket) || ticket <= 0)
@@ -669,13 +657,12 @@ async function applyCloseWorseEntriesInstruction(ctx, signal, parsed, rows, byBr
                     action: 'mgmt_close_worse_entries',
                     status: 'success',
                     request_payload: {
+                        mode: 'instruction_immediate_only',
                         ticket,
                         symbol,
                         direction: trade.direction,
                         entry_price: trade.entry_price,
-                        reference_price: ref,
-                        pips,
-                        pip_size: pipSize,
+                        layering_tickets_excluded: layeringTickets.size,
                     },
                 });
             }
@@ -707,11 +694,10 @@ async function applyCloseWorseEntriesInstruction(ctx, signal, parsed, rows, byBr
                         action: 'mgmt_close_worse_entries',
                         status: 'failed',
                         request_payload: {
+                            mode: 'instruction_immediate_only',
                             ticket,
                             symbol,
                             entry_price: trade.entry_price,
-                            reference_price: ref,
-                            pips,
                         },
                         error_message: msg,
                     });

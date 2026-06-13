@@ -4,12 +4,31 @@ import {
   cweInstructionGroupKey,
   filterTradesWithinPipsOfReference,
   isEntryWithinPipsOfReference,
+  loadFiredRangeLayeringTickets,
   parseCweInstructionGroupKey,
   referencePriceForDirection,
+  selectImmediateLegsForCweInstruction,
   selectTradesForCweInstruction,
 } from './closeWorseEntries'
 
 const pip = 0.1 // XAU-style
+
+const trade = (
+  id: string,
+  ticket: string,
+  extra?: Partial<{ signal_id: string; cwe_close_price: number | null }>,
+) => ({
+  id,
+  signal_id: extra?.signal_id ?? 'sig-1',
+  broker_account_id: 'b',
+  metaapi_order_id: ticket,
+  symbol: 'XAUUSD',
+  direction: 'buy',
+  lot_size: 0.01,
+  entry_price: 4565.1,
+  status: 'open',
+  cwe_close_price: extra?.cwe_close_price ?? null,
+})
 
 test('isEntryWithinPipsOfReference: buy ladder example', () => {
   const anchor = 4565.1
@@ -25,9 +44,9 @@ test('referencePriceForDirection uses bid for buy and ask for sell', () => {
 
 test('filterTradesWithinPipsOfReference keeps only open legs in band', () => {
   const trades = [
-    { id: '1', broker_account_id: 'b', metaapi_order_id: '1', symbol: 'XAUUSD', direction: 'buy', lot_size: 0.01, entry_price: 4565.1, status: 'open' },
-    { id: '2', broker_account_id: 'b', metaapi_order_id: '2', symbol: 'XAUUSD', direction: 'buy', lot_size: 0.01, entry_price: 4556, status: 'open' },
-    { id: '3', broker_account_id: 'b', metaapi_order_id: '3', symbol: 'XAUUSD', direction: 'buy', lot_size: 0.01, entry_price: 4564, status: 'closed' },
+    trade('1', '1'),
+    { ...trade('2', '2'), entry_price: 4556 },
+    { ...trade('3', '3'), status: 'closed' },
   ]
   const ref = 4565.1 + 30 * pip
   const hit = filterTradesWithinPipsOfReference({
@@ -49,10 +68,54 @@ test('cweInstructionGroupKey survives symbols with pipe characters', () => {
   assert.equal(parseCweInstructionGroupKey(key)?.symbol, 'XAU|USD')
 })
 
-test('selectTradesForCweInstruction includes tagged CWE legs outside pip band', () => {
+test('selectImmediateLegsForCweInstruction closes immediates only', () => {
+  const trades = Array.from({ length: 33 }, (_, i) => trade(`imm-${i}`, String(1000 + i)))
+  const layering = new Set(['1010', '1011', '1012'])
+  const hit = selectImmediateLegsForCweInstruction(trades, layering)
+  assert.equal(hit.length, 30)
+  assert.ok(hit.every(t => !layering.has(String(t.metaapi_order_id))))
+})
+
+test('selectImmediateLegsForCweInstruction skips open trades without ticket', () => {
   const trades = [
-    { id: '1', broker_account_id: 'b', metaapi_order_id: '1', symbol: 'XAUUSD', direction: 'buy', lot_size: 0.01, entry_price: 4556, status: 'open', cwe_close_price: null },
-    { id: '2', broker_account_id: 'b', metaapi_order_id: '2', symbol: 'XAUUSD', direction: 'buy', lot_size: 0.01, entry_price: 4500, status: 'open', cwe_close_price: 4595 },
+    trade('1', '1001'),
+    { ...trade('2', ''), metaapi_order_id: '' },
+  ]
+  const hit = selectImmediateLegsForCweInstruction(trades, new Set())
+  assert.equal(hit.length, 1)
+  assert.equal(hit[0]!.id, '1')
+})
+
+test('loadFiredRangeLayeringTickets returns fired pending tickets', async () => {
+  const supabase = {
+    from: () => ({
+      select: () => ({
+        in: () => ({
+          eq: () => ({
+            eq: () => ({
+              eq: async () => ({
+                data: [{ ticket: '5001' }, { ticket: '5002' }],
+                error: null,
+              }),
+            }),
+          }),
+        }),
+      }),
+    }),
+  }
+  const tickets = await loadFiredRangeLayeringTickets(supabase as never, {
+    signalIds: ['sig-1'],
+    brokerAccountId: 'broker-1',
+    symbol: 'XAUUSD',
+  })
+  assert.equal(tickets.size, 2)
+  assert.ok(tickets.has('5001'))
+})
+
+test('selectTradesForCweInstruction legacy includes tagged CWE legs outside pip band', () => {
+  const trades = [
+    { ...trade('1', '1'), entry_price: 4556, cwe_close_price: null },
+    { ...trade('2', '2'), entry_price: 4500, cwe_close_price: 4595 },
   ]
   const ref = 4595
   const hit = selectTradesForCweInstruction({

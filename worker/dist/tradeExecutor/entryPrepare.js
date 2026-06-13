@@ -530,19 +530,14 @@ async function prepareEntryExecution(ctx, args) {
     }
     // ── Anchor resolution ────────────────────────────────────────────────
     // Priority: parsed signal entry → live /Quote (Ask for buy, Bid for sell).
-    // Needed whenever we have virtual pendings to persist (so we can compute
-    // trigger prices) OR Close-Worse-Entries is on (so we can compute the
-    // single override TP). Strict broker pendings use the signal entry as the
-    // clamp reference — no extra quote solely for that path.
+    // Needed whenever we have virtual pendings to persist (so we can compute trigger prices).
     // The Quote is a ~50-150ms GET that we issue BEFORE sending immediates so every
     // leg + every virtual trigger sees the same deterministic reference price.
     // Live fast + immediate legs: defer virtual-only anchor work until after OrderSend.
     const deferVirtualAnchor = liveEntryFast
         && legs.length > 0
-        && virtualPendings.length > 0
-        && !plan.closeWorseEntries;
-    const needsAnchor = !deferVirtualAnchor
-        && (virtualPendings.length > 0 || !!plan.closeWorseEntries);
+        && virtualPendings.length > 0;
+    const needsAnchor = !deferVirtualAnchor && virtualPendings.length > 0;
     let anchor = plan.anchor?.value ?? plan.strictEntry?.entryPrice ?? null;
     let anchorSource = plan.anchor?.source ?? 'unknown';
     if (needsAnchor && (anchor == null || anchor <= 0)) {
@@ -578,32 +573,6 @@ async function prepareEntryExecution(ctx, args) {
             }
         }
     }
-    // Apply Close-Worse-Entries to immediate legs. As of May-12 this is a *worker-managed* close: the
-    // broker never sees the threshold as a takeprofit (which produced
-    // "Invalid stops" rejections whenever the basket was already in profit or
-    // inside the stops/freeze zone). Instead we:
-    //   1. Set takeprofit = 0 on the CWE-tagged leg's broker order so only
-    //      the SL rides (the bucket TP is intentionally dropped — the user
-    //      wants these worse entries to be exited by CWE, not by TP1/TP2/TP3).
-    //   2. Stamp `cweClosePrice` on the leg / pending so the post-INSERT path
-    //      writes it into `trades.cwe_close_price` / `range_pending_legs.cwe_close_price`.
-    //   3. The new `cweCloseMonitor` polls /Quote and fires /OrderClose on
-    //      every CWE-tagged open trade once the threshold is crossed.
-    const overrideTp = (0, helpers_1.computeCweTp)(plan, anchor, params);
-    if (overrideTp != null && plan.closeWorseEntries) {
-        const nImm = Math.max(0, Math.min(legs.length, plan.closeWorseEntries.immediates));
-        for (let i = 0; i < nImm; i++) {
-            legs[i] = {
-                ...legs[i],
-                args: {
-                    ...legs[i].args,
-                    takeprofit: 0,
-                    comment: `${legs[i].args.comment ?? ''}.cw`,
-                },
-                cweClosePrice: overrideTp,
-            };
-        }
-    }
     if (isManual) {
         // One-line plan summary so it's obvious whether Range Trading / CWE are
         // actually firing, and at which anchor. Helps debug "settings not applying".
@@ -630,8 +599,7 @@ async function prepareEntryExecution(ctx, args) {
         console.log(`[tradeExecutor] manual plan signal=${signal.id} broker=${broker.id} symbol=${symbol}`
             + ` style=${manual.trade_style ?? 'single'} legs=${legs.length + virtualPendings.length}`
             + ` (immediate=${legs.length}, virtual_pending=${virtualPendings.length}${partialCount > 0 ? `, partial_tp=${partialCount}` : ''})`
-            + ` rangeOn=${manual.range_trading === true} cwOn=${!!plan.closeWorseEntries}`
-            + (overrideTp != null ? ` cweClose=${overrideTp}` : '')
+            + ` rangeOn=${manual.range_trading === true}`
             + ` pip=${plan.pip ?? 'n/a'}`
             + (pipValue != null ? ` pipValue=${pipValue.toFixed(4)}${quoteCcy ? '_' + quoteCcy : ''}/lot` : '')
             + (contractSize != null ? ` contractSize=${contractSize}` : '')

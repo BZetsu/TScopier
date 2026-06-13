@@ -63,7 +63,7 @@ export const fr: Translations = {
       resumeLabel: 'Reprendre la copie',
       pausedHint: 'La copie des signaux est en pause',
       statusRunning: 'Copieur Actif',
-      statusStopped: 'Copieur En Pause',
+      statusPaused: 'Copieur En Pause',
       stopCopier: 'Mettre le copieur en pause',
       confirmTitle: 'Mettre le copieur en pause ?',
       confirmBody: 'La copie des signaux, l\'exécution des trades et les journaux du copieur s\'arrêteront jusqu\'à reprise.',

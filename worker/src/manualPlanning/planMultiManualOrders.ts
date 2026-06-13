@@ -2,7 +2,6 @@ import type { OrderSendArgs } from '../metatraderapi'
 import type { PipQuote } from '../pipCalculator'
 import type {
   ManualSettings,
-  PlannerCloseWorseEntries,
   PlannerContext,
   PlannerResult,
   PlannerStrictEntry,
@@ -256,17 +255,6 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
     }
   }
 
-  let closeWorseEntries: PlannerCloseWorseEntries | undefined
-  if (manual.close_worse_entries === true && orders.length > 0) {
-    const cwPips = Math.max(0, Number(manual.close_worse_entries_pips ?? 0))
-    if (cwPips > 0) {
-      closeWorseEntries = {
-        immediates: orders.length,
-        pipsFromAnchor: cwPips,
-      }
-    }
-  }
-
   if (orders.length === 0 && virtualPendings.length === 0) {
     return buildSingleOrder({
       orderBase,
@@ -295,7 +283,6 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
     pipQuote,
     isBuy,
     ...(strictEntry ? { strictEntry } : {}),
-    ...(closeWorseEntries ? { closeWorseEntries } : {}),
     ...(manual.range_trading === true && reservedRangeLegs > 0
       ? {
           rangeLayering: {

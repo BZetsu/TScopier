@@ -1050,12 +1050,6 @@ export function AccountConfigPage() {
         })
       }
     }
-    if (ms.close_worse_entries && (multiTradePreview.immediate ?? 0) > 0) {
-      text += interpolate(cm.risk.previewCweLegs, {
-        count: String(multiTradePreview.immediate),
-        pips: String(Number(ms.close_worse_entries_pips ?? 20) || 0),
-      })
-    }
     return text
   }, [channelManualSettings, cm.risk, multiTradePreview])
 
@@ -3089,31 +3083,6 @@ export function AccountConfigPage() {
                                       />
                                     </div>
                                   </>
-                                )}
-                              </div>
-
-                              <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-3 space-y-3">
-                                <div className="flex items-center justify-between">
-                                  <ConfigToggleLabel info={cm.risk.closeWorseBody}>{cm.risk.closeWorseEntries}</ConfigToggleLabel>
-                                  <Toggle
-                                    checked={channelManualSettings.close_worse_entries === true}
-                                    onChange={v => setManual({ close_worse_entries: v })}
-                                  />
-                                </div>
-                                {channelManualSettings.close_worse_entries && (
-                                  <ConfigureInput
-                                    label={cm.risk.closeWorsePips}
-                                    type="number"
-                                    min={1}
-                                    step={1}
-                                    placeholder="30"
-                                    hint={
-                                      formatPipHint(Number(channelManualSettings.close_worse_entries_pips ?? 30) || 0)
-                                      ?? cm.risk.closeWorsePipsFallback
-                                    }
-                                    value={String(channelManualSettings.close_worse_entries_pips ?? 30)}
-                                    onChange={e => setManual({ close_worse_entries_pips: Math.max(1, Number(e.target.value) || 1) })}
-                                  />
                                 )}
                               </div>
                                 </div>

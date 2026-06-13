@@ -548,49 +548,6 @@ test('planManualOrders: multi + BuyLimit → market immediates (price 0; avoids 
   }
 })
 
-test('planManualOrders: CWE policy emitted for immediate legs', () => {
-  const plan = planManualOrders({
-    parsed: { ...baseParsed, entry_price: 1850 },
-    resolvedSymbol: 'XAUUSD',
-    baseOperation: 'Buy',
-    manual: {
-      ...baseManual,
-      close_worse_entries: true,
-      close_worse_entries_pips: 30,
-    },
-    channelKeywords: null,
-    manualLot: 1.0,
-    ctx: baseCtx,
-    commentPrefix: 'TSCopier:abc',
-  })
-  const cw = plan.closeWorseEntries
-  assert.ok(cw, 'CWE policy should be emitted when range + close_worse_entries are on')
-  assert.equal(cw!.pipsFromAnchor, 30)
-  assert.equal(cw!.immediates, 5)
-})
-
-test('planManualOrders: CWE policy emitted without range trading (immediates only)', () => {
-  const plan = planManualOrders({
-    parsed: { ...baseParsed, entry_price: 1850 },
-    resolvedSymbol: 'XAUUSD',
-    baseOperation: 'Buy',
-    manual: {
-      ...baseManual,
-      range_trading: false,
-      range_percent: 0,
-      close_worse_entries: true,
-      close_worse_entries_pips: 30,
-    },
-    channelKeywords: null,
-    manualLot: 1.0,
-    ctx: baseCtx,
-    commentPrefix: 'TSCopier:abc',
-  })
-  const cw = plan.closeWorseEntries
-  assert.ok(cw, 'CWE should apply to multi immediates even when range trading is off')
-  assert.ok(cw!.immediates > 0)
-})
-
 test('planManualOrders: sell ladder → virtualPendings carry isBuy=false', () => {
   const plan = planManualOrders({
     parsed: { ...baseParsed, action: 'sell', entry_price: 1850 },

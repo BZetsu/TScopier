@@ -6,10 +6,10 @@ import {
 } from '../channelActiveTradeParams'
 import { isChannelManagementBlocked, isPendingCancelBlocked, normalizeChannelMessageFiltersMap } from '../channelMessageFilters'
 import {
-  referencePriceForDirection,
   cweInstructionGroupKey,
+  loadFiredRangeLayeringTickets,
   parseCweInstructionGroupKey,
-  selectTradesForCweInstruction
+  selectImmediateLegsForCweInstruction,
 } from '../closeWorseEntries'
 import { tryBrokerFallbackClose } from '../managementBrokerClose'
 import { applyMgmtModifyToBasketGroups } from '../managementModifyBaskets'
@@ -26,7 +26,6 @@ import { hasMetatraderApiConfigured, type MetatraderApiClient } from '../metatra
 import { resolveLatestOpenBasketAnchor } from '../multiTradeMerge'
 import { isBenignOrderModifyError } from '../orderModifyBenign'
 import { patchActiveRangePendingLegStops } from '../rangePendingLadderSync'
-import { signalPipPrice } from '../signalPip'
 import { type TradeExecutorContext } from './context'
 import { isMtUuid } from './helpers'
 import {
@@ -655,6 +654,7 @@ export async function applyCloseWorseEntriesInstruction(ctx: TradeExecutorContex
     parsed: ParsedSignal,
     rows: Array<{
       id: string
+      signal_id?: string | null
       broker_account_id: string
       metaapi_order_id: string | null
       symbol: string
@@ -696,7 +696,7 @@ export async function applyCloseWorseEntriesInstruction(ctx: TradeExecutorContex
       if (!broker || !isMtUuid(broker.metaapi_account_id)) return
 
       const manual = (broker.manual_settings ?? {}) as ManualSettings
-      if (manual.trade_style !== 'multi' || manual.close_worse_entries !== true) {
+      if (manual.trade_style !== 'multi') {
         await ctx.supabase.from('trade_execution_logs').insert({
           user_id: signal.user_id,
           signal_id: signal.id,
@@ -704,44 +704,35 @@ export async function applyCloseWorseEntriesInstruction(ctx: TradeExecutorContex
           action: 'mgmt_close_worse_entries',
           status: 'skipped',
           request_payload: {
-            reason: 'close_worse_entries_disabled',
+            reason: 'cwe_requires_multi_trade',
             trade_style: manual.trade_style ?? 'single',
-            close_worse_entries: manual.close_worse_entries === true,
           },
         })
         return
       }
 
-      const pips = Math.max(1, Number(manual.close_worse_entries_pips ?? 30))
       const uuid = broker.metaapi_account_id!
       const api = ctx.apiFor(broker)
       if (!api) return
-      const pipSize = signalPipPrice(symbol)
-      if (!Number.isFinite(pipSize) || pipSize <= 0) {
-        console.warn(`[tradeExecutor] cwe instruction skip: invalid pip size symbol=${symbol}`)
-        return
-      }
 
-      let q: { bid: number; ask: number }
-      try {
-        q = await api.quote(uuid, symbol)
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        console.warn(`[tradeExecutor] cwe instruction /Quote failed symbol=${symbol}: ${msg}`)
-        return
-      }
-
-      const ref = referencePriceForDirection(direction, q.bid, q.ask)
-      const toClose = selectTradesForCweInstruction({
-        trades: groupTrades,
-        referencePrice: ref,
-        pips,
-        pipSize,
+      const signalIds = [
+        ...new Set(
+          groupTrades
+            .map(t => String(t.signal_id ?? '').trim())
+            .filter(Boolean),
+        ),
+      ]
+      const layeringTickets = await loadFiredRangeLayeringTickets(ctx.supabase, {
+        signalIds,
+        brokerAccountId: brokerId,
+        symbol,
       })
+      const toClose = selectImmediateLegsForCweInstruction(groupTrades, layeringTickets)
 
       console.log(
         `[tradeExecutor] cwe instruction signal=${signal.id} broker=${broker.id} symbol=${symbol}`
-        + ` ref=${ref} pips=${pips} matched=${toClose.length}/${groupTrades.length}`,
+        + ` mode=instruction_immediate_only matched=${toClose.length}/${groupTrades.length}`
+        + ` layering_tickets=${layeringTickets.size}`,
       )
 
       for (const trade of toClose) {
@@ -774,13 +765,12 @@ export async function applyCloseWorseEntriesInstruction(ctx: TradeExecutorContex
             action: 'mgmt_close_worse_entries',
             status: 'success',
             request_payload: {
+              mode: 'instruction_immediate_only',
               ticket,
               symbol,
               direction: trade.direction,
               entry_price: trade.entry_price,
-              reference_price: ref,
-              pips,
-              pip_size: pipSize,
+              layering_tickets_excluded: layeringTickets.size,
             },
           })
         } catch (err) {
@@ -810,11 +800,10 @@ export async function applyCloseWorseEntriesInstruction(ctx: TradeExecutorContex
               action: 'mgmt_close_worse_entries',
               status: 'failed',
               request_payload: {
+                mode: 'instruction_immediate_only',
                 ticket,
                 symbol,
                 entry_price: trade.entry_price,
-                reference_price: ref,
-                pips,
               },
               error_message: msg,
             })
