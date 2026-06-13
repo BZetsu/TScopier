@@ -4,6 +4,20 @@ import type { BrokerAccount } from '../types/database'
 interface CallOpts<T> {
   body: Record<string, unknown>
   expect?: (body: unknown) => T
+  timeoutMs?: number
+}
+
+const BROKER_EDGE_TIMEOUT_MS = 120_000
+const BROKER_RECONNECT_TIMEOUT_MS = 90_000
+
+function brokerFetchError(e: unknown, fallback: string): Error {
+  if (e instanceof DOMException && e.name === 'TimeoutError') {
+    return new Error('Broker request timed out. Try again in a moment.')
+  }
+  if (e instanceof Error && e.name === 'AbortError') {
+    return new Error('Broker request timed out. Try again in a moment.')
+  }
+  return e instanceof Error ? e : new Error(fallback)
 }
 
 /** Validate / refresh the Supabase JWT before edge calls (avoids stale-session 401s). */
@@ -29,15 +43,22 @@ async function call<T = unknown>(opts: CallOpts<T>): Promise<T> {
   const token = await ensureFreshAuthSession()
 
   const url = (import.meta.env.VITE_SUPABASE_URL as string) + '/functions/v1/broker-metatrader'
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-      apikey: import.meta.env.VITE_SUPABASE_ANON_KEY as string,
-    },
-    body: JSON.stringify(opts.body),
-  })
+  const timeoutMs = opts.timeoutMs ?? BROKER_EDGE_TIMEOUT_MS
+  let res: Response
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        apikey: import.meta.env.VITE_SUPABASE_ANON_KEY as string,
+      },
+      body: JSON.stringify(opts.body),
+      signal: AbortSignal.timeout(timeoutMs),
+    })
+  } catch (e) {
+    throw brokerFetchError(e, 'Broker request failed')
+  }
 
   const text = await res.text()
   let body: unknown = null
@@ -206,6 +227,7 @@ export const metatraderApi = {
           ? { remember_password: opts.rememberPassword }
           : {}),
       },
+      timeoutMs: BROKER_RECONNECT_TIMEOUT_MS,
       expect: (b) =>
         b as {
           ok: boolean

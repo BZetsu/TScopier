@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import clsx from 'clsx'
 import { Radio, Trash2, RefreshCw, CircleAlert as AlertCircle, ChevronDown, Plus, X } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
+import { whenRealtimeReady } from '../../lib/whenRealtimeReady'
 import { useAuth } from '../../context/AuthContext'
 import { useT } from '../../context/LocaleContext'
 import { interpolate } from '../../i18n/interpolate'
@@ -140,25 +141,34 @@ export function CopierEnginePage() {
 
   useEffect(() => {
     if (!user?.id) return
-    const rt = supabase
-      .channel(`telegram_channels_ui:${user.id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'telegram_channels',
-          filter: `user_id=eq.${user.id}`,
-        },
-        payload => {
-          const row = payload.new as TelegramChannel
-          if (!row?.id) return
-          setChannels(prev => prev.map(c => (c.id === row.id ? { ...c, ...row } : c)))
-        },
-      )
-      .subscribe()
+
+    let cancelled = false
+    let rt: ReturnType<typeof supabase.channel> | null = null
+
+    void whenRealtimeReady(user.id).then(() => {
+      if (cancelled) return
+      rt = supabase
+        .channel(`telegram_channels_ui:${user.id}`)
+        .on(
+          'postgres_changes',
+          {
+            event: 'UPDATE',
+            schema: 'public',
+            table: 'telegram_channels',
+            filter: `user_id=eq.${user.id}`,
+          },
+          payload => {
+            const row = payload.new as TelegramChannel
+            if (!row?.id) return
+            setChannels(prev => prev.map(c => (c.id === row.id ? { ...c, ...row } : c)))
+          },
+        )
+        .subscribe()
+    })
+
     return () => {
-      void supabase.removeChannel(rt)
+      cancelled = true
+      if (rt) void supabase.removeChannel(rt)
     }
   }, [user?.id])
 

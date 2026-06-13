@@ -4,7 +4,9 @@ import { metatraderApi } from '../lib/metatraderapi'
 import { brokerCanReconnect, brokerNeedsPasswordForReconnect } from '../lib/brokerReconnect'
 import { classifyBrokerConnectError } from '../lib/brokerConnectError'
 import {
+  brokerReconnectBlockedReason,
   brokerReconnectInFlight,
+  BROKER_RECONNECT_MIN_GAP_MS,
   endBrokerReconnect,
   tryBeginBrokerReconnect,
 } from '../lib/brokerReconnectCoordinator'
@@ -64,14 +66,23 @@ async function reconnectWithOptionalPassword(
     requestPassword?: (brokerId: string) => Promise<BrokerPasswordPromptResult | null>
     reconnectFailedLabel: string
     onError?: (message: string) => void
+    bypassGap?: boolean
+    lockAlreadyHeld?: boolean
   },
 ): Promise<{ result: ReconnectResult; rememberPassword?: boolean }> {
-  if (!tryBeginBrokerReconnect(brokerId)) {
+  const acquiredLock = options.lockAlreadyHeld
+    ? true
+    : tryBeginBrokerReconnect(brokerId, { bypassGap: options.bypassGap })
+  if (!acquiredLock) {
+    const blocked = brokerReconnectBlockedReason(brokerId, { bypassGap: options.bypassGap })
+    const message = blocked === 'in_flight'
+      ? 'Reconnect already in progress. Please wait a moment and try again.'
+      : `Please wait ${Math.ceil(BROKER_RECONNECT_MIN_GAP_MS / 1000)} seconds before retrying.`
     return {
       result: {
         ok: false,
         connection_status: 'error',
-        message: 'Reconnect already in progress. Please wait a moment and try again.',
+        message,
       },
     }
   }
@@ -150,7 +161,9 @@ async function reconnectWithOptionalPassword(
       result: { ok: false, connection_status: 'error', message: msg },
     }
   } finally {
-    endBrokerReconnect(brokerId)
+    if (!options.lockAlreadyHeld) {
+      endBrokerReconnect(brokerId)
+    }
   }
 }
 
@@ -215,8 +228,19 @@ export function useBrokerReconnect(opts: UseBrokerReconnectOptions) {
     const forcePasswordPrompt = options?.forcePasswordPrompt === true
     const broker = opts.brokers.find(b => b.id === brokerId)
     const hasStoredPassword = broker?.auto_reconnect_enabled === true
-    setReconnectingBrokerIds(prev => new Set(prev).add(brokerId))
     opts.onClearError?.()
+
+    if (brokerReconnectInFlight(brokerId)) {
+      const message = 'Reconnect already in progress. Please wait a moment and try again.'
+      opts.onError?.(message)
+      return {
+        ok: false,
+        connection_status: 'error' as const,
+        message,
+      }
+    }
+
+    setReconnectingBrokerIds(prev => new Set(prev).add(brokerId))
     try {
       const { result } = await reconnectWithOptionalPassword(brokerId, {
         allowPasswordPrompt,
@@ -225,6 +249,7 @@ export function useBrokerReconnect(opts: UseBrokerReconnectOptions) {
         requestPassword: opts.requestPassword,
         reconnectFailedLabel: opts.reconnectFailedLabel,
         onError: opts.onError,
+        bypassGap: true,
       })
       applyReconnectResult(brokerId, result)
       return result

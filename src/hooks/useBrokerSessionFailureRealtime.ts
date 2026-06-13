@@ -1,5 +1,6 @@
 import { useEffect, useRef, type Dispatch, type SetStateAction } from 'react'
 import { supabase } from '../lib/supabase'
+import { whenRealtimeReady } from '../lib/whenRealtimeReady'
 import type { BrokerAccount } from '../types/database'
 import { metatraderApi } from '../lib/metatraderapi'
 import {
@@ -44,72 +45,79 @@ export function useBrokerSessionFailureRealtime(
   useEffect(() => {
     if (!userId) return
 
-    const channel = supabase
-      .channel(`broker_session_failures:${userId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'trade_execution_logs',
-          filter: `user_id=eq.${userId}`,
-        },
-        payload => {
-          const row = payload.new as {
-            action?: string
-            status?: string
-            error_message?: string | null
-            broker_account_id?: string
-            request_payload?: Record<string, unknown> | null
-          }
-          if (!isSessionDisconnectLog(row)) return
-          const brokerId = row.broker_account_id
-          if (!brokerId) return
-          setBrokers(prev =>
-            prev.map(b =>
-              b.id === brokerId ? { ...b, connection_status: 'error' as const } : b,
-            ),
-          )
+    let cancelled = false
+    let channel: ReturnType<typeof supabase.channel> | null = null
 
-          if (silentReconnect && !reconnectTimeouts.current.has(brokerId) && !brokerReconnectInFlight(brokerId)) {
-            const timeout = setTimeout(async () => {
-              reconnectTimeouts.current.delete(brokerId)
-              if (!tryBeginBrokerReconnect(brokerId)) return
-              try {
-                const result = await metatraderApi.reconnect(brokerId)
-                if (result.connection_status === 'connected') {
-                  setBrokers(prev =>
-                    prev.map(b => {
-                      if (b.id !== brokerId) return b
-                      return {
-                        ...b,
-                        connection_status: 'connected' as const,
-                        last_synced_at: new Date().toISOString(),
-                        ...(result.summary
-                          ? {
-                              last_balance: result.summary.balance ?? b.last_balance,
-                              last_equity: result.summary.equity ?? b.last_equity,
-                              last_currency: result.summary.currency ?? b.last_currency,
-                            }
-                          : {}),
-                      }
-                    }),
-                  )
+    void whenRealtimeReady(userId).then(() => {
+      if (cancelled) return
+      channel = supabase
+        .channel(`broker_session_failures:${userId}`)
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'trade_execution_logs',
+            filter: `user_id=eq.${userId}`,
+          },
+          payload => {
+            const row = payload.new as {
+              action?: string
+              status?: string
+              error_message?: string | null
+              broker_account_id?: string
+              request_payload?: Record<string, unknown> | null
+            }
+            if (!isSessionDisconnectLog(row)) return
+            const brokerId = row.broker_account_id
+            if (!brokerId) return
+            setBrokers(prev =>
+              prev.map(b =>
+                b.id === brokerId ? { ...b, connection_status: 'error' as const } : b,
+              ),
+            )
+
+            if (silentReconnect && !reconnectTimeouts.current.has(brokerId) && !brokerReconnectInFlight(brokerId)) {
+              const timeout = setTimeout(async () => {
+                reconnectTimeouts.current.delete(brokerId)
+                if (!tryBeginBrokerReconnect(brokerId)) return
+                try {
+                  const result = await metatraderApi.reconnect(brokerId)
+                  if (result.connection_status === 'connected') {
+                    setBrokers(prev =>
+                      prev.map(b => {
+                        if (b.id !== brokerId) return b
+                        return {
+                          ...b,
+                          connection_status: 'connected' as const,
+                          last_synced_at: new Date().toISOString(),
+                          ...(result.summary
+                            ? {
+                                last_balance: result.summary.balance ?? b.last_balance,
+                                last_equity: result.summary.equity ?? b.last_equity,
+                                last_currency: result.summary.currency ?? b.last_currency,
+                              }
+                            : {}),
+                        }
+                      }),
+                    )
+                  }
+                } catch {
+                  // Silent — periodic reconnect loop will handle retries
+                } finally {
+                  endBrokerReconnect(brokerId)
                 }
-              } catch {
-                // Silent — periodic reconnect loop will handle retries
-              } finally {
-                endBrokerReconnect(brokerId)
-              }
-            }, RECONNECT_DEBOUNCE_MS)
-            reconnectTimeouts.current.set(brokerId, timeout)
-          }
-        },
-      )
-      .subscribe()
+              }, RECONNECT_DEBOUNCE_MS)
+              reconnectTimeouts.current.set(brokerId, timeout)
+            }
+          },
+        )
+        .subscribe()
+    })
 
     return () => {
-      void supabase.removeChannel(channel)
+      cancelled = true
+      if (channel) void supabase.removeChannel(channel)
       for (const t of reconnectTimeouts.current.values()) clearTimeout(t)
       reconnectTimeouts.current.clear()
     }

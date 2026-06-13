@@ -287,8 +287,9 @@ export class MetatraderApiClient {
   private readonly authHeader: string
   private readonly paths: PlatformPaths
   readonly platform: MtPlatform
+  private readonly fetchTimeoutMs: number
 
-  constructor(platform: MtPlatform, authHeader: string, baseUrl?: string) {
+  constructor(platform: MtPlatform, authHeader: string, baseUrl?: string, fetchTimeoutMs = 45_000) {
     const header = authHeader.trim()
     if (!header) {
       throw new Error("MetatraderApiClient: Authorization header required")
@@ -298,15 +299,26 @@ export class MetatraderApiClient {
     this.baseUrl = normalizeBaseUrl(baseUrl ?? "", defaultBase)
     this.authHeader = normalizeAuthorizationHeader(header)
     this.paths = pathsFor(platform)
+    this.fetchTimeoutMs = fetchTimeoutMs
   }
 
-  private async get<T>(path: string, params: Record<string, string | number | undefined | null>): Promise<T> {
+  private async get<T>(path: string, params: Record<string, string | number | undefined | null>, timeoutMs?: number): Promise<T> {
     const qs = buildQuery(params)
     const url = `${this.baseUrl}${path}${qs ? `?${qs}` : ""}`
-    const res = await fetch(url, {
-      method: "GET",
-      headers: { Authorization: this.authHeader, accept: "application/json, text/plain" },
-    })
+    let res: Response
+    try {
+      res = await fetch(url, {
+        method: "GET",
+        headers: { Authorization: this.authHeader, accept: "application/json, text/plain" },
+        signal: AbortSignal.timeout(timeoutMs ?? this.fetchTimeoutMs),
+      })
+    } catch (e) {
+      const name = e instanceof Error ? e.name : ""
+      if (name === "TimeoutError" || name === "AbortError") {
+        throw new MetatraderApiError(`MT API request timed out (${path})`, 504)
+      }
+      throw e
+    }
     const text = await res.text()
     let body: unknown = null
     if (text) {
@@ -337,7 +349,7 @@ export class MetatraderApiClient {
       user: userNum,
       password: args.password,
       server: args.server,
-    })
+    }, 60_000)
     assertNoApiError(raw)
     return parseToken(raw, args.id)
   }

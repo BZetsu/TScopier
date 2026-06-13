@@ -12,6 +12,7 @@ import { useAuth } from './AuthContext'
 import { useUserProfile } from './UserProfileContext'
 import { useT } from './LocaleContext'
 import { supabase } from '../lib/supabase'
+import { whenRealtimeReady } from '../lib/whenRealtimeReady'
 import { playNotificationSound } from '../lib/notificationSound'
 import {
   countUnreadNotifications,
@@ -174,28 +175,35 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
     }
 
     const filter = `user_id=eq.${user.id}`
-    const channel = supabase
-      .channel(`trade_notifications:${user.id}`)
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'trade_execution_logs', filter },
-        payload => {
-          const row = payload.new as TradeExecutionLogRow
-          if (knownLogIdsRef.current.has(row.id)) return
-          knownLogIdsRef.current.add(row.id)
-          rawRowsRef.current = [row, ...rawRowsRef.current]
-            .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
-            .slice(0, FETCH_LIMIT)
-          const interim = applyRows(rawRowsRef.current)
-          setItems(interim.slice(0, MAX_NOTIFICATIONS))
-          schedule()
-        },
-      )
-      .subscribe()
+    let cancelled = false
+    let channel: ReturnType<typeof supabase.channel> | null = null
+
+    void whenRealtimeReady(user.id).then(() => {
+      if (cancelled) return
+      channel = supabase
+        .channel(`trade_notifications:${user.id}`)
+        .on(
+          'postgres_changes',
+          { event: 'INSERT', schema: 'public', table: 'trade_execution_logs', filter },
+          payload => {
+            const row = payload.new as TradeExecutionLogRow
+            if (knownLogIdsRef.current.has(row.id)) return
+            knownLogIdsRef.current.add(row.id)
+            rawRowsRef.current = [row, ...rawRowsRef.current]
+              .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
+              .slice(0, FETCH_LIMIT)
+            const interim = applyRows(rawRowsRef.current)
+            setItems(interim.slice(0, MAX_NOTIFICATIONS))
+            schedule()
+          },
+        )
+        .subscribe()
+    })
 
     return () => {
+      cancelled = true
       if (debounceTimer) clearTimeout(debounceTimer)
-      void supabase.removeChannel(channel)
+      if (channel) void supabase.removeChannel(channel)
     }
   }, [user?.id, refresh, soundEnabled, applyRows])
 

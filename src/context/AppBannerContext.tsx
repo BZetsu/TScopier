@@ -13,7 +13,9 @@ import {
   fetchAppBannerState,
   type AppBannerState,
 } from '../lib/appBanner'
+import { useAuth } from './AuthContext'
 import { supabase } from '../lib/supabase'
+import { whenRealtimeReady } from '../lib/whenRealtimeReady'
 
 const REFRESH_MS = 5 * 60_000
 
@@ -25,6 +27,7 @@ const AppBannerContext = createContext<AppBannerContextValue | null>(null)
 
 /** Shared app-wide banner state (one fetch + realtime subscription for the whole app). */
 export function AppBannerProvider({ children }: { children: ReactNode }) {
+  const { loading: authLoading } = useAuth()
   const [banner, setBanner] = useState<AppBannerState>(APP_BANNER_DISABLED)
 
   const refresh = useCallback(async () => {
@@ -33,30 +36,41 @@ export function AppBannerProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     void refresh()
+  }, [refresh])
 
-    const channel = supabase
-      .channel('app_settings_banner')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'app_settings',
-          filter: `key=eq.${APP_BANNER_SETTING_KEY}`,
-        },
-        () => void refresh(),
-      )
-      .subscribe()
+  useEffect(() => {
+    if (authLoading) return
+
+    let cancelled = false
+    let channel: ReturnType<typeof supabase.channel> | null = null
+
+    void whenRealtimeReady().then(() => {
+      if (cancelled) return
+      channel = supabase
+        .channel('app_settings_banner')
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'app_settings',
+            filter: `key=eq.${APP_BANNER_SETTING_KEY}`,
+          },
+          () => void refresh(),
+        )
+        .subscribe()
+    })
 
     const interval = window.setInterval(() => {
       if (document.visibilityState === 'visible') void refresh()
     }, REFRESH_MS)
 
     return () => {
+      cancelled = true
       window.clearInterval(interval)
-      void supabase.removeChannel(channel)
+      if (channel) void supabase.removeChannel(channel)
     }
-  }, [refresh])
+  }, [authLoading, refresh])
 
   const value = useMemo(
     () => ({ ...banner, refresh }),

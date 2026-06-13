@@ -67,10 +67,10 @@ export function BrokerAccountsProvider({ children }: { children: ReactNode }) {
 
   const reconnectErrorHandlerRef = useRef<((message: string) => void) | null>(null)
   const reconnectSuccessHandlerRef = useRef<((brokerId: string) => void) | null>(null)
-  const passwordRequestRef = useRef<{
+  const passwordQueueRef = useRef<Array<{
     brokerId: string
     resolve: (result: BrokerPasswordPromptResult | null) => void
-  } | null>(null)
+  }>>([])
   const [passwordModalBrokerId, setPasswordModalBrokerId] = useState<string | null>(null)
 
   /** Pause MT health/reconnect on settings, billing, etc. — worker still recovers sessions. */
@@ -84,17 +84,19 @@ export function BrokerAccountsProvider({ children }: { children: ReactNode }) {
 
   const requestReconnectPassword = useCallback((brokerId: string): Promise<BrokerPasswordPromptResult | null> => {
     return new Promise(resolve => {
-      passwordRequestRef.current = { brokerId, resolve }
-      setPasswordModalBrokerId(brokerId)
+      passwordQueueRef.current.push({ brokerId, resolve })
+      if (passwordQueueRef.current.length === 1) {
+        setPasswordModalBrokerId(brokerId)
+      }
     })
   }, [])
 
   const finishPasswordRequest = useCallback((result: BrokerPasswordPromptResult | null) => {
-    const pending = passwordRequestRef.current
+    const pending = passwordQueueRef.current.shift()
     if (!pending) return
-    passwordRequestRef.current = null
-    setPasswordModalBrokerId(null)
     pending.resolve(result)
+    const next = passwordQueueRef.current[0]
+    setPasswordModalBrokerId(next?.brokerId ?? null)
   }, [])
 
   const handlePasswordModalSubmit = useCallback((payload: { password: string; rememberPassword: boolean }) => {
