@@ -66,7 +66,6 @@ import { TradeVolumeChart } from '../../components/dashboard/TradeVolumeChart'
 import { useDashboardRealtime } from '../../hooks/useDashboardRealtime'
 import { useBrokerAccounts } from '../../context/BrokerAccountsContext'
 import {
-  BROKER_ACCOUNT_CLIENT_SELECT,
   sortBrokerAccountsNewestFirst,
 } from '../../lib/brokerAccountSelect'
 import {
@@ -560,6 +559,7 @@ export function DashboardPage() {
   const { user } = useAuth()
   const {
     brokers: linkedAccounts,
+    loading: brokersLoading,
     setBrokers,
     patchBroker,
     replaceBroker,
@@ -570,6 +570,8 @@ export function DashboardPage() {
     setReconnectErrorHandler,
     setReconnectSuccessHandler,
   } = useBrokerAccounts()
+  const linkedAccountsRef = useRef(linkedAccounts)
+  linkedAccountsRef.current = linkedAccounts
   const { openAddTradingAccount } = useAddTradingAccount()
   const { formatMoney, formatSignedMoney } = useFormatMoney()
   const navigate = useNavigate()
@@ -859,10 +861,14 @@ export function DashboardPage() {
     try {
     const { todayStart, tomorrowStart, yesterdayStart } = getLocalCalendarDayBounds()
 
-    const [brokerRes, channelsRes, tradesRes, todaySignalsRes, yesterdaySignalsRes, logsRes, allSignalsRes, channelsMetaRes, attributionRes, aiLogsRes] = await Promise.all([
-      supabase.from('broker_accounts').select(BROKER_ACCOUNT_CLIENT_SELECT).eq('user_id', user!.id),
+    const [channelsRes, tradesRes, todaySignalsRes, yesterdaySignalsRes, logsRes, allSignalsRes, channelsMetaRes, attributionRes, aiLogsRes] = await Promise.all([
       supabase.from('telegram_channels').select('id').eq('user_id', user!.id).eq('is_active', true),
-      supabase.from('trades').select('*').eq('user_id', user!.id),
+      supabase
+        .from('trades')
+        .select('id,symbol,direction,profit,lot_size,status,opened_at,closed_at,broker_account_id,signal_id')
+        .eq('user_id', user!.id)
+        .order('opened_at', { ascending: false })
+        .limit(3000),
       supabase.from('signals').select('status').eq('user_id', user!.id).gte('created_at', todayStart.toISOString()).lt('created_at', tomorrowStart.toISOString()),
       supabase.from('signals').select('status').eq('user_id', user!.id).gte('created_at', yesterdayStart.toISOString()).lt('created_at', todayStart.toISOString()),
       supabase
@@ -1050,7 +1056,9 @@ export function DashboardPage() {
       }
       return winnerName
     })()
-    const brokerAccounts = (brokerRes.data ?? []) as unknown as BrokerAccount[]
+    const brokerAccounts = linkedAccountsRef.current.length > 0
+      ? linkedAccountsRef.current
+      : [] as BrokerAccount[]
     const mtBrokerConnected = hasActiveMtBroker(brokerAccounts)
     const activeBrokerCount = brokerAccounts.filter(account => account.is_active).length
     // Seed the balance map from the cached columns the worker / edge function
@@ -1312,9 +1320,13 @@ export function DashboardPage() {
   })
 
   useEffect(() => {
-    if (!user) return
-    void loadDashboard({ fresh: true, syncLive: true })
-  }, [user])
+    if (!user || brokersLoading) return
+    void loadDashboard({ fresh: true, syncLive: false })
+    const deferLive = window.setTimeout(() => {
+      void loadDashboard({ fresh: false, syncLive: true })
+    }, 400)
+    return () => window.clearTimeout(deferLive)
+  }, [user, brokersLoading])
 
   useEffect(() => {
     if (!user) return

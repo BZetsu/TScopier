@@ -45,8 +45,18 @@ export function AppLayout() {
     effectivePlan,
     hasTrialExpired,
   })
+  const [calendarCheckEnabled, setCalendarCheckEnabled] = useState(false)
+  useEffect(() => {
+    const enable = () => setCalendarCheckEnabled(true)
+    if (typeof requestIdleCallback !== 'undefined') {
+      const idleId = requestIdleCallback(enable, { timeout: 5000 })
+      return () => cancelIdleCallback(idleId)
+    }
+    const timer = window.setTimeout(enable, 3000)
+    return () => window.clearTimeout(timer)
+  }, [])
   const hasOpenTrades = useHasOpenTrades(user?.id)
-  const hasHighImpactNewsToday = useHasHighImpactNewsToday(Boolean(user?.id))
+  const hasHighImpactNewsToday = useHasHighImpactNewsToday(calendarCheckEnabled)
 
   const openUserMenu = () => {
     if (userMenuCloseTimerRef.current) {

@@ -366,7 +366,9 @@ function normalizeManualSettings(raw: unknown): ManualSettings {
     } as ManualTpLot
   })
   const legPctRaw = Number(j.multi_trade_leg_percent)
-  const legPct = Number.isFinite(legPctRaw) && legPctRaw > 0 ? Math.min(100, legPctRaw) : DEFAULT_MANUAL_SETTINGS.multi_trade_leg_percent
+  const legPct = Number.isFinite(legPctRaw) && legPctRaw > 0
+    ? Math.min(100, legPctRaw)
+    : (DEFAULT_MANUAL_SETTINGS.multi_trade_leg_percent ?? 7)
   const legacyMaxLegsRaw = Number(j.multi_trade_max_legs)
 
   const merged = { ...DEFAULT_MANUAL_SETTINGS, ...(j as ManualSettings) }

@@ -26,6 +26,7 @@ import {
   BROKER_ACCOUNT_CLIENT_SELECT,
   sortBrokerAccountsNewestFirst,
 } from '../lib/brokerAccountSelect'
+import { routeNeedsLiveBrokerConnectivity } from '../lib/liveBrokerRoutes'
 
 interface BrokerAccountsContextValue {
   brokers: BrokerAccount[]
@@ -72,11 +73,14 @@ export function BrokerAccountsProvider({ children }: { children: ReactNode }) {
   } | null>(null)
   const [passwordModalBrokerId, setPasswordModalBrokerId] = useState<string | null>(null)
 
-  /** Pause health polls / auto-reconnect while the password modal is open (avoids UI jank). */
+  /** Pause MT health/reconnect on settings, billing, etc. — worker still recovers sessions. */
+  const needsLiveBrokerConnectivity = routeNeedsLiveBrokerConnectivity(pathname)
   const routePausesHealthChecks = pathname === '/account-configuration'
   const passwordModalOpen = passwordModalBrokerId != null
-  const healthChecksPaused = routePausesHealthChecks || manualConnectivityPaused || passwordModalOpen
-  const recoveryPaused = manualConnectivityPaused || passwordModalOpen
+  const healthChecksPaused =
+    !needsLiveBrokerConnectivity || routePausesHealthChecks || manualConnectivityPaused || passwordModalOpen
+  const recoveryPaused =
+    !needsLiveBrokerConnectivity || manualConnectivityPaused || passwordModalOpen
 
   const requestReconnectPassword = useCallback((brokerId: string): Promise<BrokerPasswordPromptResult | null> => {
     return new Promise(resolve => {

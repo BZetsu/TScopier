@@ -6,7 +6,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { getTranslations } from '../i18n/locales'
+import { getTranslations, loadTranslations } from '../i18n/locales'
 import {
   DEFAULT_LOCALE,
   LOCALE_STORAGE_KEY,
@@ -33,6 +33,7 @@ function readStoredLocale(): Locale {
 
 export function LocaleProvider({ children }: { children: ReactNode }) {
   const [locale, setLocaleState] = useState<Locale>(() => readStoredLocale())
+  const [t, setT] = useState(() => getTranslations(locale))
 
   const setLocale = useCallback((next: Locale) => {
     setLocaleState(next)
@@ -45,9 +46,14 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     document.documentElement.lang = locale
+    let cancelled = false
+    void loadTranslations(locale).then(translations => {
+      if (!cancelled) setT(translations)
+    })
+    return () => {
+      cancelled = true
+    }
   }, [locale])
-
-  const t = useMemo(() => getTranslations(locale), [locale])
 
   const value = useMemo(
     () => ({
