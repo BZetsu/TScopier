@@ -56,12 +56,12 @@ function nextBackoffMs(fails: number): number {
  */
 const RECONNECT_ACTIVE_MS = monitorActiveIntervalMs(
   'BROKER_RECONNECT_INTERVAL_MS',
-  Math.max(60_000, Number(process.env.BROKER_RECONNECT_INTERVAL_MS ?? 120_000) || 120_000),
+  Math.max(30_000, Number(process.env.BROKER_RECONNECT_INTERVAL_MS ?? 60_000) || 60_000),
 )
-const RECONNECT_IDLE_MS = monitorIdleIntervalMs('BROKER_RECONNECT_IDLE_MS', 180_000)
+const RECONNECT_IDLE_MS = monitorIdleIntervalMs('BROKER_RECONNECT_IDLE_MS', 120_000)
 const HARD_RECONNECT_SWEEP_MS = Math.max(
   60_000,
-  Math.min(6 * 60 * 60_000, Number(process.env.BROKER_HARD_RECONNECT_SWEEP_MS ?? 15 * 60_000) || 15 * 60_000),
+  Math.min(6 * 60 * 60_000, Number(process.env.BROKER_HARD_RECONNECT_SWEEP_MS ?? 5 * 60_000) || 5 * 60_000),
 )
 
 export class BrokerConnectionMonitor {
@@ -205,7 +205,18 @@ export class BrokerConnectionMonitor {
     const delay = nextBackoffMs(fails)
     this.backoff.set(row.id, { fails, lastAttemptAt: now, nextEligibleAt: now + delay })
 
-    if (fails >= 4 && row.connection_status !== 'error') {
+    const hasCreds = Boolean(
+      row.auto_reconnect_enabled
+      && row.mt_password_encrypted
+      && row.account_login
+      && row.broker_server,
+    )
+
+    if (hasCreds) {
+      if (row.connection_status !== 'recovering' && row.connection_status !== 'error') {
+        void writeBrokerConnectionStatus(this.supabase, row.id, 'recovering')
+      }
+    } else if (fails >= 4 && row.connection_status !== 'error') {
       void writeBrokerConnectionStatus(this.supabase, row.id, 'error', {
         rawError: 'keepSessionAlive failed during reconnect sweep',
       })
@@ -228,7 +239,7 @@ export class BrokerConnectionMonitor {
           .from('broker_accounts')
           .select('id,platform,metaapi_account_id,connection_status,account_login,broker_server,auto_reconnect_enabled,mt_password_encrypted')
           .not('metaapi_account_id', 'is', null)
-          .eq('connection_status', 'error')
+          .in('connection_status', ['error', 'recovering'])
           .eq('auto_reconnect_enabled', true)
           .not('mt_password_encrypted', 'is', null),
       )

@@ -31,7 +31,7 @@ export function isLegacyBrokerLink(metaapiAccountId: string | null | undefined):
 
 export interface BrokerReconnectResult {
   ok: boolean
-  connection_status: "connected" | "error"
+  connection_status: "connected" | "recovering" | "error"
   message?: string
   connection_error_kind?: string
   summary?: Awaited<ReturnType<MetatraderApiClient["accountSummary"]>> | null
@@ -175,18 +175,29 @@ export async function verifyBrokerCredentialConnect(
 
 export async function markBrokerConnectionError(
   supabase: SupabaseClient,
-  broker: { id: string; user_id: string },
+  broker: {
+    id: string
+    user_id: string
+    auto_reconnect_enabled?: boolean | null
+    mt_password_encrypted?: string | null
+  },
   rawMessage: string,
   opts?: BrokerConnectErrorOptions,
 ): Promise<{ kind: string; message: string }> {
   const raw = String(rawMessage ?? "").trim() || "Broker reconnect failed"
   const { kind, message } = connectionErrorFromRaw(raw, opts)
+  const hasStoredCreds = Boolean(broker.auto_reconnect_enabled && broker.mt_password_encrypted)
+  const unrecoverable = kind === "wrong_password"
+    || kind === "credentials_rejected"
+    || kind === "investor_password"
+    || kind === "account_disabled"
+  const status = hasStoredCreds && !unrecoverable ? "recovering" : "error"
   await supabase
     .from("broker_accounts")
     .update({
-      connection_status: "error",
-      connection_error_kind: kind,
-      connection_error_message: raw,
+      connection_status: status,
+      connection_error_kind: unrecoverable ? kind : null,
+      connection_error_message: unrecoverable ? raw : null,
     })
     .eq("id", broker.id)
     .eq("user_id", broker.user_id)
@@ -386,31 +397,19 @@ export async function reconnectBrokerSession(
       .eq("user_id", broker.user_id)
 
     let passwordPersistStatus: Awaited<ReturnType<typeof persistMtPasswordIfRequested>> = "skipped"
-    if (password && opts?.remember_password !== undefined) {
+    if (password) {
+      const remember = opts?.remember_password !== false
       passwordPersistStatus = await persistMtPasswordIfRequested(
         supabase,
         broker.id,
         broker.user_id,
         password,
-        opts.remember_password,
-        env,
-      )
-    } else if (password && broker.auto_reconnect_enabled && opts?.remember_password === undefined) {
-      // Refresh ciphertext when auto-reconnect already enabled and user supplied a new password.
-      passwordPersistStatus = await persistMtPasswordIfRequested(
-        supabase,
-        broker.id,
-        broker.user_id,
-        password,
-        true,
+        remember,
         env,
       )
     }
 
-    if (
-      opts?.remember_password === true &&
-      passwordPersistStatus !== "saved"
-    ) {
+    if (password && opts?.remember_password !== false && passwordPersistStatus !== "saved") {
       return {
         ok: true,
         connection_status: "connected",

@@ -1634,6 +1634,9 @@ export function DashboardPage() {
     for (const r of results) {
       const broker = sourceAccounts.find(b => b.id === r.id)
       if (r.error || !r.summary || r.stale) {
+        if (broker?.auto_reconnect_enabled && broker.connection_status !== 'error') {
+          continue
+        }
         if (broker && (r.error || r.stale || !r.summary)) {
           patchBroker(r.id, { connection_status: 'error' })
         }

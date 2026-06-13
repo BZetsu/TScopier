@@ -14,6 +14,7 @@ import { TrailingStopMonitor } from './trailingStopMonitor'
 import { BasketSlTpReconcileMonitor } from './basketSlTpReconcileMonitor'
 import { NewsTradingMonitor } from './newsTradingMonitor'
 import { BrokerConnectionMonitor } from './brokerConnectionMonitor'
+import { BrokerConnectionKeeper } from './brokerConnectionKeeper'
 import { isBrokerCredentialsCryptoConfigured } from './brokerCredentialsCrypto'
 import { OpenTradeReconcileMonitor } from './openTradeReconcileMonitor'
 import { CopyLimitMonitor } from './copyLimitMonitor'
@@ -78,6 +79,7 @@ function startTradeMonitors() {
   }
 
   if (workerConfig.runsTrade) {
+    const brokerConnectionKeeper = new BrokerConnectionKeeper(supabase)
     const brokerConnectionMonitor = new BrokerConnectionMonitor(supabase)
     const copyLimitMonitor = new CopyLimitMonitor(supabase)
     if (!isBrokerCredentialsCryptoConfigured()) {
@@ -86,8 +88,10 @@ function startTradeMonitors() {
         + ' set the same key in Supabase Edge secrets',
       )
     }
+    brokerConnectionKeeper.start()
     brokerConnectionMonitor.start()
     copyLimitMonitor.start()
+    trackMonitor(brokerConnectionKeeper)
     trackMonitor(brokerConnectionMonitor)
     trackMonitor(copyLimitMonitor)
   }

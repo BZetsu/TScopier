@@ -213,7 +213,6 @@ Deno.serve(async (req: Request) => {
       if (!server) return bad(400, "server required")
       if (!login) return bad(400, "login required")
       if (!password) return bad(400, "password required")
-      const rememberPassword = Boolean((body as Record<string, unknown>).remember_password)
 
       const { data: duplicateLogin } = await supabase
         .from("broker_accounts")
@@ -290,14 +289,17 @@ Deno.serve(async (req: Request) => {
           ? new Date().toISOString().slice(0, 10)
           : null,
       }
-      if (rememberPassword) {
-        const enc = await encryptMtPassword(password, Deno.env)
-        if (enc) {
-          insertPayload.mt_password_encrypted = enc
-          insertPayload.auto_reconnect_enabled = true
-          insertPayload.password_updated_at = new Date().toISOString()
-        }
+      const enc = await encryptMtPassword(password, Deno.env)
+      if (!enc) {
+        try { await client.deleteAccount(uuid) } catch { /* swallow */ }
+        return bad(
+          500,
+          "Could not save broker credentials for automatic reconnect. Verify BROKER_CREDENTIALS_ENCRYPTION_KEY is configured in Edge Function secrets.",
+        )
       }
+      insertPayload.mt_password_encrypted = enc
+      insertPayload.auto_reconnect_enabled = true
+      insertPayload.password_updated_at = new Date().toISOString()
 
       const { data: row, error: insErr } = await supabase
         .from("broker_accounts")

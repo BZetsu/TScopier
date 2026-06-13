@@ -33,16 +33,22 @@ function applyReconnectFailure(
   brokerId: string,
   message: string | undefined,
   connectionErrorKind: string | undefined,
+  broker?: BrokerAccount,
 ) {
+  const kind = connectionErrorKind ?? classifyBrokerConnectError(message)
+  const unrecoverable = kind === 'wrong_password'
+    || kind === 'credentials_rejected'
+    || kind === 'investor_password'
+    || kind === 'account_disabled'
+  const useRecovering = Boolean(broker?.auto_reconnect_enabled) && !unrecoverable
   setBrokers(prev =>
     prev.map(b => {
       if (b.id !== brokerId) return b
-      const kind = connectionErrorKind ?? classifyBrokerConnectError(message)
       return {
         ...b,
-        connection_status: 'error' as const,
-        connection_error_kind: kind,
-        connection_error_message: message ?? b.connection_error_message ?? null,
+        connection_status: useRecovering ? 'recovering' as const : 'error' as const,
+        connection_error_kind: unrecoverable ? kind : null,
+        connection_error_message: unrecoverable ? (message ?? b.connection_error_message ?? null) : null,
       }
     }),
   )
@@ -64,7 +70,11 @@ export function useBrokerConnectionHealth(
 
   const connectedBrokers = useMemo(
     () =>
-      brokers.filter(b => b.connection_status === 'connected' && isMtSessionUuid(b.metaapi_account_id)),
+      brokers.filter(
+        b =>
+          (b.connection_status === 'connected' || b.connection_status === 'recovering')
+          && isMtSessionUuid(b.metaapi_account_id),
+      ),
     [brokers],
   )
 
@@ -124,12 +134,19 @@ export function useBrokerConnectionHealth(
           brokerId,
           result.message,
           result.connection_error_kind,
+          brokers.find(b => b.id === brokerId),
         )
         return false
       } catch (err) {
         if (!cancelled) {
           const msg = err instanceof Error ? err.message : String(err)
-          applyReconnectFailure(setBrokers, brokerId, msg, undefined)
+          applyReconnectFailure(
+            setBrokers,
+            brokerId,
+            msg,
+            undefined,
+            brokers.find(b => b.id === brokerId),
+          )
         }
         return false
       } finally {
@@ -155,7 +172,13 @@ export function useBrokerConnectionHealth(
 
       const recovered = await attemptSilentReconnect(id)
       if (!recovered && !cancelled) {
-        applyReconnectFailure(setBrokers, id, msg, undefined)
+        applyReconnectFailure(
+          setBrokers,
+          id,
+          msg,
+          undefined,
+          brokers.find(b => b.id === id),
+        )
       }
     }
 
@@ -203,5 +226,5 @@ export function useBrokerConnectionHealth(
       clearInterval(timer)
       document.removeEventListener('visibilitychange', onVisible)
     }
-  }, [connectedKey, enabled, pollIntervalMs, refreshOnVisible, setBrokers, sortedForHealth])
+  }, [connectedKey, enabled, pollIntervalMs, refreshOnVisible, setBrokers, sortedForHealth, brokers])
 }

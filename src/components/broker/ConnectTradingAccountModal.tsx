@@ -121,7 +121,6 @@ export function ConnectTradingAccountModal({ open, onClose }: ConnectTradingAcco
         login,
         password: form.account_password,
         label: form.label.trim() || undefined,
-        remember_password: form.remember_password,
       })
       upsertBroker(broker)
       if (broker?.id && broker.last_balance == null && broker.last_equity == null) {
@@ -229,23 +228,6 @@ export function ConnectTradingAccountModal({ open, onClose }: ConnectTradingAcco
                 required
               />
             </div>
-
-            <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-neutral-100 bg-neutral-50 px-3 py-3 dark:border-neutral-800 dark:bg-neutral-800/40">
-              <input
-                type="checkbox"
-                checked={form.remember_password}
-                onChange={event => setField('remember_password', event.target.checked)}
-                className="mt-0.5 h-4 w-4 rounded border-neutral-300 text-teal-600 focus:ring-teal-500"
-              />
-              <span className="min-w-0">
-                <span className="block text-sm font-medium text-neutral-800 dark:text-neutral-100">
-                  {t.accountConfig.connectForm.rememberPasswordLabel}
-                </span>
-                <span className="mt-0.5 block text-xs leading-relaxed text-neutral-500 dark:text-neutral-400">
-                  {t.accountConfig.connectForm.rememberPasswordHint}
-                </span>
-              </span>
-            </label>
 
             <div className="flex gap-2 pt-2">
               <Button type="submit" loading={saving} size="sm">

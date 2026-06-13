@@ -299,7 +299,6 @@ export function BrokerAccountsProvider({ children }: { children: ReactNode }) {
       <BrokerReconnectPasswordModal
         open={passwordModalOpen}
         broker={passwordModalBroker}
-        defaultRememberPassword={passwordModalBroker?.auto_reconnect_enabled ?? false}
         copy={passwordModalCopy}
         onSubmit={handlePasswordModalSubmit}
         onCancel={handlePasswordModalCancel}

@@ -184,16 +184,20 @@ export function useBrokerReconnect(opts: UseBrokerReconnectOptions) {
       prev.map(b => {
         if (b.id !== brokerId) return b
         if (result.connection_status !== 'connected' || !result.summary) {
+          const unrecoverable = result.connection_error_kind === 'wrong_password'
+            || result.connection_error_kind === 'credentials_rejected'
+            || result.connection_error_kind === 'investor_password'
+            || result.connection_error_kind === 'account_disabled'
+          const useRecovering = b.auto_reconnect_enabled === true && !unrecoverable
           return {
             ...b,
-            connection_status: 'error' as const,
-            ...(result.message
-              ? {
-                  connection_error_message: result.message,
-                  connection_error_kind: result.connection_error_kind
-                    ?? classifyBrokerConnectError(result.message),
-                }
-              : {}),
+            connection_status: useRecovering ? 'recovering' as const : 'error' as const,
+            connection_error_kind: useRecovering
+              ? null
+              : (result.connection_error_kind ?? classifyBrokerConnectError(result.message)),
+            connection_error_message: useRecovering
+              ? null
+              : (result.message ?? b.connection_error_message ?? null),
           }
         }
         return {

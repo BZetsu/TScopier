@@ -4,7 +4,7 @@ import {
   type BrokerConnectErrorKind,
 } from './brokerConnectError'
 
-type ConnectionStatus = 'pending' | 'connected' | 'error'
+type ConnectionStatus = 'pending' | 'connected' | 'recovering' | 'error'
 
 const MIN_WRITE_INTERVAL_MS = Math.max(
   30_000,
@@ -32,6 +32,9 @@ export async function writeBrokerConnectionStatus(
 
   const patch: Record<string, unknown> = { connection_status: status }
   if (status === 'connected') {
+    patch.connection_error_kind = null
+    patch.connection_error_message = null
+  } else if (status === 'recovering') {
     patch.connection_error_kind = null
     patch.connection_error_message = null
   } else if (opts?.rawError) {
