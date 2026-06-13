@@ -9,6 +9,7 @@ import {
 import { loadExistingRangeStepIndices } from '../../rangePendingFireGuard'
 import { isPostgresDuplicateKeyError } from '../../rangePendingLegPersist'
 import { computeBasketMergeLinkContext, type BasketMergeLinkContext } from '../../signalMergeLink'
+import { symbolsCompatibleForBasket } from '../../basketModFollowUp'
 import { type TradeExecutorContext } from '../context'
 import { type BrokerRow, type ParsedSignal, type SignalRow } from '../types'
 
@@ -177,7 +178,7 @@ export async function resolveBasketAnchorSignalIdForOpenTrades(ctx: TradeExecuto
       .limit(200)
 
     let cand = (openRows ?? []) as { signal_id: string; symbol: string }[]
-    if (symUp) cand = cand.filter(t => String(t.symbol ?? '').toUpperCase() === symUp)
+    if (symUp) cand = cand.filter(t => symbolsCompatibleForBasket(symUp, t.symbol))
     const candSigIds = [...new Set(cand.map(t => t.signal_id))]
     if (!candSigIds.length) return null
 

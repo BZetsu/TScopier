@@ -150,11 +150,13 @@ export async function applyManagement(ctx: TradeExecutorContext, signal: SignalR
     const brokerAccountIds = brokers.map(b => b.id)
     const replyScoped = isReplyScopedManagement(signal)
     const symbolFromText = explicitMgmtSymbol(parsed)
+    let mgmtSymbolHint: string | null = symbolFromText
     let basketAnchorId: string | null = null
     let rows: MgmtTradeRow[] = []
 
     if (replyScoped && signal.parent_signal_id) {
       let symbolHint: string | null = symbolFromText
+      let parentParsed: ParsedSignal | null = null
       try {
         const { data: ps } = await ctx.supabase
           .from('signals')
@@ -162,8 +164,10 @@ export async function applyManagement(ctx: TradeExecutorContext, signal: SignalR
           .eq('id', signal.parent_signal_id)
           .maybeSingle()
         const p = (ps as { parsed_data?: ParsedSignal | null } | null)?.parsed_data
+        parentParsed = p ?? null
         const fromParent = p?.symbol != null && String(p.symbol).trim() ? String(p.symbol).trim() : null
         if (!symbolHint && fromParent) symbolHint = fromParent
+        if (symbolHint) mgmtSymbolHint = symbolHint
       } catch {
         // best-effort
       }
@@ -177,9 +181,13 @@ export async function applyManagement(ctx: TradeExecutorContext, signal: SignalR
         .in('status', ['open', 'pending'])
       if ((parentOpenCount ?? 0) === 0) {
         const mgmtAction = String(parsed.action ?? '').toLowerCase()
-        const mgmtDir = mgmtAction === 'buy' || mgmtAction === 'sell'
+        let mgmtDir: 'buy' | 'sell' | null = mgmtAction === 'buy' || mgmtAction === 'sell'
           ? mgmtAction
           : null
+        if (!mgmtDir && parentParsed) {
+          const parentAction = String(parentParsed.action ?? '').toLowerCase()
+          if (parentAction === 'buy' || parentAction === 'sell') mgmtDir = parentAction
+        }
         const symForResolve = symbolHint?.trim() ?? ''
         if (mgmtDir && symForResolve && signal.channel_id && brokerAccountIds[0]) {
           const latest = await resolveLatestOpenBasketAnchor(ctx.supabase, {
@@ -203,20 +211,23 @@ export async function applyManagement(ctx: TradeExecutorContext, signal: SignalR
         }
       }
       if (!basketAnchorId) {
-        await skipMgmtSignalWithLog(ctx, signal, 'mgmt_no_open_trades_db', { scope: 'reply_basket' })
-        return
+        if (String(parsed.action ?? '').toLowerCase() !== 'close_worse_entries') {
+          await skipMgmtSignalWithLog(ctx, signal, 'mgmt_no_open_trades_db', { scope: 'reply_basket' })
+          return
+        }
+      } else {
+        const { data } = await ctx.supabase
+          .from('trades')
+          .select(
+            'id,signal_id,broker_account_id,metaapi_order_id,symbol,direction,lot_size,status,sl,tp,entry_price,opened_at,cwe_close_price',
+          )
+          .eq('signal_id', basketAnchorId)
+          .in('broker_account_id', brokerAccountIds)
+          .in('status', ['open', 'pending'])
+          .order('opened_at', { ascending: true })
+          .limit(500)
+        rows = (data ?? []) as MgmtTradeRow[]
       }
-
-      const { data } = await ctx.supabase
-        .from('trades')
-        .select(
-          'id,signal_id,broker_account_id,metaapi_order_id,symbol,direction,lot_size,status,sl,tp,entry_price,opened_at,cwe_close_price',
-        )
-        .eq('signal_id', basketAnchorId)
-        .in('status', ['open', 'pending'])
-        .order('opened_at', { ascending: true })
-        .limit(500)
-      rows = (data ?? []) as MgmtTradeRow[]
     } else {
       if (!signal.channel_id) {
         await skipMgmtSignalWithLog(ctx, signal, 'mgmt_no_open_trades_db', { scope: 'no_channel' })
@@ -242,6 +253,20 @@ export async function applyManagement(ctx: TradeExecutorContext, signal: SignalR
 
     const byBroker = new Map(brokers.map(b => [b.id, b]))
     const action = String(parsed.action).toLowerCase()
+
+    if (
+      action === 'close_worse_entries'
+      && !rows.length
+      && signal.channel_id
+    ) {
+      rows = await loadOpenTradesForManagement(ctx.supabase, {
+        userId: signal.user_id,
+        channelId: signal.channel_id,
+        brokerAccountIds,
+        symbolFilter: mgmtSymbolHint,
+      })
+    }
+
     const cancelledPendingScopes = new Set<string>()
 
     const pendingLegs = await loadRangePendingLegsInMgmtScope(ctx.supabase, {
@@ -691,7 +716,7 @@ export async function applyCloseWorseEntriesInstruction(ctx: TradeExecutorContex
     await Promise.allSettled(Array.from(groups.entries()).map(async ([key, groupTrades]) => {
       const parsedKey = parseCweInstructionGroupKey(key)
       if (!parsedKey) return
-      const { brokerId, symbol, direction } = parsedKey
+      const { brokerId, symbol } = parsedKey
       const broker = byBroker.get(brokerId)
       if (!broker || !isMtUuid(broker.metaapi_account_id)) return
 
@@ -713,7 +738,17 @@ export async function applyCloseWorseEntriesInstruction(ctx: TradeExecutorContex
 
       const uuid = broker.metaapi_account_id!
       const api = ctx.apiFor(broker)
-      if (!api) return
+      if (!api) {
+        await ctx.supabase.from('trade_execution_logs').insert({
+          user_id: signal.user_id,
+          signal_id: signal.id,
+          broker_account_id: broker.id,
+          action: 'mgmt_close_worse_entries',
+          status: 'skipped',
+          request_payload: { reason: 'cwe_broker_api_unavailable', symbol },
+        })
+        return
+      }
 
       const signalIds = [
         ...new Set(
@@ -734,6 +769,24 @@ export async function applyCloseWorseEntriesInstruction(ctx: TradeExecutorContex
         + ` mode=instruction_immediate_only matched=${toClose.length}/${groupTrades.length}`
         + ` layering_tickets=${layeringTickets.size}`,
       )
+
+      if (!toClose.length) {
+        await ctx.supabase.from('trade_execution_logs').insert({
+          user_id: signal.user_id,
+          signal_id: signal.id,
+          broker_account_id: broker.id,
+          action: 'mgmt_close_worse_entries',
+          status: 'skipped',
+          request_payload: {
+            mode: 'instruction_immediate_only',
+            reason: groupTrades.length > 0 ? 'cwe_all_legs_layering_or_no_ticket' : 'cwe_no_open_immediates',
+            open_legs: groupTrades.length,
+            layering_tickets_excluded: layeringTickets.size,
+            symbol,
+          },
+        })
+        return
+      }
 
       for (const trade of toClose) {
         const ticket = Number(trade.metaapi_order_id)
