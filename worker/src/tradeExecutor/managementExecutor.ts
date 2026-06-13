@@ -12,7 +12,9 @@ import {
   selectImmediateLegsForCweInstruction,
 } from '../closeWorseEntries'
 import { tryBrokerFallbackClose } from '../managementBrokerClose'
+import { closeWithVerification } from '../managementClose'
 import { applyMgmtModifyToBasketGroups } from '../managementModifyBaskets'
+import type { MgmtExecOptions, MgmtExecResult } from '../mgmtExecOptions'
 import { loadRangePendingLegsInMgmtScope, pendingLegsToCancelScopes, updateRangePendingLegsForManagement } from '../managementPendingLegs'
 import {
   explicitMgmtSymbol,
@@ -23,9 +25,10 @@ import {
   type MgmtTradeRow
 } from '../managementScope'
 import { type ManualSettings } from '../manualPlanner'
-import { hasMetatraderApiConfigured, type MetatraderApiClient } from '../metatraderapi'
+import { hasMetatraderApiConfigured } from '../metatraderapi'
 import { resolveLatestOpenBasketAnchor } from '../multiTradeMerge'
 import { isBenignOrderModifyError } from '../orderModifyBenign'
+import { mgmtLegConcurrency, parallelMap } from '../parallelPool'
 import { patchActiveRangePendingLegStops } from '../rangePendingLadderSync'
 import { type TradeExecutorContext } from './context'
 import { isMtUuid } from './helpers'
@@ -36,58 +39,12 @@ import {
   type SignalRow
 } from './types'
 
-interface CloseVerificationResult {
-  confirmed: boolean
-  reason?: string
-  attempts: number
+function mgmtCloseOpts(liveMgmtFast: boolean) {
+  return { maxAttempts: 2, slippageEscalation: 50, liveFast: liveMgmtFast }
 }
 
-async function closeWithVerification(
-  api: MetatraderApiClient,
-  uuid: string,
-  ticket: number,
-  opts: { maxAttempts?: number; slippageEscalation?: number } = {},
-): Promise<CloseVerificationResult> {
-  const maxAttempts = opts.maxAttempts ?? 2
-  const slippageStep = opts.slippageEscalation ?? 50
-
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const slippage = 20 + (attempt - 1) * slippageStep
-    const result = await api.orderClose(uuid, { ticket, slippage })
-
-    if (result.state && /^(rejected|cancelled|expired)/i.test(result.state)) {
-      if (attempt >= maxAttempts) {
-        return { confirmed: false, reason: `orderClose state=${result.state}`, attempts: attempt }
-      }
-      await new Promise(r => setTimeout(r, 300))
-      continue
-    }
-
-    await new Promise(r => setTimeout(r, 400))
-
-    let stillOpen = false
-    try {
-      const openOrders = await api.openedOrders(uuid)
-      for (const raw of openOrders ?? []) {
-        if (!raw || typeof raw !== 'object') continue
-        const o = raw as Record<string, unknown>
-        const t = Number(o.ticket ?? o.Ticket ?? o.orderId ?? o.OrderID ?? 0)
-        if (t === ticket) { stillOpen = true; break }
-      }
-    } catch {
-      return { confirmed: true, attempts: attempt }
-    }
-
-    if (!stillOpen) {
-      return { confirmed: true, attempts: attempt }
-    }
-
-    if (attempt >= maxAttempts) {
-      return { confirmed: false, reason: 'ticket still open after orderClose + verification', attempts: attempt }
-    }
-    await new Promise(r => setTimeout(r, 300))
-  }
-  return { confirmed: false, reason: 'exhausted attempts', attempts: maxAttempts }
+function emptyMgmtResult(parallelism = 1): MgmtExecResult {
+  return { legsTotal: 0, legsParallelism: parallelism }
 }
 
 export async function logSendSkipped(ctx: TradeExecutorContext, 
@@ -145,12 +102,21 @@ async function skipMgmtSignalWithLog(
   } catch { /* best-effort */ }
 }
 
-export async function applyManagement(ctx: TradeExecutorContext, signal: SignalRow, parsed: ParsedSignal, brokers: BrokerRow[]): Promise<void> {
+export async function applyManagement(
+  ctx: TradeExecutorContext,
+  signal: SignalRow,
+  parsed: ParsedSignal,
+  brokers: BrokerRow[],
+  mgmtOpts?: MgmtExecOptions,
+): Promise<MgmtExecResult> {
+    const liveMgmtFast = mgmtOpts?.liveMgmtFast === true
+    const legConcurrency = liveMgmtFast ? mgmtLegConcurrency() : 1
+    let legsTotal = 0
     if (!hasMetatraderApiConfigured()) {
       await skipMgmtSignalWithLog(ctx, signal, 'broker_api_not_configured', {
         action: String(parsed.action ?? '').toLowerCase(),
       })
-      return
+      return emptyMgmtResult(legConcurrency)
     }
 
     const brokerAccountIds = brokers.map(b => b.id)
@@ -219,7 +185,7 @@ export async function applyManagement(ctx: TradeExecutorContext, signal: SignalR
       if (!basketAnchorId) {
         if (String(parsed.action ?? '').toLowerCase() !== 'close_worse_entries') {
           await skipMgmtSignalWithLog(ctx, signal, 'mgmt_no_open_trades_db', { scope: 'reply_basket' })
-          return
+          return emptyMgmtResult(legConcurrency)
         }
       } else {
         const { data } = await ctx.supabase
@@ -237,7 +203,7 @@ export async function applyManagement(ctx: TradeExecutorContext, signal: SignalR
     } else {
       if (!signal.channel_id) {
         await skipMgmtSignalWithLog(ctx, signal, 'mgmt_no_open_trades_db', { scope: 'no_channel' })
-        return
+        return emptyMgmtResult(legConcurrency)
       }
       const actionPre = String(parsed.action ?? '').toLowerCase()
       let channelRows = actionPre === 'close_worse_entries'
@@ -324,7 +290,7 @@ export async function applyManagement(ctx: TradeExecutorContext, signal: SignalR
     if (action === 'close_worse_entries') {
       if (!rows.length) {
         await skipMgmtSignalWithLog(ctx, signal, 'mgmt_no_open_trades_db', { action: 'close_worse_entries' })
-        return
+        return emptyMgmtResult(legConcurrency)
       }
       const eligibleBrokers = brokers.filter(
         b => !isChannelManagementBlocked(
@@ -336,7 +302,7 @@ export async function applyManagement(ctx: TradeExecutorContext, signal: SignalR
       )
       if (!eligibleBrokers.length) {
         await skipMgmtSignalWithLog(ctx, signal, 'channel_filter_ignored', { action: 'close_worse_entries' })
-        return
+        return emptyMgmtResult(legConcurrency)
       }
       const eligibleIds = new Set(eligibleBrokers.map(b => b.id))
       const eligibleRows = rows.filter(r => eligibleIds.has(r.broker_account_id))
@@ -345,11 +311,17 @@ export async function applyManagement(ctx: TradeExecutorContext, signal: SignalR
           action: 'close_worse_entries',
           loaded_rows: rows.length,
         })
-        return
+        return emptyMgmtResult(legConcurrency)
       }
       const eligibleByBroker = new Map(eligibleBrokers.map(b => [b.id, b]))
-      await ctx.applyCloseWorseEntriesInstruction(signal, parsed, eligibleRows, eligibleByBroker)
-      return
+      const cweResult = await ctx.applyCloseWorseEntriesInstruction(
+        signal,
+        parsed,
+        eligibleRows,
+        eligibleByBroker,
+        mgmtOpts,
+      )
+      return cweResult
     }
 
     if (!rows.length && !pendingLegs.length) {
@@ -369,10 +341,11 @@ export async function applyManagement(ctx: TradeExecutorContext, signal: SignalR
             channelDisplayName: channelMeta.commentSlug,
             channelUsername: null,
             closeWithVerification: (a, u, ticket) =>
-              closeWithVerification(a, u, ticket, { maxAttempts: 2, slippageEscalation: 50 }),
+              closeWithVerification(a, u, ticket, mgmtCloseOpts(liveMgmtFast)),
           })
           brokerClosed += one.closed
         }))
+        legsTotal += brokerClosed
         if (brokerClosed > 0) {
           try {
             await ctx.supabase
@@ -381,7 +354,7 @@ export async function applyManagement(ctx: TradeExecutorContext, signal: SignalR
               .eq('id', signal.id)
               .eq('status', 'parsed')
           } catch { /* best-effort */ }
-          return
+          return { legsTotal, legsParallelism: legConcurrency }
         }
       }
 
@@ -409,7 +382,7 @@ export async function applyManagement(ctx: TradeExecutorContext, signal: SignalR
         symbol_filter: symbolFromText,
         reply_scoped: replyScoped,
       })
-      return
+      return emptyMgmtResult(legConcurrency)
     }
 
     if (action === 'close' && !rows.length && pendingLegs.length) {
@@ -433,7 +406,7 @@ export async function applyManagement(ctx: TradeExecutorContext, signal: SignalR
           .eq('id', signal.id)
           .eq('status', 'parsed')
       } catch { /* best-effort */ }
-      return
+      return emptyMgmtResult(legConcurrency)
     }
 
     const rowsByBrokerSignal = new Map<string, MgmtTradeRow[]>()
@@ -444,7 +417,25 @@ export async function applyManagement(ctx: TradeExecutorContext, signal: SignalR
       rowsByBrokerSignal.set(key, list)
     }
 
-    await Promise.allSettled(rows.map(async trade => {
+    const eligibleTrades = rows.filter(tr => {
+      const broker = byBroker.get(tr.broker_account_id)
+      if (!broker || !isMtUuid(broker.metaapi_account_id)) return false
+      if (isChannelManagementBlocked(
+        normalizeChannelMessageFiltersMap(broker.channel_message_filters),
+        signal.channel_id,
+        action,
+        mgmtCtx,
+      )) {
+        return false
+      }
+      const ticket = Number(tr.metaapi_order_id)
+      return Number.isFinite(ticket) && ticket > 0
+    })
+    if (action === 'close' || action === 'breakeven' || action === 'partial_profit' || action === 'partial_breakeven') {
+      legsTotal += eligibleTrades.length
+    }
+
+    const processTrade = async (trade: MgmtTradeRow): Promise<void> => {
       const broker = byBroker.get(trade.broker_account_id)
       if (!broker || !isMtUuid(broker.metaapi_account_id)) return
       if (isChannelManagementBlocked(
@@ -463,7 +454,7 @@ export async function applyManagement(ctx: TradeExecutorContext, signal: SignalR
 
       try {
         if (action === 'close') {
-          const closeResult = await closeWithVerification(api, uuid, ticket, { maxAttempts: 2, slippageEscalation: 50 })
+          const closeResult = await closeWithVerification(api, uuid, ticket, mgmtCloseOpts(liveMgmtFast))
           if (!closeResult.confirmed) {
             throw new Error(
               closeResult.reason ?? 'orderClose succeeded but ticket still open on broker',
@@ -552,9 +543,23 @@ export async function applyManagement(ctx: TradeExecutorContext, signal: SignalR
           error_message: benign ? null : msg,
         })
       }
-    }))
+    }
+
+    if (liveMgmtFast && eligibleTrades.length > 1) {
+      await Promise.allSettled(
+        await parallelMap(eligibleTrades, legConcurrency, trade => processTrade(trade)),
+      )
+    } else {
+      await Promise.allSettled(eligibleTrades.map(trade => processTrade(trade)))
+    }
 
     if (action === 'modify' && (hasNewSl || hasNewTp)) {
+      for (const brokerRows of rowsByBrokerSignal.values()) {
+        legsTotal += brokerRows.filter(r => {
+          const ticket = Number(r.metaapi_order_id)
+          return Number.isFinite(ticket) && ticket > 0
+        }).length
+      }
       await applyMgmtModifyToBasketGroups({
         supabase: ctx.supabase,
         apiFor: broker => ctx.apiFor(broker as BrokerRow),
@@ -569,6 +574,7 @@ export async function applyManagement(ctx: TradeExecutorContext, signal: SignalR
         hasNewSl,
         hasNewTp,
         parsedTpLevels,
+        liveMgmtFast,
       })
     }
 
@@ -686,9 +692,10 @@ export async function applyManagement(ctx: TradeExecutorContext, signal: SignalR
     } catch {
       // best-effort
     }
+    return { legsTotal, legsParallelism: legConcurrency }
   }
 
-export async function applyCloseWorseEntriesInstruction(ctx: TradeExecutorContext, 
+export async function applyCloseWorseEntriesInstruction(ctx: TradeExecutorContext,
     signal: SignalRow,
     parsed: ParsedSignal,
     rows: Array<{
@@ -704,16 +711,21 @@ export async function applyCloseWorseEntriesInstruction(ctx: TradeExecutorContex
       cwe_close_price?: number | null
     }>,
     byBroker: Map<string, BrokerRow>,
-  ): Promise<void> {
+    mgmtOpts?: MgmtExecOptions,
+  ): Promise<MgmtExecResult> {
+    const liveMgmtFast = mgmtOpts?.liveMgmtFast === true
+    const legConcurrency = liveMgmtFast ? mgmtLegConcurrency() : 1
+    let legsTotal = 0
+
     if (!hasMetatraderApiConfigured()) {
       await skipMgmtSignalWithLog(ctx, signal, 'broker_api_not_configured', { action: 'close_worse_entries' })
-      return
+      return emptyMgmtResult(legConcurrency)
     }
 
     const openRows = rows.filter(r => r.status === 'open')
     if (!openRows.length) {
       await skipMgmtSignalWithLog(ctx, signal, 'cwe_no_open_trades', { action: 'close_worse_entries' })
-      return
+      return emptyMgmtResult(legConcurrency)
     }
 
     const groups = new Map<string, typeof openRows>()
@@ -775,6 +787,7 @@ export async function applyCloseWorseEntriesInstruction(ctx: TradeExecutorContex
       })
       const toClose = selectImmediateLegsForCweInstruction(groupTrades, layeringTickets)
       let groupClosed = 0
+      legsTotal += toClose.length
 
       console.log(
         `[tradeExecutor] cwe instruction signal=${signal.id} broker=${broker.id} symbol=${symbol}`
@@ -800,11 +813,11 @@ export async function applyCloseWorseEntriesInstruction(ctx: TradeExecutorContex
         return { closed: 0, eligible: 0 }
       }
 
-      for (const trade of toClose) {
+      const closeOneLeg = async (trade: typeof toClose[number]): Promise<number> => {
         const ticket = Number(trade.metaapi_order_id)
-        if (!Number.isFinite(ticket) || ticket <= 0) continue
+        if (!Number.isFinite(ticket) || ticket <= 0) return 0
         try {
-          const closeResult = await closeWithVerification(api, uuid, ticket, { maxAttempts: 2, slippageEscalation: 50 })
+          const closeResult = await closeWithVerification(api, uuid, ticket, mgmtCloseOpts(liveMgmtFast))
           if (!closeResult.confirmed) {
             throw new Error(closeResult.reason ?? 'cwe orderClose: ticket still open')
           }
@@ -838,7 +851,7 @@ export async function applyCloseWorseEntriesInstruction(ctx: TradeExecutorContex
               layering_tickets_excluded: layeringTickets.size,
             },
           })
-          groupClosed += 1
+          return 1
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err)
           const benign = /not\s+found|already\s+closed|invalid\s+ticket|no\s+such\s+order/i.test(msg)
@@ -858,25 +871,30 @@ export async function applyCloseWorseEntriesInstruction(ctx: TradeExecutorContex
                 symbolHint: trade.symbol,
               })
             }
-            groupClosed += 1
-          } else {
-            await ctx.supabase.from('trade_execution_logs').insert({
-              user_id: signal.user_id,
-              signal_id: signal.id,
-              broker_account_id: broker.id,
-              action: 'mgmt_close_worse_entries',
-              status: 'failed',
-              request_payload: {
-                mode: 'instruction_immediate_only',
-                ticket,
-                symbol,
-                entry_price: trade.entry_price,
-              },
-              error_message: msg,
-            })
+            return 1
           }
+          await ctx.supabase.from('trade_execution_logs').insert({
+            user_id: signal.user_id,
+            signal_id: signal.id,
+            broker_account_id: broker.id,
+            action: 'mgmt_close_worse_entries',
+            status: 'failed',
+            request_payload: {
+              mode: 'instruction_immediate_only',
+              ticket,
+              symbol,
+              entry_price: trade.entry_price,
+            },
+            error_message: msg,
+          })
+          return 0
         }
       }
+
+      const closeResults = liveMgmtFast && toClose.length > 1
+        ? await parallelMap(toClose, legConcurrency, trade => closeOneLeg(trade))
+        : await Promise.all(toClose.map(trade => closeOneLeg(trade)))
+      groupClosed = closeResults.reduce((sum, n) => sum + n, 0)
       return { closed: groupClosed, eligible: toClose.length }
     }))
 
@@ -901,7 +919,7 @@ export async function applyCloseWorseEntriesInstruction(ctx: TradeExecutorContex
       } catch {
         // best-effort
       }
-      return
+      return { legsTotal, legsParallelism: legConcurrency }
     }
 
     const skipReason = eligibleCloseCount > 0
@@ -912,4 +930,5 @@ export async function applyCloseWorseEntriesInstruction(ctx: TradeExecutorContex
       open_legs: openRows.length,
       eligible_close_legs: eligibleCloseCount,
     })
+    return { legsTotal, legsParallelism: legConcurrency }
   }

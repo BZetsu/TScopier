@@ -43,6 +43,7 @@ export async function tryParameterFollowUpMergeModifyOnly(ctx: TradeExecutorCont
     strictEntryPrefetch: { bid: number; ask: number } | null
     commentPrefix: string
     sameSignalRefresh?: boolean
+    liveMgmtFast?: boolean
   }): Promise<MergeOutcome> {
     const {
       signal, parsed, broker, channelKeywords, baseLot, params, symbol, uuid,
@@ -262,6 +263,7 @@ export async function tryParameterFollowUpMergeModifyOnly(ctx: TradeExecutorCont
       direction,
       logAction: 'merge_routed_modify_only',
       sameSignalRefresh: args.sameSignalRefresh === true,
+      liveMgmtFast: args.liveMgmtFast === true,
       mergeLinkMeta: {
         reply_chain: link.replyOk,
         within_time_window: link.withinWindow,

@@ -12,7 +12,7 @@ const rangePendingLadderSync_1 = require("../../rangePendingLadderSync");
 const helpers_1 = require("../helpers");
 const helpers_2 = require("./helpers");
 async function applyBasketSlTpRefresh(ctx, args) {
-    const { signal, parsed, broker, channelKeywords, baseLot, params, symbol, uuid, strictEntryPrefetch, commentPrefix, anchorSignalId, direction, logAction, mergeLinkMeta, sameSignalRefresh, } = args;
+    const { signal, parsed, broker, channelKeywords, baseLot, params, symbol, uuid, strictEntryPrefetch, commentPrefix, anchorSignalId, direction, logAction, mergeLinkMeta, sameSignalRefresh, liveMgmtFast, } = args;
     const api = ctx.apiFor(broker);
     if (!api) {
         return {
@@ -289,10 +289,15 @@ async function applyBasketSlTpRefresh(ctx, args) {
         skippedNoTicket: 0,
         skippedNotOnBroker: 0,
     };
-    const stragglerRounds = Math.min(12, Math.max(3, Number(process.env.BASKET_REFRESH_STRAGGLER_ROUNDS ?? 8)));
+    const stragglerRounds = liveMgmtFast
+        ? Math.min(4, Math.max(1, Number(process.env.BASKET_REFRESH_STRAGGLER_ROUNDS ?? 2)))
+        : Math.min(12, Math.max(3, Number(process.env.BASKET_REFRESH_STRAGGLER_ROUNDS ?? 8)));
     for (let round = 0; round < stragglerRounds; round++) {
         if (round > 0) {
-            await new Promise(r => setTimeout(r, Math.min(round, 4) * 200));
+            const roundSleepMs = liveMgmtFast
+                ? Math.min(round, 2) * 100
+                : Math.min(round, 4) * 200;
+            await new Promise(r => setTimeout(r, roundSleepMs));
             familyTrades = await loadFamilyTrades();
             summary.openLegs = familyTrades.length;
             const refreshedTargets = (0, multiTradeMerge_1.buildPerLegStopTargets)({
@@ -349,6 +354,7 @@ async function applyBasketSlTpRefresh(ctx, args) {
             openedTickets,
             alreadyModified: modifiedTradeIds,
             skipAlreadySynced: true,
+            liveMgmtFast,
         });
         for (const id of pass.modifiedTradeIds)
             modifiedTradeIds.add(id);

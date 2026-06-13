@@ -596,7 +596,10 @@ function parseDeterministicManagement(
     /\bclose\s+worse\b/i.test(t) ||
     hasAnyKeyword(t, kwCloseWorse)
 
-  if (wantsCloseWorseEntries) action = "close_worse_entries"
+  if (wantsCloseWorseEntries) {
+    action = "close_worse_entries"
+    confidence = 0.95
+  }
   else if (wantsPartialHalf && wantsBreakeven) action = "partial_breakeven"
   else if (wantsPartialHalf) {
     action = "partial_profit"
@@ -618,7 +621,10 @@ function parseDeterministicManagement(
     }
   } else if (wantsBreakeven) action = "breakeven"
   else if (wantsExplicitFullClose(t, kwClose)) action = "close"
-  else if (looksLikeStopOrTpAdjustCommand(t) || hasAnyKeyword(t, kwModify)) action = "modify"
+  else if (looksLikeStopOrTpAdjustCommand(t) || hasAnyKeyword(t, kwModify)) {
+    action = "modify"
+    confidence = 0.95
+  }
 
   if (!action) return null
   const looksEntry = ENTRY_KW.test(t) &&

@@ -150,7 +150,7 @@ async function pushParsedSignalToTradeWorkerInner(row, opts) {
         return false;
     }
     const isMgmt = (0, tradeSignalActions_1.isManagementAction)(action ?? '');
-    const defaultTimeoutMs = isMgmt ? 2000 : 4000;
+    const defaultTimeoutMs = isMgmt ? 5000 : 4000;
     const timeoutMs = Math.max(500, Math.min(10000, Number(process.env.TRADE_SIGNAL_PUSH_TIMEOUT_MS ?? defaultTimeoutMs)));
     const dispatchSource = opts?.source ?? row.dispatch_source ?? 'listener_push';
     const url = `${baseUrl}/internal/dispatch-signal`;

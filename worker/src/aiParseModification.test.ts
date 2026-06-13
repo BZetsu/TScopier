@@ -25,6 +25,41 @@ describe('parseModificationDeterministic', () => {
     assert.ok((result.parsed.confidence ?? 0) >= 0.9)
   })
 
+  it('parses adjust SL to price with high confidence', () => {
+    const result = parseModificationDeterministic(
+      'Adjust SL to 4505',
+      DEFAULT_CHANNEL_KEYWORDS,
+      null,
+    )
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.action, 'modify')
+    assert.equal(result.parsed.sl, 4505)
+    assert.ok((result.parsed.confidence ?? 0) >= 0.9)
+  })
+
+  it('parses set SL price with high confidence', () => {
+    const result = parseModificationDeterministic(
+      'Set SL 2650',
+      DEFAULT_CHANNEL_KEYWORDS,
+      null,
+    )
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.action, 'modify')
+    assert.equal(result.parsed.sl, 2650)
+    assert.ok((result.parsed.confidence ?? 0) >= 0.9)
+  })
+
+  it('parses close worse entries with high confidence', () => {
+    const result = parseModificationDeterministic(
+      'Close worse entries',
+      DEFAULT_CHANNEL_KEYWORDS,
+      null,
+    )
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.action, 'close_worse_entries')
+    assert.ok((result.parsed.confidence ?? 0) >= 0.9)
+  })
+
   it('skips bare chatter without management keywords', () => {
     const result = parseModificationDeterministic(
       'Nice trade everyone',

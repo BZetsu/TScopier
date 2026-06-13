@@ -343,6 +343,23 @@ Management messages (`Close half`, `Close worse entries`, `Adjust SL`, etc.) are
 
 **Close worse entries** (channel post) closes open legs on that channel whose entry is within your configured pip band of the live price, and always closes legs tagged with `cwe_close_price` (range multi-trade CWE immediates). Requires **Multi Trades** + **Close worse entries** enabled on the broker account. Redeploy **trade worker** and **parse-signal** after CWE fixes.
 
+### Management execution speed (live Telegram)
+
+Live management (`close_worse_entries`, `close`, `modify`, edited SL/TP) bypasses the in-process queue and uses parallel leg execution with fast close/modify on the trade-mgmt worker. Sweeps and reconcile jobs keep verified closes.
+
+| Env | Recommendation |
+|-----|----------------|
+| `LISTENER_INLINE_PARSE=true` | Required (default) — avoids OpenAI parse delay before dispatch |
+| `AI_MODIFICATION_PARSE_ENABLED=false` | Optional: deterministic-only if channel keywords cover your phrases |
+| `AI_MODIFICATION_PARSE_TIMEOUT_MS=1500` | Lower if AI modification parse stays enabled |
+| `TRADE_MGMT_WORKER_URL` | Dedicated mgmt worker URL on listener (not shared with entry) |
+| `EXECUTOR_MAX_CONCURRENT_SIGNALS=6` | More parallel signal handlers on mgmt shard |
+| `MGMT_LEG_CONCURRENCY=6` | Parallel CWE/SL legs per broker (max 12) |
+| `TRADE_SIGNAL_QUEUE_MGMT_CONSUMER_BLOCK_MS=150` | Lower Redis mgmt consumer latency |
+| `TRADE_SIGNAL_PUSH_TIMEOUT_MS=5000` | HTTP push fallback timeout for mgmt (when queue off) |
+
+Pipeline logs include `mgmt_fast_path`, `mgmt_wall_ms`, `mgmt_legs_total`, and `mgmt_legs_parallelism` on live mgmt dispatches.
+
 Channel **Adjust SL / TP** instructions are stored in `channel_active_trade_params` (per channel + symbol). They apply to **management**, **pending ladder legs**, and **parameter refresh** on open baskets — not to naked **buy/sell** posts with no SL/TP in the message (avoids stale levels → broker "Invalid stops"). Run migration `20260520130000_channel_active_trade_params.sql` when upgrading.
 
 | **Channel post**, no symbol in text | All **open trades** on that Telegram channel |

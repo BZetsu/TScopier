@@ -1,6 +1,9 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.shouldUseEntryFastPath = shouldUseEntryFastPath;
+exports.shouldUseMgmtFastPath = shouldUseMgmtFastPath;
+exports.isLiveMgmtFast = isLiveMgmtFast;
+exports.revisionInflightWaitMs = revisionInflightWaitMs;
 exports.enqueueSignal = enqueueSignal;
 exports.scheduleQueueDrain = scheduleQueueDrain;
 exports.dequeueQueuedSignal = dequeueQueuedSignal;
@@ -46,6 +49,67 @@ function shouldUseEntryFastPath(ctx, row) {
     if ((0, multiTradeMerge_1.shouldRouteAsBasketParameterRefresh)(parsed))
         return false;
     return (0, tradeSignalActions_1.isEntryAction)((0, tradeSignalActions_1.parsedAction)(parsed));
+}
+function revisionDirectionFlip(row) {
+    if (!row.revision_prior_action)
+        return false;
+    const action = (0, tradeSignalActions_1.parsedAction)(row.parsed_data);
+    return (0, signalRevision_1.revisionDirectionFlippedFromActions)(row.revision_prior_action, action);
+}
+/** Live management bypasses in-process queue + heavy idempotency (mirror entry fast path). */
+function shouldUseMgmtFastPath(row, source) {
+    const mode = workerConfig_1.workerConfig.tradeExecutorMode;
+    if (mode !== 'mgmt' && mode !== 'all')
+        return false;
+    const parsed = row.parsed_data;
+    if (!parsed)
+        return false;
+    if (source === signalRevision_1.MESSAGE_REVISION_DISPATCH_SOURCE && revisionDirectionFlip(row)) {
+        return false;
+    }
+    const action = (0, tradeSignalActions_1.parsedAction)(parsed);
+    if ((0, tradeSignalActions_1.isManagementAction)(action))
+        return true;
+    if (source === signalRevision_1.MESSAGE_REVISION_DISPATCH_SOURCE
+        && (0, multiTradeMerge_1.shouldRouteAsBasketParameterRefresh)(parsed)) {
+        return true;
+    }
+    return false;
+}
+function isLiveMgmtFast(opts, parsed, row) {
+    if (opts?.liveDispatch !== true || opts?.lightIdempotency !== true)
+        return false;
+    if (opts.dispatchSource === signalRevision_1.MESSAGE_REVISION_DISPATCH_SOURCE
+        && row?.revision_prior_action
+        && (0, signalRevision_1.revisionDirectionFlippedFromActions)(row.revision_prior_action, (0, tradeSignalActions_1.parsedAction)(parsed))) {
+        return false;
+    }
+    const action = (0, tradeSignalActions_1.parsedAction)(parsed);
+    if ((0, tradeSignalActions_1.isManagementAction)(action))
+        return true;
+    if (opts.dispatchSource === signalRevision_1.MESSAGE_REVISION_DISPATCH_SOURCE
+        && parsed
+        && (0, multiTradeMerge_1.shouldRouteAsBasketParameterRefresh)(parsed)) {
+        return true;
+    }
+    return false;
+}
+function revisionInflightWaitMs(row, dispatchSource) {
+    if (dispatchSource !== signalRevision_1.MESSAGE_REVISION_DISPATCH_SOURCE)
+        return 60000;
+    const parsed = row.parsed_data;
+    if (!parsed)
+        return 60000;
+    const action = (0, tradeSignalActions_1.parsedAction)(parsed);
+    if ((0, tradeSignalActions_1.isManagementAction)(action))
+        return 10000;
+    if ((0, multiTradeMerge_1.shouldRouteAsBasketParameterRefresh)(parsed) && !(0, tradeSignalActions_1.isEntryAction)(action)) {
+        return 10000;
+    }
+    if ((0, multiTradeMerge_1.shouldRouteAsBasketParameterRefresh)(parsed)) {
+        return 10000;
+    }
+    return 60000;
 }
 function enqueueSignal(ctx, row, opts) {
     if (!types_1.PARSED_STATUSES.has(row.status))
@@ -253,7 +317,7 @@ async function handleSignal(ctx, row, opts) {
         return;
     const isMessageRevisionEarly = opts?.dispatchSource === signalRevision_1.MESSAGE_REVISION_DISPATCH_SOURCE;
     if (isMessageRevisionEarly) {
-        await waitForSignalInflightClear(ctx, row.id);
+        await waitForSignalInflightClear(ctx, row.id, revisionInflightWaitMs(row, opts?.dispatchSource));
     }
     if (!ctx.claimSignalExecution(row.id))
         return;
@@ -273,25 +337,29 @@ async function handleSignal(ctx, row, opts) {
     }
     const handleStartMs = Date.now();
     const liveFast = opts?.liveDispatch === true && opts?.lightIdempotency === true;
-    const channelMetaPromise = liveFast && row.channel_id
+    const liveMgmtFast = isLiveMgmtFast(opts, row.parsed_data, row);
+    const channelMetaPromise = (liveFast || liveMgmtFast) && row.channel_id
         ? ctx.getChannelMeta(row.channel_id)
         : null;
     const queueWaitMs = opts?.dispatchReceivedAt != null
         ? Math.max(0, handleStartMs - opts.dispatchReceivedAt)
         : null;
-    let pipelineOutcome = { live_fast: liveFast };
+    let pipelineOutcome = {
+        live_fast: liveFast,
+        mgmt_fast_path: liveMgmtFast,
+    };
     const isMessageRevision = opts?.dispatchSource === signalRevision_1.MESSAGE_REVISION_DISPATCH_SOURCE;
     try {
         if (!opts?.liveDispatch && !isMessageRevision && ctx.signalTooOldForReplay(row))
             return;
-        if (!liveFast) {
+        if (!liveFast && !liveMgmtFast) {
             void ctx.logPipelineStage(row, 'handle_start', {
                 live_dispatch: opts?.liveDispatch === true,
                 source: opts?.dispatchSource ?? null,
                 queue_wait_ms: queueWaitMs,
             });
         }
-        if (!isMessageRevision && !liveFast && await ctx.signalAlreadyHandled(row.id)) {
+        if (!isMessageRevision && !liveFast && !liveMgmtFast && await ctx.signalAlreadyHandled(row.id)) {
             await ctx.markSignalExecuted(row.id);
             return;
         }
@@ -461,7 +529,15 @@ async function handleSignal(ctx, row, opts) {
                 await ctx.logDispatchSkipped(row, 'channel_filter_ignored');
                 return;
             }
-            await ctx.applyManagement(row, parsed, mgmtBrokers);
+            const mgmtWallStart = Date.now();
+            const mgmtResult = await ctx.applyManagement(row, parsed, mgmtBrokers, { liveMgmtFast });
+            pipelineOutcome = {
+                ...pipelineOutcome,
+                mgmt_wall_ms: Date.now() - mgmtWallStart,
+                mgmt_legs_total: mgmtResult.legsTotal,
+                mgmt_legs_parallelism: mgmtResult.legsParallelism,
+                mgmt_action: action,
+            };
             return;
         }
         const op = (0, helpers_1.operationFor)(action, parsed);
@@ -482,6 +558,7 @@ async function handleSignal(ctx, row, opts) {
         }
         const outcomes = await Promise.all(brokers.map(b => ctx.sendOrder(row, parsed, op, b, channelKeywords, pipelineT0, {
             liveEntryFast: liveFast,
+            liveMgmtFast,
             commentPrefix,
             sameSignalRefresh: isMessageRevision,
         })));
@@ -566,13 +643,14 @@ async function handleSignal(ctx, row, opts) {
     }
     finally {
         const handleMs = Date.now() - handleStartMs;
-        if (liveFast) {
+        if (liveFast || liveMgmtFast) {
             ctx.logPipelineSummaryBackground(row, { handle_ms: handleMs, ...pipelineOutcome });
         }
         else {
             void ctx.logPipelineStage(row, 'handle_end', {
                 handle_ms: handleMs,
                 source: opts?.dispatchSource ?? null,
+                ...pipelineOutcome,
             });
         }
         ctx.inflight.delete(row.id);

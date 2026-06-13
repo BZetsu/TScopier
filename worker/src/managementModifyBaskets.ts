@@ -106,6 +106,7 @@ export async function applyMgmtModifyToBasketGroups(args: {
   hasNewSl: boolean
   hasNewTp: boolean
   parsedTpLevels: number[]
+  liveMgmtFast?: boolean
 }): Promise<void> {
   const {
     supabase,
@@ -117,6 +118,7 @@ export async function applyMgmtModifyToBasketGroups(args: {
     hasNewSl,
     hasNewTp,
     parsedTpLevels,
+    liveMgmtFast,
   } = args
   if (!hasNewSl && !hasNewTp) return
 
@@ -218,6 +220,7 @@ export async function applyMgmtModifyToBasketGroups(args: {
       strictEntryPrefetch: null,
       openedTickets,
       skipAlreadySynced: false,
+      liveMgmtFast,
     })
 
     const mergeFailed = summary.modified < summary.openLegs

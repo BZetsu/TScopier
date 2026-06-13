@@ -222,6 +222,7 @@ async function prepareEntryExecution(ctx, args) {
             strictEntryPrefetch,
             commentPrefix,
             sameSignalRefresh,
+            liveMgmtFast: sendOpts?.liveMgmtFast === true,
         });
         if (sameSignalRefresh) {
             return {

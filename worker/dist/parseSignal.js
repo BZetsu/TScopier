@@ -472,8 +472,10 @@ function parseDeterministicManagement(message, lexicon, channelKeywords) {
     const wantsCloseWorseEntries = /\bclose\s+worse\s+entr(?:y|ies)\b/i.test(t) ||
         /\bclose\s+worse\b/i.test(t) ||
         hasAnyKeyword(t, kwCloseWorse);
-    if (wantsCloseWorseEntries)
+    if (wantsCloseWorseEntries) {
         action = "close_worse_entries";
+        confidence = 0.95;
+    }
     else if (wantsPartialHalf && wantsBreakeven)
         action = "partial_breakeven";
     else if (wantsPartialHalf) {
@@ -498,8 +500,10 @@ function parseDeterministicManagement(message, lexicon, channelKeywords) {
         action = "breakeven";
     else if (wantsExplicitFullClose(t, kwClose))
         action = "close";
-    else if (looksLikeStopOrTpAdjustCommand(t) || hasAnyKeyword(t, kwModify))
+    else if (looksLikeStopOrTpAdjustCommand(t) || hasAnyKeyword(t, kwModify)) {
         action = "modify";
+        confidence = 0.95;
+    }
     if (!action)
         return null;
     const looksEntry = ENTRY_KW.test(t) &&

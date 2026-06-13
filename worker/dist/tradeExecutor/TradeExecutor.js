@@ -560,6 +560,8 @@ class TradeExecutor {
         // cache hit by the time it runs.
         this.prewarmForDispatch(rowWithTs);
         const entryFast = this.shouldUseEntryFastPath(rowWithTs);
+        const mgmtFast = dispatch.shouldUseMgmtFastPath(rowWithTs, source);
+        const useFastPath = entryFast || mgmtFast;
         if (entryFast)
             this.kickLiveEntryPrewarm(rowWithTs);
         const listenerTs = (0, pipelineTimestamps_1.parsePipelineTimestamps)(rowWithTs.pipeline_ts);
@@ -568,10 +570,10 @@ class TradeExecutor {
             console.warn(`[tradeExecutor] listener_push missing pipeline_ts listener stamps signal=${row.id}`
                 + ' — redeploy listener service (LISTENER_INLINE_PARSE + pipeline_ts on dispatch)');
         }
-        if (!entryFast) {
+        if (!useFastPath) {
             void this.logPipelineStage(rowWithTs, 'dispatch_received', { source, priority: opts?.priority ?? null });
         }
-        if (entryFast) {
+        if (useFastPath) {
             if (this.inflight.has(row.id) || this.queuedIds.has(row.id))
                 return true;
             void this.handleSignal(rowWithTs, {
@@ -611,14 +613,16 @@ class TradeExecutor {
         };
         this.prewarmForDispatch(rowWithTs);
         const entryFast = this.shouldUseEntryFastPath(rowWithTs);
+        const mgmtFast = dispatch.shouldUseMgmtFastPath(rowWithTs, source);
+        const useFastPath = entryFast || mgmtFast;
         if (entryFast)
             this.kickLiveEntryPrewarm(rowWithTs);
-        if (!entryFast) {
+        if (!useFastPath) {
             await this.logPipelineStage(rowWithTs, 'dispatch_received', { source, priority: opts?.priority ?? null });
         }
         if (this.inflight.has(row.id)) {
             if (source === signalRevision_1.MESSAGE_REVISION_DISPATCH_SOURCE) {
-                await dispatch.waitForSignalInflightClear(this, row.id);
+                await dispatch.waitForSignalInflightClear(this, row.id, dispatch.revisionInflightWaitMs(rowWithTs, source));
             }
             else {
                 return true;
@@ -628,7 +632,7 @@ class TradeExecutor {
             liveDispatch: true,
             dispatchSource: source,
             dispatchReceivedAt: receivedAt,
-            lightIdempotency: entryFast,
+            lightIdempotency: useFastPath,
         });
         return true;
     }
@@ -640,6 +644,9 @@ class TradeExecutor {
             priority: (0, tradeSignalActions_1.dispatchPriorityForAction)((0, tradeSignalActions_1.parsedAction)(row.parsed_data)),
             source: 'in_process',
         });
+    }
+    shouldUseMgmtFastPath(row, source) {
+        return dispatch.shouldUseMgmtFastPath(row, source);
     }
     shouldUseEntryFastPath(row) {
         return dispatch.shouldUseEntryFastPath(this, row);
@@ -966,15 +973,15 @@ class TradeExecutor {
     async skipMgmtSignal(signalId, reason) {
         return await managementExecutor.skipMgmtSignal(this, signalId, reason);
     }
-    async applyManagement(signal, parsed, brokers) {
-        return await managementExecutor.applyManagement(this, signal, parsed, brokers);
+    async applyManagement(signal, parsed, brokers, mgmtOpts) {
+        return await managementExecutor.applyManagement(this, signal, parsed, brokers, mgmtOpts);
     }
     /**
      * Telegram "Close worse entries": close open basket legs whose entry is within
      * `close_worse_entries_pips` of the live quote at instruction time.
      */
-    async applyCloseWorseEntriesInstruction(signal, parsed, rows, byBroker) {
-        return await managementExecutor.applyCloseWorseEntriesInstruction(this, signal, parsed, rows, byBroker);
+    async applyCloseWorseEntriesInstruction(signal, parsed, rows, byBroker, mgmtOpts) {
+        return await managementExecutor.applyCloseWorseEntriesInstruction(this, signal, parsed, rows, byBroker, mgmtOpts);
     }
     /**
      * One-time cleanup of broker-side BuyLimit/SellLimit orders left over from

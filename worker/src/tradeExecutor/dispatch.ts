@@ -48,6 +48,7 @@ import {
 } from '../subscriptionAccess'
 import { evaluateParsedSignalExecutionEligibility } from '../signalExecutionEligibility'
 import { evaluateChannelCopyLimitPauseForBroker } from '../copyLimitDispatch'
+import type { MgmtExecOptions } from '../mgmtExecOptions'
 
 export function shouldUseEntryFastPath(ctx: TradeExecutorContext, row: SignalRow): boolean {
     const mode = workerConfig.tradeExecutorMode
@@ -58,6 +59,76 @@ export function shouldUseEntryFastPath(ctx: TradeExecutorContext, row: SignalRow
     if (shouldRouteAsBasketParameterRefresh(parsed)) return false
     return isEntryAction(parsedAction(parsed))
   }
+
+function revisionDirectionFlip(row: SignalRow): boolean {
+  if (!row.revision_prior_action) return false
+  const action = parsedAction(row.parsed_data)
+  return revisionDirectionFlippedFromActions(row.revision_prior_action, action)
+}
+
+/** Live management bypasses in-process queue + heavy idempotency (mirror entry fast path). */
+export function shouldUseMgmtFastPath(row: SignalRow, source?: string): boolean {
+  const mode = workerConfig.tradeExecutorMode
+  if (mode !== 'mgmt' && mode !== 'all') return false
+  const parsed = row.parsed_data
+  if (!parsed) return false
+  if (source === MESSAGE_REVISION_DISPATCH_SOURCE && revisionDirectionFlip(row)) {
+    return false
+  }
+  const action = parsedAction(parsed)
+  if (isManagementAction(action)) return true
+  if (
+    source === MESSAGE_REVISION_DISPATCH_SOURCE
+    && shouldRouteAsBasketParameterRefresh(parsed)
+  ) {
+    return true
+  }
+  return false
+}
+
+export function isLiveMgmtFast(
+  opts?: {
+    liveDispatch?: boolean
+    lightIdempotency?: boolean
+    dispatchSource?: string
+  },
+  parsed?: { action?: string } | null,
+  row?: SignalRow,
+): boolean {
+  if (opts?.liveDispatch !== true || opts?.lightIdempotency !== true) return false
+  if (
+    opts.dispatchSource === MESSAGE_REVISION_DISPATCH_SOURCE
+    && row?.revision_prior_action
+    && revisionDirectionFlippedFromActions(row.revision_prior_action, parsedAction(parsed))
+  ) {
+    return false
+  }
+  const action = parsedAction(parsed)
+  if (isManagementAction(action)) return true
+  if (
+    opts.dispatchSource === MESSAGE_REVISION_DISPATCH_SOURCE
+    && parsed
+    && shouldRouteAsBasketParameterRefresh(parsed as ParsedSignal)
+  ) {
+    return true
+  }
+  return false
+}
+
+export function revisionInflightWaitMs(row: SignalRow, dispatchSource?: string): number {
+  if (dispatchSource !== MESSAGE_REVISION_DISPATCH_SOURCE) return 60_000
+  const parsed = row.parsed_data
+  if (!parsed) return 60_000
+  const action = parsedAction(parsed)
+  if (isManagementAction(action)) return 10_000
+  if (shouldRouteAsBasketParameterRefresh(parsed as ParsedSignal) && !isEntryAction(action)) {
+    return 10_000
+  }
+  if (shouldRouteAsBasketParameterRefresh(parsed as ParsedSignal)) {
+    return 10_000
+  }
+  return 60_000
+}
 
 export function enqueueSignal(ctx: TradeExecutorContext, 
     row: SignalRow,
@@ -301,7 +372,11 @@ export async function handleSignal(ctx: TradeExecutorContext,
     if (!hasMetatraderApiConfigured()) return
     const isMessageRevisionEarly = opts?.dispatchSource === MESSAGE_REVISION_DISPATCH_SOURCE
     if (isMessageRevisionEarly) {
-      await waitForSignalInflightClear(ctx, row.id)
+      await waitForSignalInflightClear(
+        ctx,
+        row.id,
+        revisionInflightWaitMs(row, opts?.dispatchSource),
+      )
     }
     if (!ctx.claimSignalExecution(row.id)) return
 
@@ -323,18 +398,22 @@ export async function handleSignal(ctx: TradeExecutorContext,
 
     const handleStartMs = Date.now()
     const liveFast = opts?.liveDispatch === true && opts?.lightIdempotency === true
-    const channelMetaPromise = liveFast && row.channel_id
+    const liveMgmtFast = isLiveMgmtFast(opts, row.parsed_data, row)
+    const channelMetaPromise = (liveFast || liveMgmtFast) && row.channel_id
       ? ctx.getChannelMeta(row.channel_id)
       : null
     const queueWaitMs = opts?.dispatchReceivedAt != null
       ? Math.max(0, handleStartMs - (opts.dispatchReceivedAt as number))
       : null
-    let pipelineOutcome: Record<string, unknown> = { live_fast: liveFast }
+    let pipelineOutcome: Record<string, unknown> = {
+      live_fast: liveFast,
+      mgmt_fast_path: liveMgmtFast,
+    }
     const isMessageRevision = opts?.dispatchSource === MESSAGE_REVISION_DISPATCH_SOURCE
     try {
       if (!opts?.liveDispatch && !isMessageRevision && ctx.signalTooOldForReplay(row)) return
 
-      if (!liveFast) {
+      if (!liveFast && !liveMgmtFast) {
         void ctx.logPipelineStage(row, 'handle_start', {
           live_dispatch: opts?.liveDispatch === true,
           source: opts?.dispatchSource ?? null,
@@ -342,7 +421,7 @@ export async function handleSignal(ctx: TradeExecutorContext,
         })
       }
 
-      if (!isMessageRevision && !liveFast && await ctx.signalAlreadyHandled(row.id)) {
+      if (!isMessageRevision && !liveFast && !liveMgmtFast && await ctx.signalAlreadyHandled(row.id)) {
         await ctx.markSignalExecuted(row.id)
         return
       }
@@ -549,7 +628,15 @@ export async function handleSignal(ctx: TradeExecutorContext,
           await ctx.logDispatchSkipped(row, 'channel_filter_ignored')
           return
         }
-        await ctx.applyManagement(row, parsed, mgmtBrokers)
+        const mgmtWallStart = Date.now()
+        const mgmtResult = await ctx.applyManagement(row, parsed, mgmtBrokers, { liveMgmtFast })
+        pipelineOutcome = {
+          ...pipelineOutcome,
+          mgmt_wall_ms: Date.now() - mgmtWallStart,
+          mgmt_legs_total: mgmtResult.legsTotal,
+          mgmt_legs_parallelism: mgmtResult.legsParallelism,
+          mgmt_action: action,
+        }
         return
       }
 
@@ -575,6 +662,7 @@ export async function handleSignal(ctx: TradeExecutorContext,
       const outcomes = await Promise.all(
         brokers.map(b => ctx.sendOrder(row, parsed, op, b, channelKeywords, pipelineT0, {
           liveEntryFast: liveFast,
+          liveMgmtFast,
           commentPrefix,
           sameSignalRefresh: isMessageRevision,
         })),
@@ -656,12 +744,13 @@ export async function handleSignal(ctx: TradeExecutorContext,
       }
     } finally {
       const handleMs = Date.now() - handleStartMs
-      if (liveFast) {
+      if (liveFast || liveMgmtFast) {
         ctx.logPipelineSummaryBackground(row, { handle_ms: handleMs, ...pipelineOutcome })
       } else {
         void ctx.logPipelineStage(row, 'handle_end', {
           handle_ms: handleMs,
           source: opts?.dispatchSource ?? null,
+          ...pipelineOutcome,
         })
       }
       ctx.inflight.delete(row.id)

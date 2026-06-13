@@ -58,6 +58,7 @@ import {
   signalMatchesExecutorMode,
 } from '../tradeSignalActions'
 import { workerConfig, userBelongsToShard } from '../workerConfig'
+import type { MgmtExecOptions, MgmtExecResult } from '../mgmtExecOptions'
 import { writeBrokerConnectionStatus } from '../brokerConnectionStatus'
 import {
   applyShardToQuery,
@@ -746,6 +747,8 @@ export class TradeExecutor {
     // cache hit by the time it runs.
     this.prewarmForDispatch(rowWithTs)
     const entryFast = this.shouldUseEntryFastPath(rowWithTs)
+    const mgmtFast = dispatch.shouldUseMgmtFastPath(rowWithTs, source)
+    const useFastPath = entryFast || mgmtFast
     if (entryFast) this.kickLiveEntryPrewarm(rowWithTs)
     const listenerTs = parsePipelineTimestamps(rowWithTs.pipeline_ts)
     if (
@@ -757,11 +760,11 @@ export class TradeExecutor {
         + ' — redeploy listener service (LISTENER_INLINE_PARSE + pipeline_ts on dispatch)',
       )
     }
-    if (!entryFast) {
+    if (!useFastPath) {
       void this.logPipelineStage(rowWithTs, 'dispatch_received', { source, priority: opts?.priority ?? null })
     }
 
-    if (entryFast) {
+    if (useFastPath) {
       if (this.inflight.has(row.id) || this.queuedIds.has(row.id)) return true
       void this.handleSignal(rowWithTs, {
         liveDispatch: true,
@@ -804,15 +807,21 @@ export class TradeExecutor {
     }
     this.prewarmForDispatch(rowWithTs)
     const entryFast = this.shouldUseEntryFastPath(rowWithTs)
+    const mgmtFast = dispatch.shouldUseMgmtFastPath(rowWithTs, source)
+    const useFastPath = entryFast || mgmtFast
     if (entryFast) this.kickLiveEntryPrewarm(rowWithTs)
 
-    if (!entryFast) {
+    if (!useFastPath) {
       await this.logPipelineStage(rowWithTs, 'dispatch_received', { source, priority: opts?.priority ?? null })
     }
 
     if (this.inflight.has(row.id)) {
       if (source === MESSAGE_REVISION_DISPATCH_SOURCE) {
-        await dispatch.waitForSignalInflightClear(this, row.id)
+        await dispatch.waitForSignalInflightClear(
+          this,
+          row.id,
+          dispatch.revisionInflightWaitMs(rowWithTs, source),
+        )
       } else {
         return true
       }
@@ -822,7 +831,7 @@ export class TradeExecutor {
       liveDispatch: true,
       dispatchSource: source,
       dispatchReceivedAt: receivedAt,
-      lightIdempotency: entryFast,
+      lightIdempotency: useFastPath,
     })
     return true
   }
@@ -835,6 +844,10 @@ export class TradeExecutor {
       priority: dispatchPriorityForAction(parsedAction(row.parsed_data)),
       source: 'in_process',
     })
+  }
+
+  shouldUseMgmtFastPath(row: SignalRow, source?: string): boolean {
+    return dispatch.shouldUseMgmtFastPath(row, source)
   }
 
   shouldUseEntryFastPath(row: SignalRow): boolean {
@@ -1038,6 +1051,7 @@ export class TradeExecutor {
     strictEntryPrefetch: { bid: number; ask: number } | null
     commentPrefix: string
     sameSignalRefresh?: boolean
+    liveMgmtFast?: boolean
   }): Promise<MergeOutcome> {
     return await basketMerge.tryParameterFollowUpMergeModifyOnly(this, args)
   }
@@ -1093,6 +1107,7 @@ export class TradeExecutor {
     direction: 'buy' | 'sell'
     logAction: 'merge_routed_modify_only' | 'signal_merge_into_open_trade'
     sameSignalRefresh?: boolean
+    liveMgmtFast?: boolean
     mergeLinkMeta?: Record<string, unknown>
   }): Promise<{ success: boolean; summary: MergeModifySummary }> {
     return await basketMerge.applyBasketSlTpRefresh(this, args)
@@ -1242,7 +1257,7 @@ export class TradeExecutor {
     broker: BrokerRow,
     channelKeywords: ChannelKeywords | null,
     pipelineT0?: number,
-    sendOpts?: { liveEntryFast?: boolean; commentPrefix?: string; sameSignalRefresh?: boolean },
+    sendOpts?: { liveEntryFast?: boolean; liveMgmtFast?: boolean; commentPrefix?: string; sameSignalRefresh?: boolean },
   ): Promise<SendOrderOutcome>  {
     const configReady = channelConfigReadyForExecution(broker, signal.channel_id)
     if (!configReady.ready) {
@@ -1341,8 +1356,13 @@ export class TradeExecutor {
     return await managementExecutor.skipMgmtSignal(this, signalId, reason)
   }
 
-  async applyManagement(signal: SignalRow, parsed: ParsedSignal, brokers: BrokerRow[]): Promise<void> {
-    return await managementExecutor.applyManagement(this, signal, parsed, brokers)
+  async applyManagement(
+    signal: SignalRow,
+    parsed: ParsedSignal,
+    brokers: BrokerRow[],
+    mgmtOpts?: MgmtExecOptions,
+  ): Promise<MgmtExecResult> {
+    return await managementExecutor.applyManagement(this, signal, parsed, brokers, mgmtOpts)
   }
 
   /**
@@ -1362,8 +1382,10 @@ export class TradeExecutor {
       entry_price: number | null
       cwe_close_price?: number | null
     }>,
-    byBroker: Map<string, BrokerRow>,): Promise<void> {
-    return await managementExecutor.applyCloseWorseEntriesInstruction(this, signal, parsed, rows, byBroker)
+    byBroker: Map<string, BrokerRow>,
+    mgmtOpts?: MgmtExecOptions,
+  ): Promise<MgmtExecResult> {
+    return await managementExecutor.applyCloseWorseEntriesInstruction(this, signal, parsed, rows, byBroker, mgmtOpts)
   }
 
   /**

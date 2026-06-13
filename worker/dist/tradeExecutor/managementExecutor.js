@@ -8,54 +8,21 @@ const channelActiveTradeParams_1 = require("../channelActiveTradeParams");
 const channelMessageFilters_1 = require("../channelMessageFilters");
 const closeWorseEntries_1 = require("../closeWorseEntries");
 const managementBrokerClose_1 = require("../managementBrokerClose");
+const managementClose_1 = require("../managementClose");
 const managementModifyBaskets_1 = require("../managementModifyBaskets");
 const managementPendingLegs_1 = require("../managementPendingLegs");
 const managementScope_1 = require("../managementScope");
 const metatraderapi_1 = require("../metatraderapi");
 const multiTradeMerge_1 = require("../multiTradeMerge");
 const orderModifyBenign_1 = require("../orderModifyBenign");
+const parallelPool_1 = require("../parallelPool");
 const rangePendingLadderSync_1 = require("../rangePendingLadderSync");
 const helpers_1 = require("./helpers");
-async function closeWithVerification(api, uuid, ticket, opts = {}) {
-    const maxAttempts = opts.maxAttempts ?? 2;
-    const slippageStep = opts.slippageEscalation ?? 50;
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        const slippage = 20 + (attempt - 1) * slippageStep;
-        const result = await api.orderClose(uuid, { ticket, slippage });
-        if (result.state && /^(rejected|cancelled|expired)/i.test(result.state)) {
-            if (attempt >= maxAttempts) {
-                return { confirmed: false, reason: `orderClose state=${result.state}`, attempts: attempt };
-            }
-            await new Promise(r => setTimeout(r, 300));
-            continue;
-        }
-        await new Promise(r => setTimeout(r, 400));
-        let stillOpen = false;
-        try {
-            const openOrders = await api.openedOrders(uuid);
-            for (const raw of openOrders ?? []) {
-                if (!raw || typeof raw !== 'object')
-                    continue;
-                const o = raw;
-                const t = Number(o.ticket ?? o.Ticket ?? o.orderId ?? o.OrderID ?? 0);
-                if (t === ticket) {
-                    stillOpen = true;
-                    break;
-                }
-            }
-        }
-        catch {
-            return { confirmed: true, attempts: attempt };
-        }
-        if (!stillOpen) {
-            return { confirmed: true, attempts: attempt };
-        }
-        if (attempt >= maxAttempts) {
-            return { confirmed: false, reason: 'ticket still open after orderClose + verification', attempts: attempt };
-        }
-        await new Promise(r => setTimeout(r, 300));
-    }
-    return { confirmed: false, reason: 'exhausted attempts', attempts: maxAttempts };
+function mgmtCloseOpts(liveMgmtFast) {
+    return { maxAttempts: 2, slippageEscalation: 50, liveFast: liveMgmtFast };
+}
+function emptyMgmtResult(parallelism = 1) {
+    return { legsTotal: 0, legsParallelism: parallelism };
 }
 async function logSendSkipped(ctx, signal, broker, reason, extra) {
     if (reason === 'broker_session_not_connected') {
@@ -102,12 +69,15 @@ async function skipMgmtSignalWithLog(ctx, signal, reason, extra) {
     }
     catch { /* best-effort */ }
 }
-async function applyManagement(ctx, signal, parsed, brokers) {
+async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
+    const liveMgmtFast = mgmtOpts?.liveMgmtFast === true;
+    const legConcurrency = liveMgmtFast ? (0, parallelPool_1.mgmtLegConcurrency)() : 1;
+    let legsTotal = 0;
     if (!(0, metatraderapi_1.hasMetatraderApiConfigured)()) {
         await skipMgmtSignalWithLog(ctx, signal, 'broker_api_not_configured', {
             action: String(parsed.action ?? '').toLowerCase(),
         });
-        return;
+        return emptyMgmtResult(legConcurrency);
     }
     const brokerAccountIds = brokers.map(b => b.id);
     const replyScoped = (0, managementScope_1.isReplyScopedManagement)(signal);
@@ -178,7 +148,7 @@ async function applyManagement(ctx, signal, parsed, brokers) {
         if (!basketAnchorId) {
             if (String(parsed.action ?? '').toLowerCase() !== 'close_worse_entries') {
                 await skipMgmtSignalWithLog(ctx, signal, 'mgmt_no_open_trades_db', { scope: 'reply_basket' });
-                return;
+                return emptyMgmtResult(legConcurrency);
             }
         }
         else {
@@ -196,7 +166,7 @@ async function applyManagement(ctx, signal, parsed, brokers) {
     else {
         if (!signal.channel_id) {
             await skipMgmtSignalWithLog(ctx, signal, 'mgmt_no_open_trades_db', { scope: 'no_channel' });
-            return;
+            return emptyMgmtResult(legConcurrency);
         }
         const actionPre = String(parsed.action ?? '').toLowerCase();
         let channelRows = actionPre === 'close_worse_entries'
@@ -267,12 +237,12 @@ async function applyManagement(ctx, signal, parsed, brokers) {
     if (action === 'close_worse_entries') {
         if (!rows.length) {
             await skipMgmtSignalWithLog(ctx, signal, 'mgmt_no_open_trades_db', { action: 'close_worse_entries' });
-            return;
+            return emptyMgmtResult(legConcurrency);
         }
         const eligibleBrokers = brokers.filter(b => !(0, channelMessageFilters_1.isChannelManagementBlocked)((0, channelMessageFilters_1.normalizeChannelMessageFiltersMap)(b.channel_message_filters), signal.channel_id, action, mgmtCtx));
         if (!eligibleBrokers.length) {
             await skipMgmtSignalWithLog(ctx, signal, 'channel_filter_ignored', { action: 'close_worse_entries' });
-            return;
+            return emptyMgmtResult(legConcurrency);
         }
         const eligibleIds = new Set(eligibleBrokers.map(b => b.id));
         const eligibleRows = rows.filter(r => eligibleIds.has(r.broker_account_id));
@@ -281,11 +251,11 @@ async function applyManagement(ctx, signal, parsed, brokers) {
                 action: 'close_worse_entries',
                 loaded_rows: rows.length,
             });
-            return;
+            return emptyMgmtResult(legConcurrency);
         }
         const eligibleByBroker = new Map(eligibleBrokers.map(b => [b.id, b]));
-        await ctx.applyCloseWorseEntriesInstruction(signal, parsed, eligibleRows, eligibleByBroker);
-        return;
+        const cweResult = await ctx.applyCloseWorseEntriesInstruction(signal, parsed, eligibleRows, eligibleByBroker, mgmtOpts);
+        return cweResult;
     }
     if (!rows.length && !pendingLegs.length) {
         if (action === 'close' && signal.channel_id) {
@@ -304,10 +274,11 @@ async function applyManagement(ctx, signal, parsed, brokers) {
                     brokers: [broker],
                     channelDisplayName: channelMeta.commentSlug,
                     channelUsername: null,
-                    closeWithVerification: (a, u, ticket) => closeWithVerification(a, u, ticket, { maxAttempts: 2, slippageEscalation: 50 }),
+                    closeWithVerification: (a, u, ticket) => (0, managementClose_1.closeWithVerification)(a, u, ticket, mgmtCloseOpts(liveMgmtFast)),
                 });
                 brokerClosed += one.closed;
             }));
+            legsTotal += brokerClosed;
             if (brokerClosed > 0) {
                 try {
                     await ctx.supabase
@@ -317,7 +288,7 @@ async function applyManagement(ctx, signal, parsed, brokers) {
                         .eq('status', 'parsed');
                 }
                 catch { /* best-effort */ }
-                return;
+                return { legsTotal, legsParallelism: legConcurrency };
             }
         }
         let skipReason = action === 'modify' && !symbolFromText && !replyScoped
@@ -345,7 +316,7 @@ async function applyManagement(ctx, signal, parsed, brokers) {
             symbol_filter: symbolFromText,
             reply_scoped: replyScoped,
         });
-        return;
+        return emptyMgmtResult(legConcurrency);
     }
     if (action === 'close' && !rows.length && pendingLegs.length) {
         const scopes = Array.from(cancelledPendingScopes)
@@ -367,7 +338,7 @@ async function applyManagement(ctx, signal, parsed, brokers) {
                 .eq('status', 'parsed');
         }
         catch { /* best-effort */ }
-        return;
+        return emptyMgmtResult(legConcurrency);
     }
     const rowsByBrokerSignal = new Map();
     for (const tr of rows) {
@@ -376,7 +347,20 @@ async function applyManagement(ctx, signal, parsed, brokers) {
         list.push(tr);
         rowsByBrokerSignal.set(key, list);
     }
-    await Promise.allSettled(rows.map(async (trade) => {
+    const eligibleTrades = rows.filter(tr => {
+        const broker = byBroker.get(tr.broker_account_id);
+        if (!broker || !(0, helpers_1.isMtUuid)(broker.metaapi_account_id))
+            return false;
+        if ((0, channelMessageFilters_1.isChannelManagementBlocked)((0, channelMessageFilters_1.normalizeChannelMessageFiltersMap)(broker.channel_message_filters), signal.channel_id, action, mgmtCtx)) {
+            return false;
+        }
+        const ticket = Number(tr.metaapi_order_id);
+        return Number.isFinite(ticket) && ticket > 0;
+    });
+    if (action === 'close' || action === 'breakeven' || action === 'partial_profit' || action === 'partial_breakeven') {
+        legsTotal += eligibleTrades.length;
+    }
+    const processTrade = async (trade) => {
         const broker = byBroker.get(trade.broker_account_id);
         if (!broker || !(0, helpers_1.isMtUuid)(broker.metaapi_account_id))
             return;
@@ -392,7 +376,7 @@ async function applyManagement(ctx, signal, parsed, brokers) {
             return;
         try {
             if (action === 'close') {
-                const closeResult = await closeWithVerification(api, uuid, ticket, { maxAttempts: 2, slippageEscalation: 50 });
+                const closeResult = await (0, managementClose_1.closeWithVerification)(api, uuid, ticket, mgmtCloseOpts(liveMgmtFast));
                 if (!closeResult.confirmed) {
                     throw new Error(closeResult.reason ?? 'orderClose succeeded but ticket still open on broker');
                 }
@@ -484,8 +468,20 @@ async function applyManagement(ctx, signal, parsed, brokers) {
                 error_message: benign ? null : msg,
             });
         }
-    }));
+    };
+    if (liveMgmtFast && eligibleTrades.length > 1) {
+        await Promise.allSettled(await (0, parallelPool_1.parallelMap)(eligibleTrades, legConcurrency, trade => processTrade(trade)));
+    }
+    else {
+        await Promise.allSettled(eligibleTrades.map(trade => processTrade(trade)));
+    }
     if (action === 'modify' && (hasNewSl || hasNewTp)) {
+        for (const brokerRows of rowsByBrokerSignal.values()) {
+            legsTotal += brokerRows.filter(r => {
+                const ticket = Number(r.metaapi_order_id);
+                return Number.isFinite(ticket) && ticket > 0;
+            }).length;
+        }
         await (0, managementModifyBaskets_1.applyMgmtModifyToBasketGroups)({
             supabase: ctx.supabase,
             apiFor: broker => ctx.apiFor(broker),
@@ -500,6 +496,7 @@ async function applyManagement(ctx, signal, parsed, brokers) {
             hasNewSl,
             hasNewTp,
             parsedTpLevels,
+            liveMgmtFast,
         });
     }
     if ((action === 'modify' || action === 'breakeven' || action === 'partial_breakeven')
@@ -598,16 +595,20 @@ async function applyManagement(ctx, signal, parsed, brokers) {
     catch {
         // best-effort
     }
+    return { legsTotal, legsParallelism: legConcurrency };
 }
-async function applyCloseWorseEntriesInstruction(ctx, signal, parsed, rows, byBroker) {
+async function applyCloseWorseEntriesInstruction(ctx, signal, parsed, rows, byBroker, mgmtOpts) {
+    const liveMgmtFast = mgmtOpts?.liveMgmtFast === true;
+    const legConcurrency = liveMgmtFast ? (0, parallelPool_1.mgmtLegConcurrency)() : 1;
+    let legsTotal = 0;
     if (!(0, metatraderapi_1.hasMetatraderApiConfigured)()) {
         await skipMgmtSignalWithLog(ctx, signal, 'broker_api_not_configured', { action: 'close_worse_entries' });
-        return;
+        return emptyMgmtResult(legConcurrency);
     }
     const openRows = rows.filter(r => r.status === 'open');
     if (!openRows.length) {
         await skipMgmtSignalWithLog(ctx, signal, 'cwe_no_open_trades', { action: 'close_worse_entries' });
-        return;
+        return emptyMgmtResult(legConcurrency);
     }
     const groups = new Map();
     for (const t of openRows) {
@@ -664,6 +665,7 @@ async function applyCloseWorseEntriesInstruction(ctx, signal, parsed, rows, byBr
         });
         const toClose = (0, closeWorseEntries_1.selectImmediateLegsForCweInstruction)(groupTrades, layeringTickets);
         let groupClosed = 0;
+        legsTotal += toClose.length;
         console.log(`[tradeExecutor] cwe instruction signal=${signal.id} broker=${broker.id} symbol=${symbol}`
             + ` mode=instruction_immediate_only matched=${toClose.length}/${groupTrades.length}`
             + ` layering_tickets=${layeringTickets.size}`);
@@ -684,12 +686,12 @@ async function applyCloseWorseEntriesInstruction(ctx, signal, parsed, rows, byBr
             });
             return { closed: 0, eligible: 0 };
         }
-        for (const trade of toClose) {
+        const closeOneLeg = async (trade) => {
             const ticket = Number(trade.metaapi_order_id);
             if (!Number.isFinite(ticket) || ticket <= 0)
-                continue;
+                return 0;
             try {
-                const closeResult = await closeWithVerification(api, uuid, ticket, { maxAttempts: 2, slippageEscalation: 50 });
+                const closeResult = await (0, managementClose_1.closeWithVerification)(api, uuid, ticket, mgmtCloseOpts(liveMgmtFast));
                 if (!closeResult.confirmed) {
                     throw new Error(closeResult.reason ?? 'cwe orderClose: ticket still open');
                 }
@@ -723,7 +725,7 @@ async function applyCloseWorseEntriesInstruction(ctx, signal, parsed, rows, byBr
                         layering_tickets_excluded: layeringTickets.size,
                     },
                 });
-                groupClosed += 1;
+                return 1;
             }
             catch (err) {
                 const msg = err instanceof Error ? err.message : String(err);
@@ -744,26 +746,29 @@ async function applyCloseWorseEntriesInstruction(ctx, signal, parsed, rows, byBr
                             symbolHint: trade.symbol,
                         });
                     }
-                    groupClosed += 1;
+                    return 1;
                 }
-                else {
-                    await ctx.supabase.from('trade_execution_logs').insert({
-                        user_id: signal.user_id,
-                        signal_id: signal.id,
-                        broker_account_id: broker.id,
-                        action: 'mgmt_close_worse_entries',
-                        status: 'failed',
-                        request_payload: {
-                            mode: 'instruction_immediate_only',
-                            ticket,
-                            symbol,
-                            entry_price: trade.entry_price,
-                        },
-                        error_message: msg,
-                    });
-                }
+                await ctx.supabase.from('trade_execution_logs').insert({
+                    user_id: signal.user_id,
+                    signal_id: signal.id,
+                    broker_account_id: broker.id,
+                    action: 'mgmt_close_worse_entries',
+                    status: 'failed',
+                    request_payload: {
+                        mode: 'instruction_immediate_only',
+                        ticket,
+                        symbol,
+                        entry_price: trade.entry_price,
+                    },
+                    error_message: msg,
+                });
+                return 0;
             }
-        }
+        };
+        const closeResults = liveMgmtFast && toClose.length > 1
+            ? await (0, parallelPool_1.parallelMap)(toClose, legConcurrency, trade => closeOneLeg(trade))
+            : await Promise.all(toClose.map(trade => closeOneLeg(trade)));
+        groupClosed = closeResults.reduce((sum, n) => sum + n, 0);
         return { closed: groupClosed, eligible: toClose.length };
     }));
     let closedCount = 0;
@@ -788,7 +793,7 @@ async function applyCloseWorseEntriesInstruction(ctx, signal, parsed, rows, byBr
         catch {
             // best-effort
         }
-        return;
+        return { legsTotal, legsParallelism: legConcurrency };
     }
     const skipReason = eligibleCloseCount > 0
         ? 'cwe_close_failed'
@@ -798,4 +803,5 @@ async function applyCloseWorseEntriesInstruction(ctx, signal, parsed, rows, byBr
         open_legs: openRows.length,
         eligible_close_legs: eligibleCloseCount,
     });
+    return { legsTotal, legsParallelism: legConcurrency };
 }

@@ -58,7 +58,7 @@ export type EntryArgs = {
   broker: BrokerRow
   channelKeywords: ChannelKeywords | null
   pipelineT0?: number
-  sendOpts?: { liveEntryFast?: boolean; commentPrefix?: string; sameSignalRefresh?: boolean }
+  sendOpts?: { liveEntryFast?: boolean; liveMgmtFast?: boolean; commentPrefix?: string; sameSignalRefresh?: boolean }
 }
 
 export type PreparedEntry = {
@@ -334,6 +334,7 @@ export async function prepareEntryExecution(
       strictEntryPrefetch,
       commentPrefix,
       sameSignalRefresh,
+      liveMgmtFast: sendOpts?.liveMgmtFast === true,
     })
     if (sameSignalRefresh) {
       return {

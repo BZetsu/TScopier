@@ -56,6 +56,7 @@ const tpBucketDistribution_1 = require("./manualPlanning/tpBucketDistribution");
 const basketModFollowUp_1 = require("./basketModFollowUp");
 const channelActiveTradeParams_1 = require("./channelActiveTradeParams");
 const orderModifyBenign_1 = require("./orderModifyBenign");
+const parallelPool_1 = require("./parallelPool");
 function isBuySideOp(op) {
     return op === 'Buy' || op === 'BuyLimit' || op === 'BuyStop' || op === 'BuyStopLimit';
 }
@@ -221,7 +222,7 @@ async function logBasketLegModify(supabase, args) {
     catch { /* best-effort */ }
 }
 async function runBasketLegModifies(args) {
-    const { supabase, api, uuid, symbol, direction, baseLot, params, signalId, userId, brokerAccountId, familyTrades, perLegTargets: rawTargets, signalTps, tpLots, nImmCwe, strictEntryPrefetch, openedTickets, skipAlreadySynced, alreadyModified, } = args;
+    const { supabase, api, uuid, symbol, direction, baseLot, params, signalId, userId, brokerAccountId, familyTrades, perLegTargets: rawTargets, signalTps, tpLots, nImmCwe, strictEntryPrefetch, openedTickets, skipAlreadySynced, alreadyModified, liveMgmtFast, } = args;
     const parsedTps = (signalTps ?? []).filter(t => typeof t === 'number' && Number.isFinite(t) && t > 0);
     const perLegTargets = (0, tpBucketDistribution_1.expandPerLegTargetsToCount)({
         targets: rawTargets,
@@ -242,34 +243,35 @@ async function runBasketLegModifies(args) {
     const legErrors = [];
     const modifiedTradeIds = [];
     const usePreflight = openedTickets != null && openedTickets.size >= 0;
-    const legModifyGapMs = Math.max(0, Number(process.env.BASKET_LEG_MODIFY_GAP_MS ?? 50) || 0);
-    for (let i = 0; i < familyTrades.length; i++) {
-        if (i > 0 && legModifyGapMs > 0) {
-            await new Promise(resolve => setTimeout(resolve, legModifyGapMs));
-        }
+    const liveFast = liveMgmtFast === true;
+    const legModifyGapMs = liveFast
+        ? 0
+        : Math.max(0, Number(process.env.BASKET_LEG_MODIFY_GAP_MS ?? 50) || 0);
+    const noopOutcome = () => ({
+        attempted: 0,
+        modified: 0,
+        failed: 0,
+        skippedNoTicket: 0,
+        skippedNotOnBroker: 0,
+    });
+    const processLeg = async (i) => {
         const tr = familyTrades[i];
         if (alreadyModified?.has(tr.id)) {
-            modifiedTradeIds.push(tr.id);
-            summary.modified += 1;
-            continue;
+            return { ...noopOutcome(), modifiedId: tr.id, modified: 1 };
         }
         const target = perLegTargets[i];
         if (!target)
-            continue;
+            return noopOutcome();
         const legIdx = familyTrades.findIndex(t => t.id === tr.id);
         const cweIdx = legIdx >= 0 ? legIdx : i;
         if (skipAlreadySynced && stopsAlreadyMatch(tr, target, nImmCwe, cweIdx)) {
-            modifiedTradeIds.push(tr.id);
-            summary.modified += 1;
-            continue;
+            return { ...noopOutcome(), modifiedId: tr.id, modified: 1 };
         }
         const ticket = Number(tr.metaapi_order_id);
         if (!Number.isFinite(ticket) || ticket <= 0) {
-            summary.skippedNoTicket += 1;
-            continue;
+            return { ...noopOutcome(), skippedNoTicket: 1 };
         }
         if (usePreflight && !openedTickets.has(ticket)) {
-            summary.skippedNotOnBroker += 1;
             const err = {
                 trade_id: tr.id,
                 ticket,
@@ -280,7 +282,6 @@ async function runBasketLegModifies(args) {
                 error: 'ticket not in OpenedOrders',
                 skip_reason: 'skipped_not_on_broker',
             };
-            legErrors.push(err);
             await logBasketLegModify(supabase, {
                 userId,
                 signalId,
@@ -294,9 +295,8 @@ async function runBasketLegModifies(args) {
                 targetTp: cweIdx < nImmCwe ? 0 : target.takeprofit,
                 skipReason: 'skipped_not_on_broker',
             });
-            continue;
+            return { ...noopOutcome(), legError: err, skippedNotOnBroker: 1 };
         }
-        summary.attempted += 1;
         let ref = Number(tr.entry_price) || 0;
         if (ref <= 0) {
             try {
@@ -304,9 +304,8 @@ async function runBasketLegModifies(args) {
                 ref = direction === 'buy' ? q.ask : q.bid;
             }
             catch (err) {
-                summary.failed += 1;
                 const msg = err instanceof Error ? err.message : String(err);
-                legErrors.push({
+                const legErr = {
                     trade_id: tr.id,
                     ticket,
                     leg_index: i + 1,
@@ -314,7 +313,7 @@ async function runBasketLegModifies(args) {
                     target_sl: target.stoploss,
                     target_tp: target.takeprofit,
                     error: msg,
-                });
+                };
                 await logBasketLegModify(supabase, {
                     userId,
                     signalId,
@@ -328,7 +327,7 @@ async function runBasketLegModifies(args) {
                     targetTp: target.takeprofit,
                     errorMessage: msg,
                 });
-                continue;
+                return { ...noopOutcome(), legError: legErr, attempted: 1, failed: 1 };
             }
         }
         let stoploss = target.stoploss;
@@ -343,7 +342,6 @@ async function runBasketLegModifies(args) {
             stoploss = stripped.stoploss;
             takeprofit = stripped.takeprofit;
             if (stoploss <= 0 && takeprofit <= 0) {
-                summary.failed += 1;
                 const err = {
                     trade_id: tr.id,
                     ticket,
@@ -354,7 +352,6 @@ async function runBasketLegModifies(args) {
                     error: 'wrong_side_sl',
                     skip_reason: 'wrong_side_sl',
                 };
-                legErrors.push(err);
                 await logBasketLegModify(supabase, {
                     userId,
                     signalId,
@@ -368,7 +365,7 @@ async function runBasketLegModifies(args) {
                     targetTp: target.takeprofit,
                     skipReason: 'wrong_side_sl',
                 });
-                continue;
+                return { ...noopOutcome(), legError: err, attempted: 1, failed: 1 };
             }
         }
         const sendShape = {
@@ -385,8 +382,6 @@ async function runBasketLegModifies(args) {
         const clamped = clampBasketOrderStops(sendShape, params);
         let modSl = clamped.args.stoploss ?? 0;
         let modTp = clamped.args.takeprofit ?? 0;
-        // MT5 OrderModifySafe can null-ref when TP=0 is sent on a position that
-        // already carries TP — keep the open leg's stops for unchanged fields.
         if (modTp <= 0 && nImmCwe === 0) {
             const curTp = Number(tr.tp);
             if (Number.isFinite(curTp) && curTp > 0)
@@ -398,8 +393,7 @@ async function runBasketLegModifies(args) {
                 modSl = curSl;
         }
         if (modSl <= 0 && modTp <= 0) {
-            summary.failed += 1;
-            legErrors.push({
+            const err = {
                 trade_id: tr.id,
                 ticket,
                 leg_index: i + 1,
@@ -408,7 +402,7 @@ async function runBasketLegModifies(args) {
                 target_tp: target.takeprofit,
                 error: 'no_stops_to_apply',
                 skip_reason: 'no_stops_to_apply',
-            });
+            };
             await logBasketLegModify(supabase, {
                 userId,
                 signalId,
@@ -422,7 +416,7 @@ async function runBasketLegModifies(args) {
                 targetTp: target.takeprofit,
                 skipReason: 'no_stops_to_apply',
             });
-            continue;
+            return { ...noopOutcome(), legError: err, attempted: 1, failed: 1 };
         }
         try {
             const modRes = await api.orderModify(uuid, {
@@ -438,8 +432,6 @@ async function runBasketLegModifies(args) {
                 tp: typeof newTp === 'number' && newTp > 0 ? newTp : null,
                 cwe_close_price: typeof cweClose === 'number' && cweClose > 0 ? cweClose : null,
             }).eq('id', tr.id);
-            modifiedTradeIds.push(tr.id);
-            summary.modified += 1;
             await logBasketLegModify(supabase, {
                 userId,
                 signalId,
@@ -452,12 +444,11 @@ async function runBasketLegModifies(args) {
                 targetSl: modSl,
                 targetTp: modTp,
             });
+            return { ...noopOutcome(), modifiedId: tr.id, attempted: 1, modified: 1 };
         }
         catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             if ((0, orderModifyBenign_1.isBenignOrderModifyError)(msg)) {
-                modifiedTradeIds.push(tr.id);
-                summary.modified += 1;
                 await logBasketLegModify(supabase, {
                     userId,
                     signalId,
@@ -471,10 +462,9 @@ async function runBasketLegModifies(args) {
                     targetTp: modTp,
                     skipReason: 'already_synced_on_broker',
                 });
-                continue;
+                return { ...noopOutcome(), modifiedId: tr.id, attempted: 1, modified: 1 };
             }
-            summary.failed += 1;
-            legErrors.push({
+            const legErr = {
                 trade_id: tr.id,
                 ticket,
                 leg_index: i + 1,
@@ -482,7 +472,7 @@ async function runBasketLegModifies(args) {
                 target_sl: modSl,
                 target_tp: modTp,
                 error: msg,
-            });
+            };
             console.warn(`[basketSlTpReconcile] OrderModify failed leg=${i + 1}/${familyTrades.length} trade=${tr.id}: ${msg}`);
             await logBasketLegModify(supabase, {
                 userId,
@@ -497,7 +487,33 @@ async function runBasketLegModifies(args) {
                 targetTp: modTp,
                 errorMessage: msg,
             });
+            return { ...noopOutcome(), legError: legErr, attempted: 1, failed: 1 };
         }
+    };
+    const legIndices = familyTrades.map((_, idx) => idx);
+    let legOutcomes;
+    if (liveFast && familyTrades.length > 1) {
+        legOutcomes = await (0, parallelPool_1.parallelMap)(legIndices, (0, parallelPool_1.mgmtLegConcurrency)(), idx => processLeg(idx));
+    }
+    else {
+        legOutcomes = [];
+        for (let i = 0; i < familyTrades.length; i++) {
+            if (i > 0 && legModifyGapMs > 0) {
+                await new Promise(resolve => setTimeout(resolve, legModifyGapMs));
+            }
+            legOutcomes.push(await processLeg(i));
+        }
+    }
+    for (const o of legOutcomes) {
+        summary.attempted += o.attempted;
+        summary.modified += o.modified;
+        summary.failed += o.failed;
+        summary.skippedNoTicket += o.skippedNoTicket;
+        summary.skippedNotOnBroker += o.skippedNotOnBroker;
+        if (o.modifiedId)
+            modifiedTradeIds.push(o.modifiedId);
+        if (o.legError)
+            legErrors.push(o.legError);
     }
     const stillMissingTicket = familyTrades.filter(tr => {
         const t = Number(tr.metaapi_order_id);

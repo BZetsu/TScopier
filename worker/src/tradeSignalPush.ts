@@ -197,7 +197,7 @@ async function pushParsedSignalToTradeWorkerInner(
   }
 
   const isMgmt = isManagementAction(action ?? '')
-  const defaultTimeoutMs = isMgmt ? 2_000 : 4_000
+  const defaultTimeoutMs = isMgmt ? 5_000 : 4_000
   const timeoutMs = Math.max(
     500,
     Math.min(10_000, Number(process.env.TRADE_SIGNAL_PUSH_TIMEOUT_MS ?? defaultTimeoutMs)),

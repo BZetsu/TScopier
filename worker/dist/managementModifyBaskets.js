@@ -55,7 +55,7 @@ function buildMgmtModifyTargets(args) {
     });
 }
 async function applyMgmtModifyToBasketGroups(args) {
-    const { supabase, apiFor, signal, parsed, rowsByBrokerSignal, brokersById, hasNewSl, hasNewTp, parsedTpLevels, } = args;
+    const { supabase, apiFor, signal, parsed, rowsByBrokerSignal, brokersById, hasNewSl, hasNewTp, parsedTpLevels, liveMgmtFast, } = args;
     if (!hasNewSl && !hasNewTp)
         return;
     const newSl = hasNewSl ? parsed.sl : 0;
@@ -145,6 +145,7 @@ async function applyMgmtModifyToBasketGroups(args) {
             strictEntryPrefetch: null,
             openedTickets,
             skipAlreadySynced: false,
+            liveMgmtFast,
         });
         const mergeFailed = summary.modified < summary.openLegs;
         const partialMsg = mergeFailed

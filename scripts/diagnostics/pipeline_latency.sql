@@ -26,3 +26,22 @@ where action = 'dispatch_skipped'
   and created_at > now() - interval '24 hours'
 group by 1, 2
 order by 1 desc, 3 desc;
+
+-- Management signal latency (CWE / modify): queue wait vs handle vs leg count
+select
+  date_trunc('hour', tel.created_at) as hour,
+  s.parsed_data->>'action' as mgmt_action,
+  count(*) as samples,
+  percentile_cont(0.5) within group (order by (tel.request_payload->>'queue_wait_ms')::int) as p50_queue_wait_ms,
+  percentile_cont(0.5) within group (order by (tel.request_payload->>'handle_ms')::int) as p50_handle_ms,
+  percentile_cont(0.5) within group (order by (tel.request_payload->>'mgmt_wall_ms')::int) as p50_mgmt_wall_ms,
+  percentile_cont(0.5) within group (order by (tel.request_payload->>'mgmt_legs_total')::int) as p50_mgmt_legs,
+  percentile_cont(0.99) within group (order by (tel.request_payload->>'mgmt_wall_ms')::int) as p99_mgmt_wall_ms
+from trade_execution_logs tel
+join signals s on s.id = tel.signal_id
+where tel.action in ('pipeline_summary', 'handle_end')
+  and tel.created_at > now() - interval '24 hours'
+  and coalesce(tel.request_payload->>'mgmt_fast_path', 'false') = 'true'
+  and s.parsed_data->>'action' in ('close_worse_entries', 'modify', 'close', 'breakeven')
+group by 1, 2
+order by 1 desc, 2;

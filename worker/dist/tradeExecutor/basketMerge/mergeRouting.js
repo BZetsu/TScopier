@@ -218,6 +218,7 @@ async function tryParameterFollowUpMergeModifyOnly(ctx, args) {
         direction,
         logAction: 'merge_routed_modify_only',
         sameSignalRefresh: args.sameSignalRefresh === true,
+        liveMgmtFast: args.liveMgmtFast === true,
         mergeLinkMeta: {
             reply_chain: link.replyOk,
             within_time_window: link.withinWindow,
