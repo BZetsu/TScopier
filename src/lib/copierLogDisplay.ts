@@ -3,6 +3,7 @@ import type { Signal } from '../types/database'
 
 export const MANAGEMENT_COPIER_ACTIONS = new Set([
   'close',
+  'close_worse_entries',
   'breakeven',
   'partial_profit',
   'partial_breakeven',

@@ -261,6 +261,25 @@ test('filterChannelWorkerDisplayLogs: hides duplicate merge summary and internal
   )
 })
 
+test('channelWorkerLogMessage: close worse entries success', () => {
+  const message = channelWorkerLogMessage(
+    {
+      action: 'mgmt_close_worse_entries',
+      status: 'success',
+      request_payload: { mode: 'instruction_immediate_only', symbol: 'XAUUSD' },
+      response_payload: null,
+      error_message: null,
+      signals: {
+        parsed_data: { action: 'close_worse_entries', symbol: 'XAUUSD' },
+        status: 'executed',
+      },
+    },
+    channelWorkerEn,
+    { 'ch-1': 'Test Signal Channel' },
+  )
+  assert.match(message ?? '', /instant.*XAUUSD/i)
+})
+
 test('channelWorkerLogMessage: still hides non-trade commentary', () => {
   const message = channelWorkerLogMessage(
     {

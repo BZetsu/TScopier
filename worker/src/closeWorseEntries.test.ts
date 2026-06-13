@@ -92,11 +92,13 @@ test('loadFiredRangeLayeringTickets returns fired pending tickets', async () => 
       select: () => ({
         in: () => ({
           eq: () => ({
-            eq: () => ({
-              eq: async () => ({
-                data: [{ ticket: '5001' }, { ticket: '5002' }],
-                error: null,
-              }),
+            eq: async () => ({
+              data: [
+                { ticket: '5001', symbol: 'XAUUSD' },
+                { ticket: '5002', symbol: 'XAUUSD+' },
+                { ticket: '5003', symbol: 'BTCUSD' },
+              ],
+              error: null,
             }),
           }),
         }),
@@ -110,6 +112,7 @@ test('loadFiredRangeLayeringTickets returns fired pending tickets', async () => 
   })
   assert.equal(tickets.size, 2)
   assert.ok(tickets.has('5001'))
+  assert.ok(tickets.has('5002'))
 })
 
 test('selectTradesForCweInstruction legacy includes tagged CWE legs outside pip band', () => {

@@ -308,6 +308,10 @@ export async function handleSignal(ctx: TradeExecutorContext,
     if (await loadCachedUserCopierPaused(ctx.supabase, row.user_id)) {
       ctx.inflight.delete(row.id)
       ctx.queuedIds.delete(row.id)
+      const action = parsedAction(row.parsed_data)
+      if (isManagementAction(action)) {
+        await ctx.logDispatchSkipped(row, 'copier_paused')
+      }
       return
     }
 

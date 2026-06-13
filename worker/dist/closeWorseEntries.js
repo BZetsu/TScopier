@@ -16,6 +16,7 @@ exports.filterTradesWithinPipsOfReference = filterTradesWithinPipsOfReference;
 exports.selectTradesForCweInstruction = selectTradesForCweInstruction;
 exports.loadFiredRangeLayeringTickets = loadFiredRangeLayeringTickets;
 exports.selectImmediateLegsForCweInstruction = selectImmediateLegsForCweInstruction;
+const basketModFollowUp_1 = require("./basketModFollowUp");
 function isEntryWithinPipsOfReference(entryPrice, referencePrice, pips, pipSize) {
     if (!Number.isFinite(entryPrice) || entryPrice <= 0)
         return false;
@@ -80,10 +81,9 @@ async function loadFiredRangeLayeringTickets(supabase, args) {
         return new Set();
     const { data, error } = await supabase
         .from('range_pending_legs')
-        .select('ticket')
+        .select('ticket, symbol')
         .in('signal_id', signalIds)
         .eq('broker_account_id', args.brokerAccountId)
-        .eq('symbol', args.symbol)
         .eq('status', 'fired');
     if (error) {
         console.warn(`[closeWorseEntries] fired range pending lookup failed broker=${args.brokerAccountId} symbol=${args.symbol}: ${error.message}`);
@@ -91,7 +91,11 @@ async function loadFiredRangeLayeringTickets(supabase, args) {
     }
     const tickets = new Set();
     for (const row of data ?? []) {
-        const ticket = String(row.ticket ?? '').trim();
+        const r = row;
+        const rowSymbol = String(r.symbol ?? '').trim();
+        if (rowSymbol && !(0, basketModFollowUp_1.symbolsCompatibleForBasket)(args.symbol, rowSymbol))
+            continue;
+        const ticket = String(r.ticket ?? '').trim();
         if (ticket)
             tickets.add(ticket);
     }

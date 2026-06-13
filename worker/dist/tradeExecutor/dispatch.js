@@ -260,6 +260,10 @@ async function handleSignal(ctx, row, opts) {
     if (await (0, copierPause_1.loadCachedUserCopierPaused)(ctx.supabase, row.user_id)) {
         ctx.inflight.delete(row.id);
         ctx.queuedIds.delete(row.id);
+        const action = (0, tradeSignalActions_1.parsedAction)(row.parsed_data);
+        if ((0, tradeSignalActions_1.isManagementAction)(action)) {
+            await ctx.logDispatchSkipped(row, 'copier_paused');
+        }
         return;
     }
     if ((0, copierPause_1.signalPredatesCopierResume)(row.user_id, row.created_at)) {

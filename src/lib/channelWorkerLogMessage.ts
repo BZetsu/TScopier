@@ -895,6 +895,12 @@ function messageForSignalAction(
         s => interpolate(cw.signalCloseNamed, { prefix, symbol: s }),
         () => interpolate(cw.signalCloseGeneric, { prefix }),
       )
+    case 'close_worse_entries':
+      return namedOrGeneric(
+        instr,
+        s => interpolate(cw.signalCloseWorseNamed, { prefix, symbol: s }),
+        () => interpolate(cw.signalCloseWorseGeneric, { prefix }),
+      )
     case 'breakeven':
       return tense === 'understood'
         ? interpolate(cw.signalBreakevenUnderstood, { on })
@@ -929,6 +935,12 @@ function mgmtSuccessPhrase(
         s => interpolate(cw.mgmtCloseSuccessNamed, { symbol: s }),
         () => cw.mgmtCloseSuccessGeneric,
       )
+    case 'close_worse_entries':
+      return namedOrGeneric(
+        instr,
+        s => interpolate(cw.mgmtCloseWorseSuccessNamed, { symbol: s }),
+        () => cw.mgmtCloseWorseSuccessGeneric,
+      )
     case 'breakeven':
       return interpolate(cw.mgmtBreakevenSuccess, { on })
     case 'partial_profit': {
@@ -956,6 +968,12 @@ function mgmtFailurePhrase(action: string, instr: string | null, cw: ChannelWork
         instr,
         s => interpolate(cw.mgmtCloseFailNamed, { symbol: s }),
         () => cw.mgmtCloseFailGeneric,
+      )
+    case 'close_worse_entries':
+      return namedOrGeneric(
+        instr,
+        s => interpolate(cw.mgmtCloseWorseFailNamed, { symbol: s }),
+        () => cw.mgmtCloseWorseFailGeneric,
       )
     case 'breakeven':
       return namedOrGeneric(
@@ -985,6 +1003,12 @@ function mgmtSkippedPhrase(action: string, instr: string | null, cw: ChannelWork
         instr,
         s => interpolate(cw.mgmtCloseSkippedNamed, { symbol: s }),
         () => cw.mgmtCloseSkippedGeneric,
+      )
+    case 'close_worse_entries':
+      return namedOrGeneric(
+        instr,
+        s => interpolate(cw.mgmtCloseWorseSkippedNamed, { symbol: s }),
+        () => cw.mgmtCloseWorseSkippedGeneric,
       )
     default:
       return namedOrGeneric(

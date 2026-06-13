@@ -322,17 +322,18 @@ export async function applyManagement(ctx: TradeExecutorContext, signal: SignalR
         ),
       )
       if (!eligibleBrokers.length) {
-        try {
-          await ctx.supabase
-            .from('signals')
-            .update({ status: 'skipped', skip_reason: 'channel_filter_ignored' })
-            .eq('id', signal.id)
-            .eq('status', 'parsed')
-        } catch { /* best-effort */ }
+        await skipMgmtSignalWithLog(ctx, signal, 'channel_filter_ignored', { action: 'close_worse_entries' })
         return
       }
       const eligibleIds = new Set(eligibleBrokers.map(b => b.id))
       const eligibleRows = rows.filter(r => eligibleIds.has(r.broker_account_id))
+      if (!eligibleRows.length) {
+        await skipMgmtSignalWithLog(ctx, signal, 'cwe_no_eligible_broker_trades', {
+          action: 'close_worse_entries',
+          loaded_rows: rows.length,
+        })
+        return
+      }
       const eligibleByBroker = new Map(eligibleBrokers.map(b => [b.id, b]))
       await ctx.applyCloseWorseEntriesInstruction(signal, parsed, eligibleRows, eligibleByBroker)
       return
@@ -691,17 +692,14 @@ export async function applyCloseWorseEntriesInstruction(ctx: TradeExecutorContex
     }>,
     byBroker: Map<string, BrokerRow>,
   ): Promise<void> {
-    if (!hasMetatraderApiConfigured()) return
+    if (!hasMetatraderApiConfigured()) {
+      await skipMgmtSignalWithLog(ctx, signal, 'broker_api_not_configured', { action: 'close_worse_entries' })
+      return
+    }
 
     const openRows = rows.filter(r => r.status === 'open')
     if (!openRows.length) {
-      try {
-        await ctx.supabase
-          .from('signals')
-          .update({ status: 'skipped', skip_reason: 'cwe_no_open_trades' })
-          .eq('id', signal.id)
-          .eq('status', 'parsed')
-      } catch { /* best-effort */ }
+      await skipMgmtSignalWithLog(ctx, signal, 'cwe_no_open_trades', { action: 'close_worse_entries' })
       return
     }
 

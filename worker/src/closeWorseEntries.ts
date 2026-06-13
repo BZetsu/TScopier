@@ -8,6 +8,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { symbolsCompatibleForBasket } from './basketModFollowUp'
 
 export function isEntryWithinPipsOfReference(
   entryPrice: number,
@@ -109,10 +110,9 @@ export async function loadFiredRangeLayeringTickets(
 
   const { data, error } = await supabase
     .from('range_pending_legs')
-    .select('ticket')
+    .select('ticket, symbol')
     .in('signal_id', signalIds)
     .eq('broker_account_id', args.brokerAccountId)
-    .eq('symbol', args.symbol)
     .eq('status', 'fired')
 
   if (error) {
@@ -124,7 +124,10 @@ export async function loadFiredRangeLayeringTickets(
 
   const tickets = new Set<string>()
   for (const row of data ?? []) {
-    const ticket = String((row as { ticket?: string | null }).ticket ?? '').trim()
+    const r = row as { ticket?: string | null; symbol?: string | null }
+    const rowSymbol = String(r.symbol ?? '').trim()
+    if (rowSymbol && !symbolsCompatibleForBasket(args.symbol, rowSymbol)) continue
+    const ticket = String(r.ticket ?? '').trim()
     if (ticket) tickets.add(ticket)
   }
   return tickets
