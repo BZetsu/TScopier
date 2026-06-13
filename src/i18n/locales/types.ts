@@ -59,6 +59,8 @@ export interface NavTranslations {
     pauseLabel: string
     resumeLabel: string
     pausedHint: string
+    statusRunning: string
+    statusStopped: string
   }
   notifications: {
     title: string
