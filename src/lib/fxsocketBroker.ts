@@ -367,7 +367,7 @@ export const fxsocketBroker = {
   },
 
   /** Client-side frame for subscribing to a ticket on the worker stream proxy. */
-  streamTicket(ticket: number): FxsocketStreamSubscribeFrame {
+  streamSubscribeFrame(ticket: number): FxsocketStreamSubscribeFrame {
     return { action: 'subscribe', topic: 'trades', ticket }
   },
 

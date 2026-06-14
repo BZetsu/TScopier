@@ -265,6 +265,17 @@ export function trimPreview(value: unknown, maxLen = 400): unknown {
   return { _preview: `${text.slice(0, maxLen)}…` }
 }
 
+function unwrapOrderList(raw: unknown): unknown[] {
+  if (Array.isArray(raw)) return raw
+  if (!raw || typeof raw !== "object") return []
+  const o = raw as Record<string, unknown>
+  for (const key of ["orders", "Orders", "items", "Items", "data", "Data", "result", "Result"]) {
+    const v = o[key]
+    if (Array.isArray(v)) return v
+  }
+  return []
+}
+
 export class FxsocketClient {
   private apiKey: string
   private baseUrl: string
@@ -436,7 +447,7 @@ export class FxsocketClient {
       `${this.accountBase(accountId)}/OrderHistory?from=${qFrom}&to=${qTo}`,
       { method: "GET", timeoutMs: 90_000 },
     )
-    return Array.isArray(raw) ? raw : []
+    return unwrapOrderList(raw)
   }
 
   async priceHistory(

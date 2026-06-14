@@ -282,3 +282,43 @@ test('computeProfitByChannel: uses durable attribution when ticket differs in fo
   assert.notEqual(rows[0]!.key, UNLINKED_CHANNEL_KEY)
   assert.equal(rows[0]!.key, 'ch-1')
 })
+
+test('resolveChannelIdForTrade: attributes via TSCopier slug on connected channel only', () => {
+  const channelId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+  const maps = buildPerformanceChannelLinkMaps([], [], [], [])
+  maps.channelNames[channelId] = 'Test Signal Channel'
+  const resolved = resolveChannelIdForTrade(
+    mtTrade({
+      broker_id: 'broker-1',
+      ticket: 1705377546,
+      status: 'open',
+      comment: 'TSCopier:TestSignalCh:4a6c0a6b:',
+      profit: -7.86,
+      opened_at: '2026-06-14T16:53:23.000Z',
+      closed_at: null,
+    }),
+    maps,
+    { connectedChannelIds: [channelId] },
+  )
+  assert.equal(resolved, channelId)
+})
+
+test('resolveChannelIdForTrade: single connected channel TSCopier fallback', () => {
+  const channelId = 'ch-only'
+  const maps = buildPerformanceChannelLinkMaps([], [], [], [])
+  maps.channelNames[channelId] = 'VIP'
+  const resolved = resolveChannelIdForTrade(
+    mtTrade({
+      broker_id: 'broker-1',
+      ticket: 1,
+      status: 'open',
+      comment: 'TSCopier:UnknownSlug:deadbeef',
+      profit: 5,
+      opened_at: '2026-06-14T16:53:23.000Z',
+      closed_at: null,
+    }),
+    maps,
+    { connectedChannelIds: [channelId] },
+  )
+  assert.equal(resolved, channelId)
+})

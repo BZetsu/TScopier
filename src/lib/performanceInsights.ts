@@ -7,6 +7,7 @@ import {
 } from './dashboardCharts'
 import { isTradeableClosedRow } from './dashboardTradeStats'
 import { displayTradeProfit } from './tradeDisplay'
+import { normalizeSignalChannelIds } from './brokerChannelLink'
 import { parseTscopierComment, sanitizeChannelCommentSlug } from './tscopierComment'
 import type { MtTrade } from './fxsocketBroker'
 import { periodRange, periodToDays, type PerformancePeriod } from './performanceAnalytics'
@@ -298,9 +299,58 @@ function channelAttributionTicketKeys(trade: MtTrade): string[] {
   return [...keys]
 }
 
+export type ResolveChannelIdOpts = {
+  connectedChannelIds?: string[] | null
+}
+
+export function canonicalChannelId(
+  channelId: string,
+  maps: PerformanceChannelLinkMaps,
+): string {
+  const lower = channelId.trim().toLowerCase()
+  if (!lower) return channelId
+  for (const key of Object.keys(maps.channelNames)) {
+    if (key.toLowerCase() === lower) return key
+  }
+  return channelId
+}
+
+function connectedChannelIds(
+  raw: string[] | null | undefined,
+  maps: PerformanceChannelLinkMaps,
+): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const id of normalizeSignalChannelIds(raw)) {
+    const canonical = canonicalChannelId(id, maps)
+    if (seen.has(canonical)) continue
+    seen.add(canonical)
+    out.push(canonical)
+  }
+  return out
+}
+
+function resolveSlugOnConnectedChannels(
+  slug: string,
+  connected: string[],
+  maps: PerformanceChannelLinkMaps,
+): string | null {
+  const norm = slug.trim().toLowerCase()
+  if (!norm) return null
+  for (const channelId of connected) {
+    const label = maps.channelNames[channelId] ?? ''
+    const candidates = [sanitizeChannelCommentSlug(label)].filter(Boolean)
+    for (const candidate of candidates) {
+      if (candidate.toLowerCase() === norm) return channelId
+    }
+  }
+  return null
+}
+
 export function resolveChannelIdForTrade(
   trade: MtTrade,
   maps: PerformanceChannelLinkMaps,
+  opts?: ResolveChannelIdOpts,
 ): string {
   for (const key of channelAttributionTicketKeys(trade)) {
     const fromTicket = maps.ticketToChannelId[key]
@@ -318,6 +368,17 @@ export function resolveChannelIdForTrade(
     if (fromSlug) return fromSlug
   }
 
+  const connected = connectedChannelIds(opts?.connectedChannelIds, maps)
+  if (parsed && connected.length > 0) {
+    if (parsed.channelSlug) {
+      const fromConnected = resolveSlugOnConnectedChannels(parsed.channelSlug, connected, maps)
+      if (fromConnected) return fromConnected
+    }
+    if (trade.comment?.trim().startsWith('TSCopier:') && connected.length === 1) {
+      return connected[0]!
+    }
+  }
+
   return UNLINKED_CHANNEL_KEY
 }
 
@@ -327,14 +388,16 @@ export function computeProfitByChannel(
   maps: PerformanceChannelLinkMaps,
   unlinkedLabel: string,
   now = new Date(),
+  connectedChannelIds?: string[] | null,
 ): PerformanceDistributionRow[] {
   const closed = closedMtTradesInPeriod(trades, period, now)
   const byChannel = new Map<string, { count: number; pnl: number }>()
+  const resolveOpts: ResolveChannelIdOpts = { connectedChannelIds }
 
   for (const trade of closed) {
     const pnl = displayTradeProfit(trade)
     if (pnl == null || !Number.isFinite(pnl)) continue
-    const channelId = resolveChannelIdForTrade(trade, maps)
+    const channelId = resolveChannelIdForTrade(trade, maps, resolveOpts)
     if (channelId === UNLINKED_CHANNEL_KEY) continue
     const prev = byChannel.get(channelId) ?? { count: 0, pnl: 0 }
     byChannel.set(channelId, { count: prev.count + 1, pnl: prev.pnl + pnl })

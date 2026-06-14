@@ -8,15 +8,17 @@ import {
   sumRealizedClosedDealProfit,
   type TradeStatsRow,
 } from './dashboardTradeStats'
-import { displayTradeProfit } from './tradeDisplay'
+import { displayTradeProfit, tradeOpenLegProfit } from './tradeDisplay'
 import type { MtTrade } from './fxsocketBroker'
 import { normalizeSignalChannelIds } from './brokerChannelLink'
 import {
+  canonicalChannelId,
   computeProfitByChannel,
   resolveChannelIdForTrade,
   UNLINKED_CHANNEL_KEY,
   type PerformanceChannelLinkMaps,
   type PerformanceDistributionRow,
+  type ResolveChannelIdOpts,
 } from './performanceInsights'
 import { isMtTimestampInRange } from './mtApiDateTime'
 
@@ -155,8 +157,10 @@ export function findLastAttributedSignalTrade(
   brokerId: string,
   mtTrades: MtTrade[],
   maps: PerformanceChannelLinkMaps,
+  connectedChannelIds?: string[] | null,
 ): BrokerLastSignalTrade | null {
   const brokerTrades = mtTradesForBroker(mtTrades, brokerId)
+  const resolveOpts: ResolveChannelIdOpts = { connectedChannelIds }
   let best: BrokerLastSignalTrade | null = null
   let bestMs = 0
 
@@ -173,7 +177,7 @@ export function findLastAttributedSignalTrade(
     ) {
       continue
     }
-    const channelId = resolveChannelIdForTrade(trade, maps)
+    const channelId = resolveChannelIdForTrade(trade, maps, resolveOpts)
     if (channelId === UNLINKED_CHANNEL_KEY) continue
     const pnl = displayTradeProfit(trade)
     if (pnl == null || !Number.isFinite(pnl)) continue
@@ -201,18 +205,6 @@ function parseOpenMs(iso: string | null | undefined): number {
   return Number.isFinite(ms) ? ms : 0
 }
 
-function canonicalChannelId(
-  channelId: string,
-  maps: PerformanceChannelLinkMaps,
-): string {
-  const lower = channelId.trim().toLowerCase()
-  if (!lower) return channelId
-  for (const key of Object.keys(maps.channelNames)) {
-    if (key.toLowerCase() === lower) return key
-  }
-  return channelId
-}
-
 /** Lifetime P/L per connected signal channel (realized closed + open unrealized). */
 export function computeBrokerProfitByChannel(opts: {
   brokerId: string
@@ -229,11 +221,13 @@ export function computeBrokerProfitByChannel(opts: {
     opts.channelLinkMaps,
     opts.unlinkedChannelLabel,
     opts.now,
+    opts.connectedChannelIds,
   )
   const openRows = findActiveAttributedSignalTrades(
     opts.brokerId,
     opts.mtTrades,
     opts.channelLinkMaps,
+    opts.connectedChannelIds,
   )
 
   const merged = new Map<string, PerformanceDistributionRow>()
@@ -273,7 +267,9 @@ export function findActiveAttributedSignalTrades(
   brokerId: string,
   mtTrades: MtTrade[],
   maps: PerformanceChannelLinkMaps,
+  connectedChannelIds?: string[] | null,
 ): BrokerActiveSignalTrade[] {
+  const resolveOpts: ResolveChannelIdOpts = { connectedChannelIds }
   const byChannel = new Map<
     string,
     BrokerActiveSignalTrade & { latestOpenMs: number }
@@ -292,9 +288,9 @@ export function findActiveAttributedSignalTrades(
     ) {
       continue
     }
-    const channelId = resolveChannelIdForTrade(trade, maps)
+    const channelId = resolveChannelIdForTrade(trade, maps, resolveOpts)
     if (channelId === UNLINKED_CHANNEL_KEY) continue
-    const pnl = displayTradeProfit(trade)
+    const pnl = tradeOpenLegProfit(trade)
     if (pnl == null || !Number.isFinite(pnl)) continue
 
     const openedAt = trade.opened_at ?? trade.closed_at
@@ -390,11 +386,13 @@ export function computeBrokerStatsSnapshot(opts: {
       opts.brokerId,
       opts.mtTrades,
       opts.channelLinkMaps,
+      opts.connectedChannelIds,
     ),
     lastSignalTrade: findLastAttributedSignalTrade(
       opts.brokerId,
       opts.mtTrades,
       opts.channelLinkMaps,
+      opts.connectedChannelIds,
     ),
   }
 }

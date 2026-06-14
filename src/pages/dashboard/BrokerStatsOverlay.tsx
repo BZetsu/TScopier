@@ -8,6 +8,7 @@ import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { formatMoneyWithCode } from '../../lib/currency'
 import { interpolate } from '../../i18n/interpolate'
 import { usePerformanceData } from '../../hooks/usePerformanceData'
+import { useFxsocketStream } from '../../hooks/useFxsocketStream'
 import { computeBrokerStatsSnapshot } from '../../lib/brokerStats'
 import {
   type BrokerStatsRouteState,
@@ -20,8 +21,64 @@ import {
 } from '../../lib/brokerFromServer'
 import { brokerConnectionStatusLabel } from '../../lib/brokerReconnect'
 import { isFxsocketLinkedBroker } from '../../lib/brokerLink'
+import { mergeLivePositionsIntoMtTrades } from '../../lib/mergeLivePositionsIntoMtTrades'
+import {
+  isFxsocketMarketPositionRow,
+  unwrapFxsocketPositionsPayload,
+} from '../../lib/fxsocketStreamParse'
 import { Button } from '../../components/ui/Button'
 import type { BrokerAccount } from '../../types/database'
+
+function readPositionTicket(raw: unknown): number | null {
+  if (!raw || typeof raw !== 'object') return null
+  const o = raw as Record<string, unknown>
+  for (const key of ['ticket', 'Ticket', 'id', 'Id', 'positionId', 'PositionId']) {
+    const v = o[key]
+    const n = typeof v === 'number' ? v : Number(v)
+    if (Number.isFinite(n)) return n
+  }
+  return null
+}
+
+function upsertLivePositionRow(
+  prev: Map<number, Record<string, unknown>>,
+  raw: unknown,
+): Map<number, Record<string, unknown>> {
+  if (!raw || typeof raw !== 'object') return prev
+  const row = raw as Record<string, unknown>
+  const ticket = readPositionTicket(row)
+  if (ticket == null) return prev
+
+  const state = String(row.state ?? row.State ?? '').toLowerCase()
+  const volume = Number(row.volume ?? row.Volume ?? row.lots ?? row.Lots ?? 1)
+  const closed =
+    state.includes('closed')
+    || state.includes('cancel')
+    || state.includes('deleted')
+    || volume === 0
+    || !isFxsocketMarketPositionRow(row)
+
+  const next = new Map(prev)
+  if (closed) {
+    if (!next.has(ticket)) return prev
+    next.delete(ticket)
+    return next
+  }
+  if (prev.get(ticket) === row) return prev
+  next.set(ticket, row)
+  return next
+}
+
+function rebuildLivePositionRows(rawData: unknown): Map<number, Record<string, unknown>> {
+  const rows = unwrapFxsocketPositionsPayload(rawData)
+  const next = new Map<number, Record<string, unknown>>()
+  for (const raw of rows) {
+    if (!raw || typeof raw !== 'object' || !isFxsocketMarketPositionRow(raw)) continue
+    const ticket = readPositionTicket(raw)
+    if (ticket != null) next.set(ticket, raw as Record<string, unknown>)
+  }
+  return next
+}
 
 function formatPct(value: number | null | undefined, digits = 0): string {
   if (value == null || !Number.isFinite(value)) return '—'
@@ -113,11 +170,29 @@ export function BrokerStatsOverlay() {
 
   const liveRefreshKeyRef = useRef<string | null>(null)
   const [brokerMetricsReady, setBrokerMetricsReady] = useState(false)
+  const [livePositionRows, setLivePositionRows] = useState<Map<number, Record<string, unknown>>>(
+    () => new Map(),
+  )
 
   useEffect(() => {
     liveRefreshKeyRef.current = null
     setBrokerMetricsReady(false)
+    setLivePositionRows(new Map())
   }, [brokerId])
+
+  const streamBrokers = useMemo(
+    () => (account && isFxsocketLinkedBroker(account) ? [account] : []),
+    [account],
+  )
+
+  useFxsocketStream(streamBrokers, {
+    onPositions: (_brokerId, _snapshot, rawData) => {
+      setLivePositionRows(rebuildLivePositionRows(rawData))
+    },
+    onTrade: (_brokerId, data) => {
+      setLivePositionRows(prev => upsertLivePositionRow(prev, data))
+    },
+  }, streamBrokers.length > 0)
 
   useEffect(() => {
     if (!brokerId || !user?.id) return
@@ -137,6 +212,12 @@ export function BrokerStatsOverlay() {
   }, [brokerId, user?.id, accounts, refreshBroker])
 
   const currency = (account?.last_currency ?? '').trim() || undefined
+
+  const effectiveMtTrades = useMemo(() => {
+    if (!account || livePositionRows.size === 0) return mtTrades
+    return mergeLivePositionsIntoMtTrades(mtTrades, account, livePositionRows.values())
+  }, [mtTrades, account, livePositionRows])
+
   const stats = useMemo(() => {
     if (!brokerId || !account) return null
     return computeBrokerStatsSnapshot({
@@ -144,7 +225,7 @@ export function BrokerStatsOverlay() {
       initialBalance: account.performance_baseline_balance,
       currentBalance: balanceByAccountId[brokerId] ?? account.last_balance,
       currentEquity: equityByAccountId[brokerId] ?? account.last_equity,
-      mtTrades,
+      mtTrades: effectiveMtTrades,
       chartTrades,
       channelLinkMaps,
       connectedChannelIds: account.signal_channel_ids,
@@ -155,7 +236,7 @@ export function BrokerStatsOverlay() {
     account,
     balanceByAccountId,
     equityByAccountId,
-    mtTrades,
+    effectiveMtTrades,
     chartTrades,
     channelLinkMaps,
     t.performance.unlinkedChannel,

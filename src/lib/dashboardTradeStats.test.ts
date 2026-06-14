@@ -63,6 +63,17 @@ test('isBalanceCashFlowRow: detects deposits and ignores tradeable closes', () =
   assert.equal(
     isBalanceCashFlowRow({
       status: 'closed',
+      symbol: '',
+      lot_size: 0,
+      direction: '',
+      type: '',
+      profit: 855.94,
+    }),
+    false,
+  )
+  assert.equal(
+    isBalanceCashFlowRow({
+      status: 'closed',
       symbol: 'XAUUSD',
       lot_size: 0.1,
       direction: 'buy',

@@ -2,6 +2,7 @@ import { assertEquals } from "jsr:@std/assert"
 import {
   inferPerformanceBaselineFromHistory,
   resolvePerformanceBaselineBalance,
+  splitBalanceCashFlows,
   sumRealizedClosedDealProfit,
   sumRealizedClosedNetProfit,
 } from "./performanceBaseline.ts"
@@ -75,4 +76,68 @@ Deno.test("resolvePerformanceBaselineBalance corrects stale baseline missing swa
     trades,
   )
   assertEquals(baseline, 210_000)
+})
+
+Deno.test("resolvePerformanceBaselineBalance corrects understated baseline from spurious cash-flow row", () => {
+  const trades = [
+    trade({
+      ticket: 0,
+      symbol: "",
+      direction: "",
+      type: "Balance",
+      lot_size: 0,
+      profit: 210_000,
+      closed_at: "2026-01-01T08:00:00",
+    }),
+    trade({
+      ticket: 1,
+      profit: -45_378.67,
+      swap: 111.66,
+      closed_at: "2026-06-12T16:16:47",
+    }),
+    trade({
+      ticket: 2,
+      symbol: "",
+      direction: "",
+      type: "",
+      lot_size: 0,
+      profit: 855.94,
+      closed_at: "2026-06-12T16:16:47",
+    }),
+  ]
+  const baseline = resolvePerformanceBaselineBalance(
+    209_144.06,
+    { balance: 164_732.99, equity: 164_732.99 },
+    trades,
+  )
+  assertEquals(baseline, 210_000)
+})
+
+Deno.test("splitBalanceCashFlows separates initial deposit from later withdrawals", () => {
+  const trades = [
+    trade({
+      ticket: 0,
+      symbol: "",
+      direction: "",
+      type: "Balance",
+      lot_size: 0,
+      profit: 210_000,
+      closed_at: "2026-01-01T08:00:00",
+    }),
+    trade({ ticket: 1, profit: -100, closed_at: "2026-02-01T10:00:00" }),
+    trade({
+      ticket: 2,
+      symbol: "",
+      direction: "",
+      type: "Balance",
+      lot_size: 0,
+      profit: -5_000,
+      closed_at: "2026-03-01T10:00:00",
+    }),
+  ]
+  assertEquals(splitBalanceCashFlows(trades), {
+    initialDeposit: 210_000,
+    subsequentCashFlow: -5_000,
+  })
+  assertEquals(inferPerformanceBaselineFromHistory(204_900, trades), 210_000)
 })

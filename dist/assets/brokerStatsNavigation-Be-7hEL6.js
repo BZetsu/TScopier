@@ -1,1 +1,0 @@
-function e(e){return{id:e.id,label:e.label,broker_name:e.broker_name,broker_server:e.broker_server,platform:e.platform,connection_status:e.connection_status,last_currency:e.last_currency,performance_baseline_balance:e.performance_baseline_balance,metaapi_account_id:e.metaapi_account_id,last_balance:e.last_balance,last_equity:e.last_equity,is_active:e.is_active}}export{e as t};

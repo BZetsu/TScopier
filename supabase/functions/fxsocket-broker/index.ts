@@ -11,7 +11,7 @@ import {
   PERFORMANCE_BASELINE_HISTORY_DAYS,
   resolvePerformanceBaselineBalance,
 } from "../_shared/performanceBaseline.ts"
-import { fetchFxsocketBrokerTrades } from "../_shared/fxsocketTrades.ts"
+import { fetchFxsocketBrokerTrades, fetchClosedHistoryForBaseline } from "../_shared/fxsocketTrades.ts"
 import type { MtHistoryProfile } from "../_shared/mtTradeFields.ts"
 
 const corsHeaders = {
@@ -240,17 +240,15 @@ Deno.serve(async (req: Request) => {
           historyFromDate.setDate(historyFromDate.getDate() - PERFORMANCE_BASELINE_HISTORY_DAYS)
           let tradesForBaseline: Awaited<ReturnType<typeof fetchFxsocketBrokerTrades>> = []
           try {
-            tradesForBaseline = await fetchFxsocketBrokerTrades(fx, {
+            tradesForBaseline = await fetchClosedHistoryForBaseline(fx, {
               id: row.id,
               label: row.label,
               broker_name: row.broker_name ?? null,
               fxsocket_account_id: row.fxsocket_account_id,
             }, {
-              scope: "closed",
               historyFrom: formatMtDt(historyFromDate),
               historyTo,
               historyProfile: "trades",
-              limit: 0,
             })
           } catch (e) {
             console.warn("[fxsocket-broker] baseline history fetch failed:", e)

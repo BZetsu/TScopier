@@ -2,12 +2,14 @@ import type { FxsocketClient } from "./fxsocketClient.ts"
 import {
   adjustMtTradesPositionDirection,
   flattenMtOrder,
+  ingestMtHistoryRows,
   pickMtField,
   reconcileTradeDirectionWithStops,
   resolveMtDealProfit,
   resolveMtLots,
   resolveMtPositionTicket,
   type MtHistoryProfile,
+  type RawMtOrder,
 } from "./mtTradeFields.ts"
 
 type RawOrder = Record<string, unknown>
@@ -206,4 +208,81 @@ export async function fetchFxsocketBrokerTrades(
     const bv = bt ? Date.parse(bt) : 0
     return bv - av
   }).slice(0, opts.limit > 0 ? opts.limit : undefined)
+}
+
+const BASELINE_HISTORY_CHUNK_DAYS = 45
+
+function parseHistoryIso(iso: string): Date {
+  const d = new Date(iso)
+  return Number.isFinite(d.getTime()) ? d : new Date()
+}
+
+function formatHistoryChunk(d: Date): string {
+  return d.toISOString().slice(0, 19)
+}
+
+function buildHistoryChunks(fromIso: string, toIso: string): Array<{ from: string; to: string }> {
+  const start = parseHistoryIso(fromIso)
+  const end = parseHistoryIso(toIso)
+  if (end.getTime() <= start.getTime()) {
+    return [{ from: fromIso, to: toIso }]
+  }
+
+  const chunks: Array<{ from: string; to: string }> = []
+  let cursor = new Date(start)
+  while (cursor.getTime() < end.getTime()) {
+    const chunkEnd = new Date(cursor)
+    chunkEnd.setDate(chunkEnd.getDate() + BASELINE_HISTORY_CHUNK_DAYS)
+    const boundedEnd = chunkEnd.getTime() > end.getTime() ? end : chunkEnd
+    chunks.push({
+      from: formatHistoryChunk(cursor),
+      to: formatHistoryChunk(boundedEnd),
+    })
+    cursor = new Date(boundedEnd)
+    cursor.setDate(cursor.getDate() + 1)
+  }
+  return chunks.length > 0 ? chunks : [{ from: fromIso, to: toIso }]
+}
+
+/** Full closed history for baseline inference — chunked fetches + ticket dedupe. */
+export async function fetchClosedHistoryForBaseline(
+  fx: FxsocketClient,
+  broker: BrokerRow & { fxsocket_account_id: string },
+  opts: {
+    historyFrom: string
+    historyTo: string
+    historyProfile: MtHistoryProfile
+  },
+): Promise<FxsocketBrokerTradeRow[]> {
+  const sessionId = String(broker.fxsocket_account_id ?? "").trim()
+  if (!sessionId) return []
+
+  const merged = new Map<string, RawMtOrder>()
+  const chunks = buildHistoryChunks(opts.historyFrom, opts.historyTo)
+  const settled = await Promise.allSettled(
+    chunks.map(chunk => fx.orderHistory(sessionId, chunk.from, chunk.to)),
+  )
+
+  for (const result of settled) {
+    if (result.status !== "fulfilled") continue
+    ingestMtHistoryRows(merged, result.value, opts.historyProfile)
+  }
+
+  const out: FxsocketBrokerTradeRow[] = []
+  for (const row of merged.values()) {
+    out.push(normalizeOrder(row, broker, "closed", opts.historyProfile))
+  }
+
+  return out.sort((a, b) => {
+    const av = rowCloseMs(a)
+    const bv = rowCloseMs(b)
+    return bv - av
+  })
+}
+
+function rowCloseMs(row: Pick<FxsocketBrokerTradeRow, "closed_at" | "opened_at">): number {
+  const iso = row.closed_at ?? row.opened_at
+  if (!iso) return 0
+  const ms = Date.parse(iso)
+  return Number.isFinite(ms) ? ms : 0
 }

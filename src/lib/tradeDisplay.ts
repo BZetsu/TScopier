@@ -24,6 +24,16 @@ export function displayTradeProfit(trade: MtTrade): number | null {
   return net !== 0 ? net : p
 }
 
+/** Floating P/L for open legs (profit + swap + commission); tolerates missing profit from REST. */
+export function tradeOpenLegProfit(trade: MtTrade): number | null {
+  if (trade.status !== 'open') return displayTradeProfit(trade)
+  const profit = typeof trade.profit === 'number' && Number.isFinite(trade.profit) ? trade.profit : 0
+  const swap = typeof trade.swap === 'number' && Number.isFinite(trade.swap) ? trade.swap : 0
+  const commission =
+    typeof trade.commission === 'number' && Number.isFinite(trade.commission) ? trade.commission : 0
+  return Math.round((profit + swap + commission) * 100) / 100
+}
+
 export function getTradeDisplayMeta(trade: MtTrade) {
   const displayDirection = resolveTradeDisplayDirection(trade)
   const isBuy = displayDirection === 'buy'

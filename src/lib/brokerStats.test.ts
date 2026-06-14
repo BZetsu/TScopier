@@ -253,6 +253,65 @@ test('findActiveAttributedSignalTrades aggregates open positions per signal chan
   assert.equal(active[1]?.positionCount, 2)
 })
 
+test('findActiveAttributedSignalTrades uses swap/commission when profit is null', () => {
+  const maps = buildPerformanceChannelLinkMaps(
+    [{ id: 'ch-1', display_name: 'VIP' }],
+    [{
+      broker_account_id: 'broker-1',
+      metaapi_order_id: '50',
+      signal_id: 'sig-1',
+      telegram_channel_id: 'ch-1',
+    }],
+    [{ id: 'sig-1', channel_id: 'ch-1' }],
+    [],
+  )
+  const active = findActiveAttributedSignalTrades(
+    'broker-1',
+    [
+      mtTrade({
+        broker_id: 'broker-1',
+        ticket: 50,
+        status: 'open',
+        profit: null,
+        swap: -1.5,
+        commission: -0.5,
+        opened_at: '2026-06-02T11:00:00',
+        closed_at: null,
+      }),
+    ],
+    maps,
+  )
+  assert.equal(active.length, 1)
+  assert.equal(active[0]?.pnl, -2)
+})
+
+test('computeBrokerProfitByChannel attributes open legs via TSCopier comment slug', () => {
+  const channelId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+  const maps = buildPerformanceChannelLinkMaps([], [], [], [])
+  maps.channelNames[channelId] = 'Test Signal Channel'
+  const rows = computeBrokerProfitByChannel({
+    brokerId: 'broker-1',
+    connectedChannelIds: [channelId],
+    mtTrades: [
+      mtTrade({
+        broker_id: 'broker-1',
+        ticket: 1705377546,
+        status: 'open',
+        comment: 'TSCopier:TestSignalCh:4a6c0a6b:',
+        profit: -417,
+        opened_at: '2026-06-14T16:53:23.000Z',
+        closed_at: null,
+      }),
+    ],
+    channelLinkMaps: maps,
+    unlinkedChannelLabel: 'Unlinked',
+    now: TEST_NOW,
+  })
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0]?.key, channelId)
+  assert.equal(rows[0]?.pnl, -417)
+})
+
 test('computeBrokerProfitByChannel sums closed and open P/L per channel', () => {
   const maps = buildPerformanceChannelLinkMaps(
     [{ id: 'ch-1', display_name: 'VIP' }, { id: 'ch-2', display_name: 'Beta' }],
