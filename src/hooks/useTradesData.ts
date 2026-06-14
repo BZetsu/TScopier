@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { getLocalCalendarDayBounds } from '../lib/dashboardTradeStats'
 import { formatLocalMtApiDateTime } from '../lib/mtApiDateTime'
 import { fxsocketBroker, type MtTrade } from '../lib/fxsocketBroker'
+import { enrichMtTradesTimestamps } from '../lib/mtTradeTimestamps'
 import { readSessionCache, writeSessionCache } from '../lib/sessionDataCache'
 import {
   TRADES_CACHE_TTL_MS,
@@ -29,7 +30,9 @@ async function fetchTradesFromMt(): Promise<MtTrade[]> {
     historyTo: formatLocalMtApiDateTime(historyTo),
     limit: TRADES_PAGE_MAX_RESULTS,
   })
-  return (res.trades ?? []).slice(0, TRADES_PAGE_MAX_RESULTS)
+  return enrichMtTradesTimestamps(
+    (res.trades ?? []).slice(0, TRADES_PAGE_MAX_RESULTS),
+  )
 }
 
 export function useTradesData(userId: string | undefined) {
