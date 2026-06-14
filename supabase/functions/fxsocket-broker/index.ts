@@ -7,6 +7,10 @@ import {
   makeFxsocketClientFromEnv,
   type FxsocketAccountSummary,
 } from "../_shared/fxsocketClient.ts"
+import {
+  PERFORMANCE_BASELINE_HISTORY_DAYS,
+  resolvePerformanceBaselineBalance,
+} from "../_shared/performanceBaseline.ts"
 import { fetchFxsocketBrokerTrades } from "../_shared/fxsocketTrades.ts"
 import type { MtHistoryProfile } from "../_shared/mtTradeFields.ts"
 
@@ -229,6 +233,37 @@ Deno.serve(async (req: Request) => {
         const readiness = await fx.resolveLinkReadiness(row.fxsocket_account_id)
 
         if (readiness.ready) {
+          let baselinePatch: Record<string, number> = {}
+          const formatMtDt = (d: Date) => d.toISOString().slice(0, 19)
+          const historyTo = formatMtDt(new Date())
+          const historyFromDate = new Date()
+          historyFromDate.setDate(historyFromDate.getDate() - PERFORMANCE_BASELINE_HISTORY_DAYS)
+          let tradesForBaseline: Awaited<ReturnType<typeof fetchFxsocketBrokerTrades>> = []
+          try {
+            tradesForBaseline = await fetchFxsocketBrokerTrades(fx, {
+              id: row.id,
+              label: row.label,
+              broker_name: row.broker_name ?? null,
+              fxsocket_account_id: row.fxsocket_account_id,
+            }, {
+              scope: "closed",
+              historyFrom: formatMtDt(historyFromDate),
+              historyTo,
+              historyProfile: "trades",
+              limit: 0,
+            })
+          } catch (e) {
+            console.warn("[fxsocket-broker] baseline history fetch failed:", e)
+          }
+          const baseline = resolvePerformanceBaselineBalance(
+            row.performance_baseline_balance,
+            readiness.summary,
+            tradesForBaseline,
+          )
+          if (baseline != null) {
+            baselinePatch = { performance_baseline_balance: baseline }
+          }
+
           const { data: updated, error } = await supabase
             .from("broker_accounts")
             .update({
@@ -236,6 +271,7 @@ Deno.serve(async (req: Request) => {
               connection_status: "connected",
               connection_error: null,
               ...summaryToRowPatch(readiness.summary),
+              ...baselinePatch,
             })
             .eq("id", accountRowId)
             .eq("user_id", userId)

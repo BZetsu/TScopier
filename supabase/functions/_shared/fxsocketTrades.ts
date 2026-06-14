@@ -85,18 +85,20 @@ function resolveDirection(order: RawOrder, historyProfile: MtHistoryProfile): { 
   return { direction: "", type_label: "" }
 }
 
-function isNonTradeEntry(direction: string, typeLabel: string, lotSize: number): boolean {
+function isBalanceOpType(typeLabel: string): boolean {
   const type = typeLabel.toLowerCase()
-  if (
+  return (
     type.includes("balance") ||
     type.includes("credit") ||
     type.includes("deposit") ||
     type.includes("withdraw") ||
     type.includes("correction") ||
     type.includes("transfer")
-  ) {
-    return true
-  }
+  )
+}
+
+function isNonTradeEntry(direction: string, typeLabel: string, lotSize: number): boolean {
+  if (isBalanceOpType(typeLabel)) return true
   return direction === "" && lotSize <= 0
 }
 
@@ -149,7 +151,7 @@ function normalizeOrder(
     sl,
     tp,
     close_price: num(pickMtField(row, historyProfile, "closePrice", "ClosePrice")),
-    profit: isNonTradeEntry(direction, type_label, lot_size)
+    profit: isNonTradeEntry(direction, type_label, lot_size) && !isBalanceOpType(type_label)
       ? null
       : resolveMtDealProfit(row, historyProfile),
     swap: num(pickMtField(row, historyProfile, "swap", "Swap")),
