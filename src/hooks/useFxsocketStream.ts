@@ -2,15 +2,16 @@ import { useEffect, useMemo, useRef } from 'react'
 import { openFxsocketStream, type FxsocketStreamMessage } from '../lib/fxsocketStream'
 import {
   parseFxsocketAccountStreamData,
-  parseFxsocketOpenPositionCount,
+  parseFxsocketPositionsStreamData,
   type FxsocketAccountStreamSnapshot,
+  type FxsocketPositionsStreamSnapshot,
 } from '../lib/fxsocketStreamParse'
 import { isFxsocketLinkedBroker } from '../lib/brokerLink'
 import type { BrokerAccount } from '../types/database'
 
 export interface FxsocketStreamHandlers {
   onAccount?: (brokerAccountId: string, data: FxsocketAccountStreamSnapshot) => void
-  onPositions?: (brokerAccountId: string, openTrades: number) => void
+  onPositions?: (brokerAccountId: string, snapshot: FxsocketPositionsStreamSnapshot) => void
   onTerminal?: (brokerAccountId: string, data: Record<string, unknown>) => void
   onTrade?: (brokerAccountId: string, data: Record<string, unknown>) => void
 }
@@ -46,7 +47,7 @@ export function useFxsocketStream(
           } else if (msg.type === 'positions' && 'data' in msg) {
             handlersRef.current.onPositions?.(
               broker.id,
-              parseFxsocketOpenPositionCount(msg.data),
+              parseFxsocketPositionsStreamData(msg.data),
             )
           } else if (msg.type === 'terminal' && 'data' in msg) {
             handlersRef.current.onTerminal?.(broker.id, msg.data as Record<string, unknown>)

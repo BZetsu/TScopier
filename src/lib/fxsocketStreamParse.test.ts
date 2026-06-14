@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest'
 import {
   parseFxsocketAccountStreamData,
   parseFxsocketOpenPositionCount,
+  parseFxsocketPositionsStreamData,
+  shouldApplyAccountStreamOpenPnl,
+  sumOpenPnlByBroker,
+  countOpenMarketPositionsByBroker,
 } from './fxsocketStreamParse'
 
 describe('parseFxsocketAccountStreamData', () => {
@@ -35,6 +39,18 @@ describe('parseFxsocketAccountStreamData', () => {
       equity: 1012.34,
     })
     expect(snap.openPnl).toBeCloseTo(12.34)
+    expect(snap.openPnlSource).toBe('derived')
+  })
+
+  it('does not apply misleading zero account profit when positions are open', () => {
+    const snap = parseFxsocketAccountStreamData({
+      balance: 164_732.99,
+      equity: 164_732.99,
+      profit: 0,
+    })
+    expect(snap.openPnl).toBe(0)
+    expect(shouldApplyAccountStreamOpenPnl(snap, 3)).toBe(false)
+    expect(shouldApplyAccountStreamOpenPnl(snap, 0)).toBe(true)
   })
 })
 
@@ -48,6 +64,61 @@ describe('parseFxsocketOpenPositionCount', () => {
     ])).toBe(2)
     expect(parseFxsocketOpenPositionCount([])).toBe(0)
     expect(parseFxsocketOpenPositionCount(null)).toBe(0)
+  })
+})
+
+describe('parseFxsocketPositionsStreamData', () => {
+  it('sums profit, swap, and commission on open market positions', () => {
+    const snap = parseFxsocketPositionsStreamData([
+      { kind: 'position', operation: 'Buy', profit: 100, swap: 1.5, commission: -0.5 },
+      { kind: 'position', operation: 'Sell', Profit: -25, Swap: 0.25 },
+      { kind: 'pending', operation: 'BuyLimit', profit: 999 },
+    ])
+    expect(snap.openTrades).toBe(2)
+    expect(snap.openPnl).toBe(76.25)
+  })
+
+  it('returns zero open P/L when there are no market positions', () => {
+    expect(parseFxsocketPositionsStreamData([])).toEqual({ openTrades: 0, openPnl: 0 })
+    expect(parseFxsocketPositionsStreamData([
+      { kind: 'pending', operation: 'BuyLimit', ticket: 1 },
+    ])).toEqual({ openTrades: 0, openPnl: 0 })
+  })
+
+  it('parses FxSocket REST/WS position rows (kind position)', () => {
+    const snap = parseFxsocketPositionsStreamData([
+      {
+        kind: 'position',
+        symbol: 'XAUUSD',
+        lots: 0.35,
+        profit: -12.5,
+        swap: 0.1,
+      },
+    ])
+    expect(snap.openTrades).toBe(1)
+    expect(snap.openPnl).toBe(-12.4)
+  })
+
+  it('unwraps nested positions envelopes', () => {
+    const snap = parseFxsocketPositionsStreamData({
+      positions: [
+        { kind: 'position', symbol: 'EURUSD', lots: 0.1, profit: 5 },
+      ],
+    })
+    expect(snap.openTrades).toBe(1)
+    expect(snap.openPnl).toBe(5)
+  })
+})
+
+describe('sumOpenPnlByBroker', () => {
+  it('sums open leg profit swap commission per broker', () => {
+    const totals = sumOpenPnlByBroker([
+      { broker_id: 'a', status: 'open', type: 'Buy', profit: 10, swap: 1 },
+      { broker_id: 'a', status: 'open', type: 'Sell', profit: -3, commission: -0.5 },
+      { broker_id: 'a', status: 'open', type: 'Buy Limit', profit: 99 },
+      { broker_id: 'b', status: 'closed', type: 'Buy', profit: 50 },
+    ])
+    expect(totals).toEqual({ a: 7.5 })
   })
 })
 

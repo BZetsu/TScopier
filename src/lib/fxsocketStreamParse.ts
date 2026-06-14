@@ -3,6 +3,8 @@ export interface FxsocketAccountStreamSnapshot {
   balance?: number
   equity?: number
   openPnl?: number
+  /** Whether openPnl came from the broker profit field vs equity − balance. */
+  openPnlSource?: 'explicit' | 'derived'
   currency?: string
 }
 
@@ -18,18 +20,114 @@ function readStr(v: unknown): string | undefined {
   return s.length > 0 ? s : undefined
 }
 
+function readProfitField(o: Record<string, unknown>): number | undefined {
+  for (const key of [
+    'profit', 'Profit',
+    'floatingProfit', 'FloatingProfit',
+    'unrealizedProfit', 'UnrealizedProfit',
+    'dealProfit', 'DealProfit',
+    'grossProfit', 'GrossProfit',
+    'freeProfit', 'FreeProfit',
+  ]) {
+    const n = readNum(o[key])
+    if (n != null) return n
+  }
+  return undefined
+}
+
 export function parseFxsocketAccountStreamData(raw: Record<string, unknown>): FxsocketAccountStreamSnapshot {
   const balance = readNum(raw.balance ?? raw.Balance)
   const equity = readNum(raw.equity ?? raw.Equity)
-  const profit = readNum(raw.profit ?? raw.Profit)
-  const openPnl =
-    profit ??
-    (balance != null && equity != null ? equity - balance : undefined)
+  const explicitProfit = readProfitField(raw)
+  let openPnl: number | undefined
+  let openPnlSource: 'explicit' | 'derived' | undefined
+  if (explicitProfit != null) {
+    openPnl = explicitProfit
+    openPnlSource = 'explicit'
+  } else if (balance != null && equity != null) {
+    openPnl = equity - balance
+    openPnlSource = 'derived'
+  }
   return {
     balance,
     equity: equity ?? balance,
     openPnl,
+    openPnlSource,
     currency: readStr(raw.currency ?? raw.Currency),
+  }
+}
+
+/**
+ * Account-stream P/L can report 0 while positions still carry floating P/L.
+ * Prefer positions-derived values when we already know the account has open legs.
+ */
+export function shouldApplyAccountStreamOpenPnl(
+  snap: FxsocketAccountStreamSnapshot,
+  openTrades: number,
+): boolean {
+  if (snap.openPnl == null || snap.openPnlSource == null) return false
+  if (openTrades <= 0) return true
+  if (snap.openPnlSource === 'explicit' && Math.abs(snap.openPnl) > 0.001) return true
+  if (snap.openPnlSource === 'derived' && Math.abs(snap.openPnl) > 0.001) return true
+  return false
+}
+
+export interface FxsocketPositionsStreamSnapshot {
+  openTrades: number
+  openPnl?: number
+}
+
+function readPositionLegPnl(o: Record<string, unknown>): number | null {
+  const profit = readProfitField(o)
+  const swap = readNum(o.swap ?? o.Swap)
+  const commission = readNum(o.commission ?? o.Commission)
+  if (profit == null && swap == null && commission == null) return null
+  return (profit ?? 0) + (swap ?? 0) + (commission ?? 0)
+}
+
+/** FxSocket WS `positions` payloads are usually an array; unwrap common envelopes. */
+export function unwrapFxsocketPositionsPayload(data: unknown): unknown[] {
+  if (Array.isArray(data)) return data
+  const o = readRecord(data)
+  if (!o) return []
+  for (const key of ['positions', 'Positions', 'orders', 'Orders', 'items', 'data', 'Data']) {
+    const v = o[key]
+    if (Array.isArray(v)) return v
+  }
+  if (isFxsocketMarketPositionRow(o)) return [o]
+  return []
+}
+
+/** Open market position count + floating P/L from the WebSocket `positions` topic. */
+export function parseFxsocketPositionsStreamData(data: unknown): FxsocketPositionsStreamSnapshot {
+  const rows = unwrapFxsocketPositionsPayload(data)
+  if (rows.length === 0) {
+    return Array.isArray(data) || readRecord(data) ? { openTrades: 0, openPnl: 0 } : { openTrades: 0 }
+  }
+
+  let openTrades = 0
+  let openPnl = 0
+  let hasLegPnl = false
+
+  for (const raw of rows) {
+    if (!isFxsocketMarketPositionRow(raw)) continue
+    openTrades += 1
+    const o = readRecord(raw)
+    if (!o) continue
+    const legPnl = readPositionLegPnl(o)
+    if (legPnl != null) {
+      openPnl += legPnl
+      hasLegPnl = true
+    }
+  }
+
+  if (openTrades === 0) {
+    return { openTrades: 0, openPnl: 0 }
+  }
+
+  return {
+    openTrades,
+    ...(hasLegPnl ? { openPnl: Math.round(openPnl * 100) / 100 } : {}),
   }
 }
 
@@ -83,13 +181,15 @@ export function isFxsocketMarketPositionRow(raw: unknown): boolean {
   if (op === 'buy' || op === 'sell') return true
   const t = rawNumericOrderKind(o)
   if (t === 0 || t === 1) return true
+  const symbol = String(o.symbol ?? o.Symbol ?? '').trim()
+  const lots = readNum(o.lots ?? o.Lots ?? o.volume ?? o.Volume ?? o.lot_size)
+  if (symbol && lots != null && lots > 0 && readPositionLegPnl(o) != null) return true
   return false
 }
 
 /** Count open market positions from the WebSocket `positions` topic snapshot. */
 export function parseFxsocketOpenPositionCount(data: unknown): number {
-  if (!Array.isArray(data)) return 0
-  return data.filter(isFxsocketMarketPositionRow).length
+  return parseFxsocketPositionsStreamData(data).openTrades
 }
 
 /** Pending stop/limit rows from normalized MtTrade / OpenedOrders payloads. */
@@ -106,6 +206,33 @@ export function countOpenMarketPositionsByBroker(
     if (t.status !== 'open') continue
     if (isMtTradePendingEntry(t)) continue
     out[t.broker_id] = (out[t.broker_id] ?? 0) + 1
+  }
+  return out
+}
+
+/** Sum floating P/L on open market legs per broker (REST bootstrap / WS fallback). */
+export function sumOpenPnlByBroker(
+  trades: Array<{
+    broker_id: string
+    status?: string
+    type?: string | null
+    profit?: number | null
+    swap?: number | null
+    commission?: number | null
+  }>,
+): Record<string, number> {
+  const out: Record<string, number> = {}
+  for (const t of trades) {
+    if (t.status !== 'open') continue
+    if (isMtTradePendingEntry(t)) continue
+    const profit = t.profit
+    if (profit == null || !Number.isFinite(profit)) continue
+    const swap = typeof t.swap === 'number' && Number.isFinite(t.swap) ? t.swap : 0
+    const commission = typeof t.commission === 'number' && Number.isFinite(t.commission) ? t.commission : 0
+    out[t.broker_id] = (out[t.broker_id] ?? 0) + profit + swap + commission
+  }
+  for (const brokerId of Object.keys(out)) {
+    out[brokerId] = Math.round(out[brokerId]! * 100) / 100
   }
   return out
 }
