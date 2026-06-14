@@ -82,6 +82,8 @@ import {
 } from '../../lib/dashboardAnalytics'
 import {
   buildPerformanceChannelLinkMaps,
+  EMPTY_CHANNEL_LINK_MAPS,
+  normalizeChannelLinkMaps,
   type PerformanceChannelLinkMaps,
 } from '../../lib/performanceInsights'
 import { ChannelProfitChart } from '../../components/dashboard/ChannelProfitChart'
@@ -542,12 +544,6 @@ function bootChartTrades(cached: DashboardCachePayload | null): DashboardChartTr
   return []
 }
 
-const EMPTY_CHANNEL_LINK_MAPS: PerformanceChannelLinkMaps = {
-  ticketToChannelId: {},
-  signalPrefixToChannelId: {},
-  channelSlugToChannelId: {},
-  channelNames: {},
-}
 
 function bootDashboardChartsReady(cached: DashboardCachePayload | null): boolean {
   if (!cached?.stats) return false
@@ -584,16 +580,19 @@ function mergeDashboardCachePayload(
 ): DashboardCachePayload {
   const chartTrades = incoming.chartTrades?.length ? incoming.chartTrades : existing?.chartTrades
   const mtTrades = incoming.mtTrades?.length ? incoming.mtTrades : existing?.mtTrades
-  const channelLinkMaps = incoming.channelLinkMaps
-    && Object.keys(incoming.channelLinkMaps.channelNames ?? {}).length > 0
-    ? incoming.channelLinkMaps
-    : existing?.channelLinkMaps
+  const channelLinkMaps = (() => {
+    const raw = incoming.channelLinkMaps
+      && Object.keys(incoming.channelLinkMaps.channelNames ?? {}).length > 0
+      ? incoming.channelLinkMaps
+      : existing?.channelLinkMaps
+    return normalizeChannelLinkMaps(raw)
+  })()
   let cachedAnalytics = incoming.cachedAnalytics
   if (!hasDashboardAnalyticsData(cachedAnalytics) && (chartTrades?.length || mtTrades?.length)) {
     cachedAnalytics = computeDashboardAnalyticsSnapshot(
       chartTrades ?? [],
       mtTrades ?? [],
-      channelLinkMaps ?? EMPTY_CHANNEL_LINK_MAPS,
+      channelLinkMaps,
       'Unlinked',
     )
   }
@@ -838,7 +837,7 @@ function applyDashboardCacheSnapshot(
     handlers.setMtTrades(cached.mtTrades)
     handlers.mtTradesRef.current = cached.mtTrades
   }
-  if (cached.channelLinkMaps) handlers.setChannelLinkMaps(cached.channelLinkMaps)
+  if (cached.channelLinkMaps) handlers.setChannelLinkMaps(normalizeChannelLinkMaps(cached.channelLinkMaps))
   if (cached.cachedAnalytics) handlers.setCachedAnalytics(cached.cachedAnalytics)
   syncPerformanceCacheFromDashboard(userId)
   seedLiveBrokerStateFromBalances(balances, handlers.liveBrokerStateRef.current, cached.linkedAccounts)
@@ -892,7 +891,7 @@ export function DashboardPage() {
   chartTradesRef.current = chartTrades
   const [mtTrades, setMtTrades] = useState<MtTrade[]>(() => bootCache?.mtTrades ?? [])
   const [channelLinkMaps, setChannelLinkMaps] = useState<PerformanceChannelLinkMaps>(
-    () => bootCache?.channelLinkMaps ?? EMPTY_CHANNEL_LINK_MAPS,
+    () => normalizeChannelLinkMaps(bootCache?.channelLinkMaps),
   )
   const [cachedAnalytics, setCachedAnalytics] = useState<DashboardAnalytics | null>(
     () => bootCache?.cachedAnalytics ?? null,
@@ -1425,12 +1424,7 @@ export function DashboardPage() {
     const analyticsForLoad = deriveDashboardAnalytics({
       chartTrades: chartTradesForLoad,
       mtTrades: useMtTrades ? (mtTradesRef.current ?? []) : [],
-      channelLinkMaps: {
-        ticketToChannelId: {},
-        signalPrefixToChannelId: {},
-        channelSlugToChannelId: {},
-        channelNames: {},
-      },
+      channelLinkMaps: EMPTY_CHANNEL_LINK_MAPS,
       unlinkedLabel: '',
     })
     const todayProfit = analyticsForLoad.todayProfit

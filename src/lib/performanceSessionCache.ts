@@ -15,7 +15,7 @@ export type PerformanceCachePayload = {
 }
 
 export function performanceCacheKey(userId: string): string {
-  return `performance:v2:${userId}`
+  return `performance:v3:${userId}`
 }
 
 export function clearPerformanceSessionCache(userId?: string | null): void {

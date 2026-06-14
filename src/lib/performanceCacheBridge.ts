@@ -3,7 +3,7 @@ import {
   DASHBOARD_CACHE_LEGACY_KEYS,
   DASHBOARD_CACHE_VERSION,
 } from './dashboardSessionCache'
-import type { PerformanceChannelLinkMaps } from './performanceInsights'
+import { normalizeChannelLinkMaps, type PerformanceChannelLinkMaps } from './performanceInsights'
 import type { MtTrade } from './fxsocketBroker'
 import { performanceCacheKey, type PerformanceCachePayload } from './performanceSessionCache'
 import { writeSessionCache } from './sessionDataCache'
@@ -19,13 +19,6 @@ type DashboardCacheSlice = {
   linkedAccountBalances?: Record<string, BrokerBalanceSnapshot>
   mtTrades?: MtTrade[]
   channelLinkMaps?: PerformanceChannelLinkMaps
-}
-
-const EMPTY_CHANNEL_MAPS: PerformanceChannelLinkMaps = {
-  ticketToChannelId: {},
-  signalPrefixToChannelId: {},
-  channelSlugToChannelId: {},
-  channelNames: {},
 }
 
 function readDashboardCacheSlice(userId: string): DashboardCacheSlice | null {
@@ -74,7 +67,7 @@ export function performancePayloadFromDashboardCache(userId: string): Performanc
     mtTrades: dash.mtTrades ?? [],
     equityByAccountId,
     balanceByAccountId,
-    channelLinkMaps: dash.channelLinkMaps ?? EMPTY_CHANNEL_MAPS,
+    channelLinkMaps: normalizeChannelLinkMaps(dash.channelLinkMaps),
   }
 }
 

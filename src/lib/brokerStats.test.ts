@@ -13,6 +13,7 @@ import {
   computeBrokerTotalProfit,
   findActiveAttributedSignalTrades,
   findLastAttributedSignalTrade,
+  sumProfitForSignalTrades,
 } from './brokerStats'
 
 const TEST_NOW = new Date(2026, 5, 2, 12, 0, 0)
@@ -394,7 +395,7 @@ test('computeBrokerStatsSnapshot includes initial balance and channel rows', () 
   assert.deepEqual(snapshot.activeSignalTrades, [])
 })
 
-test('computeBrokerStatsSnapshot last signal trade shows channel total profit', () => {
+test('computeBrokerStatsSnapshot last signal trade shows signal total profit', () => {
   const maps = buildPerformanceChannelLinkMaps(
     [{ id: 'ch-1', display_name: 'Alpha' }, { id: 'ch-2', display_name: 'Beta' }],
     [
@@ -441,6 +442,94 @@ test('computeBrokerStatsSnapshot last signal trade shows channel total profit', 
   })
   assert.equal(snapshot.lastSignalTrade?.channelLabel, 'Beta')
   assert.equal(snapshot.lastSignalTrade?.pnl, 40)
+})
+
+test('computeBrokerStatsSnapshot last signal total excludes other signals on same channel', () => {
+  const maps = buildPerformanceChannelLinkMaps(
+    [{ id: 'ch-1', display_name: 'Alpha' }],
+    [
+      {
+        broker_account_id: 'broker-1',
+        metaapi_order_id: '10',
+        signal_id: 'sig-a',
+        telegram_channel_id: 'ch-1',
+      },
+      {
+        broker_account_id: 'broker-1',
+        metaapi_order_id: '20',
+        signal_id: 'sig-b',
+        telegram_channel_id: 'ch-1',
+      },
+      {
+        broker_account_id: 'broker-1',
+        metaapi_order_id: '21',
+        signal_id: 'sig-b',
+        telegram_channel_id: 'ch-1',
+      },
+    ],
+    [
+      { id: 'sig-a', channel_id: 'ch-1' },
+      { id: 'sig-b', channel_id: 'ch-1' },
+    ],
+    [],
+  )
+  const snapshot = computeBrokerStatsSnapshot({
+    brokerId: 'broker-1',
+    initialBalance: 10_000,
+    currentBalance: 10_120,
+    currentEquity: 10_150,
+    mtTrades: [
+      mtTrade({ broker_id: 'broker-1', ticket: 10, profit: 100, closed_at: '2026-06-01T08:00:00' }),
+      mtTrade({ broker_id: 'broker-1', ticket: 20, profit: 15, closed_at: '2026-06-02T09:00:00' }),
+      mtTrade({ broker_id: 'broker-1', ticket: 21, profit: 25, closed_at: '2026-06-03T09:00:00' }),
+    ],
+    chartTrades: [],
+    channelLinkMaps: maps,
+    connectedChannelIds: ['ch-1'],
+    unlinkedChannelLabel: 'Unlinked',
+    now: TEST_NOW,
+  })
+  assert.equal(snapshot.lastSignalTrade?.pnl, 40)
+  assert.equal(snapshot.profitByChannel[0]?.pnl, 140)
+})
+
+test('sumProfitForSignalTrades aggregates closed and open legs', () => {
+  const maps = buildPerformanceChannelLinkMaps(
+    [{ id: 'ch-1', display_name: 'VIP' }],
+    [
+      {
+        broker_account_id: 'broker-1',
+        metaapi_order_id: '1',
+        signal_id: 'sig-1',
+        telegram_channel_id: 'ch-1',
+      },
+      {
+        broker_account_id: 'broker-1',
+        metaapi_order_id: '2',
+        signal_id: 'sig-1',
+        telegram_channel_id: 'ch-1',
+      },
+    ],
+    [{ id: 'sig-1', channel_id: 'ch-1' }],
+    [],
+  )
+  const total = sumProfitForSignalTrades(
+    'broker-1',
+    'sig-1',
+    [
+      mtTrade({ broker_id: 'broker-1', ticket: 1, profit: 10, closed_at: TEST_CLOSED_TODAY }),
+      mtTrade({
+        broker_id: 'broker-1',
+        ticket: 2,
+        status: 'open',
+        profit: 5,
+        opened_at: '2026-06-02T11:00:00',
+        closed_at: null,
+      }),
+    ],
+    maps,
+  )
+  assert.equal(total, 15)
 })
 
 test('computeBrokerStatsSnapshot includes active open attributed trades', () => {

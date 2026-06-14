@@ -81,7 +81,9 @@ test('deriveDashboardAnalytics: today profit matches trade outcome bucket', () =
     mtTrades: [],
     channelLinkMaps: {
       ticketToChannelId: {},
+      ticketToSignalId: {},
       signalPrefixToChannelId: {},
+      signalPrefixToSignalId: {},
       channelSlugToChannelId: {},
       channelNames: {},
     },
@@ -98,7 +100,9 @@ test('deriveDashboardAnalytics: MT trades drive today and yesterday profit', () 
   const now = new Date(2026, 5, 10, 12, 0, 0)
   const maps = {
     ticketToChannelId: {},
+    ticketToSignalId: {},
     signalPrefixToChannelId: {},
+    signalPrefixToSignalId: {},
     channelSlugToChannelId: {},
     channelNames: {},
   }

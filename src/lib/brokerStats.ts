@@ -15,6 +15,7 @@ import {
   canonicalChannelId,
   computeProfitByChannel,
   resolveChannelIdForTrade,
+  resolveSignalIdForTrade,
   UNLINKED_CHANNEL_KEY,
   type PerformanceChannelLinkMaps,
   type PerformanceDistributionRow,
@@ -197,6 +198,52 @@ export function findLastAttributedSignalTrade(
   }
 
   return best
+}
+
+/** Sum realized + open P/L for all MT legs attributed to one copier signal. */
+export function sumProfitForSignalTrades(
+  brokerId: string,
+  signalId: string,
+  mtTrades: MtTrade[],
+  maps: PerformanceChannelLinkMaps,
+): number {
+  let total = 0
+  for (const trade of mtTradesForBroker(mtTrades, brokerId)) {
+    if (resolveSignalIdForTrade(trade, maps) !== signalId) continue
+    if (trade.status === 'closed') {
+      if (
+        !isTradeableClosedRow({
+          status: trade.status,
+          symbol: trade.symbol,
+          lot_size: trade.lot_size,
+          direction: trade.direction,
+          type: trade.type,
+        })
+      ) {
+        continue
+      }
+      const pnl = displayTradeProfit(trade)
+      if (pnl == null || !Number.isFinite(pnl)) continue
+      total += pnl
+      continue
+    }
+    if (trade.status !== 'open') continue
+    if (
+      !isTradeableOpenRow({
+        status: trade.status,
+        symbol: trade.symbol,
+        lot_size: trade.lot_size,
+        direction: trade.direction,
+        type: trade.type,
+      })
+    ) {
+      continue
+    }
+    const pnl = tradeOpenLegProfit(trade)
+    if (pnl == null || !Number.isFinite(pnl)) continue
+    total += pnl
+  }
+  return Math.round(total * 100) / 100
 }
 
 function parseOpenMs(iso: string | null | undefined): number {
@@ -389,24 +436,33 @@ export function computeBrokerStatsSnapshot(opts: {
       opts.channelLinkMaps,
       opts.connectedChannelIds,
     ),
-    lastSignalTrade: enrichLastSignalTradeWithChannelTotal(
+    lastSignalTrade: enrichLastSignalTradeWithSignalTotal(
       findLastAttributedSignalTrade(
         opts.brokerId,
         opts.mtTrades,
         opts.channelLinkMaps,
         opts.connectedChannelIds,
       ),
-      profitByChannel,
+      opts.brokerId,
+      opts.mtTrades,
+      opts.channelLinkMaps,
     ),
   }
 }
 
-function enrichLastSignalTradeWithChannelTotal(
+function enrichLastSignalTradeWithSignalTotal(
   lastTrade: BrokerLastSignalTrade | null,
-  profitByChannel: PerformanceDistributionRow[],
+  brokerId: string,
+  mtTrades: MtTrade[],
+  maps: PerformanceChannelLinkMaps,
 ): BrokerLastSignalTrade | null {
   if (!lastTrade) return null
-  const channelRow = profitByChannel.find(row => row.key === lastTrade.channelId)
-  if (channelRow == null) return lastTrade
-  return { ...lastTrade, pnl: channelRow.pnl }
+  const lastMtTrade = mtTradesForBroker(mtTrades, brokerId).find(t => t.ticket === lastTrade.ticket)
+  if (!lastMtTrade) return lastTrade
+  const signalId = resolveSignalIdForTrade(lastMtTrade, maps)
+  if (!signalId) return lastTrade
+  return {
+    ...lastTrade,
+    pnl: sumProfitForSignalTrades(brokerId, signalId, mtTrades, maps),
+  }
 }

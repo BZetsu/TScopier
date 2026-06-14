@@ -4,7 +4,9 @@ import type { MtTrade } from './fxsocketBroker'
 import {
   buildPerformanceChannelLinkMaps,
   computeProfitByChannel,
+  normalizeChannelLinkMaps,
   resolveChannelIdForTrade,
+  resolveSignalIdForTrade,
   UNLINKED_CHANNEL_KEY,
 } from './performanceInsights'
 
@@ -50,6 +52,21 @@ test('buildPerformanceChannelLinkMaps: ticket keys normalize numeric variants', 
     [],
   )
   assert.equal(maps.ticketToChannelId['broker-1:12345'], 'ch-1')
+  assert.equal(maps.ticketToSignalId['broker-1:12345'], 'sig-1')
+})
+
+test('normalizeChannelLinkMaps backfills ticketToSignalId from older cache payloads', () => {
+  const maps = normalizeChannelLinkMaps({
+    ticketToChannelId: { 'broker-1:1': 'ch-1' },
+    signalPrefixToChannelId: {},
+    channelSlugToChannelId: {},
+    channelNames: { 'ch-1': 'VIP' },
+  })
+  assert.deepEqual(maps.ticketToSignalId, {})
+  assert.equal(resolveSignalIdForTrade(
+    mtTrade({ broker_id: 'broker-1', ticket: 1, comment: null }),
+    maps,
+  ), null)
 })
 
 test('computeProfitByChannel: maps closed MT trade via DB ticket attribution', () => {

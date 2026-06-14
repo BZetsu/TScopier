@@ -21,6 +21,8 @@ import {
 } from '../lib/performanceAnalytics'
 import {
   buildPerformanceChannelLinkMaps,
+  normalizeChannelLinkMaps,
+  EMPTY_CHANNEL_LINK_MAPS,
   type PerformanceChannelLinkMaps,
 } from '../lib/performanceInsights'
 import { BROKER_ACCOUNT_CLIENT_SELECT } from '../lib/brokerAccountSelect'
@@ -132,12 +134,7 @@ export function usePerformanceData(userId: string | undefined) {
   const [mtTrades, setMtTrades] = useState<MtTrade[]>([])
   const [equityByAccountId, setEquityByAccountId] = useState<Record<string, number>>({})
   const [balanceByAccountId, setBalanceByAccountId] = useState<Record<string, number>>({})
-  const [channelLinkMaps, setChannelLinkMaps] = useState<PerformanceChannelLinkMaps>({
-    ticketToChannelId: {},
-    signalPrefixToChannelId: {},
-    channelSlugToChannelId: {},
-    channelNames: {},
-  })
+  const [channelLinkMaps, setChannelLinkMaps] = useState<PerformanceChannelLinkMaps>(EMPTY_CHANNEL_LINK_MAPS)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -162,14 +159,7 @@ export function usePerformanceData(userId: string | undefined) {
     setMtTrades(payload.mtTrades)
     setEquityByAccountId(payload.equityByAccountId)
     setBalanceByAccountId(payload.balanceByAccountId)
-    setChannelLinkMaps(
-      payload.channelLinkMaps ?? {
-        ticketToChannelId: {},
-        signalPrefixToChannelId: {},
-        channelSlugToChannelId: {},
-        channelNames: {},
-      },
-    )
+    setChannelLinkMaps(normalizeChannelLinkMaps(payload.channelLinkMaps))
   }, [])
 
   const load = useCallback(
@@ -350,12 +340,7 @@ export function usePerformanceData(userId: string | undefined) {
           mtTrades: mergedTrades,
           equityByAccountId: nextEquity,
           balanceByAccountId: nextBalance,
-          channelLinkMaps: basePayload?.channelLinkMaps ?? {
-            ticketToChannelId: {},
-            signalPrefixToChannelId: {},
-            channelSlugToChannelId: {},
-            channelNames: {},
-          },
+          channelLinkMaps: normalizeChannelLinkMaps(basePayload?.channelLinkMaps),
         }
 
         applyPayload(nextPayload)

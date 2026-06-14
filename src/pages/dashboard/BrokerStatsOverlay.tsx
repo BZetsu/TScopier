@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useLocation, useNavigate, useParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import clsx from 'clsx'
 import { RefreshCw, X } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
@@ -471,8 +471,18 @@ export function BrokerStatsOverlay() {
               </section>
 
               <section className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-4">
-                <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">{bs.lastSignalTrade}</h3>
-                <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">{bs.lastSignalTradeHint}</p>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">{bs.lastSignalTrade}</h3>
+                    <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">{bs.lastSignalTradeHint}</p>
+                  </div>
+                  <Link
+                    to="/account-trades"
+                    className="shrink-0 text-xs font-semibold text-teal-600 hover:text-teal-700 dark:text-teal-400 dark:hover:text-teal-300"
+                  >
+                    {bs.seeAll}
+                  </Link>
+                </div>
                 {stats.lastSignalTrade ? (
                   <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
                     <div>
@@ -486,7 +496,7 @@ export function BrokerStatsOverlay() {
                       <p className="font-medium text-neutral-900 dark:text-neutral-50">{stats.lastSignalTrade.symbol}</p>
                     </div>
                     <div>
-                      <p className="text-xs text-neutral-400">{bs.lastSignalChannelProfit}</p>
+                      <p className="text-xs text-neutral-400">{bs.lastSignalTotalProfit}</p>
                       <p className={clsx('font-semibold tabular-nums', pnlColor(stats.lastSignalTrade.pnl))}>
                         {formatSignedMoney(stats.lastSignalTrade.pnl)}
                       </p>
