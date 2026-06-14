@@ -3,7 +3,13 @@ import type { BrokerAccount } from '../types/database'
 import type { FxsocketStreamSubscribeFrame } from './fxsocketStreamTypes'
 
 const FXSOCKET_EDGE_TIMEOUT_MS = 120_000
-const FXSOCKET_CONNECT_TIMEOUT_MS = 180_000
+const FXSOCKET_CONNECT_TIMEOUT_MS = 120_000
+const FXSOCKET_WAIT_CONNECTED_MS = 180_000
+const FXSOCKET_WAIT_CONNECTED_INTERVAL_MS = 3_000
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => window.setTimeout(resolve, ms))
+}
 
 interface CallOpts<T> {
   body: Record<string, unknown>
@@ -13,10 +19,10 @@ interface CallOpts<T> {
 
 function fxsocketFetchError(e: unknown, fallback: string): Error {
   if (e instanceof DOMException && e.name === 'TimeoutError') {
-    return new Error('FxSocket request timed out. Try again in a moment.')
+    return new Error('Broker request timed out. Try again in a moment.')
   }
   if (e instanceof Error && e.name === 'AbortError') {
-    return new Error('FxSocket request timed out. Try again in a moment.')
+    return new Error('Broker request timed out. Try again in a moment.')
   }
   return e instanceof Error ? e : new Error(fallback)
 }
@@ -41,23 +47,36 @@ export async function ensureFreshAuthSession(): Promise<string> {
 }
 
 async function call<T = unknown>(opts: CallOpts<T>): Promise<T> {
-  const token = await ensureFreshAuthSession()
   const url = (import.meta.env.VITE_SUPABASE_URL as string) + '/functions/v1/fxsocket-broker'
   const timeoutMs = opts.timeoutMs ?? FXSOCKET_EDGE_TIMEOUT_MS
-  let res: Response
-  try {
-    res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-        apikey: import.meta.env.VITE_SUPABASE_ANON_KEY as string,
-      },
-      body: JSON.stringify(opts.body),
-      signal: AbortSignal.timeout(timeoutMs),
-    })
-  } catch (e) {
-    throw fxsocketFetchError(e, 'FxSocket request failed')
+
+  const doFetch = async (token: string): Promise<Response> => {
+    try {
+      return await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+          apikey: import.meta.env.VITE_SUPABASE_ANON_KEY as string,
+        },
+        body: JSON.stringify(opts.body),
+        signal: AbortSignal.timeout(timeoutMs),
+      })
+    } catch (e) {
+      throw fxsocketFetchError(e, 'Broker request failed')
+    }
+  }
+
+  let token = await ensureFreshAuthSession()
+  let res = await doFetch(token)
+
+  if (res.status === 401) {
+    const { data: refreshed, error: refreshErr } = await supabase.auth.refreshSession()
+    const retryToken = refreshed.session?.access_token
+    if (!refreshErr && retryToken) {
+      token = retryToken
+      res = await doFetch(token)
+    }
   }
 
   const text = await res.text()
@@ -118,10 +137,36 @@ export interface MtTrade {
 
 export type { FxsocketStreamSubscribeFrame } from './fxsocketStreamTypes'
 
+export interface BrokerSearchResult {
+  name?: string
+  access?: string[]
+  logoUrl?: string | null
+  site?: string | null
+}
+
+export interface BrokerSearchCompany {
+  companyName?: string
+  results?: BrokerSearchResult[]
+}
+
 export const FXSOCKET_DOCS_URL = 'https://fxsocket.com/docs#request-builder'
 export const FXSOCKET_V1_DOCS_URL = 'https://api.fxsocket.com/v1/docs#/'
+export const FXSOCKET_BSA_DOCS_URL = 'https://bsa.fxsocket.com/docs'
 
 export const fxsocketBroker = {
+  searchBrokers(args: {
+    platform: 'MT4' | 'MT5'
+    company: string
+  }): Promise<{ companies: BrokerSearchCompany[] }> {
+    return call({
+      body: { action: 'search_brokers', platform: args.platform, company: args.company },
+      expect: (b) => {
+        const row = b as { ok?: boolean; companies?: BrokerSearchCompany[] }
+        return { companies: row.companies ?? [] }
+      },
+    })
+  },
+
   list(): Promise<BrokerAccount[]> {
     return call({
       body: { action: 'list' },
@@ -138,7 +183,7 @@ export const fxsocketBroker = {
     password?: string
     server?: string
     fxsocketAccountId?: string
-  }): Promise<{ account: BrokerAccount }> {
+  }): Promise<{ account: BrokerAccount; pending?: boolean }> {
     return call({
       body: {
         action: 'connect',
@@ -150,11 +195,47 @@ export const fxsocketBroker = {
       },
       timeoutMs: FXSOCKET_CONNECT_TIMEOUT_MS,
       expect: (b) => {
-        const account = (b as { account?: BrokerAccount }).account
+        const row = b as { account?: BrokerAccount; pending?: boolean }
+        const account = row.account
         if (!account) throw new Error('Connect did not return an account')
-        return { account }
+        return { account, pending: row.pending === true }
       },
     })
+  },
+
+  /** Poll refresh_summary until the FxSocket terminal reaches connected (or error). */
+  async waitUntilConnected(
+    accountId: string,
+    opts?: { maxMs?: number; intervalMs?: number },
+  ): Promise<{ account: BrokerAccount; summary?: AccountSummary }> {
+    const maxMs = opts?.maxMs ?? FXSOCKET_WAIT_CONNECTED_MS
+    const intervalMs = opts?.intervalMs ?? FXSOCKET_WAIT_CONNECTED_INTERVAL_MS
+    const started = Date.now()
+    let lastError = 'Terminal connection timed out'
+
+    while (Date.now() - started < maxMs) {
+      try {
+        const result = await call({
+          body: { action: 'refresh_summary', account_id: accountId },
+          expect: (b) => {
+            const row = b as { account?: BrokerAccount; summary?: AccountSummary; pending?: boolean }
+            const account = row.account
+            if (!account) throw new Error('Refresh did not return an account')
+            return { account, summary: row.summary, pending: row.pending === true }
+          },
+        })
+        if (result.account.connection_status === 'connected') return result
+        if (result.account.connection_status === 'error') {
+          throw new Error(result.account.connection_error ?? 'Broker connection failed')
+        }
+      } catch (e) {
+        lastError = e instanceof Error ? e.message : lastError
+        if (!/timed out|connecting|pending|not ready/i.test(lastError)) throw e
+      }
+      await sleep(intervalMs)
+    }
+
+    throw new Error(lastError)
   },
 
   delete(accountId: string): Promise<void> {
@@ -167,14 +248,16 @@ export const fxsocketBroker = {
   refreshSummary(accountId: string): Promise<{
     account: BrokerAccount
     summary?: AccountSummary
+    pending?: boolean
   }> {
     return call({
       body: { action: 'refresh_summary', account_id: accountId },
       expect: (b) => {
-        const account = (b as { account?: BrokerAccount }).account
+        const row = b as { account?: BrokerAccount; summary?: AccountSummary; pending?: boolean }
+        const account = row.account
         if (!account) throw new Error('Refresh did not return an account')
-        const summary = (b as { summary?: AccountSummary }).summary
-        return { account, summary }
+        const summary = row.summary
+        return { account, summary, pending: row.pending === true }
       },
     })
   },

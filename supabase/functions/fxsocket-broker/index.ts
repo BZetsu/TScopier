@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { createClient } from "npm:@supabase/supabase-js@2"
+import { searchBrokerCompanies } from "../_shared/fxsocketBsaClient.ts"
 import {
   FxsocketApiError,
   isFxsocketConfigured,
@@ -102,6 +103,17 @@ Deno.serve(async (req: Request) => {
       return Response.json({ ok: true, accounts: data ?? [] }, { headers: corsHeaders })
     }
 
+    if (action === "search_brokers") {
+      ensureFxsocketConfigured()
+      const company = String(body.company ?? "").trim()
+      const platform = String(body.platform ?? "MT5").trim()
+      const companies = await searchBrokerCompanies(Deno.env, {
+        company,
+        code: platform.toUpperCase() === "MT4" ? "mt4" : "mt5",
+      })
+      return Response.json({ ok: true, companies }, { headers: corsHeaders })
+    }
+
     ensureFxsocketConfigured()
     const fx = makeFxsocketClientFromEnv(Deno.env)
 
@@ -160,6 +172,7 @@ Deno.serve(async (req: Request) => {
         user_id: userId,
         label: displayLabel,
         platform: "MT5",
+        metaapi_account_id: "",
         fxsocket_account_id: accountId,
         account_login: login || null,
         broker_server: server || null,
@@ -185,35 +198,11 @@ Deno.serve(async (req: Request) => {
         return bad(500, insErr.message)
       }
 
-      try {
-        const { summary } = await fx.pollUntilReady(accountId)
-        const { data: updated, error: updErr } = await supabase
-          .from("broker_accounts")
-          .update({
-            fxsocket_status: "connected",
-            connection_status: "connected",
-            connection_error: null,
-            ...summaryToRowPatch(summary),
-          })
-          .eq("id", row.id)
-          .eq("user_id", userId)
-          .select("*")
-          .single()
-        if (updErr) return bad(500, updErr.message)
-        return Response.json({ ok: true, account: updated, summary }, { headers: corsHeaders })
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : "Terminal not ready"
-        await supabase
-          .from("broker_accounts")
-          .update({
-            fxsocket_status: "error",
-            connection_status: "error",
-            connection_error: msg,
-          })
-          .eq("id", row.id)
-          .eq("user_id", userId)
-        return bad(504, msg)
-      }
+      // Return immediately — MT5 terminal spin-up can take minutes. Client polls refresh_summary.
+      return Response.json(
+        { ok: true, account: row, pending: true },
+        { headers: corsHeaders },
+      )
     }
 
     if (action === "delete") {
@@ -237,6 +226,39 @@ Deno.serve(async (req: Request) => {
       if (!accountRowId) return bad(400, "account_id required")
       const row = await loadOwnedBrokerRow(supabase, userId, accountRowId)
       try {
+        const v1 = await fx.getV1Account(row.fxsocket_account_id)
+        if (v1.status === "connecting") {
+          const { data: updated, error } = await supabase
+            .from("broker_accounts")
+            .update({
+              fxsocket_status: "connecting",
+              connection_status: "pending",
+              connection_error: null,
+            })
+            .eq("id", accountRowId)
+            .eq("user_id", userId)
+            .select("*")
+            .single()
+          if (error) return bad(500, error.message)
+          return Response.json(
+            { ok: true, account: updated ?? row, pending: true },
+            { headers: corsHeaders },
+          )
+        }
+        if (v1.status === "error") {
+          const msg = v1.error || "FxSocket terminal connection failed"
+          await supabase
+            .from("broker_accounts")
+            .update({
+              fxsocket_status: "error",
+              connection_status: "error",
+              connection_error: msg,
+            })
+            .eq("id", accountRowId)
+            .eq("user_id", userId)
+          return bad(502, msg)
+        }
+
         const summary = await fx.accountSummary(row.fxsocket_account_id)
         const { data: updated, error } = await supabase
           .from("broker_accounts")

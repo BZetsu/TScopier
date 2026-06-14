@@ -1,5 +1,7 @@
-import { supabase } from './supabase'
-import type { MtServer } from '../types/database'
+import {
+  fxsocketBroker,
+  type BrokerSearchCompany,
+} from './fxsocketBroker'
 import { inferBrokerLabelFromServer } from './brokerFromServer'
 
 export interface ServerOption {
@@ -13,36 +15,40 @@ export interface BrokerServerGroup {
   servers: ServerOption[]
 }
 
-/**
- * Load broker servers from `mt_servers`, filtered by platform and grouped by
- * broker name. The DB already stores a backfilled `broker_label`; we fall back
- * to inferBrokerLabelFromServer for any row that hasn't been labeled yet so the
- * typeahead remains useful even on fresh installs.
- */
-export async function loadBrokerServers(platform: 'MT4' | 'MT5'): Promise<BrokerServerGroup[]> {
-  const { data, error } = await supabase
-    .from('mt_servers')
-    .select('id,server_name,platform,broker_label,is_active')
-    .eq('is_active', true)
-    .in('platform', [platform, 'ANY'])
-    .order('server_name', { ascending: true })
-    .limit(2000)
-
-  if (error) throw new Error(error.message)
-
+/** Map FxSocket BSA search results into grouped server options. */
+export function brokerSearchToGroups(companies: BrokerSearchCompany[]): BrokerServerGroup[] {
   const groups = new Map<string, ServerOption[]>()
-  for (const row of (data ?? []) as MtServer[]) {
-    const label = (row.broker_label && row.broker_label.trim())
-      || inferBrokerLabelFromServer(row.server_name)
+
+  for (const company of companies) {
+    const label = (company.companyName && company.companyName.trim())
+      || inferBrokerLabelFromServer(company.results?.[0]?.name ?? '')
       || 'Other'
-    const arr = groups.get(label) ?? []
-    arr.push({ id: row.id, server_name: row.server_name, broker_label: label })
-    groups.set(label, arr)
+
+    for (const result of company.results ?? []) {
+      const serverName = (result.name ?? '').trim()
+      if (!serverName) continue
+      const arr = groups.get(label) ?? []
+      arr.push({
+        id: `${label}:${serverName}`,
+        server_name: serverName,
+        broker_label: label,
+      })
+      groups.set(label, arr)
+    }
   }
 
   return [...groups.entries()]
     .map(([broker_label, servers]) => ({ broker_label, servers }))
     .sort((a, b) => a.broker_label.localeCompare(b.broker_label))
+}
+
+/** Search broker companies/servers via FxSocket BSA (proxied through edge). */
+export async function searchBrokerServers(
+  platform: 'MT4' | 'MT5',
+  company: string,
+): Promise<BrokerServerGroup[]> {
+  const { companies } = await fxsocketBroker.searchBrokers({ platform, company })
+  return brokerSearchToGroups(companies)
 }
 
 export function flattenBrokerGroups(groups: BrokerServerGroup[]): ServerOption[] {

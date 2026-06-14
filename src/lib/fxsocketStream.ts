@@ -56,7 +56,7 @@ export async function openFxsocketStream(
       }
     }
     ws.onerror = () => {
-      handlers.onError?.('FxSocket stream connection error')
+      handlers.onError?.('Live broker stream connection error')
     }
     ws.onclose = () => {
       notifyState(false)

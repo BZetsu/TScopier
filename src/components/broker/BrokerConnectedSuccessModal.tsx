@@ -9,7 +9,9 @@ import { Button } from '../ui/Button'
 
 export interface BrokerConnectedSuccessModalCopy {
   title: string
+  titlePending: string
   body: string
+  bodyPending: string
   addChannel: string
   configure: string
   detailLogin: string
@@ -66,6 +68,10 @@ export function BrokerConnectedSuccessModal({
 
   const logo = platformLogo(broker.platform)
   const label = getBrokerDisplayLabel(broker)
+  const isPending = broker.connection_status === 'pending'
+    || broker.fxsocket_status === 'connecting'
+  const modalTitle = isPending ? copy.titlePending : copy.title
+  const modalBody = interpolate(isPending ? copy.bodyPending : copy.body, { account: label })
 
   const modal = (
     <div
@@ -92,10 +98,10 @@ export function BrokerConnectedSuccessModal({
                 id="broker-connected-success-title"
                 className="text-base font-semibold text-neutral-900 dark:text-neutral-50"
               >
-                {copy.title}
+                {modalTitle}
               </h2>
               <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400 leading-relaxed">
-                {interpolate(copy.body, { account: label })}
+                {modalBody}
               </p>
             </div>
             <button

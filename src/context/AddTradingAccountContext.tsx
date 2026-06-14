@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react'
@@ -10,6 +11,8 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import type { BrokerAccount } from '../types/database'
 import { ConnectTradingAccountModal } from '../components/broker/ConnectTradingAccountModal'
 import { BrokerConnectedSuccessModal } from '../components/broker/BrokerConnectedSuccessModal'
+import { useBrokerAccounts } from './BrokerAccountsContext'
+import { fxsocketBroker } from '../lib/fxsocketBroker'
 import { useT } from './LocaleContext'
 
 type AddTradingAccountContextValue = {
@@ -25,8 +28,10 @@ export function AddTradingAccountProvider({ children }: { children: ReactNode })
   const t = useT()
   const navigate = useNavigate()
   const { pathname } = useLocation()
+  const { upsertBroker, brokers } = useBrokerAccounts()
   const sc = t.accountConfig.brokerConnectedSuccess
   const bl = t.accountConfig.brokerList
+  const pendingConnectRef = useRef<string | null>(null)
 
   const [open, setOpen] = useState(false)
   const [connectedBroker, setConnectedBroker] = useState<BrokerAccount | null>(null)
@@ -53,7 +58,26 @@ export function AddTradingAccountProvider({ children }: { children: ReactNode })
   const handleConnectSuccess = useCallback((broker: BrokerAccount) => {
     setOpen(false)
     setConnectedBroker(broker)
-  }, [])
+
+    const isPending = broker.connection_status === 'pending'
+      || broker.fxsocket_status === 'connecting'
+    if (!isPending || pendingConnectRef.current === broker.id) return
+
+    pendingConnectRef.current = broker.id
+    void fxsocketBroker.waitUntilConnected(broker.id)
+      .then(({ account }) => {
+        upsertBroker(account)
+        setConnectedBroker(prev => (prev?.id === account.id ? account : prev))
+      })
+      .catch(() => {
+        // Account stays in pending/error — user can refresh from Account Configuration.
+      })
+      .finally(() => {
+        if (pendingConnectRef.current === broker.id) {
+          pendingConnectRef.current = null
+        }
+      })
+  }, [upsertBroker])
 
   const dismissSuccess = useCallback(() => {
     setConnectedBroker(null)
@@ -86,20 +110,30 @@ export function AddTradingAccountProvider({ children }: { children: ReactNode })
     ],
   )
 
+  const handleClose = useCallback(() => {
+    setOpen(false)
+  }, [])
+
+  const successBroker = connectedBroker
+    ? brokers.find(b => b.id === connectedBroker.id) ?? connectedBroker
+    : null
+
   return (
     <AddTradingAccountContext.Provider value={value}>
       {children}
       <ConnectTradingAccountModal
         open={open}
-        onClose={() => setOpen(false)}
+        onClose={handleClose}
         onSuccess={handleConnectSuccess}
       />
       <BrokerConnectedSuccessModal
-        open={connectedBroker != null}
-        broker={connectedBroker}
+        open={successBroker != null}
+        broker={successBroker}
         copy={{
           title: sc.title,
+          titlePending: sc.titlePending,
           body: sc.body,
+          bodyPending: sc.bodyPending,
           addChannel: sc.addChannel,
           configure: sc.configure,
           detailLogin: bl.detailLogin,

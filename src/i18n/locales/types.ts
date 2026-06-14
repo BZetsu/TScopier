@@ -326,6 +326,10 @@ export interface AccountConfigConnectFormTranslations {
   rememberPasswordLabel: string
   rememberPasswordHint: string
   connectButton: string
+  connectingTitle: string
+  connectingStepLinking: string
+  connectingStepTerminal: string
+  connectingStepSlow: string
   validationRequired: string
   connectFailed: string
 }
@@ -395,7 +399,9 @@ export interface AccountConfigBrokerListTranslations {
 
 export interface AccountConfigBrokerConnectedSuccessTranslations {
   title: string
+  titlePending: string
   body: string
+  bodyPending: string
   addChannel: string
   configure: string
 }
