@@ -16,7 +16,7 @@ export function isMtSessionUuid(metaapiAccountId: string | null | undefined): bo
   return isFxsocketSessionUuid(metaapiAccountId)
 }
 
-/** Pre–MetatraderAPI rows stored `ServerName|Login` in metaapi_account_id. */
+/** Pre–FxSocket rows stored `ServerName|Login` in metaapi_account_id. */
 export function isLegacyBrokerLink(metaapiAccountId: string | null | undefined): boolean {
   const v = (metaapiAccountId ?? '').trim()
   return v.length > 0 && v.includes('|')

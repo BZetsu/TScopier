@@ -4,7 +4,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { MetatraderApiClient } from './fxsocketClient'
+import type { FxsocketBrokerClient } from './fxsocketClient'
 import { normalizeSymbolParams } from './fxsocketClient'
 import {
   fetchOpenBrokerTickets,
@@ -88,7 +88,7 @@ function buildMgmtModifyTargets(args: {
 
 export async function applyMgmtModifyToBasketGroups(args: {
   supabase: SupabaseClient
-  apiFor: (broker: { id: string; metaapi_account_id?: string | null }) => MetatraderApiClient | null
+  apiFor: (broker: { id: string; metaapi_account_id?: string | null }) => FxsocketBrokerClient | null
   signal: {
     id: string
     user_id: string

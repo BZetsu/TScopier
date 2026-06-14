@@ -8,8 +8,8 @@ import { isAutoBeTriggerMet } from '../autoManagement'
 import { deriveManualStopsWithClamp } from '../manualPlanning/manualStops'
 import { signalPipPrice } from '../signalPip'
 import {
-  hasMetatraderApiConfigured,
-  type MetatraderApiClient,
+  hasFxsocketConfigured,
+  type FxsocketBrokerClient,
 } from '../fxsocketClient'
 import { apiForMetaapiAccount, loadPlatformByMetaapiId } from '../mtApiByAccount'
 
@@ -20,7 +20,7 @@ const supabase = createClient(
 
 async function main() {
   console.log('=== Live broker E2E check ===\n')
-  console.log('MT API configured:', hasMetatraderApiConfigured())
+  console.log('MT API configured:', hasFxsocketConfigured())
   console.log('Supabase:', process.env.SUPABASE_URL?.replace(/https?:\/\//, '').split('/')[0])
 
   const { data: brokers, error: bErr } = await supabase
@@ -69,7 +69,7 @@ async function main() {
 
   console.log('\nOpen trades awaiting auto-BE:', autoTrades?.length ?? 0)
 
-  if (!hasMetatraderApiConfigured()) {
+  if (!hasFxsocketConfigured()) {
     console.log('\nSKIP MT quote / trigger dry-run — MT4API_BASIC_USER/PASSWORD not set locally.')
     console.log('Deploy trade_mgmt worker with MT API creds to apply auto-BE on open trades.')
     return
@@ -83,7 +83,7 @@ async function main() {
     const broker = brokerById.get(trade.broker_account_id ?? '')
     if (!broker?.metaapi_account_id) continue
     const uuid = String(broker.metaapi_account_id)
-    const api: MetatraderApiClient | null = apiForMetaapiAccount(platformByUuid, uuid)
+    const api: FxsocketBrokerClient | null = apiForMetaapiAccount(platformByUuid, uuid)
     if (!api) {
       console.log(`  ${trade.symbol} ${trade.direction}: no API client for ${uuid.slice(0, 8)}`)
       continue

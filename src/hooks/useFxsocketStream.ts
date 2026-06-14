@@ -1,11 +1,16 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { openFxsocketStream, type FxsocketStreamMessage } from '../lib/fxsocketStream'
+import {
+  parseFxsocketAccountStreamData,
+  parseFxsocketOpenPositionCount,
+  type FxsocketAccountStreamSnapshot,
+} from '../lib/fxsocketStreamParse'
 import { isFxsocketLinkedBroker } from '../lib/brokerLink'
 import type { BrokerAccount } from '../types/database'
 
 export interface FxsocketStreamHandlers {
-  onAccount?: (brokerAccountId: string, data: Record<string, unknown>) => void
-  onPositions?: (brokerAccountId: string, data: unknown[]) => void
+  onAccount?: (brokerAccountId: string, data: FxsocketAccountStreamSnapshot) => void
+  onPositions?: (brokerAccountId: string, openTrades: number) => void
   onTerminal?: (brokerAccountId: string, data: Record<string, unknown>) => void
   onTrade?: (brokerAccountId: string, data: Record<string, unknown>) => void
 }
@@ -18,8 +23,13 @@ export function useFxsocketStream(
   const handlersRef = useRef(handlers)
   handlersRef.current = handlers
 
+  const streamBrokerIds = useMemo(
+    () => brokers.filter(isFxsocketLinkedBroker).map(b => b.id).sort().join(','),
+    [brokers],
+  )
+
   useEffect(() => {
-    if (!enabled) return
+    if (!enabled || !streamBrokerIds) return
 
     const linked = brokers.filter(isFxsocketLinkedBroker)
     if (linked.length === 0) return
@@ -31,9 +41,13 @@ export function useFxsocketStream(
       void openFxsocketStream(broker.id, {
         onMessage: (msg: FxsocketStreamMessage) => {
           if (msg.type === 'account' && 'data' in msg) {
-            handlersRef.current.onAccount?.(broker.id, msg.data as Record<string, unknown>)
+            const snap = parseFxsocketAccountStreamData(msg.data as Record<string, unknown>)
+            handlersRef.current.onAccount?.(broker.id, snap)
           } else if (msg.type === 'positions' && 'data' in msg) {
-            handlersRef.current.onPositions?.(broker.id, msg.data as unknown[])
+            handlersRef.current.onPositions?.(
+              broker.id,
+              parseFxsocketOpenPositionCount(msg.data),
+            )
           } else if (msg.type === 'terminal' && 'data' in msg) {
             handlersRef.current.onTerminal?.(broker.id, msg.data as Record<string, unknown>)
           } else if (msg.type === 'trade' && 'data' in msg) {
@@ -55,5 +69,5 @@ export function useFxsocketStream(
       cancelled = true
       for (const handle of handles.values()) handle.close()
     }
-  }, [brokers, enabled])
+  }, [streamBrokerIds, brokers, enabled])
 }

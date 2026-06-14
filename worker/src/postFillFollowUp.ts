@@ -3,7 +3,7 @@
  * merge-into-existing — all after broker OrderSend (live fast path).
  */
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { MetatraderApiClient, MtOperation } from './fxsocketClient'
+import type { FxsocketBrokerClient, MtOperation } from './fxsocketClient'
 import type { PlannerContext } from './manualPlanning/types'
 import {
   loadChannelActiveTradeParamsForSymbol,
@@ -74,7 +74,7 @@ export type PostFillExecutorHooks = {
 
 export type ApplyPostFillFollowUpArgs = {
   supabase: SupabaseClient
-  api: MetatraderApiClient
+  api: FxsocketBrokerClient
   uuid: string
   signal: SignalRow
   parsed: ParsedSignal

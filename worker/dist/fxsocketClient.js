@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.FxsocketBrokerClient = exports.MetatraderApiClient = exports.MT_SESSION_EXPIRED_HINT = exports.hasMetatraderApiConfigured = exports.MetatraderApiError = exports.FxsocketApiError = void 0;
+exports.FxsocketBrokerClient = exports.MT_SESSION_EXPIRED_HINT = exports.FxsocketApiError = void 0;
 exports.normalizeOrderResponse = normalizeOrderResponse;
 exports.normalizeSymbolParams = normalizeSymbolParams;
 exports.unwrapOrderList = unwrapOrderList;
@@ -12,12 +12,11 @@ exports.isMtSessionGoneError = isMtSessionGoneError;
 exports.isTransientMtApiError = isTransientMtApiError;
 exports.mtPlatformFrom = mtPlatformFrom;
 exports.getFxsocketClient = getFxsocketClient;
-exports.getMetatraderApi = getMetatraderApi;
 const undici_1 = require("undici");
 const brokerConnectError_1 = require("./brokerConnectError");
 const mtTradeFields_1 = require("./mtTradeFields");
 /**
- * FxSocket MT5 REST client for the worker — drop-in replacement for metatraderapi.ts.
+ * FxSocket MT5 REST client for the worker.
  *
  * - Account linking: POST/GET/DELETE https://api.fxsocket.com/v1/accounts
  * - Trading: https://api.fxsocket.com/mt5/{accountId}/…
@@ -49,8 +48,6 @@ class FxsocketApiError extends Error {
     }
 }
 exports.FxsocketApiError = FxsocketApiError;
-/** @deprecated Use FxsocketApiError — kept for drop-in compat with metatraderapi imports. */
-exports.MetatraderApiError = FxsocketApiError;
 function num(v) {
     if (v === null || v === undefined)
         return undefined;
@@ -66,7 +63,7 @@ function nestedTicket(o, key) {
 }
 /**
  * Normalize order responses from FxSocket ({ order, deal, success }) and legacy
- * MetatraderAPI ({ ticket, Ticket, result: { … } }) into camelCase OrderResult.
+ * MT REST shapes ({ ticket, Ticket, result: { … } }) into camelCase OrderResult.
  */
 function normalizeOrderResponse(body) {
     if (body == null || typeof body !== 'object') {
@@ -243,8 +240,6 @@ function hasFxsocketConfigured(env = process.env) {
         return false;
     }
 }
-/** @deprecated Use hasFxsocketConfigured — kept for drop-in compat. */
-exports.hasMetatraderApiConfigured = hasFxsocketConfigured;
 function isCheckConnectOk(body) {
     if (body === true)
         return true;
@@ -386,12 +381,12 @@ function normalizeV1Account(raw) {
         error: o.error != null ? String(o.error) : '',
     };
 }
-class MetatraderApiClient {
+class FxsocketBrokerClient {
     constructor(_platform = 'MT5', apiKey, baseUrl, timeoutMs = 30000) {
         this.platform = 'MT5';
         const key = (apiKey ?? resolveApiKey()).trim();
         if (!key)
-            throw new Error('MetatraderApiClient: FXSOCKET_API_KEY required');
+            throw new Error('FxsocketBrokerClient: FXSOCKET_API_KEY required');
         this.apiKey = key;
         this.baseUrl = normalizeBaseUrl(baseUrl ?? trimEnv(process.env.FXSOCKET_BASE_URL), DEFAULT_BASE_URL);
         this.v1BaseUrl = `${this.baseUrl}/v1`;
@@ -821,23 +816,17 @@ class MetatraderApiClient {
         return normalizeOrderResponse(raw);
     }
 }
-exports.MetatraderApiClient = MetatraderApiClient;
-/** Alias for the FxSocket-backed client class. */
-exports.FxsocketBrokerClient = MetatraderApiClient;
+exports.FxsocketBrokerClient = FxsocketBrokerClient;
 let clientSingleton;
 function getFxsocketClient() {
     if (clientSingleton !== undefined)
         return clientSingleton;
     try {
-        clientSingleton = new MetatraderApiClient('MT5');
+        clientSingleton = new FxsocketBrokerClient('MT5');
         return clientSingleton;
     }
     catch {
         clientSingleton = null;
         return null;
     }
-}
-/** @deprecated Use getFxsocketClient — kept for drop-in compat. */
-function getMetatraderApi(_platform = 'MT5') {
-    return getFxsocketClient();
 }

@@ -17,7 +17,7 @@ const helpers_1 = require("./helpers");
 const slTpRefresh_1 = require("./slTpRefresh");
 async function tryParameterFollowUpMergeModifyOnly(ctx, args) {
     const { signal, parsed, broker, channelKeywords, baseLot, params, symbol, uuid, strictEntryPrefetch, commentPrefix, } = args;
-    if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)())
+    if (!(0, fxsocketClient_1.hasFxsocketConfigured)())
         return { handled: false };
     if ((0, signalPriceInference_1.parsedHasReEnterIntent)(parsed))
         return { handled: false };
@@ -237,7 +237,7 @@ async function tryParameterFollowUpMergeModifyOnly(ctx, args) {
 }
 async function tryMergeSignalIntoExistingOpenTrade(ctx, args) {
     const { signal, parsed, op, broker, channelKeywords, baseLot, params, symbol, uuid, strictEntryPrefetch, commentPrefix, } = args;
-    if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)())
+    if (!(0, fxsocketClient_1.hasFxsocketConfigured)())
         return { handled: false };
     const api = ctx.apiFor(broker);
     if (!api)
@@ -342,7 +342,7 @@ async function tryMergeSignalIntoExistingOpenTrade(ctx, args) {
  */
 async function tryTeaserCompletionMerge(ctx, args) {
     const { signal, parsed, broker, channelKeywords, baseLot, params, symbol, uuid, strictEntryPrefetch, commentPrefix, } = args;
-    if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)())
+    if (!(0, fxsocketClient_1.hasFxsocketConfigured)())
         return { handled: false };
     if (!(0, channelActiveTradeParams_1.parsedSignalHasExplicitStops)(parsed))
         return { handled: false };

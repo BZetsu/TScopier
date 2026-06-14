@@ -109,6 +109,9 @@ export function computeBrokerTodayProfit(
 /**
  * Total P/L from balance change since link, minus deposit/withdrawal cash flows
  * detected in MT history (so a 10K deposit does not inflate trading P/L).
+ *
+ * Requires full broker order history (see PERFORMANCE_MT_HISTORY_DAYS) so cash-flow
+ * rows are not missed — partial history produces a misleading interim figure.
  */
 export function computeBrokerBalanceProfit(
   initialBalance: number | null | undefined,
@@ -371,13 +374,14 @@ export function computeBrokerStatsSnapshot(opts: {
       ? Number(opts.currentEquity)
       : null
 
+  const balanceProfit = computeBrokerBalanceProfit(initial, balance, opts.mtTrades, opts.brokerId)
+  const dealProfit = computeBrokerTotalProfit(opts.brokerId, opts.mtTrades, opts.chartTrades)
+
   return {
     initialBalance: initial,
     currentBalance: balance,
     currentEquity: equity,
-    totalProfit:
-      computeBrokerBalanceProfit(initial, balance, opts.mtTrades, opts.brokerId)
-      ?? computeBrokerTotalProfit(opts.brokerId, opts.mtTrades, opts.chartTrades),
+    totalProfit: balanceProfit ?? dealProfit,
     todayProfit: computeBrokerTodayProfit(opts.brokerId, opts.mtTrades, opts.chartTrades, opts.now),
     closedDealCount,
     connectedChannelCount: profitByChannel.length,

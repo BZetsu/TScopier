@@ -1,4 +1,4 @@
--- Serialize MetatraderAPI ConnectEx across Edge + Worker processes (same broker server).
+-- Serialize FxSocket ConnectEx across Edge + Worker processes (same broker server).
 
 CREATE TABLE IF NOT EXISTS public.mt_server_connect_locks (
   lock_key text PRIMARY KEY,

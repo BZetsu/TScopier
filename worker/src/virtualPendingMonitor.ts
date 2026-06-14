@@ -1,7 +1,7 @@
 import os from 'node:os'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import {
-  hasMetatraderApiConfigured,
+  hasFxsocketConfigured,
   normalizeSymbolParams,
   OrderSendArgs,
   SymbolParams,
@@ -290,7 +290,7 @@ export class VirtualPendingMonitor {
 
   start() {
     if (this.loop) return
-    if (!hasMetatraderApiConfigured()) {
+    if (!hasFxsocketConfigured()) {
       console.warn('[virtualPendingMonitor] MT4API_BASIC_USER/PASSWORD missing — virtual pending monitor disabled')
       return
     }
@@ -326,7 +326,7 @@ export class VirtualPendingMonitor {
   }
 
   private async tick(): Promise<void> {
-    if (!hasMetatraderApiConfigured()) return
+    if (!hasFxsocketConfigured()) return
 
     // Re-open rows whose claim is stale. Anything older than STALE_CLAIM_AFTER_MS
     // is considered abandoned (the claiming worker probably crashed); reset it
@@ -906,7 +906,7 @@ export class VirtualPendingMonitor {
         tradeRowId
         && Number.isFinite(ticketNum)
         && ticketNum > 0
-        && hasMetatraderApiConfigured()
+        && hasFxsocketConfigured()
       ) {
         try {
           await tryApplyBasketFollowUpToNewFill(this.supabase, api, {

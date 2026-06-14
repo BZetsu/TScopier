@@ -6,9 +6,9 @@ import {
   type TrailingStopConfig,
 } from './trailingStop'
 import {
-  hasMetatraderApiConfigured,
+  hasFxsocketConfigured,
   normalizeSymbolParams,
-  type MetatraderApiClient,
+  type FxsocketBrokerClient,
   type SymbolParams,
 } from './fxsocketClient'
 import { apiForMetaapiAccount, loadPlatformByMetaapiId, type PlatformByMetaapiId } from './mtApiByAccount'
@@ -70,7 +70,7 @@ export class TrailingStopMonitor {
 
   start() {
     if (this.loop) return
-    if (!hasMetatraderApiConfigured()) {
+    if (!hasFxsocketConfigured()) {
       console.warn('[trailingStopMonitor] MT4API_BASIC_USER/PASSWORD missing — trailing stop monitor disabled')
       return
     }
@@ -107,7 +107,7 @@ export class TrailingStopMonitor {
   }
 
   private async tick(): Promise<void> {
-    if (!hasMetatraderApiConfigured()) return
+    if (!hasFxsocketConfigured()) return
 
     const tradesQ = await applyShardToQuery(
       this.supabase,
@@ -200,7 +200,7 @@ export class TrailingStopMonitor {
   private async maybeTrailTrade(
     trade: TrailTradeRow,
     uuid: string,
-    api: MetatraderApiClient,
+    api: FxsocketBrokerClient,
     bid: number,
     ask: number,
   ): Promise<boolean | null> {

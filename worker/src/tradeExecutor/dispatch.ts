@@ -1,5 +1,5 @@
 import type { TradeExecutorContext } from './context'
-import { hasMetatraderApiConfigured } from '../fxsocketClient'
+import { hasFxsocketConfigured } from '../fxsocketClient'
 import type { BrokerRow, QueuedSignal, SignalRow } from './types'
 import {
   dispatchPriorityForAction,
@@ -369,7 +369,7 @@ export async function handleSignal(ctx: TradeExecutorContext,
       dispatchReceivedAt?: number
     },
   ) {
-    if (!hasMetatraderApiConfigured()) return
+    if (!hasFxsocketConfigured()) return
     const isMessageRevisionEarly = opts?.dispatchSource === MESSAGE_REVISION_DISPATCH_SOURCE
     if (isMessageRevisionEarly) {
       await waitForSignalInflightClear(

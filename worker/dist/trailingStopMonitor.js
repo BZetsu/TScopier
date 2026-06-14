@@ -24,7 +24,7 @@ class TrailingStopMonitor {
     start() {
         if (this.loop)
             return;
-        if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)()) {
+        if (!(0, fxsocketClient_1.hasFxsocketConfigured)()) {
             console.warn('[trailingStopMonitor] MT4API_BASIC_USER/PASSWORD missing — trailing stop monitor disabled');
             return;
         }
@@ -57,7 +57,7 @@ class TrailingStopMonitor {
         }
     }
     async tick() {
-        if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)())
+        if (!(0, fxsocketClient_1.hasFxsocketConfigured)())
             return;
         const tradesQ = await (0, monitorIdleGate_1.applyShardToQuery)(this.supabase, this.supabase
             .from('trades')

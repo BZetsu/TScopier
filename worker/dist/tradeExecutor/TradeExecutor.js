@@ -110,12 +110,12 @@ class TradeExecutor {
         this.brokerActivatedAt = new Map();
         this.userTimezoneById = new Map();
         this.copyLimitStateCache = new Map();
-        if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)()) {
+        if (!(0, fxsocketClient_1.hasFxsocketConfigured)()) {
             console.warn('[tradeExecutor] MT4API_BASIC_USER/PASSWORD missing — trade execution disabled.');
         }
     }
     apiFor(broker) {
-        return (0, fxsocketClient_1.getMetatraderApi)((0, fxsocketClient_1.mtPlatformFrom)(broker.platform));
+        return (0, fxsocketClient_1.getFxsocketClient)();
     }
     apiForUuid(uuid) {
         for (const b of this.brokersById.values()) {
@@ -790,7 +790,7 @@ class TradeExecutor {
         return await basketMerge.tryMergeSignalIntoExistingOpenTrade(this, args);
     }
     async sweepExpiredTscopierBrokerPendings() {
-        if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)())
+        if (!(0, fxsocketClient_1.hasFxsocketConfigured)())
             return;
         if (String(process.env.WORKER_BROKER_PENDING_EXPIRY_SWEEP ?? '').toLowerCase() !== 'true')
             return;
@@ -992,7 +992,7 @@ class TradeExecutor {
      * indefinitely — it becomes a no-op once the legacy pendings are gone.
      */
     async cleanupLegacyBrokerPendings() {
-        if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)())
+        if (!(0, fxsocketClient_1.hasFxsocketConfigured)())
             return;
         const brokers = Array.from(this.brokersById.values()).filter(b => b.is_active && (0, helpers_2.isMtUuid)(b.metaapi_account_id));
         if (!brokers.length)

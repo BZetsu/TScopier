@@ -25,7 +25,7 @@ import {
   type MgmtTradeRow
 } from '../managementScope'
 import { type ManualSettings } from '../manualPlanner'
-import { hasMetatraderApiConfigured } from '../fxsocketClient'
+import { hasFxsocketConfigured } from '../fxsocketClient'
 import { resolveLatestOpenBasketAnchor } from '../multiTradeMerge'
 import { isBenignOrderModifyError } from '../orderModifyBenign'
 import { mgmtLegConcurrency, parallelMap } from '../parallelPool'
@@ -112,7 +112,7 @@ export async function applyManagement(
     const liveMgmtFast = mgmtOpts?.liveMgmtFast === true
     const legConcurrency = liveMgmtFast ? mgmtLegConcurrency() : 1
     let legsTotal = 0
-    if (!hasMetatraderApiConfigured()) {
+    if (!hasFxsocketConfigured()) {
       await skipMgmtSignalWithLog(ctx, signal, 'broker_api_not_configured', {
         action: String(parsed.action ?? '').toLowerCase(),
       })
@@ -717,7 +717,7 @@ export async function applyCloseWorseEntriesInstruction(ctx: TradeExecutorContex
     const legConcurrency = liveMgmtFast ? mgmtLegConcurrency() : 1
     let legsTotal = 0
 
-    if (!hasMetatraderApiConfigured()) {
+    if (!hasFxsocketConfigured()) {
       await skipMgmtSignalWithLog(ctx, signal, 'broker_api_not_configured', { action: 'close_worse_entries' })
       return emptyMgmtResult(legConcurrency)
     }

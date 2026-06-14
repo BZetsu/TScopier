@@ -55,7 +55,7 @@ class SignalEntryPendingMonitor {
     start() {
         if (this.loop)
             return;
-        if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)()) {
+        if (!(0, fxsocketClient_1.hasFxsocketConfigured)()) {
             console.warn('[signalEntryPendingMonitor] MT4API_BASIC_USER/PASSWORD missing — signal entry pending monitor disabled');
             return;
         }
@@ -88,7 +88,7 @@ class SignalEntryPendingMonitor {
         }
     }
     async tick() {
-        if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)())
+        if (!(0, fxsocketClient_1.hasFxsocketConfigured)())
             return;
         const rowsQ = await (0, monitorIdleGate_1.applyShardToQuery)(this.supabase, this.supabase
             .from('signal_entry_pending_orders')

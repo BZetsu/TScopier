@@ -20,7 +20,7 @@ class NewsTradingMonitor {
     start() {
         if (this.timer)
             return;
-        if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)()) {
+        if (!(0, fxsocketClient_1.hasFxsocketConfigured)()) {
             console.warn('[newsTradingMonitor] MT API not configured — monitor disabled');
             return;
         }

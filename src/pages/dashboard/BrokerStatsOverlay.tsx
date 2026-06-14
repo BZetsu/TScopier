@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import clsx from 'clsx'
 import { RefreshCw, X } from 'lucide-react'
@@ -19,6 +19,7 @@ import {
   resolveMtServerCandidate,
 } from '../../lib/brokerFromServer'
 import { brokerConnectionStatusLabel } from '../../lib/brokerReconnect'
+import { isFxsocketLinkedBroker } from '../../lib/brokerLink'
 import { Button } from '../../components/ui/Button'
 import type { BrokerAccount } from '../../types/database'
 
@@ -111,17 +112,28 @@ export function BrokerStatsOverlay() {
   }, [navigate])
 
   const liveRefreshKeyRef = useRef<string | null>(null)
+  const [brokerMetricsReady, setBrokerMetricsReady] = useState(false)
+
   useEffect(() => {
     liveRefreshKeyRef.current = null
+    setBrokerMetricsReady(false)
   }, [brokerId])
 
   useEffect(() => {
     if (!brokerId || !user?.id) return
-    if (!accounts.some(a => a.id === brokerId)) return
+
+    const loaded = accounts.find(a => a.id === brokerId)
+    if (!loaded) return
+
+    if (!isFxsocketLinkedBroker(loaded)) {
+      setBrokerMetricsReady(true)
+      return
+    }
+
     const key = `${brokerId}:${user.id}`
     if (liveRefreshKeyRef.current === key) return
     liveRefreshKeyRef.current = key
-    void refreshBroker(brokerId, { silent: true })
+    void refreshBroker(brokerId, { silent: true }).finally(() => setBrokerMetricsReady(true))
   }, [brokerId, user?.id, accounts, refreshBroker])
 
   const currency = (account?.last_currency ?? '').trim() || undefined
@@ -172,7 +184,9 @@ export function BrokerStatsOverlay() {
   const pnlColor = (n: number) =>
     n > 0 ? 'text-teal-600' : n < 0 ? 'text-error-600' : 'text-neutral-900 dark:text-neutral-50'
 
-  const showBodySkeleton = loading && !stats
+  const needsLiveBrokerHistory = account != null && isFxsocketLinkedBroker(account)
+  const showBodySkeleton =
+    (loading && !stats) || (needsLiveBrokerHistory && !brokerMetricsReady)
 
   return (
     <div

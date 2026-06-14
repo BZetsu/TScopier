@@ -1,11 +1,10 @@
 import { RealtimeChannel, SupabaseClient } from '@supabase/supabase-js'
 import {
-  getMetatraderApi,
-  hasMetatraderApiConfigured,
+  getFxsocketClient,
+  hasFxsocketConfigured,
   isBrokerDisconnectedMessage,
   MT_SESSION_EXPIRED_HINT,
-  mtPlatformFrom,
-  MetatraderApiClient,
+  FxsocketBrokerClient,
   MtOperation,
   normalizeSymbolParams,
   OrderSendArgs,
@@ -255,16 +254,16 @@ export class TradeExecutor {
     readonly supabase: SupabaseClient,
     readonly sessionManager?: UserSessionManager,
   ) {
-    if (!hasMetatraderApiConfigured()) {
+    if (!hasFxsocketConfigured()) {
       console.warn('[tradeExecutor] MT4API_BASIC_USER/PASSWORD missing — trade execution disabled.')
     }
   }
 
-  apiFor(broker: BrokerRow): MetatraderApiClient | null {
-    return getMetatraderApi(mtPlatformFrom(broker.platform))
+  apiFor(broker: BrokerRow): FxsocketBrokerClient | null {
+    return getFxsocketClient()
   }
 
-  apiForUuid(uuid: string): MetatraderApiClient | null {
+  apiForUuid(uuid: string): FxsocketBrokerClient | null {
     for (const b of this.brokersById.values()) {
       if (b.metaapi_account_id === uuid) return this.apiFor(b)
     }
@@ -1136,7 +1135,7 @@ export class TradeExecutor {
   }
 
   private async sweepExpiredTscopierBrokerPendings(): Promise<void> {
-    if (!hasMetatraderApiConfigured()) return
+    if (!hasFxsocketConfigured()) return
     if (String(process.env.WORKER_BROKER_PENDING_EXPIRY_SWEEP ?? '').toLowerCase() !== 'true') return
 
     const brokers = Array.from(this.brokersById.values()).filter(b =>
@@ -1191,7 +1190,7 @@ export class TradeExecutor {
     return await brokerSymbolCache.pingBrokerSession(this, row)
   }
 
-  async ensureBrokerSession(api: MetatraderApiClient,
+  async ensureBrokerSession(api: FxsocketBrokerClient,
     uuid: string,
     broker: BrokerRow,
     opts?: { force?: boolean },): Promise<boolean> {
@@ -1199,7 +1198,7 @@ export class TradeExecutor {
   }
 
   /** Live entry: CheckConnect only (not AccountSummary+OpenedOrders). Deduped per uuid. */
-  async ensureBrokerSessionLiveFast(api: MetatraderApiClient,
+  async ensureBrokerSessionLiveFast(api: FxsocketBrokerClient,
     uuid: string,
     broker: BrokerRow,): Promise<boolean> {
     return await brokerSymbolCache.ensureBrokerSessionLiveFast(this, api, uuid, broker)
@@ -1397,7 +1396,7 @@ export class TradeExecutor {
    * indefinitely — it becomes a no-op once the legacy pendings are gone.
    */
   private async cleanupLegacyBrokerPendings(): Promise<void> {
-    if (!hasMetatraderApiConfigured()) return
+    if (!hasFxsocketConfigured()) return
     const brokers = Array.from(this.brokersById.values()).filter(b =>
       b.is_active && isMtUuid(b.metaapi_account_id),
     )
@@ -1486,7 +1485,7 @@ export class TradeExecutor {
     signal: SignalRow
     broker: BrokerRow
     uuid: string
-    api: MetatraderApiClient
+    api: FxsocketBrokerClient
     symbol: string
     virtualPendings: VirtualPendingLeg[]
     parsed: ParsedSignal

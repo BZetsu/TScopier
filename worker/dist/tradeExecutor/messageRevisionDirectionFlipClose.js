@@ -38,7 +38,7 @@ async function closeWithVerification(api, uuid, ticket) {
     return { confirmed: false, reason: 'max_attempts' };
 }
 async function closeBasketForRevisionDirectionFlip(ctx, row, brokers) {
-    if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)())
+    if (!(0, fxsocketClient_1.hasFxsocketConfigured)())
         return { closed: 0, failed: 0 };
     let closed = 0;
     let failed = 0;

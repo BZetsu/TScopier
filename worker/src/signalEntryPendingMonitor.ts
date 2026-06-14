@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { hasMetatraderApiConfigured } from './fxsocketClient'
+import { hasFxsocketConfigured } from './fxsocketClient'
 import { apiForMetaapiAccount, loadPlatformByMetaapiId, type PlatformByMetaapiId } from './mtApiByAccount'
 import {
   applyShardToQuery,
@@ -76,7 +76,7 @@ export class SignalEntryPendingMonitor {
 
   start() {
     if (this.loop) return
-    if (!hasMetatraderApiConfigured()) {
+    if (!hasFxsocketConfigured()) {
       console.warn('[signalEntryPendingMonitor] MT4API_BASIC_USER/PASSWORD missing — signal entry pending monitor disabled')
       return
     }
@@ -113,7 +113,7 @@ export class SignalEntryPendingMonitor {
   }
 
   private async tick(): Promise<void> {
-    if (!hasMetatraderApiConfigured()) return
+    if (!hasFxsocketConfigured()) return
 
     const rowsQ = await applyShardToQuery(
       this.supabase,

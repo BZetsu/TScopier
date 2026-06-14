@@ -1,4 +1,4 @@
-/** Classify MetatraderAPI / MT terminal connect failures for user-facing copy. */
+/** Classify FxSocket / MT terminal connect failures for user-facing copy. */
 
 export type BrokerConnectErrorKind =
   | 'wrong_password'

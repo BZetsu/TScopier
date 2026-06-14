@@ -1,4 +1,4 @@
-import type { MetatraderApiClient } from './fxsocketClient'
+import type { FxsocketBrokerClient } from './fxsocketClient'
 
 export interface CloseVerificationResult {
   confirmed: boolean
@@ -16,7 +16,7 @@ function mgmtCloseVerifySleepMs(liveFast: boolean): number {
 
 /** Single orderClose — no post-close openedOrders poll (live fast tier). */
 export async function closeOrderFast(
-  api: MetatraderApiClient,
+  api: FxsocketBrokerClient,
   uuid: string,
   ticket: number,
   slippage = 20,
@@ -29,7 +29,7 @@ export async function closeOrderFast(
 }
 
 export async function closeWithVerification(
-  api: MetatraderApiClient,
+  api: FxsocketBrokerClient,
   uuid: string,
   ticket: number,
   opts: { maxAttempts?: number; slippageEscalation?: number; liveFast?: boolean } = {},

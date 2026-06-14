@@ -1,8 +1,8 @@
 import {
-  hasMetatraderApiConfigured,
+  hasFxsocketConfigured,
   isBrokerDisconnectedMessage,
   MT_SESSION_EXPIRED_HINT,
-  MetatraderApiClient,
+  FxsocketBrokerClient,
   MtOperation,
   OrderSendArgs,
 } from '../fxsocketClient'
@@ -67,7 +67,7 @@ export type PreparedEntry = {
   parsed: ParsedSignal
   broker: BrokerRow
   manual: ManualSettings
-  api: MetatraderApiClient
+  api: FxsocketBrokerClient
   uuid: string
   symbol: string
   requestedSymbol: string
@@ -173,7 +173,7 @@ export async function prepareEntryExecution(
   }
   const liveEntryFast = sendOpts?.liveEntryFast === true
   const commentPrefix = sendOpts?.commentPrefix ?? buildTscopierCommentPrefix(signal.id)
-  if (!hasMetatraderApiConfigured()) return { ok: false, outcome: {} }
+  if (!hasFxsocketConfigured()) return { ok: false, outcome: {} }
   const api = ctx.apiFor(broker)
   if (!api) return { ok: false, outcome: {} }
   const uuid = broker.metaapi_account_id!

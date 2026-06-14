@@ -18,7 +18,7 @@ class OpenTradeReconcileMonitor {
     start() {
         if (this.loop)
             return;
-        if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)()) {
+        if (!(0, fxsocketClient_1.hasFxsocketConfigured)()) {
             console.warn('[openTradeReconcileMonitor] MT4API_BASIC_USER/PASSWORD missing — disabled');
             return;
         }

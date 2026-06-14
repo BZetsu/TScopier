@@ -48,7 +48,7 @@ class PartialTpMonitor {
     start() {
         if (this.loop)
             return;
-        if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)()) {
+        if (!(0, fxsocketClient_1.hasFxsocketConfigured)()) {
             console.warn('[partialTpMonitor] MT4API_BASIC_USER/PASSWORD missing — partial TP monitor disabled');
             return;
         }
@@ -87,7 +87,7 @@ class PartialTpMonitor {
         }
     }
     async tick() {
-        if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)())
+        if (!(0, fxsocketClient_1.hasFxsocketConfigured)())
             return;
         // Re-claim stuck rows so a crashed worker can't strand a partial. Same
         // 30s threshold as virtualPendingMonitor.

@@ -8,7 +8,7 @@ import {
 } from './brokerConnectError'
 
 describe('brokerConnectError', () => {
-  it('treats MetatraderAPI null reference as session drop, not wrong login', () => {
+  it('treats FxSocket null reference as session drop, not wrong login', () => {
     const raw = 'Object reference not set to an instance of an object. (:52886408)'
     assert.equal(isMtBridgeGlitchMessage(raw), true)
     assert.equal(classifyBrokerConnectError(raw), 'session_expired')

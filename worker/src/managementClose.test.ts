@@ -1,14 +1,14 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { closeOrderFast, closeWithVerification } from './managementClose'
-import type { MetatraderApiClient } from './fxsocketClient'
+import type { FxsocketBrokerClient } from './fxsocketClient'
 
-function mockApi(overrides: Partial<MetatraderApiClient> = {}): MetatraderApiClient {
+function mockApi(overrides: Partial<FxsocketBrokerClient> = {}): FxsocketBrokerClient {
   return {
     orderClose: async () => ({ state: 'filled' }),
     openedOrders: async () => [],
     ...overrides,
-  } as MetatraderApiClient
+  } as FxsocketBrokerClient
 }
 
 describe('managementClose', () => {

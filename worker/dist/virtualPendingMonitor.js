@@ -143,7 +143,7 @@ class VirtualPendingMonitor {
     start() {
         if (this.loop)
             return;
-        if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)()) {
+        if (!(0, fxsocketClient_1.hasFxsocketConfigured)()) {
             console.warn('[virtualPendingMonitor] MT4API_BASIC_USER/PASSWORD missing — virtual pending monitor disabled');
             return;
         }
@@ -177,7 +177,7 @@ class VirtualPendingMonitor {
         }
     }
     async tick() {
-        if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)())
+        if (!(0, fxsocketClient_1.hasFxsocketConfigured)())
             return;
         // Re-open rows whose claim is stale. Anything older than STALE_CLAIM_AFTER_MS
         // is considered abandoned (the claiming worker probably crashed); reset it
@@ -689,7 +689,7 @@ class VirtualPendingMonitor {
             if (tradeRowId
                 && Number.isFinite(ticketNum)
                 && ticketNum > 0
-                && (0, fxsocketClient_1.hasMetatraderApiConfigured)()) {
+                && (0, fxsocketClient_1.hasFxsocketConfigured)()) {
                 try {
                     await (0, basketModFollowUp_1.tryApplyBasketFollowUpToNewFill)(this.supabase, api, {
                         userId: leg.user_id,

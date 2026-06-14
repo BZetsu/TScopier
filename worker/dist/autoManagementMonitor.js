@@ -24,7 +24,7 @@ class AutoManagementMonitor {
     start() {
         if (this.loop)
             return;
-        if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)()) {
+        if (!(0, fxsocketClient_1.hasFxsocketConfigured)()) {
             console.warn('[autoManagementMonitor] MT4API_BASIC_USER/PASSWORD missing — auto-management monitor disabled');
             return;
         }
@@ -57,7 +57,7 @@ class AutoManagementMonitor {
         }
     }
     async tick() {
-        if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)())
+        if (!(0, fxsocketClient_1.hasFxsocketConfigured)())
             return;
         const tradesQ = await (0, monitorIdleGate_1.applyShardToQuery)(this.supabase, this.supabase
             .from('trades')

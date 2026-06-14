@@ -1,6 +1,6 @@
 import { purgeRangePendingLegsForBaskets } from '../rangePendingLegDelete'
 import { channelMatchesBrokerSignal } from '../brokerChannelFilter'
-import { hasMetatraderApiConfigured, type MetatraderApiClient } from '../fxsocketClient'
+import { hasFxsocketConfigured, type FxsocketBrokerClient } from '../fxsocketClient'
 import { isMtUuid } from './helpers'
 import type { TradeExecutorContext } from './context'
 import type { BrokerRow, SignalRow } from './types'
@@ -11,7 +11,7 @@ interface CloseVerificationResult {
 }
 
 async function closeWithVerification(
-  api: MetatraderApiClient,
+  api: FxsocketBrokerClient,
   uuid: string,
   ticket: number,
 ): Promise<CloseVerificationResult> {
@@ -48,7 +48,7 @@ export async function closeBasketForRevisionDirectionFlip(
   row: SignalRow,
   brokers: BrokerRow[],
 ): Promise<{ closed: number; failed: number }> {
-  if (!hasMetatraderApiConfigured()) return { closed: 0, failed: 0 }
+  if (!hasFxsocketConfigured()) return { closed: 0, failed: 0 }
 
   let closed = 0
   let failed = 0

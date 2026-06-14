@@ -26,9 +26,9 @@ async function flattenChannelTradesForCopyLimit(args) {
         pendingCancelled: 0,
         virtualLegsDeleted: 0,
     };
-    if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)())
+    if (!(0, fxsocketClient_1.hasFxsocketConfigured)())
         return result;
-    const api = (0, fxsocketClient_1.getMetatraderApi)((0, fxsocketClient_1.mtPlatformFrom)(args.platform));
+    const api = (0, fxsocketClient_1.getFxsocketClient)();
     if (!api || !args.metaapiAccountId || args.metaapiAccountId.includes('|'))
         return result;
     const trades = await (0, managementScope_1.loadOpenTradesForManagement)(args.supabase, {

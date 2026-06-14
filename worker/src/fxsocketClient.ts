@@ -3,7 +3,7 @@ import { isMtBridgeGlitchMessage } from './brokerConnectError'
 import { ingestMtHistoryRows, type MtHistoryProfile } from './mtTradeFields'
 
 /**
- * FxSocket MT5 REST client for the worker — drop-in replacement for metatraderapi.ts.
+ * FxSocket MT5 REST client for the worker.
  *
  * - Account linking: POST/GET/DELETE https://api.fxsocket.com/v1/accounts
  * - Trading: https://api.fxsocket.com/mt5/{accountId}/…
@@ -156,9 +156,6 @@ export class FxsocketApiError extends Error {
   }
 }
 
-/** @deprecated Use FxsocketApiError — kept for drop-in compat with metatraderapi imports. */
-export const MetatraderApiError = FxsocketApiError
-
 function num(v: unknown): number | undefined {
   if (v === null || v === undefined) return undefined
   const n = typeof v === 'number' ? v : Number(v)
@@ -174,7 +171,7 @@ function nestedTicket(o: Record<string, unknown>, key: string): unknown {
 
 /**
  * Normalize order responses from FxSocket ({ order, deal, success }) and legacy
- * MetatraderAPI ({ ticket, Ticket, result: { … } }) into camelCase OrderResult.
+ * MT REST shapes ({ ticket, Ticket, result: { … } }) into camelCase OrderResult.
  */
 export function normalizeOrderResponse(body: unknown): OrderResult {
   if (body == null || typeof body !== 'object') {
@@ -353,9 +350,6 @@ export function hasFxsocketConfigured(env: NodeJS.ProcessEnv = process.env): boo
   }
 }
 
-/** @deprecated Use hasFxsocketConfigured — kept for drop-in compat. */
-export const hasMetatraderApiConfigured = hasFxsocketConfigured
-
 export function isCheckConnectOk(body: unknown): boolean {
   if (body === true) return true
   if (body === false) return false
@@ -507,7 +501,7 @@ function normalizeV1Account(raw: unknown): V1Account {
   }
 }
 
-export class MetatraderApiClient {
+export class FxsocketBrokerClient {
   private readonly baseUrl: string
   private readonly v1BaseUrl: string
   private readonly apiKey: string
@@ -521,7 +515,7 @@ export class MetatraderApiClient {
     timeoutMs: number = 30_000,
   ) {
     const key = (apiKey ?? resolveApiKey()).trim()
-    if (!key) throw new Error('MetatraderApiClient: FXSOCKET_API_KEY required')
+    if (!key) throw new Error('FxsocketBrokerClient: FXSOCKET_API_KEY required')
     this.apiKey = key
     this.baseUrl = normalizeBaseUrl(baseUrl ?? trimEnv(process.env.FXSOCKET_BASE_URL), DEFAULT_BASE_URL)
     this.v1BaseUrl = `${this.baseUrl}/v1`
@@ -1004,23 +998,15 @@ export class MetatraderApiClient {
   }
 }
 
-/** Alias for the FxSocket-backed client class. */
-export const FxsocketBrokerClient = MetatraderApiClient
+let clientSingleton: FxsocketBrokerClient | null | undefined
 
-let clientSingleton: MetatraderApiClient | null | undefined
-
-export function getFxsocketClient(): MetatraderApiClient | null {
+export function getFxsocketClient(): FxsocketBrokerClient | null {
   if (clientSingleton !== undefined) return clientSingleton
   try {
-    clientSingleton = new MetatraderApiClient('MT5')
+    clientSingleton = new FxsocketBrokerClient('MT5')
     return clientSingleton
   } catch {
     clientSingleton = null
     return null
   }
-}
-
-/** @deprecated Use getFxsocketClient — kept for drop-in compat. */
-export function getMetatraderApi(_platform: MtPlatform = 'MT5'): MetatraderApiClient | null {
-  return getFxsocketClient()
 }

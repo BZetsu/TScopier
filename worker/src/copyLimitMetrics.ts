@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { periodWindowUtc } from './copyLimitPeriods'
 import type { CopyLimitPeriod } from './copyLimitTypes'
-import { getMetatraderApi, hasMetatraderApiConfigured, mtPlatformFrom } from './fxsocketClient'
+import { getFxsocketClient, hasFxsocketConfigured } from './fxsocketClient'
 
 export type ChannelPnlSnapshot = {
   realizedPnl: number
@@ -68,9 +68,9 @@ export async function fetchChannelFloatingPnl(
     if (ticket && Number.isFinite(p)) dbProfitByTicket.set(ticket, p)
   }
 
-  if (hasMetatraderApiConfigured()) {
+  if (hasFxsocketConfigured()) {
     try {
-      const api = getMetatraderApi(mtPlatformFrom(platform))
+      const api = getFxsocketClient()
       if (api) {
         const orders = await api.openedOrders(metaapiAccountId)
         const ticketSet = new Set(tickets)
@@ -156,8 +156,8 @@ export async function fetchLiveAccountEquity(
   opts?: { lastBalance?: number | null },
 ): Promise<number> {
   if (!metaapiAccountId || metaapiAccountId.includes('|')) return fallbackEquity
-  if (!hasMetatraderApiConfigured()) return fallbackEquity
-  const api = getMetatraderApi(mtPlatformFrom(platform))
+  if (!hasFxsocketConfigured()) return fallbackEquity
+  const api = getFxsocketClient()
   if (!api) return fallbackEquity
 
   const readEquity = async (): Promise<number | null> => {

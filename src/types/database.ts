@@ -351,7 +351,7 @@ export interface BrokerAccount {
   broker_name?: string | null
   /** MT server hostname as entered when linking (e.g. ICMarketsSC-MT5-2). */
   broker_server?: string | null
-  /** Last known status from MetatraderAPI register/check. */
+  /** Last known status from FxSocket register/check. */
   connection_status?: 'pending' | 'connected' | 'recovering' | 'error' | null
   /** Cached AccountSummary values for fast UI render. */
   last_balance?: number | null

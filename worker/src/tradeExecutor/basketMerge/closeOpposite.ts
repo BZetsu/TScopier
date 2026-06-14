@@ -1,6 +1,6 @@
 import { isOppositeSignalCloseBlocked, isPendingCancelBlocked, normalizeChannelMessageFiltersMap } from '../../channelMessageFilters'
 import { type ManualSettings } from '../../manualPlanner'
-import { hasMetatraderApiConfigured } from '../../fxsocketClient'
+import { hasFxsocketConfigured } from '../../fxsocketClient'
 import { type TradeExecutorContext } from '../context'
 import {
   type BrokerRow,
@@ -16,7 +16,7 @@ export async function closeOppositeDirectionTrades(ctx: TradeExecutorContext,
     broker: BrokerRow,
     symbol: string,
   ): Promise<void> {
-    if (!hasMetatraderApiConfigured()) return
+    if (!hasFxsocketConfigured()) return
     const manual = (broker.manual_settings ?? {}) as ManualSettings
     if (manual.close_on_opposite_signal !== true) return
     if (isOppositeSignalCloseBlocked(

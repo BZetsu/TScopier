@@ -20,6 +20,10 @@ import { InfoTooltip } from '../../components/ui/InfoTooltip'
 import { fxsocketBroker, type MtTrade } from '../../lib/fxsocketBroker'
 import { isFxsocketLinkedBroker } from '../../lib/brokerLink'
 import { useFxsocketStream } from '../../hooks/useFxsocketStream'
+import {
+  countOpenMarketPositionsByBroker,
+  type FxsocketAccountStreamSnapshot,
+} from '../../lib/fxsocketStreamParse'
 import { formatLocalCalendarDay } from '../../lib/dayStartBalance'
 import { formatLocalMtApiDateTime, isMtTimestampInRange } from '../../lib/mtApiDateTime'
 import {
@@ -274,6 +278,76 @@ function resolveAccountOpenPnl(
   return null
 }
 
+function hasConnectedBrokerOpenPnl(
+  accounts: BrokerAccount[],
+  balances: Record<string, BrokerBalanceSnapshot>,
+): boolean {
+  return accounts.some(
+    account =>
+      isBrokerLiveConnected(account) && balances[account.id]?.open_pnl != null,
+  )
+}
+
+/** Recompute headline balance/equity/open stats from the live balance map (WS + DB seed). */
+function recomputeLiveBrokerDashboardStats(
+  accounts: BrokerAccount[],
+  balances: Record<string, BrokerBalanceSnapshot>,
+  prev: DashboardStats,
+): Pick<DashboardStats, 'portfolioValue' | 'totalEquity' | 'openPnl' | 'openTrades' | 'openPositions'> {
+  let portfolioValue = 0
+  let totalEquity = 0
+  let openPnl = 0
+
+  for (const account of accounts) {
+    const snap = balances[account.id]
+    if (snap?.balance != null && Number.isFinite(snap.balance)) {
+      portfolioValue += snap.balance
+    }
+    if (snap?.equity != null && Number.isFinite(snap.equity)) {
+      totalEquity += snap.equity
+    } else if (snap?.balance != null && Number.isFinite(snap.balance)) {
+      totalEquity += snap.balance
+    }
+    if (isBrokerLiveConnected(account)) {
+      const p = snap?.open_pnl
+      if (p != null && Number.isFinite(p)) openPnl += p
+    }
+  }
+
+  const hasOpenTrades = hasConnectedBrokerOpenTrades(accounts, balances)
+  const openTrades = accounts.some(isFxsocketLinkedBroker)
+    ? sumConnectedOpenTrades(accounts, balances)
+    : hasOpenTrades
+      ? sumConnectedOpenTrades(accounts, balances)
+      : prev.openTrades
+  const hasOpenPnl = hasConnectedBrokerOpenPnl(accounts, balances)
+
+  return {
+    portfolioValue,
+    totalEquity,
+    openPnl: hasOpenPnl ? openPnl : prev.openPnl,
+    openTrades,
+    openPositions: openTrades,
+  }
+}
+
+function applyFxsocketAccountStreamUpdate(
+  brokerId: string,
+  snap: FxsocketAccountStreamSnapshot,
+  prev: Record<string, BrokerBalanceSnapshot>,
+): Record<string, BrokerBalanceSnapshot> {
+  return {
+    ...prev,
+    [brokerId]: {
+      ...(prev[brokerId] ?? {}),
+      ...(snap.balance != null ? { balance: snap.balance } : {}),
+      ...(snap.equity != null ? { equity: snap.equity } : {}),
+      ...(snap.openPnl != null ? { open_pnl: snap.openPnl } : {}),
+      ...(snap.currency ? { currency: snap.currency } : {}),
+    },
+  }
+}
+
 /** Sum open positions only from brokers with a live connected session. */
 function sumConnectedOpenTrades(
   accounts: BrokerAccount[],
@@ -284,6 +358,24 @@ function sumConnectedOpenTrades(
     const n = balances[account.id]?.open_trades
     return sum + (typeof n === 'number' && Number.isFinite(n) ? n : 0)
   }, 0)
+}
+
+/**
+ * Open-trade headline count: FxSocket-linked accounts use live broker feeds only
+ * (WebSocket positions or REST bootstrap). Never stale TSCopier DB leg rows.
+ */
+function resolveDashboardOpenTradesCount(
+  accounts: BrokerAccount[],
+  balances: Record<string, BrokerBalanceSnapshot>,
+  dbOpenCount: number,
+): number {
+  if (accounts.some(isFxsocketLinkedBroker)) {
+    return sumConnectedOpenTrades(accounts, balances)
+  }
+  if (hasConnectedBrokerOpenTrades(accounts, balances)) {
+    return sumConnectedOpenTrades(accounts, balances)
+  }
+  return dbOpenCount
 }
 
 function hasConnectedBrokerOpenTrades(
@@ -406,9 +498,13 @@ function statsFromDashboardCache(cached: DashboardCachePayload | null): Dashboar
   if (!cached?.stats) return DEFAULT_DASHBOARD_STATS
   const accounts = cached.linkedAccounts ?? []
   const balances = cached.linkedAccountBalances ?? {}
-  const openTrades = hasConnectedBrokerOpenTrades(accounts, balances)
-    ? sumConnectedOpenTrades(accounts, balances)
-    : 0
+  const openTrades = resolveDashboardOpenTradesCount(
+    accounts,
+    balances,
+    hasConnectedBrokerOpenTrades(accounts, balances)
+      ? sumConnectedOpenTrades(accounts, balances)
+      : cached.stats.openTrades,
+  )
   const openPnl = accounts.some(a => isBrokerLiveConnected(a) && balances[a.id]?.open_pnl != null)
     ? accounts.reduce((sum, a) => {
         if (!isBrokerLiveConnected(a)) return sum
@@ -1055,7 +1151,7 @@ export function DashboardPage() {
     const activeBrokerCount = brokerAccounts.filter(account => account.is_active).length
     // Seed the balance map from the cached columns the worker / edge function
     // wrote on AccountSummary. This is what makes the page render instantly
-    // without waiting for a live MetatraderAPI roundtrip on every page load.
+    // without waiting for a live FxSocket roundtrip on every page load.
     const balanceMap = Object.fromEntries(
       brokerAccounts.map((account) => {
         // Best-effort Open PnL on first paint: MT reports equity = balance + floating P/L,
@@ -1134,13 +1230,15 @@ export function DashboardPage() {
       const acct = mergedBalances[account.id]
       return sum + (acct?.open_pnl ?? 0)
     }, 0)
-    const totalLiveOpenTradesFromSummary = sumConnectedOpenTrades(brokerAccounts, mergedBalances)
     const hasAnyBrokerOpenPnl = brokerAccounts.some(
       account => isBrokerLiveConnected(account) && mergedBalances[account.id]?.open_pnl != null,
     )
     const hasAnyBrokerOpenTradesFromSummary = hasConnectedBrokerOpenTrades(brokerAccounts, mergedBalances)
-    const resolvedOpenTradesCount =
-      hasAnyBrokerOpenTradesFromSummary ? totalLiveOpenTradesFromSummary : openTrades.length
+    const resolvedOpenTradesCount = resolveDashboardOpenTradesCount(
+      brokerAccounts,
+      mergedBalances,
+      openTrades.length,
+    )
     const channelNames = buildChannelDisplayNames((channelsMetaRes.data ?? []) as ChannelNameRow[])
     const channelMaps = buildPerformanceChannelLinkMaps(
       (channelsMetaRes.data ?? []) as Array<{
@@ -1210,7 +1308,7 @@ export function DashboardPage() {
     )
 
     const mergedAfterDb = mergeDashboardStats(statsRef.current, nextStats, useMtTrades, {
-      trustOpenTrades: hasAnyBrokerOpenTradesFromSummary,
+      trustOpenTrades: brokerAccounts.some(isFxsocketLinkedBroker) || hasAnyBrokerOpenTradesFromSummary,
       preserveMtTradeCounts: mtBrokerConnected,
       preserveMtPnl: mtBrokerConnected && !useMtTrades,
       mtHasClosedTrades: useMtTrades
@@ -1308,81 +1406,64 @@ export function DashboardPage() {
   }, [setReconnectErrorHandler, setReconnectSuccessHandler])
 
   useFxsocketStream(linkedAccounts, {
-    onAccount: (brokerId, data) => {
-      const balance = Number(data.balance)
-      const equity = Number(data.equity ?? data.balance)
-      const profit = Number(data.profit)
-      setLinkedAccountBalances(prev => {
-        const next = {
-          ...prev,
-          [brokerId]: {
-            ...(prev[brokerId] ?? {}),
-            ...(Number.isFinite(balance) ? { balance } : {}),
-            ...(Number.isFinite(equity) ? { equity } : {}),
-            ...(Number.isFinite(profit) ? { open_pnl: profit } : {}),
-          },
+    onAccount: (brokerId, snap) => {
+      const nextBalances = applyFxsocketAccountStreamUpdate(
+        brokerId,
+        snap,
+        linkedBalancesRef.current,
+      )
+      linkedBalancesRef.current = nextBalances
+      if (snap.openPnl != null) {
+        liveBrokerStateRef.current[brokerId] = {
+          ...liveBrokerStateRef.current[brokerId],
+          open_pnl: snap.openPnl,
         }
-        linkedBalancesRef.current = next
-        return next
-      })
+      }
+      setLinkedAccountBalances(nextBalances)
       patchBroker(brokerId, {
-        ...(Number.isFinite(balance) ? { last_balance: balance } : {}),
-        ...(Number.isFinite(equity) ? { last_equity: equity } : {}),
+        ...(snap.balance != null ? { last_balance: snap.balance } : {}),
+        ...(snap.equity != null ? { last_equity: snap.equity } : {}),
+        ...(snap.currency ? { last_currency: snap.currency } : {}),
         fxsocket_status: 'connected',
         connection_status: 'connected',
         last_synced_at: new Date().toISOString(),
       })
       setStats(prev => {
-        const balances = linkedBalancesRef.current
-        let openPnl = 0
-        let portfolioValue = 0
-        let totalEquity = 0
-        let sawLive = false
-        for (const account of linkedAccountsRef.current) {
-          if (!isFxsocketLinkedBroker(account)) continue
-          const snap = balances[account.id]
-          if (snap?.balance != null && Number.isFinite(snap.balance)) {
-            portfolioValue += snap.balance
-          }
-          if (snap?.equity != null && Number.isFinite(snap.equity)) {
-            totalEquity += snap.equity
-          } else if (snap?.balance != null && Number.isFinite(snap.balance)) {
-            totalEquity += snap.balance
-          }
-          const p = snap?.open_pnl
-          if (p != null && Number.isFinite(p)) {
-            openPnl += p
-            sawLive = true
-          }
-        }
-        if (!sawLive && portfolioValue === 0 && totalEquity === 0) return prev
         const next = {
           ...prev,
-          openPnl: sawLive ? openPnl : prev.openPnl,
-          portfolioValue: portfolioValue || prev.portfolioValue,
-          totalEquity: totalEquity || prev.totalEquity,
+          ...recomputeLiveBrokerDashboardStats(
+            linkedAccountsRef.current,
+            nextBalances,
+            prev,
+          ),
         }
         statsRef.current = next
         return next
       })
     },
-    onPositions: (brokerId, data) => {
-      const openTrades = Array.isArray(data) ? data.length : 0
-      setLinkedAccountBalances(prev => {
-        const next = {
-          ...prev,
-          [brokerId]: { ...(prev[brokerId] ?? {}), open_trades: openTrades },
-        }
-        linkedBalancesRef.current = next
-        return next
-      })
+    onPositions: (brokerId, openTrades) => {
+      const nextBalances = {
+        ...linkedBalancesRef.current,
+        [brokerId]: {
+          ...(linkedBalancesRef.current[brokerId] ?? {}),
+          open_trades: openTrades,
+        },
+      }
+      linkedBalancesRef.current = nextBalances
       liveBrokerStateRef.current[brokerId] = {
         ...liveBrokerStateRef.current[brokerId],
         open_trades: openTrades,
       }
+      setLinkedAccountBalances(nextBalances)
       setStats(prev => {
-        const openPositions = sumConnectedOpenTrades(linkedAccountsRef.current, linkedBalancesRef.current)
-        const next = { ...prev, openPositions, openTrades: openPositions }
+        const next = {
+          ...prev,
+          ...recomputeLiveBrokerDashboardStats(
+            linkedAccountsRef.current,
+            nextBalances,
+            prev,
+          ),
+        }
         statsRef.current = next
         return next
       })
@@ -1403,7 +1484,7 @@ export function DashboardPage() {
   }, [user, brokersLoading])
 
   /**
-   * Pull live trades (open + recent closed) from MetatraderAPI for every linked
+   * Pull live trades (open + recent closed) from FxSocket for every linked
    * broker and recompute the performance stats from them. Throttled to one call
    * per MT_TRADES_REFRESH_MS so the 15s auto-tick doesn't hammer the edge fn.
    */
@@ -1440,6 +1521,34 @@ export function DashboardPage() {
       mtTradesRef.current = trades
       setMtTrades(trades)
     }
+
+    const openByBroker = countOpenMarketPositionsByBroker(trades)
+    const nextBalances = { ...linkedBalancesRef.current }
+    let openCountsChanged = false
+    for (const account of sourceAccounts) {
+      if (!isFxsocketLinkedBroker(account)) continue
+      const count = openByBroker[account.id] ?? 0
+      if (nextBalances[account.id]?.open_trades === count) continue
+      nextBalances[account.id] = { ...(nextBalances[account.id] ?? {}), open_trades: count }
+      liveBrokerStateRef.current[account.id] = {
+        ...liveBrokerStateRef.current[account.id],
+        open_trades: count,
+      }
+      openCountsChanged = true
+    }
+    if (openCountsChanged) {
+      linkedBalancesRef.current = nextBalances
+      setLinkedAccountBalances(nextBalances)
+      setStats(prev => {
+        const next = {
+          ...prev,
+          ...recomputeLiveBrokerDashboardStats(linkedAccountsRef.current, nextBalances, prev),
+        }
+        statsRef.current = next
+        return next
+      })
+    }
+
     const chartNext = resolveAnalyticsChartTrades(resolvedTrades, [], true)
     setChartTrades(prev => applyAuthoritativeChartTrades(prev, chartNext, true))
     setDashboardChartsReady(true)

@@ -313,7 +313,7 @@ async function waitForSignalInflightClear(ctx, signalId, timeoutMs = 60000) {
     return !ctx.inflight.has(signalId);
 }
 async function handleSignal(ctx, row, opts) {
-    if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)())
+    if (!(0, fxsocketClient_1.hasFxsocketConfigured)())
         return;
     const isMessageRevisionEarly = opts?.dispatchSource === signalRevision_1.MESSAGE_REVISION_DISPATCH_SOURCE;
     if (isMessageRevisionEarly) {

@@ -1,6 +1,6 @@
 import {
   isBrokerDisconnectedMessage,
-  MetatraderApiClient,
+  FxsocketBrokerClient,
   MtOperation,
 } from '../fxsocketClient'
 import { isMtBridgeGlitchMessage } from '../brokerConnectError'
@@ -19,7 +19,7 @@ export type SendImmediateLegsInput = {
   parsed: ParsedSignal
   broker: BrokerRow
   manual: ManualSettings
-  api: MetatraderApiClient
+  api: FxsocketBrokerClient
   uuid: string
   symbol: string
   requestedSymbol: string

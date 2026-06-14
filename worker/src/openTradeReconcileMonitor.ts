@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { hasMetatraderApiConfigured } from './fxsocketClient'
+import { hasFxsocketConfigured } from './fxsocketClient'
 import { apiForMetaapiAccount, loadPlatformByMetaapiId, type PlatformByMetaapiId } from './mtApiByAccount'
 import {
   applyShardToQuery,
@@ -29,7 +29,7 @@ export class OpenTradeReconcileMonitor {
 
   start() {
     if (this.loop) return
-    if (!hasMetatraderApiConfigured()) {
+    if (!hasFxsocketConfigured()) {
       console.warn('[openTradeReconcileMonitor] MT4API_BASIC_USER/PASSWORD missing — disabled')
       return
     }

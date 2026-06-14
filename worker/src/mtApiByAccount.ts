@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { getFxsocketClient, type MetatraderApiClient, type MtPlatform } from './fxsocketClient'
+import { getFxsocketClient, type FxsocketBrokerClient, type MtPlatform } from './fxsocketClient'
 
 export type PlatformByFxsocketId = Map<string, MtPlatform>
 
@@ -45,7 +45,7 @@ export type PlatformByMetaapiId = PlatformByFxsocketId
 export function apiForFxsocketAccount(
   _platformById: PlatformByFxsocketId,
   sessionId: string,
-): MetatraderApiClient | null {
+): FxsocketBrokerClient | null {
   if (!sessionId || sessionId.includes('|')) return null
   return getFxsocketClient()
 }

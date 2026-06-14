@@ -4,7 +4,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { MetatraderApiClient, OrderSendArgs } from './fxsocketClient'
+import type { FxsocketBrokerClient, OrderSendArgs } from './fxsocketClient'
 import type { MergeModifySummary, PerLegStopTarget } from './multiTradeMerge'
 import { expandPerLegTargetsToCount } from './manualPlanning/tpBucketDistribution'
 import type { ManualTpLot } from './manualPlanning/types'
@@ -133,7 +133,7 @@ function ingestBrokerTickets(orders: unknown[]): Set<number> {
 
 /** Tickets currently open on the broker account (from /OpenedOrders). */
 export async function fetchOpenBrokerTickets(
-  api: MetatraderApiClient,
+  api: FxsocketBrokerClient,
   uuid: string,
 ): Promise<Set<number>> {
   try {
@@ -147,7 +147,7 @@ export async function fetchOpenBrokerTickets(
 
 /** Same as fetchOpenBrokerTickets but propagates API errors (for ghost-basket reconcile). */
 export async function fetchOpenBrokerTicketsStrict(
-  api: MetatraderApiClient,
+  api: FxsocketBrokerClient,
   uuid: string,
 ): Promise<Set<number>> {
   const orders = await api.openedOrders(uuid)
@@ -283,7 +283,7 @@ export async function logBasketLegModify(
 
 export async function runBasketLegModifies(args: {
   supabase: SupabaseClient
-  api: MetatraderApiClient
+  api: FxsocketBrokerClient
   uuid: string
   symbol: string
   direction: 'buy' | 'sell'

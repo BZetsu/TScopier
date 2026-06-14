@@ -11,9 +11,9 @@ import {
 import { pipCalculator, pipValueForLots } from './pipCalculator'
 import { signalPipPrice } from './signalPip'
 import {
-  hasMetatraderApiConfigured,
+  hasFxsocketConfigured,
   normalizeSymbolParams,
-  type MetatraderApiClient,
+  type FxsocketBrokerClient,
   type SymbolParams,
 } from './fxsocketClient'
 import { apiForMetaapiAccount, loadPlatformByMetaapiId, type PlatformByMetaapiId } from './mtApiByAccount'
@@ -86,7 +86,7 @@ export class AutoManagementMonitor {
 
   start() {
     if (this.loop) return
-    if (!hasMetatraderApiConfigured()) {
+    if (!hasFxsocketConfigured()) {
       console.warn('[autoManagementMonitor] MT4API_BASIC_USER/PASSWORD missing — auto-management monitor disabled')
       return
     }
@@ -123,7 +123,7 @@ export class AutoManagementMonitor {
   }
 
   private async tick(): Promise<void> {
-    if (!hasMetatraderApiConfigured()) return
+    if (!hasFxsocketConfigured()) return
 
     const tradesQ = await applyShardToQuery(
       this.supabase,
@@ -246,7 +246,7 @@ export class AutoManagementMonitor {
   private async maybeApplyBreakeven(
     trade: AutoBeTradeRow,
     uuid: string,
-    api: MetatraderApiClient,
+    api: FxsocketBrokerClient,
     bid: number,
     ask: number,
     partials: PartialLegRow[],

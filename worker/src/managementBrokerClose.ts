@@ -3,7 +3,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { MetatraderApiClient } from './fxsocketClient'
+import type { FxsocketBrokerClient } from './fxsocketClient'
 import { symbolsCompatibleForBasket } from './basketModFollowUp'
 import { clearChannelActiveTradeParamsWhenFlat } from './channelActiveTradeParams'
 import { parseTscopierComment, tscopierCommentMatchesChannelSlug } from './tscopierComment'
@@ -57,14 +57,14 @@ export function filterTscopierOrdersForChannelClose(args: {
 
 export async function tryBrokerFallbackClose(args: {
   supabase: SupabaseClient
-  api: MetatraderApiClient
+  api: FxsocketBrokerClient
   signal: { id: string; user_id: string; channel_id: string | null }
   parsed: { symbol?: string | null }
   brokers: BrokerRow[]
   channelDisplayName?: string | null
   channelUsername?: string | null
   closeWithVerification: (
-    api: MetatraderApiClient,
+    api: FxsocketBrokerClient,
     uuid: string,
     ticket: number,
   ) => Promise<{ confirmed: boolean; reason?: string }>

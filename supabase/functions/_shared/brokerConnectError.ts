@@ -1,4 +1,4 @@
-/** Classify MetatraderAPI / MT terminal connect failures for user-facing copy. */
+/** Classify FxSocket / MT terminal connect failures for user-facing copy. */
 
 export type BrokerConnectErrorKind =
   | 'wrong_password'
@@ -13,7 +13,7 @@ export type BrokerConnectErrorKind =
 export interface BrokerConnectErrorOptions {
   /** True when the user just submitted login/password/server (register or reconnect). */
   credentialConnect?: boolean
-  /** MetatraderAPI error code when available (e.g. INVALID_PASSWORD, 3006). */
+  /** Broker API error code when available (e.g. INVALID_PASSWORD, 3006). */
   errorCode?: string | null
 }
 

@@ -2,7 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { findPreNewsCloseTriggers } from './newsTrading/blackout'
 import { getCalendarEventsCached } from './newsTrading/calendarProvider'
 import { isNewsTradingEnabled, type ScheduleFilterSettings } from './newsTrading/settings'
-import { hasMetatraderApiConfigured } from './fxsocketClient'
+import { hasFxsocketConfigured } from './fxsocketClient'
 import { apiForMetaapiAccount, loadPlatformByMetaapiId } from './mtApiByAccount'
 import { resolveChannelTradingConfig } from './channelTradingConfig'
 import { isUserCopierPausedCached } from './copierPause'
@@ -40,7 +40,7 @@ export class NewsTradingMonitor {
 
   start() {
     if (this.timer) return
-    if (!hasMetatraderApiConfigured()) {
+    if (!hasFxsocketConfigured()) {
       console.warn('[newsTradingMonitor] MT API not configured — monitor disabled')
       return
     }

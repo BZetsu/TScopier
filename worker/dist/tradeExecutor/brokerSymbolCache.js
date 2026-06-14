@@ -31,7 +31,7 @@ function prewarmSymbolsEnabled(ctx) {
     return v !== '0' && v !== 'false' && v !== 'no';
 }
 async function prewarmBrokerCaches(ctx) {
-    if (!ctx.prewarmSymbolsEnabled() || !(0, fxsocketClient_1.hasMetatraderApiConfigured)())
+    if (!ctx.prewarmSymbolsEnabled() || !(0, fxsocketClient_1.hasFxsocketConfigured)())
         return;
     for (const row of ctx.brokersById.values()) {
         const uuid = row.metaapi_account_id;
@@ -62,7 +62,7 @@ async function pingBrokerSession(_ctx, _row) {
     /* no-op — FxSocket handles connectivity */
 }
 async function symbolCacheKeepaliveTick(ctx) {
-    if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)())
+    if (!(0, fxsocketClient_1.hasFxsocketConfigured)())
         return;
     if (!ctx.prewarmSymbolsEnabled())
         return;
@@ -188,7 +188,7 @@ function brokersWarmForLiveEntry(ctx, brokers, signalSymbol) {
     return true;
 }
 function prewarmForDispatch(ctx, row) {
-    if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)())
+    if (!(0, fxsocketClient_1.hasFxsocketConfigured)())
         return;
     const parsed = row.parsed_data;
     const signalSymbol = parsed?.symbol;
@@ -244,7 +244,7 @@ async function getSymbolParams(ctx, uuid, symbol) {
         if (age < types_1.SYMBOL_CACHE_TTL_MS)
             return cached;
     }
-    if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)())
+    if (!(0, fxsocketClient_1.hasFxsocketConfigured)())
         return null;
     return ctx.refreshSymbolParams(uuid, symbol, key);
 }
@@ -316,7 +316,7 @@ async function getSymbolList(ctx, uuid) {
     return fetchPromise;
 }
 async function fetchSymbolList(ctx, uuid) {
-    if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)())
+    if (!(0, fxsocketClient_1.hasFxsocketConfigured)())
         return null;
     const api = ctx.apiForUuid(uuid);
     if (!api)

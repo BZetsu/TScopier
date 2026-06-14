@@ -1,8 +1,8 @@
 import type { TradeExecutorContext } from './context'
 import type { ParsedSignal } from './types'
 import {
-  hasMetatraderApiConfigured,
-  MetatraderApiClient,
+  hasFxsocketConfigured,
+  FxsocketBrokerClient,
   normalizeSymbolParams,
   type SymbolParams,
 } from '../fxsocketClient'
@@ -34,7 +34,7 @@ export function prewarmSymbolsEnabled(ctx: TradeExecutorContext, ): boolean {
   }
 
 export async function prewarmBrokerCaches(ctx: TradeExecutorContext, ): Promise<void> {
-    if (!ctx.prewarmSymbolsEnabled() || !hasMetatraderApiConfigured()) return
+    if (!ctx.prewarmSymbolsEnabled() || !hasFxsocketConfigured()) return
     for (const row of ctx.brokersById.values()) {
       const uuid = row.metaapi_account_id
       if (!isMtUuid(uuid)) continue
@@ -67,7 +67,7 @@ export async function pingBrokerSession(_ctx: TradeExecutorContext, _row: Broker
 }
 
 export async function symbolCacheKeepaliveTick(ctx: TradeExecutorContext, ): Promise<void> {
-    if (!hasMetatraderApiConfigured()) return
+    if (!hasFxsocketConfigured()) return
     if (!ctx.prewarmSymbolsEnabled()) return
 
     const uuidsWithList = [...ctx.symbolListCache.keys()]
@@ -114,7 +114,7 @@ export async function markBrokerSessionDown(ctx: TradeExecutorContext, broker: B
   }
 
 export async function ensureBrokerSession(ctx: TradeExecutorContext,
-    api: MetatraderApiClient,
+    api: FxsocketBrokerClient,
     uuid: string,
     broker: BrokerRow,
     opts?: { force?: boolean },
@@ -141,7 +141,7 @@ export async function ensureBrokerSession(ctx: TradeExecutorContext,
   }
 
 export async function ensureBrokerSessionLiveFast(ctx: TradeExecutorContext, 
-    api: MetatraderApiClient,
+    api: FxsocketBrokerClient,
     uuid: string,
     broker: BrokerRow,
   ): Promise<boolean> {
@@ -199,7 +199,7 @@ export function brokersWarmForLiveEntry(ctx: TradeExecutorContext, brokers: Brok
   }
 
 export function prewarmForDispatch(ctx: TradeExecutorContext, row: SignalRow): void {
-    if (!hasMetatraderApiConfigured()) return
+    if (!hasFxsocketConfigured()) return
     const parsed = row.parsed_data as ParsedSignal | null
     const signalSymbol = parsed?.symbol
     if (!signalSymbol) return
@@ -251,7 +251,7 @@ export async function getSymbolParams(ctx: TradeExecutorContext, uuid: string, s
       if (age < SYMBOL_CACHE_TTL_MS) return cached
     }
 
-    if (!hasMetatraderApiConfigured()) return null
+    if (!hasFxsocketConfigured()) return null
     return ctx.refreshSymbolParams(uuid, symbol, key)
   }
 
@@ -328,7 +328,7 @@ export async function getSymbolList(ctx: TradeExecutorContext, uuid: string): Pr
   }
 
 export async function fetchSymbolList(ctx: TradeExecutorContext, uuid: string): Promise<SymbolListCacheEntry | null> {
-    if (!hasMetatraderApiConfigured()) return null
+    if (!hasFxsocketConfigured()) return null
     const api = ctx.apiForUuid(uuid)
     if (!api) return null
     try {

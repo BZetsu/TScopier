@@ -50,9 +50,9 @@ async function fetchChannelFloatingPnl(supabase, brokerAccountId, channelId, met
         if (ticket && Number.isFinite(p))
             dbProfitByTicket.set(ticket, p);
     }
-    if ((0, fxsocketClient_1.hasMetatraderApiConfigured)()) {
+    if ((0, fxsocketClient_1.hasFxsocketConfigured)()) {
         try {
-            const api = (0, fxsocketClient_1.getMetatraderApi)((0, fxsocketClient_1.mtPlatformFrom)(platform));
+            const api = (0, fxsocketClient_1.getFxsocketClient)();
             if (api) {
                 const orders = await api.openedOrders(metaapiAccountId);
                 const ticketSet = new Set(tickets);
@@ -112,9 +112,9 @@ function resolveReferenceEquity(lastEquity, lastBalance) {
 async function fetchLiveAccountEquity(metaapiAccountId, platform, fallbackEquity, opts) {
     if (!metaapiAccountId || metaapiAccountId.includes('|'))
         return fallbackEquity;
-    if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)())
+    if (!(0, fxsocketClient_1.hasFxsocketConfigured)())
         return fallbackEquity;
-    const api = (0, fxsocketClient_1.getMetatraderApi)((0, fxsocketClient_1.mtPlatformFrom)(platform));
+    const api = (0, fxsocketClient_1.getFxsocketClient)();
     if (!api)
         return fallbackEquity;
     const readEquity = async () => {

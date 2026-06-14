@@ -1,6 +1,6 @@
 import os from 'node:os'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { hasMetatraderApiConfigured, type MetatraderApiClient } from './fxsocketClient'
+import { hasFxsocketConfigured, type FxsocketBrokerClient } from './fxsocketClient'
 import {
   applyShardToQuery,
   hasWorkOnShard,
@@ -99,7 +99,7 @@ export class PartialTpMonitor {
 
   start() {
     if (this.loop) return
-    if (!hasMetatraderApiConfigured()) {
+    if (!hasFxsocketConfigured()) {
       console.warn('[partialTpMonitor] MT4API_BASIC_USER/PASSWORD missing — partial TP monitor disabled')
       return
     }
@@ -141,7 +141,7 @@ export class PartialTpMonitor {
   }
 
   private async tick(): Promise<void> {
-    if (!hasMetatraderApiConfigured()) return
+    if (!hasFxsocketConfigured()) return
 
     // Re-claim stuck rows so a crashed worker can't strand a partial. Same
     // 30s threshold as virtualPendingMonitor.
@@ -259,7 +259,7 @@ export class PartialTpMonitor {
    */
   private async firePartial(
     partial: PartialRow,
-    api: MetatraderApiClient,
+    api: FxsocketBrokerClient,
     bid: number,
     ask: number,
   ): Promise<boolean> {

@@ -8,7 +8,7 @@ import {
   type ChannelKeywords,
   type ManualSettings
 } from '../../manualPlanner'
-import { hasMetatraderApiConfigured, MtOperation } from '../../fxsocketClient'
+import { hasFxsocketConfigured, MtOperation } from '../../fxsocketClient'
 import {
   legacyMergeLinkingEnabled,
   filterSignalIdsByChannel,
@@ -49,7 +49,7 @@ export async function tryParameterFollowUpMergeModifyOnly(ctx: TradeExecutorCont
       signal, parsed, broker, channelKeywords, baseLot, params, symbol, uuid,
       strictEntryPrefetch, commentPrefix,
     } = args
-    if (!hasMetatraderApiConfigured()) return { handled: false }
+    if (!hasFxsocketConfigured()) return { handled: false }
     if (parsedHasReEnterIntent(parsed)) return { handled: false }
     if (!shouldRouteAsBasketParameterRefresh(parsed) && args.sameSignalRefresh !== true) {
       return { handled: false }
@@ -298,7 +298,7 @@ export async function tryMergeSignalIntoExistingOpenTrade(ctx: TradeExecutorCont
       signal, parsed, op, broker, channelKeywords, baseLot, params, symbol, uuid,
       strictEntryPrefetch, commentPrefix,
     } = args
-    if (!hasMetatraderApiConfigured()) return { handled: false }
+    if (!hasFxsocketConfigured()) return { handled: false }
     const api = ctx.apiFor(broker)
     if (!api) return { handled: false }
     if (parsedHasReEnterIntent(parsed)) return { handled: false }
@@ -427,7 +427,7 @@ export async function tryTeaserCompletionMerge(ctx: TradeExecutorContext, args: 
       signal, parsed, broker, channelKeywords, baseLot, params, symbol, uuid,
       strictEntryPrefetch, commentPrefix,
     } = args
-    if (!hasMetatraderApiConfigured()) return { handled: false }
+    if (!hasFxsocketConfigured()) return { handled: false }
     if (!parsedSignalHasExplicitStops(parsed)) return { handled: false }
     if (!messageHasMarketNowIntent(String(parsed.raw_instruction ?? ''))) return { handled: false }
     if (shouldRouteAsBasketParameterRefresh(parsed)) return { handled: false }

@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { MetatraderApiClient } from './fxsocketClient'
+import type { FxsocketBrokerClient } from './fxsocketClient'
 
 export type SignalEntryPendingRow = {
   id: string
@@ -117,7 +117,7 @@ export function findClosedRowForTicket(
  */
 export async function cancelSignalEntryRowAtBroker(
   supabase: SupabaseClient,
-  api: MetatraderApiClient,
+  api: FxsocketBrokerClient,
   row: SignalEntryPendingRow,
   reason: string,
 ): Promise<{ ok: boolean; error?: string }> {

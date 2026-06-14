@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { MetatraderApiClient } from './fxsocketClient'
+import type { FxsocketBrokerClient } from './fxsocketClient'
 import type { ManualTpLot } from './manualPlanning/types'
 import { normalizeManualSettingsForExecution } from './manualPlanning/normalizeManualSettings'
 import { resolveChannelTradingConfig } from './channelTradingConfig'
@@ -115,7 +115,7 @@ function computeFollowUpStops(
 
 async function executeFollowUpModify(
   supabase: SupabaseClient,
-  api: MetatraderApiClient,
+  api: FxsocketBrokerClient,
   args: {
     userId: string
     brokerAccountId: string
@@ -182,7 +182,7 @@ async function executeFollowUpModify(
  */
 export async function tryApplyBasketFollowUpToNewFill(
   supabase: SupabaseClient,
-  api: MetatraderApiClient,
+  api: FxsocketBrokerClient,
   args: {
     userId: string
     basketSignalId: string

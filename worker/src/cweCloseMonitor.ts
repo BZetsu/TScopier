@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { hasMetatraderApiConfigured, type MetatraderApiClient } from './fxsocketClient'
+import { hasFxsocketConfigured, type FxsocketBrokerClient } from './fxsocketClient'
 import { apiForMetaapiAccount, loadPlatformByMetaapiId } from './mtApiByAccount'
 import {
   applyShardToQuery,
@@ -94,7 +94,7 @@ export class CweCloseMonitor {
 
   start() {
     if (this.loop) return
-    if (!hasMetatraderApiConfigured()) {
+    if (!hasFxsocketConfigured()) {
       console.warn('[cweCloseMonitor] MT4API_BASIC_USER/PASSWORD missing — close-worse-entries monitor disabled')
       return
     }
@@ -131,7 +131,7 @@ export class CweCloseMonitor {
   }
 
   private async tick(): Promise<void> {
-    if (!hasMetatraderApiConfigured()) return
+    if (!hasFxsocketConfigured()) return
 
     // Pull every open trade that has a CWE close threshold pinned to it.
     // The partial index `trades_cwe_open_idx` makes this a constant-time
@@ -266,7 +266,7 @@ export class CweCloseMonitor {
   private async closeTrade(
     trade: CweTradeRow,
     uuid: string,
-    api: MetatraderApiClient,
+    api: FxsocketBrokerClient,
     bid: number,
     ask: number,
   ): Promise<boolean> {

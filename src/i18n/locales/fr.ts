@@ -330,7 +330,7 @@ export const fr: Translations = {
       connectButton: 'Connecter le compte',
       connectingTitle: 'Connexion de votre broker',
       connectingStepLinking: 'Liaison de votre compte MT5…',
-      connectingStepTerminal: 'Démarrage du terminal MT5 — comptez généralement 30 à 90 secondes.',
+      connectingStepTerminal: 'Démarrage du terminal MT5 — comptez généralement 10 à 30 secondes.',
       connectingStepSlow: 'Toujours en cours… la première connexion peut prendre quelques minutes.',
       validationRequired: 'Numéro de compte, mot de passe et serveur sont requis',
       connectFailed: 'Échec de la connexion du compte',
@@ -407,7 +407,7 @@ export const fr: Translations = {
         'Ce nom de serveur ressemble à MT5, mais vous avez choisi MT4. La copie et la gestion des trades peuvent échouer. Connecter en MT5 ?',
       deleteTitle: 'Supprimer le compte de trading ?',
       deleteBody:
-        'Cela déconnecte {label} de MetatraderAPI et du copieur. Cette action est irréversible.',
+        'Cela déconnecte {label} de votre courtier et du copieur. Cette action est irréversible.',
       deleteConfirm: 'Déconnecter',
       connectedAccountsHeading: 'Comptes connectés',
       connectedAccountsUnlimited: 'Illimité',
