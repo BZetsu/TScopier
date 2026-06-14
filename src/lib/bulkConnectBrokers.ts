@@ -211,7 +211,10 @@ export function downloadConnectAccountsTemplate(filename = 'tscopier-mt5-account
 export type ConnectAccountsBatchArgs = {
   rows: ConnectTradingAccountForm[]
   existingBrokers: BrokerAccount[]
-  canAddMore: () => boolean
+  /** Active broker rows already linked before this batch starts. */
+  activeBrokerCountAtStart: number
+  /** Null when admin / unlimited. */
+  maxBrokerAccounts: number | null
   onProgress: (rows: BulkConnectRowProgress[]) => void
   connect?: (args: {
     login?: string
@@ -219,12 +222,65 @@ export type ConnectAccountsBatchArgs = {
     server?: string
     label?: string
   }) => Promise<{ account: BrokerAccount; pending?: boolean }>
+  /** Known brokers accumulated during the batch (for timeout recovery). */
+  getKnownBrokers?: () => BrokerAccount[]
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => {
+    if (typeof window !== 'undefined') {
+      window.setTimeout(resolve, ms)
+    } else {
+      setTimeout(resolve, ms)
+    }
+  })
+}
+
+function isRecoverableConnectError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase()
+  return /timed out|timeout|abort|network|failed to fetch|load failed|gateway|504|502/i.test(msg)
+}
+
+function isBrokerLimitError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase()
+  return /broker account limit|allows \d+ broker|upgrade to advanced|subscription is required/i.test(msg)
+}
+
+export function canLinkAnotherBrokerInBatch(
+  activeBrokerCountAtStart: number,
+  linkedInBatch: number,
+  maxBrokerAccounts: number | null,
+): boolean {
+  if (maxBrokerAccounts == null) return true
+  return activeBrokerCountAtStart + linkedInBatch < maxBrokerAccounts
+}
+
+async function findLinkedBrokerAccount(
+  login: string,
+  server: string,
+  knownBrokers: readonly BrokerAccount[],
+): Promise<BrokerAccount | null> {
+  const key = brokerLoginServerKey(login, server)
+  const local = knownBrokers.find(
+    b => brokerLoginServerKey(b.account_login ?? '', b.broker_server ?? '') === key,
+  )
+  if (local) return local
+
+  try {
+    const { fxsocketBroker } = await import('./fxsocketBroker')
+    const remote = await fxsocketBroker.list()
+    return remote.find(
+      b => brokerLoginServerKey(b.account_login ?? '', b.broker_server ?? '') === key,
+    ) ?? null
+  } catch {
+    return null
+  }
 }
 
 export async function connectAccountsBatch(args: ConnectAccountsBatchArgs): Promise<BulkConnectResult> {
   const connect = args.connect ?? (async (connectArgs) => {
-    const { fxsocketBroker } = await import('./fxsocketBroker')
-    return fxsocketBroker.connect(connectArgs)
+    const { fxsocketBroker, FXSOCKET_BULK_CONNECT_TIMEOUT_MS } = await import('./fxsocketBroker')
+    return fxsocketBroker.connect({ ...connectArgs, timeoutMs: FXSOCKET_BULK_CONNECT_TIMEOUT_MS })
   })
   const progress: BulkConnectRowProgress[] = args.rows.map((row, index) => ({
     index,
@@ -241,7 +297,6 @@ export async function connectAccountsBatch(args: ConnectAccountsBatchArgs): Prom
   let linkedCount = 0
   let failedCount = 0
   let skippedCount = 0
-  let linkedThisBatch = 0
 
   emit()
 
@@ -267,7 +322,7 @@ export async function connectAccountsBatch(args: ConnectAccountsBatchArgs): Prom
       continue
     }
 
-    if (!args.canAddMore()) {
+    if (!canLinkAnotherBrokerInBatch(args.activeBrokerCountAtStart, linkedCount, args.maxBrokerAccounts)) {
       entry.status = 'skipped_limit'
       entry.error = 'Broker account limit reached'
       skippedCount++
@@ -277,6 +332,14 @@ export async function connectAccountsBatch(args: ConnectAccountsBatchArgs): Prom
 
     entry.status = 'linking'
     emit()
+
+    const knownBrokers = () => {
+      const fromProgress = progress
+        .map(row => row.account)
+        .filter((account): account is BrokerAccount => account != null)
+      const external = args.getKnownBrokers?.() ?? []
+      return [...args.existingBrokers, ...external, ...fromProgress]
+    }
 
     try {
       const { account } = await connect({
@@ -289,20 +352,48 @@ export async function connectAccountsBatch(args: ConnectAccountsBatchArgs): Prom
       entry.account = account
       seenKeys.add(key)
       linkedCount++
-      linkedThisBatch++
       emit()
     } catch (err) {
-      entry.status = 'failed'
-      entry.error = err instanceof Error ? err.message : 'Connect failed'
-      failedCount++
+      let recovered: BrokerAccount | null = null
+      if (isRecoverableConnectError(err)) {
+        await sleep(2_000)
+        recovered = await findLinkedBrokerAccount(login, server, knownBrokers())
+      }
+
+      if (recovered) {
+        entry.status = 'linked'
+        entry.account = recovered
+        seenKeys.add(key)
+        linkedCount++
+        emit()
+        continue
+      }
+
+      const msg = err instanceof Error ? err.message : 'Connect failed'
+      if (isBrokerLimitError(err)) {
+        entry.status = 'skipped_limit'
+        entry.error = msg
+        skippedCount++
+      } else {
+        entry.status = 'failed'
+        entry.error = msg
+        failedCount++
+      }
       emit()
     }
   }
 
-  void linkedThisBatch
   return { rows: progress, linkedCount, failedCount, skippedCount }
 }
 
 export function emptyConnectRows(count = 1): ConnectTradingAccountForm[] {
   return Array.from({ length: count }, () => ({ ...emptyConnectTradingAccountForm }))
+}
+
+export function resolveActiveBrokerCount(
+  brokers: readonly BrokerAccount[],
+  usageCount: number,
+): number {
+  const activeBrokers = brokers.filter(b => b.is_active !== false).length
+  return Math.max(activeBrokers, usageCount)
 }

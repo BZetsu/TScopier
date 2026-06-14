@@ -3,6 +3,7 @@ import { describe, it } from 'node:test'
 import type { BrokerAccount } from '../types/database'
 import {
   brokerLoginServerKey,
+  canLinkAnotherBrokerInBatch,
   connectAccountsBatch,
   isDuplicateBrokerLogin,
   parseConnectAccountsCsv,
@@ -87,9 +88,14 @@ Demo,Broker-Demo,111,pass`
     assert.equal(brokerLoginServerKey('123', 'ICMarketsSC-MT5'), '123::ICMarketsSC-MT5')
   })
 
+  it('canLinkAnotherBrokerInBatch uses starting count plus linked rows only', () => {
+    assert.equal(canLinkAnotherBrokerInBatch(4, 0, 5), true)
+    assert.equal(canLinkAnotherBrokerInBatch(4, 1, 5), false)
+    assert.equal(canLinkAnotherBrokerInBatch(0, 2, null), true)
+  })
+
   it('connectAccountsBatch links sequentially and stops at limit', async () => {
     const calls: string[] = []
-    let allowed = 1
 
     const result = await connectAccountsBatch({
       rows: [
@@ -97,11 +103,11 @@ Demo,Broker-Demo,111,pass`
         { label: 'B', broker_server: 'S2', account_number: '2', account_password: 'p2' },
       ],
       existingBrokers: [],
-      canAddMore: () => allowed > 0,
+      activeBrokerCountAtStart: 4,
+      maxBrokerAccounts: 5,
       onProgress: () => {},
       connect: async args => {
         calls.push(String(args.login))
-        allowed--
         return {
           account: broker({
             id: `id-${args.login}`,
@@ -118,6 +124,30 @@ Demo,Broker-Demo,111,pass`
     assert.equal(result.rows[1]?.status, 'skipped_limit')
   })
 
+  it('connectAccountsBatch recovers linked account after timeout', async () => {
+    const result = await connectAccountsBatch({
+      rows: [
+        { label: '', broker_server: 'S', account_number: '1', account_password: 'p' },
+      ],
+      existingBrokers: [],
+      activeBrokerCountAtStart: 0,
+      maxBrokerAccounts: 5,
+      onProgress: () => {},
+      connect: async () => {
+        throw new Error('Broker request timed out. Try again in a moment.')
+      },
+      getKnownBrokers: () => [broker({
+        id: 'recovered',
+        account_login: '1',
+        broker_server: 'S',
+      })],
+    })
+
+    assert.equal(result.linkedCount, 1)
+    assert.equal(result.rows[0]?.status, 'linked')
+    assert.equal(result.rows[0]?.account?.id, 'recovered')
+  })
+
   it('connectAccountsBatch skips duplicates within batch and existing brokers', async () => {
     const result = await connectAccountsBatch({
       rows: [
@@ -125,7 +155,8 @@ Demo,Broker-Demo,111,pass`
         { label: '', broker_server: 'S', account_number: '1', account_password: 'p' },
       ],
       existingBrokers: [broker({ id: 'existing', account_login: '9', broker_server: 'Other' })],
-      canAddMore: () => true,
+      activeBrokerCountAtStart: 1,
+      maxBrokerAccounts: 10,
       onProgress: () => {},
       connect: async () => ({
         account: broker({ id: 'new', account_login: '1', broker_server: 'S' }),

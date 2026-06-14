@@ -6,6 +6,8 @@ const FXSOCKET_EDGE_TIMEOUT_MS = 120_000
 /** Full-account PositionHistory can require many chunked broker calls. */
 const FXSOCKET_TRADES_TIMEOUT_MS = 180_000
 const FXSOCKET_CONNECT_TIMEOUT_MS = 120_000
+/** Bulk CSV uploads queue several FxSocket provisions sequentially. */
+export const FXSOCKET_BULK_CONNECT_TIMEOUT_MS = 300_000
 const FXSOCKET_WAIT_CONNECTED_MS = 180_000
 const FXSOCKET_WAIT_CONNECTED_INTERVAL_MS = 1_000
 
@@ -159,6 +161,7 @@ export const fxsocketBroker = {
     password?: string
     server?: string
     fxsocketAccountId?: string
+    timeoutMs?: number
   }): Promise<{ account: BrokerAccount; pending?: boolean }> {
     return call({
       body: {
@@ -169,7 +172,7 @@ export const fxsocketBroker = {
         server: args.server,
         fxsocket_account_id: args.fxsocketAccountId,
       },
-      timeoutMs: FXSOCKET_CONNECT_TIMEOUT_MS,
+      timeoutMs: args.timeoutMs ?? FXSOCKET_CONNECT_TIMEOUT_MS,
       expect: (b) => {
         const row = b as { account?: BrokerAccount; pending?: boolean }
         const account = row.account

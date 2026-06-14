@@ -9,6 +9,7 @@ import {
   connectAccountsBatch,
   downloadConnectAccountsTemplate,
   parseConnectAccountsCsv,
+  resolveActiveBrokerCount,
   type BulkConnectResult,
   type BulkConnectRowProgress,
 } from '../../lib/bulkConnectBrokers'
@@ -33,7 +34,8 @@ export function BulkUploadAccountsModal({ open, onClose, onBatchComplete }: Bulk
   const overlayRef = useRef<HTMLDivElement>(null)
   const backdropRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const linkedInBatchRef = useRef(0)
+  const brokersRef = useRef(brokers)
+  brokersRef.current = brokers
 
   const [error, setError] = useState('')
   const [parseErrors, setParseErrors] = useState<Array<{ line: number; message: string }>>([])
@@ -49,7 +51,6 @@ export function BulkUploadAccountsModal({ open, onClose, onBatchComplete }: Bulk
     setBatchRows([])
     setConnecting(false)
     setDragOver(false)
-    linkedInBatchRef.current = 0
   }, [])
 
   const handleClose = useCallback(() => {
@@ -112,11 +113,9 @@ export function BulkUploadAccountsModal({ open, onClose, onBatchComplete }: Bulk
     if (file) await handleFile(file)
   }, [handleFile])
 
-  const canAddMore = useCallback(() => {
-    if (isAdmin) return true
-    if (!hasActiveSubscription) return false
-    return usage.brokerAccounts + linkedInBatchRef.current < limits.maxBrokerAccounts
-  }, [hasActiveSubscription, isAdmin, limits.maxBrokerAccounts, usage.brokerAccounts])
+  const slotsAvailable = isAdmin
+    ? previewRows.length
+    : Math.max(0, limits.maxBrokerAccounts - resolveActiveBrokerCount(brokers, usage.brokerAccounts))
 
   const handleConnect = async () => {
     setError('')
@@ -128,19 +127,20 @@ export function BulkUploadAccountsModal({ open, onClose, onBatchComplete }: Bulk
       setError(bc.noValidRows)
       return
     }
-    if (!canAddMore()) {
+    if (!isAdmin && slotsAvailable <= 0) {
       setError(interpolate(pw.brokerLimit, { limit: String(limits.maxBrokerAccounts) }))
       return
     }
 
-    linkedInBatchRef.current = 0
     setConnecting(true)
 
     try {
       const result = await connectAccountsBatch({
         rows: previewRows,
         existingBrokers: brokers,
-        canAddMore,
+        activeBrokerCountAtStart: resolveActiveBrokerCount(brokers, usage.brokerAccounts),
+        maxBrokerAccounts: isAdmin ? null : limits.maxBrokerAccounts,
+        getKnownBrokers: () => brokersRef.current,
         onProgress: rows => {
           setBatchRows(rows)
           for (const row of rows) {
@@ -148,7 +148,6 @@ export function BulkUploadAccountsModal({ open, onClose, onBatchComplete }: Bulk
               upsertBroker(row.account)
             }
           }
-          linkedInBatchRef.current = rows.filter(r => r.status === 'linked').length
         },
       })
 

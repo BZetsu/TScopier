@@ -13,6 +13,7 @@ import {
 import {
   connectAccountsBatch,
   emptyConnectRows,
+  resolveActiveBrokerCount,
   validateConnectRow,
   type BulkConnectResult,
   type BulkConnectRowProgress,
@@ -54,7 +55,8 @@ export function ConnectTradingAccountModal({
   const overlayRef = useRef<HTMLDivElement>(null)
   const backdropRef = useRef<HTMLDivElement>(null)
   const connectStartedAtRef = useRef(0)
-  const linkedInBatchRef = useRef(0)
+  const brokersRef = useRef(brokers)
+  brokersRef.current = brokers
 
   const [rows, setRows] = useState<ConnectTradingAccountForm[]>(() => emptyConnectRows())
   const [error, setError] = useState('')
@@ -70,7 +72,6 @@ export function ConnectTradingAccountModal({
     setConnectStep(0)
     setBatchRows([])
     setBulkUploadOpen(false)
-    linkedInBatchRef.current = 0
   }, [])
 
   const handleClose = useCallback(() => {
@@ -130,11 +131,7 @@ export function ConnectTradingAccountModal({
     setRows(prev => (prev.length <= 1 ? prev : prev.filter((_, i) => i !== index)))
   }, [])
 
-  const canAddMore = useCallback(() => {
-    if (isAdmin) return true
-    if (!hasActiveSubscription) return false
-    return usage.brokerAccounts + linkedInBatchRef.current < limits.maxBrokerAccounts
-  }, [hasActiveSubscription, isAdmin, limits.maxBrokerAccounts, usage.brokerAccounts])
+  const activeBrokerCount = resolveActiveBrokerCount(brokers, usage.brokerAccounts)
 
   const connectSingle = async (row: ConnectTradingAccountForm) => {
     const login = row.account_number.trim()
@@ -166,7 +163,7 @@ export function ConnectTradingAccountModal({
       setError(pw.subscriptionRequired)
       return
     }
-    if (!canAddMore()) {
+    if (!isAdmin && activeBrokerCount >= limits.maxBrokerAccounts) {
       setError(interpolate(pw.brokerLimit, { limit: String(limits.maxBrokerAccounts) }))
       return
     }
@@ -200,20 +197,20 @@ export function ConnectTradingAccountModal({
       return
     }
 
-    linkedInBatchRef.current = 0
     setSaving(true)
 
     try {
       const result = await connectAccountsBatch({
         rows: validRows,
         existingBrokers: brokers,
-        canAddMore,
+        activeBrokerCountAtStart: activeBrokerCount,
+        maxBrokerAccounts: isAdmin ? null : limits.maxBrokerAccounts,
+        getKnownBrokers: () => brokersRef.current,
         onProgress: progress => {
           setBatchRows(progress)
           for (const entry of progress) {
             if (entry.status === 'linked' && entry.account) upsertBroker(entry.account)
           }
-          linkedInBatchRef.current = progress.filter(r => r.status === 'linked').length
         },
       })
 
