@@ -365,6 +365,8 @@ export interface BrokerAccount {
   performance_baseline_balance?: number | null
   /** UTC time when `performance_baseline_balance` was first captured. */
   performance_baseline_captured_at?: string | null
+  /** Wall time when the broker was last activated (connect / reconnect). */
+  last_activated_at?: string | null
   /** Balance at the start of `day_start_balance_on` (local calendar day). */
   day_start_balance?: number | null
   /** Local calendar day (YYYY-MM-DD) for `day_start_balance`. */

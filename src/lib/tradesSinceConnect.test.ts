@@ -44,6 +44,17 @@ describe('tradesSinceConnect', () => {
     )
   })
 
+  it('resolveBrokerConnectMs uses latest of baseline and last_activated_at', () => {
+    assert.equal(
+      resolveBrokerConnectMs({
+        performance_baseline_captured_at: '2026-01-01T00:00:00.000Z',
+        last_activated_at: '2026-06-14T13:58:00.000Z',
+        created_at: '2025-01-01T00:00:00.000Z',
+      }),
+      Date.parse('2026-06-14T13:58:00.000Z'),
+    )
+  })
+
   it('filterMtTradesSinceConnect drops pre-connect closed trades', () => {
     const accounts = [{
       id: 'broker-1',

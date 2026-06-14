@@ -18,6 +18,7 @@ import {
   type ResolveChannelIdOpts,
 } from './performanceInsights'
 import {
+  filterChartTradesSinceConnect,
   filterMtTradesSinceConnect,
   type BrokerConnectAnchor,
 } from './tradesSinceConnect'
@@ -132,20 +133,32 @@ export function deriveDashboardAnalytics(args: {
   now?: Date
 }): DashboardAnalytics {
   const now = args.now ?? new Date()
+  const hasConnectScope = (args.accounts?.length ?? 0) > 0
   const hasMtSource = args.mtTrades.length > 0
+  const scopedChart = hasConnectScope
+    ? filterChartTradesSinceConnect(args.chartTrades, args.accounts!)
+    : args.chartTrades
   const scopedMt = hasMtSource
     ? scopeDashboardCopierMtTrades(args.mtTrades, args.channelLinkMaps, args.accounts)
     : []
-  const useMt = scopedMt.length > 0
-  const todaySummary = useMt
+  const useMtSummaries = scopedMt.length > 0
+  const mtLoadedButEmpty = hasConnectScope && hasMtSource && scopedMt.length === 0
+  const fallbackChart = hasConnectScope ? scopedChart : args.chartTrades
+  const todaySummary = useMtSummaries
     ? summarizeTodayFromMtTrades(scopedMt, now)
-    : summarizeTodayFromChartTrades(args.chartTrades, now)
-  const yesterdaySummary = useMt
+    : mtLoadedButEmpty
+      ? summarizeTodayFromChartTrades([], now)
+      : summarizeTodayFromChartTrades(fallbackChart, now)
+  const yesterdaySummary = useMtSummaries
     ? summarizeYesterdayFromMtTrades(scopedMt, now)
-    : summarizeYesterdayFromChartTrades(args.chartTrades, now)
-  const chartForVolume = useMt
+    : mtLoadedButEmpty
+      ? summarizeYesterdayFromChartTrades([], now)
+      : summarizeYesterdayFromChartTrades(fallbackChart, now)
+  const chartForVolume = useMtSummaries
     ? resolveDashboardChartTrades(scopedMt, [])
-    : args.chartTrades
+    : mtLoadedButEmpty
+      ? []
+      : fallbackChart
 
   return {
     todayProfit: todaySummary.netPnl,

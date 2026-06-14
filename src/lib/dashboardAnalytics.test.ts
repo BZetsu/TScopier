@@ -298,3 +298,105 @@ test('deriveDashboardAnalytics: attributes TSCopier comment via account connecte
   assert.equal(analytics.todayProfit, 100)
   assert.equal(analytics.tradesTaken, 1)
 })
+
+test('deriveDashboardAnalytics: excludes pre-connect chart trades when broker linked', () => {
+  const now = new Date(2026, 5, 14, 12, 0, 0)
+  const chartTrades: DashboardChartTrade[] = [
+    {
+      brokerAccountId: 'b1',
+      lotSize: 0.1,
+      profit: 500,
+      status: 'closed',
+      closedAt: '2026-06-01T10:00:00',
+      openedAt: '2026-06-01T09:00:00',
+    },
+    {
+      brokerAccountId: 'b1',
+      lotSize: 0.1,
+      profit: 50,
+      status: 'closed',
+      closedAt: '2026-06-14T10:00:00',
+      openedAt: '2026-06-14T09:00:00',
+    },
+  ]
+  const analytics = deriveDashboardAnalytics({
+    chartTrades,
+    mtTrades: [],
+    channelLinkMaps: {
+      ticketToChannelId: {},
+      ticketToSignalId: {},
+      signalPrefixToChannelId: {},
+      signalPrefixToSignalId: {},
+      channelSlugToChannelId: {},
+      channelNames: {},
+    },
+    unlinkedLabel: 'Unlinked',
+    accounts: [{
+      id: 'b1',
+      performance_baseline_captured_at: '2026-06-14T00:00:00.000Z',
+      created_at: '2026-01-01T00:00:00.000Z',
+    }],
+    now,
+  })
+  assert.equal(analytics.todayProfit, 50)
+  assert.equal(analytics.tradeVolume7Day.reduce((sum, d) => sum + d.volume, 0), 1)
+})
+
+test('deriveDashboardAnalytics: empty 7d charts when MT loaded but all pre-connect', () => {
+  const now = new Date(2026, 5, 14, 12, 0, 0)
+  const maps = {
+    ticketToChannelId: { 'b1:1': 'ch-1' },
+    ticketToSignalId: {},
+    signalPrefixToChannelId: {},
+    signalPrefixToSignalId: {},
+    channelSlugToChannelId: {},
+    channelNames: { 'ch-1': 'VIP Gold' },
+  }
+  const mtTrades = [{
+    id: 'b1:1',
+    broker_id: 'b1',
+    broker_label: 'Demo',
+    broker_name: 'IC',
+    ticket: 1,
+    symbol: 'XAUUSD',
+    direction: 'buy' as const,
+    type: 'Buy',
+    lot_size: 0.1,
+    entry_price: 2500,
+    sl: null,
+    tp: null,
+    close_price: 2510,
+    profit: 500,
+    swap: 0,
+    commission: 0,
+    comment: null,
+    magic: null,
+    opened_at: '2026-06-01T09:00:00',
+    closed_at: '2026-06-01T10:00:00',
+    state: null,
+    status: 'closed' as const,
+  }]
+  const staleChart: DashboardChartTrade[] = [{
+    brokerAccountId: 'b1',
+    lotSize: 0.1,
+    profit: 999,
+    status: 'closed',
+    closedAt: '2026-06-01T10:00:00',
+    openedAt: '2026-06-01T09:00:00',
+  }]
+  const analytics = deriveDashboardAnalytics({
+    chartTrades: staleChart,
+    mtTrades,
+    channelLinkMaps: maps,
+    unlinkedLabel: 'Unlinked',
+    accounts: [{
+      id: 'b1',
+      performance_baseline_captured_at: '2026-06-14T00:00:00.000Z',
+      created_at: '2026-01-01T00:00:00.000Z',
+    }],
+    now,
+  })
+  assert.equal(analytics.todayProfit, 0)
+  assert.equal(analytics.tradeVolume7Day.reduce((sum, d) => sum + d.volume, 0), 0)
+  assert.equal(analytics.channelProfit7d.length, 0)
+})

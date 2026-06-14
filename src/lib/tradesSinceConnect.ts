@@ -4,18 +4,30 @@ import type { BrokerAccount } from '../types/database'
 
 export type BrokerConnectAnchor = Pick<
   BrokerAccount,
-  'id' | 'performance_baseline_captured_at' | 'created_at'
+  'id' | 'performance_baseline_captured_at' | 'created_at' | 'last_activated_at'
 >
 
-/** UTC ms when TSCopier first linked this broker (baseline capture, else account created). */
+/** UTC ms when copier metrics should start for this broker (latest connect anchor). */
 export function resolveBrokerConnectMs(
-  account: Pick<BrokerAccount, 'performance_baseline_captured_at'> & {
+  account: Pick<BrokerAccount, 'performance_baseline_captured_at' | 'last_activated_at'> & {
     created_at?: string | null
   },
 ): number | null {
-  const raw = account.performance_baseline_captured_at?.trim() || account.created_at?.trim()
-  if (!raw) return null
-  return parseMtHistoryTimestamp(raw)
+  const anchors: number[] = []
+  for (const raw of [
+    account.performance_baseline_captured_at,
+    account.last_activated_at,
+  ]) {
+    const trimmed = raw?.trim()
+    if (!trimmed) continue
+    const ms = parseMtHistoryTimestamp(trimmed)
+    if (ms != null) anchors.push(ms)
+  }
+  if (anchors.length > 0) return Math.max(...anchors)
+
+  const created = account.created_at?.trim()
+  if (!created) return null
+  return parseMtHistoryTimestamp(created)
 }
 
 export function buildBrokerConnectMsMap(
@@ -85,11 +97,50 @@ export function isTradeStatsRowSinceConnect(row: TradeStatsConnectRow, connectMs
 
 export function filterTradeStatsRowsSinceConnect<T extends TradeStatsConnectRow>(
   rows: T[],
-  account: Pick<BrokerAccount, 'performance_baseline_captured_at'> & {
+  account: Pick<BrokerAccount, 'performance_baseline_captured_at' | 'last_activated_at'> & {
     created_at?: string | null
   },
 ): T[] {
   const connectMs = resolveBrokerConnectMs(account)
   if (connectMs == null) return rows
   return rows.filter(row => isTradeStatsRowSinceConnect(row, connectMs))
+}
+
+export type ChartTradeConnectRow = {
+  brokerAccountId: string
+  status?: string
+  closed_at?: string | null
+  opened_at?: string | null
+  closedAt?: string | null
+  openedAt?: string | null
+}
+
+function chartTradeActivityMs(trade: ChartTradeConnectRow): number | null {
+  return resolveTradeStatsSinceConnectMs({
+    status: trade.status,
+    closed_at: trade.closed_at ?? trade.closedAt ?? null,
+    opened_at: trade.opened_at ?? trade.openedAt ?? null,
+  })
+}
+
+export function isChartTradeSinceConnect(
+  trade: ChartTradeConnectRow,
+  connectMsByBrokerId: ReadonlyMap<string, number>,
+): boolean {
+  const connectMs = connectMsByBrokerId.get(trade.brokerAccountId)
+  if (connectMs == null) return true
+
+  const activityMs = chartTradeActivityMs(trade)
+  if (activityMs == null) return (trade.status ?? 'closed') === 'open'
+  return activityMs >= connectMs
+}
+
+export function filterChartTradesSinceConnect<T extends ChartTradeConnectRow>(
+  trades: T[],
+  accounts: readonly BrokerConnectAnchor[],
+): T[] {
+  if (trades.length === 0 || accounts.length === 0) return trades
+  const connectMsByBrokerId = buildBrokerConnectMsMap(accounts)
+  if (connectMsByBrokerId.size === 0) return trades
+  return trades.filter(trade => isChartTradeSinceConnect(trade, connectMsByBrokerId))
 }

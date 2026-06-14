@@ -1082,19 +1082,26 @@ export function DashboardPage() {
 
   const displayAnalytics = useMemo(() => {
     const live = dashboardAnalytics
+    const hasLinkedBroker = linkedAccounts.some(isFxsocketLinkedBroker)
     if (hasDashboardAnalyticsData(live)) return live
-    if (cachedAnalytics && hasDashboardAnalyticsData(cachedAnalytics)) return cachedAnalytics
+    if (cachedAnalytics && hasDashboardAnalyticsData(cachedAnalytics) && !hasLinkedBroker) {
+      return cachedAnalytics
+    }
     if (!cachedAnalytics) return live
     return {
       ...live,
       todayProfit: live.todayProfit !== 0 ? live.todayProfit : cachedAnalytics.todayProfit,
       yesterdayProfit: live.yesterdayProfit !== 0 ? live.yesterdayProfit : cachedAnalytics.yesterdayProfit,
-      tradeVolume7Day: live.tradeVolume7Day.some(d => d.volume > 0 || d.profit !== 0 || d.loss !== 0)
+      tradeVolume7Day: hasLinkedBroker
         ? live.tradeVolume7Day
-        : cachedAnalytics.tradeVolume7Day,
-      channelProfit7d: live.channelProfit7d.length > 0
+        : live.tradeVolume7Day.some(d => d.volume > 0 || d.profit !== 0 || d.loss !== 0)
+          ? live.tradeVolume7Day
+          : cachedAnalytics.tradeVolume7Day,
+      channelProfit7d: hasLinkedBroker
         ? live.channelProfit7d
-        : cachedAnalytics.channelProfit7d,
+        : live.channelProfit7d.length > 0
+          ? live.channelProfit7d
+          : cachedAnalytics.channelProfit7d,
       tradesTaken: live.tradesTaken > 0 ? live.tradesTaken : cachedAnalytics.tradesTaken,
       tradesTakenYesterday: live.tradesTakenYesterday > 0
         ? live.tradesTakenYesterday
@@ -1103,7 +1110,7 @@ export function DashboardPage() {
       tradesLost: live.tradesLost > 0 ? live.tradesLost : cachedAnalytics.tradesLost,
       tradesBreakeven: live.tradesBreakeven > 0 ? live.tradesBreakeven : cachedAnalytics.tradesBreakeven,
     }
-  }, [dashboardAnalytics, cachedAnalytics])
+  }, [dashboardAnalytics, cachedAnalytics, linkedAccounts])
 
   /** Headline stats: prefer display analytics (live or cached) when available. */
   const headlineStats = useMemo(() => {
