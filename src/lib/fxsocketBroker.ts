@@ -139,36 +139,10 @@ export interface MtTrade {
 
 export type { FxsocketStreamSubscribeFrame } from './fxsocketStreamTypes'
 
-export interface BrokerSearchResult {
-  name?: string
-  access?: string[]
-  logoUrl?: string | null
-  site?: string | null
-}
-
-export interface BrokerSearchCompany {
-  companyName?: string
-  results?: BrokerSearchResult[]
-}
-
 export const FXSOCKET_DOCS_URL = 'https://fxsocket.com/docs#request-builder'
 export const FXSOCKET_V1_DOCS_URL = 'https://api.fxsocket.com/v1/docs#/'
-export const FXSOCKET_BSA_DOCS_URL = 'https://bsa.fxsocket.com/docs'
 
 export const fxsocketBroker = {
-  searchBrokers(args: {
-    platform: 'MT4' | 'MT5'
-    company: string
-  }): Promise<{ companies: BrokerSearchCompany[] }> {
-    return call({
-      body: { action: 'search_brokers', platform: args.platform, company: args.company },
-      expect: (b) => {
-        const row = b as { ok?: boolean; companies?: BrokerSearchCompany[] }
-        return { companies: row.companies ?? [] }
-      },
-    })
-  },
-
   list(): Promise<BrokerAccount[]> {
     return call({
       body: { action: 'list' },

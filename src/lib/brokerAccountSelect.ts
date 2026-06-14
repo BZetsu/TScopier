@@ -31,6 +31,7 @@ export const BROKER_ACCOUNT_CLIENT_SELECT = [
   'last_currency',
   'last_synced_at',
   'performance_baseline_balance',
+  'performance_baseline_captured_at',
   'day_start_balance',
   'day_start_balance_on',
   'is_active',

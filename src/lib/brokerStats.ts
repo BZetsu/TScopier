@@ -10,6 +10,7 @@ import {
 } from './dashboardTradeStats'
 import { displayTradeProfit, tradeOpenLegProfit } from './tradeDisplay'
 import type { MtTrade } from './fxsocketBroker'
+import type { BrokerAccount } from '../types/database'
 import { normalizeSignalChannelIds } from './brokerChannelLink'
 import {
   canonicalChannelId,
@@ -42,6 +43,7 @@ export type BrokerActiveSignalTrade = {
 
 export type BrokerStatsSnapshot = {
   initialBalance: number | null
+  connectedAt: string | null
   currentBalance: number | null
   currentEquity: number | null
   totalProfit: number
@@ -135,6 +137,28 @@ export function computeBrokerBalanceProfit(
   if (!brokerId || !mtTrades.length) return rawDelta
   const cashFlow = sumBalanceCashFlow(statsRowsForBroker(mtTradesForBroker(mtTrades, brokerId)))
   return rawDelta - cashFlow
+}
+
+/** Per-account P/L since first connect: current balance minus link-time baseline, net of deposits/withdrawals. */
+export function computeConnectPnlByAccountId(
+  accounts: Array<
+    Pick<BrokerAccount, 'id' | 'performance_baseline_balance' | 'last_balance'>
+  >,
+  balanceByAccountId: Record<string, { balance?: number } | undefined>,
+  mtTrades: MtTrade[],
+): Record<string, number> {
+  const out: Record<string, number> = {}
+  for (const account of accounts) {
+    const summary = balanceByAccountId[account.id]
+    const pnl = computeBrokerBalanceProfit(
+      account.performance_baseline_balance,
+      summary?.balance ?? account.last_balance,
+      mtTrades,
+      account.id,
+    )
+    if (pnl != null) out[account.id] = pnl
+  }
+  return out
 }
 
 export function computeBrokerTotalProfit(
@@ -372,8 +396,10 @@ export function findActiveAttributedSignalTrades(
 
 export function computeBrokerStatsSnapshot(opts: {
   brokerId: string
-  /** Balance captured when this broker was first connected (`performance_baseline_balance`). */
+  /** Balance snapshotted at first successful connect (`performance_baseline_balance`). */
   initialBalance: number | null | undefined
+  /** When the baseline balance was first captured. */
+  connectedAt?: string | null
   currentBalance: number | null | undefined
   currentEquity: number | null | undefined
   mtTrades: MtTrade[]
@@ -409,6 +435,7 @@ export function computeBrokerStatsSnapshot(opts: {
     opts.initialBalance != null && Number.isFinite(Number(opts.initialBalance)) && Number(opts.initialBalance) > 0
       ? Number(opts.initialBalance)
       : null
+  const connectedAt = opts.connectedAt?.trim() ? opts.connectedAt.trim() : null
   const balance =
     opts.currentBalance != null && Number.isFinite(Number(opts.currentBalance))
       ? Number(opts.currentBalance)
@@ -423,6 +450,7 @@ export function computeBrokerStatsSnapshot(opts: {
 
   return {
     initialBalance,
+    connectedAt,
     currentBalance: balance,
     currentEquity: equity,
     totalProfit: balanceProfit ?? dealProfit,

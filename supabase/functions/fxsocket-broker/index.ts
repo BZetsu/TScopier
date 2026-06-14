@@ -8,10 +8,9 @@ import {
   type FxsocketAccountSummary,
 } from "../_shared/fxsocketClient.ts"
 import {
-  PERFORMANCE_BASELINE_HISTORY_DAYS,
   resolvePerformanceBaselineBalance,
 } from "../_shared/performanceBaseline.ts"
-import { fetchFxsocketBrokerTrades, fetchClosedHistoryForBaseline, BROKER_FULL_HISTORY_FROM_DATE } from "../_shared/fxsocketTrades.ts"
+import { fetchFxsocketBrokerTrades, BROKER_FULL_HISTORY_FROM_DATE } from "../_shared/fxsocketTrades.ts"
 import type { MtHistoryProfile } from "../_shared/mtTradeFields.ts"
 
 const corsHeaders = {
@@ -233,33 +232,16 @@ Deno.serve(async (req: Request) => {
         const readiness = await fx.resolveLinkReadiness(row.fxsocket_account_id)
 
         if (readiness.ready) {
-          let baselinePatch: Record<string, number> = {}
-          const formatMtDt = (d: Date) => d.toISOString().slice(0, 19)
-          const historyTo = formatMtDt(new Date())
-          const historyFromDate = new Date()
-          historyFromDate.setDate(historyFromDate.getDate() - PERFORMANCE_BASELINE_HISTORY_DAYS)
-          let tradesForBaseline: Awaited<ReturnType<typeof fetchFxsocketBrokerTrades>> = []
-          try {
-            tradesForBaseline = await fetchClosedHistoryForBaseline(fx, {
-              id: row.id,
-              label: row.label,
-              broker_name: row.broker_name ?? null,
-              fxsocket_account_id: row.fxsocket_account_id,
-            }, {
-              historyFrom: formatMtDt(historyFromDate),
-              historyTo,
-              historyProfile: "trades",
-            })
-          } catch (e) {
-            console.warn("[fxsocket-broker] baseline history fetch failed:", e)
-          }
+          let baselinePatch: Record<string, number | string> = {}
           const baseline = resolvePerformanceBaselineBalance(
             row.performance_baseline_balance,
             readiness.summary,
-            tradesForBaseline,
           )
           if (baseline != null) {
-            baselinePatch = { performance_baseline_balance: baseline }
+            baselinePatch = {
+              performance_baseline_balance: baseline,
+              performance_baseline_captured_at: new Date().toISOString(),
+            }
           }
 
           const { data: updated, error } = await supabase

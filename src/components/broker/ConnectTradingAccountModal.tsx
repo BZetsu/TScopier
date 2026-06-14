@@ -13,7 +13,6 @@ import {
 import { PaywallErrorAlert } from '../billing/PaywallErrorAlert'
 import { PasswordInput } from '../auth/PasswordInput'
 import { Input } from '../ui/Input'
-import { MtCompanyServerPicker } from '../ui/MtCompanyServerPicker'
 import { Button } from '../ui/Button'
 import { useOverlayDismiss } from '../../hooks/useOverlayDismiss'
 import type { BrokerAccount } from '../../types/database'
@@ -216,10 +215,11 @@ export function ConnectTradingAccountModal({ open, onClose, onSuccess }: Connect
               onChange={event => setField('label', event.target.value)}
             />
 
-            <MtCompanyServerPicker
-              platform="MT5"
+            <Input
+              label={cf.brokerServerLabel}
+              placeholder={cf.brokerServerPlaceholder}
               value={form.broker_server}
-              onChange={setBrokerServer}
+              onChange={event => setBrokerServer(event.target.value)}
               hint={cf.brokerServerHint}
               required
             />

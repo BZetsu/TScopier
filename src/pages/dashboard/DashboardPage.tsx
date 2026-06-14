@@ -67,11 +67,11 @@ import {
   writeDashboardMemoryCache,
 } from '../../lib/dashboardSessionCache'
 import { brokerStatsPreviewFromAccount } from '../../lib/brokerStatsNavigation'
+import { computeConnectPnlByAccountId } from '../../lib/brokerStats'
 import { syncPerformanceCacheFromDashboard } from '../../lib/performanceCacheBridge'
 import { fetchBrokerMtTrades } from '../../lib/brokerTradeHistory'
 import {
   resolveDashboardChartTrades,
-  sumClosedDealProfitByBroker,
   type DashboardChartTrade,
 } from '../../lib/dashboardCharts'
 import {
@@ -1044,12 +1044,10 @@ export function DashboardPage() {
     }
   }, [stats, mtTrades, effectiveChartTrades, displayAnalytics])
 
-  const closedProfitByAccountId = useMemo(
-    () => sumClosedDealProfitByBroker(effectiveChartTrades),
-    [effectiveChartTrades],
+  const connectPnlByAccountId = useMemo(
+    () => computeConnectPnlByAccountId(linkedAccounts, linkedAccountBalances, mtTrades),
+    [linkedAccounts, linkedAccountBalances, mtTrades],
   )
-
-  const hasMtTradeHistory = effectiveChartTrades.length > 0
 
   const openPnlSub = useMemo(() => {
     let accountCount = countAccountsWithOpenPositions(
@@ -1143,8 +1141,7 @@ export function DashboardPage() {
     return sortLinkedAccounts(linkedAccounts, linkedAccountSortKey, linkedAccountSortDir, {
       balances: linkedAccountBalances,
       performance: linkedAccountPerformance,
-      closedProfitByAccountId,
-      hasMtTradeHistory,
+      connectPnlByAccountId,
     })
   }, [
     linkedAccounts,
@@ -1152,8 +1149,7 @@ export function DashboardPage() {
     linkedAccountSortDir,
     linkedAccountBalances,
     linkedAccountPerformance,
-    closedProfitByAccountId,
-    hasMtTradeHistory,
+    connectPnlByAccountId,
   ])
 
   const hasLinkedBroker = linkedAccounts.some(isFxsocketLinkedBroker)
@@ -2394,9 +2390,7 @@ export function DashboardPage() {
                 account={account}
                 accountSummary={linkedAccountBalances[account.id]}
                 performance={linkedAccountPerformance[account.id]}
-                closedHistoryPnl={
-                  hasMtTradeHistory ? (closedProfitByAccountId[account.id] ?? 0) : null
-                }
+                connectPnl={connectPnlByAccountId[account.id] ?? null}
                 onToggleActive={is_active => { void toggleBrokerActive(account.id, is_active) }}
                 toggleDisabled={togglingBrokerId === account.id}
                 showReconnect={brokerCanReconnect(account)}
@@ -2605,7 +2599,7 @@ function LinkedAccountRow({
   account,
   accountSummary,
   performance,
-  closedHistoryPnl,
+  connectPnl,
   onToggleActive,
   toggleDisabled,
   showReconnect,
@@ -2616,8 +2610,8 @@ function LinkedAccountRow({
   account: BrokerAccount
   accountSummary?: { balance?: number; equity?: number; currency?: string; broker?: string; mt_server_hint?: string; account_type?: 'Live' | 'Demo'; open_pnl?: number }
   performance?: LinkedAccountPerformance
-  /** Sum of closed-deal profit from MT history; null until trade history is loaded. */
-  closedHistoryPnl?: number | null
+  /** Balance P/L since first connect; null when baseline or balance is unavailable. */
+  connectPnl?: number | null
   onToggleActive: (is_active: boolean) => void
   toggleDisabled?: boolean
   showReconnect?: boolean
@@ -2638,7 +2632,7 @@ function LinkedAccountRow({
   const balance = accountSummary?.balance ?? account.last_balance ?? null
   const accountCurrency = (accountSummary?.currency ?? account.last_currency ?? '').trim() || undefined
   const balanceText = formatMoneyWithCode(balance, accountCurrency, { locale: intlLocale })
-  const pnl = closedHistoryPnl != null ? closedHistoryPnl : 0
+  const pnl = connectPnl ?? 0
   const pnlColor = pnl >= 0 ? 'text-teal-600' : 'text-neutral-600 dark:text-neutral-400'
   const pnlFormatted = formatMoneyWithCode(Math.abs(pnl), accountCurrency, { locale: intlLocale, nullAsDash: false })
   const openPnl = resolveAccountOpenPnl(account, accountSummary)
@@ -2725,7 +2719,7 @@ function LinkedAccountRow({
       <span className={`text-sm font-semibold ${accountTypeClass}`}>{accountTypeLabel}</span>
       <span className="text-sm font-medium text-neutral-900 dark:text-neutral-50">{balanceText}</span>
       <span className={`text-sm font-semibold ${pnlColor}`}>
-        {closedHistoryPnl == null ? '—' : (
+        {connectPnl == null ? '—' : (
           <>
             {pnl >= 0 ? '+' : '-'}
             {pnlFormatted}

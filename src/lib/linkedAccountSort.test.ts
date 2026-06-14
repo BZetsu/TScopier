@@ -24,8 +24,7 @@ const ctx = (
 ): LinkedAccountSortContext => ({
   balances: {},
   performance: {},
-  closedProfitByAccountId: {},
-  hasMtTradeHistory: true,
+  connectPnlByAccountId: {},
   ...patch,
 })
 

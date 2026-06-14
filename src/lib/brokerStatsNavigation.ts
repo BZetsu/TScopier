@@ -10,6 +10,7 @@ export type BrokerStatsAccountPreview = Pick<
   | 'connection_status'
   | 'last_currency'
   | 'performance_baseline_balance'
+  | 'performance_baseline_captured_at'
   | 'metaapi_account_id'
   | 'last_balance'
   | 'last_equity'
@@ -30,6 +31,7 @@ export function brokerStatsPreviewFromAccount(account: BrokerAccount): BrokerSta
     connection_status: account.connection_status,
     last_currency: account.last_currency,
     performance_baseline_balance: account.performance_baseline_balance,
+    performance_baseline_captured_at: account.performance_baseline_captured_at,
     metaapi_account_id: account.metaapi_account_id,
     last_balance: account.last_balance,
     last_equity: account.last_equity,

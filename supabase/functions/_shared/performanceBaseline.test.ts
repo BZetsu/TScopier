@@ -2,6 +2,7 @@ import { assertEquals } from "jsr:@std/assert"
 import {
   inferPerformanceBaselineFromHistory,
   resolvePerformanceBaselineBalance,
+  snapshotLinkTimeBalance,
   splitBalanceCashFlows,
   sumRealizedClosedDealProfit,
   sumRealizedClosedNetProfit,
@@ -37,14 +38,34 @@ function trade(overrides: Partial<FxsocketBrokerTradeRow>): FxsocketBrokerTradeR
   }
 }
 
+Deno.test("snapshotLinkTimeBalance uses live AccountSummary balance", () => {
+  assertEquals(snapshotLinkTimeBalance({ balance: 10_000, equity: 10_050 }), 10_000)
+  assertEquals(snapshotLinkTimeBalance({ balance: null, equity: 10_050 }), 10_050)
+})
+
 Deno.test("resolvePerformanceBaselineBalance captures balance on first link", () => {
   const baseline = resolvePerformanceBaselineBalance(null, { balance: 10_000, equity: 10_000 })
   assertEquals(baseline, 10_000)
 })
 
-Deno.test("resolvePerformanceBaselineBalance skips when baseline already correct", () => {
-  const baseline = resolvePerformanceBaselineBalance(10_000, { balance: 12_000 })
-  assertEquals(baseline, null)
+Deno.test("resolvePerformanceBaselineBalance keeps existing baseline immutable", () => {
+  assertEquals(resolvePerformanceBaselineBalance(10_000, { balance: 12_000 }), null)
+  const trades = [trade({ ticket: 1, profit: -45_378.67, swap: 111.66 })]
+  assertEquals(
+    resolvePerformanceBaselineBalance(210_111.66, { balance: 164_732.99, equity: 164_732.99 }, trades),
+    null,
+  )
+})
+
+Deno.test("resolvePerformanceBaselineBalance ignores trade history on first link", () => {
+  const trades = [trade({ ticket: 1, profit: -45_378.67, swap: 111.66 })]
+  assertEquals(Math.round(sumRealizedClosedNetProfit(trades) * 100) / 100, -45_267.01)
+  const baseline = resolvePerformanceBaselineBalance(
+    null,
+    { balance: 164_732.99, equity: 164_732.99 },
+    trades,
+  )
+  assertEquals(baseline, 164_732.99)
 })
 
 Deno.test("inferPerformanceBaselineFromHistory reconstructs from closed deal profit", () => {
@@ -55,62 +76,6 @@ Deno.test("inferPerformanceBaselineFromHistory reconstructs from closed deal pro
   assertEquals(sumRealizedClosedDealProfit(trades), -300)
   assertEquals(sumRealizedClosedNetProfit(trades), -300)
   assertEquals(inferPerformanceBaselineFromHistory(9_700, trades), 10_000)
-})
-
-Deno.test("resolvePerformanceBaselineBalance matches MT5 deposit (profit + swap)", () => {
-  const trades = [trade({ ticket: 1, profit: -45_378.67, swap: 111.66 })]
-  assertEquals(Math.round(sumRealizedClosedNetProfit(trades) * 100) / 100, -45_267.01)
-  const baseline = resolvePerformanceBaselineBalance(
-    null,
-    { balance: 164_732.99, equity: 164_732.99 },
-    trades,
-  )
-  assertEquals(baseline, 210_000)
-})
-
-Deno.test("resolvePerformanceBaselineBalance keeps stored baseline when no deposit row", () => {
-  const trades = [trade({ ticket: 1, profit: -45_378.67, swap: 111.66 })]
-  const baseline = resolvePerformanceBaselineBalance(
-    210_111.66,
-    { balance: 164_732.99, equity: 164_732.99 },
-    trades,
-  )
-  assertEquals(baseline, null)
-})
-
-Deno.test("resolvePerformanceBaselineBalance corrects understated baseline from spurious cash-flow row", () => {
-  const trades = [
-    trade({
-      ticket: 0,
-      symbol: "",
-      direction: "",
-      type: "Balance",
-      lot_size: 0,
-      profit: 210_000,
-      closed_at: "2026-01-01T08:00:00",
-    }),
-    trade({
-      ticket: 1,
-      profit: -45_378.67,
-      swap: 111.66,
-      closed_at: "2026-06-12T16:16:47",
-    }),
-    trade({
-      ticket: 2,
-      symbol: "",
-      direction: "",
-      type: "",
-      lot_size: 0,
-      profit: 855.94,
-      closed_at: "2026-06-12T16:16:47",
-    }),
-  ]
-  const baseline = resolvePerformanceBaselineBalance(
-    209_144.06,
-    { balance: 164_732.99, equity: 164_732.99 },
-    trades,
-  )
-  assertEquals(baseline, 210_000)
 })
 
 Deno.test("inferPerformanceBaselineFromHistory prefers MT5 deposit over short inference", () => {

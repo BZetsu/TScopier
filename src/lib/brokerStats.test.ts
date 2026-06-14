@@ -7,6 +7,7 @@ import {
 } from './performanceInsights'
 import {
   computeBrokerBalanceProfit,
+  computeConnectPnlByAccountId,
   computeBrokerProfitByChannel,
   computeBrokerStatsSnapshot,
   computeBrokerTodayProfit,
@@ -89,6 +90,20 @@ test('computeBrokerBalanceProfit is balance delta minus deposit/withdrawal cash 
     }),
   ]
   assert.equal(computeBrokerBalanceProfit(10_000, 20_500, withDeposit, 'broker-1'), 500)
+})
+
+test('computeConnectPnlByAccountId maps balance P/L since connect per account', () => {
+  const accounts = [
+    { id: 'broker-1', performance_baseline_balance: 10_000, last_balance: 10_120 },
+    { id: 'broker-2', performance_baseline_balance: null, last_balance: 5_000 },
+  ] as const
+  const balances = {
+    'broker-1': { balance: 10_120 },
+    'broker-2': { balance: 5_050 },
+  }
+  const result = computeConnectPnlByAccountId([...accounts], balances, [])
+  assert.equal(result['broker-1'], 120)
+  assert.equal(result['broker-2'], undefined)
 })
 
 test('computeBrokerTodayProfit and total exclude balance rows', () => {

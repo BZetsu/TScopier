@@ -33,8 +33,7 @@ export type BrokerBalanceSnapshot = {
 export interface LinkedAccountSortContext {
   balances: Record<string, BrokerBalanceSnapshot>
   performance: Record<string, LinkedAccountPerformance>
-  closedProfitByAccountId: Record<string, number>
-  hasMtTradeHistory: boolean
+  connectPnlByAccountId: Record<string, number>
 }
 
 function compareText(a: string, b: string, dir: 1 | -1): number {
@@ -110,12 +109,11 @@ function balanceValue(
   return bal != null && Number.isFinite(Number(bal)) ? Number(bal) : null
 }
 
-function closedPnlValue(
+function connectPnlValue(
   accountId: string,
   ctx: LinkedAccountSortContext,
 ): number | null {
-  if (!ctx.hasMtTradeHistory) return null
-  return ctx.closedProfitByAccountId[accountId] ?? 0
+  return ctx.connectPnlByAccountId[accountId] ?? null
 }
 
 function statusRank(account: BrokerAccount): number {
@@ -152,7 +150,7 @@ function compareAccounts(
       cmp = compareNullableNumber(balanceValue(a, summaryA), balanceValue(b, summaryB), d)
       break
     case 'pnl':
-      cmp = compareNullableNumber(closedPnlValue(a.id, ctx), closedPnlValue(b.id, ctx), d)
+      cmp = compareNullableNumber(connectPnlValue(a.id, ctx), connectPnlValue(b.id, ctx), d)
       break
     case 'openPnl':
       cmp = compareNullableNumber(openPnlValue(a, summaryA), openPnlValue(b, summaryB), d)

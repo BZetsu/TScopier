@@ -182,9 +182,9 @@ export function computePerformanceBaselineBalance(
   balance: number | null | undefined,
   trades: MtTrade[],
 ): number | null {
+  void trades
   if (balance == null || !Number.isFinite(balance) || balance <= 0) return null
-  if (!trades.length || !trades.some(isMtClosedDealForOutcome)) return balance
-  return inferPerformanceBaselineFromHistory(balance, trades)
+  return Math.round(balance * 100) / 100
 }
 
 /**

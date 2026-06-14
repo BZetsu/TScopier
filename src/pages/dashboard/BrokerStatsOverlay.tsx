@@ -19,7 +19,7 @@ import {
   resolveLinkedAccountType,
   resolveMtServerCandidate,
 } from '../../lib/brokerFromServer'
-import { brokerConnectionStatusLabel } from '../../lib/brokerReconnect'
+import { brokerConnectionStatusLabel, isBrokerSessionConnected } from '../../lib/brokerReconnect'
 import { isFxsocketLinkedBroker } from '../../lib/brokerLink'
 import { mergeLivePositionsIntoMtTrades } from '../../lib/mergeLivePositionsIntoMtTrades'
 import {
@@ -83,6 +83,19 @@ function rebuildLivePositionRows(rawData: unknown): Map<number, Record<string, u
 function formatPct(value: number | null | undefined, digits = 0): string {
   if (value == null || !Number.isFinite(value)) return '—'
   return `${value.toFixed(digits)}%`
+}
+
+function formatConnectedAt(iso: string | null | undefined): string {
+  if (!iso) return '—'
+  const ms = Date.parse(iso)
+  if (!Number.isFinite(ms)) return '—'
+  return new Date(ms).toLocaleString([], {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 }
 
 function StatTile({
@@ -223,6 +236,7 @@ export function BrokerStatsOverlay() {
     return computeBrokerStatsSnapshot({
       brokerId,
       initialBalance: account.performance_baseline_balance,
+      connectedAt: account.performance_baseline_captured_at,
       currentBalance: balanceByAccountId[brokerId] ?? account.last_balance,
       currentEquity: equityByAccountId[brokerId] ?? account.last_equity,
       mtTrades: effectiveMtTrades,
@@ -269,6 +283,10 @@ export function BrokerStatsOverlay() {
   const showBodySkeleton = !stats && (loading || (needsLiveBrokerHistory && !brokerMetricsReady))
   const showRefreshingOverlay = Boolean(stats && needsLiveBrokerHistory && !brokerMetricsReady)
 
+  const connectedAtDisplay = formatConnectedAt(
+    stats?.connectedAt ?? account?.performance_baseline_captured_at ?? null,
+  )
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-6"
@@ -306,6 +324,9 @@ export function BrokerStatsOverlay() {
                     </span>
                     {' · '}
                     {brokerConnectionStatusLabel(account, la)}
+                    {isBrokerSessionConnected(account) && connectedAtDisplay !== '—' ? (
+                      <> {connectedAtDisplay}</>
+                    ) : null}
                   </>
                 ) : null}
               </p>

@@ -359,10 +359,12 @@ export interface BrokerAccount {
   last_currency?: string | null
   last_synced_at?: string | null
   /**
-   * Balance at first successful link/summary (TSCopier tracking start).
-   * Dashboard total profit uses current equity minus this baseline per account.
+   * Balance snapshotted at first successful FxSocket connect.
+   * Dashboard total profit uses current balance minus this baseline per account.
    */
   performance_baseline_balance?: number | null
+  /** UTC time when `performance_baseline_balance` was first captured. */
+  performance_baseline_captured_at?: string | null
   /** Balance at the start of `day_start_balance_on` (local calendar day). */
   day_start_balance?: number | null
   /** Local calendar day (YYYY-MM-DD) for `day_start_balance`. */

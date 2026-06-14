@@ -167,55 +167,35 @@ export function hasPerformanceBaseline(value: number | null | undefined): boolea
   return Number.isFinite(n) && n > 0
 }
 
-export function computePerformanceBaselineBalance(
-  summary: FxsocketAccountSummary,
-  trades?: FxsocketBrokerTradeRow[],
-): number | null {
+/**
+ * Balance at first successful FxSocket connect (raw AccountSummary balance).
+ * Never inferred from MT deposit history — immutable once stored.
+ */
+export function snapshotLinkTimeBalance(summary: FxsocketAccountSummary): number | null {
   const balanceRaw = summary.balance ?? summary.equity
   if (balanceRaw == null || !Number.isFinite(Number(balanceRaw))) return null
   const balance = Number(balanceRaw)
   if (balance <= 0) return null
+  return Math.round(balance * 100) / 100
+}
 
-  if (!trades?.length || !trades.some(isMtClosedDealForOutcome)) return balance
-
-  return inferPerformanceBaselineFromHistory(balance, trades)
+export function computePerformanceBaselineBalance(
+  summary: FxsocketAccountSummary,
+  trades?: FxsocketBrokerTradeRow[],
+): number | null {
+  void trades
+  return snapshotLinkTimeBalance(summary)
 }
 
 /**
- * Returns the baseline balance to persist, or null when no update is needed / possible.
- * New links capture inferred/deposit baseline; existing link-time baselines are kept
- * unless MT deposit history reconciles a better figure.
+ * Returns the baseline balance to persist on first connect, or null when already set.
  */
 export function resolvePerformanceBaselineBalance(
   existing: number | null | undefined,
   summary: FxsocketAccountSummary,
-  trades?: FxsocketBrokerTradeRow[],
+  _trades?: FxsocketBrokerTradeRow[],
 ): number | null {
-  const computed = computePerformanceBaselineBalance(summary, trades)
-  if (computed == null) return null
-
-  if (!hasPerformanceBaseline(existing)) return computed
-
-  if (!trades?.length || !trades.some(isMtClosedDealForOutcome)) return null
-
-  const balanceRaw = summary.balance ?? summary.equity
-  if (balanceRaw == null || !Number.isFinite(Number(balanceRaw))) return null
-  const balance = Number(balanceRaw)
-
-  const { initialDeposit, subsequentCashFlow } = splitBalanceCashFlows(trades)
-  if (initialDeposit <= 0) return null
-
-  const netPnl = sumRealizedClosedNetProfit(trades)
-  const depositResidual = Math.abs(balance - initialDeposit - netPnl - subsequentCashFlow)
-  const depositRounded = Math.round(initialDeposit * 100) / 100
-  const stored = Number(existing)
-
-  if (depositResidual <= BASELINE_EPSILON) {
-    if (Math.abs(stored - depositRounded) <= BASELINE_EPSILON) return null
-    return depositRounded
-  }
-
-  if (initialDeposit > stored + BASELINE_EPSILON) return depositRounded
-
-  return null
+  void _trades
+  if (hasPerformanceBaseline(existing)) return null
+  return snapshotLinkTimeBalance(summary)
 }

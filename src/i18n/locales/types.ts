@@ -141,6 +141,8 @@ export interface DashboardBrokerStatsTranslations {
   notFound: string
   initialBalance: string
   initialBalanceHint: string
+  connectedAt: string
+  connectedAtHint: string
   currentBalance: string
   currentEquity: string
   totalProfit: string
@@ -311,17 +313,7 @@ export interface AccountConfigConnectFormTranslations {
   platformMt4: string
   brokerServerLabel: string
   brokerServerHint: string
-  brokerCompanySearchPlaceholder: string
-  brokerCompanySearchEmpty: string
-  brokerCompanySearchMinChars: string
-  brokerCompanySearchNoResults: string
-  brokerCompanySearchLoading: string
-  brokerCompanySearchError: string
-  brokerServerPickerTitle: string
-  brokerServerSelectPrompt: string
-  brokerServerManualToggle: string
-  brokerServerManualLabel: string
-  brokerServerManualHint: string
+  brokerServerPlaceholder: string
   mtLoginLabel: string
   mtLoginPlaceholder: string
   passwordLabel: string
