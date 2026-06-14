@@ -376,6 +376,14 @@ Deno.serve(async (req: Request) => {
       return Response.json({ ok: true, symbol_info: info }, { headers: corsHeaders })
     }
 
+    if (action === "live_snapshot") {
+      const accountRowId = String(body.account_id ?? body.broker_id ?? "")
+      if (!accountRowId) return bad(400, "account_id required")
+      const row = await loadOwnedBrokerRow(supabase, userId, accountRowId)
+      const summary = await fx.accountSummary(row.fxsocket_account_id)
+      return Response.json({ ok: true, summary }, { headers: corsHeaders })
+    }
+
     if (action === "stream_ticket") {
       const accountRowId = String(body.account_id ?? body.broker_id ?? "")
       if (!accountRowId) return bad(400, "account_id required")

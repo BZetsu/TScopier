@@ -3,6 +3,7 @@ import {
   parseFxsocketAccountStreamData,
   parseFxsocketOpenPositionCount,
   parseFxsocketPositionsStreamData,
+  resolveFxsocketFloatingOpenPnl,
   shouldApplyAccountStreamOpenPnl,
   sumOpenPnlByBroker,
   countOpenMarketPositionsByBroker,
@@ -130,5 +131,17 @@ describe('countOpenMarketPositionsByBroker', () => {
       { broker_id: 'b', status: 'closed', type: 'Sell' },
     ])
     expect(counts).toEqual({ a: 1 })
+  })
+})
+
+describe('resolveFxsocketFloatingOpenPnl', () => {
+  it('prefers equity minus balance when explicit profit is misleading zero', () => {
+    const pnl = resolveFxsocketFloatingOpenPnl({
+      balance: 1000,
+      equity: 1012.34,
+      openPnl: 0,
+      openPnlSource: 'explicit',
+    }, 3)
+    expect(pnl).toBeCloseTo(12.34)
   })
 })

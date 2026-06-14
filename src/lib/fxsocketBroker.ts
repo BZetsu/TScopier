@@ -267,6 +267,33 @@ export const fxsocketBroker = {
     })
   },
 
+  /** Lightweight AccountSummary poll — no baseline/history work (for live Open P/L). */
+  liveSnapshot(accountId: string): Promise<{ summary: AccountSummary }> {
+    return call({
+      body: { action: 'live_snapshot', account_id: accountId },
+      timeoutMs: 12_000,
+      expect: (b) => {
+        const row = b as { summary?: AccountSummary }
+        const summary = row.summary
+        if (!summary || typeof summary !== 'object') throw new Error('Live snapshot missing summary')
+        return { summary }
+      },
+    })
+  },
+
+  /** Worker WS URL from server WORKER_PUBLIC_URL (trade worker with /broker/stream). */
+  streamTicket(accountId: string): Promise<{ ws_url: string }> {
+    return call({
+      body: { action: 'stream_ticket', account_id: accountId },
+      expect: (b) => {
+        const row = b as { ws_url?: string }
+        const ws_url = String(row.ws_url ?? '').trim()
+        if (!ws_url) throw new Error('stream_ticket did not return ws_url')
+        return { ws_url }
+      },
+    })
+  },
+
   openedOrders(accountId: string): Promise<unknown[]> {
     return call({
       body: { action: 'opened_orders', account_id: accountId },

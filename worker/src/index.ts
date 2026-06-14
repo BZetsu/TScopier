@@ -140,7 +140,15 @@ async function main() {
     }
     if (httpServer) {
       const streamManager = getFxsocketStreamManager()
-      if (streamManager) attachBrokerStreamProxy(httpServer, supabase, streamManager)
+      if (streamManager) {
+        attachBrokerStreamProxy(httpServer, supabase, streamManager)
+        console.log('[worker] broker stream proxy attached at /broker/stream')
+      } else {
+        console.error(
+          '[worker] broker stream proxy DISABLED — set FXSOCKET_API_KEY on this trade worker'
+          + ' and point WORKER_PUBLIC_URL / VITE_WORKER_URL here (not the listener service)',
+        )
+      }
     }
 
     const queueCfg = signalQueueConfig()

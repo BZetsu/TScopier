@@ -1,4 +1,4 @@
-import { ensureFreshAuthSession } from './fxsocketBroker'
+import { ensureFreshAuthSession, fxsocketBroker } from './fxsocketBroker'
 import { normalizeFxsocketStreamMessage } from './fxsocketStreamNormalize'
 import type { FxsocketStreamMessage, FxsocketStreamSubscribeFrame, FxsocketStreamTopic } from './fxsocketStreamTypes'
 
@@ -12,11 +12,9 @@ export interface FxsocketStreamHandle {
   unsubscribe(frame: Omit<FxsocketStreamSubscribeFrame, 'action'>): void
 }
 
-function workerStreamUrl(brokerAccountId: string, token: string): string {
-  const raw = String(import.meta.env.VITE_WORKER_URL ?? '').trim().replace(/\/+$/, '')
-  if (!raw) throw new Error('VITE_WORKER_URL is not configured')
-  const httpBase = raw.startsWith('http') ? raw : `https://${raw}`
-  const u = new URL(httpBase)
+function workerStreamUrlFromBase(brokerAccountId: string, token: string, base: string): string {
+  const httpBase = base.startsWith('http') ? base : `https://${base}`
+  const u = new URL(httpBase.replace(/\/+$/, ''))
   u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:'
   u.pathname = '/broker/stream'
   u.search = new URLSearchParams({
@@ -24,6 +22,19 @@ function workerStreamUrl(brokerAccountId: string, token: string): string {
     token,
   }).toString()
   return u.toString()
+}
+
+async function resolveBrokerStreamUrl(brokerAccountId: string, token: string): Promise<string> {
+  try {
+    const { ws_url } = await fxsocketBroker.streamTicket(brokerAccountId)
+    const u = new URL(ws_url)
+    u.searchParams.set('token', token)
+    return u.toString()
+  } catch {
+    const raw = String(import.meta.env.VITE_WORKER_URL ?? '').trim()
+    if (!raw) throw new Error('VITE_WORKER_URL is not configured and stream_ticket failed')
+    return workerStreamUrlFromBase(brokerAccountId, token, raw)
+  }
 }
 
 export async function openFxsocketStream(
@@ -68,7 +79,7 @@ export async function openFxsocketStream(
     connecting = true
     try {
       const token = await ensureFreshAuthSession()
-      const url = workerStreamUrl(brokerAccountId, token)
+      const url = await resolveBrokerStreamUrl(brokerAccountId, token)
       try { ws?.close() } catch { /* ignore */ }
       const socket = new WebSocket(url)
       ws = socket
@@ -96,8 +107,9 @@ export async function openFxsocketStream(
         notifyState(false)
         if (!closed) scheduleReconnect()
       }
-    } catch {
+    } catch (err) {
       connecting = false
+      handlers.onError?.(err instanceof Error ? err.message : 'Live broker stream setup failed')
       if (!closed) scheduleReconnect()
     }
   }

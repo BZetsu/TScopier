@@ -72,6 +72,20 @@ export function shouldApplyAccountStreamOpenPnl(
   return false
 }
 
+/** Best floating P/L from account summary / WS account topic (profit or equity − balance). */
+export function resolveFxsocketFloatingOpenPnl(
+  snap: FxsocketAccountStreamSnapshot,
+  openTrades = 0,
+): number | undefined {
+  if (shouldApplyAccountStreamOpenPnl(snap, openTrades) && snap.openPnl != null) {
+    return snap.openPnl
+  }
+  if (snap.balance != null && snap.equity != null) {
+    return Math.round((snap.equity - snap.balance) * 100) / 100
+  }
+  return undefined
+}
+
 export interface FxsocketPositionsStreamSnapshot {
   openTrades: number
   openPnl?: number

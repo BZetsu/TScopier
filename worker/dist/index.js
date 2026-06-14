@@ -127,8 +127,14 @@ async function main() {
         }
         if (httpServer) {
             const streamManager = (0, fxsocketStreamManager_1.getFxsocketStreamManager)();
-            if (streamManager)
+            if (streamManager) {
                 (0, brokerStreamProxy_1.attachBrokerStreamProxy)(httpServer, supabase, streamManager);
+                console.log('[worker] broker stream proxy attached at /broker/stream');
+            }
+            else {
+                console.error('[worker] broker stream proxy DISABLED — set FXSOCKET_API_KEY on this trade worker'
+                    + ' and point WORKER_PUBLIC_URL / VITE_WORKER_URL here (not the listener service)');
+            }
         }
         const queueCfg = (0, signalQueueConfig_1.signalQueueConfig)();
         if (queueCfg.enabled && (0, signalQueueConfig_1.redisQueueConfigured)()) {

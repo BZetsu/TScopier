@@ -30,7 +30,8 @@ import {
 import {
   countOpenMarketPositionsByBroker,
   isFxsocketMarketPositionRow,
-  shouldApplyAccountStreamOpenPnl,
+  parseFxsocketAccountStreamData,
+  resolveFxsocketFloatingOpenPnl,
   sumOpenPnlByBroker,
   unwrapFxsocketPositionsPayload,
   type FxsocketAccountStreamSnapshot,
@@ -551,7 +552,6 @@ function mergeDashboardStats(
     trustOpenTrades?: boolean
     preserveMtTradeCounts?: boolean
     preserveMtPnl?: boolean
-    preserveLiveOpenPnl?: boolean
   },
 ): DashboardStats {
   if (authoritative) {
@@ -586,7 +586,7 @@ function mergeDashboardStats(
     ...next,
     totalEquity: keepBalance(prev.totalEquity, next.totalEquity),
     portfolioValue: keepBalance(prev.portfolioValue, next.portfolioValue),
-    openPnl: opts?.preserveLiveOpenPnl ? prev.openPnl : keepBalance(prev.openPnl, next.openPnl),
+    openPnl: keepBalance(prev.openPnl, next.openPnl),
     openPositions: keepOpenCount(prev.openPositions, next.openPositions),
     openTrades: keepOpenCount(prev.openTrades, next.openTrades),
     todayProfit: keepPnl(prev.todayProfit, next.todayProfit),
@@ -754,6 +754,7 @@ export function DashboardPage() {
   const liveBrokerStateRef = useRef<Record<string, { open_pnl?: number; open_trades?: number }>>({})
   const positionBooksRef = useRef<Record<string, FxsocketPositionBook>>({})
   const wsMarkedConnectedRef = useRef(new Set<string>())
+  const lastWsTickRef = useRef<Record<string, number>>({})
   const liveMetricsRafRef = useRef(0)
   if (bootCache?.linkedAccountBalances && Object.keys(liveBrokerStateRef.current).length === 0) {
     seedLiveBrokerStateFromBalances(
@@ -1332,6 +1333,17 @@ export function DashboardPage() {
       mostTradedAsset,
       yesterdayMostTradedAsset,
     }
+    const stickyOpenPnl = brokerAccounts.reduce((sum, account) => {
+      const p = liveBrokerStateRef.current[account.id]?.open_pnl
+      return sum + (p != null && Number.isFinite(p) ? p : 0)
+    }, 0)
+    if (
+      brokerAccounts.some(
+        account => liveBrokerStateRef.current[account.id]?.open_pnl != null,
+      )
+    ) {
+      nextStats.openPnl = stickyOpenPnl
+    }
     if (fresh && generation !== loadGenerationRef.current) return
 
     const aiLogs = dedupePipelineParseAttempts((aiLogsRes.data ?? []) as AiExpertLogRow[])
@@ -1345,7 +1357,6 @@ export function DashboardPage() {
       trustOpenTrades: brokerAccounts.some(isFxsocketLinkedBroker) || hasAnyBrokerOpenTradesFromSummary,
       preserveMtTradeCounts: mtBrokerConnected,
       preserveMtPnl: mtBrokerConnected && !useMtTrades,
-      preserveLiveOpenPnl: wsMarkedConnectedRef.current.size > 0,
       mtHasClosedTrades: useMtTrades
         ? sourceTrades.some(t => t.status === 'closed')
         : undefined,
@@ -1479,8 +1490,13 @@ export function DashboardPage() {
     flushLiveBrokerMetrics()
   }
 
+  const markWsTick = (brokerId: string) => {
+    lastWsTickRef.current[brokerId] = Date.now()
+  }
+
   useFxsocketStream(linkedAccounts, {
     onAccount: (brokerId, snap) => {
+      markWsTick(brokerId)
       const wasWsLive = wsMarkedConnectedRef.current.has(brokerId)
       wsMarkedConnectedRef.current.add(brokerId)
       if (
@@ -1493,18 +1509,7 @@ export function DashboardPage() {
         })
       }
       const openTrades = linkedBalancesRef.current[brokerId]?.open_trades ?? 0
-      let openPnlToApply: number | undefined
-      if (shouldApplyAccountStreamOpenPnl(snap, openTrades)) {
-        openPnlToApply = snap.openPnl
-      } else if (
-        openTrades > 0
-        && snap.balance != null
-        && snap.equity != null
-        && Number.isFinite(snap.balance)
-        && Number.isFinite(snap.equity)
-      ) {
-        openPnlToApply = Math.round((snap.equity - snap.balance) * 100) / 100
-      }
+      const openPnlToApply = resolveFxsocketFloatingOpenPnl(snap, openTrades)
       const snapForBalances = openPnlToApply != null
         ? { ...snap, openPnl: openPnlToApply }
         : { ...snap, openPnl: undefined }
@@ -1523,6 +1528,7 @@ export function DashboardPage() {
       flushLiveBrokerMetrics()
     },
     onPositions: (brokerId, snapshot, rawData) => {
+      markWsTick(brokerId)
       wsMarkedConnectedRef.current.add(brokerId)
       const rows = unwrapFxsocketPositionsPayload(rawData)
       if (rows.length === 0) {
@@ -1545,6 +1551,7 @@ export function DashboardPage() {
       })
     },
     onTrade: (brokerId, data) => {
+      markWsTick(brokerId)
       wsMarkedConnectedRef.current.add(brokerId)
       const book = positionBooksRef.current[brokerId] ?? new Map()
       mergePositionRowIntoBook(book, data)
@@ -1556,6 +1563,54 @@ export function DashboardPage() {
       })
     },
   }, linkedAccounts.some(isFxsocketLinkedBroker))
+
+  /** REST fallback when WS is quiet — keeps Open P/L moving without a full page refresh. */
+  useEffect(() => {
+    const accounts = linkedAccounts.filter(isFxsocketLinkedBroker)
+    if (accounts.length === 0) return
+
+    let cancelled = false
+    const pollLiveSnapshots = async () => {
+      const now = Date.now()
+      for (const account of accounts) {
+        if (cancelled) return
+        const lastWs = lastWsTickRef.current[account.id] ?? 0
+        if (now - lastWs < 2500) continue
+        try {
+          const { summary } = await fxsocketBroker.liveSnapshot(account.id)
+          if (cancelled) return
+          const snap = parseFxsocketAccountStreamData(summary as Record<string, unknown>)
+          const openTrades = linkedBalancesRef.current[account.id]?.open_trades ?? 0
+          const openPnl = resolveFxsocketFloatingOpenPnl(snap, openTrades)
+          const nextBalances = applyFxsocketAccountStreamUpdate(
+            account.id,
+            openPnl != null ? { ...snap, openPnl } : snap,
+            linkedBalancesRef.current,
+          )
+          linkedBalancesRef.current = nextBalances
+          if (openPnl != null) {
+            liveBrokerStateRef.current[account.id] = {
+              ...liveBrokerStateRef.current[account.id],
+              open_pnl: openPnl,
+            }
+          }
+          flushLiveBrokerMetrics()
+        } catch {
+          /* WS or next poll will retry */
+        }
+      }
+    }
+
+    const intervalId = window.setInterval(() => {
+      void pollLiveSnapshots()
+    }, 2000)
+    void pollLiveSnapshots()
+
+    return () => {
+      cancelled = true
+      window.clearInterval(intervalId)
+    }
+  }, [linkedAccounts.map(a => a.id).sort().join(',')])
 
   useDashboardRealtime(user?.id, () => refreshQuietRef.current(), broker => {
     replaceBroker(broker)
