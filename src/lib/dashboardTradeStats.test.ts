@@ -2,6 +2,7 @@ import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
 import {
   computeLinkedAccountPerformance,
+  computeLinkedAccountPerformanceMap,
   countClosedTradeOutcomesInRange,
   isBalanceCashFlowRow,
   isTradeableClosedRow,
@@ -283,4 +284,49 @@ test('computeLinkedAccountPerformance: ROI from realized trades ignores deposit-
     50_000,
   )
   assert.equal(perf.roi, 2)
+})
+
+test('computeLinkedAccountPerformanceMap: win rate and drawdown ignore pre-connect trades', () => {
+  const account = {
+    id: 'broker-1',
+    performance_baseline_balance: 10_000,
+    performance_baseline_captured_at: '2026-06-14T00:00:00.000Z',
+    created_at: '2026-01-01T00:00:00.000Z',
+  }
+  const tradesByAccountId = {
+    'broker-1': [
+      {
+        status: 'closed',
+        symbol: 'XAUUSD',
+        lot_size: 0.1,
+        direction: 'buy',
+        profit: -500,
+        opened_at: '2026-06-01T10:00:00.000Z',
+        closed_at: '2026-06-01T12:00:00.000Z',
+      },
+      {
+        status: 'closed',
+        symbol: 'XAUUSD',
+        lot_size: 0.1,
+        direction: 'buy',
+        profit: 200,
+        opened_at: '2026-06-15T10:00:00.000Z',
+        closed_at: '2026-06-15T12:00:00.000Z',
+      },
+      {
+        status: 'closed',
+        symbol: 'EURUSD',
+        lot_size: 0.1,
+        direction: 'sell',
+        profit: 100,
+        opened_at: '2026-06-16T10:00:00.000Z',
+        closed_at: '2026-06-16T12:00:00.000Z',
+      },
+    ],
+  }
+
+  const perf = computeLinkedAccountPerformanceMap([account], tradesByAccountId, {})['broker-1']
+  assert.equal(perf?.winRate, 100)
+  assert.equal(perf?.roi, 3)
+  assert.equal(perf?.maxDrawdownPct, 0)
 })

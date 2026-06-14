@@ -68,6 +68,7 @@ function statsRowsForBroker(trades: MtTrade[]): TradeStatsRow[] {
     status: t.status,
     profit: t.profit,
     closed_at: t.closed_at,
+    opened_at: t.opened_at,
     symbol: t.symbol,
     lot_size: t.lot_size,
     direction: t.direction,

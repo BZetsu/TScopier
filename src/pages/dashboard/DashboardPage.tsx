@@ -47,6 +47,7 @@ import {
   type LinkedAccountPerformance,
   type TradeStatsRow,
 } from '../../lib/dashboardTradeStats'
+import { filterMtTradesSinceConnect } from '../../lib/tradesSinceConnect'
 import {
   buildCopierLogSymbolLabels,
   buildSignalSymbolLookup,
@@ -234,6 +235,7 @@ function mtTradesToStatsByAccount(trades: MtTrade[]): Record<string, TradeStatsR
       status: t.status,
       profit: t.profit,
       closed_at: t.closed_at,
+      opened_at: t.opened_at,
       symbol: t.symbol,
       lot_size: t.lot_size,
       direction: t.direction,
@@ -836,8 +838,11 @@ function applyDashboardCacheSnapshot(
   if (chart.length) handlers.setChartTrades(chart)
   if (cached.aiExpertLogs?.length) handlers.setAiExpertLogs(cached.aiExpertLogs)
   if (cached.mtTrades?.length) {
-    handlers.setMtTrades(cached.mtTrades)
-    handlers.mtTradesRef.current = cached.mtTrades
+    const scopedMtTrades = cached.linkedAccounts?.length
+      ? filterMtTradesSinceConnect(cached.mtTrades, cached.linkedAccounts)
+      : cached.mtTrades
+    handlers.setMtTrades(scopedMtTrades)
+    handlers.mtTradesRef.current = scopedMtTrades
   }
   if (cached.channelLinkMaps) handlers.setChannelLinkMaps(normalizeChannelLinkMaps(cached.channelLinkMaps))
   if (cached.cachedAnalytics) handlers.setCachedAnalytics(cached.cachedAnalytics)
@@ -1097,6 +1102,7 @@ export function DashboardPage() {
           status: t.status,
           profit: t.profit,
           closed_at: t.closed_at,
+          opened_at: t.opened_at,
           symbol: t.symbol,
           lot_size: t.lot_size,
           direction: t.direction,
@@ -1856,10 +1862,11 @@ export function DashboardPage() {
       if (trades.length === 0) return
     }
 
-    const resolvedTrades = trades.length > 0 ? trades : (mtTradesRef.current ?? [])
+    const rawTrades = trades.length > 0 ? trades : (mtTradesRef.current ?? [])
+    const resolvedTrades = filterMtTradesSinceConnect(rawTrades, sourceAccounts)
     if (trades.length > 0) {
-      mtTradesRef.current = trades
-      setMtTrades(trades)
+      mtTradesRef.current = resolvedTrades
+      setMtTrades(resolvedTrades)
     }
     if (resolvedTrades.length === 0) return
 
@@ -1941,6 +1948,7 @@ export function DashboardPage() {
       status: t.status ?? 'closed',
       profit: t.profit,
       closed_at: t.closed_at,
+      opened_at: t.opened_at,
       symbol: t.symbol,
       lot_size: t.lot_size,
       direction: t.direction,

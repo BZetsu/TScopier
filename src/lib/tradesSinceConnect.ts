@@ -9,7 +9,9 @@ export type BrokerConnectAnchor = Pick<
 
 /** UTC ms when TSCopier first linked this broker (baseline capture, else account created). */
 export function resolveBrokerConnectMs(
-  account: Pick<BrokerAccount, 'performance_baseline_captured_at' | 'created_at'>,
+  account: Pick<BrokerAccount, 'performance_baseline_captured_at'> & {
+    created_at?: string | null
+  },
 ): number | null {
   const raw = account.performance_baseline_captured_at?.trim() || account.created_at?.trim()
   if (!raw) return null
@@ -57,4 +59,37 @@ export function filterMtTradesSinceConnect(
   const connectMsByBrokerId = buildBrokerConnectMsMap(accounts)
   if (connectMsByBrokerId.size === 0) return trades
   return trades.filter(trade => isMtTradeSinceConnect(trade, connectMsByBrokerId))
+}
+
+export type TradeStatsConnectRow = {
+  status?: string
+  closed_at: string | null
+  opened_at?: string | null
+}
+
+/** When trade activity started for stats rows (open time preferred). */
+export function resolveTradeStatsSinceConnectMs(row: TradeStatsConnectRow): number | null {
+  const opened = parseMtHistoryTimestamp(row.opened_at)
+  if (opened != null) return opened
+  if ((row.status ?? 'closed') === 'closed') {
+    return parseMtHistoryTimestamp(row.closed_at)
+  }
+  return null
+}
+
+export function isTradeStatsRowSinceConnect(row: TradeStatsConnectRow, connectMs: number): boolean {
+  const activityMs = resolveTradeStatsSinceConnectMs(row)
+  if (activityMs == null) return (row.status ?? 'closed') === 'open'
+  return activityMs >= connectMs
+}
+
+export function filterTradeStatsRowsSinceConnect<T extends TradeStatsConnectRow>(
+  rows: T[],
+  account: Pick<BrokerAccount, 'performance_baseline_captured_at'> & {
+    created_at?: string | null
+  },
+): T[] {
+  const connectMs = resolveBrokerConnectMs(account)
+  if (connectMs == null) return rows
+  return rows.filter(row => isTradeStatsRowSinceConnect(row, connectMs))
 }

@@ -1,4 +1,5 @@
 import { isMtTimestampInRange } from './mtApiDateTime'
+import { filterTradeStatsRowsSinceConnect } from './tradesSinceConnect'
 
 /** Shared filters for dashboard closed-trade P/L and win/loss counts. */
 
@@ -6,6 +7,7 @@ export type TradeStatsRow = {
   status?: string
   profit: number | null
   closed_at: string | null
+  opened_at?: string | null
   symbol: string
   lot_size: number
   direction?: string
@@ -294,15 +296,18 @@ export function computeLinkedAccountPerformanceMap(
     id: string
     performance_baseline_balance?: number | null
     last_balance?: number | null
+    performance_baseline_captured_at?: string | null
+    created_at?: string | null
   }>,
   tradesByAccountId: Record<string, TradeStatsRow[]>,
   equityByAccountId: Record<string, number | undefined>,
 ): Record<string, LinkedAccountPerformance> {
   const out: Record<string, LinkedAccountPerformance> = {}
   for (const account of accounts) {
+    const scoped = filterTradeStatsRowsSinceConnect(tradesByAccountId[account.id] ?? [], account)
     out[account.id] = computeLinkedAccountPerformance(
       account,
-      tradesByAccountId[account.id] ?? [],
+      scoped,
       equityByAccountId[account.id],
     )
   }
