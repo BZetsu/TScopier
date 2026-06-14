@@ -13,6 +13,7 @@ import { HelpSidebarNav } from './HelpSidebarNav'
 import { NotificationBell } from './NotificationBell'
 import { CopierPauseToggle } from './CopierPauseToggle'
 import { UserMenuDropdown } from './UserMenuDropdown'
+import { DashboardKeepAlive } from './DashboardKeepAlive'
 import { useUserProfile } from '../../context/UserProfileContext'
 import { useSubscription } from '../../context/SubscriptionContext'
 import { useHasOpenTrades } from '../../hooks/useHasOpenTrades'
@@ -31,6 +32,8 @@ export function AppLayout() {
   const { user, signOut } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
+  const onDashboardRoute = location.pathname === '/dashboard'
+    || location.pathname.startsWith('/dashboard/broker/')
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [notificationsOpen, setNotificationsOpen] = useState(false)
@@ -441,7 +444,8 @@ export function AppLayout() {
             'lg:pt-0',
           )}
         >
-          <Outlet />
+          <DashboardKeepAlive />
+          {!onDashboardRoute && <Outlet />}
         </main>
       </div>
     </div>

@@ -19,12 +19,6 @@ import { AppBanner } from './components/layout/AppBanner'
 const AppPricingPage = lazy(() =>
   import('./pages/pricing/AppPricingPage').then(m => ({ default: m.AppPricingPage })),
 )
-const DashboardPage = lazy(() =>
-  import('./pages/dashboard/DashboardPage').then(m => ({ default: m.DashboardPage })),
-)
-const BrokerStatsOverlay = lazy(() =>
-  import('./pages/dashboard/BrokerStatsOverlay').then(m => ({ default: m.BrokerStatsOverlay })),
-)
 const AccountConfigPage = lazy(() =>
   import('./pages/dashboard/AccountConfigPage').then(m => ({ default: m.AccountConfigPage })),
 )
@@ -83,6 +77,10 @@ function LazyPage({ children }: { children: React.ReactNode }) {
   return <Suspense fallback={<PageLoader />}>{children}</Suspense>
 }
 
+function DashboardRouteAnchor() {
+  return null
+}
+
 export default function App() {
   return (
     <AuthProvider>
@@ -116,9 +114,8 @@ export default function App() {
             }
           >
             <Route path="/pricing" element={<LazyPage><AppPricingPage /></LazyPage>} />
-            <Route path="/dashboard" element={<LazyPage><DashboardPage /></LazyPage>}>
-              <Route path="broker/:brokerId" element={<LazyPage><BrokerStatsOverlay /></LazyPage>} />
-            </Route>
+            {/* Dashboard UI is kept alive in AppShell via DashboardKeepAlive */}
+            <Route path="/dashboard/*" element={<DashboardRouteAnchor />} />
             <Route path="/welcome" element={<WelcomePage />} />
             <Route path="/account-configuration" element={<LazyPage><AccountConfigPage /></LazyPage>} />
             <Route path="/brokers" element={<Navigate to="/account-configuration" replace />} />

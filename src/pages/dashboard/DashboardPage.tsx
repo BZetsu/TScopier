@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from 'react'
 import { Link, Outlet, useNavigate } from 'react-router-dom'
 import { ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, Clock, Plus, RefreshCw } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
@@ -61,7 +61,10 @@ import {
   getDashboardActiveUserId,
   isDashboardSessionLoaded,
   markDashboardSessionLoaded,
+  readDashboardMemoryCache,
+  resolveDashboardCacheUserId,
   setDashboardActiveUserId,
+  writeDashboardMemoryCache,
 } from '../../lib/dashboardSessionCache'
 import { brokerStatsPreviewFromAccount } from '../../lib/brokerStatsNavigation'
 import { syncPerformanceCacheFromDashboard } from '../../lib/performanceCacheBridge'
@@ -75,6 +78,7 @@ import {
   deriveDashboardAnalytics,
   preferAuthoritativeChartTrades,
   resolveAnalyticsChartTrades,
+  type DashboardAnalytics,
 } from '../../lib/dashboardAnalytics'
 import {
   buildPerformanceChannelLinkMaps,
@@ -478,6 +482,7 @@ type DashboardCachePayload = {
   aiExpertLogs?: AiExpertLogRow[]
   mtTrades?: MtTrade[]
   channelLinkMaps?: PerformanceChannelLinkMaps
+  cachedAnalytics?: DashboardAnalytics
   cachedDay?: string
   cachedAt?: number
 }
@@ -515,11 +520,93 @@ const DEFAULT_DASHBOARD_STATS: DashboardStats = {
   yesterdayMostTradedAsset: '—',
 }
 
-function readBootstrapDashboardCache(expectedUserId: string | null | undefined): DashboardCachePayload | null {
-  if (typeof sessionStorage === 'undefined' || !expectedUserId) return null
-  const userId = sessionStorage.getItem(DASHBOARD_ACTIVE_USER_KEY)
-  if (!userId || userId !== expectedUserId) return null
-  return readDashboardCache(userId)
+function readBootstrapDashboardCache(authUserId?: string | null): DashboardCachePayload | null {
+  const userId = resolveDashboardCacheUserId(authUserId)
+  if (!userId) return null
+  if (authUserId && userId !== authUserId) return null
+
+  const memory = readDashboardMemoryCache<DashboardCachePayload>(userId)
+  if (memory?.stats) return memory
+
+  const fromStorage = readDashboardCache(userId)
+  if (fromStorage?.stats) {
+    writeDashboardMemoryCache(userId, fromStorage)
+  }
+  return fromStorage
+}
+
+function bootChartTrades(cached: DashboardCachePayload | null): DashboardChartTrade[] {
+  if (!cached) return []
+  if (cached.chartTrades?.length) return cached.chartTrades
+  if (cached.mtTrades?.length) return resolveDashboardChartTrades(cached.mtTrades, [])
+  return []
+}
+
+const EMPTY_CHANNEL_LINK_MAPS: PerformanceChannelLinkMaps = {
+  ticketToChannelId: {},
+  signalPrefixToChannelId: {},
+  channelSlugToChannelId: {},
+  channelNames: {},
+}
+
+function bootDashboardChartsReady(cached: DashboardCachePayload | null): boolean {
+  if (!cached?.stats) return false
+  if (hasDashboardAnalyticsData(cached.cachedAnalytics)) return true
+  if (bootChartTrades(cached).length > 0 || (cached.mtTrades?.length ?? 0) > 0) return true
+  return !cached.linkedAccounts?.some(isFxsocketLinkedBroker)
+}
+
+function hasDashboardAnalyticsData(analytics: DashboardAnalytics | null | undefined): boolean {
+  if (!analytics) return false
+  return analytics.tradeVolume7Day.some(d => d.profit !== 0 || d.loss !== 0)
+    || analytics.channelProfit7d.length > 0
+    || analytics.tradesTaken > 0
+    || analytics.todayProfit !== 0
+}
+
+function computeDashboardAnalyticsSnapshot(
+  chartTrades: DashboardChartTrade[],
+  mtTrades: MtTrade[],
+  channelLinkMaps: PerformanceChannelLinkMaps,
+  unlinkedLabel: string,
+): DashboardAnalytics {
+  return deriveDashboardAnalytics({
+    chartTrades,
+    mtTrades,
+    channelLinkMaps,
+    unlinkedLabel,
+  })
+}
+
+function mergeDashboardCachePayload(
+  incoming: DashboardCachePayload,
+  existing: DashboardCachePayload | null,
+): DashboardCachePayload {
+  const chartTrades = incoming.chartTrades?.length ? incoming.chartTrades : existing?.chartTrades
+  const mtTrades = incoming.mtTrades?.length ? incoming.mtTrades : existing?.mtTrades
+  const channelLinkMaps = incoming.channelLinkMaps
+    && Object.keys(incoming.channelLinkMaps.channelNames ?? {}).length > 0
+    ? incoming.channelLinkMaps
+    : existing?.channelLinkMaps
+  let cachedAnalytics = incoming.cachedAnalytics
+  if (!hasDashboardAnalyticsData(cachedAnalytics) && (chartTrades?.length || mtTrades?.length)) {
+    cachedAnalytics = computeDashboardAnalyticsSnapshot(
+      chartTrades ?? [],
+      mtTrades ?? [],
+      channelLinkMaps ?? EMPTY_CHANNEL_LINK_MAPS,
+      'Unlinked',
+    )
+  }
+  if (!hasDashboardAnalyticsData(cachedAnalytics)) {
+    cachedAnalytics = existing?.cachedAnalytics ?? cachedAnalytics
+  }
+  return {
+    ...incoming,
+    chartTrades,
+    mtTrades,
+    channelLinkMaps,
+    cachedAnalytics,
+  }
 }
 
 function statsFromDashboardCache(cached: DashboardCachePayload | null): DashboardStats {
@@ -621,12 +708,36 @@ function applyAuthoritativeChartTrades(
 }
 
 function writeDashboardCache(userId: string, payload: DashboardCachePayload) {
-  sessionStorage.setItem(DASHBOARD_ACTIVE_USER_KEY, userId)
-  sessionStorage.setItem(`${DASHBOARD_CACHE_VERSION}:${userId}`, JSON.stringify({
-    ...payload,
+  const existing = readDashboardMemoryCache<DashboardCachePayload>(userId) ?? readDashboardCache(userId)
+  const merged = mergeDashboardCachePayload(payload, existing)
+  const envelope: DashboardCachePayload = {
+    ...merged,
     cachedDay: formatLocalCalendarDay(),
     cachedAt: Date.now(),
-  }))
+  }
+  writeDashboardMemoryCache(userId, envelope)
+  sessionStorage.setItem(DASHBOARD_ACTIVE_USER_KEY, userId)
+  const slimForStorage: DashboardCachePayload = {
+    ...envelope,
+    mtTrades: undefined,
+    chartTrades: envelope.chartTrades?.length && JSON.stringify(envelope.chartTrades).length < 400_000
+      ? envelope.chartTrades
+      : undefined,
+  }
+  try {
+    sessionStorage.setItem(`${DASHBOARD_CACHE_VERSION}:${userId}`, JSON.stringify(slimForStorage))
+  } catch {
+    try {
+      sessionStorage.setItem(`${DASHBOARD_CACHE_VERSION}:${userId}`, JSON.stringify({
+        ...slimForStorage,
+        chartTrades: undefined,
+        copierLogs: slimForStorage.copierLogs?.slice(0, 10),
+        aiExpertLogs: slimForStorage.aiExpertLogs?.slice(0, 10),
+      }))
+    } catch {
+      /* memory cache still holds the full snapshot for this tab */
+    }
+  }
   syncPerformanceCacheFromDashboard(userId)
   markDashboardSessionLoaded(userId)
 }
@@ -693,6 +804,7 @@ type DashboardCacheApplyHandlers = {
   setMtTrades: (trades: MtTrade[]) => void
   setAiExpertLogs: (logs: AiExpertLogRow[]) => void
   setChannelLinkMaps: (maps: PerformanceChannelLinkMaps) => void
+  setCachedAnalytics: (analytics: DashboardAnalytics | null) => void
   setDashboardChartsReady: (ready: boolean) => void
   liveBrokerStateRef: MutableRefObject<Record<string, { open_pnl?: number; open_trades?: number }>>
   mtTradesRef: MutableRefObject<MtTrade[] | null>
@@ -719,20 +831,18 @@ function applyDashboardCacheSnapshot(
   const balances = cached.linkedAccountBalances ?? {}
   handlers.linkedBalancesRef.current = balances
   handlers.setLinkedAccountBalances(balances)
-  if (cached.chartTrades?.length) {
-    handlers.setChartTrades(cached.chartTrades)
-  } else if (cached.mtTrades?.length) {
-    handlers.setChartTrades(resolveDashboardChartTrades(cached.mtTrades, []))
-  }
+  const chart = bootChartTrades(cached)
+  if (chart.length) handlers.setChartTrades(chart)
   if (cached.aiExpertLogs?.length) handlers.setAiExpertLogs(cached.aiExpertLogs)
   if (cached.mtTrades?.length) {
     handlers.setMtTrades(cached.mtTrades)
     handlers.mtTradesRef.current = cached.mtTrades
   }
   if (cached.channelLinkMaps) handlers.setChannelLinkMaps(cached.channelLinkMaps)
+  if (cached.cachedAnalytics) handlers.setCachedAnalytics(cached.cachedAnalytics)
   syncPerformanceCacheFromDashboard(userId)
   seedLiveBrokerStateFromBalances(balances, handlers.liveBrokerStateRef.current, cached.linkedAccounts)
-  if ((cached.chartTrades?.length ?? 0) > 0 || (cached.mtTrades?.length ?? 0) > 0) {
+  if (bootDashboardChartsReady(cached)) {
     handlers.setDashboardChartsReady(true)
   }
 }
@@ -759,7 +869,12 @@ export function DashboardPage() {
   const { openAddTradingAccount } = useAddTradingAccount()
   const { formatMoney, formatSignedMoney } = useFormatMoney()
   const navigate = useNavigate()
-  const bootCache = useMemo(() => readBootstrapDashboardCache(user?.id), [user?.id])
+  const bootSnapshotRef = useRef<DashboardCachePayload | null>(null)
+  if (bootSnapshotRef.current === null) {
+    bootSnapshotRef.current = readBootstrapDashboardCache(user?.id)
+  }
+  const bootCache = bootSnapshotRef.current
+  const hadBootCacheRef = useRef(Boolean(bootCache?.stats))
   const [stats, setStats] = useState<DashboardStats>(() => statsFromDashboardCache(bootCache))
   const [copierLogs, setCopierLogs] = useState<Signal[]>(() => bootCache?.copierLogs ?? [])
   const [copierLogSymbols, setCopierLogSymbols] = useState<Record<string, string>>(
@@ -772,16 +887,16 @@ export function DashboardPage() {
   const [linkedAccountBalances, setLinkedAccountBalances] = useState<Record<string, BrokerBalanceSnapshot>>(
     () => bootCache?.linkedAccountBalances ?? {},
   )
-  const [chartTrades, setChartTrades] = useState<DashboardChartTrade[]>(() => bootCache?.chartTrades ?? [])
+  const [chartTrades, setChartTrades] = useState<DashboardChartTrade[]>(() => bootChartTrades(bootCache))
   const chartTradesRef = useRef(chartTrades)
   chartTradesRef.current = chartTrades
   const [mtTrades, setMtTrades] = useState<MtTrade[]>(() => bootCache?.mtTrades ?? [])
-  const [channelLinkMaps, setChannelLinkMaps] = useState<PerformanceChannelLinkMaps>({
-    ticketToChannelId: {},
-    signalPrefixToChannelId: {},
-    channelSlugToChannelId: {},
-    channelNames: {},
-  })
+  const [channelLinkMaps, setChannelLinkMaps] = useState<PerformanceChannelLinkMaps>(
+    () => bootCache?.channelLinkMaps ?? EMPTY_CHANNEL_LINK_MAPS,
+  )
+  const [cachedAnalytics, setCachedAnalytics] = useState<DashboardAnalytics | null>(
+    () => bootCache?.cachedAnalytics ?? null,
+  )
   const channelLinkMapsRef = useRef(channelLinkMaps)
   channelLinkMapsRef.current = channelLinkMaps
   const [togglingBrokerId, setTogglingBrokerId] = useState<string | null>(null)
@@ -792,12 +907,7 @@ export function DashboardPage() {
   /** Ignore stale responses when a newer *fresh* loadDashboard run started. */
   const loadGenerationRef = useRef(0)
   const dashboardReadyRef = useRef(Boolean(bootCache?.stats))
-  const bootHasMtBroker = bootCache?.linkedAccounts?.some(isFxsocketLinkedBroker)
-  const [dashboardChartsReady, setDashboardChartsReady] = useState(() => {
-    if (!bootCache) return false
-    if ((bootCache.chartTrades?.length ?? 0) > 0 || (bootCache.mtTrades?.length ?? 0) > 0) return true
-    return !bootHasMtBroker
-  })
+  const [dashboardChartsReady, setDashboardChartsReady] = useState(() => bootDashboardChartsReady(bootCache))
   const linkedBalancesRef = useRef<Record<string, BrokerBalanceSnapshot>>(bootCache?.linkedAccountBalances ?? {})
   const refreshQuietRef = useRef<() => void>(() => {})
   /** Last successful MT trades response, kept across renders so stats survive throttled refresh windows. */
@@ -827,18 +937,22 @@ export function DashboardPage() {
     statsRef.current = stats
   }, [stats])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!user?.id) return
 
     const previousUser = getDashboardActiveUserId()
     const isUserSwitch = previousUser != null && previousUser !== user.id
     if (isUserSwitch) {
       clearDashboardSessionCache(previousUser)
+      bootSnapshotRef.current = null
+      hadBootCacheRef.current = false
     }
     setDashboardActiveUserId(user.id)
 
-    const cached = readDashboardCache(user.id)
+    const cached = readBootstrapDashboardCache(user.id)
     if (cached?.stats) {
+      bootSnapshotRef.current = cached
+      hadBootCacheRef.current = true
       applyDashboardCacheSnapshot(user.id, cached, {
         setStats,
         setCopierLogs,
@@ -849,6 +963,7 @@ export function DashboardPage() {
         setMtTrades,
         setAiExpertLogs,
         setChannelLinkMaps,
+        setCachedAnalytics,
         setDashboardChartsReady,
         liveBrokerStateRef,
         mtTradesRef,
@@ -871,6 +986,10 @@ export function DashboardPage() {
       setChartTrades([])
       setMtTrades([])
       setAiExpertLogs([])
+      setChannelLinkMaps(EMPTY_CHANNEL_LINK_MAPS)
+      setCachedAnalytics(null)
+      setDashboardChartsReady(false)
+      hadBootCacheRef.current = false
     }
     dashboardReadyRef.current = false
   }, [user?.id])
@@ -892,10 +1011,19 @@ export function DashboardPage() {
     [effectiveChartTrades, mtTrades, channelLinkMaps, t.performance.unlinkedChannel],
   )
 
-  /** Headline stats: broker MT history when loaded; otherwise keep loadDashboard figures. */
+  const displayAnalytics = useMemo(() => {
+    if (hasDashboardAnalyticsData(dashboardAnalytics)) return dashboardAnalytics
+    if (hasDashboardAnalyticsData(cachedAnalytics)) return cachedAnalytics!
+    return dashboardAnalytics
+  }, [dashboardAnalytics, cachedAnalytics])
+
+  /** Headline stats: prefer display analytics (live or cached) when available. */
   const headlineStats = useMemo(() => {
-    const hasBrokerTradeHistory = mtTrades.length > 0 || effectiveChartTrades.length > 0
+    const analytics = displayAnalytics
+    const hasAnalytics = hasDashboardAnalyticsData(analytics)
+    const hasLiveTradeHistory = mtTrades.length > 0 || effectiveChartTrades.length > 0
     const openedTodayBoost = (() => {
+      if (!hasLiveTradeHistory) return 0
       const rows = mtTrades.length > 0
         ? resolveDashboardChartTrades(mtTrades, [])
         : effectiveChartTrades
@@ -905,23 +1033,17 @@ export function DashboardPage() {
     })()
     return {
       ...stats,
-      todayProfit: hasBrokerTradeHistory ? dashboardAnalytics.todayProfit : stats.todayProfit,
-      yesterdayProfit: hasBrokerTradeHistory
-        ? dashboardAnalytics.yesterdayProfit
-        : stats.yesterdayProfit,
-      tradesTaken: hasBrokerTradeHistory
-        ? Math.max(dashboardAnalytics.tradesTaken, openedTodayBoost)
+      todayProfit: hasAnalytics ? analytics.todayProfit : stats.todayProfit,
+      yesterdayProfit: hasAnalytics ? analytics.yesterdayProfit : stats.yesterdayProfit,
+      tradesTaken: hasAnalytics
+        ? Math.max(analytics.tradesTaken, openedTodayBoost)
         : stats.tradesTaken,
-      tradesTakenYesterday: hasBrokerTradeHistory
-        ? dashboardAnalytics.tradesTakenYesterday
-        : stats.tradesTakenYesterday,
-      tradesWon: hasBrokerTradeHistory ? dashboardAnalytics.tradesWon : stats.tradesWon,
-      tradesLost: hasBrokerTradeHistory ? dashboardAnalytics.tradesLost : stats.tradesLost,
-      tradesBreakeven: hasBrokerTradeHistory
-        ? dashboardAnalytics.tradesBreakeven
-        : stats.tradesBreakeven,
+      tradesTakenYesterday: hasAnalytics ? analytics.tradesTakenYesterday : stats.tradesTakenYesterday,
+      tradesWon: hasAnalytics ? analytics.tradesWon : stats.tradesWon,
+      tradesLost: hasAnalytics ? analytics.tradesLost : stats.tradesLost,
+      tradesBreakeven: hasAnalytics ? analytics.tradesBreakeven : stats.tradesBreakeven,
     }
-  }, [stats, mtTrades, effectiveChartTrades, dashboardAnalytics])
+  }, [stats, mtTrades, effectiveChartTrades, displayAnalytics])
 
   const closedProfitByAccountId = useMemo(
     () => sumClosedDealProfitByBroker(effectiveChartTrades),
@@ -1458,6 +1580,13 @@ export function DashboardPage() {
       if (fresh && generation !== loadGenerationRef.current) return
       const chartFromMt = resolveAnalyticsChartTrades(mtTradesRef.current, allTrades, mtBrokerConnected)
       if (user) {
+        const analytics = computeDashboardAnalyticsSnapshot(
+          chartFromMt.length > 0 ? chartFromMt : chartTradesRef.current,
+          mtTradesRef.current ?? [],
+          channelMaps,
+          t.performance.unlinkedChannel,
+        )
+        setCachedAnalytics(analytics)
         writeDashboardCache(user.id, {
           stats: statsRef.current,
           copierLogs: logs,
@@ -1469,9 +1598,20 @@ export function DashboardPage() {
           aiExpertLogs: aiLogs,
           mtTrades: mtTradesRef.current ?? undefined,
           channelLinkMaps: channelMaps,
+          cachedAnalytics: analytics,
         })
       }
     } else if (user) {
+      const chartForCache = mtBrokerConnected
+        ? (chartTradesRef.current.length > 0 ? chartTradesRef.current : chartFromDb)
+        : chartFromDb
+      const analytics = computeDashboardAnalyticsSnapshot(
+        chartForCache,
+        mtTradesRef.current ?? [],
+        channelMaps,
+        t.performance.unlinkedChannel,
+      )
+      setCachedAnalytics(analytics)
       writeDashboardCache(user.id, {
         stats: mergedAfterDb,
         copierLogs: logs,
@@ -1479,12 +1619,11 @@ export function DashboardPage() {
         channelDisplayNames: channelNames,
         linkedAccounts: sortedBrokerAccounts,
         linkedAccountBalances: mergedBalances,
-        chartTrades: mtBrokerConnected
-          ? (chartTradesRef.current.length > 0 ? chartTradesRef.current : chartFromDb)
-          : chartFromDb,
+        chartTrades: chartForCache,
         aiExpertLogs: aiLogs,
         mtTrades: mtTradesRef.current ?? undefined,
         channelLinkMaps: channelMaps,
+        cachedAnalytics: analytics,
       })
     }
     if (fresh && generation !== loadGenerationRef.current) return
@@ -1869,6 +2008,14 @@ export function DashboardPage() {
     statsRef.current = mtStatsPatch
     setStats(mtStatsPatch)
     if (user) {
+      const chartForCache = chartNext.length > 0 ? chartNext : chartTradesRef.current
+      const analytics = computeDashboardAnalyticsSnapshot(
+        chartForCache,
+        resolvedTrades,
+        channelLinkMapsRef.current,
+        t.performance.unlinkedChannel,
+      )
+      setCachedAnalytics(analytics)
       writeDashboardCache(user.id, {
         stats: mtStatsPatch,
         copierLogs,
@@ -1876,10 +2023,11 @@ export function DashboardPage() {
         channelDisplayNames,
         linkedAccounts,
         linkedAccountBalances: linkedBalancesRef.current,
-        chartTrades: chartNext.length > 0 ? chartNext : chartTradesRef.current,
+        chartTrades: chartForCache,
         aiExpertLogs,
         mtTrades: resolvedTrades,
         channelLinkMaps: channelLinkMapsRef.current,
+        cachedAnalytics: analytics,
       })
       syncPerformanceCacheFromDashboard(user.id)
     }
@@ -1905,9 +2053,12 @@ export function DashboardPage() {
 
   const chartsEmpty = effectiveChartTrades.length === 0 && linkedAccounts.length === 0
   const chartsLoading =
+    !hadBootCacheRef.current &&
     !dashboardChartsReady &&
+    !hasDashboardAnalyticsData(displayAnalytics) &&
     effectiveChartTrades.length === 0 &&
-    (!hasActiveMtBroker(linkedAccounts) || mtTrades.length === 0)
+    mtTrades.length === 0 &&
+    (hasActiveMtBroker(linkedAccounts) || Boolean(bootCache?.linkedAccounts?.some(isFxsocketLinkedBroker)))
 
   return (
     <PageShell maxWidth="xl" spacing="none" className="space-y-6">
@@ -2012,9 +2163,9 @@ export function DashboardPage() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-        <TradeVolumeChart data={dashboardAnalytics.tradeVolume7Day} loading={chartsLoading} />
+        <TradeVolumeChart data={displayAnalytics.tradeVolume7Day} loading={chartsLoading} />
         <ChannelProfitChart
-          data={dashboardAnalytics.channelProfit7d}
+          data={displayAnalytics.channelProfit7d}
           loading={chartsLoading}
         />
       </div>

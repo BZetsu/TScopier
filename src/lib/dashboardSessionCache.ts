@@ -1,5 +1,5 @@
-export const DASHBOARD_CACHE_VERSION = 'dashboard_cache_v11'
-export const DASHBOARD_CACHE_LEGACY_KEYS = ['dashboard_cache_v10', 'dashboard_cache_v9', 'dashboard_cache_v8', 'dashboard_cache_v7'] as const
+export const DASHBOARD_CACHE_VERSION = 'dashboard_cache_v12'
+export const DASHBOARD_CACHE_LEGACY_KEYS = ['dashboard_cache_v11', 'dashboard_cache_v10', 'dashboard_cache_v9', 'dashboard_cache_v8', 'dashboard_cache_v7'] as const
 export const DASHBOARD_ACTIVE_USER_KEY = 'dashboard_cache_active_user_id'
 
 export type DashboardCacheTimestamps = {
@@ -7,9 +7,21 @@ export type DashboardCacheTimestamps = {
   cachedDay?: string
 }
 
+/** In-memory snapshot — survives DashboardPage unmount/remount within the same tab. */
+let dashboardMemoryCache: { userId: string; payload: unknown } | null = null
+
 /** In-memory: dashboard data was loaded or restored this browser tab session. */
 let dashboardSessionLoadedUserId: string | null = null
 let dashboardActiveUserId: string | null = null
+
+export function readDashboardMemoryCache<T>(userId: string): T | null {
+  if (dashboardMemoryCache?.userId !== userId) return null
+  return dashboardMemoryCache.payload as T
+}
+
+export function writeDashboardMemoryCache(userId: string, payload: unknown): void {
+  dashboardMemoryCache = { userId, payload }
+}
 
 export function markDashboardSessionLoaded(userId: string): void {
   dashboardSessionLoadedUserId = userId
@@ -25,6 +37,13 @@ export function getDashboardActiveUserId(): string | null {
 
 export function setDashboardActiveUserId(userId: string | null): void {
   dashboardActiveUserId = userId
+}
+
+/** Resolve the user id used for dashboard cache reads before auth has hydrated. */
+export function resolveDashboardCacheUserId(authUserId?: string | null): string | null {
+  if (authUserId) return authUserId
+  if (typeof sessionStorage === 'undefined') return null
+  return sessionStorage.getItem(DASHBOARD_ACTIVE_USER_KEY)
 }
 
 /** Clear per-user dashboard session cache (call on sign-out or user switch). */
@@ -43,4 +62,7 @@ export function clearDashboardSessionCache(userId?: string | null) {
   sessionStorage.removeItem(DASHBOARD_ACTIVE_USER_KEY)
   dashboardSessionLoadedUserId = null
   dashboardActiveUserId = null
+  if (!userId || dashboardMemoryCache?.userId === userId) {
+    dashboardMemoryCache = null
+  }
 }
