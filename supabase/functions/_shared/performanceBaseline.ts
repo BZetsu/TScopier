@@ -153,6 +153,9 @@ export function inferPerformanceBaselineFromHistory(
     if (depositResidual <= BASELINE_EPSILON) {
       return Math.round(initialDeposit * 100) / 100
     }
+    if (inferred < initialDeposit - BASELINE_EPSILON) {
+      return Math.round(initialDeposit * 100) / 100
+    }
   }
 
   return Math.round(inferred * 100) / 100

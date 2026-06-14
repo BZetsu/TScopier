@@ -11,6 +11,7 @@ import {
 import { displayTradeProfit, tradeOpenLegProfit } from './tradeDisplay'
 import type { MtTrade } from './fxsocketBroker'
 import { normalizeSignalChannelIds } from './brokerChannelLink'
+import { resolveDisplayInitialBalance } from './performanceBaseline'
 import {
   canonicalChannelId,
   computeProfitByChannel,
@@ -336,6 +337,12 @@ export function computeBrokerStatsSnapshot(opts: {
   now?: Date
 }): BrokerStatsSnapshot {
   const brokerMt = mtTradesForBroker(opts.mtTrades, opts.brokerId)
+  const initialBalance = resolveDisplayInitialBalance(
+    opts.initialBalance,
+    opts.currentBalance,
+    opts.mtTrades,
+    opts.brokerId,
+  )
   const profitByChannel = computeBrokerProfitByChannel({
     brokerId: opts.brokerId,
     connectedChannelIds: opts.connectedChannelIds,
@@ -358,8 +365,8 @@ export function computeBrokerStatsSnapshot(opts: {
   ).length
 
   const initial =
-    opts.initialBalance != null && Number.isFinite(Number(opts.initialBalance))
-      ? Number(opts.initialBalance)
+    initialBalance != null && Number.isFinite(Number(initialBalance))
+      ? Number(initialBalance)
       : null
   const balance =
     opts.currentBalance != null && Number.isFinite(Number(opts.currentBalance))

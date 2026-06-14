@@ -30,6 +30,7 @@ import {
 import { BROKER_ACCOUNT_CLIENT_SELECT } from '../lib/brokerAccountSelect'
 import type { BrokerAccount } from '../types/database'
 
+import { resolveDisplayInitialBalance } from '../lib/performanceBaseline'
 import { isFxsocketLinkedBroker } from '../lib/brokerLink'
 
 async function fetchPerformancePayload(userId: string): Promise<PerformanceCachePayload> {
@@ -113,9 +114,16 @@ async function fetchPerformancePayload(userId: string): Promise<PerformanceCache
         const bal = summary?.balance ?? refreshed.last_balance ?? summary?.equity ?? refreshed.last_equity
         if (eq != null && Number.isFinite(Number(eq))) equity[account.id] = Number(eq)
         if (bal != null && Number.isFinite(Number(bal))) balance[account.id] = Number(bal)
-        const baseline = Number(refreshed.performance_baseline_balance ?? account.performance_baseline_balance)
-        if (Number.isFinite(baseline) && baseline > 0) {
-          baselineById[account.id] = baseline
+        const balanceNum = bal != null && Number.isFinite(Number(bal)) ? Number(bal) : null
+        const accountTrades = trades.filter(t => t.broker_id === account.id)
+        const resolved = resolveDisplayInitialBalance(
+          refreshed.performance_baseline_balance ?? account.performance_baseline_balance,
+          balanceNum,
+          accountTrades,
+          account.id,
+        )
+        if (resolved != null && Number.isFinite(resolved) && resolved > 0) {
+          baselineById[account.id] = resolved
         }
       } catch {
         const eq = account.last_equity ?? account.last_balance
@@ -338,8 +346,16 @@ export function usePerformanceData(userId: string | undefined) {
         const { account: refreshed, summary } = summaryRes
         const eq = summary?.equity ?? refreshed.last_equity ?? summary?.balance
         const bal = summary?.balance ?? refreshed.last_balance ?? summary?.equity
-        const baseline = Number(refreshed.performance_baseline_balance ?? account.performance_baseline_balance)
         const brokerTrades = tradesRes.trades ?? []
+        const balanceNum = bal != null && Number.isFinite(Number(bal)) ? Number(bal) : null
+        const serverBaseline = Number(refreshed.performance_baseline_balance ?? account.performance_baseline_balance)
+        const clientBaseline = resolveDisplayInitialBalance(
+          Number.isFinite(serverBaseline) && serverBaseline > 0 ? serverBaseline : account.performance_baseline_balance,
+          balanceNum,
+          brokerTrades,
+          brokerId,
+        )
+        const baseline = clientBaseline ?? (Number.isFinite(serverBaseline) && serverBaseline > 0 ? serverBaseline : null)
         const basePayload = payloadRef.current
         const priorTrades = basePayload?.mtTrades ?? mtTradesRef.current
         const mergedTrades = [
@@ -349,9 +365,9 @@ export function usePerformanceData(userId: string | undefined) {
 
         const nextAccounts = (basePayload?.accounts ?? []).map(a => {
           if (a.id !== brokerId) return a
-          return Number.isFinite(baseline) && baseline > 0
-            ? { ...a, performance_baseline_balance: baseline }
-            : a
+          return baseline != null && Number.isFinite(baseline) && baseline > 0
+            ? { ...a, ...refreshed, performance_baseline_balance: baseline }
+            : { ...a, ...refreshed }
         })
         const nextEquity = {
           ...(basePayload?.equityByAccountId ?? {}),

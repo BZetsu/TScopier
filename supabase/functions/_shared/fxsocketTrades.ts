@@ -186,7 +186,13 @@ export async function fetchFxsocketBrokerTrades(
 
   const [openedRes, closedRes] = await Promise.allSettled([
     wantOpen ? fx.openedOrders(sessionId) : Promise.resolve([] as unknown[]),
-    wantClosed ? fx.orderHistory(sessionId, opts.historyFrom, opts.historyTo) : Promise.resolve([] as unknown[]),
+    wantClosed
+      ? fetchClosedHistoryForBaseline(fx, broker, {
+        historyFrom: opts.historyFrom,
+        historyTo: opts.historyTo,
+        historyProfile: opts.historyProfile,
+      })
+      : Promise.resolve([] as FxsocketBrokerTradeRow[]),
   ])
 
   const out: FxsocketBrokerTradeRow[] = []
@@ -196,9 +202,7 @@ export async function fetchFxsocketBrokerTrades(
     }
   }
   if (closedRes.status === "fulfilled" && Array.isArray(closedRes.value)) {
-    for (const o of closedRes.value as RawOrder[]) {
-      out.push(normalizeOrder(o, broker, "closed", opts.historyProfile))
-    }
+    out.push(...closedRes.value)
   }
 
   return out.sort((a, b) => {

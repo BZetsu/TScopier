@@ -266,8 +266,8 @@ export function BrokerStatsOverlay() {
     n > 0 ? 'text-teal-600' : n < 0 ? 'text-error-600' : 'text-neutral-900 dark:text-neutral-50'
 
   const needsLiveBrokerHistory = account != null && isFxsocketLinkedBroker(account)
-  const showBodySkeleton =
-    (loading && !stats) || (needsLiveBrokerHistory && !brokerMetricsReady)
+  const showBodySkeleton = !stats && (loading || (needsLiveBrokerHistory && !brokerMetricsReady))
+  const showRefreshingOverlay = Boolean(stats && needsLiveBrokerHistory && !brokerMetricsReady)
 
   return (
     <div
@@ -348,16 +348,19 @@ export function BrokerStatsOverlay() {
           ) : null}
 
           {showBodySkeleton ? (
-            <div className="grid grid-cols-2 gap-3 animate-pulse">
-              {[...Array(6)].map((_, i) => (
-                <div key={i} className="h-16 rounded-xl bg-neutral-100 dark:bg-neutral-800" />
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 animate-pulse">
+              {[...Array(9)].map((_, i) => (
+                <div key={i} className="h-[72px] rounded-xl bg-neutral-100 dark:bg-neutral-800" />
               ))}
             </div>
-          ) : null}
-
-          {account && stats ? (
+          ) : account && stats ? (
             <>
-              <section className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              <section
+                className={clsx(
+                  'grid grid-cols-2 sm:grid-cols-3 gap-3 transition-opacity',
+                  showRefreshingOverlay && 'opacity-60',
+                )}
+              >
                 <StatTile
                   label={bs.initialBalance}
                   hint={bs.initialBalanceHint}

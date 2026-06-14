@@ -113,6 +113,22 @@ Deno.test("resolvePerformanceBaselineBalance corrects understated baseline from 
   assertEquals(baseline, 210_000)
 })
 
+Deno.test("inferPerformanceBaselineFromHistory prefers MT5 deposit over short inference", () => {
+  const trades = [
+    trade({
+      ticket: 0,
+      symbol: "",
+      direction: "",
+      type: "Balance",
+      lot_size: 0,
+      profit: 210_000,
+      closed_at: "2026-01-01T08:00:00",
+    }),
+    trade({ ticket: 1, profit: -45_378.67, swap: 111.66, closed_at: "2026-06-12T16:16:47" }),
+  ]
+  assertEquals(inferPerformanceBaselineFromHistory(163_877.05, trades), 210_000)
+})
+
 Deno.test("splitBalanceCashFlows separates initial deposit from later withdrawals", () => {
   const trades = [
     trade({
