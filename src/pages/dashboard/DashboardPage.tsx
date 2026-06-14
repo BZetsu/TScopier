@@ -21,6 +21,13 @@ import { fxsocketBroker, type MtTrade } from '../../lib/fxsocketBroker'
 import { isFxsocketLinkedBroker } from '../../lib/brokerLink'
 import { useFxsocketStream } from '../../hooks/useFxsocketStream'
 import {
+  rebuildPositionBookFromPayload,
+  rebuildPositionBookFromMtTrades,
+  mergePositionRowIntoBook,
+  snapshotFromPositionBook,
+  type FxsocketPositionBook,
+} from '../../lib/fxsocketLivePositionBook'
+import {
   countOpenMarketPositionsByBroker,
   shouldApplyAccountStreamOpenPnl,
   sumOpenPnlByBroker,
@@ -726,6 +733,9 @@ export function DashboardPage() {
    * Active Trades stat can fluctuate between ticks.
    */
   const liveBrokerStateRef = useRef<Record<string, { open_pnl?: number; open_trades?: number }>>({})
+  const positionBooksRef = useRef<Record<string, FxsocketPositionBook>>({})
+  const wsMarkedConnectedRef = useRef(new Set<string>())
+  const liveMetricsRafRef = useRef(0)
   if (bootCache?.linkedAccountBalances && Object.keys(liveBrokerStateRef.current).length === 0) {
     seedLiveBrokerStateFromBalances(
       bootCache.linkedAccountBalances,
@@ -1407,10 +1417,52 @@ export function DashboardPage() {
     }
   }, [setReconnectErrorHandler, setReconnectSuccessHandler])
 
+  const flushLiveBrokerMetrics = () => {
+    if (liveMetricsRafRef.current) return
+    liveMetricsRafRef.current = requestAnimationFrame(() => {
+      liveMetricsRafRef.current = 0
+      const balances = linkedBalancesRef.current
+      setLinkedAccountBalances({ ...balances })
+      setStats(prev => {
+        const next = {
+          ...prev,
+          ...recomputeLiveBrokerDashboardStats(linkedAccountsRef.current, balances, prev),
+        }
+        statsRef.current = next
+        return next
+      })
+    })
+  }
+
+  const applyBrokerLiveSnapshot = (brokerId: string, patch: Partial<BrokerBalanceSnapshot>) => {
+    linkedBalancesRef.current = {
+      ...linkedBalancesRef.current,
+      [brokerId]: {
+        ...(linkedBalancesRef.current[brokerId] ?? {}),
+        ...patch,
+      },
+    }
+    liveBrokerStateRef.current[brokerId] = {
+      ...liveBrokerStateRef.current[brokerId],
+      ...(patch.open_trades != null ? { open_trades: patch.open_trades } : {}),
+      ...(patch.open_pnl != null ? { open_pnl: patch.open_pnl } : {}),
+    }
+    flushLiveBrokerMetrics()
+  }
+
   useFxsocketStream(linkedAccounts, {
     onAccount: (brokerId, snap) => {
+      if (!wsMarkedConnectedRef.current.has(brokerId)) {
+        wsMarkedConnectedRef.current.add(brokerId)
+        patchBroker(brokerId, {
+          fxsocket_status: 'connected',
+          connection_status: 'connected',
+        })
+      }
       const openTrades = linkedBalancesRef.current[brokerId]?.open_trades ?? 0
-      const applyOpenPnl = shouldApplyAccountStreamOpenPnl(snap, openTrades)
+      const hasLivePositionBook = (positionBooksRef.current[brokerId]?.size ?? 0) > 0
+      const applyOpenPnl =
+        !hasLivePositionBook && shouldApplyAccountStreamOpenPnl(snap, openTrades)
       const snapForBalances = applyOpenPnl ? snap : { ...snap, openPnl: undefined }
       const nextBalances = applyFxsocketAccountStreamUpdate(
         brokerId,
@@ -1424,58 +1476,29 @@ export function DashboardPage() {
           open_pnl: snap.openPnl,
         }
       }
-      setLinkedAccountBalances(nextBalances)
-      patchBroker(brokerId, {
-        ...(snap.balance != null ? { last_balance: snap.balance } : {}),
-        ...(snap.equity != null ? { last_equity: snap.equity } : {}),
-        ...(snap.currency ? { last_currency: snap.currency } : {}),
-        fxsocket_status: 'connected',
-        connection_status: 'connected',
-        last_synced_at: new Date().toISOString(),
-      })
-      setStats(prev => {
-        const next = {
-          ...prev,
-          ...recomputeLiveBrokerDashboardStats(
-            linkedAccountsRef.current,
-            nextBalances,
-            prev,
-          ),
-        }
-        statsRef.current = next
-        return next
-      })
+      flushLiveBrokerMetrics()
     },
-    onPositions: (brokerId, snapshot) => {
+    onPositions: (brokerId, snapshot, rawData) => {
+      positionBooksRef.current[brokerId] = rebuildPositionBookFromPayload(rawData)
+      const bookSnap = snapshotFromPositionBook(positionBooksRef.current[brokerId])
       const openPnl =
+        bookSnap.openPnl ??
         snapshot.openPnl ??
         (snapshot.openTrades > 0 ? sumOpenPnlByBroker(mtTradesRef.current ?? [])[brokerId] : undefined)
-      const nextBalances = {
-        ...linkedBalancesRef.current,
-        [brokerId]: {
-          ...(linkedBalancesRef.current[brokerId] ?? {}),
-          open_trades: snapshot.openTrades,
-          ...(openPnl != null ? { open_pnl: openPnl } : {}),
-        },
-      }
-      linkedBalancesRef.current = nextBalances
-      liveBrokerStateRef.current[brokerId] = {
-        ...liveBrokerStateRef.current[brokerId],
-        open_trades: snapshot.openTrades,
+      applyBrokerLiveSnapshot(brokerId, {
+        open_trades: bookSnap.openTrades || snapshot.openTrades,
         ...(openPnl != null ? { open_pnl: openPnl } : {}),
-      }
-      setLinkedAccountBalances(nextBalances)
-      setStats(prev => {
-        const next = {
-          ...prev,
-          ...recomputeLiveBrokerDashboardStats(
-            linkedAccountsRef.current,
-            nextBalances,
-            prev,
-          ),
-        }
-        statsRef.current = next
-        return next
+      })
+    },
+    onTrade: (brokerId, data) => {
+      let book = positionBooksRef.current[brokerId]
+      if (!book) book = new Map()
+      if (!mergePositionRowIntoBook(book, data)) return
+      positionBooksRef.current[brokerId] = book
+      const snap = snapshotFromPositionBook(book)
+      applyBrokerLiveSnapshot(brokerId, {
+        open_trades: snap.openTrades,
+        open_pnl: snap.openPnl,
       })
     },
   }, linkedAccounts.some(isFxsocketLinkedBroker))
@@ -1539,18 +1562,30 @@ export function DashboardPage() {
     for (const account of sourceAccounts) {
       if (!isFxsocketLinkedBroker(account)) continue
       const count = openByBroker[account.id] ?? 0
-      const openPnl = openPnlByBroker[account.id]
+      const liveBook = positionBooksRef.current[account.id]
+      if (!liveBook || liveBook.size === 0) {
+        positionBooksRef.current[account.id] = rebuildPositionBookFromMtTrades(
+          resolvedTrades,
+          account.id,
+        )
+      }
+      const bookSnap =
+        (positionBooksRef.current[account.id]?.size ?? 0) > 0
+          ? snapshotFromPositionBook(positionBooksRef.current[account.id]!)
+          : null
+      const openPnl = bookSnap?.openPnl ?? openPnlByBroker[account.id]
+      const openTrades = bookSnap?.openTrades ?? count
       const prev = nextBalances[account.id]
-      if (prev?.open_trades === count && prev?.open_pnl === openPnl) continue
+      if (prev?.open_trades === openTrades && prev?.open_pnl === openPnl) continue
       nextBalances[account.id] = {
         ...(prev ?? {}),
-        open_trades: count,
-        ...(openPnl != null ? { open_pnl: openPnl } : count === 0 ? { open_pnl: 0 } : {}),
+        open_trades: openTrades,
+        ...(openPnl != null ? { open_pnl: openPnl } : openTrades === 0 ? { open_pnl: 0 } : {}),
       }
       liveBrokerStateRef.current[account.id] = {
         ...liveBrokerStateRef.current[account.id],
-        open_trades: count,
-        ...(openPnl != null ? { open_pnl: openPnl } : count === 0 ? { open_pnl: 0 } : {}),
+        open_trades: openTrades,
+        ...(openPnl != null ? { open_pnl: openPnl } : openTrades === 0 ? { open_pnl: 0 } : {}),
       }
       openCountsChanged = true
     }

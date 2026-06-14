@@ -6,6 +6,7 @@ const mtApiByAccount_1 = require("./mtApiByAccount");
 const DEFAULT_SUBSCRIPTIONS = [
     { topic: 'account' },
     { topic: 'positions' },
+    { topic: 'trades' },
     { topic: 'terminal' },
 ];
 function parseUrlQuery(url) {

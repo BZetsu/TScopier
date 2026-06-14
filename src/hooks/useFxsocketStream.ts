@@ -11,9 +11,22 @@ import type { BrokerAccount } from '../types/database'
 
 export interface FxsocketStreamHandlers {
   onAccount?: (brokerAccountId: string, data: FxsocketAccountStreamSnapshot) => void
-  onPositions?: (brokerAccountId: string, snapshot: FxsocketPositionsStreamSnapshot) => void
+  onPositions?: (
+    brokerAccountId: string,
+    snapshot: FxsocketPositionsStreamSnapshot,
+    rawData: unknown,
+  ) => void
   onTerminal?: (brokerAccountId: string, data: Record<string, unknown>) => void
   onTrade?: (brokerAccountId: string, data: Record<string, unknown>) => void
+}
+
+/** Stable key from linked broker row ids only — balance patches must not reconnect streams. */
+export function fxsocketStreamBrokerIdsKey(brokers: BrokerAccount[]): string {
+  return brokers
+    .filter(isFxsocketLinkedBroker)
+    .map(b => b.id)
+    .sort()
+    .join(',')
 }
 
 export function useFxsocketStream(
@@ -24,35 +37,37 @@ export function useFxsocketStream(
   const handlersRef = useRef(handlers)
   handlersRef.current = handlers
 
-  const streamBrokerIds = useMemo(
-    () => brokers.filter(isFxsocketLinkedBroker).map(b => b.id).sort().join(','),
-    [brokers],
+  const brokerIdsKey = useMemo(
+    () => fxsocketStreamBrokerIdsKey(brokers),
+    [brokers.map(b => b.id).sort().join(',')],
   )
 
   useEffect(() => {
-    if (!enabled || !streamBrokerIds) return
+    if (!enabled || !brokerIdsKey) return
 
-    const linked = brokers.filter(isFxsocketLinkedBroker)
-    if (linked.length === 0) return
+    const brokerIds = brokerIdsKey.split(',').filter(Boolean)
+    if (brokerIds.length === 0) return
 
     const handles = new Map<string, { close: () => void }>()
     let cancelled = false
 
-    for (const broker of linked) {
-      void openFxsocketStream(broker.id, {
+    for (const brokerId of brokerIds) {
+      void openFxsocketStream(brokerId, {
         onMessage: (msg: FxsocketStreamMessage) => {
           if (msg.type === 'account' && 'data' in msg) {
             const snap = parseFxsocketAccountStreamData(msg.data as Record<string, unknown>)
-            handlersRef.current.onAccount?.(broker.id, snap)
+            handlersRef.current.onAccount?.(brokerId, snap)
           } else if (msg.type === 'positions' && 'data' in msg) {
             handlersRef.current.onPositions?.(
-              broker.id,
+              brokerId,
               parseFxsocketPositionsStreamData(msg.data),
+              msg.data,
             )
           } else if (msg.type === 'terminal' && 'data' in msg) {
-            handlersRef.current.onTerminal?.(broker.id, msg.data as Record<string, unknown>)
+            handlersRef.current.onTerminal?.(brokerId, msg.data as Record<string, unknown>)
           } else if (msg.type === 'trade' && 'data' in msg) {
-            handlersRef.current.onTrade?.(broker.id, msg.data as Record<string, unknown>)
+            const data = msg.data as Record<string, unknown>
+            handlersRef.current.onTrade?.(brokerId, data)
           }
         },
       }).then(handle => {
@@ -60,7 +75,7 @@ export function useFxsocketStream(
           handle.close()
           return
         }
-        handles.set(broker.id, handle)
+        handles.set(brokerId, handle)
       }).catch(() => {
         /* stream setup failed — dashboard falls back to cached values */
       })
@@ -70,5 +85,5 @@ export function useFxsocketStream(
       cancelled = true
       for (const handle of handles.values()) handle.close()
     }
-  }, [streamBrokerIds, brokers, enabled])
+  }, [brokerIdsKey, enabled])
 }

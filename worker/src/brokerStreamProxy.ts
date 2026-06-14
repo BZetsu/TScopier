@@ -9,6 +9,7 @@ import type { FxsocketWsServerMessage } from './fxsocketWsClient'
 const DEFAULT_SUBSCRIPTIONS = [
   { topic: 'account' as const },
   { topic: 'positions' as const },
+  { topic: 'trades' as const },
   { topic: 'terminal' as const },
 ]
 
