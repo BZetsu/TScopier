@@ -190,6 +190,7 @@ export interface DashboardLinkedAccountsTranslations {
   statusActive: string
   statusPaused: string
   statusConnected: string
+  statusConnecting: string
   statusRecovering: string
   accountTypeLive: string
   accountTypeDemo: string
@@ -337,6 +338,7 @@ export interface AccountConfigConnectFormTranslations {
 export interface AccountConfigBrokerListTranslations {
   statusPaused: string
   statusConnected: string
+  statusConnecting: string
   statusRecovering: string
   statusError: string
   statusDisconnected: string

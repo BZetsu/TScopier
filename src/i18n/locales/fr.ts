@@ -338,6 +338,7 @@ export const fr: Translations = {
     brokerList: {
       statusPaused: 'En pause',
       statusConnected: 'Connecté',
+      statusConnecting: 'Connexion',
       statusRecovering: 'Reconnexion',
       statusError: 'Erreur',
       statusDisconnected: 'Déconnecté',
@@ -493,6 +494,7 @@ export const fr: Translations = {
       statusActive: 'Actif',
       statusPaused: 'En pause',
       statusConnected: 'Connecté',
+      statusConnecting: 'Connexion',
       statusRecovering: 'Reconnexion',
       accountTypeLive: 'Réel',
       accountTypeDemo: 'Démo',

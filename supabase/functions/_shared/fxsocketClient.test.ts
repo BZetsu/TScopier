@@ -2,6 +2,8 @@ import { assertEquals, assertThrows } from "jsr:@std/assert"
 import {
   buildV1CreateAccountBody,
   getFxsocketV1BaseUrl,
+  isAccountSummaryReady,
+  isV1AccountLinkPending,
   normalizeAccountSummary,
   normalizeOrderResponse,
   normalizeV1Account,
@@ -84,4 +86,16 @@ Deno.test("normalizeV1Account maps POST /v1/accounts response", () => {
   assertEquals(acct.id, "11111111-2222-3333-4444-555555555555")
   assertEquals(acct.status, "connecting")
   assertEquals(acct.login, 12345)
+})
+
+Deno.test("isV1AccountLinkPending treats connecting and sent as pending", () => {
+  assertEquals(isV1AccountLinkPending(normalizeV1Account({ status: "connecting" })), true)
+  assertEquals(isV1AccountLinkPending(normalizeV1Account({ status: "sent" })), true)
+  assertEquals(isV1AccountLinkPending(normalizeV1Account({ status: "connected" })), false)
+})
+
+Deno.test("isAccountSummaryReady requires balance or equity", () => {
+  assertEquals(isAccountSummaryReady({ balance: 1000 }), true)
+  assertEquals(isAccountSummaryReady({ equity: 0 }), true)
+  assertEquals(isAccountSummaryReady({ currency: "USD" }), false)
 })

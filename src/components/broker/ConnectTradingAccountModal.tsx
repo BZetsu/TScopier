@@ -133,9 +133,19 @@ export function ConnectTradingAccountModal({ open, onClose, onSuccess }: Connect
         label: form.label.trim() || undefined,
       })
       upsertBroker(account)
+
+      let ready = account
+      if (account.connection_status !== 'connected') {
+        const result = await fxsocketBroker.waitUntilConnected(account.id, {
+          onProgress: ({ account: updated }) => upsertBroker(updated),
+        })
+        ready = result.account
+        upsertBroker(ready)
+      }
+
       reset()
       if (onSuccess) {
-        onSuccess(account)
+        onSuccess(ready)
       } else {
         onClose()
       }

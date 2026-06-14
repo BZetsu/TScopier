@@ -68,10 +68,8 @@ export function BrokerConnectedSuccessModal({
 
   const logo = platformLogo(broker.platform)
   const label = getBrokerDisplayLabel(broker)
-  const isPending = broker.connection_status === 'pending'
-    || broker.fxsocket_status === 'connecting'
-  const modalTitle = isPending ? copy.titlePending : copy.title
-  const modalBody = interpolate(isPending ? copy.bodyPending : copy.body, { account: label })
+  const modalTitle = copy.title
+  const modalBody = interpolate(copy.body, { account: label })
 
   const modal = (
     <div

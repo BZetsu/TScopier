@@ -226,8 +226,29 @@ Deno.serve(async (req: Request) => {
       if (!accountRowId) return bad(400, "account_id required")
       const row = await loadOwnedBrokerRow(supabase, userId, accountRowId)
       try {
-        const v1 = await fx.getV1Account(row.fxsocket_account_id)
-        if (v1.status === "connecting") {
+        const readiness = await fx.resolveLinkReadiness(row.fxsocket_account_id)
+
+        if (readiness.ready) {
+          const { data: updated, error } = await supabase
+            .from("broker_accounts")
+            .update({
+              fxsocket_status: "connected",
+              connection_status: "connected",
+              connection_error: null,
+              ...summaryToRowPatch(readiness.summary),
+            })
+            .eq("id", accountRowId)
+            .eq("user_id", userId)
+            .select("*")
+            .single()
+          if (error) return bad(500, error.message)
+          return Response.json(
+            { ok: true, account: updated, summary: readiness.summary },
+            { headers: corsHeaders },
+          )
+        }
+
+        if (readiness.pending) {
           const { data: updated, error } = await supabase
             .from("broker_accounts")
             .update({
@@ -245,35 +266,18 @@ Deno.serve(async (req: Request) => {
             { headers: corsHeaders },
           )
         }
-        if (v1.status === "error") {
-          const msg = v1.error || "FxSocket terminal connection failed"
-          await supabase
-            .from("broker_accounts")
-            .update({
-              fxsocket_status: "error",
-              connection_status: "error",
-              connection_error: msg,
-            })
-            .eq("id", accountRowId)
-            .eq("user_id", userId)
-          return bad(502, msg)
-        }
 
-        const summary = await fx.accountSummary(row.fxsocket_account_id)
-        const { data: updated, error } = await supabase
+        const msg = readiness.error || "FxSocket terminal connection failed"
+        await supabase
           .from("broker_accounts")
           .update({
-            fxsocket_status: "connected",
-            connection_status: "connected",
-            connection_error: null,
-            ...summaryToRowPatch(summary),
+            fxsocket_status: "error",
+            connection_status: "error",
+            connection_error: msg,
           })
           .eq("id", accountRowId)
           .eq("user_id", userId)
-          .select("*")
-          .single()
-        if (error) return bad(500, error.message)
-        return Response.json({ ok: true, account: updated, summary }, { headers: corsHeaders })
+        return bad(502, msg)
       } catch (e) {
         const msg = e instanceof Error ? e.message : "Refresh failed"
         await supabase

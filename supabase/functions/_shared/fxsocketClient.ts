@@ -185,6 +185,25 @@ export function normalizeV1Account(raw: unknown): FxsocketV1Account {
   }
 }
 
+export function isV1AccountLinkError(v1: FxsocketV1Account): boolean {
+  return v1.status.trim().toLowerCase() === "error"
+}
+
+/** v1 link status can stay "connecting" while the MT5 REST terminal is already usable. */
+export function isV1AccountLinkPending(v1: FxsocketV1Account): boolean {
+  const s = v1.status.trim().toLowerCase()
+  return s === "connecting" || s === "pending" || s === "sent" || s === "starting" || s === ""
+}
+
+export function isAccountSummaryReady(summary: FxsocketAccountSummary): boolean {
+  return summary.balance != null || summary.equity != null
+}
+
+export type FxsocketLinkReadiness =
+  | { ready: true; summary: FxsocketAccountSummary; v1: FxsocketV1Account }
+  | { ready: false; pending: true; v1: FxsocketV1Account }
+  | { ready: false; pending: false; error: string; v1: FxsocketV1Account }
+
 /** Build POST /v1/accounts body per OpenAPI schema V1CreateAccount. */
 export function buildV1CreateAccountBody(args: {
   login: string | number
@@ -347,6 +366,42 @@ export class FxsocketClient {
     return normalizeV1Account(raw)
   }
 
+  /**
+   * Probe MT5 AccountSummary for readiness — do not rely on v1 status alone.
+   * The v1 link record can lag behind a terminal that already answers REST calls.
+   */
+  async resolveLinkReadiness(accountId: string): Promise<FxsocketLinkReadiness> {
+    const v1 = await this.getV1Account(accountId)
+    if (isV1AccountLinkError(v1)) {
+      return {
+        ready: false,
+        pending: false,
+        error: v1.error || "FxSocket terminal connection failed",
+        v1,
+      }
+    }
+
+    try {
+      const summary = await this.accountSummary(accountId)
+      if (isAccountSummaryReady(summary)) {
+        return { ready: true, summary, v1 }
+      }
+    } catch (e) {
+      if (e instanceof FxsocketApiError && e.status === 401) throw e
+    }
+
+    if (isV1AccountLinkPending(v1)) {
+      return { ready: false, pending: true, v1 }
+    }
+
+    return {
+      ready: false,
+      pending: false,
+      error: "Could not fetch account summary from the broker terminal",
+      v1,
+    }
+  }
+
   async accountSummary(accountId: string): Promise<FxsocketAccountSummary> {
     const raw = await this.request(`${this.accountBase(accountId)}/AccountSummary`, { method: "GET" })
     return normalizeAccountSummary(raw)
@@ -444,7 +499,7 @@ export class FxsocketClient {
     }
   }
 
-  /** Poll GET /v1/accounts/{id} until connected, then fetch AccountSummary. */
+  /** Poll until AccountSummary succeeds (terminal ready), not only v1 status connected. */
   async pollUntilReady(
     accountId: string,
     opts?: { timeoutMs?: number; intervalMs?: number },
@@ -455,19 +510,14 @@ export class FxsocketClient {
     let lastV1: FxsocketV1Account | null = null
 
     while (Date.now() - started < timeoutMs) {
-      const v1Account = await this.getV1Account(accountId)
-      lastV1 = v1Account
-      if (v1Account.status === "connected") {
-        try {
-          const summary = await this.accountSummary(accountId)
-          return { summary, v1Account, terminal: { connected: true } }
-        } catch (e) {
-          if (e instanceof FxsocketApiError && e.status === 401) throw e
-        }
+      const readiness = await this.resolveLinkReadiness(accountId)
+      lastV1 = readiness.v1
+      if (readiness.ready) {
+        return { summary: readiness.summary, v1Account: readiness.v1, terminal: { connected: true } }
       }
-      if (v1Account.status === "error") {
+      if (!readiness.pending) {
         throw new FxsocketApiError(
-          v1Account.error || "FxSocket terminal connection failed",
+          readiness.error || "FxSocket terminal connection failed",
           502,
           "CONNECT_ERROR",
         )

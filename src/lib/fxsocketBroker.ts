@@ -5,7 +5,7 @@ import type { FxsocketStreamSubscribeFrame } from './fxsocketStreamTypes'
 const FXSOCKET_EDGE_TIMEOUT_MS = 120_000
 const FXSOCKET_CONNECT_TIMEOUT_MS = 120_000
 const FXSOCKET_WAIT_CONNECTED_MS = 180_000
-const FXSOCKET_WAIT_CONNECTED_INTERVAL_MS = 3_000
+const FXSOCKET_WAIT_CONNECTED_INTERVAL_MS = 1_000
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => window.setTimeout(resolve, ms))
@@ -206,7 +206,11 @@ export const fxsocketBroker = {
   /** Poll refresh_summary until the FxSocket terminal reaches connected (or error). */
   async waitUntilConnected(
     accountId: string,
-    opts?: { maxMs?: number; intervalMs?: number },
+    opts?: {
+      maxMs?: number
+      intervalMs?: number
+      onProgress?: (result: { account: BrokerAccount; summary?: AccountSummary; pending?: boolean }) => void
+    },
   ): Promise<{ account: BrokerAccount; summary?: AccountSummary }> {
     const maxMs = opts?.maxMs ?? FXSOCKET_WAIT_CONNECTED_MS
     const intervalMs = opts?.intervalMs ?? FXSOCKET_WAIT_CONNECTED_INTERVAL_MS
@@ -224,6 +228,7 @@ export const fxsocketBroker = {
             return { account, summary: row.summary, pending: row.pending === true }
           },
         })
+        opts?.onProgress?.(result)
         if (result.account.connection_status === 'connected') return result
         if (result.account.connection_status === 'error') {
           throw new Error(result.account.connection_error ?? 'Broker connection failed')
