@@ -1,7 +1,10 @@
 import { ensureFreshAuthSession } from './fxsocketBroker'
-import type { FxsocketStreamMessage, FxsocketStreamSubscribeFrame } from './fxsocketStreamTypes'
+import { normalizeFxsocketStreamMessage } from './fxsocketStreamNormalize'
+import type { FxsocketStreamMessage, FxsocketStreamSubscribeFrame, FxsocketStreamTopic } from './fxsocketStreamTypes'
 
 export type { FxsocketStreamMessage, FxsocketStreamSubscribeFrame, FxsocketStreamTopic } from './fxsocketStreamTypes'
+
+const LIVE_BROKER_TOPICS: FxsocketStreamTopic[] = ['account', 'positions', 'trades']
 
 export interface FxsocketStreamHandle {
   close(): void
@@ -46,11 +49,14 @@ export async function openFxsocketStream(
     ws.onopen = () => {
       reconnectAttempt = 0
       notifyState(true)
+      for (const topic of LIVE_BROKER_TOPICS) {
+        sendFrame({ action: 'subscribe', topic })
+      }
     }
     ws.onmessage = (event) => {
       try {
-        const msg = JSON.parse(String(event.data)) as FxsocketStreamMessage
-        handlers.onMessage?.(msg)
+        const msg = normalizeFxsocketStreamMessage(JSON.parse(String(event.data)))
+        if (msg) handlers.onMessage?.(msg)
       } catch {
         /* ignore malformed frames */
       }

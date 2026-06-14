@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.FxsocketWsClient = void 0;
 exports.buildFxsocketWsUrl = buildFxsocketWsUrl;
 const ws_1 = __importDefault(require("ws"));
+const fxsocketStreamNormalize_1 = require("./fxsocketStreamNormalize");
 const DEFAULT_BASE_URL = 'https://api.fxsocket.com';
 function trimEnv(v) {
     return (v ?? '').trim();
@@ -140,9 +141,7 @@ class FxsocketWsClient {
             return null;
         try {
             const parsed = JSON.parse(text);
-            if (parsed && typeof parsed === 'object' && typeof parsed.type === 'string') {
-                return parsed;
-            }
+            return (0, fxsocketStreamNormalize_1.normalizeFxsocketWsMessage)(parsed);
         }
         catch {
             console.warn('[fxsocketWsClient] invalid JSON frame:', text.slice(0, 200));

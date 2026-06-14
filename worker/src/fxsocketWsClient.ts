@@ -1,4 +1,5 @@
 import WebSocket from 'ws'
+import { normalizeFxsocketWsMessage } from './fxsocketStreamNormalize'
 
 const DEFAULT_BASE_URL = 'https://api.fxsocket.com'
 
@@ -174,10 +175,8 @@ export class FxsocketWsClient {
     const text = typeof data === 'string' ? data : data.toString('utf8')
     if (!text.trim()) return null
     try {
-      const parsed = JSON.parse(text) as FxsocketWsServerMessage
-      if (parsed && typeof parsed === 'object' && typeof parsed.type === 'string') {
-        return parsed
-      }
+      const parsed = JSON.parse(text) as unknown
+      return normalizeFxsocketWsMessage(parsed)
     } catch {
       console.warn('[fxsocketWsClient] invalid JSON frame:', text.slice(0, 200))
     }
