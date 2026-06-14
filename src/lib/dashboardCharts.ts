@@ -247,20 +247,27 @@ export function sumClosedDealProfitByBroker(
 
 const OUTCOME_EPSILON = 0.01
 
-/** Today’s closed-deal stats using the same rules as {@link buildTradeVolume7Day}. */
-export function summarizeTodayFromChartTrades(
-  trades: DashboardChartTrade[],
-  now = new Date(),
-): {
+export type DayTradeSummary = {
   hasData: boolean
   taken: number
   won: number
   lost: number
   breakeven: number
-  /** Sum of deal profit for closes today (net P/L, matches the chart). */
   netPnl: number
-} {
-  const todayKey = dayKey(startOfLocalDay(now))
+}
+
+function classifyOutcome(p: number): 'won' | 'lost' | 'breakeven' {
+  if (p > OUTCOME_EPSILON) return 'won'
+  if (p < -OUTCOME_EPSILON) return 'lost'
+  return 'breakeven'
+}
+
+/** Closed-deal stats for a local calendar-day window [rangeStart, rangeEnd). */
+export function summarizeDayFromChartTrades(
+  trades: DashboardChartTrade[],
+  rangeStart: Date,
+  rangeEnd: Date,
+): DayTradeSummary {
   let taken = 0
   let won = 0
   let lost = 0
@@ -269,40 +276,27 @@ export function summarizeTodayFromChartTrades(
 
   for (const t of trades) {
     if (t.status !== 'closed') continue
-    const key = chartTradeDayKey(t)
-    if (key !== todayKey) continue
+    const closeIso = t.closedAt ?? t.openedAt
+    if (!closeIso || !isMtTimestampInRange(closeIso, rangeStart, rangeEnd)) continue
     const p = t.profit
     if (p == null || !Number.isFinite(p)) continue
     taken++
     netPnl += p
-    if (p > OUTCOME_EPSILON) won++
-    else if (p < -OUTCOME_EPSILON) lost++
+    const outcome = classifyOutcome(p)
+    if (outcome === 'won') won++
+    else if (outcome === 'lost') lost++
     else breakeven++
   }
 
-  return {
-    hasData: taken > 0,
-    taken,
-    won,
-    lost,
-    breakeven,
-    netPnl,
-  }
+  return { hasData: taken > 0, taken, won, lost, breakeven, netPnl }
 }
 
-/** Today’s closed-deal stats from live MT rows (same close-time rules as the Trades page). */
-export function summarizeTodayFromMtTrades(
+/** Closed-deal stats for a local calendar-day window [rangeStart, rangeEnd). */
+export function summarizeDayFromMtTrades(
   trades: MtTrade[],
-  now = new Date(),
-): {
-  hasData: boolean
-  taken: number
-  won: number
-  lost: number
-  breakeven: number
-  netPnl: number
-} {
-  const { todayStart, tomorrowStart } = getLocalCalendarDayBounds(now)
+  rangeStart: Date,
+  rangeEnd: Date,
+): DayTradeSummary {
   let taken = 0
   let won = 0
   let lost = 0
@@ -323,24 +317,54 @@ export function summarizeTodayFromMtTrades(
       continue
     }
     const closeIso = t.closed_at ?? t.opened_at
-    if (!closeIso || !isMtTimestampInRange(closeIso, todayStart, tomorrowStart)) continue
+    if (!closeIso || !isMtTimestampInRange(closeIso, rangeStart, rangeEnd)) continue
     const p = displayTradeProfit(t)
     if (p == null || !Number.isFinite(p)) continue
     taken++
     netPnl += p
-    if (p > OUTCOME_EPSILON) won++
-    else if (p < -OUTCOME_EPSILON) lost++
+    const outcome = classifyOutcome(p)
+    if (outcome === 'won') won++
+    else if (outcome === 'lost') lost++
     else breakeven++
   }
 
-  return {
-    hasData: taken > 0,
-    taken,
-    won,
-    lost,
-    breakeven,
-    netPnl,
-  }
+  return { hasData: taken > 0, taken, won, lost, breakeven, netPnl }
+}
+
+/** Today’s closed-deal stats using the same rules as {@link buildTradeVolume7Day}. */
+export function summarizeTodayFromChartTrades(
+  trades: DashboardChartTrade[],
+  now = new Date(),
+): DayTradeSummary {
+  const { todayStart, tomorrowStart } = getLocalCalendarDayBounds(now)
+  return summarizeDayFromChartTrades(trades, todayStart, tomorrowStart)
+}
+
+/** Yesterday’s closed-deal stats (same close-time rules as today). */
+export function summarizeYesterdayFromChartTrades(
+  trades: DashboardChartTrade[],
+  now = new Date(),
+): DayTradeSummary {
+  const { todayStart, yesterdayStart } = getLocalCalendarDayBounds(now)
+  return summarizeDayFromChartTrades(trades, yesterdayStart, todayStart)
+}
+
+/** Today’s closed-deal stats from live MT rows (same close-time rules as the Trades page). */
+export function summarizeTodayFromMtTrades(
+  trades: MtTrade[],
+  now = new Date(),
+): DayTradeSummary {
+  const { todayStart, tomorrowStart } = getLocalCalendarDayBounds(now)
+  return summarizeDayFromMtTrades(trades, todayStart, tomorrowStart)
+}
+
+/** Yesterday’s closed-deal stats from live MT rows. */
+export function summarizeYesterdayFromMtTrades(
+  trades: MtTrade[],
+  now = new Date(),
+): DayTradeSummary {
+  const { todayStart, yesterdayStart } = getLocalCalendarDayBounds(now)
+  return summarizeDayFromMtTrades(trades, yesterdayStart, todayStart)
 }
 
 export interface AccountGrowthResult {

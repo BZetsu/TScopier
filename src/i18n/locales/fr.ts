@@ -435,8 +435,9 @@ export const fr: Translations = {
     acrossAccounts: 'Sur {count} compte(s) connecté(s)',
     todaysProfit: "Profit du jour",
     todaysProfitHint:
-      'P/L net des trades clôturés aujourd’hui — même calcul que le graphique Résultat des trades (7 jours) (profit vert moins perte rouge du jour).',
+      'P/L net réalisé des trades clôturés aujourd’hui (jour calendaire local, par heure de clôture).',
     tradesTakenToday: "Trades aujourd'hui",
+    tradesVsYesterday: '{count} vs hier',
     noClosedTradesToday: 'Aucun trade clôturé aujourd\'hui',
     openPnl: 'PnL ouvert',
     openPnlNoOpen: 'Aucun PnL ouvert',

@@ -1,12 +1,11 @@
 import type { MtTrade } from './fxsocketBroker'
 import {
   buildTradeVolume7Day,
-  findTodayTradeOutcomeDay,
-  findYesterdayTradeOutcomeDay,
-  netPnlFromTradeOutcomeDay,
   resolveDashboardChartTrades,
   summarizeTodayFromChartTrades,
   summarizeTodayFromMtTrades,
+  summarizeYesterdayFromChartTrades,
+  summarizeYesterdayFromMtTrades,
   type DashboardChartTrade,
   type TradeVolumeDay,
 } from './dashboardCharts'
@@ -65,6 +64,7 @@ export type DashboardAnalytics = {
   tradeVolume7Day: TradeVolumeDay[]
   channelProfit7d: PerformanceDistributionRow[]
   tradesTaken: number
+  tradesTakenYesterday: number
   tradesWon: number
   tradesLost: number
   tradesBreakeven: number
@@ -79,16 +79,21 @@ export function deriveDashboardAnalytics(args: {
   now?: Date
 }): DashboardAnalytics {
   const now = args.now ?? new Date()
-  const todaySummary =
-    args.mtTrades.length > 0
-      ? summarizeTodayFromMtTrades(args.mtTrades, now)
-      : summarizeTodayFromChartTrades(args.chartTrades, now)
-  const todayBucket = findTodayTradeOutcomeDay(args.chartTrades, now)
+  const useMt = args.mtTrades.length > 0
+  const todaySummary = useMt
+    ? summarizeTodayFromMtTrades(args.mtTrades, now)
+    : summarizeTodayFromChartTrades(args.chartTrades, now)
+  const yesterdaySummary = useMt
+    ? summarizeYesterdayFromMtTrades(args.mtTrades, now)
+    : summarizeYesterdayFromChartTrades(args.chartTrades, now)
+  const chartForVolume = useMt
+    ? resolveDashboardChartTrades(args.mtTrades, [])
+    : args.chartTrades
 
   return {
-    todayProfit: netPnlFromTradeOutcomeDay(todayBucket),
-    yesterdayProfit: netPnlFromTradeOutcomeDay(findYesterdayTradeOutcomeDay(args.chartTrades, now)),
-    tradeVolume7Day: buildTradeVolume7Day(args.chartTrades, now),
+    todayProfit: todaySummary.netPnl,
+    yesterdayProfit: yesterdaySummary.netPnl,
+    tradeVolume7Day: buildTradeVolume7Day(chartForVolume, now),
     channelProfit7d: computeProfitByChannel(
       args.mtTrades,
       '7d',
@@ -97,6 +102,7 @@ export function deriveDashboardAnalytics(args: {
       now,
     ),
     tradesTaken: todaySummary.taken,
+    tradesTakenYesterday: yesterdaySummary.taken,
     tradesWon: todaySummary.won,
     tradesLost: todaySummary.lost,
     tradesBreakeven: todaySummary.breakeven,

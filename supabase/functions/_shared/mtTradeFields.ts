@@ -122,6 +122,84 @@ function numMtField(
   return Number.isFinite(n) ? n : null
 }
 
+function epochMsFromUnknown(v: unknown): number | null {
+  if (v === null || v === undefined || v === "") return null
+  if (typeof v === "number" && Number.isFinite(v) && v > 0) {
+    return v < 1e12 ? v * 1000 : v
+  }
+  if (typeof v === "string") {
+    const trimmed = v.trim()
+    if (!trimmed) return null
+    if (/^\d{10,13}$/.test(trimmed)) {
+      const n = Number(trimmed)
+      if (Number.isFinite(n) && n > 0) return n < 1e12 ? n * 1000 : n
+    }
+    const parsed = Date.parse(trimmed)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return null
+}
+
+function timestampIsoFromFields(
+  order: RawMtOrder,
+  profile: MtHistoryProfile,
+  keys: string[],
+): string | null {
+  for (const k of keys) {
+    const ms = epochMsFromUnknown(pickMtField(order, profile, k))
+    if (ms != null) return new Date(ms).toISOString()
+  }
+  return null
+}
+
+const MT_OPEN_TIME_KEYS = [
+  "openTime", "OpenTime", "open_time", "timeOpen", "TimeOpen",
+  "timeSetup", "TimeSetup", "setupTime", "SetupTime",
+  "created", "Created",
+] as const
+
+const MT_CLOSE_TIME_KEYS = [
+  "closeTime", "CloseTime", "close_time", "timeClose", "TimeClose",
+  "doneTime", "DoneTime", "historyTime", "HistoryTime",
+] as const
+
+/** Opening / setup time for a deal or open order. */
+export function resolveMtOpenTimestamp(
+  order: RawMtOrder,
+  profile: MtHistoryProfile,
+): string | null {
+  const direct = timestampIsoFromFields(order, profile, [...MT_OPEN_TIME_KEYS])
+  if (direct) return direct
+
+  if (profile !== "trades") {
+    return timestampIsoFromFields(order, profile, ["time", "Time"])
+  }
+
+  const flat = flattenMtOrder(order, "trades")
+  for (const key of ["dealInternalIn", "DealInternalIn", "position", "Position"] as const) {
+    const nested = flat[key]
+    if (!isPlainObject(nested)) continue
+    const nestedOpen = timestampIsoFromFields(
+      nested as RawMtOrder,
+      profile,
+      [...MT_OPEN_TIME_KEYS, "time", "Time"],
+    )
+    if (nestedOpen) return nestedOpen
+  }
+
+  return null
+}
+
+/** Close / execution time for a deal (MT5 history rows often only expose `time`). */
+export function resolveMtCloseTimestamp(
+  order: RawMtOrder,
+  profile: MtHistoryProfile,
+): string | null {
+  const close = timestampIsoFromFields(order, profile, [...MT_CLOSE_TIME_KEYS])
+  if (close) return close
+  return timestampIsoFromFields(order, profile, ["time", "Time"])
+}
+
 /** Convert MT volume / lots fields to standard lots (0.01 = 0.01 lot). */
 export function resolveMtLots(order: RawMtOrder, profile: MtHistoryProfile): number {
   const keys = profile === "trades"
@@ -229,6 +307,8 @@ function closeTimeKey(order: RawMtOrder, profile: MtHistoryProfile): string {
     "DoneTime",
     "historyTime",
     "HistoryTime",
+    "time",
+    "Time",
   )
   return ct != null ? String(ct) : ""
 }
@@ -276,9 +356,24 @@ export function mergeMtHistoryRow(
     if (merged[k] == null && prevRow[k] != null) merged[k] = prevRow[k]
   }
 
-  if (!pickMtField(merged, profile, "closeTime", "CloseTime", "close_time", "timeClose", "TimeClose")) {
-    const ct = pickMtField(prevRow, profile, "closeTime", "CloseTime", "close_time", "timeClose", "TimeClose")
+  if (!pickMtField(merged, profile, "closeTime", "CloseTime", "close_time", "timeClose", "TimeClose", "time", "Time")) {
+    const ct = pickMtField(
+      prevRow,
+      profile,
+      "closeTime",
+      "CloseTime",
+      "close_time",
+      "timeClose",
+      "TimeClose",
+      "time",
+      "Time",
+    )
     if (ct) merged.closeTime = ct
+  }
+
+  if (!pickMtField(merged, profile, "openTime", "OpenTime", "open_time", "timeOpen", "TimeOpen")) {
+    const ot = pickMtField(prevRow, profile, "openTime", "OpenTime", "open_time", "timeOpen", "TimeOpen")
+    if (ot) merged.openTime = ot
   }
 
   if (!pickMtField(merged, profile, "symbol", "Symbol") && pickMtField(prevRow, profile, "symbol", "Symbol")) {

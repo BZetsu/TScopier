@@ -206,6 +206,7 @@ export interface DashboardTranslations {
   /** Tooltip: how Today's profit is calculated vs broker terminal. */
   todaysProfitHint: string
   tradesTakenToday: string
+  tradesVsYesterday: string
   noClosedTradesToday: string
   openPnl: string
   openPnlNoOpen: string

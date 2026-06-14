@@ -1,12 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
-import {
-  PERFORMANCE_MT_HISTORY_DAYS, resolveDashboardChartTrades } from '../lib/dashboardCharts'
-import {
-  computeLinkedAccountPerformanceMap,
-  getLocalCalendarDayBounds,
-} from '../lib/dashboardTradeStats'
-import { formatLocalMtApiDateTime } from '../lib/mtApiDateTime'
+import { resolveDashboardChartTrades } from '../lib/dashboardCharts'
+import { computeLinkedAccountPerformanceMap } from '../lib/dashboardTradeStats'
+import { fetchBrokerMtTrades } from '../lib/brokerTradeHistory'
 import {
   PERFORMANCE_CACHE_TTL_MS,
   performanceCacheKey,
@@ -61,16 +57,7 @@ async function fetchPerformancePayload(userId: string): Promise<PerformanceCache
 
   let trades: MtTrade[] = []
   if (mtBrokers.length > 0) {
-    const { tomorrowStart: historyTo } = getLocalCalendarDayBounds()
-    const historyFrom = new Date()
-    historyFrom.setDate(historyFrom.getDate() - PERFORMANCE_MT_HISTORY_DAYS)
-    const tradesRes = await fxsocketBroker.trades({
-      historyProfile: 'trades',
-      scope: 'all',
-      historyFrom: formatLocalMtApiDateTime(historyFrom),
-      historyTo: formatLocalMtApiDateTime(historyTo),
-    })
-    trades = tradesRes.trades ?? []
+    trades = await fetchBrokerMtTrades({ scope: 'performance', historyProfile: 'trades' })
   }
 
   const channelLinkMaps = buildPerformanceChannelLinkMaps(
@@ -205,7 +192,12 @@ export function usePerformanceData(userId: string | undefined) {
         setLastUpdated(new Date(cached.fetchedAt))
         setError(null)
         if (!opts?.background) setLoading(false)
-        if (Date.now() - cached.fetchedAt < PERFORMANCE_CACHE_TTL_MS) return
+        const staleEmptyBrokerHistory =
+          cached.data.mtTrades.length === 0
+          && cached.data.accounts.some(isFxsocketLinkedBroker)
+        if (!staleEmptyBrokerHistory && Date.now() - cached.fetchedAt < PERFORMANCE_CACHE_TTL_MS) {
+          return
+        }
       }
 
       inflightRef.current = true
@@ -260,7 +252,12 @@ export function usePerformanceData(userId: string | undefined) {
         setLastUpdated(new Date(cached.fetchedAt))
         setLoading(false)
         setError(null)
-        if (Date.now() - cached.fetchedAt < PERFORMANCE_CACHE_TTL_MS) return
+        const staleEmptyBrokerHistory =
+          cached.data.mtTrades.length === 0
+          && cached.data.accounts.some(isFxsocketLinkedBroker)
+        if (!staleEmptyBrokerHistory && Date.now() - cached.fetchedAt < PERFORMANCE_CACHE_TTL_MS) {
+          return
+        }
         void load({ background: true })
         return
       }
@@ -328,25 +325,14 @@ export function usePerformanceData(userId: string | undefined) {
       }
 
       try {
-        const { tomorrowStart: historyTo } = getLocalCalendarDayBounds()
-        const historyFrom = new Date()
-        historyFrom.setDate(historyFrom.getDate() - PERFORMANCE_MT_HISTORY_DAYS)
-
-        const [summaryRes, tradesRes] = await Promise.all([
+        const [summaryRes, brokerTrades] = await Promise.all([
           fxsocketBroker.refreshSummary(brokerId),
-          fxsocketBroker.trades({
-            brokerId,
-            historyProfile: 'trades',
-            scope: 'all',
-            historyFrom: formatLocalMtApiDateTime(historyFrom),
-            historyTo: formatLocalMtApiDateTime(historyTo),
-          }),
+          fetchBrokerMtTrades({ scope: 'performance', brokerId, historyProfile: 'trades' }),
         ])
 
         const { account: refreshed, summary } = summaryRes
         const eq = summary?.equity ?? refreshed.last_equity ?? summary?.balance
         const bal = summary?.balance ?? refreshed.last_balance ?? summary?.equity
-        const brokerTrades = tradesRes.trades ?? []
         const balanceNum = bal != null && Number.isFinite(Number(bal)) ? Number(bal) : null
         const serverBaseline = Number(refreshed.performance_baseline_balance ?? account.performance_baseline_balance)
         const clientBaseline = resolveDisplayInitialBalance(

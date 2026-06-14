@@ -93,3 +93,74 @@ test('deriveDashboardAnalytics: today profit matches trade outcome bucket', () =
   assert.ok(todayBar)
   assert.equal(todayBar!.profit - todayBar!.loss, analytics.todayProfit)
 })
+
+test('deriveDashboardAnalytics: MT trades drive today and yesterday profit', () => {
+  const now = new Date(2026, 5, 10, 12, 0, 0)
+  const maps = {
+    ticketToChannelId: {},
+    signalPrefixToChannelId: {},
+    channelSlugToChannelId: {},
+    channelNames: {},
+  }
+  const mtTrades = [
+    {
+      id: 'b1:1',
+      broker_id: 'b1',
+      broker_label: 'Demo',
+      broker_name: 'IC',
+      ticket: 1,
+      symbol: 'XAUUSD',
+      direction: 'buy' as const,
+      type: 'Buy',
+      lot_size: 0.1,
+      entry_price: 2500,
+      sl: null,
+      tp: null,
+      close_price: 2510,
+      profit: 120,
+      swap: 0,
+      commission: 0,
+      comment: null,
+      magic: null,
+      opened_at: '2026-06-10T09:00:00',
+      closed_at: '2026-06-10T10:00:00',
+      state: null,
+      status: 'closed' as const,
+    },
+    {
+      id: 'b1:2',
+      broker_id: 'b1',
+      broker_label: 'Demo',
+      broker_name: 'IC',
+      ticket: 2,
+      symbol: 'XAUUSD',
+      direction: 'buy' as const,
+      type: 'Buy',
+      lot_size: 0.1,
+      entry_price: 2500,
+      sl: null,
+      tp: null,
+      close_price: 2490,
+      profit: -40,
+      swap: 0,
+      commission: 0,
+      comment: null,
+      magic: null,
+      opened_at: '2026-06-09T09:00:00',
+      closed_at: '2026-06-09T15:00:00',
+      state: null,
+      status: 'closed' as const,
+    },
+  ]
+  const analytics = deriveDashboardAnalytics({
+    chartTrades: [],
+    mtTrades,
+    channelLinkMaps: maps,
+    unlinkedLabel: 'Unlinked',
+    now,
+  })
+  assert.equal(analytics.todayProfit, 120)
+  assert.equal(analytics.yesterdayProfit, -40)
+  assert.equal(analytics.tradesTaken, 1)
+  assert.equal(analytics.tradesTakenYesterday, 1)
+})

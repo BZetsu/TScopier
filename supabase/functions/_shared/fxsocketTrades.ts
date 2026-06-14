@@ -5,8 +5,10 @@ import {
   ingestMtHistoryRows,
   pickMtField,
   reconcileTradeDirectionWithStops,
+  resolveMtCloseTimestamp,
   resolveMtDealProfit,
   resolveMtLots,
+  resolveMtOpenTimestamp,
   resolveMtPositionTicket,
   type MtHistoryProfile,
   type RawMtOrder,
@@ -128,16 +130,8 @@ function normalizeOrder(
     sl,
     tp,
   )
-  const openTime = pickMtField(
-    row,
-    historyProfile,
-    "openTime", "OpenTime", "open_time", "timeOpen", "TimeOpen",
-  ) as string | undefined
-  const closeTime = pickMtField(
-    row,
-    historyProfile,
-    "closeTime", "CloseTime", "close_time", "timeClose", "TimeClose", "doneTime", "DoneTime",
-  ) as string | undefined
+  const openTime = resolveMtOpenTimestamp(order, historyProfile)
+  const closeTime = resolveMtCloseTimestamp(order, historyProfile)
   return {
     id: `${broker.id}:${ticket}`,
     broker_id: broker.id,
@@ -160,8 +154,8 @@ function normalizeOrder(
     commission: num(pickMtField(row, historyProfile, "commission", "Commission")),
     comment: (pickMtField(row, historyProfile, "comment", "Comment") as string | undefined) ?? null,
     magic: num(pickMtField(row, historyProfile, "magicNumber", "MagicNumber", "magic", "Magic")),
-    opened_at: openTime ?? null,
-    closed_at: closeTime ?? null,
+    opened_at: openTime,
+    closed_at: closeTime,
     state: (pickMtField(row, historyProfile, "state", "State") as string | undefined) ?? null,
     status,
   }
