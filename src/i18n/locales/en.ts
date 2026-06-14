@@ -420,6 +420,7 @@ export const en: Translations = {
   },
   dashboard: {
     title: 'Dashboard',
+    loadingMetrics: 'Loading your dashboard metrics',
     totalBalance: 'Total Balance',
     acrossAccounts: 'Across {count} connected account(s)',
     todaysProfit: "Today's Profit",

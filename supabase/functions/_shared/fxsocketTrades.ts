@@ -185,6 +185,7 @@ export async function fetchFxsocketBrokerTrades(
     historyTo: string
     historyProfile: MtHistoryProfile
     limit: number
+    includeBalanceCashFlow?: boolean
   },
 ): Promise<FxsocketBrokerTradeRow[]> {
   const sessionId = String(broker.fxsocket_account_id ?? "").trim()
@@ -192,22 +193,22 @@ export async function fetchFxsocketBrokerTrades(
 
   const wantOpen = opts.scope === "all" || opts.scope === "open"
   const wantClosed = opts.scope === "all" || opts.scope === "closed"
+  const includeBalanceCashFlow = opts.includeBalanceCashFlow !== false
 
   const [openedRes, closedRes] = await Promise.allSettled([
     wantOpen ? fx.openedOrders(sessionId) : Promise.resolve([] as unknown[]),
     wantClosed
       ? opts.historyProfile === "trades"
-        ? Promise.all([
-          fetchTradesListFromPositionHistory(fx, broker, {
-            historyFrom: opts.historyFrom,
-            historyTo: opts.historyTo,
-          }),
-          fetchBalanceCashFlowFromOrderHistory(fx, broker, {
+        ? fetchTradesListFromPositionHistory(fx, broker, {
+          historyFrom: opts.historyFrom,
+          historyTo: opts.historyTo,
+        }).then(async (positions) => {
+          if (!includeBalanceCashFlow) return positions
+          const cashFlows = await fetchBalanceCashFlowFromOrderHistory(fx, broker, {
             historyFrom: opts.historyFrom,
             historyTo: opts.historyTo,
             historyProfile: opts.historyProfile,
-          }),
-        ]).then(([positions, cashFlows]) => {
+          })
           const tickets = new Set(positions.map(row => row.ticket))
           const merged = [...positions]
           for (const row of cashFlows) {

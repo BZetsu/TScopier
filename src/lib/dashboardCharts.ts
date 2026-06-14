@@ -32,7 +32,7 @@ export interface AccountGrowthSeries {
 }
 
 /** MT closed-order history for dashboard 7-day charts (+ buffer for timezone edges). */
-export const DASHBOARD_CHART_MT_HISTORY_DAYS = 31
+export const DASHBOARD_CHART_MT_HISTORY_DAYS = 10
 
 /** MT closed-order history for performance page (max UI period + buffer). */
 export const PERFORMANCE_MT_HISTORY_DAYS = 400

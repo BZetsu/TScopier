@@ -405,6 +405,7 @@ Deno.serve(async (req: Request) => {
         Number.isFinite(limitRaw) && limitRaw > 0
           ? Math.floor(limitRaw)
           : 0
+      const includeBalanceCashFlow = body.include_balance_cashflow !== false
 
       let brokers: Array<{ id: string; label: string; broker_name: string | null; fxsocket_account_id: string }> = []
       if (brokerId) {
@@ -432,6 +433,7 @@ Deno.serve(async (req: Request) => {
           historyTo,
           historyProfile,
           limit,
+          includeBalanceCashFlow,
         })),
       )
       const trades = tradesByBroker.flat()

@@ -44,6 +44,18 @@ test('preferAuthoritativeChartTrades: accepts MT refresh with higher quality', (
   assert.equal(out, next)
 })
 
+test('resolveAnalyticsChartTrades: MT broker falls back to DB when MT snapshot empty', () => {
+  const db = [{
+    broker_account_id: 'b1',
+    lot_size: 0.1,
+    profit: 999,
+    status: 'closed',
+    closed_at: '2026-06-10T10:00:00',
+    opened_at: '2026-06-10T09:00:00',
+  }]
+  assert.equal(resolveAnalyticsChartTrades([], db, true).length, 1)
+})
+
 test('resolveAnalyticsChartTrades: MT broker ignores DB rows', () => {
   const db = [{
     broker_account_id: 'b1',
@@ -237,5 +249,57 @@ test('deriveDashboardAnalytics: excludes manual MT trades without channel attrib
     now,
   })
   assert.equal(analytics.todayProfit, 120)
+  assert.equal(analytics.tradesTaken, 1)
+})
+
+test('deriveDashboardAnalytics: attributes TSCopier comment via account connected channels', () => {
+  const now = new Date(2026, 5, 14, 12, 0, 0)
+  const channelId = 'ch-test-1'
+  const maps = {
+    ticketToChannelId: {},
+    ticketToSignalId: {},
+    signalPrefixToChannelId: {},
+    signalPrefixToSignalId: {},
+    channelSlugToChannelId: { testsignalch: channelId },
+    channelNames: { [channelId]: 'Test Signal Channel' },
+  }
+  const mtTrades = [{
+    id: 'b1:1',
+    broker_id: 'b1',
+    broker_label: 'Demo',
+    broker_name: 'IC',
+    ticket: 1,
+    symbol: 'BTCUSD',
+    direction: 'buy' as const,
+    type: 'Buy',
+    lot_size: 0.1,
+    entry_price: 100000,
+    sl: null,
+    tp: null,
+    close_price: 101000,
+    profit: 100,
+    swap: 0,
+    commission: 0,
+    comment: 'TSCopier:TestSignalCh:4a6c0a6b',
+    magic: null,
+    opened_at: '2026-06-14T09:00:00',
+    closed_at: '2026-06-14T10:00:00',
+    state: null,
+    status: 'closed' as const,
+  }]
+  const analytics = deriveDashboardAnalytics({
+    chartTrades: [],
+    mtTrades,
+    channelLinkMaps: maps,
+    unlinkedLabel: 'Unlinked',
+    accounts: [{
+      id: 'b1',
+      performance_baseline_captured_at: '2026-06-14T00:00:00.000Z',
+      created_at: '2026-01-01T00:00:00.000Z',
+      signal_channel_ids: [channelId],
+    }],
+    now,
+  })
+  assert.equal(analytics.todayProfit, 100)
   assert.equal(analytics.tradesTaken, 1)
 })

@@ -204,6 +204,7 @@ export interface DashboardLinkedAccountsTranslations {
 
 export interface DashboardTranslations {
   title: string
+  loadingMetrics: string
   totalBalance: string
   acrossAccounts: string
   todaysProfit: string

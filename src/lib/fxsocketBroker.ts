@@ -347,6 +347,7 @@ export const fxsocketBroker = {
     historyTo?: string
     historyProfile?: 'dashboard' | 'trades'
     limit?: number
+    includeBalanceCashflow?: boolean
   } = {}): Promise<{ trades: MtTrade[] }> {
     return call({
       body: {
@@ -357,6 +358,7 @@ export const fxsocketBroker = {
         ...(args.historyFrom ? { history_from: args.historyFrom } : {}),
         ...(args.historyTo ? { history_to: args.historyTo } : {}),
         ...(args.limit != null && args.limit > 0 ? { limit: args.limit } : {}),
+        ...(args.includeBalanceCashflow === false ? { include_balance_cashflow: false } : {}),
       },
       timeoutMs: FXSOCKET_TRADES_TIMEOUT_MS,
       expect: (b) => b as { trades: MtTrade[] },

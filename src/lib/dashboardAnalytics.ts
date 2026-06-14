@@ -21,6 +21,11 @@ import {
   filterMtTradesSinceConnect,
   type BrokerConnectAnchor,
 } from './tradesSinceConnect'
+import { normalizeSignalChannelIds } from './brokerChannelLink'
+
+export type DashboardConnectAccount = BrokerConnectAnchor & {
+  signal_channel_ids?: string[] | null
+}
 
 /** Closed MT legs attributed to a TSCopier signal channel (excludes manual/unlinked broker trades). */
 export function filterCopierAttributedMtTrades(
@@ -37,13 +42,28 @@ export function filterCopierAttributedMtTrades(
 export function scopeDashboardCopierMtTrades(
   mtTrades: MtTrade[],
   maps: PerformanceChannelLinkMaps,
-  accounts?: readonly BrokerConnectAnchor[],
+  accounts?: readonly DashboardConnectAccount[],
   opts?: ResolveChannelIdOpts,
 ): MtTrade[] {
   const sinceConnect = accounts?.length
     ? filterMtTradesSinceConnect(mtTrades, accounts)
     : mtTrades
-  return filterCopierAttributedMtTrades(sinceConnect, maps, opts)
+
+  const connectedByBroker = new Map<string, string[]>()
+  for (const account of accounts ?? []) {
+    if (!account.id) continue
+    connectedByBroker.set(account.id, normalizeSignalChannelIds(account.signal_channel_ids))
+  }
+
+  return sinceConnect.filter(trade => {
+    const resolveOpts: ResolveChannelIdOpts = {
+      connectedChannelIds:
+        connectedByBroker.get(trade.broker_id)
+        ?? opts?.connectedChannelIds
+        ?? null,
+    }
+    return resolveChannelIdForTrade(trade, maps, resolveOpts) !== UNLINKED_CHANNEL_KEY
+  })
 }
 
 /** Closed chart rows with usable deal profit — proxy for MT-quality P/L data. */
@@ -83,9 +103,9 @@ export function resolveAnalyticsChartTrades(
   dbTrades: Parameters<typeof resolveDashboardChartTrades>[1],
   hasMtBroker: boolean,
 ): DashboardChartTrade[] {
-  if (hasMtBroker) {
-    return resolveDashboardChartTrades(mtTrades, [])
-  }
+  const mtChart = resolveDashboardChartTrades(mtTrades, [])
+  if (mtChart.length > 0) return mtChart
+  if (hasMtBroker) return resolveDashboardChartTrades(null, dbTrades)
   return resolveDashboardChartTrades(mtTrades, dbTrades)
 }
 
@@ -108,7 +128,7 @@ export function deriveDashboardAnalytics(args: {
   channelLinkMaps: PerformanceChannelLinkMaps
   unlinkedLabel: string
   /** When set, exclude trades before each broker's first TSCopier connect. */
-  accounts?: readonly BrokerConnectAnchor[]
+  accounts?: readonly DashboardConnectAccount[]
   now?: Date
 }): DashboardAnalytics {
   const now = args.now ?? new Date()
@@ -116,7 +136,7 @@ export function deriveDashboardAnalytics(args: {
   const scopedMt = hasMtSource
     ? scopeDashboardCopierMtTrades(args.mtTrades, args.channelLinkMaps, args.accounts)
     : []
-  const useMt = hasMtSource
+  const useMt = scopedMt.length > 0
   const todaySummary = useMt
     ? summarizeTodayFromMtTrades(scopedMt, now)
     : summarizeTodayFromChartTrades(args.chartTrades, now)

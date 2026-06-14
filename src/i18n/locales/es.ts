@@ -420,6 +420,7 @@ export const es: Translations = {
   },
   dashboard: {
     title: 'Panel',
+    loadingMetrics: 'Cargando métricas del panel…',
     totalBalance: 'Balance total',
     acrossAccounts: 'En {count} cuenta(s) conectada(s)',
     todaysProfit: 'Beneficio de hoy',
