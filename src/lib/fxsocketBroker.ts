@@ -382,7 +382,7 @@ export const fxsocketBroker = {
         ...(args.historyTo ? { history_to: args.historyTo } : {}),
         ...(args.limit != null && args.limit > 0 ? { limit: args.limit } : {}),
       },
-      timeoutMs: args.limit != null && args.limit > 0 ? 20_000 : FXSOCKET_EDGE_TIMEOUT_MS,
+      timeoutMs: FXSOCKET_EDGE_TIMEOUT_MS,
       expect: (b) => b as { trades: MtTrade[] },
     })
   },

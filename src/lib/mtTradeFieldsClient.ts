@@ -27,13 +27,30 @@ const MT_DEAL_NESTED_OBJECTS = [
   'Result',
 ] as const
 
+const MT_NESTED_SKIP_VOLUME_ABSORB = new Set([
+  'dealInternalIn',
+  'DealInternalIn',
+  'position',
+  'Position',
+])
+
+const MT_LOT_VOLUME_FIELD_NAMES = new Set([
+  'lots', 'Lots', 'lot', 'Lot',
+  'volume', 'Volume', 'volumeExt', 'VolumeExt',
+  'volumeLots', 'VolumeLots', 'volume_lots',
+  'volumeClosed', 'VolumeClosed', 'closeVolume', 'CloseVolume',
+  'closeLots', 'CloseLots', 'requestLots', 'RequestLots',
+  'requestVolume', 'RequestVolume', 'dealVolume', 'DealVolume',
+])
+
 export function flattenMtOrder(row: unknown): RawMtOrder {
   if (!isPlainObject(row)) return {}
   const flat: RawMtOrder = { ...row }
 
-  const absorb = (src: RawMtOrder) => {
+  const absorb = (src: RawMtOrder, skipVolume = false) => {
     for (const [k, v] of Object.entries(src)) {
       if (!scalarValue(v)) continue
+      if (skipVolume && MT_LOT_VOLUME_FIELD_NAMES.has(k)) continue
       const cur = flat[k]
       if (cur === undefined || cur === null || cur === '') {
         flat[k] = v
@@ -48,7 +65,9 @@ export function flattenMtOrder(row: unknown): RawMtOrder {
   if (isPlainObject(flat.result)) absorb(flat.result as RawMtOrder)
   for (const key of MT_DEAL_NESTED_OBJECTS) {
     const nested = flat[key]
-    if (isPlainObject(nested)) absorb(nested)
+    if (isPlainObject(nested)) {
+      absorb(nested, MT_NESTED_SKIP_VOLUME_ABSORB.has(key))
+    }
   }
 
   return flat
@@ -87,6 +106,11 @@ export function epochMsFromUnknown(v: unknown): number | null {
     if (Number.isFinite(parsed)) return parsed
   }
 
+  if (trimmed.includes('T')) {
+    const isoParsed = Date.parse(trimmed)
+    if (Number.isFinite(isoParsed)) return isoParsed
+  }
+
   const normalized = trimmed.includes('T')
     ? trimmed.replace(/\./g, '-')
     : trimmed.replace(/\./g, '-').replace(' ', 'T')
@@ -110,15 +134,19 @@ function timestampIsoFromFields(order: RawMtOrder, keys: string[]): string | nul
 }
 
 const MT_OPEN_TIME_KEYS = [
-  'openTime', 'OpenTime', 'open_time', 'timeOpen', 'TimeOpen',
+  'openTime', 'OpenTime', 'open_time', 'OPEN_TIME', 'Open_Time',
+  'timeOpen', 'TimeOpen',
   'timeSetup', 'TimeSetup', 'time_setup', 'Time_Setup', 'setupTime', 'SetupTime',
+  'timeSetupMsc', 'TimeSetupMsc', 'time_setup_msc',
   'brokerTime', 'BrokerTime',
   'created', 'Created',
 ] as const
 
 const MT_CLOSE_TIME_KEYS = [
-  'closeTime', 'CloseTime', 'close_time', 'timeClose', 'TimeClose',
+  'closeTime', 'CloseTime', 'close_time', 'CLOSE_TIME', 'Close_Time',
+  'timeClose', 'TimeClose',
   'doneTime', 'DoneTime', 'time_done', 'Time_Done', 'timeDone', 'TimeDone',
+  'timeDoneMsc', 'TimeDoneMsc', 'time_done_msc',
   'doneBrokerTime', 'DoneBrokerTime',
   'historyTime', 'HistoryTime',
 ] as const
@@ -136,7 +164,16 @@ export function resolveMtOpenTimestamp(order: RawMtOrder): string | null {
     if (nestedOpen) return nestedOpen
   }
 
-  return null
+  return findDeepTimestamp(order, [...MT_OPEN_TIME_KEYS])
+}
+
+/** OpenedOrders / live positions — `time` is open time, not deal close time. */
+export function resolveMtLiveOpenTimestamp(order: RawMtOrder): string | null {
+  const direct = resolveMtOpenTimestamp(order)
+  if (direct) return direct
+  const fromTime = timestampIsoFromFields(order, ['time', 'Time'])
+  if (fromTime) return fromTime
+  return findDeepTimestamp(order, [...MT_OPEN_TIME_KEYS, 'time', 'Time'])
 }
 
 /** Close / execution time (FxSocket OrderHistory deals use `time`). */
@@ -151,7 +188,7 @@ export function resolveMtCloseTimestamp(order: RawMtOrder): string | null {
 function findDeepTimestamp(obj: unknown, keys: string[], depth = 0): string | null {
   if (depth > 5 || !isPlainObject(obj)) return null
   for (const k of keys) {
-    const ms = epochMsFromUnknown(obj[k])
+    const ms = epochMsFromUnknown(pickMtField(obj as RawMtOrder, k))
     if (ms != null) return new Date(ms).toISOString()
   }
   for (const v of Object.values(obj)) {
@@ -181,9 +218,22 @@ export function resolveMtTicket(order: RawMtOrder): number {
   return Number.isFinite(ticket) && ticket > 0 ? ticket : 0
 }
 
+/** @deprecated Prefer resolveMtPositionTicket for MT5 deal/position matching. */
 export function resolveMtPositionId(order: RawMtOrder): number {
-  const id = Number(
-    pickMtField(order, 'positionId', 'PositionId', 'position_id', 'position', 'Position') ?? 0,
+  return resolveMtPositionTicket(order) ?? 0
+}
+
+/** Opening / position ticket on MT5 close deals (differs from the closing deal ticket). */
+export function resolveMtPositionTicket(order: RawMtOrder): number | null {
+  const flat = flattenMtOrder(order)
+  for (const key of ['dealInternalIn', 'DealInternalIn', 'position', 'Position'] as const) {
+    const nested = flat[key]
+    if (!isPlainObject(nested)) continue
+    const ticket = resolveMtTicket(nested as RawMtOrder)
+    if (ticket > 0) return ticket
+  }
+  const positionId = Number(
+    pickMtField(flat, 'positionId', 'PositionId', 'position_id', 'order', 'Order') ?? 0,
   )
-  return Number.isFinite(id) && id > 0 ? id : 0
+  return Number.isFinite(positionId) && positionId > 0 ? positionId : null
 }

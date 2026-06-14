@@ -1,13 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getLocalCalendarDayBounds } from '../lib/dashboardTradeStats'
-import { formatLocalMtApiDateTime } from '../lib/mtApiDateTime'
+import { formatBrokerHistoryDate } from '../lib/mtApiDateTime'
 import { fxsocketBroker, type MtTrade } from '../lib/fxsocketBroker'
 import { TRADES_PAGE_HISTORY_DAYS, TRADES_PAGE_MAX_RESULTS } from '../lib/tradesConstants'
-import {
-  enrichMtTradesTimestamps,
-  hydrateMtTradesTimesFromBrokers,
-  mtTradeMissingDisplayTime,
-} from '../lib/mtTradeTimestamps'
+import { enrichMtTradesTimestamps, hydrateMtTradesTimesFromBrokers, mtTradeMissingDisplayTime } from '../lib/mtTradeTimestamps'
 import { readSessionCache, writeSessionCache } from '../lib/sessionDataCache'
 import {
   TRADES_CACHE_TTL_MS,
@@ -29,14 +25,31 @@ async function fetchTradesFromMt(): Promise<MtTrade[]> {
   const res = await fxsocketBroker.trades({
     scope: 'all',
     historyProfile: 'trades',
-    historyFrom: formatLocalMtApiDateTime(historyFrom),
-    historyTo: formatLocalMtApiDateTime(historyTo),
+    historyFrom: formatBrokerHistoryDate(historyFrom),
+    historyTo: formatBrokerHistoryDate(historyTo),
     limit: TRADES_PAGE_MAX_RESULTS,
   })
-  const normalized = enrichMtTradesTimestamps(
+  let normalized = enrichMtTradesTimestamps(
     (res.trades ?? []).slice(0, TRADES_PAGE_MAX_RESULTS),
   )
-  return hydrateMtTradesTimesFromBrokers(normalized)
+  if (normalized.some(mtTradeMissingDisplayTime)) {
+    const { trades: hydrated, stats } = await hydrateMtTradesTimesFromBrokers(normalized)
+    normalized = hydrated
+    if (import.meta.env.DEV && (stats.missingBefore > 0 || stats.historyErrors.length > 0)) {
+      console.debug('[trades] time hydration fallback', stats)
+    }
+  }
+  if (import.meta.env.DEV) {
+    const missingFromEdge = normalized.filter(mtTradeMissingDisplayTime).length
+    if (missingFromEdge > 0) {
+      console.debug('[trades] missing times after fetch', {
+        missing: missingFromEdge,
+        total: normalized.length,
+        sample: normalized.find(mtTradeMissingDisplayTime),
+      })
+    }
+  }
+  return normalized
 }
 
 export function useTradesData(userId: string | undefined) {

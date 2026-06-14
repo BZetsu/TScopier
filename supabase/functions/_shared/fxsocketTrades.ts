@@ -8,8 +8,10 @@ import {
   resolveMtCloseTimestamp,
   resolveMtDealProfit,
   resolveMtLots,
+  resolveMtLiveOpenTimestamp,
   resolveMtOpenTimestamp,
   resolveMtPositionTicket,
+  resolveMtTicket,
   type MtHistoryProfile,
   type RawMtOrder,
 } from "./mtTradeFields.ts"
@@ -113,14 +115,17 @@ function normalizeOrder(
   historyProfile: MtHistoryProfile,
 ): FxsocketBrokerTradeRow {
   const row = historyProfile === "trades" ? flattenMtOrder(order, "trades") : order
-  const ticket = Number(pickMtField(row, historyProfile, "ticket", "Ticket") ?? 0)
+  const ticket = resolveMtTicket(row, historyProfile)
   const positionTicket = historyProfile === "trades" ? resolveMtPositionTicket(order, "trades") : null
   const resolved = resolveDirection(row, historyProfile)
   const adjusted =
     status === "closed" && historyProfile === "trades"
       ? adjustMtTradesPositionDirection(order, historyProfile, resolved)
       : resolved
-  const lot_size = resolveMtLots(row, historyProfile)
+  const lot_size = resolveMtLots(
+    historyProfile === "trades" ? (order as RawMtOrder) : row,
+    historyProfile,
+  )
   const entry_price = num(pickMtField(row, historyProfile, "openPrice", "OpenPrice", "price"))
   const sl = num(pickMtField(row, historyProfile, "stopLoss", "StopLoss", "sl"))
   const tp = num(pickMtField(row, historyProfile, "takeProfit", "TakeProfit", "tp"))
@@ -130,7 +135,9 @@ function normalizeOrder(
     sl,
     tp,
   )
-  const openTime = resolveMtOpenTimestamp(order, historyProfile)
+  const openTime = status === "open"
+    ? resolveMtLiveOpenTimestamp(order, historyProfile)
+    : resolveMtOpenTimestamp(order, historyProfile)
   const closeTime = resolveMtCloseTimestamp(order, historyProfile)
   return {
     id: `${broker.id}:${ticket}`,
@@ -181,11 +188,16 @@ export async function fetchFxsocketBrokerTrades(
   const [openedRes, closedRes] = await Promise.allSettled([
     wantOpen ? fx.openedOrders(sessionId) : Promise.resolve([] as unknown[]),
     wantClosed
-      ? fetchClosedHistoryForBaseline(fx, broker, {
-        historyFrom: opts.historyFrom,
-        historyTo: opts.historyTo,
-        historyProfile: opts.historyProfile,
-      })
+      ? opts.historyProfile === "trades"
+        ? fetchTradesListFromPositionHistory(fx, broker, {
+          historyFrom: opts.historyFrom,
+          historyTo: opts.historyTo,
+        })
+        : fetchClosedHistoryForBaseline(fx, broker, {
+          historyFrom: opts.historyFrom,
+          historyTo: opts.historyTo,
+          historyProfile: opts.historyProfile,
+        })
       : Promise.resolve([] as FxsocketBrokerTradeRow[]),
   ])
 
@@ -242,7 +254,14 @@ function buildHistoryChunks(fromIso: string, toIso: string): Array<{ from: strin
   return chunks.length > 0 ? chunks : [{ from: fromIso, to: toIso }]
 }
 
-/** Full closed history for baseline inference — chunked fetches + ticket dedupe. */
+function rowCloseMs(row: Pick<FxsocketBrokerTradeRow, "closed_at" | "opened_at">): number {
+  const iso = row.closed_at ?? row.opened_at
+  if (!iso) return 0
+  const ms = Date.parse(iso)
+  return Number.isFinite(ms) ? ms : 0
+}
+
+/** Full closed history for baseline inference — chunked OrderHistory + ticket dedupe. */
 export async function fetchClosedHistoryForBaseline(
   fx: FxsocketClient,
   broker: BrokerRow & { fxsocket_account_id: string },
@@ -257,18 +276,23 @@ export async function fetchClosedHistoryForBaseline(
 
   const merged = new Map<string, RawMtOrder>()
   const chunks = buildHistoryChunks(opts.historyFrom, opts.historyTo)
-  const settled = await Promise.allSettled(
+  const orderSettled = await Promise.allSettled(
     chunks.map(chunk => fx.orderHistory(sessionId, chunk.from, chunk.to)),
   )
 
-  for (const result of settled) {
+  for (const result of orderSettled) {
     if (result.status !== "fulfilled") continue
     ingestMtHistoryRows(merged, result.value, opts.historyProfile)
   }
 
   const out: FxsocketBrokerTradeRow[] = []
   for (const row of merged.values()) {
-    out.push(normalizeOrder(row, broker, "closed", opts.historyProfile))
+    const trade = normalizeOrder(row, broker, "closed", opts.historyProfile)
+    if (opts.historyProfile === "trades") {
+      if (trade.lot_size <= 0 && !trade.symbol.trim()) continue
+      if (isNonTradeEntry(trade.direction, trade.type, trade.lot_size)) continue
+    }
+    out.push(trade)
   }
 
   return out.sort((a, b) => {
@@ -278,9 +302,117 @@ export async function fetchClosedHistoryForBaseline(
   })
 }
 
-function rowCloseMs(row: Pick<FxsocketBrokerTradeRow, "closed_at" | "opened_at">): number {
-  const iso = row.closed_at ?? row.opened_at
-  if (!iso) return 0
-  const ms = Date.parse(iso)
-  return Number.isFinite(ms) ? ms : 0
+function readScalar(row: RawOrder, ...keys: string[]): unknown {
+  for (const k of keys) {
+    const v = row[k]
+    if (v !== undefined && v !== null && v !== "") return v
+  }
+  return undefined
+}
+
+/** YYYY-MM-DD for FxSocket PositionHistory (matches Swagger). */
+function toBrokerHistoryDateParam(iso: string): string {
+  const trimmed = iso.trim()
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed
+  const d = new Date(trimmed.includes("T") ? trimmed : trimmed.replace(" ", "T"))
+  if (!Number.isFinite(d.getTime())) return trimmed.slice(0, 10)
+  return d.toISOString().slice(0, 10)
+}
+
+function directionFromPositionType(typeStr: string): { direction: "buy" | "sell" | ""; type_label: string } {
+  const cleaned = typeStr.replace(/^(OrderType_|DealType_|POSITION_TYPE_|PositionType_)/i, "").trim()
+  const lower = cleaned.toLowerCase()
+  const direction: "buy" | "sell" | "" =
+    lower.startsWith("buy") ? "buy"
+    : lower.startsWith("sell") ? "sell"
+    : lower.includes("buy") ? "buy"
+    : lower.includes("sell") ? "sell"
+    : ""
+  const label = cleaned.replace(/([a-z])([A-Z])/g, "$1 $2").trim()
+  return { direction, type_label: label || cleaned || typeStr }
+}
+
+/** Map one FxSocket PositionHistory row → closed MtTrade (no merge/flatten). */
+export function mapPositionHistoryRow(row: RawOrder, broker: BrokerRow): FxsocketBrokerTradeRow | null {
+  const positionId = num(readScalar(row, "positionId", "PositionId", "ticket", "Ticket"))
+  if (positionId == null || positionId <= 0) return null
+
+  const symbol = String(readScalar(row, "symbol", "Symbol") ?? "").trim()
+  if (!symbol) return null
+
+  const volume = num(readScalar(row, "volume", "Volume", "lots", "Lots"))
+  if (volume == null || volume <= 0) return null
+
+  const closedAt = resolveMtCloseTimestamp(row as RawMtOrder, "trades")
+  if (!closedAt) return null
+
+  const openedAt = resolveMtOpenTimestamp(row as RawMtOrder, "trades")
+  const typeStr = String(readScalar(row, "type", "Type") ?? "")
+  const { direction, type_label } = directionFromPositionType(typeStr)
+  if (isNonTradeEntry(direction, type_label, volume)) return null
+
+  const netProfit = num(readScalar(row, "netProfit", "NetProfit"))
+  const profit = num(readScalar(row, "profit", "Profit"))
+
+  return {
+    id: `${broker.id}:${positionId}`,
+    broker_id: broker.id,
+    broker_label: broker.label,
+    broker_name: broker.broker_name,
+    ticket: positionId,
+    position_ticket: positionId,
+    symbol,
+    direction,
+    type: type_label,
+    lot_size: volume,
+    entry_price: num(readScalar(row, "openPrice", "OpenPrice")),
+    sl: null,
+    tp: null,
+    close_price: num(readScalar(row, "closePrice", "ClosePrice")),
+    profit: netProfit ?? profit,
+    swap: num(readScalar(row, "swap", "Swap")),
+    commission: num(readScalar(row, "commission", "Commission")),
+    comment: (readScalar(row, "comment", "Comment") as string | undefined) ?? null,
+    magic: num(readScalar(row, "magic", "Magic", "magicNumber", "MagicNumber")),
+    opened_at: openedAt,
+    closed_at: closedAt,
+    state: null,
+    status: "closed",
+  }
+}
+
+/** Trades page closed legs — one row per PositionHistory round-trip. */
+export async function fetchTradesListFromPositionHistory(
+  fx: FxsocketClient,
+  broker: BrokerRow & { fxsocket_account_id: string },
+  opts: {
+    historyFrom: string
+    historyTo: string
+  },
+): Promise<FxsocketBrokerTradeRow[]> {
+  const sessionId = String(broker.fxsocket_account_id ?? "").trim()
+  if (!sessionId) return []
+
+  const from = toBrokerHistoryDateParam(opts.historyFrom)
+  const to = toBrokerHistoryDateParam(opts.historyTo)
+
+  let rows: unknown[] = []
+  try {
+    rows = await fx.positionHistory(sessionId, from, to)
+  } catch {
+    return []
+  }
+
+  const seen = new Set<number>()
+  const out: FxsocketBrokerTradeRow[] = []
+  for (const row of rows) {
+    if (!row || typeof row !== "object") continue
+    const trade = mapPositionHistoryRow(row as RawOrder, broker)
+    if (!trade) continue
+    if (seen.has(trade.ticket)) continue
+    seen.add(trade.ticket)
+    out.push(trade)
+  }
+
+  return out.sort((a, b) => rowCloseMs(b) - rowCloseMs(a))
 }

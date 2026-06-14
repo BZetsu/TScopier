@@ -612,7 +612,7 @@ export const en: Translations = {
     colTp: 'TP',
     colLots: 'Lots',
     colPnl: 'PnL',
-    colTime: 'Time',
+    colTime: 'Date & Time',
     instructionAction: 'Action',
     instructionSymbol: 'Symbol',
     instructionEntry: 'Entry',

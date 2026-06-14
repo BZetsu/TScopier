@@ -177,7 +177,7 @@ export function TradesPage() {
                     <th className="px-2 py-3 text-center">TP</th>
                     <th className="px-2 py-3 text-center">Lots</th>
                     <th className="px-2 py-3 text-center">PnL</th>
-                    <th className="px-2 py-3 text-center">Time</th>
+                    <th className="px-2 py-3 text-center">{t.trades.colTime}</th>
                     <th className="px-4 py-3 text-center">Status</th>
                   </tr>
                 </thead>

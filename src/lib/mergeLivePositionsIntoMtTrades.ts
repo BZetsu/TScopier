@@ -79,7 +79,7 @@ function mtTradeFromPositionRow(
     commission: readNum(o.commission ?? o.Commission) ?? 0,
     comment: readString(o, 'comment', 'Comment'),
     magic: readNum(o.magic ?? o.Magic ?? o.magicNumber ?? o.MagicNumber) ?? null,
-    opened_at: readString(o, 'openTime', 'OpenTime', 'open_time', 'timeOpen', 'TimeOpen'),
+    opened_at: readString(o, 'openTime', 'OpenTime', 'open_time', 'timeOpen', 'TimeOpen', 'time', 'Time'),
     closed_at: null,
     state: readString(o, 'state', 'State'),
     status: 'open',
@@ -115,9 +115,18 @@ export function mergeLivePositionsIntoMtTrades(
     if (existingIdx != null) {
       const existing = out[existingIdx]!
       if (existing.status !== 'open') continue
+      const openTime =
+        readString(o, 'openTime', 'OpenTime', 'open_time', 'timeOpen', 'TimeOpen', 'time', 'Time') ??
+        existing.opened_at
       const nextComment = comment ?? existing.comment
-      if (legPnl === existing.profit && nextComment === existing.comment) continue
-      out[existingIdx] = { ...existing, profit: legPnl, comment: nextComment }
+      if (
+        legPnl === existing.profit &&
+        nextComment === existing.comment &&
+        openTime === existing.opened_at
+      ) {
+        continue
+      }
+      out[existingIdx] = { ...existing, profit: legPnl, comment: nextComment, opened_at: openTime }
       changed = true
       continue
     }

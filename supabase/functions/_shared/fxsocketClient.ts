@@ -269,7 +269,10 @@ function unwrapOrderList(raw: unknown): unknown[] {
   if (Array.isArray(raw)) return raw
   if (!raw || typeof raw !== "object") return []
   const o = raw as Record<string, unknown>
-  for (const key of ["orders", "Orders", "items", "Items", "data", "Data", "result", "Result"]) {
+  for (const key of [
+    "orders", "Orders", "deals", "Deals", "positions", "Positions",
+    "history", "History", "items", "Items", "data", "Data", "result", "Result",
+  ]) {
     const v = o[key]
     if (Array.isArray(v)) return v
   }

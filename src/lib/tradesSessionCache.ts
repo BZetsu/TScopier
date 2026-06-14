@@ -10,7 +10,7 @@ export type TradesCachePayload = {
 }
 
 export function tradesCacheKey(userId: string): string {
-  return `trades:v4:${userId}`
+  return `trades:v10:${userId}`
 }
 
 /** Cheap signature so we can skip re-renders when MT data is unchanged. */
