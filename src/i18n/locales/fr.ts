@@ -908,7 +908,7 @@ export const fr: Translations = {
     },
     errors: {
       rateLimit:
-        'Limite de données marché — attendez une minute puis réessayez, ou réduisez le débit API dans les secrets Supabase.',
+        'Données marché indisponibles — vérifiez que votre courtier est connecté dans Courtiers, puis réessayez.',
     },
   },
   brokersPage: {

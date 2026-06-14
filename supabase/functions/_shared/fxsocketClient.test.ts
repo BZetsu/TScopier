@@ -7,6 +7,8 @@ import {
   normalizeAccountSummary,
   normalizeOrderResponse,
   normalizeV1Account,
+  parsePriceHistoryResponse,
+  parseQuoteTicksResponse,
   trimPreview,
 } from "./fxsocketClient.ts"
 
@@ -98,4 +100,13 @@ Deno.test("isAccountSummaryReady requires balance or equity", () => {
   assertEquals(isAccountSummaryReady({ balance: 1000 }), true)
   assertEquals(isAccountSummaryReady({ equity: 0 }), true)
   assertEquals(isAccountSummaryReady({ currency: "USD" }), false)
+})
+
+Deno.test("parsePriceHistoryResponse returns empty for non-array", () => {
+  assertEquals(parsePriceHistoryResponse(null), [])
+  assertEquals(parsePriceHistoryResponse({ error: "MRPC" }), [])
+})
+
+Deno.test("parseQuoteTicksResponse skips invalid rows", () => {
+  assertEquals(parseQuoteTicksResponse([{ bid: 1.1 }]), [])
 })

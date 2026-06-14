@@ -19,6 +19,7 @@ export const FXSOCKET_DOCUMENTED_ENDPOINTS = [
   "GET /symbols",
   "GET /getQuote",
   "GET /PriceHistory",
+  "GET /QuoteTicks",
   "GET /SymbolInfo",
   "GET /ServerTimezone",
   "GET /OrderCalcMargin",
@@ -110,6 +111,28 @@ export interface FxsocketQuote {
   bid?: number
   ask?: number
   time?: string
+  last?: number
+  volume?: number
+}
+
+/** OHLC bar from GET /PriceHistory — https://fxsocket.com/docs/mt5/market-data */
+export interface FxsocketPriceBar {
+  time: string
+  open: number
+  high: number
+  low: number
+  close: number
+  tickVolume?: number
+  realVolume?: number
+  spread?: number
+}
+
+/** Historical quote tick from GET /QuoteTicks (MT5 copy_ticks_range shape). */
+export interface FxsocketQuoteTick {
+  time: string
+  bid: number
+  ask: number
+  timeMsc?: number
   last?: number
   volume?: number
 }
@@ -263,6 +286,57 @@ export function trimPreview(value: unknown, maxLen = 400): unknown {
   const text = JSON.stringify(value)
   if (text.length <= maxLen) return value
   return { _preview: `${text.slice(0, maxLen)}…` }
+}
+
+function parsePriceBar(raw: unknown): FxsocketPriceBar | null {
+  if (!raw || typeof raw !== "object") return null
+  const o = raw as Record<string, unknown>
+  const time = o.time != null ? String(o.time) : ""
+  const open = num(o.open)
+  const high = num(o.high)
+  const low = num(o.low)
+  const close = num(o.close)
+  if (!time || open == null || high == null || low == null || close == null) return null
+  return {
+    time,
+    open,
+    high,
+    low,
+    close,
+    tickVolume: num(o.tickVolume ?? o.tick_volume),
+    realVolume: num(o.realVolume ?? o.real_volume),
+    spread: num(o.spread),
+  }
+}
+
+export function parsePriceHistoryResponse(raw: unknown): FxsocketPriceBar[] {
+  if (!Array.isArray(raw)) return []
+  return raw.map(parsePriceBar).filter((b): b is FxsocketPriceBar => b != null)
+}
+
+function parseQuoteTick(raw: unknown): FxsocketQuoteTick | null {
+  if (!raw || typeof raw !== "object") return null
+  const o = raw as Record<string, unknown>
+  const bid = num(o.bid)
+  const ask = num(o.ask)
+  if (bid == null || ask == null) return null
+  const time = o.time != null ? String(o.time) : ""
+  const timeMsc = num(o.timeMsc ?? o.time_msc ?? o.timeMs ?? o.time_ms)
+  const ts = time || (timeMsc != null ? String(timeMsc) : "")
+  if (!ts) return null
+  return {
+    time: time || new Date(timeMsc!).toISOString(),
+    bid,
+    ask,
+    timeMsc: timeMsc ?? undefined,
+    last: num(o.last),
+    volume: num(o.volume),
+  }
+}
+
+export function parseQuoteTicksResponse(raw: unknown): FxsocketQuoteTick[] {
+  if (!Array.isArray(raw)) return []
+  return raw.map(parseQuoteTick).filter((t): t is FxsocketQuoteTick => t != null)
 }
 
 function unwrapOrderList(raw: unknown): unknown[] {
@@ -466,17 +540,35 @@ export class FxsocketClient {
   async priceHistory(
     accountId: string,
     args: { symbol: string; timeframe: string; from: string; to: string },
-  ): Promise<unknown> {
+  ): Promise<FxsocketPriceBar[]> {
     const params = new URLSearchParams({
       symbol: args.symbol.trim(),
       timeframe: args.timeframe.trim(),
       from: args.from.trim(),
       to: args.to.trim(),
     })
-    return await this.request(
+    const raw = await this.request(
       `${this.accountBase(accountId)}/PriceHistory?${params.toString()}`,
       { method: "GET", timeoutMs: 90_000 },
     )
+    return parsePriceHistoryResponse(raw)
+  }
+
+  /** Historical bid/ask ticks for backtesting (GET /QuoteTicks). */
+  async quoteTicks(
+    accountId: string,
+    args: { symbol: string; from: string; to: string },
+  ): Promise<FxsocketQuoteTick[]> {
+    const params = new URLSearchParams({
+      symbol: args.symbol.trim(),
+      from: args.from.trim(),
+      to: args.to.trim(),
+    })
+    const raw = await this.request(
+      `${this.accountBase(accountId)}/QuoteTicks?${params.toString()}`,
+      { method: "GET", timeoutMs: 120_000 },
+    )
+    return parseQuoteTicksResponse(raw)
   }
 
   async serverTimezone(accountId: string): Promise<Record<string, unknown>> {

@@ -907,7 +907,7 @@ export const es: Translations = {
     },
     errors: {
       rateLimit:
-        'Límite de datos de mercado — espera un minuto y vuelve a intentar, o reduce la tasa de llamadas API en los secretos de Supabase.',
+        'Datos de mercado no disponibles — asegúrate de que tu bróker esté conectado en Brókers e inténtalo de nuevo.',
     },
   },
   brokersPage: {

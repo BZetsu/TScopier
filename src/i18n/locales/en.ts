@@ -907,7 +907,7 @@ export const en: Translations = {
     },
     errors: {
       rateLimit:
-        'Market data rate limit — wait about a minute and run again, or lower the API call rate in Supabase edge secrets.',
+        'Market data unavailable — ensure your broker is connected in Brokers and try again.',
     },
   },
   brokersPage: {

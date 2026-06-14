@@ -37,7 +37,11 @@ export interface BacktestSummary {
   message?: string
   signalSource?: string
   rawParsedCount?: number
+  marketDataApiCalls?: number
+  /** @deprecated use marketDataApiCalls */
   massiveApiCalls?: number
+  brokerAccountId?: string
+  brokerLabel?: string
   importWarnings?: string[]
 }
 
