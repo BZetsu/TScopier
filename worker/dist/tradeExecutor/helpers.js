@@ -1,6 +1,8 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.isMtUuid = isMtUuid;
+exports.brokerSessionUuid = brokerSessionUuid;
+exports.brokerHasLinkedSession = brokerHasLinkedSession;
 exports.parseSymbolToTradeList = parseSymbolToTradeList;
 exports.applySymbolMapping = applySymbolMapping;
 exports.isMt5OnlyOperation = isMt5OnlyOperation;
@@ -14,6 +16,7 @@ exports.computeCweTp = computeCweTp;
 exports.triggerPriceFor = triggerPriceFor;
 exports.brokerOrderOpenMs = brokerOrderOpenMs;
 const manualPlanner_1 = require("../manualPlanner");
+const mtApiByAccount_1 = require("../mtApiByAccount");
 function isMtUuid(s) {
     if (!s)
         return false;
@@ -21,6 +24,14 @@ function isMtUuid(s) {
     if (!v || v.includes('|'))
         return false;
     return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+}
+/** FxSocket terminal UUID (prefers fxsocket_account_id over legacy metaapi_account_id). */
+function brokerSessionUuid(broker) {
+    const id = (0, mtApiByAccount_1.brokerSessionId)(broker);
+    return isMtUuid(id) ? id : null;
+}
+function brokerHasLinkedSession(broker) {
+    return brokerSessionUuid(broker) != null;
 }
 function parseSymbolToTradeList(value) {
     if (!value || !value.trim())

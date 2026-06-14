@@ -149,7 +149,9 @@ import { isBenignOrderModifyError } from '../orderModifyBenign'
 import { invalidateChannelParseCache } from '../channelKeywordsCache'
 import {
   applySymbolMapping,
+  brokerHasLinkedSession,
   brokerOrderOpenMs,
+  brokerSessionUuid,
   clampOrderStops,
   computeCweTp,
   computeLot,
@@ -354,8 +356,10 @@ export class TradeExecutor {
         manual_settings: normalizeManualSettingsForExecution(cfg.manual_settings) as Record<string, unknown>,
       }
     }
+    const sessionId = brokerSessionUuid(row)
     return {
       ...row,
+      metaapi_account_id: sessionId ?? row.metaapi_account_id,
       manual_settings: normalizeManualSettingsForExecution(row.manual_settings) as Record<string, unknown>,
       channel_trading_configs: normalizedConfigs,
     }
@@ -368,7 +372,7 @@ export class TradeExecutor {
   private async loadBrokers() {
     const brokersQ = await applyShardToQuery(
       this.supabase,
-      this.supabase.from('broker_accounts').select('*').not('metaapi_account_id', 'is', null),
+      this.supabase.from('broker_accounts').select('*').or('fxsocket_account_id.neq.,metaapi_account_id.neq.'),
     )
     if (!brokersQ) {
       this.brokersByUser.clear()
@@ -407,7 +411,7 @@ export class TradeExecutor {
       }
     }
     for (const row of brokerRows) {
-      if (!isMtUuid(row.metaapi_account_id)) continue
+      if (!brokerHasLinkedSession(row)) continue
       const tableRows = configsByBroker.get(row.id) ?? []
       const mergedRow = tableRows.length
         ? {
@@ -608,7 +612,7 @@ export class TradeExecutor {
           const row = payload.new as BrokerRow | undefined
           if (!row) return
           if (!userBelongsToShard(row.user_id)) return
-          if (!isMtUuid(row.metaapi_account_id)) {
+          if (!brokerHasLinkedSession(row)) {
             this.removeBrokerCache(row.id)
             return
           }

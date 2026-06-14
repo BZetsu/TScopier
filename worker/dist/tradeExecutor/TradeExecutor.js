@@ -207,8 +207,10 @@ class TradeExecutor {
                 manual_settings: (0, normalizeManualSettings_1.normalizeManualSettingsForExecution)(cfg.manual_settings),
             };
         }
+        const sessionId = (0, helpers_2.brokerSessionUuid)(row);
         return {
             ...row,
+            metaapi_account_id: sessionId ?? row.metaapi_account_id,
             manual_settings: (0, normalizeManualSettings_1.normalizeManualSettingsForExecution)(row.manual_settings),
             channel_trading_configs: normalizedConfigs,
         };
@@ -217,7 +219,7 @@ class TradeExecutor {
         return this.sweepLoop;
     }
     async loadBrokers() {
-        const brokersQ = await (0, monitorIdleGate_1.applyShardToQuery)(this.supabase, this.supabase.from('broker_accounts').select('*').not('metaapi_account_id', 'is', null));
+        const brokersQ = await (0, monitorIdleGate_1.applyShardToQuery)(this.supabase, this.supabase.from('broker_accounts').select('*').or('fxsocket_account_id.neq.,metaapi_account_id.neq.'));
         if (!brokersQ) {
             this.brokersByUser.clear();
             this.brokersById.clear();
@@ -256,7 +258,7 @@ class TradeExecutor {
             }
         }
         for (const row of brokerRows) {
-            if (!(0, helpers_2.isMtUuid)(row.metaapi_account_id))
+            if (!(0, helpers_2.brokerHasLinkedSession)(row))
                 continue;
             const tableRows = configsByBroker.get(row.id) ?? [];
             const mergedRow = tableRows.length
@@ -439,7 +441,7 @@ class TradeExecutor {
                 return;
             if (!(0, workerConfig_1.userBelongsToShard)(row.user_id))
                 return;
-            if (!(0, helpers_2.isMtUuid)(row.metaapi_account_id)) {
+            if (!(0, helpers_2.brokerHasLinkedSession)(row)) {
                 this.removeBrokerCache(row.id);
                 return;
             }

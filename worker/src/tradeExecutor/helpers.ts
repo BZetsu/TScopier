@@ -6,6 +6,7 @@ import {
   type PlannerResult,
   type VirtualPendingLeg,
 } from '../manualPlanner'
+import { brokerSessionId } from '../mtApiByAccount'
 import type { OrderSendArgs } from '../fxsocketClient'
 import type { BrokerRow, Leg, ParsedSignal, SymbolCacheEntry, SymbolMappingResult } from './types'
 
@@ -14,6 +15,22 @@ export function isMtUuid(s: string | null | undefined): boolean {
   const v = s.trim()
   if (!v || v.includes('|')) return false
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v)
+}
+
+/** FxSocket terminal UUID (prefers fxsocket_account_id over legacy metaapi_account_id). */
+export function brokerSessionUuid(broker: {
+  fxsocket_account_id?: string | null
+  metaapi_account_id?: string | null
+}): string | null {
+  const id = brokerSessionId(broker)
+  return isMtUuid(id) ? id : null
+}
+
+export function brokerHasLinkedSession(broker: {
+  fxsocket_account_id?: string | null
+  metaapi_account_id?: string | null
+}): boolean {
+  return brokerSessionUuid(broker) != null
 }
 
 export function parseSymbolToTradeList(value: string | null | undefined): string[] {
