@@ -28,6 +28,16 @@ export function parseMtHistoryTimestamp(
     if (Number.isFinite(n)) return epochMs(n)
   }
 
+  const mtBroker = s.match(
+    /^(\d{4})[.\-/](\d{2})[.\-/](\d{2})(?:[ T](\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?)?$/,
+  )
+  if (mtBroker) {
+    const [, y, mo, d, h = '00', mi = '00', sec = '00', ms] = mtBroker
+    const iso = `${y}-${mo}-${d}T${h}:${mi}:${sec}${ms ? `.${ms.padEnd(3, '0').slice(0, 3)}` : ''}`
+    const parsed = Date.parse(iso)
+    if (Number.isFinite(parsed)) return parsed
+  }
+
   const normalizedDots = s.replace(/\./g, '-')
   if (/[zZ]$|[+-]\d{2}:?\d{2}$/.test(normalizedDots)) {
     const t = Date.parse(normalizedDots)

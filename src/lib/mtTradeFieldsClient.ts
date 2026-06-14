@@ -143,10 +143,47 @@ export function resolveMtOpenTimestamp(order: RawMtOrder): string | null {
 export function resolveMtCloseTimestamp(order: RawMtOrder): string | null {
   const close = timestampIsoFromFields(order, [...MT_CLOSE_TIME_KEYS])
   if (close) return close
-  return timestampIsoFromFields(order, ['time', 'Time'])
+  const dealTime = timestampIsoFromFields(order, ['time', 'Time'])
+  if (dealTime) return dealTime
+  return findDeepTimestamp(order, [...MT_CLOSE_TIME_KEYS, 'time', 'Time'])
+}
+
+function findDeepTimestamp(obj: unknown, keys: string[], depth = 0): string | null {
+  if (depth > 5 || !isPlainObject(obj)) return null
+  for (const k of keys) {
+    const ms = epochMsFromUnknown(obj[k])
+    if (ms != null) return new Date(ms).toISOString()
+  }
+  for (const v of Object.values(obj)) {
+    if (!isPlainObject(v)) continue
+    const found = findDeepTimestamp(v, keys, depth + 1)
+    if (found) return found
+  }
+  return null
 }
 
 export function resolveMtTicket(order: RawMtOrder): number {
-  const ticket = Number(pickMtField(order, 'ticket', 'Ticket', 'order', 'Order', 'deal', 'Deal') ?? 0)
+  const ticket = Number(
+    pickMtField(
+      order,
+      'ticket',
+      'Ticket',
+      'ticketNumber',
+      'TicketNumber',
+      'dealTicket',
+      'DealTicket',
+      'deal',
+      'Deal',
+      'order',
+      'Order',
+    ) ?? 0,
+  )
   return Number.isFinite(ticket) && ticket > 0 ? ticket : 0
+}
+
+export function resolveMtPositionId(order: RawMtOrder): number {
+  const id = Number(
+    pickMtField(order, 'positionId', 'PositionId', 'position_id', 'position', 'Position') ?? 0,
+  )
+  return Number.isFinite(id) && id > 0 ? id : 0
 }

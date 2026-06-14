@@ -347,6 +347,18 @@ Deno.serve(async (req: Request) => {
       return Response.json({ ok: true, orders }, { headers: corsHeaders })
     }
 
+    if (action === "position_history") {
+      const accountRowId = String(body.account_id ?? "")
+      const historyFrom = String(body.history_from ?? "").trim()
+      const historyTo = String(body.history_to ?? "").trim()
+      if (!accountRowId || !historyFrom || !historyTo) {
+        return bad(400, "account_id, history_from, and history_to required")
+      }
+      const row = await loadOwnedBrokerRow(supabase, userId, accountRowId)
+      const positions = await fx.positionHistory(row.fxsocket_account_id, historyFrom, historyTo)
+      return Response.json({ ok: true, positions }, { headers: corsHeaders })
+    }
+
     if (action === "quote") {
       const accountRowId = String(body.account_id ?? "")
       const symbol = String(body.symbol ?? "EURUSD").trim()

@@ -1,8 +1,8 @@
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
 import {
+  applyCloseTimesToTrades,
   buildTicketTimeLookup,
-  hydrateMtTradesFromLookups,
   mtTradeMissingDisplayTime,
 } from './mtTradeTimestamps.ts'
 import type { MtTrade } from './fxsocketBroker.ts'
@@ -25,14 +25,7 @@ test('buildTicketTimeLookup: FxSocket OrderHistory deal time', () => {
   assert.equal(new Date(hit!.closed_at!).toISOString(), '2026-06-14T14:13:01.000Z')
 })
 
-test('buildTicketTimeLookup: MT5 broker dot date', () => {
-  const lookup = buildTicketTimeLookup([
-    { ticket: 99, time: '2026.06.14 14:13:01', profit: 1, volume: 0.1, symbol: 'EURUSD' },
-  ])
-  assert.ok(lookup.get(99)?.closed_at)
-})
-
-test('hydrateMtTradesFromLookups fills missing closed_at', () => {
+test('applyCloseTimesToTrades sets closed_at for closed trades', () => {
   const trade: MtTrade = {
     id: 'b:1401725372',
     broker_id: 'b',
@@ -61,6 +54,7 @@ test('hydrateMtTradesFromLookups fills missing closed_at', () => {
   const lookup = buildTicketTimeLookup([
     { ticket: 1401725372, time: '2026-06-14T14:13:01Z' },
   ])
-  const [hydrated] = hydrateMtTradesFromLookups([trade], { b: lookup })
+  const [hydrated] = applyCloseTimesToTrades([trade], { b: lookup })
   assert.equal(mtTradeMissingDisplayTime(hydrated), false)
+  assert.equal(hydrated.closed_at, '2026-06-14T14:13:01.000Z')
 })

@@ -336,9 +336,30 @@ export const fxsocketBroker = {
         history_from: args.from,
         history_to: args.to,
       },
+      timeoutMs: FXSOCKET_EDGE_TIMEOUT_MS,
       expect: (b) => {
         const orders = (b as { orders?: unknown[] }).orders
         return Array.isArray(orders) ? orders : []
+      },
+    })
+  },
+
+  positionHistory(args: {
+    accountId: string
+    from: string
+    to: string
+  }): Promise<unknown[]> {
+    return call({
+      body: {
+        action: 'position_history',
+        account_id: args.accountId,
+        history_from: args.from,
+        history_to: args.to,
+      },
+      timeoutMs: FXSOCKET_EDGE_TIMEOUT_MS,
+      expect: (b) => {
+        const positions = (b as { positions?: unknown[] }).positions
+        return Array.isArray(positions) ? positions : []
       },
     })
   },

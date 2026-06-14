@@ -7,31 +7,53 @@ import {
   flattenMtOrder,
   resolveMtCloseTimestamp,
   resolveMtOpenTimestamp,
+  resolveMtPositionId,
   resolveMtTicket,
 } from './mtTradeFieldsClient'
 
 export type TicketTimeLookup = Map<number, { opened_at: string | null; closed_at: string | null }>
+
+function mergeLookupEntry(
+  lookup: TicketTimeLookup,
+  ticket: number,
+  opened: string | null,
+  closed: string | null,
+): void {
+  if (ticket <= 0) return
+  const prev = lookup.get(ticket)
+  lookup.set(ticket, {
+    opened_at: opened ?? prev?.opened_at ?? null,
+    closed_at: closed ?? prev?.closed_at ?? null,
+  })
+}
 
 /** True when the Trades table would show "—" for TIME. */
 export function mtTradeMissingDisplayTime(trade: MtTrade): boolean {
   return parseMtHistoryTimestamp(resolveTradeDisplayTimeRaw(trade)) == null
 }
 
+/** Close time for closed legs; open time for open legs. Only returns parseable values. */
 export function resolveTradeDisplayTimeRaw(trade: MtTrade): string | number | null | undefined {
   if (trade.status === 'closed') {
-    return trade.closed_at ?? trade.opened_at
+    if (parseMtHistoryTimestamp(trade.closed_at) != null) return trade.closed_at
+    if (parseMtHistoryTimestamp(trade.opened_at) != null) return trade.opened_at
+    return null
   }
-  return trade.opened_at
+  if (parseMtHistoryTimestamp(trade.opened_at) != null) return trade.opened_at
+  return null
+}
+
+function coerceValidIso(value: string | null | undefined): string | null {
+  const ms = parseMtHistoryTimestamp(value)
+  return ms != null ? new Date(ms).toISOString() : null
 }
 
 /** Normalize broker timestamp fields (unix seconds, numeric strings, ISO). */
 export function enrichMtTradeTimestamps(trade: MtTrade): MtTrade {
-  const openedMs = parseMtHistoryTimestamp(trade.opened_at)
-  const closedMs = parseMtHistoryTimestamp(trade.closed_at)
   return {
     ...trade,
-    opened_at: openedMs != null ? new Date(openedMs).toISOString() : trade.opened_at,
-    closed_at: closedMs != null ? new Date(closedMs).toISOString() : trade.closed_at,
+    opened_at: coerceValidIso(trade.opened_at),
+    closed_at: coerceValidIso(trade.closed_at),
   }
 }
 
@@ -46,104 +68,121 @@ export function buildTicketTimeLookup(orders: unknown[]): TicketTimeLookup {
     if (!order || typeof order !== 'object') continue
     const row = flattenMtOrder(order)
     const ticket = resolveMtTicket(row)
-    if (ticket <= 0) continue
-
+    const positionId = resolveMtPositionId(row)
     const opened = resolveMtOpenTimestamp(row)
     const closed = resolveMtCloseTimestamp(row)
-    const prev = lookup.get(ticket)
 
-    lookup.set(ticket, {
-      opened_at: opened ?? prev?.opened_at ?? null,
-      closed_at: closed ?? prev?.closed_at ?? null,
-    })
-
-    const positionTicket = Number(
-      pickNestedTicket(row, 'positionId', 'PositionId', 'position', 'Position', 'order', 'Order'),
-    )
-    if (positionTicket > 0 && positionTicket !== ticket) {
-      const posPrev = lookup.get(positionTicket)
-      lookup.set(positionTicket, {
-        opened_at: opened ?? posPrev?.opened_at ?? null,
-        closed_at: closed ?? posPrev?.closed_at ?? null,
-      })
-    }
+    mergeLookupEntry(lookup, ticket, opened, closed)
+    mergeLookupEntry(lookup, positionId, opened, closed)
   }
 
   return lookup
 }
 
-function pickNestedTicket(row: RawMtOrder, ...keys: string[]): number {
-  for (const k of keys) {
-    const v = row[k]
-    if (v == null) continue
-    const n = Number(v)
-    if (Number.isFinite(n) && n > 0) return n
+/** FxSocket PositionHistory rows include explicit closeTime per round-trip. */
+export function buildPositionTimeLookup(positions: unknown[]): TicketTimeLookup {
+  const lookup: TicketTimeLookup = new Map()
+
+  for (const position of positions) {
+    if (!position || typeof position !== 'object') continue
+    const row = flattenMtOrder(position)
+    const positionId = resolveMtPositionId(row)
+    const opened = resolveMtOpenTimestamp(row)
+    const closed = resolveMtCloseTimestamp(row)
+    mergeLookupEntry(lookup, positionId, opened, closed)
   }
-  return 0
+
+  return lookup
 }
 
-type RawMtOrder = Record<string, unknown>
+function mergeTicketTimeLookups(...maps: TicketTimeLookup[]): TicketTimeLookup {
+  const out: TicketTimeLookup = new Map()
+  for (const map of maps) {
+    for (const [ticket, times] of map) {
+      mergeLookupEntry(out, ticket, times.opened_at, times.closed_at)
+    }
+  }
+  return out
+}
 
-export function hydrateMtTradesFromLookups(
+function lookupCloseTime(lookup: TicketTimeLookup | undefined, trade: MtTrade): string | null {
+  if (!lookup) return null
+  const byTicket = lookup.get(trade.ticket)
+  const byPosition =
+    trade.position_ticket != null && trade.position_ticket > 0
+      ? lookup.get(trade.position_ticket)
+      : undefined
+  return byTicket?.closed_at ?? byPosition?.closed_at ?? null
+}
+
+function lookupOpenTime(lookup: TicketTimeLookup | undefined, trade: MtTrade): string | null {
+  if (!lookup) return null
+  const byTicket = lookup.get(trade.ticket)
+  const byPosition =
+    trade.position_ticket != null && trade.position_ticket > 0
+      ? lookup.get(trade.position_ticket)
+      : undefined
+  return byTicket?.opened_at ?? byPosition?.opened_at ?? null
+}
+
+/** Apply broker close times to every closed trade row. */
+export function applyCloseTimesToTrades(
   trades: MtTrade[],
   lookupsByBroker: Record<string, TicketTimeLookup>,
 ): MtTrade[] {
   return trades.map(trade => {
-    if (!mtTradeMissingDisplayTime(trade)) return trade
-    const lookup = lookupsByBroker[trade.broker_id]
-    if (!lookup) return trade
+    if (trade.status !== 'closed') return enrichMtTradeTimestamps(trade)
 
-    const byTicket = lookup.get(trade.ticket)
-    const byPosition =
-      trade.position_ticket != null && trade.position_ticket > 0
-        ? lookup.get(trade.position_ticket)
-        : undefined
-    const hit = byTicket ?? byPosition
-    if (!hit) return trade
+    const lookup = lookupsByBroker[trade.broker_id]
+    const closedFromLookup = lookupCloseTime(lookup, trade)
+    const openedFromLookup = lookupOpenTime(lookup, trade)
 
     return enrichMtTradeTimestamps({
       ...trade,
-      opened_at: trade.opened_at ?? hit.opened_at,
-      closed_at: trade.closed_at ?? hit.closed_at,
+      closed_at: closedFromLookup ?? trade.closed_at,
+      opened_at: openedFromLookup ?? trade.opened_at,
     })
   })
 }
 
-/** Fill missing deal times from raw FxSocket OrderHistory (works even if edge normalizer is stale). */
-export async function hydrateMtTradesTimesFromBrokers(trades: MtTrade[]): Promise<MtTrade[]> {
-  if (trades.length === 0 || !trades.some(mtTradeMissingDisplayTime)) {
-    return trades
-  }
-
-  const brokerIds = [...new Set(
-    trades.filter(mtTradeMissingDisplayTime).map(t => t.broker_id).filter(Boolean),
-  )]
-  if (brokerIds.length === 0) return trades
-
+function tradesHistoryRange(): { from: string; to: string } {
   const { tomorrowStart: historyTo } = getLocalCalendarDayBounds()
   const historyFrom = new Date()
   historyFrom.setDate(historyFrom.getDate() - TRADES_PAGE_HISTORY_DAYS)
-  const from = formatLocalMtApiDateTime(historyFrom)
-  const to = formatLocalMtApiDateTime(historyTo)
+  return {
+    from: formatLocalMtApiDateTime(historyFrom),
+    to: formatLocalMtApiDateTime(historyTo),
+  }
+}
 
+/** Fill close times from FxSocket OrderHistory + PositionHistory (source of truth for TIME column). */
+export async function hydrateMtTradesTimesFromBrokers(trades: MtTrade[]): Promise<MtTrade[]> {
+  const closed = trades.filter(t => t.status === 'closed')
+  if (closed.length === 0) return trades
+
+  const brokerIds = [...new Set(closed.map(t => t.broker_id).filter(Boolean))]
+  if (brokerIds.length === 0) return trades
+
+  const { from, to } = tradesHistoryRange()
   const lookupsByBroker: Record<string, TicketTimeLookup> = {}
 
   await Promise.all(
     brokerIds.map(async brokerId => {
-      try {
-        const orders = await fxsocketBroker.orderHistory({
-          accountId: brokerId,
-          from,
-          to,
-        })
-        lookupsByBroker[brokerId] = buildTicketTimeLookup(orders)
-      } catch {
-        lookupsByBroker[brokerId] = new Map()
-      }
+      const [ordersRes, positionsRes] = await Promise.allSettled([
+        fxsocketBroker.orderHistory({ accountId: brokerId, from, to }),
+        fxsocketBroker.positionHistory({ accountId: brokerId, from, to }),
+      ])
+
+      const orderLookup =
+        ordersRes.status === 'fulfilled' ? buildTicketTimeLookup(ordersRes.value) : new Map()
+      const positionLookup =
+        positionsRes.status === 'fulfilled' ? buildPositionTimeLookup(positionsRes.value) : new Map()
+
+      lookupsByBroker[brokerId] = mergeTicketTimeLookups(orderLookup, positionLookup)
     }),
   )
 
-  return hydrateMtTradesFromLookups(trades, lookupsByBroker)
+  return applyCloseTimesToTrades(trades, lookupsByBroker)
 }
 
 export function formatTradeTimeLabel(iso: string | number | null | undefined): string {
@@ -156,4 +195,14 @@ export function formatTradeTimeLabel(iso: string | number | null | undefined): s
     hour: '2-digit',
     minute: '2-digit',
   })
+}
+
+/** Label for closed-trade TIME column (close time only). */
+export function formatTradeCloseTimeLabel(trade: MtTrade): string {
+  if (trade.status !== 'closed') {
+    return formatTradeTimeLabel(resolveTradeDisplayTimeRaw(trade))
+  }
+  const closedMs = parseMtHistoryTimestamp(trade.closed_at)
+  if (closedMs != null) return formatTradeTimeLabel(trade.closed_at)
+  return formatTradeTimeLabel(resolveTradeDisplayTimeRaw(trade))
 }

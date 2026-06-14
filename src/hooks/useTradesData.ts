@@ -82,13 +82,8 @@ export function useTradesData(userId: string | undefined) {
         const fetchedAt = Date.now()
 
         const payload: TradesCachePayload = { trades: list, fingerprint }
-        if (fingerprint !== fingerprintRef.current) {
-          writeSessionCache(key, payload)
-          applyPayload(payload, fetchedAt)
-        } else {
-          writeSessionCache(key, payload)
-          setLastSyncedAt(fetchedAt)
-        }
+        writeSessionCache(key, payload)
+        applyPayload(payload, fetchedAt)
       } catch (e) {
         if (!cached) {
           setTrades([])

@@ -1,6 +1,6 @@
 import type { MtTrade } from './fxsocketBroker'
 import { directionDisplayLabel, resolveTradeDisplayDirection } from './tradeDirection'
-import { formatTradeTimeLabel, resolveTradeDisplayTimeRaw } from './mtTradeTimestamps'
+import { formatTradeCloseTimeLabel } from './mtTradeTimestamps'
 
 export function formatTradePrice(value: number | null | undefined): string {
   if (value === null || value === undefined) return '—'
@@ -48,7 +48,7 @@ export function getTradeDisplayMeta(trade: MtTrade) {
     closed: { variant: 'neutral', label: 'Closed' },
   }
   const status = statusConfig[trade.status] ?? { variant: 'neutral' as const, label: trade.status }
-  const timeLabel = formatTradeTimeLabel(resolveTradeDisplayTimeRaw(trade))
+  const timeLabel = formatTradeCloseTimeLabel(trade)
   const broker = trade.broker_name || trade.broker_label || '—'
   const directionLabel = directionDisplayLabel(displayDirection)
 

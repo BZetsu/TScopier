@@ -450,6 +450,16 @@ export class FxsocketClient {
     return unwrapOrderList(raw)
   }
 
+  async positionHistory(accountId: string, from: string, to: string): Promise<unknown[]> {
+    const qFrom = encodeURIComponent(from.trim())
+    const qTo = encodeURIComponent(to.trim())
+    const raw = await this.request(
+      `${this.accountBase(accountId)}/PositionHistory?from=${qFrom}&to=${qTo}`,
+      { method: "GET", timeoutMs: 90_000 },
+    )
+    return unwrapOrderList(raw)
+  }
+
   async priceHistory(
     accountId: string,
     args: { symbol: string; timeframe: string; from: string; to: string },
