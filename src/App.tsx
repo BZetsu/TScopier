@@ -117,8 +117,8 @@ export default function App() {
             {/* Dashboard UI is kept alive in AppShell via DashboardKeepAlive */}
             <Route path="/dashboard/*" element={<DashboardRouteAnchor />} />
             <Route path="/welcome" element={<WelcomePage />} />
-            <Route path="/account-configuration" element={<LazyPage><AccountConfigPage /></LazyPage>} />
-            <Route path="/brokers" element={<Navigate to="/account-configuration" replace />} />
+            <Route path="/brokers" element={<LazyPage><AccountConfigPage /></LazyPage>} />
+            <Route path="/account-configuration" element={<Navigate to="/brokers" replace />} />
             <Route path="/account-trades" element={<LazyPage><TradesPage /></LazyPage>} />
             <Route path="/channels" element={<LazyPage><CopierEnginePage /></LazyPage>} />
             <Route path="/copier-engine" element={<Navigate to="/channels" replace />} />

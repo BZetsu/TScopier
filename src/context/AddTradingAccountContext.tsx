@@ -45,8 +45,8 @@ export function AddTradingAccountProvider({ children }: { children: ReactNode })
   const requestConfigureBroker = useCallback(
     (brokerId: string) => {
       setPendingConfigureBrokerId(brokerId)
-      if (pathname !== '/account-configuration') {
-        navigate('/account-configuration')
+      if (pathname !== '/brokers') {
+        navigate('/brokers')
       }
     },
     [navigate, pathname],

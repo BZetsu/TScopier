@@ -607,7 +607,7 @@ export function CopierEnginePage() {
       {/* {brokers.length === 0 && (
         <div className="mb-4 px-4 py-3 bg-warning-50 border border-warning-200 rounded-xl text-sm text-warning-700 flex items-center gap-2">
           <span className="font-medium">No active broker account.</span>
-          <a href="/account-configuration" className="underline text-warning-800">Connect one in Account Configuration.</a>
+          <a href="/brokers" className="underline text-warning-800">Connect one in Brokers.</a>
         </div>
       )} */}
       {!loading && showTelegramConnectFlow && (
@@ -948,7 +948,7 @@ function ChannelRow({
                       )}
                       <div className="border-t border-neutral-100 dark:border-neutral-800 mt-1 pt-1">
                         <Link
-                          to="/account-configuration"
+                          to="/brokers"
                           className="block px-3 py-2 text-xs text-primary-600 hover:bg-neutral-50 dark:hover:bg-neutral-800"
                           onClick={onCloseConnectMenu}
                         >
@@ -1005,7 +1005,7 @@ function ChannelRow({
             </div>
           ) : (
             <Link
-              to="/account-configuration"
+              to="/brokers"
               className="inline-flex items-center rounded-lg border border-dashed border-neutral-300 dark:border-neutral-600 px-3 py-1.5 text-xs font-medium text-primary-600 hover:bg-white dark:hover:bg-neutral-900 transition-colors"
             >
               {ce.connectToBroker}

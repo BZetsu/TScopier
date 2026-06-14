@@ -1185,7 +1185,7 @@ export const fr: Translations = {
   },
   pages: {
     accountConfiguration: {
-      title: 'Compte et configuration',
+      title: 'Brokers',
       description: 'Connectez des comptes MetaTrader et réglez la copie pour chacun.',
     },
     brokers: {

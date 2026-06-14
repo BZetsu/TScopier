@@ -99,7 +99,7 @@ export function AccountPerformanceTable({
                 </td>
                 <td className="px-4 py-3 text-right">
                   <Link
-                    to="/account-configuration"
+                    to="/brokers"
                     className="text-xs font-semibold text-teal-600 hover:text-teal-700 dark:text-teal-400"
                   >
                     {labels.configure}

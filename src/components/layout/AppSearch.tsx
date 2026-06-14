@@ -46,7 +46,7 @@ import {
 
 const PAGE_ICONS: Record<string, typeof LayoutDashboard> = {
   '/dashboard': LayoutDashboard,
-  '/account-configuration': Settings,
+  '/brokers': Settings,
   '/account-trades': History,
   '/settings': Settings,
   '/channels': Send,
@@ -191,7 +191,7 @@ function useAppSearchController(headerEl: HTMLElement | null) {
       kind: 'broker',
       title: b.label,
       subtitle: b.server || undefined,
-      path: '/account-configuration',
+      path: '/brokers',
       sectionLabel: t.globalSearch.groupBrokers,
       keywords: [b.server, b.id, 'broker', 'account'],
     }))

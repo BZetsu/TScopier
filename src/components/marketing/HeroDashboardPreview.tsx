@@ -379,7 +379,7 @@ export function HeroDashboardPreview() {
       label: t.nav.sections.general,
       items: [
         { icon: LayoutDashboard, label: t.nav.items.dashboard, active: true },
-        { icon: Settings, label: t.nav.items.configuration, active: false },
+        { icon: Settings, label: t.nav.items.brokers, active: false },
         { icon: History, label: t.nav.items.trades, active: false },
       ],
     },

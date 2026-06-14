@@ -1184,7 +1184,7 @@ export const es: Translations = {
   },
   pages: {
     accountConfiguration: {
-      title: 'Cuenta y configuración',
+      title: 'Brokers',
       description: 'Conecta cuentas MetaTrader y ajusta cómo copia cada una.',
     },
     brokers: {

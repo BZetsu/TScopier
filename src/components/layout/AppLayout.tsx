@@ -101,7 +101,7 @@ export function AppLayout() {
         label: t.nav.sections.general,
         items: [
           { to: '/dashboard', icon: LayoutDashboard, label: t.nav.items.dashboard },
-          { to: '/account-configuration', icon: Settings, label: t.nav.items.configuration },
+          { to: '/brokers', icon: Settings, label: t.nav.items.brokers },
           { to: '/account-trades', icon: History, label: t.nav.items.trades, showOpenTradesIndicator: true },
         ],
       },

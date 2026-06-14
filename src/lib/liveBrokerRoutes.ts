@@ -1,7 +1,7 @@
 /** Routes that need live MT health checks and silent reconnect sweeps. */
 const LIVE_BROKER_CONNECTIVITY_PREFIXES = [
   '/dashboard',
-  '/account-configuration',
+  '/brokers',
   '/channels',
   '/performance',
   '/portfolio',
