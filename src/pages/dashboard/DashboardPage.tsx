@@ -29,8 +29,10 @@ import {
 } from '../../lib/fxsocketLivePositionBook'
 import {
   countOpenMarketPositionsByBroker,
+  isFxsocketMarketPositionRow,
   shouldApplyAccountStreamOpenPnl,
   sumOpenPnlByBroker,
+  unwrapFxsocketPositionsPayload,
   type FxsocketAccountStreamSnapshot,
 } from '../../lib/fxsocketStreamParse'
 import { formatLocalCalendarDay } from '../../lib/dayStartBalance'
@@ -271,6 +273,14 @@ function isBrokerLiveConnected(
   return isBrokerSessionConnected(account)
 }
 
+/** WS-active brokers count as live even before DB status catches up. */
+function isBrokerLiveForMetrics(
+  account: BrokerAccount,
+  wsLiveBrokerIds: ReadonlySet<string>,
+): boolean {
+  return wsLiveBrokerIds.has(account.id) || isBrokerLiveConnected(account)
+}
+
 /** Floating P/L on open positions for one linked account (live broker feed). */
 function resolveAccountOpenPnl(
   account: BrokerAccount,
@@ -290,10 +300,11 @@ function resolveAccountOpenPnl(
 function hasConnectedBrokerOpenPnl(
   accounts: BrokerAccount[],
   balances: Record<string, BrokerBalanceSnapshot>,
+  wsLiveBrokerIds: ReadonlySet<string> = new Set(),
 ): boolean {
   return accounts.some(
     account =>
-      isBrokerLiveConnected(account) && balances[account.id]?.open_pnl != null,
+      isBrokerLiveForMetrics(account, wsLiveBrokerIds) && balances[account.id]?.open_pnl != null,
   )
 }
 
@@ -302,6 +313,7 @@ function recomputeLiveBrokerDashboardStats(
   accounts: BrokerAccount[],
   balances: Record<string, BrokerBalanceSnapshot>,
   prev: DashboardStats,
+  wsLiveBrokerIds: ReadonlySet<string> = new Set(),
 ): Pick<DashboardStats, 'portfolioValue' | 'totalEquity' | 'openPnl' | 'openTrades' | 'openPositions'> {
   let portfolioValue = 0
   let totalEquity = 0
@@ -317,19 +329,19 @@ function recomputeLiveBrokerDashboardStats(
     } else if (snap?.balance != null && Number.isFinite(snap.balance)) {
       totalEquity += snap.balance
     }
-    if (isBrokerLiveConnected(account)) {
+    if (isBrokerLiveForMetrics(account, wsLiveBrokerIds)) {
       const p = snap?.open_pnl
       if (p != null && Number.isFinite(p)) openPnl += p
     }
   }
 
-  const hasOpenTrades = hasConnectedBrokerOpenTrades(accounts, balances)
+  const hasOpenTrades = hasConnectedBrokerOpenTrades(accounts, balances, wsLiveBrokerIds)
   const openTrades = accounts.some(isFxsocketLinkedBroker)
-    ? sumConnectedOpenTrades(accounts, balances)
+    ? sumConnectedOpenTrades(accounts, balances, wsLiveBrokerIds)
     : hasOpenTrades
-      ? sumConnectedOpenTrades(accounts, balances)
+      ? sumConnectedOpenTrades(accounts, balances, wsLiveBrokerIds)
       : prev.openTrades
-  const hasOpenPnl = hasConnectedBrokerOpenPnl(accounts, balances)
+  const hasOpenPnl = hasConnectedBrokerOpenPnl(accounts, balances, wsLiveBrokerIds)
 
   return {
     portfolioValue,
@@ -361,9 +373,10 @@ function applyFxsocketAccountStreamUpdate(
 function sumConnectedOpenTrades(
   accounts: BrokerAccount[],
   balances: Record<string, BrokerBalanceSnapshot>,
+  wsLiveBrokerIds: ReadonlySet<string> = new Set(),
 ): number {
   return accounts.reduce((sum, account) => {
-    if (!isBrokerLiveConnected(account)) return sum
+    if (!isBrokerLiveForMetrics(account, wsLiveBrokerIds)) return sum
     const n = balances[account.id]?.open_trades
     return sum + (typeof n === 'number' && Number.isFinite(n) ? n : 0)
   }, 0)
@@ -390,10 +403,12 @@ function resolveDashboardOpenTradesCount(
 function hasConnectedBrokerOpenTrades(
   accounts: BrokerAccount[],
   balances: Record<string, BrokerBalanceSnapshot>,
+  wsLiveBrokerIds: ReadonlySet<string> = new Set(),
 ): boolean {
   return accounts.some(
     account =>
-      isBrokerLiveConnected(account) && typeof balances[account.id]?.open_trades === 'number',
+      isBrokerLiveForMetrics(account, wsLiveBrokerIds)
+      && typeof balances[account.id]?.open_trades === 'number',
   )
 }
 
@@ -426,8 +441,11 @@ function mergeBrokerBalances(
   prev: Record<string, BrokerBalanceSnapshot>,
   sticky: Record<string, { open_pnl?: number; open_trades?: number }>,
   accounts: BrokerAccount[],
+  wsLiveBrokerIds: ReadonlySet<string> = new Set(),
 ): Record<string, BrokerBalanceSnapshot> {
-  const connected = new Set(accounts.filter(isBrokerLiveConnected).map(a => a.id))
+  const connected = new Set(
+    accounts.filter(a => isBrokerLiveForMetrics(a, wsLiveBrokerIds)).map(a => a.id),
+  )
   const out: Record<string, BrokerBalanceSnapshot> = { ...fromDb }
   for (const id of new Set([...Object.keys(fromDb), ...Object.keys(prev)])) {
     const db = fromDb[id]
@@ -533,6 +551,7 @@ function mergeDashboardStats(
     trustOpenTrades?: boolean
     preserveMtTradeCounts?: boolean
     preserveMtPnl?: boolean
+    preserveLiveOpenPnl?: boolean
   },
 ): DashboardStats {
   if (authoritative) {
@@ -567,7 +586,7 @@ function mergeDashboardStats(
     ...next,
     totalEquity: keepBalance(prev.totalEquity, next.totalEquity),
     portfolioValue: keepBalance(prev.portfolioValue, next.portfolioValue),
-    openPnl: keepBalance(prev.openPnl, next.openPnl),
+    openPnl: opts?.preserveLiveOpenPnl ? prev.openPnl : keepBalance(prev.openPnl, next.openPnl),
     openPositions: keepOpenCount(prev.openPositions, next.openPositions),
     openTrades: keepOpenCount(prev.openTrades, next.openTrades),
     todayProfit: keepPnl(prev.todayProfit, next.todayProfit),
@@ -1175,7 +1194,7 @@ export function DashboardPage() {
         // Re-apply the last MT live values we've already fetched this session so
         // the stat doesn't bounce between throttled refresh windows.
         const sticky = liveBrokerStateRef.current[account.id]
-        const liveOk = isBrokerLiveConnected(account)
+        const liveOk = isBrokerLiveForMetrics(account, wsMarkedConnectedRef.current)
         return [
           account.id,
           {
@@ -1199,6 +1218,7 @@ export function DashboardPage() {
       linkedBalancesRef.current,
       liveBrokerStateRef.current,
       brokerAccounts,
+      wsMarkedConnectedRef.current,
     )
     const chartTradesForLoad = resolveAnalyticsChartTrades(
       useMtTrades ? mtTradesRef.current : null,
@@ -1238,12 +1258,14 @@ export function DashboardPage() {
       return sum + (acct?.equity ?? acct?.balance ?? 0)
     }, 0)
     const totalLiveOpenPnl = brokerAccounts.reduce((sum, account) => {
-      if (!isBrokerLiveConnected(account)) return sum
+      if (!isBrokerLiveForMetrics(account, wsMarkedConnectedRef.current)) return sum
       const acct = mergedBalances[account.id]
       return sum + (acct?.open_pnl ?? 0)
     }, 0)
     const hasAnyBrokerOpenPnl = brokerAccounts.some(
-      account => isBrokerLiveConnected(account) && mergedBalances[account.id]?.open_pnl != null,
+      account =>
+        isBrokerLiveForMetrics(account, wsMarkedConnectedRef.current)
+        && mergedBalances[account.id]?.open_pnl != null,
     )
     const hasAnyBrokerOpenTradesFromSummary = hasConnectedBrokerOpenTrades(brokerAccounts, mergedBalances)
     const resolvedOpenTradesCount = resolveDashboardOpenTradesCount(
@@ -1323,6 +1345,7 @@ export function DashboardPage() {
       trustOpenTrades: brokerAccounts.some(isFxsocketLinkedBroker) || hasAnyBrokerOpenTradesFromSummary,
       preserveMtTradeCounts: mtBrokerConnected,
       preserveMtPnl: mtBrokerConnected && !useMtTrades,
+      preserveLiveOpenPnl: wsMarkedConnectedRef.current.size > 0,
       mtHasClosedTrades: useMtTrades
         ? sourceTrades.some(t => t.status === 'closed')
         : undefined,
@@ -1422,11 +1445,17 @@ export function DashboardPage() {
     liveMetricsRafRef.current = requestAnimationFrame(() => {
       liveMetricsRafRef.current = 0
       const balances = linkedBalancesRef.current
+      const wsLive = wsMarkedConnectedRef.current
       setLinkedAccountBalances({ ...balances })
       setStats(prev => {
         const next = {
           ...prev,
-          ...recomputeLiveBrokerDashboardStats(linkedAccountsRef.current, balances, prev),
+          ...recomputeLiveBrokerDashboardStats(
+            linkedAccountsRef.current,
+            balances,
+            prev,
+            wsLive,
+          ),
         }
         statsRef.current = next
         return next
@@ -1452,35 +1481,60 @@ export function DashboardPage() {
 
   useFxsocketStream(linkedAccounts, {
     onAccount: (brokerId, snap) => {
-      if (!wsMarkedConnectedRef.current.has(brokerId)) {
-        wsMarkedConnectedRef.current.add(brokerId)
+      const wasWsLive = wsMarkedConnectedRef.current.has(brokerId)
+      wsMarkedConnectedRef.current.add(brokerId)
+      if (
+        !wasWsLive
+        || !linkedAccountsRef.current.some(a => a.id === brokerId && isBrokerLiveConnected(a))
+      ) {
         patchBroker(brokerId, {
           fxsocket_status: 'connected',
           connection_status: 'connected',
         })
       }
       const openTrades = linkedBalancesRef.current[brokerId]?.open_trades ?? 0
-      const hasLivePositionBook = (positionBooksRef.current[brokerId]?.size ?? 0) > 0
-      const applyOpenPnl =
-        !hasLivePositionBook && shouldApplyAccountStreamOpenPnl(snap, openTrades)
-      const snapForBalances = applyOpenPnl ? snap : { ...snap, openPnl: undefined }
+      let openPnlToApply: number | undefined
+      if (shouldApplyAccountStreamOpenPnl(snap, openTrades)) {
+        openPnlToApply = snap.openPnl
+      } else if (
+        openTrades > 0
+        && snap.balance != null
+        && snap.equity != null
+        && Number.isFinite(snap.balance)
+        && Number.isFinite(snap.equity)
+      ) {
+        openPnlToApply = Math.round((snap.equity - snap.balance) * 100) / 100
+      }
+      const snapForBalances = openPnlToApply != null
+        ? { ...snap, openPnl: openPnlToApply }
+        : { ...snap, openPnl: undefined }
       const nextBalances = applyFxsocketAccountStreamUpdate(
         brokerId,
         snapForBalances,
         linkedBalancesRef.current,
       )
       linkedBalancesRef.current = nextBalances
-      if (applyOpenPnl && snap.openPnl != null) {
+      if (openPnlToApply != null) {
         liveBrokerStateRef.current[brokerId] = {
           ...liveBrokerStateRef.current[brokerId],
-          open_pnl: snap.openPnl,
+          open_pnl: openPnlToApply,
         }
       }
       flushLiveBrokerMetrics()
     },
     onPositions: (brokerId, snapshot, rawData) => {
-      positionBooksRef.current[brokerId] = rebuildPositionBookFromPayload(rawData)
-      const bookSnap = snapshotFromPositionBook(positionBooksRef.current[brokerId])
+      wsMarkedConnectedRef.current.add(brokerId)
+      const rows = unwrapFxsocketPositionsPayload(rawData)
+      if (rows.length === 0) {
+        positionBooksRef.current[brokerId] = new Map()
+      } else if (rows.length === 1 && isFxsocketMarketPositionRow(rows[0])) {
+        const book = positionBooksRef.current[brokerId] ?? new Map()
+        mergePositionRowIntoBook(book, rows[0])
+        positionBooksRef.current[brokerId] = book
+      } else {
+        positionBooksRef.current[brokerId] = rebuildPositionBookFromPayload(rawData)
+      }
+      const bookSnap = snapshotFromPositionBook(positionBooksRef.current[brokerId]!)
       const openPnl =
         bookSnap.openPnl ??
         snapshot.openPnl ??
@@ -1491,9 +1545,9 @@ export function DashboardPage() {
       })
     },
     onTrade: (brokerId, data) => {
-      let book = positionBooksRef.current[brokerId]
-      if (!book) book = new Map()
-      if (!mergePositionRowIntoBook(book, data)) return
+      wsMarkedConnectedRef.current.add(brokerId)
+      const book = positionBooksRef.current[brokerId] ?? new Map()
+      mergePositionRowIntoBook(book, data)
       positionBooksRef.current[brokerId] = book
       const snap = snapshotFromPositionBook(book)
       applyBrokerLiveSnapshot(brokerId, {
@@ -1595,7 +1649,12 @@ export function DashboardPage() {
       setStats(prev => {
         const next = {
           ...prev,
-          ...recomputeLiveBrokerDashboardStats(linkedAccountsRef.current, nextBalances, prev),
+          ...recomputeLiveBrokerDashboardStats(
+            linkedAccountsRef.current,
+            nextBalances,
+            prev,
+            wsMarkedConnectedRef.current,
+          ),
         }
         statsRef.current = next
         return next
