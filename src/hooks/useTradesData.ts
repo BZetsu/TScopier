@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { supabase } from '../lib/supabase'
 import { getLocalCalendarDayBounds } from '../lib/dashboardTradeStats'
 import { formatBrokerHistoryDate } from '../lib/mtApiDateTime'
 import { fxsocketBroker, type MtTrade } from '../lib/fxsocketBroker'
+import { BROKER_ACCOUNT_CLIENT_SELECT } from '../lib/brokerAccountSelect'
+import { filterMtTradesSinceConnect } from '../lib/tradesSinceConnect'
+import type { BrokerAccount } from '../types/database'
 import { BROKER_FULL_HISTORY_FROM } from '../lib/tradesConstants'
 import { enrichMtTradesTimestamps, hydrateMtTradesTimesFromBrokers, mtTradeMissingDisplayTime } from '../lib/mtTradeTimestamps'
 import { readSessionCache, writeSessionCache } from '../lib/sessionDataCache'
@@ -16,15 +20,23 @@ import { useDashboardRealtime } from './useDashboardRealtime'
 const AUTO_REFRESH_MS = 15_000
 const VISIBILITY_STALE_MS = 30_000
 
-async function fetchTradesFromMt(): Promise<MtTrade[]> {
+async function fetchTradesFromMt(userId: string): Promise<MtTrade[]> {
   const { tomorrowStart: historyTo } = getLocalCalendarDayBounds()
-  const res = await fxsocketBroker.trades({
-    scope: 'all',
-    historyProfile: 'trades',
-    historyFrom: BROKER_FULL_HISTORY_FROM,
-    historyTo: formatBrokerHistoryDate(historyTo),
-  })
-  let normalized = enrichMtTradesTimestamps(res.trades ?? [])
+  const [tradesRes, brokerRes] = await Promise.all([
+    fxsocketBroker.trades({
+      scope: 'all',
+      historyProfile: 'trades',
+      historyFrom: BROKER_FULL_HISTORY_FROM,
+      historyTo: formatBrokerHistoryDate(historyTo),
+    }),
+    supabase
+      .from('broker_accounts')
+      .select(BROKER_ACCOUNT_CLIENT_SELECT)
+      .eq('user_id', userId),
+  ])
+  if (brokerRes.error) throw brokerRes.error
+
+  let normalized = enrichMtTradesTimestamps(tradesRes.trades ?? [])
   if (normalized.some(mtTradeMissingDisplayTime)) {
     const { trades: hydrated, stats } = await hydrateMtTradesTimesFromBrokers(normalized)
     normalized = hydrated
@@ -42,7 +54,8 @@ async function fetchTradesFromMt(): Promise<MtTrade[]> {
       })
     }
   }
-  return normalized
+  const accounts = (brokerRes.data ?? []) as unknown as BrokerAccount[]
+  return filterMtTradesSinceConnect(normalized, accounts)
 }
 
 export function useTradesData(userId: string | undefined) {
@@ -83,7 +96,7 @@ export function useTradesData(userId: string | undefined) {
       else setLoading(true)
 
       try {
-        const list = await fetchTradesFromMt()
+        const list = await fetchTradesFromMt(userId)
         const fingerprint = tradesListFingerprint(list)
         const fetchedAt = Date.now()
 

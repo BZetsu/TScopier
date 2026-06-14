@@ -26,6 +26,7 @@ import {
   type PerformanceChannelLinkMaps,
 } from '../lib/performanceInsights'
 import { BROKER_ACCOUNT_CLIENT_SELECT } from '../lib/brokerAccountSelect'
+import { filterMtTradesSinceConnect } from '../lib/tradesSinceConnect'
 import type { BrokerAccount } from '../types/database'
 
 import { isFxsocketLinkedBroker } from '../lib/brokerLink'
@@ -59,6 +60,7 @@ async function fetchPerformancePayload(userId: string): Promise<PerformanceCache
   let trades: MtTrade[] = []
   if (mtBrokers.length > 0) {
     trades = await fetchBrokerMtTrades({ scope: 'performance', historyProfile: 'trades' })
+    trades = filterMtTradesSinceConnect(trades, linked)
   }
 
   const channelLinkMaps = buildPerformanceChannelLinkMaps(
@@ -317,15 +319,18 @@ export function usePerformanceData(userId: string | undefined) {
         const bal = summary?.balance ?? refreshed.last_balance ?? summary?.equity
         const basePayload = payloadRef.current
         const priorTrades = basePayload?.mtTrades ?? mtTradesRef.current
-        const mergedTrades = [
-          ...priorTrades.filter(t => t.broker_id !== brokerId),
-          ...brokerTrades,
-        ]
-
         const nextAccounts = (basePayload?.accounts ?? []).map(a => {
           if (a.id !== brokerId) return a
           return { ...a, ...refreshed }
         })
+        const mergedTrades = filterMtTradesSinceConnect(
+          [
+            ...priorTrades.filter(t => t.broker_id !== brokerId),
+            ...brokerTrades,
+          ],
+          nextAccounts.length > 0 ? nextAccounts : basePayload?.accounts ?? [],
+        )
+
         const nextEquity = {
           ...(basePayload?.equityByAccountId ?? {}),
           ...(eq != null && Number.isFinite(Number(eq)) ? { [brokerId]: Number(eq) } : {}),

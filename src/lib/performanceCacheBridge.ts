@@ -7,6 +7,7 @@ import { normalizeChannelLinkMaps, type PerformanceChannelLinkMaps } from './per
 import type { MtTrade } from './fxsocketBroker'
 import { performanceCacheKey, type PerformanceCachePayload } from './performanceSessionCache'
 import { writeSessionCache } from './sessionDataCache'
+import { filterMtTradesSinceConnect } from './tradesSinceConnect'
 import type { BrokerAccount } from '../types/database'
 
 type BrokerBalanceSnapshot = {
@@ -64,7 +65,7 @@ export function performancePayloadFromDashboardCache(userId: string): Performanc
 
   return {
     accounts: dash.linkedAccounts,
-    mtTrades: dash.mtTrades ?? [],
+    mtTrades: filterMtTradesSinceConnect(dash.mtTrades ?? [], dash.linkedAccounts),
     equityByAccountId,
     balanceByAccountId,
     channelLinkMaps: normalizeChannelLinkMaps(dash.channelLinkMaps),

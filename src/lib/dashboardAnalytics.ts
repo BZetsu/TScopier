@@ -11,9 +11,40 @@ import {
 } from './dashboardCharts'
 import {
   computeProfitByChannel,
+  resolveChannelIdForTrade,
+  UNLINKED_CHANNEL_KEY,
   type PerformanceChannelLinkMaps,
   type PerformanceDistributionRow,
+  type ResolveChannelIdOpts,
 } from './performanceInsights'
+import {
+  filterMtTradesSinceConnect,
+  type BrokerConnectAnchor,
+} from './tradesSinceConnect'
+
+/** Closed MT legs attributed to a TSCopier signal channel (excludes manual/unlinked broker trades). */
+export function filterCopierAttributedMtTrades(
+  trades: MtTrade[],
+  maps: PerformanceChannelLinkMaps,
+  opts?: ResolveChannelIdOpts,
+): MtTrade[] {
+  return trades.filter(
+    t => resolveChannelIdForTrade(t, maps, opts) !== UNLINKED_CHANNEL_KEY,
+  )
+}
+
+/** MT history scoped to after broker connect and copier-attributed legs only. */
+export function scopeDashboardCopierMtTrades(
+  mtTrades: MtTrade[],
+  maps: PerformanceChannelLinkMaps,
+  accounts?: readonly BrokerConnectAnchor[],
+  opts?: ResolveChannelIdOpts,
+): MtTrade[] {
+  const sinceConnect = accounts?.length
+    ? filterMtTradesSinceConnect(mtTrades, accounts)
+    : mtTrades
+  return filterCopierAttributedMtTrades(sinceConnect, maps, opts)
+}
 
 /** Closed chart rows with usable deal profit — proxy for MT-quality P/L data. */
 export function chartTradesQualityScore(rows: DashboardChartTrade[]): number {
@@ -70,24 +101,30 @@ export type DashboardAnalytics = {
   tradesBreakeven: number
 }
 
-/** Single derived snapshot for Today's Profit, Trade Outcome 7d, and channel P/L 7d. */
+/** Single derived snapshot for Profit from Trades, Trade Outcome 7d, and channel P/L 7d. */
 export function deriveDashboardAnalytics(args: {
   chartTrades: DashboardChartTrade[]
   mtTrades: MtTrade[]
   channelLinkMaps: PerformanceChannelLinkMaps
   unlinkedLabel: string
+  /** When set, exclude trades before each broker's first TSCopier connect. */
+  accounts?: readonly BrokerConnectAnchor[]
   now?: Date
 }): DashboardAnalytics {
   const now = args.now ?? new Date()
-  const useMt = args.mtTrades.length > 0
+  const hasMtSource = args.mtTrades.length > 0
+  const scopedMt = hasMtSource
+    ? scopeDashboardCopierMtTrades(args.mtTrades, args.channelLinkMaps, args.accounts)
+    : []
+  const useMt = hasMtSource
   const todaySummary = useMt
-    ? summarizeTodayFromMtTrades(args.mtTrades, now)
+    ? summarizeTodayFromMtTrades(scopedMt, now)
     : summarizeTodayFromChartTrades(args.chartTrades, now)
   const yesterdaySummary = useMt
-    ? summarizeYesterdayFromMtTrades(args.mtTrades, now)
+    ? summarizeYesterdayFromMtTrades(scopedMt, now)
     : summarizeYesterdayFromChartTrades(args.chartTrades, now)
   const chartForVolume = useMt
-    ? resolveDashboardChartTrades(args.mtTrades, [])
+    ? resolveDashboardChartTrades(scopedMt, [])
     : args.chartTrades
 
   return {
@@ -95,7 +132,7 @@ export function deriveDashboardAnalytics(args: {
     yesterdayProfit: yesterdaySummary.netPnl,
     tradeVolume7Day: buildTradeVolume7Day(chartForVolume, now),
     channelProfit7d: computeProfitByChannel(
-      args.mtTrades,
+      scopedMt,
       '7d',
       args.channelLinkMaps,
       args.unlinkedLabel,

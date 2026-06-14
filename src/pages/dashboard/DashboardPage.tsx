@@ -41,7 +41,6 @@ import { isMtTimestampInRange } from '../../lib/mtApiDateTime'
 import {
   aggregateRealizedProfitFromTrades,
   computeLinkedAccountPerformanceMap,
-  countChartTradesOpenedInRange,
   getLocalCalendarDayBounds,
   isTradeableClosedRow,
   netClosedLegProfit,
@@ -565,12 +564,14 @@ function computeDashboardAnalyticsSnapshot(
   mtTrades: MtTrade[],
   channelLinkMaps: PerformanceChannelLinkMaps,
   unlinkedLabel: string,
+  accounts?: readonly BrokerAccount[],
 ): DashboardAnalytics {
   return deriveDashboardAnalytics({
     chartTrades,
     mtTrades,
     channelLinkMaps,
     unlinkedLabel,
+    accounts,
   })
 }
 
@@ -594,6 +595,7 @@ function mergeDashboardCachePayload(
       mtTrades ?? [],
       channelLinkMaps,
       'Unlinked',
+      incoming.linkedAccounts,
     )
   }
   if (!hasDashboardAnalyticsData(cachedAnalytics)) {
@@ -1006,8 +1008,9 @@ export function DashboardPage() {
       mtTrades,
       channelLinkMaps,
       unlinkedLabel: t.performance.unlinkedChannel,
+      accounts: linkedAccounts,
     }),
-    [effectiveChartTrades, mtTrades, channelLinkMaps, t.performance.unlinkedChannel],
+    [effectiveChartTrades, mtTrades, channelLinkMaps, linkedAccounts, t.performance.unlinkedChannel],
   )
 
   const displayAnalytics = useMemo(() => {
@@ -1020,29 +1023,17 @@ export function DashboardPage() {
   const headlineStats = useMemo(() => {
     const analytics = displayAnalytics
     const hasAnalytics = hasDashboardAnalyticsData(analytics)
-    const hasLiveTradeHistory = mtTrades.length > 0 || effectiveChartTrades.length > 0
-    const openedTodayBoost = (() => {
-      if (!hasLiveTradeHistory) return 0
-      const rows = mtTrades.length > 0
-        ? resolveDashboardChartTrades(mtTrades, [])
-        : effectiveChartTrades
-      if (rows.length === 0) return 0
-      const { todayStart, tomorrowStart } = getLocalCalendarDayBounds()
-      return countChartTradesOpenedInRange(rows, todayStart, tomorrowStart)
-    })()
     return {
       ...stats,
       todayProfit: hasAnalytics ? analytics.todayProfit : stats.todayProfit,
       yesterdayProfit: hasAnalytics ? analytics.yesterdayProfit : stats.yesterdayProfit,
-      tradesTaken: hasAnalytics
-        ? Math.max(analytics.tradesTaken, openedTodayBoost)
-        : stats.tradesTaken,
+      tradesTaken: hasAnalytics ? analytics.tradesTaken : stats.tradesTaken,
       tradesTakenYesterday: hasAnalytics ? analytics.tradesTakenYesterday : stats.tradesTakenYesterday,
       tradesWon: hasAnalytics ? analytics.tradesWon : stats.tradesWon,
       tradesLost: hasAnalytics ? analytics.tradesLost : stats.tradesLost,
       tradesBreakeven: hasAnalytics ? analytics.tradesBreakeven : stats.tradesBreakeven,
     }
-  }, [stats, mtTrades, effectiveChartTrades, displayAnalytics])
+  }, [stats, displayAnalytics])
 
   const connectPnlByAccountId = useMemo(
     () => computeConnectPnlByAccountId(linkedAccounts, linkedAccountBalances, mtTrades),
@@ -1177,7 +1168,7 @@ export function DashboardPage() {
       supabase.from('telegram_channels').select('id').eq('user_id', user!.id).eq('is_active', true),
       supabase
         .from('trades')
-        .select('id,symbol,direction,profit,lot_size,status,opened_at,closed_at,broker_account_id,signal_id')
+        .select('id,symbol,direction,profit,lot_size,status,opened_at,closed_at,broker_account_id,signal_id,metaapi_order_id,telegram_channel_id')
         .eq('user_id', user!.id)
         .order('opened_at', { ascending: false })
         .limit(3000),
@@ -1370,6 +1361,29 @@ export function DashboardPage() {
     const brokerAccounts = linkedAccountsRef.current.length > 0
       ? linkedAccountsRef.current
       : [] as BrokerAccount[]
+    const channelMaps = buildPerformanceChannelLinkMaps(
+      (channelsMetaRes.data ?? []) as Array<{
+        id: string
+        display_name: string
+        channel_username?: string | null
+      }>,
+      allTrades
+        .filter(t => t.metaapi_order_id && t.broker_account_id)
+        .map(t => ({
+          broker_account_id: t.broker_account_id,
+          metaapi_order_id: t.metaapi_order_id,
+          signal_id: t.signal_id,
+          telegram_channel_id: t.telegram_channel_id,
+        })),
+      (allSignalsRes.data ?? []) as Array<{ id: string; channel_id: string | null }>,
+      (attributionRes.data ?? []) as Array<{
+        broker_account_id: string | null
+        metaapi_order_id: string | null
+        signal_id: string | null
+        channel_id: string | null
+        channel_label: string | null
+      }>,
+    )
     const mtBrokerConnected = hasActiveMtBroker(brokerAccounts)
     const activeBrokerCount = brokerAccounts.filter(account => account.is_active).length
     // Seed the balance map from the cached columns the worker / edge function
@@ -1420,16 +1434,12 @@ export function DashboardPage() {
     const analyticsForLoad = deriveDashboardAnalytics({
       chartTrades: chartTradesForLoad,
       mtTrades: useMtTrades ? (mtTradesRef.current ?? []) : [],
-      channelLinkMaps: EMPTY_CHANNEL_LINK_MAPS,
-      unlinkedLabel: '',
+      channelLinkMaps: channelMaps,
+      unlinkedLabel: t.performance.unlinkedChannel,
+      accounts: brokerAccounts,
     })
     const todayProfit = analyticsForLoad.todayProfit
     const yesterdayProfit = analyticsForLoad.yesterdayProfit
-    const openedTodayCount = countChartTradesOpenedInRange(
-      chartTradesForLoad,
-      todayStart,
-      tomorrowStart,
-    )
     /** Lifetime realized P/L from closed MT deals (not balance/equity deltas). */
     const yesterdayTotalProfitLoss: number | null = null
     const totalProfitLoss = aggregateTotalProfitFromMtTrades(
@@ -1461,29 +1471,6 @@ export function DashboardPage() {
       openTrades.length,
     )
     const channelNames = buildChannelDisplayNames((channelsMetaRes.data ?? []) as ChannelNameRow[])
-    const channelMaps = buildPerformanceChannelLinkMaps(
-      (channelsMetaRes.data ?? []) as Array<{
-        id: string
-        display_name: string
-        channel_username?: string | null
-      }>,
-      allTrades
-        .filter(t => t.metaapi_order_id && t.broker_account_id)
-        .map(t => ({
-          broker_account_id: t.broker_account_id,
-          metaapi_order_id: t.metaapi_order_id,
-          signal_id: t.signal_id,
-          telegram_channel_id: t.telegram_channel_id,
-        })),
-      (allSignalsRes.data ?? []) as Array<{ id: string; channel_id: string | null }>,
-      (attributionRes.data ?? []) as Array<{
-        broker_account_id: string | null
-        metaapi_order_id: string | null
-        signal_id: string | null
-        channel_id: string | null
-        channel_label: string | null
-      }>,
-    )
     setChannelLinkMaps(channelMaps)
     const logs = ((logsRes.data ?? []) as Signal[]).filter(s => !isNonTradeSkipReason(s.skip_reason))
     const symbolLookup = await buildSignalSymbolLookup(supabase, user!.id, logs)
@@ -1492,7 +1479,7 @@ export function DashboardPage() {
       accounts: activeBrokerCount,
       portfolioValue: totalPortfolioValue,
       totalEquity: totalEquityValue,
-      tradesTaken: Math.max(analyticsForLoad.tradesTaken, openedTodayCount),
+      tradesTaken: analyticsForLoad.tradesTaken,
       tradesTakenYesterday: analyticsForLoad.tradesTakenYesterday,
       tradesWon: analyticsForLoad.tradesWon,
       tradesLost: analyticsForLoad.tradesLost,
@@ -1575,6 +1562,7 @@ export function DashboardPage() {
           mtTradesRef.current ?? [],
           channelMaps,
           t.performance.unlinkedChannel,
+          sortedBrokerAccounts,
         )
         setCachedAnalytics(analytics)
         writeDashboardCache(user.id, {
@@ -1600,6 +1588,7 @@ export function DashboardPage() {
         mtTradesRef.current ?? [],
         channelMaps,
         t.performance.unlinkedChannel,
+        sortedBrokerAccounts,
       )
       setCachedAnalytics(analytics)
       writeDashboardCache(user.id, {
@@ -1937,7 +1926,6 @@ export function DashboardPage() {
 
     const today = resolvedTrades.filter(t => inRange(t.opened_at, today0, tomorrow0))
     const yesterday = resolvedTrades.filter(t => inRange(t.opened_at, yesterday0, today0))
-    const openedTodayCount = countChartTradesOpenedInRange(chartNext, today0, tomorrow0)
     const topSymbol = (rows: typeof trades): string => {
       const counts = new Map<string, number>()
       for (const r of rows) if (r.symbol) counts.set(r.symbol, (counts.get(r.symbol) ?? 0) + 1)
@@ -1976,10 +1964,11 @@ export function DashboardPage() {
       mtTrades: resolvedTrades,
       channelLinkMaps: channelLinkMapsRef.current,
       unlinkedLabel: t.performance.unlinkedChannel,
+      accounts: linkedAccountsRef.current,
     })
     const mtStatsPatch: DashboardStats = {
       ...statsRef.current,
-      tradesTaken: Math.max(analyticsPatch.tradesTaken, openedTodayCount),
+      tradesTaken: analyticsPatch.tradesTaken,
       tradesTakenYesterday: analyticsPatch.tradesTakenYesterday,
       tradesWon: analyticsPatch.tradesWon,
       tradesLost: analyticsPatch.tradesLost,
@@ -2004,6 +1993,7 @@ export function DashboardPage() {
         resolvedTrades,
         channelLinkMapsRef.current,
         t.performance.unlinkedChannel,
+        linkedAccounts,
       )
       setCachedAnalytics(analytics)
       writeDashboardCache(user.id, {
