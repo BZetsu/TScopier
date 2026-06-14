@@ -10,13 +10,18 @@ export function sortBrokerAccountsNewestFirst(accounts: BrokerAccount[]): Broker
   })
 }
 
-/** Columns safe to read from the browser (excludes mt_password_encrypted). */
+/** Columns safe to read from the browser. */
 export const BROKER_ACCOUNT_CLIENT_SELECT = [
   'id',
   'user_id',
   'label',
   'platform',
   'metaapi_account_id',
+  'fxsocket_account_id',
+  'fxsocket_status',
+  'terminal_connected',
+  'trade_allowed',
+  'connection_error',
   'account_login',
   'broker_name',
   'broker_server',
@@ -42,8 +47,4 @@ export const BROKER_ACCOUNT_CLIENT_SELECT = [
   'created_at',
   'updated_at',
   'last_activated_at',
-  'auto_reconnect_enabled',
-  'password_updated_at',
-  'connection_error_kind',
-  'connection_error_message',
 ].join(',')

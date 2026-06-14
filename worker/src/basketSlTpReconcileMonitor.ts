@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { hasMetatraderApiConfigured } from './metatraderapi'
+import { hasMetatraderApiConfigured } from './fxsocketClient'
 import { apiForMetaapiAccount, loadPlatformByMetaapiId, type PlatformByMetaapiId } from './mtApiByAccount'
 import {
   fetchOpenBrokerTickets,
@@ -21,7 +21,7 @@ import {
 } from './monitorIdleGate'
 import { normalizeManualSettingsForExecution } from './manualPlanning/normalizeManualSettings'
 import { resolveChannelTradingConfig } from './channelTradingConfig'
-import { normalizeSymbolParams } from './metatraderapi'
+import { normalizeSymbolParams } from './fxsocketClient'
 import { isUserCopierPausedCached } from './copierPause'
 
 const ACTIVE_MS = monitorActiveIntervalMs('BASKET_RECONCILE_TICK_MS', 15_000)

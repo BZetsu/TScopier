@@ -10,23 +10,14 @@ import {
   type ReactNode,
   type SetStateAction,
 } from 'react'
-import { useLocation } from 'react-router-dom'
 import { useAuth } from './AuthContext'
-import { useLocale } from './LocaleContext'
 import { supabase } from '../lib/supabase'
-import { metatraderApi } from '../lib/metatraderapi'
 import type { BrokerAccount } from '../types/database'
 import { useBrokerAccountsRealtime } from '../hooks/useBrokerAccountsRealtime'
-import { useBrokerConnectionHealth } from '../hooks/useBrokerConnectionHealth'
-import { useBrokerConnectionRecovery } from '../hooks/useBrokerConnectionRecovery'
-import { useBrokerReconnect, type BrokerPasswordPromptResult } from '../hooks/useBrokerReconnect'
-import { useBrokerSessionFailureRealtime } from '../hooks/useBrokerSessionFailureRealtime'
-import { BrokerReconnectPasswordModal } from '../components/broker/BrokerReconnectPasswordModal'
 import {
   BROKER_ACCOUNT_CLIENT_SELECT,
   sortBrokerAccountsNewestFirst,
 } from '../lib/brokerAccountSelect'
-import { routeNeedsLiveBrokerConnectivity } from '../lib/liveBrokerRoutes'
 
 interface BrokerAccountsContextValue {
   brokers: BrokerAccount[]
@@ -39,12 +30,11 @@ interface BrokerAccountsContextValue {
   removeBroker: (id: string) => void
   patchBroker: (id: string, patch: Partial<BrokerAccount>) => void
   toggleBrokerActive: (id: string, is_active: boolean) => Promise<{ error: string | null }>
-  reconnectBroker: ReturnType<typeof useBrokerReconnect>['reconnectBroker']
+  reconnectBroker: (brokerId: string) => Promise<void>
   reconnectingBrokerIds: Set<string>
   brokersNeedingReconnect: BrokerAccount[]
   isReconnecting: (brokerId: string) => boolean
   setHealthPollingPaused: (paused: boolean) => void
-  /** Pauses health checks, auto-reconnect sweeps, and silent reconnect side-effects. */
   setBackgroundConnectivityPaused: (paused: boolean) => void
   setReconnectErrorHandler: (handler: ((message: string) => void) | null) => void
   setReconnectSuccessHandler: (handler: ((brokerId: string) => void) | null) => void
@@ -55,57 +45,11 @@ const BrokerAccountsContext = createContext<BrokerAccountsContextValue | null>(n
 
 export function BrokerAccountsProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth()
-  const { t } = useLocale()
-  const { pathname } = useLocation()
-  const bl = t.accountConfig.brokerList
 
   const [brokers, setBrokers] = useState<BrokerAccount[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
-  const [manualConnectivityPaused, setManualConnectivityPaused] = useState(false)
   const initialLoadDoneRef = useRef(false)
-
-  const reconnectErrorHandlerRef = useRef<((message: string) => void) | null>(null)
-  const reconnectSuccessHandlerRef = useRef<((brokerId: string) => void) | null>(null)
-  const passwordQueueRef = useRef<Array<{
-    brokerId: string
-    resolve: (result: BrokerPasswordPromptResult | null) => void
-  }>>([])
-  const [passwordModalBrokerId, setPasswordModalBrokerId] = useState<string | null>(null)
-
-  /** Pause MT health/reconnect on settings, billing, etc. — worker still recovers sessions. */
-  const needsLiveBrokerConnectivity = routeNeedsLiveBrokerConnectivity(pathname)
-  const routePausesHealthChecks = pathname === '/account-configuration'
-  const passwordModalOpen = passwordModalBrokerId != null
-  const healthChecksPaused =
-    !needsLiveBrokerConnectivity || routePausesHealthChecks || manualConnectivityPaused || passwordModalOpen
-  const recoveryPaused =
-    !needsLiveBrokerConnectivity || manualConnectivityPaused || passwordModalOpen
-
-  const requestReconnectPassword = useCallback((brokerId: string): Promise<BrokerPasswordPromptResult | null> => {
-    return new Promise(resolve => {
-      passwordQueueRef.current.push({ brokerId, resolve })
-      if (passwordQueueRef.current.length === 1) {
-        setPasswordModalBrokerId(brokerId)
-      }
-    })
-  }, [])
-
-  const finishPasswordRequest = useCallback((result: BrokerPasswordPromptResult | null) => {
-    const pending = passwordQueueRef.current.shift()
-    if (!pending) return
-    pending.resolve(result)
-    const next = passwordQueueRef.current[0]
-    setPasswordModalBrokerId(next?.brokerId ?? null)
-  }, [])
-
-  const handlePasswordModalSubmit = useCallback((payload: { password: string; rememberPassword: boolean }) => {
-    finishPasswordRequest(payload)
-  }, [finishPasswordRequest])
-
-  const handlePasswordModalCancel = useCallback(() => {
-    finishPasswordRequest(null)
-  }, [finishPasswordRequest])
 
   const refreshBrokers = useCallback(async (options?: { silent?: boolean }) => {
     if (!user?.id) {
@@ -174,80 +118,11 @@ export function BrokerAccountsProvider({ children }: { children: ReactNode }) {
     return { error: null }
   }, [user])
 
-  const {
-    reconnectBroker,
-    reconnectingBrokerIds,
-    brokersNeedingReconnect,
-    isReconnecting,
-  } = useBrokerReconnect({
-    brokers,
-    setBrokers,
-    autoReconnect: true,
-    autoReconnectActiveOnly: false,
-    autoReconnectPaused: recoveryPaused,
-    reconnectFailedLabel: bl.reconnectFailed,
-    requestPassword: requestReconnectPassword,
-    onError: message => reconnectErrorHandlerRef.current?.(message),
-    onClearError: () => {},
-    onReconnectSuccess: brokerId => reconnectSuccessHandlerRef.current?.(brokerId),
-  })
+  useBrokerAccountsRealtime(user?.id, setBrokers)
 
-  useBrokerAccountsRealtime(user?.id, setBrokers, { silentReconnect: !recoveryPaused })
-  useBrokerConnectionHealth(brokers, setBrokers, {
-    enabled: !healthChecksPaused,
-    refreshOnVisible: !healthChecksPaused,
-  })
-  // Recovery sweep disabled — useBrokerReconnect silent sweep + worker BrokerConnectionMonitor cover this.
-  useBrokerConnectionRecovery(brokers, setBrokers, { enabled: false })
-  useBrokerSessionFailureRealtime(user?.id, setBrokers, { silentReconnect: !recoveryPaused })
-
-  const clearStoredCredentials = useCallback(async (brokerId: string) => {
-    try {
-      const { broker } = await metatraderApi.clearStoredCredentials(brokerId)
-      if (broker) {
-        setBrokers(prev => prev.map(b => (b.id === brokerId ? { ...b, ...broker } : b)))
-      } else {
-        patchBroker(brokerId, { auto_reconnect_enabled: false, password_updated_at: null })
-      }
-      return { error: null }
-    } catch (err) {
-      return { error: err instanceof Error ? err.message : bl.reconnectFailed }
-    }
-  }, [bl.reconnectFailed, patchBroker])
-
-  const passwordModalBroker = useMemo(
-    () => (passwordModalBrokerId ? brokers.find(b => b.id === passwordModalBrokerId) ?? null : null),
-    [brokers, passwordModalBrokerId],
-  )
-
-  const passwordModalCopy = useMemo(
-    () => ({
-      title: bl.reconnectPasswordTitle,
-      body: bl.reconnectPasswordBody,
-      passwordLabel: bl.reconnectPasswordLabel,
-      passwordHint: bl.reconnectPasswordHint,
-      passwordPlaceholder: bl.reconnectPasswordPlaceholder,
-      rememberPasswordLabel: bl.rememberPasswordLabel,
-      rememberPasswordHint: bl.rememberPasswordHint,
-      detailLogin: bl.detailLogin,
-      detailServer: bl.detailServer,
-      reconnect: bl.reconnect,
-      cancel: t.common.cancel,
-    }),
-    [
-      bl.reconnectPasswordTitle,
-      bl.reconnectPasswordBody,
-      bl.reconnectPasswordLabel,
-      bl.reconnectPasswordHint,
-      bl.reconnectPasswordPlaceholder,
-      bl.rememberPasswordLabel,
-      bl.rememberPasswordHint,
-      bl.detailLogin,
-      bl.detailServer,
-      bl.reconnect,
-      t.common.cancel,
-    ],
-  )
+  const emptySet = useMemo(() => new Set<string>(), [])
+  const noopAsync = useCallback(async () => {}, [])
+  const noopClear = useCallback(async () => ({ error: null as string | null }), [])
 
   const value = useMemo(
     (): BrokerAccountsContextValue => ({
@@ -261,19 +136,15 @@ export function BrokerAccountsProvider({ children }: { children: ReactNode }) {
       removeBroker,
       patchBroker,
       toggleBrokerActive,
-      reconnectBroker,
-      reconnectingBrokerIds,
-      brokersNeedingReconnect,
-      isReconnecting,
-      setHealthPollingPaused: setManualConnectivityPaused,
-      setBackgroundConnectivityPaused: setManualConnectivityPaused,
-      setReconnectErrorHandler: handler => {
-        reconnectErrorHandlerRef.current = handler
-      },
-      setReconnectSuccessHandler: handler => {
-        reconnectSuccessHandlerRef.current = handler
-      },
-      clearStoredCredentials,
+      reconnectBroker: noopAsync,
+      reconnectingBrokerIds: emptySet,
+      brokersNeedingReconnect: [],
+      isReconnecting: () => false,
+      setHealthPollingPaused: () => {},
+      setBackgroundConnectivityPaused: () => {},
+      setReconnectErrorHandler: () => {},
+      setReconnectSuccessHandler: () => {},
+      clearStoredCredentials: noopClear,
     }),
     [
       brokers,
@@ -285,24 +156,15 @@ export function BrokerAccountsProvider({ children }: { children: ReactNode }) {
       removeBroker,
       patchBroker,
       toggleBrokerActive,
-      reconnectBroker,
-      reconnectingBrokerIds,
-      brokersNeedingReconnect,
-      isReconnecting,
-      clearStoredCredentials,
+      emptySet,
+      noopAsync,
+      noopClear,
     ],
   )
 
   return (
     <BrokerAccountsContext.Provider value={value}>
       {children}
-      <BrokerReconnectPasswordModal
-        open={passwordModalOpen}
-        broker={passwordModalBroker}
-        copy={passwordModalCopy}
-        onSubmit={handlePasswordModalSubmit}
-        onCancel={handlePasswordModalCancel}
-      />
     </BrokerAccountsContext.Provider>
   )
 }

@@ -29,6 +29,7 @@ export interface NavTranslations {
   items: {
     dashboard: string
     configuration: string
+    brokers: string
     trades: string
     channels: string
     backtest: string
@@ -60,6 +61,8 @@ export interface NavTranslations {
     resumeLabel: string
     pausedHint: string
     statusRunning: string
+    statusStopped: string
+    statusPaused?: string
     stopCopier: string
     confirmTitle: string
     confirmBody: string
@@ -472,6 +475,75 @@ export interface EconomicCalendarTranslations {
   relatedNewsEmpty: string
   readArticle: string
   dataByFmp: string
+}
+
+export interface BrokersPageTranslations {
+  title: string
+  subtitle: string
+  mt5OnlyNote: string
+  apiKeyRotationNote: string
+  setupNote: string
+  sectionAccounts: string
+  sectionCompare: string
+  sectionRawLog: string
+  connectTitle: string
+  labelField: string
+  loginField: string
+  passwordField: string
+  serverField: string
+  connectButton: string
+  connecting: string
+  refresh: string
+  delete: string
+  copyUuid: string
+  uuidCopied: string
+  openSwagger: string
+  lastSynced: string
+  noAccounts: string
+  compareFxAccount: string
+  compareLegacyBroker: string
+  symbolField: string
+  runDiagnostics: string
+  runDemoTrade: string
+  compareRunning: string
+  compareTableOperation: string
+  compareTableFxMs: string
+  compareTableLegacyMs: string
+  compareTableDelta: string
+  compareTableStatus: string
+  statusOk: string
+  statusError: string
+  demoTradeTitle: string
+  demoTradeBody: string
+  demoTradeConfirm: string
+  demoTradeCancel: string
+  connectionStatus: {
+    connecting: string
+    connected: string
+    error: string
+    disconnected: string
+  }
+  opLabels: {
+    account_summary: string
+    quote: string
+    opened_orders: string
+    order_send: string
+  }
+  loadError: string
+  connectError: string
+  deleteConfirm: string
+  selectFxAccount: string
+  selectLegacyBroker: string
+  docsUrl: string
+  docsLinkLabel: string
+  v1DocsUrl: string
+  v1DocsLinkLabel: string
+  docsEndpointNote: string
+  linkExistingTitle: string
+  existingUuidField: string
+  linkExistingButton: string
+  connectModeCredentials: string
+  connectModeLinkUuid: string
 }
 
 export interface MarketNewsTranslations {
@@ -1074,6 +1146,7 @@ export interface Translations {
   copierEnginePage: CopierEnginePageTranslations
   backtest: BacktestTranslations
   marketNews: MarketNewsTranslations
+  brokersPage: BrokersPageTranslations
   economicCalendar: EconomicCalendarTranslations
   contactSupportPage: ContactSupportPageTranslations
   riskDisclaimerPage: RiskDisclaimerPageTranslations
@@ -1085,6 +1158,7 @@ export interface Translations {
   affiliate: AffiliateTranslations
   pages: {
     accountConfiguration: PageMeta
+    brokers: PageMeta
     contactSupport: PageMeta
     riskDisclaimer: PageMeta
     termsOfService: PageMeta

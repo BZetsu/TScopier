@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getLocalCalendarDayBounds } from '../lib/dashboardTradeStats'
 import { formatLocalMtApiDateTime } from '../lib/mtApiDateTime'
-import { metatraderApi, type MtTrade } from '../lib/metatraderapi'
+import { fxsocketBroker, type MtTrade } from '../lib/fxsocketBroker'
 import { readSessionCache, writeSessionCache } from '../lib/sessionDataCache'
 import {
   TRADES_CACHE_TTL_MS,
@@ -22,7 +22,7 @@ async function fetchTradesFromMt(): Promise<MtTrade[]> {
   const { tomorrowStart: historyTo } = getLocalCalendarDayBounds()
   const historyFrom = new Date()
   historyFrom.setDate(historyFrom.getDate() - TRADES_PAGE_HISTORY_DAYS)
-  const res = await metatraderApi.trades({
+  const res = await fxsocketBroker.trades({
     scope: 'all',
     historyProfile: 'trades',
     historyFrom: formatLocalMtApiDateTime(historyFrom),

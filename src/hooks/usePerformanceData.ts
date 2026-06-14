@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
-import { PERFORMANCE_MT_HISTORY_DAYS, resolveDashboardChartTrades } from '../lib/dashboardCharts'
+import {
+  PERFORMANCE_MT_HISTORY_DAYS, resolveDashboardChartTrades } from '../lib/dashboardCharts'
 import {
   computeLinkedAccountPerformanceMap,
   getLocalCalendarDayBounds,
 } from '../lib/dashboardTradeStats'
-import { formatLocalCalendarDay } from '../lib/dayStartBalance'
 import { formatLocalMtApiDateTime } from '../lib/mtApiDateTime'
 import {
   PERFORMANCE_CACHE_TTL_MS,
@@ -14,7 +14,7 @@ import {
 } from '../lib/performanceSessionCache'
 import { performancePayloadFromDashboardCache } from '../lib/performanceCacheBridge'
 import { readSessionCache, writeSessionCache } from '../lib/sessionDataCache'
-import { metatraderApi, type MtTrade } from '../lib/metatraderapi'
+import { fxsocketBroker, type MtTrade } from '../lib/fxsocketBroker'
 import {
   aggregateAccountPerformance,
   chartTradesToStatsRows,
@@ -30,10 +30,7 @@ import {
 import { BROKER_ACCOUNT_CLIENT_SELECT } from '../lib/brokerAccountSelect'
 import type { BrokerAccount } from '../types/database'
 
-function isMtLinkedBroker(account: BrokerAccount): boolean {
-  const uuid = (account.metaapi_account_id ?? '').trim()
-  return account.is_active && uuid.length > 0 && !uuid.includes('|')
-}
+import { isFxsocketLinkedBroker } from '../lib/brokerLink'
 
 async function fetchPerformancePayload(userId: string): Promise<PerformanceCachePayload> {
   const [brokerRes, channelsRes, dbTradesRes, attributionRes, signalsRes] = await Promise.all([
@@ -59,14 +56,14 @@ async function fetchPerformancePayload(userId: string): Promise<PerformanceCache
   if (brokerRes.error) throw brokerRes.error
 
   const linked = (brokerRes.data ?? []) as unknown as BrokerAccount[]
-  const mtBrokers = linked.filter(isMtLinkedBroker)
+  const mtBrokers = linked.filter(isFxsocketLinkedBroker)
 
   let trades: MtTrade[] = []
   if (mtBrokers.length > 0) {
     const { tomorrowStart: historyTo } = getLocalCalendarDayBounds()
     const historyFrom = new Date()
     historyFrom.setDate(historyFrom.getDate() - PERFORMANCE_MT_HISTORY_DAYS)
-    const tradesRes = await metatraderApi.trades({
+    const tradesRes = await fxsocketBroker.trades({
       historyProfile: 'trades',
       scope: 'all',
       historyFrom: formatLocalMtApiDateTime(historyFrom),
@@ -97,15 +94,13 @@ async function fetchPerformancePayload(userId: string): Promise<PerformanceCache
     }>,
   )
 
-  const calendarDay = formatLocalCalendarDay()
-  const timezoneOffsetMinutes = new Date().getTimezoneOffset()
   const equity: Record<string, number> = {}
   const balance: Record<string, number> = {}
   const baselineById: Record<string, number> = {}
 
   await Promise.all(
     linked.map(async account => {
-      if (!isMtLinkedBroker(account)) {
+      if (!isFxsocketLinkedBroker(account)) {
         const eq = account.last_equity ?? account.last_balance
         const bal = account.last_balance ?? account.last_equity
         if (eq != null && Number.isFinite(Number(eq))) equity[account.id] = Number(eq)
@@ -113,15 +108,12 @@ async function fetchPerformancePayload(userId: string): Promise<PerformanceCache
         return
       }
       try {
-        const { summary, performance_baseline_balance } = await metatraderApi.summary(account.id, {
-          calendarDay,
-          timezoneOffsetMinutes,
-        })
-        const eq = summary.equity ?? summary.balance
-        const bal = summary.balance ?? summary.equity
+        const { account: refreshed, summary } = await fxsocketBroker.refreshSummary(account.id)
+        const eq = summary?.equity ?? refreshed.last_equity ?? summary?.balance ?? refreshed.last_balance
+        const bal = summary?.balance ?? refreshed.last_balance ?? summary?.equity ?? refreshed.last_equity
         if (eq != null && Number.isFinite(Number(eq))) equity[account.id] = Number(eq)
         if (bal != null && Number.isFinite(Number(bal))) balance[account.id] = Number(bal)
-        const baseline = Number(performance_baseline_balance)
+        const baseline = Number(refreshed.performance_baseline_balance ?? account.performance_baseline_balance)
         if (Number.isFinite(baseline) && baseline > 0) {
           baselineById[account.id] = baseline
         }
@@ -314,14 +306,13 @@ export function usePerformanceData(userId: string | undefined) {
     [chartTrades, statsRows],
   )
 
-  const hasMtBrokers = accounts.some(isMtLinkedBroker)
+  const hasMtBrokers = accounts.some(isFxsocketLinkedBroker)
 
   const refreshBroker = useCallback(
     async (brokerId: string, opts?: { silent?: boolean }) => {
       if (!userId) return
       const account = payloadRef.current?.accounts.find(a => a.id === brokerId)
-      const uuid = (account?.metaapi_account_id ?? '').trim()
-      if (!account?.is_active || !uuid || uuid.includes('|')) return
+      if (!account?.is_active || !isFxsocketLinkedBroker(account)) return
 
       if (!opts?.silent) {
         setRefreshing(true)
@@ -329,15 +320,13 @@ export function usePerformanceData(userId: string | undefined) {
       }
 
       try {
-        const calendarDay = formatLocalCalendarDay()
-        const timezoneOffsetMinutes = new Date().getTimezoneOffset()
         const { tomorrowStart: historyTo } = getLocalCalendarDayBounds()
         const historyFrom = new Date()
         historyFrom.setDate(historyFrom.getDate() - PERFORMANCE_MT_HISTORY_DAYS)
 
         const [summaryRes, tradesRes] = await Promise.all([
-          metatraderApi.summary(brokerId, { calendarDay, timezoneOffsetMinutes }),
-          metatraderApi.trades({
+          fxsocketBroker.refreshSummary(brokerId),
+          fxsocketBroker.trades({
             brokerId,
             historyProfile: 'trades',
             scope: 'all',
@@ -346,10 +335,10 @@ export function usePerformanceData(userId: string | undefined) {
           }),
         ])
 
-        const { summary, performance_baseline_balance } = summaryRes
-        const eq = summary.equity ?? summary.balance
-        const bal = summary.balance ?? summary.equity
-        const baseline = Number(performance_baseline_balance)
+        const { account: refreshed, summary } = summaryRes
+        const eq = summary?.equity ?? refreshed.last_equity ?? summary?.balance
+        const bal = summary?.balance ?? refreshed.last_balance ?? summary?.equity
+        const baseline = Number(refreshed.performance_baseline_balance ?? account.performance_baseline_balance)
         const brokerTrades = tradesRes.trades ?? []
         const basePayload = payloadRef.current
         const priorTrades = basePayload?.mtTrades ?? mtTradesRef.current

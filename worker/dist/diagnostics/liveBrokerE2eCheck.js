@@ -9,12 +9,12 @@ const supabase_js_1 = require("@supabase/supabase-js");
 const autoManagement_1 = require("../autoManagement");
 const manualStops_1 = require("../manualPlanning/manualStops");
 const signalPip_1 = require("../signalPip");
-const metatraderapi_1 = require("../metatraderapi");
+const fxsocketClient_1 = require("../fxsocketClient");
 const mtApiByAccount_1 = require("../mtApiByAccount");
 const supabase = (0, supabase_js_1.createClient)(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 async function main() {
     console.log('=== Live broker E2E check ===\n');
-    console.log('MT API configured:', (0, metatraderapi_1.hasMetatraderApiConfigured)());
+    console.log('MT API configured:', (0, fxsocketClient_1.hasMetatraderApiConfigured)());
     console.log('Supabase:', process.env.SUPABASE_URL?.replace(/https?:\/\//, '').split('/')[0]);
     const { data: brokers, error: bErr } = await supabase
         .from('broker_accounts')
@@ -61,7 +61,7 @@ async function main() {
         .order('opened_at', { ascending: false })
         .limit(10);
     console.log('\nOpen trades awaiting auto-BE:', autoTrades?.length ?? 0);
-    if (!(0, metatraderapi_1.hasMetatraderApiConfigured)()) {
+    if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)()) {
         console.log('\nSKIP MT quote / trigger dry-run — MT4API_BASIC_USER/PASSWORD not set locally.');
         console.log('Deploy trade_mgmt worker with MT API creds to apply auto-BE on open trades.');
         return;

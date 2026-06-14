@@ -10,7 +10,7 @@ import { Card } from '../../components/ui/Card'
 import { Badge } from '../../components/ui/Badge'
 import { Alert } from '../../components/ui/Alert'
 import { TradeDetailModal } from '../../components/trades/TradeDetailModal'
-import type { MtTrade } from '../../lib/metatraderapi'
+import type { MtTrade } from '../../lib/fxsocketBroker'
 import {
   formatTradeLots,
   formatTradePrice,

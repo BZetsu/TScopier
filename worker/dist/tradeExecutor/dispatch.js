@@ -20,7 +20,7 @@ exports.waitForSignalInflightClear = waitForSignalInflightClear;
 exports.handleSignal = handleSignal;
 exports.getChannelMeta = getChannelMeta;
 exports.brokerEligibleForSignal = brokerEligibleForSignal;
-const metatraderapi_1 = require("../metatraderapi");
+const fxsocketClient_1 = require("../fxsocketClient");
 const tradeSignalActions_1 = require("../tradeSignalActions");
 const workerConfig_1 = require("../workerConfig");
 const brokerChannelFilter_1 = require("../brokerChannelFilter");
@@ -313,7 +313,7 @@ async function waitForSignalInflightClear(ctx, signalId, timeoutMs = 60000) {
     return !ctx.inflight.has(signalId);
 }
 async function handleSignal(ctx, row, opts) {
-    if (!(0, metatraderapi_1.hasMetatraderApiConfigured)())
+    if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)())
         return;
     const isMessageRevisionEarly = opts?.dispatchSource === signalRevision_1.MESSAGE_REVISION_DISPATCH_SOURCE;
     if (isMessageRevisionEarly) {
@@ -683,6 +683,10 @@ async function getChannelMeta(ctx, channelId) {
     }
 }
 function brokerEligibleForSignal(ctx, broker, signal) {
+    if (String(broker.platform ?? '').toUpperCase() === 'MT4')
+        return false;
+    if (!broker.is_active)
+        return false;
     const activatedAt = ctx.brokerActivatedAt.get(broker.id);
     if (activatedAt == null)
         return true;

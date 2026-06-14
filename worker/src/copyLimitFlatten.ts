@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { clearChannelActiveTradeParamsWhenFlat } from './channelActiveTradeParams'
 import { loadOpenTradesForManagement } from './managementScope'
-import { getMetatraderApi, hasMetatraderApiConfigured, mtPlatformFrom } from './metatraderapi'
+import { getMetatraderApi, hasMetatraderApiConfigured, mtPlatformFrom } from './fxsocketClient'
 import { deleteRangePendingLegsForBasket } from './rangePendingLegDelete'
 import {
   cancelSignalEntryRowAtBroker,

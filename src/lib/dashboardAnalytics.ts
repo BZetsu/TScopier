@@ -1,4 +1,4 @@
-import type { MtTrade } from './metatraderapi'
+import type { MtTrade } from './fxsocketBroker'
 import {
   buildTradeVolume7Day,
   findTodayTradeOutcomeDay,

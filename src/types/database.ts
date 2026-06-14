@@ -329,13 +329,22 @@ export interface ManualSettings {
   copy_limits?: CopyLimitsConfig
 }
 
+export type FxsocketConnectionStatus = 'connecting' | 'connected' | 'error' | 'disconnected'
+
 export interface BrokerAccount {
   id: string
   user_id: string
   label: string
   platform: string
-  /** MetatraderAPI account UUID returned by /RegisterAccount. */
+  /** DEPRECATED: legacy mt4api session UUID. Use fxsocket_account_id. */
   metaapi_account_id: string
+  /** FxSocket terminal UUID (api.fxsocket.com/mt5/{id}/...). */
+  fxsocket_account_id?: string | null
+  /** FxSocket v1 account status. */
+  fxsocket_status?: FxsocketConnectionStatus | null
+  terminal_connected?: boolean | null
+  trade_allowed?: boolean | null
+  connection_error?: string | null
   /** MT login number, kept separate from the UUID for display. */
   account_login?: string | null
   /** Human-readable broker name (e.g. "IC Markets"). */
@@ -358,14 +367,6 @@ export interface BrokerAccount {
   day_start_balance?: number | null
   /** Local calendar day (YYYY-MM-DD) for `day_start_balance`. */
   day_start_balance_on?: string | null
-  /** User opted in to encrypted server-side password storage for automatic reconnect. */
-  auto_reconnect_enabled?: boolean | null
-  /** When stored credentials were last written (no password exposed to client). */
-  password_updated_at?: string | null
-  /** Classified last connect failure (wrong_password, session_expired, etc.). */
-  connection_error_kind?: string | null
-  /** User-facing last connect failure message. */
-  connection_error_message?: string | null
   is_active: boolean
   /** AI uses balance-scaled sizing; Manual uses defaults unless signal specifies lots. */
   copier_mode?: 'ai' | 'manual'

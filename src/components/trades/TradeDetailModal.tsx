@@ -9,7 +9,7 @@ import {
 } from 'lucide-react'
 import clsx from 'clsx'
 import { useT } from '../../context/LocaleContext'
-import type { MtTrade } from '../../lib/metatraderapi'
+import type { MtTrade } from '../../lib/fxsocketBroker'
 import {
   formatSignalInstructions,
   resolveTradeSignalContext,

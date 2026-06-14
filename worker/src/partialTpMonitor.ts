@@ -1,6 +1,6 @@
 import os from 'node:os'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { hasMetatraderApiConfigured, type MetatraderApiClient } from './metatraderapi'
+import { hasMetatraderApiConfigured, type MetatraderApiClient } from './fxsocketClient'
 import {
   applyShardToQuery,
   hasWorkOnShard,

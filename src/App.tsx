@@ -121,6 +121,7 @@ export default function App() {
             </Route>
             <Route path="/welcome" element={<WelcomePage />} />
             <Route path="/account-configuration" element={<LazyPage><AccountConfigPage /></LazyPage>} />
+            <Route path="/brokers" element={<Navigate to="/account-configuration" replace />} />
             <Route path="/account-trades" element={<LazyPage><TradesPage /></LazyPage>} />
             <Route path="/channels" element={<LazyPage><CopierEnginePage /></LazyPage>} />
             <Route path="/copier-engine" element={<Navigate to="/channels" replace />} />

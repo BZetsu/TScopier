@@ -1,0 +1,263 @@
+import { supabase } from './supabase'
+import type { BrokerAccount } from '../types/database'
+import type { FxsocketStreamSubscribeFrame } from './fxsocketStreamTypes'
+
+const FXSOCKET_EDGE_TIMEOUT_MS = 120_000
+const FXSOCKET_CONNECT_TIMEOUT_MS = 180_000
+
+interface CallOpts<T> {
+  body: Record<string, unknown>
+  expect?: (body: unknown) => T
+  timeoutMs?: number
+}
+
+function fxsocketFetchError(e: unknown, fallback: string): Error {
+  if (e instanceof DOMException && e.name === 'TimeoutError') {
+    return new Error('FxSocket request timed out. Try again in a moment.')
+  }
+  if (e instanceof Error && e.name === 'AbortError') {
+    return new Error('FxSocket request timed out. Try again in a moment.')
+  }
+  return e instanceof Error ? e : new Error(fallback)
+}
+
+/** Validate / refresh the Supabase JWT before edge calls (avoids stale-session 401s). */
+export async function ensureFreshAuthSession(): Promise<string> {
+  const { data: userData, error: userErr } = await supabase.auth.getUser()
+  if (userErr || !userData.user) throw new Error('Not signed in')
+
+  const { data: sessionData } = await supabase.auth.getSession()
+  const session = sessionData.session
+  const token = session?.access_token
+  if (!token) throw new Error('Not signed in')
+
+  const expiresAt = session.expires_at ?? 0
+  const nowSec = Math.floor(Date.now() / 1000)
+  if (expiresAt - nowSec > 120) return token
+
+  const { data: refreshed, error: refreshErr } = await supabase.auth.refreshSession()
+  if (refreshErr || !refreshed.session?.access_token) return token
+  return refreshed.session.access_token
+}
+
+async function call<T = unknown>(opts: CallOpts<T>): Promise<T> {
+  const token = await ensureFreshAuthSession()
+  const url = (import.meta.env.VITE_SUPABASE_URL as string) + '/functions/v1/fxsocket-broker'
+  const timeoutMs = opts.timeoutMs ?? FXSOCKET_EDGE_TIMEOUT_MS
+  let res: Response
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        apikey: import.meta.env.VITE_SUPABASE_ANON_KEY as string,
+      },
+      body: JSON.stringify(opts.body),
+      signal: AbortSignal.timeout(timeoutMs),
+    })
+  } catch (e) {
+    throw fxsocketFetchError(e, 'FxSocket request failed')
+  }
+
+  const text = await res.text()
+  let body: unknown = null
+  if (text) {
+    try { body = JSON.parse(text) } catch { body = text }
+  }
+  if (!res.ok) {
+    const msg = (body && typeof body === 'object' && 'error' in (body as Record<string, unknown>))
+      ? String((body as Record<string, unknown>).error)
+      : text || `HTTP ${res.status}`
+    if (res.status === 504) {
+      throw new Error('Trade history timed out loading from your broker. Try Refresh in a moment.')
+    }
+    throw new Error(msg)
+  }
+  return (opts.expect ? opts.expect(body) : (body as T))
+}
+
+export interface AccountSummary {
+  balance?: number
+  equity?: number
+  currency?: string
+  margin?: number
+  freeMargin?: number
+  marginLevel?: number
+  leverage?: number
+  profit?: number
+  credit?: number
+  type?: string
+}
+
+export interface MtTrade {
+  id: string
+  broker_id: string
+  broker_label: string
+  broker_name: string | null
+  ticket: number
+  position_ticket?: number | null
+  symbol: string
+  direction: 'buy' | 'sell' | ''
+  type: string
+  lot_size: number
+  entry_price: number | null
+  sl: number | null
+  tp: number | null
+  close_price: number | null
+  profit: number | null
+  swap: number | null
+  commission: number | null
+  comment: string | null
+  magic: number | null
+  opened_at: string | null
+  closed_at: string | null
+  state: string | null
+  status: 'open' | 'closed'
+}
+
+export type { FxsocketStreamSubscribeFrame } from './fxsocketStreamTypes'
+
+export const FXSOCKET_DOCS_URL = 'https://fxsocket.com/docs#request-builder'
+export const FXSOCKET_V1_DOCS_URL = 'https://api.fxsocket.com/v1/docs#/'
+
+export const fxsocketBroker = {
+  list(): Promise<BrokerAccount[]> {
+    return call({
+      body: { action: 'list' },
+      expect: (b) => {
+        const rows = (b as { accounts?: BrokerAccount[] }).accounts
+        return Array.isArray(rows) ? rows : []
+      },
+    })
+  },
+
+  connect(args: {
+    label?: string
+    login?: string
+    password?: string
+    server?: string
+    fxsocketAccountId?: string
+  }): Promise<{ account: BrokerAccount }> {
+    return call({
+      body: {
+        action: 'connect',
+        label: args.label,
+        login: args.login,
+        password: args.password,
+        server: args.server,
+        fxsocket_account_id: args.fxsocketAccountId,
+      },
+      timeoutMs: FXSOCKET_CONNECT_TIMEOUT_MS,
+      expect: (b) => {
+        const account = (b as { account?: BrokerAccount }).account
+        if (!account) throw new Error('Connect did not return an account')
+        return { account }
+      },
+    })
+  },
+
+  delete(accountId: string): Promise<void> {
+    return call({
+      body: { action: 'delete', account_id: accountId },
+      expect: () => undefined,
+    })
+  },
+
+  refreshSummary(accountId: string): Promise<{
+    account: BrokerAccount
+    summary?: AccountSummary
+  }> {
+    return call({
+      body: { action: 'refresh_summary', account_id: accountId },
+      expect: (b) => {
+        const account = (b as { account?: BrokerAccount }).account
+        if (!account) throw new Error('Refresh did not return an account')
+        const summary = (b as { summary?: AccountSummary }).summary
+        return { account, summary }
+      },
+    })
+  },
+
+  openedOrders(accountId: string): Promise<unknown[]> {
+    return call({
+      body: { action: 'opened_orders', account_id: accountId },
+      expect: (b) => {
+        const orders = (b as { orders?: unknown[] }).orders
+        return Array.isArray(orders) ? orders : []
+      },
+    })
+  },
+
+  quote(accountId: string, symbol = 'EURUSD'): Promise<Record<string, unknown>> {
+    return call({
+      body: { action: 'quote', account_id: accountId, symbol },
+      expect: (b) => {
+        const quote = (b as { quote?: Record<string, unknown> }).quote
+        return quote && typeof quote === 'object' ? quote : {}
+      },
+    })
+  },
+
+  symbols(accountId: string): Promise<string[]> {
+    return call({
+      body: { action: 'symbols', account_id: accountId },
+      expect: (b) => {
+        const symbols = (b as { symbols?: string[] }).symbols
+        return Array.isArray(symbols) ? symbols.map(String) : []
+      },
+    })
+  },
+
+  orderHistory(args: {
+    accountId: string
+    from: string
+    to: string
+  }): Promise<unknown[]> {
+    return call({
+      body: {
+        action: 'order_history',
+        account_id: args.accountId,
+        history_from: args.from,
+        history_to: args.to,
+      },
+      expect: (b) => {
+        const orders = (b as { orders?: unknown[] }).orders
+        return Array.isArray(orders) ? orders : []
+      },
+    })
+  },
+
+  trades(args: {
+    brokerId?: string
+    scope?: 'all' | 'open' | 'closed'
+    historyFrom?: string
+    historyTo?: string
+    historyProfile?: 'dashboard' | 'trades'
+    limit?: number
+  } = {}): Promise<{ trades: MtTrade[] }> {
+    return call({
+      body: {
+        action: 'trades',
+        broker_id: args.brokerId ?? '',
+        scope: args.scope ?? 'all',
+        history_profile: args.historyProfile ?? 'dashboard',
+        ...(args.historyFrom ? { history_from: args.historyFrom } : {}),
+        ...(args.historyTo ? { history_to: args.historyTo } : {}),
+        ...(args.limit != null && args.limit > 0 ? { limit: args.limit } : {}),
+      },
+      timeoutMs: args.limit != null && args.limit > 0 ? 20_000 : FXSOCKET_EDGE_TIMEOUT_MS,
+      expect: (b) => b as { trades: MtTrade[] },
+    })
+  },
+
+  /** Client-side frame for subscribing to a ticket on the worker stream proxy. */
+  streamTicket(ticket: number): FxsocketStreamSubscribeFrame {
+    return { action: 'subscribe', topic: 'trades', ticket }
+  },
+
+  swaggerUrl(fxsocketAccountId: string): string {
+    const id = encodeURIComponent(fxsocketAccountId.trim())
+    return `https://api.fxsocket.com/mt5/${id}/swagger-ui/`
+  },
+}

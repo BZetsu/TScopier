@@ -26,14 +26,12 @@ import { CopyLimitsTargetsSection } from '../../components/configure/CopyLimitsT
 import { useUserProfile } from '../../context/UserProfileContext'
 import { normalizeCopyLimitState, type CopyLimitState } from '../../lib/copyLimitTypes'
 import { ConfigTitle, ConfigToggleLabel, ConfigureInput, ConfigureSelect, InfoTooltip } from '../../components/ui/InfoTooltip'
-import { metatraderApi } from '../../lib/metatraderapi'
+import { fxsocketBroker } from '../../lib/fxsocketBroker'
 import { isLegacyBrokerLink } from '../../lib/brokerLink'
 import { brokerCanReconnect, brokerConnectionBadgeVariant, brokerConnectionStatusLabel } from '../../lib/brokerReconnect'
 import {
   brokerConnectErrorLabelsFromI18n,
-  brokerConnectErrorText,
   brokerReconnectBannerText,
-  type BrokerConnectErrorKind,
 } from '../../lib/brokerConnectError'
 import {
   BROKER_ACCOUNT_CLIENT_SELECT,
@@ -748,7 +746,6 @@ export function AccountConfigPage() {
     brokersNeedingReconnect,
     isReconnecting: isBrokerReconnecting,
     setReconnectErrorHandler,
-    clearStoredCredentials,
   } = useBrokerAccounts()
   const { openAddTradingAccount, pendingConfigureBrokerId, clearPendingConfigureBroker } = useAddTradingAccount()
   const {
@@ -1327,7 +1324,7 @@ export function AccountConfigPage() {
     const results = await Promise.all(
       needSummary.map(async b => {
         try {
-          const { summary } = await metatraderApi.summary(b.id)
+          const { summary } = await fxsocketBroker.refreshSummary(b.id)
           const accountType = resolveLinkedAccountType(
             summary?.type,
             resolveMtServerCandidate(b, b.broker_server),
@@ -1952,7 +1949,7 @@ export function AccountConfigPage() {
     })
 
     try {
-      await metatraderApi.remove(id)
+      await fxsocketBroker.delete(id)
     } catch (err) {
       const msg = err instanceof Error ? err.message : bl.deleteFailed
 
@@ -1963,7 +1960,7 @@ export function AccountConfigPage() {
         .eq('user_id', user.id)
 
       if (!directDelErr) {
-        void metatraderApi.remove(id).catch(() => {})
+        void fxsocketBroker.delete(id).catch(() => {})
         return
       }
 
@@ -2033,7 +2030,7 @@ export function AccountConfigPage() {
           </Alert>
         )}
 
-        {brokersNeedingReconnect.length > 0 && (
+        {false && brokersNeedingReconnect.length > 0 && (
           <Alert variant="warning" className="mb-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <span>{reconnectBannerText}</span>
             <Button
@@ -2148,21 +2145,14 @@ export function AccountConfigPage() {
                         {brokerLabel && (
                           <Badge variant="neutral" size="sm">{brokerLabel}</Badge>
                         )}
-                          {broker.auto_reconnect_enabled ? (
-                            <Badge variant="success" size="sm">{bl.storedCredentialsActive}</Badge>
-                          ) : null}
                       </div>
                         {broker.broker_server && (
                           <p className="mt-0.5 truncate text-xs text-neutral-500 dark:text-neutral-400">{broker.broker_server}</p>
                         )}
-                        {(broker.connection_error_kind || broker.connection_error_message) && brokerCanReconnect(broker) ? (
+                        {broker.connection_error && brokerCanReconnect(broker) ? (
                           <p className="mt-1 text-xs text-error-600 dark:text-error-400 leading-relaxed">
-                            {brokerConnectErrorText(
-                              broker.connection_error_kind as BrokerConnectErrorKind | null | undefined,
-                              broker.connection_error_message,
-                              connectErrorLabels,
-                          )}
-                        </p>
+                            {broker.connection_error}
+                          </p>
                         ) : null}
                     </div>
                     </div>
@@ -2187,16 +2177,6 @@ export function AccountConfigPage() {
                         >
                           <RefreshCw className="w-3.5 h-3.5" />
                           {bl.reconnect}
-                        </Button>
-                      ) : null}
-                      {broker.auto_reconnect_enabled ? (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => { void clearStoredCredentials(broker.id).then(r => { if (r.error) setError(r.error) }) }}
-                        >
-                          {bl.clearStoredCredentials}
                         </Button>
                       ) : null}
                       <button

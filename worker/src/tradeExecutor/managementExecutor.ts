@@ -25,7 +25,7 @@ import {
   type MgmtTradeRow
 } from '../managementScope'
 import { type ManualSettings } from '../manualPlanner'
-import { hasMetatraderApiConfigured } from '../metatraderapi'
+import { hasMetatraderApiConfigured } from '../fxsocketClient'
 import { resolveLatestOpenBasketAnchor } from '../multiTradeMerge'
 import { isBenignOrderModifyError } from '../orderModifyBenign'
 import { mgmtLegConcurrency, parallelMap } from '../parallelPool'

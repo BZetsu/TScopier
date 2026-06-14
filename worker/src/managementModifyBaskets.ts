@@ -4,8 +4,8 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { MetatraderApiClient } from './metatraderapi'
-import { normalizeSymbolParams } from './metatraderapi'
+import type { MetatraderApiClient } from './fxsocketClient'
+import { normalizeSymbolParams } from './fxsocketClient'
 import {
   fetchOpenBrokerTickets,
   markBasketReconcileDoneForAnchor,

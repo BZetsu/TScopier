@@ -4,7 +4,7 @@ exports.closeBasketForRevisionDirectionFlip = closeBasketForRevisionDirectionFli
 exports.waitForSignalBasketFlat = waitForSignalBasketFlat;
 const rangePendingLegDelete_1 = require("../rangePendingLegDelete");
 const brokerChannelFilter_1 = require("../brokerChannelFilter");
-const metatraderapi_1 = require("../metatraderapi");
+const fxsocketClient_1 = require("../fxsocketClient");
 const helpers_1 = require("./helpers");
 async function closeWithVerification(api, uuid, ticket) {
     const maxAttempts = 2;
@@ -38,7 +38,7 @@ async function closeWithVerification(api, uuid, ticket) {
     return { confirmed: false, reason: 'max_attempts' };
 }
 async function closeBasketForRevisionDirectionFlip(ctx, row, brokers) {
-    if (!(0, metatraderapi_1.hasMetatraderApiConfigured)())
+    if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)())
         return { closed: 0, failed: 0 };
     let closed = 0;
     let failed = 0;

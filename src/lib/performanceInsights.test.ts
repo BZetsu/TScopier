@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
-import type { MtTrade } from './metatraderapi'
+import type { MtTrade } from './fxsocketBroker'
 import {
   buildPerformanceChannelLinkMaps,
   computeProfitByChannel,

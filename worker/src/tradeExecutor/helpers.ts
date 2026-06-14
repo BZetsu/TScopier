@@ -6,7 +6,7 @@ import {
   type PlannerResult,
   type VirtualPendingLeg,
 } from '../manualPlanner'
-import type { OrderSendArgs } from '../metatraderapi'
+import type { OrderSendArgs } from '../fxsocketClient'
 import type { BrokerRow, Leg, ParsedSignal, SymbolCacheEntry, SymbolMappingResult } from './types'
 
 export function isMtUuid(s: string | null | undefined): boolean {
@@ -62,7 +62,7 @@ export function isExcluded(symbol: string, broker: BrokerRow): boolean {
   return list.includes(upper)
 }
 
-export function operationFor(action: string, signal: ParsedSignal): import('../metatraderapi').MtOperation | null {
+export function operationFor(action: string, signal: ParsedSignal): import('../fxsocketClient').MtOperation | null {
   const a = action.toLowerCase()
   const hasEntry = parsedHasExplicitEntryAnchor(signal)
   if (a === 'buy') return hasEntry ? 'BuyLimit' : 'Buy'

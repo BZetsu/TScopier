@@ -2,7 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CweCloseMonitor = void 0;
 exports.isCweTriggered = isCweTriggered;
-const metatraderapi_1 = require("./metatraderapi");
+const fxsocketClient_1 = require("./fxsocketClient");
 const mtApiByAccount_1 = require("./mtApiByAccount");
 const monitorIdleGate_1 = require("./monitorIdleGate");
 const rangeLayerTillClose_1 = require("./rangeLayerTillClose");
@@ -41,7 +41,7 @@ class CweCloseMonitor {
     start() {
         if (this.loop)
             return;
-        if (!(0, metatraderapi_1.hasMetatraderApiConfigured)()) {
+        if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)()) {
             console.warn('[cweCloseMonitor] MT4API_BASIC_USER/PASSWORD missing — close-worse-entries monitor disabled');
             return;
         }
@@ -74,7 +74,7 @@ class CweCloseMonitor {
         }
     }
     async tick() {
-        if (!(0, metatraderapi_1.hasMetatraderApiConfigured)())
+        if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)())
             return;
         // Pull every open trade that has a CWE close threshold pinned to it.
         // The partial index `trades_cwe_open_idx` makes this a constant-time

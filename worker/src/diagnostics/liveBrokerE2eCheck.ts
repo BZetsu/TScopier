@@ -10,7 +10,7 @@ import { signalPipPrice } from '../signalPip'
 import {
   hasMetatraderApiConfigured,
   type MetatraderApiClient,
-} from '../metatraderapi'
+} from '../fxsocketClient'
 import { apiForMetaapiAccount, loadPlatformByMetaapiId } from '../mtApiByAccount'
 
 const supabase = createClient(

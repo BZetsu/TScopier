@@ -10,7 +10,7 @@ import {
   normalizeSymbolParams,
   type MetatraderApiClient,
   type SymbolParams,
-} from './metatraderapi'
+} from './fxsocketClient'
 import { apiForMetaapiAccount, loadPlatformByMetaapiId, type PlatformByMetaapiId } from './mtApiByAccount'
 import { isBenignOrderModifyError } from './orderModifyBenign'
 import {

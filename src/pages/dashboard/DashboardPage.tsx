@@ -17,7 +17,9 @@ import { useAddTradingAccount } from '../../context/AddTradingAccountContext'
 import { Toggle } from '../../components/ui/Toggle'
 import { Button } from '../../components/ui/Button'
 import { InfoTooltip } from '../../components/ui/InfoTooltip'
-import { metatraderApi, type MtTrade } from '../../lib/metatraderapi'
+import { fxsocketBroker, type MtTrade } from '../../lib/fxsocketBroker'
+import { isFxsocketLinkedBroker } from '../../lib/brokerLink'
+import { useFxsocketStream } from '../../hooks/useFxsocketStream'
 import { formatLocalCalendarDay } from '../../lib/dayStartBalance'
 import { formatLocalMtApiDateTime, isMtTimestampInRange } from '../../lib/mtApiDateTime'
 import {
@@ -236,10 +238,7 @@ function formatMtApiDateTime(d: Date): string {
 }
 
 function hasActiveMtBroker(accounts: BrokerAccount[]): boolean {
-  return accounts.some(b => {
-    const uuid = (b.metaapi_account_id ?? '').trim()
-    return b.is_active && uuid.length > 0 && !uuid.includes('|')
-  })
+  return accounts.some(isFxsocketLinkedBroker)
 }
 
 type BrokerBalanceSnapshot = {
@@ -253,7 +252,9 @@ type BrokerBalanceSnapshot = {
   open_trades?: number
 }
 
-function isBrokerLiveConnected(account: Pick<BrokerAccount, 'connection_status'>): boolean {
+function isBrokerLiveConnected(
+  account: Pick<BrokerAccount, 'fxsocket_status' | 'connection_status'>,
+): boolean {
   return isBrokerSessionConnected(account)
 }
 
@@ -564,8 +565,8 @@ export function DashboardPage() {
     patchBroker,
     replaceBroker,
     toggleBrokerActive: toggleBrokerActiveInStore,
-    reconnectBroker,
-    brokersNeedingReconnect,
+    reconnectBroker: _reconnectBroker,
+    brokersNeedingReconnect: _brokersNeedingReconnect,
     isReconnecting: isBrokerReconnecting,
     setReconnectErrorHandler,
     setReconnectSuccessHandler,
@@ -603,20 +604,12 @@ export function DashboardPage() {
   const [togglingBrokerId, setTogglingBrokerId] = useState<string | null>(null)
   const [brokerReconnectError, setBrokerReconnectError] = useState('')
   const loadDashboardLiveRef = useRef<() => void>(() => {})
-  /** Background MT/broker poll — DB changes use Supabase Realtime instead. */
-  const MT_LIVE_REFRESH_MS = 15_000
-  const BROKER_SUMMARY_REFRESH_MS = 8_000
   const MT_TRADES_REFRESH_MS = 30_000
-  const PNL_FAST_POLL_MS = 5_000
-  const lastBrokerRefreshRef = useRef<number>(0)
   const lastMtTradesRefreshRef = useRef<number>(0)
   /** Ignore stale responses when a newer *fresh* loadDashboard run started. */
   const loadGenerationRef = useRef(0)
   const dashboardReadyRef = useRef(Boolean(bootCache?.stats))
-  const bootHasMtBroker = bootCache?.linkedAccounts?.some(b => {
-    const uuid = (b.metaapi_account_id ?? '').trim()
-    return b.is_active && uuid.length > 0 && !uuid.includes('|')
-  })
+  const bootHasMtBroker = bootCache?.linkedAccounts?.some(isFxsocketLinkedBroker)
   const [dashboardChartsReady, setDashboardChartsReady] = useState(() => {
     if (!bootCache) return false
     if ((bootCache.chartTrades?.length ?? 0) > 0 || (bootCache.mtTrades?.length ?? 0) > 0) return true
@@ -631,9 +624,8 @@ export function DashboardPage() {
   }, [mtTrades])
   /**
    * Last known MT live values per broker id, kept across `loadDashboard` calls so
-   * the auto-refresh tick (15s) doesn't bounce stats back to DB defaults while
-   * `refreshBrokerSummaries` is between throttled runs (30s). Without this the
-   * Active Trades stat fluctuates 0/1 between ticks.
+   * throttled trade refreshes don't bounce stats back to DB defaults. Without this the
+   * Active Trades stat can fluctuate between ticks.
    */
   const liveBrokerStateRef = useRef<Record<string, { open_pnl?: number; open_trades?: number }>>({})
   if (bootCache?.linkedAccountBalances && Object.keys(liveBrokerStateRef.current).length === 0) {
@@ -1240,8 +1232,8 @@ export function DashboardPage() {
     }
 
     if (syncLive) {
+      // Live balance/equity/positions come from useFxsocketStream; fetch trades once for charts.
       await Promise.allSettled([
-        refreshBrokerSummaries(brokerAccounts, mergedBalances, { force: true }),
         refreshMtTrades(brokerAccounts, { force: true }),
       ])
       if (fresh && generation !== loadGenerationRef.current) return
@@ -1298,12 +1290,12 @@ export function DashboardPage() {
   const bl = t.accountConfig.brokerList
   const connectErrorLabels = useMemo(() => brokerConnectErrorLabelsFromI18n(bl), [bl])
   const reconnectBannerText = useMemo(
-    () => brokerReconnectBannerText(brokersNeedingReconnect, {
+    () => brokerReconnectBannerText(_brokersNeedingReconnect, {
       ...connectErrorLabels,
       droppedOne: bl.reconnectDroppedOne,
       droppedMany: bl.reconnectDroppedMany,
     }),
-    [brokersNeedingReconnect, connectErrorLabels, bl.reconnectDroppedOne, bl.reconnectDroppedMany],
+    [_brokersNeedingReconnect, connectErrorLabels, bl.reconnectDroppedOne, bl.reconnectDroppedMany],
   )
 
   useEffect(() => {
@@ -1314,6 +1306,88 @@ export function DashboardPage() {
       setReconnectSuccessHandler(null)
     }
   }, [setReconnectErrorHandler, setReconnectSuccessHandler])
+
+  useFxsocketStream(linkedAccounts, {
+    onAccount: (brokerId, data) => {
+      const balance = Number(data.balance)
+      const equity = Number(data.equity ?? data.balance)
+      const profit = Number(data.profit)
+      setLinkedAccountBalances(prev => {
+        const next = {
+          ...prev,
+          [brokerId]: {
+            ...(prev[brokerId] ?? {}),
+            ...(Number.isFinite(balance) ? { balance } : {}),
+            ...(Number.isFinite(equity) ? { equity } : {}),
+            ...(Number.isFinite(profit) ? { open_pnl: profit } : {}),
+          },
+        }
+        linkedBalancesRef.current = next
+        return next
+      })
+      patchBroker(brokerId, {
+        ...(Number.isFinite(balance) ? { last_balance: balance } : {}),
+        ...(Number.isFinite(equity) ? { last_equity: equity } : {}),
+        fxsocket_status: 'connected',
+        connection_status: 'connected',
+        last_synced_at: new Date().toISOString(),
+      })
+      setStats(prev => {
+        const balances = linkedBalancesRef.current
+        let openPnl = 0
+        let portfolioValue = 0
+        let totalEquity = 0
+        let sawLive = false
+        for (const account of linkedAccountsRef.current) {
+          if (!isFxsocketLinkedBroker(account)) continue
+          const snap = balances[account.id]
+          if (snap?.balance != null && Number.isFinite(snap.balance)) {
+            portfolioValue += snap.balance
+          }
+          if (snap?.equity != null && Number.isFinite(snap.equity)) {
+            totalEquity += snap.equity
+          } else if (snap?.balance != null && Number.isFinite(snap.balance)) {
+            totalEquity += snap.balance
+          }
+          const p = snap?.open_pnl
+          if (p != null && Number.isFinite(p)) {
+            openPnl += p
+            sawLive = true
+          }
+        }
+        if (!sawLive && portfolioValue === 0 && totalEquity === 0) return prev
+        const next = {
+          ...prev,
+          openPnl: sawLive ? openPnl : prev.openPnl,
+          portfolioValue: portfolioValue || prev.portfolioValue,
+          totalEquity: totalEquity || prev.totalEquity,
+        }
+        statsRef.current = next
+        return next
+      })
+    },
+    onPositions: (brokerId, data) => {
+      const openTrades = Array.isArray(data) ? data.length : 0
+      setLinkedAccountBalances(prev => {
+        const next = {
+          ...prev,
+          [brokerId]: { ...(prev[brokerId] ?? {}), open_trades: openTrades },
+        }
+        linkedBalancesRef.current = next
+        return next
+      })
+      liveBrokerStateRef.current[brokerId] = {
+        ...liveBrokerStateRef.current[brokerId],
+        open_trades: openTrades,
+      }
+      setStats(prev => {
+        const openPositions = sumConnectedOpenTrades(linkedAccountsRef.current, linkedBalancesRef.current)
+        const next = { ...prev, openPositions, openTrades: openPositions }
+        statsRef.current = next
+        return next
+      })
+    },
+  }, linkedAccounts.some(isFxsocketLinkedBroker))
 
   useDashboardRealtime(user?.id, () => refreshQuietRef.current(), broker => {
     replaceBroker(broker)
@@ -1328,94 +1402,6 @@ export function DashboardPage() {
     return () => window.clearTimeout(deferLive)
   }, [user, brokersLoading])
 
-  useEffect(() => {
-    if (!user) return
-
-    let cancelled = false
-    const syncLiveMt = async () => {
-      if (cancelled || document.visibilityState !== 'visible') return
-      await Promise.allSettled([
-        refreshBrokerSummaries(undefined, undefined, { force: true }),
-        refreshMtTrades(undefined, { force: true }),
-      ])
-    }
-
-    const interval = window.setInterval(() => {
-      void syncLiveMt()
-    }, MT_LIVE_REFRESH_MS)
-
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') {
-        lastBrokerRefreshRef.current = 0
-        lastMtTradesRefreshRef.current = 0
-        void syncLiveMt()
-      }
-    }
-    document.addEventListener('visibilitychange', onVisible)
-
-    return () => {
-      cancelled = true
-      window.clearInterval(interval)
-      document.removeEventListener('visibilitychange', onVisible)
-    }
-  }, [user])
-
-  useEffect(() => {
-    if (!user) return
-    const hasOpenTrades = statsRef.current.openTrades > 0
-    if (!hasOpenTrades) return
-
-    let cancelled = false
-    const pollPnl = async () => {
-      if (cancelled || document.visibilityState !== 'visible') return
-      const accounts = linkedAccounts.filter(b => {
-        const uuid = (b.metaapi_account_id ?? '').trim()
-        return b.is_active && uuid.length > 0 && !uuid.includes('|') && isBrokerLiveConnected(b)
-      })
-      if (accounts.length === 0) return
-      try {
-        const { accounts: results } = await metatraderApi.pnlQuick(accounts.map(a => a.id))
-        if (cancelled) return
-        setStats(prev => {
-          let openPnl = 0
-          let sawLive = false
-          for (const r of results) {
-            const profit = r.profit ?? (r.equity != null && r.balance != null ? r.equity - r.balance : null)
-            if (profit != null && Number.isFinite(profit)) {
-              openPnl += profit
-              sawLive = true
-            }
-          }
-          if (!sawLive) return prev
-          const next = { ...prev, openPnl }
-          statsRef.current = next
-          return next
-        })
-        setLinkedAccountBalances(prev => {
-          const next = { ...prev }
-          for (const r of results) {
-            if (r.profit == null && r.equity == null) continue
-            const profit = r.profit ?? (r.equity != null && r.balance != null ? r.equity - r.balance : null)
-            next[r.id] = {
-              ...(next[r.id] ?? {}),
-              open_pnl: profit ?? undefined,
-              ...(r.equity != null ? { equity: r.equity } : {}),
-              ...(r.balance != null ? { balance: r.balance } : {}),
-            }
-          }
-          linkedBalancesRef.current = next
-          return next
-        })
-      } catch { /* swallow — full refresh will retry */ }
-    }
-
-    const interval = window.setInterval(() => { void pollPnl() }, PNL_FAST_POLL_MS)
-    return () => {
-      cancelled = true
-      window.clearInterval(interval)
-    }
-  }, [user, linkedAccounts, stats.openTrades])
-
   /**
    * Pull live trades (open + recent closed) from MetatraderAPI for every linked
    * broker and recompute the performance stats from them. Throttled to one call
@@ -1428,10 +1414,7 @@ export function DashboardPage() {
     const now = Date.now()
     if (!opts?.force && now - lastMtTradesRefreshRef.current < MT_TRADES_REFRESH_MS) return
     const sourceAccounts = brokerAccounts ?? linkedAccounts
-    const hasMtBroker = sourceAccounts.some((b) => {
-      const uuid = (b.metaapi_account_id ?? '').trim()
-      return b.is_active && uuid.length > 0 && !uuid.includes('|')
-    })
+    const hasMtBroker = sourceAccounts.some(isFxsocketLinkedBroker)
     if (!hasMtBroker) return
     lastMtTradesRefreshRef.current = now
 
@@ -1440,7 +1423,7 @@ export function DashboardPage() {
     historyFrom.setDate(historyFrom.getDate() - DASHBOARD_CHART_MT_HISTORY_DAYS)
     let trades: MtTrade[]
     try {
-      const res = await metatraderApi.trades({
+      const res = await fxsocketBroker.trades({
         scope: 'all',
         historyProfile: 'trades',
         historyFrom: formatMtApiDateTime(historyFrom),
@@ -1559,193 +1542,6 @@ export function DashboardPage() {
         mtTrades: trades,
       })
     }
-  }
-
-  /**
-   * Pull live balance/equity from MetatraderAPI for every connected broker and
-   * merge the results into local state. Throttled so the auto-refresh ticker
-   * doesn't hammer the edge function — at most once per BROKER_SUMMARY_REFRESH_MS.
-   */
-  const refreshBrokerSummaries = async (
-    brokerAccounts?: BrokerAccount[],
-    balanceSeed?: Record<string, { balance?: number; equity?: number; currency?: string; broker?: string; mt_server_hint?: string; account_type?: 'Live' | 'Demo'; open_pnl?: number; open_trades?: number }>,
-    opts?: { force?: boolean },
-  ) => {
-    const now = Date.now()
-    if (!opts?.force && now - lastBrokerRefreshRef.current < BROKER_SUMMARY_REFRESH_MS) return
-    lastBrokerRefreshRef.current = now
-
-    const sourceAccounts = brokerAccounts ?? linkedAccounts
-    const mtBrokers = sourceAccounts.filter((b) => {
-      const uuid = (b.metaapi_account_id ?? '').trim()
-      // Skip legacy / not-yet-linked rows that don't have a MetatraderAPI uuid.
-      return b.is_active && uuid.length > 0 && !uuid.includes('|')
-    })
-    if (mtBrokers.length === 0) return
-
-    const calendarDay = formatLocalCalendarDay()
-    const timezoneOffsetMinutes = new Date().getTimezoneOffset()
-
-    const results = await Promise.all(
-      mtBrokers.map(async (b) => {
-        try {
-          const {
-            summary,
-            open_positions,
-            reconciled_closed,
-            performance_baseline_balance,
-            day_start_balance,
-            day_start_balance_on,
-            todays_profit_from_balance,
-            stale,
-          } = await metatraderApi.summary(b.id, { calendarDay, timezoneOffsetMinutes })
-          return {
-            id: b.id,
-            summary,
-            open_positions,
-            reconciled_closed: reconciled_closed ?? 0,
-            stale: stale === true,
-            performance_baseline_balance: performance_baseline_balance ?? null,
-            day_start_balance: day_start_balance ?? null,
-            day_start_balance_on: day_start_balance_on ?? null,
-            todays_profit_from_balance: todays_profit_from_balance ?? null,
-            error: null as Error | null,
-          }
-        } catch (err) {
-          return {
-            id: b.id,
-            summary: null,
-            open_positions: null as number | null,
-            reconciled_closed: 0,
-            stale: false,
-            performance_baseline_balance: null as number | null,
-            day_start_balance: null as number | null,
-            day_start_balance_on: null as string | null,
-            todays_profit_from_balance: null as number | null,
-            error: err instanceof Error ? err : new Error('summary failed'),
-          }
-        }
-      }),
-    )
-
-    const prevBalances = balanceSeed ?? linkedAccountBalances
-    const nextBalances = { ...prevBalances }
-    const successes: typeof results = []
-    for (const r of results) {
-      const broker = sourceAccounts.find(b => b.id === r.id)
-      if (r.error || !r.summary || r.stale) {
-        if (broker?.auto_reconnect_enabled && broker.connection_status !== 'error') {
-          continue
-        }
-        if (broker && (r.error || r.stale || !r.summary)) {
-          patchBroker(r.id, { connection_status: 'error' })
-        }
-        continue
-      }
-      successes.push(r)
-      if (
-        r.day_start_balance != null ||
-        r.day_start_balance_on != null
-      ) {
-        patchBroker(r.id, {
-          day_start_balance: r.day_start_balance,
-          day_start_balance_on: r.day_start_balance_on,
-        })
-      }
-      const s = r.summary
-      const server = broker
-        ? resolveMtServerCandidate(broker, nextBalances[r.id]?.mt_server_hint ?? broker.broker_server)
-        : null
-      const accountType = resolveLinkedAccountType(s.type, server)
-      const nextBalance = s.balance ?? nextBalances[r.id]?.balance
-      const nextEquity = s.equity ?? nextBalances[r.id]?.equity
-      const liveProfit =
-        s.profit != null
-          ? s.profit
-          : (nextBalance != null && nextEquity != null ? nextEquity - nextBalance : nextBalances[r.id]?.open_pnl)
-      const liveOpenTrades =
-        typeof r.open_positions === 'number'
-          ? r.open_positions
-          : r.stale
-            ? 0
-            : undefined
-      nextBalances[r.id] = {
-        ...(nextBalances[r.id] ?? {}),
-        balance: nextBalance,
-        equity: nextEquity,
-        currency: s.currency ?? nextBalances[r.id]?.currency,
-        account_type: accountType ?? nextBalances[r.id]?.account_type,
-        open_pnl: liveProfit,
-        open_trades: liveOpenTrades,
-      }
-      liveBrokerStateRef.current[r.id] = {
-        open_pnl: typeof liveProfit === 'number' ? liveProfit : undefined,
-        open_trades: typeof liveOpenTrades === 'number' ? liveOpenTrades : undefined,
-      }
-    }
-    const mergedForDisplay = mergeBrokerBalances(
-      nextBalances,
-      nextBalances,
-      liveBrokerStateRef.current,
-      sourceAccounts,
-    )
-    linkedBalancesRef.current = mergedForDisplay
-    setLinkedAccountBalances(mergedForDisplay)
-
-    const sawOpenPosCount = successes.length > 0
-    const mtOpenTotal = sumConnectedOpenTrades(sourceAccounts, mergedForDisplay)
-    const reconciledTotal = results.reduce((sum, r) => sum + (r.reconciled_closed ?? 0), 0)
-    if (reconciledTotal > 0) {
-      void refreshMtTrades(sourceAccounts, { force: true })
-    }
-
-    // Recompute portfolio value (pure balance), equity, and open PnL from the freshest snapshot.
-    setStats(prev => {
-      let portfolioValue = 0
-      let totalEquity = 0
-      let openPnl = 0
-      let sawLivePnl = false
-      for (const account of sourceAccounts) {
-        const row = successes.find(r => r.id === account.id)
-        const live = row?.summary
-        const equity = live?.equity ?? account.last_equity ?? account.last_balance ?? 0
-        const balance = live?.balance ?? account.last_balance ?? 0
-        portfolioValue += balance || 0
-        totalEquity += equity || balance || 0
-        if (live && isBrokerLiveConnected(account) && !row?.stale) {
-          const profit = live.profit ?? (live.equity != null && live.balance != null ? live.equity - live.balance : null)
-          if (profit != null && Number.isFinite(profit)) {
-            openPnl += profit
-            sawLivePnl = true
-          }
-        }
-      }
-      const accountsForTotal = sourceAccounts.map(a => {
-        const row = successes.find(s => s.id === a.id)
-        const fromLive =
-          row?.performance_baseline_balance != null && Number.isFinite(Number(row.performance_baseline_balance))
-            ? Number(row.performance_baseline_balance)
-            : null
-        return {
-          ...a,
-          performance_baseline_balance: fromLive ?? a.performance_baseline_balance ?? null,
-        }
-      })
-      const totalProfitLoss = aggregateTotalProfitFromMtTrades(
-        accountsForTotal,
-        mtTradesRef.current,
-      )
-      const next = {
-        ...prev,
-        portfolioValue,
-        totalEquity,
-        openPnl: sawLivePnl ? openPnl : prev.openPnl,
-        totalProfitLoss,
-        ...(sawOpenPosCount ? { openPositions: mtOpenTotal, openTrades: mtOpenTotal } : {}),
-      }
-      statsRef.current = next
-      return next
-    })
   }
 
   const toggleBrokerActive = async (id: string, is_active: boolean) => {
@@ -2011,7 +1807,7 @@ export function DashboardPage() {
           </div>
         ) : null}
 
-        {brokersNeedingReconnect.length > 0 ? (
+        {_brokersNeedingReconnect.length > 0 ? (
           <div className="px-4 sm:px-5 py-2 text-sm text-amber-700 dark:text-amber-300 border-b border-neutral-100 dark:border-neutral-800">
             {reconnectBannerText}
           </div>
@@ -2115,7 +1911,7 @@ export function DashboardPage() {
                 toggleDisabled={togglingBrokerId === account.id}
                 showReconnect={brokerCanReconnect(account)}
                 isReconnecting={isBrokerReconnecting(account.id)}
-                onReconnect={() => { void reconnectBroker(account.id) }}
+                onReconnect={() => { void _reconnectBroker(account.id) }}
                 onOpenStats={() =>
                   navigate(`/dashboard/broker/${account.id}`, {
                     state: { accountPreview: brokerStatsPreviewFromAccount(account) },

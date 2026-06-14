@@ -10,7 +10,7 @@ import {
   normalizeSymbolParams,
   OrderSendArgs,
   SymbolParams,
-} from '../metatraderapi'
+} from '../fxsocketClient'
 import {
   clampPendingExpiryHours,
   parsedHasExplicitEntryAnchor,

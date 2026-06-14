@@ -3,7 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.TrailingStopMonitor = void 0;
 const signalPip_1 = require("./signalPip");
 const trailingStop_1 = require("./trailingStop");
-const metatraderapi_1 = require("./metatraderapi");
+const fxsocketClient_1 = require("./fxsocketClient");
 const mtApiByAccount_1 = require("./mtApiByAccount");
 const orderModifyBenign_1 = require("./orderModifyBenign");
 const monitorIdleGate_1 = require("./monitorIdleGate");
@@ -24,7 +24,7 @@ class TrailingStopMonitor {
     start() {
         if (this.loop)
             return;
-        if (!(0, metatraderapi_1.hasMetatraderApiConfigured)()) {
+        if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)()) {
             console.warn('[trailingStopMonitor] MT4API_BASIC_USER/PASSWORD missing — trailing stop monitor disabled');
             return;
         }
@@ -57,7 +57,7 @@ class TrailingStopMonitor {
         }
     }
     async tick() {
-        if (!(0, metatraderapi_1.hasMetatraderApiConfigured)())
+        if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)())
             return;
         const tradesQ = await (0, monitorIdleGate_1.applyShardToQuery)(this.supabase, this.supabase
             .from('trades')
@@ -247,7 +247,7 @@ class TrailingStopMonitor {
             return null;
         try {
             const p = await api.symbolParams(uuid, symbol);
-            const n = (0, metatraderapi_1.normalizeSymbolParams)(p);
+            const n = (0, fxsocketClient_1.normalizeSymbolParams)(p);
             const entry = {
                 digits: n.digits ?? 5,
                 point: n.point ?? 0.00001,

@@ -1,4 +1,4 @@
-import type { MtOperation } from '../metatraderapi'
+import type { MtOperation } from '../fxsocketClient'
 import type { ChannelKeywords, ManualSettings, ParsedSignal, PlannerContext, PlannerResult } from './types'
 import { deriveManualStopsWithClamp, reverseSignalGateSatisfied } from './manualStops'
 import { flipOperation, resolveOpExecAndStrict } from './executionShape'

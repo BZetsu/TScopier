@@ -10,7 +10,7 @@ exports.fillWithinTriggerBand = fillWithinTriggerBand;
 exports.evaluateTpTouch = evaluateTpTouch;
 exports.shouldLockBasketLayering = shouldLockBasketLayering;
 const node_os_1 = __importDefault(require("node:os"));
-const metatraderapi_1 = require("./metatraderapi");
+const fxsocketClient_1 = require("./fxsocketClient");
 const mtApiByAccount_1 = require("./mtApiByAccount");
 const autoManagement_1 = require("./autoManagement");
 const basketModFollowUp_1 = require("./basketModFollowUp");
@@ -143,7 +143,7 @@ class VirtualPendingMonitor {
     start() {
         if (this.loop)
             return;
-        if (!(0, metatraderapi_1.hasMetatraderApiConfigured)()) {
+        if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)()) {
             console.warn('[virtualPendingMonitor] MT4API_BASIC_USER/PASSWORD missing — virtual pending monitor disabled');
             return;
         }
@@ -177,7 +177,7 @@ class VirtualPendingMonitor {
         }
     }
     async tick() {
-        if (!(0, metatraderapi_1.hasMetatraderApiConfigured)())
+        if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)())
             return;
         // Re-open rows whose claim is stale. Anything older than STALE_CLAIM_AFTER_MS
         // is considered abandoned (the claiming worker probably crashed); reset it
@@ -689,7 +689,7 @@ class VirtualPendingMonitor {
             if (tradeRowId
                 && Number.isFinite(ticketNum)
                 && ticketNum > 0
-                && (0, metatraderapi_1.hasMetatraderApiConfigured)()) {
+                && (0, fxsocketClient_1.hasMetatraderApiConfigured)()) {
                 try {
                     await (0, basketModFollowUp_1.tryApplyBasketFollowUpToNewFill)(this.supabase, api, {
                         userId: leg.user_id,
@@ -847,7 +847,7 @@ class VirtualPendingMonitor {
             return cached;
         try {
             const p = await api.symbolParams(uuid, symbol);
-            const n = (0, metatraderapi_1.normalizeSymbolParams)(p);
+            const n = (0, fxsocketClient_1.normalizeSymbolParams)(p);
             const entry = {
                 digits: n.digits ?? 5,
                 point: n.point ?? 0.00001,

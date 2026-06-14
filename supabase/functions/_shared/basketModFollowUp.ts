@@ -3,7 +3,9 @@
  * opened basket leg. Keep in sync with worker/src/basketModFollowUp.ts.
  */
 
-import type { MetatraderApiClient } from "./metatraderapi.ts"
+type OrderModifyApi = {
+  orderModify(metaUuid: string, payload: Record<string, unknown>): Promise<unknown>
+}
 import {
   takeProfitForLegIndex,
   type ManualTpLotLike,
@@ -159,7 +161,7 @@ function computeFollowUpStops(
 
 async function executeFollowUpModify(
   supabase: SupabaseLike,
-  api: MetatraderApiClient,
+  api: OrderModifyApi,
   args: {
     userId: string
     brokerAccountId: string
@@ -220,7 +222,7 @@ async function executeFollowUpModify(
 
 export async function tryApplyBasketFollowUpToNewFill(
   supabase: SupabaseLike,
-  api: MetatraderApiClient,
+  api: OrderModifyApi,
   args: {
     userId: string
     basketSignalId: string

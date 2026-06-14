@@ -26,7 +26,7 @@ export function buildAppSearchPages(t: Translations): AppSearchPageDef[] {
   const p = t.pages
   return [
     { path: '/dashboard', title: t.nav.items.dashboard, sectionLabel: t.nav.sections.general, subtitle: t.dashboard.title, keywords: ['home', 'overview'] },
-    { path: '/account-configuration', title: t.nav.items.configuration, sectionLabel: t.nav.sections.general, subtitle: p.accountConfiguration.description, keywords: ['broker', 'mt4', 'mt5', 'account', 'copier'] },
+    { path: '/account-configuration', title: t.nav.items.configuration, sectionLabel: t.nav.sections.general, subtitle: p.accountConfiguration.description, keywords: ['broker', 'mt5', 'fxsocket', 'account', 'copier'] },
     { path: '/account-trades', title: t.nav.items.trades, sectionLabel: t.nav.sections.general, keywords: ['positions', 'orders', 'history', 'trades'] },
     { path: '/settings', title: t.nav.settings, sectionLabel: t.nav.sections.general, subtitle: p.settings.description, keywords: ['profile', 'password', 'timezone'] },
     { path: '/channels', title: t.nav.items.channels, sectionLabel: t.nav.sections.signals, subtitle: p.copierEngine.description, keywords: ['telegram', 'signals'] },

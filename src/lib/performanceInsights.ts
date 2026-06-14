@@ -8,7 +8,7 @@ import {
 import { isTradeableClosedRow } from './dashboardTradeStats'
 import { displayTradeProfit } from './tradeDisplay'
 import { parseTscopierComment, sanitizeChannelCommentSlug } from './tscopierComment'
-import type { MtTrade } from './metatraderapi'
+import type { MtTrade } from './fxsocketBroker'
 import { periodRange, periodToDays, type PerformancePeriod } from './performanceAnalytics'
 
 export const UNLINKED_CHANNEL_KEY = '__unlinked__'

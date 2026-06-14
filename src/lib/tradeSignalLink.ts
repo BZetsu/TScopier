@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import type { MtTrade } from './metatraderapi'
+import type { MtTrade } from './fxsocketBroker'
 import type { Signal, TelegramChannel } from '../types/database'
 import { parseTscopierComment, signalIdMatchesPrefix } from './tscopierComment'
 

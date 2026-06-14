@@ -8,7 +8,7 @@ import {
   type ChannelKeywords,
   type ManualSettings
 } from '../../manualPlanner'
-import { hasMetatraderApiConfigured, MtOperation } from '../../metatraderapi'
+import { hasMetatraderApiConfigured, MtOperation } from '../../fxsocketClient'
 import {
   legacyMergeLinkingEnabled,
   filterSignalIdsByChannel,

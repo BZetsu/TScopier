@@ -4,7 +4,7 @@ exports.NewsTradingMonitor = void 0;
 const blackout_1 = require("./newsTrading/blackout");
 const calendarProvider_1 = require("./newsTrading/calendarProvider");
 const settings_1 = require("./newsTrading/settings");
-const metatraderapi_1 = require("./metatraderapi");
+const fxsocketClient_1 = require("./fxsocketClient");
 const mtApiByAccount_1 = require("./mtApiByAccount");
 const channelTradingConfig_1 = require("./channelTradingConfig");
 const copierPause_1 = require("./copierPause");
@@ -20,7 +20,7 @@ class NewsTradingMonitor {
     start() {
         if (this.timer)
             return;
-        if (!(0, metatraderapi_1.hasMetatraderApiConfigured)()) {
+        if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)()) {
             console.warn('[newsTradingMonitor] MT API not configured — monitor disabled');
             return;
         }

@@ -6,7 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.PartialTpMonitor = void 0;
 exports.isPartialTpTriggered = isPartialTpTriggered;
 const node_os_1 = __importDefault(require("node:os"));
-const metatraderapi_1 = require("./metatraderapi");
+const fxsocketClient_1 = require("./fxsocketClient");
 const monitorIdleGate_1 = require("./monitorIdleGate");
 const mtApiByAccount_1 = require("./mtApiByAccount");
 const rangeLayerTillClose_1 = require("./rangeLayerTillClose");
@@ -48,7 +48,7 @@ class PartialTpMonitor {
     start() {
         if (this.loop)
             return;
-        if (!(0, metatraderapi_1.hasMetatraderApiConfigured)()) {
+        if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)()) {
             console.warn('[partialTpMonitor] MT4API_BASIC_USER/PASSWORD missing — partial TP monitor disabled');
             return;
         }
@@ -87,7 +87,7 @@ class PartialTpMonitor {
         }
     }
     async tick() {
-        if (!(0, metatraderapi_1.hasMetatraderApiConfigured)())
+        if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)())
             return;
         // Re-claim stuck rows so a crashed worker can't strand a partial. Same
         // 30s threshold as virtualPendingMonitor.

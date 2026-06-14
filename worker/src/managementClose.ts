@@ -1,4 +1,4 @@
-import type { MetatraderApiClient } from './metatraderapi'
+import type { MetatraderApiClient } from './fxsocketClient'
 
 export interface CloseVerificationResult {
   confirmed: boolean

@@ -1,7 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SignalEntryPendingMonitor = void 0;
-const metatraderapi_1 = require("./metatraderapi");
+const fxsocketClient_1 = require("./fxsocketClient");
 const mtApiByAccount_1 = require("./mtApiByAccount");
 const monitorIdleGate_1 = require("./monitorIdleGate");
 const signalEntryPendingHelpers_1 = require("./signalEntryPendingHelpers");
@@ -55,7 +55,7 @@ class SignalEntryPendingMonitor {
     start() {
         if (this.loop)
             return;
-        if (!(0, metatraderapi_1.hasMetatraderApiConfigured)()) {
+        if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)()) {
             console.warn('[signalEntryPendingMonitor] MT4API_BASIC_USER/PASSWORD missing — signal entry pending monitor disabled');
             return;
         }
@@ -88,7 +88,7 @@ class SignalEntryPendingMonitor {
         }
     }
     async tick() {
-        if (!(0, metatraderapi_1.hasMetatraderApiConfigured)())
+        if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)())
             return;
         const rowsQ = await (0, monitorIdleGate_1.applyShardToQuery)(this.supabase, this.supabase
             .from('signal_entry_pending_orders')

@@ -121,7 +121,7 @@ export interface SymbolMappingResult {
 }
 
 export interface Leg {
-  args: import('../metatraderapi').OrderSendArgs
+  args: import('../fxsocketClient').OrderSendArgs
   idx: number
   cweClosePrice?: number | null
   partialTps?: import('../manualPlanner').PlannerPartialTp[]

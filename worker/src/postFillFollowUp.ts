@@ -3,7 +3,7 @@
  * merge-into-existing — all after broker OrderSend (live fast path).
  */
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { MetatraderApiClient, MtOperation } from './metatraderapi'
+import type { MetatraderApiClient, MtOperation } from './fxsocketClient'
 import type { PlannerContext } from './manualPlanning/types'
 import {
   loadChannelActiveTradeParamsForSymbol,

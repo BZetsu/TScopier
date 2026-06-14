@@ -1,6 +1,6 @@
 import { isOppositeSignalCloseBlocked, isPendingCancelBlocked, normalizeChannelMessageFiltersMap } from '../../channelMessageFilters'
 import { type ManualSettings } from '../../manualPlanner'
-import { hasMetatraderApiConfigured } from '../../metatraderapi'
+import { hasMetatraderApiConfigured } from '../../fxsocketClient'
 import { type TradeExecutorContext } from '../context'
 import {
   type BrokerRow,

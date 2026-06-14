@@ -1,5 +1,5 @@
 import { clearSessionCacheKey, readSessionCache } from './sessionDataCache'
-import type { MtTrade } from './metatraderapi'
+import type { MtTrade } from './fxsocketBroker'
 
 /** Serve Trades page from cache; background refetch when older than this. */
 export const TRADES_CACHE_TTL_MS = 90 * 1000

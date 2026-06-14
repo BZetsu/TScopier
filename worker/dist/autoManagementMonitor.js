@@ -4,7 +4,7 @@ exports.AutoManagementMonitor = void 0;
 const autoManagement_1 = require("./autoManagement");
 const pipCalculator_1 = require("./pipCalculator");
 const signalPip_1 = require("./signalPip");
-const metatraderapi_1 = require("./metatraderapi");
+const fxsocketClient_1 = require("./fxsocketClient");
 const mtApiByAccount_1 = require("./mtApiByAccount");
 const monitorIdleGate_1 = require("./monitorIdleGate");
 const copierPause_1 = require("./copierPause");
@@ -24,7 +24,7 @@ class AutoManagementMonitor {
     start() {
         if (this.loop)
             return;
-        if (!(0, metatraderapi_1.hasMetatraderApiConfigured)()) {
+        if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)()) {
             console.warn('[autoManagementMonitor] MT4API_BASIC_USER/PASSWORD missing — auto-management monitor disabled');
             return;
         }
@@ -57,7 +57,7 @@ class AutoManagementMonitor {
         }
     }
     async tick() {
-        if (!(0, metatraderapi_1.hasMetatraderApiConfigured)())
+        if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)())
             return;
         const tradesQ = await (0, monitorIdleGate_1.applyShardToQuery)(this.supabase, this.supabase
             .from('trades')
@@ -355,7 +355,7 @@ class AutoManagementMonitor {
             return null;
         try {
             const p = await api.symbolParams(uuid, symbol);
-            const n = (0, metatraderapi_1.normalizeSymbolParams)(p);
+            const n = (0, fxsocketClient_1.normalizeSymbolParams)(p);
             const entry = {
                 digits: n.digits ?? 5,
                 point: n.point ?? 0.00001,

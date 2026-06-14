@@ -1,13 +1,13 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.BasketSlTpReconcileMonitor = void 0;
-const metatraderapi_1 = require("./metatraderapi");
+const fxsocketClient_1 = require("./fxsocketClient");
 const mtApiByAccount_1 = require("./mtApiByAccount");
 const basketSlTpReconcile_1 = require("./basketSlTpReconcile");
 const monitorIdleGate_1 = require("./monitorIdleGate");
 const normalizeManualSettings_1 = require("./manualPlanning/normalizeManualSettings");
 const channelTradingConfig_1 = require("./channelTradingConfig");
-const metatraderapi_2 = require("./metatraderapi");
+const fxsocketClient_2 = require("./fxsocketClient");
 const copierPause_1 = require("./copierPause");
 const ACTIVE_MS = (0, monitorIdleGate_1.monitorActiveIntervalMs)('BASKET_RECONCILE_TICK_MS', 15000);
 const IDLE_MS = (0, monitorIdleGate_1.monitorIdleIntervalMs)('BASKET_RECONCILE_IDLE_MS', 120000);
@@ -23,7 +23,7 @@ class BasketSlTpReconcileMonitor {
     start() {
         if (this.loop)
             return;
-        if (!(0, metatraderapi_1.hasMetatraderApiConfigured)()) {
+        if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)()) {
             console.warn('[basketSlTpReconcileMonitor] MT4API_BASIC_USER/PASSWORD missing — disabled');
             return;
         }
@@ -147,7 +147,7 @@ class BasketSlTpReconcileMonitor {
         let params = null;
         try {
             const sp = await api.symbolParams(uuid, row.symbol);
-            const n = (0, metatraderapi_2.normalizeSymbolParams)(sp);
+            const n = (0, fxsocketClient_2.normalizeSymbolParams)(sp);
             params = {
                 digits: n.digits ?? 5,
                 point: n.point ?? 0.00001,

@@ -5,7 +5,7 @@ import {
   normalizeSymbolParams,
   OrderSendArgs,
   SymbolParams,
-} from './metatraderapi'
+} from './fxsocketClient'
 import { apiForMetaapiAccount, loadPlatformByMetaapiId, type PlatformByMetaapiId } from './mtApiByAccount'
 import { autoManagementTradeSnapshot } from './autoManagement'
 import { tryApplyBasketFollowUpToNewFill } from './basketModFollowUp'

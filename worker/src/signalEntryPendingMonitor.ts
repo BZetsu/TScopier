@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { hasMetatraderApiConfigured } from './metatraderapi'
+import { hasMetatraderApiConfigured } from './fxsocketClient'
 import { apiForMetaapiAccount, loadPlatformByMetaapiId, type PlatformByMetaapiId } from './mtApiByAccount'
 import {
   applyShardToQuery,

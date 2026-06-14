@@ -4,7 +4,7 @@ import {
   DASHBOARD_CACHE_VERSION,
 } from './dashboardSessionCache'
 import type { PerformanceChannelLinkMaps } from './performanceInsights'
-import type { MtTrade } from './metatraderapi'
+import type { MtTrade } from './fxsocketBroker'
 import { performanceCacheKey, type PerformanceCachePayload } from './performanceSessionCache'
 import { writeSessionCache } from './sessionDataCache'
 import type { BrokerAccount } from '../types/database'

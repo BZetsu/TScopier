@@ -1,7 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.OpenTradeReconcileMonitor = void 0;
-const metatraderapi_1 = require("./metatraderapi");
+const fxsocketClient_1 = require("./fxsocketClient");
 const mtApiByAccount_1 = require("./mtApiByAccount");
 const monitorIdleGate_1 = require("./monitorIdleGate");
 const openTradeReconcile_1 = require("./openTradeReconcile");
@@ -18,7 +18,7 @@ class OpenTradeReconcileMonitor {
     start() {
         if (this.loop)
             return;
-        if (!(0, metatraderapi_1.hasMetatraderApiConfigured)()) {
+        if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)()) {
             console.warn('[openTradeReconcileMonitor] MT4API_BASIC_USER/PASSWORD missing — disabled');
             return;
         }

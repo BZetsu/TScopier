@@ -4,7 +4,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { MetatraderApiClient, OrderSendArgs } from './metatraderapi'
+import type { MetatraderApiClient, OrderSendArgs } from './fxsocketClient'
 import type { MergeModifySummary, PerLegStopTarget } from './multiTradeMerge'
 import { expandPerLegTargetsToCount } from './manualPlanning/tpBucketDistribution'
 import type { ManualTpLot } from './manualPlanning/types'

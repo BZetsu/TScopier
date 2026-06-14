@@ -1,4 +1,4 @@
-import { MtOperation, OrderSendArgs } from '../metatraderapi'
+import { MtOperation, OrderSendArgs } from '../fxsocketClient'
 import { clampPendingExpiryHours } from '../manualPlanner'
 import { autoManagementTradeSnapshot } from '../autoManagement'
 import type { TradeExecutorContext } from './context'

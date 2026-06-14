@@ -1,4 +1,4 @@
-import type { MtOperation, OrderSendArgs } from '../metatraderapi'
+import type { MtOperation, OrderSendArgs } from '../fxsocketClient'
 import type { PlannerStrictEntry } from './types'
 import { clampPendingExpiryHours } from './manualSettings'
 

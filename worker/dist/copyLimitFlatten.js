@@ -3,7 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.flattenChannelTradesForCopyLimit = flattenChannelTradesForCopyLimit;
 const channelActiveTradeParams_1 = require("./channelActiveTradeParams");
 const managementScope_1 = require("./managementScope");
-const metatraderapi_1 = require("./metatraderapi");
+const fxsocketClient_1 = require("./fxsocketClient");
 const rangePendingLegDelete_1 = require("./rangePendingLegDelete");
 const signalEntryPendingHelpers_1 = require("./signalEntryPendingHelpers");
 async function closeBrokerTicket(api, uuid, ticket) {
@@ -26,9 +26,9 @@ async function flattenChannelTradesForCopyLimit(args) {
         pendingCancelled: 0,
         virtualLegsDeleted: 0,
     };
-    if (!(0, metatraderapi_1.hasMetatraderApiConfigured)())
+    if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)())
         return result;
-    const api = (0, metatraderapi_1.getMetatraderApi)((0, metatraderapi_1.mtPlatformFrom)(args.platform));
+    const api = (0, fxsocketClient_1.getMetatraderApi)((0, fxsocketClient_1.mtPlatformFrom)(args.platform));
     if (!api || !args.metaapiAccountId || args.metaapiAccountId.includes('|'))
         return result;
     const trades = await (0, managementScope_1.loadOpenTradesForManagement)(args.supabase, {

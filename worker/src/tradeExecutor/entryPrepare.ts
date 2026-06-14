@@ -5,7 +5,7 @@ import {
   MetatraderApiClient,
   MtOperation,
   OrderSendArgs,
-} from '../metatraderapi'
+} from '../fxsocketClient'
 import {
   clampPendingExpiryHours,
   parsedHasExplicitEntryAnchor,

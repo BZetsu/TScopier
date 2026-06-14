@@ -1,35 +1,47 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.loadPlatformByMetaapiId = loadPlatformByMetaapiId;
-exports.apiForMetaapiAccount = apiForMetaapiAccount;
-const metatraderapi_1 = require("./metatraderapi");
-/** Resolve MT4/MT5 host per stored session id (metaapi_account_id). */
-async function loadPlatformByMetaapiId(supabase, metaapiIds) {
+exports.apiForMetaapiAccount = exports.loadPlatformByMetaapiId = void 0;
+exports.brokerSessionId = brokerSessionId;
+exports.loadPlatformByFxsocketId = loadPlatformByFxsocketId;
+exports.apiForFxsocketAccount = apiForFxsocketAccount;
+const fxsocketClient_1 = require("./fxsocketClient");
+/** Resolve broker session id (FxSocket terminal UUID). */
+function brokerSessionId(row) {
+    const fx = String(row.fxsocket_account_id ?? '').trim();
+    if (fx && !fx.includes('|'))
+        return fx;
+    const legacy = String(row.metaapi_account_id ?? '').trim();
+    if (legacy && !legacy.includes('|'))
+        return legacy;
+    return '';
+}
+async function loadPlatformByFxsocketId(supabase, sessionIds) {
     const out = new Map();
-    const ids = [...new Set(metaapiIds.filter(id => id && !id.includes('|')))];
+    const ids = [...new Set(sessionIds.filter(id => id && !id.includes('|')))];
     if (!ids.length)
         return out;
     const { data, error } = await supabase
         .from('broker_accounts')
-        .select('metaapi_account_id,platform')
-        .in('metaapi_account_id', ids);
+        .select('fxsocket_account_id,metaapi_account_id,platform')
+        .or(`fxsocket_account_id.in.(${ids.join(',')}),metaapi_account_id.in.(${ids.join(',')})`);
     if (error) {
-        console.warn(`[mtApi] broker platform lookup failed: ${error.message}`);
+        console.warn(`[fxApi] broker platform lookup failed: ${error.message}`);
         return out;
     }
     for (const row of data ?? []) {
-        const id = String(row.metaapi_account_id ?? '').trim();
+        const id = brokerSessionId(row);
         if (!id)
             continue;
-        out.set(id, (0, metatraderapi_1.mtPlatformFrom)(row.platform));
+        out.set(id, 'MT5');
     }
     return out;
 }
-function apiForMetaapiAccount(platformById, metaapiAccountId) {
-    const platform = platformById.get(metaapiAccountId);
-    if (!platform) {
-        console.error(`[mtApi] missing platform for metaapi_account_id=${metaapiAccountId} — refusing MT5 fallback`);
+/** @deprecated use loadPlatformByFxsocketId */
+exports.loadPlatformByMetaapiId = loadPlatformByFxsocketId;
+function apiForFxsocketAccount(_platformById, sessionId) {
+    if (!sessionId || sessionId.includes('|'))
         return null;
-    }
-    return (0, metatraderapi_1.getMetatraderApi)(platform);
+    return (0, fxsocketClient_1.getFxsocketClient)();
 }
+/** @deprecated use apiForFxsocketAccount */
+exports.apiForMetaapiAccount = apiForFxsocketAccount;

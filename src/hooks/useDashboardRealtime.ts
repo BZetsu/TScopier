@@ -6,11 +6,15 @@ import type { BrokerAccount } from '../types/database'
 const DEBOUNCE_MS = 450
 
 const BROKER_LIGHT_FIELDS = new Set([
+  'fxsocket_status',
   'connection_status',
+  'connection_error',
   'last_synced_at',
   'last_balance',
   'last_equity',
   'last_currency',
+  'terminal_connected',
+  'trade_allowed',
   'updated_at',
 ])
 
@@ -28,8 +32,7 @@ function isBrokerLightweightUpdate(
 
 /**
  * Subscribe to Supabase Realtime for tables that drive dashboard stats.
- * Debounces bursts (e.g. multi-leg basket) into a single quiet refresh.
- * Broker connection_status / balance sync updates patch local state only.
+ * Debounces bursts into a single quiet refresh.
  */
 export function useDashboardRealtime(
   userId: string | undefined,
@@ -88,11 +91,6 @@ export function useDashboardRealtime(
             }
             schedule()
           },
-        )
-        .on(
-          'postgres_changes',
-          { event: 'INSERT', schema: 'public', table: 'trade_execution_logs', filter },
-          schedule,
         )
         .on(
           'postgres_changes',

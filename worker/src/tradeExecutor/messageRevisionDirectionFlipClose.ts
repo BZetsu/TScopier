@@ -1,6 +1,6 @@
 import { purgeRangePendingLegsForBaskets } from '../rangePendingLegDelete'
 import { channelMatchesBrokerSignal } from '../brokerChannelFilter'
-import { hasMetatraderApiConfigured, type MetatraderApiClient } from '../metatraderapi'
+import { hasMetatraderApiConfigured, type MetatraderApiClient } from '../fxsocketClient'
 import { isMtUuid } from './helpers'
 import type { TradeExecutorContext } from './context'
 import type { BrokerRow, SignalRow } from './types'

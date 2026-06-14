@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
-import type { MtOperation } from '../metatraderapi'
+import type { MtOperation } from '../fxsocketClient'
 import { resolveOpExecAndStrict } from './executionShape'
 
 const base = {

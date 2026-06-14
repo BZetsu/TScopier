@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { MetatraderApiClient } from './metatraderapi'
+import type { MetatraderApiClient } from './fxsocketClient'
 import type { ManualTpLot } from './manualPlanning/types'
 import { normalizeManualSettingsForExecution } from './manualPlanning/normalizeManualSettings'
 import { resolveChannelTradingConfig } from './channelTradingConfig'

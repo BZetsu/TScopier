@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { metatraderApi } from '../lib/metatraderapi'
+import { fxsocketBroker } from '../lib/fxsocketBroker'
 import { supabase } from '../lib/supabase'
 import { hasOpenTradesInCache } from '../lib/tradesSessionCache'
 import { whenRealtimeReady } from '../lib/whenRealtimeReady'
@@ -8,7 +8,7 @@ const REFRESH_MS = 60_000
 const REALTIME_DEBOUNCE_MS = 450
 
 async function fetchHasOpenFromBroker(): Promise<boolean> {
-  const res = await metatraderApi.trades({
+  const res = await fxsocketBroker.trades({
     scope: 'open',
     historyProfile: 'trades',
     limit: 1,

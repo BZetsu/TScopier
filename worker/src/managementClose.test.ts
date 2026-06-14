@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { closeOrderFast, closeWithVerification } from './managementClose'
-import type { MetatraderApiClient } from './metatraderapi'
+import type { MetatraderApiClient } from './fxsocketClient'
 
 function mockApi(overrides: Partial<MetatraderApiClient> = {}): MetatraderApiClient {
   return {

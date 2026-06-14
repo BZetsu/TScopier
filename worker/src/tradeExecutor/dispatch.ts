@@ -1,5 +1,5 @@
 import type { TradeExecutorContext } from './context'
-import { hasMetatraderApiConfigured } from '../metatraderapi'
+import { hasMetatraderApiConfigured } from '../fxsocketClient'
 import type { BrokerRow, QueuedSignal, SignalRow } from './types'
 import {
   dispatchPriorityForAction,
@@ -790,6 +790,8 @@ export async function getChannelMeta(ctx: TradeExecutorContext, channelId: strin
   }
 
 export function brokerEligibleForSignal(ctx: TradeExecutorContext, broker: BrokerRow, signal: SignalRow): boolean {
+    if (String(broker.platform ?? '').toUpperCase() === 'MT4') return false
+    if (!broker.is_active) return false
     const activatedAt = ctx.brokerActivatedAt.get(broker.id)
     if (activatedAt == null) return true
     const createdAtRaw = (signal as { created_at?: string | number | null }).created_at

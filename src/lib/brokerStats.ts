@@ -9,7 +9,7 @@ import {
   type TradeStatsRow,
 } from './dashboardTradeStats'
 import { displayTradeProfit } from './tradeDisplay'
-import type { MtTrade } from './metatraderapi'
+import type { MtTrade } from './fxsocketBroker'
 import { normalizeSignalChannelIds } from './brokerChannelLink'
 import {
   computeProfitByChannel,

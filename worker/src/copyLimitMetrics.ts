@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { periodWindowUtc } from './copyLimitPeriods'
 import type { CopyLimitPeriod } from './copyLimitTypes'
-import { getMetatraderApi, hasMetatraderApiConfigured, mtPlatformFrom } from './metatraderapi'
+import { getMetatraderApi, hasMetatraderApiConfigured, mtPlatformFrom } from './fxsocketClient'
 
 export type ChannelPnlSnapshot = {
   realizedPnl: number

@@ -1,4 +1,4 @@
-import type { OrderSendArgs } from '../metatraderapi'
+import type { OrderSendArgs } from '../fxsocketClient'
 import type { PipQuote } from '../pipCalculator'
 import type {
   ManualSettings,

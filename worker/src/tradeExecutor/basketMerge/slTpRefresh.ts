@@ -35,7 +35,7 @@ import {
   type PlannerPartialTp
 } from '../../manualPlanner'
 import { isMtBridgeGlitchMessage } from '../../brokerConnectError'
-import { MtOperation } from '../../metatraderapi'
+import { MtOperation } from '../../fxsocketClient'
 import { buildPerLegStopTargets, mergePlanImmediateOrders, type MergeModifySummary } from '../../multiTradeMerge'
 import { isRangeLayerTillCloseEnabled } from '../../rangeLayerTillClose'
 import {

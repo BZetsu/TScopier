@@ -13,7 +13,7 @@ import {
   sumTradeableClosedProfitInRange,
 } from './dashboardTradeStats'
 import { summarizeTodayFromMtTrades } from './dashboardCharts'
-import type { MtTrade } from './metatraderapi'
+import type { MtTrade } from './fxsocketBroker'
 
 test('isTradeableClosedRow: excludes balance/deposit and zero-lot buy mislabels', () => {
   assert.equal(

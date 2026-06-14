@@ -416,3 +416,24 @@ See [`docs/telegram-copier-triage.md`](telegram-copier-triage.md) and `scripts/d
 ## Environment reference
 
 See `worker/.env.example` for catch-up, lease, and parse tuning variables.
+
+## FxSocket Brokers sandbox (`/brokers`)
+
+The **`fxsocket-broker`** Edge function is isolated from the live copier.
+
+- **Account linking (v1):** [api.fxsocket.com/v1/docs](https://api.fxsocket.com/v1/docs) — `POST /v1/accounts` with login/password/server; auth via `X-API-Key` only.
+- **Trading (per-account):** [fxsocket.com/docs#request-builder](https://fxsocket.com/docs#request-builder) — `https://api.fxsocket.com/mt5/{account_id}/…`
+
+The API has no CORS headers — all calls go through Edge.
+
+Set these in **Supabase → Edge Functions → Secrets** (not worker env):
+
+| Secret | Purpose |
+|--------|---------|
+| `FXSOCKET_API_KEY` | `fxs_live_…` platform key (`X-API-Key` on all FxSocket calls) — **only required secret** |
+| `FXSOCKET_BASE_URL` | Optional; default `https://api.fxsocket.com` |
+
+Deploy: `supabase functions deploy fxsocket-broker`. Apply migration `20260615190000_fxsocket_broker_accounts.sql`.
+
+Unit tests: `deno test supabase/functions/_shared/fxsocketClient.test.ts`
+

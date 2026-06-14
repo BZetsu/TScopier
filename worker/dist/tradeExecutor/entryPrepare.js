@@ -1,7 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.prepareEntryExecution = prepareEntryExecution;
-const metatraderapi_1 = require("../metatraderapi");
+const fxsocketClient_1 = require("../fxsocketClient");
 const manualPlanner_1 = require("../manualPlanner");
 const blackout_1 = require("../newsTrading/blackout");
 const calendarProvider_1 = require("../newsTrading/calendarProvider");
@@ -78,7 +78,7 @@ async function prepareEntryExecution(ctx, args) {
     }
     const liveEntryFast = sendOpts?.liveEntryFast === true;
     const commentPrefix = sendOpts?.commentPrefix ?? (0, tradeComment_1.buildTscopierCommentPrefix)(signal.id);
-    if (!(0, metatraderapi_1.hasMetatraderApiConfigured)())
+    if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)())
         return { ok: false, outcome: {} };
     const api = ctx.apiFor(broker);
     if (!api)
@@ -153,7 +153,7 @@ async function prepareEntryExecution(ctx, args) {
         await ctx.logSendSkipped(signal, broker, 'broker_session_not_connected', {
             symbol: requestedSymbol,
             metaapi_account_id: uuid,
-            hint: metatraderapi_1.MT_SESSION_EXPIRED_HINT,
+            hint: fxsocketClient_1.MT_SESSION_EXPIRED_HINT,
         });
         return { ok: false, outcome: {} };
     }

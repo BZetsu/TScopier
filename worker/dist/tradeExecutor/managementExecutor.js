@@ -12,7 +12,7 @@ const managementClose_1 = require("../managementClose");
 const managementModifyBaskets_1 = require("../managementModifyBaskets");
 const managementPendingLegs_1 = require("../managementPendingLegs");
 const managementScope_1 = require("../managementScope");
-const metatraderapi_1 = require("../metatraderapi");
+const fxsocketClient_1 = require("../fxsocketClient");
 const multiTradeMerge_1 = require("../multiTradeMerge");
 const orderModifyBenign_1 = require("../orderModifyBenign");
 const parallelPool_1 = require("../parallelPool");
@@ -73,7 +73,7 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
     const liveMgmtFast = mgmtOpts?.liveMgmtFast === true;
     const legConcurrency = liveMgmtFast ? (0, parallelPool_1.mgmtLegConcurrency)() : 1;
     let legsTotal = 0;
-    if (!(0, metatraderapi_1.hasMetatraderApiConfigured)()) {
+    if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)()) {
         await skipMgmtSignalWithLog(ctx, signal, 'broker_api_not_configured', {
             action: String(parsed.action ?? '').toLowerCase(),
         });
@@ -601,7 +601,7 @@ async function applyCloseWorseEntriesInstruction(ctx, signal, parsed, rows, byBr
     const liveMgmtFast = mgmtOpts?.liveMgmtFast === true;
     const legConcurrency = liveMgmtFast ? (0, parallelPool_1.mgmtLegConcurrency)() : 1;
     let legsTotal = 0;
-    if (!(0, metatraderapi_1.hasMetatraderApiConfigured)()) {
+    if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)()) {
         await skipMgmtSignalWithLog(ctx, signal, 'broker_api_not_configured', { action: 'close_worse_entries' });
         return emptyMgmtResult(legConcurrency);
     }

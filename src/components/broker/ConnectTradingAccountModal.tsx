@@ -4,18 +4,15 @@ import { useT } from '../../context/LocaleContext'
 import { interpolate } from '../../i18n/interpolate'
 import { useBrokerAccounts } from '../../context/BrokerAccountsContext'
 import { useSubscription } from '../../context/SubscriptionContext'
-import { metatraderApi } from '../../lib/metatraderapi'
+import { fxsocketBroker } from '../../lib/fxsocketBroker'
 import {
   emptyConnectTradingAccountForm,
   type ConnectTradingAccountForm,
 } from '../../lib/connectTradingAccountForm'
-import { tailRefreshBrokerSummary } from '../../lib/tailRefreshBrokerSummary'
 import { PaywallErrorAlert } from '../billing/PaywallErrorAlert'
 import { PasswordInput } from '../auth/PasswordInput'
 import { Input } from '../ui/Input'
-import { Select } from '../ui/Select'
 import { Button } from '../ui/Button'
-import { MtCompanyServerPicker } from '../ui/MtCompanyServerPicker'
 import { useOverlayDismiss } from '../../hooks/useOverlayDismiss'
 import type { BrokerAccount } from '../../types/database'
 
@@ -29,7 +26,7 @@ export function ConnectTradingAccountModal({ open, onClose, onSuccess }: Connect
   const t = useT()
   const bl = t.accountConfig.brokerList
   const pw = t.pricing.paywall
-  const { brokers, upsertBroker, patchBroker } = useBrokerAccounts()
+  const { brokers, upsertBroker } = useBrokerAccounts()
   const { hasActiveSubscription, canAddBroker, limits } = useSubscription()
   const overlayRef = useRef<HTMLDivElement>(null)
   const backdropRef = useRef<HTMLDivElement>(null)
@@ -71,7 +68,7 @@ export function ConnectTradingAccountModal({ open, onClose, onSuccess }: Connect
     if (!open) reset()
   }, [open, reset])
 
-  const setField = (field: keyof ConnectTradingAccountForm, value: string | boolean) => {
+  const setField = (field: keyof ConnectTradingAccountForm, value: string) => {
     setForm(prev => ({ ...prev, [field]: value }))
   }
 
@@ -102,41 +99,17 @@ export function ConnectTradingAccountModal({ open, onClose, onSuccess }: Connect
       return
     }
 
-    const serverUpper = server.toUpperCase()
-    const serverSuggestsMt4 = /MT4|METATRADER\s*4/.test(serverUpper) && !/MT5/.test(serverUpper)
-    const serverSuggestsMt5 = /MT5|METATRADER\s*5/.test(serverUpper) && !/MT4/.test(serverUpper)
-    if (form.platform === 'MT5' && serverSuggestsMt4) {
-      const proceed = window.confirm(bl.platformServerMismatchMt4)
-      if (!proceed) {
-        setSaving(false)
-        return
-      }
-    }
-    if (form.platform === 'MT4' && serverSuggestsMt5) {
-      const proceed = window.confirm(bl.platformServerMismatchMt5)
-      if (!proceed) {
-        setSaving(false)
-        return
-      }
-    }
-
     try {
-      const { broker } = await metatraderApi.register({
-        platform: form.platform,
-        server,
+      const { account } = await fxsocketBroker.connect({
         login,
         password: form.account_password,
+        server,
         label: form.label.trim() || undefined,
       })
-      upsertBroker(broker)
-      if (broker?.id && broker.last_balance == null && broker.last_equity == null) {
-        void tailRefreshBrokerSummary(broker.id, [...brokers, broker], patch => {
-          patchBroker(broker.id, patch)
-        })
-      }
+      upsertBroker(account)
       reset()
       if (onSuccess) {
-        onSuccess(broker)
+        onSuccess(account)
       } else {
         onClose()
       }
@@ -149,7 +122,7 @@ export function ConnectTradingAccountModal({ open, onClose, onSuccess }: Connect
 
   if (!open) return null
 
-  const title = interpolate(t.accountConfig.connectForm.title, { platform: form.platform })
+  const title = interpolate(t.accountConfig.connectForm.title, { platform: 'MT5' })
 
   return (
     <div
@@ -193,31 +166,21 @@ export function ConnectTradingAccountModal({ open, onClose, onSuccess }: Connect
           {error ? <PaywallErrorAlert message={error} className="mb-4" /> : null}
 
           <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <Input
-                label={t.accountConfig.connectForm.accountLabel}
-                placeholder={interpolate(t.accountConfig.connectForm.accountLabelPlaceholder, {
-                  platform: form.platform,
-                })}
-                value={form.label}
-                onChange={event => setField('label', event.target.value)}
-              />
-              <Select
-                label={t.accountConfig.connectForm.platformLabel}
-                value={form.platform}
-                onChange={event => setField('platform', event.target.value)}
-                options={[
-                  { value: 'MT5', label: t.accountConfig.connectForm.platformMt5 },
-                  { value: 'MT4', label: t.accountConfig.connectForm.platformMt4 },
-                ]}
-              />
-            </div>
+            <Input
+              label={t.accountConfig.connectForm.accountLabel}
+              placeholder={interpolate(t.accountConfig.connectForm.accountLabelPlaceholder, {
+                platform: 'MT5',
+              })}
+              value={form.label}
+              onChange={event => setField('label', event.target.value)}
+            />
 
-            <MtCompanyServerPicker
-              platform={form.platform}
-              value={form.broker_server}
-              onChange={value => setField('broker_server', value)}
+            <Input
+              label={t.accountConfig.connectForm.brokerServerLabel}
+              placeholder={t.accountConfig.connectForm.brokerServerManualLabel}
               hint={t.accountConfig.connectForm.brokerServerHint}
+              value={form.broker_server}
+              onChange={event => setField('broker_server', event.target.value)}
               required
             />
 

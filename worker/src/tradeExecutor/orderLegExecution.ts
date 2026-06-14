@@ -2,7 +2,7 @@ import {
   isBrokerDisconnectedMessage,
   MetatraderApiClient,
   MtOperation,
-} from '../metatraderapi'
+} from '../fxsocketClient'
 import { isMtBridgeGlitchMessage } from '../brokerConnectError'
 import type { ChannelKeywords, ManualSettings, PlannerResult, VirtualPendingLeg } from '../manualPlanner'
 import { autoManagementTradeSnapshot } from '../autoManagement'

@@ -1,4 +1,4 @@
-import type { MtTrade } from './metatraderapi'
+import type { MtTrade } from './fxsocketBroker'
 import { directionDisplayLabel, resolveTradeDisplayDirection } from './tradeDirection'
 
 export function formatTradePrice(value: number | null | undefined): string {

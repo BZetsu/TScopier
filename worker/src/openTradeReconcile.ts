@@ -4,7 +4,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { MetatraderApiClient } from './metatraderapi'
+import type { MetatraderApiClient } from './fxsocketClient'
 import { closeStaleOpenTrades, fetchOpenBrokerTicketsStrict } from './basketSlTpReconcile'
 
 export type OpenTradeReconcileRow = {

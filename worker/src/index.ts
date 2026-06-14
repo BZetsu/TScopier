@@ -13,10 +13,9 @@ import { AutoManagementMonitor } from './autoManagementMonitor'
 import { TrailingStopMonitor } from './trailingStopMonitor'
 import { BasketSlTpReconcileMonitor } from './basketSlTpReconcileMonitor'
 import { NewsTradingMonitor } from './newsTradingMonitor'
-import { BrokerConnectionMonitor } from './brokerConnectionMonitor'
-import { BrokerConnectionKeeper } from './brokerConnectionKeeper'
-import { isBrokerCredentialsCryptoConfigured } from './brokerCredentialsCrypto'
 import { OpenTradeReconcileMonitor } from './openTradeReconcileMonitor'
+import { attachBrokerStreamProxy } from './brokerStreamProxy'
+import { getFxsocketStreamManager } from './fxsocketStreamManager'
 import { CopyLimitMonitor } from './copyLimitMonitor'
 import { workerConfig } from './workerConfig'
 import { validateListenerTradeShardConfig, validateListenerQueueConfig } from './tradeSignalPush'
@@ -79,20 +78,8 @@ function startTradeMonitors() {
   }
 
   if (workerConfig.runsTrade) {
-    const brokerConnectionKeeper = new BrokerConnectionKeeper(supabase)
-    const brokerConnectionMonitor = new BrokerConnectionMonitor(supabase)
     const copyLimitMonitor = new CopyLimitMonitor(supabase)
-    if (!isBrokerCredentialsCryptoConfigured()) {
-      console.warn(
-        '[worker] BROKER_CREDENTIALS_ENCRYPTION_KEY not set — stored-password auto reconnect disabled;'
-        + ' set the same key in Supabase Edge secrets',
-      )
-    }
-    brokerConnectionKeeper.start()
-    brokerConnectionMonitor.start()
     copyLimitMonitor.start()
-    trackMonitor(brokerConnectionKeeper)
-    trackMonitor(brokerConnectionMonitor)
     trackMonitor(copyLimitMonitor)
   }
 
@@ -150,6 +137,10 @@ async function main() {
     }
     if (!httpServer) {
       httpServer = startTradeHttpServer(sessionManager, tradeExecutor)
+    }
+    if (httpServer) {
+      const streamManager = getFxsocketStreamManager()
+      if (streamManager) attachBrokerStreamProxy(httpServer, supabase, streamManager)
     }
 
     const queueCfg = signalQueueConfig()

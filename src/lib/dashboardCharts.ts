@@ -1,7 +1,7 @@
 import type { BrokerAccount } from '../types/database'
 import { inferBrokerLabelFromServer } from './brokerFromServer'
 import { coerceMtTimestamp, parseMtHistoryTimestamp, isMtTimestampInRange } from './mtApiDateTime'
-import type { MtTrade } from './metatraderapi'
+import type { MtTrade } from './fxsocketBroker'
 import { getLocalCalendarDayBounds, isTradeableClosedRow } from './dashboardTradeStats'
 import { displayTradeProfit } from './tradeDisplay'
 import { resolveTradeDisplayDirection } from './tradeDirection'

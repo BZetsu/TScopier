@@ -7,7 +7,7 @@ const basketModFollowUp_1 = require("../../basketModFollowUp");
 const channelActiveTradeParams_1 = require("../../channelActiveTradeParams");
 const channelMessageFilters_1 = require("../../channelMessageFilters");
 const manualPlanner_1 = require("../../manualPlanner");
-const metatraderapi_1 = require("../../metatraderapi");
+const fxsocketClient_1 = require("../../fxsocketClient");
 const multiTradeMerge_1 = require("../../multiTradeMerge");
 const signalMergeLink_1 = require("../../signalMergeLink");
 const signalEntryNowRequirement_1 = require("../../signalEntryNowRequirement");
@@ -17,7 +17,7 @@ const helpers_1 = require("./helpers");
 const slTpRefresh_1 = require("./slTpRefresh");
 async function tryParameterFollowUpMergeModifyOnly(ctx, args) {
     const { signal, parsed, broker, channelKeywords, baseLot, params, symbol, uuid, strictEntryPrefetch, commentPrefix, } = args;
-    if (!(0, metatraderapi_1.hasMetatraderApiConfigured)())
+    if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)())
         return { handled: false };
     if ((0, signalPriceInference_1.parsedHasReEnterIntent)(parsed))
         return { handled: false };
@@ -237,7 +237,7 @@ async function tryParameterFollowUpMergeModifyOnly(ctx, args) {
 }
 async function tryMergeSignalIntoExistingOpenTrade(ctx, args) {
     const { signal, parsed, op, broker, channelKeywords, baseLot, params, symbol, uuid, strictEntryPrefetch, commentPrefix, } = args;
-    if (!(0, metatraderapi_1.hasMetatraderApiConfigured)())
+    if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)())
         return { handled: false };
     const api = ctx.apiFor(broker);
     if (!api)
@@ -342,7 +342,7 @@ async function tryMergeSignalIntoExistingOpenTrade(ctx, args) {
  */
 async function tryTeaserCompletionMerge(ctx, args) {
     const { signal, parsed, broker, channelKeywords, baseLot, params, symbol, uuid, strictEntryPrefetch, commentPrefix, } = args;
-    if (!(0, metatraderapi_1.hasMetatraderApiConfigured)())
+    if (!(0, fxsocketClient_1.hasMetatraderApiConfigured)())
         return { handled: false };
     if (!(0, channelActiveTradeParams_1.parsedSignalHasExplicitStops)(parsed))
         return { handled: false };

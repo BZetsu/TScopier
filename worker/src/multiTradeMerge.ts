@@ -4,7 +4,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { OrderSendArgs } from './metatraderapi'
+import type { OrderSendArgs } from './fxsocketClient'
 import type { PlannerResult } from './manualPlanner'
 import { parsedHasExplicitEntryAnchor } from './manualPlanner'
 import { parsedHasReEnterIntent } from './signalPriceInference'

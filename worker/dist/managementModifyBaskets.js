@@ -5,7 +5,7 @@
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.applyMgmtModifyToBasketGroups = applyMgmtModifyToBasketGroups;
-const metatraderapi_1 = require("./metatraderapi");
+const fxsocketClient_1 = require("./fxsocketClient");
 const basketSlTpReconcile_1 = require("./basketSlTpReconcile");
 const tpBucketDistribution_1 = require("./manualPlanning/tpBucketDistribution");
 const channelMessageFilters_1 = require("./channelMessageFilters");
@@ -93,7 +93,7 @@ async function applyMgmtModifyToBasketGroups(args) {
         let params = null;
         try {
             const sp = await api.symbolParams(uuid, symbol);
-            const n = (0, metatraderapi_1.normalizeSymbolParams)(sp);
+            const n = (0, fxsocketClient_1.normalizeSymbolParams)(sp);
             params = {
                 digits: n.digits ?? 5,
                 point: n.point ?? 0.00001,
