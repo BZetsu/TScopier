@@ -3104,18 +3104,18 @@ export function AccountConfigPage() {
                                     </div>
 
                                     <div className="flex items-center justify-between">
-                                      <ConfigToggleLabel info={cm.risk.layerTillCloseBody}>{cm.risk.layerTillClose}</ConfigToggleLabel>
-                                      <Toggle
-                                        checked={channelManualSettings.range_layer_till_close === true}
-                                        onChange={v => setManual({ range_layer_till_close: v })}
-                                      />
-                                    </div>
-
-                                    <div className="flex items-center justify-between">
                                       <ConfigToggleLabel info={cm.risk.useSignalRangeBody}>{cm.risk.useSignalRange}</ConfigToggleLabel>
                                       <Toggle
                                         checked={channelManualSettings.use_signal_entry_range === true}
                                         onChange={v => setManual({ use_signal_entry_range: v })}
+                                      />
+                                    </div>
+
+                                    <div className="flex items-center justify-between">
+                                      <ConfigToggleLabel info={cm.risk.layerTillCloseBody}>{cm.risk.layerTillClose}</ConfigToggleLabel>
+                                      <Toggle
+                                        checked={channelManualSettings.range_layer_till_close === true}
+                                        onChange={v => setManual({ range_layer_till_close: v })}
                                       />
                                     </div>
                                   </>
