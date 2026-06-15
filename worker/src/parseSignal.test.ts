@@ -434,4 +434,49 @@ Have a great weekend.`
     assert.equal(result.parsed.sl, 4488)
     assert.deepEqual(result.parsed.tp, [4520])
   })
+
+  it('parses BTC/ETH channel template: SYMBOL BUY, ENTRY zone slash, SL, TPn without colon', () => {
+    const msg = `XAUUSD BUY
+
+ENTRY: 4335 / 4325
+
+SL: 4320
+
+TP1 4340
+
+TP2 4345
+
+TP3 4350
+
+TP4 4355
+
+TP5 4360
+
+Risk only 1-2% of your balance.`
+    const result = parseChannelMessageSync(msg, DEFAULT_CHANNEL_KEYWORDS, lexicon)
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.action, 'buy')
+    assert.equal(result.parsed.symbol, 'XAUUSD')
+    assert.equal(result.parsed.entry_price, null)
+    assert.equal(result.parsed.entry_zone_low, 4325)
+    assert.equal(result.parsed.entry_zone_high, 4335)
+    assert.equal(result.parsed.sl, 4320)
+    assert.deepEqual(result.parsed.tp, [4340, 4345, 4350, 4355, 4360])
+  })
+
+  it('parses ENTRY zone slash template without SL line when TP tiers are space-separated', () => {
+    const msg = `XAUUSD BUY
+
+ENTRY: 4335 / 4325
+
+TP1 4340
+
+TP2 4345`
+    const result = parseChannelMessageSync(msg, DEFAULT_CHANNEL_KEYWORDS, lexicon)
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.action, 'buy')
+    assert.equal(result.parsed.entry_zone_low, 4325)
+    assert.equal(result.parsed.entry_zone_high, 4335)
+    assert.deepEqual(result.parsed.tp, [4340, 4345])
+  })
 })
