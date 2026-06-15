@@ -315,6 +315,17 @@ export interface AccountConfigConnectFormTranslations {
   brokerServerLabel: string
   brokerServerHint: string
   brokerServerPlaceholder: string
+  brokerCompanySearchPlaceholder: string
+  brokerCompanySearchEmpty: string
+  brokerCompanySearchMinChars: string
+  brokerCompanySearchNoResults: string
+  brokerCompanySearchLoading: string
+  brokerCompanySearchError: string
+  brokerServerPickerTitle: string
+  brokerServerSelectPrompt: string
+  brokerServerManualToggle: string
+  brokerServerManualLabel: string
+  brokerServerManualHint: string
   mtLoginLabel: string
   mtLoginPlaceholder: string
   passwordLabel: string

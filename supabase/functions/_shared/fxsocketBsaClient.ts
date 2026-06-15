@@ -60,6 +60,25 @@ export function normalizeBsaSearchResponse(raw: BsaSearchResponse): BrokerSearch
   }))
 }
 
+/** Response shape from GET /searchMt5 — `[{ "Company Name": ["Server-A", "Server-B"] }]`. */
+export type BsaSearchMt5Response = Array<Record<string, string[]>>
+
+export function normalizeBsaSearchMt5Response(raw: BsaSearchMt5Response): BrokerSearchCompany[] {
+  const companies: BrokerSearchCompany[] = []
+  for (const row of raw ?? []) {
+    if (!row || typeof row !== "object") continue
+    for (const [companyName, servers] of Object.entries(row)) {
+      const names = (servers ?? []).map((name) => String(name).trim()).filter(Boolean)
+      if (names.length === 0) continue
+      companies.push({
+        companyName,
+        results: names.map((name) => ({ name, access: [] })),
+      })
+    }
+  }
+  return companies
+}
+
 export async function searchBrokerCompanies(
   env: EnvGetter,
   args: { company: string; code?: BsaPlatformCode },
@@ -98,4 +117,46 @@ export async function searchBrokerCompanies(
   }
 
   return normalizeBsaSearchResponse((body ?? {}) as BsaSearchResponse)
+}
+
+/**
+ * MT5 broker + server search (public BSA endpoint).
+ * Docs: https://bsa.fxsocket.com/docs#/default/search_mt5_searchMt5_get
+ */
+export async function searchMt5BrokerCompanies(
+  env: EnvGetter,
+  args: { company: string },
+): Promise<BrokerSearchCompany[]> {
+  const company = args.company.trim()
+  if (company.length < 4) {
+    throw new FxsocketApiError("company must be at least 4 characters", 400)
+  }
+
+  const url = new URL(`${getBsaBaseUrl(env)}/searchMt5`)
+  url.searchParams.set("company", company)
+
+  const res = await fetch(url.toString(), { method: "GET" })
+
+  const text = await res.text()
+  let body: unknown = null
+  if (text) {
+    try {
+      body = JSON.parse(text)
+    } catch {
+      body = text
+    }
+  }
+
+  if (!res.ok) {
+    const detail = body && typeof body === "object" && "detail" in (body as Record<string, unknown>)
+      ? String((body as Record<string, unknown>).detail)
+      : text || `HTTP ${res.status}`
+    throw new FxsocketApiError(`Broker search failed: ${detail}`, res.status)
+  }
+
+  if (!Array.isArray(body)) {
+    return []
+  }
+
+  return normalizeBsaSearchMt5Response(body as BsaSearchMt5Response)
 }

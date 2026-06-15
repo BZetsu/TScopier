@@ -113,6 +113,18 @@ export interface AccountSummary {
   type?: string
 }
 
+export interface BrokerSearchResult {
+  name?: string
+  access?: string[]
+  logoUrl?: string | null
+  site?: string | null
+}
+
+export interface BrokerSearchCompany {
+  companyName?: string
+  results?: BrokerSearchResult[]
+}
+
 export interface MtTrade {
   id: string
   broker_id: string
@@ -151,6 +163,23 @@ export const fxsocketBroker = {
       expect: (b) => {
         const rows = (b as { accounts?: BrokerAccount[] }).accounts
         return Array.isArray(rows) ? rows : []
+      },
+    })
+  },
+
+  searchBrokers(args: {
+    company: string
+    platform?: 'MT4' | 'MT5'
+  }): Promise<{ companies: BrokerSearchCompany[] }> {
+    return call({
+      body: {
+        action: 'search_brokers',
+        company: args.company,
+        platform: args.platform ?? 'MT5',
+      },
+      expect: (b) => {
+        const row = b as { companies?: BrokerSearchCompany[] }
+        return { companies: row.companies ?? [] }
       },
     })
   },

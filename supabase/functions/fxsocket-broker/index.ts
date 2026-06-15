@@ -1,6 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { createClient } from "npm:@supabase/supabase-js@2"
-import { searchBrokerCompanies } from "../_shared/fxsocketBsaClient.ts"
+import { searchBrokerCompanies, searchMt5BrokerCompanies } from "../_shared/fxsocketBsaClient.ts"
 import {
   FxsocketApiError,
   isFxsocketConfigured,
@@ -112,13 +112,20 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === "search_brokers") {
-      ensureFxsocketConfigured()
       const company = String(body.company ?? "").trim()
       const platform = String(body.platform ?? "MT5").trim()
-      const companies = await searchBrokerCompanies(Deno.env, {
-        company,
-        code: platform.toUpperCase() === "MT4" ? "mt4" : "mt5",
-      })
+      if (company.length < 4) {
+        return Response.json({ ok: true, companies: [] }, { headers: corsHeaders })
+      }
+      const companies = platform.toUpperCase() === "MT4"
+        ? await (async () => {
+          ensureFxsocketConfigured()
+          return searchBrokerCompanies(Deno.env, {
+            company,
+            code: "mt4",
+          })
+        })()
+        : await searchMt5BrokerCompanies(Deno.env, { company })
       return Response.json({ ok: true, companies }, { headers: corsHeaders })
     }
 

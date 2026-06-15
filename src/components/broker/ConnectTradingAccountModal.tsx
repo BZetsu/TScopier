@@ -26,6 +26,7 @@ import { useOverlayDismiss } from '../../hooks/useOverlayDismiss'
 import type { BrokerAccount } from '../../types/database'
 import { BulkUploadAccountsModal } from './BulkUploadAccountsModal'
 import { ConnectAccountsBatchProgress } from './ConnectAccountsBatchProgress'
+import { MtCompanyServerPicker } from '../ui/MtCompanyServerPicker'
 
 type ConnectTradingAccountModalProps = {
   open: boolean
@@ -320,11 +321,9 @@ export function ConnectTradingAccountModal({
                     onChange={event => setRowField(index, 'label', event.target.value)}
                   />
 
-                  <Input
-                    label={cf.brokerServerLabel}
-                    placeholder={cf.brokerServerPlaceholder}
+                  <MtCompanyServerPicker
                     value={row.broker_server}
-                    onChange={event => setRowField(index, 'broker_server', event.target.value)}
+                    onChange={next => setRowField(index, 'broker_server', next)}
                     hint={index === 0 ? cf.brokerServerHint : undefined}
                     required
                   />
