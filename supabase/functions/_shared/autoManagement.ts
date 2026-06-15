@@ -5,7 +5,7 @@
 
 import { signalPipPrice } from "./signalPip.ts"
 
-export const BREAKEVEN_OFFSET_PIPS_DEFAULT = 5
+export const BREAKEVEN_OFFSET_PIPS_DEFAULT = 3
 
 export type AutoBeMode = "pips" | "rr" | "money" | "tp_hit"
 export type AutoBeType = "sl_only" | "sl_and_close_half"
@@ -28,7 +28,7 @@ function roundPrice(v: number, digits: number): number {
   return Number(v.toFixed(digits))
 }
 
-/** Pips beyond entry when channel or auto breakeven moves SL (default 5). */
+/** Pips beyond entry when channel or auto breakeven moves SL (default 3). */
 export function resolveBreakevenOffsetPips(manual: {
   breakeven_offset_pips?: number
 }): number {

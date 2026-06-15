@@ -12,20 +12,20 @@ import {
   resolveSlForBreakevenCheck,
 } from './autoManagement'
 
-test('resolveBreakevenOffsetPips defaults to 5 when unset', () => {
-  assert.equal(resolveBreakevenOffsetPips({}), 5)
+test('resolveBreakevenOffsetPips defaults to 3 when unset', () => {
+  assert.equal(resolveBreakevenOffsetPips({}), 3)
   assert.equal(resolveBreakevenOffsetPips({ breakeven_offset_pips: 8 }), 8)
 })
 
-test('breakevenStopLossForSymbol: buy XAUUSD entry + 5 pips', () => {
+test('breakevenStopLossForSymbol: buy XAUUSD entry + 3 pips', () => {
   assert.equal(
     breakevenStopLossForSymbol({
       isBuy: true,
       entryPrice: 4330,
-      manual: { breakeven_offset_pips: 5 },
+      manual: { breakeven_offset_pips: 3 },
       symbol: 'XAUUSD',
     }),
-    4330.5,
+    4330.3,
   )
 })
 
