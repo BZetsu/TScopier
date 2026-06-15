@@ -341,10 +341,12 @@ export async function tryApplyBasketFollowUpToNewFill(
       + ` basket_created=${createdAt}`,
     )
   } else if (channelParams) {
+    const skipChannelTp =
+      resolvedManual.range_trading === true && tpPhase === 'layering_rebalance'
     const channelStops = computeFollowUpStops(legCtx, {
       action: 'modify',
       sl: channelParams.stoploss,
-      tpLevels: channelParams.tpLevels,
+      tpLevels: skipChannelTp ? [] : channelParams.tpLevels,
     })
     if (channelStops) {
       let stops = channelStops

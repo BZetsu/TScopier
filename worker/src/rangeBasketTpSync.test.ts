@@ -2,7 +2,9 @@ import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
 import {
   buildRangeBasketTpTargets,
+  coercePositiveTpLevels,
   estimatePlanImmediateLegCount,
+  resolveRangeBasketFinalTps,
   resolveRangeBasketLegCounts,
 } from './rangeBasketTpSync'
 import type { BasketOpenLeg } from './basketSlTpReconcile'
@@ -75,4 +77,44 @@ test('resolveRangeBasketLegCounts: layering phase when all pending fired', () =>
   })
   assert.equal(counts.firedRangeLegCount, 10)
   assert.equal(counts.phase, 'layering_rebalance')
+})
+
+test('coercePositiveTpLevels: accepts numeric strings', () => {
+  assert.deepEqual(coercePositiveTpLevels(['4345', 4355, '4360']), [4345, 4355, 4360])
+})
+
+test('resolveRangeBasketFinalTps: falls back to open-leg ladder', () => {
+  const legs = [
+    openLeg('a', 4335, '2026-01-01T00:00:00Z'),
+    openLeg('b', 4336, '2026-01-01T00:00:01Z'),
+  ]
+  legs[0]!.tp = 4345
+  legs[1]!.tp = 4360
+  const tps = resolveRangeBasketFinalTps({
+    parsed: {},
+    plan: null,
+    familyTrades: legs,
+    direction: 'buy',
+  })
+  assert.deepEqual(tps, [4345, 4360])
+})
+
+test('buildRangeBasketTpTargets: coerced string TPs produce non-zero phase B targets', () => {
+  const legs = Array.from({ length: 4 }, (_, i) =>
+    openLeg(`i${i}`, 4335 - i * 0.1, `2026-01-01T00:00:0${i}Z`),
+  )
+  const targets = buildRangeBasketTpTargets({
+    familyTrades: legs,
+    plan: null,
+    parsed: { sl: 4300, tp: ['4345', '4355', '4360'] },
+    tpLots: TP_LOTS,
+    direction: 'buy',
+    activePendingCount: 9,
+    maxPendingStepIdx: 10,
+    forceLayeringRebalance: true,
+  })
+  assert.equal(targets.length, 4)
+  assert.ok(targets.every(t => t.takeprofit > 0))
+  assert.ok(targets.some(t => t.takeprofit === 4345))
+  assert.ok(targets.some(t => t.takeprofit === 4360))
 })

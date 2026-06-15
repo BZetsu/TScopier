@@ -6,6 +6,10 @@ import {
   type BasketOpenLeg,
   type BasketSymbolParams,
 } from './basketSlTpReconcile'
+import {
+  channelParamsPredateBasket,
+  loadChannelActiveTradeParamsForSymbol,
+} from './channelActiveTradeParams'
 import type { ManualTpLot } from './manualPlanning/types'
 import {
   buildEntryQualityTakeProfitMap,
@@ -33,12 +37,71 @@ export type RangeBasketTpSyncArgs = {
   plan?: PlannerResult | null
   /** When set, force phase B (range layer just fired). */
   forceLayeringRebalance?: boolean
+  channelId?: string | null
+  basketCreatedAt?: string | null
 }
 
-function positiveTps(parsed: { tp?: number[] | null }): number[] {
-  return (parsed.tp ?? []).filter(
-    (t): t is number => typeof t === 'number' && Number.isFinite(t) && t > 0,
+/** Coerce signal / JSON TP ladder values (numbers or numeric strings). */
+export function coercePositiveTpLevels(tp: unknown): number[] {
+  if (!Array.isArray(tp)) return []
+  const out: number[] = []
+  for (const raw of tp) {
+    const n = typeof raw === 'number' ? raw : Number(raw)
+    if (Number.isFinite(n) && n > 0) out.push(n)
+  }
+  return out
+}
+
+function uniqueOrderedLevels(levels: number[]): number[] {
+  const seen = new Set<number>()
+  const out: number[] = []
+  for (const level of levels) {
+    if (seen.has(level)) continue
+    seen.add(level)
+    out.push(level)
+  }
+  return out
+}
+
+function ladderFromOpenTrades(familyTrades: BasketOpenLeg[], isBuy: boolean): number[] {
+  const levels = new Set<number>()
+  for (const tr of familyTrades) {
+    const tp = Number(tr.tp)
+    if (Number.isFinite(tp) && tp > 0) levels.add(tp)
+  }
+  const arr = [...levels]
+  arr.sort((a, b) => (isBuy ? a - b : b - a))
+  return arr
+}
+
+/** Resolve the TP ladder for range-basket sync (parsed → plan → channel → open legs). */
+export function resolveRangeBasketFinalTps(args: {
+  parsed: { tp?: unknown }
+  plan?: PlannerResult | null
+  familyTrades?: BasketOpenLeg[]
+  channelTpLevels?: number[] | null
+  direction: 'buy' | 'sell'
+}): number[] {
+  const fromParsed = coercePositiveTpLevels(args.parsed.tp)
+  if (fromParsed.length) return fromParsed
+
+  const fromPlan = uniqueOrderedLevels(
+    (args.plan ? mergePlanImmediateOrders(args.plan) : [])
+      .map(o => Number(o.takeprofit))
+      .filter(tp => Number.isFinite(tp) && tp > 0),
   )
+  if (fromPlan.length) return fromPlan
+
+  const fromChannel = uniqueOrderedLevels(
+    (args.channelTpLevels ?? []).filter(tp => Number.isFinite(tp) && tp > 0),
+  )
+  if (fromChannel.length) return fromChannel
+
+  if (args.familyTrades?.length) {
+    const fromOpen = ladderFromOpenTrades(args.familyTrades, args.direction === 'buy')
+    if (fromOpen.length) return fromOpen
+  }
+  return []
 }
 
 function toEntryQualityLeg(tr: BasketOpenLeg): EntryQualityLeg {
@@ -93,16 +156,18 @@ export function resolveRangeBasketLegCounts(args: {
 export function buildRangeBasketTpTargets(args: {
   familyTrades: BasketOpenLeg[]
   plan: PlannerResult | null | undefined
-  parsed: { sl?: number | null; tp?: number[] | null }
+  parsed: { sl?: number | null; tp?: unknown }
   tpLots?: ManualTpLot[] | null
   direction: 'buy' | 'sell'
   activePendingCount: number
   maxPendingStepIdx: number
   forceLayeringRebalance?: boolean
+  channelTpLevels?: number[] | null
+  finalTpsOverride?: number[] | null
 }): PerLegStopTargetLike[] {
   const {
     familyTrades, plan, parsed, tpLots, direction, activePendingCount, maxPendingStepIdx,
-    forceLayeringRebalance,
+    forceLayeringRebalance, channelTpLevels, finalTpsOverride,
   } = args
   if (!familyTrades.length) return []
 
@@ -110,15 +175,19 @@ export function buildRangeBasketTpTargets(args: {
     stoploss: Number(o.stoploss) || 0,
     takeprofit: Number(o.takeprofit) || 0,
   }))
-  const hasSl = typeof parsed.sl === 'number' && Number.isFinite(parsed.sl) && parsed.sl > 0
-  const parsedTps = positiveTps(parsed)
-  const sl = hasSl ? (parsed.sl as number) : (fromPlan[0]?.stoploss ?? 0)
-  let finalTps = parsedTps
-  if (!finalTps.length && fromPlan.length > 0) {
-    finalTps = fromPlan
-      .map(o => o.takeprofit)
-      .filter(tp => typeof tp === 'number' && Number.isFinite(tp) && tp > 0)
-  }
+  const slRaw = parsed.sl
+  const slNum = typeof slRaw === 'number' ? slRaw : Number(slRaw ?? 0)
+  const hasSl = Number.isFinite(slNum) && slNum > 0
+  const sl = hasSl ? slNum : (fromPlan[0]?.stoploss ?? 0)
+  const finalTps = args.finalTpsOverride?.length
+    ? args.finalTpsOverride
+    : resolveRangeBasketFinalTps({
+        parsed,
+        plan,
+        familyTrades,
+        channelTpLevels,
+        direction,
+      })
 
   const planImmediateLegCount = estimatePlanImmediateLegCount({
     openLegCount: familyTrades.length,
@@ -254,6 +323,43 @@ export async function patchPendingRangeLegTakeProfits(args: {
   return updated
 }
 
+async function loadScopedChannelTpLevels(
+  supabase: SupabaseClient,
+  args: {
+    userId: string
+    channelId?: string | null
+    basketCreatedAt?: string | null
+    symbol: string
+  },
+): Promise<number[] | null> {
+  if (!args.channelId) return null
+  try {
+    const channelParams = await loadChannelActiveTradeParamsForSymbol(
+      supabase,
+      args.userId,
+      args.channelId,
+      args.symbol,
+    )
+    if (!channelParams?.tpLevels?.length) return null
+    if (channelParamsPredateBasket(channelParams, args.basketCreatedAt)) return null
+    return channelParams.tpLevels
+  } catch {
+    return null
+  }
+}
+
+async function reloadSignalParsed(
+  supabase: SupabaseClient,
+  signalId: string,
+): Promise<{ sl?: number | null; tp?: unknown } | null> {
+  const { data } = await supabase
+    .from('signals')
+    .select('parsed_data')
+    .eq('id', signalId)
+    .maybeSingle()
+  return (data?.parsed_data ?? null) as { sl?: number | null; tp?: unknown } | null
+}
+
 /** Sync SL/TP on all open legs for a range-layering basket (phase-aware). */
 export async function syncRangeBasketTakeProfits(args: RangeBasketTpSyncArgs): Promise<void> {
   if (args.manual.range_trading !== true) return
@@ -275,15 +381,68 @@ export async function syncRangeBasketTakeProfits(args: RangeBasketTpSyncArgs): P
     args.signalId,
   )
 
+  const channelTpLevels = await loadScopedChannelTpLevels(args.supabase, {
+    userId: args.userId,
+    channelId: args.channelId,
+    basketCreatedAt: args.basketCreatedAt,
+    symbol: args.symbol,
+  })
+
+  let parsed = args.parsed
+  let finalTps = resolveRangeBasketFinalTps({
+    parsed,
+    plan: args.plan,
+    familyTrades,
+    channelTpLevels,
+    direction: args.direction,
+  })
+
+  if (!finalTps.length && args.forceLayeringRebalance) {
+    await new Promise(r => setTimeout(r, 300))
+    const reloaded = await reloadSignalParsed(args.supabase, args.signalId)
+    if (reloaded) {
+      parsed = { ...parsed, ...reloaded }
+      finalTps = resolveRangeBasketFinalTps({
+        parsed,
+        plan: args.plan,
+        familyTrades,
+        channelTpLevels,
+        direction: args.direction,
+      })
+    }
+  }
+
+  if (!finalTps.length) {
+    console.warn(
+      `[rangeBasketTpSync] skip rebalance — no TP ladder signal=${args.signalId}`
+      + ` broker=${args.brokerAccountId} open=${familyTrades.length}`,
+    )
+    await logRangeBasketTpRebalance(args.supabase, {
+      userId: args.userId,
+      signalId: args.signalId,
+      brokerAccountId: args.brokerAccountId,
+      openLegs: familyTrades.length,
+      phase: args.forceLayeringRebalance ? 'layering_rebalance' : 'unknown',
+      forceLayeringRebalance: args.forceLayeringRebalance,
+      modified: 0,
+      attempted: 1,
+      failed: 1,
+      tpCounts: {},
+    })
+    return
+  }
+
   const perLegTargets = buildRangeBasketTpTargets({
     familyTrades,
     plan: args.plan,
-    parsed: args.parsed,
+    parsed,
     tpLots: args.manual.tp_lots,
     direction: args.direction,
     activePendingCount,
     maxPendingStepIdx,
     forceLayeringRebalance: args.forceLayeringRebalance,
+    channelTpLevels,
+    finalTpsOverride: finalTps,
   })
   if (!perLegTargets.length) return
 
@@ -306,7 +465,6 @@ export async function syncRangeBasketTakeProfits(args: RangeBasketTpSyncArgs): P
     openedTickets = await fetchOpenBrokerTickets(args.api, args.uuid)
   } catch { /* optional */ }
 
-  const parsedTps = positiveTps(args.parsed)
   const isBuy = args.direction === 'buy'
 
   if (effectivePhase === 'layering_rebalance') {
@@ -316,9 +474,7 @@ export async function syncRangeBasketTakeProfits(args: RangeBasketTpSyncArgs): P
         brokerAccountId: args.brokerAccountId,
         signalId: args.signalId,
         isBuy,
-        finalTps: parsedTps.length
-          ? parsedTps
-          : perLegTargets.map(t => t.takeprofit).filter(tp => tp > 0),
+        finalTps,
         tpLots: args.manual.tp_lots,
         openLegs: familyTrades.map(toEntryQualityLeg),
       })
@@ -351,7 +507,7 @@ export async function syncRangeBasketTakeProfits(args: RangeBasketTpSyncArgs): P
       brokerAccountId: args.brokerAccountId,
       familyTrades,
       perLegTargets,
-      signalTps: parsedTps,
+      signalTps: finalTps,
       tpLots: args.manual.tp_lots,
       nImmCwe: 0,
       overrideTp: null,

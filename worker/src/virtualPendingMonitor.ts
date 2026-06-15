@@ -1097,10 +1097,11 @@ export class VirtualPendingMonitor {
 
     const { data: signalRow } = await this.supabase
       .from('signals')
-      .select('parsed_data, telegram_channel_id, channel_id')
+      .select('parsed_data, telegram_channel_id, channel_id, created_at')
       .eq('id', leg.signal_id)
       .maybeSingle()
     const channelId = (signalRow?.channel_id ?? signalRow?.telegram_channel_id) as string | null
+    const basketCreatedAt = (signalRow?.created_at ?? null) as string | null
     const rawManual = await this.loadManualSettingsForLeg(leg.broker_account_id, channelId)
     const manual = normalizeManualSettingsForExecution(rawManual)
     if (manual.range_trading !== true) return
@@ -1109,7 +1110,7 @@ export class VirtualPendingMonitor {
     if (!api) return
 
     const params = await this.getSymbolParams(leg.metaapi_account_id, leg.symbol)
-    const parsed = (signalRow?.parsed_data ?? {}) as { sl?: number | null; tp?: number[] | null }
+    const parsed = (signalRow?.parsed_data ?? {}) as { sl?: number | null; tp?: unknown }
 
     await syncRangeBasketTakeProfits({
       supabase: this.supabase,
@@ -1136,6 +1137,8 @@ export class VirtualPendingMonitor {
       parsed,
       plan: null,
       forceLayeringRebalance: opts?.forceLayeringRebalance,
+      channelId,
+      basketCreatedAt,
     })
   }
 
