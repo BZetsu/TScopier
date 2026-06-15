@@ -264,7 +264,7 @@ class UserListener:
         row = self._resolve_channel_row(variants, username)
         if not row:
             return
-        raw = (message.message or message.text or "").strip()
+        raw = telegram_message_text(message)
         if not raw:
             return
         await self._try_apply_message_revision(
@@ -352,7 +352,7 @@ class UserListener:
 
     async def process_message(self, row: ChannelRow, message: Any, *, source: str) -> None:
         message_id = str(message.id)
-        raw = (message.message or message.text or "").strip()
+        raw = telegram_message_text(message)
         is_reply = bool(getattr(message, "reply_to", None))
         msg_date = getattr(message, "date", None)
         if source == "catchup" and msg_date:

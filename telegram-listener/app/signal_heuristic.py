@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+from .normalize_telegram_message_text import normalize_telegram_message_text
+
 _EXPLICIT_SYMBOLS = re.compile(
     r"\b("
     r"BTCUSDT|BTCEUR|BTCUSD|ETHUSDT|ETHUSD|EURUSD|GBPUSD|USDJPY|AUDUSD|NZDUSD|"
@@ -97,17 +99,17 @@ def looks_like_channel_management_update(text: str) -> bool:
 
 def looks_like_trading_signal(text: str, is_reply: bool = False) -> bool:
     """Score-based gate matching TS listener (score >= 2)."""
-    normalized = re.sub(r"\s+", " ", (text or "").strip().lower())
+    normalized = re.sub(r"\s+", " ", normalize_telegram_message_text(text).strip().lower())
     if not normalized:
         return False
 
-    has_instrument = _has_tradable_instrument_in_text(text)
+    has_instrument = _has_tradable_instrument_in_text(normalized)
     has_direction_or_action = bool(
         re.search(
             r"\b(buy|sell|long|short|tp|take profit|sl|stop loss|breakeven|be)\b",
             normalized,
         )
-        or _looks_like_explicit_full_close_command(text)
+        or _looks_like_explicit_full_close_command(normalized)
     )
     has_price_context = bool(
         re.search(r"\b\d{1,5}(?:\.\d{1,5})\b", normalized)
@@ -122,7 +124,7 @@ def looks_like_trading_signal(text: str, is_reply: bool = False) -> bool:
     )):
         return True
 
-    if looks_like_channel_management_update(text):
+    if looks_like_channel_management_update(normalized):
         return True
 
     score = sum(

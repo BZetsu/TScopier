@@ -38,8 +38,7 @@ def telegram_edit_date_sec(message: Any) -> int | None:
         return None
 
 
-def telegram_message_text(message: Any) -> str:
-    return str(getattr(message, "message", None) or getattr(message, "text", None) or "").strip()
+from .normalize_telegram_message_text import normalize_telegram_message_text, telegram_message_text
 
 
 def should_reconcile_signal(stored: dict[str, Any], snap: dict[str, Any]) -> bool:

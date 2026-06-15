@@ -22,6 +22,7 @@ import {
   partialCloseFractionFromMessage,
 } from "../_shared/signalManagementIntent.ts"
 import { SIGNAL_PRICE_NUM, parseSignalPriceListBlock, parseSignalPriceToken } from "../_shared/signalPriceFormat.ts"
+import { normalizeTelegramMessageText } from "../_shared/normalizeTelegramMessageText.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -1176,6 +1177,7 @@ async function parseRawChannelMessage(
   channelId: string | null,
   rawMessage: string,
 ): Promise<{ parsed: ParsedSignal; status: string; skip_reason: string | null }> {
+  const message = normalizeTelegramMessageText(rawMessage)
   const lexicon = await loadChannelLexicon(supabase, channelId)
   const channelKeywords = await loadChannelKeywords(supabase, channelId)
 
@@ -1184,15 +1186,15 @@ async function parseRawChannelMessage(
     ...splitKeywordAliases(channelKeywords.additional.skip_keyword, channelKeywords.additional.delimiters),
   ]
 
-  const explicitIgnore = hasAnyKeyword(rawMessage, ignoreAliases)
+  const explicitIgnore = hasAnyKeyword(message, ignoreAliases)
   const keywordMatch =
-    parseDeterministicManagement(rawMessage, lexicon, channelKeywords) ??
-    parseChannelParameterFollowUp(rawMessage, lexicon, channelKeywords) ??
-    parseSimpleSignal(rawMessage, lexicon, channelKeywords) ??
-    parseEntryFromKeywords(rawMessage, lexicon, channelKeywords)
+    parseDeterministicManagement(message, lexicon, channelKeywords) ??
+    parseChannelParameterFollowUp(message, lexicon, channelKeywords) ??
+    parseSimpleSignal(message, lexicon, channelKeywords) ??
+    parseEntryFromKeywords(message, lexicon, channelKeywords)
 
   const rawParsed = explicitIgnore
-    ? ignorePayload(rawMessage)
+    ? ignorePayload(message)
     : keywordMatch ?? {
       action: "ignore",
       symbol: null,
@@ -1203,21 +1205,21 @@ async function parseRawChannelMessage(
       tp: [],
       lot_size: null,
       confidence: 0,
-      raw_instruction: rawMessage,
+      raw_instruction: message,
       open_tp: false,
     }
 
   const enriched = applyReEnterFlag(
     applyDirectionalPriceInference(
-      normalizeParsedFromModel(rawParsed, rawMessage),
-      rawMessage,
+      normalizeParsedFromModel(rawParsed, message),
+      message,
     ),
-    rawMessage,
+    message,
   )
 
-  const repaired = applyRawSymbolRepair(enriched, rawMessage)
+  const repaired = applyRawSymbolRepair(enriched, message)
   const dropped = dropInvalidTradeSymbol(repaired)
-  if (entryMissingSlTpRequiresNow(dropped, rawMessage, channelKeywords)) {
+  if (entryMissingSlTpRequiresNow(dropped, message, channelKeywords)) {
     return {
       parsed: {
         ...dropped,

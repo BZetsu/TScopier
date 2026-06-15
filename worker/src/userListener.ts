@@ -44,6 +44,7 @@ import {
   telegramEditDateSec,
   telegramMessageText,
 } from './signalTelegramReconcile'
+import { normalizeTelegramMessageText } from './normalizeTelegramMessageText'
 import { evaluateParsedSignalExecutionEligibility } from './signalExecutionEligibility'
 import { looksLikeCasualNonTradeMessage } from './signalCommentaryGuard'
 
@@ -216,20 +217,20 @@ function extractReplyToMsgId(replyTo: unknown): string | null {
 }
 
 function looksLikeTradingSignal(text: string, isReply: boolean): boolean {
-  const normalized = text
+  const normalized = normalizeTelegramMessageText(text)
     .toLowerCase()
     .replace(/\s+/g, ' ')
     .trim()
 
   if (!normalized) return false
 
-  if (looksLikeCasualNonTradeMessage(text)) return false
+  if (looksLikeCasualNonTradeMessage(normalized)) return false
 
-  const hasInstrument = hasTradableInstrumentInText(text)
+  const hasInstrument = hasTradableInstrumentInText(normalized)
 
   const hasDirectionOrAction =
     /\b(buy|sell|long|short|tp|take profit|sl|stop loss|breakeven|be)\b/.test(normalized)
-    || looksLikeExplicitFullCloseCommand(text)
+    || looksLikeExplicitFullCloseCommand(normalized)
 
   const hasPriceContext =
     /\b\d{1,5}(?:\.\d{1,5})\b/.test(normalized) ||
@@ -244,7 +245,7 @@ function looksLikeTradingSignal(text: string, isReply: boolean): boolean {
   }
 
   // Breakeven / partial-close / TP-hit updates often lack symbol or explicit SL/TP labels.
-  if (looksLikeChannelManagementUpdate(text)) return true
+  if (looksLikeChannelManagementUpdate(normalized)) return true
 
   // Require stronger evidence than a single keyword to reduce false positives.
   const score = Number(hasDirectionOrAction) + Number(hasInstrument) + Number(hasPriceContext) + Number(hasTradeStructure)
@@ -784,7 +785,7 @@ export class UserListener {
     const messages: Array<{ telegram_message_id: string; raw_message: string; signal_at: string }> = []
 
     for (const m of collected) {
-      const raw = String(m.text ?? m.message ?? '').trim()
+      const raw = telegramMessageText(m)
       if (!raw) continue
       const epoch = this.messageEpochSec(m as MessageLike & { date?: number | Date | string })
       const signalAt = epoch > 0
@@ -865,7 +866,7 @@ export class UserListener {
     }
     const candidates: Candidate[] = []
     for (const m of collected) {
-      const raw = String(m.text ?? m.message ?? '').trim()
+      const raw = telegramMessageText(m)
       if (!raw) continue
       const isReply = !!(m as MessageLike & { replyTo?: unknown }).replyTo
       if (!looksLikeTradingSignal(raw, isReply)) continue
@@ -1098,7 +1099,7 @@ export class UserListener {
     const channelRow = await this.resolveChannelRowForChat(chatIdVariants, chatUsername)
     if (!channelRow) return
 
-    const rawMessage = (message.text ?? message.message ?? '') as string
+    const rawMessage = telegramMessageText(message)
     if (!rawMessage.trim()) return
 
     await this.tryApplyMessageRevision({
@@ -1535,7 +1536,7 @@ export class UserListener {
     if (await this.skipMessageWhileCopierPaused(channelRow, String(message.id))) return false
 
     const messageId = String(message.id)
-    const rawMessage = (message.text ?? message.message ?? '') as string
+    const rawMessage = telegramMessageText(message)
     const isReply = !!message.replyTo
     const messageEpochSec = this.messageEpochSec(message)
     // Stamp listener arrival as early as possible so telegram_to_listener_ms
@@ -2756,7 +2757,7 @@ export class UserListener {
         if (msgEpochSec && msgEpochSec > toSec) {
           continue
         }
-        const raw = String(m.text ?? m.message ?? '').trim()
+        const raw = telegramMessageText(m)
         if (!raw) continue
         const isReply = !!m.replyTo
         const fetchAllForBacktest = process.env.BACKTEST_FETCH_ALL_MESSAGES === 'true'
@@ -2841,7 +2842,7 @@ export class UserListener {
     collected.sort((a, b) => Number(a.id) - Number(b.id))
     const out: string[] = []
     for (const m of collected) {
-      const raw = String(m.text ?? m.message ?? '').trim()
+      const raw = telegramMessageText(m)
       if (!raw) continue
       const isReply = !!m.replyTo
       if (!looksLikeTradingSignal(raw, isReply)) continue

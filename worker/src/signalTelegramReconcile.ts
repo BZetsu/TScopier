@@ -4,6 +4,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { isIncomingRevisionStale, messageTextChanged } from './signalRevision'
+import { normalizeTelegramMessageText } from './normalizeTelegramMessageText'
 
 export const RECONCILE_SWEEP_WINDOW_MS = Math.max(
   60_000,
@@ -79,7 +80,7 @@ export function telegramEditDateSec(message: unknown): number | null {
 export function telegramMessageText(message: unknown): string {
   if (message == null || typeof message !== 'object') return ''
   const m = message as { text?: unknown; message?: unknown }
-  return String(m.text ?? m.message ?? '').trim()
+  return normalizeTelegramMessageText(String(m.text ?? m.message ?? ''))
 }
 
 export function shouldReconcileSignal(

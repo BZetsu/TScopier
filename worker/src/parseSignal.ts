@@ -24,6 +24,7 @@ import {
   sanitizeParsedSymbol,
 } from './tradableSymbol'
 import { looksLikeCasualNonTradeMessage } from './signalCommentaryGuard'
+import { normalizeTelegramMessageText } from './normalizeTelegramMessageText'
 import { entryMissingSlTpRequiresNow } from './signalEntryNowRequirement'
 
 /** Structured instruction from Telegram text + per-channel keywords. */
@@ -1269,20 +1270,21 @@ export function parseChannelMessageSync(
   channelKeywords: ChannelKeywords,
   lexicon: ChannelLexiconRow | null,
 ): ParseChannelMessageResult {
+  const message = normalizeTelegramMessageText(rawMessage)
   const ignoreAliases = [
     ...splitKeywordAliases(channelKeywords.additional.ignore_keyword, channelKeywords.additional.delimiters),
     ...splitKeywordAliases(channelKeywords.additional.skip_keyword, channelKeywords.additional.delimiters),
   ]
 
-  const explicitIgnore = hasAnyKeyword(rawMessage, ignoreAliases)
+  const explicitIgnore = hasAnyKeyword(message, ignoreAliases)
   const keywordMatch =
-    parseDeterministicManagement(rawMessage, lexicon, channelKeywords) ??
-    parseChannelParameterFollowUp(rawMessage, lexicon, channelKeywords) ??
-    parseSimpleSignal(rawMessage, lexicon, channelKeywords) ??
-    parseEntryFromKeywords(rawMessage, lexicon, channelKeywords)
+    parseDeterministicManagement(message, lexicon, channelKeywords) ??
+    parseChannelParameterFollowUp(message, lexicon, channelKeywords) ??
+    parseSimpleSignal(message, lexicon, channelKeywords) ??
+    parseEntryFromKeywords(message, lexicon, channelKeywords)
 
   const rawParsed = explicitIgnore
-    ? ignorePayload(rawMessage)
+    ? ignorePayload(message)
     : keywordMatch ?? {
       action: "ignore",
       symbol: null,
@@ -1293,12 +1295,12 @@ export function parseChannelMessageSync(
       tp: [],
       lot_size: null,
       confidence: 0,
-      raw_instruction: rawMessage,
+      raw_instruction: message,
       open_tp: false,
     }
 
-  const dropped = enrichParsedKeywordMatch(rawParsed, rawMessage)
-  if (entryMissingSlTpRequiresNow(dropped, rawMessage, channelKeywords)) {
+  const dropped = enrichParsedKeywordMatch(rawParsed, message)
+  if (entryMissingSlTpRequiresNow(dropped, message, channelKeywords)) {
     return {
       parsed: {
         ...dropped,
