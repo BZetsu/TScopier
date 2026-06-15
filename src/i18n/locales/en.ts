@@ -461,7 +461,7 @@ export const en: Translations = {
     todaysProfit: "Today's Profit",
     todaysProfitHint:
       'Realized P/L from copier-attributed trades closed today, since your broker connected.',
-    tradesTakenToday: 'Trades Taken Today',
+    tradesTakenToday: 'Trades Completed Today',
     tradesVsYesterday: '{count} vs yesterday',
     noClosedTradesToday: 'No closed trades today',
     openPnl: 'Open PnL',

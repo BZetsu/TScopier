@@ -462,7 +462,7 @@ export const fr: Translations = {
     todaysProfit: 'Profit du jour',
     todaysProfitHint:
       'P/L réalisé des trades copieur clôturés aujourd’hui, depuis la connexion du broker.',
-    tradesTakenToday: "Trades aujourd'hui",
+    tradesTakenToday: 'Trades complétés aujourd\'hui',
     tradesVsYesterday: '{count} vs hier',
     noClosedTradesToday: 'Aucun trade clôturé aujourd\'hui',
     openPnl: 'PnL ouvert',
