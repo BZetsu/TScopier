@@ -10,7 +10,14 @@ import {
   loadChannelActiveTradeParamsForSymbol,
   stripInvalidStopsForSide,
 } from './channelActiveTradeParams'
-import { takeProfitForSplitBasketLeg } from './manualPlanning/tpBucketDistribution'
+import { resolveRangeBasketLegCounts } from './rangeBasketTpSync'
+import {
+  takeProfitForEntryQualityLeg,
+  takeProfitForPoolLegIndex,
+  takeProfitForSplitBasketLeg,
+  type EntryQualityLeg,
+  type RangeBasketTpPhase,
+} from './manualPlanning/tpBucketDistribution'
 import { isBenignOrderModifyError } from './orderModifyBenign'
 
 type ParsedMgmt = {
@@ -65,7 +72,10 @@ type FollowUpLegContext = {
   entryPrice: number | null
   symbol: string
   isBuy: boolean
-  manual: { breakeven_offset_pips?: number }
+  manual: { breakeven_offset_pips?: number; range_trading?: boolean }
+  tradeRowId?: string
+  openLegsForTp?: EntryQualityLeg[]
+  tpPhase?: RangeBasketTpPhase
 }
 
 export function computeFollowUpStops(
@@ -107,13 +117,31 @@ export function computeFollowUpStops(
 
   if (hasNewTp) {
     const idx = ctx.legIndex >= 0 ? ctx.legIndex : ctx.openCount - 1
-    takeprofit = takeProfitForSplitBasketLeg({
-      legIndex: idx,
-      immediateLegCount: ctx.immediateLegCount,
-      rangeLegCount: ctx.rangeLegCount,
-      finalTps,
-      tpLots: ctx.tpLots,
-    })
+    if (ctx.manual.range_trading === true && ctx.tpPhase === 'layering_rebalance'
+      && ctx.tradeRowId && ctx.openLegsForTp?.length) {
+      takeprofit = takeProfitForEntryQualityLeg({
+        legId: ctx.tradeRowId,
+        openLegs: ctx.openLegsForTp,
+        isBuy: ctx.isBuy,
+        finalTps,
+        tpLots: ctx.tpLots,
+      })
+    } else if (ctx.manual.range_trading === true && ctx.tpPhase === 'instant_only') {
+      takeprofit = takeProfitForPoolLegIndex({
+        poolLegIndex: idx,
+        poolLegCount: Math.max(1, ctx.immediateLegCount),
+        finalTps,
+        tpLots: ctx.tpLots,
+      })
+    } else {
+      takeprofit = takeProfitForSplitBasketLeg({
+        legIndex: idx,
+        immediateLegCount: ctx.immediateLegCount,
+        rangeLegCount: ctx.rangeLegCount,
+        finalTps,
+        tpLots: ctx.tpLots,
+      })
+    }
     if (takeprofit <= 0) {
       takeprofit = finalTps[finalTps.length - 1]!
     }
@@ -240,7 +268,7 @@ export async function tryApplyBasketFollowUpToNewFill(
 
   const { data: openLegs } = await supabase
     .from('trades')
-    .select('id')
+    .select('id, entry_price, opened_at')
     .eq('broker_account_id', args.brokerAccountId)
     .eq('signal_id', args.basketSignalId)
     .eq('status', 'open')
@@ -266,6 +294,18 @@ export async function tryApplyBasketFollowUpToNewFill(
   const firedPendingApprox = Math.max(0, maxPendingStepIdx - activePendingCount)
   const immediateLegCount = Math.max(0, openCount - firedPendingApprox)
   const rangeLegCount = Math.max(0, totalPlannedLegs - immediateLegCount)
+  const planImmediateLegCount = Math.max(immediateLegCount, openCount - firedPendingApprox)
+  const { phase: tpPhase } = resolveRangeBasketLegCounts({
+    openLegCount: openCount,
+    planImmediateLegCount,
+    activePendingCount,
+    maxPendingStepIdx,
+  })
+  const openLegsForTp: EntryQualityLeg[] = (openLegs ?? []).map(row => ({
+    id: row.id,
+    entryPrice: Number(row.entry_price ?? 0),
+    openedAt: String(row.opened_at ?? ''),
+  }))
 
   const legCtx: FollowUpLegContext = {
     legIndex,
@@ -280,6 +320,9 @@ export async function tryApplyBasketFollowUpToNewFill(
     symbol: args.symbol,
     isBuy: args.isBuy ?? true,
     manual: channelManual,
+    tradeRowId: args.tradeRowId,
+    openLegsForTp,
+    tpPhase,
   }
 
   const channelParams = await loadChannelActiveTradeParamsForSymbol(

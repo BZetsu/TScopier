@@ -1,10 +1,8 @@
 import {
-  fetchOpenBrokerTickets,
-  runBasketLegModifies,
-  type BasketOpenLeg,
   type BasketSymbolParams
 } from '../../basketSlTpReconcile'
 import { type ManualSettings, type PlannerResult } from '../../manualPlanner'
+import { syncRangeBasketTakeProfits } from '../../rangeBasketTpSync'
 import { buildPerLegStopTargets, mergePlanImmediateOrders } from '../../multiTradeMerge'
 import { type TradeExecutorContext } from '../context'
 import {
@@ -13,6 +11,11 @@ import {
   type SignalRow,
   type SymbolCacheEntry
 } from '../types'
+import {
+  fetchOpenBrokerTickets,
+  runBasketLegModifies,
+  type BasketOpenLeg,
+} from '../../basketSlTpReconcile'
 
 export async function syncMultiBasketLegTakeProfits(ctx: TradeExecutorContext, args: {
     signal: SignalRow
@@ -30,6 +33,36 @@ export async function syncMultiBasketLegTakeProfits(ctx: TradeExecutorContext, a
     if (!api) return
 
     await new Promise(r => setTimeout(r, 250))
+
+    if (manual.range_trading === true) {
+      const basketParams: BasketSymbolParams | null = params
+        ? {
+            digits: params.digits,
+            point: params.point,
+            minLot: params.minLot,
+            lotStep: params.lotStep,
+            contractSize: params.contractSize,
+            stopsLevel: params.stopsLevel,
+            freezeLevel: params.freezeLevel,
+          }
+        : null
+      await syncRangeBasketTakeProfits({
+        supabase: ctx.supabase,
+        api,
+        uuid,
+        symbol,
+        direction,
+        baseLot: Number(broker.default_lot_size ?? 0.01),
+        params: basketParams,
+        signalId: signal.id,
+        userId: signal.user_id,
+        brokerAccountId: broker.id,
+        manual,
+        parsed,
+        plan,
+      })
+      return
+    }
 
     const { data: familyRows, error } = await ctx.supabase
       .from('trades')

@@ -11,7 +11,7 @@ import type {
 import { clampPendingExpiryHours } from './manualSettings'
 import type { PlanSingleManualOrdersArgs } from './planSingleManualOrders'
 import { planRangeSplit } from './rangeSplit'
-import { buildDistributedPerLegTakeProfits } from './tpBucketDistribution'
+import { buildDistributedPerLegTakeProfits, buildEntryQualityTakeProfitMap } from './tpBucketDistribution'
 import { resolveMultiTradeTargetUnits, multiTradeUnitsToLot } from './multiTradeLegUnits'
 import { resolveRangeDistancePips } from './signalEntryRange'
 
@@ -143,6 +143,39 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
   }
   const tpForRangeIndex = (idx: number): number | null => {
     if (finalTps.length === 0) return null
+    if (
+      manual.range_trading === true
+      && effectiveRangeLegs > 0
+      && entryAnchor != null
+      && entryAnchor > 0
+      && stepPriceOffset > 0
+    ) {
+      const projectedLegs: Array<{ id: string; entryPrice: number; openedAt: string }> = []
+      for (let i = 0; i < immediateLegs; i++) {
+        projectedLegs.push({
+          id: `imm${i}`,
+          entryPrice: entryAnchor,
+          openedAt: `imm${String(i).padStart(4, '0')}`,
+        })
+      }
+      for (let i = 0; i < effectiveRangeLegs; i++) {
+        const stepIdx = i + 1
+        const offset = stepIdx * stepPriceOffset
+        projectedLegs.push({
+          id: `rg${stepIdx}`,
+          entryPrice: isBuy ? entryAnchor - offset : entryAnchor + offset,
+          openedAt: `rg${String(stepIdx).padStart(4, '0')}`,
+        })
+      }
+      const projectedTp = buildEntryQualityTakeProfitMap({
+        legs: projectedLegs,
+        isBuy,
+        slotLegCount: immediateLegs + effectiveRangeLegs,
+        finalTps,
+        tpLots: manual.tp_lots,
+      }).get(`rg${idx + 1}`)
+      if (typeof projectedTp === 'number' && projectedTp > 0) return projectedTp
+    }
     const price = rangeTpPrices[idx]
     if (typeof price === 'number' && Number.isFinite(price) && price > 0) return price
     return finalTps[finalTps.length - 1] ?? null

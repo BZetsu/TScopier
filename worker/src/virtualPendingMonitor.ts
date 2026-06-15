@@ -12,6 +12,8 @@ import { tryApplyBasketFollowUpToNewFill } from './basketModFollowUp'
 import { channelParamsPredateBasket, loadChannelActiveTradeParamsForSymbol } from './channelActiveTradeParams'
 import { resolveChannelTradingConfig } from './channelTradingConfig'
 import { markRangeLegFired, markRangeLegsExpired } from './rangePendingLadderSync'
+import { normalizeManualSettingsForExecution } from './manualPlanning/normalizeManualSettings'
+import { syncRangeBasketTakeProfits } from './rangeBasketTpSync'
 import {
   hasWorkOnShard,
   monitorActiveIntervalMs,
@@ -348,9 +350,9 @@ export class VirtualPendingMonitor {
       .eq('status', 'pending')
       .not('expires_at', 'is', null)
       .lt('expires_at', nowIso)
-      .select('id,signal_id,user_id,broker_account_id,symbol,step_idx')
+      .select('id,signal_id,user_id,broker_account_id,metaapi_account_id,symbol,is_buy,step_idx')
     if (expired && expired.length) {
-      for (const r of expired as Array<{ id: string; signal_id: string; user_id: string; broker_account_id: string; symbol: string; step_idx: number }>) {
+      for (const r of expired as PendingRow[]) {
         if (isUserCopierPausedCached(r.user_id)) continue
         try {
           await this.supabase.from('trade_execution_logs').insert({
@@ -362,6 +364,21 @@ export class VirtualPendingMonitor {
             request_payload: { id: r.id, symbol: r.symbol, step_idx: r.step_idx } as unknown as Record<string, unknown>,
           })
         } catch { /* logging is best-effort */ }
+      }
+      const expiredBaskets = new Map<string, PendingRow>()
+      for (const r of expired as PendingRow[]) {
+        const key = `${r.broker_account_id}|${r.signal_id}|${r.symbol}`
+        if (!expiredBaskets.has(key)) expiredBaskets.set(key, r)
+      }
+      for (const basketLeg of expiredBaskets.values()) {
+        try {
+          await this.rebalanceRangeBasketTakeProfits(basketLeg)
+        } catch (rebalErr) {
+          console.warn(
+            `[virtualPendingMonitor] TP rebalance after pending expiry signal=${basketLeg.signal_id}:`,
+            rebalErr,
+          )
+        }
       }
     }
 
@@ -928,6 +945,14 @@ export class VirtualPendingMonitor {
             hookErr,
           )
         }
+        try {
+          await this.rebalanceRangeBasketTakeProfits(leg, { forceLayeringRebalance: true })
+        } catch (rebalErr) {
+          console.warn(
+            `[virtualPendingMonitor] TP rebalance after range fill leg=${leg.id} signal=${leg.signal_id}:`,
+            rebalErr,
+          )
+        }
       }
       try {
         await this.supabase.from('trade_execution_logs').insert({
@@ -1056,6 +1081,56 @@ export class VirtualPendingMonitor {
     } catch {
       // Logging failure is non-fatal.
     }
+  }
+
+  private async rebalanceRangeBasketTakeProfits(
+    leg: Pick<PendingRow, 'user_id' | 'signal_id' | 'broker_account_id' | 'metaapi_account_id' | 'symbol' | 'is_buy'>,
+    opts?: { forceLayeringRebalance?: boolean },
+  ): Promise<void> {
+    if (!hasFxsocketConfigured()) return
+
+    const { data: signalRow } = await this.supabase
+      .from('signals')
+      .select('parsed_data, telegram_channel_id, channel_id')
+      .eq('id', leg.signal_id)
+      .maybeSingle()
+    const channelId = (signalRow?.channel_id ?? signalRow?.telegram_channel_id) as string | null
+    const rawManual = await this.loadManualSettingsForLeg(leg.broker_account_id, channelId)
+    const manual = normalizeManualSettingsForExecution(rawManual)
+    if (manual.range_trading !== true) return
+
+    const api = apiForMetaapiAccount(this.platformByUuid, leg.metaapi_account_id)
+    if (!api) return
+
+    const params = await this.getSymbolParams(leg.metaapi_account_id, leg.symbol)
+    const parsed = (signalRow?.parsed_data ?? {}) as { sl?: number | null; tp?: number[] | null }
+
+    await syncRangeBasketTakeProfits({
+      supabase: this.supabase,
+      api,
+      uuid: leg.metaapi_account_id,
+      symbol: leg.symbol,
+      direction: leg.is_buy ? 'buy' : 'sell',
+      baseLot: 0.01,
+      params: params
+        ? {
+            digits: params.digits,
+            point: params.point,
+            minLot: params.minLot,
+            lotStep: params.lotStep,
+            contractSize: params.contractSize,
+            stopsLevel: params.stopsLevel,
+            freezeLevel: params.freezeLevel,
+          }
+        : null,
+      signalId: leg.signal_id,
+      userId: leg.user_id,
+      brokerAccountId: leg.broker_account_id,
+      manual,
+      parsed,
+      plan: null,
+      forceLayeringRebalance: opts?.forceLayeringRebalance,
+    })
   }
 
   private async loadManualSettingsForLeg(

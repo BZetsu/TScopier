@@ -37,6 +37,7 @@ import {
 import { isMtBridgeGlitchMessage } from '../../brokerConnectError'
 import { MtOperation } from '../../fxsocketClient'
 import { buildPerLegStopTargets, mergePlanImmediateOrders, type MergeModifySummary } from '../../multiTradeMerge'
+import { buildRangeBasketTpTargets } from '../../rangeBasketTpSync'
 import { isRangeLayerTillCloseEnabled } from '../../rangeLayerTillClose'
 import {
   patchActiveRangePendingLegStops,
@@ -351,14 +352,24 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
       typeof singleBrokerTpRaw === 'number' && Number.isFinite(singleBrokerTpRaw) && singleBrokerTpRaw > 0
         ? singleBrokerTpRaw
         : null
-    let perLegTargets = buildPerLegStopTargets({
-      plan,
-      parsed: effectiveParsed,
-      openLegCount: familyTrades.length,
-      totalPlannedLegCount: basketTotalPlannedLegs,
-      immediateLegCount: refreshImmediateLegCount,
-      tpLots: manual.tp_lots,
-    })
+    let perLegTargets = manual.range_trading === true
+      ? buildRangeBasketTpTargets({
+          familyTrades,
+          plan,
+          parsed: effectiveParsed,
+          tpLots: manual.tp_lots,
+          direction: direction as 'buy' | 'sell',
+          activePendingCount,
+          maxPendingStepIdx,
+        })
+      : buildPerLegStopTargets({
+          plan,
+          parsed: effectiveParsed,
+          openLegCount: familyTrades.length,
+          totalPlannedLegCount: basketTotalPlannedLegs,
+          immediateLegCount: refreshImmediateLegCount,
+          tpLots: manual.tp_lots,
+        })
     if (manual.trade_style !== 'multi' && singleBrokerTp != null) {
       perLegTargets = perLegTargets.map(target => ({ ...target, takeprofit: singleBrokerTp }))
     }
