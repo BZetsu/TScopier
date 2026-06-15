@@ -2,10 +2,13 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.symbolsCompatibleForBasket = symbolsCompatibleForBasket;
 exports.mgmtSignalMatchesBasketSymbol = mgmtSignalMatchesBasketSymbol;
+exports.computeFollowUpStops = computeFollowUpStops;
 exports.tryApplyBasketFollowUpToNewFill = tryApplyBasketFollowUpToNewFill;
+const autoManagement_1 = require("./autoManagement");
 const normalizeManualSettings_1 = require("./manualPlanning/normalizeManualSettings");
 const channelTradingConfig_1 = require("./channelTradingConfig");
 const channelActiveTradeParams_1 = require("./channelActiveTradeParams");
+const rangeBasketTpSync_1 = require("./rangeBasketTpSync");
 const tpBucketDistribution_1 = require("./manualPlanning/tpBucketDistribution");
 const orderModifyBenign_1 = require("./orderModifyBenign");
 function sanitizeLevel(v) {
@@ -40,10 +43,16 @@ function computeFollowUpStops(ctx, source) {
         const entry = sanitizeLevel(ctx.entryPrice);
         if (entry <= 0)
             return null;
+        const beSl = (0, autoManagement_1.breakevenStopLossForSymbol)({
+            isBuy: ctx.isBuy,
+            entryPrice: entry,
+            manual: ctx.manual,
+            symbol: ctx.symbol,
+        });
         return {
-            stoploss: entry,
+            stoploss: beSl,
             takeprofit: sanitizeLevel(ctx.existingTp),
-            dbPatch: { sl: entry },
+            dbPatch: { sl: beSl },
         };
     }
     const hasNewSl = typeof source.sl === 'number' && Number.isFinite(source.sl) && source.sl > 0;
@@ -60,13 +69,33 @@ function computeFollowUpStops(ctx, source) {
         dbPatch.sl = source.sl;
     if (hasNewTp) {
         const idx = ctx.legIndex >= 0 ? ctx.legIndex : ctx.openCount - 1;
-        takeprofit = (0, tpBucketDistribution_1.takeProfitForSplitBasketLeg)({
-            legIndex: idx,
-            immediateLegCount: ctx.immediateLegCount,
-            rangeLegCount: ctx.rangeLegCount,
-            finalTps,
-            tpLots: ctx.tpLots,
-        });
+        if (ctx.manual.range_trading === true && ctx.tpPhase === 'layering_rebalance'
+            && ctx.tradeRowId && ctx.openLegsForTp?.length) {
+            takeprofit = (0, tpBucketDistribution_1.takeProfitForEntryQualityLeg)({
+                legId: ctx.tradeRowId,
+                openLegs: ctx.openLegsForTp,
+                isBuy: ctx.isBuy,
+                finalTps,
+                tpLots: ctx.tpLots,
+            });
+        }
+        else if (ctx.manual.range_trading === true && ctx.tpPhase === 'instant_only') {
+            takeprofit = (0, tpBucketDistribution_1.takeProfitForPoolLegIndex)({
+                poolLegIndex: idx,
+                poolLegCount: Math.max(1, ctx.immediateLegCount),
+                finalTps,
+                tpLots: ctx.tpLots,
+            });
+        }
+        else {
+            takeprofit = (0, tpBucketDistribution_1.takeProfitForSplitBasketLeg)({
+                legIndex: idx,
+                immediateLegCount: ctx.immediateLegCount,
+                rangeLegCount: ctx.rangeLegCount,
+                finalTps,
+                tpLots: ctx.tpLots,
+            });
+        }
         if (takeprofit <= 0) {
             takeprofit = finalTps[finalTps.length - 1];
         }
@@ -138,17 +167,20 @@ async function tryApplyBasketFollowUpToNewFill(supabase, api, args) {
     if (!channelId || !createdAt)
         return;
     let tpLots = args.tpLots;
+    let channelManual = {};
+    const { data: br } = await supabase
+        .from('broker_accounts')
+        .select('manual_settings, channel_trading_configs, copier_mode, ai_settings')
+        .eq('id', args.brokerAccountId)
+        .maybeSingle();
+    const resolvedManual = (0, normalizeManualSettings_1.normalizeManualSettingsForExecution)((0, channelTradingConfig_1.resolveChannelTradingConfig)((br ?? {}), channelId).manual_settings);
+    channelManual = resolvedManual;
     if (tpLots === undefined) {
-        const { data: br } = await supabase
-            .from('broker_accounts')
-            .select('manual_settings, channel_trading_configs, copier_mode, ai_settings')
-            .eq('id', args.brokerAccountId)
-            .maybeSingle();
-        tpLots = (0, normalizeManualSettings_1.normalizeManualSettingsForExecution)((0, channelTradingConfig_1.resolveChannelTradingConfig)((br ?? {}), channelId).manual_settings).tp_lots;
+        tpLots = resolvedManual.tp_lots;
     }
     const { data: openLegs } = await supabase
         .from('trades')
-        .select('id')
+        .select('id, entry_price, opened_at')
         .eq('broker_account_id', args.brokerAccountId)
         .eq('signal_id', args.basketSignalId)
         .eq('status', 'open')
@@ -157,13 +189,12 @@ async function tryApplyBasketFollowUpToNewFill(supabase, api, args) {
     const legIndex = (openLegs ?? []).findIndex(r => r.id === args.tradeRowId);
     const { data: pendingRows } = await supabase
         .from('range_pending_legs')
-        .select('step_idx')
+        .select('step_idx, status')
         .eq('broker_account_id', args.brokerAccountId)
         .eq('signal_id', args.basketSignalId)
-        .in('status', ['pending', 'claimed'])
         .limit(500);
     const openCount = openLegs?.length ?? 0;
-    const activePendingCount = pendingRows?.length ?? 0;
+    const activePendingCount = (pendingRows ?? []).filter(r => r.status === 'pending' || r.status === 'claimed').length;
     const maxPendingStepIdx = Math.max(0, ...(pendingRows ?? []).map(r => Number(r.step_idx) || 0));
     const totalPlannedLegs = (0, channelActiveTradeParams_1.estimateBasketTotalPlannedLegs)({
         openLegCount: openCount,
@@ -173,6 +204,18 @@ async function tryApplyBasketFollowUpToNewFill(supabase, api, args) {
     const firedPendingApprox = Math.max(0, maxPendingStepIdx - activePendingCount);
     const immediateLegCount = Math.max(0, openCount - firedPendingApprox);
     const rangeLegCount = Math.max(0, totalPlannedLegs - immediateLegCount);
+    const planImmediateLegCount = Math.max(immediateLegCount, openCount - firedPendingApprox);
+    const { phase: tpPhase } = (0, rangeBasketTpSync_1.resolveRangeBasketLegCounts)({
+        openLegCount: openCount,
+        planImmediateLegCount,
+        activePendingCount,
+        maxPendingStepIdx,
+    });
+    const openLegsForTp = (openLegs ?? []).map(row => ({
+        id: row.id,
+        entryPrice: Number(row.entry_price ?? 0),
+        openedAt: String(row.opened_at ?? ''),
+    }));
     const legCtx = {
         legIndex,
         openCount,
@@ -183,6 +226,12 @@ async function tryApplyBasketFollowUpToNewFill(supabase, api, args) {
         existingSl: args.existingSl,
         existingTp: args.existingTp,
         entryPrice: args.entryPrice,
+        symbol: args.symbol,
+        isBuy: args.isBuy ?? true,
+        manual: channelManual,
+        tradeRowId: args.tradeRowId,
+        openLegsForTp,
+        tpPhase,
     };
     const channelParams = await (0, channelActiveTradeParams_1.loadChannelActiveTradeParamsForSymbol)(supabase, args.userId, channelId, args.symbol);
     if (channelParams && (0, channelActiveTradeParams_1.channelParamsPredateBasket)(channelParams, createdAt)) {
@@ -193,10 +242,11 @@ async function tryApplyBasketFollowUpToNewFill(supabase, api, args) {
             + ` basket_created=${createdAt}`);
     }
     else if (channelParams) {
+        const skipChannelTp = resolvedManual.range_trading === true && tpPhase === 'layering_rebalance';
         const channelStops = computeFollowUpStops(legCtx, {
             action: 'modify',
             sl: channelParams.stoploss,
-            tpLevels: channelParams.tpLevels,
+            tpLevels: skipChannelTp ? [] : channelParams.tpLevels,
         });
         if (channelStops) {
             let stops = channelStops;

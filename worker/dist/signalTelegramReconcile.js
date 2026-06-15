@@ -15,6 +15,7 @@ exports.snapshotsFromTelegramMessages = snapshotsFromTelegramMessages;
 exports.loadSignalsForReconcile = loadSignalsForReconcile;
 exports.markSignalsReconciled = markSignalsReconciled;
 const signalRevision_1 = require("./signalRevision");
+const normalizeTelegramMessageText_1 = require("./normalizeTelegramMessageText");
 exports.RECONCILE_SWEEP_WINDOW_MS = Math.max(60000, Math.min(24 * 60 * 60000, Number(process.env.SIGNAL_RECONCILE_WINDOW_MS ?? 6 * 60 * 60000)));
 exports.RECONCILE_SWEEP_INTERVAL_MS = Math.max(15000, Math.min(300000, Number(process.env.SIGNAL_RECONCILE_SWEEP_MS ?? 60000)));
 exports.RECONCILE_SWEEP_MAX_SIGNALS = Math.max(10, Math.min(300, Number(process.env.SIGNAL_RECONCILE_MAX_SIGNALS ?? 100)));
@@ -56,7 +57,7 @@ function telegramMessageText(message) {
     if (message == null || typeof message !== 'object')
         return '';
     const m = message;
-    return String(m.text ?? m.message ?? '').trim();
+    return (0, normalizeTelegramMessageText_1.normalizeTelegramMessageText)(String(m.text ?? m.message ?? ''));
 }
 function shouldReconcileSignal(stored, fetched) {
     const storedEdit = stored.telegram_edit_date_seen;

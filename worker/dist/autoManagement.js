@@ -1,5 +1,8 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.BREAKEVEN_OFFSET_PIPS_DEFAULT = void 0;
+exports.resolveBreakevenOffsetPips = resolveBreakevenOffsetPips;
+exports.breakevenStopLossForSymbol = breakevenStopLossForSymbol;
 exports.isAutoManagementEnabled = isAutoManagementEnabled;
 exports.normalizeAutoBeConfig = normalizeAutoBeConfig;
 exports.autoManagementTradeSnapshot = autoManagementTradeSnapshot;
@@ -10,6 +13,9 @@ exports.clampBreakevenModifyStops = clampBreakevenModifyStops;
 exports.profitPips = profitPips;
 exports.isAutoBeTriggerMet = isAutoBeTriggerMet;
 const partialTpMonitor_1 = require("./partialTpMonitor");
+const signalPip_1 = require("./signalPip");
+/** Keep snapshot helpers in sync with supabase/functions/_shared/autoManagement.ts */
+exports.BREAKEVEN_OFFSET_PIPS_DEFAULT = 5;
 function roundPrice(v, digits) {
     if (!Number.isFinite(v))
         return v;
@@ -18,6 +24,26 @@ function roundPrice(v, digits) {
 function positiveNum(v, fallback) {
     const n = Number(v);
     return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+/** Pips beyond entry when channel or auto breakeven moves SL (default 5). */
+function resolveBreakevenOffsetPips(manual) {
+    const raw = manual.breakeven_offset_pips;
+    if (raw === undefined || raw === null)
+        return exports.BREAKEVEN_OFFSET_PIPS_DEFAULT;
+    return positiveNum(raw, exports.BREAKEVEN_OFFSET_PIPS_DEFAULT);
+}
+function defaultDigitsForPip(pip) {
+    if (pip >= 0.01)
+        return 2;
+    if (pip >= 0.001)
+        return 3;
+    return 5;
+}
+/** Channel breakeven SL from entry + configured offset for a symbol. */
+function breakevenStopLossForSymbol(args) {
+    const pip = (0, signalPip_1.signalPipPrice)(args.symbol);
+    const digits = args.digits ?? defaultDigitsForPip(pip);
+    return computeBreakevenStopLoss(args.isBuy, args.entryPrice, resolveBreakevenOffsetPips(args.manual), pip, digits);
 }
 /** True when manual settings enable auto move-SL-to-breakeven. */
 function isAutoManagementEnabled(manual) {
@@ -38,7 +64,7 @@ function normalizeAutoBeConfig(manual) {
         triggerValue: positiveNum(manual.move_sl_to_entry_after_value ?? 0, mode === 'rr' ? 1 : 10),
         tpIndex: Math.max(1, Math.floor(Number(manual.move_sl_to_entry_tp_index ?? 1) || 1)),
         beType,
-        offsetPips: positiveNum(manual.breakeven_offset_pips ?? 0, 10),
+        offsetPips: resolveBreakevenOffsetPips(manual),
     };
 }
 /** DB columns to set on trades.insert when auto-management is active. */

@@ -14,8 +14,10 @@ exports.isBuySideOp = isBuySideOp;
 exports.clampOrderStops = clampOrderStops;
 exports.computeCweTp = computeCweTp;
 exports.triggerPriceFor = triggerPriceFor;
+exports.virtualPendingTriggerAllowed = virtualPendingTriggerAllowed;
 exports.brokerOrderOpenMs = brokerOrderOpenMs;
 const manualPlanner_1 = require("../manualPlanner");
+const signalEntryRange_1 = require("../manualPlanning/signalEntryRange");
 const mtApiByAccount_1 = require("../mtApiByAccount");
 function isMtUuid(s) {
     if (!s)
@@ -84,7 +86,7 @@ function computeLot(broker, signal) {
         const m = (broker.manual_settings ?? {});
         if (m.risk_mode === 'dynamic_balance_percent') {
             const pct = Number(m.dynamic_balance_percent ?? 1);
-            const bal = Number(broker.last_balance ?? 0);
+            const bal = Number(broker.last_balance ?? broker.last_equity ?? 0);
             if (bal > 0 && pct > 0) {
                 return Math.max(0.01, +(bal * (pct / 100) / 1000).toFixed(2));
             }
@@ -180,6 +182,22 @@ function triggerPriceFor(leg, anchor, digits) {
     const px = anchor + dir * leg.stepIdx * leg.stepPriceOffset;
     const d = Math.max(0, Math.min(8, Math.floor(digits)));
     return Number(px.toFixed(d));
+}
+/** Whether a virtual range leg should be persisted (broker stops zone + signal entry zone). */
+function virtualPendingTriggerAllowed(args) {
+    if (args.signalRangeBoundary != null
+        && !(0, signalEntryRange_1.virtualLegTriggerAllowed)({
+            trigger: args.triggerPrice,
+            boundary: args.signalRangeBoundary,
+            isBuy: args.isBuy,
+        })) {
+        return false;
+    }
+    if (args.stopsZoneLo != null && args.stopsZoneHi != null
+        && args.triggerPrice > args.stopsZoneLo && args.triggerPrice < args.stopsZoneHi) {
+        return false;
+    }
+    return true;
 }
 function brokerOrderOpenMs(o) {
     const candidates = [

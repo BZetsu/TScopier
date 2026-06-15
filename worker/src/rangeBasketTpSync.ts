@@ -33,7 +33,7 @@ export type RangeBasketTpSyncArgs = {
   userId: string
   brokerAccountId: string
   manual: { range_trading?: boolean; tp_lots?: ManualTpLot[] | null }
-  parsed: { sl?: number | null; tp?: number[] | null }
+  parsed: { sl?: unknown; tp?: unknown }
   plan?: PlannerResult | null
   /** When set, force phase B (range layer just fired). */
   forceLayeringRebalance?: boolean
@@ -156,7 +156,7 @@ export function resolveRangeBasketLegCounts(args: {
 export function buildRangeBasketTpTargets(args: {
   familyTrades: BasketOpenLeg[]
   plan: PlannerResult | null | undefined
-  parsed: { sl?: number | null; tp?: unknown }
+  parsed: { sl?: unknown; tp?: unknown }
   tpLots?: ManualTpLot[] | null
   direction: 'buy' | 'sell'
   activePendingCount: number

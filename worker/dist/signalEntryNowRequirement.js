@@ -62,6 +62,9 @@ function messageHasExplicitSlTpLabels(message) {
         return true;
     if (/\b(?:tp|take\s*profit|target(?:\s+level)?)\s*#?\s*\d+\s*[:=\-]\s*\d/i.test(text))
         return true;
+    // TP1 4340 (numbered tier, space-separated — no colon)
+    if (/\b(?:tp|take\s*profit|target(?:\s+level)?)\s*#?\s*\d+\s+\d/i.test(text))
+        return true;
     if (/\b(?:tp|take\s*profit|target(?:\s+level)?)\s*[:=\-]\s*\d/i.test(text))
         return true;
     if (/\btp\s*\d+\s*[:=\-]\s*\d/i.test(text))

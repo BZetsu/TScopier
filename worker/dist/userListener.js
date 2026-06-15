@@ -21,6 +21,7 @@ const copierPause_1 = require("./copierPause");
 const signalRevision_1 = require("./signalRevision");
 const aiParseModification_1 = require("./aiParseModification");
 const signalTelegramReconcile_1 = require("./signalTelegramReconcile");
+const normalizeTelegramMessageText_1 = require("./normalizeTelegramMessageText");
 const signalExecutionEligibility_1 = require("./signalExecutionEligibility");
 const signalCommentaryGuard_1 = require("./signalCommentaryGuard");
 const SUPABASE_URL = process.env.SUPABASE_URL ?? '';
@@ -115,17 +116,17 @@ function extractReplyToMsgId(replyTo) {
     return s ? s : null;
 }
 function looksLikeTradingSignal(text, isReply) {
-    const normalized = text
+    const normalized = (0, normalizeTelegramMessageText_1.normalizeTelegramMessageText)(text)
         .toLowerCase()
         .replace(/\s+/g, ' ')
         .trim();
     if (!normalized)
         return false;
-    if ((0, signalCommentaryGuard_1.looksLikeCasualNonTradeMessage)(text))
+    if ((0, signalCommentaryGuard_1.looksLikeCasualNonTradeMessage)(normalized))
         return false;
-    const hasInstrument = (0, tradableSymbol_1.hasTradableInstrumentInText)(text);
+    const hasInstrument = (0, tradableSymbol_1.hasTradableInstrumentInText)(normalized);
     const hasDirectionOrAction = /\b(buy|sell|long|short|tp|take profit|sl|stop loss|breakeven|be)\b/.test(normalized)
-        || (0, parseSignal_1.looksLikeExplicitFullCloseCommand)(text);
+        || (0, parseSignal_1.looksLikeExplicitFullCloseCommand)(normalized);
     const hasPriceContext = /\b\d{1,5}(?:\.\d{1,5})\b/.test(normalized) ||
         /\b(entry|zone|between|above|below|now)\b/.test(normalized);
     const hasTradeStructure = /\b(tp\s*\d*|sl|entry|signal|setup)\b/.test(normalized);
@@ -134,7 +135,7 @@ function looksLikeTradingSignal(text, isReply) {
         return true;
     }
     // Breakeven / partial-close / TP-hit updates often lack symbol or explicit SL/TP labels.
-    if ((0, parseSignal_1.looksLikeChannelManagementUpdate)(text))
+    if ((0, parseSignal_1.looksLikeChannelManagementUpdate)(normalized))
         return true;
     // Require stronger evidence than a single keyword to reduce false positives.
     const score = Number(hasDirectionOrAction) + Number(hasInstrument) + Number(hasPriceContext) + Number(hasTradeStructure);
@@ -624,7 +625,7 @@ class UserListener {
         const collected = await this.fetchMessagesBetweenForBacktest(row, fromMs, toMs);
         const messages = [];
         for (const m of collected) {
-            const raw = String(m.text ?? m.message ?? '').trim();
+            const raw = (0, signalTelegramReconcile_1.telegramMessageText)(m);
             if (!raw)
                 continue;
             const epoch = this.messageEpochSec(m);
@@ -662,6 +663,14 @@ class UserListener {
             throw new Error(error.message);
         if (!row)
             throw new Error('Channel not found');
+        const runId = opts?.runId;
+        if (runId) {
+            await this.supabase.from('backtest_runs').update({
+                progress_pct: 1,
+                progress_message: 'Fetching messages from Telegram…',
+                updated_at: new Date().toISOString(),
+            }).eq('id', runId).eq('user_id', this.userId);
+        }
         const collected = await this.fetchMessagesBetweenForBacktest(row, fromMs, toMs);
         const errors = [];
         const rangeFromIso = new Date(fromMs).toISOString();
@@ -678,7 +687,7 @@ class UserListener {
             errors.push(`clear prior import: ${delErr.message}`);
         const candidates = [];
         for (const m of collected) {
-            const raw = String(m.text ?? m.message ?? '').trim();
+            const raw = (0, signalTelegramReconcile_1.telegramMessageText)(m);
             if (!raw)
                 continue;
             const isReply = !!m.replyTo;
@@ -694,17 +703,25 @@ class UserListener {
         let imported = 0;
         const parseConcurrency = Math.max(1, Math.min(8, Number(process.env.BACKTEST_PARSE_CONCURRENCY ?? 4)));
         const parseDelayMs = Math.max(0, Number(process.env.BACKTEST_PARSE_DELAY_MS ?? 0));
-        const runId = opts?.runId;
         const reportSyncProgress = async (parsed, total) => {
             if (!runId)
                 return;
-            const pct = total > 0 ? 2 + Math.floor((parsed / total) * 12) : 2;
+            const pct = total > 0 ? 5 + Math.floor((parsed / total) * 90) : 5;
             await this.supabase.from('backtest_runs').update({
                 progress_pct: pct,
-                progress_message: `Syncing Telegram: parsing ${parsed}/${total} candidate message(s)…`,
+                progress_message: `Parsing signals ${parsed}/${total}…`,
                 updated_at: new Date().toISOString(),
             }).eq('id', runId).eq('user_id', this.userId);
         };
+        if (runId) {
+            await this.supabase.from('backtest_runs').update({
+                progress_pct: 5,
+                progress_message: candidates.length > 0
+                    ? `Found ${candidates.length} candidate message(s) — parsing…`
+                    : 'No trade-like messages in range',
+                updated_at: new Date().toISOString(),
+            }).eq('id', runId).eq('user_id', this.userId);
+        }
         await reportSyncProgress(0, candidates.length);
         let parsedCount = 0;
         await this.mapWithConcurrency(candidates, parseConcurrency, async (c) => {
@@ -878,7 +895,7 @@ class UserListener {
         const channelRow = await this.resolveChannelRowForChat(chatIdVariants, chatUsername);
         if (!channelRow)
             return;
-        const rawMessage = (message.text ?? message.message ?? '');
+        const rawMessage = (0, signalTelegramReconcile_1.telegramMessageText)(message);
         if (!rawMessage.trim())
             return;
         await this.tryApplyMessageRevision({
@@ -1250,7 +1267,7 @@ class UserListener {
         if (await this.skipMessageWhileCopierPaused(channelRow, String(message.id)))
             return false;
         const messageId = String(message.id);
-        const rawMessage = (message.text ?? message.message ?? '');
+        const rawMessage = (0, signalTelegramReconcile_1.telegramMessageText)(message);
         const isReply = !!message.replyTo;
         const messageEpochSec = this.messageEpochSec(message);
         // Stamp listener arrival as early as possible so telegram_to_listener_ms
@@ -2302,7 +2319,7 @@ class UserListener {
                 if (msgEpochSec && msgEpochSec > toSec) {
                     continue;
                 }
-                const raw = String(m.text ?? m.message ?? '').trim();
+                const raw = (0, signalTelegramReconcile_1.telegramMessageText)(m);
                 if (!raw)
                     continue;
                 const isReply = !!m.replyTo;
@@ -2393,7 +2410,7 @@ class UserListener {
         collected.sort((a, b) => Number(a.id) - Number(b.id));
         const out = [];
         for (const m of collected) {
-            const raw = String(m.text ?? m.message ?? '').trim();
+            const raw = (0, signalTelegramReconcile_1.telegramMessageText)(m);
             if (!raw)
                 continue;
             const isReply = !!m.replyTo;

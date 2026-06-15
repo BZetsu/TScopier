@@ -1,0 +1,402 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.coercePositiveTpLevels = coercePositiveTpLevels;
+exports.resolveRangeBasketFinalTps = resolveRangeBasketFinalTps;
+exports.estimatePlanImmediateLegCount = estimatePlanImmediateLegCount;
+exports.resolveRangeBasketLegCounts = resolveRangeBasketLegCounts;
+exports.buildRangeBasketTpTargets = buildRangeBasketTpTargets;
+exports.patchPendingRangeLegTakeProfits = patchPendingRangeLegTakeProfits;
+exports.syncRangeBasketTakeProfits = syncRangeBasketTakeProfits;
+const basketSlTpReconcile_1 = require("./basketSlTpReconcile");
+const channelActiveTradeParams_1 = require("./channelActiveTradeParams");
+const tpBucketDistribution_1 = require("./manualPlanning/tpBucketDistribution");
+const multiTradeMerge_1 = require("./multiTradeMerge");
+/** Coerce signal / JSON TP ladder values (numbers or numeric strings). */
+function coercePositiveTpLevels(tp) {
+    if (!Array.isArray(tp))
+        return [];
+    const out = [];
+    for (const raw of tp) {
+        const n = typeof raw === 'number' ? raw : Number(raw);
+        if (Number.isFinite(n) && n > 0)
+            out.push(n);
+    }
+    return out;
+}
+function uniqueOrderedLevels(levels) {
+    const seen = new Set();
+    const out = [];
+    for (const level of levels) {
+        if (seen.has(level))
+            continue;
+        seen.add(level);
+        out.push(level);
+    }
+    return out;
+}
+function ladderFromOpenTrades(familyTrades, isBuy) {
+    const levels = new Set();
+    for (const tr of familyTrades) {
+        const tp = Number(tr.tp);
+        if (Number.isFinite(tp) && tp > 0)
+            levels.add(tp);
+    }
+    const arr = [...levels];
+    arr.sort((a, b) => (isBuy ? a - b : b - a));
+    return arr;
+}
+/** Resolve the TP ladder for range-basket sync (parsed → plan → channel → open legs). */
+function resolveRangeBasketFinalTps(args) {
+    const fromParsed = coercePositiveTpLevels(args.parsed.tp);
+    if (fromParsed.length)
+        return fromParsed;
+    const fromPlan = uniqueOrderedLevels((args.plan ? (0, multiTradeMerge_1.mergePlanImmediateOrders)(args.plan) : [])
+        .map(o => Number(o.takeprofit))
+        .filter(tp => Number.isFinite(tp) && tp > 0));
+    if (fromPlan.length)
+        return fromPlan;
+    const fromChannel = uniqueOrderedLevels((args.channelTpLevels ?? []).filter(tp => Number.isFinite(tp) && tp > 0));
+    if (fromChannel.length)
+        return fromChannel;
+    if (args.familyTrades?.length) {
+        const fromOpen = ladderFromOpenTrades(args.familyTrades, args.direction === 'buy');
+        if (fromOpen.length)
+            return fromOpen;
+    }
+    return [];
+}
+function toEntryQualityLeg(tr) {
+    return {
+        id: tr.id,
+        entryPrice: Number(tr.entry_price ?? 0),
+        openedAt: String(tr.opened_at ?? ''),
+    };
+}
+/** Infer instant leg count when the entry plan is unavailable (post-layer rebalance). */
+function estimatePlanImmediateLegCount(args) {
+    if (args.planImmediateLegCount != null && args.planImmediateLegCount > 0) {
+        return args.planImmediateLegCount;
+    }
+    const firedPendingApprox = Math.max(0, args.maxPendingStepIdx - args.activePendingCount);
+    if (args.maxPendingStepIdx > 0) {
+        return Math.max(0, args.openLegCount - firedPendingApprox);
+    }
+    return args.openLegCount;
+}
+function resolveRangeBasketLegCounts(args) {
+    const firedPendingApprox = Math.max(0, args.maxPendingStepIdx - args.activePendingCount);
+    const immediateLegCount = Math.max(args.planImmediateLegCount, Math.max(0, args.openLegCount - firedPendingApprox));
+    const firedRangeLegCount = Math.max(0, args.openLegCount - immediateLegCount);
+    const phase = (0, tpBucketDistribution_1.resolveRangeBasketTpPhase)({
+        openLegCount: args.openLegCount,
+        immediateLegCount,
+        firedRangeLegCount,
+    });
+    return { immediateLegCount, firedRangeLegCount, phase };
+}
+function buildRangeBasketTpTargets(args) {
+    const { familyTrades, plan, parsed, tpLots, direction, activePendingCount, maxPendingStepIdx, forceLayeringRebalance, channelTpLevels, finalTpsOverride, } = args;
+    if (!familyTrades.length)
+        return [];
+    const fromPlan = (plan ? (0, multiTradeMerge_1.mergePlanImmediateOrders)(plan) : []).map(o => ({
+        stoploss: Number(o.stoploss) || 0,
+        takeprofit: Number(o.takeprofit) || 0,
+    }));
+    const slRaw = parsed.sl;
+    const slNum = typeof slRaw === 'number' ? slRaw : Number(slRaw ?? 0);
+    const hasSl = Number.isFinite(slNum) && slNum > 0;
+    const sl = hasSl ? slNum : (fromPlan[0]?.stoploss ?? 0);
+    const finalTps = args.finalTpsOverride?.length
+        ? args.finalTpsOverride
+        : resolveRangeBasketFinalTps({
+            parsed,
+            plan,
+            familyTrades,
+            channelTpLevels,
+            direction,
+        });
+    const planImmediateLegCount = estimatePlanImmediateLegCount({
+        openLegCount: familyTrades.length,
+        activePendingCount,
+        maxPendingStepIdx,
+        planImmediateLegCount: plan ? (0, multiTradeMerge_1.mergePlanImmediateOrders)(plan).length : undefined,
+    });
+    const { immediateLegCount, phase: detectedPhase } = resolveRangeBasketLegCounts({
+        openLegCount: familyTrades.length,
+        planImmediateLegCount,
+        activePendingCount,
+        maxPendingStepIdx,
+    });
+    const phase = forceLayeringRebalance ? 'layering_rebalance' : detectedPhase;
+    const isBuy = direction === 'buy';
+    const openLegs = familyTrades.map(tr => ({
+        ...toEntryQualityLeg(tr),
+        stoploss: sl,
+    }));
+    return (0, tpBucketDistribution_1.buildRangeBasketPerLegStopTargets)({
+        phase,
+        openLegs,
+        immediateLegCount,
+        isBuy,
+        stoploss: sl,
+        finalTps,
+        tpLots,
+    });
+}
+async function loadPendingMeta(supabase, brokerAccountId, signalId) {
+    const { data: pendingRows } = await supabase
+        .from('range_pending_legs')
+        .select('step_idx, status')
+        .eq('broker_account_id', brokerAccountId)
+        .eq('signal_id', signalId)
+        .limit(500);
+    const rows = pendingRows ?? [];
+    const activePendingCount = rows.filter(r => r.status === 'pending' || r.status === 'claimed').length;
+    const maxPendingStepIdx = Math.max(0, ...rows.map(r => Number(r.step_idx) || 0));
+    return { activePendingCount, maxPendingStepIdx };
+}
+async function logRangeBasketTpRebalance(supabase, args) {
+    try {
+        await supabase.from('trade_execution_logs').insert({
+            user_id: args.userId,
+            signal_id: args.signalId,
+            broker_account_id: args.brokerAccountId,
+            action: 'range_basket_tp_rebalance',
+            status: args.modified > 0 || args.attempted === 0 ? 'success' : 'failed',
+            request_payload: {
+                open_legs: args.openLegs,
+                phase: args.phase,
+                force_layering_rebalance: args.forceLayeringRebalance === true,
+                modified: args.modified,
+                attempted: args.attempted,
+                failed: args.failed,
+                target_tp_counts: args.tpCounts,
+            },
+        });
+    }
+    catch { /* best-effort */ }
+}
+async function patchPendingRangeLegTakeProfits(args) {
+    const { supabase, brokerAccountId, signalId, isBuy, finalTps, tpLots, openLegs } = args;
+    const { data: pendingRows } = await supabase
+        .from('range_pending_legs')
+        .select('id, trigger_price, step_idx')
+        .eq('broker_account_id', brokerAccountId)
+        .eq('signal_id', signalId)
+        .in('status', ['pending', 'claimed'])
+        .limit(500);
+    if (!pendingRows?.length)
+        return 0;
+    const projected = [
+        ...openLegs,
+        ...pendingRows.map(row => ({
+            id: `pending:${row.id}`,
+            entryPrice: Number(row.trigger_price ?? 0),
+            openedAt: `pending:${String(row.step_idx ?? 0).padStart(6, '0')}`,
+        })),
+    ];
+    const slotLegCount = openLegs.length + pendingRows.length;
+    const tpMap = (0, tpBucketDistribution_1.buildEntryQualityTakeProfitMap)({
+        legs: projected,
+        isBuy,
+        slotLegCount,
+        finalTps,
+        tpLots,
+    });
+    let updated = 0;
+    for (const row of pendingRows) {
+        const tp = tpMap.get(`pending:${row.id}`);
+        if (typeof tp !== 'number' || !(tp > 0))
+            continue;
+        const { error } = await supabase
+            .from('range_pending_legs')
+            .update({ takeprofit: tp })
+            .eq('id', row.id);
+        if (!error)
+            updated += 1;
+    }
+    return updated;
+}
+async function loadScopedChannelTpLevels(supabase, args) {
+    if (!args.channelId)
+        return null;
+    try {
+        const channelParams = await (0, channelActiveTradeParams_1.loadChannelActiveTradeParamsForSymbol)(supabase, args.userId, args.channelId, args.symbol);
+        if (!channelParams?.tpLevels?.length)
+            return null;
+        if ((0, channelActiveTradeParams_1.channelParamsPredateBasket)(channelParams, args.basketCreatedAt))
+            return null;
+        return channelParams.tpLevels;
+    }
+    catch {
+        return null;
+    }
+}
+async function reloadSignalParsed(supabase, signalId) {
+    const { data } = await supabase
+        .from('signals')
+        .select('parsed_data')
+        .eq('id', signalId)
+        .maybeSingle();
+    return (data?.parsed_data ?? null);
+}
+/** Sync SL/TP on all open legs for a range-layering basket (phase-aware). */
+async function syncRangeBasketTakeProfits(args) {
+    if (args.manual.range_trading !== true)
+        return;
+    const { data: familyRows, error } = await args.supabase
+        .from('trades')
+        .select('id,signal_id,metaapi_order_id,opened_at,lot_size,sl,tp,entry_price,direction,symbol')
+        .eq('broker_account_id', args.brokerAccountId)
+        .eq('signal_id', args.signalId)
+        .eq('status', 'open')
+        .order('opened_at', { ascending: true })
+        .limit(500);
+    if (error || !(familyRows ?? []).length)
+        return;
+    const familyTrades = (familyRows ?? []);
+    const { activePendingCount, maxPendingStepIdx } = await loadPendingMeta(args.supabase, args.brokerAccountId, args.signalId);
+    const channelTpLevels = await loadScopedChannelTpLevels(args.supabase, {
+        userId: args.userId,
+        channelId: args.channelId,
+        basketCreatedAt: args.basketCreatedAt,
+        symbol: args.symbol,
+    });
+    let parsed = args.parsed;
+    let finalTps = resolveRangeBasketFinalTps({
+        parsed,
+        plan: args.plan,
+        familyTrades,
+        channelTpLevels,
+        direction: args.direction,
+    });
+    if (!finalTps.length && args.forceLayeringRebalance) {
+        await new Promise(r => setTimeout(r, 300));
+        const reloaded = await reloadSignalParsed(args.supabase, args.signalId);
+        if (reloaded) {
+            parsed = { ...parsed, ...reloaded };
+            finalTps = resolveRangeBasketFinalTps({
+                parsed,
+                plan: args.plan,
+                familyTrades,
+                channelTpLevels,
+                direction: args.direction,
+            });
+        }
+    }
+    if (!finalTps.length) {
+        console.warn(`[rangeBasketTpSync] skip rebalance — no TP ladder signal=${args.signalId}`
+            + ` broker=${args.brokerAccountId} open=${familyTrades.length}`);
+        await logRangeBasketTpRebalance(args.supabase, {
+            userId: args.userId,
+            signalId: args.signalId,
+            brokerAccountId: args.brokerAccountId,
+            openLegs: familyTrades.length,
+            phase: args.forceLayeringRebalance ? 'layering_rebalance' : 'unknown',
+            forceLayeringRebalance: args.forceLayeringRebalance,
+            modified: 0,
+            attempted: 1,
+            failed: 1,
+            tpCounts: {},
+        });
+        return;
+    }
+    const perLegTargets = buildRangeBasketTpTargets({
+        familyTrades,
+        plan: args.plan,
+        parsed,
+        tpLots: args.manual.tp_lots,
+        direction: args.direction,
+        activePendingCount,
+        maxPendingStepIdx,
+        forceLayeringRebalance: args.forceLayeringRebalance,
+        channelTpLevels,
+        finalTpsOverride: finalTps,
+    });
+    if (!perLegTargets.length)
+        return;
+    const planImmediateLegCount = estimatePlanImmediateLegCount({
+        openLegCount: familyTrades.length,
+        activePendingCount,
+        maxPendingStepIdx,
+        planImmediateLegCount: args.plan ? (0, multiTradeMerge_1.mergePlanImmediateOrders)(args.plan).length : undefined,
+    });
+    const { phase } = resolveRangeBasketLegCounts({
+        openLegCount: familyTrades.length,
+        planImmediateLegCount,
+        activePendingCount,
+        maxPendingStepIdx,
+    });
+    const effectivePhase = args.forceLayeringRebalance ? 'layering_rebalance' : phase;
+    let openedTickets = null;
+    try {
+        openedTickets = await (0, basketSlTpReconcile_1.fetchOpenBrokerTickets)(args.api, args.uuid);
+    }
+    catch { /* optional */ }
+    const isBuy = args.direction === 'buy';
+    if (effectivePhase === 'layering_rebalance') {
+        try {
+            await patchPendingRangeLegTakeProfits({
+                supabase: args.supabase,
+                brokerAccountId: args.brokerAccountId,
+                signalId: args.signalId,
+                isBuy,
+                finalTps,
+                tpLots: args.manual.tp_lots,
+                openLegs: familyTrades.map(toEntryQualityLeg),
+            });
+        }
+        catch (err) {
+            console.warn(`[rangeBasketTpSync] pending TP patch failed signal=${args.signalId}:`, err instanceof Error ? err.message : String(err));
+        }
+    }
+    const tpCounts = {};
+    for (const target of perLegTargets) {
+        const key = String(target.takeprofit);
+        tpCounts[key] = (tpCounts[key] ?? 0) + 1;
+    }
+    let modifyResult = null;
+    try {
+        modifyResult = await (0, basketSlTpReconcile_1.runBasketLegModifies)({
+            supabase: args.supabase,
+            api: args.api,
+            uuid: args.uuid,
+            symbol: args.symbol,
+            direction: args.direction,
+            baseLot: args.baseLot,
+            params: args.params,
+            signalId: args.signalId,
+            userId: args.userId,
+            brokerAccountId: args.brokerAccountId,
+            familyTrades,
+            perLegTargets,
+            signalTps: finalTps,
+            tpLots: args.manual.tp_lots,
+            nImmCwe: 0,
+            overrideTp: null,
+            strictEntryPrefetch: null,
+            openedTickets,
+            skipAlreadySynced: args.forceLayeringRebalance !== true,
+        });
+    }
+    catch (err) {
+        console.warn(`[rangeBasketTpSync] leg modify failed signal=${args.signalId} broker=${args.brokerAccountId}:`, err instanceof Error ? err.message : String(err));
+    }
+    await logRangeBasketTpRebalance(args.supabase, {
+        userId: args.userId,
+        signalId: args.signalId,
+        brokerAccountId: args.brokerAccountId,
+        openLegs: familyTrades.length,
+        phase: effectivePhase,
+        forceLayeringRebalance: args.forceLayeringRebalance,
+        modified: modifyResult?.summary.modified ?? 0,
+        attempted: modifyResult?.summary.attempted ?? 0,
+        failed: modifyResult?.summary.failed ?? 0,
+        tpCounts,
+    });
+    if (modifyResult && modifyResult.summary.modified > 0) {
+        console.log(`[rangeBasketTpSync] rebalanced signal=${args.signalId} broker=${args.brokerAccountId}`
+            + ` open=${familyTrades.length} phase=${effectivePhase}`
+            + ` modified=${modifyResult.summary.modified}/${modifyResult.summary.attempted}`);
+    }
+}

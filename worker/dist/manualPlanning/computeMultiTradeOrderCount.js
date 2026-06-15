@@ -4,6 +4,7 @@ exports.MULTI_TRADE_ABS_MAX_LEGS = void 0;
 exports.computeMultiTradeOrderCount = computeMultiTradeOrderCount;
 /** Hard cap aligned with planner + AccountConfig preview. */
 exports.MULTI_TRADE_ABS_MAX_LEGS = 500;
+const multiTradeLegUnits_1 = require("./multiTradeLegUnits");
 /**
  * Mirrors `src/lib/estimateMultiTradeOrders.ts` — preview order count for multi-trade bursts.
  */
@@ -14,15 +15,12 @@ function computeMultiTradeOrderCount(args) {
     const manualLot = Number(args.manualLot);
     if (!Number.isFinite(manualLot) || manualLot <= 0)
         return 0;
-    const FP_EPS = 1e-9;
-    const toUnits = (v) => {
-        if (!Number.isFinite(v) || v <= 0)
-            return 0;
-        return Math.max(0, Math.floor(v / lotStep + FP_EPS));
-    };
-    const manualUnits = toUnits(manualLot);
-    const targetUnits = toUnits(manualLot * (legPct / 100));
-    const minUnits = Math.max(1, Math.round(minLot / lotStep));
+    const { manualUnits, targetUnits, minUnits } = (0, multiTradeLegUnits_1.resolveMultiTradeTargetUnits)({
+        manualLot,
+        legPercent: legPct,
+        minLot,
+        lotStep,
+    });
     if (targetUnits < minUnits || manualUnits < minUnits)
         return 1;
     const baseLegs = Math.max(1, Math.min(exports.MULTI_TRADE_ABS_MAX_LEGS, Math.floor(manualUnits / targetUnits)));

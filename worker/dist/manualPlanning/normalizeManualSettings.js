@@ -4,6 +4,7 @@ exports.DEFAULT_MANUAL_TP_LOTS = void 0;
 exports.sanitizeTpLots = sanitizeTpLots;
 exports.normalizeManualSettingsForExecution = normalizeManualSettingsForExecution;
 const computeMultiTradeOrderCount_1 = require("./computeMultiTradeOrderCount");
+const resolveManualLot_1 = require("./resolveManualLot");
 /** Default Targets % rows — keep aligned with AccountConfigPage `DEFAULT_MANUAL_TP_LOTS`. */
 exports.DEFAULT_MANUAL_TP_LOTS = [
     { label: 'TP1', lot: 0.01, percent: 50, enabled: true },
@@ -32,7 +33,7 @@ function sanitizeTpLots(rows) {
  * Normalize `manual_settings` from DB for execution (Targets %, leg %, range).
  * Mirrors `normalizeManualSettings` in AccountConfigPage — without UI-only fields.
  */
-function normalizeManualSettingsForExecution(raw) {
+function normalizeManualSettingsForExecution(raw, opts) {
     const j = raw && typeof raw === 'object' ? raw : {};
     const tpLotsRaw = Array.isArray(j.tp_lots) ? j.tp_lots : exports.DEFAULT_MANUAL_TP_LOTS;
     const tpLots = tpLotsRaw.map((x, i) => {
@@ -50,27 +51,35 @@ function normalizeManualSettingsForExecution(raw) {
     const maxOrdersRaw = Number(j.multi_trade_max_orders);
     const legacyMaxLegsRaw = Number(j.multi_trade_max_legs);
     const tradeStyle = j.trade_style === 'multi' ? 'multi' : 'single';
+    const riskMode = String(j.risk_mode ?? 'fixed_lot');
+    const accountBalance = opts?.accountBalance;
     let maxOrders;
-    if (Number.isFinite(maxOrdersRaw) && maxOrdersRaw > 0) {
+    const seedMaxOrdersFromLot = (manualLot) => {
+        if (!Number.isFinite(manualLot) || manualLot <= 0)
+            return;
+        const preview = (0, computeMultiTradeOrderCount_1.computeMultiTradeOrderCount)({
+            manualLot,
+            legPercent: legPct,
+            rangeTrading: j.range_trading === true,
+            rangePercent: Number(j.range_percent),
+            rangeStepPips: Number(j.range_step_pips),
+            rangeDistancePips: Number(j.range_distance_pips),
+        });
+        if (preview > 0)
+            maxOrders = preview;
+    };
+    if (tradeStyle === 'multi' && riskMode === 'dynamic_balance_percent' && Number(accountBalance) > 0) {
+        // Recompute from live balance — stored cap goes stale when balance or % changes.
+        seedMaxOrdersFromLot((0, resolveManualLot_1.resolveManualLotForSettings)(j, accountBalance));
+    }
+    else if (Number.isFinite(maxOrdersRaw) && maxOrdersRaw > 0) {
         maxOrders = Math.max(1, Math.min(500, Math.floor(maxOrdersRaw)));
     }
     else if (Number.isFinite(legacyMaxLegsRaw) && legacyMaxLegsRaw > 0) {
         maxOrders = Math.max(1, Math.min(500, Math.floor(legacyMaxLegsRaw)));
     }
     else if (tradeStyle === 'multi') {
-        const fixedLot = Number(j.fixed_lot);
-        if (Number.isFinite(fixedLot) && fixedLot > 0) {
-            const preview = (0, computeMultiTradeOrderCount_1.computeMultiTradeOrderCount)({
-                manualLot: fixedLot,
-                legPercent: legPct,
-                rangeTrading: j.range_trading === true,
-                rangePercent: Number(j.range_percent),
-                rangeStepPips: Number(j.range_step_pips),
-                rangeDistancePips: Number(j.range_distance_pips),
-            });
-            if (preview > 0)
-                maxOrders = preview;
-        }
+        seedMaxOrdersFromLot((0, resolveManualLot_1.resolveManualLotForSettings)(j, accountBalance));
     }
     const readNumber = (key, fallback) => {
         const v = Number(j[key]);
@@ -114,6 +123,7 @@ function normalizeManualSettingsForExecution(raw) {
         trade_style: j.trade_style === 'multi' ? 'multi' : 'single',
         range_trading: j.range_trading === true,
         range_layer_till_close: j.range_layer_till_close === true,
+        use_signal_entry_range: j.use_signal_entry_range === true,
         close_worse_entries: j.close_worse_entries === true,
         close_worse_entries_pips: Math.max(0, readNumber('close_worse_entries_pips', 30)),
         use_predefined_sl_pips: j.use_predefined_sl_pips === true,

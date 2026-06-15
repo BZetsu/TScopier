@@ -5,6 +5,8 @@ exports.skipMgmtSignal = skipMgmtSignal;
 exports.applyManagement = applyManagement;
 exports.applyCloseWorseEntriesInstruction = applyCloseWorseEntriesInstruction;
 const channelActiveTradeParams_1 = require("../channelActiveTradeParams");
+const channelTradingConfig_1 = require("../channelTradingConfig");
+const autoManagement_1 = require("../autoManagement");
 const channelMessageFilters_1 = require("../channelMessageFilters");
 const closeWorseEntries_1 = require("../closeWorseEntries");
 const managementBrokerClose_1 = require("../managementBrokerClose");
@@ -422,12 +424,43 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
             else if (action === 'breakeven') {
                 const entry = sanitizeLevel(trade.entry_price);
                 if (entry > 0) {
+                    const manual = (0, channelTradingConfig_1.resolveChannelTradingConfig)(broker, signal.channel_id).manual_settings;
+                    const isBuy = String(trade.direction).toLowerCase() === 'buy';
+                    const symEntry = await ctx.getSymbolParams(uuid, trade.symbol);
+                    const digits = symEntry?.digits;
+                    let beSl = (0, autoManagement_1.breakevenStopLossForSymbol)({
+                        isBuy,
+                        entryPrice: entry,
+                        manual,
+                        symbol: trade.symbol,
+                        digits,
+                    });
+                    let modifyTp = sanitizeLevel(trade.tp);
+                    try {
+                        const q = await api.quote(uuid, trade.symbol);
+                        const refPrice = isBuy ? q.bid : q.ask;
+                        const clamped = (0, autoManagement_1.clampBreakevenModifyStops)({
+                            isBuy,
+                            stoploss: beSl,
+                            takeprofit: modifyTp,
+                            referencePrice: refPrice,
+                            point: symEntry?.point ?? 0,
+                            digits: digits ?? 5,
+                            stopsLevel: symEntry?.stopsLevel ?? 0,
+                            freezeLevel: symEntry?.freezeLevel ?? 0,
+                        });
+                        beSl = clamped.stoploss;
+                        modifyTp = clamped.takeprofit;
+                    }
+                    catch {
+                        /* quote optional; use computed breakeven SL */
+                    }
                     await api.orderModify(uuid, {
                         ticket,
-                        stoploss: entry,
-                        takeprofit: sanitizeLevel(trade.tp),
+                        stoploss: beSl,
+                        takeprofit: modifyTp,
                     });
-                    await ctx.supabase.from('trades').update({ sl: entry }).eq('id', trade.id);
+                    await ctx.supabase.from('trades').update({ sl: beSl }).eq('id', trade.id);
                 }
             }
             else if (action === 'modify') {
@@ -503,12 +536,17 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
         && pendingLegs.length
         && (hasNewSl || hasNewTp || action === 'breakeven' || action === 'partial_breakeven')) {
         const tpLotsByBroker = new Map(brokers.map(b => [b.id, (b.manual_settings ?? {}).tp_lots]));
+        const breakevenManualByBroker = new Map(brokers.map(b => [
+            b.id,
+            (0, channelTradingConfig_1.resolveChannelTradingConfig)(b, signal.channel_id).manual_settings,
+        ]));
         const pendingUpdated = await (0, managementPendingLegs_1.updateRangePendingLegsForManagement)({
             supabase: ctx.supabase,
             parsed,
             pendingLegs,
             openTrades: rows,
             tpLotsByBroker,
+            breakevenManualByBroker,
             action,
             hasNewSl,
             hasNewTp,

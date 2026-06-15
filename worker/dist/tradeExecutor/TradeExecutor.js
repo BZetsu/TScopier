@@ -200,18 +200,23 @@ class TradeExecutor {
     // ── caches ────────────────────────────────────────────────────────────
     normalizeBrokerRow(row) {
         const healedConfigs = (0, channelTradingConfig_1.healChannelTradingConfigsMap)(row);
+        const accountBalance = Number(row.last_balance ?? row.last_equity ?? 0) || null;
         const normalizedConfigs = {};
         for (const [channelId, cfg] of Object.entries(healedConfigs)) {
             normalizedConfigs[channelId] = {
                 ...cfg,
-                manual_settings: (0, normalizeManualSettings_1.normalizeManualSettingsForExecution)(cfg.manual_settings),
+                manual_settings: (0, normalizeManualSettings_1.normalizeManualSettingsForExecution)(cfg.manual_settings, {
+                    accountBalance,
+                }),
             };
         }
         const sessionId = (0, helpers_2.brokerSessionUuid)(row);
         return {
             ...row,
             metaapi_account_id: sessionId ?? row.metaapi_account_id,
-            manual_settings: (0, normalizeManualSettings_1.normalizeManualSettingsForExecution)(row.manual_settings),
+            manual_settings: (0, normalizeManualSettings_1.normalizeManualSettingsForExecution)(row.manual_settings, {
+                accountBalance,
+            }),
             channel_trading_configs: normalizedConfigs,
         };
     }
@@ -1095,11 +1100,18 @@ class TradeExecutor {
         const safe = Math.max(Number(params?.stopsLevel) || 0, Number(params?.freezeLevel) || 0);
         const zoneHi = safe > 0 ? anchor + (safe + 2) * (params?.point ?? 0) : null;
         const zoneLo = safe > 0 ? anchor - (safe + 2) * (params?.point ?? 0) : null;
+        const signalRangeBoundary = plan.rangeLayering?.signalRangeBoundary ?? null;
         const nowMs = Date.now();
         const insertRows = [];
         for (const v of virtualPendings) {
             const triggerPrice = (0, helpers_2.triggerPriceFor)(v, anchor, digits);
-            if (zoneHi != null && zoneLo != null && triggerPrice > zoneLo && triggerPrice < zoneHi) {
+            if (!(0, helpers_2.virtualPendingTriggerAllowed)({
+                triggerPrice,
+                signalRangeBoundary,
+                isBuy: v.isBuy,
+                stopsZoneLo: zoneLo,
+                stopsZoneHi: zoneHi,
+            })) {
                 continue;
             }
             const expiresAt = v.expiryHours && v.expiryHours > 0

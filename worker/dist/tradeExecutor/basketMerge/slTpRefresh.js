@@ -7,6 +7,7 @@ const channelActiveTradeParams_1 = require("../../channelActiveTradeParams");
 const manualPlanner_1 = require("../../manualPlanner");
 const brokerConnectError_1 = require("../../brokerConnectError");
 const multiTradeMerge_1 = require("../../multiTradeMerge");
+const rangeBasketTpSync_1 = require("../../rangeBasketTpSync");
 const rangeLayerTillClose_1 = require("../../rangeLayerTillClose");
 const rangePendingLadderSync_1 = require("../../rangePendingLadderSync");
 const helpers_1 = require("../helpers");
@@ -190,15 +191,14 @@ async function applyBasketSlTpRefresh(ctx, args) {
         await new Promise(resolve => setTimeout(resolve, Math.min(plan.delay_ms, 30000)));
     }
     let virtualPendings = (plan.virtualPendings ?? []).slice(0, 500);
-    const { data: activePendingRows } = await ctx.supabase
+    const { data: rangePendingRows } = await ctx.supabase
         .from('range_pending_legs')
-        .select('step_idx')
+        .select('step_idx, status')
         .eq('signal_id', anchorSignalId)
         .eq('broker_account_id', broker.id)
-        .in('status', ['pending', 'claimed'])
         .limit(500);
-    const activePendingCount = activePendingRows?.length ?? 0;
-    const maxPendingStepIdx = Math.max(0, ...(activePendingRows ?? []).map(r => Number(r.step_idx) || 0));
+    const activePendingCount = (rangePendingRows ?? []).filter(r => r.status === 'pending' || r.status === 'claimed').length;
+    const maxPendingStepIdx = Math.max(0, ...(rangePendingRows ?? []).map(r => Number(r.step_idx) || 0));
     const basketTotalPlannedLegs = Math.max((0, channelActiveTradeParams_1.estimateBasketTotalPlannedLegs)({
         openLegCount: familyTrades.length,
         activePendingCount,
@@ -228,14 +228,24 @@ async function applyBasketSlTpRefresh(ctx, args) {
     const singleBrokerTp = typeof singleBrokerTpRaw === 'number' && Number.isFinite(singleBrokerTpRaw) && singleBrokerTpRaw > 0
         ? singleBrokerTpRaw
         : null;
-    let perLegTargets = (0, multiTradeMerge_1.buildPerLegStopTargets)({
-        plan,
-        parsed: effectiveParsed,
-        openLegCount: familyTrades.length,
-        totalPlannedLegCount: basketTotalPlannedLegs,
-        immediateLegCount: refreshImmediateLegCount,
-        tpLots: manual.tp_lots,
-    });
+    let perLegTargets = manual.range_trading === true
+        ? (0, rangeBasketTpSync_1.buildRangeBasketTpTargets)({
+            familyTrades,
+            plan,
+            parsed: effectiveParsed,
+            tpLots: manual.tp_lots,
+            direction: direction,
+            activePendingCount,
+            maxPendingStepIdx,
+        })
+        : (0, multiTradeMerge_1.buildPerLegStopTargets)({
+            plan,
+            parsed: effectiveParsed,
+            openLegCount: familyTrades.length,
+            totalPlannedLegCount: basketTotalPlannedLegs,
+            immediateLegCount: refreshImmediateLegCount,
+            tpLots: manual.tp_lots,
+        });
     if (manual.trade_style !== 'multi' && singleBrokerTp != null) {
         perLegTargets = perLegTargets.map(target => ({ ...target, takeprofit: singleBrokerTp }));
     }
@@ -426,7 +436,13 @@ async function applyBasketSlTpRefresh(ctx, args) {
             tpLots: manual.tp_lots,
             buildInsertRow: (v) => {
                 const triggerPrice = (0, helpers_1.triggerPriceFor)(v, insertAnchor, digits);
-                if (zoneHi != null && zoneLo != null && triggerPrice > zoneLo && triggerPrice < zoneHi) {
+                if (!(0, helpers_1.virtualPendingTriggerAllowed)({
+                    triggerPrice,
+                    signalRangeBoundary: plan.rangeLayering?.signalRangeBoundary ?? null,
+                    isBuy: v.isBuy,
+                    stopsZoneLo: zoneLo,
+                    stopsZoneHi: zoneHi,
+                })) {
                     return null;
                 }
                 const expiresAt = v.expiryHours && v.expiryHours > 0

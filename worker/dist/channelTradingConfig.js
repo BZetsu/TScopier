@@ -14,6 +14,10 @@ exports.withChannelTradingConfig = withChannelTradingConfig;
 const normalizeManualSettings_1 = require("./manualPlanning/normalizeManualSettings");
 const brokerChannelFilter_1 = require("./brokerChannelFilter");
 const copyLimitTypes_1 = require("./copyLimitTypes");
+function brokerAccountBalance(broker) {
+    const bal = Number(broker.last_balance ?? broker.last_equity ?? 0);
+    return bal > 0 ? bal : null;
+}
 function normalizeChannelUuid(id) {
     const s = String(id ?? '').trim();
     return s ? s.toLowerCase() : null;
@@ -55,7 +59,7 @@ function resolveChannelConfigEntry(configs, channelId) {
     }
     return undefined;
 }
-function mergeHealedChannelManualSettings(existing, brokerFallback, defaultManual) {
+function mergeHealedChannelManualSettings(existing, brokerFallback, defaultManual, accountBalance) {
     const base = channelManualSettingsComplete(brokerFallback) ? brokerFallback : defaultManual;
     const partial = existing && typeof existing === 'object' && !Array.isArray(existing)
         && !isMinimalSeedManualSettings(existing)
@@ -64,13 +68,14 @@ function mergeHealedChannelManualSettings(existing, brokerFallback, defaultManua
     return (0, normalizeManualSettings_1.normalizeManualSettingsForExecution)({
         ...base,
         ...partial,
-    });
+    }, { accountBalance });
 }
 function healChannelTradingConfigsMap(broker) {
     const configs = { ...normalizeChannelTradingConfigsMap(broker.channel_trading_configs) };
     const linkedIds = (0, brokerChannelFilter_1.normalizeSignalChannelIds)(broker.signal_channel_ids);
     const multiChannel = linkedIds.length > 1;
-    const brokerFallbackManual = (0, normalizeManualSettings_1.normalizeManualSettingsForExecution)(broker.manual_settings);
+    const balance = brokerAccountBalance(broker);
+    const brokerFallbackManual = (0, normalizeManualSettings_1.normalizeManualSettingsForExecution)(broker.manual_settings, { accountBalance: balance });
     const defaultManual = (0, normalizeManualSettings_1.normalizeManualSettingsForExecution)(buildDefaultChannelTradingConfig().manual_settings);
     const fallbackMode = (broker.copier_mode ?? 'manual');
     // broker.manual_settings mirrors the last channel saved in Account Configuration —
@@ -83,7 +88,7 @@ function healChannelTradingConfigsMap(broker) {
         if (storedPerChannelConfigComplete(configs, key))
             continue;
         const existing = resolveChannelConfigEntry(configs, key);
-        const manual = mergeHealedChannelManualSettings(existing?.manual_settings, healBrokerFallback, defaultManual);
+        const manual = mergeHealedChannelManualSettings(existing?.manual_settings, healBrokerFallback, defaultManual, balance);
         if (!channelManualSettingsComplete(manual)) {
             console.warn(`[channelTradingConfig] healed incomplete per-channel config for ${key}`
                 + ' — open Account Configuration, set lot + Single/Multi, Save');
@@ -176,7 +181,8 @@ function channelConfigReadyForExecution(broker, channelId) {
 }
 function resolveChannelTradingConfig(broker, channelId) {
     const fallbackMode = (broker.copier_mode ?? 'manual');
-    const fallbackManual = (0, normalizeManualSettings_1.normalizeManualSettingsForExecution)(broker.manual_settings);
+    const balance = brokerAccountBalance(broker);
+    const fallbackManual = (0, normalizeManualSettings_1.normalizeManualSettingsForExecution)(broker.manual_settings, { accountBalance: balance });
     const fallbackAi = (broker.ai_settings ?? {});
     if (!channelId) {
         return {
@@ -192,7 +198,7 @@ function resolveChannelTradingConfig(broker, channelId) {
     if (ready.ready && ready.source === 'per_channel' && channelConfig) {
         return {
             copier_mode: channelConfig.copier_mode ?? fallbackMode,
-            manual_settings: (0, normalizeManualSettings_1.normalizeManualSettingsForExecution)(channelConfig.manual_settings),
+            manual_settings: (0, normalizeManualSettings_1.normalizeManualSettingsForExecution)(channelConfig.manual_settings, { accountBalance: balance }),
             ai_settings: (channelConfig.ai_settings ?? fallbackAi),
             config_source: 'per_channel',
         };

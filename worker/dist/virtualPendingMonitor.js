@@ -17,6 +17,8 @@ const basketModFollowUp_1 = require("./basketModFollowUp");
 const channelActiveTradeParams_1 = require("./channelActiveTradeParams");
 const channelTradingConfig_1 = require("./channelTradingConfig");
 const rangePendingLadderSync_1 = require("./rangePendingLadderSync");
+const normalizeManualSettings_1 = require("./manualPlanning/normalizeManualSettings");
+const rangeBasketTpSync_1 = require("./rangeBasketTpSync");
 const monitorIdleGate_1 = require("./monitorIdleGate");
 const rangeLayerTillClose_1 = require("./rangeLayerTillClose");
 const copierPause_1 = require("./copierPause");
@@ -196,7 +198,7 @@ class VirtualPendingMonitor {
             .eq('status', 'pending')
             .not('expires_at', 'is', null)
             .lt('expires_at', nowIso)
-            .select('id,signal_id,user_id,broker_account_id,symbol,step_idx');
+            .select('id,signal_id,user_id,broker_account_id,metaapi_account_id,symbol,is_buy,step_idx');
         if (expired && expired.length) {
             for (const r of expired) {
                 if ((0, copierPause_1.isUserCopierPausedCached)(r.user_id))
@@ -212,6 +214,20 @@ class VirtualPendingMonitor {
                     });
                 }
                 catch { /* logging is best-effort */ }
+            }
+            const expiredBaskets = new Map();
+            for (const r of expired) {
+                const key = `${r.broker_account_id}|${r.signal_id}|${r.symbol}`;
+                if (!expiredBaskets.has(key))
+                    expiredBaskets.set(key, r);
+            }
+            for (const basketLeg of expiredBaskets.values()) {
+                try {
+                    await this.rebalanceRangeBasketTakeProfits(basketLeg);
+                }
+                catch (rebalErr) {
+                    console.warn(`[virtualPendingMonitor] TP rebalance after pending expiry signal=${basketLeg.signal_id}:`, rebalErr);
+                }
             }
         }
         // Pull the live pending queue.
@@ -708,6 +724,17 @@ class VirtualPendingMonitor {
                 catch (hookErr) {
                     console.warn(`[virtualPendingMonitor] SL/TP follow-up for range leg=${leg.id} signal=${leg.signal_id}:`, hookErr);
                 }
+                // Brief pause so the new trade row is visible before the basket-wide rebalance query.
+                await new Promise(r => setTimeout(r, 250));
+                try {
+                    await this.rebalanceRangeBasketTakeProfits(leg, { forceLayeringRebalance: true });
+                }
+                catch (rebalErr) {
+                    console.warn(`[virtualPendingMonitor] TP rebalance after range fill leg=${leg.id} signal=${leg.signal_id}:`, rebalErr);
+                }
+            }
+            else if (tradeRowId && Number.isFinite(ticketNum) && ticketNum > 0) {
+                console.warn(`[virtualPendingMonitor] skip TP rebalance leg=${leg.id} signal=${leg.signal_id}: fxsocket not configured`);
             }
             try {
                 await this.supabase.from('trade_execution_logs').insert({
@@ -816,6 +843,54 @@ class VirtualPendingMonitor {
         catch {
             // Logging failure is non-fatal.
         }
+    }
+    async rebalanceRangeBasketTakeProfits(leg, opts) {
+        if (!(0, fxsocketClient_1.hasFxsocketConfigured)())
+            return;
+        const { data: signalRow } = await this.supabase
+            .from('signals')
+            .select('parsed_data, telegram_channel_id, channel_id, created_at')
+            .eq('id', leg.signal_id)
+            .maybeSingle();
+        const channelId = (signalRow?.channel_id ?? signalRow?.telegram_channel_id);
+        const basketCreatedAt = (signalRow?.created_at ?? null);
+        const rawManual = await this.loadManualSettingsForLeg(leg.broker_account_id, channelId);
+        const manual = (0, normalizeManualSettings_1.normalizeManualSettingsForExecution)(rawManual);
+        if (manual.range_trading !== true)
+            return;
+        const api = (0, mtApiByAccount_1.apiForMetaapiAccount)(this.platformByUuid, leg.metaapi_account_id);
+        if (!api)
+            return;
+        const params = await this.getSymbolParams(leg.metaapi_account_id, leg.symbol);
+        const parsed = (signalRow?.parsed_data ?? {});
+        await (0, rangeBasketTpSync_1.syncRangeBasketTakeProfits)({
+            supabase: this.supabase,
+            api,
+            uuid: leg.metaapi_account_id,
+            symbol: leg.symbol,
+            direction: leg.is_buy ? 'buy' : 'sell',
+            baseLot: 0.01,
+            params: params
+                ? {
+                    digits: params.digits,
+                    point: params.point,
+                    minLot: params.minLot,
+                    lotStep: params.lotStep,
+                    contractSize: params.contractSize,
+                    stopsLevel: params.stopsLevel,
+                    freezeLevel: params.freezeLevel,
+                }
+                : null,
+            signalId: leg.signal_id,
+            userId: leg.user_id,
+            brokerAccountId: leg.broker_account_id,
+            manual,
+            parsed,
+            plan: null,
+            forceLayeringRebalance: opts?.forceLayeringRebalance,
+            channelId,
+            basketCreatedAt,
+        });
     }
     async loadManualSettingsForLeg(brokerAccountId, channelId) {
         const cacheKey = `${brokerAccountId}|${channelId ?? ''}`;
