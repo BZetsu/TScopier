@@ -7,6 +7,7 @@ import { whenRealtimeReady } from '../../lib/whenRealtimeReady'
 import { useAuth } from '../../context/AuthContext'
 import { useT } from '../../context/LocaleContext'
 import { interpolate } from '../../i18n/interpolate'
+import { isBrokerCopyEnabled } from '../../lib/brokerLink'
 import {
   brokersMatchingChannel,
   brokersNotMatchingChannel,
@@ -379,7 +380,7 @@ export function CopierEnginePage() {
   const handleConnectAllBrokersToChannel = async (channelId: string) => {
     if (!user) return
     const toLink = brokersNotMatchingChannel(
-      brokers.filter(b => b.is_active),
+      brokers.filter(b => isBrokerCopyEnabled(b)),
       channelId,
     )
     if (toLink.length === 0) return
@@ -842,7 +843,7 @@ function ChannelRow({
     () => brokersNotMatchingChannel(brokers, channel.id),
     [brokers, channel.id],
   )
-  const hasAnyBrokers = brokers.some(b => b.is_active)
+  const hasAnyBrokers = brokers.some(b => isBrokerCopyEnabled(b))
   const identityValid = hasValidTelegramChannelIdentity(channel)
 
   useEffect(() => {

@@ -18,7 +18,7 @@ import { Toggle } from '../../components/ui/Toggle'
 import { Button } from '../../components/ui/Button'
 import { InfoTooltip } from '../../components/ui/InfoTooltip'
 import { fxsocketBroker, type MtTrade } from '../../lib/fxsocketBroker'
-import { isFxsocketLinkedBroker } from '../../lib/brokerLink'
+import { isFxsocketLinkedBroker, countLinkedBrokerSessions } from '../../lib/brokerLink'
 import { useFxsocketStream } from '../../hooks/useFxsocketStream'
 import {
   rebuildPositionBookFromPayload,
@@ -1496,7 +1496,7 @@ export function DashboardPage() {
       }>,
     )
     const mtBrokerConnected = hasActiveMtBroker(brokerAccounts)
-    const activeBrokerCount = brokerAccounts.filter(account => account.is_active).length
+    const activeBrokerCount = countLinkedBrokerSessions(brokerAccounts)
     // Seed the balance map from the cached columns the worker / edge function
     // wrote on AccountSummary. This is what makes the page render instantly
     // without waiting for a live FxSocket roundtrip on every page load.
@@ -2128,7 +2128,7 @@ export function DashboardPage() {
     if (!user) return
     const snapshot = linkedAccounts
     const applyActiveStats = (accounts: BrokerAccount[]) => {
-      const activeCount = accounts.filter(a => a.is_active).length
+      const activeCount = countLinkedBrokerSessions(accounts)
       setStats(s => ({
         ...s,
         accounts: activeCount,

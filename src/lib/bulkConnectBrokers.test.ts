@@ -8,6 +8,7 @@ import {
   isDuplicateBrokerLogin,
   parseConnectAccountsCsv,
   parseCsvRows,
+  resolveActiveBrokerCount,
   validateConnectRow,
 } from './bulkConnectBrokers'
 
@@ -146,6 +147,17 @@ Demo,Broker-Demo,111,pass`
     assert.equal(result.linkedCount, 1)
     assert.equal(result.rows[0]?.status, 'linked')
     assert.equal(result.rows[0]?.account?.id, 'recovered')
+  })
+
+  it('resolveActiveBrokerCount counts session-linked brokers regardless of copy toggle', () => {
+    const sessionUuid = 'a1b2c3d4-e5f6-4789-a012-3456789abcde'
+    const brokers = [
+      broker({ id: 'a', fxsocket_account_id: sessionUuid, is_active: true }),
+      broker({ id: 'b', fxsocket_account_id: sessionUuid, is_active: false }),
+      broker({ id: 'c', is_active: true }),
+    ]
+    assert.equal(resolveActiveBrokerCount(brokers, 0), 2)
+    assert.equal(resolveActiveBrokerCount(brokers, 4), 4)
   })
 
   it('connectAccountsBatch skips duplicates within batch and existing brokers', async () => {

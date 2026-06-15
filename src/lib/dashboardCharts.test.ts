@@ -48,10 +48,12 @@ test('sumNetPnlFromTradeVolumeDays matches per-deal sum in window', () => {
   assert.equal(sumNetPnlFromTradeVolumeDays(buckets), 30)
 })
 
+const SESSION_UUID = 'a1b2c3d4-e5f6-4789-a012-3456789abcde'
+
 test('buildAccountGrowthSeries: flat balance line when no closed trades in window', () => {
   const now = new Date(2026, 4, 18, 12, 0, 0)
   const accounts = [
-    { id: 'acc-1', is_active: true, broker_name: 'Demo' },
+    { id: 'acc-1', is_active: true, broker_name: 'Demo', fxsocket_account_id: SESSION_UUID },
   ] as Parameters<typeof buildAccountGrowthSeries>[0]
   const balances = { 'acc-1': 5000 }
   const { data, series } = buildAccountGrowthSeries(accounts, [], balances, 7, now)
@@ -60,6 +62,16 @@ test('buildAccountGrowthSeries: flat balance line when no closed trades in windo
   for (const row of data) {
     assert.equal(row.acc_acc1, 5000)
   }
+})
+
+test('buildAccountGrowthSeries: includes copy-paused session-linked accounts', () => {
+  const now = new Date(2026, 4, 18, 12, 0, 0)
+  const accounts = [
+    { id: 'acc-1', is_active: false, broker_name: 'Paused', fxsocket_account_id: SESSION_UUID },
+  ] as Parameters<typeof buildAccountGrowthSeries>[0]
+  const balances = { 'acc-1': 2500 }
+  const { series } = buildAccountGrowthSeries(accounts, [], balances, 7, now)
+  assert.equal(series.length, 1)
 })
 
 test('buildAccountGrowthSeries: reconstructs per-account balance from closed deals', () => {
@@ -91,8 +103,8 @@ test('buildAccountGrowthSeries: reconstructs per-account balance from closed dea
     },
   ]
   const accounts = [
-    { id: 'acc-1', is_active: true, broker_name: 'A' },
-    { id: 'acc-2', is_active: true, broker_name: 'B' },
+    { id: 'acc-1', is_active: true, broker_name: 'A', fxsocket_account_id: SESSION_UUID },
+    { id: 'acc-2', is_active: true, broker_name: 'B', fxsocket_account_id: 'b2b2b2b2-b2b2-4789-a012-3456789abcde' },
   ] as Parameters<typeof buildAccountGrowthSeries>[0]
   const balances = { 'acc-1': 1030, 'acc-2': 1010 }
   const { data, series } = buildAccountGrowthSeries(accounts, trades, balances, 7, now)

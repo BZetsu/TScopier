@@ -1,5 +1,5 @@
 import type { BrokerAccount } from '../types/database'
-import { isFxsocketLinkedBroker } from './brokerLink'
+import { hasFxsocketBrokerSession } from './brokerLink'
 
 export function isBrokerSessionHealthy(
   account: Pick<BrokerAccount, 'fxsocket_status' | 'connection_status'>,
@@ -16,11 +16,10 @@ export function isBrokerSessionConnected(
 }
 
 export function brokerCanReconnect(
-  account: Pick<BrokerAccount, 'fxsocket_account_id' | 'fxsocket_status' | 'connection_status' | 'is_active'>,
+  account: Pick<BrokerAccount, 'fxsocket_account_id' | 'fxsocket_status' | 'connection_status'>,
 ): boolean {
-  if (!account.is_active) return false
   const status = account.fxsocket_status ?? account.connection_status
-  return isFxsocketLinkedBroker(account) && status === 'error'
+  return hasFxsocketBrokerSession(account) && status === 'error'
 }
 
 type BrokerConnectionStatusLabels = {

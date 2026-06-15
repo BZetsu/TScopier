@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
-import { resolveDisplayedTodayProfit, resolveDayStartBalance } from './dayStartBalance'
+import { resolveDisplayedTodayProfit, resolveDayStartBalance, aggregateTodaysProfitFromDayStart } from './dayStartBalance'
 
 test('resolveDisplayedTodayProfit: chart wins when balance delta is zeroed', () => {
   assert.equal(
@@ -62,4 +62,22 @@ test('resolveDayStartBalance: same-day resync uses last balance not current', ()
   })
   assert.equal(r.rolled, true)
   assert.equal(r.dayStartBalance, 41_000)
+})
+
+test('aggregateTodaysProfitFromDayStart includes copy-paused connected brokers', () => {
+  const profit = aggregateTodaysProfitFromDayStart(
+    [
+      {
+        id: 'paused',
+        is_active: false,
+        connection_status: 'connected',
+        day_start_balance: 1000,
+        day_start_balance_on: '2026-05-18',
+      },
+    ],
+    { paused: { balance: 1050 } },
+    '2026-05-18',
+    { connectedOnly: true },
+  )
+  assert.equal(profit, 50)
 })

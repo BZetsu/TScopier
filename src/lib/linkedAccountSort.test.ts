@@ -56,14 +56,39 @@ describe('sortLinkedAccounts', () => {
   it('sorts status with active connected accounts first when descending', () => {
     const rows = sortLinkedAccounts(
       [
-        account('paused', { is_active: false, connection_status: 'connected' }),
+        account('paused', {
+          is_active: false,
+          connection_status: 'connected',
+          fxsocket_account_id: 'a1b2c3d4-e5f6-4789-a012-3456789abcde',
+        }),
         account('off', { is_active: false, connection_status: 'disconnected' }),
-        account('active', { is_active: true, connection_status: 'connected' }),
+        account('active', {
+          is_active: true,
+          connection_status: 'connected',
+          fxsocket_account_id: 'b2b2b2b2-b2b2-4789-a012-3456789abcde',
+        }),
       ],
       'status',
       'desc',
       ctx(),
     )
     assert.deepEqual(rows.map(r => r.id), ['active', 'paused', 'off'])
+  })
+
+  it('paused connected session-linked accounts rank above disconnected', () => {
+    const rows = sortLinkedAccounts(
+      [
+        account('disconnected', { is_active: false, connection_status: 'disconnected' }),
+        account('paused-linked', {
+          is_active: false,
+          connection_status: 'connected',
+          fxsocket_account_id: 'a1b2c3d4-e5f6-4789-a012-3456789abcde',
+        }),
+      ],
+      'status',
+      'desc',
+      ctx(),
+    )
+    assert.deepEqual(rows.map(r => r.id), ['paused-linked', 'disconnected'])
   })
 })

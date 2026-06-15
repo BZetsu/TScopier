@@ -1,4 +1,5 @@
 import type { BrokerAccount } from '../types/database'
+import { countLinkedBrokerSessions } from './brokerLink'
 import {
   emptyConnectTradingAccountForm,
   type ConnectTradingAccountForm,
@@ -394,6 +395,6 @@ export function resolveActiveBrokerCount(
   brokers: readonly BrokerAccount[],
   usageCount: number,
 ): number {
-  const activeBrokers = brokers.filter(b => b.is_active !== false).length
+  const activeBrokers = countLinkedBrokerSessions(brokers)
   return Math.max(activeBrokers, usageCount)
 }

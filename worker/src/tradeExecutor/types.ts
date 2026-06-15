@@ -65,6 +65,7 @@ export type MergeOutcome =
 export interface BrokerRow {
   id: string
   user_id: string
+  /** Copy-trades toggle — when false, broker stays linked but does not receive new signals. */
   is_active: boolean
   platform: string
   connection_status?: string | null

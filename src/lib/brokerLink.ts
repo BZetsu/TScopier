@@ -5,10 +5,25 @@ export function isFxsocketSessionUuid(fxsocketAccountId: string | null | undefin
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v)
 }
 
-export function isFxsocketLinkedBroker(
+/** Broker has a linked FxSocket terminal (connected slot), regardless of copy toggle. */
+export function hasFxsocketBrokerSession(
+  account: Pick<{ fxsocket_account_id?: string | null }, 'fxsocket_account_id'>,
+): boolean {
+  return isFxsocketSessionUuid(account.fxsocket_account_id)
+}
+
+/** Broker is eligible to copy new signals (Copy trades toggle on). */
+export function isBrokerCopyEnabled(
   account: Pick<{ fxsocket_account_id?: string | null; is_active?: boolean }, 'fxsocket_account_id' | 'is_active'>,
 ): boolean {
-  return Boolean(account.is_active) && isFxsocketSessionUuid(account.fxsocket_account_id)
+  return account.is_active !== false && hasFxsocketBrokerSession(account)
+}
+
+/** Session-linked broker — use for metrics, streams, and connected counts. */
+export function isFxsocketLinkedBroker(
+  account: Pick<{ fxsocket_account_id?: string | null }, 'fxsocket_account_id'>,
+): boolean {
+  return hasFxsocketBrokerSession(account)
 }
 
 /** @deprecated Use isFxsocketSessionUuid */
@@ -20,4 +35,9 @@ export function isMtSessionUuid(metaapiAccountId: string | null | undefined): bo
 export function isLegacyBrokerLink(metaapiAccountId: string | null | undefined): boolean {
   const v = (metaapiAccountId ?? '').trim()
   return v.length > 0 && v.includes('|')
+}
+
+/** Count brokers using a plan slot (linked session, regardless of copy toggle). */
+export function countLinkedBrokerSessions(brokers: readonly { fxsocket_account_id?: string | null }[]): number {
+  return brokers.filter(hasFxsocketBrokerSession).length
 }

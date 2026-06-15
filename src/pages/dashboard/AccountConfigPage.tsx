@@ -27,7 +27,7 @@ import { useUserProfile } from '../../context/UserProfileContext'
 import { normalizeCopyLimitState, type CopyLimitState } from '../../lib/copyLimitTypes'
 import { ConfigTitle, ConfigToggleLabel, ConfigureInput, ConfigureSelect, InfoTooltip } from '../../components/ui/InfoTooltip'
 import { fxsocketBroker } from '../../lib/fxsocketBroker'
-import { isLegacyBrokerLink } from '../../lib/brokerLink'
+import { isLegacyBrokerLink, countLinkedBrokerSessions } from '../../lib/brokerLink'
 import { brokerCanReconnect, brokerConnectionBadgeVariant, brokerConnectionStatusLabel } from '../../lib/brokerReconnect'
 import {
   brokerConnectErrorLabelsFromI18n,
@@ -870,7 +870,7 @@ export function AccountConfigPage() {
   const brokerRangeEnd = Math.min(safeBrokerPage * BROKER_PAGE_SIZE, filteredBrokers.length)
 
   const linkedBrokerCount = useMemo(
-    () => brokers.filter(b => b.is_active).length,
+    () => countLinkedBrokerSessions(brokers),
     [brokers],
   )
   const connectedAccountCount = usageLoading ? linkedBrokerCount : usage.brokerAccounts

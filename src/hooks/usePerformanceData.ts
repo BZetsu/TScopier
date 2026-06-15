@@ -41,8 +41,7 @@ async function fetchPerformancePayload(userId: string): Promise<PerformanceCache
     supabase
       .from('broker_accounts')
       .select(BROKER_ACCOUNT_CLIENT_SELECT)
-      .eq('user_id', userId)
-      .eq('is_active', true),
+      .eq('user_id', userId),
     supabase
       .from('telegram_channels')
       .select('id, display_name, channel_username')
@@ -311,7 +310,7 @@ export function usePerformanceData(userId: string | undefined) {
     async (brokerId: string, opts?: { silent?: boolean }) => {
       if (!userId) return
       const account = payloadRef.current?.accounts.find(a => a.id === brokerId)
-      if (!account?.is_active || !isFxsocketLinkedBroker(account)) return
+      if (!account || !isFxsocketLinkedBroker(account)) return
 
       if (!opts?.silent) {
         setRefreshing(true)
