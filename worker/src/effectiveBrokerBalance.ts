@@ -17,11 +17,6 @@ function readFiniteNum(v: number | null | undefined): number | null {
   return Number(v)
 }
 
-/**
- * Cash + broker credit from AccountSummary.
- * MT5: equity = balance + credit + floating P/L — when credit is omitted from the API,
- * derive balance + credit as equity − profit.
- */
 export function effectiveAccountSummaryBalance(summary: {
   balance?: number | null
   credit?: number | null
@@ -46,4 +41,37 @@ export function effectiveAccountSummaryBalance(summary: {
   if (fromBalanceCredit != null) return fromBalanceCredit
   if (equity != null) return equity
   return null
+}
+
+function looksLikeMissingBrokerCredit(balance: number, equity: number): boolean {
+  return equity > balance + 0.005 && balance < equity * 0.2
+}
+
+export function resolveBrokerTotalBalance(
+  account: { last_balance?: number | null; last_equity?: number | null },
+  opts?: { openPnl?: number | null },
+): number | null {
+  const balance = readFiniteNum(account.last_balance)
+  const equity = readFiniteNum(account.last_equity)
+  const openPnl = opts?.openPnl
+
+  if (openPnl != null && Number.isFinite(openPnl)) {
+    const fromFloating = effectiveAccountSummaryBalance({
+      balance,
+      equity,
+      profit: openPnl,
+    })
+    if (fromFloating != null) return fromFloating
+  }
+
+  const effective = effectiveAccountSummaryBalance({ balance, equity })
+  if (
+    balance != null
+    && equity != null
+    && looksLikeMissingBrokerCredit(balance, equity)
+  ) {
+    return Math.round(equity * 100) / 100
+  }
+
+  return effective ?? balance ?? equity ?? null
 }

@@ -8,6 +8,7 @@ import {
 } from '../manualPlanner'
 import { virtualLegTriggerAllowed } from '../manualPlanning/signalEntryRange'
 import { brokerSessionId } from '../mtApiByAccount'
+import { resolveBrokerTotalBalance } from '../effectiveBrokerBalance'
 import type { OrderSendArgs } from '../fxsocketClient'
 import type { BrokerRow, Leg, ParsedSignal, SymbolCacheEntry, SymbolMappingResult } from './types'
 
@@ -94,7 +95,7 @@ export function computeLot(broker: BrokerRow, signal: ParsedSignal): number {
     const m = (broker.manual_settings ?? {}) as ManualSettings
     if (m.risk_mode === 'dynamic_balance_percent') {
       const pct = Number(m.dynamic_balance_percent ?? 1)
-      const bal = Number(broker.last_balance ?? broker.last_equity ?? 0)
+      const bal = resolveBrokerTotalBalance(broker) ?? 0
       if (bal > 0 && pct > 0) {
         return Math.max(0.01, +(bal * (pct / 100) / 1000).toFixed(2))
       }
@@ -111,7 +112,7 @@ export function computeLot(broker: BrokerRow, signal: ParsedSignal): number {
     fallback_lot?: number | null
   }
   const ref = Number(ai.reference_equity ?? 1000)
-  const bal = Number(broker.last_balance ?? broker.last_equity ?? ref)
+  const bal = resolveBrokerTotalBalance(broker) ?? ref
   const base = Number(ai.fallback_lot ?? broker.default_lot_size ?? 0.01)
   const scaled = ref > 0 ? base * (bal / ref) : base
   const min = Number(ai.min_lot ?? 0.01)

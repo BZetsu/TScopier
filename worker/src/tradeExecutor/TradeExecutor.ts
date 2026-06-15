@@ -28,6 +28,7 @@ import {
   type VirtualPendingLeg,
 } from '../manualPlanner'
 import { normalizeManualSettingsForExecution } from '../manualPlanning/normalizeManualSettings'
+import { resolveBrokerTotalBalance } from '../effectiveBrokerBalance'
 import { normalizeChannelTradingConfigsMap, withChannelTradingConfig, channelConfigReadyForExecution, resolveChannelTradingConfig, healChannelTradingConfigsMap } from '../channelTradingConfig'
 import {
   applyBrokerChannelTradingConfigRow,
@@ -350,7 +351,7 @@ export class TradeExecutor {
 
   private normalizeBrokerRow(row: BrokerRow): BrokerRow {
     const healedConfigs = healChannelTradingConfigsMap(row)
-    const accountBalance = Number(row.last_balance ?? row.last_equity ?? 0) || null
+    const accountBalance = resolveBrokerTotalBalance(row) || null
     const normalizedConfigs: Record<string, unknown> = {}
     for (const [channelId, cfg] of Object.entries(healedConfigs)) {
       normalizedConfigs[channelId] = {

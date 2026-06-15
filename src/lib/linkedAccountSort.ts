@@ -1,3 +1,4 @@
+import { resolveBrokerTotalBalance } from './effectiveBrokerBalance'
 import type { BrokerAccount } from '../types/database'
 import {
   inferBrokerLabelFromServer,
@@ -93,7 +94,7 @@ function openPnlValue(
   const fromSummary = summary?.open_pnl
   if (fromSummary != null && Number.isFinite(fromSummary)) return fromSummary
   if (!isBrokerSessionConnected(account)) return null
-  const balance = summary?.balance ?? account.last_balance
+  const balance = summary?.balance ?? resolveBrokerTotalBalance(account)
   const equity = summary?.equity ?? account.last_equity
   if (balance != null && equity != null && Number.isFinite(balance) && Number.isFinite(equity)) {
     return equity - balance
@@ -105,8 +106,11 @@ function balanceValue(
   account: BrokerAccount,
   summary: BrokerBalanceSnapshot | undefined,
 ): number | null {
-  const bal = summary?.balance ?? account.last_balance ?? summary?.equity ?? account.last_equity
-  return bal != null && Number.isFinite(Number(bal)) ? Number(bal) : null
+  if (summary?.balance != null && Number.isFinite(summary.balance)) {
+    return summary.balance
+  }
+  const openPnl = openPnlValue(account, summary)
+  return resolveBrokerTotalBalance(account, { openPnl })
 }
 
 function connectPnlValue(

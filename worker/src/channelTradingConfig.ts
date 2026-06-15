@@ -2,6 +2,7 @@ import { normalizeManualSettingsForExecution } from './manualPlanning/normalizeM
 import type { ManualSettings } from './manualPlanning/types'
 import { normalizeSignalChannelIds } from './brokerChannelFilter'
 import { normalizeCopyLimitState, type CopyLimitState } from './copyLimitTypes'
+import { resolveBrokerTotalBalance } from './effectiveBrokerBalance'
 
 export interface ChannelTradingConfig {
   copier_mode?: 'ai' | 'manual'
@@ -23,7 +24,7 @@ export type BrokerChannelTradingFields = {
 }
 
 function brokerAccountBalance(broker: BrokerChannelTradingFields): number | null {
-  const bal = Number(broker.last_balance ?? broker.last_equity ?? 0)
+  const bal = resolveBrokerTotalBalance(broker) ?? 0
   return bal > 0 ? bal : null
 }
 

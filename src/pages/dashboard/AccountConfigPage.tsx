@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, type ReactNode } from 'react'
+import { useEffect, useState, useMemo, useRef, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, useNavigate } from 'react-router-dom'
 import {
@@ -27,7 +27,8 @@ import { useUserProfile } from '../../context/UserProfileContext'
 import { normalizeCopyLimitState, type CopyLimitState } from '../../lib/copyLimitTypes'
 import { ConfigTitle, ConfigToggleLabel, ConfigureInput, ConfigureSelect, InfoTooltip } from '../../components/ui/InfoTooltip'
 import { fxsocketBroker } from '../../lib/fxsocketBroker'
-import { isLegacyBrokerLink, countLinkedBrokerSessions } from '../../lib/brokerLink'
+import { isLegacyBrokerLink, countLinkedBrokerSessions, hasFxsocketBrokerSession } from '../../lib/brokerLink'
+import { resolveBrokerTotalBalance } from '../../lib/effectiveBrokerBalance'
 import { brokerCanReconnect, brokerConnectionBadgeVariant, brokerConnectionStatusLabel } from '../../lib/brokerReconnect'
 import {
   brokerConnectErrorLabelsFromI18n,
@@ -658,7 +659,7 @@ function buildChannelConfigDraftFromBroker(
     broker.manual_settings && typeof broker.manual_settings === 'object'
       ? (broker.manual_settings as Record<string, unknown>)
       : buildDefaultChannelTradingConfig().manual_settings,
-    { accountBalance: broker.last_balance },
+    { accountBalance: resolveBrokerTotalBalance(broker) },
   )
   const defaultManual = normalizeManualSettings(buildDefaultChannelTradingConfig().manual_settings)
 
@@ -667,7 +668,7 @@ function buildChannelConfigDraftFromBroker(
     channelConfigs[id] = {
       mode: stored?.copier_mode === 'ai' ? 'ai' : stored?.copier_mode === 'manual' ? 'manual' : legacyMode,
       manualSettings: stored?.manual_settings && storedPerChannelConfigComplete(storedConfigs, id)
-        ? normalizeManualSettings(stored.manual_settings, { accountBalance: broker.last_balance })
+        ? normalizeManualSettings(stored.manual_settings, { accountBalance: resolveBrokerTotalBalance(broker) })
         : fallbackManual ?? defaultManual,
       channelFilters: keywordFiltersEnabled
         ? normalizeChannelFilters(persistedFilters[id] ?? DEFAULT_CHANNEL_FILTERS)
@@ -780,6 +781,7 @@ export function AccountConfigPage() {
     isReconnecting: isBrokerReconnecting,
     setReconnectErrorHandler,
   } = useBrokerAccounts()
+  const brokerBalanceRefreshStartedRef = useRef(false)
   const { openAddTradingAccount, pendingConfigureBrokerId, clearPendingConfigureBroker } = useAddTradingAccount()
   const {
     subscription,
@@ -805,10 +807,53 @@ export function AccountConfigPage() {
     }),
     [brokersNeedingReconnect, connectErrorLabels, bl.reconnectDroppedOne, bl.reconnectDroppedMany],
   )
+
+  // Re-sync balance (cash + broker credit) when cached last_balance is stale cash-only.
+  useEffect(() => {
+    if (brokersLoading || brokerBalanceRefreshStartedRef.current) return
+    const connected = brokers.filter(
+      b => hasFxsocketBrokerSession(b) && b.connection_status === 'connected',
+    )
+    if (connected.length === 0) return
+
+    const stale = connected.filter(b => {
+      const bal = b.last_balance
+      const eq = b.last_equity
+      if (bal == null || eq == null) return true
+      if (eq > bal + 0.01 && bal < eq * 0.2) return true
+      const syncedAt = b.last_synced_at ? Date.parse(b.last_synced_at) : 0
+      return !syncedAt || Date.now() - syncedAt > 5 * 60_000
+    })
+    if (stale.length === 0) return
+
+    brokerBalanceRefreshStartedRef.current = true
+    let cancelled = false
+    void (async () => {
+      await Promise.all(
+        stale.map(async b => {
+          if (cancelled) return
+          try {
+            const { account } = await fxsocketBroker.refreshSummary(b.id)
+            if (!cancelled) replaceBroker(account)
+          } catch {
+            /* best-effort */
+          }
+        }),
+      )
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [brokers, brokersLoading, replaceBroker])
+
   const [channelOptions, setChannelOptions] = useState<ChannelOption[]>(() =>
     userId ? (channelOptionsCache.get(userId) ?? []) : [],
   )
   const [configAccount, setConfigAccount] = useState<BrokerAccount | null>(null)
+  const configAccountTotalBalance = useMemo(
+    () => (configAccount ? resolveBrokerTotalBalance(configAccount) : null),
+    [configAccount?.last_balance, configAccount?.last_equity],
+  )
   const [channelCopyLimitState, setChannelCopyLimitState] = useState<Record<string, CopyLimitState>>({})
   const [configDraft, setConfigDraft] = useState<AccountConfigDraft>({
     channelIds: [],
@@ -982,9 +1027,9 @@ export function AccountConfigPage() {
     return hasBlockedMultiTradeSplit(
       draftForCheck.channelIds,
       draftForCheck.channelConfigs,
-      configAccount?.last_balance,
+      configAccountTotalBalance,
     )
-  }, [configDraft, fixedLotDraft, configAccount?.last_balance])
+  }, [configDraft, fixedLotDraft, configAccountTotalBalance])
 
   const selectedChannelEditedFromDefault = useMemo(() => {
     const id = configDraft.selectedChannelId
@@ -1018,9 +1063,9 @@ export function AccountConfigPage() {
     if (channelManualSettings.risk_mode !== 'dynamic_balance_percent') return null
     const lot = resolvePreviewManualLot({
       manualSettings: channelManualSettings,
-      accountBalance: configAccount?.last_balance,
+      accountBalance: configAccountTotalBalance,
     })
-    const balance = Number(configAccount?.last_balance ?? 0)
+    const balance = Number(configAccountTotalBalance ?? 0)
     const percent = Number(channelManualSettings.dynamic_balance_percent ?? 1) || 1
     const lotLabel = formatPreviewLotSize(lot)
     const hint = balance > 0
@@ -1035,7 +1080,7 @@ export function AccountConfigPage() {
     channelManualSettings.risk_mode,
     channelManualSettings.dynamic_balance_percent,
     channelManualSettings.fixed_lot,
-    configAccount?.last_balance,
+    configAccountTotalBalance,
     configAccount?.last_currency,
     cm.risk.dynamicBalanceLotSizeHint,
     cm.risk.dynamicBalanceLotSizeFallback,
@@ -1048,12 +1093,12 @@ export function AccountConfigPage() {
       : ms.fixed_lot
     return resolvePreviewManualLot({
       manualSettings: { ...ms, fixed_lot: fixedLot },
-      accountBalance: configAccount?.last_balance,
+      accountBalance: configAccountTotalBalance,
     })
   }, [
     channelManualSettings,
     fixedLotDraft,
-    configAccount?.last_balance,
+    configAccountTotalBalance,
   ])
 
   const multiTradeMinLegPercent = useMemo(
@@ -1847,7 +1892,7 @@ export function AccountConfigPage() {
       }
     }
 
-    if (hasBlockedMultiTradeSplit(channelIds, committedDraft.channelConfigs, configAccount.last_balance)) {
+    if (hasBlockedMultiTradeSplit(channelIds, committedDraft.channelConfigs, configAccountTotalBalance)) {
       setError(cm.risk.multiTradeSplitSaveBlocked)
       return
     }
@@ -1884,7 +1929,7 @@ export function AccountConfigPage() {
                 savePlanCtx.status,
                 (committedDraft.channelConfigs[id]?.manualSettings ?? DEFAULT_MANUAL_SETTINGS) as Record<string, unknown>,
               ) as ManualSettings,
-              { accountBalance: configAccount?.last_balance },
+              { accountBalance: configAccountTotalBalance },
             ),
           },
         ]),
@@ -1920,7 +1965,7 @@ export function AccountConfigPage() {
               allow_high_impact_news: fallbackManualConfig.manualSettings.news_trading_enabled === true,
             } as Record<string, unknown>,
           ) as ManualSettings,
-          { accountBalance: configAccount?.last_balance },
+          { accountBalance: configAccountTotalBalance },
         )
       : (configAccount.manual_settings ?? {})
     const { error: tableErr } = await upsertBrokerChannelTradingConfigs(
@@ -2314,7 +2359,7 @@ export function AccountConfigPage() {
                     />
                     <AccountDetailCell
                       label={bl.detailBalance}
-                      value={formatBrokerMoney(broker.last_balance, broker.last_currency)}
+                      value={formatBrokerMoney(resolveBrokerTotalBalance(broker), broker.last_currency)}
                       className="border-t border-l border-neutral-100 dark:border-neutral-800 lg:border-t-0"
                     />
                     <AccountDetailCell
@@ -2359,7 +2404,7 @@ export function AccountConfigPage() {
           setFixedLotDraft(null)
         }}
         manualSettings={channelManualSettings}
-        initialBalance={configAccount?.last_balance ?? null}
+        initialBalance={configAccountTotalBalance}
         currency={configAccount?.last_currency}
         pipQuote={livePipQuote}
         symbol={resolvedSingleSymbol}
@@ -2440,7 +2485,7 @@ export function AccountConfigPage() {
                   </span>
                   <span className="text-neutral-300 dark:text-neutral-600" aria-hidden>·</span>
                   <span>
-                    {bl.detailBalance}: {formatBrokerMoney(configAccount.last_balance, configAccount.last_currency)}
+                    {bl.detailBalance}: {formatBrokerMoney(resolveBrokerTotalBalance(configAccount), configAccount.last_currency)}
                   </span>
                   {selectedChannelOption ? (
                     <>

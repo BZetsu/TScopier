@@ -19,6 +19,7 @@ import { Button } from '../../components/ui/Button'
 import { InfoTooltip } from '../../components/ui/InfoTooltip'
 import { fxsocketBroker, type MtTrade } from '../../lib/fxsocketBroker'
 import { isFxsocketLinkedBroker, countLinkedBrokerSessions } from '../../lib/brokerLink'
+import { resolveBrokerTotalBalance } from '../../lib/effectiveBrokerBalance'
 import { useFxsocketStream } from '../../hooks/useFxsocketStream'
 import {
   rebuildPositionBookFromPayload,
@@ -1502,11 +1503,11 @@ export function DashboardPage() {
     // without waiting for a live FxSocket roundtrip on every page load.
     const balanceMap = Object.fromEntries(
       brokerAccounts.map((account) => {
-        // Best-effort Open PnL on first paint: MT reports equity = balance + floating P/L,
-        // so until the live /AccountSummary refresh lands we approximate from cached fields.
+        // Best-effort Open PnL on first paint: equity = total balance + floating P/L.
+        const totalBalance = resolveBrokerTotalBalance(account)
         const cachedOpenPnl =
-          account.last_equity != null && account.last_balance != null
-            ? account.last_equity - account.last_balance
+          account.last_equity != null && totalBalance != null
+            ? account.last_equity - totalBalance
             : undefined
         // Re-apply the last MT live values we've already fetched this session so
         // the stat doesn't bounce between throttled refresh windows.
@@ -1515,7 +1516,7 @@ export function DashboardPage() {
         return [
           account.id,
           {
-            balance: account.last_balance ?? undefined,
+            balance: totalBalance ?? undefined,
             equity: account.last_equity ?? undefined,
             currency: account.last_currency ?? undefined,
             broker: account.broker_name ?? undefined,
