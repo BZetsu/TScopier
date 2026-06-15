@@ -48,6 +48,8 @@ export interface ManualSettings {
   range_step_pips?: number
   range_distance_pips?: number
   range_layer_till_close?: boolean
+  /** When true with range_trading, cap layering depth from parsed entry zone instead of range_distance_pips. */
+  use_signal_entry_range?: boolean
   close_worse_entries?: boolean
   close_worse_entries_pips?: number
   /** @deprecated Replaced by `range_percent`. */
@@ -158,6 +160,9 @@ export interface PlannerRangeLayering {
   maxStepIdx: number
   reservedPendingLegs: number
   activePendingLegs: number
+  useSignalEntryRange?: boolean
+  signalRangeBoundary?: number | null
+  effectiveDistancePips?: number
 }
 
 export interface PlannerResult {

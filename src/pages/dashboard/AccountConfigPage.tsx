@@ -387,6 +387,7 @@ function normalizeManualSettings(
   const rangeStepPips = Math.max(0, readNumber('range_step_pips', DEFAULT_MANUAL_SETTINGS.range_step_pips ?? 3))
   const rangeDistancePips = Math.max(0, readNumber('range_distance_pips', DEFAULT_MANUAL_SETTINGS.range_distance_pips ?? 30))
   const rangeLayerTillClose = (j as Record<string, unknown>).range_layer_till_close === true
+  const useSignalEntryRange = (j as Record<string, unknown>).use_signal_entry_range === true
   const closeWorseEntries = (j as Record<string, unknown>).close_worse_entries === true
   const closeWorseEntriesPips = Math.max(0, readNumber('close_worse_entries_pips', DEFAULT_MANUAL_SETTINGS.close_worse_entries_pips ?? 30))
   const singleTpTargetRaw = String((j as Record<string, unknown>).single_tp_target ?? 'farthest').toLowerCase()
@@ -459,6 +460,7 @@ function normalizeManualSettings(
     range_step_pips: rangeStepPips,
     range_distance_pips: rangeDistancePips,
     range_layer_till_close: rangeLayerTillClose,
+    use_signal_entry_range: useSignalEntryRange,
     close_worse_entries: closeWorseEntries,
     close_worse_entries_pips: closeWorseEntriesPips,
     single_tp_target: singleTpTarget,
@@ -1073,6 +1075,9 @@ export function AccountConfigPage() {
           pending: String(reservedPending),
         })
       }
+    }
+    if (ms.range_trading && ms.use_signal_entry_range === true) {
+      text += cm.risk.previewSignalRangeFootnote
     }
     return text
   }, [channelManualSettings, cm.risk, multiTradePreview])
@@ -3084,9 +3089,14 @@ export function AccountConfigPage() {
                                         min={1}
                                         step={1}
                                         placeholder="100"
+                                        disabled={channelManualSettings.use_signal_entry_range === true}
                                         hint={
-                                          formatPipHint(Number(channelManualSettings.range_distance_pips ?? DEFAULT_MANUAL_SETTINGS.range_distance_pips) || 0)
-                                          ?? cm.risk.rangeDistanceFallback
+                                          channelManualSettings.use_signal_entry_range === true
+                                            ? cm.risk.useSignalRangeDistanceDisabledHint
+                                            : (
+                                              formatPipHint(Number(channelManualSettings.range_distance_pips ?? DEFAULT_MANUAL_SETTINGS.range_distance_pips) || 0)
+                                              ?? cm.risk.rangeDistanceFallback
+                                            )
                                         }
                                         value={String(channelManualSettings.range_distance_pips ?? DEFAULT_MANUAL_SETTINGS.range_distance_pips)}
                                         onChange={e => setManual({ range_distance_pips: Math.max(1, Number(e.target.value) || 1) })}
@@ -3098,6 +3108,14 @@ export function AccountConfigPage() {
                                       <Toggle
                                         checked={channelManualSettings.range_layer_till_close === true}
                                         onChange={v => setManual({ range_layer_till_close: v })}
+                                      />
+                                    </div>
+
+                                    <div className="flex items-center justify-between">
+                                      <ConfigToggleLabel info={cm.risk.useSignalRangeBody}>{cm.risk.useSignalRange}</ConfigToggleLabel>
+                                      <Toggle
+                                        checked={channelManualSettings.use_signal_entry_range === true}
+                                        onChange={v => setManual({ use_signal_entry_range: v })}
                                       />
                                     </div>
                                   </>

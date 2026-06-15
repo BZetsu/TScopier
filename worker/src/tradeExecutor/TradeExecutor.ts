@@ -162,6 +162,7 @@ import {
   parseSymbolToTradeList,
   roundLot,
   triggerPriceFor,
+  virtualPendingTriggerAllowed,
   type Leg,
 } from './helpers'
 import {
@@ -1532,11 +1533,18 @@ export class TradeExecutor {
     const safe = Math.max(Number(params?.stopsLevel) || 0, Number(params?.freezeLevel) || 0)
     const zoneHi = safe > 0 ? anchor + (safe + 2) * (params?.point ?? 0) : null
     const zoneLo = safe > 0 ? anchor - (safe + 2) * (params?.point ?? 0) : null
+    const signalRangeBoundary = plan.rangeLayering?.signalRangeBoundary ?? null
     const nowMs = Date.now()
     const insertRows: Record<string, unknown>[] = []
     for (const v of virtualPendings) {
       const triggerPrice = triggerPriceFor(v, anchor, digits)
-      if (zoneHi != null && zoneLo != null && triggerPrice > zoneLo && triggerPrice < zoneHi) {
+      if (!virtualPendingTriggerAllowed({
+        triggerPrice,
+        signalRangeBoundary,
+        isBuy: v.isBuy,
+        stopsZoneLo: zoneLo,
+        stopsZoneHi: zoneHi,
+      })) {
         continue
       }
       const expiresAt = v.expiryHours && v.expiryHours > 0

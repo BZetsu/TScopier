@@ -158,6 +158,10 @@ export interface ConfigureModalTranslations {
     rangeDistanceFallback: string
     layerTillClose: string
     layerTillCloseBody: string
+    useSignalRange: string
+    useSignalRangeBody: string
+    useSignalRangeDistanceDisabledHint: string
+    previewSignalRangeFootnote: string
     closeWorseEntries: string
     closeWorseBody: string
     closeWorsePips: string

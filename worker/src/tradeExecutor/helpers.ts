@@ -6,6 +6,7 @@ import {
   type PlannerResult,
   type VirtualPendingLeg,
 } from '../manualPlanner'
+import { virtualLegTriggerAllowed } from '../manualPlanning/signalEntryRange'
 import { brokerSessionId } from '../mtApiByAccount'
 import type { OrderSendArgs } from '../fxsocketClient'
 import type { BrokerRow, Leg, ParsedSignal, SymbolCacheEntry, SymbolMappingResult } from './types'
@@ -198,6 +199,29 @@ export function triggerPriceFor(leg: VirtualPendingLeg, anchor: number, digits: 
   const px = anchor + dir * leg.stepIdx * leg.stepPriceOffset
   const d = Math.max(0, Math.min(8, Math.floor(digits)))
   return Number(px.toFixed(d))
+}
+
+/** Whether a virtual range leg should be persisted (broker stops zone + signal entry zone). */
+export function virtualPendingTriggerAllowed(args: {
+  triggerPrice: number
+  signalRangeBoundary: number | null | undefined
+  isBuy: boolean
+  stopsZoneLo: number | null
+  stopsZoneHi: number | null
+}): boolean {
+  if (args.signalRangeBoundary != null
+    && !virtualLegTriggerAllowed({
+      trigger: args.triggerPrice,
+      boundary: args.signalRangeBoundary,
+      isBuy: args.isBuy,
+    })) {
+    return false
+  }
+  if (args.stopsZoneLo != null && args.stopsZoneHi != null
+    && args.triggerPrice > args.stopsZoneLo && args.triggerPrice < args.stopsZoneHi) {
+    return false
+  }
+  return true
 }
 
 export function brokerOrderOpenMs(o: Record<string, unknown>): number | null {

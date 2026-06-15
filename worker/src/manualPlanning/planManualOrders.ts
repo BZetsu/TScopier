@@ -152,6 +152,7 @@ export function planManualOrders(args: {
 
   return planMultiManualOrders({
     ...singleShared,
+    parsed,
     commentPrefix,
     expertId,
     slippage,

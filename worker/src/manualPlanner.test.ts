@@ -1213,3 +1213,87 @@ test('planManualOrders: predefined SL wins over rr_for_sl when both apply', () =
   const expectedSl = Number((entry - 50 * pip).toFixed(5))
   assert.equal(plan.orders[0]?.stoploss, expectedSl)
 })
+
+test('planManualOrders: use_signal_entry_range uses zone width for range layering', () => {
+  const manual: ManualSettings = {
+    ...baseManual,
+    range_step_pips: 3,
+    range_distance_pips: 30,
+    use_signal_entry_range: true,
+  }
+  const plan = planManualOrders({
+    parsed: {
+      ...baseParsed,
+      entry_zone_low: 4325,
+      entry_zone_high: 4335,
+    },
+    resolvedSymbol: 'XAUUSD',
+    baseOperation: 'Buy',
+    manual,
+    channelKeywords: null,
+    manualLot: 1.0,
+    ctx: baseCtx,
+    commentPrefix: 'TSCopier:abc',
+  })
+  const rl = plan.rangeLayering
+  assert.ok(rl)
+  assert.equal(rl.useSignalEntryRange, true)
+  assert.equal(rl.signalRangeBoundary, 4325)
+  assert.equal(rl.effectiveDistancePips, 100) // 10 price units / 0.1 pip
+  assert.equal(rl.activePendingLegs, 5) // 50% of 10 legs reserved; zone width allows all 5
+})
+
+test('planManualOrders: use_signal_entry_range without zone falls back to range_distance_pips', () => {
+  const manual: ManualSettings = {
+    ...baseManual,
+    range_step_pips: 3,
+    range_distance_pips: 30,
+    use_signal_entry_range: true,
+  }
+  const plan = planManualOrders({
+    parsed: { ...baseParsed, entry_price: 4330 },
+    resolvedSymbol: 'XAUUSD',
+    baseOperation: 'Buy',
+    manual,
+    channelKeywords: null,
+    manualLot: 1.0,
+    ctx: baseCtx,
+    commentPrefix: 'TSCopier:abc',
+  })
+  const rl = plan.rangeLayering
+  assert.ok(rl)
+  assert.equal(rl.effectiveDistancePips, 30)
+  assert.equal(rl.signalRangeBoundary, null)
+  assert.equal(rl.activePendingLegs, 5) // 30/3 = 10 max steps; 5 reserved pendings
+})
+
+test('planManualOrders: signal range buy virtual triggers do not go below zone low', () => {
+  const manual: ManualSettings = {
+    ...baseManual,
+    range_step_pips: 3,
+    range_distance_pips: 30,
+    use_signal_entry_range: true,
+  }
+  const plan = planManualOrders({
+    parsed: {
+      ...baseParsed,
+      entry_zone_low: 4325,
+      entry_zone_high: 4335,
+    },
+    resolvedSymbol: 'XAUUSD',
+    baseOperation: 'Buy',
+    manual,
+    channelKeywords: null,
+    manualLot: 1.0,
+    ctx: baseCtx,
+    commentPrefix: 'TSCopier:abc',
+  })
+  const anchor = 4330
+  const boundary = plan.rangeLayering?.signalRangeBoundary ?? null
+  const virtuals = plan.virtualPendings ?? []
+  assert.ok(virtuals.length > 0)
+  for (const v of virtuals) {
+    const trigger = triggerPriceFor(v, anchor, 2)
+    assert.ok(trigger >= (boundary ?? 0), `step ${v.stepIdx} trigger ${trigger} below ${boundary}`)
+  }
+})

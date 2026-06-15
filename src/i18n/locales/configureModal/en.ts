@@ -176,6 +176,13 @@ export const configureModalEn: ConfigureModalTranslations = {
     layerTillClose: 'Layer till close',
     layerTillCloseBody:
       'On: range pending orders keep opening until the whole trade is closed, even if price pulls back after a take-profit or close-worse-entries. Off: pending orders are cancelled after the first take-profit or when any order closes, so no deeper orders open on a reversal.',
+    useSignalRange: 'Use signal range',
+    useSignalRangeBody:
+      'When on, layering depth comes from the signal entry zone (e.g. ENTRY 4335 / 4325). Buy ladders stop at the zone low; sell ladders stop at the zone high. If the signal has no entry zone, Range distance (pips) is used instead.',
+    useSignalRangeDistanceDisabledHint:
+      'Depth is taken from the signal entry zone when the signal includes one.',
+    previewSignalRangeFootnote:
+      ' At execution, range depth is taken from the signal entry zone when present.',
     closeWorseEntries: 'Close worse entries',
     closeWorseBody:
       'When the price moves +X pips in your favor from the starting entry, the system automatically closes your immediate trades. When a "Close worse entries" message is enabled and triggered, the system closes any open trade that is within X pips of the current market price. Trades affected by "Close worse entries" do not have a Take-Profit (TP) set on the broker\'s side. Only the Stop-Loss (SL) is sent to the broker.',

@@ -2,6 +2,7 @@ import type { OrderSendArgs } from '../fxsocketClient'
 import type { PipQuote } from '../pipCalculator'
 import type {
   ManualSettings,
+  ParsedSignal,
   PlannerContext,
   PlannerResult,
   PlannerStrictEntry,
@@ -12,8 +13,10 @@ import type { PlanSingleManualOrdersArgs } from './planSingleManualOrders'
 import { planRangeSplit } from './rangeSplit'
 import { buildDistributedPerLegTakeProfits } from './tpBucketDistribution'
 import { resolveMultiTradeTargetUnits, multiTradeUnitsToLot } from './multiTradeLegUnits'
+import { resolveRangeDistancePips } from './signalEntryRange'
 
 export interface PlanMultiManualOrdersArgs {
+  parsed: ParsedSignal
   orderBase: Omit<OrderSendArgs, 'volume' | 'stoploss' | 'takeprofit' | 'expiration' | 'expirationType'>
   expirationFields: { expiration?: string; expirationType?: OrderSendArgs['expirationType'] }
   strictEntry: PlannerStrictEntry | undefined
@@ -42,6 +45,7 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
     strictEntry,
     manual,
     manualLot,
+    parsed,
     ctx,
     commentPrefix,
     expertId,
@@ -102,13 +106,14 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
   // broker pendings on that path, so range layering must stay enabled.
   const baseIsPendingSignal =
     orderBase.operation.includes('Limit') || orderBase.operation.includes('Stop')
+  const rangeDistance = resolveRangeDistancePips({ manual, parsed, pip, isBuy })
   const split = planRangeSplit({
     totalLegs,
     baseIsPendingSignal,
     rangeOn: manual.range_trading === true,
     rangePct: Math.max(0, Math.min(100, Number(manual.range_percent ?? 0))),
     stepPips: Math.max(0, Number(manual.range_step_pips ?? 0)),
-    distPips: Math.max(0, Number(manual.range_distance_pips ?? 0)),
+    distPips: rangeDistance.distPips,
     pip,
     minStepPriceUnits: minStopDist,
     hasSignalAnchor: entryAnchor != null,
@@ -290,6 +295,13 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
             maxStepIdx: split.maxStepIdx,
             reservedPendingLegs: reservedRangeLegs,
             activePendingLegs: effectiveRangeLegs,
+            ...(manual.use_signal_entry_range === true
+              ? {
+                  useSignalEntryRange: true,
+                  signalRangeBoundary: rangeDistance.boundary,
+                  effectiveDistancePips: rangeDistance.distPips,
+                }
+              : {}),
           },
         }
       : {}),

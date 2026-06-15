@@ -44,7 +44,7 @@ import {
   syncRangePendingLadderOnBasketRefresh,
 } from '../../rangePendingLadderSync'
 import { type TradeExecutorContext } from '../context'
-import { roundLot, triggerPriceFor } from '../helpers'
+import { roundLot, triggerPriceFor, virtualPendingTriggerAllowed } from '../helpers'
 import {
   type BrokerRow,
   type ParsedSignal,
@@ -563,7 +563,13 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
         tpLots: manual.tp_lots,
         buildInsertRow: (v) => {
           const triggerPrice = triggerPriceFor(v, insertAnchor, digits)
-          if (zoneHi != null && zoneLo != null && triggerPrice > zoneLo && triggerPrice < zoneHi) {
+          if (!virtualPendingTriggerAllowed({
+            triggerPrice,
+            signalRangeBoundary: plan.rangeLayering?.signalRangeBoundary ?? null,
+            isBuy: v.isBuy,
+            stopsZoneLo: zoneLo,
+            stopsZoneHi: zoneHi,
+          })) {
             return null
           }
           const expiresAt = v.expiryHours && v.expiryHours > 0

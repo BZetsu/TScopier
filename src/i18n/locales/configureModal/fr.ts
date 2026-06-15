@@ -176,6 +176,13 @@ export const configureModalFr: ConfigureModalTranslations = {
     layerTillClose: 'Échelonner jusqu’à la clôture',
     layerTillCloseBody:
       'Activé : les ordres en attente du range continuent tant que la position n’est pas entièrement fermée, même si le prix repart après un take-profit ou une fermeture CWE. Désactivé : les ordres en attente sont annulés au premier take-profit ou à la première fermeture, donc aucun ordre plus profond ne s’ouvre en cas de retournement.',
+    useSignalRange: 'Utiliser le range du signal',
+    useSignalRangeBody:
+      'Activé : la profondeur d’échelonnage vient de la zone d’entrée du signal (ex. ENTRY 4335 / 4325). Les achats s’arrêtent au bas de zone ; les ventes au haut. Sans zone d’entrée, la distance de range (pips) est utilisée.',
+    useSignalRangeDistanceDisabledHint:
+      'La profondeur est prise dans la zone d’entrée du signal lorsqu’elle est présente.',
+    previewSignalRangeFootnote:
+      ' À l’exécution, la profondeur du range est prise dans la zone d’entrée du signal lorsqu’elle est présente.',
     closeWorseEntries: 'Fermer les entrées défavorables',
     closeWorseBody:
       'Lorsque le prix évolue de +X pips en votre faveur depuis l’entrée initiale, le système ferme automatiquement vos opérations immédiates. Lorsqu’un message « Fermer les entrées défavorables » est activé et déclenché, le système ferme toute opération ouverte située à moins de X pips du cours du marché actuel. Les opérations concernées par « Fermer les entrées défavorables » n’ont pas de take-profit (TP) défini côté courtier. Seul le stop loss (SL) est envoyé au courtier.',

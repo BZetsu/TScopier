@@ -176,6 +176,13 @@ export const configureModalEs: ConfigureModalTranslations = {
     layerTillClose: 'Escalonar hasta el cierre',
     layerTillCloseBody:
       'Activado: las órdenes pendientes del rango siguen abriéndose hasta que toda la operación esté cerrada, aunque el precio retroceda tras un take-profit o un cierre CWE. Desactivado: las pendientes se cancelan en el primer take-profit o al cerrar cualquier orden, así que no se abren órdenes más profundas si el precio revierte.',
+    useSignalRange: 'Usar rango de la señal',
+    useSignalRangeBody:
+      'Activado: la profundidad del escalonado proviene de la zona de entrada de la señal (p. ej. ENTRY 4335 / 4325). Las compras se detienen en el mínimo de la zona; las ventas en el máximo. Sin zona de entrada, se usa la distancia de rango (pips).',
+    useSignalRangeDistanceDisabledHint:
+      'La profundidad se toma de la zona de entrada de la señal cuando está presente.',
+    previewSignalRangeFootnote:
+      ' En la ejecución, la profundidad del rango se toma de la zona de entrada de la señal cuando está presente.',
     closeWorseEntries: 'Cerrar entradas peores',
     closeWorseBody:
       'Cuando el precio avanza +X pips a su favor desde la entrada inicial, el sistema cierra automáticamente sus operaciones inmediatas. Cuando la opción « Cerrar entradas peores » está activada y se dispara, el sistema cierra cualquier operación abierta que esté a X pips del precio de mercado actual. Las operaciones afectadas por « Cerrar entradas peores » no tienen take-profit (TP) establecido en el broker. Solo se envía el stop loss (SL) al broker.',
