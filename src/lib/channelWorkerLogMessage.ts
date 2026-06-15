@@ -690,6 +690,12 @@ function buildChannelWorkerLogMessage(row: ChannelWorkerLogRow, cw: ChannelWorke
   if (logAction === 'virtual_pending_fired') {
     return interpolate(cw.virtualFired, { on: onInstrument(instr, cw) })
   }
+  if (logAction === 'basket_leg_modify' && payload.internal_rebalance === true) {
+    return ''
+  }
+  if (logAction === 'range_basket_tp_rebalance') {
+    return ''
+  }
   if (logAction === 'virtual_pending_cancelled') {
     return interpolate(cw.virtualCancelled, { on: onInstrument(instr, cw) })
   }

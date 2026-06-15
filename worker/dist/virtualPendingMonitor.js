@@ -725,7 +725,7 @@ class VirtualPendingMonitor {
                     console.warn(`[virtualPendingMonitor] SL/TP follow-up for range leg=${leg.id} signal=${leg.signal_id}:`, hookErr);
                 }
                 // Brief pause so the new trade row is visible before the basket-wide rebalance query.
-                await new Promise(r => setTimeout(r, 250));
+                await new Promise(r => setTimeout(r, 500));
                 try {
                     await this.rebalanceRangeBasketTakeProfits(leg, { forceLayeringRebalance: true });
                 }

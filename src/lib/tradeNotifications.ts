@@ -76,6 +76,7 @@ const SUPPRESSED_ACTIONS = new Set([
   'pipeline_parse_dispatch',
   'pipeline_parse',
   'dispatch_received',
+  'range_basket_tp_rebalance',
 ])
 
 const MODIFY_BATCH_MS = 5000

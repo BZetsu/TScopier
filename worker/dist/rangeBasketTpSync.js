@@ -356,28 +356,57 @@ async function syncRangeBasketTakeProfits(args) {
         tpCounts[key] = (tpCounts[key] ?? 0) + 1;
     }
     let modifyResult = null;
+    const internalRebalance = effectivePhase === 'layering_rebalance';
+    const runModifyPass = (trades, targets) => (0, basketSlTpReconcile_1.runBasketLegModifies)({
+        supabase: args.supabase,
+        api: args.api,
+        uuid: args.uuid,
+        symbol: args.symbol,
+        direction: args.direction,
+        baseLot: args.baseLot,
+        params: args.params,
+        signalId: args.signalId,
+        userId: args.userId,
+        brokerAccountId: args.brokerAccountId,
+        familyTrades: trades,
+        perLegTargets: targets,
+        signalTps: finalTps,
+        tpLots: args.manual.tp_lots,
+        nImmCwe: 0,
+        overrideTp: null,
+        strictEntryPrefetch: null,
+        openedTickets,
+        skipAlreadySynced: true,
+        internalRebalance,
+    });
     try {
-        modifyResult = await (0, basketSlTpReconcile_1.runBasketLegModifies)({
-            supabase: args.supabase,
-            api: args.api,
-            uuid: args.uuid,
-            symbol: args.symbol,
-            direction: args.direction,
-            baseLot: args.baseLot,
-            params: args.params,
-            signalId: args.signalId,
-            userId: args.userId,
-            brokerAccountId: args.brokerAccountId,
-            familyTrades,
-            perLegTargets,
-            signalTps: finalTps,
-            tpLots: args.manual.tp_lots,
-            nImmCwe: 0,
-            overrideTp: null,
-            strictEntryPrefetch: null,
-            openedTickets,
-            skipAlreadySynced: args.forceLayeringRebalance !== true,
-        });
+        modifyResult = await runModifyPass(familyTrades, perLegTargets);
+        if (args.forceLayeringRebalance && modifyResult.summary.failed > 0 && modifyResult.legErrors.length > 0) {
+            await new Promise(r => setTimeout(r, 750));
+            const failedIds = new Set(modifyResult.legErrors.map(e => e.trade_id));
+            const retryTrades = familyTrades.filter(t => failedIds.has(t.id));
+            const retryTargets = retryTrades.map(t => {
+                const idx = familyTrades.findIndex(f => f.id === t.id);
+                return perLegTargets[idx];
+            });
+            if (retryTrades.length > 0) {
+                const retryResult = await runModifyPass(retryTrades, retryTargets);
+                modifyResult = {
+                    summary: {
+                        openLegs: familyTrades.length,
+                        attempted: modifyResult.summary.attempted + retryResult.summary.attempted,
+                        modified: modifyResult.summary.modified + retryResult.summary.modified,
+                        failed: retryResult.summary.failed,
+                        skippedNoTicket: retryResult.summary.skippedNoTicket,
+                        skippedNotOnBroker: retryResult.summary.skippedNotOnBroker,
+                    },
+                    legErrors: retryResult.legErrors,
+                    modifiedTradeIds: [
+                        ...new Set([...modifyResult.modifiedTradeIds, ...retryResult.modifiedTradeIds]),
+                    ],
+                };
+            }
+        }
     }
     catch (err) {
         console.warn(`[rangeBasketTpSync] leg modify failed signal=${args.signalId} broker=${args.brokerAccountId}:`, err instanceof Error ? err.message : String(err));

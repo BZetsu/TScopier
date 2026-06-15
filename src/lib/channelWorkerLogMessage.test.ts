@@ -280,6 +280,27 @@ test('channelWorkerLogMessage: close worse entries success', () => {
   assert.match(message ?? '', /instant.*XAUUSD/i)
 })
 
+test('channelWorkerLogMessage: hides internal range rebalance leg modify failures', () => {
+  const message = channelWorkerLogMessage(
+    {
+      action: 'basket_leg_modify',
+      status: 'failed',
+      request_payload: {
+        internal_rebalance: true,
+        broker_symbol: 'XAUUSD',
+        target_tp: 4345,
+      },
+      response_payload: null,
+      error_message: 'Order rejected',
+      signals: {
+        parsed_data: { action: 'buy', symbol: 'XAUUSD' },
+      },
+    },
+    channelWorkerEn,
+  )
+  assert.equal(message, null)
+})
+
 test('channelWorkerLogMessage: still hides non-trade commentary', () => {
   const message = channelWorkerLogMessage(
     {

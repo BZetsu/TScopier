@@ -946,7 +946,7 @@ export class VirtualPendingMonitor {
           )
         }
         // Brief pause so the new trade row is visible before the basket-wide rebalance query.
-        await new Promise(r => setTimeout(r, 250))
+        await new Promise(r => setTimeout(r, 500))
         try {
           await this.rebalanceRangeBasketTakeProfits(leg, { forceLayeringRebalance: true })
         } catch (rebalErr) {

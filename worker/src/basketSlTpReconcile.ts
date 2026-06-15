@@ -258,6 +258,8 @@ export async function logBasketLegModify(
     targetTp: number
     errorMessage?: string | null
     skipReason?: string | null
+    /** Range-basket TP rebalance — suppress per-leg noise in channel worker UI. */
+    internalRebalance?: boolean
   },
 ): Promise<void> {
   try {
@@ -276,6 +278,7 @@ export async function logBasketLegModify(
         target_sl: args.targetSl,
         target_tp: args.targetTp,
         skip_reason: args.skipReason ?? null,
+        internal_rebalance: args.internalRebalance === true,
       } as unknown as Record<string, unknown>,
     })
   } catch { /* best-effort */ }
@@ -305,12 +308,14 @@ export async function runBasketLegModifies(args: {
   alreadyModified?: Set<string>
   /** Live Telegram mgmt: parallel leg modifies, no inter-leg gap. */
   liveMgmtFast?: boolean
+  /** Range-basket TP rebalance — tag per-leg logs for UI suppression. */
+  internalRebalance?: boolean
 }): Promise<RunBasketLegModifyResult> {
   const {
     supabase, api, uuid, symbol, direction, baseLot, params,
     signalId, userId, brokerAccountId, familyTrades, perLegTargets: rawTargets,
     signalTps, tpLots, nImmCwe, strictEntryPrefetch, openedTickets, skipAlreadySynced, alreadyModified,
-    liveMgmtFast,
+    liveMgmtFast, internalRebalance,
   } = args
 
   const parsedTps = (signalTps ?? []).filter(t => typeof t === 'number' && Number.isFinite(t) && t > 0)
@@ -337,7 +342,15 @@ export async function runBasketLegModifies(args: {
   const liveFast = liveMgmtFast === true
   const legModifyGapMs = liveFast
     ? 0
-    : Math.max(0, Number(process.env.BASKET_LEG_MODIFY_GAP_MS ?? 50) || 0)
+    : internalRebalance === true
+      ? Math.max(80, Number(process.env.RANGE_REBALANCE_LEG_GAP_MS ?? 120) || 120)
+      : Math.max(0, Number(process.env.BASKET_LEG_MODIFY_GAP_MS ?? 50) || 0)
+  const logLegModify = (
+    legArgs: Omit<Parameters<typeof logBasketLegModify>[1], 'internalRebalance'>,
+  ) => logBasketLegModify(supabase, {
+    ...legArgs,
+    internalRebalance: internalRebalance === true,
+  })
 
   type LegOutcome = {
     modifiedId?: string
@@ -387,7 +400,7 @@ export async function runBasketLegModifies(args: {
         error: 'ticket not in OpenedOrders',
         skip_reason: 'skipped_not_on_broker',
       }
-      await logBasketLegModify(supabase, {
+      await logLegModify({
         userId,
         signalId,
         brokerAccountId,
@@ -419,7 +432,7 @@ export async function runBasketLegModifies(args: {
           target_tp: target.takeprofit,
           error: msg,
         }
-        await logBasketLegModify(supabase, {
+        await logLegModify({
           userId,
           signalId,
           brokerAccountId,
@@ -458,7 +471,7 @@ export async function runBasketLegModifies(args: {
           error: 'wrong_side_sl',
           skip_reason: 'wrong_side_sl',
         }
-        await logBasketLegModify(supabase, {
+        await logLegModify({
           userId,
           signalId,
           brokerAccountId,
@@ -508,7 +521,7 @@ export async function runBasketLegModifies(args: {
         error: 'no_stops_to_apply',
         skip_reason: 'no_stops_to_apply',
       }
-      await logBasketLegModify(supabase, {
+      await logLegModify({
         userId,
         signalId,
         brokerAccountId,
@@ -538,7 +551,7 @@ export async function runBasketLegModifies(args: {
         tp: typeof newTp === 'number' && newTp > 0 ? newTp : null,
         cwe_close_price: typeof cweClose === 'number' && cweClose > 0 ? cweClose : null,
       }).eq('id', tr.id)
-      await logBasketLegModify(supabase, {
+      await logLegModify({
         userId,
         signalId,
         brokerAccountId,
@@ -554,7 +567,7 @@ export async function runBasketLegModifies(args: {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       if (isBenignOrderModifyError(msg)) {
-        await logBasketLegModify(supabase, {
+        await logLegModify({
           userId,
           signalId,
           brokerAccountId,
@@ -581,7 +594,7 @@ export async function runBasketLegModifies(args: {
       console.warn(
         `[basketSlTpReconcile] OrderModify failed leg=${i + 1}/${familyTrades.length} trade=${tr.id}: ${msg}`,
       )
-      await logBasketLegModify(supabase, {
+      await logLegModify({
         userId,
         signalId,
         brokerAccountId,
