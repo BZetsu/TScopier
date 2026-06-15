@@ -294,15 +294,16 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
     }
 
     let virtualPendings = (plan.virtualPendings ?? []).slice(0, 500)
-    const { data: activePendingRows } = await ctx.supabase
+    const { data: rangePendingRows } = await ctx.supabase
       .from('range_pending_legs')
-      .select('step_idx')
+      .select('step_idx, status')
       .eq('signal_id', anchorSignalId)
       .eq('broker_account_id', broker.id)
-      .in('status', ['pending', 'claimed'])
       .limit(500)
-    const activePendingCount = activePendingRows?.length ?? 0
-    const maxPendingStepIdx = Math.max(0, ...(activePendingRows ?? []).map(r => Number(r.step_idx) || 0))
+    const activePendingCount = (rangePendingRows ?? []).filter(
+      r => r.status === 'pending' || r.status === 'claimed',
+    ).length
+    const maxPendingStepIdx = Math.max(0, ...(rangePendingRows ?? []).map(r => Number(r.step_idx) || 0))
     const basketTotalPlannedLegs = Math.max(
       estimateBasketTotalPlannedLegs({
         openLegCount: familyTrades.length,

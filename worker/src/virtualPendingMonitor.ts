@@ -945,6 +945,8 @@ export class VirtualPendingMonitor {
             hookErr,
           )
         }
+        // Brief pause so the new trade row is visible before the basket-wide rebalance query.
+        await new Promise(r => setTimeout(r, 250))
         try {
           await this.rebalanceRangeBasketTakeProfits(leg, { forceLayeringRebalance: true })
         } catch (rebalErr) {
@@ -953,6 +955,10 @@ export class VirtualPendingMonitor {
             rebalErr,
           )
         }
+      } else if (tradeRowId && Number.isFinite(ticketNum) && ticketNum > 0) {
+        console.warn(
+          `[virtualPendingMonitor] skip TP rebalance leg=${leg.id} signal=${leg.signal_id}: fxsocket not configured`,
+        )
       }
       try {
         await this.supabase.from('trade_execution_logs').insert({

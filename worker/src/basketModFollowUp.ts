@@ -278,13 +278,14 @@ export async function tryApplyBasketFollowUpToNewFill(
 
   const { data: pendingRows } = await supabase
     .from('range_pending_legs')
-    .select('step_idx')
+    .select('step_idx, status')
     .eq('broker_account_id', args.brokerAccountId)
     .eq('signal_id', args.basketSignalId)
-    .in('status', ['pending', 'claimed'])
     .limit(500)
   const openCount = openLegs?.length ?? 0
-  const activePendingCount = pendingRows?.length ?? 0
+  const activePendingCount = (pendingRows ?? []).filter(
+    r => r.status === 'pending' || r.status === 'claimed',
+  ).length
   const maxPendingStepIdx = Math.max(0, ...(pendingRows ?? []).map(r => Number(r.step_idx) || 0))
   const totalPlannedLegs = estimateBasketTotalPlannedLegs({
     openLegCount: openCount,

@@ -49,6 +49,23 @@ function toEntryQualityLeg(tr: BasketOpenLeg): EntryQualityLeg {
   }
 }
 
+/** Infer instant leg count when the entry plan is unavailable (post-layer rebalance). */
+export function estimatePlanImmediateLegCount(args: {
+  openLegCount: number
+  activePendingCount: number
+  maxPendingStepIdx: number
+  planImmediateLegCount?: number
+}): number {
+  if (args.planImmediateLegCount != null && args.planImmediateLegCount > 0) {
+    return args.planImmediateLegCount
+  }
+  const firedPendingApprox = Math.max(0, args.maxPendingStepIdx - args.activePendingCount)
+  if (args.maxPendingStepIdx > 0) {
+    return Math.max(0, args.openLegCount - firedPendingApprox)
+  }
+  return args.openLegCount
+}
+
 export function resolveRangeBasketLegCounts(args: {
   openLegCount: number
   planImmediateLegCount: number
@@ -103,7 +120,12 @@ export function buildRangeBasketTpTargets(args: {
       .filter(tp => typeof tp === 'number' && Number.isFinite(tp) && tp > 0)
   }
 
-  const planImmediateLegCount = plan ? mergePlanImmediateOrders(plan).length : familyTrades.length
+  const planImmediateLegCount = estimatePlanImmediateLegCount({
+    openLegCount: familyTrades.length,
+    activePendingCount,
+    maxPendingStepIdx,
+    planImmediateLegCount: plan ? mergePlanImmediateOrders(plan).length : undefined,
+  })
   const { immediateLegCount, phase: detectedPhase } = resolveRangeBasketLegCounts({
     openLegCount: familyTrades.length,
     planImmediateLegCount,
@@ -139,11 +161,48 @@ async function loadPendingMeta(
     .select('step_idx, status')
     .eq('broker_account_id', brokerAccountId)
     .eq('signal_id', signalId)
-    .in('status', ['pending', 'claimed'])
     .limit(500)
-  const activePendingCount = pendingRows?.length ?? 0
-  const maxPendingStepIdx = Math.max(0, ...(pendingRows ?? []).map(r => Number(r.step_idx) || 0))
+  const rows = pendingRows ?? []
+  const activePendingCount = rows.filter(
+    r => r.status === 'pending' || r.status === 'claimed',
+  ).length
+  const maxPendingStepIdx = Math.max(0, ...rows.map(r => Number(r.step_idx) || 0))
   return { activePendingCount, maxPendingStepIdx }
+}
+
+async function logRangeBasketTpRebalance(
+  supabase: SupabaseClient,
+  args: {
+    userId: string
+    signalId: string
+    brokerAccountId: string
+    openLegs: number
+    phase: string
+    forceLayeringRebalance?: boolean
+    modified: number
+    attempted: number
+    failed: number
+    tpCounts: Record<string, number>
+  },
+): Promise<void> {
+  try {
+    await supabase.from('trade_execution_logs').insert({
+      user_id: args.userId,
+      signal_id: args.signalId,
+      broker_account_id: args.brokerAccountId,
+      action: 'range_basket_tp_rebalance',
+      status: args.modified > 0 || args.attempted === 0 ? 'success' : 'failed',
+      request_payload: {
+        open_legs: args.openLegs,
+        phase: args.phase,
+        force_layering_rebalance: args.forceLayeringRebalance === true,
+        modified: args.modified,
+        attempted: args.attempted,
+        failed: args.failed,
+        target_tp_counts: args.tpCounts,
+      } as unknown as Record<string, unknown>,
+    })
+  } catch { /* best-effort */ }
 }
 
 export async function patchPendingRangeLegTakeProfits(args: {
@@ -228,6 +287,20 @@ export async function syncRangeBasketTakeProfits(args: RangeBasketTpSyncArgs): P
   })
   if (!perLegTargets.length) return
 
+  const planImmediateLegCount = estimatePlanImmediateLegCount({
+    openLegCount: familyTrades.length,
+    activePendingCount,
+    maxPendingStepIdx,
+    planImmediateLegCount: args.plan ? mergePlanImmediateOrders(args.plan).length : undefined,
+  })
+  const { phase } = resolveRangeBasketLegCounts({
+    openLegCount: familyTrades.length,
+    planImmediateLegCount,
+    activePendingCount,
+    maxPendingStepIdx,
+  })
+  const effectivePhase = args.forceLayeringRebalance ? 'layering_rebalance' : phase
+
   let openedTickets: Set<number> | null = null
   try {
     openedTickets = await fetchOpenBrokerTickets(args.api, args.uuid)
@@ -236,12 +309,7 @@ export async function syncRangeBasketTakeProfits(args: RangeBasketTpSyncArgs): P
   const parsedTps = positiveTps(args.parsed)
   const isBuy = args.direction === 'buy'
 
-  if (args.forceLayeringRebalance || resolveRangeBasketLegCounts({
-    openLegCount: familyTrades.length,
-    planImmediateLegCount: args.plan ? mergePlanImmediateOrders(args.plan).length : familyTrades.length,
-    activePendingCount,
-    maxPendingStepIdx,
-  }).phase === 'layering_rebalance') {
+  if (effectivePhase === 'layering_rebalance') {
     try {
       await patchPendingRangeLegTakeProfits({
         supabase: args.supabase,
@@ -262,8 +330,15 @@ export async function syncRangeBasketTakeProfits(args: RangeBasketTpSyncArgs): P
     }
   }
 
+  const tpCounts: Record<string, number> = {}
+  for (const target of perLegTargets) {
+    const key = String(target.takeprofit)
+    tpCounts[key] = (tpCounts[key] ?? 0) + 1
+  }
+
+  let modifyResult: Awaited<ReturnType<typeof runBasketLegModifies>> | null = null
   try {
-    await runBasketLegModifies({
+    modifyResult = await runBasketLegModifies({
       supabase: args.supabase,
       api: args.api,
       uuid: args.uuid,
@@ -282,12 +357,33 @@ export async function syncRangeBasketTakeProfits(args: RangeBasketTpSyncArgs): P
       overrideTp: null,
       strictEntryPrefetch: null,
       openedTickets,
-      skipAlreadySynced: true,
+      skipAlreadySynced: args.forceLayeringRebalance !== true,
     })
   } catch (err) {
     console.warn(
       `[rangeBasketTpSync] leg modify failed signal=${args.signalId} broker=${args.brokerAccountId}:`,
       err instanceof Error ? err.message : String(err),
+    )
+  }
+
+  await logRangeBasketTpRebalance(args.supabase, {
+    userId: args.userId,
+    signalId: args.signalId,
+    brokerAccountId: args.brokerAccountId,
+    openLegs: familyTrades.length,
+    phase: effectivePhase,
+    forceLayeringRebalance: args.forceLayeringRebalance,
+    modified: modifyResult?.summary.modified ?? 0,
+    attempted: modifyResult?.summary.attempted ?? 0,
+    failed: modifyResult?.summary.failed ?? 0,
+    tpCounts,
+  })
+
+  if (modifyResult && modifyResult.summary.modified > 0) {
+    console.log(
+      `[rangeBasketTpSync] rebalanced signal=${args.signalId} broker=${args.brokerAccountId}`
+      + ` open=${familyTrades.length} phase=${effectivePhase}`
+      + ` modified=${modifyResult.summary.modified}/${modifyResult.summary.attempted}`,
     )
   }
 }

@@ -2,6 +2,7 @@ import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
 import {
   buildRangeBasketTpTargets,
+  estimatePlanImmediateLegCount,
   resolveRangeBasketLegCounts,
 } from './rangeBasketTpSync'
 import type { BasketOpenLeg } from './basketSlTpReconcile'
@@ -48,8 +49,30 @@ test('buildRangeBasketTpTargets: phase A uses instant pool only', () => {
     parsed: { sl: 4300, tp: [4530, 4510, 4490] },
     tpLots: TP_LOTS,
     direction: 'buy',
-    activePendingCount: 6,
-    maxPendingStepIdx: 6,
+    activePendingCount: 10,
+    maxPendingStepIdx: 10,
   })
   assert.equal(targets.filter(t => t.takeprofit === 4530).length, 2)
+})
+
+test('estimatePlanImmediateLegCount: infers instants after all range legs fired', () => {
+  assert.equal(
+    estimatePlanImmediateLegCount({
+      openLegCount: 27,
+      activePendingCount: 0,
+      maxPendingStepIdx: 10,
+    }),
+    17,
+  )
+})
+
+test('resolveRangeBasketLegCounts: layering phase when all pending fired', () => {
+  const counts = resolveRangeBasketLegCounts({
+    openLegCount: 27,
+    planImmediateLegCount: 17,
+    activePendingCount: 0,
+    maxPendingStepIdx: 10,
+  })
+  assert.equal(counts.firedRangeLegCount, 10)
+  assert.equal(counts.phase, 'layering_rebalance')
 })
