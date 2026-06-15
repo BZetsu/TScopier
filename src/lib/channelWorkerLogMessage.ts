@@ -29,6 +29,28 @@ function isNonTradeSkipReason(value: unknown): boolean {
   return normalized === 'non_trade_message'
 }
 
+function normalizeSkipReasonKey(value: unknown): string {
+  return String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_')
+}
+
+/** Expected setup gaps — hidden from the Channel Worker feed to reduce noise. */
+const SILENCED_CHANNEL_WORKER_SKIP_REASONS = new Set([
+  'no_broker_channel_match',
+])
+
+export function isSilencedChannelWorkerSkipReason(value: unknown): boolean {
+  return SILENCED_CHANNEL_WORKER_SKIP_REASONS.has(normalizeSkipReasonKey(value))
+}
+
+function resolveLogSkipReason(row: ChannelWorkerLogRow): string {
+  return String(
+    row.signals?.skip_reason ?? row.request_payload?.skip_reason ?? row.error_message ?? '',
+  ).trim()
+}
+
 export function resolveChannelNameFromLog(
   row: ChannelWorkerLogRow,
   channelDisplayNames?: Record<string, string>,
@@ -450,6 +472,7 @@ export function filterChannelWorkerDisplayLogs<T extends ChannelWorkerDisplayLog
   return sorted.filter(row => {
     const action = row.action.toLowerCase()
     if (CHANNEL_WORKER_HIDDEN_LOG_ACTIONS.has(action)) return false
+    if (isSilencedChannelWorkerSkipReason(resolveLogSkipReason(row))) return false
 
     if (action === 'merge_modify_summary' && row.status.toLowerCase() === 'success') {
       const payload = row.request_payload ?? {}
@@ -481,8 +504,9 @@ export function channelWorkerLogMessage(
   cw: ChannelWorkerTranslations,
   channelDisplayNames?: Record<string, string>,
 ): string | null {
-  const skipReason = row.signals?.skip_reason ?? row.request_payload?.skip_reason ?? row.error_message
+  const skipReason = resolveLogSkipReason(row)
   if (isNonTradeSkipReason(skipReason)) return null
+  if (isSilencedChannelWorkerSkipReason(skipReason)) return null
   const logAction = row.action.toLowerCase()
   const signalAction = signalActionFromLog(row)
   if (CHANNEL_WORKER_HIDDEN_LOG_ACTIONS.has(logAction)) return null

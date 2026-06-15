@@ -297,3 +297,45 @@ test('channelWorkerLogMessage: still hides non-trade commentary', () => {
   )
   assert.equal(message, null)
 })
+
+test('channelWorkerLogMessage: hides unlinked channel dispatch skips', () => {
+  const message = channelWorkerLogMessage(
+    {
+      action: 'dispatch_skipped',
+      status: 'skipped',
+      request_payload: { skip_reason: 'no_broker_channel_match', channel_id: 'ch-1' },
+      response_payload: null,
+      error_message: 'no_broker_channel_match',
+      signals: {
+        channel_id: 'ch-1',
+        parsed_data: { action: 'buy', symbol: 'XAUUSD' },
+        status: 'skipped',
+        skip_reason: 'no_broker_channel_match',
+      },
+    },
+    channelWorkerEn,
+    { 'ch-1': 'Gold Trader Mo' },
+  )
+  assert.equal(message, null)
+})
+
+test('channelWorkerLogMessage: hides unlinked channel mgmt-style skipped remap', () => {
+  const message = channelWorkerLogMessage(
+    {
+      action: 'mgmt_modify',
+      status: 'success',
+      request_payload: { symbol: 'XAUUSD' },
+      response_payload: null,
+      error_message: null,
+      signals: {
+        channel_id: 'ch-1',
+        parsed_data: { action: 'modify', symbol: 'XAUUSD' },
+        status: 'skipped',
+        skip_reason: 'no_broker_channel_match',
+      },
+    },
+    channelWorkerEn,
+    { 'ch-1': 'Gold Trader Mo' },
+  )
+  assert.equal(message, null)
+})
