@@ -141,6 +141,7 @@ export interface ConfigureModalTranslations {
     perLegSize: string
     totalOpenTrades: string
     previewFallbackSingle: string
+    multiTradeSplitSaveBlocked: string
     previewInstantPending: string
     previewFooter: string
     previewDynamicRisk: string

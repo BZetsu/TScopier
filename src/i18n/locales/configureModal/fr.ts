@@ -150,6 +150,8 @@ export const configureModalFr: ConfigureModalTranslations = {
     perLegSize: 'Taille par jambe (% du lot fixe)',
     totalOpenTrades: 'Total des positions ouvertes',
     previewFallbackSingle: '1 (répartition impossible avec aperçu min. 0,01 / pas 0,01)',
+    multiTradeSplitSaveBlocked:
+      'Enregistrement impossible : répartition impossible avec aperçu min. 0,01 / pas 0,01. Augmentez la taille de lot ou le % par jambe.',
     previewInstantPending: '{total} ({immediate} instantanées + {pending} pour échelonnement)',
     previewFooter:
       'Nombre de trades que le copieur prévoit d’ouvrir pour un signal. Basé sur votre taille de lot configurée et la taille par jambe. Le courtier peut en ouvrir moins si le marché n’a pas couvert la zone pendant l’échelonnement.',

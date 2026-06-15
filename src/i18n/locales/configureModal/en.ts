@@ -150,6 +150,8 @@ export const configureModalEn: ConfigureModalTranslations = {
     perLegSize: 'Per-leg size (% of fixed lot)',
     totalOpenTrades: 'Total Open Trades',
     previewFallbackSingle: '1 (split not possible at 0.01 min / 0.01 step preview)',
+    multiTradeSplitSaveBlocked:
+      'Cannot save: split not possible at 0.01 min / 0.01 step preview. Increase lot size or per-leg %.',
     previewInstantPending: '{total} ({immediate} instant + {pending} for layering)',
     previewFooter:
       'How many trades the copier plans to open for one signal. Based on your configured lot size and per-leg size. Your broker may open fewer if the market did not cover the zone during layering.',

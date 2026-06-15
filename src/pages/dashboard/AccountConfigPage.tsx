@@ -107,6 +107,7 @@ import { DEFAULT_MANUAL_SETTINGS, DEFAULT_MANUAL_TP_LOTS } from '../../lib/defau
 import { marketingUrl } from '../../lib/site'
 import {
   choosePersistedSelectedChannelId,
+  hasBlockedMultiTradeSplit,
   hasRequestedMultiTradeStyle,
   shouldBlockMultiTradeSave,
 } from './accountConfigPersistence'
@@ -958,6 +959,15 @@ export function AccountConfigPage() {
 
   const canSaveConfigureModal = configureModalDirty || selectedChannelNeedsPersistedSave
 
+  const multiTradeSplitSaveBlocked = useMemo(() => {
+    const draftForCheck = applyPendingConfigureDraftFields(configDraft, fixedLotDraft)
+    return hasBlockedMultiTradeSplit(
+      draftForCheck.channelIds,
+      draftForCheck.channelConfigs,
+      configAccount?.last_balance,
+    )
+  }, [configDraft, fixedLotDraft, configAccount?.last_balance])
+
   const selectedChannelEditedFromDefault = useMemo(() => {
     const id = configDraft.selectedChannelId
     if (!id || !configDraft.channelIds.includes(id)) return false
@@ -1781,6 +1791,11 @@ export function AccountConfigPage() {
         setError(cm.channelConfigSaveIncomplete)
         return
       }
+    }
+
+    if (hasBlockedMultiTradeSplit(channelIds, committedDraft.channelConfigs, configAccount.last_balance)) {
+      setError(cm.risk.multiTradeSplitSaveBlocked)
+      return
     }
 
     await refreshSubscription()
@@ -3831,7 +3846,8 @@ export function AccountConfigPage() {
                 <Button
                   className="w-full sm:w-auto min-h-[44px]"
                   loading={configSaving}
-                  disabled={!canSaveConfigureModal || presetSaving || channelConnecting}
+                  disabled={!canSaveConfigureModal || presetSaving || channelConnecting || multiTradeSplitSaveBlocked}
+                  title={multiTradeSplitSaveBlocked ? cm.risk.multiTradeSplitSaveBlocked : undefined}
                   onClick={() => void saveConfigureModal()}
                 >
                   {cm.save}

@@ -150,6 +150,8 @@ export const configureModalEs: ConfigureModalTranslations = {
     perLegSize: 'Tamaño por pierna (% del lote fijo)',
     totalOpenTrades: 'Total de operaciones abiertas',
     previewFallbackSingle: '1 (división imposible con vista previa mín. 0,01 / paso 0,01)',
+    multiTradeSplitSaveBlocked:
+      'No se puede guardar: división imposible con vista previa mín. 0,01 / paso 0,01. Aumente el tamaño del lote o el % por tramo.',
     previewInstantPending: '{total} ({immediate} instantáneas + {pending} para escalonado)',
     previewFooter:
       'Cuántas operaciones planea abrir el copiador por señal. Según su tamaño de lote configurado y el tamaño por pierna. El broker puede abrir menos si el mercado no cubrió la zona durante el escalonado.',
