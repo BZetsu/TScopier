@@ -1,3 +1,4 @@
+import { resolveMultiTradeTargetUnits, multiTradeUnitsToLot } from './multiTradeLegUnits'
 import { estimateMultiTradeOrderCount } from './estimateMultiTradeOrders'
 import { pipValueForLots, type PipQuote } from './pipCalculator'
 import type { ManualSettings, ManualTpLot } from '../types/database'
@@ -210,9 +211,13 @@ export function computeLegBreakdown(args: {
   }
 
   const manualUnits = toUnits(manualLot, lotStep)
-  const targetUnits = toUnits(manualLot * (legPct / 100), lotStep)
-  const minUnits = Math.max(1, Math.round(minLot / lotStep))
-  const perLegLot = unitsToLot(targetUnits, lotStep)
+  const { targetUnits, minUnits } = resolveMultiTradeTargetUnits({
+    manualLot,
+    legPercent: legPct,
+    minLot,
+    lotStep,
+  })
+  const perLegLot = multiTradeUnitsToLot(targetUnits, lotStep)
   const remainderUnits = manualUnits - preview.baseLegs * targetUnits
   const remainderLegLot =
     preview.extraRemainderLeg && remainderUnits >= minUnits

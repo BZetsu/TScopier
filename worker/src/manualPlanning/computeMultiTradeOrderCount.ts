@@ -1,6 +1,8 @@
 /** Hard cap aligned with planner + AccountConfig preview. */
 export const MULTI_TRADE_ABS_MAX_LEGS = 500
 
+import { resolveMultiTradeTargetUnits } from './multiTradeLegUnits'
+
 export interface ComputeMultiTradeOrderCountArgs {
   manualLot: number
   legPercent: number
@@ -22,14 +24,12 @@ export function computeMultiTradeOrderCount(args: ComputeMultiTradeOrderCountArg
   const manualLot = Number(args.manualLot)
   if (!Number.isFinite(manualLot) || manualLot <= 0) return 0
 
-  const FP_EPS = 1e-9
-  const toUnits = (v: number): number => {
-    if (!Number.isFinite(v) || v <= 0) return 0
-    return Math.max(0, Math.floor(v / lotStep + FP_EPS))
-  }
-  const manualUnits = toUnits(manualLot)
-  const targetUnits = toUnits(manualLot * (legPct / 100))
-  const minUnits = Math.max(1, Math.round(minLot / lotStep))
+  const { manualUnits, targetUnits, minUnits } = resolveMultiTradeTargetUnits({
+    manualLot,
+    legPercent: legPct,
+    minLot,
+    lotStep,
+  })
 
   if (targetUnits < minUnits || manualUnits < minUnits) return 1
 

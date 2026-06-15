@@ -54,3 +54,22 @@ test('resolvePreviewManualLot falls back to fixed lot when balance unknown', () 
     0.05,
   )
 })
+
+test('dynamic balance small total lot still splits multi-trade at broker min leg', () => {
+  const manualLot = resolvePreviewManualLot({
+    manualSettings: {
+      risk_mode: 'dynamic_balance_percent',
+      dynamic_balance_percent: 1,
+      fixed_lot: 0.01,
+    },
+    accountBalance: 10_000,
+  })
+  assert.equal(manualLot, 0.1)
+
+  const preview = estimateMultiTradeOrderCount({
+    manualLot,
+    legPercent: 5,
+  })
+  assert.equal(preview.fallsBackSingle, false)
+  assert.equal(preview.totalOrders, 10)
+})

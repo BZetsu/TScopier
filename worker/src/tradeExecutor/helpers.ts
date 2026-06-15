@@ -93,7 +93,7 @@ export function computeLot(broker: BrokerRow, signal: ParsedSignal): number {
     const m = (broker.manual_settings ?? {}) as ManualSettings
     if (m.risk_mode === 'dynamic_balance_percent') {
       const pct = Number(m.dynamic_balance_percent ?? 1)
-      const bal = Number(broker.last_balance ?? 0)
+      const bal = Number(broker.last_balance ?? broker.last_equity ?? 0)
       if (bal > 0 && pct > 0) {
         return Math.max(0.01, +(bal * (pct / 100) / 1000).toFixed(2))
       }

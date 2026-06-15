@@ -220,6 +220,29 @@ test('planMultiManualOrders: default sends one order per granular leg (no consol
   assert.ok(Math.abs(totalVolume - 1.0) < 1e-9)
 })
 
+test('planMultiManualOrders: clamps per-leg to min lot when dynamic total is small', () => {
+  const manual: ManualSettings = {
+    ...baseManual,
+    multi_trade_leg_percent: 5,
+    range_trading: false,
+    tp_lots: [{ label: 'TP1', lot: 0, percent: 100, enabled: true }],
+  }
+  const plan = planManualOrders({
+    parsed: { ...baseParsed, tp: [1900] },
+    resolvedSymbol: 'XAUUSD',
+    baseOperation: 'Buy',
+    manual,
+    channelKeywords: null,
+    manualLot: 0.1,
+    ctx: baseCtx,
+    commentPrefix: 'TSCopier:abc',
+  })
+  assert.equal(plan.orders.length, 10)
+  const totalVolume = plan.orders.reduce((s, o) => s + Number(o.volume), 0)
+  assert.ok(Math.abs(totalVolume - 0.1) < 1e-9)
+  assert.ok(plan.orders.every(o => Number(o.volume) === 0.01))
+})
+
 test('planMultiManualOrders: explicit cap consolidates legs, volume + TP split preserved', () => {
   const manual: ManualSettings = {
     ...baseManual,

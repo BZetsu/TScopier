@@ -1,3 +1,5 @@
+import { resolveMultiTradeTargetUnits } from './multiTradeLegUnits'
+
 /** Hard cap aligned with worker/src/manualPlanner.ts */
 export const MULTI_TRADE_ABS_MAX_LEGS = 500
 
@@ -57,20 +59,18 @@ export function estimateMultiTradeOrderCount(args: {
     return { baseLegs: 0, extraRemainderLeg: false, totalOrders: 0, fallsBackSingle: true }
   }
 
-  const FP_EPS = 1e-9
-  const toUnits = (v: number): number => {
-    if (!Number.isFinite(v) || v <= 0) return 0
-    return Math.max(0, Math.floor(v / lotStep + FP_EPS))
-  }
-  const manualUnits = toUnits(manualLot)
-  const targetUnits = toUnits(manualLot * (legPct / 100))
-  const minUnits = Math.max(1, Math.round(minLot / lotStep))
+  const { manualUnits, targetUnits, minUnits } = resolveMultiTradeTargetUnits({
+    manualLot,
+    legPercent: legPct,
+    minLot,
+    lotStep,
+  })
 
-  if (targetUnits < minUnits) {
-    return { baseLegs: 1, extraRemainderLeg: false, totalOrders: 1, fallsBackSingle: true }
-  }
   if (manualUnits < minUnits) {
     return { baseLegs: 0, extraRemainderLeg: false, totalOrders: 0, fallsBackSingle: true }
+  }
+  if (targetUnits < minUnits) {
+    return { baseLegs: 1, extraRemainderLeg: false, totalOrders: 1, fallsBackSingle: true }
   }
 
   const baseLegs = Math.max(1, Math.min(MULTI_TRADE_ABS_MAX_LEGS, Math.floor(manualUnits / targetUnits)))
