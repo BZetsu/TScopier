@@ -26,6 +26,30 @@ describe('resolveLinkedAccountType', () => {
     assert.equal(resolveLinkedAccountType('0', 'ICMarkets-Demo'), 'Demo')
     assert.equal(resolveLinkedAccountType('2', 'ICMarkets-Live'), 'Live')
     assert.equal(resolveLinkedAccountType(undefined, 'Pepperstone-Live'), 'Live')
+    assert.equal(resolveLinkedAccountTypeForBroker({
+      label: 'LIFE USD 257',
+      broker_name: 'IC Markets',
+      broker_server: 'ICMarketsSC-MT5-4',
+      metaapi_account_id: 'x',
+    }), 'Live')
+  })
+
+  it('infers Live from retail broker name when server is missing', () => {
+    assert.equal(resolveLinkedAccountTypeForBroker({
+      label: 'real_account_LJEP',
+      broker_name: 'IC Markets',
+      broker_server: null,
+      metaapi_account_id: 'x',
+    }), 'Live')
+  })
+
+  it('detects prop firms from account label', () => {
+    assert.equal(resolveLinkedAccountTypeForBroker({
+      label: '4xHub GTMO LJEP',
+      broker_name: '4x Hub International',
+      broker_server: '4xHub-Server',
+      metaapi_account_id: 'x',
+    }), 'PropFirm')
   })
 
   it('returns undefined when nothing matches', () => {

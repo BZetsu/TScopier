@@ -1444,10 +1444,7 @@ export function AccountConfigPage() {
   }
 
   const syncBrokerAccountTypes = async (list: BrokerAccount[]) => {
-    const linked = list.filter(b => {
-      const uuid = (b.metaapi_account_id ?? '').trim()
-      return uuid.length > 0 && !uuid.includes('|')
-    })
+    const linked = list.filter(b => hasFxsocketBrokerSession(b))
     if (linked.length === 0) return
 
     const fromServer: Record<string, LinkedAccountType> = {}
