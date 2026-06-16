@@ -17,6 +17,7 @@ import {
   selectImmediateLegsForCweInstruction,
 } from '../closeWorseEntries'
 import { tryBrokerFallbackClose } from '../managementBrokerClose'
+import { extractOpenOrderFromBrokerRaw } from '../managementBrokerClose'
 import { closeWithVerification } from '../managementClose'
 import { applyMgmtModifyToBasketGroups } from '../managementModifyBaskets'
 import type { MgmtExecOptions, MgmtExecResult } from '../mgmtExecOptions'
@@ -35,6 +36,7 @@ import { resolveLatestOpenBasketAnchor } from '../multiTradeMerge'
 import { isBenignOrderModifyError } from '../orderModifyBenign'
 import { mgmtLegConcurrency, parallelMap } from '../parallelPool'
 import { patchActiveRangePendingLegStops } from '../rangePendingLadderSync'
+import { symbolsCompatibleForBasket } from '../basketModFollowUp'
 import { type TradeExecutorContext } from './context'
 import { isMtUuid } from './helpers'
 import {
@@ -50,6 +52,66 @@ function mgmtCloseOpts(liveMgmtFast: boolean) {
 
 function emptyMgmtResult(parallelism = 1): MgmtExecResult {
   return { legsTotal: 0, legsParallelism: parallelism }
+}
+
+function isUnknownTicketError(message: string): boolean {
+  const m = message.toLowerCase()
+  return (
+    /\bunknown ticket\b/.test(m)
+    || /\binvalid ticket\b/.test(m)
+    || /\bticket\b.*\bnot found\b/.test(m)
+    || /\bno such order\b/.test(m)
+  )
+}
+
+function isRetryableBreakevenError(message: string): boolean {
+  const m = message.toLowerCase()
+  return (
+    /order rejected/.test(m)
+    || /trade context busy/.test(m)
+    || /off quotes/.test(m)
+    || /requote/.test(m)
+    || /timeout/.test(m)
+    || /temporary/.test(m)
+    || /too many requests/.test(m)
+  )
+}
+
+async function sleepMs(ms: number): Promise<void> {
+  await new Promise(resolve => setTimeout(resolve, ms))
+}
+
+function resolveReconciledTicketForTrade(
+  trade: MgmtTradeRow,
+  rawOrders: unknown[],
+): number | null {
+  const expectedDir = String(trade.direction).toLowerCase() === 'buy'
+  const expectedLots = Number.isFinite(Number(trade.lot_size)) ? Number(trade.lot_size) : null
+  const expectedEntry = Number.isFinite(Number(trade.entry_price)) ? Number(trade.entry_price) : null
+  const candidates = rawOrders
+    .map(extractOpenOrderFromBrokerRaw)
+    .filter((o): o is NonNullable<ReturnType<typeof extractOpenOrderFromBrokerRaw>> => o != null)
+    .filter(o => symbolsCompatibleForBasket(trade.symbol, o.symbol))
+    .filter(o => o.isBuy === expectedDir)
+
+  if (!candidates.length) return null
+
+  candidates.sort((a, b) => {
+    const lotScoreA = expectedLots == null ? 0 : Math.abs((a.lots || 0) - expectedLots)
+    const lotScoreB = expectedLots == null ? 0 : Math.abs((b.lots || 0) - expectedLots)
+    if (lotScoreA !== lotScoreB) return lotScoreA - lotScoreB
+    const entryA = Number.isFinite(Number((a as { openPrice?: number }).openPrice))
+      ? Number((a as { openPrice?: number }).openPrice)
+      : null
+    const entryB = Number.isFinite(Number((b as { openPrice?: number }).openPrice))
+      ? Number((b as { openPrice?: number }).openPrice)
+      : null
+    const entryScoreA = expectedEntry != null && entryA != null ? Math.abs(entryA - expectedEntry) : 0
+    const entryScoreB = expectedEntry != null && entryB != null ? Math.abs(entryB - expectedEntry) : 0
+    if (entryScoreA !== entryScoreB) return entryScoreA - entryScoreB
+    return b.ticket - a.ticket
+  })
+  return candidates[0]?.ticket ?? null
 }
 
 export async function logSendSkipped(ctx: TradeExecutorContext, 
@@ -454,6 +516,8 @@ export async function applyManagement(
       const uuid = broker.metaapi_account_id!
       const ticket = Number(trade.metaapi_order_id)
       if (!Number.isFinite(ticket) || ticket <= 0) return
+      let effectiveTicket = ticket
+      let ticketReconciledFrom: number | null = null
       const api = ctx.apiFor(broker)
       if (!api) return
 
@@ -534,12 +598,50 @@ export async function applyManagement(
             } catch {
               /* quote optional; use computed breakeven SL */
             }
-            await api.orderModify(uuid, {
-              ticket,
-              stoploss: beSl,
-              takeprofit: modifyTp,
-            })
-            await ctx.supabase.from('trades').update({ sl: beSl }).eq('id', trade.id)
+            const maxAttempts = 3
+            let lastErr: unknown = null
+            for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+              try {
+                await api.orderModify(uuid, {
+                  ticket: effectiveTicket,
+                  stoploss: beSl,
+                  takeprofit: modifyTp,
+                })
+                lastErr = null
+                break
+              } catch (err) {
+                lastErr = err
+                const msg = err instanceof Error ? err.message : String(err)
+                if (isUnknownTicketError(msg)) {
+                  const rawOrders = await api.openedOrders(uuid)
+                  const reconciledTicket = resolveReconciledTicketForTrade(trade, rawOrders ?? [])
+                  if (reconciledTicket && reconciledTicket !== effectiveTicket) {
+                    ticketReconciledFrom = effectiveTicket
+                    effectiveTicket = reconciledTicket
+                    continue
+                  }
+                }
+                if (attempt < maxAttempts && isRetryableBreakevenError(msg)) {
+                  await sleepMs(250 * attempt)
+                  const rawOrders = await api.openedOrders(uuid).catch(() => [])
+                  const reconciledTicket = resolveReconciledTicketForTrade(trade, rawOrders ?? [])
+                  if (reconciledTicket && reconciledTicket !== effectiveTicket) {
+                    ticketReconciledFrom = effectiveTicket
+                    effectiveTicket = reconciledTicket
+                  }
+                  continue
+                }
+                break
+              }
+            }
+            if (lastErr) throw lastErr
+            await ctx.supabase
+              .from('trades')
+              .update({
+                sl: beSl,
+                ...(ticketReconciledFrom != null ? { metaapi_order_id: String(effectiveTicket) } : {}),
+              })
+              .eq('id', trade.id)
           }
         } else if (action === 'modify') {
           return
@@ -551,11 +653,12 @@ export async function applyManagement(
           action: `mgmt_${action}`,
           status: 'success',
           request_payload: {
-            ticket,
+            ticket: effectiveTicket,
             action,
             basket_anchor_signal_id: trade.signal_id,
             mgmt_scope: replyScoped ? 'reply_basket' : 'channel',
             mgmt_parent_signal_id: signal.parent_signal_id,
+            ticket_reconciled_from: ticketReconciledFrom ?? undefined,
           },
         })
       } catch (err) {
@@ -568,12 +671,13 @@ export async function applyManagement(
           action: `mgmt_${action}`,
           status: benign ? 'success' : 'failed',
           request_payload: {
-            ticket,
+            ticket: effectiveTicket,
             action,
             basket_anchor_signal_id: trade.signal_id,
             mgmt_scope: replyScoped ? 'reply_basket' : 'channel',
             mgmt_parent_signal_id: signal.parent_signal_id,
             already_synced: benign || undefined,
+            ticket_reconciled_from: ticketReconciledFrom ?? undefined,
           },
           error_message: benign ? null : msg,
         })
