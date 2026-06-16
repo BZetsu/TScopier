@@ -21,6 +21,8 @@ export const landingPl: LandingTranslations = {
     headlineAccent: '100% na autopilocie.',
     subheadline:
       'Skopiuj instrukcje handlowe od dostawców sygnału do swojego MT4/MT5 w mniej niż 2 minuty - bez skomplikowanych konfiguracji, bez EA i bez VPS. ',
+    propFirmNote:
+      'Działa z każdą firmą prop—niezależnie od tego, czy zezwala na handel EA, czy nie.',
     primaryCta: 'Wypróbuj za darmo',
     secondaryCta: 'Zaloguj się',
     imageAlt:
@@ -122,7 +124,7 @@ export const landingPl: LandingTranslations = {
         metric: '100%',
         metricVariant: 'teal',
         description:
-          'W 100% oparty na chmurze – bez pobierania, bez EA i bez VPS. Zarządzaj wszystkim za pomocą przeglądarki.',
+          'W 100% oparty na chmurze – bez pobierania, bez EA na terminalu i bez VPS. Działa z każdą firmą prop, z EA dozwolonym lub nie.',
         layout: 'short',
         icon: 'cloud',
       },
@@ -508,6 +510,11 @@ export const landingPl: LandingTranslations = {
           'Nie. TScopier jest w pełni oparty na chmurze. Logujesz się w przeglądarce, łączysz Telegram i swoje konta MT4/MT5, a kopiarka działa w oparciu o naszą infrastrukturę — ​​nie trzeba instalować programu Expert Advisor ani VPS, który wymaga konserwacji.',
       },
       {
+        question: 'Czy TScopier działa z firmami prop, które zakazują EA?',
+        answer:
+          'Tak. TScopier działa w całości w chmurze — nic nie jest instalowane na terminalu MT4/MT5. Możesz kopiować sygnały na dowolne konto firmy prop, niezależnie od tego, czy zezwala na Expert Advisors.',
+      },
+      {
         question: 'Jakie platformy obsługuje TScopier?',
         answer:
           'Podłączasz kanały sygnałowe Telegram i kopiujesz je na konta MetaTrader 4 i MetaTrader 5. Połącz wielu brokerów i kieruj każdy kanał do wybranych kont.',
@@ -576,6 +583,13 @@ export const landingPl: LandingTranslations = {
         aspect: 'Infrastruktura',
         other: 'VPS wymagany, aby EA działały przez całą dobę.',
         tscopier: '100% chmura – bez pobierania, bez EA i bez obsługi VPS.',
+      },
+      {
+        aspect: 'Firmy prop',
+        other:
+          'Wiele kopiarek opiera się na Expert Advisors na terminalu — zablokowane, gdy firma prop zabrania handlu automatycznego.',
+        tscopier:
+          'Wykonanie w chmurze bez EA na koncie — działa ze wszystkimi firmami prop, z EA dozwolonym lub nie.',
       },
       {
         aspect: 'Wykonanie',

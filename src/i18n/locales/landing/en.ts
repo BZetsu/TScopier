@@ -21,6 +21,8 @@ export const landingEn: LandingTranslations = {
     headlineAccent: '100% On Autopilot.',
     subheadline:
       'Copy trading instructions from your signal providers to your MT4/MT5 in under 2 minutes - No complicated setups, no EA, and no VPS required. ',
+    propFirmNote:
+      'Works with every prop firm—whether they allow EA trading or not.',
     primaryCta: 'Try it for free',
     secondaryCta: 'Sign in',
     imageAlt:
@@ -122,7 +124,7 @@ export const landingEn: LandingTranslations = {
         metric: '100%',
         metricVariant: 'teal',
         description:
-          '100% cloud based—no download, no EA, and no VPS needed. Manage everything from your browser.',
+          '100% cloud based—no download, no EA on your terminal, and no VPS needed. Works with every prop firm, EA-allowed or not.',
         layout: 'short',
         icon: 'cloud',
       },
@@ -508,6 +510,11 @@ export const landingEn: LandingTranslations = {
           'No. TScopier is fully cloud-based. You sign in from your browser, connect Telegram and your MT4/MT5 accounts, and the copier runs on our infrastructure—no Expert Advisor installs or VPS to maintain.',
       },
       {
+        question: 'Does TScopier work with prop firms that ban EAs?',
+        answer:
+          'Yes. TScopier runs entirely in the cloud—nothing is installed on your MT4/MT5 terminal. You can copy signals to any prop firm account whether their rules allow Expert Advisors or not.',
+      },
+      {
         question: 'Which platforms does TScopier support?',
         answer:
           'You connect Telegram signal channels and copy to MetaTrader 4 and MetaTrader 5 accounts. Link multiple brokers and route each channel to the accounts you choose.',
@@ -576,6 +583,13 @@ export const landingEn: LandingTranslations = {
         aspect: 'Infrastructure',
         other: 'VPS required to keep EAs running around the clock.',
         tscopier: '100% cloud—no download, no EA, and no VPS to maintain.',
+      },
+      {
+        aspect: 'Prop firms',
+        other:
+          'Many copiers rely on Expert Advisors on your terminal—blocked when a prop firm forbids automated trading.',
+        tscopier:
+          'Cloud execution with no EA on your account—works with all prop firms, whether they allow EAs or not.',
       },
       {
         aspect: 'Execution',

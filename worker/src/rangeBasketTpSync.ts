@@ -55,7 +55,7 @@ export type RangeBasketTpSyncArgs = {
   signalId: string
   userId: string
   brokerAccountId: string
-  manual: { range_trading?: boolean; tp_lots?: ManualTpLot[] | null }
+  manual: { range_trading?: boolean; tp_lots?: ManualTpLot[] | null; order_comments_enabled?: boolean }
   parsed: RangeBasketParsedSlice
   plan?: PlannerResult | null
   /** When set, force phase B (range layer just fired). */
@@ -543,6 +543,7 @@ export async function syncRangeBasketTakeProfits(args: RangeBasketTpSyncArgs): P
     openedTickets,
     skipAlreadySynced: true,
     internalRebalance,
+    orderCommentsEnabled: args.manual.order_comments_enabled !== false,
   })
 
   try {

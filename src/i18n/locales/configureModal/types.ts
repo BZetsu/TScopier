@@ -334,6 +334,8 @@ export interface ConfigureModalTranslations {
     ruleTriggerTpHit: string
     ruleBreakevenOffset: string
     ruleBreakevenTrue: string
+    orderCommentsTitle: string
+    orderCommentsSubtitle: string
   }
   filters: {
     timeTitle: string

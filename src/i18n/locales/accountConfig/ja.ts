@@ -106,6 +106,7 @@ export const accountConfigJa: AccountConfigBundleTranslations = {
       detailAccountType: '口座タイプ',
       accountTypeDemo: 'デモ',
       accountTypeLive: 'ライブ',
+      accountTypePropFirm: 'プロップファーム',
       detailServer: 'サーバー',
       detailSignalChannels: 'シグナルチャンネル',
       detailBalance: '残高',

@@ -39,7 +39,7 @@ import {
   shouldPreferParsedStopsOnEntry,
   type ChannelActiveTradeParams,
 } from '../channelActiveTradeParams'
-import { buildTscopierCommentPrefix } from '../tradeComment'
+import { resolveTscopierCommentPrefix } from '../tradeComment'
 import type { TradeExecutorContext } from './context'
 import { applySymbolMapping, computeLot, isExcluded, isMt5OnlyOperation, roundLot, triggerPriceFor, type Leg } from './helpers'
 import type {
@@ -58,7 +58,7 @@ export type EntryArgs = {
   broker: BrokerRow
   channelKeywords: ChannelKeywords | null
   pipelineT0?: number
-  sendOpts?: { liveEntryFast?: boolean; liveMgmtFast?: boolean; commentPrefix?: string; sameSignalRefresh?: boolean }
+  sendOpts?: { liveEntryFast?: boolean; liveMgmtFast?: boolean; commentSlug?: string | null; commentPrefix?: string; sameSignalRefresh?: boolean }
 }
 
 export type PreparedEntry = {
@@ -172,7 +172,6 @@ export async function prepareEntryExecution(
     return { ok: false, outcome: {} }
   }
   const liveEntryFast = sendOpts?.liveEntryFast === true
-  const commentPrefix = sendOpts?.commentPrefix ?? buildTscopierCommentPrefix(signal.id)
   if (!hasFxsocketConfigured()) return { ok: false, outcome: {} }
   const api = ctx.apiFor(broker)
   if (!api) return { ok: false, outcome: {} }
@@ -210,6 +209,12 @@ export async function prepareEntryExecution(
 
   const isManual = (broker.copier_mode ?? 'ai') === 'manual'
   const manual = (broker.manual_settings ?? {}) as ManualSettings
+  const commentPrefix = resolveTscopierCommentPrefix(
+    signal.id,
+    sendOpts?.commentSlug,
+    manual,
+    sendOpts?.commentPrefix,
+  )
 
   const needsQuotePrefetch =
     isManual

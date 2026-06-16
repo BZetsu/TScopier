@@ -331,7 +331,10 @@ export const configureModalNl: ConfigureModalTranslations = {
     ruleTriggerMoney: 'na ${value} ongerealiseerde winst',
     ruleBreakevenOffset: 'invoer + {offset} pip(en)',
     ruleBreakevenTrue: 'binnenkomst (echt break-even)',
-    ruleTriggerTpHit: 'wanneer TP{index} is bereikt'
+    ruleTriggerTpHit: 'wanneer TP{index} is bereikt',
+    orderCommentsTitle: 'Ordercommentaren',
+    orderCommentsSubtitle:
+      'Uit: TSCopier laat het commentaarveld van de broker leeg voor trades die het opent of vernieuwt.',
   },
   filters: {
     timeTitle: 'Tijdfilter',

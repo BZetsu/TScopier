@@ -373,6 +373,9 @@ export const configureModalFr: ConfigureModalTranslations = {
     ruleBreakevenOffset: 'entrée + {offset} pip(s)',
     ruleBreakevenTrue: 'entrée (break-even réel)',
     ruleTriggerTpHit: 'lorsque TP{index} est atteint',
+    orderCommentsTitle: 'Commentaires d\'ordre',
+    orderCommentsSubtitle:
+      'Désactivé : TSCopier laisse le champ commentaire du courtier vide pour les trades qu\'il ouvre ou actualise.',
   },
   filters: {
     timeTitle: 'Filtre horaire',

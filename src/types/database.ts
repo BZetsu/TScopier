@@ -314,6 +314,8 @@ export interface ManualSettings {
   trailing_step_pips?: number
   trailing_distance_pips?: number
   close_on_opposite_signal?: boolean
+  /** When false, OrderSend comments are left empty (Management tab). Default on. */
+  order_comments_enabled?: boolean
   time_filter_enabled?: boolean
   trade_start_time?: string
   trade_end_time?: string

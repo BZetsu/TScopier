@@ -21,6 +21,8 @@ export const landingNl: LandingTranslations = {
     headlineAccent: '100% op autopilot.',
     subheadline:
       'Kopieer trading-instructies van je signaalaanbieders naar MT4/MT5 in minder dan 2 minuten - geen complexe setup, geen EA en geen VPS nodig.',
+    propFirmNote:
+      'Werkt met elke prop firm—of ze nu EA-handel toestaan of niet.',
     primaryCta: 'Probeer gratis',
     secondaryCta: 'Inloggen',
     imageAlt:
@@ -121,7 +123,7 @@ export const landingNl: LandingTranslations = {
         metric: '100%',
         metricVariant: 'teal',
         description:
-          'Volledig cloud-based: geen download, geen EA en geen VPS. Beheer alles vanuit je browser.',
+          'Volledig cloud-based: geen download, geen EA op je terminal en geen VPS. Werkt met elke prop firm, met of zonder EA-toestemming.',
         layout: 'short',
         icon: 'cloud',
       },
@@ -507,6 +509,11 @@ export const landingNl: LandingTranslations = {
           'Nee. TScopier draait volledig in de cloud. Je logt in via je browser, koppelt Telegram en je MT4/MT5-accounts en de copier draait op onze infrastructuur - geen Expert Advisor-installatie of VPS-beheer nodig.',
       },
       {
+        question: 'Werkt TScopier met prop firms die EA\'s verbieden?',
+        answer:
+          'Ja. TScopier draait volledig in de cloud—er wordt niets op je MT4/MT5-terminal geïnstalleerd. Je kunt signalen kopiëren naar elk prop-firmaccount, of ze nu Expert Advisors toestaan of niet.',
+      },
+      {
         question: 'Welke platforms ondersteunt TScopier?',
         answer:
           'Je koppelt Telegram-signaalkanalen en kopieert naar MetaTrader 4- en MetaTrader 5-accounts. Koppel meerdere brokers en routeer elk kanaal naar de accounts die jij kiest.',
@@ -575,6 +582,13 @@ export const landingNl: LandingTranslations = {
         aspect: 'Infrastructuur',
         other: 'VPS vereist om EA\'s 24/7 draaiend te houden.',
         tscopier: '100% cloud - geen download, geen EA en geen VPS om te onderhouden.',
+      },
+      {
+        aspect: 'Prop firms',
+        other:
+          'Veel copiers vertrouwen op Expert Advisors op je terminal—geblokkeerd wanneer een prop firm geautomatiseerd handelen verbiedt.',
+        tscopier:
+          'Cloud-uitvoering zonder EA op je account—werkt met alle prop firms, met of zonder EA-toestemming.',
       },
       {
         aspect: 'Uitvoering',

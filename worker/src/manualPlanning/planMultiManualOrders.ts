@@ -9,6 +9,7 @@ import type {
   VirtualPendingLeg,
 } from './types'
 import { clampPendingExpiryHours } from './manualSettings'
+import { appendOrderCommentSuffix } from '../tradeComment'
 import type { PlanSingleManualOrdersArgs } from './planSingleManualOrders'
 import { planRangeSplit } from './rangeSplit'
 import { buildDistributedPerLegTakeProfits, buildEntryQualityTakeProfitMap } from './tpBucketDistribution'
@@ -244,7 +245,7 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
           stoploss: roundPrice(finalSl),
           takeprofit: roundPrice(g.tpPrice),
           ...expirationFields,
-          comment: `${commentPrefix}:tp${orderNo}`,
+          comment: appendOrderCommentSuffix(commentPrefix, `:tp${orderNo}`),
         })
       }
     }
@@ -266,7 +267,7 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
         stoploss: finalSl,
         takeprofit: tpPrice,
         slippage: slippage ?? 20,
-        comment: `${commentPrefix}:rg${stepIdx}.tp`,
+        comment: appendOrderCommentSuffix(commentPrefix, `:rg${stepIdx}.tp`),
         expertID: expertId,
         expiryHours,
       })
@@ -285,7 +286,7 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
         stoploss: roundPrice(finalSl),
         takeprofit: roundPrice(tpPrice),
         ...expirationFields,
-        comment: `${commentPrefix}:tp.rem`,
+        comment: appendOrderCommentSuffix(commentPrefix, ':tp.rem'),
       })
     }
   }

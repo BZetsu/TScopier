@@ -198,6 +198,7 @@ export interface DashboardLinkedAccountsTranslations {
   statusRecovering: string
   accountTypeLive: string
   accountTypeDemo: string
+  accountTypePropFirm: string
   statusDisconnected: string
   reconnect: string
 }
@@ -397,6 +398,7 @@ export interface AccountConfigBrokerListTranslations {
   detailAccountType: string
   accountTypeDemo: string
   accountTypeLive: string
+  accountTypePropFirm: string
   detailServer: string
   detailSignalChannels: string
   detailBalance: string

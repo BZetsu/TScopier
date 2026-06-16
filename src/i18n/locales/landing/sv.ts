@@ -21,6 +21,8 @@ export const landingSv: LandingTranslations = {
     headlineAccent: '100 % på autopilot.',
     subheadline:
       'Kopiera handelsinstruktioner från dina signalleverantörer till din MT4/MT5 på mindre än 2 minuter - Inga komplicerade inställningar, ingen EA och ingen VPS krävs.',
+    propFirmNote:
+      'Fungerar med alla prop firms—oavsett om de tillåter EA-handel eller inte.',
     primaryCta: 'Prova det gratis',
     secondaryCta: 'Logga in',
     imageAlt:
@@ -122,7 +124,7 @@ export const landingSv: LandingTranslations = {
         metric: '100 %',
         metricVariant: 'teal',
         description:
-          '100 % molnbaserad – ingen nedladdning, ingen EA och ingen VPS behövs. Hantera allt från din webbläsare.',
+          '100 % molnbaserad – ingen nedladdning, ingen EA på din terminal och ingen VPS. Fungerar med alla prop firms, med eller utan tillåten EA.',
         layout: 'short',
         icon: 'cloud',
       },
@@ -508,6 +510,11 @@ export const landingSv: LandingTranslations = {
           'Nej. TScopier är helt molnbaserad. Du loggar in från din webbläsare, ansluter Telegram och dina MT4/MT5 konton, och kopiatorn körs på vår infrastruktur – ingen expertrådgivare eller VPS att underhålla.',
       },
       {
+        question: 'Fungerar TScopier med prop firms som förbjuder EA?',
+        answer:
+          'Ja. TScopier körs helt i molnet—inget installeras på din MT4/MT5-terminal. Du kan kopiera signaler till vilket prop-firmkonto som helst, oavsett om de tillåter Expert Advisors eller inte.',
+      },
+      {
         question: 'Vilka plattformar stöder TScopier?',
         answer:
           'Du ansluter Telegram signalkanaler och kopierar till MetaTrader 4- och MetaTrader 5-konton. Länka flera mäklare och dirigera varje kanal till de konton du väljer.',
@@ -576,6 +583,13 @@ export const landingSv: LandingTranslations = {
         aspect: 'Infrastruktur',
         other: 'VPS krävs för att hålla EA igång dygnet runt.',
         tscopier: '100 % moln – ingen nedladdning, ingen EA och ingen VPS att underhålla.',
+      },
+      {
+        aspect: 'Prop firms',
+        other:
+          'Många kopiatorer förlitar sig på Expert Advisors på din terminal—blockerade när en prop firm förbjuder automatiserad handel.',
+        tscopier:
+          'Molnbaserad exekvering utan EA på ditt konto—fungerar med alla prop firms, med eller utan tillåten EA.',
       },
       {
         aspect: 'Utförande',

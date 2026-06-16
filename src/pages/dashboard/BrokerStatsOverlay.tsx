@@ -18,6 +18,7 @@ import {
   resolveAccountLogin,
   resolveLinkedAccountType,
   resolveMtServerCandidate,
+  formatLinkedAccountTypeLabel,
 } from '../../lib/brokerFromServer'
 import { brokerConnectionStatusLabel, isBrokerSessionConnected } from '../../lib/brokerReconnect'
 import { isFxsocketLinkedBroker } from '../../lib/brokerLink'
@@ -267,14 +268,20 @@ export function BrokerStatsOverlay() {
   const login = account ? resolveAccountLogin(account) : ''
   const platformLine = login ? `${platform} • ${login}` : platform
   const accountType = account
-    ? resolveLinkedAccountType(undefined, resolveMtServerCandidate(account, account.broker_server)) ?? '—'
+    ? resolveLinkedAccountType(
+      undefined,
+      resolveMtServerCandidate(account, account.broker_server),
+      account.broker_name,
+    ) ?? '—'
     : '—'
   const accountTypeLabel =
-    accountType === 'Live'
-      ? la.accountTypeLive
-      : accountType === 'Demo'
-        ? la.accountTypeDemo
-        : accountType
+    accountType === '—'
+      ? accountType
+      : formatLinkedAccountTypeLabel(accountType, {
+          demo: la.accountTypeDemo,
+          live: la.accountTypeLive,
+          propFirm: la.accountTypePropFirm,
+        })
 
   const pnlColor = (n: number) =>
     n > 0 ? 'text-teal-600' : n < 0 ? 'text-error-600' : 'text-neutral-900 dark:text-neutral-50'

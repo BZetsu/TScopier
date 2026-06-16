@@ -68,6 +68,8 @@ export interface ManualSettings {
   pending_expiry_hours?: number
   add_new_trades_to_existing?: boolean
   close_on_opposite_signal?: boolean
+  /** When false, OrderSend comments are left empty. Default on. */
+  order_comments_enabled?: boolean
   time_filter_enabled?: boolean
   trade_start_time?: string
   trade_end_time?: string

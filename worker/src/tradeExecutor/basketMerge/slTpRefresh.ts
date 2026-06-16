@@ -496,6 +496,7 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
         alreadyModified: modifiedTradeIds,
         skipAlreadySynced: true,
         liveMgmtFast,
+        orderCommentsEnabled: manual.order_comments_enabled !== false,
       })
       for (const id of pass.modifiedTradeIds) modifiedTradeIds.add(id)
       summary = pass.summary

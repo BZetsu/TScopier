@@ -128,6 +128,7 @@ export async function syncMultiBasketLegTakeProfits(ctx: TradeExecutorContext, a
         strictEntryPrefetch: null,
         openedTickets,
         skipAlreadySynced: true,
+        orderCommentsEnabled: manual.order_comments_enabled !== false,
       })
     } catch (err) {
       console.warn(

@@ -331,7 +331,10 @@ export const configureModalSv: ConfigureModalTranslations = {
     ruleTriggerMoney: 'efter ${value} orealiserad vinst',
     ruleBreakevenOffset: 'entry + {offset} pip(s)',
     ruleBreakevenTrue: 'inträde (verklig breakeven)',
-    ruleTriggerTpHit: 'när TP{index} nås'
+    ruleTriggerTpHit: 'när TP{index} nås',
+    orderCommentsTitle: 'Orderkommentarer',
+    orderCommentsSubtitle:
+      'Av: TSCopier lämnar mäklarens kommentarsfält tomt för affärer den öppnar eller uppdaterar.',
   },
   filters: {
     timeTitle: 'Tidsfilter',

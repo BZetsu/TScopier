@@ -72,6 +72,7 @@ export const dashboardSv: DashboardBundleTranslations = {
       statusRecovering: 'Återansluter',
       accountTypeLive: 'Live',
       accountTypeDemo: 'Demo',
+      accountTypePropFirm: 'Prop firm',
       statusDisconnected: 'Frånkopplad',
       reconnect: 'Återanslut',
     },

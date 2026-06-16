@@ -97,7 +97,89 @@ export function inferBrokerLabelFromServer(server: string | null | undefined): s
   return spaced.charAt(0).toUpperCase() + spaced.slice(1)
 }
 
-export type LinkedAccountType = 'Live' | 'Demo'
+export type LinkedAccountType = 'Live' | 'Demo' | 'PropFirm'
+
+export interface LinkedAccountTypeLabels {
+  demo: string
+  live: string
+  propFirm: string
+}
+
+/**
+ * Substrings matched against MT server hostnames and broker labels.
+ * Kept specific to avoid false positives on retail brokers.
+ */
+const PROP_FIRM_HINT_NEEDLES: readonly string[] = [
+  'ftmo',
+  'the5ers',
+  '5percentonline',
+  'fivepercent',
+  'fundednext',
+  'fundingpips',
+  'funderpro',
+  'e8funding',
+  'e8markets',
+  'goatfunded',
+  'instantfunding',
+  'blueguardian',
+  'brightfunded',
+  'aquafunded',
+  'fidelcrest',
+  'luxtrading',
+  'maventrading',
+  'alphacapital',
+  'alpha-capital',
+  'audacitycapital',
+  'breakoutprop',
+  'forexify',
+  'atmosfunded',
+  'quantec',
+  'propfirm',
+  'prop-firm',
+  'proptrad',
+  'fundedtrader',
+  'trueforexfunds',
+  'myforexfunds',
+  'finotive',
+  'seacrest',
+  'citytraders',
+  'fundedsquad',
+  'surgetrader',
+  'topstep',
+  'tradeify',
+  'blueberryfunded',
+  'blueberry-funded',
+  'fundedelite',
+  'thefunded',
+  'getfunded',
+  'fundedphase',
+  'citytradersimperium',
+  'fundedtrading',
+  'fundingtraders',
+  'oanda-prop',
+  'thinkcapital',
+  'think-capital',
+  'for traders',
+  'fortraders',
+  'pipfarm',
+  'titan capital',
+  'titancapital',
+  'lark funding',
+  'larkfunding',
+  'sabiotrade',
+  'rebelsfunding',
+  'rebels funding',
+]
+
+/** True when server or broker label looks like a prop-firm environment. */
+export function inferPropFirmAccount(...hints: Array<string | null | undefined>): boolean {
+  for (const hint of hints) {
+    const s = (hint ?? '').trim().toLowerCase()
+    if (!s) continue
+    if (PROP_FIRM_HINT_NEEDLES.some(needle => s.includes(needle))) return true
+  }
+  return false
+}
 
 /** Parse MT AccountSummary `type` (e.g. ACCOUNT_TRADE_MODE_DEMO, "0", "2"). */
 export function parseMtAccountTradeMode(
@@ -124,10 +206,32 @@ export function inferAccountTypeFromServer(server?: string | null): LinkedAccoun
   return undefined
 }
 
-/** Prefer broker-reported trade mode; fall back to server name heuristics. */
+/**
+ * Prefer prop-firm heuristics, then broker-reported trade mode, then server name demo/live hints.
+ */
 export function resolveLinkedAccountType(
   mtSummaryType?: string | number | null,
   server?: string | null,
+  brokerHint?: string | null,
 ): LinkedAccountType | undefined {
+  if (inferPropFirmAccount(server, brokerHint)) return 'PropFirm'
   return parseMtAccountTradeMode(mtSummaryType) ?? inferAccountTypeFromServer(server)
+}
+
+export function formatLinkedAccountTypeLabel(
+  type: LinkedAccountType | undefined,
+  labels: LinkedAccountTypeLabels,
+): string {
+  if (!type) return '—'
+  if (type === 'Demo') return labels.demo
+  if (type === 'Live') return labels.live
+  if (type === 'PropFirm') return labels.propFirm
+  return type
+}
+
+export function linkedAccountTypeValueClass(type: LinkedAccountType | undefined): string {
+  if (type === 'Demo') return 'font-semibold text-amber-700 dark:text-amber-300'
+  if (type === 'Live') return 'font-semibold text-teal-700 dark:text-teal-300'
+  if (type === 'PropFirm') return 'font-semibold text-violet-700 dark:text-violet-300'
+  return 'text-neutral-900 dark:text-neutral-50'
 }

@@ -72,6 +72,7 @@ export const dashboardRu: DashboardBundleTranslations = {
       statusRecovering: 'Переподключение',
       accountTypeLive: 'Реальный',
       accountTypeDemo: 'Демо',
+      accountTypePropFirm: 'Проп-фирма',
       statusDisconnected: 'Отключен',
       reconnect: 'Переподключить',
     },

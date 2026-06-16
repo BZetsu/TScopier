@@ -106,6 +106,7 @@ export const accountConfigRu: AccountConfigBundleTranslations = {
       detailAccountType: 'Тип счета',
       accountTypeDemo: 'Демо',
       accountTypeLive: 'Реальный',
+      accountTypePropFirm: 'Проп-фирма',
       detailServer: 'Сервер',
       detailSignalChannels: 'Сигнальные каналы',
       detailBalance: 'Баланс',

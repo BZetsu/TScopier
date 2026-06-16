@@ -221,6 +221,7 @@ export async function applyMgmtModifyToBasketGroups(args: {
       openedTickets,
       skipAlreadySynced: false,
       liveMgmtFast,
+      orderCommentsEnabled: manual.order_comments_enabled !== false,
     })
 
     const mergeFailed = summary.modified < summary.openLegs

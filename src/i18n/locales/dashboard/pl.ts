@@ -72,6 +72,7 @@ export const dashboardPl: DashboardBundleTranslations = {
       statusRecovering: 'Ponowne łączenie',
       accountTypeLive: 'Rzeczywiste',
       accountTypeDemo: 'Demo',
+      accountTypePropFirm: 'Firma prop',
       statusDisconnected: 'Rozłączone',
       reconnect: 'Połącz ponownie',
     },

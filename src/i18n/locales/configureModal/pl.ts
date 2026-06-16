@@ -331,7 +331,10 @@ export const configureModalPl: ConfigureModalTranslations = {
     ruleTriggerMoney: 'po niezrealizowanym zysku ${value}',
     ruleBreakevenOffset: 'wpis + {offset} pipsów',
     ruleBreakevenTrue: 'wejście (prawdziwy próg rentowności)',
-    ruleTriggerTpHit: 'po osiągnięciu TP{index}'
+    ruleTriggerTpHit: 'po osiągnięciu TP{index}',
+    orderCommentsTitle: 'Komentarze zleceń',
+    orderCommentsSubtitle:
+      'Wyłączone: TSCopier pozostawia pole komentarza brokera puste dla otwieranych lub odświeżanych transakcji.',
   },
   filters: {
     timeTitle: 'Filtr czasu',

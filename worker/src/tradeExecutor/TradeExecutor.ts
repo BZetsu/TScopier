@@ -1267,7 +1267,7 @@ export class TradeExecutor {
     broker: BrokerRow,
     channelKeywords: ChannelKeywords | null,
     pipelineT0?: number,
-    sendOpts?: { liveEntryFast?: boolean; liveMgmtFast?: boolean; commentPrefix?: string; sameSignalRefresh?: boolean },
+    sendOpts?: { liveEntryFast?: boolean; liveMgmtFast?: boolean; commentSlug?: string | null; commentPrefix?: string; sameSignalRefresh?: boolean },
   ): Promise<SendOrderOutcome>  {
     const configReady = channelConfigReadyForExecution(broker, signal.channel_id)
     if (!configReady.ready) {

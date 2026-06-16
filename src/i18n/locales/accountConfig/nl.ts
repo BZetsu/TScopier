@@ -106,6 +106,7 @@ export const accountConfigNl: AccountConfigBundleTranslations = {
       detailAccountType: 'Accounttype',
       accountTypeDemo: 'Demo',
       accountTypeLive: 'Live',
+      accountTypePropFirm: 'Prop firm',
       detailServer: 'Server',
       detailSignalChannels: 'Signaalkanalen',
       detailBalance: 'Saldo',

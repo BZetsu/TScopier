@@ -331,7 +331,10 @@ export const configureModalRu: ConfigureModalTranslations = {
     ruleTriggerMoney: 'после ${value} нереализованной прибыли',
     ruleBreakevenOffset: 'запись + {offset} пунктов',
     ruleBreakevenTrue: 'вход (истинный безубыток)',
-    ruleTriggerTpHit: 'когда будет достигнута точка TP{index}'
+    ruleTriggerTpHit: 'когда будет достигнута точка TP{index}',
+    orderCommentsTitle: 'Комментарии к ордерам',
+    orderCommentsSubtitle:
+      'Выкл.: TSCopier оставляет поле комментария брокера пустым для сделок, которые открывает или обновляет.',
   },
   filters: {
     timeTitle: 'Временной фильтр',

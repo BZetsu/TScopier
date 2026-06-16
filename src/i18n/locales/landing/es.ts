@@ -21,6 +21,8 @@ export const landingEs: LandingTranslations = {
     headlineAccent: '100 % en piloto automático.',
     subheadline:
       'Conecta tu cuenta MT4/MT5, elige canales de señales y deja que TSCopier ejecute entradas, capas y gestión — con control total del riesgo y filtros.',
+    propFirmNote:
+      'Funciona con todas las firmas prop, permitan o no el trading con EA.',
     primaryCta: 'Pruébalo gratis',
     secondaryCta: 'Iniciar sesión',
     imageAlt:
@@ -122,7 +124,7 @@ export const landingEs: LandingTranslations = {
         metric: '100%',
         metricVariant: 'teal',
         description:
-          '100 % en la nube: sin descargas, sin EA y sin VPS. Todo desde el navegador.',
+          '100 % en la nube: sin descargas, sin EA en tu terminal y sin VPS. Funciona con todas las firmas prop, con o sin EA permitido.',
         layout: 'short',
         icon: 'cloud',
       },
@@ -508,6 +510,11 @@ export const landingEs: LandingTranslations = {
           'No. TScopier es 100 % en la nube. Inicias sesión en el navegador, conectas Telegram y tus cuentas MT4/MT5, y el copiador corre en nuestra infraestructura—sin EA ni VPS que mantener.',
       },
       {
+        question: '¿TScopier funciona con firmas prop que prohíben los EA?',
+        answer:
+          'Sí. TScopier funciona íntegramente en la nube: no se instala nada en tu terminal MT4/MT5. Puedes copiar señales en cualquier cuenta de firma prop, permitan o no los Asesores Expertos.',
+      },
+      {
         question: '¿Qué plataformas admite TScopier?',
         answer:
           'Conectas canales de señales de Telegram y copias a cuentas MetaTrader 4 y 5. Enlaza varios brokers y dirige cada canal a las cuentas que elijas.',
@@ -577,6 +584,13 @@ export const landingEs: LandingTranslations = {
         aspect: 'Infraestructura',
         other: 'Hace falta un VPS para mantener los EA activos 24/7.',
         tscopier: '100 % en la nube: sin descarga, sin EA y sin VPS que mantener.',
+      },
+      {
+        aspect: 'Firmas prop',
+        other:
+          'Muchos copiadores usan Asesores Expertos en tu terminal, bloqueados cuando la firma prohíbe el trading automatizado.',
+        tscopier:
+          'Ejecución en la nube sin EA en tu cuenta: funciona con todas las firmas prop, permitan o no los EA.',
       },
       {
         aspect: 'Ejecución',

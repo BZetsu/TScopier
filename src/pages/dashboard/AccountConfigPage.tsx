@@ -59,7 +59,10 @@ import {
   inferBrokerLabelFromServer,
   resolveLinkedAccountType,
   resolveMtServerCandidate,
+  formatLinkedAccountTypeLabel,
+  linkedAccountTypeValueClass,
   type LinkedAccountType,
+  type LinkedAccountTypeLabels,
 } from '../../lib/brokerFromServer'
 import { estimateMultiTradeOrderCount, formatMultiTradeTotalOpenTradesPreview } from '../../lib/estimateMultiTradeOrders'
 import { computeMinMultiTradeLegPercent, resolveMultiTradePerLegLot } from '../../lib/multiTradeLegUnits'
@@ -568,10 +571,16 @@ function formatBrokerMoney(value: number | null | undefined, currency?: string |
   return formatMoneyWithCode(value, currency?.trim() || undefined)
 }
 
-function accountTypeValueClass(type: LinkedAccountType | undefined): string {
-  if (type === 'Demo') return 'font-semibold text-amber-700 dark:text-amber-300'
-  if (type === 'Live') return 'font-semibold text-teal-700 dark:text-teal-300'
-  return 'text-neutral-900 dark:text-neutral-50'
+function accountTypeLabelsFromBrokerList(bl: {
+  accountTypeDemo: string
+  accountTypeLive: string
+  accountTypePropFirm: string
+}): LinkedAccountTypeLabels {
+  return {
+    demo: bl.accountTypeDemo,
+    live: bl.accountTypeLive,
+    propFirm: bl.accountTypePropFirm,
+  }
 }
 
 function AccountDetailCell({
@@ -723,16 +732,6 @@ async function resolveLatestManualSettingsPlanContext(args: {
     ...planCtx,
     effectivePlan: effective,
   }
-}
-
-function formatLinkedAccountTypeLabel(
-  type: LinkedAccountType | undefined,
-  labels: { demo: string; live: string },
-): string {
-  if (!type) return '—'
-  if (type === 'Demo') return labels.demo
-  if (type === 'Live') return labels.live
-  return type
 }
 
 export function AccountConfigPage() {
@@ -987,6 +986,7 @@ export function AccountConfigPage() {
       ?? resolveLinkedAccountType(
         undefined,
         resolveMtServerCandidate(configAccount, configAccount.broker_server),
+        configAccount.broker_name,
       )
     )
   }, [configAccount, brokerAccountTypes])
@@ -1456,7 +1456,11 @@ export function AccountConfigPage() {
 
     const fromServer: Record<string, LinkedAccountType> = {}
     for (const b of linked) {
-      const inferred = resolveLinkedAccountType(undefined, resolveMtServerCandidate(b, b.broker_server))
+      const inferred = resolveLinkedAccountType(
+        undefined,
+        resolveMtServerCandidate(b, b.broker_server),
+        b.broker_name,
+      )
       if (inferred) fromServer[b.id] = inferred
     }
     setBrokerAccountTypes(prev => ({ ...fromServer, ...prev }))
@@ -1471,6 +1475,7 @@ export function AccountConfigPage() {
           const accountType = resolveLinkedAccountType(
             summary?.type,
             resolveMtServerCandidate(b, b.broker_server),
+            b.broker_name,
           )
           return accountType ? { id: b.id, accountType } as const : null
         } catch {
@@ -2295,7 +2300,11 @@ export function AccountConfigPage() {
               const channelsLabel = getBrokerSignalChannelsLabel(broker.id)
               const accountType =
                 brokerAccountTypes[broker.id]
-                ?? resolveLinkedAccountType(undefined, resolveMtServerCandidate(broker, broker.broker_server))
+                ?? resolveLinkedAccountType(
+                  undefined,
+                  resolveMtServerCandidate(broker, broker.broker_server),
+                  broker.broker_name,
+                )
               return (
                 <Card key={broker.id} padding="none" className="overflow-hidden">
                   <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
@@ -2371,11 +2380,8 @@ export function AccountConfigPage() {
                     <AccountDetailCell
                       label={bl.detailAccountType}
                       value={
-                        <span className={accountTypeValueClass(accountType)}>
-                          {formatLinkedAccountTypeLabel(accountType, {
-                            demo: bl.accountTypeDemo,
-                            live: bl.accountTypeLive,
-                          })}
+                        <span className={linkedAccountTypeValueClass(accountType)}>
+                          {formatLinkedAccountTypeLabel(accountType, accountTypeLabelsFromBrokerList(bl))}
                         </span>
                       }
                       className="border-l border-neutral-100 dark:border-neutral-800 max-lg:border-t-0"
@@ -2509,11 +2515,8 @@ export function AccountConfigPage() {
                   <span className="text-neutral-300 dark:text-neutral-600" aria-hidden>·</span>
                   <span>
                     {bl.detailAccountType}:{' '}
-                    <span className={accountTypeValueClass(configureAccountType)}>
-                      {formatLinkedAccountTypeLabel(configureAccountType, {
-                        demo: bl.accountTypeDemo,
-                        live: bl.accountTypeLive,
-                      })}
+                    <span className={linkedAccountTypeValueClass(configureAccountType)}>
+                      {formatLinkedAccountTypeLabel(configureAccountType, accountTypeLabelsFromBrokerList(bl))}
                     </span>
                   </span>
                   <span className="text-neutral-300 dark:text-neutral-600" aria-hidden>·</span>
@@ -3822,6 +3825,18 @@ export function AccountConfigPage() {
                                 />
                               </div>
                             </div>
+
+                            <section className="rounded-lg border border-neutral-200 dark:border-neutral-800 overflow-hidden">
+                              <div className="flex items-center justify-between gap-3 bg-white dark:bg-neutral-900 px-4 py-3">
+                                <ConfigTitle info={cm.management.orderCommentsSubtitle}>
+                                  {cm.management.orderCommentsTitle}
+                                </ConfigTitle>
+                                <Toggle
+                                  checked={ms.order_comments_enabled !== false}
+                                  onChange={v => setManual({ order_comments_enabled: v })}
+                                />
+                              </div>
+                            </section>
                           </div>
                           )
                         })()}

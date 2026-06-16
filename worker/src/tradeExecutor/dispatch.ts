@@ -25,7 +25,7 @@ import { shouldRouteAsBasketParameterRefresh, parsedHasSlOrTp } from '../multiTr
 import type { ParsedSignal } from '../manualPlanner'
 import { SKIP_REASON_SIGNAL_ENTRY_REQUIRED } from '../manualPlanner'
 import { parsePipelineTimestamps, pipelineSummaryPayload } from '../pipelineTimestamps'
-import { buildTscopierCommentPrefix, resolveChannelLabelForComment, sanitizeChannelCommentSlug } from '../tradeComment'
+import { resolveChannelLabelForComment, sanitizeChannelCommentSlug } from '../tradeComment'
 import { isMtUuid, operationFor } from './helpers'
 import {
   EXECUTION_LOG_ACTIONS_HANDLED,
@@ -604,7 +604,6 @@ export async function handleSignal(ctx: TradeExecutorContext,
       const { keywords: channelKeywords, commentSlug } = channelMetaPromise
         ? await channelMetaPromise
         : await ctx.getChannelMeta(row.channel_id)
-      const commentPrefix = buildTscopierCommentPrefix(row.id, commentSlug)
       const rawText = String(parsed.raw_instruction ?? '').toLowerCase()
       const ignoreKw = channelKeywords?.additional?.ignore_keyword?.trim().toLowerCase()
       const skipKw = channelKeywords?.additional?.skip_keyword?.trim().toLowerCase()
@@ -663,7 +662,7 @@ export async function handleSignal(ctx: TradeExecutorContext,
         brokers.map(b => ctx.sendOrder(row, parsed, op, b, channelKeywords, pipelineT0, {
           liveEntryFast: liveFast,
           liveMgmtFast,
-          commentPrefix,
+          commentSlug,
           sameSignalRefresh: isMessageRevision,
         })),
       )

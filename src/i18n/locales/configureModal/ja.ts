@@ -331,7 +331,10 @@ export const configureModalJa: ConfigureModalTranslations = {
     ruleTriggerMoney: '${value} の未実現利益後',
     ruleBreakevenOffset: 'エントリ + {offset} ピップ',
     ruleBreakevenTrue: 'エントリー（真の損益分岐点）',
-    ruleTriggerTpHit: 'TP{index} に達したとき'
+    ruleTriggerTpHit: 'TP{index} に達したとき',
+    orderCommentsTitle: '注文コメント',
+    orderCommentsSubtitle:
+      'オフの場合、TSCopier が開設・更新する取引のブローカーコメント欄は空のままになります。',
   },
   filters: {
     timeTitle: '時間フィルター',

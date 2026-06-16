@@ -40,3 +40,37 @@ export function buildTscopierCommentPrefix(signalId: string, channelSlug?: strin
   if (slug) return `TSCopier:${slug}:${id8}`
   return `TSCopier:${id8}`
 }
+
+export type OrderCommentsManual = { order_comments_enabled?: boolean } | null | undefined
+
+/** Default on — only explicit `false` disables MT order comments. */
+export function areOrderCommentsEnabled(manual?: OrderCommentsManual): boolean {
+  return manual?.order_comments_enabled !== false
+}
+
+/**
+ * Resolve the comment prefix for a broker after manual settings are known.
+ * Returns empty string when order comments are disabled for that channel config.
+ */
+export function resolveTscopierCommentPrefix(
+  signalId: string,
+  channelSlug?: string | null,
+  manual?: OrderCommentsManual,
+  overridePrefix?: string | null,
+): string {
+  if (!areOrderCommentsEnabled(manual)) return ''
+  if (overridePrefix != null && overridePrefix !== '') return overridePrefix
+  return buildTscopierCommentPrefix(signalId, channelSlug)
+}
+
+/** Append a planner suffix (`:tp1`, `:rg2.tp`, …); empty when comments are off. */
+export function appendOrderCommentSuffix(prefix: string, suffix: string): string {
+  if (!prefix) return ''
+  return `${prefix}${suffix}`
+}
+
+/** Comment for basket refresh OrderSend when a leg must be re-opened. */
+export function buildBasketRefreshComment(signalId: string, manual?: OrderCommentsManual): string {
+  if (!areOrderCommentsEnabled(manual)) return ''
+  return `TSCopier:${signalId.slice(0, 8)}:refresh`
+}

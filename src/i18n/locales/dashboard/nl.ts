@@ -72,6 +72,7 @@ export const dashboardNl: DashboardBundleTranslations = {
       statusRecovering: 'Opnieuw verbinden',
       accountTypeLive: 'Live',
       accountTypeDemo: 'Demo',
+      accountTypePropFirm: 'Prop firm',
       statusDisconnected: 'Niet gekoppeld',
       reconnect: 'Opnieuw verbinden',
     },

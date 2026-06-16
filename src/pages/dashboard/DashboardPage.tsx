@@ -9,6 +9,8 @@ import {
   resolveAccountLogin,
   resolveLinkedAccountType,
   resolveMtServerCandidate,
+  formatLinkedAccountTypeLabel,
+  linkedAccountTypeValueClass,
   type LinkedAccountType,
 } from '../../lib/brokerFromServer'
 import { PageHeader } from '../../components/layout/PageHeader'
@@ -271,7 +273,7 @@ type BrokerBalanceSnapshot = {
   currency?: string
   broker?: string
   mt_server_hint?: string
-  account_type?: 'Live' | 'Demo'
+  account_type?: LinkedAccountType
   open_pnl?: number
   open_trades?: number
 }
@@ -1524,6 +1526,7 @@ export function DashboardPage() {
             account_type: resolveLinkedAccountType(
               undefined,
               resolveMtServerCandidate(account, account.broker_server ?? undefined),
+              account.broker_name,
             ),
             open_pnl: liveOk ? (sticky?.open_pnl ?? cachedOpenPnl) : 0,
             open_trades: liveOk ? sticky?.open_trades : 0,
@@ -2768,25 +2771,23 @@ function LinkedAccountRow({
     ?? resolveLinkedAccountType(
       undefined,
       resolveMtServerCandidate(account, accountSummary?.mt_server_hint),
+      accountSummary?.broker ?? account.broker_name,
     )
     ?? '—'
-  const accountTypeClass =
-    accountType === 'Demo'
-      ? 'text-amber-700 dark:text-amber-300'
-      : accountType === 'Live'
-        ? 'text-teal-700 dark:text-teal-300'
-        : 'text-neutral-900 dark:text-neutral-50'
+  const accountTypeClass = linkedAccountTypeValueClass(accountType === '—' ? undefined : accountType)
 
   const accountLabel = account.label || la.unnamedAccount
   const platformLabel = (account.platform ?? '').trim().toUpperCase() || '—'
   const accountLogin = resolveAccountLogin(account)
   const platformLine = accountLogin ? `${platformLabel} • ${accountLogin}` : platformLabel
   const accountTypeLabel =
-    accountType === 'Live'
-      ? la.accountTypeLive
-      : accountType === 'Demo'
-        ? la.accountTypeDemo
-        : accountType
+    accountType === '—'
+      ? accountType
+      : formatLinkedAccountTypeLabel(accountType, {
+          demo: la.accountTypeDemo,
+          live: la.accountTypeLive,
+          propFirm: la.accountTypePropFirm,
+        })
   const winRate = performance?.winRate ?? null
   const maxDd = performance?.maxDrawdownPct ?? null
   const winRateColor =

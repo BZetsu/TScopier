@@ -21,6 +21,8 @@ export const landingFr: LandingTranslations = {
     headlineAccent: '100 % en autopilote.',
     subheadline:
       'Connectez votre compte MT4/MT5, choisissez vos canaux de signaux et laissez TSCopier exécuter entrées, couches et gestion — avec un contrôle total du risque et des filtres.',
+    propFirmNote:
+      'Compatible avec toutes les prop firms, qu’elles autorisent ou non le trading par EA.',
     primaryCta: 'Essayez gratuitement',
     secondaryCta: 'Se connecter',
     imageAlt:
@@ -122,7 +124,7 @@ export const landingFr: LandingTranslations = {
         metric: '100%',
         metricVariant: 'teal',
         description:
-          '100 % cloud : pas de téléchargement, pas d’EA ni de VPS. Tout depuis le navigateur.',
+          '100 % cloud : pas de téléchargement, pas d’EA sur votre terminal ni de VPS. Compatible avec toutes les prop firms, EA autorisés ou non.',
         layout: 'short',
         icon: 'cloud',
       },
@@ -508,6 +510,11 @@ export const landingFr: LandingTranslations = {
           'Non. TScopier est entièrement cloud. Vous vous connectez dans le navigateur, liez Telegram et vos comptes MT4/MT5, et le copieur tourne sur notre infrastructure—sans EA ni VPS à maintenir.',
       },
       {
+        question: 'TScopier fonctionne-t-il avec les prop firms qui interdisent les EA ?',
+        answer:
+          'Oui. TScopier tourne entièrement dans le cloud—rien n’est installé sur votre terminal MT4/MT5. Vous pouvez copier des signaux sur tout compte prop firm, qu’elle autorise ou non les Expert Advisors.',
+      },
+      {
         question: 'Quelles plateformes TScopier prend-il en charge ?',
         answer:
           'Vous connectez des canaux de signaux Telegram et copiez vers MetaTrader 4 et 5. Liez plusieurs courtiers et routez chaque canal vers les comptes de votre choix.',
@@ -577,6 +584,13 @@ export const landingFr: LandingTranslations = {
         aspect: 'Infrastructure',
         other: 'VPS nécessaire pour faire tourner les EA 24h/24.',
         tscopier: '100 % cloud : pas de téléchargement, pas d’EA ni de VPS à maintenir.',
+      },
+      {
+        aspect: 'Prop firms',
+        other:
+          'Beaucoup de copieurs reposent sur des Expert Advisors sur votre terminal—bloqués quand une prop firm interdit le trading automatisé.',
+        tscopier:
+          'Exécution cloud sans EA sur votre compte—compatible avec toutes les prop firms, EA autorisés ou non.',
       },
       {
         aspect: 'Exécution',

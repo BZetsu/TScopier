@@ -70,6 +70,7 @@ export const dashboardJa: DashboardBundleTranslations = {
       statusRecovering: '再接続中',
       accountTypeLive: 'ライブ',
       accountTypeDemo: 'デモ',
+      accountTypePropFirm: 'プロップファーム',
       statusDisconnected: '未接続',
       reconnect: '再接続',
     },

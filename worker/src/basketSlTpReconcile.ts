@@ -13,6 +13,7 @@ import { stripInvalidStopsForSide } from './channelActiveTradeParams'
 import { isMtBridgeGlitchMessage } from './brokerConnectError'
 import { isBenignOrderModifyError, stopsAlreadyMatchDb } from './orderModifyBenign'
 import { mgmtLegConcurrency, parallelMap } from './parallelPool'
+import { buildBasketRefreshComment } from './tradeComment'
 
 export type BasketSymbolParams = {
   digits?: number
@@ -310,12 +311,15 @@ export async function runBasketLegModifies(args: {
   liveMgmtFast?: boolean
   /** Range-basket TP rebalance — tag per-leg logs for UI suppression. */
   internalRebalance?: boolean
+  /** When false, refresh OrderSend comments are left empty. */
+  orderCommentsEnabled?: boolean
 }): Promise<RunBasketLegModifyResult> {
   const {
     supabase, api, uuid, symbol, direction, baseLot, params,
     signalId, userId, brokerAccountId, familyTrades, perLegTargets: rawTargets,
     signalTps, tpLots, nImmCwe, strictEntryPrefetch, openedTickets, skipAlreadySynced, alreadyModified,
     liveMgmtFast, internalRebalance,
+    orderCommentsEnabled,
   } = args
 
   const parsedTps = (signalTps ?? []).filter(t => typeof t === 'number' && Number.isFinite(t) && t > 0)
@@ -496,7 +500,7 @@ export async function runBasketLegModifies(args: {
       stoploss,
       takeprofit,
       slippage: 20,
-      comment: `TSCopier:${signalId.slice(0, 8)}:refresh`,
+      comment: buildBasketRefreshComment(signalId, { order_comments_enabled: orderCommentsEnabled }),
       expertID: 909090,
     }
     const clamped = clampBasketOrderStops(sendShape, params)

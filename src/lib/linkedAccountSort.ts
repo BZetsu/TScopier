@@ -5,6 +5,7 @@ import {
   resolveAccountLogin,
   resolveLinkedAccountType,
   resolveMtServerCandidate,
+  type LinkedAccountType,
 } from './brokerFromServer'
 import { isBrokerSessionConnected } from './brokerReconnect'
 import type { LinkedAccountPerformance } from './dashboardTradeStats'
@@ -27,7 +28,7 @@ export type BrokerBalanceSnapshot = {
   equity?: number
   broker?: string
   mt_server_hint?: string
-  account_type?: 'Live' | 'Demo'
+  account_type?: LinkedAccountType
   open_pnl?: number
 }
 
@@ -81,9 +82,14 @@ function accountTypeRank(
 ): number {
   const type =
     summary?.account_type
-    ?? resolveLinkedAccountType(undefined, resolveMtServerCandidate(account, summary?.mt_server_hint))
+    ?? resolveLinkedAccountType(
+      undefined,
+      resolveMtServerCandidate(account, summary?.mt_server_hint),
+      summary?.broker ?? account.broker_name,
+    )
   if (type === 'Demo') return 1
-  if (type === 'Live') return 2
+  if (type === 'PropFirm') return 2
+  if (type === 'Live') return 3
   return 0
 }
 

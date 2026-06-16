@@ -21,6 +21,8 @@ export const landingJa: LandingTranslations = {
     headlineAccent: '100%自動化。',
     subheadline:
       'シグナル配信者の指示をMT4/MT5へ2分以内でコピー。複雑な設定・EA・VPSは不要です。',
+    propFirmNote:
+      'EA取引の可否に関わらず、すべてのプロップファームで利用できます。',
     primaryCta: '無料で試す',
     secondaryCta: 'ログイン',
     imageAlt: '残高、当日損益、取引結果、口座成長チャートを表示したTScopierダッシュボード',
@@ -119,7 +121,7 @@ export const landingJa: LandingTranslations = {
         label: 'クラウド基盤',
         metric: '100%',
         metricVariant: 'teal',
-        description: '100%クラウド型。ダウンロード不要、EA不要、VPS不要。ブラウザだけで管理できます。',
+        description: '100%クラウド型。ダウンロード不要、ターミナルへのEA不要、VPS不要。EAの可否に関わらずすべてのプロップファームで利用可能。',
         layout: 'short',
         icon: 'cloud',
       },
@@ -502,6 +504,11 @@ export const landingJa: LandingTranslations = {
           '不要です。TScopierは完全クラウド型。ブラウザでログインし、TelegramとMT4/MT5を接続するだけで、コピー処理は当社インフラ上で稼働します。',
       },
       {
+        question: 'EAを禁止しているプロップファームでも使えますか？',
+        answer:
+          'はい。TScopierは完全にクラウドで動作し、MT4/MT5ターミナルには何もインストールしません。EAの可否に関わらず、あらゆるプロップファーム口座へシグナルをコピーできます。',
+      },
+      {
         question: 'TScopierはどのプラットフォームに対応していますか？',
         answer:
           'Telegramシグナルチャンネルを接続し、MetaTrader 4 / MetaTrader 5へコピーできます。複数ブローカーを接続し、チャンネルごとに送信先口座を指定可能です。',
@@ -570,6 +577,13 @@ export const landingJa: LandingTranslations = {
         aspect: 'インフラ',
         other: 'EA常時稼働のためVPSが必須。',
         tscopier: '100%クラウド。ダウンロード不要、EA不要、VPS不要。',
+      },
+      {
+        aspect: 'プロップファーム',
+        other:
+          '多くのコピーアプリはターミナル上のEAに依存—自動売買を禁止するプロップファームでは使えません。',
+        tscopier:
+          '口座にEAを置かないクラウド実行—EAの可否に関わらずすべてのプロップファームで利用可能。',
       },
       {
         aspect: '実行速度',
