@@ -86,6 +86,9 @@ export const configureModalEs: ConfigureModalTranslations = {
     commaSeparatedHint: 'Valores separados por comas',
     autoTrainingInProgress: 'Entrenamiento en progreso... {progress}%',
     autoTrainingDone: 'Entrenamiento completado y guardado.',
+    trainingLearnedFrom: 'Palabras clave aprendidas de {count} mensajes de muestra.',
+    multilingualRetrainHint:
+      '¿Canal en otro idioma? Ejecuta Entrenar canal tras vincularlo. Si los registros muestran señales omitidas, vuelve a entrenar aquí.',
   },
   channelSymbols: {
     title: 'Mapeo de símbolos',

@@ -1,6 +1,7 @@
 /**
  * Shared detection for channel management updates (breakeven, partial close, etc.).
  */
+import type { ChannelKeywords } from './parseSignal'
 
 const EXPLICIT_CLOSE_SYMBOL =
   'gold|xauusd|xau|silver|xagusd|btc|bitcoin|btcusd|ethusd|eurusd|gbpusd|us30|nas100'
@@ -22,10 +23,60 @@ export function looksLikeExplicitFullCloseCommand(message: string): boolean {
   )
 }
 
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function splitKeywordAliases(raw: string, delimiters = ''): string[] {
+  const extra = String(delimiters ?? '').replace(/\s+/g, '')
+  const chars = [',', ';', '\n', '|', ...extra.split('')].filter(Boolean).map(c => escapeRegExp(c))
+  const splitter = new RegExp(`[${chars.join('')}]+`)
+  return String(raw ?? '')
+    .split(splitter)
+    .map(x => x.trim())
+    .filter(Boolean)
+}
+
+function keywordRegex(phrase: string): RegExp {
+  const p = escapeRegExp(phrase.trim()).replace(/\s+/g, '\\s+')
+  return new RegExp(`(?<![\\p{L}\\p{N}])${p}(?![\\p{L}\\p{N}])`, 'iu')
+}
+
+function hasAnyKeyword(text: string, words: string[]): boolean {
+  return words.some(w => w && keywordRegex(w).test(text))
+}
+
+function managementAliasesFromKeywords(keywords: ChannelKeywords | null | undefined): string[] {
+  if (!keywords) return []
+  const delim = keywords.additional.delimiters
+  return Array.from(new Set([
+    ...splitKeywordAliases(keywords.update.break_even, delim),
+    ...splitKeywordAliases(keywords.update.close_full, delim),
+    ...splitKeywordAliases(keywords.update.close_half, delim),
+    ...splitKeywordAliases(keywords.update.close_partial, delim),
+    ...splitKeywordAliases(keywords.update.close_tp1, delim),
+    ...splitKeywordAliases(keywords.update.close_tp2, delim),
+    ...splitKeywordAliases(keywords.update.close_tp3, delim),
+    ...splitKeywordAliases(keywords.update.close_tp4, delim),
+    ...splitKeywordAliases(keywords.update.set_sl, delim),
+    ...splitKeywordAliases(keywords.update.adjust_sl, delim),
+    ...splitKeywordAliases(keywords.update.set_tp, delim),
+    ...splitKeywordAliases(keywords.update.adjust_tp, delim),
+    ...splitKeywordAliases(keywords.additional.close_all, delim),
+  ].map(a => a.trim()).filter(Boolean)))
+}
+
 /** True when text looks like a trade-management instruction (not a fresh entry). */
-export function looksLikeChannelManagementUpdate(text: string): boolean {
+export function looksLikeChannelManagementUpdate(
+  text: string,
+  channelKeywords?: ChannelKeywords | null,
+): boolean {
   const t = String(text ?? '').replace(/\s+/g, ' ').trim()
   if (!t) return false
+
+  const configured = managementAliasesFromKeywords(channelKeywords)
+  if (configured.length > 0 && hasAnyKeyword(t, configured)) return true
+
   return (
     /\b(move\s+stop|move\s+sl|move\s+risk|stop\s+to\s+breakeven|breakeven|break\s*even)\b/i.test(t)
     || /\b(?:adjust|move|set|change|update)\s+(?:sl|stop\s*loss|stoploss|risk)\b/i.test(t)

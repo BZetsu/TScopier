@@ -94,11 +94,15 @@ export async function analyzeChannelProfile(
 export async function trainChannelSignals(
   channelId: string,
   lookbackDays = 30,
+  historicalMessages?: string[],
 ): Promise<TrainChannelSignalsResult> {
   return callAnalyzeChannelProfile({
     channel_id: channelId,
     lookback_days: lookbackDays,
     action: 'train',
+    ...(historicalMessages && historicalMessages.length > 0
+      ? { historical_messages: historicalMessages.slice(0, 300) }
+      : {}),
   }) as Promise<TrainChannelSignalsResult>
 }
 

@@ -447,7 +447,12 @@ export class UserSessionManager {
     return listener
   }
 
-  async backfillChannelHistory(userId: string, channelRowId: string, days: number) {
+  async backfillChannelHistory(
+    userId: string,
+    channelRowId: string,
+    days: number,
+    opts?: { forTraining?: boolean },
+  ) {
     // Prefer the live listener (listener-only deploys). Avoids a second MTProto
     // connection that would trigger AUTH_KEY_DUPLICATED.
     if (workerConfig.runsListener) {
@@ -460,7 +465,7 @@ export class UserSessionManager {
         }
       }
       if (listener?.isTelegramConnected()) {
-        return listener.backfillChannelHistory(channelRowId, days)
+        return listener.backfillChannelHistory(channelRowId, days, opts)
       }
     }
 
@@ -471,7 +476,7 @@ export class UserSessionManager {
     }
     return this.withEphemeralTelegram(userId, () =>
       runWithEphemeralListener(this.supabase, userId, listener =>
-        listener.backfillChannelHistory(channelRowId, days),
+        listener.backfillChannelHistory(channelRowId, days, opts),
       ),
     )
   }

@@ -479,4 +479,47 @@ TP2 4345`
     assert.equal(result.parsed.entry_zone_high, 4335)
     assert.deepEqual(result.parsed.tp, [4340, 4345])
   })
+
+  it('parses Spanish COMPRA with configured channel keywords', () => {
+    const keywords = {
+      ...DEFAULT_CHANNEL_KEYWORDS,
+      signal: {
+        ...DEFAULT_CHANNEL_KEYWORDS.signal,
+        buy: 'COMPRA|COMPRAR',
+        sell: 'VENTA|VENDER',
+      },
+    }
+    const msg = 'COMPRA XAUUSD @ 2650 SL 2640 TP 2670'
+    const result = parseChannelMessageSync(msg, keywords, lexicon)
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.action, 'buy')
+    assert.equal(result.parsed.symbol, 'XAUUSD')
+    assert.equal(result.parsed.sl, 2640)
+    assert.deepEqual(result.parsed.tp, [2670])
+  })
+
+  it('parses Russian sell via lexicon action_aliases', () => {
+    const msg = 'ПРОДАЖА EURUSD SL 1.0950 TP 1.0900'
+    const ruLexicon: ChannelLexiconRow = {
+      user_id: 'u',
+      channel_id: 'c',
+      action_aliases: { buy: [], sell: ['продажа', 'продать'], modify: [] },
+    }
+    const result = parseChannelMessageSync(msg, DEFAULT_CHANNEL_KEYWORDS, ruLexicon)
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.action, 'sell')
+    assert.equal(result.parsed.symbol, 'EURUSD')
+  })
+
+  it('parses Polish KUPNO with channel buy keyword', () => {
+    const keywords = {
+      ...DEFAULT_CHANNEL_KEYWORDS,
+      signal: { ...DEFAULT_CHANNEL_KEYWORDS.signal, buy: 'KUPNO|KUPIC' },
+    }
+    const msg = 'KUPNO GOLD SL 2650 TP 2700'
+    const result = parseChannelMessageSync(msg, keywords, lexicon)
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.action, 'buy')
+    assert.equal(result.parsed.symbol, 'XAUUSD')
+  })
 })

@@ -86,6 +86,9 @@ export const configureModalEn: ConfigureModalTranslations = {
     commaSeparatedHint: 'Comma-separated values',
     autoTrainingInProgress: 'Training in progress... {progress}%',
     autoTrainingDone: 'Training completed and saved.',
+    trainingLearnedFrom: 'Keywords learned from {count} sample messages.',
+    multilingualRetrainHint:
+      'Non-English channel? Run Train channel after linking so the copier learns buy/sell/SL/TP words. If Copier Logs show skipped signals, re-train here.',
   },
   channelSymbols: {
     title: 'Symbol mapping',

@@ -1291,7 +1291,11 @@ export function AccountConfigPage() {
   const CHANNEL_SYMBOL_LOOKBACK_DAYS = 30
   const TELEGRAM_AUTH_EDGE_FN = `${import.meta.env.VITE_SUPABASE_URL as string}/functions/v1/telegram-auth`
 
-  const backfillChannelSignals = async (channelId: string, lookbackDays: number) => {
+  const backfillChannelSignals = async (
+    channelId: string,
+    lookbackDays: number,
+    opts?: { forTraining?: boolean },
+  ): Promise<{ imported: number; messages: string[] }> => {
     const token = (await supabase.auth.getSession()).data.session?.access_token
     if (!token) throw new Error('Not signed in')
     const res = await fetch(TELEGRAM_AUTH_EDGE_FN, {
@@ -1304,9 +1308,15 @@ export function AccountConfigPage() {
         action: 'backfill_channel_history',
         channel_row_id: channelId,
         days: lookbackDays,
+        for_training: opts?.forTraining === true,
       }),
     })
-    const data = await res.json().catch(() => ({})) as { error?: unknown; message?: unknown }
+    const data = await res.json().catch(() => ({})) as {
+      error?: unknown
+      message?: unknown
+      imported?: number
+      messages?: string[]
+    }
     if (!res.ok || data.error) {
       const msg =
         typeof data.error === 'string'
@@ -1315,6 +1325,10 @@ export function AccountConfigPage() {
             ? data.message
             : 'Failed to import Telegram channel history'
       throw new Error(msg)
+    }
+    return {
+      imported: Number(data.imported ?? 0),
+      messages: Array.isArray(data.messages) ? data.messages.filter((m): m is string => typeof m === 'string') : [],
     }
   }
 
@@ -1362,13 +1376,17 @@ export function AccountConfigPage() {
 
   const runAiTraining = async (
     channelId: string,
-    opts?: { autoSave?: boolean; silent?: boolean },
+    opts?: { autoSave?: boolean; silent?: boolean; historicalMessages?: string[] },
   ) => {
     setTrainingRunningByChannel(prev => ({ ...prev, [channelId]: true }))
     setTrainingProgressByChannel(prev => ({ ...prev, [channelId]: Math.max(5, prev[channelId] ?? 0) }))
     if (!opts?.silent) setError('')
     try {
-      const result = await trainChannelSignals(channelId, CHANNEL_SYMBOL_LOOKBACK_DAYS)
+      const result = await trainChannelSignals(
+        channelId,
+        CHANNEL_SYMBOL_LOOKBACK_DAYS,
+        opts?.historicalMessages,
+      )
       if (!result.ok || !result.training_schema) {
         throw new Error(result.error || 'AI training failed')
       }
@@ -1590,14 +1608,23 @@ export function AccountConfigPage() {
         }
       })
       try {
-        await backfillChannelSignals(channelId, CHANNEL_SYMBOL_LOOKBACK_DAYS)
+        const backfill = await backfillChannelSignals(channelId, CHANNEL_SYMBOL_LOOKBACK_DAYS, {
+          forTraining: true,
+        })
+        const alreadyTrained = trainingExistsByChannel[channelId] === true
+        if (!alreadyTrained) {
+          void runAiTraining(channelId, {
+            autoSave: true,
+            silent: true,
+            historicalMessages: backfill.messages,
+          })
+        }
       } catch (syncErr) {
         console.warn('[account-config] channel backfill failed:', syncErr)
-      }
-      // Auto-start training only once per channel (skip if training already exists).
-      const alreadyTrained = trainingExistsByChannel[channelId] === true
-      if (!alreadyTrained) {
-        void runAiTraining(channelId, { autoSave: true, silent: true })
+        const alreadyTrained = trainingExistsByChannel[channelId] === true
+        if (!alreadyTrained) {
+          void runAiTraining(channelId, { autoSave: true, silent: true })
+        }
       }
     } finally {
       setChannelConnecting(false)
@@ -2838,6 +2865,17 @@ export function AccountConfigPage() {
                                   <ConfigTitle variant="semibold" info={`${cm.aiTraining.intro}\n\n${cm.aiTraining.trainHint}`}>
                                     {cm.aiTraining.title}
                                   </ConfigTitle>
+                                  {trainingExistsByChannel[configDraft.selectedChannelId] === true
+                                    && activeTrainingDraft.sample_signal_examples.length > 0 ? (
+                                    <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
+                                      {interpolate(cm.aiTraining.trainingLearnedFrom, {
+                                        count: String(activeTrainingDraft.sample_signal_examples.length),
+                                      })}
+                                    </p>
+                                  ) : null}
+                                  <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                                    {cm.aiTraining.multilingualRetrainHint}
+                                  </p>
                                 </div>
                                 <div className="flex items-center gap-2">
                                   <Button

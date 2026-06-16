@@ -83,7 +83,10 @@ export const configureModalPl: ConfigureModalTranslations = {
     },
     commaSeparatedHint: 'Wartości oddzielone przecinkami',
     autoTrainingInProgress: 'Szkolenie w toku... {progress}%',
-    autoTrainingDone: 'Trening ukończony i zapisany.'
+    autoTrainingDone: 'Trening ukończony i zapisany.',
+    trainingLearnedFrom: 'Słowa kluczowe nauczone z {count} przykładowych wiadomości.',
+    multilingualRetrainHint:
+      'Kanał w innym języku? Uruchom trening kanału po połączeniu. Jeśli logi pokazują pominięte sygnały, wytrenuj ponownie tutaj.',
   },
   channelSymbols: {
     title: 'Mapowanie symboli',

@@ -83,7 +83,10 @@ export const configureModalSv: ConfigureModalTranslations = {
     },
     commaSeparatedHint: 'Kommaseparerade värden',
     autoTrainingInProgress: 'Utbildning pågår... {progress}%',
-    autoTrainingDone: 'Träningen genomförd och sparad.'
+    autoTrainingDone: 'Träningen genomförd och sparad.',
+    trainingLearnedFrom: 'Nyckelord inlärda från {count} exempelmeddelanden.',
+    multilingualRetrainHint:
+      'Kanal på annat språk? Kör Träna kanal efter länkning. Om loggar visar hoppade signaler, träna om här.',
   },
   channelSymbols: {
     title: 'Symbolkartläggning',

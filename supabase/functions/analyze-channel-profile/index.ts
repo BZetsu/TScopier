@@ -210,13 +210,25 @@ function normalizeTrainingSchema(raw: unknown): SignalTrainingSchema {
 }
 
 function defaultTrainingSchemaFromRows(rows: Array<{ raw_message: string }>): SignalTrainingSchema {
-  const buy = new Set<string>(["buy", "long"])
-  const sell = new Set<string>(["sell", "short"])
-  const entry = new Set<string>(["entry", "@", "at", "price", "now"])
-  const sl = new Set<string>(["sl", "stop loss"])
-  const tp = new Set<string>(["tp", "take profit", "target"])
-  const tpTier = new Set<string>(["tp1", "tp2", "tp3"])
-  const management = new Set<string>(["breakeven", "partial", "close"])
+  const buy = new Set<string>([
+    "buy", "long", "comprar", "compra", "acheter", "achat", "kupić", "kupno", "kupic",
+    "купить", "покупка", "köp", "kopen", "買い", "شراء",
+  ])
+  const sell = new Set<string>([
+    "sell", "short", "venta", "vender", "vendre", "vente", "sprzedać", "sprzedaz",
+    "продать", "продажа", "sälj", "verkopen", "売り", "بيع",
+  ])
+  const entry = new Set<string>(["entry", "@", "at", "price", "now", "entrada", "entree", "wejście", "вход"])
+  const sl = new Set<string>([
+    "sl", "stop loss", "stoploss", "stop", "стоп", "stopa", "stopp", "損切り",
+  ])
+  const tp = new Set<string>([
+    "tp", "take profit", "target", "objetivo", "objectif", "cel", "цель", "mål", "doel",
+  ])
+  const tpTier = new Set<string>(["tp1", "tp2", "tp3", "objetivo 1", "target 1"])
+  const management = new Set<string>([
+    "breakeven", "break even", "partial", "close", "cerrar", "fermer", "zamknij", "закрыть",
+  ])
   const languageHints = new Set<string>()
   const sampleSignalExamples: string[] = []
   let signalThenPrice = 0
@@ -227,9 +239,17 @@ function defaultTrainingSchemaFromRows(rows: Array<{ raw_message: string }>): Si
     if (!msg) continue
     const low = msg.toLowerCase()
     if (/[a-z]/.test(low)) languageHints.add("latin")
+    if (/\b(comprar|venta|acheter|vendre|kupić|kupno|sprzedać|купить|продать|köp|sälj|kopen|verkopen)\b/.test(low)) {
+      languageHints.add("multilingual")
+    }
     if (/\b(comprar|venta|acheter|vendre)\b/.test(low)) languageHints.add("romance")
-    if (/\bкупить|продать\b/.test(low)) languageHints.add("cyrillic")
-    if (sampleSignalExamples.length < 6 && /\b(buy|sell|long|short|tp|sl|entry)\b/i.test(msg)) {
+    if (/\b(купить|продать)\b/.test(low)) languageHints.add("cyrillic")
+    if (/[\u3040-\u30ff\u4e00-\u9fff]/.test(msg)) languageHints.add("japanese")
+    if (/[\u0600-\u06ff]/.test(msg)) languageHints.add("arabic")
+    if (sampleSignalExamples.length < 6 && (
+      /\b(buy|sell|long|short|tp|sl|entry|comprar|venta|acheter|vendre|kupić|sprzedać|купить|продать)\b/i.test(msg)
+      || /\b\d{1,5}(?:\.\d{1,5})\b/.test(msg)
+    )) {
       sampleSignalExamples.push(msg.slice(0, 200))
     }
     if (/\b(tp\d+|target\s*\d+)\b/i.test(msg)) tpTier.add("tp1")

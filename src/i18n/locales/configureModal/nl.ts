@@ -83,7 +83,10 @@ export const configureModalNl: ConfigureModalTranslations = {
     },
     commaSeparatedHint: 'Door komma\'s gescheiden waarden',
     autoTrainingInProgress: 'Training bezig... {progress}%',
-    autoTrainingDone: 'Training voltooid en opgeslagen.'
+    autoTrainingDone: 'Training voltooid en opgeslagen.',
+    trainingLearnedFrom: 'Sleutelwoorden geleerd uit {count} voorbeeldberichten.',
+    multilingualRetrainHint:
+      'Kanaal in een andere taal? Voer Kanaal trainen uit na koppelen. Bij overgeslagen signalen in de logs, hier opnieuw trainen.',
   },
   channelSymbols: {
     title: 'Symbolen in kaart brengen',

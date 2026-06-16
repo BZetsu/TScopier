@@ -9,14 +9,15 @@ import type { EditedMessageEvent } from 'telegram/events/EditedMessage'
 import { Api } from 'telegram/tl'
 import { buildClient, isAuthKeyUnregistered, rethrowIfSessionInvalid, TelegramSessionInvalidError, tgInvoke } from './telegramClient'
 import { tradeableFromParsed } from './backtestSignal'
-import { hasTradableInstrumentInText } from './tradableSymbol'
 import type { SignalRow } from './tradeExecutor'
 import { enqueueParsedSignal } from './queue/signalQueuePublisher'
 import { signalQueueConfig } from './queue/signalQueueConfig'
 import { pushParsedSignalToTradeWorker, pushParsedSignalToTradeWorkerAwait } from './tradeSignalPush'
 import { persistListenerEvent } from './listenerEvents'
 import { getChannelParseContext, invalidateChannelParseCache } from './channelKeywordsCache'
-import { parseChannelMessageSync, parseRawChannelMessage, looksLikeChannelManagementUpdate, looksLikeExplicitFullCloseCommand } from './parseSignal'
+import { parseChannelMessageSync, parseRawChannelMessage } from './parseSignal'
+import { looksLikeTradingSignal, looksLikeTrainingCandidate } from './signalTradingHeuristic'
+import { looksLikeChannelManagementUpdate } from './signalManagementIntent'
 import type { PipelineTimestamps } from './pipelineTimestamps'
 import { incMetric } from './workerMetrics'
 import { workerConfig } from './workerConfig'
@@ -31,6 +32,7 @@ import {
   updateSignalAfterRevision,
 } from './signalRevision'
 import { aiParseModification, aiResultToParseResult } from './aiParseModification'
+import { aiParseEntry, aiEntryResultToParseResult } from './aiParseEntry'
 import {
   RECONCILE_POLL_HOOK_MAX_SIGNALS,
   RECONCILE_POLL_HOOK_WINDOW_MS,
@@ -44,9 +46,7 @@ import {
   telegramEditDateSec,
   telegramMessageText,
 } from './signalTelegramReconcile'
-import { normalizeTelegramMessageText } from './normalizeTelegramMessageText'
 import { evaluateParsedSignalExecutionEligibility } from './signalExecutionEligibility'
-import { looksLikeCasualNonTradeMessage } from './signalCommentaryGuard'
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? ''
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? ''
@@ -214,42 +214,6 @@ function extractReplyToMsgId(replyTo: unknown): string | null {
   if (v == null) return null
   const s = String(v).trim()
   return s ? s : null
-}
-
-function looksLikeTradingSignal(text: string, isReply: boolean): boolean {
-  const normalized = normalizeTelegramMessageText(text)
-    .toLowerCase()
-    .replace(/\s+/g, ' ')
-    .trim()
-
-  if (!normalized) return false
-
-  if (looksLikeCasualNonTradeMessage(normalized)) return false
-
-  const hasInstrument = hasTradableInstrumentInText(normalized)
-
-  const hasDirectionOrAction =
-    /\b(buy|sell|long|short|tp|take profit|sl|stop loss|breakeven|be)\b/.test(normalized)
-    || looksLikeExplicitFullCloseCommand(normalized)
-
-  const hasPriceContext =
-    /\b\d{1,5}(?:\.\d{1,5})\b/.test(normalized) ||
-    /\b(entry|zone|between|above|below|now)\b/.test(normalized)
-
-  const hasTradeStructure =
-    /\b(tp\s*\d*|sl|entry|signal|setup)\b/.test(normalized)
-
-  // Reply updates like "move SL to ..." are often signal modifications.
-  if (isReply && /\b(move|set|update|adjust|tp|sl|breakeven|be|close)\b/.test(normalized)) {
-    return true
-  }
-
-  // Breakeven / partial-close / TP-hit updates often lack symbol or explicit SL/TP labels.
-  if (looksLikeChannelManagementUpdate(normalized)) return true
-
-  // Require stronger evidence than a single keyword to reduce false positives.
-  const score = Number(hasDirectionOrAction) + Number(hasInstrument) + Number(hasPriceContext) + Number(hasTradeStructure)
-  return score >= 2
 }
 
 function normalizeChannelUsername(raw: string | null | undefined): string {
@@ -740,7 +704,11 @@ export class UserListener {
    * Fetches and stores matching messages for the last N days even when
    * last_seen_message_id is still empty (seed-only mode).
    */
-  async backfillChannelHistory(channelRowId: string, days: number): Promise<{ imported: number; messages: string[] }> {
+  async backfillChannelHistory(
+    channelRowId: string,
+    days: number,
+    opts?: { forTraining?: boolean },
+  ): Promise<{ imported: number; messages: string[] }> {
     const lookbackDays = Math.max(1, Math.min(90, Number(days || 30)))
     const { data: row, error } = await this.supabase
       .from('telegram_channels')
@@ -752,7 +720,7 @@ export class UserListener {
     if (error) throw new Error(error.message)
     if (!row) throw new Error('Channel not found')
 
-    const messages = await this.backfillChannelFromDate(row as ChannelRow, lookbackDays)
+    const messages = await this.backfillChannelFromDate(row as ChannelRow, lookbackDays, opts)
     return { imported: messages.length, messages }
   }
 
@@ -846,6 +814,7 @@ export class UserListener {
 
     const collected = await this.fetchMessagesBetweenForBacktest(row as ChannelRow, fromMs, toMs)
     const errors: string[] = []
+    const heuristicCtx = await getChannelParseContext(this.supabase, channelRowId)
     const rangeFromIso = new Date(fromMs).toISOString()
     const rangeToIso = new Date(toMs).toISOString()
 
@@ -869,7 +838,7 @@ export class UserListener {
       const raw = telegramMessageText(m)
       if (!raw) continue
       const isReply = !!(m as MessageLike & { replyTo?: unknown }).replyTo
-      if (!looksLikeTradingSignal(raw, isReply)) continue
+      if (!looksLikeTradingSignal(raw, isReply, heuristicCtx)) continue
       const epoch = this.messageEpochSec(m as MessageLike & { date?: number | Date | string })
       candidates.push({
         raw,
@@ -1405,8 +1374,12 @@ export class UserListener {
     }
   }
 
-  private isModificationClassMessage(rawMessage: string, isReply: boolean): boolean {
-    return isReply || looksLikeChannelManagementUpdate(rawMessage)
+  private isModificationClassMessage(
+    rawMessage: string,
+    isReply: boolean,
+    channelKeywords?: import('./parseSignal').ChannelKeywords | null,
+  ): boolean {
+    return isReply || looksLikeChannelManagementUpdate(rawMessage, channelKeywords)
   }
 
   private async parseSignalForListener(args: {
@@ -1419,7 +1392,8 @@ export class UserListener {
     parseResult: Awaited<ReturnType<typeof parseChannelMessageSync>>
     aiMeta?: { intent: string; source: string }
   }> {
-    if (this.isModificationClassMessage(args.rawMessage, args.isReply)) {
+    const { keywords, lexicon } = await getChannelParseContext(this.supabase, args.channelRowId)
+    if (this.isModificationClassMessage(args.rawMessage, args.isReply, keywords)) {
       const aiResult = await aiParseModification(this.supabase, {
         userId: this.userId,
         channelRowId: args.channelRowId,
@@ -1433,8 +1407,24 @@ export class UserListener {
       }
     }
     if (listenerInlineParseEnabled()) {
-      const { keywords, lexicon } = await getChannelParseContext(this.supabase, args.channelRowId)
-      return { parseResult: parseChannelMessageSync(args.rawMessage, keywords, lexicon) }
+      const det = parseChannelMessageSync(args.rawMessage, keywords, lexicon)
+      if (det.status === 'parsed' || det.parsed.action !== 'ignore') {
+        return { parseResult: det }
+      }
+      const aiEntry = await aiParseEntry(this.supabase, {
+        userId: this.userId,
+        channelRowId: args.channelRowId,
+        rawMessage: args.rawMessage,
+        isReply: args.isReply,
+        parentSignalId: args.parentSignalId,
+      })
+      if (aiEntry.status === 'parsed') {
+        return {
+          parseResult: aiEntryResultToParseResult(aiEntry),
+          aiMeta: { intent: 'entry', source: aiEntry.source },
+        }
+      }
+      return { parseResult: det }
     }
     if (PARSE_SIGNAL_URL) {
       return {
@@ -1560,7 +1550,8 @@ export class UserListener {
       parentSignalId = await this.resolveParentSignalIdForReply(channelRow.id, replyToMessageId)
     }
 
-    if (!looksLikeTradingSignal(rawMessage, isReply)) {
+    const heuristicCtx = await getChannelParseContext(this.supabase, channelRow.id)
+    if (!looksLikeTradingSignal(rawMessage, isReply, heuristicCtx)) {
       console.log(
         `[userListener] skipped non-signal user=${this.userId} channelRow=${channelRow.id} messageId=${messageId}`,
       )
@@ -2734,6 +2725,7 @@ export class UserListener {
     const collected: MessageLike[] = []
     let offsetId = 0
     const batchSize = 100
+    const heuristicCtx = await getChannelParseContext(this.supabase, row.id)
 
     while (collected.length < BACKFILL_PER_CHANNEL_CAP) {
       let batch: Array<MessageLike & { id: number | bigint; date?: number | Date | string }>
@@ -2762,9 +2754,9 @@ export class UserListener {
         const isReply = !!m.replyTo
         const fetchAllForBacktest = process.env.BACKTEST_FETCH_ALL_MESSAGES === 'true'
         if (!opts?.forBacktest) {
-          if (!looksLikeTradingSignal(raw, isReply)) continue
+          if (!looksLikeTradingSignal(raw, isReply, heuristicCtx)) continue
         } else if (!fetchAllForBacktest) {
-          if (!looksLikeTradingSignal(raw, isReply)) continue
+          if (!looksLikeTradingSignal(raw, isReply, heuristicCtx)) continue
         }
         collected.push(m)
       }
@@ -2778,7 +2770,11 @@ export class UserListener {
     return collected
   }
 
-  private async backfillChannelFromDate(row: ChannelRow, days: number): Promise<string[]> {
+  private async backfillChannelFromDate(
+    row: ChannelRow,
+    days: number,
+    opts?: { forTraining?: boolean },
+  ): Promise<string[]> {
     let peer: unknown
     try {
       peer = await this.resolveChannelPeer(row)
@@ -2790,6 +2786,9 @@ export class UserListener {
     const collected: MessageLike[] = []
     let offsetId = 0
     const batchSize = 100
+    const heuristicCtx = opts?.forTraining
+      ? null
+      : await getChannelParseContext(this.supabase, row.id)
 
     while (collected.length < BACKFILL_PER_CHANNEL_CAP) {
       let batch: Array<MessageLike & { id: number | bigint; date?: number | Date | string }>
@@ -2845,7 +2844,10 @@ export class UserListener {
       const raw = telegramMessageText(m)
       if (!raw) continue
       const isReply = !!m.replyTo
-      if (!looksLikeTradingSignal(raw, isReply)) continue
+      const passes = opts?.forTraining
+        ? looksLikeTrainingCandidate(raw)
+        : looksLikeTradingSignal(raw, isReply, heuristicCtx)
+      if (!passes) continue
       out.push(raw)
       if (out.length >= 300) break
     }

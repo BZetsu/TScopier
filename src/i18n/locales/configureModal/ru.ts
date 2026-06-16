@@ -83,7 +83,10 @@ export const configureModalRu: ConfigureModalTranslations = {
     },
     commaSeparatedHint: 'Значения, разделенные запятыми',
     autoTrainingInProgress: 'Идет обучение... {progress}%',
-    autoTrainingDone: 'Обучение завершено и сохранено.'
+    autoTrainingDone: 'Обучение завершено и сохранено.',
+    trainingLearnedFrom: 'Ключевые слова изучены по {count} примерам сообщений.',
+    multilingualRetrainHint:
+      'Канал на другом языке? Запустите обучение канала после подключения. Если в логах пропущенные сигналы — переобучите здесь.',
   },
   channelSymbols: {
     title: 'Сопоставление символов',

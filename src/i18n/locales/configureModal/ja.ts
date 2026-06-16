@@ -83,7 +83,10 @@ export const configureModalJa: ConfigureModalTranslations = {
     },
     commaSeparatedHint: 'カンマ区切りの値',
     autoTrainingInProgress: 'トレーニング中... {progress}%',
-    autoTrainingDone: 'トレーニングが完了し、保存されました。'
+    autoTrainingDone: 'トレーニングが完了し、保存されました。',
+    trainingLearnedFrom: '{count}件のサンプルメッセージからキーワードを学習しました。',
+    multilingualRetrainHint:
+      '他言語のチャンネルですか？リンク後にチャンネル訓練を実行してください。ログでスキップされた場合はここで再訓練してください。',
   },
   channelSymbols: {
     title: 'シンボルマッピング',

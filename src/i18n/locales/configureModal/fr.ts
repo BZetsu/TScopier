@@ -86,6 +86,9 @@ export const configureModalFr: ConfigureModalTranslations = {
     commaSeparatedHint: 'Valeurs séparées par des virgules',
     autoTrainingInProgress: 'Entraînement en cours... {progress}%',
     autoTrainingDone: 'Entraînement terminé et enregistré.',
+    trainingLearnedFrom: 'Mots-clés appris à partir de {count} messages exemples.',
+    multilingualRetrainHint:
+      'Canal dans une autre langue ? Lancez Entraîner le canal après liaison. Si les journaux affichent des signaux ignorés, réentraînez ici.',
   },
   channelSymbols: {
     title: 'Mapping des symboles',
