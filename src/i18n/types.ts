@@ -22,8 +22,8 @@ export const LOCALES: LocaleOption[] = [
     code: 'en',
     label: 'English',
     short: 'EN',
-    flagId: 'gb',
-    searchText: 'english en british uk united kingdom',
+    flagId: 'us',
+    searchText: 'english en us usa united states america',
   },
   {
     code: 'es',
