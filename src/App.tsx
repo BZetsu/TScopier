@@ -13,8 +13,8 @@ import { WelcomePage } from './pages/onboarding/WelcomePage'
 import { ReferralCodeRedirect } from './pages/auth/ReferralCodeRedirect'
 import { GoogleAnalyticsRouteTracker } from './components/analytics/GoogleAnalyticsRouteTracker'
 import { CookieConsentBanner } from './components/marketing/CookieConsentBanner'
-import { AppBannerProvider } from './context/AppBannerContext'
-import { AppBanner } from './components/layout/AppBanner'
+import { AppTopBannersProvider } from './context/AppTopBannersProvider'
+import { AppTopBanners } from './components/layout/AppTopBanners'
 
 const AppPricingPage = lazy(() =>
   import('./pages/pricing/AppPricingPage').then(m => ({ default: m.AppPricingPage })),
@@ -87,9 +87,9 @@ export default function App() {
       <LocaleProvider>
       <UserProfileProvider>
       <BrowserRouter>
-      <AppBannerProvider>
+      <AppTopBannersProvider>
       <div className="flex h-[100dvh] min-h-0 flex-col overflow-hidden overscroll-none">
-        <AppBanner />
+        <AppTopBanners />
         <div className="min-h-0 flex-1 overflow-hidden overscroll-none">
       <GoogleAnalyticsRouteTracker />
       <CookieConsentBanner />
@@ -150,7 +150,7 @@ export default function App() {
       </SubscriptionProvider>
         </div>
       </div>
-      </AppBannerProvider>
+      </AppTopBannersProvider>
       </BrowserRouter>
       </UserProfileProvider>
       </LocaleProvider>
