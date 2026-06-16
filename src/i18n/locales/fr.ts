@@ -314,7 +314,8 @@ export const fr: Translations = {
       brokerCompanySearchCompaniesHeading: 'Brokers',
       brokerCompanySearchEmpty: 'Recherchez votre société broker ou nom de serveur',
       brokerCompanySearchMinChars: 'Saisissez au moins 4 caractères pour rechercher',
-      brokerCompanySearchNoResults: 'Aucune société trouvée. Essayez une autre orthographe.',
+      brokerCompanySearchNoResults: 'Aucune correspondance dans notre annuaire de brokers.',
+      brokerCompanySearchUseQuery: 'Utiliser « {query} » comme nom de serveur',
       brokerCompanySearchLoading: 'Recherche des brokers…',
       brokerCompanySearchError: 'La recherche a échoué. Réessayez ou saisissez le serveur manuellement.',
       brokerServerPickerTitle: 'Serveur',
@@ -419,6 +420,8 @@ export const fr: Translations = {
         'Ce compte MT est désactivé ou bloqué chez le broker. Contactez votre broker ou connectez-vous d’abord via MetaTrader.',
       connectErrorCredentialsRejected:
         'Connexion impossible avec ces identifiants MT. Vérifiez le numéro de compte, le mot de passe de trading et le nom exact du serveur dans MetaTrader.',
+      connectErrorTerminalNotReady:
+        'Nous n\'avons pas encore pu charger votre compte depuis le broker. Si vous venez de connecter, attendez une minute puis réessayez. Sinon, vérifiez que votre login, mot de passe et serveur correspondent exactement à MetaTrader.',
       connectErrorSessionExpired:
         'La session de trading a expiré sur le serveur. Utilisez Reconnecter et entrez votre mot de passe MT actuel.',
       connectErrorUnknown:

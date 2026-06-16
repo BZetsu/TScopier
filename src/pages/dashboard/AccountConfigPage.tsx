@@ -32,7 +32,9 @@ import { resolveBrokerTotalBalance } from '../../lib/effectiveBrokerBalance'
 import { brokerCanReconnect, brokerConnectionBadgeVariant, brokerConnectionStatusLabel } from '../../lib/brokerReconnect'
 import {
   brokerConnectErrorLabelsFromI18n,
+  brokerConnectErrorText,
   brokerReconnectBannerText,
+  classifyBrokerConnectError,
 } from '../../lib/brokerConnectError'
 import {
   BROKER_ACCOUNT_CLIENT_SELECT,
@@ -2315,7 +2317,11 @@ export function AccountConfigPage() {
                         )}
                         {broker.connection_error && brokerCanReconnect(broker) ? (
                           <p className="mt-1 text-xs text-error-600 dark:text-error-400 leading-relaxed">
-                            {broker.connection_error}
+                            {brokerConnectErrorText(
+                              classifyBrokerConnectError(broker.connection_error),
+                              broker.connection_error,
+                              connectErrorLabels,
+                            )}
                           </p>
                         ) : null}
                     </div>

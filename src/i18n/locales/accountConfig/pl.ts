@@ -29,7 +29,8 @@ export const accountConfigPl: AccountConfigBundleTranslations = {
       brokerCompanySearchCompaniesHeading: 'Brokerzy',
       brokerCompanySearchEmpty: 'Wyszukaj firmę brokera lub nazwę serwera',
       brokerCompanySearchMinChars: 'Wpisz co najmniej 4 znaki, aby wyszukać',
-      brokerCompanySearchNoResults: 'Nie znaleziono firm. Spróbuj innej pisowni.',
+      brokerCompanySearchNoResults: 'Brak dopasowań w naszym katalogu brokerów.',
+      brokerCompanySearchUseQuery: 'Użyj „{query}” jako nazwy serwera',
       brokerCompanySearchLoading: 'Wyszukiwanie brokerów…',
       brokerCompanySearchError: 'Wyszukiwanie brokerów nie powiodło się. Spróbuj ponownie lub wpisz serwer ręcznie.',
       brokerServerPickerTitle: 'Serwer',
@@ -134,6 +135,8 @@ export const accountConfigPl: AccountConfigBundleTranslations = {
         'To konto MT jest wyłączone lub zablokowane u brokera. Skontaktuj się z brokerem lub najpierw zaloguj się przez MetaTradera.',
       connectErrorCredentialsRejected:
         'Nie udało się zalogować przy użyciu tych danych MT. Zweryfikuj numer konta, hasło tradingowe i dokładną nazwę serwera z MetaTradera.',
+      connectErrorTerminalNotReady:
+        'Nie udało się jeszcze wczytać konta od brokera. Jeśli właśnie się połączyłeś, odczekaj minutę i spróbuj ponownie. W przeciwnym razie sprawdź, czy login MT, hasło i serwer dokładnie odpowiadają MetaTraderowi.',
       connectErrorSessionExpired:
         'Sesja tradingowa wygasła na serwerze handlowym. Użyj opcji Połącz ponownie i wpisz aktualne hasło MT.',
       connectErrorUnknown:

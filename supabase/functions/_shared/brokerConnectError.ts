@@ -8,6 +8,7 @@ export type BrokerConnectErrorKind =
   | 'account_disabled'
   | 'session_expired'
   | 'credentials_rejected'
+  | 'terminal_not_ready'
   | 'unknown'
 
 export interface BrokerConnectErrorOptions {
@@ -35,6 +36,9 @@ const SESSION_EXPIRED =
 /** Ambiguous failures right after a credential-based ConnectEx — usually bad login details. */
 const CREDENTIAL_CONNECT_AMBIGUOUS =
   /not connected|broker session is not connected|accountsummary returned no data|could not verify broker|connect failed|authentication failed|could not authenticate/i
+
+const TERMINAL_NOT_READY =
+  /could not fetch account summary|accountsummary returned no data|terminal did not reach connected|fxsocket terminal connection failed/i
 
 const BRIDGE_GLITCH =
   /object reference not set|nullreferenceexception|null reference|unexpected error|internal server error|an error occurred while handling|sequence contains no elements/i
@@ -71,6 +75,9 @@ export function classifyBrokerConnectError(
     }
     return 'session_expired'
   }
+  if (TERMINAL_NOT_READY.test(message)) {
+    return 'terminal_not_ready'
+  }
   if (opts?.credentialConnect && CREDENTIAL_CONNECT_AMBIGUOUS.test(message)) {
     return 'credentials_rejected'
   }
@@ -104,6 +111,8 @@ export function friendlyBrokerConnectError(
       return 'This MT account is disabled or blocked at the broker. Contact your broker or log in via MetaTrader first.'
     case 'credentials_rejected':
       return 'Could not log in with these MT details. Verify your account number, trading password, and exact server name from MetaTrader.'
+    case 'terminal_not_ready':
+      return 'We could not load your account from the broker yet. If you just connected, wait a minute and try again. Otherwise verify your MT login, password, and server name match MetaTrader exactly.'
     case 'session_expired':
       if (isMtBridgeGlitchMessage(raw)) {
         return 'Broker connection dropped after a trade-server glitch. Use Reconnect — your login details are usually still correct.'

@@ -29,7 +29,8 @@ export const accountConfigRu: AccountConfigBundleTranslations = {
       brokerCompanySearchCompaniesHeading: 'Брокеры',
       brokerCompanySearchEmpty: 'Найдите компанию брокера или имя сервера',
       brokerCompanySearchMinChars: 'Введите минимум 4 символа для поиска',
-      brokerCompanySearchNoResults: 'Компании не найдены. Попробуйте другое написание.',
+      brokerCompanySearchNoResults: 'Совпадений в нашем каталоге брокеров нет.',
+      brokerCompanySearchUseQuery: 'Использовать «{query}» как имя сервера',
       brokerCompanySearchLoading: 'Поиск брокеров…',
       brokerCompanySearchError: 'Не удалось выполнить поиск брокеров. Попробуйте снова или введите сервер вручную.',
       brokerServerPickerTitle: 'Сервер',
@@ -134,6 +135,8 @@ export const accountConfigRu: AccountConfigBundleTranslations = {
         'Этот счет MT отключен или заблокирован у брокера. Свяжитесь с брокером или сначала войдите через MetaTrader.',
       connectErrorCredentialsRejected:
         'Не удалось войти с этими данными MT. Проверьте номер счета, торговый пароль и точное название сервера в MetaTrader.',
+      connectErrorTerminalNotReady:
+        'Мы пока не смогли загрузить ваш счет от брокера. Если вы только что подключились, подождите минуту и попробуйте снова. Иначе проверьте, что логин MT, пароль и сервер точно совпадают с MetaTrader.',
       connectErrorSessionExpired:
         'Торговая сессия истекла на торговом сервере. Нажмите «Переподключить» и введите текущий пароль MT.',
       connectErrorUnknown:

@@ -313,7 +313,8 @@ export const es: Translations = {
       brokerCompanySearchCompaniesHeading: 'Brokers',
       brokerCompanySearchEmpty: 'Busca tu empresa broker o nombre de servidor',
       brokerCompanySearchMinChars: 'Escribe al menos 4 caracteres para buscar',
-      brokerCompanySearchNoResults: 'No se encontraron empresas. Prueba otra ortografía.',
+      brokerCompanySearchNoResults: 'No se encontraron coincidencias en nuestro directorio de brokers.',
+      brokerCompanySearchUseQuery: 'Usar "{query}" como nombre de servidor',
       brokerCompanySearchLoading: 'Buscando brokers…',
       brokerCompanySearchError: 'La búsqueda falló. Inténtalo de nuevo o introduce el servidor manualmente.',
       brokerServerPickerTitle: 'Servidor',
@@ -418,6 +419,8 @@ export const es: Translations = {
         'Esta cuenta MT está deshabilitada o bloqueada en el broker. Contacta con tu broker o inicia sesión primero en MetaTrader.',
       connectErrorCredentialsRejected:
         'No se pudo iniciar sesión con estos datos MT. Verifica el número de cuenta, la contraseña de trading y el nombre exacto del servidor en MetaTrader.',
+      connectErrorTerminalNotReady:
+        'Aún no pudimos cargar tu cuenta desde el broker. Si acabas de conectar, espera un minuto e inténtalo de nuevo. Si no, verifica que tu login, contraseña y servidor coincidan exactamente con MetaTrader.',
       connectErrorSessionExpired:
         'La sesión de trading expiró en el servidor. Usa Reconectar e introduce tu contraseña MT actual.',
       connectErrorUnknown:

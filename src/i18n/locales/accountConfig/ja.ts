@@ -29,7 +29,8 @@ export const accountConfigJa: AccountConfigBundleTranslations = {
       brokerCompanySearchCompaniesHeading: 'ブローカー',
       brokerCompanySearchEmpty: 'ブローカー会社名またはサーバー名を検索',
       brokerCompanySearchMinChars: '検索するには 4 文字以上入力してください',
-      brokerCompanySearchNoResults: '会社が見つかりません。別の表記でお試しください。',
+      brokerCompanySearchNoResults: 'ブローカー一覧に一致する結果がありません。',
+      brokerCompanySearchUseQuery: '「{query}」をサーバー名として使用',
       brokerCompanySearchLoading: 'ブローカーを検索中…',
       brokerCompanySearchError: 'ブローカー検索に失敗しました。再試行するか、サーバー名を手動で入力してください。',
       brokerServerPickerTitle: 'サーバー',
@@ -134,6 +135,8 @@ export const accountConfigJa: AccountConfigBundleTranslations = {
         'この MT 口座はブローカー側で無効化またはブロックされています。ブローカーへ連絡するか、先に MetaTrader でログインしてください。',
       connectErrorCredentialsRejected:
         'この MT 情報ではログインできませんでした。MetaTrader の口座番号、取引パスワード、正確なサーバー名を確認してください。',
+      connectErrorTerminalNotReady:
+        'ブローカーから口座をまだ読み込めませんでした。接続したばかりの場合は 1 分ほど待ってから再試行してください。それでも失敗する場合は、MT のログイン、パスワード、サーバー名が MetaTrader と完全に一致しているか確認してください。',
       connectErrorSessionExpired:
         '取引サーバー上で取引セッションの有効期限が切れました。再接続を使い、現在の MT パスワードを入力してください。',
       connectErrorUnknown:

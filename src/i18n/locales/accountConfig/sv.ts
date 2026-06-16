@@ -29,7 +29,8 @@ export const accountConfigSv: AccountConfigBundleTranslations = {
       brokerCompanySearchCompaniesHeading: 'Mäklare',
       brokerCompanySearchEmpty: 'Sök efter ditt mäklarföretag eller servernamn',
       brokerCompanySearchMinChars: 'Skriv minst 4 tecken för att söka',
-      brokerCompanySearchNoResults: 'Inga företag hittades. Prova en annan stavning.',
+      brokerCompanySearchNoResults: 'Inga träffar i vår mäklarkatalog.',
+      brokerCompanySearchUseQuery: 'Använd "{query}" som servernamn',
       brokerCompanySearchLoading: 'Söker efter mäklare…',
       brokerCompanySearchError: 'Mäklar­sökningen misslyckades. Försök igen eller ange servern manuellt.',
       brokerServerPickerTitle: 'Server',
@@ -134,6 +135,8 @@ export const accountConfigSv: AccountConfigBundleTranslations = {
         'Detta MT-konto är inaktiverat eller spärrat hos mäklaren. Kontakta mäklaren eller logga in via MetaTrader först.',
       connectErrorCredentialsRejected:
         'Det gick inte att logga in med dessa MT-uppgifter. Verifiera kontonummer, handelslösenord och exakt servernamn från MetaTrader.',
+      connectErrorTerminalNotReady:
+        'Vi kunde inte ladda ditt konto från mäklaren ännu. Om du precis anslöt, vänta en minut och försök igen. Annars, verifiera att MT-inloggning, lösenord och server stämmer exakt med MetaTrader.',
       connectErrorSessionExpired:
         'Handelssessionen löpte ut på handelsservern. Använd Återanslut och ange ditt aktuella MT-lösenord.',
       connectErrorUnknown:

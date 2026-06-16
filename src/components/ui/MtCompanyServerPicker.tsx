@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { ArrowLeft, Check, ChevronRight, Search, X } from 'lucide-react'
 import { useT } from '../../context/LocaleContext'
+import { interpolate } from '../../i18n/interpolate'
 import { useOverlayDismiss } from '../../hooks/useOverlayDismiss'
 import { partitionBrokerSearchResults } from '../../lib/brokerSearchResults'
 import { fxsocketBroker, type BrokerSearchCompany } from '../../lib/fxsocketBroker'
@@ -172,6 +173,21 @@ export function MtCompanyServerPicker({
   )
   const hasResults = serverHits.length > 0 || companyHits.length > 0
 
+  const handleUseSearchQueryAsServer = () => {
+    if (!trimmedQuery) return
+    handleServerSelect(trimmedQuery)
+  }
+
+  const useQueryButton = trimmedQuery.length >= 4 ? (
+    <button
+      type="button"
+      onClick={handleUseSearchQueryAsServer}
+      className="w-full rounded-xl border border-teal-200 bg-teal-50 px-4 py-3 text-left text-sm font-medium text-teal-900 transition-colors hover:bg-teal-100 dark:border-teal-900/50 dark:bg-teal-950/40 dark:text-teal-100 dark:hover:bg-teal-950/60"
+    >
+      {interpolate(cf.brokerCompanySearchUseQuery, { query: trimmedQuery })}
+    </button>
+  ) : null
+
   return (
     <div className="flex flex-col gap-1.5">
       {resolvedLabel && (
@@ -309,16 +325,22 @@ export function MtCompanyServerPicker({
                       {cf.brokerCompanySearchLoading}
                     </div>
                   ) : searchError ? (
-                    <div className="px-4 py-8 text-sm text-center text-error-600 dark:text-error-400">
-                      {searchError}
+                    <div className="px-4 py-8 space-y-4">
+                      <p className="text-sm text-center text-error-600 dark:text-error-400">
+                        {searchError}
+                      </p>
+                      {useQueryButton}
                     </div>
                   ) : showMinCharsHint ? (
                     <div className="px-4 py-8 text-sm text-center text-neutral-500 dark:text-neutral-400">
                       {cf.brokerCompanySearchMinChars}
                     </div>
                   ) : trimmedQuery.length >= 4 && !hasResults ? (
-                    <div className="px-4 py-8 text-sm text-center text-neutral-500 dark:text-neutral-400">
-                      {cf.brokerCompanySearchNoResults}
+                    <div className="px-4 py-8 space-y-4">
+                      <p className="text-sm text-center text-neutral-500 dark:text-neutral-400">
+                        {cf.brokerCompanySearchNoResults}
+                      </p>
+                      {useQueryButton}
                     </div>
                   ) : hasResults ? (
                     <div className="divide-y divide-neutral-100 dark:divide-neutral-800">

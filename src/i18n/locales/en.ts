@@ -313,7 +313,8 @@ export const en: Translations = {
       brokerCompanySearchCompaniesHeading: 'Brokers',
       brokerCompanySearchEmpty: 'Search for your broker company or server name',
       brokerCompanySearchMinChars: 'Type at least 4 characters to search',
-      brokerCompanySearchNoResults: 'No companies found. Try a different spelling.',
+      brokerCompanySearchNoResults: 'No matches in our broker directory.',
+      brokerCompanySearchUseQuery: 'Use "{query}" as server name',
       brokerCompanySearchLoading: 'Searching brokers…',
       brokerCompanySearchError: 'Broker search failed. Try again or enter your server manually.',
       brokerServerPickerTitle: 'Server',
@@ -418,6 +419,8 @@ export const en: Translations = {
     'This MT account is disabled or blocked at the broker. Contact your broker or log in via MetaTrader first.',
   connectErrorCredentialsRejected:
     'Could not log in with these MT details. Verify your account number, trading password, and exact server name from MetaTrader.',
+  connectErrorTerminalNotReady:
+    'We could not load your account from the broker yet. If you just connected, wait a minute and try again. Otherwise verify your MT login, password, and server name match MetaTrader exactly.',
   connectErrorSessionExpired:
     'Trading session expired on the trade server. Use Reconnect and enter your current MT password.',
   connectErrorUnknown:

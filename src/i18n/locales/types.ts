@@ -321,6 +321,7 @@ export interface AccountConfigConnectFormTranslations {
   brokerCompanySearchEmpty: string
   brokerCompanySearchMinChars: string
   brokerCompanySearchNoResults: string
+  brokerCompanySearchUseQuery: string
   brokerCompanySearchLoading: string
   brokerCompanySearchError: string
   brokerServerPickerTitle: string
@@ -414,6 +415,7 @@ export interface AccountConfigBrokerListTranslations {
   connectErrorInvestorPassword: string
   connectErrorAccountDisabled: string
   connectErrorCredentialsRejected: string
+  connectErrorTerminalNotReady: string
   connectErrorSessionExpired: string
   connectErrorUnknown: string
   reconnectFailed: string

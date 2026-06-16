@@ -1,6 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { createClient } from "npm:@supabase/supabase-js@2"
 import { searchBrokerDirectory } from "../_shared/fxsocketBsaClient.ts"
+import { friendlyBrokerConnectError } from "../_shared/brokerConnectError.ts"
 import {
   FxsocketApiError,
   isFxsocketConfigured,
@@ -303,7 +304,9 @@ Deno.serve(async (req: Request) => {
           )
         }
 
-        const msg = readiness.error || "FxSocket terminal connection failed"
+        const rawMsg = readiness.error || "FxSocket terminal connection failed"
+        const establishing = row.connection_status === "pending" || row.connection_status === "connecting"
+        const msg = friendlyBrokerConnectError(rawMsg, { credentialConnect: establishing })
         await supabase
           .from("broker_accounts")
           .update({
@@ -315,7 +318,9 @@ Deno.serve(async (req: Request) => {
           .eq("user_id", userId)
         return bad(502, msg)
       } catch (e) {
-        const msg = e instanceof Error ? e.message : "Refresh failed"
+        const rawMsg = e instanceof Error ? e.message : "Refresh failed"
+        const establishing = row.connection_status === "pending" || row.connection_status === "connecting"
+        const msg = friendlyBrokerConnectError(rawMsg, { credentialConnect: establishing })
         await supabase
           .from("broker_accounts")
           .update({

@@ -8,6 +8,7 @@ export type BrokerConnectErrorKind =
   | 'account_disabled'
   | 'session_expired'
   | 'credentials_rejected'
+  | 'terminal_not_ready'
   | 'unknown'
 
 export interface BrokerConnectErrorOptions {
@@ -32,6 +33,9 @@ const SESSION_EXPIRED =
 
 const CREDENTIAL_CONNECT_AMBIGUOUS =
   /not connected|broker session is not connected|accountsummary returned no data|could not verify broker|connect failed|authentication failed|could not authenticate/i
+
+const TERMINAL_NOT_READY =
+  /could not fetch account summary|accountsummary returned no data|terminal did not reach connected|fxsocket terminal connection failed/i
 
 const BRIDGE_GLITCH =
   /object reference not set|nullreferenceexception|null reference|unexpected error|internal server error|an error occurred while handling|sequence contains no elements/i
@@ -68,6 +72,9 @@ export function classifyBrokerConnectError(
     }
     return 'session_expired'
   }
+  if (TERMINAL_NOT_READY.test(message)) {
+    return 'terminal_not_ready'
+  }
   if (opts?.credentialConnect && CREDENTIAL_CONNECT_AMBIGUOUS.test(message)) {
     return 'credentials_rejected'
   }
@@ -90,6 +97,7 @@ export interface BrokerConnectErrorLabels {
   investorPassword: string
   accountDisabled: string
   credentialsRejected: string
+  terminalNotReady: string
   sessionExpired: string
   unknown: string
 }
@@ -112,6 +120,8 @@ export function brokerConnectErrorText(
       return labels.accountDisabled
     case 'credentials_rejected':
       return labels.credentialsRejected
+    case 'terminal_not_ready':
+      return labels.terminalNotReady
     case 'session_expired':
       return labels.sessionExpired
     case 'unknown':
@@ -151,6 +161,14 @@ export function brokerReconnectBannerText(
   return labels.droppedMany.replace('{count}', String(brokers.length))
 }
 
+export function userFacingBrokerConnectError(
+  raw: string | null | undefined,
+  labels: BrokerConnectErrorLabels,
+  opts?: BrokerConnectErrorOptions,
+): string {
+  return brokerConnectErrorText(classifyBrokerConnectError(raw, opts), raw, labels)
+}
+
 export function brokerConnectErrorLabelsFromI18n(bl: {
   connectErrorWrongPassword: string
   connectErrorWrongLogin: string
@@ -158,6 +176,7 @@ export function brokerConnectErrorLabelsFromI18n(bl: {
   connectErrorInvestorPassword: string
   connectErrorAccountDisabled: string
   connectErrorCredentialsRejected: string
+  connectErrorTerminalNotReady: string
   connectErrorSessionExpired: string
   connectErrorUnknown: string
 }): BrokerConnectErrorLabels {
@@ -168,6 +187,7 @@ export function brokerConnectErrorLabelsFromI18n(bl: {
     investorPassword: bl.connectErrorInvestorPassword,
     accountDisabled: bl.connectErrorAccountDisabled,
     credentialsRejected: bl.connectErrorCredentialsRejected,
+    terminalNotReady: bl.connectErrorTerminalNotReady,
     sessionExpired: bl.connectErrorSessionExpired,
     unknown: bl.connectErrorUnknown,
   }

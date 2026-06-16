@@ -29,7 +29,8 @@ export const accountConfigNl: AccountConfigBundleTranslations = {
       brokerCompanySearchCompaniesHeading: 'Brokers',
       brokerCompanySearchEmpty: 'Zoek je brokerbedrijf of servernaam',
       brokerCompanySearchMinChars: 'Typ minimaal 4 tekens om te zoeken',
-      brokerCompanySearchNoResults: 'Geen bedrijven gevonden. Probeer een andere spelling.',
+      brokerCompanySearchNoResults: 'Geen resultaten in onze brokerlijst.',
+      brokerCompanySearchUseQuery: '"{query}" gebruiken als servernaam',
       brokerCompanySearchLoading: 'Brokers zoeken…',
       brokerCompanySearchError: 'Zoeken naar brokers is mislukt. Probeer opnieuw of voer je server handmatig in.',
       brokerServerPickerTitle: 'Server',
@@ -134,6 +135,8 @@ export const accountConfigNl: AccountConfigBundleTranslations = {
         'Dit MT-account is uitgeschakeld of geblokkeerd bij de broker. Neem contact op met je broker of log eerst in via MetaTrader.',
       connectErrorCredentialsRejected:
         'Inloggen met deze MT-gegevens is mislukt. Controleer je accountnummer, tradingwachtwoord en exacte servernaam in MetaTrader.',
+      connectErrorTerminalNotReady:
+        'We konden je account nog niet van de broker laden. Als je net hebt gekoppeld, wacht een minuut en probeer opnieuw. Controleer anders of je MT-login, wachtwoord en server exact overeenkomen met MetaTrader.',
       connectErrorSessionExpired:
         'De handelssessie is verlopen op de tradeserver. Gebruik Opnieuw verbinden en voer je huidige MT-wachtwoord in.',
       connectErrorUnknown:

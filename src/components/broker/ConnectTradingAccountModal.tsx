@@ -22,7 +22,10 @@ import {
   type BulkConnectResult,
   type BulkConnectRowProgress,
 } from '../../lib/bulkConnectBrokers'
-import { PaywallErrorAlert } from '../billing/PaywallErrorAlert'
+import {
+  brokerConnectErrorLabelsFromI18n,
+  userFacingBrokerConnectError,
+} from '../../lib/brokerConnectError'
 import { PasswordInput } from '../auth/PasswordInput'
 import { Input } from '../ui/Input'
 import { Button } from '../ui/Button'
@@ -54,7 +57,9 @@ export function ConnectTradingAccountModal({
   const t = useT()
   const cf = t.accountConfig.connectForm
   const bc = t.accountConfig.bulkConnect
+  const bl = t.accountConfig.brokerList
   const pw = t.pricing.paywall
+  const connectErrorLabels = brokerConnectErrorLabelsFromI18n(bl)
   const { brokers, upsertBroker } = useBrokerAccounts()
   const { hasActiveSubscription, limits, usage, isAdmin } = useSubscription()
   const overlayRef = useRef<HTMLDivElement>(null)
@@ -205,7 +210,8 @@ export function ConnectTradingAccountModal({
         if (onSuccess) onSuccess(ready)
         else onClose()
       } catch (err) {
-        setError(err instanceof Error ? err.message : cf.connectFailed)
+        const message = err instanceof Error ? err.message : cf.connectFailed
+        setError(userFacingBrokerConnectError(message, connectErrorLabels, { credentialConnect: true }) || cf.connectFailed)
         setSaving(false)
       }
       return
@@ -232,7 +238,8 @@ export function ConnectTradingAccountModal({
       onClose()
       onBatchSuccess?.(result)
     } catch (err) {
-      setError(err instanceof Error ? err.message : cf.connectFailed)
+      const message = err instanceof Error ? err.message : cf.connectFailed
+      setError(userFacingBrokerConnectError(message, connectErrorLabels, { credentialConnect: true }) || cf.connectFailed)
       setSaving(false)
     }
   }

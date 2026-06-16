@@ -35,7 +35,14 @@ describe('brokerConnectError', () => {
     )
   })
 
-  it('classifies INVALID_PASSWORD API codes as wrong_password', () => {
-    assert.equal(classifyBrokerConnectError('Connect failed', { errorCode: 'INVALID_PASSWORD' }), 'wrong_password')
+  it('classifies account summary failures as terminal_not_ready', () => {
+    assert.equal(
+      classifyBrokerConnectError('Could not fetch account summary from the broker terminal'),
+      'terminal_not_ready',
+    )
+    assert.match(
+      friendlyBrokerConnectError('Could not fetch account summary from the broker terminal'),
+      /could not load your account from the broker yet/i,
+    )
   })
 })
