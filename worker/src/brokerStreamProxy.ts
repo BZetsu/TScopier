@@ -3,6 +3,7 @@ import type { IncomingMessage } from 'http'
 import { WebSocketServer, WebSocket } from 'ws'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { brokerSessionId } from './mtApiByAccount'
+import { mtPlatformFrom } from './fxsocketClient'
 import type { FxsocketStreamManager } from './fxsocketStreamManager'
 import type { FxsocketWsServerMessage } from './fxsocketWsClient'
 
@@ -32,10 +33,10 @@ async function loadOwnedBroker(
   supabase: SupabaseClient,
   userId: string,
   brokerAccountId: string,
-): Promise<{ fxsocket_account_id: string; metaapi_account_id?: string | null } | null> {
+): Promise<{ fxsocket_account_id: string; metaapi_account_id?: string | null; platform?: string | null } | null> {
   const { data, error } = await supabase
     .from('broker_accounts')
-    .select('fxsocket_account_id,metaapi_account_id')
+    .select('fxsocket_account_id,metaapi_account_id,platform')
     .eq('id', brokerAccountId)
     .eq('user_id', userId)
     .maybeSingle()
@@ -89,8 +90,9 @@ export function attachBrokerStreamProxy(
         }
 
         const sessionId = brokerSessionId(broker)
+        const platform = mtPlatformFrom(broker.platform)
         wss.handleUpgrade(req, socket, head, (clientWs) => {
-          void handleClientConnection(clientWs, sessionId, streamManager)
+          void handleClientConnection(clientWs, sessionId, streamManager, platform)
         })
       } catch (err) {
         console.warn('[brokerStreamProxy] upgrade failed:', err instanceof Error ? err.message : err)
@@ -105,6 +107,7 @@ function handleClientConnection(
   clientWs: WebSocket,
   sessionId: string,
   streamManager: FxsocketStreamManager,
+  platform: 'MT4' | 'MT5',
 ): void {
   const relay = (msg: FxsocketWsServerMessage) => {
     if (clientWs.readyState !== WebSocket.OPEN) return
@@ -115,7 +118,7 @@ function handleClientConnection(
     }
   }
 
-  const unsub = streamManager.subscribe(sessionId, relay, DEFAULT_SUBSCRIPTIONS)
+  const unsub = streamManager.subscribe(sessionId, relay, DEFAULT_SUBSCRIPTIONS, platform)
 
   clientWs.on('message', (raw) => {
     try {

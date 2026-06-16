@@ -6,7 +6,7 @@ import { ingestMtHistoryRows, type MtHistoryProfile } from './mtTradeFields'
  * FxSocket MT5 REST client for the worker.
  *
  * - Account linking: POST/GET/DELETE https://api.fxsocket.com/v1/accounts
- * - Trading: https://api.fxsocket.com/mt5/{accountId}/…
+ * - Trading: https://api.fxsocket.com/mt4/{accountId}/… or …/mt5/{accountId}/…
  * - Auth: X-API-Key header (FXSOCKET_API_KEY)
  */
 
@@ -24,8 +24,8 @@ const KEEP_ALIVE_AGENT = new Agent({
   pipelining: 1,
 })
 
-/** MT5-only — FxSocket does not support MT4. */
-export type MtPlatform = 'MT5'
+/** MetaTrader platform for FxSocket per-account REST paths. */
+export type MtPlatform = 'MT4' | 'MT5'
 
 export type MtOperation =
   | 'Buy'
@@ -482,12 +482,17 @@ function symbolInfoToParams(info: Record<string, unknown>, symbol: string): Symb
   }
 }
 
-export function mtPlatformFrom(_s: string | null | undefined): MtPlatform {
-  return 'MT5'
+export function mtPlatformFrom(value: string | null | undefined): MtPlatform {
+  return String(value ?? '').trim().toUpperCase() === 'MT4' ? 'MT4' : 'MT5'
+}
+
+function accountApiPathSegment(platform: MtPlatform): 'mt4' | 'mt5' {
+  return platform === 'MT4' ? 'mt4' : 'mt5'
 }
 
 interface V1Account {
   id: string
+  platform: string
   status: string
   error: string
 }
@@ -496,6 +501,7 @@ function normalizeV1Account(raw: unknown): V1Account {
   const o = (raw && typeof raw === 'object') ? raw as Record<string, unknown> : {}
   return {
     id: o.id != null ? String(o.id) : '',
+    platform: o.platform != null ? String(o.platform) : '',
     status: o.status != null ? String(o.status) : '',
     error: o.error != null ? String(o.error) : '',
   }
@@ -506,7 +512,7 @@ export class FxsocketBrokerClient {
   private readonly v1BaseUrl: string
   private readonly apiKey: string
   private readonly timeoutMs: number
-  readonly platform: MtPlatform = 'MT5'
+  private readonly platformCache = new Map<string, MtPlatform>()
 
   constructor(
     _platform: MtPlatform = 'MT5',
@@ -522,10 +528,36 @@ export class FxsocketBrokerClient {
     this.timeoutMs = timeoutMs
   }
 
-  private accountBase(accountId: string): string {
+  private async resolvePlatform(id: string, hint?: MtPlatform): Promise<MtPlatform> {
+    if (hint) {
+      this.platformCache.set(id, hint)
+      return hint
+    }
+    const cached = this.platformCache.get(id)
+    if (cached) return cached
+    try {
+      const v1 = await this.getV1Account(id)
+      const platform = mtPlatformFrom(v1.platform)
+      this.platformCache.set(id, platform)
+      return platform
+    } catch {
+      return 'MT5'
+    }
+  }
+
+  private async accountBase(accountId: string, platformHint?: MtPlatform): Promise<string> {
     const id = String(accountId ?? '').trim()
     if (!id) throw new FxsocketApiError('account id required', 400)
-    return `${this.baseUrl}/mt5/${encodeURIComponent(id)}`
+    const platform = await this.resolvePlatform(id, platformHint)
+    return `${this.baseUrl}/${accountApiPathSegment(platform)}/${encodeURIComponent(id)}`
+  }
+
+  async getV1Account(id: string): Promise<V1Account> {
+    const raw = await this.get<unknown>(
+      `${this.v1BaseUrl}/accounts/${encodeURIComponent(id)}`,
+    )
+    assertNoApiError(raw)
+    return normalizeV1Account(raw)
   }
 
   private async http<T>(
@@ -562,7 +594,7 @@ export class FxsocketBrokerClient {
     const status = res.statusCode
     if (status < 200 || status >= 300) {
       const err = parseErrorEnvelope(parsed)
-      if (status === 404 && url.includes('/mt5/')) {
+      if (status === 404 && (url.includes('/mt5/') || url.includes('/mt4/'))) {
         throw new FxsocketApiError(
           'FxSocket account or endpoint not found. Check the account UUID and that the terminal is running.',
           404,
@@ -682,7 +714,7 @@ export class FxsocketBrokerClient {
   }
 
   async openedOrders(id: string): Promise<unknown[]> {
-    const raw = await this.get<unknown>(`${this.accountBase(id)}/OpenedOrders`)
+    const raw = await this.get<unknown>(`${await this.accountBase(id)}/OpenedOrders`)
     assertNoApiError(raw)
     return unwrapOrderList(raw)
   }
@@ -700,7 +732,7 @@ export class FxsocketBrokerClient {
   }
 
   async orderHistory(id: string, from: string, to: string): Promise<unknown[]> {
-    const raw = await this.get<unknown>(`${this.accountBase(id)}/OrderHistory`, { from, to })
+    const raw = await this.get<unknown>(`${await this.accountBase(id)}/OrderHistory`, { from, to })
     assertNoApiError(raw)
     return unwrapOrderList(raw)
   }
@@ -824,7 +856,7 @@ export class FxsocketBrokerClient {
   }
 
   async accountSummary(id: string): Promise<AccountSummary> {
-    const raw = await this.get<unknown>(`${this.accountBase(id)}/AccountSummary`)
+    const raw = await this.get<unknown>(`${await this.accountBase(id)}/AccountSummary`)
     assertNoApiError(raw)
     return normalizeAccountSummary(raw)
   }
@@ -841,6 +873,7 @@ export class FxsocketBrokerClient {
     )
     assertNoApiError(raw)
     const acct = normalizeV1Account(raw)
+    this.platformCache.set(id, mtPlatformFrom(acct.platform))
     if (acct.status === 'error') {
       throw new FxsocketApiError(acct.error || 'Broker session is not connected', 502)
     }
@@ -854,19 +887,19 @@ export class FxsocketBrokerClient {
 
   async symbolParams(id: string, symbol: string): Promise<SymbolParams> {
     const raw = await this.get<Record<string, unknown>>(
-      `${this.accountBase(id)}/SymbolInfo`,
+      `${await this.accountBase(id)}/SymbolInfo`,
       { symbol },
     )
     return symbolInfoToParams(raw ?? {}, symbol)
   }
 
   async symbols(id: string): Promise<unknown[]> {
-    const raw = await this.get<unknown>(`${this.accountBase(id)}/symbols`)
+    const raw = await this.get<unknown>(`${await this.accountBase(id)}/symbols`)
     return Array.isArray(raw) ? raw : unwrapOrderList(raw)
   }
 
   async quote(id: string, symbol: string): Promise<QuoteResult> {
-    const raw = await this.get<unknown>(`${this.accountBase(id)}/getQuote`, { symbol })
+    const raw = await this.get<unknown>(`${await this.accountBase(id)}/getQuote`, { symbol })
     assertNoApiError(raw)
     const root = (raw && typeof raw === 'object') ? raw as Record<string, unknown> : {}
     const r = (root.result && typeof root.result === 'object') ? root.result as Record<string, unknown> : root
@@ -935,7 +968,7 @@ export class FxsocketBrokerClient {
     if (args.takeprofit != null && args.takeprofit !== 0) payload.takeProfit = args.takeprofit
     if (args.expiration) payload.expiration = args.expiration
 
-    const raw = await this.post<unknown>(`${this.accountBase(id)}/OrderSend`, payload, 90_000)
+    const raw = await this.post<unknown>(`${await this.accountBase(id)}/OrderSend`, payload, 90_000)
     assertNoApiError(raw)
     const out = normalizeOrderResponse(raw)
     if (!Number.isFinite(out.ticket) || out.ticket <= 0) {
@@ -979,7 +1012,7 @@ export class FxsocketBrokerClient {
     if (args.price != null) payload.price = args.price
     if (args.expiration) payload.expiration = args.expiration
 
-    const raw = await this.post<unknown>(`${this.accountBase(id)}/OrderModify`, payload, 90_000)
+    const raw = await this.post<unknown>(`${await this.accountBase(id)}/OrderModify`, payload, 90_000)
     assertNoApiError(raw)
     return normalizeOrderResponse(raw)
   }
@@ -992,7 +1025,7 @@ export class FxsocketBrokerClient {
     if (args.lots != null && args.lots > 0) payload.volume = args.lots
     if (args.price != null && args.price > 0) payload.price = args.price
 
-    const raw = await this.post<unknown>(`${this.accountBase(id)}/OrderClose`, payload, 90_000)
+    const raw = await this.post<unknown>(`${await this.accountBase(id)}/OrderClose`, payload, 90_000)
     assertNoApiError(raw)
     return normalizeOrderResponse(raw)
   }

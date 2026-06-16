@@ -27,6 +27,7 @@ export interface FxsocketWsClientOptions {
   accountId: string
   apiKey: string
   baseUrl?: string
+  platform?: 'MT4' | 'MT5'
   reconnect?: boolean
   reconnectDelayMs?: number
   maxReconnectDelayMs?: number
@@ -76,7 +77,8 @@ export class FxsocketWsClient {
 
     this.accountId = id
     this.apiKey = key
-    this.wsUrl = `${wsBaseUrl(base)}/mt5/${encodeURIComponent(id)}/ws?api_key=${encodeURIComponent(key)}`
+    const segment = opts.platform === 'MT4' ? 'mt4' : 'mt5'
+    this.wsUrl = `${wsBaseUrl(base)}/${segment}/${encodeURIComponent(id)}/ws?api_key=${encodeURIComponent(key)}`
     this.reconnect = opts.reconnect !== false
     this.reconnectDelayMs = Math.max(500, opts.reconnectDelayMs ?? 2_000)
     this.maxReconnectDelayMs = Math.max(this.reconnectDelayMs, opts.maxReconnectDelayMs ?? 60_000)
@@ -204,7 +206,13 @@ export class FxsocketWsClient {
   }
 }
 
-export function buildFxsocketWsUrl(accountId: string, apiKey: string, baseUrl?: string): string {
+export function buildFxsocketWsUrl(
+  accountId: string,
+  apiKey: string,
+  baseUrl?: string,
+  platform: 'MT4' | 'MT5' = 'MT5',
+): string {
   const base = trimEnv(baseUrl) || trimEnv(process.env.FXSOCKET_BASE_URL) || DEFAULT_BASE_URL
-  return `${wsBaseUrl(base)}/mt5/${encodeURIComponent(accountId)}/ws?api_key=${encodeURIComponent(apiKey)}`
+  const segment = platform === 'MT4' ? 'mt4' : 'mt5'
+  return `${wsBaseUrl(base)}/${segment}/${encodeURIComponent(accountId)}/ws?api_key=${encodeURIComponent(apiKey)}`
 }

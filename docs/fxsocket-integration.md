@@ -43,7 +43,7 @@ VITE_WORKER_URL=https://your-worker.up.railway.app
 
 | action | Description |
 |--------|-------------|
-| `connect` | Link MT5 via `POST /v1/accounts` (login/password/server) |
+| `connect` | Link MT4/MT5 via `POST /v1/accounts` (login/password/server/platform) |
 | `search_brokers` | MT4/MT5 company/server lookup via [BSA `/searchMt4`](https://bsa.fxsocket.com/docs#/default/search_mt4_searchMt4_get) or [`/searchMt5`](https://bsa.fxsocket.com/docs#/default/search_mt5_searchMt5_get) (`company` ≥4 chars, `platform` MT4 or MT5) |
 | `delete` | Unlink account |
 | `list` | User's `broker_accounts` with FxSocket IDs |
@@ -52,13 +52,15 @@ VITE_WORKER_URL=https://your-worker.up.railway.app
 | `opened_orders`, `quote`, `symbols`, `symbol_info` | Market data |
 | `stream_ticket` | Returns worker WS URL (browser adds JWT) |
 
+**Per-account REST:** `https://api.fxsocket.com/mt4/{account_id}/…` or `…/mt5/{account_id}/…` depending on platform ([MT4 docs](https://fxsocket.com/docs/mt4), [MT5 docs](https://fxsocket.com/docs/mt5)).
+
 **Worker WebSocket:** `wss://{WORKER}/broker/stream?broker_account_id={uuid}&token={jwt}`
 
 Topics: `account`, `positions`, `prices`, `trades`, `terminal` (subscribe via JSON frames).
 
-## MT5-only policy
+## MT4 / MT5
 
-MT4 accounts are deactivated on migration. Users must reconnect as MT5 via Account Configuration.
+Both platforms are supported. Link via `POST /v1/accounts` with `platform: mt4` or `mt5`; all terminal REST/WebSocket calls must use the matching `/mt4/{id}` or `/mt5/{id}` base path.
 
 ## Migration from legacy
 

@@ -48,6 +48,11 @@ type BrokerRow = {
   id: string
   label: string
   broker_name: string | null
+  platform?: string | null
+}
+
+function brokerApiPlatform(broker: BrokerRow): string | undefined {
+  return broker.platform ?? undefined
 }
 
 function num(v: unknown): number | null {
@@ -190,13 +195,14 @@ export async function fetchFxsocketBrokerTrades(
 ): Promise<FxsocketBrokerTradeRow[]> {
   const sessionId = String(broker.fxsocket_account_id ?? "").trim()
   if (!sessionId) return []
+  const platform = brokerApiPlatform(broker)
 
   const wantOpen = opts.scope === "all" || opts.scope === "open"
   const wantClosed = opts.scope === "all" || opts.scope === "closed"
   const includeBalanceCashFlow = opts.includeBalanceCashFlow !== false
 
   const [openedRes, closedRes] = await Promise.allSettled([
-    wantOpen ? fx.openedOrders(sessionId) : Promise.resolve([] as unknown[]),
+    wantOpen ? fx.openedOrders(sessionId, platform) : Promise.resolve([] as unknown[]),
     wantClosed
       ? opts.historyProfile === "trades"
         ? fetchTradesListFromPositionHistory(fx, broker, {
@@ -328,11 +334,12 @@ export async function fetchClosedHistoryForBaseline(
 ): Promise<FxsocketBrokerTradeRow[]> {
   const sessionId = String(broker.fxsocket_account_id ?? "").trim()
   if (!sessionId) return []
+  const platform = brokerApiPlatform(broker)
 
   const merged = new Map<string, RawMtOrder>()
   const chunks = buildHistoryChunks(opts.historyFrom, opts.historyTo)
   const orderSettled = await Promise.allSettled(
-    chunks.map(chunk => fx.orderHistory(sessionId, chunk.from, chunk.to)),
+    chunks.map(chunk => fx.orderHistory(sessionId, chunk.from, chunk.to, platform)),
   )
 
   for (const result of orderSettled) {
@@ -373,11 +380,12 @@ export async function fetchBalanceCashFlowFromOrderHistory(
 ): Promise<FxsocketBrokerTradeRow[]> {
   const sessionId = String(broker.fxsocket_account_id ?? "").trim()
   if (!sessionId) return []
+  const platform = brokerApiPlatform(broker)
 
   const merged = new Map<string, RawMtOrder>()
   const chunks = buildHistoryChunks(opts.historyFrom, opts.historyTo)
   const orderSettled = await Promise.allSettled(
-    chunks.map(chunk => fx.orderHistory(sessionId, chunk.from, chunk.to)),
+    chunks.map(chunk => fx.orderHistory(sessionId, chunk.from, chunk.to, platform)),
   )
 
   for (const result of orderSettled) {
@@ -485,10 +493,11 @@ export async function fetchTradesListFromPositionHistory(
 ): Promise<FxsocketBrokerTradeRow[]> {
   const sessionId = String(broker.fxsocket_account_id ?? "").trim()
   if (!sessionId) return []
+  const platform = brokerApiPlatform(broker)
 
   const chunks = buildPositionHistoryDateChunks(opts.historyFrom, opts.historyTo)
   const settled = await Promise.allSettled(
-    chunks.map(chunk => fx.positionHistory(sessionId, chunk.from, chunk.to)),
+    chunks.map(chunk => fx.positionHistory(sessionId, chunk.from, chunk.to, platform)),
   )
 
   const seen = new Set<number>()

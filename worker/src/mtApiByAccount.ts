@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { getFxsocketClient, type FxsocketBrokerClient, type MtPlatform } from './fxsocketClient'
+import { getFxsocketClient, type FxsocketBrokerClient, mtPlatformFrom, type MtPlatform } from './fxsocketClient'
 
 export type PlatformByFxsocketId = Map<string, MtPlatform>
 
@@ -33,7 +33,7 @@ export async function loadPlatformByFxsocketId(
   for (const row of data ?? []) {
     const id = brokerSessionId(row as { fxsocket_account_id?: string; metaapi_account_id?: string })
     if (!id) continue
-    out.set(id, 'MT5')
+    out.set(id, mtPlatformFrom((row as { platform?: string | null }).platform))
   }
   return out
 }

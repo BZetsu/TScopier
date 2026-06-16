@@ -60,6 +60,7 @@ export class FxsocketStreamManager {
     accountId: string,
     handler: FxsocketStreamHandler,
     subscriptions: FxsocketStreamSubscription[] = [],
+    platform: 'MT4' | 'MT5' = 'MT5',
   ): () => void {
     const id = String(accountId ?? '').trim()
     if (!id) throw new Error('FxsocketStreamManager.subscribe: accountId required')
@@ -70,6 +71,7 @@ export class FxsocketStreamManager {
         accountId: id,
         apiKey: this.apiKey,
         baseUrl: this.baseUrl,
+        platform,
         onConnectionChange: (connected) => {
           if (connected) return
           if (!this.streams.has(id)) return

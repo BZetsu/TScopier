@@ -47,7 +47,6 @@ function summaryToRowPatch(summary: FxsocketAccountSummary) {
   }
 }
 
-/** WebSocket URL for worker stream proxy (token appended by client). */
 function buildWorkerStreamWsUrl(brokerAccountId: string): string {
   const raw = (Deno.env.get("WORKER_PUBLIC_URL") ?? "").trim().replace(/\/+$/, "")
   if (!raw) {
@@ -62,6 +61,10 @@ function buildWorkerStreamWsUrl(brokerAccountId: string): string {
   u.pathname = "/broker/stream"
   u.search = new URLSearchParams({ broker_account_id: brokerAccountId }).toString()
   return u.toString()
+}
+
+function brokerApiPlatform(row: { platform?: string | null }): string {
+  return row.platform === "MT4" ? "MT4" : "MT5"
 }
 
 async function loadOwnedBrokerRow(
@@ -340,7 +343,7 @@ Deno.serve(async (req: Request) => {
       const accountRowId = String(body.account_id ?? "")
       if (!accountRowId) return bad(400, "account_id required")
       const row = await loadOwnedBrokerRow(supabase, userId, accountRowId)
-      const orders = await fx.openedOrders(row.fxsocket_account_id)
+      const orders = await fx.openedOrders(row.fxsocket_account_id, brokerApiPlatform(row))
       return Response.json({ ok: true, orders }, { headers: corsHeaders })
     }
 
@@ -352,7 +355,7 @@ Deno.serve(async (req: Request) => {
         return bad(400, "account_id, history_from, and history_to required")
       }
       const row = await loadOwnedBrokerRow(supabase, userId, accountRowId)
-      const orders = await fx.orderHistory(row.fxsocket_account_id, historyFrom, historyTo)
+      const orders = await fx.orderHistory(row.fxsocket_account_id, historyFrom, historyTo, brokerApiPlatform(row))
       return Response.json({ ok: true, orders }, { headers: corsHeaders })
     }
 
@@ -364,7 +367,7 @@ Deno.serve(async (req: Request) => {
         return bad(400, "account_id, history_from, and history_to required")
       }
       const row = await loadOwnedBrokerRow(supabase, userId, accountRowId)
-      const positions = await fx.positionHistory(row.fxsocket_account_id, historyFrom, historyTo)
+      const positions = await fx.positionHistory(row.fxsocket_account_id, historyFrom, historyTo, brokerApiPlatform(row))
       return Response.json({ ok: true, positions }, { headers: corsHeaders })
     }
 
@@ -373,7 +376,7 @@ Deno.serve(async (req: Request) => {
       const symbol = String(body.symbol ?? "EURUSD").trim()
       if (!accountRowId) return bad(400, "account_id required")
       const row = await loadOwnedBrokerRow(supabase, userId, accountRowId)
-      const quote = await fx.getQuote(row.fxsocket_account_id, symbol)
+      const quote = await fx.getQuote(row.fxsocket_account_id, symbol, brokerApiPlatform(row))
       return Response.json({ ok: true, quote }, { headers: corsHeaders })
     }
 
@@ -381,7 +384,7 @@ Deno.serve(async (req: Request) => {
       const accountRowId = String(body.account_id ?? "")
       if (!accountRowId) return bad(400, "account_id required")
       const row = await loadOwnedBrokerRow(supabase, userId, accountRowId)
-      const symbols = await fx.symbols(row.fxsocket_account_id)
+      const symbols = await fx.symbols(row.fxsocket_account_id, brokerApiPlatform(row))
       return Response.json({ ok: true, symbols }, { headers: corsHeaders })
     }
 
@@ -391,7 +394,7 @@ Deno.serve(async (req: Request) => {
       if (!accountRowId) return bad(400, "account_id required")
       if (!symbol) return bad(400, "symbol required")
       const row = await loadOwnedBrokerRow(supabase, userId, accountRowId)
-      const info = await fx.symbolInfo(row.fxsocket_account_id, symbol)
+      const info = await fx.symbolInfo(row.fxsocket_account_id, symbol, brokerApiPlatform(row))
       return Response.json({ ok: true, symbol_info: info }, { headers: corsHeaders })
     }
 
@@ -399,7 +402,7 @@ Deno.serve(async (req: Request) => {
       const accountRowId = String(body.account_id ?? body.broker_id ?? "")
       if (!accountRowId) return bad(400, "account_id required")
       const row = await loadOwnedBrokerRow(supabase, userId, accountRowId)
-      const summary = await fx.accountSummary(row.fxsocket_account_id)
+      const summary = await fx.accountSummary(row.fxsocket_account_id, brokerApiPlatform(row))
       return Response.json({ ok: true, summary }, { headers: corsHeaders })
     }
 
@@ -434,7 +437,13 @@ Deno.serve(async (req: Request) => {
           : 0
       const includeBalanceCashFlow = body.include_balance_cashflow !== false
 
-      let brokers: Array<{ id: string; label: string; broker_name: string | null; fxsocket_account_id: string }> = []
+      let brokers: Array<{
+        id: string
+        label: string
+        broker_name: string | null
+        fxsocket_account_id: string
+        platform?: string | null
+      }> = []
       if (brokerId) {
         const row = await loadOwnedBrokerRow(supabase, userId, brokerId)
         brokers = [{
@@ -442,11 +451,12 @@ Deno.serve(async (req: Request) => {
           label: row.label,
           broker_name: row.broker_name ?? null,
           fxsocket_account_id: row.fxsocket_account_id,
+          platform: row.platform,
         }]
       } else {
         const { data } = await supabase
           .from("broker_accounts")
-          .select("id,label,broker_name,fxsocket_account_id")
+          .select("id,label,broker_name,fxsocket_account_id,platform")
           .eq("user_id", userId)
           .eq("is_active", true)
           .neq("fxsocket_account_id", "")

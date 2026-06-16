@@ -1,5 +1,6 @@
 import { assertEquals, assertThrows } from "jsr:@std/assert"
 import {
+  accountApiPathSegment,
   buildV1CreateAccountBody,
   getFxsocketV1BaseUrl,
   isAccountSummaryReady,
@@ -74,6 +75,13 @@ Deno.test("buildV1CreateAccountBody includes platform when provided", () => {
     platform: "MT4",
   })
   assertEquals(body.platform, "mt4")
+})
+
+Deno.test("accountApiPathSegment maps MT4/MT5 to REST path segment", () => {
+  assertEquals(accountApiPathSegment("MT4"), "mt4")
+  assertEquals(accountApiPathSegment("mt4"), "mt4")
+  assertEquals(accountApiPathSegment("MT5"), "mt5")
+  assertEquals(accountApiPathSegment(null), "mt5")
 })
 
 Deno.test("buildV1CreateAccountBody rejects invalid login", () => {

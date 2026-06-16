@@ -6,7 +6,7 @@
  *   GET  /v1/accounts/{id} — poll until status is connected
  *
  * Trading (per-account): https://fxsocket.com/docs#request-builder
- *   https://api.fxsocket.com/mt5/{account_id}/AccountSummary, OrderSend, …
+ *   https://api.fxsocket.com/mt4/{account_id}/… or …/mt5/{account_id}/…
  */
 
 export const FXSOCKET_DOCS_REQUEST_BUILDER = "https://fxsocket.com/docs#request-builder"
@@ -234,6 +234,11 @@ function normalizeV1Platform(platform?: string): "mt4" | "mt5" | undefined {
   return undefined
 }
 
+/** REST path segment for per-account trading API (`/mt4/{id}` or `/mt5/{id}`). */
+export function accountApiPathSegment(platform?: string | null): "mt4" | "mt5" {
+  return normalizeV1Platform(platform ?? "") ?? "mt5"
+}
+
 /** Build POST /v1/accounts body per OpenAPI schema V1CreateAccount. */
 export function buildV1CreateAccountBody(args: {
   login: string | number
@@ -374,10 +379,11 @@ export class FxsocketClient {
     this.v1BaseUrl = getFxsocketV1BaseUrl(env)
   }
 
-  accountBase(accountId: string): string {
+  accountBase(accountId: string, platform?: string | null): string {
     const id = String(accountId ?? "").trim()
     if (!id) throw new FxsocketApiError("account_id required", 400)
-    return `${this.baseUrl}/mt5/${encodeURIComponent(id)}`
+    const segment = accountApiPathSegment(platform)
+    return `${this.baseUrl}/${segment}/${encodeURIComponent(id)}`
   }
 
   private async request(
@@ -413,7 +419,7 @@ export class FxsocketClient {
 
     if (!res.ok) {
       const err = parseErrorEnvelope(body)
-      if (res.status === 404 && url.includes("/mt5/")) {
+      if (res.status === 404 && (url.includes("/mt5/") || url.includes("/mt4/"))) {
         throw new FxsocketApiError(
           "FxSocket account or endpoint not found. Check the account UUID and that the terminal is running.",
           404,
@@ -481,8 +487,10 @@ export class FxsocketClient {
       }
     }
 
+    const apiPlatform = v1.platform || undefined
+
     try {
-      const summary = await this.accountSummary(accountId)
+      const summary = await this.accountSummary(accountId, apiPlatform)
       if (isAccountSummaryReady(summary)) {
         return { ready: true, summary, v1 }
       }
@@ -502,48 +510,48 @@ export class FxsocketClient {
     }
   }
 
-  async accountSummary(accountId: string): Promise<FxsocketAccountSummary> {
-    const raw = await this.request(`${this.accountBase(accountId)}/AccountSummary`, { method: "GET" })
+  async accountSummary(accountId: string, platform?: string | null): Promise<FxsocketAccountSummary> {
+    const raw = await this.request(`${this.accountBase(accountId, platform)}/AccountSummary`, { method: "GET" })
     return normalizeAccountSummary(raw)
   }
 
-  async openedOrders(accountId: string): Promise<FxsocketOpenedOrder[]> {
-    const raw = await this.request(`${this.accountBase(accountId)}/OpenedOrders`, { method: "GET" })
+  async openedOrders(accountId: string, platform?: string | null): Promise<FxsocketOpenedOrder[]> {
+    const raw = await this.request(`${this.accountBase(accountId, platform)}/OpenedOrders`, { method: "GET" })
     return Array.isArray(raw) ? raw as FxsocketOpenedOrder[] : []
   }
 
-  async getQuote(accountId: string, symbol: string): Promise<FxsocketQuote> {
+  async getQuote(accountId: string, symbol: string, platform?: string | null): Promise<FxsocketQuote> {
     const q = encodeURIComponent(symbol.trim())
-    const raw = await this.request(`${this.accountBase(accountId)}/getQuote?symbol=${q}`, { method: "GET" })
+    const raw = await this.request(`${this.accountBase(accountId, platform)}/getQuote?symbol=${q}`, { method: "GET" })
     return (raw && typeof raw === "object") ? raw as FxsocketQuote : {}
   }
 
-  async symbolInfo(accountId: string, symbol: string): Promise<Record<string, unknown>> {
+  async symbolInfo(accountId: string, symbol: string, platform?: string | null): Promise<Record<string, unknown>> {
     const q = encodeURIComponent(symbol.trim())
-    const raw = await this.request(`${this.accountBase(accountId)}/SymbolInfo?symbol=${q}`, { method: "GET" })
+    const raw = await this.request(`${this.accountBase(accountId, platform)}/SymbolInfo?symbol=${q}`, { method: "GET" })
     return (raw && typeof raw === "object") ? raw as Record<string, unknown> : {}
   }
 
-  async symbols(accountId: string): Promise<string[]> {
-    const raw = await this.request(`${this.accountBase(accountId)}/symbols`, { method: "GET" })
+  async symbols(accountId: string, platform?: string | null): Promise<string[]> {
+    const raw = await this.request(`${this.accountBase(accountId, platform)}/symbols`, { method: "GET" })
     return Array.isArray(raw) ? raw.map(String) : []
   }
 
-  async orderHistory(accountId: string, from: string, to: string): Promise<unknown[]> {
+  async orderHistory(accountId: string, from: string, to: string, platform?: string | null): Promise<unknown[]> {
     const qFrom = encodeURIComponent(from.trim())
     const qTo = encodeURIComponent(to.trim())
     const raw = await this.request(
-      `${this.accountBase(accountId)}/OrderHistory?from=${qFrom}&to=${qTo}`,
+      `${this.accountBase(accountId, platform)}/OrderHistory?from=${qFrom}&to=${qTo}`,
       { method: "GET", timeoutMs: 90_000 },
     )
     return unwrapOrderList(raw)
   }
 
-  async positionHistory(accountId: string, from: string, to: string): Promise<unknown[]> {
+  async positionHistory(accountId: string, from: string, to: string, platform?: string | null): Promise<unknown[]> {
     const qFrom = encodeURIComponent(from.trim())
     const qTo = encodeURIComponent(to.trim())
     const raw = await this.request(
-      `${this.accountBase(accountId)}/PositionHistory?from=${qFrom}&to=${qTo}`,
+      `${this.accountBase(accountId, platform)}/PositionHistory?from=${qFrom}&to=${qTo}`,
       { method: "GET", timeoutMs: 90_000 },
     )
     return unwrapOrderList(raw)
@@ -552,6 +560,7 @@ export class FxsocketClient {
   async priceHistory(
     accountId: string,
     args: { symbol: string; timeframe: string; from: string; to: string },
+    platform?: string | null,
   ): Promise<FxsocketPriceBar[]> {
     const params = new URLSearchParams({
       symbol: args.symbol.trim(),
@@ -560,7 +569,7 @@ export class FxsocketClient {
       to: args.to.trim(),
     })
     const raw = await this.request(
-      `${this.accountBase(accountId)}/PriceHistory?${params.toString()}`,
+      `${this.accountBase(accountId, platform)}/PriceHistory?${params.toString()}`,
       { method: "GET", timeoutMs: 90_000 },
     )
     return parsePriceHistoryResponse(raw)
@@ -570,6 +579,7 @@ export class FxsocketClient {
   async quoteTicks(
     accountId: string,
     args: { symbol: string; from: string; to: string },
+    platform?: string | null,
   ): Promise<FxsocketQuoteTick[]> {
     const params = new URLSearchParams({
       symbol: args.symbol.trim(),
@@ -577,19 +587,19 @@ export class FxsocketClient {
       to: args.to.trim(),
     })
     const raw = await this.request(
-      `${this.accountBase(accountId)}/QuoteTicks?${params.toString()}`,
+      `${this.accountBase(accountId, platform)}/QuoteTicks?${params.toString()}`,
       { method: "GET", timeoutMs: 120_000 },
     )
     return parseQuoteTicksResponse(raw)
   }
 
-  async serverTimezone(accountId: string): Promise<Record<string, unknown>> {
-    const raw = await this.request(`${this.accountBase(accountId)}/ServerTimezone`, { method: "GET" })
+  async serverTimezone(accountId: string, platform?: string | null): Promise<Record<string, unknown>> {
+    const raw = await this.request(`${this.accountBase(accountId, platform)}/ServerTimezone`, { method: "GET" })
     return (raw && typeof raw === "object") ? raw as Record<string, unknown> : {}
   }
 
-  async orderSend(accountId: string, payload: Record<string, unknown>): Promise<FxsocketOrderResult> {
-    const raw = await this.request(`${this.accountBase(accountId)}/OrderSend`, {
+  async orderSend(accountId: string, payload: Record<string, unknown>, platform?: string | null): Promise<FxsocketOrderResult> {
+    const raw = await this.request(`${this.accountBase(accountId, platform)}/OrderSend`, {
       method: "POST",
       body: JSON.stringify(payload),
       timeoutMs: 90_000,
@@ -597,8 +607,8 @@ export class FxsocketClient {
     return normalizeOrderResponse(raw)
   }
 
-  async orderModify(accountId: string, payload: Record<string, unknown>): Promise<FxsocketOrderResult> {
-    const raw = await this.request(`${this.accountBase(accountId)}/OrderModify`, {
+  async orderModify(accountId: string, payload: Record<string, unknown>, platform?: string | null): Promise<FxsocketOrderResult> {
+    const raw = await this.request(`${this.accountBase(accountId, platform)}/OrderModify`, {
       method: "POST",
       body: JSON.stringify(payload),
       timeoutMs: 90_000,
@@ -606,8 +616,8 @@ export class FxsocketClient {
     return normalizeOrderResponse(raw)
   }
 
-  async orderClose(accountId: string, payload: Record<string, unknown>): Promise<FxsocketOrderResult> {
-    const raw = await this.request(`${this.accountBase(accountId)}/OrderClose`, {
+  async orderClose(accountId: string, payload: Record<string, unknown>, platform?: string | null): Promise<FxsocketOrderResult> {
+    const raw = await this.request(`${this.accountBase(accountId, platform)}/OrderClose`, {
       method: "POST",
       body: JSON.stringify(payload),
       timeoutMs: 90_000,
