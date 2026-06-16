@@ -18,12 +18,14 @@ describe('brokerSearchResults', () => {
     assert.equal(brokerSearchMatchScore('VantageMarkets-Demo', 'VantageMarkets-Demo 2'), 90)
   })
 
-  it('partitionBrokerSearchResults surfaces server hits for server queries', () => {
+  it('partitionBrokerSearchResults expands related servers for numbered server queries', () => {
     const { serverHits, companyHits } = partitionBrokerSearchResults(
       'VantageMarkets-Demo 2',
       vantageCompanies,
     )
-    assert.deepEqual(serverHits.map(hit => hit.serverName), ['VantageMarkets-Demo'])
+    assert.equal(serverHits.some(hit => hit.serverName === 'VantageMarkets-Demo'), true)
+    assert.equal(serverHits.some(hit => hit.serverName === 'VantageMarkets-Live 2'), true)
+    assert.equal(serverHits.length, 2)
     assert.equal(companyHits.length, 0)
   })
 })

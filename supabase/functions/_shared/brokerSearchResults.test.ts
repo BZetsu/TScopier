@@ -23,13 +23,15 @@ Deno.test("brokerSearchMatchScore matches server names with trailing numbers", (
   assertEquals(brokerSearchMatchScore("VantageMarkets-Live 2", "VantageMarkets-Live 2"), 100)
 })
 
-Deno.test("partitionBrokerSearchResults surfaces server hits before companies", () => {
+Deno.test("partitionBrokerSearchResults expands related servers for numbered server queries", () => {
   const { serverHits, companyHits } = partitionBrokerSearchResults(
     "VantageMarkets-Demo 2",
     vantageCompanies,
   )
 
-  assertEquals(serverHits.map((hit) => hit.serverName), ["VantageMarkets-Demo"])
+  assertEquals(serverHits.map((hit) => hit.serverName).includes("VantageMarkets-Demo"), true)
+  assertEquals(serverHits.map((hit) => hit.serverName).includes("VantageMarkets-Live 2"), true)
+  assertEquals(serverHits.length, 3)
   assertEquals(companyHits.length, 0)
 })
 

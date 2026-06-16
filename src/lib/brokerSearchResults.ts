@@ -48,6 +48,82 @@ export function brokerSearchMatchScore(text: string, query: string): number {
 const SERVER_HIT_MIN_SCORE = 50
 const COMPANY_HIT_MIN_SCORE = 45
 
+function extractTrailingNumber(query: string): string | null {
+  const match = query.trim().match(/\s+(\d+)$/)
+  return match ? match[1] : null
+}
+
+function serverFamilyPrefix(query: string): string {
+  const withoutNumber = withoutTrailingNumber(query.trim())
+  const dash = withoutNumber.indexOf('-')
+  if (dash > 0) return withoutNumber.slice(0, dash + 1)
+  return ''
+}
+
+/** Include sibling servers from companies that already matched the query. */
+export function expandBrokerServerHits(
+  query: string,
+  companies: BrokerSearchCompany[],
+  hits: BrokerServerHit[],
+): BrokerServerHit[] {
+  if (hits.length === 0) return hits
+
+  const byServer = new Map<string, BrokerServerHit>()
+  for (const hit of hits) {
+    byServer.set(hit.serverName.toLowerCase(), hit)
+  }
+
+  const touchedCompanies = new Set(
+    hits.map(hit => hit.companyName.trim().toLowerCase()).filter(Boolean),
+  )
+  const trailingNumber = extractTrailingNumber(query)
+  const family = serverFamilyPrefix(query)
+  const queryBase = withoutTrailingNumber(normalizeSearchText(query))
+
+  for (const company of companies) {
+    const companyName = (company.companyName ?? '').trim()
+    if (!touchedCompanies.has(companyName.toLowerCase())) continue
+
+    for (const result of company.results ?? []) {
+      const serverName = (result.name ?? '').trim()
+      if (!serverName) continue
+      const key = serverName.toLowerCase()
+      if (byServer.has(key)) continue
+
+      const normalized = normalizeSearchText(serverName)
+      let include = false
+
+      if (trailingNumber && normalized.endsWith(` ${trailingNumber}`)) {
+        include = true
+      }
+      if (family && serverName.startsWith(family)) {
+        include = true
+      }
+      if (queryBase && normalized.startsWith(queryBase)) {
+        include = true
+      }
+
+      if (!include) continue
+
+      byServer.set(key, {
+        serverName,
+        companyName,
+        company,
+        score: brokerSearchMatchScore(serverName, query),
+      })
+    }
+  }
+
+  return [...byServer.values()].sort(
+    (a, b) => b.score - a.score || a.serverName.localeCompare(b.serverName),
+  )
+}
+
+function serversShownForCompany(hits: BrokerServerHit[], companyName: string): number {
+  const key = companyName.toLowerCase()
+  return hits.filter(hit => hit.companyName.trim().toLowerCase() === key).length
+}
+
 export function partitionBrokerSearchResults(
   query: string,
   companies: BrokerSearchCompany[],
@@ -74,10 +150,11 @@ export function partitionBrokerSearchResults(
     }
   }
 
-  serverHits.sort((a, b) => b.score - a.score || a.serverName.localeCompare(b.serverName))
+  const expandedServerHits = expandBrokerServerHits(trimmedQuery, companies, serverHits)
+  expandedServerHits.sort((a, b) => b.score - a.score || a.serverName.localeCompare(b.serverName))
 
   const serverCompanyKeys = new Set(
-    serverHits.map(hit => (hit.companyName || '').trim().toLowerCase()).filter(Boolean),
+    expandedServerHits.map(hit => (hit.companyName || '').trim().toLowerCase()).filter(Boolean),
   )
 
   const companyHits = companies
@@ -91,11 +168,15 @@ export function partitionBrokerSearchResults(
       const key = companyName.toLowerCase()
       if (!companyName) return false
       if (score < COMPANY_HIT_MIN_SCORE) return false
-      if (serverHits.length > 0 && serverCompanyKeys.has(key)) return false
+      if (expandedServerHits.length > 0 && serverCompanyKeys.has(key)) {
+        const totalServers = (company.results ?? []).filter(row => (row.name ?? '').trim()).length
+        const shown = serversShownForCompany(expandedServerHits, companyName)
+        if (shown >= totalServers) return false
+      }
       return true
     })
     .sort((a, b) => b.score - a.score || (a.company.companyName ?? '').localeCompare(b.company.companyName ?? ''))
     .map(({ company }) => company)
 
-  return { serverHits, companyHits }
+  return { serverHits: expandedServerHits, companyHits }
 }
