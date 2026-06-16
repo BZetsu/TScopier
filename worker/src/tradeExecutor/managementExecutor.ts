@@ -74,11 +74,51 @@ function isRetryableBreakevenError(message: string): boolean {
     || /timeout/.test(m)
     || /temporary/.test(m)
     || /too many requests/.test(m)
+    || /verify failed/.test(m)
   )
 }
 
 async function sleepMs(ms: number): Promise<void> {
   await new Promise(resolve => setTimeout(resolve, ms))
+}
+
+function readOrderStopLoss(raw: unknown): number | null {
+  if (!raw || typeof raw !== 'object') return null
+  const o = raw as Record<string, unknown>
+  for (const key of ['stoploss', 'StopLoss', 'sl', 'SL', 'stop_loss', 'Stoploss']) {
+    const v = o[key]
+    const n = typeof v === 'number' ? v : Number(v)
+    if (Number.isFinite(n) && n > 0) return n
+  }
+  return null
+}
+
+function findRawOrderByTicket(rawOrders: unknown[], ticket: number): unknown | null {
+  for (const raw of rawOrders) {
+    if (!raw || typeof raw !== 'object') continue
+    const o = raw as Record<string, unknown>
+    const t = Number(o.ticket ?? o.Ticket ?? o.orderId ?? o.OrderID ?? 0)
+    if (Number.isFinite(t) && t === ticket) return raw
+  }
+  return null
+}
+
+async function verifyBreakevenApplied(args: {
+  api: NonNullable<TradeExecutorContext['apiFor'] extends (...x: any[]) => infer R ? R : never>
+  uuid: string
+  ticket: number
+  expectedSl: number
+  point: number
+}): Promise<{ ok: boolean; reason?: string }> {
+  const { api, uuid, ticket, expectedSl, point } = args
+  const rawOrders = await api.openedOrders(uuid)
+  const order = findRawOrderByTicket(rawOrders ?? [], ticket)
+  if (!order) return { ok: false, reason: 'verify failed: ticket missing from opened orders' }
+  const sl = readOrderStopLoss(order)
+  if (sl == null) return { ok: false, reason: 'verify failed: broker did not return stop loss' }
+  const eps = Math.max(point > 0 ? point * 3 : 0, 1e-5)
+  if (Math.abs(sl - expectedSl) <= eps) return { ok: true }
+  return { ok: false, reason: `verify failed: broker SL=${sl} expected=${expectedSl}` }
 }
 
 function resolveReconciledTicketForTrade(
@@ -607,6 +647,14 @@ export async function applyManagement(
                   stoploss: beSl,
                   takeprofit: modifyTp,
                 })
+                const verify = await verifyBreakevenApplied({
+                  api,
+                  uuid,
+                  ticket: effectiveTicket,
+                  expectedSl: beSl,
+                  point: symEntry?.point ?? 0,
+                })
+                if (!verify.ok) throw new Error(verify.reason ?? 'verify failed')
                 lastErr = null
                 break
               } catch (err) {
