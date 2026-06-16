@@ -24,8 +24,10 @@ export const accountConfigNl: AccountConfigBundleTranslations = {
       brokerServerHint:
         'Plak de exacte servernaam uit je MetaTrader-terminal (Bestand → Inloggen op handelsaccount).',
       brokerServerPlaceholder: 'bijv. ICMarketsSC-MT5',
-      brokerCompanySearchPlaceholder: 'Voer bedrijfsnaam in (bijv. Vantage)',
-      brokerCompanySearchEmpty: 'Gebruik zoeken om een bedrijf te vinden',
+      brokerCompanySearchPlaceholder: 'Zoek op brokerbedrijf of servernaam',
+      brokerCompanySearchServersHeading: 'Servers',
+      brokerCompanySearchCompaniesHeading: 'Brokers',
+      brokerCompanySearchEmpty: 'Zoek je brokerbedrijf of servernaam',
       brokerCompanySearchMinChars: 'Typ minimaal 4 tekens om te zoeken',
       brokerCompanySearchNoResults: 'Geen bedrijven gevonden. Probeer een andere spelling.',
       brokerCompanySearchLoading: 'Brokers zoeken…',

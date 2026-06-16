@@ -4,6 +4,10 @@
  */
 
 import { FxsocketApiError, resolveFxsocketApiKey } from "./fxsocketClient.ts"
+import {
+  deriveBrokerSearchVariants,
+  mergeBrokerSearchCompanies,
+} from "./brokerSearchResults.ts"
 
 type EnvGetter = { get(name: string): string | undefined }
 
@@ -159,4 +163,28 @@ export async function searchMt5BrokerCompanies(
   }
 
   return normalizeBsaSearchMt5Response(body as BsaSearchMt5Response)
+}
+
+/**
+ * Search by company or server name — runs multiple BSA fragments and merges results.
+ * The public /searchMt5 endpoint only accepts company-name fragments, so server-style
+ * queries (e.g. "VantageMarkets-Demo 2") are expanded into shorter variants first.
+ */
+export async function searchBrokerDirectory(
+  env: EnvGetter,
+  args: { query: string },
+): Promise<BrokerSearchCompany[]> {
+  const query = args.query.trim()
+  if (query.length < 4) {
+    throw new FxsocketApiError("query must be at least 4 characters", 400)
+  }
+
+  const variants = deriveBrokerSearchVariants(query)
+  const batches = await Promise.all(
+    variants.map((variant) =>
+      searchMt5BrokerCompanies(env, { company: variant }).catch(() => [] as BrokerSearchCompany[])
+    ),
+  )
+
+  return mergeBrokerSearchCompanies(batches)
 }

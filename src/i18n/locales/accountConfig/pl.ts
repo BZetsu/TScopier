@@ -24,8 +24,10 @@ export const accountConfigPl: AccountConfigBundleTranslations = {
       brokerServerHint:
         'Wklej dokładną nazwę serwera z terminala MetaTrader (Plik → Zaloguj się do rachunku handlowego).',
       brokerServerPlaceholder: 'np. ICMarketsSC-MT5',
-      brokerCompanySearchPlaceholder: 'Wpisz nazwę firmy (np. Vantage)',
-      brokerCompanySearchEmpty: 'Użyj wyszukiwania, aby znaleźć firmę',
+      brokerCompanySearchPlaceholder: 'Szukaj po firmie brokera lub nazwie serwera',
+      brokerCompanySearchServersHeading: 'Serwery',
+      brokerCompanySearchCompaniesHeading: 'Brokerzy',
+      brokerCompanySearchEmpty: 'Wyszukaj firmę brokera lub nazwę serwera',
       brokerCompanySearchMinChars: 'Wpisz co najmniej 4 znaki, aby wyszukać',
       brokerCompanySearchNoResults: 'Nie znaleziono firm. Spróbuj innej pisowni.',
       brokerCompanySearchLoading: 'Wyszukiwanie brokerów…',

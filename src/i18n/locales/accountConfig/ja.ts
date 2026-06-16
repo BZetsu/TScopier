@@ -24,8 +24,10 @@ export const accountConfigJa: AccountConfigBundleTranslations = {
       brokerServerHint:
         'MetaTrader ターミナルの正確なサーバー名を貼り付けてください（ファイル → 取引口座にログイン）。',
       brokerServerPlaceholder: '例: ICMarketsSC-MT5',
-      brokerCompanySearchPlaceholder: '会社名を入力（例: Vantage）',
-      brokerCompanySearchEmpty: '会社を見つけるには検索を使用してください',
+      brokerCompanySearchPlaceholder: '会社名またはサーバー名で検索',
+      brokerCompanySearchServersHeading: 'サーバー',
+      brokerCompanySearchCompaniesHeading: 'ブローカー',
+      brokerCompanySearchEmpty: 'ブローカー会社名またはサーバー名を検索',
       brokerCompanySearchMinChars: '検索するには 4 文字以上入力してください',
       brokerCompanySearchNoResults: '会社が見つかりません。別の表記でお試しください。',
       brokerCompanySearchLoading: 'ブローカーを検索中…',

@@ -316,6 +316,8 @@ export interface AccountConfigConnectFormTranslations {
   brokerServerHint: string
   brokerServerPlaceholder: string
   brokerCompanySearchPlaceholder: string
+  brokerCompanySearchServersHeading: string
+  brokerCompanySearchCompaniesHeading: string
   brokerCompanySearchEmpty: string
   brokerCompanySearchMinChars: string
   brokerCompanySearchNoResults: string

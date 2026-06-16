@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { ArrowLeft, Check, ChevronRight, Search, X } from 'lucide-react'
 import { useT } from '../../context/LocaleContext'
 import { useOverlayDismiss } from '../../hooks/useOverlayDismiss'
+import { partitionBrokerSearchResults } from '../../lib/brokerSearchResults'
 import { fxsocketBroker, type BrokerSearchCompany } from '../../lib/fxsocketBroker'
 
 interface MtCompanyServerPickerProps {
@@ -165,6 +166,11 @@ export function MtCompanyServerPicker({
 
   const trimmedQuery = searchQuery.trim()
   const showMinCharsHint = trimmedQuery.length > 0 && trimmedQuery.length < 4
+  const { serverHits, companyHits } = useMemo(
+    () => partitionBrokerSearchResults(trimmedQuery, companies),
+    [trimmedQuery, companies],
+  )
+  const hasResults = serverHits.length > 0 || companyHits.length > 0
 
   return (
     <div className="flex flex-col gap-1.5">
@@ -310,37 +316,81 @@ export function MtCompanyServerPicker({
                     <div className="px-4 py-8 text-sm text-center text-neutral-500 dark:text-neutral-400">
                       {cf.brokerCompanySearchMinChars}
                     </div>
-                  ) : trimmedQuery.length >= 4 && companies.length === 0 ? (
+                  ) : trimmedQuery.length >= 4 && !hasResults ? (
                     <div className="px-4 py-8 text-sm text-center text-neutral-500 dark:text-neutral-400">
                       {cf.brokerCompanySearchNoResults}
                     </div>
-                  ) : companies.length > 0 ? (
-                    <ul className="divide-y divide-neutral-100 dark:divide-neutral-800">
-                      {companies.map((company, index) => {
-                        const shortLabel = companyShortLabel(company)
-                        return (
-                          <li key={companyKey(company, index)}>
-                            <button
-                              type="button"
-                              onClick={() => handleCompanySelect(company)}
-                              className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-neutral-50 dark:hover:bg-neutral-800/50"
-                            >
-                              <div className="min-w-0 flex-1">
-                                <div className="text-sm font-medium text-neutral-900 dark:text-neutral-50 truncate">
-                                  {company.companyName || shortLabel || '—'}
-                                </div>
-                                {shortLabel && company.companyName && (
-                                  <div className="text-xs text-neutral-500 dark:text-neutral-400 truncate mt-0.5">
-                                    {shortLabel}
+                  ) : hasResults ? (
+                    <div className="divide-y divide-neutral-100 dark:divide-neutral-800">
+                      {serverHits.length > 0 ? (
+                        <div>
+                          <p className="px-4 pt-3 pb-1 text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
+                            {cf.brokerCompanySearchServersHeading}
+                          </p>
+                          <ul>
+                            {serverHits.map(hit => (
+                              <li key={hit.serverName}>
+                                <button
+                                  type="button"
+                                  onClick={() => handleServerSelect(hit.serverName)}
+                                  className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-neutral-50 dark:hover:bg-neutral-800/50"
+                                >
+                                  <div className="min-w-0 flex-1">
+                                    <div className="text-sm font-medium text-neutral-900 dark:text-neutral-50 truncate">
+                                      {hit.serverName}
+                                    </div>
+                                    {hit.companyName ? (
+                                      <div className="text-xs text-neutral-500 dark:text-neutral-400 truncate mt-0.5">
+                                        {hit.companyName}
+                                      </div>
+                                    ) : null}
                                   </div>
-                                )}
-                              </div>
-                              <ChevronRight className="w-4 h-4 shrink-0 text-neutral-300 dark:text-neutral-600" />
-                            </button>
-                          </li>
-                        )
-                      })}
-                    </ul>
+                                  {value === hit.serverName ? (
+                                    <Check className="w-4 h-4 shrink-0 text-teal-600 dark:text-teal-400" />
+                                  ) : (
+                                    <ChevronRight className="w-4 h-4 shrink-0 text-neutral-300 dark:text-neutral-600" />
+                                  )}
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null}
+
+                      {companyHits.length > 0 ? (
+                        <div>
+                          <p className="px-4 pt-3 pb-1 text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
+                            {cf.brokerCompanySearchCompaniesHeading}
+                          </p>
+                          <ul>
+                            {companyHits.map((company, index) => {
+                              const shortLabel = companyShortLabel(company)
+                              return (
+                                <li key={companyKey(company, index)}>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleCompanySelect(company)}
+                                    className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-neutral-50 dark:hover:bg-neutral-800/50"
+                                  >
+                                    <div className="min-w-0 flex-1">
+                                      <div className="text-sm font-medium text-neutral-900 dark:text-neutral-50 truncate">
+                                        {company.companyName || shortLabel || '—'}
+                                      </div>
+                                      {shortLabel && company.companyName ? (
+                                        <div className="text-xs text-neutral-500 dark:text-neutral-400 truncate mt-0.5">
+                                          {shortLabel}
+                                        </div>
+                                      ) : null}
+                                    </div>
+                                    <ChevronRight className="w-4 h-4 shrink-0 text-neutral-300 dark:text-neutral-600" />
+                                  </button>
+                                </li>
+                              )
+                            })}
+                          </ul>
+                        </div>
+                      ) : null}
+                    </div>
                   ) : (
                     <div className="px-4 py-10 text-center">
                       <div className="mx-auto mb-4 w-16 h-16 rounded-2xl bg-neutral-100 dark:bg-neutral-800 flex items-center justify-center">

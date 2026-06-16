@@ -308,8 +308,10 @@ export const en: Translations = {
       brokerServerHint:
         'Paste the exact server name from your MetaTrader terminal (File → Login to Trade Account).',
       brokerServerPlaceholder: 'e.g. ICMarketsSC-MT5',
-      brokerCompanySearchPlaceholder: 'Enter company name (e.g. Vantage)',
-      brokerCompanySearchEmpty: 'Use search to find a company',
+      brokerCompanySearchPlaceholder: 'Search by broker company or server name',
+      brokerCompanySearchServersHeading: 'Servers',
+      brokerCompanySearchCompaniesHeading: 'Brokers',
+      brokerCompanySearchEmpty: 'Search for your broker company or server name',
       brokerCompanySearchMinChars: 'Type at least 4 characters to search',
       brokerCompanySearchNoResults: 'No companies found. Try a different spelling.',
       brokerCompanySearchLoading: 'Searching brokers…',

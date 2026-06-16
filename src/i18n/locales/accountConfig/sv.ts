@@ -24,8 +24,10 @@ export const accountConfigSv: AccountConfigBundleTranslations = {
       brokerServerHint:
         'Klistra in det exakta servernamnet från din MetaTrader-terminal (Fil → Logga in på handelskonto).',
       brokerServerPlaceholder: 't.ex. ICMarketsSC-MT5',
-      brokerCompanySearchPlaceholder: 'Ange företagsnamn (t.ex. Vantage)',
-      brokerCompanySearchEmpty: 'Använd sök för att hitta ett företag',
+      brokerCompanySearchPlaceholder: 'Sök på mäklarföretag eller servernamn',
+      brokerCompanySearchServersHeading: 'Servrar',
+      brokerCompanySearchCompaniesHeading: 'Mäklare',
+      brokerCompanySearchEmpty: 'Sök efter ditt mäklarföretag eller servernamn',
       brokerCompanySearchMinChars: 'Skriv minst 4 tecken för att söka',
       brokerCompanySearchNoResults: 'Inga företag hittades. Prova en annan stavning.',
       brokerCompanySearchLoading: 'Söker efter mäklare…',

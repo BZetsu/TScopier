@@ -308,8 +308,10 @@ export const es: Translations = {
       brokerServerHint:
         'Pega el nombre exacto del servidor desde MetaTrader (Archivo → Acceder a cuenta comercial).',
       brokerServerPlaceholder: 'p. ej. ICMarketsSC-MT5',
-      brokerCompanySearchPlaceholder: 'Introduce el nombre de la empresa (p. ej. Vantage)',
-      brokerCompanySearchEmpty: 'Usa la búsqueda para encontrar una empresa',
+      brokerCompanySearchPlaceholder: 'Buscar por empresa broker o nombre de servidor',
+      brokerCompanySearchServersHeading: 'Servidores',
+      brokerCompanySearchCompaniesHeading: 'Brokers',
+      brokerCompanySearchEmpty: 'Busca tu empresa broker o nombre de servidor',
       brokerCompanySearchMinChars: 'Escribe al menos 4 caracteres para buscar',
       brokerCompanySearchNoResults: 'No se encontraron empresas. Prueba otra ortografía.',
       brokerCompanySearchLoading: 'Buscando brokers…',

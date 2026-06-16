@@ -24,8 +24,10 @@ export const accountConfigRu: AccountConfigBundleTranslations = {
       brokerServerHint:
         'Вставьте точное название сервера из терминала MetaTrader (Файл → Подключиться к торговому счету).',
       brokerServerPlaceholder: 'например, ICMarketsSC-MT5',
-      brokerCompanySearchPlaceholder: 'Введите название компании (например, Vantage)',
-      brokerCompanySearchEmpty: 'Используйте поиск, чтобы найти компанию',
+      brokerCompanySearchPlaceholder: 'Поиск по компании брокера или имени сервера',
+      brokerCompanySearchServersHeading: 'Серверы',
+      brokerCompanySearchCompaniesHeading: 'Брокеры',
+      brokerCompanySearchEmpty: 'Найдите компанию брокера или имя сервера',
       brokerCompanySearchMinChars: 'Введите минимум 4 символа для поиска',
       brokerCompanySearchNoResults: 'Компании не найдены. Попробуйте другое написание.',
       brokerCompanySearchLoading: 'Поиск брокеров…',
