@@ -11,8 +11,8 @@ import {
   type BasketReconcileJobRow,
   type BasketSymbolParams,
 } from './basketSlTpReconcile'
+import { resolveFreshTargetsForJob, sweepOpenBasketsForReconcileDrift } from './basketReconcileTargets'
 import {
-  applyShardToQuery,
   hasWorkOnShard,
   monitorActiveIntervalMs,
   monitorIdleIntervalMs,
@@ -29,11 +29,16 @@ const ACTIVE_MS = monitorActiveIntervalMs('BASKET_RECONCILE_TICK_MS', 15_000)
 const IDLE_MS = monitorIdleIntervalMs('BASKET_RECONCILE_IDLE_MS', 120_000)
 const BATCH_LIMIT = 20
 const HOST_ID = `worker-${process.pid}`
+const SWEEP_INTERVAL_MS = Math.min(
+  600_000,
+  Math.max(60_000, Number(process.env.BASKET_RECONCILE_SWEEP_MS ?? 180_000)),
+)
 
 export class BasketSlTpReconcileMonitor {
   private loop: MonitorLoopHandle | null = null
   private ticking = false
   private platformByUuid: PlatformByMetaapiId = new Map()
+  private lastSweepAt = 0
 
   constructor(private readonly supabase: SupabaseClient) {}
 
@@ -48,15 +53,17 @@ export class BasketSlTpReconcileMonitor {
       supabase: this.supabase,
       activeIntervalMs: ACTIVE_MS,
       idleIntervalMs: IDLE_MS,
-      hasWork: (sb) => {
-        const now = new Date().toISOString()
+      hasWork: async sb => {
+        const now = Date.now()
+        if (now - this.lastSweepAt >= SWEEP_INTERVAL_MS) return true
+        const ts = new Date().toISOString()
         return hasWorkOnShard(sb, 'basket_reconcile_jobs', q =>
-          q.eq('status', 'pending').lte('next_run_at', now),
+          q.eq('status', 'pending').lte('next_run_at', ts),
         )
       },
       tick: () => this.runTick(),
     })
-    console.log(`[basketSlTpReconcileMonitor] started active=${ACTIVE_MS}ms idle=${IDLE_MS}ms`)
+    console.log(`[basketSlTpReconcileMonitor] started active=${ACTIVE_MS}ms idle=${IDLE_MS}ms sweep=${SWEEP_INTERVAL_MS}ms`)
   }
 
   stop() {
@@ -90,18 +97,28 @@ export class BasketSlTpReconcileMonitor {
 
     if (error) {
       console.warn(`[basketSlTpReconcileMonitor] select failed: ${error.message}`)
-      return
+    } else {
+      for (const raw of (jobs ?? []) as BasketReconcileJobRow[]) {
+        if (raw.attempts >= raw.max_attempts) {
+          await this.supabase
+            .from('basket_reconcile_jobs')
+            .update({ status: 'failed', updated_at: new Date().toISOString() })
+            .eq('id', raw.id)
+          continue
+        }
+        await this.processJob(raw)
+      }
     }
 
-    for (const raw of (jobs ?? []) as BasketReconcileJobRow[]) {
-      if (raw.attempts >= raw.max_attempts) {
-        await this.supabase
-          .from('basket_reconcile_jobs')
-          .update({ status: 'failed', updated_at: new Date().toISOString() })
-          .eq('id', raw.id)
-        continue
+    if (Date.now() - this.lastSweepAt >= SWEEP_INTERVAL_MS) {
+      this.lastSweepAt = Date.now()
+      try {
+        await sweepOpenBasketsForReconcileDrift(this.supabase)
+      } catch (err) {
+        console.warn(
+          `[basketSlTpReconcileMonitor] drift sweep failed: ${err instanceof Error ? err.message : String(err)}`,
+        )
       }
-      await this.processJob(raw)
     }
   }
 
@@ -170,11 +187,40 @@ export class BasketSlTpReconcileMonitor {
       return
     }
 
-    const perLegTargets = parsePerLegTargets(row.per_leg_targets)
-    if (!perLegTargets.length) {
+    const { data: anchorSig } = await this.supabase
+      .from('signals')
+      .select('parsed_data, channel_id')
+      .eq('id', row.anchor_signal_id)
+      .maybeSingle()
+    const anchorParsed = (anchorSig as { parsed_data?: { tp?: number[] }; channel_id?: string | null } | null)?.parsed_data
+    const anchorChannelId = (anchorSig as { channel_id?: string | null } | null)?.channel_id ?? row.channel_id
+
+    const manual = normalizeManualSettingsForExecution(
+      resolveChannelTradingConfig(
+        broker as Parameters<typeof resolveChannelTradingConfig>[0],
+        anchorChannelId,
+      ).manual_settings,
+    )
+
+    const storedTargets = parsePerLegTargets(row.per_leg_targets)
+    const { perLegTargets: freshTargets, signalTps: freshSignalTps } = await resolveFreshTargetsForJob(
+      this.supabase,
+      row,
+      familyTrades,
+      manual,
+    )
+    const effectiveTargets = freshTargets.length ? freshTargets : storedTargets
+    if (!effectiveTargets.length) {
       await this.releaseJob(row.id, 'empty per_leg_targets', row.attempts)
       return
     }
+    const effectiveSignalTps = freshSignalTps.length
+      ? freshSignalTps
+      : (Array.isArray(anchorParsed?.tp)
+        ? anchorParsed.tp.filter(
+            (t): t is number => typeof t === 'number' && Number.isFinite(t) && t > 0,
+          )
+        : [])
 
     let params: BasketSymbolParams | null = null
     try {
@@ -193,24 +239,6 @@ export class BasketSlTpReconcileMonitor {
 
     const openedTickets = await fetchOpenBrokerTickets(api, uuid)
     const baseLot = Number(broker.default_lot_size ?? 0.01)
-    const { data: anchorSig } = await this.supabase
-      .from('signals')
-      .select('parsed_data, channel_id')
-      .eq('id', row.anchor_signal_id)
-      .maybeSingle()
-    const anchorParsed = (anchorSig as { parsed_data?: { tp?: number[] }; channel_id?: string | null } | null)?.parsed_data
-    const anchorChannelId = (anchorSig as { channel_id?: string | null } | null)?.channel_id ?? null
-    const manual = normalizeManualSettingsForExecution(
-      resolveChannelTradingConfig(
-        broker as Parameters<typeof resolveChannelTradingConfig>[0],
-        anchorChannelId,
-      ).manual_settings,
-    )
-    const signalTps = Array.isArray(anchorParsed?.tp)
-      ? anchorParsed.tp.filter(
-          (t): t is number => typeof t === 'number' && Number.isFinite(t) && t > 0,
-        )
-      : []
     const { summary, legErrors } = await runBasketLegModifies({
       supabase: this.supabase,
       api,
@@ -223,8 +251,8 @@ export class BasketSlTpReconcileMonitor {
       userId: row.user_id,
       brokerAccountId: row.broker_account_id,
       familyTrades,
-      perLegTargets,
-      signalTps,
+      perLegTargets: effectiveTargets,
+      signalTps: effectiveSignalTps,
       tpLots: manual.tp_lots,
       nImmCwe: row.n_imm_cwe ?? 0,
       overrideTp: row.override_tp,

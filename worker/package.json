@@ -8,8 +8,11 @@
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts",
     "test": "node --require ts-node/register --test $(find src -name '*.test.ts' | sort)",
-    "replay-parse": "ts-node -r dotenv/config src/diagnostics/replayChannelParse.ts",
-    "push-signal-stops": "ts-node -r dotenv/config src/diagnostics/pushSignalStopsToBroker.ts"
+    "replay-parse": "node -r dotenv/config dist/diagnostics/replayChannelParse.js",
+    "push-signal-stops": "node -r dotenv/config dist/diagnostics/pushSignalStopsToBroker.js",
+    "rebalance-open-baskets": "node -r dotenv/config dist/diagnostics/rebalanceOpenBaskets.js",
+    "push-signal-stops:dev": "ts-node -r dotenv/config src/diagnostics/pushSignalStopsToBroker.ts",
+    "rebalance-open-baskets:dev": "ts-node -r dotenv/config src/diagnostics/rebalanceOpenBaskets.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",

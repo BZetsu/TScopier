@@ -6,6 +6,7 @@ exports.resolveRangeBasketFinalTps = resolveRangeBasketFinalTps;
 exports.estimatePlanImmediateLegCount = estimatePlanImmediateLegCount;
 exports.resolveRangeBasketLegCounts = resolveRangeBasketLegCounts;
 exports.buildRangeBasketTpTargets = buildRangeBasketTpTargets;
+exports.loadRangePendingMeta = loadRangePendingMeta;
 exports.patchPendingRangeLegTakeProfits = patchPendingRangeLegTakeProfits;
 exports.syncRangeBasketTakeProfits = syncRangeBasketTakeProfits;
 const basketSlTpReconcile_1 = require("./basketSlTpReconcile");
@@ -168,7 +169,7 @@ function buildRangeBasketTpTargets(args) {
         tpLots,
     });
 }
-async function loadPendingMeta(supabase, brokerAccountId, signalId) {
+async function loadRangePendingMeta(supabase, brokerAccountId, signalId) {
     const { data: pendingRows } = await supabase
         .from('range_pending_legs')
         .select('step_idx, status')
@@ -283,7 +284,7 @@ async function syncRangeBasketTakeProfits(args) {
     if (error || !(familyRows ?? []).length)
         return;
     const familyTrades = (familyRows ?? []);
-    const { activePendingCount, maxPendingStepIdx } = await loadPendingMeta(args.supabase, args.brokerAccountId, args.signalId);
+    const { activePendingCount, maxPendingStepIdx } = await loadRangePendingMeta(args.supabase, args.brokerAccountId, args.signalId);
     const channelTpLevels = await loadScopedChannelTpLevels(args.supabase, {
         userId: args.userId,
         channelId: args.channelId,

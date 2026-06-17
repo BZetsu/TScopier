@@ -1,8 +1,11 @@
 /**
  * Emergency: push signal SL/TP to live broker positions via OrderModify.
  *
- * Usage:
- *   cd worker && npx ts-node -r dotenv/config src/diagnostics/pushSignalStopsToBroker.ts
+ * Railway / production (after npm run build):
+ *   node -r dotenv/config dist/diagnostics/pushSignalStopsToBroker.js
+ *
+ * Local:
+ *   cd worker && npm run build && npm run push-signal-stops
  *
  * Env:
  *   SIGNAL_ID          — optional; defaults to latest buy/sell with parsed SL today
@@ -10,6 +13,11 @@
  *   DRY_RUN=true       — print plan only, no broker calls
  *   ALL_CHANNELS=true  — apply to all open trades since SINCE (ignore signal channel filter)
  *   SYMBOL_PREFIX      — optional symbol filter (default: signal symbol or XAU)
+ *   SL_ONLY=true       — modify stoploss only; leave each leg's TP unchanged on broker + DB
+ *   PUSH_SL_ONLY=true  — alias for SL_ONLY
+ *   SL_FROM=channel    — SL source: channel (default) | signal | trade
+ *   SL_OVERRIDE=4319   — optional explicit SL (overrides SL_FROM)
+ *   TP_ONLY=true       — modify takeprofit only; leave SL unchanged per leg
  */
 import 'dotenv/config'
 import { createClient } from '@supabase/supabase-js'
@@ -17,10 +25,14 @@ import {
   getFxsocketClient,
   hasFxsocketConfigured,
   mtPlatformFrom,
-  type FxsocketBrokerClient,
 } from '../fxsocketClient'
 import { brokerSessionUuid } from '../tradeExecutor/helpers'
-import { takeProfitForLegIndex } from '../manualPlanning/tpBucketDistribution'
+import {
+  buildEntryQualityTakeProfitMap,
+  type EntryQualityLeg,
+} from '../manualPlanning/tpBucketDistribution'
+import type { ManualTpLot } from '../manualPlanning/types'
+import { loadChannelActiveTradeParamsForSymbol } from '../channelActiveTradeParams'
 
 const supabase = createClient(
   process.env.SUPABASE_URL!,
@@ -37,6 +49,7 @@ type TradeRow = {
   sl: number | null
   tp: number | null
   opened_at: string
+  entry_price: number | null
   telegram_channel_id: string | null
 }
 
@@ -46,7 +59,7 @@ type BrokerRow = {
   platform?: string | null
   fxsocket_account_id?: string | null
   metaapi_account_id?: string | null
-  manual_settings?: { tp_lots?: unknown } | null
+  manual_settings?: { tp_lots?: ManualTpLot[] | null } | null
 }
 
 function num(v: unknown): number | null {
@@ -55,10 +68,80 @@ function num(v: unknown): number | null {
   return Number.isFinite(n) && n > 0 ? n : null
 }
 
-function tpForLegIndex(tps: number[], legIndex: number): number | null {
-  if (!tps.length) return null
-  const idx = Math.min(Math.max(0, legIndex), tps.length - 1)
-  return tps[idx] ?? tps[tps.length - 1] ?? null
+async function resolveTargetSl(args: {
+  signal: { channel_id: string | null; user_id: string; parsed_data: unknown }
+  symbol: string
+  slFrom: 'channel' | 'signal' | 'trade'
+  tradeSl?: number | null
+  channelId?: string | null
+}): Promise<number> {
+  const override = num(process.env.SL_OVERRIDE)
+  if (override != null) return override
+
+  const parsed = (args.signal.parsed_data ?? {}) as { sl?: unknown }
+  const parsedSl = num(parsed.sl)
+  const channelId = args.channelId ?? args.signal.channel_id
+
+  const tryChannel = async (): Promise<number | null> => {
+    if (!channelId) return null
+    const ch = await loadChannelActiveTradeParamsForSymbol(
+      supabase,
+      args.signal.user_id,
+      channelId,
+      args.symbol,
+    )
+    return ch?.stoploss != null ? num(ch.stoploss) : null
+  }
+
+  if (args.slFrom === 'trade') {
+    const fromTrade = num(args.tradeSl)
+    if (fromTrade != null) return fromTrade
+    const fromCh = await tryChannel()
+    if (fromCh != null) return fromCh
+    if (parsedSl != null) return parsedSl
+  }
+
+  if (args.slFrom === 'signal') {
+    if (parsedSl != null) return parsedSl
+    const fromCh = await tryChannel()
+    if (fromCh != null) return fromCh
+  }
+
+  // default: channel first (catches SL adjustments like 4319 after initial 4321)
+  const fromCh = await tryChannel()
+  if (fromCh != null) return fromCh
+  if (parsedSl != null) return parsedSl
+  const fromTrade = num(args.tradeSl)
+  if (fromTrade != null) return fromTrade
+
+  throw new Error('No SL — set SL_OVERRIDE, channel_active_trade_params, or SIGNAL_ID with parsed SL')
+}
+
+async function resolveTpLadder(
+  signal: { channel_id: string | null; user_id: string; parsed_data: unknown },
+  symbol: string,
+): Promise<{ tps: number[] }> {
+  const parsed = (signal.parsed_data ?? {}) as { tp?: unknown[] }
+  let tps = (parsed.tp ?? []).map(t => num(t)).filter((t): t is number => t != null)
+
+  if (!tps.length && signal.channel_id) {
+    const ch = await loadChannelActiveTradeParamsForSymbol(
+      supabase,
+      signal.user_id,
+      signal.channel_id,
+      symbol,
+    )
+    if (ch?.tpLevels?.length) tps = ch.tpLevels
+  }
+
+  if (!tps.length) throw new Error('No TP ladder — set SIGNAL_ID with parsed TPs or channel_active_trade_params')
+  return { tps }
+}
+
+function parseSlFrom(): 'channel' | 'signal' | 'trade' {
+  const raw = String(process.env.SL_FROM ?? 'channel').trim().toLowerCase()
+  if (raw === 'signal' || raw === 'trade') return raw
+  return 'channel'
 }
 
 async function resolveSignalId(): Promise<string> {
@@ -89,8 +172,16 @@ async function resolveSignalId(): Promise<string> {
 
 async function main() {
   const dryRun = String(process.env.DRY_RUN ?? '').toLowerCase() === 'true'
+  const slOnly =
+    String(process.env.SL_ONLY ?? process.env.PUSH_SL_ONLY ?? '').toLowerCase() === 'true'
+  const tpOnly = String(process.env.TP_ONLY ?? '').toLowerCase() === 'true'
+  const slFrom = parseSlFrom()
   if (!dryRun && !hasFxsocketConfigured()) {
     throw new Error('FXSOCKET_API_KEY not set — cannot call broker')
+  }
+
+  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    throw new Error('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required')
   }
 
   const signalId = await resolveSignalId()
@@ -102,26 +193,27 @@ async function main() {
   if (sigErr || !signal) throw sigErr ?? new Error(`signal not found: ${signalId}`)
 
   const parsed = (signal.parsed_data ?? {}) as { sl?: unknown; tp?: unknown[]; symbol?: string; action?: string }
-  const signalSl = num(parsed.sl)
-  const signalTps = (parsed.tp ?? [])
-    .map(t => num(t))
-    .filter((t): t is number => t != null)
-  if (signalSl == null) throw new Error(`signal ${signalId} has no parsed SL`)
+  const symbolPrefix = String(process.env.SYMBOL_PREFIX ?? parsed.symbol ?? 'XAU').trim().toUpperCase()
+  const signalTps = slOnly ? [] : (await resolveTpLadder(signal, symbolPrefix)).tps
 
   const sinceIso = process.env.SINCE_ISO?.trim()
     || new Date(new Date(signal.created_at).getTime() - 2 * 60_000).toISOString()
+  const allChannels = String(process.env.ALL_CHANNELS ?? 'true').toLowerCase() === 'true'
 
   console.log(`Signal ${signalId}`)
-  console.log(`  SL=${signalSl}  TPs=${signalTps.join(',') || '(none — using last TP only)'}`)
+  if (slOnly) {
+    console.log(`  mode=SL_ONLY  SL_FROM=${slFrom}`)
+  } else if (tpOnly) {
+    console.log(`  mode=TP_ONLY  TPs=${signalTps.join(',')}`)
+  } else {
+    console.log(`  SL_FROM=${slFrom}  TPs=${signalTps.join(',')}`)
+  }
   console.log(`  channel=${signal.channel_id}  since=${sinceIso}`)
   console.log(`  dryRun=${dryRun}\n`)
 
-  const allChannels = String(process.env.ALL_CHANNELS ?? 'true').toLowerCase() === 'true'
-  const symbolPrefix = String(process.env.SYMBOL_PREFIX ?? parsed.symbol ?? 'XAU').trim().toUpperCase()
-
   let tradesQ = supabase
     .from('trades')
-    .select('id,signal_id,broker_account_id,metaapi_order_id,symbol,direction,sl,tp,opened_at,telegram_channel_id')
+    .select('id,signal_id,broker_account_id,metaapi_order_id,symbol,direction,sl,tp,opened_at,entry_price,telegram_channel_id')
     .eq('status', 'open')
     .gte('opened_at', sinceIso)
     .not('metaapi_order_id', 'is', null)
@@ -176,9 +268,26 @@ async function main() {
       .filter(r => r.broker_account_id === brokerId)
       .sort((a, b) => new Date(a.opened_at).getTime() - new Date(b.opened_at).getTime())
 
-    const tpLots = (broker.manual_settings as { tp_lots?: Parameters<typeof takeProfitForLegIndex>[0]['tpLots'] } | null)?.tp_lots
+    const tpLots = broker.manual_settings?.tp_lots ?? null
+
+    const isBuy = String(legs[0]?.direction ?? '').toLowerCase() === 'buy'
+    const tpMap = slOnly || tpOnly
+      ? new Map<string, number>()
+      : buildEntryQualityTakeProfitMap({
+          legs: legs.map(tr => ({
+            id: tr.id,
+            entryPrice: Number(tr.entry_price ?? 0),
+            openedAt: tr.opened_at,
+          })) satisfies EntryQualityLeg[],
+          isBuy,
+          slotLegCount: legs.length,
+          finalTps: signalTps,
+          tpLots: tpLots ?? null,
+        })
 
     console.log(`\n${broker.label ?? brokerId} (${broker.platform}) — ${legs.length} leg(s)`)
+
+    const slCache = new Map<string, number>()
 
     for (let i = 0; i < legs.length; i++) {
       const tr = legs[i]!
@@ -188,36 +297,62 @@ async function main() {
         continue
       }
 
-      let targetTp = tpForLegIndex(signalTps, i)
-      if (targetTp == null && signalTps.length) {
-        targetTp = takeProfitForLegIndex({
-          legIndex: i,
-          openLegCount: legs.length,
-          finalTps: signalTps,
-          tpLots: tpLots ?? null,
-        })
+      const keepTp = num(tr.tp)
+      const keepSl = num(tr.sl)
+      const targetTp = tpOnly ? (tpMap.get(tr.id) ?? keepTp) : slOnly ? keepTp : (tpMap.get(tr.id) ?? keepTp)
+
+      let targetSl: number | null = tpOnly ? keepSl : null
+      if (!tpOnly) {
+        const chKey = `${tr.telegram_channel_id ?? signal.channel_id ?? ''}|${tr.symbol}|${slFrom}`
+        const cached = slCache.get(chKey)
+        if (cached != null) {
+          targetSl = cached
+        } else {
+          targetSl = await resolveTargetSl({
+            signal,
+            symbol: tr.symbol,
+            slFrom,
+            tradeSl: tr.sl,
+            channelId: tr.telegram_channel_id ?? signal.channel_id,
+          })
+          slCache.set(chKey, targetSl)
+        }
       }
-      if (targetTp == null && num(tr.tp) != null) targetTp = num(tr.tp)
 
-      const targetSl = signalSl
+      if (targetSl == null && !tpOnly) {
+        skipped++
+        continue
+      }
+      if (!slOnly && !tpOnly && (targetTp == null || !(targetTp > 0))) {
+        skipped++
+        continue
+      }
 
+      const slLabel = targetSl != null ? targetSl : '—'
+      const tpLabel = targetTp != null ? targetTp : '—'
       console.log(
         `  leg ${i + 1}/${legs.length} ticket=${ticket} ${tr.symbol}`
-        + ` → SL=${targetSl} TP=${targetTp ?? '—'}`,
+        + ` → SL=${slLabel} TP=${tpLabel}${slOnly ? ' (TP unchanged)' : ''}`,
       )
 
       if (dryRun) continue
 
       try {
-        await client!.orderModify(uuid, {
-          ticket,
-          stoploss: targetSl,
-          takeprofit: targetTp ?? undefined,
-        })
-        await supabase
-          .from('trades')
-          .update({ sl: targetSl, tp: targetTp })
-          .eq('id', tr.id)
+        const modifyArgs: { ticket: number; stoploss?: number; takeprofit?: number } = { ticket }
+        if (!tpOnly && targetSl != null && targetSl > 0) modifyArgs.stoploss = targetSl
+        if (!slOnly && targetTp != null && targetTp > 0) modifyArgs.takeprofit = targetTp
+        if (modifyArgs.stoploss == null && modifyArgs.takeprofit == null) {
+          skipped++
+          continue
+        }
+
+        await client!.orderModify(uuid, modifyArgs)
+        const dbPatch: { sl?: number | null; tp?: number | null } = {}
+        if (!tpOnly && targetSl != null) dbPatch.sl = targetSl
+        if (!slOnly && targetTp != null) dbPatch.tp = targetTp
+        if (Object.keys(dbPatch).length > 0) {
+          await supabase.from('trades').update(dbPatch).eq('id', tr.id)
+        }
         await supabase.from('trade_execution_logs').insert({
           user_id: signal.user_id,
           signal_id: signalId,
@@ -227,9 +362,12 @@ async function main() {
           request_payload: {
             ticket,
             action: 'modify',
-            target_sl: targetSl,
-            target_tp: targetTp,
+            target_sl: modifyArgs.stoploss ?? null,
+            target_tp: modifyArgs.takeprofit ?? null,
             manual_push: true,
+            sl_only: slOnly,
+            tp_only: tpOnly,
+            sl_from: slFrom,
             trade_id: tr.id,
           } as unknown as Record<string, unknown>,
         })

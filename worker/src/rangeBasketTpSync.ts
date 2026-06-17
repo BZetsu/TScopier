@@ -248,7 +248,7 @@ export function buildRangeBasketTpTargets(args: {
   })
 }
 
-async function loadPendingMeta(
+export async function loadRangePendingMeta(
   supabase: SupabaseClient,
   brokerAccountId: string,
   signalId: string,
@@ -405,7 +405,7 @@ export async function syncRangeBasketTakeProfits(args: RangeBasketTpSyncArgs): P
   if (error || !(familyRows ?? []).length) return
 
   const familyTrades = (familyRows ?? []) as BasketOpenLeg[]
-  const { activePendingCount, maxPendingStepIdx } = await loadPendingMeta(
+  const { activePendingCount, maxPendingStepIdx } = await loadRangePendingMeta(
     args.supabase,
     args.brokerAccountId,
     args.signalId,

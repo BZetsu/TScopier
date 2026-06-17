@@ -4,6 +4,7 @@ exports.BasketSlTpReconcileMonitor = void 0;
 const fxsocketClient_1 = require("./fxsocketClient");
 const mtApiByAccount_1 = require("./mtApiByAccount");
 const basketSlTpReconcile_1 = require("./basketSlTpReconcile");
+const basketReconcileTargets_1 = require("./basketReconcileTargets");
 const monitorIdleGate_1 = require("./monitorIdleGate");
 const normalizeManualSettings_1 = require("./manualPlanning/normalizeManualSettings");
 const channelTradingConfig_1 = require("./channelTradingConfig");
@@ -14,12 +15,14 @@ const ACTIVE_MS = (0, monitorIdleGate_1.monitorActiveIntervalMs)('BASKET_RECONCI
 const IDLE_MS = (0, monitorIdleGate_1.monitorIdleIntervalMs)('BASKET_RECONCILE_IDLE_MS', 120000);
 const BATCH_LIMIT = 20;
 const HOST_ID = `worker-${process.pid}`;
+const SWEEP_INTERVAL_MS = Math.min(600000, Math.max(60000, Number(process.env.BASKET_RECONCILE_SWEEP_MS ?? 180000)));
 class BasketSlTpReconcileMonitor {
     constructor(supabase) {
         this.supabase = supabase;
         this.loop = null;
         this.ticking = false;
         this.platformByUuid = new Map();
+        this.lastSweepAt = 0;
     }
     start() {
         if (this.loop)
@@ -33,9 +36,12 @@ class BasketSlTpReconcileMonitor {
             supabase: this.supabase,
             activeIntervalMs: ACTIVE_MS,
             idleIntervalMs: IDLE_MS,
-            hasWork: (sb) => {
-                const now = new Date().toISOString();
-                return (0, monitorIdleGate_1.hasWorkOnShard)(sb, 'basket_reconcile_jobs', q => q.eq('status', 'pending').lte('next_run_at', now));
+            hasWork: async (sb) => {
+                const now = Date.now();
+                if (now - this.lastSweepAt >= SWEEP_INTERVAL_MS)
+                    return true;
+                const ts = new Date().toISOString();
+                return (0, monitorIdleGate_1.hasWorkOnShard)(sb, 'basket_reconcile_jobs', q => q.eq('status', 'pending').lte('next_run_at', ts));
             },
             tick: () => this.runTick(),
         });
@@ -70,17 +76,27 @@ class BasketSlTpReconcileMonitor {
             .limit(BATCH_LIMIT);
         if (error) {
             console.warn(`[basketSlTpReconcileMonitor] select failed: ${error.message}`);
-            return;
         }
-        for (const raw of (jobs ?? [])) {
-            if (raw.attempts >= raw.max_attempts) {
-                await this.supabase
-                    .from('basket_reconcile_jobs')
-                    .update({ status: 'failed', updated_at: new Date().toISOString() })
-                    .eq('id', raw.id);
-                continue;
+        else {
+            for (const raw of (jobs ?? [])) {
+                if (raw.attempts >= raw.max_attempts) {
+                    await this.supabase
+                        .from('basket_reconcile_jobs')
+                        .update({ status: 'failed', updated_at: new Date().toISOString() })
+                        .eq('id', raw.id);
+                    continue;
+                }
+                await this.processJob(raw);
             }
-            await this.processJob(raw);
+        }
+        if (Date.now() - this.lastSweepAt >= SWEEP_INTERVAL_MS) {
+            this.lastSweepAt = Date.now();
+            try {
+                await (0, basketReconcileTargets_1.sweepOpenBasketsForReconcileDrift)(this.supabase);
+            }
+            catch (err) {
+                console.warn(`[basketSlTpReconcileMonitor] drift sweep failed: ${err instanceof Error ? err.message : String(err)}`);
+            }
         }
     }
     async processJob(job) {
@@ -136,11 +152,26 @@ class BasketSlTpReconcileMonitor {
             await (0, basketSlTpReconcile_1.markBasketReconcileDone)(this.supabase, row.id);
             return;
         }
-        const perLegTargets = (0, basketSlTpReconcile_1.parsePerLegTargets)(row.per_leg_targets);
-        if (!perLegTargets.length) {
+        const { data: anchorSig } = await this.supabase
+            .from('signals')
+            .select('parsed_data, channel_id')
+            .eq('id', row.anchor_signal_id)
+            .maybeSingle();
+        const anchorParsed = anchorSig?.parsed_data;
+        const anchorChannelId = anchorSig?.channel_id ?? row.channel_id;
+        const manual = (0, normalizeManualSettings_1.normalizeManualSettingsForExecution)((0, channelTradingConfig_1.resolveChannelTradingConfig)(broker, anchorChannelId).manual_settings);
+        const storedTargets = (0, basketSlTpReconcile_1.parsePerLegTargets)(row.per_leg_targets);
+        const { perLegTargets: freshTargets, signalTps: freshSignalTps } = await (0, basketReconcileTargets_1.resolveFreshTargetsForJob)(this.supabase, row, familyTrades, manual);
+        const effectiveTargets = freshTargets.length ? freshTargets : storedTargets;
+        if (!effectiveTargets.length) {
             await this.releaseJob(row.id, 'empty per_leg_targets', row.attempts);
             return;
         }
+        const effectiveSignalTps = freshSignalTps.length
+            ? freshSignalTps
+            : (Array.isArray(anchorParsed?.tp)
+                ? anchorParsed.tp.filter((t) => typeof t === 'number' && Number.isFinite(t) && t > 0)
+                : []);
         let params = null;
         try {
             const sp = await api.symbolParams(uuid, row.symbol);
@@ -158,17 +189,6 @@ class BasketSlTpReconcileMonitor {
         catch { /* optional */ }
         const openedTickets = await (0, basketSlTpReconcile_1.fetchOpenBrokerTickets)(api, uuid);
         const baseLot = Number(broker.default_lot_size ?? 0.01);
-        const { data: anchorSig } = await this.supabase
-            .from('signals')
-            .select('parsed_data, channel_id')
-            .eq('id', row.anchor_signal_id)
-            .maybeSingle();
-        const anchorParsed = anchorSig?.parsed_data;
-        const anchorChannelId = anchorSig?.channel_id ?? null;
-        const manual = (0, normalizeManualSettings_1.normalizeManualSettingsForExecution)((0, channelTradingConfig_1.resolveChannelTradingConfig)(broker, anchorChannelId).manual_settings);
-        const signalTps = Array.isArray(anchorParsed?.tp)
-            ? anchorParsed.tp.filter((t) => typeof t === 'number' && Number.isFinite(t) && t > 0)
-            : [];
         const { summary, legErrors } = await (0, basketSlTpReconcile_1.runBasketLegModifies)({
             supabase: this.supabase,
             api,
@@ -181,8 +201,8 @@ class BasketSlTpReconcileMonitor {
             userId: row.user_id,
             brokerAccountId: row.broker_account_id,
             familyTrades,
-            perLegTargets,
-            signalTps,
+            perLegTargets: effectiveTargets,
+            signalTps: effectiveSignalTps,
             tpLots: manual.tp_lots,
             nImmCwe: row.n_imm_cwe ?? 0,
             overrideTp: row.override_tp,
