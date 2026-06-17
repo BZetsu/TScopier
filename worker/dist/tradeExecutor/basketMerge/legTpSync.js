@@ -36,6 +36,8 @@ async function syncMultiBasketLegTakeProfits(ctx, args) {
             manual,
             parsed: (0, rangeBasketTpSync_1.toRangeBasketParsedSlice)(parsed),
             plan,
+            channelId: signal.channel_id,
+            basketCreatedAt: signal.created_at ?? null,
         });
         return;
     }

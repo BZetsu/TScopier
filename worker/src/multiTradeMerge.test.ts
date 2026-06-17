@@ -96,7 +96,7 @@ test('shouldRouteAsBasketParameterRefresh: SL/TP without entry is follow-up cand
   )
 })
 
-test('shouldRouteAsBasketParameterRefresh: full entry with zone is not parameter refresh (sameSignalRefresh bypass)', () => {
+test('shouldRouteAsBasketParameterRefresh: full entry with zone + market now + SL/TP is refresh', () => {
   assert.equal(
     shouldRouteAsBasketParameterRefresh({
       action: 'buy',
@@ -107,11 +107,11 @@ test('shouldRouteAsBasketParameterRefresh: full entry with zone is not parameter
       tp: [4218, 4220],
       raw_instruction: 'Gold buy now 4216 - 4213 SL: 4209 TP: 4218',
     }),
-    false,
+    true,
   )
 })
 
-test('shouldRouteAsBasketParameterRefresh: full entry with zone and stops opens trade', () => {
+test('shouldRouteAsBasketParameterRefresh: full entry with zone without market now opens trade', () => {
   assert.equal(
     shouldRouteAsBasketParameterRefresh({
       action: 'sell',

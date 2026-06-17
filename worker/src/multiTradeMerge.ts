@@ -66,8 +66,11 @@ export function shouldRouteAsBasketParameterRefresh(parsed: ParsedSignalLike): b
   if (act === 'modify') return true
   if (act === 'buy' || act === 'sell') {
     if (isBareEntryFollowUp(parsed)) return false
-    // Full entry alerts (priced entry or zone) must open a trade — not SL/TP-only refresh.
+    // Entry zone + market-now + SL/TP completes a teaser basket (modify-only), not a new entry.
     if (parsedHasExplicitEntryAnchor(parsed as Parameters<typeof parsedHasExplicitEntryAnchor>[0])) {
+      if (messageHasMarketNowIntent(parsed.raw_instruction ?? '') && parsedHasSlOrTp(parsed)) {
+        return true
+      }
       return false
     }
     // "BUY NOW + SL/TP" (no priced entry) is an explicit market entry, not a

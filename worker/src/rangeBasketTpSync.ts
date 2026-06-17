@@ -122,6 +122,11 @@ export function resolveRangeBasketFinalTps(args: {
 
   if (args.familyTrades?.length) {
     const fromOpen = ladderFromOpenTrades(args.familyTrades, args.direction === 'buy')
+    if (fromOpen.length > 1) return fromOpen
+    // One TP across many legs is usually a failed balance — do not treat as the ladder.
+    if (fromOpen.length === 1 && args.familyTrades.length >= 2) {
+      return []
+    }
     if (fromOpen.length) return fromOpen
   }
   return []
@@ -422,19 +427,31 @@ export async function syncRangeBasketTakeProfits(args: RangeBasketTpSyncArgs): P
     direction: args.direction,
   })
 
-  if (!finalTps.length && args.forceLayeringRebalance) {
+  if ((!finalTps.length || finalTps.length <= 1) && args.forceLayeringRebalance) {
     await new Promise(r => setTimeout(r, 300))
+    let effectiveChannelTpLevels = channelTpLevels
+    if (args.channelId) {
+      const reloadedChannel = await loadScopedChannelTpLevels(args.supabase, {
+        userId: args.userId,
+        channelId: args.channelId,
+        basketCreatedAt: args.basketCreatedAt,
+        symbol: args.symbol,
+      })
+      if (reloadedChannel?.length) {
+        effectiveChannelTpLevels = reloadedChannel
+      }
+    }
     const reloaded = await reloadSignalParsed(args.supabase, args.signalId)
     if (reloaded) {
       parsed = { ...parsed, ...reloaded }
-      finalTps = resolveRangeBasketFinalTps({
-        parsed,
-        plan: args.plan,
-        familyTrades,
-        channelTpLevels,
-        direction: args.direction,
-      })
     }
+    finalTps = resolveRangeBasketFinalTps({
+      parsed,
+      plan: args.plan,
+      familyTrades,
+      channelTpLevels: effectiveChannelTpLevels,
+      direction: args.direction,
+    })
   }
 
   if (!finalTps.length) {

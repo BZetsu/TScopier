@@ -60,6 +60,8 @@ export async function syncMultiBasketLegTakeProfits(ctx: TradeExecutorContext, a
         manual,
         parsed: toRangeBasketParsedSlice(parsed),
         plan,
+        channelId: signal.channel_id,
+        basketCreatedAt: signal.created_at ?? null,
       })
       return
     }

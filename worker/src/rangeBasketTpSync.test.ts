@@ -83,7 +83,7 @@ test('coercePositiveTpLevels: accepts numeric strings', () => {
   assert.deepEqual(coercePositiveTpLevels(['4345', 4355, '4360']), [4345, 4355, 4360])
 })
 
-test('resolveRangeBasketFinalTps: falls back to open-leg ladder', () => {
+test('resolveRangeBasketFinalTps: falls back to open-leg ladder when multiple TP levels', () => {
   const legs = [
     openLeg('a', 4335, '2026-01-01T00:00:00Z'),
     openLeg('b', 4336, '2026-01-01T00:00:01Z'),
@@ -97,6 +97,35 @@ test('resolveRangeBasketFinalTps: falls back to open-leg ladder', () => {
     direction: 'buy',
   })
   assert.deepEqual(tps, [4345, 4360])
+})
+
+test('resolveRangeBasketFinalTps: ignores single TP on many legs (failed balance)', () => {
+  const legs = Array.from({ length: 5 }, (_, i) =>
+    openLeg(`i${i}`, 4335, `2026-01-01T00:00:0${i}Z`),
+  )
+  for (const leg of legs) leg.tp = 4332
+  const tps = resolveRangeBasketFinalTps({
+    parsed: {},
+    plan: null,
+    familyTrades: legs,
+    direction: 'buy',
+  })
+  assert.deepEqual(tps, [])
+})
+
+test('resolveRangeBasketFinalTps: prefers channel ladder over single open-leg TP', () => {
+  const legs = Array.from({ length: 5 }, (_, i) =>
+    openLeg(`i${i}`, 4335, `2026-01-01T00:00:0${i}Z`),
+  )
+  for (const leg of legs) leg.tp = 4332
+  const tps = resolveRangeBasketFinalTps({
+    parsed: {},
+    plan: null,
+    familyTrades: legs,
+    channelTpLevels: [4332, 4334, 4336],
+    direction: 'buy',
+  })
+  assert.deepEqual(tps, [4332, 4334, 4336])
 })
 
 test('buildRangeBasketTpTargets: coerced string TPs produce non-zero phase B targets', () => {

@@ -1095,12 +1095,18 @@ export class VirtualPendingMonitor {
   ): Promise<void> {
     if (!hasFxsocketConfigured()) return
 
-    const { data: signalRow } = await this.supabase
+    const { data: signalRow, error: signalErr } = await this.supabase
       .from('signals')
-      .select('parsed_data, telegram_channel_id, channel_id, created_at')
+      .select('parsed_data, channel_id, created_at')
       .eq('id', leg.signal_id)
       .maybeSingle()
-    const channelId = (signalRow?.channel_id ?? signalRow?.telegram_channel_id) as string | null
+    if (signalErr) {
+      console.warn(
+        `[virtualPendingMonitor] signal load failed for rebalance signal=${leg.signal_id}: ${signalErr.message}`,
+      )
+      return
+    }
+    const channelId = (signalRow?.channel_id ?? null) as string | null
     const basketCreatedAt = (signalRow?.created_at ?? null) as string | null
     const rawManual = await this.loadManualSettingsForLeg(leg.broker_account_id, channelId)
     const manual = normalizeManualSettingsForExecution(rawManual)

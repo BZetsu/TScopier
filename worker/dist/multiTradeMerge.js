@@ -41,8 +41,11 @@ function shouldRouteAsBasketParameterRefresh(parsed) {
     if (act === 'buy' || act === 'sell') {
         if (isBareEntryFollowUp(parsed))
             return false;
-        // Full entry alerts (priced entry or zone) must open a trade — not SL/TP-only refresh.
+        // Entry zone + market-now + SL/TP completes a teaser basket (modify-only), not a new entry.
         if ((0, manualPlanner_1.parsedHasExplicitEntryAnchor)(parsed)) {
+            if ((0, signalEntryNowRequirement_1.messageHasMarketNowIntent)(parsed.raw_instruction ?? '') && parsedHasSlOrTp(parsed)) {
+                return true;
+            }
             return false;
         }
         // "BUY NOW + SL/TP" (no priced entry) is an explicit market entry, not a
