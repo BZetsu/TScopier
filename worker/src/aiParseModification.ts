@@ -4,6 +4,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { ParsedSignal } from './manualPlanning/types'
+import { parsedHasExplicitEntryAnchor } from './manualPlanning/parsedEntry'
 import {
   normalizeAiParsedOutput,
   parseChannelMessageSync,
@@ -13,6 +14,8 @@ import {
   type ParseChannelMessageResult,
 } from './parseSignal'
 import { getChannelParseContext } from './channelKeywordsCache'
+import { messageHasMarketNowIntent } from './signalEntryNowRequirement'
+import { parsedHasReEnterIntent } from './signalPriceInference'
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY ?? ''
 
@@ -104,8 +107,9 @@ function resultFromDeterministic(
 ): AiModificationResult | null {
   if (det.status !== 'parsed' || det.parsed.action === 'ignore') return null
   if (deterministicFastPathConfidence(det.parsed) < 0.9) return null
+  const coerced = coerceMgmtSlTpFollowUpAction(det.parsed as ParsedSignal)
   return {
-    parsed: det.parsed as ParsedSignal,
+    parsed: coerced,
     status: 'parsed',
     skip_reason: null,
     intent: mapActionToIntent(det.parsed.action),
@@ -124,6 +128,34 @@ function mapActionToIntent(action: string): AiModificationIntent {
   if (a === 'buy' || a === 'sell') return 'parameter_refresh'
   if (a === 'ignore') return 'ignore'
   return 'commentary'
+}
+
+/** SL/TP-only follow-ups must use `modify` so dispatch hits the full-basket mgmt path. */
+export function coerceMgmtSlTpFollowUpAction(
+  parsed: ParsedSignal,
+  intent: AiModificationIntent = mapActionToIntent(parsed.action),
+): ParsedSignal {
+  const action = String(parsed.action ?? '').toLowerCase()
+  if (action === 'modify') return parsed
+
+  const hasSl = typeof parsed.sl === 'number' && Number.isFinite(parsed.sl) && parsed.sl > 0
+  const hasTp = (parsed.tp ?? []).some(
+    t => typeof t === 'number' && Number.isFinite(t) && (t as number) > 0,
+  )
+  if (!hasSl && !hasTp) return parsed
+  if (parsedHasReEnterIntent(parsed)) return parsed
+  if (parsedHasExplicitEntryAnchor(parsed)) return parsed
+  if (messageHasMarketNowIntent(parsed.raw_instruction ?? '')) return parsed
+
+  const slTpFollowUpIntent =
+    intent === 'modify'
+    || intent === 'parameter_refresh'
+    || (action === 'buy' || action === 'sell')
+
+  if (slTpFollowUpIntent && (action === 'buy' || action === 'sell')) {
+    return { ...parsed, action: 'modify' }
+  }
+  return parsed
 }
 
 async function loadParentSignal(
@@ -230,23 +262,30 @@ function buildAiResult(
   const corrected = typeof raw.corrected_message === 'string' && raw.corrected_message.trim()
     ? raw.corrected_message.trim()
     : rawMessage
-  const parsed = normalizeAiParsedOutput(
-    {
-      action: raw.action,
-      symbol: raw.symbol,
-      entry_price: raw.entry_price,
-      entry_zone_low: raw.entry_zone_low,
-      entry_zone_high: raw.entry_zone_high,
-      sl: raw.sl,
-      tp: raw.tp,
-      lot_size: raw.lot_size,
-      partial_close_fraction: raw.partial_close_fraction,
-      re_enter: raw.re_enter,
-      confidence: raw.confidence,
-      raw_instruction: corrected,
-    },
-    corrected,
-  ) as ParsedSignal
+  const intentHint = String(raw.intent ?? mapActionToIntent(String(raw.action ?? '')))
+  const parsed = coerceMgmtSlTpFollowUpAction(
+    normalizeAiParsedOutput(
+      {
+        action: raw.action,
+        symbol: raw.symbol,
+        entry_price: raw.entry_price,
+        entry_zone_low: raw.entry_zone_low,
+        entry_zone_high: raw.entry_zone_high,
+        sl: raw.sl,
+        tp: raw.tp,
+        lot_size: raw.lot_size,
+        partial_close_fraction: raw.partial_close_fraction,
+        re_enter: raw.re_enter,
+        confidence: raw.confidence,
+        raw_instruction: corrected,
+      },
+      corrected,
+    ) as ParsedSignal,
+    (['modify', 'close', 'breakeven', 'partial_profit', 'parameter_refresh', 'ignore', 'commentary'] as const)
+      .includes(intentHint as AiModificationIntent)
+      ? intentHint as AiModificationIntent
+      : mapActionToIntent(String(raw.action ?? '')),
+  )
 
   const intentRaw = String(raw.intent ?? mapActionToIntent(parsed.action))
   const intent = (
@@ -300,7 +339,7 @@ function revisionDeterministicParse(
         ? 'parameter_refresh'
         : mapActionToIntent(action)
     return {
-      parsed: entry.parsed as ParsedSignal,
+      parsed: coerceMgmtSlTpFollowUpAction(entry.parsed as ParsedSignal, intent),
       status: 'parsed',
       skip_reason: null,
       intent,
@@ -313,7 +352,7 @@ function revisionDeterministicParse(
   const mod = parseModificationDeterministic(rawMessage, keywords, lexicon)
   if (mod.status === 'parsed' && mod.parsed.action !== 'ignore') {
     return {
-      parsed: mod.parsed as ParsedSignal,
+      parsed: coerceMgmtSlTpFollowUpAction(mod.parsed as ParsedSignal),
       status: 'parsed',
       skip_reason: null,
       intent: mapActionToIntent(mod.parsed.action),
@@ -466,5 +505,10 @@ export async function aiParseModification(
 
 /** Convert AI result to parse result shape used by listener dispatch. */
 export function aiResultToParseResult(result: AiModificationResult): ParseChannelMessageResult {
-  return toParseResult(result.parsed, result.status === 'parsed' ? 'parsed' : 'skipped', result.skip_reason ?? null)
+  const parsed = coerceMgmtSlTpFollowUpAction(result.parsed, result.intent)
+  return toParseResult(
+    parsed as ParseChannelMessageResult['parsed'],
+    result.status === 'parsed' ? 'parsed' : 'skipped',
+    result.skip_reason ?? null,
+  )
 }

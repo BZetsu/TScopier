@@ -13,6 +13,7 @@ import {
   upsertBasketReconcileJob,
   type BasketOpenLeg,
   type BasketSymbolParams,
+  type LegModifyError,
 } from './basketSlTpReconcile'
 import { takeProfitForLegIndex } from './manualPlanning/tpBucketDistribution'
 import type { ManualSettings, ManualTpLot } from './manualPlanning/types'
@@ -21,7 +22,7 @@ import {
   isChannelManagementBlocked,
   normalizeChannelMessageFiltersMap,
 } from './channelMessageFilters'
-import type { PerLegStopTarget } from './multiTradeMerge'
+import type { PerLegStopTarget, MergeModifySummary } from './multiTradeMerge'
 
 function sanitizeLevel(v: number | null | undefined): number {
   const n = typeof v === 'number' ? v : Number(v ?? 0)
@@ -200,29 +201,70 @@ export async function applyMgmtModifyToBasketGroups(args: {
     const nImmCwe = brokerRows.filter(r => r.cwe_close_price != null).length
     const overrideTp = brokerRows.find(r => r.cwe_close_price != null)?.cwe_close_price ?? null
 
-    const { summary, legErrors } = await runBasketLegModifies({
-      supabase,
-      api,
-      uuid,
-      symbol,
-      direction,
-      baseLot: Number(broker.default_lot_size ?? 0.01),
-      params,
-      signalId: signal.id,
-      userId: signal.user_id,
-      brokerAccountId: broker.id,
-      familyTrades,
-      perLegTargets,
-      signalTps: parsedTpLevels,
-      tpLots: manual.tp_lots,
-      nImmCwe,
-      overrideTp: typeof overrideTp === 'number' ? overrideTp : null,
-      strictEntryPrefetch: null,
-      openedTickets,
-      skipAlreadySynced: false,
-      liveMgmtFast,
-      orderCommentsEnabled: manual.order_comments_enabled !== false,
-    })
+    const modifiedTradeIds = new Set<string>()
+    let summary: MergeModifySummary & { skippedNotOnBroker: number } = {
+      openLegs: familyTrades.length,
+      attempted: 0,
+      modified: 0,
+      failed: 0,
+      skippedNoTicket: 0,
+      skippedNotOnBroker: 0,
+    }
+    let legErrors: LegModifyError[] = []
+
+    const stragglerRounds = liveMgmtFast
+      ? Math.min(4, Math.max(1, Number(process.env.BASKET_MGMT_STRAGGLER_ROUNDS ?? 3)))
+      : Math.min(
+        8,
+        Math.max(2, Number(process.env.BASKET_MGMT_STRAGGLER_ROUNDS ?? 4)),
+      )
+
+    for (let round = 0; round < stragglerRounds; round++) {
+      if (round > 0) {
+        const sleepMs = liveMgmtFast ? Math.min(round, 2) * 100 : Math.min(round, 3) * 200
+        await new Promise(resolve => setTimeout(resolve, sleepMs))
+        if (round === 1) {
+          try {
+            openedTickets = await fetchOpenBrokerTickets(api, uuid)
+          } catch {
+            openedTickets = null
+          }
+        }
+      }
+
+      const pendingLegs = familyTrades.filter(tr => !modifiedTradeIds.has(tr.id))
+      if (!pendingLegs.length) break
+
+      const pass = await runBasketLegModifies({
+        supabase,
+        api,
+        uuid,
+        symbol,
+        direction,
+        baseLot: Number(broker.default_lot_size ?? 0.01),
+        params,
+        signalId: signal.id,
+        userId: signal.user_id,
+        brokerAccountId: broker.id,
+        familyTrades,
+        perLegTargets,
+        signalTps: parsedTpLevels,
+        tpLots: manual.tp_lots,
+        nImmCwe,
+        overrideTp: typeof overrideTp === 'number' ? overrideTp : null,
+        strictEntryPrefetch: null,
+        openedTickets,
+        skipAlreadySynced: round > 0,
+        alreadyModified: modifiedTradeIds,
+        liveMgmtFast,
+        orderCommentsEnabled: manual.order_comments_enabled !== false,
+      })
+
+      for (const id of pass.modifiedTradeIds) modifiedTradeIds.add(id)
+      summary = pass.summary
+      legErrors = pass.legErrors
+      if (modifiedTradeIds.size >= familyTrades.length) break
+    }
 
     const mergeFailed = summary.modified < summary.openLegs
     const partialMsg = mergeFailed

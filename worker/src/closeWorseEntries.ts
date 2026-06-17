@@ -145,3 +145,24 @@ export function selectImmediateLegsForCweInstruction(
     return !layeringTickets.has(ticket)
   })
 }
+
+/**
+ * Instruction CWE: immediate legs whose entry is within `pips` of the live quote
+ * (worse/near-market fills). Range layering tickets stay open; better fills farther
+ * from the quote are kept.
+ */
+export function selectWorseImmediateLegsForCweInstruction(args: {
+  trades: OpenTradeForCweClose[]
+  layeringTickets: Set<string>
+  referencePrice: number
+  pips: number
+  pipSize: number
+}): OpenTradeForCweClose[] {
+  const immediates = selectImmediateLegsForCweInstruction(args.trades, args.layeringTickets)
+  return filterTradesWithinPipsOfReference({
+    trades: immediates,
+    referencePrice: args.referencePrice,
+    pips: args.pips,
+    pipSize: args.pipSize,
+  })
+}

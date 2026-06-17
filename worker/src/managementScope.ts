@@ -269,7 +269,7 @@ export function resolveChannelCweTargets(
   return resolveNewestOpenSymbolTrades(filtered)
 }
 
-async function loadTradesForBasketAnchor(
+export async function loadTradesForBasketAnchor(
   supabase: SupabaseClient,
   args: {
     userId: string
@@ -381,4 +381,43 @@ export function resolveChannelModifyTargets(
   const plausible = filterTradesByPlausibleMgmtLevels(scoped, parsed)
   if (plausible.length) return plausible
   return scoped
+}
+
+/**
+ * Ensure every open leg on each touched basket anchor is included — channel-wide
+ * loaders can return a subset when symbol filters or attribution lag behind fills.
+ */
+export async function expandMgmtRowsToFullBaskets(
+  supabase: SupabaseClient,
+  args: {
+    userId: string
+    rows: MgmtTradeRow[]
+  },
+): Promise<MgmtTradeRow[]> {
+  if (!args.rows.length) return []
+  const merged = new Map<string, MgmtTradeRow>()
+  for (const tr of args.rows) merged.set(tr.id, tr)
+
+  const anchors = new Map<string, { brokerAccountId: string; anchorSignalId: string }>()
+  for (const tr of args.rows) {
+    anchors.set(`${tr.broker_account_id}|${tr.signal_id}`, {
+      brokerAccountId: tr.broker_account_id,
+      anchorSignalId: tr.signal_id,
+    })
+  }
+
+  await Promise.all([...anchors.values()].map(async ({ brokerAccountId, anchorSignalId }) => {
+    const basketRows = await loadTradesForBasketAnchor(supabase, {
+      userId: args.userId,
+      brokerAccountIds: [brokerAccountId],
+      anchorSignalId,
+    })
+    for (const tr of basketRows) merged.set(tr.id, tr)
+  }))
+
+  return [...merged.values()].sort((a, b) => {
+    const ta = a.opened_at ? new Date(a.opened_at).getTime() : 0
+    const tb = b.opened_at ? new Date(b.opened_at).getTime() : 0
+    return ta - tb
+  })
 }

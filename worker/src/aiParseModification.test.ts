@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { parseModificationDeterministic, parseChannelMessageSync, DEFAULT_CHANNEL_KEYWORDS } from './parseSignal'
+import { coerceMgmtSlTpFollowUpAction } from './aiParseModification'
 
 function mapActionToIntent(action: string) {
   const a = String(action ?? '').toLowerCase()
@@ -75,6 +76,37 @@ describe('ai modification intent mapping', () => {
   it('maps buy with SL to parameter_refresh intent', () => {
     assert.equal(mapActionToIntent('buy'), 'parameter_refresh')
     assert.equal(mapActionToIntent('modify'), 'modify')
+  })
+
+  it('coerces buy + SL-only AI output to modify for basket mgmt path', () => {
+    const coerced = coerceMgmtSlTpFollowUpAction({
+      action: 'buy',
+      symbol: 'XAUUSD',
+      entry_price: null,
+      entry_zone_low: null,
+      entry_zone_high: null,
+      sl: 4505,
+      tp: null,
+      lot_size: null,
+      raw_instruction: 'Adjust SL to 4505',
+    }, 'parameter_refresh')
+    assert.equal(coerced.action, 'modify')
+    assert.equal(coerced.sl, 4505)
+  })
+
+  it('keeps buy + priced entry as entry (not modify)', () => {
+    const kept = coerceMgmtSlTpFollowUpAction({
+      action: 'buy',
+      symbol: 'XAUUSD',
+      entry_price: 2650,
+      entry_zone_low: null,
+      entry_zone_high: null,
+      sl: 2640,
+      tp: [2670],
+      lot_size: null,
+      raw_instruction: 'BUY XAUUSD 2650 SL 2640 TP 2670',
+    }, 'parameter_refresh')
+    assert.equal(kept.action, 'buy')
   })
 })
 

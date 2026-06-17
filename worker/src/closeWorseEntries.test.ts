@@ -9,6 +9,7 @@ import {
   referencePriceForDirection,
   selectImmediateLegsForCweInstruction,
   selectTradesForCweInstruction,
+  selectWorseImmediateLegsForCweInstruction,
 } from './closeWorseEntries'
 
 const pip = 0.1 // XAU-style
@@ -16,7 +17,7 @@ const pip = 0.1 // XAU-style
 const trade = (
   id: string,
   ticket: string,
-  extra?: Partial<{ signal_id: string; cwe_close_price: number | null }>,
+  extra?: Partial<{ signal_id: string; cwe_close_price: number | null; entry_price: number }>,
 ) => ({
   id,
   signal_id: extra?.signal_id ?? 'sig-1',
@@ -25,7 +26,7 @@ const trade = (
   symbol: 'XAUUSD',
   direction: 'buy',
   lot_size: 0.01,
-  entry_price: 4565.1,
+  entry_price: extra?.entry_price ?? 4565.1,
   status: 'open',
   cwe_close_price: extra?.cwe_close_price ?? null,
 })
@@ -66,6 +67,25 @@ test('cweInstructionGroupKey survives symbols with pipe characters', () => {
     direction: 'buy',
   })
   assert.equal(parseCweInstructionGroupKey(key)?.symbol, 'XAU|USD')
+})
+
+test('selectWorseImmediateLegsForCweInstruction keeps better fills outside pip band', () => {
+  const trades = [
+    trade('instant', '1001', { entry_price: 4565.1 }),
+    { ...trade('better', '1002'), entry_price: 4556 },
+    { ...trade('layer', '1010'), entry_price: 4540 },
+  ]
+  const layering = new Set(['1010'])
+  const ref = 4565.1 + 30 * pip
+  const hit = selectWorseImmediateLegsForCweInstruction({
+    trades,
+    layeringTickets: layering,
+    referencePrice: ref,
+    pips: 30,
+    pipSize: pip,
+  })
+  assert.equal(hit.length, 1)
+  assert.equal(hit[0]!.id, 'instant')
 })
 
 test('selectImmediateLegsForCweInstruction closes immediates only', () => {

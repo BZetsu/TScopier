@@ -16,7 +16,9 @@ import {
   cweInstructionGroupKey,
   loadFiredRangeLayeringTickets,
   parseCweInstructionGroupKey,
+  referencePriceForDirection,
   selectImmediateLegsForCweInstruction,
+  selectWorseImmediateLegsForCweInstruction,
 } from '../closeWorseEntries'
 import { tryBrokerFallbackClose } from '../managementBrokerClose'
 import { extractOpenOrderFromBrokerRaw } from '../managementBrokerClose'
@@ -26,6 +28,7 @@ import type { MgmtExecOptions, MgmtExecResult } from '../mgmtExecOptions'
 import { loadRangePendingLegsInMgmtScope, pendingLegsToCancelScopes, updateRangePendingLegsForManagement } from '../managementPendingLegs'
 import {
   explicitMgmtSymbol,
+  expandMgmtRowsToFullBaskets,
   isReplyScopedManagement,
   loadOpenTradesForChannelWideCwe,
   loadOpenTradesForManagement,
@@ -349,6 +352,14 @@ export async function applyManagement(
 
     const byBroker = new Map(brokers.map(b => [b.id, b]))
     const action = String(parsed.action).toLowerCase()
+
+    if (action === 'modify' && rows.length > 0) {
+      rows = await expandMgmtRowsToFullBaskets(ctx.supabase, {
+        userId: signal.user_id,
+        rows,
+      })
+      basketAnchorId = rows[0]?.signal_id ?? basketAnchorId
+    }
 
     if (
       action === 'close_worse_entries'
@@ -1045,14 +1056,50 @@ export async function applyCloseWorseEntriesInstruction(ctx: TradeExecutorContex
         brokerAccountId: brokerId,
         symbol,
       })
-      const toClose = selectImmediateLegsForCweInstruction(groupTrades, layeringTickets)
+
+      const cwePips = Math.max(0, Number(manual.close_worse_entries_pips ?? 30))
+      const pipSize = signalPipPrice(symbol)
+      let referencePrice: number | null = null
+      if (cwePips > 0 && pipSize > 0) {
+        try {
+          const brokerSymbol = await ctx.resolveBrokerSymbolForLiveEntry(uuid, symbol).catch(() => symbol)
+          const q = await api.quote(uuid, brokerSymbol)
+          referencePrice = referencePriceForDirection(parsedKey.direction, q.bid, q.ask)
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err)
+          await ctx.supabase.from('trade_execution_logs').insert({
+            user_id: signal.user_id,
+            signal_id: signal.id,
+            broker_account_id: broker.id,
+            action: 'mgmt_close_worse_entries',
+            status: 'skipped',
+            request_payload: {
+              reason: 'cwe_quote_unavailable',
+              symbol,
+              error: msg.slice(0, 200),
+            },
+          })
+          return { closed: 0, eligible: 0 }
+        }
+      }
+
+      const toClose = referencePrice != null && cwePips > 0
+        ? selectWorseImmediateLegsForCweInstruction({
+          trades: groupTrades,
+          layeringTickets,
+          referencePrice,
+          pips: cwePips,
+          pipSize,
+        })
+        : selectImmediateLegsForCweInstruction(groupTrades, layeringTickets)
       let groupClosed = 0
       legsTotal += toClose.length
 
       console.log(
         `[tradeExecutor] cwe instruction signal=${signal.id} broker=${broker.id} symbol=${symbol}`
-        + ` mode=instruction_immediate_only matched=${toClose.length}/${groupTrades.length}`
-        + ` layering_tickets=${layeringTickets.size}`,
+        + ` mode=instruction_immediate_within_pips matched=${toClose.length}/${groupTrades.length}`
+        + ` layering_tickets=${layeringTickets.size} pips=${cwePips}`
+        + (referencePrice != null ? ` ref=${referencePrice}` : ''),
       )
 
       if (!toClose.length) {
@@ -1063,10 +1110,12 @@ export async function applyCloseWorseEntriesInstruction(ctx: TradeExecutorContex
           action: 'mgmt_close_worse_entries',
           status: 'skipped',
           request_payload: {
-            mode: 'instruction_immediate_only',
-            reason: groupTrades.length > 0 ? 'cwe_all_legs_layering_or_no_ticket' : 'cwe_no_open_immediates',
+            mode: 'instruction_immediate_within_pips',
+            reason: groupTrades.length > 0 ? 'cwe_no_immediates_within_pips' : 'cwe_no_open_immediates',
             open_legs: groupTrades.length,
             layering_tickets_excluded: layeringTickets.size,
+            cwe_pips: cwePips,
+            reference_price: referencePrice,
             symbol,
           },
         })
@@ -1103,7 +1152,7 @@ export async function applyCloseWorseEntriesInstruction(ctx: TradeExecutorContex
             action: 'mgmt_close_worse_entries',
             status: 'success',
             request_payload: {
-              mode: 'instruction_immediate_only',
+              mode: 'instruction_immediate_within_pips',
               ticket,
               symbol,
               direction: trade.direction,
@@ -1140,7 +1189,7 @@ export async function applyCloseWorseEntriesInstruction(ctx: TradeExecutorContex
             action: 'mgmt_close_worse_entries',
             status: 'failed',
             request_payload: {
-              mode: 'instruction_immediate_only',
+              mode: 'instruction_immediate_within_pips',
               ticket,
               symbol,
               entry_price: trade.entry_price,

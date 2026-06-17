@@ -88,7 +88,20 @@ function toParseResult(
 }
 
 export function aiEntryResultToParseResult(result: AiEntryParseResult): ParseChannelMessageResult {
-  return toParseResult(result.parsed, result.status === 'parsed' ? 'parsed' : 'skipped', result.skip_reason ?? null)
+  const parsed = coerceAiEntrySignal(result.parsed)
+  return toParseResult(parsed, result.status === 'parsed' ? 'parsed' : 'skipped', result.skip_reason ?? null)
+}
+
+/**
+ * AI entry parser is only used on the entry fallback path, so parsed buy/sell
+ * should always express explicit "open new trade" intent. This prevents them
+ * from being routed as basket parameter refresh (modify-only).
+ */
+export function coerceAiEntrySignal(parsed: ParsedSignal): ParsedSignal {
+  const action = String(parsed.action ?? '').toLowerCase()
+  if (action !== 'buy' && action !== 'sell') return parsed
+  if (parsed.re_enter === true) return parsed
+  return { ...parsed, re_enter: true }
 }
 
 async function callOpenAiEntry(context: Record<string, unknown>): Promise<{
@@ -214,7 +227,7 @@ export async function aiParseEntry(
   const corrected = typeof aiRaw.corrected_message === 'string' && aiRaw.corrected_message.trim()
     ? aiRaw.corrected_message.trim()
     : args.rawMessage
-  const parsed = normalizeAiParsedOutput(
+  const parsed = coerceAiEntrySignal(normalizeAiParsedOutput(
     {
       action: aiRaw.action,
       symbol: aiRaw.symbol,
@@ -230,7 +243,7 @@ export async function aiParseEntry(
       raw_instruction: corrected,
     },
     corrected,
-  ) as ParsedSignal
+  ) as ParsedSignal)
 
   const confidence = typeof aiRaw.confidence === 'number' && Number.isFinite(aiRaw.confidence)
     ? Math.min(1, Math.max(0, aiRaw.confidence))
