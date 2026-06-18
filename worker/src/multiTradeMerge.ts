@@ -66,6 +66,7 @@ export function shouldRouteAsBasketParameterRefresh(parsed: ParsedSignalLike): b
   if (act === 'modify') return true
   if (act === 'buy' || act === 'sell') {
     if (isBareEntryFollowUp(parsed)) return false
+    if (isOneShotChannelTradeAlert(parsed)) return false
     // Entry zone + market-now + SL/TP completes a teaser basket (modify-only), not a new entry.
     if (parsedHasExplicitEntryAnchor(parsed as Parameters<typeof parsedHasExplicitEntryAnchor>[0])) {
       if (messageHasMarketNowIntent(parsed.raw_instruction ?? '') && parsedHasSlOrTp(parsed)) {
@@ -397,4 +398,12 @@ function isBareEntryFollowUp(parsed: ParsedSignalLike): boolean {
     !parsedHasSlOrTp(parsed)
     && !parsedHasExplicitEntryAnchor(parsed as Parameters<typeof parsedHasExplicitEntryAnchor>[0])
   )
+}
+
+/** One-shot channel entry (e.g. FX Culture "BUY TRADE XAU/USD" + zone + SL/TP) — always opens. */
+function isOneShotChannelTradeAlert(parsed: ParsedSignalLike): boolean {
+  const act = String(parsed.action ?? '').toLowerCase()
+  if (act !== 'buy' && act !== 'sell') return false
+  if (!parsed.symbol || !parsedHasSlOrTp(parsed)) return false
+  return /\b(?:buy|sell)\s+trade\b/i.test(String(parsed.raw_instruction ?? ''))
 }

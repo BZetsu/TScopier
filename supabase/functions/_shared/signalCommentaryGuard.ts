@@ -65,6 +65,37 @@ export function looksLikeCasualNonTradeMessage(message: string): boolean {
   }
 
   if (looksLikeProfitResultCommentary(text)) return true
+  if (looksLikeTradeRecapCommentary(text)) return true
+
+  return false
+}
+
+/** Past-tense trade story / lesson posts that mention "took the buy" but carry no executable levels. */
+export function looksLikeTradeRecapCommentary(message: string): boolean {
+  const text = String(message ?? '').replace(/\s+/g, ' ').trim()
+  if (!text) return false
+  if (hasExecutableTradeStructure(text)) return false
+
+  if (
+    /\b(?:after the|following the)\s+(?:fomc|fed|nfp|cpi|news)\b/i.test(text)
+    && /\b(?:waited|took|entered|position)\b/i.test(text)
+  ) {
+    return true
+  }
+
+  if (
+    /\b(?:i\s+)?took the\s+(?:buy|sell)\b/i.test(text)
+    && /\b(?:pips?|move|higher|lower|caught|around)\b/i.test(text)
+  ) {
+    return true
+  }
+
+  if (
+    /\b(?:key lesson|lesson here|patience matters|wait for confirmation)\b/i.test(text)
+    && /\b(?:took|entered|position|caught)\b/i.test(text)
+  ) {
+    return true
+  }
 
   return false
 }

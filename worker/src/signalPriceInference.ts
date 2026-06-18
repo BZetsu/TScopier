@@ -213,6 +213,24 @@ export function extractUnlabeledPrices(message: string): number[] {
   return out
 }
 
+/**
+ * FX Culture / ICT style bare range on its own line: "4282.0-4287.0", "4282 / 4287".
+ * Must appear as a two-price range, not a single labeled SL/TP value.
+ */
+export function extractBarePriceRangeZone(message: string): { low: number; high: number } | null {
+  const collapsed = String(message ?? '').replace(/\s+/g, ' ').trim()
+  const zoneRx = new RegExp(
+    `(?:^|\\s)(${SIGNAL_PRICE_NUM})\\s*(?:-|–)\\s*(${SIGNAL_PRICE_NUM})(?:\\.|\\s|$)`,
+    'i',
+  )
+  const m = collapsed.match(zoneRx)
+  if (!m?.[1] || !m?.[2]) return null
+  const a = parseSignalPriceToken(m[1])
+  const b = parseSignalPriceToken(m[2])
+  if (a == null || b == null) return null
+  return { low: Math.min(a, b), high: Math.max(a, b) }
+}
+
 export function entryReferenceFromParsed(parsed: {
   entry_price?: number | null
   entry_zone_low?: number | null

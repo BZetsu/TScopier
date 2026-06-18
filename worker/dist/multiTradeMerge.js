@@ -41,6 +41,8 @@ function shouldRouteAsBasketParameterRefresh(parsed) {
     if (act === 'buy' || act === 'sell') {
         if (isBareEntryFollowUp(parsed))
             return false;
+        if (isOneShotChannelTradeAlert(parsed))
+            return false;
         // Entry zone + market-now + SL/TP completes a teaser basket (modify-only), not a new entry.
         if ((0, manualPlanner_1.parsedHasExplicitEntryAnchor)(parsed)) {
             if ((0, signalEntryNowRequirement_1.messageHasMarketNowIntent)(parsed.raw_instruction ?? '') && parsedHasSlOrTp(parsed)) {
@@ -291,4 +293,13 @@ async function resolveRecentEntrySignalAnchor(supabase, args, opts) {
 function isBareEntryFollowUp(parsed) {
     return (!parsedHasSlOrTp(parsed)
         && !(0, manualPlanner_1.parsedHasExplicitEntryAnchor)(parsed));
+}
+/** One-shot channel entry (e.g. FX Culture "BUY TRADE XAU/USD" + zone + SL/TP) — always opens. */
+function isOneShotChannelTradeAlert(parsed) {
+    const act = String(parsed.action ?? '').toLowerCase();
+    if (act !== 'buy' && act !== 'sell')
+        return false;
+    if (!parsed.symbol || !parsedHasSlOrTp(parsed))
+        return false;
+    return /\b(?:buy|sell)\s+trade\b/i.test(String(parsed.raw_instruction ?? ''));
 }

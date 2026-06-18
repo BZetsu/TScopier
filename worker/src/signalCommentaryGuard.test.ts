@@ -4,6 +4,7 @@ import {
   looksLikeCasualNonTradeMessage,
   looksLikeMarketNewsOrCommentary,
   looksLikeProfitResultCommentary,
+  looksLikeTradeRecapCommentary,
 } from './signalCommentaryGuard'
 import {
   entryMissingSlTpRequiresNow,
@@ -75,6 +76,24 @@ describe('looksLikeProfitResultCommentary', () => {
     const signal = 'GOLD BUY NOW 4532.7 SL: 4524.3 TP: 4535'
     assert.equal(looksLikeProfitResultCommentary(signal), false)
     assert.equal(looksLikeCasualNonTradeMessage(signal), false)
+  })
+})
+
+describe('looksLikeTradeRecapCommentary', () => {
+  it('detects FOMC post-trade lesson recap', () => {
+    const msg = `After the FOMC news, I waited around 30 minutes before taking any position.
+Gold started to show bullish structure, so I took the buy and caught around a 250 pips move higher.
+The key lesson here: wait for confirmation, execute clean, manage risk.`
+    assert.equal(looksLikeTradeRecapCommentary(msg), true)
+    assert.equal(looksLikeCasualNonTradeMessage(msg), true)
+  })
+
+  it('does not flag FX Culture executable signal', () => {
+    const signal = `BUY TRADE XAU/USD
+4282.0-4287.0
+Stop Loss: 4265
+Target: 4365.0`
+    assert.equal(looksLikeTradeRecapCommentary(signal), false)
   })
 })
 

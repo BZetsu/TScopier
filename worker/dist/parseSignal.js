@@ -629,46 +629,53 @@ function extractOptionalEntryAnchor(message, channelKeywords) {
                 }
             }
             else {
-                const entryLevel = text.match(new RegExp(`\\bentry\\s+level\\s*[:=]?\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'i'));
-                if (entryLevel?.[1])
-                    entry_price = (0, signalPriceFormat_1.parseSignalPriceToken)(entryLevel[1]);
-                const entryLabel = text.match(new RegExp(`\\bentry\\s*(?:price|level)?\\s*[:=]\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'i'));
-                if (entry_price == null && entryLabel?.[1])
-                    entry_price = (0, signalPriceFormat_1.parseSignalPriceToken)(entryLabel[1]);
-                if (entry_price == null) {
-                    const atPx = text.match(new RegExp(`@\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`));
-                    if (atPx?.[1])
-                        entry_price = (0, signalPriceFormat_1.parseSignalPriceToken)(atPx[1]);
+                const bareZone = (0, signalPriceInference_1.extractBarePriceRangeZone)(message);
+                if (bareZone) {
+                    entry_zone_low = bareZone.low;
+                    entry_zone_high = bareZone.high;
                 }
-                if (entry_price == null) {
-                    const buySellAt = text.match(new RegExp(`\\b(?:buy|sell)\\s+at\\s+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'i'));
-                    if (buySellAt?.[1])
-                        entry_price = (0, signalPriceFormat_1.parseSignalPriceToken)(buySellAt[1]);
-                }
-                if (entry_price == null) {
-                    const entryWord = text.match(new RegExp(`\\bentry\\s+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'i'));
-                    if (entryWord?.[1])
-                        entry_price = (0, signalPriceFormat_1.parseSignalPriceToken)(entryWord[1]);
-                }
-                if (entry_price == null) {
-                    const entryLabels = splitKeywordAliases(channelKeywords.signal.entry_point, delim);
-                    const fromKw = extractPriceByLabels(text, entryLabels);
-                    if (fromKw != null && Number.isFinite(fromKw) && fromKw > 0) {
-                        entry_price = fromKw;
+                if (entry_zone_low == null) {
+                    const entryLevel = text.match(new RegExp(`\\bentry\\s+level\\s*[:=]?\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'i'));
+                    if (entryLevel?.[1])
+                        entry_price = (0, signalPriceFormat_1.parseSignalPriceToken)(entryLevel[1]);
+                    const entryLabel = text.match(new RegExp(`\\bentry\\s*(?:price|level)?\\s*[:=]\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'i'));
+                    if (entry_price == null && entryLabel?.[1])
+                        entry_price = (0, signalPriceFormat_1.parseSignalPriceToken)(entryLabel[1]);
+                    if (entry_price == null) {
+                        const atPx = text.match(new RegExp(`@\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`));
+                        if (atPx?.[1])
+                            entry_price = (0, signalPriceFormat_1.parseSignalPriceToken)(atPx[1]);
                     }
-                }
-                // Common signal shapes that omit "entry" / "@" labels but still carry a single anchor:
-                //   "BUY XAUUSD NOW 2650", "BUY GOLD 2645.5 MARKET", "SELL BTCUSD 98000 NOW",
-                //   "BUY XAUUSD 2650" / "SELL GOLD 2645.5" (market word optional — same anchor as with NOW).
-                if (entry_price == null && entry_zone_low == null) {
-                    const symPriceOptionalMarket = text.match(new RegExp(`\\b(?:xauusd|xagusd|gold|silver|btcusd|btcusdt|ethusd|ethusdt|eurusd|gbpusd|usdjpy|us30|nas100)\\s+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})(?:\\s+(?:now|instant|market|mkt))?\\b`, 'i'));
-                    if (symPriceOptionalMarket?.[1])
-                        entry_price = (0, signalPriceFormat_1.parseSignalPriceToken)(symPriceOptionalMarket[1]);
-                }
-                if (entry_price == null && entry_zone_low == null) {
-                    const marketThenPrice = text.match(new RegExp(`\\b(?:now|instant|market|mkt)\\s+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'i'));
-                    if (marketThenPrice?.[1])
-                        entry_price = (0, signalPriceFormat_1.parseSignalPriceToken)(marketThenPrice[1]);
+                    if (entry_price == null) {
+                        const buySellAt = text.match(new RegExp(`\\b(?:buy|sell)\\s+at\\s+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'i'));
+                        if (buySellAt?.[1])
+                            entry_price = (0, signalPriceFormat_1.parseSignalPriceToken)(buySellAt[1]);
+                    }
+                    if (entry_price == null) {
+                        const entryWord = text.match(new RegExp(`\\bentry\\s+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'i'));
+                        if (entryWord?.[1])
+                            entry_price = (0, signalPriceFormat_1.parseSignalPriceToken)(entryWord[1]);
+                    }
+                    if (entry_price == null) {
+                        const entryLabels = splitKeywordAliases(channelKeywords.signal.entry_point, delim);
+                        const fromKw = extractPriceByLabels(text, entryLabels);
+                        if (fromKw != null && Number.isFinite(fromKw) && fromKw > 0) {
+                            entry_price = fromKw;
+                        }
+                    }
+                    // Common signal shapes that omit "entry" / "@" labels but still carry a single anchor:
+                    //   "BUY XAUUSD NOW 2650", "BUY GOLD 2645.5 MARKET", "SELL BTCUSD 98000 NOW",
+                    //   "BUY XAUUSD 2650" / "SELL GOLD 2645.5" (market word optional — same anchor as with NOW).
+                    if (entry_price == null && entry_zone_low == null) {
+                        const symPriceOptionalMarket = text.match(new RegExp(`\\b(?:xauusd|xagusd|gold|silver|btcusd|btcusdt|ethusd|ethusdt|eurusd|gbpusd|usdjpy|us30|nas100)\\s+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})(?:\\s+(?:now|instant|market|mkt))?\\b`, 'i'));
+                        if (symPriceOptionalMarket?.[1])
+                            entry_price = (0, signalPriceFormat_1.parseSignalPriceToken)(symPriceOptionalMarket[1]);
+                    }
+                    if (entry_price == null && entry_zone_low == null) {
+                        const marketThenPrice = text.match(new RegExp(`\\b(?:now|instant|market|mkt)\\s+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'i'));
+                        if (marketThenPrice?.[1])
+                            entry_price = (0, signalPriceFormat_1.parseSignalPriceToken)(marketThenPrice[1]);
+                    }
                 }
             }
         }

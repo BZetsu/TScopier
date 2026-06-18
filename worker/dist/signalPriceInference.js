@@ -7,6 +7,7 @@ exports.detectReEnterIntent = detectReEnterIntent;
 exports.parsedHasReEnterIntent = parsedHasReEnterIntent;
 exports.classifyPricesByDirection = classifyPricesByDirection;
 exports.extractUnlabeledPrices = extractUnlabeledPrices;
+exports.extractBarePriceRangeZone = extractBarePriceRangeZone;
 exports.entryReferenceFromParsed = entryReferenceFromParsed;
 const signalPriceFormat_1 = require("./signalPriceFormat");
 const signalCommentaryGuard_1 = require("./signalCommentaryGuard");
@@ -179,6 +180,22 @@ function extractUnlabeledPrices(message) {
         out.push(value);
     }
     return out;
+}
+/**
+ * FX Culture / ICT style bare range on its own line: "4282.0-4287.0", "4282 / 4287".
+ * Must appear as a two-price range, not a single labeled SL/TP value.
+ */
+function extractBarePriceRangeZone(message) {
+    const collapsed = String(message ?? '').replace(/\s+/g, ' ').trim();
+    const zoneRx = new RegExp(`(?:^|\\s)(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\s*(?:-|–)\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})(?:\\.|\\s|$)`, 'i');
+    const m = collapsed.match(zoneRx);
+    if (!m?.[1] || !m?.[2])
+        return null;
+    const a = (0, signalPriceFormat_1.parseSignalPriceToken)(m[1]);
+    const b = (0, signalPriceFormat_1.parseSignalPriceToken)(m[2]);
+    if (a == null || b == null)
+        return null;
+    return { low: Math.min(a, b), high: Math.max(a, b) };
 }
 function entryReferenceFromParsed(parsed) {
     const ep = positivePrice(parsed.entry_price);

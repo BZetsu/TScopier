@@ -96,6 +96,21 @@ test('shouldRouteAsBasketParameterRefresh: SL/TP without entry is follow-up cand
   )
 })
 
+test('shouldRouteAsBasketParameterRefresh: FX Culture one-shot BUY TRADE opens trade', () => {
+  assert.equal(
+    shouldRouteAsBasketParameterRefresh({
+      action: 'buy',
+      symbol: 'XAUUSD',
+      entry_zone_low: 4282,
+      entry_zone_high: 4287,
+      sl: 4265,
+      tp: [4365],
+      raw_instruction: 'BUY TRADE XAU/USD\n4282.0-4287.0\nStop Loss: 4265\nTarget: 4365.0',
+    }),
+    false,
+  )
+})
+
 test('shouldRouteAsBasketParameterRefresh: full entry with zone + market now + SL/TP is refresh', () => {
   assert.equal(
     shouldRouteAsBasketParameterRefresh({

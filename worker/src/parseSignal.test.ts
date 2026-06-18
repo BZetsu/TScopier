@@ -579,4 +579,34 @@ TP2 4345`
     assert.equal(result.status, 'parsed')
     assert.equal(result.parsed.action, 'close')
   })
+
+  it('parses FX Culture BUY TRADE with bare entry zone line and SL/TP', () => {
+    const msg = `BUY TRADE XAU/USD 
+
+4282.0-4287.0
+
+
+📍Stop Loss: 4265
+
+Target: 4365.0`
+    const result = parseChannelMessageSync(msg, DEFAULT_CHANNEL_KEYWORDS, lexicon)
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.action, 'buy')
+    assert.equal(result.parsed.symbol, 'XAUUSD')
+    assert.equal(result.parsed.entry_zone_low, 4282)
+    assert.equal(result.parsed.entry_zone_high, 4287)
+    assert.equal(result.parsed.sl, 4265)
+    assert.deepEqual(result.parsed.tp, [4365])
+  })
+
+  it('skips FX Culture FOMC trade recap commentary', () => {
+    const msg = `After the FOMC news, I waited around 30 minutes before taking any position.
+
+Gold started to show bullish structure after the initial move, so I took the buy and caught around a $25 /250 pips move higher.
+
+The key lesson here: wait for confirmation, execute clean, manage risk.`
+    const result = parseChannelMessageSync(msg, DEFAULT_CHANNEL_KEYWORDS, lexicon)
+    assert.equal(result.status, 'skipped')
+    assert.equal(result.parsed.action, 'ignore')
+  })
 })

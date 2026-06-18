@@ -7,6 +7,7 @@ import {
   classifyPricesByDirection,
   detectReEnterIntent,
   entryReferenceFromParsed,
+  extractBarePriceRangeZone,
   extractUnlabeledPrices,
   type TradeDirection,
 } from './signalPriceInference'
@@ -792,6 +793,12 @@ function extractOptionalEntryAnchor(
           entry_zone_high = Math.max(a, b)
         }
       } else {
+      const bareZone = extractBarePriceRangeZone(message)
+      if (bareZone) {
+        entry_zone_low = bareZone.low
+        entry_zone_high = bareZone.high
+      }
+      if (entry_zone_low == null) {
       const entryLevel = text.match(new RegExp(`\\bentry\\s+level\\s*[:=]?\\s*(${SIGNAL_PRICE_NUM})\\b`, 'i'))
       if (entryLevel?.[1]) entry_price = parseSignalPriceToken(entryLevel[1])
       const entryLabel = text.match(new RegExp(`\\bentry\\s*(?:price|level)?\\s*[:=]\\s*(${SIGNAL_PRICE_NUM})\\b`, 'i'))
@@ -828,6 +835,7 @@ function extractOptionalEntryAnchor(
       const marketThenPrice = text.match(new RegExp(`\\b(?:now|instant|market|mkt)\\s+(${SIGNAL_PRICE_NUM})\\b`, 'i'))
       if (marketThenPrice?.[1]) entry_price = parseSignalPriceToken(marketThenPrice[1])
     }
+      }
       }
     }
   }

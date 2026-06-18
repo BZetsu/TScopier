@@ -45,7 +45,7 @@ class BasketSlTpReconcileMonitor {
             },
             tick: () => this.runTick(),
         });
-        console.log(`[basketSlTpReconcileMonitor] started active=${ACTIVE_MS}ms idle=${IDLE_MS}ms`);
+        console.log(`[basketSlTpReconcileMonitor] started active=${ACTIVE_MS}ms idle=${IDLE_MS}ms sweep=${SWEEP_INTERVAL_MS}ms`);
     }
     stop() {
         this.loop?.stop();

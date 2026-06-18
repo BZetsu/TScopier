@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.hasExecutableTradeStructure = hasExecutableTradeStructure;
 exports.looksLikeMarketNewsOrCommentary = looksLikeMarketNewsOrCommentary;
 exports.looksLikeCasualNonTradeMessage = looksLikeCasualNonTradeMessage;
+exports.looksLikeTradeRecapCommentary = looksLikeTradeRecapCommentary;
 exports.looksLikeProfitResultCommentary = looksLikeProfitResultCommentary;
 exports.isPercentagePriceAt = isPercentagePriceAt;
 /** True when the message has explicit executable trade structure (not inferred). */
@@ -81,6 +82,29 @@ function looksLikeCasualNonTradeMessage(message) {
     }
     if (looksLikeProfitResultCommentary(text))
         return true;
+    if (looksLikeTradeRecapCommentary(text))
+        return true;
+    return false;
+}
+/** Past-tense trade story / lesson posts that mention "took the buy" but carry no executable levels. */
+function looksLikeTradeRecapCommentary(message) {
+    const text = String(message ?? '').replace(/\s+/g, ' ').trim();
+    if (!text)
+        return false;
+    if (hasExecutableTradeStructure(text))
+        return false;
+    if (/\b(?:after the|following the)\s+(?:fomc|fed|nfp|cpi|news)\b/i.test(text)
+        && /\b(?:waited|took|entered|position)\b/i.test(text)) {
+        return true;
+    }
+    if (/\b(?:i\s+)?took the\s+(?:buy|sell)\b/i.test(text)
+        && /\b(?:pips?|move|higher|lower|caught|around)\b/i.test(text)) {
+        return true;
+    }
+    if (/\b(?:key lesson|lesson here|patience matters|wait for confirmation)\b/i.test(text)
+        && /\b(?:took|entered|position|caught)\b/i.test(text)) {
+        return true;
+    }
     return false;
 }
 /** Profit/testimonial posts that mention a past signal side but are not new entries. */
