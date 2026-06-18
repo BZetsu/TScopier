@@ -7,9 +7,10 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { PerLegStopTarget } from './multiTradeMerge'
 import {
-  channelParamsPredateBasket,
-  loadChannelActiveTradeParamsForSymbol,
-} from './channelActiveTradeParams'
+  logEffectiveBasketStops,
+  resolveEffectiveBasketStops,
+  type EffectiveStopSource,
+} from './basketEffectiveStops'
 import { expandPerLegTargetsToCount } from './manualPlanning/tpBucketDistribution'
 import type { ManualTpLot } from './manualPlanning/types'
 import { stopsAlreadyMatchDb } from './orderModifyBenign'
@@ -44,10 +45,17 @@ export type FreshReconcileTargetsArgs = {
   overrideTp: number | null
 }
 
+export type FreshReconcileTargetsResult = {
+  perLegTargets: PerLegStopTarget[]
+  signalTps: number[]
+  effectiveStoploss: number
+  effectiveSlSource: EffectiveStopSource
+}
+
 export async function resolveFreshBasketReconcileTargets(
   supabase: SupabaseClient,
   args: FreshReconcileTargetsArgs,
-): Promise<{ perLegTargets: PerLegStopTarget[]; signalTps: number[] }> {
+): Promise<FreshReconcileTargetsResult> {
   const stored = args.storedTargets
 
   const { data: anchorSig } = await supabase
@@ -65,24 +73,24 @@ export async function resolveFreshBasketReconcileTargets(
     ?? (anchorSig as { channel_id?: string | null } | null)?.channel_id
     ?? null
 
-  let parsed = toRangeBasketParsedSlice(
+  const anchorParsed = toRangeBasketParsedSlice(
     (anchorSig as { parsed_data?: unknown } | null)?.parsed_data as { sl?: unknown; tp?: unknown } | undefined,
   )
 
-  let channelTpLevels: number[] | null = null
-  if (channelId) {
-    const ch = await loadChannelActiveTradeParamsForSymbol(
-      supabase,
-      args.userId,
-      channelId,
-      args.symbol,
-    )
-    if (ch && !channelParamsPredateBasket(ch, anchorCreatedAt)) {
-      channelTpLevels = ch.tpLevels.length ? ch.tpLevels : null
-      if (ch.stoploss != null) parsed = { ...parsed, sl: ch.stoploss }
-      if (ch.tpLevels.length > 0) parsed = { ...parsed, tp: [...ch.tpLevels] }
-    }
-  }
+  const effective = await resolveEffectiveBasketStops({
+    supabase,
+    userId: args.userId,
+    channelId,
+    anchorSignalId: args.anchorSignalId,
+    symbol: args.symbol,
+    basketCreatedAt: anchorCreatedAt,
+    anchorParsed,
+    familyTrades: args.familyTrades,
+  })
+  logEffectiveBasketStops('[basketReconcileTargets]', args.anchorSignalId, effective)
+
+  const parsed = { ...effective.parsedSlice }
+  const channelTpLevels = effective.tpLevels.length ? effective.tpLevels : null
 
   const signalTps = resolveRangeBasketFinalTps({
     parsed,
@@ -109,6 +117,7 @@ export async function resolveFreshBasketReconcileTargets(
       maxPendingStepIdx,
       channelTpLevels,
       finalTpsOverride: signalTps.length ? signalTps : null,
+      stoplossOverride: effective.stoploss > 0 ? effective.stoploss : null,
     })
     perLegTargets = built.map(t => ({
       stoploss: Number(t.stoploss) || 0,
@@ -141,7 +150,7 @@ export async function resolveFreshBasketReconcileTargets(
     perLegTargets[i] = { ...perLegTargets[i]!, takeprofit: 0 }
   }
 
-  return { perLegTargets, signalTps }
+  return { perLegTargets, signalTps, effectiveStoploss: effective.stoploss, effectiveSlSource: effective.source }
 }
 
 /** True when any open leg's DB SL/TP differs from freshly resolved targets. */
@@ -149,6 +158,7 @@ export function basketLegsOutOfSync(
   familyTrades: BasketOpenLeg[],
   perLegTargets: PerLegStopTarget[],
   nImmCwe: number,
+  opts?: { effectiveStoploss?: number },
 ): boolean {
   if (!familyTrades.length || !perLegTargets.length) return false
   const expanded = expandPerLegTargetsToCount({
@@ -157,10 +167,24 @@ export function basketLegsOutOfSync(
     finalTps: perLegTargets.map(t => t.takeprofit).filter(tp => tp > 0),
     tpLots: null,
   })
+  const effectiveSl = opts?.effectiveStoploss != null && opts.effectiveStoploss > 0
+    ? opts.effectiveStoploss
+    : null
   for (let i = 0; i < familyTrades.length; i++) {
     const target = expanded[i]
     if (!target) return true
-    if (!stopsAlreadyMatchDb(familyTrades[i]!, target, nImmCwe, i)) return true
+    let compareTarget = target
+    if (effectiveSl != null) {
+      const legSl = Number(familyTrades[i]!.sl)
+      if (
+        Number.isFinite(legSl)
+        && Math.abs(legSl - effectiveSl) < 1e-8
+        && Math.abs(target.stoploss - effectiveSl) > 1e-8
+      ) {
+        compareTarget = { ...target, stoploss: effectiveSl }
+      }
+    }
+    if (!stopsAlreadyMatchDb(familyTrades[i]!, compareTarget, nImmCwe, i)) return true
   }
   return false
 }
@@ -258,7 +282,7 @@ export async function sweepOpenBasketsForReconcileDrift(
     const jobStatus = (existingJob as { status?: string } | null)?.status
     if (jobStatus === 'pending' || jobStatus === 'claimed') continue
 
-    const { perLegTargets, signalTps } = await resolveFreshBasketReconcileTargets(supabase, {
+    const { perLegTargets, signalTps, effectiveStoploss } = await resolveFreshBasketReconcileTargets(supabase, {
       anchorSignalId: row.signal_id,
       channelId: row.telegram_channel_id,
       symbol: row.symbol,
@@ -273,7 +297,7 @@ export async function sweepOpenBasketsForReconcileDrift(
     })
 
     if (!perLegTargets.length) continue
-    if (!basketLegsOutOfSync(familyTrades, perLegTargets, 0)) continue
+    if (!basketLegsOutOfSync(familyTrades, perLegTargets, 0, { effectiveStoploss })) continue
 
     const jobId = await upsertBasketReconcileJob(supabase, {
       userId: broker.user_id,
@@ -313,7 +337,7 @@ export async function resolveFreshTargetsForJob(
   job: BasketReconcileJobRow,
   familyTrades: BasketOpenLeg[],
   manual: { range_trading?: boolean; tp_lots?: ManualTpLot[] | null },
-): Promise<{ perLegTargets: PerLegStopTarget[]; signalTps: number[] }> {
+): Promise<FreshReconcileTargetsResult> {
   return resolveFreshBasketReconcileTargets(supabase, {
     anchorSignalId: job.anchor_signal_id,
     channelId: job.channel_id,

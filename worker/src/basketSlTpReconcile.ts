@@ -311,6 +311,8 @@ export async function runBasketLegModifies(args: {
   liveMgmtFast?: boolean
   /** Range-basket TP rebalance — tag per-leg logs for UI suppression. */
   internalRebalance?: boolean
+  /** When set, internal rebalance must not revert legs to anchor SL below this value. */
+  effectiveStoploss?: number
   /** When false, refresh OrderSend comments are left empty. */
   orderCommentsEnabled?: boolean
 }): Promise<RunBasketLegModifyResult> {
@@ -318,7 +320,7 @@ export async function runBasketLegModifies(args: {
     supabase, api, uuid, symbol, direction, baseLot, params,
     signalId, userId, brokerAccountId, familyTrades, perLegTargets: rawTargets,
     signalTps, tpLots, nImmCwe, strictEntryPrefetch, openedTickets, skipAlreadySynced, alreadyModified,
-    liveMgmtFast, internalRebalance,
+    liveMgmtFast, internalRebalance, effectiveStoploss,
     orderCommentsEnabled,
   } = args
 
@@ -513,6 +515,21 @@ export async function runBasketLegModifies(args: {
     if (modSl <= 0) {
       const curSl = Number(tr.sl)
       if (Number.isFinite(curSl) && curSl > 0) modSl = curSl
+    }
+    if (
+      internalRebalance === true
+      && effectiveStoploss != null
+      && effectiveStoploss > 0
+    ) {
+      const curSl = Number(tr.sl)
+      if (
+        Number.isFinite(curSl)
+        && curSl > 0
+        && Math.abs(curSl - effectiveStoploss) < 1e-8
+        && Math.abs(modSl - effectiveStoploss) > 1e-8
+      ) {
+        modSl = curSl
+      }
     }
     if (modSl <= 0 && modTp <= 0) {
       const err: LegModifyError = {

@@ -9,7 +9,7 @@ exports.resolveFreshBasketReconcileTargets = resolveFreshBasketReconcileTargets;
 exports.basketLegsOutOfSync = basketLegsOutOfSync;
 exports.sweepOpenBasketsForReconcileDrift = sweepOpenBasketsForReconcileDrift;
 exports.resolveFreshTargetsForJob = resolveFreshTargetsForJob;
-const channelActiveTradeParams_1 = require("./channelActiveTradeParams");
+const basketEffectiveStops_1 = require("./basketEffectiveStops");
 const tpBucketDistribution_1 = require("./manualPlanning/tpBucketDistribution");
 const orderModifyBenign_1 = require("./orderModifyBenign");
 const basketSlTpReconcile_1 = require("./basketSlTpReconcile");
@@ -30,18 +30,20 @@ async function resolveFreshBasketReconcileTargets(supabase, args) {
     const channelId = args.channelId
         ?? anchorSig?.channel_id
         ?? null;
-    let parsed = (0, rangeBasketTpSync_1.toRangeBasketParsedSlice)(anchorSig?.parsed_data);
-    let channelTpLevels = null;
-    if (channelId) {
-        const ch = await (0, channelActiveTradeParams_1.loadChannelActiveTradeParamsForSymbol)(supabase, args.userId, channelId, args.symbol);
-        if (ch && !(0, channelActiveTradeParams_1.channelParamsPredateBasket)(ch, anchorCreatedAt)) {
-            channelTpLevels = ch.tpLevels.length ? ch.tpLevels : null;
-            if (ch.stoploss != null)
-                parsed = { ...parsed, sl: ch.stoploss };
-            if (ch.tpLevels.length > 0)
-                parsed = { ...parsed, tp: [...ch.tpLevels] };
-        }
-    }
+    const anchorParsed = (0, rangeBasketTpSync_1.toRangeBasketParsedSlice)(anchorSig?.parsed_data);
+    const effective = await (0, basketEffectiveStops_1.resolveEffectiveBasketStops)({
+        supabase,
+        userId: args.userId,
+        channelId,
+        anchorSignalId: args.anchorSignalId,
+        symbol: args.symbol,
+        basketCreatedAt: anchorCreatedAt,
+        anchorParsed,
+        familyTrades: args.familyTrades,
+    });
+    (0, basketEffectiveStops_1.logEffectiveBasketStops)('[basketReconcileTargets]', args.anchorSignalId, effective);
+    const parsed = { ...effective.parsedSlice };
+    const channelTpLevels = effective.tpLevels.length ? effective.tpLevels : null;
     const signalTps = (0, rangeBasketTpSync_1.resolveRangeBasketFinalTps)({
         parsed,
         familyTrades: args.familyTrades,
@@ -61,6 +63,7 @@ async function resolveFreshBasketReconcileTargets(supabase, args) {
             maxPendingStepIdx,
             channelTpLevels,
             finalTpsOverride: signalTps.length ? signalTps : null,
+            stoplossOverride: effective.stoploss > 0 ? effective.stoploss : null,
         });
         perLegTargets = built.map(t => ({
             stoploss: Number(t.stoploss) || 0,
@@ -91,10 +94,10 @@ async function resolveFreshBasketReconcileTargets(supabase, args) {
     for (let i = 0; i < Math.min(args.nImmCwe, perLegTargets.length); i++) {
         perLegTargets[i] = { ...perLegTargets[i], takeprofit: 0 };
     }
-    return { perLegTargets, signalTps };
+    return { perLegTargets, signalTps, effectiveStoploss: effective.stoploss, effectiveSlSource: effective.source };
 }
 /** True when any open leg's DB SL/TP differs from freshly resolved targets. */
-function basketLegsOutOfSync(familyTrades, perLegTargets, nImmCwe) {
+function basketLegsOutOfSync(familyTrades, perLegTargets, nImmCwe, opts) {
     if (!familyTrades.length || !perLegTargets.length)
         return false;
     const expanded = (0, tpBucketDistribution_1.expandPerLegTargetsToCount)({
@@ -103,11 +106,23 @@ function basketLegsOutOfSync(familyTrades, perLegTargets, nImmCwe) {
         finalTps: perLegTargets.map(t => t.takeprofit).filter(tp => tp > 0),
         tpLots: null,
     });
+    const effectiveSl = opts?.effectiveStoploss != null && opts.effectiveStoploss > 0
+        ? opts.effectiveStoploss
+        : null;
     for (let i = 0; i < familyTrades.length; i++) {
         const target = expanded[i];
         if (!target)
             return true;
-        if (!(0, orderModifyBenign_1.stopsAlreadyMatchDb)(familyTrades[i], target, nImmCwe, i))
+        let compareTarget = target;
+        if (effectiveSl != null) {
+            const legSl = Number(familyTrades[i].sl);
+            if (Number.isFinite(legSl)
+                && Math.abs(legSl - effectiveSl) < 1e-8
+                && Math.abs(target.stoploss - effectiveSl) > 1e-8) {
+                compareTarget = { ...target, stoploss: effectiveSl };
+            }
+        }
+        if (!(0, orderModifyBenign_1.stopsAlreadyMatchDb)(familyTrades[i], compareTarget, nImmCwe, i))
             return true;
     }
     return false;
@@ -164,7 +179,7 @@ async function sweepOpenBasketsForReconcileDrift(supabase) {
         const jobStatus = existingJob?.status;
         if (jobStatus === 'pending' || jobStatus === 'claimed')
             continue;
-        const { perLegTargets, signalTps } = await resolveFreshBasketReconcileTargets(supabase, {
+        const { perLegTargets, signalTps, effectiveStoploss } = await resolveFreshBasketReconcileTargets(supabase, {
             anchorSignalId: row.signal_id,
             channelId: row.telegram_channel_id,
             symbol: row.symbol,
@@ -179,7 +194,7 @@ async function sweepOpenBasketsForReconcileDrift(supabase) {
         });
         if (!perLegTargets.length)
             continue;
-        if (!basketLegsOutOfSync(familyTrades, perLegTargets, 0))
+        if (!basketLegsOutOfSync(familyTrades, perLegTargets, 0, { effectiveStoploss }))
             continue;
         const jobId = await (0, basketSlTpReconcile_1.upsertBasketReconcileJob)(supabase, {
             userId: broker.user_id,

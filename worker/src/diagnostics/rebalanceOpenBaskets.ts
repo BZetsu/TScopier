@@ -21,7 +21,10 @@ import {
   hasFxsocketConfigured,
   mtPlatformFrom,
 } from '../fxsocketClient'
-import { loadChannelActiveTradeParamsForSymbol } from '../channelActiveTradeParams'
+import {
+  logEffectiveBasketStops,
+  resolveEffectiveBasketStops,
+} from '../basketEffectiveStops'
 import { brokerSessionUuid } from '../tradeExecutor/helpers'
 import {
   buildEntryQualityTakeProfitMap,
@@ -205,22 +208,28 @@ async function main() {
     const symbol = legs[0]?.symbol ?? 'XAUUSD'
     const isBuy = String(legs[0]?.direction ?? '').toLowerCase() === 'buy'
 
-    let channelTpLevels: number[] | null = null
-    let channelSl: number | null = null
-    if (channelId) {
-      const ch = await loadChannelActiveTradeParamsForSymbol(supabase, userId, channelId, symbol)
-      if (ch?.tpLevels?.length) channelTpLevels = ch.tpLevels
-      if (ch?.stoploss != null) channelSl = ch.stoploss
-    }
-
     const parsedSlice = toRangeBasketParsedSlice(
       ladderSignal?.tps.length
         ? { sl: ladderSignal.sl, tp: ladderSignal.tps }
         : (anchorSig?.parsed_data as { sl?: unknown; tp?: unknown } | null),
     )
 
+    const effective = await resolveEffectiveBasketStops({
+      supabase,
+      userId,
+      channelId,
+      anchorSignalId,
+      symbol,
+      basketCreatedAt: anchorSig?.created_at ?? ladderSignal?.created_at ?? null,
+      anchorParsed: parsedSlice,
+      familyTrades: legs,
+    })
+    logEffectiveBasketStops('[rebalanceOpenBaskets]', anchorSignalId, effective)
+
+    const channelTpLevels = effective.tpLevels.length ? effective.tpLevels : null
+
     const finalTps = resolveRangeBasketFinalTps({
-      parsed: parsedSlice,
+      parsed: effective.parsedSlice,
       plan: null,
       familyTrades: legs,
       channelTpLevels,
@@ -236,12 +245,12 @@ async function main() {
       continue
     }
 
-    const targetSl =
-      ladderSignal?.sl
-      ?? num(parsedSlice.sl)
-      ?? channelSl
-      ?? num(legs[0]?.sl)
-      ?? 0
+    const targetSl = effective.stoploss > 0
+      ? effective.stoploss
+      : ladderSignal?.sl
+        ?? num(parsedSlice.sl)
+        ?? num(legs[0]?.sl)
+        ?? 0
 
     const tpLots = broker.manual_settings?.tp_lots ?? null
     const entryLegs: EntryQualityLeg[] = legs.map(tr => ({

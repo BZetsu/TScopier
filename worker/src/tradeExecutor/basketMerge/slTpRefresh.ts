@@ -37,7 +37,11 @@ import {
 import { isMtBridgeGlitchMessage } from '../../brokerConnectError'
 import { MtOperation } from '../../fxsocketClient'
 import { buildPerLegStopTargets, mergePlanImmediateOrders, type MergeModifySummary } from '../../multiTradeMerge'
-import { buildRangeBasketTpTargets } from '../../rangeBasketTpSync'
+import {
+  logEffectiveBasketStops,
+  resolveEffectiveBasketStops,
+} from '../../basketEffectiveStops'
+import { buildRangeBasketTpTargets, toRangeBasketParsedSlice } from '../../rangeBasketTpSync'
 import { isRangeLayerTillCloseEnabled } from '../../rangeLayerTillClose'
 import {
   patchActiveRangePendingLegStops,
@@ -192,10 +196,29 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
         )
       }
     }
-    const effectiveParsed: ParsedSignal = {
+    let effectiveParsed: ParsedSignal = {
       ...parsed,
       sl: plannerParsed.sl,
       tp: plannerParsed.tp,
+    }
+    if (manual.range_trading === true && anchorSignalId && signal.channel_id) {
+      const resolvedStops = await resolveEffectiveBasketStops({
+        supabase: ctx.supabase,
+        userId: signal.user_id,
+        channelId: signal.channel_id,
+        anchorSignalId,
+        symbol,
+        basketCreatedAt: anchorCreatedAt,
+        anchorParsed: toRangeBasketParsedSlice(effectiveParsed),
+        familyTrades,
+      })
+      logEffectiveBasketStops('[tradeExecutor]', anchorSignalId, resolvedStops)
+      if (resolvedStops.stoploss > 0) {
+        effectiveParsed = { ...effectiveParsed, sl: resolvedStops.stoploss }
+      }
+      if (resolvedStops.tpLevels.length) {
+        effectiveParsed = { ...effectiveParsed, tp: resolvedStops.tpLevels }
+      }
     }
     if (!parsedHasExplicitEntryAnchor(plannerParsed)) {
       const ep = Number(newest.entry_price)

@@ -7,6 +7,7 @@ const channelActiveTradeParams_1 = require("../../channelActiveTradeParams");
 const manualPlanner_1 = require("../../manualPlanner");
 const brokerConnectError_1 = require("../../brokerConnectError");
 const multiTradeMerge_1 = require("../../multiTradeMerge");
+const basketEffectiveStops_1 = require("../../basketEffectiveStops");
 const rangeBasketTpSync_1 = require("../../rangeBasketTpSync");
 const rangeLayerTillClose_1 = require("../../rangeLayerTillClose");
 const rangePendingLadderSync_1 = require("../../rangePendingLadderSync");
@@ -103,11 +104,30 @@ async function applyBasketSlTpRefresh(ctx, args) {
             channelParamsForLadder = await (0, channelActiveTradeParams_1.loadChannelActiveTradeParamsForSymbol)(ctx.supabase, signal.user_id, signal.channel_id, symbol);
         }
     }
-    const effectiveParsed = {
+    let effectiveParsed = {
         ...parsed,
         sl: plannerParsed.sl,
         tp: plannerParsed.tp,
     };
+    if (manual.range_trading === true && anchorSignalId && signal.channel_id) {
+        const resolvedStops = await (0, basketEffectiveStops_1.resolveEffectiveBasketStops)({
+            supabase: ctx.supabase,
+            userId: signal.user_id,
+            channelId: signal.channel_id,
+            anchorSignalId,
+            symbol,
+            basketCreatedAt: anchorCreatedAt,
+            anchorParsed: (0, rangeBasketTpSync_1.toRangeBasketParsedSlice)(effectiveParsed),
+            familyTrades,
+        });
+        (0, basketEffectiveStops_1.logEffectiveBasketStops)('[tradeExecutor]', anchorSignalId, resolvedStops);
+        if (resolvedStops.stoploss > 0) {
+            effectiveParsed = { ...effectiveParsed, sl: resolvedStops.stoploss };
+        }
+        if (resolvedStops.tpLevels.length) {
+            effectiveParsed = { ...effectiveParsed, tp: resolvedStops.tpLevels };
+        }
+    }
     if (!(0, manualPlanner_1.parsedHasExplicitEntryAnchor)(plannerParsed)) {
         const ep = Number(newest.entry_price);
         if (Number.isFinite(ep) && ep > 0)

@@ -10,6 +10,10 @@ import {
   channelParamsPredateBasket,
   loadChannelActiveTradeParamsForSymbol,
 } from './channelActiveTradeParams'
+import {
+  logEffectiveBasketStops,
+  resolveEffectiveBasketStops,
+} from './basketEffectiveStops'
 import type { ManualTpLot } from './manualPlanning/types'
 import {
   buildEntryQualityTakeProfitMap,
@@ -192,10 +196,12 @@ export function buildRangeBasketTpTargets(args: {
   forceLayeringRebalance?: boolean
   channelTpLevels?: number[] | null
   finalTpsOverride?: number[] | null
+  /** Wins over parsed.sl when set (e.g. post-adjust effective SL). */
+  stoplossOverride?: number | null
 }): PerLegStopTargetLike[] {
   const {
     familyTrades, plan, parsed, tpLots, direction, activePendingCount, maxPendingStepIdx,
-    forceLayeringRebalance, channelTpLevels, finalTpsOverride,
+    forceLayeringRebalance, channelTpLevels, finalTpsOverride, stoplossOverride,
   } = args
   if (!familyTrades.length) return []
 
@@ -206,7 +212,10 @@ export function buildRangeBasketTpTargets(args: {
   const slRaw = parsed.sl
   const slNum = typeof slRaw === 'number' ? slRaw : Number(slRaw ?? 0)
   const hasSl = Number.isFinite(slNum) && slNum > 0
-  const sl = hasSl ? slNum : (fromPlan[0]?.stoploss ?? 0)
+  const overrideSl = stoplossOverride != null && Number(stoplossOverride) > 0
+    ? Number(stoplossOverride)
+    : null
+  const sl = overrideSl ?? (hasSl ? slNum : (fromPlan[0]?.stoploss ?? 0))
   const finalTps = args.finalTpsOverride?.length
     ? args.finalTpsOverride
     : resolveRangeBasketFinalTps({
@@ -280,6 +289,8 @@ async function logRangeBasketTpRebalance(
     attempted: number
     failed: number
     tpCounts: Record<string, number>
+    effectiveSl?: number
+    effectiveSlSource?: string
   },
 ): Promise<void> {
   try {
@@ -297,6 +308,8 @@ async function logRangeBasketTpRebalance(
         attempted: args.attempted,
         failed: args.failed,
         target_tp_counts: args.tpCounts,
+        effective_sl: args.effectiveSl,
+        effective_sl_source: args.effectiveSlSource,
       } as unknown as Record<string, unknown>,
     })
   } catch { /* best-effort */ }
@@ -411,14 +424,22 @@ export async function syncRangeBasketTakeProfits(args: RangeBasketTpSyncArgs): P
     args.signalId,
   )
 
-  const channelTpLevels = await loadScopedChannelTpLevels(args.supabase, {
+  const anchorParsed: RangeBasketParsedSlice = { ...args.parsed }
+  const effective = await resolveEffectiveBasketStops({
+    supabase: args.supabase,
     userId: args.userId,
-    channelId: args.channelId,
-    basketCreatedAt: args.basketCreatedAt,
+    channelId: args.channelId ?? null,
+    anchorSignalId: args.signalId,
     symbol: args.symbol,
+    basketCreatedAt: args.basketCreatedAt ?? familyTrades[0]?.opened_at ?? null,
+    anchorParsed,
+    familyTrades,
   })
+  logEffectiveBasketStops('[rangeBasketTpSync]', args.signalId, effective)
 
-  let parsed: RangeBasketParsedSlice = { ...args.parsed }
+  let parsed: RangeBasketParsedSlice = { ...effective.parsedSlice }
+  const channelTpLevels = effective.tpLevels.length ? effective.tpLevels : null
+
   let finalTps = resolveRangeBasketFinalTps({
     parsed,
     plan: args.plan,
@@ -431,19 +452,29 @@ export async function syncRangeBasketTakeProfits(args: RangeBasketTpSyncArgs): P
     await new Promise(r => setTimeout(r, 300))
     let effectiveChannelTpLevels = channelTpLevels
     if (args.channelId) {
-      const reloadedChannel = await loadScopedChannelTpLevels(args.supabase, {
+      const reloaded = await loadScopedChannelTpLevels(args.supabase, {
         userId: args.userId,
         channelId: args.channelId,
         basketCreatedAt: args.basketCreatedAt,
         symbol: args.symbol,
       })
-      if (reloadedChannel?.length) {
-        effectiveChannelTpLevels = reloadedChannel
+      if (reloaded?.length) {
+        effectiveChannelTpLevels = reloaded
       }
     }
-    const reloaded = await reloadSignalParsed(args.supabase, args.signalId)
-    if (reloaded) {
-      parsed = { ...parsed, ...reloaded }
+    const reloadedAnchor = await reloadSignalParsed(args.supabase, args.signalId)
+    if (reloadedAnchor) {
+      const reEffective = await resolveEffectiveBasketStops({
+        supabase: args.supabase,
+        userId: args.userId,
+        channelId: args.channelId ?? null,
+        anchorSignalId: args.signalId,
+        symbol: args.symbol,
+        basketCreatedAt: args.basketCreatedAt ?? familyTrades[0]?.opened_at ?? null,
+        anchorParsed: { ...anchorParsed, ...reloadedAnchor },
+        familyTrades,
+      })
+      parsed = { ...reEffective.parsedSlice }
     }
     finalTps = resolveRangeBasketFinalTps({
       parsed,
@@ -485,6 +516,7 @@ export async function syncRangeBasketTakeProfits(args: RangeBasketTpSyncArgs): P
     forceLayeringRebalance: args.forceLayeringRebalance,
     channelTpLevels,
     finalTpsOverride: finalTps,
+    stoplossOverride: effective.stoploss > 0 ? effective.stoploss : null,
   })
   if (!perLegTargets.length) return
 
@@ -560,6 +592,7 @@ export async function syncRangeBasketTakeProfits(args: RangeBasketTpSyncArgs): P
     openedTickets,
     skipAlreadySynced: true,
     internalRebalance,
+    effectiveStoploss: effective.stoploss > 0 ? effective.stoploss : undefined,
     orderCommentsEnabled: args.manual.order_comments_enabled !== false,
   })
 
@@ -610,6 +643,8 @@ export async function syncRangeBasketTakeProfits(args: RangeBasketTpSyncArgs): P
     attempted: modifyResult?.summary.attempted ?? 0,
     failed: modifyResult?.summary.failed ?? 0,
     tpCounts,
+    effectiveSl: effective.stoploss,
+    effectiveSlSource: effective.source,
   })
 
   if (modifyResult && modifyResult.summary.modified > 0) {

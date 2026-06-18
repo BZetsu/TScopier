@@ -19,7 +19,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 require("dotenv/config");
 const supabase_js_1 = require("@supabase/supabase-js");
 const fxsocketClient_1 = require("../fxsocketClient");
-const channelActiveTradeParams_1 = require("../channelActiveTradeParams");
+const basketEffectiveStops_1 = require("../basketEffectiveStops");
 const helpers_1 = require("../tradeExecutor/helpers");
 const tpBucketDistribution_1 = require("../manualPlanning/tpBucketDistribution");
 const rangeBasketTpSync_1 = require("../rangeBasketTpSync");
@@ -150,20 +150,23 @@ async function main() {
         }
         const symbol = legs[0]?.symbol ?? 'XAUUSD';
         const isBuy = String(legs[0]?.direction ?? '').toLowerCase() === 'buy';
-        let channelTpLevels = null;
-        let channelSl = null;
-        if (channelId) {
-            const ch = await (0, channelActiveTradeParams_1.loadChannelActiveTradeParamsForSymbol)(supabase, userId, channelId, symbol);
-            if (ch?.tpLevels?.length)
-                channelTpLevels = ch.tpLevels;
-            if (ch?.stoploss != null)
-                channelSl = ch.stoploss;
-        }
         const parsedSlice = (0, rangeBasketTpSync_1.toRangeBasketParsedSlice)(ladderSignal?.tps.length
             ? { sl: ladderSignal.sl, tp: ladderSignal.tps }
             : anchorSig?.parsed_data);
+        const effective = await (0, basketEffectiveStops_1.resolveEffectiveBasketStops)({
+            supabase,
+            userId,
+            channelId,
+            anchorSignalId,
+            symbol,
+            basketCreatedAt: anchorSig?.created_at ?? ladderSignal?.created_at ?? null,
+            anchorParsed: parsedSlice,
+            familyTrades: legs,
+        });
+        (0, basketEffectiveStops_1.logEffectiveBasketStops)('[rebalanceOpenBaskets]', anchorSignalId, effective);
+        const channelTpLevels = effective.tpLevels.length ? effective.tpLevels : null;
         const finalTps = (0, rangeBasketTpSync_1.resolveRangeBasketFinalTps)({
-            parsed: parsedSlice,
+            parsed: effective.parsedSlice,
             plan: null,
             familyTrades: legs,
             channelTpLevels,
@@ -175,11 +178,12 @@ async function main() {
             skipped += legs.length;
             continue;
         }
-        const targetSl = ladderSignal?.sl
-            ?? num(parsedSlice.sl)
-            ?? channelSl
-            ?? num(legs[0]?.sl)
-            ?? 0;
+        const targetSl = effective.stoploss > 0
+            ? effective.stoploss
+            : ladderSignal?.sl
+                ?? num(parsedSlice.sl)
+                ?? num(legs[0]?.sl)
+                ?? 0;
         const tpLots = broker.manual_settings?.tp_lots ?? null;
         const entryLegs = legs.map(tr => ({
             id: tr.id,

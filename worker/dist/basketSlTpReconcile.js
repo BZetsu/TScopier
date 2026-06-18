@@ -224,7 +224,7 @@ async function logBasketLegModify(supabase, args) {
     catch { /* best-effort */ }
 }
 async function runBasketLegModifies(args) {
-    const { supabase, api, uuid, symbol, direction, baseLot, params, signalId, userId, brokerAccountId, familyTrades, perLegTargets: rawTargets, signalTps, tpLots, nImmCwe, strictEntryPrefetch, openedTickets, skipAlreadySynced, alreadyModified, liveMgmtFast, internalRebalance, orderCommentsEnabled, } = args;
+    const { supabase, api, uuid, symbol, direction, baseLot, params, signalId, userId, brokerAccountId, familyTrades, perLegTargets: rawTargets, signalTps, tpLots, nImmCwe, strictEntryPrefetch, openedTickets, skipAlreadySynced, alreadyModified, liveMgmtFast, internalRebalance, effectiveStoploss, orderCommentsEnabled, } = args;
     const parsedTps = (signalTps ?? []).filter(t => typeof t === 'number' && Number.isFinite(t) && t > 0);
     const perLegTargets = (0, tpBucketDistribution_1.expandPerLegTargetsToCount)({
         targets: rawTargets,
@@ -399,6 +399,17 @@ async function runBasketLegModifies(args) {
             const curSl = Number(tr.sl);
             if (Number.isFinite(curSl) && curSl > 0)
                 modSl = curSl;
+        }
+        if (internalRebalance === true
+            && effectiveStoploss != null
+            && effectiveStoploss > 0) {
+            const curSl = Number(tr.sl);
+            if (Number.isFinite(curSl)
+                && curSl > 0
+                && Math.abs(curSl - effectiveStoploss) < 1e-8
+                && Math.abs(modSl - effectiveStoploss) > 1e-8) {
+                modSl = curSl;
+            }
         }
         if (modSl <= 0 && modTp <= 0) {
             const err = {

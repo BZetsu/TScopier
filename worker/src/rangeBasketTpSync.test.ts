@@ -128,6 +128,22 @@ test('resolveRangeBasketFinalTps: prefers channel ladder over single open-leg TP
   assert.deepEqual(tps, [4332, 4334, 4336])
 })
 
+test('buildRangeBasketTpTargets: stoplossOverride wins over anchor parsed.sl', () => {
+  const legs = [openLeg('a', 4255, '2026-01-01T00:00:00Z'), openLeg('b', 4252, '2026-01-01T00:00:01Z')]
+  const targets = buildRangeBasketTpTargets({
+    familyTrades: legs,
+    plan: null,
+    parsed: { sl: 4245, tp: [4265, 4275] },
+    tpLots: TP_LOTS,
+    direction: 'buy',
+    activePendingCount: 0,
+    maxPendingStepIdx: 0,
+    stoplossOverride: 4242,
+  })
+  assert.equal(targets.length, 2)
+  assert.ok(targets.every(t => t.stoploss === 4242))
+})
+
 test('buildRangeBasketTpTargets: coerced string TPs produce non-zero phase B targets', () => {
   const legs = Array.from({ length: 4 }, (_, i) =>
     openLeg(`i${i}`, 4335 - i * 0.1, `2026-01-01T00:00:0${i}Z`),

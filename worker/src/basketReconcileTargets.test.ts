@@ -39,6 +39,15 @@ describe('basketLegsOutOfSync', () => {
     assert.equal(basketLegsOutOfSync(family, targets, 0), false)
   })
 
+  it('does not flag SL drift when legs hold effective adjusted SL but targets still carry anchor SL', () => {
+    const family = [leg(4265, 4242), leg(4275, 4242)]
+    const targets = [
+      { stoploss: 4245, takeprofit: 4265 },
+      { stoploss: 4245, takeprofit: 4275 },
+    ]
+    assert.equal(basketLegsOutOfSync(family, targets, 0, { effectiveStoploss: 4242 }), false)
+  })
+
   it('detects missing SL on open legs', () => {
     const family = [{ ...leg(4332), sl: null }, leg(4334)]
     const targets = [
