@@ -1315,7 +1315,7 @@ export const en: Translations = {
     },
     settings: {
       title: 'Settings',
-      description: 'Profile, currency, timezone, and password.',
+      description: 'Profile, currency, timezone, and password..',
     },
   },
 }
