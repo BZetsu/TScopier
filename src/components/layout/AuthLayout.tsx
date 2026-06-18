@@ -22,8 +22,8 @@ export function AuthLayout() {
   const copyright = auth.marketing.copyright.replace('{year}', String(year))
 
   return (
-    <div className="flex min-h-[100dvh] flex-col bg-white dark:bg-neutral-950 lg:min-h-screen lg:flex-row">
-      <main className="relative flex w-full flex-1 flex-col lg:min-h-screen lg:w-1/2">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-white dark:bg-neutral-950 lg:min-h-screen lg:flex-row">
+      <main className="relative flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden lg:min-h-screen lg:w-1/2">
         <header
           className={clsx(
             'z-20 flex shrink-0 touch-none items-center justify-between bg-white px-5 dark:bg-neutral-950 sm:px-8',
@@ -42,11 +42,12 @@ export function AuthLayout() {
 
         <div
           className={clsx(
-            'flex flex-1 flex-col px-5 pb-[env(safe-area-inset-bottom,0px)] sm:px-8 lg:px-10',
+            'flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-y-contain px-5 sm:px-8 lg:px-10',
             'pt-[calc(4rem+env(safe-area-inset-top,0px)+var(--app-banner-h,0px))] lg:pt-0',
+            'pb-[calc(7rem+env(safe-area-inset-bottom,0px))] sm:pb-[calc(2rem+env(safe-area-inset-bottom,0px))]',
           )}
         >
-          <div className="mx-auto flex w-full max-w-[420px] flex-col py-6 lg:flex-1 lg:justify-center lg:py-8">
+          <div className="mx-auto flex w-full max-w-[420px] flex-col py-6 lg:my-auto lg:py-8">
             {isVerify ? (
               <VerifyEmailPage />
             ) : isResetPassword ? (
@@ -60,7 +61,7 @@ export function AuthLayout() {
             )}
           </div>
 
-          <footer className="mx-auto w-full max-w-[420px] shrink-0 pb-6 pt-4 lg:pb-8">
+          <footer className="mx-auto w-full max-w-[420px] shrink-0 pt-4">
             <p className="text-xs text-neutral-400 dark:text-neutral-500">{copyright}</p>
           </footer>
         </div>
