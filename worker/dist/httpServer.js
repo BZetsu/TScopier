@@ -9,6 +9,7 @@ const queueHealth_1 = require("./queue/queueHealth");
 const parseSignal_1 = require("./parseSignal");
 const aiParseModification_1 = require("./aiParseModification");
 const applySignalOverride_1 = require("./applySignalOverride");
+const retryActivity_1 = require("./retryActivity");
 const INTERNAL_TOKEN = process.env.WORKER_INTERNAL_TOKEN ?? '';
 const PORT = parseInt(process.env.WORKER_PORT ?? '8080', 10);
 function isTelegramSessionInvalid(err) {
@@ -292,6 +293,35 @@ function startTradeHttpServer(sessionManager, tradeExecutor) {
                     ? await tradeExecutor.acceptDispatchSignalAwait(signalRow, dispatchOpts)
                     : tradeExecutor.acceptDispatchSignal(signalRow, dispatchOpts);
                 return sendJson(res, 200, { accepted, awaited: shouldAwait });
+            }
+            if (url === '/internal/retry-activity' && req.method === 'POST') {
+                if (!INTERNAL_TOKEN) {
+                    return sendJson(res, 503, { error: 'WORKER_INTERNAL_TOKEN not configured' });
+                }
+                const token = req.headers['x-internal-token'];
+                if (token !== INTERNAL_TOKEN) {
+                    return sendJson(res, 401, { error: 'Unauthorized' });
+                }
+                if (!tradeExecutor) {
+                    return sendJson(res, 503, { error: 'trade_executor_not_running' });
+                }
+                const body = (await readJson(req));
+                const userId = body.user_id?.trim();
+                const logId = body.log_id?.trim();
+                if (!userId || !logId) {
+                    return sendJson(res, 400, { error: 'user_id and log_id required' });
+                }
+                if (!(0, workerConfig_1.userBelongsToShard)(userId)) {
+                    return sendJson(res, 200, { ok: false, reason: 'wrong_shard' });
+                }
+                try {
+                    const result = await (0, retryActivity_1.retryTradeActivity)(tradeExecutor, { userId, logId });
+                    return sendJson(res, 200, result);
+                }
+                catch (err) {
+                    const msg = err instanceof Error ? err.message : 'retry failed';
+                    return sendJson(res, 500, { error: msg });
+                }
             }
             if (url === '/internal/apply-signal-override' && req.method === 'POST') {
                 if (!INTERNAL_TOKEN) {

@@ -1,5 +1,5 @@
 import clsx from 'clsx'
-import { RefreshCw } from 'lucide-react'
+import { Loader2, RefreshCw } from 'lucide-react'
 import { useT } from '../../context/LocaleContext'
 import { Badge } from '../ui/Badge'
 import { Button } from '../ui/Button'
@@ -25,10 +25,12 @@ function statusLabel(
 export function TradeActivityCard({
   activity,
   variant = 'compact',
+  isRetrying = false,
   onRetry,
 }: {
   activity: DisplayableTradeActivity
   variant?: 'compact' | 'full'
+  isRetrying?: boolean
   onRetry?: () => void
 }) {
   const t = useT()
@@ -72,9 +74,14 @@ export function TradeActivityCard({
             variant="secondary"
             size="sm"
             className="shrink-0"
+            disabled={isRetrying}
             onClick={onRetry}
           >
-            <RefreshCw className="w-3.5 h-3.5" />
+            {isRetrying ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="w-3.5 h-3.5" />
+            )}
             {t.management.retry}
           </Button>
         ) : null}

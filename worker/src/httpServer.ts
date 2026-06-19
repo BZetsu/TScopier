@@ -12,6 +12,7 @@ import { getQueueHealthMetrics } from './queue/queueHealth'
 import { parseRawChannelMessage } from './parseSignal'
 import { aiParseModification, aiResultToParseResult } from './aiParseModification'
 import { applySignalOverride } from './applySignalOverride'
+import { retryTradeActivity } from './retryActivity'
 
 const INTERNAL_TOKEN = process.env.WORKER_INTERNAL_TOKEN ?? ''
 const PORT = parseInt(process.env.WORKER_PORT ?? '8080', 10)
@@ -382,6 +383,38 @@ export function startTradeHttpServer(
           ? await tradeExecutor.acceptDispatchSignalAwait(signalRow, dispatchOpts)
           : tradeExecutor.acceptDispatchSignal(signalRow, dispatchOpts)
         return sendJson(res, 200, { accepted, awaited: shouldAwait })
+      }
+
+      if (url === '/internal/retry-activity' && req.method === 'POST') {
+        if (!INTERNAL_TOKEN) {
+          return sendJson(res, 503, { error: 'WORKER_INTERNAL_TOKEN not configured' })
+        }
+        const token = req.headers['x-internal-token']
+        if (token !== INTERNAL_TOKEN) {
+          return sendJson(res, 401, { error: 'Unauthorized' })
+        }
+        if (!tradeExecutor) {
+          return sendJson(res, 503, { error: 'trade_executor_not_running' })
+        }
+        const body = (await readJson(req)) as {
+          user_id?: string
+          log_id?: string
+        }
+        const userId = body.user_id?.trim()
+        const logId = body.log_id?.trim()
+        if (!userId || !logId) {
+          return sendJson(res, 400, { error: 'user_id and log_id required' })
+        }
+        if (!userBelongsToShard(userId)) {
+          return sendJson(res, 200, { ok: false, reason: 'wrong_shard' })
+        }
+        try {
+          const result = await retryTradeActivity(tradeExecutor, { userId, logId })
+          return sendJson(res, 200, result)
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : 'retry failed'
+          return sendJson(res, 500, { error: msg })
+        }
       }
 
       if (url === '/internal/apply-signal-override' && req.method === 'POST') {

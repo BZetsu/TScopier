@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Loader2, RefreshCw } from 'lucide-react'
 import clsx from 'clsx'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import { useT } from '../../context/LocaleContext'
+import { interpolate } from '../../i18n/interpolate'
 import { PageHeader } from '../../components/layout/PageHeader'
 import { PageShell } from '../../components/layout/PageShell'
 import { Card } from '../../components/ui/Card'
@@ -13,6 +14,8 @@ import {
   TradeActivityCardSkeleton,
 } from '../../components/dashboard/TradeActivityCard'
 import { useTradeActivitiesRealtime } from '../../hooks/useTradeActivitiesRealtime'
+import { retryActivityApi } from '../../lib/retryActivityApi'
+import { formatRetryFailureReason } from '../../lib/retryActivityDisplay'
 import {
   buildChannelDisplayNames,
   buildDisplayableTradeActivities,
@@ -38,11 +41,13 @@ export function ManagementPage() {
   const [rawLogs, setRawLogs] = useState<TradeActivityLogRow[]>([])
   const [channelDisplayNames, setChannelDisplayNames] = useState<Record<string, string>>({})
   const [toastMessage, setToastMessage] = useState<string | null>(null)
+  const [retryingLogIds, setRetryingLogIds] = useState<Set<string>>(() => new Set())
+  const [retryAllBusy, setRetryAllBusy] = useState(false)
 
-  const showRetryComingSoon = useCallback(() => {
-    setToastMessage(t.management.retryComingSoon)
-    window.setTimeout(() => setToastMessage(null), 4000)
-  }, [t.management.retryComingSoon])
+  const showToast = useCallback((message: string) => {
+    setToastMessage(message)
+    window.setTimeout(() => setToastMessage(null), 4500)
+  }, [])
 
   const loadActivities = useCallback(async () => {
     if (!user) return
@@ -102,6 +107,49 @@ export function ManagementPage() {
     [pageActivities],
   )
 
+  const retrySingleActivity = useCallback(async (logId: string) => {
+    setRetryingLogIds(prev => new Set(prev).add(logId))
+    try {
+      const result = await retryActivityApi.retry({ log_id: logId })
+      const item = result.results.find(r => r.log_id === logId)
+      if (!result.ok || !item?.ok) {
+        showToast(formatRetryFailureReason(item?.reason ?? item?.error, t.management))
+        return
+      }
+      showToast(t.management.retrySuccess)
+      await loadActivities()
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : t.management.retryFailedGeneric)
+    } finally {
+      setRetryingLogIds(prev => {
+        const next = new Set(prev)
+        next.delete(logId)
+        return next
+      })
+    }
+  }, [loadActivities, showToast, t.management])
+
+  const retryAllOnPage = useCallback(async () => {
+    const ids = retryEligibleOnPage.map(a => a.row.id)
+    if (!ids.length) return
+    setRetryAllBusy(true)
+    try {
+      const result = await retryActivityApi.retry({ log_ids: ids })
+      if (result.retried > 0) {
+        showToast(interpolate(t.management.retryAllSuccess, { count: String(result.retried) }))
+        await loadActivities()
+      }
+      if (result.failed > 0) {
+        const firstFailed = result.results.find(r => !r.ok)
+        showToast(formatRetryFailureReason(firstFailed?.reason ?? firstFailed?.error, t.management))
+      }
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : t.management.retryFailedGeneric)
+    } finally {
+      setRetryAllBusy(false)
+    }
+  }, [loadActivities, retryEligibleOnPage, showToast, t.management])
+
   const filters: { value: TradeActivityFilter; label: string }[] = useMemo(
     () => [
       { value: 'all', label: t.management.filterAll },
@@ -125,8 +173,18 @@ export function ManagementPage() {
         actions={(
           <div className="flex flex-wrap items-center gap-2">
             {filter === 'failed' && retryEligibleOnPage.length > 0 ? (
-              <Button type="button" variant="secondary" size="sm" onClick={showRetryComingSoon}>
-                <RefreshCw className="w-3.5 h-3.5" />
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={retryAllBusy}
+                onClick={() => { void retryAllOnPage() }}
+              >
+                {retryAllBusy ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <RefreshCw className="w-3.5 h-3.5" />
+                )}
                 {t.management.retryAll}
               </Button>
             ) : null}
@@ -175,7 +233,10 @@ export function ManagementPage() {
                 key={activity.row.id}
                 activity={activity}
                 variant="full"
-                onRetry={activity.retryEligible ? showRetryComingSoon : undefined}
+                isRetrying={retryingLogIds.has(activity.row.id)}
+                onRetry={activity.retryEligible
+                  ? () => { void retrySingleActivity(activity.row.id) }
+                  : undefined}
               />
             ))}
           </div>

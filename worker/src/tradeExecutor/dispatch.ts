@@ -35,6 +35,7 @@ import {
   telegramLiveTradeGateEnabled,
 } from './types'
 import type { ChannelKeywords } from '../manualPlanner'
+import { ACTIVITY_RETRY_DISPATCH_SOURCE } from '../retryActivity'
 import { loadSignalById, MESSAGE_REVISION_DISPATCH_SOURCE, revisionDirectionFlippedFromActions } from '../signalRevision'
 import { applyUserOverrideToSignalRow } from '../signalOverride'
 import {
@@ -411,8 +412,9 @@ export async function handleSignal(ctx: TradeExecutorContext,
       mgmt_fast_path: liveMgmtFast,
     }
     const isMessageRevision = opts?.dispatchSource === MESSAGE_REVISION_DISPATCH_SOURCE
+    const isActivityRetry = opts?.dispatchSource === ACTIVITY_RETRY_DISPATCH_SOURCE
     try {
-      if (!opts?.liveDispatch && !isMessageRevision && ctx.signalTooOldForReplay(row)) return
+      if (!opts?.liveDispatch && !isMessageRevision && !isActivityRetry && ctx.signalTooOldForReplay(row)) return
 
       if (!liveFast && !liveMgmtFast) {
         void ctx.logPipelineStage(row, 'handle_start', {
@@ -422,7 +424,7 @@ export async function handleSignal(ctx: TradeExecutorContext,
         })
       }
 
-      if (!isMessageRevision && !liveFast && !liveMgmtFast && await ctx.signalAlreadyHandled(row.id)) {
+      if (!isMessageRevision && !isActivityRetry && !liveFast && !liveMgmtFast && await ctx.signalAlreadyHandled(row.id)) {
         await ctx.markSignalExecuted(row.id)
         return
       }

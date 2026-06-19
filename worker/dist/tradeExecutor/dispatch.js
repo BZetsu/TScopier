@@ -33,6 +33,7 @@ const pipelineTimestamps_1 = require("../pipelineTimestamps");
 const tradeComment_1 = require("../tradeComment");
 const helpers_1 = require("./helpers");
 const types_1 = require("./types");
+const retryActivity_1 = require("../retryActivity");
 const signalRevision_1 = require("../signalRevision");
 const signalOverride_1 = require("../signalOverride");
 const messageRevisionDirectionFlipClose_1 = require("./messageRevisionDirectionFlipClose");
@@ -350,8 +351,9 @@ async function handleSignal(ctx, row, opts) {
         mgmt_fast_path: liveMgmtFast,
     };
     const isMessageRevision = opts?.dispatchSource === signalRevision_1.MESSAGE_REVISION_DISPATCH_SOURCE;
+    const isActivityRetry = opts?.dispatchSource === retryActivity_1.ACTIVITY_RETRY_DISPATCH_SOURCE;
     try {
-        if (!opts?.liveDispatch && !isMessageRevision && ctx.signalTooOldForReplay(row))
+        if (!opts?.liveDispatch && !isMessageRevision && !isActivityRetry && ctx.signalTooOldForReplay(row))
             return;
         if (!liveFast && !liveMgmtFast) {
             void ctx.logPipelineStage(row, 'handle_start', {
@@ -360,7 +362,7 @@ async function handleSignal(ctx, row, opts) {
                 queue_wait_ms: queueWaitMs,
             });
         }
-        if (!isMessageRevision && !liveFast && !liveMgmtFast && await ctx.signalAlreadyHandled(row.id)) {
+        if (!isMessageRevision && !isActivityRetry && !liveFast && !liveMgmtFast && await ctx.signalAlreadyHandled(row.id)) {
             await ctx.markSignalExecuted(row.id);
             return;
         }

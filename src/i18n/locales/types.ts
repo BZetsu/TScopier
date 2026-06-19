@@ -324,7 +324,17 @@ export interface ManagementTranslations {
   statusFailed: string
   retry: string
   retryAll: string
-  retryComingSoon: string
+  retrySuccess: string
+  retryAllSuccess: string
+  retryFailedGeneric: string
+  retryFailedDetail: string
+  retryReasonNotFound: string
+  retryReasonNotFailed: string
+  retryReasonNotEligible: string
+  retryReasonNoSignal: string
+  retryReasonNotRetryable: string
+  retryReasonDispatchRejected: string
+  retryReasonWorkerUnavailable: string
   emptyTitle: string
   emptySubtitle: string
   emptyFailedTitle: string
