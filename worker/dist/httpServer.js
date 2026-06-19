@@ -9,6 +9,7 @@ const queueHealth_1 = require("./queue/queueHealth");
 const parseSignal_1 = require("./parseSignal");
 const aiParseModification_1 = require("./aiParseModification");
 const applySignalOverride_1 = require("./applySignalOverride");
+const forceCloseSignalTrades_1 = require("./forceCloseSignalTrades");
 const retryActivity_1 = require("./retryActivity");
 const INTERNAL_TOKEN = process.env.WORKER_INTERNAL_TOKEN ?? '';
 const PORT = parseInt(process.env.WORKER_PORT ?? '8080', 10);
@@ -349,6 +350,47 @@ function startTradeHttpServer(sessionManager, tradeExecutor) {
                 }
                 catch (err) {
                     const msg = err instanceof Error ? err.message : 'apply failed';
+                    return sendJson(res, 500, { error: msg });
+                }
+            }
+            if (url === '/internal/force-close-trades' && req.method === 'POST') {
+                if (!INTERNAL_TOKEN) {
+                    return sendJson(res, 503, { error: 'WORKER_INTERNAL_TOKEN not configured' });
+                }
+                const token = req.headers['x-internal-token'];
+                if (token !== INTERNAL_TOKEN) {
+                    return sendJson(res, 401, { error: 'Unauthorized' });
+                }
+                if (!tradeExecutor) {
+                    return sendJson(res, 503, { error: 'trade_executor_not_running' });
+                }
+                const body = (await readJson(req));
+                const userId = body.user_id?.trim();
+                const brokerAccountId = body.broker_account_id?.trim();
+                if (!userId || !brokerAccountId) {
+                    return sendJson(res, 400, { error: 'user_id and broker_account_id required' });
+                }
+                if (!(0, workerConfig_1.userBelongsToShard)(userId)) {
+                    return sendJson(res, 200, {
+                        ok: false,
+                        closed: 0,
+                        failed: 0,
+                        pending_cancelled: 0,
+                        virtual_legs_deleted: 0,
+                        channels_processed: 0,
+                        reason: 'wrong_shard',
+                    });
+                }
+                try {
+                    const result = await (0, forceCloseSignalTrades_1.forceCloseSignalTrades)(tradeExecutor.supabase, {
+                        userId,
+                        brokerAccountId,
+                        channelId: body.channel_id?.trim() || null,
+                    });
+                    return sendJson(res, 200, result);
+                }
+                catch (err) {
+                    const msg = err instanceof Error ? err.message : 'force close failed';
                     return sendJson(res, 500, { error: msg });
                 }
             }

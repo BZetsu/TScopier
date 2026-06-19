@@ -18,6 +18,7 @@ import {
   sanitizeChannelCommentSlug,
 } from './tradeComment'
 import { brokerHasLinkedSession, brokerSessionUuid } from './tradeExecutor/helpers'
+import type { BrokerRow as ExecutorBrokerRow } from './tradeExecutor/types'
 
 export type ForceCloseSignalTradesResult = {
   ok: boolean
@@ -189,6 +190,7 @@ async function forceCloseChannelOnBroker(
     scope: 'channel' | 'all'
   },
 ): Promise<ChannelCloseAccum> {
+  const { broker } = args
   const result: ChannelCloseAccum = {
     closed: 0,
     failed: 0,
@@ -311,7 +313,7 @@ async function forceCloseChannelOnBroker(
         channel_id: args.channelId,
       },
       parsed: { symbol: null },
-      brokers: [broker],
+      brokers: [broker as unknown as ExecutorBrokerRow],
       channelDisplayName: commentSlug,
       channelUsername: null,
       closeWithVerification: (a, u, ticket) => closeWithVerification(a, u, ticket, { liveFast: true }),
