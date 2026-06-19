@@ -174,6 +174,15 @@ export interface DashboardBrokerStatsTranslations {
   seeAll: string
   profit: string
   closedAt: string
+  closeChannel: string
+  closeAllChannels: string
+  closeChannelConfirm: string
+  closeAllConfirm: string
+  closing: string
+  closeSuccess: string
+  closePartial: string
+  closeFailed: string
+  closeDisconnected: string
 }
 
 export interface DashboardLinkedAccountsTranslations {

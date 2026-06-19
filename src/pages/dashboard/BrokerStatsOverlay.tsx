@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import clsx from 'clsx'
 import { RefreshCw, X } from 'lucide-react'
@@ -28,6 +28,7 @@ import {
   unwrapFxsocketPositionsPayload,
 } from '../../lib/fxsocketStreamParse'
 import { Button } from '../../components/ui/Button'
+import { forceCloseTradesApi } from '../../lib/forceCloseTradesApi'
 import type { BrokerAccount } from '../../types/database'
 
 function readPositionTicket(raw: unknown): number | null {
@@ -187,6 +188,14 @@ export function BrokerStatsOverlay() {
   const [livePositionRows, setLivePositionRows] = useState<Map<number, Record<string, unknown>>>(
     () => new Map(),
   )
+  const [closingChannelId, setClosingChannelId] = useState<string | null>(null)
+  const [closingAll, setClosingAll] = useState(false)
+  const [toastMessage, setToastMessage] = useState<string | null>(null)
+
+  const showToast = useCallback((message: string) => {
+    setToastMessage(message)
+    window.setTimeout(() => setToastMessage(null), 4500)
+  }, [])
 
   useEffect(() => {
     liveRefreshKeyRef.current = null
@@ -289,6 +298,58 @@ export function BrokerStatsOverlay() {
   const connectedAtDisplay = formatConnectedAt(
     stats?.connectedAt ?? account?.performance_baseline_captured_at ?? null,
   )
+
+  const canCloseTrades = account != null && isBrokerSessionConnected(account)
+  const closeBusy = closingAll || closingChannelId != null
+
+  const handleCloseResult = useCallback(async (
+    result: { ok: boolean; closed: number; failed: number },
+  ) => {
+    if (result.closed > 0 && result.failed === 0) {
+      showToast(interpolate(bs.closeSuccess, { count: String(result.closed) }))
+    } else if (result.closed > 0 && result.failed > 0) {
+      showToast(interpolate(bs.closePartial, {
+        closed: String(result.closed),
+        total: String(result.closed + result.failed),
+      }))
+    } else {
+      showToast(bs.closeFailed)
+    }
+    if (brokerId && result.closed > 0) {
+      await refreshBroker(brokerId, { silent: true })
+    }
+  }, [bs, brokerId, refreshBroker, showToast])
+
+  const closeChannelTrades = useCallback(async (channelId: string, channelLabel: string) => {
+    if (!brokerId || !canCloseTrades || closeBusy) return
+    if (!window.confirm(interpolate(bs.closeChannelConfirm, { channel: channelLabel }))) return
+    setClosingChannelId(channelId)
+    try {
+      const result = await forceCloseTradesApi.close({
+        broker_account_id: brokerId,
+        channel_id: channelId,
+      })
+      await handleCloseResult(result)
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : bs.closeFailed)
+    } finally {
+      setClosingChannelId(null)
+    }
+  }, [brokerId, bs, canCloseTrades, closeBusy, handleCloseResult, showToast])
+
+  const closeAllChannelTrades = useCallback(async () => {
+    if (!brokerId || !canCloseTrades || closeBusy) return
+    if (!window.confirm(bs.closeAllConfirm)) return
+    setClosingAll(true)
+    try {
+      const result = await forceCloseTradesApi.close({ broker_account_id: brokerId })
+      await handleCloseResult(result)
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : bs.closeFailed)
+    } finally {
+      setClosingAll(false)
+    }
+  }, [brokerId, bs, canCloseTrades, closeBusy, handleCloseResult, showToast])
 
   return (
     <div
@@ -463,8 +524,26 @@ export function BrokerStatsOverlay() {
               </section>
 
               <section className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-4">
-                <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">{bs.activeSignalTrade}</h3>
-                <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">{bs.activeSignalTradeHint}</p>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">{bs.activeSignalTrade}</h3>
+                    <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">{bs.activeSignalTradeHint}</p>
+                  </div>
+                  {stats.activeSignalTrades.length > 0 ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      loading={closingAll}
+                      disabled={!canCloseTrades || closeBusy}
+                      title={!canCloseTrades ? bs.closeDisconnected : undefined}
+                      onClick={() => { void closeAllChannelTrades() }}
+                      className="shrink-0"
+                    >
+                      {closingAll ? bs.closing : bs.closeAllChannels}
+                    </Button>
+                  ) : null}
+                </div>
                 {stats.activeSignalTrades.length === 0 ? (
                   <p className="mt-3 text-sm text-neutral-400 dark:text-neutral-500">{bs.noActiveSignalTrade}</p>
                 ) : (
@@ -482,11 +561,24 @@ export function BrokerStatsOverlay() {
                             {row.totalLots > 0 ? `${row.totalLots.toFixed(2)} ${bs.lots}` : '—'}
                           </p>
                         </div>
-                        <div className="text-right shrink-0">
-                          <p className="text-[10px] uppercase tracking-wide text-neutral-400">{bs.openPnl}</p>
-                          <p className={clsx('text-sm font-semibold tabular-nums', pnlColor(row.pnl))}>
-                            {formatSignedMoney(row.pnl)}
-                          </p>
+                        <div className="flex items-center gap-3 shrink-0">
+                          <div className="text-right">
+                            <p className="text-[10px] uppercase tracking-wide text-neutral-400">{bs.openPnl}</p>
+                            <p className={clsx('text-sm font-semibold tabular-nums', pnlColor(row.pnl))}>
+                              {formatSignedMoney(row.pnl)}
+                            </p>
+                          </div>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="secondary"
+                            loading={closingChannelId === row.channelId}
+                            disabled={!canCloseTrades || closeBusy}
+                            title={!canCloseTrades ? bs.closeDisconnected : undefined}
+                            onClick={() => { void closeChannelTrades(row.channelId, row.channelLabel) }}
+                          >
+                            {closingChannelId === row.channelId ? bs.closing : bs.closeChannel}
+                          </Button>
                         </div>
                       </li>
                     ))}
@@ -546,6 +638,15 @@ export function BrokerStatsOverlay() {
           ) : null}
         </div>
       </div>
+
+      {toastMessage ? (
+        <div
+          role="status"
+          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] max-w-md px-4 py-3 rounded-xl bg-neutral-900 text-white text-sm shadow-lg dark:bg-neutral-100 dark:text-neutral-900"
+        >
+          {toastMessage}
+        </div>
+      ) : null}
     </div>
   )
 }
