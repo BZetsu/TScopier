@@ -103,20 +103,43 @@ export function effectiveParsedData(
   return mergeSignalUserOverride(parsed, override, { overlay: true })
 }
 
+function slFromParsed(parsed: Record<string, unknown>): number | null {
+  return positiveLevel(parsed.sl ?? parsed.stoploss ?? parsed.stop_loss)
+}
+
+function tpFromParsed(parsed: Record<string, unknown>): number[] {
+  const raw = parsed.tp ?? parsed.takeprofit ?? parsed.take_profit ?? parsed.take_profits
+  return normalizeTpLevels(raw)
+}
+
+function applySlTpLevelsFromParsed(
+  parsed: Record<string, unknown>,
+  sourceParsed: unknown,
+): Record<string, unknown> {
+  const next = { ...parsed }
+  const source = (sourceParsed ?? {}) as Record<string, unknown>
+  const sl = slFromParsed(source)
+  if (sl != null) next.sl = sl
+  const tp = tpFromParsed(source)
+  if (tp.length > 0) next.tp = tp
+  return next
+}
+
 function applyMgmtParsedToEntry(
   parsed: Record<string, unknown>,
   mgmtParsed: unknown,
 ): Record<string, unknown> {
-  const next = { ...parsed }
-  const mgmt = (mgmtParsed ?? {}) as Record<string, unknown>
   const action = parsedSignalAction(mgmtParsed)
-  if (action === 'modify' || action === 'breakeven' || action === 'partial_breakeven') {
-    const sl = positiveLevel(mgmt.sl)
-    if (sl != null) next.sl = sl
-    const tp = normalizeTpLevels(mgmt.tp)
-    if (tp.length > 0) next.tp = tp
+  if (
+    action === 'modify'
+    || action === 'breakeven'
+    || action === 'partial_breakeven'
+    || action === 'buy'
+    || action === 'sell'
+  ) {
+    return applySlTpLevelsFromParsed(parsed, mgmtParsed)
   }
-  return next
+  return parsed
 }
 
 function findEntryInParentChain(
@@ -195,6 +218,7 @@ export function collectMgmtUpdatesForEntry(
   entry: SignalBatchRow,
   batchSignals: ReadonlyArray<SignalBatchRow>,
   ctx?: SignalDisplayContext,
+  alsoAnchorToIds: ReadonlySet<string> = new Set(),
 ): SignalBatchRow[] {
   if (!ENTRY_ACTIONS.has(parsedSignalAction(entry.parsed_data))) return []
 
@@ -203,8 +227,38 @@ export function collectMgmtUpdatesForEntry(
       if (row.id === entry.id) return false
       const action = parsedSignalAction(row.parsed_data)
       if (!SL_TP_MGMT_ACTIONS.has(action)) return false
-      if (resolveManagementAnchorEntryId(row, batchSignals, ctx) !== entry.id) return false
+      const anchorId = resolveManagementAnchorEntryId(row, batchSignals, ctx)
+      if (anchorId !== entry.id && !(anchorId && alsoAnchorToIds.has(anchorId))) return false
       return !hasIntermediateEntryForSymbol(entry, row, batchSignals, ctx)
+    })
+    .sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at))
+}
+
+function collectFoldEventsForEntry(
+  entry: SignalBatchRow,
+  batchSignals: ReadonlyArray<SignalBatchRow>,
+  ctx: SignalDisplayContext | undefined,
+  absorbedEntryUpdates: ReadonlyArray<SignalBatchRow>,
+): SignalBatchRow[] {
+  const absorbedIds = new Set(absorbedEntryUpdates.map(row => row.id))
+  const events: SignalBatchRow[] = [...absorbedEntryUpdates]
+
+  for (const row of batchSignals) {
+    if (row.id === entry.id || absorbedIds.has(row.id)) continue
+    const action = parsedSignalAction(row.parsed_data)
+    if (!SL_TP_MGMT_ACTIONS.has(action)) continue
+    const anchorId = resolveManagementAnchorEntryId(row, batchSignals, ctx)
+    if (anchorId !== entry.id && !(anchorId && absorbedIds.has(anchorId))) continue
+    if (hasIntermediateEntryForSymbol(entry, row, batchSignals, ctx)) continue
+    events.push(row)
+  }
+
+  const seen = new Set<string>()
+  return events
+    .filter(row => {
+      if (seen.has(row.id)) return false
+      seen.add(row.id)
+      return true
     })
     .sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at))
 }
@@ -213,11 +267,14 @@ export function foldMgmtUpdatesIntoParsed(
   entry: SignalBatchRow,
   batchSignals: ReadonlyArray<SignalBatchRow>,
   ctx?: SignalDisplayContext,
+  absorbedEntryUpdates: ReadonlyArray<SignalBatchRow> = [],
 ): Record<string, unknown> {
   let parsed = { ...((entry.parsed_data ?? {}) as Record<string, unknown>) }
-  for (const update of collectMgmtUpdatesForEntry(entry, batchSignals, ctx)) {
+
+  for (const update of collectFoldEventsForEntry(entry, batchSignals, ctx, absorbedEntryUpdates)) {
     parsed = applyMgmtParsedToEntry(parsed, update.parsed_data)
   }
+
   return parsed
 }
 
@@ -225,9 +282,10 @@ export function foldMgmtUpdatesIntoParsed(
 export function effectiveDisplayParsedData(
   signal: SignalBatchRow,
   ctx?: SignalDisplayContext,
+  absorbedEntryUpdates: ReadonlyArray<SignalBatchRow> = [],
 ): Record<string, unknown> {
   const base = ctx?.batchSignals?.length && ENTRY_ACTIONS.has(parsedSignalAction(signal.parsed_data))
-    ? foldMgmtUpdatesIntoParsed(signal, ctx.batchSignals, ctx)
+    ? foldMgmtUpdatesIntoParsed(signal, ctx.batchSignals, ctx, absorbedEntryUpdates)
     : ((signal.parsed_data ?? {}) as Record<string, unknown>)
   const override = parseUserOverride(signal.user_override)
   return mergeSignalUserOverride(base, override, { overlay: true })
@@ -236,25 +294,112 @@ export function effectiveDisplayParsedData(
 export type ConsolidatedEntrySignal = {
   signal: Signal
   lastActivityAt: string
+  absorbedEntryUpdates: SignalBatchRow[]
+}
+
+function consolidationGroupKey(
+  entry: Signal,
+  batchSignals: ReadonlyArray<SignalBatchRow>,
+  ctx?: SignalDisplayContext,
+): string | null {
+  if (!entry.channel_id) return null
+  const symbolContext = ctx?.symbolContext ?? { lookup: new Map(), replyParentBySignalId: new Map() }
+  const symbol = symbolForCopierLog(entry, symbolContext, [...batchSignals])
+  if (!symbol || symbol === '—') return null
+  return `${entry.channel_id}:${symbol}`
+}
+
+function shouldAbsorbFollowUpEntry(
+  anchor: Signal,
+  followUp: Signal,
+  openSignalIds: ReadonlySet<string>,
+): boolean {
+  if (!openSignalIds.has(anchor.id)) return false
+  if (openSignalIds.has(followUp.id)) return false
+  return true
+}
+
+function lastActivityForConsolidatedRow(
+  anchor: Signal,
+  absorbedEntryUpdates: ReadonlyArray<SignalBatchRow>,
+  batchSignals: ReadonlyArray<SignalBatchRow>,
+  ctx?: SignalDisplayContext,
+): string {
+  const events = collectFoldEventsForEntry(anchor as SignalBatchRow, batchSignals, ctx, absorbedEntryUpdates)
+  const candidates = [anchor.created_at, ...events.map(row => row.created_at)]
+  return candidates.reduce((latest, at) => (
+    Date.parse(at) > Date.parse(latest) ? at : latest
+  ))
 }
 
 export function buildConsolidatedEntrySignals(
   signals: Signal[],
   ctx?: SignalDisplayContext,
+  openSignalIds: ReadonlySet<string> = new Set(),
 ): ConsolidatedEntrySignal[] {
   const batch = ctx?.batchSignals ?? signals
   const entries = signals.filter(isEditableEntrySignal)
 
-  return entries.map(signal => {
-    const updates = collectMgmtUpdatesForEntry(signal, batch, ctx)
-    const lastUpdate = updates.length
-      ? updates.reduce((latest, row) => {
-        const ms = Date.parse(row.created_at)
-        return ms > Date.parse(latest) ? row.created_at : latest
-      }, signal.created_at)
-      : signal.created_at
-    return { signal, lastActivityAt: lastUpdate }
-  })
+  const byGroup = new Map<string, Signal[]>()
+  const ungrouped: Signal[] = []
+
+  for (const entry of entries) {
+    const key = consolidationGroupKey(entry, batch, ctx)
+    if (!key) {
+      ungrouped.push(entry)
+      continue
+    }
+    const list = byGroup.get(key) ?? []
+    list.push(entry)
+    byGroup.set(key, list)
+  }
+
+  const consolidated: ConsolidatedEntrySignal[] = []
+
+  const flushCycle = (anchor: Signal, absorbed: SignalBatchRow[]) => {
+    consolidated.push({
+      signal: anchor,
+      absorbedEntryUpdates: absorbed,
+      lastActivityAt: lastActivityForConsolidatedRow(anchor, absorbed, batch, ctx),
+    })
+  }
+
+  for (const groupEntries of byGroup.values()) {
+    const sorted = [...groupEntries].sort(
+      (a, b) => Date.parse(a.created_at) - Date.parse(b.created_at),
+    )
+
+    let anchor: Signal | null = null
+    let absorbed: SignalBatchRow[] = []
+
+    for (const entry of sorted) {
+      if (!anchor) {
+        anchor = entry
+        continue
+      }
+
+      if (shouldAbsorbFollowUpEntry(anchor, entry, openSignalIds)) {
+        absorbed.push(entry as SignalBatchRow)
+        continue
+      }
+
+      flushCycle(anchor, absorbed)
+      anchor = entry
+      absorbed = []
+    }
+
+    if (anchor) flushCycle(anchor, absorbed)
+  }
+
+  for (const entry of ungrouped) {
+    consolidated.push({
+      signal: entry,
+      absorbedEntryUpdates: [],
+      lastActivityAt: lastActivityForConsolidatedRow(entry, [], batch, ctx),
+    })
+  }
+
+  return consolidated.sort((a, b) => Date.parse(b.lastActivityAt) - Date.parse(a.lastActivityAt))
 }
 
 export function isHiddenManagementSignal(

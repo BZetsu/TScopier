@@ -1,6 +1,7 @@
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
 import {
+  buildConsolidatedEntrySignals,
   buildOpenSignalIdSet,
   collectMgmtUpdatesForEntry,
   effectiveDisplayParsedData,
@@ -138,6 +139,67 @@ test('effectiveDisplayParsedData folds modify updates into entry row', () => {
   assert.deepEqual(effective.tp, [4150, 4148, 4146])
 
   assert.equal(collectMgmtUpdatesForEntry(batch[0], batch, ctx).length, 2)
+})
+
+test('buildConsolidatedEntrySignals absorbs follow-up sell into open anchor', () => {
+  const openIds = buildOpenSignalIdSet([{ signal_id: 'entry-open' }])
+  const batch = [
+    {
+      id: 'entry-open',
+      channel_id: 'ch1',
+      created_at: '2026-06-19T18:55:00.000Z',
+      parsed_data: { action: 'sell', symbol: 'BTCUSD' },
+      parent_signal_id: null,
+      raw_message: '',
+      user_override: null,
+    },
+    {
+      id: 'entry-followup',
+      channel_id: 'ch1',
+      created_at: '2026-06-19T19:04:00.000Z',
+      parsed_data: { action: 'sell', symbol: 'BTCUSD', sl: 63144, tp: [62950, 62850, 62800] },
+      parent_signal_id: null,
+      raw_message: '',
+      user_override: null,
+    },
+  ] as const
+
+  const rows = buildConsolidatedEntrySignals([...batch], { batchSignals: [...batch] }, openIds)
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0]!.signal.id, 'entry-open')
+  assert.equal(rows[0]!.absorbedEntryUpdates.length, 1)
+  assert.equal(rows[0]!.absorbedEntryUpdates[0]!.id, 'entry-followup')
+
+  const effective = effectiveDisplayParsedData(rows[0]!.signal, { batchSignals: [...batch] }, rows[0]!.absorbedEntryUpdates)
+  assert.equal(effective.sl, 63144)
+  assert.deepEqual(effective.tp, [62950, 62850, 62800])
+})
+
+test('buildConsolidatedEntrySignals keeps separate cycles when anchor is closed', () => {
+  const openIds = buildOpenSignalIdSet([])
+  const batch = [
+    {
+      id: 'entry-1',
+      channel_id: 'ch1',
+      created_at: '2026-06-19T18:00:00.000Z',
+      parsed_data: { action: 'sell', symbol: 'BTCUSD', sl: 100 },
+      parent_signal_id: null,
+      raw_message: '',
+      user_override: null,
+    },
+    {
+      id: 'entry-2',
+      channel_id: 'ch1',
+      created_at: '2026-06-19T19:00:00.000Z',
+      parsed_data: { action: 'sell', symbol: 'BTCUSD', sl: 200 },
+      parent_signal_id: null,
+      raw_message: '',
+      user_override: null,
+    },
+  ] as const
+
+  const rows = buildConsolidatedEntrySignals([...batch], { batchSignals: [...batch] }, openIds)
+  assert.equal(rows.length, 2)
 })
 
 test('effectiveDisplayParsedData applies user override after channel updates', () => {

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Loader2, Plus, X } from 'lucide-react'
 import { useT } from '../../context/LocaleContext'
-import { effectiveDisplayParsedData, foldMgmtUpdatesIntoParsed, validateOverrideLevels, type SignalDisplayContext } from '../../lib/signalOverride'
+import { effectiveDisplayParsedData, foldMgmtUpdatesIntoParsed, validateOverrideLevels, type SignalBatchRow, type SignalDisplayContext } from '../../lib/signalOverride'
 import { signalOverrideApi } from '../../lib/signalOverrideApi'
 import type { Signal } from '../../types/database'
 import { Button } from '../ui/Button'
@@ -15,12 +15,17 @@ interface OverrideDraft {
 interface EditSignalOverrideModalProps {
   signal: Signal | null
   displayContext?: SignalDisplayContext
+  absorbedEntryUpdates?: ReadonlyArray<SignalBatchRow>
   onClose: () => void
   onSaved: (result: { appliedLegs: number; open: boolean }) => void
 }
 
-function overrideToDraft(signal: Signal, displayContext?: SignalDisplayContext): OverrideDraft {
-  const effective = effectiveDisplayParsedData(signal, displayContext)
+function overrideToDraft(
+  signal: Signal,
+  displayContext?: SignalDisplayContext,
+  absorbedEntryUpdates: ReadonlyArray<SignalBatchRow> = [],
+): OverrideDraft {
+  const effective = effectiveDisplayParsedData(signal, displayContext, absorbedEntryUpdates)
   const sl = effective.sl
   const tp = Array.isArray(effective.tp) ? effective.tp : []
   return {
@@ -31,9 +36,13 @@ function overrideToDraft(signal: Signal, displayContext?: SignalDisplayContext):
   }
 }
 
-function channelFoldedSummary(signal: Signal, displayContext?: SignalDisplayContext): { sl: string; tp: string } {
+function channelFoldedSummary(
+  signal: Signal,
+  displayContext?: SignalDisplayContext,
+  absorbedEntryUpdates: ReadonlyArray<SignalBatchRow> = [],
+): { sl: string; tp: string } {
   const parsed = displayContext?.batchSignals?.length
-    ? foldMgmtUpdatesIntoParsed(signal, displayContext.batchSignals, displayContext)
+    ? foldMgmtUpdatesIntoParsed(signal, displayContext.batchSignals, displayContext, absorbedEntryUpdates)
     : ((signal.parsed_data ?? {}) as Record<string, unknown>)
   const sl = typeof parsed.sl === 'number' && parsed.sl > 0 ? String(parsed.sl) : '—'
   const tpArr = Array.isArray(parsed.tp)
@@ -54,6 +63,7 @@ function parseDraft(draft: OverrideDraft): { sl: number | null; tp_levels: numbe
 export function EditSignalOverrideModal({
   signal,
   displayContext,
+  absorbedEntryUpdates = [],
   onClose,
   onSaved,
 }: EditSignalOverrideModalProps) {
@@ -64,8 +74,8 @@ export function EditSignalOverrideModal({
   const [formError, setFormError] = useState('')
 
   const original = useMemo(
-    () => (signal ? channelFoldedSummary(signal, displayContext) : { sl: '—', tp: '—' }),
-    [signal, displayContext],
+    () => (signal ? channelFoldedSummary(signal, displayContext, absorbedEntryUpdates) : { sl: '—', tp: '—' }),
+    [signal, displayContext, absorbedEntryUpdates],
   )
 
   useEffect(() => {
@@ -74,9 +84,9 @@ export function EditSignalOverrideModal({
       setFormError('')
       return
     }
-    setDraft(overrideToDraft(signal, displayContext))
+    setDraft(overrideToDraft(signal, displayContext, absorbedEntryUpdates))
     setFormError('')
-  }, [signal, displayContext])
+  }, [signal, displayContext, absorbedEntryUpdates])
 
   useEffect(() => {
     if (!signal) return
@@ -116,7 +126,7 @@ export function EditSignalOverrideModal({
     }
   }
 
-  const effective = effectiveDisplayParsedData(signal, displayContext)
+  const effective = effectiveDisplayParsedData(signal, displayContext, absorbedEntryUpdates)
   const currentSl = typeof effective.sl === 'number' ? String(effective.sl) : '—'
   const currentTp = Array.isArray(effective.tp)
     ? effective.tp.filter(v => typeof v === 'number').map(String).join(', ') || '—'

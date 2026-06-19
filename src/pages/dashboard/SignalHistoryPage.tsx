@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from 'react'
 import clsx from 'clsx'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
@@ -17,6 +17,7 @@ import {
   parsedSignalAction,
   symbolForCopierLog,
   tradeSignalActionLabel,
+  type CopierSymbolContext,
   type TradeSignalSummaryLabels,
 } from '../../lib/copierLogDisplay'
 import {
@@ -25,10 +26,18 @@ import {
   effectiveDisplayParsedData,
   isEditableEntrySignal,
   resolveSignalOpenStatus,
+  type SignalBatchRow,
   type SignalDisplayContext,
 } from '../../lib/signalOverride'
 
 type DatePreset = 'all' | 'today' | '7d' | '30d' | 'custom'
+
+const DESKTOP_TD = 'px-4 py-3.5 align-middle border-b border-neutral-100 dark:border-neutral-800'
+
+const DESKTOP_TH =
+  'px-4 py-3 text-left text-xs font-semibold text-neutral-500 dark:text-neutral-400 uppercase tracking-wide border-b border-neutral-100 dark:border-neutral-800 bg-white dark:bg-neutral-900'
+
+const OPEN_SIGNAL_COLUMN = 'bg-teal-50 dark:bg-teal-950/40'
 
 const selectClass =
   'px-3 py-2.5 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-sm text-neutral-700 dark:text-neutral-300 focus:outline-none focus:ring-2 focus:ring-primary-500 w-full'
@@ -112,10 +121,59 @@ function channelDisplayName(channel: TelegramChannel | undefined): string {
   return name || (username ? `@${username}` : 'Unnamed channel')
 }
 
-function signalForDisplay(signal: Signal, ctx: SignalDisplayContext): Signal {
+function signalForDisplay(
+  signal: Signal,
+  ctx: SignalDisplayContext,
+  absorbedEntryUpdates: ReadonlyArray<SignalBatchRow> = [],
+): Signal {
   return {
     ...signal,
-    parsed_data: effectiveDisplayParsedData(signal, ctx) as Json,
+    parsed_data: effectiveDisplayParsedData(signal, ctx, absorbedEntryUpdates) as Json,
+  }
+}
+
+type SignalRowContentProps = {
+  channelName: string
+  summary: string
+  actionLabel: string
+  action: string
+  symbol: string
+  openStatus: 'open' | 'closed'
+  statusOpenLabel: string
+  statusClosedLabel: string
+  timeLabel: string
+  onClick: () => void
+}
+
+function buildSignalRowProps(args: {
+  signal: Signal
+  lastActivityAt: string
+  absorbedEntryUpdates: ReadonlyArray<SignalBatchRow>
+  displayContext: SignalDisplayContext
+  tradeSignals: Signal[]
+  symbolContext: CopierSymbolContext
+  openSignalIds: Set<string>
+  channelById: Map<string, TelegramChannel>
+  summaryLabels: TradeSignalSummaryLabels
+  statusOpenLabel: string
+  statusClosedLabel: string
+  onSelect: (signal: Signal, absorbedEntryUpdates: SignalBatchRow[]) => void
+}): SignalRowContentProps {
+  const displaySignal = signalForDisplay(args.signal, args.displayContext, args.absorbedEntryUpdates)
+  return {
+    channelName: channelDisplayName(args.signal.channel_id ? args.channelById.get(args.signal.channel_id) : undefined),
+    summary: formatTradeSignalSummary(displaySignal, args.symbolContext, args.tradeSignals, args.summaryLabels),
+    actionLabel: tradeSignalActionLabel(parsedSignalAction(args.signal.parsed_data), args.summaryLabels),
+    action: parsedSignalAction(args.signal.parsed_data),
+    symbol: symbolForCopierLog(args.signal, args.symbolContext, args.tradeSignals),
+    openStatus: resolveSignalOpenStatus(args.signal, args.openSignalIds, {
+      batchSignals: args.tradeSignals,
+      replyParentBySignalId: args.symbolContext.replyParentBySignalId,
+    }),
+    statusOpenLabel: args.statusOpenLabel,
+    statusClosedLabel: args.statusClosedLabel,
+    timeLabel: args.lastActivityAt,
+    onClick: () => args.onSelect(args.signal, [...args.absorbedEntryUpdates]),
   }
 }
 
@@ -126,7 +184,7 @@ export function SignalHistoryPage() {
   const [signals, setSignals] = useState<Signal[]>([])
   const [channels, setChannels] = useState<TelegramChannel[]>([])
   const [openSignalIds, setOpenSignalIds] = useState<Set<string>>(() => new Set())
-  const [symbolContext, setSymbolContext] = useState(() => ({
+  const [symbolContext, setSymbolContext] = useState<CopierSymbolContext>(() => ({
     lookup: new Map(),
     replyParentBySignalId: new Map(),
   }))
@@ -135,6 +193,7 @@ export function SignalHistoryPage() {
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
   const [editSignal, setEditSignal] = useState<Signal | null>(null)
+  const [editAbsorbedUpdates, setEditAbsorbedUpdates] = useState<SignalBatchRow[]>([])
   const [banner, setBanner] = useState<{ tone: 'success' | 'error'; text: string } | null>(null)
 
   const summaryLabels = useMemo((): TradeSignalSummaryLabels => ({
@@ -217,13 +276,13 @@ export function SignalHistoryPage() {
   }), [tradeSignals, symbolContext])
 
   const consolidatedSignals = useMemo(() => {
-    return buildConsolidatedEntrySignals(tradeSignals, displayContext)
+    return buildConsolidatedEntrySignals(tradeSignals, displayContext, openSignalIds)
       .filter(({ signal, lastActivityAt }) => {
         if (channelFilter !== 'all' && signal.channel_id !== channelFilter) return false
         return matchesDateFilter(signal.created_at, lastActivityAt, dateFrom, dateTo)
       })
       .sort((a, b) => Date.parse(b.lastActivityAt) - Date.parse(a.lastActivityAt))
-  }, [tradeSignals, displayContext, channelFilter, dateFrom, dateTo])
+  }, [tradeSignals, displayContext, openSignalIds, channelFilter, dateFrom, dateTo])
 
   const stats = useMemo(() => {
     const now = new Date()
@@ -241,6 +300,21 @@ export function SignalHistoryPage() {
       total: entrySignals.length,
     }
   }, [entrySignals])
+
+  const rowPropsArgs = useMemo(() => ({
+    displayContext,
+    tradeSignals,
+    symbolContext,
+    openSignalIds,
+    channelById,
+    summaryLabels,
+    statusOpenLabel: sh.statusOpen,
+    statusClosedLabel: sh.statusClosed,
+    onSelect: (signal: Signal, absorbedEntryUpdates: SignalBatchRow[]) => {
+      setEditSignal(signal)
+      setEditAbsorbedUpdates(absorbedEntryUpdates)
+    },
+  }), [displayContext, tradeSignals, symbolContext, openSignalIds, channelById, summaryLabels, sh.statusOpen, sh.statusClosed])
 
   const resetFilters = () => {
     setChannelFilter('all')
@@ -358,63 +432,80 @@ export function SignalHistoryPage() {
           </div>
         </div>
 
-        <div className="px-4 py-2.5 bg-teal-50 dark:bg-teal-950/30 border-b border-teal-100 dark:border-teal-900/40 text-center text-teal-800 dark:text-teal-200 text-sm font-medium">
-          {interpolate(sh.totalFound, { count: String(consolidatedSignals.length) })}
+        <div className="hidden md:block max-h-[560px] overflow-y-auto">
+          <table className="md:table w-full table-fixed border-collapse">
+            <colgroup>
+              <col className="w-[22%]" />
+              <col className="w-[46%]" />
+              <col className="w-[14%]" />
+              <col className="w-[18%]" />
+            </colgroup>
+            <thead className="sticky top-0 z-10 bg-white dark:bg-neutral-900">
+              <tr>
+                <th className={DESKTOP_TH}>{sh.colChannel}</th>
+                <th className={DESKTOP_TH}>{sh.colSignal}</th>
+                <th className={clsx(DESKTOP_TH, 'text-center')}>{sh.colStatus}</th>
+                <th className={clsx(DESKTOP_TH, 'text-right')}>{sh.colTime}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                [...Array(6)].map((_, i) => (
+                  <tr key={i}>
+                    <td colSpan={4} className="px-4 py-4">
+                      <div className="space-y-2">
+                        <div className="h-4 w-24 bg-neutral-100 dark:bg-neutral-800 rounded animate-pulse" />
+                        <div className="h-4 w-full bg-neutral-100 dark:bg-neutral-800 rounded animate-pulse" />
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              ) : consolidatedSignals.length === 0 ? (
+                <tr>
+                  <td colSpan={4} className="py-16 text-center text-neutral-400 text-sm">{sh.noSignals}</td>
+                </tr>
+              ) : (
+                consolidatedSignals.map(({ signal, lastActivityAt, absorbedEntryUpdates }) => (
+                  <SignalRow
+                    key={signal.id}
+                    {...buildSignalRowProps({ signal, lastActivityAt, absorbedEntryUpdates, ...rowPropsArgs })}
+                  />
+                ))
+              )}
+            </tbody>
+          </table>
         </div>
 
-        <div className="hidden md:grid md:grid-cols-[1fr_2fr_auto_auto] gap-3 px-4 py-3 border-b border-neutral-100 dark:border-neutral-800 text-xs font-semibold text-neutral-500 dark:text-neutral-400 uppercase tracking-wide">
-          <span>{sh.colChannel}</span>
-          <span>{sh.colSignal}</span>
-          <span>{sh.colStatus}</span>
-          <span className="text-right">{sh.colTime}</span>
-        </div>
-
-        {loading ? (
-          <div className="divide-y divide-neutral-100 dark:divide-neutral-800">
-            {[...Array(6)].map((_, i) => (
+        <div className="md:hidden max-h-[560px] overflow-y-auto divide-y divide-neutral-100 dark:divide-neutral-800">
+          {loading ? (
+            [...Array(6)].map((_, i) => (
               <div key={i} className="px-4 py-4 space-y-2">
                 <div className="h-4 w-24 bg-neutral-100 dark:bg-neutral-800 rounded animate-pulse" />
                 <div className="h-4 w-full bg-neutral-100 dark:bg-neutral-800 rounded animate-pulse" />
               </div>
-            ))}
-          </div>
-        ) : consolidatedSignals.length === 0 ? (
-          <div className="py-16 text-center text-neutral-400 text-sm">{sh.noSignals}</div>
-        ) : (
-          <div className="divide-y divide-neutral-100 dark:divide-neutral-800 max-h-[560px] overflow-y-auto">
-            {consolidatedSignals.map(({ signal, lastActivityAt }) => {
-              const displaySignal = signalForDisplay(signal, displayContext)
-              const openStatus = resolveSignalOpenStatus(signal, openSignalIds, {
-                batchSignals: tradeSignals,
-                replyParentBySignalId: symbolContext.replyParentBySignalId,
-              })
-              const canEdit = openStatus === 'open' && isEditableEntrySignal(signal)
-              return (
-                <SignalRow
-                  key={signal.id}
-                  channelName={channelDisplayName(signal.channel_id ? channelById.get(signal.channel_id) : undefined)}
-                  summary={formatTradeSignalSummary(displaySignal, symbolContext, tradeSignals, summaryLabels)}
-                  actionLabel={tradeSignalActionLabel(parsedSignalAction(signal.parsed_data), summaryLabels)}
-                  action={parsedSignalAction(signal.parsed_data)}
-                  symbol={symbolForCopierLog(signal, symbolContext, tradeSignals)}
-                  openStatus={openStatus}
-                  statusOpenLabel={sh.statusOpen}
-                  statusClosedLabel={sh.statusClosed}
-                  editLabel={sh.editSignal}
-                  canEdit={canEdit}
-                  timeLabel={lastActivityAt}
-                  onEdit={() => setEditSignal(signal)}
-                />
-              )
-            })}
-          </div>
-        )}
+            ))
+          ) : consolidatedSignals.length === 0 ? (
+            <div className="py-16 text-center text-neutral-400 text-sm">{sh.noSignals}</div>
+          ) : (
+            consolidatedSignals.map(({ signal, lastActivityAt, absorbedEntryUpdates }) => (
+              <SignalRow
+                key={`m-${signal.id}`}
+                mobileOnly
+                {...buildSignalRowProps({ signal, lastActivityAt, absorbedEntryUpdates, ...rowPropsArgs })}
+              />
+            ))
+          )}
+        </div>
       </Card>
 
       <EditSignalOverrideModal
         signal={editSignal}
         displayContext={displayContext}
-        onClose={() => setEditSignal(null)}
+        absorbedEntryUpdates={editAbsorbedUpdates}
+        onClose={() => {
+          setEditSignal(null)
+          setEditAbsorbedUpdates([])
+        }}
         onSaved={handleSaved}
       />
     </PageShell>
@@ -422,6 +513,7 @@ export function SignalHistoryPage() {
 }
 
 function SignalRow({
+  mobileOnly,
   channelName,
   summary,
   actionLabel,
@@ -430,30 +522,17 @@ function SignalRow({
   openStatus,
   statusOpenLabel,
   statusClosedLabel,
-  editLabel,
-  canEdit,
   timeLabel,
-  onEdit,
-}: {
-  channelName: string
-  summary: string
-  actionLabel: string
-  action: string
-  symbol: string
-  openStatus: 'open' | 'closed'
-  statusOpenLabel: string
-  statusClosedLabel: string
-  editLabel: string
-  canEdit: boolean
-  timeLabel: string
-  onEdit: () => void
-}) {
+  onClick,
+}: SignalRowContentProps & { mobileOnly?: boolean }) {
   const formattedTime = new Date(timeLabel).toLocaleString([], {
     day: '2-digit',
     month: 'short',
     hour: '2-digit',
     minute: '2-digit',
   })
+
+  const isOpen = openStatus === 'open'
 
   const actionTone =
     action === 'buy'
@@ -462,22 +541,37 @@ function SignalRow({
         ? 'text-error-600 dark:text-error-400'
         : 'text-neutral-600 dark:text-neutral-300'
 
+  const rowInteractiveClass = 'cursor-pointer transition-colors hover:bg-neutral-50 dark:hover:bg-neutral-800/40'
+
+  const handleKeyDown = (e: KeyboardEvent) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      onClick()
+    }
+  }
+
   const statusBadge = (
     <span
       className={clsx(
         'inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide',
-        openStatus === 'open'
+        isOpen
           ? 'bg-teal-100 text-teal-800 dark:bg-teal-900/50 dark:text-teal-200'
           : 'bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300',
       )}
     >
-      {openStatus === 'open' ? statusOpenLabel : statusClosedLabel}
+      {isOpen ? statusOpenLabel : statusClosedLabel}
     </span>
   )
 
-  return (
-    <>
-      <article className="md:hidden px-4 py-4 hover:bg-neutral-50 dark:hover:bg-neutral-800/40 transition-colors">
+  if (mobileOnly) {
+    return (
+      <article
+        role="button"
+        tabIndex={0}
+        onClick={onClick}
+        onKeyDown={handleKeyDown}
+        className={clsx('px-4 py-4', rowInteractiveClass, isOpen && OPEN_SIGNAL_COLUMN)}
+      >
         <div className="flex items-start justify-between gap-3 mb-2">
           <div className="min-w-0">
             <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-50 truncate">{symbol !== '—' ? symbol : actionLabel}</p>
@@ -488,39 +582,35 @@ function SignalRow({
             <span className="text-xs text-neutral-400 whitespace-nowrap">{formattedTime}</span>
           </div>
         </div>
-        <div className="flex items-center justify-between gap-2 mb-1.5">
-          <p className={clsx('text-xs font-semibold uppercase', actionTone)}>{actionLabel}</p>
-          {canEdit ? (
-            <Button variant="secondary" className="h-7 px-2.5 text-xs" onClick={onEdit}>
-              {editLabel}
-            </Button>
-          ) : null}
-        </div>
+        <p className={clsx('text-xs font-semibold uppercase mb-1.5', actionTone)}>{actionLabel}</p>
         <p className="text-sm text-neutral-700 dark:text-neutral-200 leading-relaxed">{summary}</p>
       </article>
+    )
+  }
 
-      <div className="hidden md:grid md:grid-cols-[1fr_2fr_auto_auto] gap-3 px-4 py-3.5 items-center hover:bg-neutral-50 dark:hover:bg-neutral-800/40 transition-colors">
-        <div className="min-w-0">
-          <p className="text-sm font-medium text-neutral-900 dark:text-neutral-50 truncate">{channelName}</p>
-          {symbol !== '—' ? (
-            <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">{symbol}</p>
-          ) : null}
-        </div>
-        <div className="min-w-0">
-          <p className={clsx('text-xs font-semibold uppercase mb-1', actionTone)}>{actionLabel}</p>
-          <p className="text-sm text-neutral-800 dark:text-neutral-100 truncate" title={summary}>{summary}</p>
-        </div>
-        <div className="flex flex-col items-end gap-1.5">
-          {statusBadge}
-          {canEdit ? (
-            <Button variant="secondary" className="h-7 px-2.5 text-xs" onClick={onEdit}>
-              {editLabel}
-            </Button>
-          ) : null}
-        </div>
-        <span className="text-xs text-neutral-500 dark:text-neutral-400 text-right whitespace-nowrap">{formattedTime}</span>
-      </div>
-    </>
+  return (
+    <tr
+      role="button"
+      tabIndex={0}
+      onClick={onClick}
+      onKeyDown={handleKeyDown}
+      className={rowInteractiveClass}
+    >
+      <td className={DESKTOP_TD}>
+        <p className="text-sm font-medium text-neutral-900 dark:text-neutral-50 truncate">{channelName}</p>
+        {symbol !== '—' ? (
+          <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">{symbol}</p>
+        ) : null}
+      </td>
+      <td className={clsx(DESKTOP_TD, isOpen && OPEN_SIGNAL_COLUMN)}>
+        <p className={clsx('text-xs font-semibold uppercase mb-1', actionTone)}>{actionLabel}</p>
+        <p className="text-sm text-neutral-800 dark:text-neutral-100 truncate" title={summary}>{summary}</p>
+      </td>
+      <td className={clsx(DESKTOP_TD, 'text-center')}>{statusBadge}</td>
+      <td className={clsx(DESKTOP_TD, 'text-right text-xs text-neutral-500 dark:text-neutral-400 whitespace-nowrap')}>
+        {formattedTime}
+      </td>
+    </tr>
   )
 }
 
