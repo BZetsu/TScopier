@@ -174,6 +174,8 @@ export const channelWorkerPl: ChannelWorkerTranslations = {
   errorSymbolNotFound: 'Nie znaleziono symbolu: {symbol}',
   errorBrokerNotConnected:
     'Broker nie jest połączony — w Konfiguracji konta użyj Reconnect i wpisz hasło MT dla tego konta',
+  errorInvalidStops:
+    'Broker odrzucił te poziomy stop — sprawdź, czy SL/TP są po właściwej stronie rynku i spełniają minimalną odległość.',
   errorBridgeGlitch:
     'Tymczasowy błąd serwera transakcyjnego brokera — wejścia warstwowe będą ponawiane automatycznie. Użyj Reconnect, jeśli to się powtarza.',
   errorStopsAlreadySet: 'Stop loss i take profit były już ustawione u brokera (zmiana nie była potrzebna).',

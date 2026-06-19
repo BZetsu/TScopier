@@ -76,14 +76,16 @@ async function callWorkerApply(args: {
   })
   const data = await res.json().catch(() => ({})) as {
     applied_legs?: number
+    failed_legs?: number
     error?: string
     errors?: string[]
   }
   if (!res.ok) {
-    return { applied_legs: 0, errors: [data.error ?? `Worker apply failed (${res.status})`] }
+    return { applied_legs: 0, failed_legs: 0, errors: [data.error ?? `Worker apply failed (${res.status})`] }
   }
   return {
     applied_legs: Number(data.applied_legs ?? 0),
+    failed_legs: Number(data.failed_legs ?? 0),
     errors: data.errors,
   }
 }
@@ -175,16 +177,26 @@ Deno.serve(async (req: Request) => {
 
     const open = (openCount ?? 0) > 0
     let appliedLegs = 0
+    let failedLegs = 0
+    let applyErrors: string[] | undefined
     if (open) {
       const workerResult = await callWorkerApply({ userId, signalId })
       appliedLegs = workerResult.applied_legs
-      if (workerResult.errors?.length) {
-        console.warn(`[signal-override] worker apply warnings: ${workerResult.errors.join("; ")}`)
+      failedLegs = workerResult.failed_legs ?? 0
+      applyErrors = workerResult.errors
+      if (applyErrors?.length) {
+        console.warn(`[signal-override] worker apply warnings: ${applyErrors.join("; ")}`)
       }
     }
 
     return Response.json(
-      { ok: true, applied_legs: appliedLegs, open },
+      {
+        ok: true,
+        applied_legs: appliedLegs,
+        failed_legs: failedLegs,
+        open,
+        errors: applyErrors,
+      },
       { status: 200, headers: corsHeaders },
     )
   } catch (e) {

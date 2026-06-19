@@ -2,6 +2,8 @@ import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
 import {
   buildOpenSignalIdSet,
+  collectMgmtUpdatesForEntry,
+  effectiveDisplayParsedData,
   effectiveParsedData,
   isEditableEntrySignal,
   mergeSignalUserOverride,
@@ -97,4 +99,68 @@ test('validateOverrideLevels requires positive sl or tp', () => {
   assert.equal(validateOverrideLevels({ sl: null, tpLevels: [4150] }), true)
   assert.equal(validateOverrideLevels({ sl: null, tpLevels: [] }), false)
   assert.equal(validateOverrideLevels({ sl: -1, tpLevels: [] }), false)
+})
+
+test('effectiveDisplayParsedData folds modify updates into entry row', () => {
+  const batch = [
+    {
+      id: 'entry-sell',
+      channel_id: 'ch1',
+      created_at: '2026-06-19T18:27:00.000Z',
+      parsed_data: { action: 'sell', symbol: 'BTCUSD', sl: 63200 },
+      parent_signal_id: null,
+      raw_message: '',
+      user_override: null,
+    },
+    {
+      id: 'modify-1',
+      channel_id: 'ch1',
+      created_at: '2026-06-19T18:29:00.000Z',
+      parsed_data: { action: 'modify', symbol: 'BTCUSD', sl: 4159, tp: [4150, 4148, 4146] },
+      parent_signal_id: null,
+      raw_message: '',
+      user_override: null,
+    },
+    {
+      id: 'modify-2',
+      channel_id: 'ch1',
+      created_at: '2026-06-19T18:33:00.000Z',
+      parsed_data: { action: 'modify', symbol: 'BTCUSD', sl: 4165 },
+      parent_signal_id: null,
+      raw_message: '',
+      user_override: null,
+    },
+  ] as const
+
+  const ctx = { batchSignals: [...batch] }
+  const effective = effectiveDisplayParsedData(batch[0], ctx)
+  assert.equal(effective.sl, 4165)
+  assert.deepEqual(effective.tp, [4150, 4148, 4146])
+
+  assert.equal(collectMgmtUpdatesForEntry(batch[0], batch, ctx).length, 2)
+})
+
+test('effectiveDisplayParsedData applies user override after channel updates', () => {
+  const entry = {
+    id: 'entry-sell',
+    channel_id: 'ch1',
+    created_at: '2026-06-19T18:27:00.000Z',
+    parsed_data: { action: 'sell', symbol: 'XAUUSD', sl: 4165, tp: [4155] },
+    parent_signal_id: null,
+    raw_message: '',
+    user_override: { sl: 4159, tp: [4150, 4148], updated_at: '2026-06-19T19:00:00.000Z' },
+  }
+  const modify = {
+    id: 'modify-1',
+    channel_id: 'ch1',
+    created_at: '2026-06-19T18:29:00.000Z',
+    parsed_data: { action: 'modify', symbol: 'XAUUSD', sl: 4165, tp: [4150, 4148, 4146] },
+    parent_signal_id: null,
+    raw_message: '',
+    user_override: null,
+  }
+  const ctx = { batchSignals: [entry, modify] }
+  const effective = effectiveDisplayParsedData(entry, ctx)
+  assert.equal(effective.sl, 4159)
+  assert.deepEqual(effective.tp, [4150, 4148])
 })

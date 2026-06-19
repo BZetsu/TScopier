@@ -20,10 +20,12 @@ import {
   type TradeSignalSummaryLabels,
 } from '../../lib/copierLogDisplay'
 import {
+  buildConsolidatedEntrySignals,
   buildOpenSignalIdSet,
-  effectiveParsedData,
+  effectiveDisplayParsedData,
   isEditableEntrySignal,
   resolveSignalOpenStatus,
+  type SignalDisplayContext,
 } from '../../lib/signalOverride'
 
 type DatePreset = 'all' | 'today' | '7d' | '30d' | 'custom'
@@ -92,6 +94,17 @@ function signalInDateRange(createdAt: Date, dateFrom: string, dateTo: string): b
   return true
 }
 
+function matchesDateFilter(
+  entryCreatedAt: string,
+  lastActivityAt: string,
+  dateFrom: string,
+  dateTo: string,
+): boolean {
+  if (!dateFrom && !dateTo) return true
+  return signalInDateRange(new Date(entryCreatedAt), dateFrom, dateTo)
+    || signalInDateRange(new Date(lastActivityAt), dateFrom, dateTo)
+}
+
 function channelDisplayName(channel: TelegramChannel | undefined): string {
   if (!channel) return 'Unknown channel'
   const name = channel.display_name?.trim()
@@ -99,10 +112,10 @@ function channelDisplayName(channel: TelegramChannel | undefined): string {
   return name || (username ? `@${username}` : 'Unnamed channel')
 }
 
-function signalForDisplay(signal: Signal): Signal {
+function signalForDisplay(signal: Signal, ctx: SignalDisplayContext): Signal {
   return {
     ...signal,
-    parsed_data: effectiveParsedData(signal) as Json,
+    parsed_data: effectiveDisplayParsedData(signal, ctx) as Json,
   }
 }
 
@@ -192,12 +205,25 @@ export function SignalHistoryPage() {
     })
   }, [signals, channelById])
 
-  const filteredSignals = useMemo(() => {
-    return tradeSignals.filter(signal => {
-      if (channelFilter !== 'all' && signal.channel_id !== channelFilter) return false
-      return signalInDateRange(new Date(signal.created_at), dateFrom, dateTo)
-    })
-  }, [tradeSignals, channelFilter, dateFrom, dateTo])
+  const entrySignals = useMemo(
+    () => tradeSignals.filter(isEditableEntrySignal),
+    [tradeSignals],
+  )
+
+  const displayContext = useMemo((): SignalDisplayContext => ({
+    batchSignals: tradeSignals,
+    symbolContext,
+    replyParentBySignalId: symbolContext.replyParentBySignalId,
+  }), [tradeSignals, symbolContext])
+
+  const consolidatedSignals = useMemo(() => {
+    return buildConsolidatedEntrySignals(tradeSignals, displayContext)
+      .filter(({ signal, lastActivityAt }) => {
+        if (channelFilter !== 'all' && signal.channel_id !== channelFilter) return false
+        return matchesDateFilter(signal.created_at, lastActivityAt, dateFrom, dateTo)
+      })
+      .sort((a, b) => Date.parse(b.lastActivityAt) - Date.parse(a.lastActivityAt))
+  }, [tradeSignals, displayContext, channelFilter, dateFrom, dateTo])
 
   const stats = useMemo(() => {
     const now = new Date()
@@ -209,12 +235,12 @@ export function SignalHistoryPage() {
     start30d.setDate(now.getDate() - 30)
 
     return {
-      today: tradeSignals.filter(s => new Date(s.created_at) >= startOfToday).length,
-      last7d: tradeSignals.filter(s => new Date(s.created_at) >= start7d).length,
-      last30d: tradeSignals.filter(s => new Date(s.created_at) >= start30d).length,
-      total: tradeSignals.length,
+      today: entrySignals.filter(s => new Date(s.created_at) >= startOfToday).length,
+      last7d: entrySignals.filter(s => new Date(s.created_at) >= start7d).length,
+      last30d: entrySignals.filter(s => new Date(s.created_at) >= start30d).length,
+      total: entrySignals.length,
     }
-  }, [tradeSignals])
+  }, [entrySignals])
 
   const resetFilters = () => {
     setChannelFilter('all')
@@ -333,7 +359,7 @@ export function SignalHistoryPage() {
         </div>
 
         <div className="px-4 py-2.5 bg-teal-50 dark:bg-teal-950/30 border-b border-teal-100 dark:border-teal-900/40 text-center text-teal-800 dark:text-teal-200 text-sm font-medium">
-          {interpolate(sh.totalFound, { count: String(filteredSignals.length) })}
+          {interpolate(sh.totalFound, { count: String(consolidatedSignals.length) })}
         </div>
 
         <div className="hidden md:grid md:grid-cols-[1fr_2fr_auto_auto] gap-3 px-4 py-3 border-b border-neutral-100 dark:border-neutral-800 text-xs font-semibold text-neutral-500 dark:text-neutral-400 uppercase tracking-wide">
@@ -352,12 +378,12 @@ export function SignalHistoryPage() {
               </div>
             ))}
           </div>
-        ) : filteredSignals.length === 0 ? (
+        ) : consolidatedSignals.length === 0 ? (
           <div className="py-16 text-center text-neutral-400 text-sm">{sh.noSignals}</div>
         ) : (
           <div className="divide-y divide-neutral-100 dark:divide-neutral-800 max-h-[560px] overflow-y-auto">
-            {filteredSignals.map(signal => {
-              const displaySignal = signalForDisplay(signal)
+            {consolidatedSignals.map(({ signal, lastActivityAt }) => {
+              const displaySignal = signalForDisplay(signal, displayContext)
               const openStatus = resolveSignalOpenStatus(signal, openSignalIds, {
                 batchSignals: tradeSignals,
                 replyParentBySignalId: symbolContext.replyParentBySignalId,
@@ -366,7 +392,6 @@ export function SignalHistoryPage() {
               return (
                 <SignalRow
                   key={signal.id}
-                  signal={signal}
                   channelName={channelDisplayName(signal.channel_id ? channelById.get(signal.channel_id) : undefined)}
                   summary={formatTradeSignalSummary(displaySignal, symbolContext, tradeSignals, summaryLabels)}
                   actionLabel={tradeSignalActionLabel(parsedSignalAction(signal.parsed_data), summaryLabels)}
@@ -377,6 +402,7 @@ export function SignalHistoryPage() {
                   statusClosedLabel={sh.statusClosed}
                   editLabel={sh.editSignal}
                   canEdit={canEdit}
+                  timeLabel={lastActivityAt}
                   onEdit={() => setEditSignal(signal)}
                 />
               )
@@ -387,6 +413,7 @@ export function SignalHistoryPage() {
 
       <EditSignalOverrideModal
         signal={editSignal}
+        displayContext={displayContext}
         onClose={() => setEditSignal(null)}
         onSaved={handleSaved}
       />
@@ -395,7 +422,6 @@ export function SignalHistoryPage() {
 }
 
 function SignalRow({
-  signal,
   channelName,
   summary,
   actionLabel,
@@ -406,9 +432,9 @@ function SignalRow({
   statusClosedLabel,
   editLabel,
   canEdit,
+  timeLabel,
   onEdit,
 }: {
-  signal: Signal
   channelName: string
   summary: string
   actionLabel: string
@@ -419,9 +445,10 @@ function SignalRow({
   statusClosedLabel: string
   editLabel: string
   canEdit: boolean
+  timeLabel: string
   onEdit: () => void
 }) {
-  const timeLabel = new Date(signal.created_at).toLocaleString([], {
+  const formattedTime = new Date(timeLabel).toLocaleString([], {
     day: '2-digit',
     month: 'short',
     hour: '2-digit',
@@ -458,7 +485,7 @@ function SignalRow({
           </div>
           <div className="flex flex-col items-end gap-1 shrink-0">
             {statusBadge}
-            <span className="text-xs text-neutral-400 whitespace-nowrap">{timeLabel}</span>
+            <span className="text-xs text-neutral-400 whitespace-nowrap">{formattedTime}</span>
           </div>
         </div>
         <div className="flex items-center justify-between gap-2 mb-1.5">
@@ -491,7 +518,7 @@ function SignalRow({
             </Button>
           ) : null}
         </div>
-        <span className="text-xs text-neutral-500 dark:text-neutral-400 text-right whitespace-nowrap">{timeLabel}</span>
+        <span className="text-xs text-neutral-500 dark:text-neutral-400 text-right whitespace-nowrap">{formattedTime}</span>
       </div>
     </>
   )

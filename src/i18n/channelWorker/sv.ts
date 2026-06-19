@@ -173,6 +173,8 @@ export const channelWorkerSv: ChannelWorkerTranslations = {
   errorSymbolNotFound: 'Symbol hittades inte: {symbol}',
   errorBrokerNotConnected:
     'Mäklaren är inte ansluten — i Account Configuration, använd Reconnect och ange ditt MT-lösenord för detta konto',
+  errorInvalidStops:
+    'Mäklaren avvisade dessa stopnivåer — kontrollera att SL/TP ligger på rätt sida av marknaden och uppfyller minimiavståndet.',
   errorBridgeGlitch:
     'Tillfälligt fel på mäklarens handelsserver — lageringångar kommer att försöka igen automatiskt. Använd Reconnect om detta fortsätter.',
   errorStopsAlreadySet: 'Stop loss och take profit var redan satta hos mäklaren (ingen ändring behövdes).',

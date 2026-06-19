@@ -206,6 +206,9 @@ function translateBrokerError(message: string, cw: ChannelWorkerTranslations): s
   if (/not connected/i.test(message) || /broker session is not connected/i.test(message)) {
     return cw.errorBrokerNotConnected
   }
+  if (/order rejected|invalid stops?|invalid stop/i.test(message)) {
+    return cw.errorInvalidStops
+  }
   if (/object reference not set|nullreferenceexception|an error occurred while handling/i.test(message)) {
     return cw.errorBridgeGlitch
   }

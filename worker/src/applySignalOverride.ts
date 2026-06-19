@@ -5,9 +5,14 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { stripInvalidStopsForSide } from './channelActiveTradeParams'
 import {
+  clampBasketOrderStops,
+  type BasketSymbolParams,
+} from './basketSlTpReconcile'
+import {
   getFxsocketClient,
   hasFxsocketConfigured,
   mtPlatformFrom,
+  normalizeSymbolParams,
 } from './fxsocketClient'
 import {
   buildEntryQualityTakeProfitMap,
@@ -149,6 +154,34 @@ export async function applySignalOverride(
         })
       : new Map<string, number>()
 
+    let quoteRef: number | null = null
+    let symbolParams: BasketSymbolParams | null = null
+    const quoteSymbol = legs[0]?.symbol?.trim()
+    if (client && quoteSymbol && !dryRun) {
+      try {
+        const q = await client.quote(uuid, quoteSymbol)
+        const marketRef = isBuy ? q.bid : q.ask
+        if (Number.isFinite(marketRef) && marketRef > 0) quoteRef = marketRef
+      } catch {
+        /* optional — fall back to entry for side checks */
+      }
+      try {
+        const sp = await client.symbolParams(uuid, quoteSymbol)
+        const n = normalizeSymbolParams(sp)
+        symbolParams = {
+          digits: n.digits ?? 5,
+          point: n.point ?? 0.00001,
+          minLot: n.minLot ?? 0.01,
+          lotStep: n.lotStep ?? 0.01,
+          contractSize: n.contractSize ?? null,
+          stopsLevel: n.stopsLevel ?? 0,
+          freezeLevel: n.freezeLevel ?? 0,
+        }
+      } catch {
+        /* optional — modify without broker min-distance clamp */
+      }
+    }
+
     for (let i = 0; i < legs.length; i++) {
       const tr = legs[i]!
       const ticket = Number(tr.metaapi_order_id)
@@ -162,16 +195,37 @@ export async function applySignalOverride(
       let targetTp = targetTps.length > 0 ? (tpMap.get(tr.id) ?? keepTp) : keepTp
       let targetSlForLeg = targetSl ?? keepSl
 
-      const ref = num(tr.entry_price)
-      if (ref != null && targetSlForLeg != null && targetTp != null) {
+      const ref = (quoteRef != null && quoteRef > 0) ? quoteRef : num(tr.entry_price)
+      if (ref != null && ref > 0 && (targetSlForLeg != null || targetTp != null)) {
         const stripped = stripInvalidStopsForSide({
-          stoploss: targetSlForLeg,
-          takeprofit: targetTp,
+          stoploss: targetSlForLeg ?? 0,
+          takeprofit: targetTp ?? 0,
           referencePrice: ref,
           isBuy,
         })
-        targetSlForLeg = stripped.stoploss > 0 ? stripped.stoploss : null
-        targetTp = stripped.takeprofit > 0 ? stripped.takeprofit : null
+        if (targetSlForLeg != null) {
+          targetSlForLeg = stripped.stoploss > 0 ? stripped.stoploss : null
+        }
+        if (targetTp != null) {
+          targetTp = stripped.takeprofit > 0 ? stripped.takeprofit : null
+        }
+      }
+
+      if (ref != null && ref > 0 && symbolParams && (targetSlForLeg != null || targetTp != null)) {
+        const clamped = clampBasketOrderStops({
+          symbol: quoteSymbol ?? tr.symbol,
+          operation: isBuy ? 'Buy' : 'Sell',
+          volume: 0.01,
+          price: ref,
+          stoploss: targetSlForLeg ?? 0,
+          takeprofit: targetTp ?? 0,
+        }, symbolParams)
+        if (targetSlForLeg != null && clamped.args.stoploss && clamped.args.stoploss > 0) {
+          targetSlForLeg = clamped.args.stoploss
+        }
+        if (targetTp != null && clamped.args.takeprofit && clamped.args.takeprofit > 0) {
+          targetTp = clamped.args.takeprofit
+        }
       }
 
       if (targetSlForLeg == null && targetTp == null) {

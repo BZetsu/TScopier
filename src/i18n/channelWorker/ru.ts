@@ -174,6 +174,8 @@ export const channelWorkerRu: ChannelWorkerTranslations = {
   errorSymbolNotFound: 'Символ не найден: {symbol}',
   errorBrokerNotConnected:
     'Брокер не подключен — в Account Configuration используйте Reconnect и введите ваш MT-пароль для этого аккаунта',
+  errorInvalidStops:
+    'Брокер отклонил эти уровни стопа — проверьте, что SL/TP находятся с правильной стороны рынка и соответствуют минимальной дистанции.',
   errorBridgeGlitch:
     'Временный сбой торгового сервера брокера — слоистые входы будут автоматически повторены. Используйте Reconnect, если это продолжается.',
   errorStopsAlreadySet: 'Стоп-лосс и тейк-профит уже были выставлены у брокера (изменения не требуются).',

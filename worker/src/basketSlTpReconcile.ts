@@ -316,13 +316,15 @@ export async function runBasketLegModifies(args: {
   effectiveStoploss?: number
   /** When false, refresh OrderSend comments are left empty. */
   orderCommentsEnabled?: boolean
+  /** Channel/user explicit SL/TP — apply targets as given (allow tighten; use live quote for side checks). */
+  explicitChannelTargets?: boolean
 }): Promise<RunBasketLegModifyResult> {
   const {
     supabase, api, uuid, symbol, direction, baseLot, params,
     signalId, userId, brokerAccountId, familyTrades, perLegTargets: rawTargets,
     signalTps, tpLots, nImmCwe, strictEntryPrefetch, openedTickets, skipAlreadySynced, alreadyModified,
     liveMgmtFast, internalRebalance, effectiveStoploss,
-    orderCommentsEnabled,
+    orderCommentsEnabled, explicitChannelTargets,
   } = args
 
   const parsedTps = (signalTps ?? []).filter(t => typeof t === 'number' && Number.isFinite(t) && t > 0)
@@ -424,6 +426,15 @@ export async function runBasketLegModifies(args: {
     }
 
     let ref = Number(tr.entry_price) || 0
+    try {
+      const q = strictEntryPrefetch ?? await api.quote(uuid, symbol)
+      const marketRef = direction === 'buy' ? q.bid : q.ask
+      if (Number.isFinite(marketRef) && marketRef > 0) {
+        ref = explicitChannelTargets === true ? marketRef : (ref > 0 ? ref : marketRef)
+      }
+    } catch {
+      /* fall back to entry ref below */
+    }
     if (ref <= 0) {
       try {
         const q = strictEntryPrefetch ?? await api.quote(uuid, symbol)
@@ -517,7 +528,7 @@ export async function runBasketLegModifies(args: {
       const curSl = Number(tr.sl)
       if (Number.isFinite(curSl) && curSl > 0) modSl = curSl
     }
-    if (modSl > 0) {
+    if (modSl > 0 && explicitChannelTargets !== true) {
       const curSl = Number(tr.sl)
       if (Number.isFinite(curSl) && curSl > 0 && isSlMoreProtective(curSl, modSl, direction === 'buy')) {
         modSl = curSl

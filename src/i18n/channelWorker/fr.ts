@@ -173,6 +173,8 @@ export const channelWorkerFr: ChannelWorkerTranslations = {
   errorSymbolNotFound: 'Symbole introuvable : {symbol}',
   errorBrokerNotConnected:
     'Courtier non connecté — dans Configuration du compte, utilisez Reconnect et entrez votre mot de passe MT',
+  errorInvalidStops:
+    'Le courtier a rejeté ces niveaux de stop — vérifiez que SL/TP sont du bon côté du marché et respectent la distance minimale.',
   errorBridgeGlitch:
     'Panne temporaire du serveur de trading — les entrées échelonnées seront réessayées automatiquement. Utilisez Reconnect si cela continue.',
   errorStopsAlreadySet: 'Le SL et le TP étaient déjà définis sur le courtier (aucun changement requis).',

@@ -9,7 +9,9 @@ export type SignalOverrideSaveRequest = {
 export type SignalOverrideSaveResponse = {
   ok: true
   applied_legs: number
+  failed_legs?: number
   open: boolean
+  errors?: string[]
 }
 
 async function call<T>(body: Record<string, unknown>): Promise<T> {

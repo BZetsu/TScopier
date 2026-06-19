@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Loader2, Plus, X } from 'lucide-react'
 import { useT } from '../../context/LocaleContext'
-import { effectiveParsedData, validateOverrideLevels } from '../../lib/signalOverride'
+import { effectiveDisplayParsedData, foldMgmtUpdatesIntoParsed, validateOverrideLevels, type SignalDisplayContext } from '../../lib/signalOverride'
 import { signalOverrideApi } from '../../lib/signalOverrideApi'
 import type { Signal } from '../../types/database'
 import { Button } from '../ui/Button'
@@ -14,12 +14,13 @@ interface OverrideDraft {
 
 interface EditSignalOverrideModalProps {
   signal: Signal | null
+  displayContext?: SignalDisplayContext
   onClose: () => void
   onSaved: (result: { appliedLegs: number; open: boolean }) => void
 }
 
-function overrideToDraft(signal: Signal): OverrideDraft {
-  const effective = effectiveParsedData(signal)
+function overrideToDraft(signal: Signal, displayContext?: SignalDisplayContext): OverrideDraft {
+  const effective = effectiveDisplayParsedData(signal, displayContext)
   const sl = effective.sl
   const tp = Array.isArray(effective.tp) ? effective.tp : []
   return {
@@ -30,8 +31,10 @@ function overrideToDraft(signal: Signal): OverrideDraft {
   }
 }
 
-function channelOriginalSummary(signal: Signal): { sl: string; tp: string } {
-  const parsed = (signal.parsed_data ?? {}) as Record<string, unknown>
+function channelFoldedSummary(signal: Signal, displayContext?: SignalDisplayContext): { sl: string; tp: string } {
+  const parsed = displayContext?.batchSignals?.length
+    ? foldMgmtUpdatesIntoParsed(signal, displayContext.batchSignals, displayContext)
+    : ((signal.parsed_data ?? {}) as Record<string, unknown>)
   const sl = typeof parsed.sl === 'number' && parsed.sl > 0 ? String(parsed.sl) : '—'
   const tpArr = Array.isArray(parsed.tp)
     ? parsed.tp.filter(v => typeof v === 'number' && (v as number) > 0).map(String)
@@ -50,6 +53,7 @@ function parseDraft(draft: OverrideDraft): { sl: number | null; tp_levels: numbe
 
 export function EditSignalOverrideModal({
   signal,
+  displayContext,
   onClose,
   onSaved,
 }: EditSignalOverrideModalProps) {
@@ -60,8 +64,8 @@ export function EditSignalOverrideModal({
   const [formError, setFormError] = useState('')
 
   const original = useMemo(
-    () => (signal ? channelOriginalSummary(signal) : { sl: '—', tp: '—' }),
-    [signal],
+    () => (signal ? channelFoldedSummary(signal, displayContext) : { sl: '—', tp: '—' }),
+    [signal, displayContext],
   )
 
   useEffect(() => {
@@ -70,9 +74,9 @@ export function EditSignalOverrideModal({
       setFormError('')
       return
     }
-    setDraft(overrideToDraft(signal))
+    setDraft(overrideToDraft(signal, displayContext))
     setFormError('')
-  }, [signal])
+  }, [signal, displayContext])
 
   useEffect(() => {
     if (!signal) return
@@ -99,6 +103,10 @@ export function EditSignalOverrideModal({
         sl: parsed.sl,
         tp_levels: parsed.tp_levels,
       })
+      if ((result.failed_legs ?? 0) > 0 && result.applied_legs === 0) {
+        setFormError(result.errors?.[0] ?? sh.applyFailed)
+        return
+      }
       onSaved({ appliedLegs: result.applied_legs, open: result.open })
       onClose()
     } catch (e) {
@@ -108,7 +116,7 @@ export function EditSignalOverrideModal({
     }
   }
 
-  const effective = effectiveParsedData(signal)
+  const effective = effectiveDisplayParsedData(signal, displayContext)
   const currentSl = typeof effective.sl === 'number' ? String(effective.sl) : '—'
   const currentTp = Array.isArray(effective.tp)
     ? effective.tp.filter(v => typeof v === 'number').map(String).join(', ') || '—'

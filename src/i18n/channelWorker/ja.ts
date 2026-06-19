@@ -173,6 +173,8 @@ export const channelWorkerJa: ChannelWorkerTranslations = {
   errorSymbolNotFound: 'シンボルが見つかりません: {symbol}',
   errorBrokerNotConnected:
     'ブローカーが未接続です — Account Configuration で Reconnect を実行し、この口座の MT パスワードを入力してください',
+  errorInvalidStops:
+    'ブローカーがこれらのストップ水準を拒否しました — SL/TP が相場の正しい側にあり、最小距離を満たしているか確認してください。',
   errorBridgeGlitch:
     'ブローカー取引サーバーで一時的な障害が発生しています — 段階的エントリーは自動で再試行されます。継続する場合は Reconnect を使用してください。',
   errorStopsAlreadySet: 'ストップロスとテイクプロフィットはブローカー側ですでに設定済みです（変更不要）。',

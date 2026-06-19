@@ -173,6 +173,8 @@ export const channelWorkerNl: ChannelWorkerTranslations = {
   errorSymbolNotFound: 'Symbool niet gevonden: {symbol}',
   errorBrokerNotConnected:
     'Broker niet verbonden — gebruik in Account Configuration Reconnect en voer je MT-wachtwoord voor dit account in',
+  errorInvalidStops:
+    'De broker weigerde deze stopniveaus — controleer of SL/TP aan de juiste kant van de markt staan en voldoen aan de minimale afstand.',
   errorBridgeGlitch:
     'Tijdelijke storing op de trade-server van de broker — gelaagde entries proberen automatisch opnieuw. Gebruik Reconnect als dit blijft gebeuren.',
   errorStopsAlreadySet: 'Stop loss en take profit waren al ingesteld bij de broker (geen wijziging nodig).',
