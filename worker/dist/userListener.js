@@ -93,11 +93,6 @@ function catchUpParseConcurrency() {
 function livePriorityPauseMs() {
     return Math.max(0, Math.min(30000, Number(process.env.TELEGRAM_LIVE_PRIORITY_PAUSE_MS ?? 3000)));
 }
-/** Telegram returns this when the same auth key is online twice (deploy overlap, double connect). */
-function isAuthKeyDuplicated(err) {
-    const m = err instanceof Error ? err.message : String(err);
-    return m.includes('AUTH_KEY_DUPLICATED');
-}
 function reconnectCooldownMs() {
     return Math.max(500, Math.min(120000, Number(process.env.TELEGRAM_RECONNECT_COOLDOWN_MS ?? 3500)));
 }
@@ -214,7 +209,7 @@ class UserListener {
             catch (err) {
                 if ((0, telegramClient_1.isAuthKeyUnregistered)(err))
                     throw new telegramClient_1.TelegramSessionInvalidError();
-                if (isAuthKeyDuplicated(err)) {
+                if ((0, telegramClient_1.isAuthKeyDuplicated)(err)) {
                     console.warn(`[userListener] AUTH_KEY_DUPLICATED on initial connect for ${this.userId}`
                         + ` — old session still releasing; waiting ${AUTH_KEY_DUP_RECONNECT_DELAY_MS}ms then retrying`);
                     (0, workerMetrics_1.incMetric)('auth_key_duplicated');
@@ -507,7 +502,7 @@ class UserListener {
             dialogs = await this.fetchAllDialogs();
         }
         catch (err) {
-            if (isAuthKeyDuplicated(err)) {
+            if ((0, telegramClient_1.isAuthKeyDuplicated)(err)) {
                 dialogs = await this.reconnectAndRetryDialogs();
             }
             else {
@@ -538,15 +533,33 @@ class UserListener {
         console.warn(`[userListener] AUTH_KEY_DUPLICATED on getDialogs for ${this.userId}`
             + ' — disconnecting, waiting for old session to release, then reconnecting');
         (0, workerMetrics_1.incMetric)('auth_key_duplicated');
-        this.isConnected = false;
-        try {
-            await this.client.disconnect();
+        const delays = [
+            AUTH_KEY_DUP_RECONNECT_DELAY_MS,
+            15000,
+            15000,
+        ];
+        let lastErr;
+        for (let attempt = 0; attempt < delays.length; attempt++) {
+            this.isConnected = false;
+            try {
+                await this.client.disconnect();
+            }
+            catch { /* ignore */ }
+            await new Promise(r => setTimeout(r, delays[attempt]));
+            try {
+                await this.client.connect();
+                this.isConnected = true;
+                return await this.fetchAllDialogs();
+            }
+            catch (err) {
+                lastErr = err;
+                if (!(0, telegramClient_1.isAuthKeyDuplicated)(err))
+                    (0, telegramClient_1.rethrowIfSessionInvalid)(err);
+                console.warn(`[userListener] AUTH_KEY_DUPLICATED reconnect attempt ${attempt + 1}/${delays.length}`
+                    + ` for ${this.userId}`);
+            }
         }
-        catch { /* ignore */ }
-        await new Promise(r => setTimeout(r, AUTH_KEY_DUP_RECONNECT_DELAY_MS));
-        await this.client.connect();
-        this.isConnected = true;
-        return this.fetchAllDialogs();
+        throw lastErr;
     }
     /**
      * Load channel/group dialogs (capped). Uses gramjs built-in pagination, which
@@ -2498,7 +2511,7 @@ class UserListener {
         }
         catch (err) {
             console.error(`[userListener] reconnect failed for ${this.userId}:`, err);
-            if (!isAuthKeyDuplicated(err))
+            if (!(0, telegramClient_1.isAuthKeyDuplicated)(err))
                 return;
             (0, workerMetrics_1.incMetric)('auth_key_duplicated');
             console.warn(`[userListener] AUTH_KEY_DUPLICATED for ${this.userId} — waiting 15s then one retry`
@@ -2607,7 +2620,7 @@ class UserListener {
             await this.warmAllMonitoredChannelEntities();
         }
         catch (err) {
-            if (isAuthKeyDuplicated(err))
+            if ((0, telegramClient_1.isAuthKeyDuplicated)(err))
                 return;
             if ((0, telegramClient_1.isAuthKeyUnregistered)(err))
                 (0, telegramClient_1.rethrowIfSessionInvalid)(err);

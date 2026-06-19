@@ -31,7 +31,11 @@ function sendSessionInvalid(res) {
 /** Strip gramjs "(caused by …)" tails from messages shown to users. */
 function sanitizeClientError(msg) {
     const idx = msg.indexOf('(caused by');
-    return (idx > 0 ? msg.slice(0, idx) : msg).trim() || 'Request failed';
+    const cleaned = (idx > 0 ? msg.slice(0, idx) : msg).trim() || 'Request failed';
+    if ((0, telegramClient_1.isAuthKeyDuplicated)(cleaned)) {
+        return 'Telegram connection is temporarily busy (another copy is still closing). Wait 30 seconds, press Refresh, or use Reconnect Telegram if it persists.';
+    }
+    return cleaned;
 }
 /**
  * Authenticated HTTP API consumed only by the supabase telegram-auth

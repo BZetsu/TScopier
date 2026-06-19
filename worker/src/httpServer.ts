@@ -1,6 +1,10 @@
 import { createServer, IncomingMessage, Server, ServerResponse } from 'http'
 import { AuthService } from './authService'
-import { TelegramSessionInvalidError, TELEGRAM_SESSION_INVALID_CODE } from './telegramClient'
+import {
+  isAuthKeyDuplicated,
+  TelegramSessionInvalidError,
+  TELEGRAM_SESSION_INVALID_CODE,
+} from './telegramClient'
 import type { SignalRow, TradeExecutor } from './tradeExecutor'
 import { UserSessionManager } from './sessionManager'
 import { userBelongsToShard } from './workerConfig'
@@ -56,7 +60,11 @@ function sendSessionInvalid(res: ServerResponse) {
 /** Strip gramjs "(caused by …)" tails from messages shown to users. */
 function sanitizeClientError(msg: string): string {
   const idx = msg.indexOf('(caused by')
-  return (idx > 0 ? msg.slice(0, idx) : msg).trim() || 'Request failed'
+  const cleaned = (idx > 0 ? msg.slice(0, idx) : msg).trim() || 'Request failed'
+  if (isAuthKeyDuplicated(cleaned)) {
+    return 'Telegram connection is temporarily busy (another copy is still closing). Wait 30 seconds, press Refresh, or use Reconnect Telegram if it persists.'
+  }
+  return cleaned
 }
 
 /**

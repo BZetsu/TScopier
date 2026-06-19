@@ -391,6 +391,10 @@ class UserSessionManager {
         }
     }
     async listChannels(userId, opts) {
+        const local = this.listeners.get(userId);
+        if (local?.isTelegramConnected()) {
+            return local.listChannels(opts);
+        }
         const listener = await this.ensureListener(userId);
         return listener.listChannels(opts);
     }

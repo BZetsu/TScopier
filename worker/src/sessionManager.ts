@@ -415,6 +415,10 @@ export class UserSessionManager {
   }
 
   async listChannels(userId: string, opts?: { skipColdDelay?: boolean }): Promise<ChannelInfo[]> {
+    const local = this.listeners.get(userId)
+    if (local?.isTelegramConnected()) {
+      return local.listChannels(opts)
+    }
     const listener = await this.ensureListener(userId)
     return listener.listChannels(opts)
   }

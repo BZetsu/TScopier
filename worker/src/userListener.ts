@@ -7,7 +7,14 @@ import type { NewMessageEvent } from 'telegram/events/NewMessage'
 import { EditedMessage } from 'telegram/events/EditedMessage'
 import type { EditedMessageEvent } from 'telegram/events/EditedMessage'
 import { Api } from 'telegram/tl'
-import { buildClient, isAuthKeyUnregistered, rethrowIfSessionInvalid, TelegramSessionInvalidError, tgInvoke } from './telegramClient'
+import {
+  buildClient,
+  isAuthKeyDuplicated,
+  isAuthKeyUnregistered,
+  rethrowIfSessionInvalid,
+  TelegramSessionInvalidError,
+  tgInvoke,
+} from './telegramClient'
 import { tradeableFromParsed } from './backtestSignal'
 import type { SignalRow } from './tradeExecutor'
 import { enqueueParsedSignal } from './queue/signalQueuePublisher'
@@ -134,12 +141,6 @@ function catchUpParseConcurrency(): number {
 
 function livePriorityPauseMs(): number {
   return Math.max(0, Math.min(30_000, Number(process.env.TELEGRAM_LIVE_PRIORITY_PAUSE_MS ?? 3000)))
-}
-
-/** Telegram returns this when the same auth key is online twice (deploy overlap, double connect). */
-function isAuthKeyDuplicated(err: unknown): boolean {
-  const m = err instanceof Error ? err.message : String(err)
-  return m.includes('AUTH_KEY_DUPLICATED')
 }
 
 function reconnectCooldownMs(): number {
@@ -684,12 +685,30 @@ export class UserListener {
       + ' — disconnecting, waiting for old session to release, then reconnecting',
     )
     incMetric('auth_key_duplicated')
-    this.isConnected = false
-    try { await this.client.disconnect() } catch { /* ignore */ }
-    await new Promise(r => setTimeout(r, AUTH_KEY_DUP_RECONNECT_DELAY_MS))
-    await this.client.connect()
-    this.isConnected = true
-    return this.fetchAllDialogs()
+    const delays = [
+      AUTH_KEY_DUP_RECONNECT_DELAY_MS,
+      15_000,
+      15_000,
+    ]
+    let lastErr: unknown
+    for (let attempt = 0; attempt < delays.length; attempt++) {
+      this.isConnected = false
+      try { await this.client.disconnect() } catch { /* ignore */ }
+      await new Promise(r => setTimeout(r, delays[attempt]))
+      try {
+        await this.client.connect()
+        this.isConnected = true
+        return await this.fetchAllDialogs()
+      } catch (err) {
+        lastErr = err
+        if (!isAuthKeyDuplicated(err)) rethrowIfSessionInvalid(err)
+        console.warn(
+          `[userListener] AUTH_KEY_DUPLICATED reconnect attempt ${attempt + 1}/${delays.length}`
+          + ` for ${this.userId}`,
+        )
+      }
+    }
+    throw lastErr
   }
 
   /**
