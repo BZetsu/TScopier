@@ -44,10 +44,11 @@ export const dashboardSv: DashboardBundleTranslations = {
     channelProfitTitle: 'Vinst per signalkanal (7 dagar)',
     channelProfitSubtitle: 'Kopierarens affärs-P/L per Telegram-kanal sedan din mäklare anslöts',
     channelProfitEmpty: 'Inga stängda affärer kopplade till kopieraren de senaste 7 dagarna',
-    channelWorker: 'Kanalarbetare',
-    channelWorkerHint:
+    tradeActivities: 'Kanalarbetare',
+    tradeActivitiesHint:
       'Live parseraktivitet från dina Telegram-signalkanaler - hur meddelanden lästes, hoppades över eller omvandlades till handelsplaner.',
-    noChannelWorkerLogs: 'Inga kanalarbetarloggar ännu.',
+    noTradeActivities: 'Inga kanalarbetarloggar ännu.',
+    management: 'Aktiviteter',
     noData: 'Ingen data',
     linkedAccounts: {
       title: 'Länkade konton',

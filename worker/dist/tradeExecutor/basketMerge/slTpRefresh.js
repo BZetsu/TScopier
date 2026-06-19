@@ -4,6 +4,7 @@ exports.applyBasketSlTpRefresh = applyBasketSlTpRefresh;
 const basketModFollowUp_1 = require("../../basketModFollowUp");
 const basketSlTpReconcile_1 = require("../../basketSlTpReconcile");
 const channelActiveTradeParams_1 = require("../../channelActiveTradeParams");
+const signalOverride_1 = require("../../signalOverride");
 const manualPlanner_1 = require("../../manualPlanner");
 const brokerConnectError_1 = require("../../brokerConnectError");
 const multiTradeMerge_1 = require("../../multiTradeMerge");
@@ -65,13 +66,15 @@ async function applyBasketSlTpRefresh(ctx, args) {
     };
     let channelParamsForLadder = null;
     let anchorCreatedAt = null;
+    let anchorUserOverride = null;
     if (anchorSignalId) {
         const { data: anchorRow } = await ctx.supabase
             .from('signals')
-            .select('created_at')
+            .select('created_at,user_override')
             .eq('id', anchorSignalId)
             .maybeSingle();
         anchorCreatedAt = anchorRow?.created_at ?? null;
+        anchorUserOverride = (0, signalOverride_1.parseUserOverride)(anchorRow?.user_override);
     }
     if (signal.channel_id) {
         channelParamsForLadder = await (0, channelActiveTradeParams_1.loadChannelActiveTradeParamsForSymbol)(ctx.supabase, signal.user_id, signal.channel_id, symbol);
@@ -103,6 +106,9 @@ async function applyBasketSlTpRefresh(ctx, args) {
             });
             channelParamsForLadder = await (0, channelActiveTradeParams_1.loadChannelActiveTradeParamsForSymbol)(ctx.supabase, signal.user_id, signal.channel_id, symbol);
         }
+    }
+    if (anchorUserOverride) {
+        plannerParsed = (0, signalOverride_1.mergeSignalUserOverride)(plannerParsed, anchorUserOverride, { overlay: true });
     }
     let effectiveParsed = {
         ...parsed,

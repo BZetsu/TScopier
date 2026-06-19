@@ -464,6 +464,8 @@ export interface Signal {
   raw_message: string
   raw_image_url: string | null
   parsed_data: Json | null
+  /** User SL/TP overrides from Manage Signals; merged over parsed_data at display/execute time. */
+  user_override?: Json | null
   status: string
   skip_reason: string | null
   telegram_message_id: string | null

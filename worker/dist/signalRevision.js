@@ -33,7 +33,7 @@ function isIncomingRevisionStale(storedEditDateSeen, incomingEditDateSeen) {
 async function loadSignalByTelegramMessage(supabase, args) {
     const { data, error } = await supabase
         .from('signals')
-        .select('id,user_id,channel_id,raw_message,parsed_data,status,parent_signal_id,is_modification,telegram_message_id,reply_to_message_id,created_at,telegram_edit_date_seen')
+        .select('id,user_id,channel_id,raw_message,parsed_data,status,parent_signal_id,is_modification,telegram_message_id,reply_to_message_id,created_at,telegram_edit_date_seen,user_override')
         .eq('user_id', args.userId)
         .eq('channel_id', args.channelRowId)
         .eq('telegram_message_id', args.telegramMessageId)
@@ -50,7 +50,7 @@ async function loadSignalByTelegramMessage(supabase, args) {
 async function loadSignalById(supabase, signalId) {
     const { data, error } = await supabase
         .from('signals')
-        .select('id,user_id,channel_id,raw_message,parsed_data,status,parent_signal_id,is_modification,telegram_message_id,reply_to_message_id,created_at,telegram_edit_date_seen')
+        .select('id,user_id,channel_id,raw_message,parsed_data,status,parent_signal_id,is_modification,telegram_message_id,reply_to_message_id,created_at,telegram_edit_date_seen,user_override')
         .eq('id', signalId)
         .maybeSingle();
     if (error || !data)

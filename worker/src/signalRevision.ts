@@ -22,6 +22,7 @@ export type ExistingSignalRow = {
   reply_to_message_id: string | null
   created_at: string
   telegram_edit_date_seen: number | null
+  user_override?: Record<string, unknown> | null
 }
 
 export function messageTextChanged(stored: string, fetched: string): boolean {
@@ -52,7 +53,7 @@ export async function loadSignalByTelegramMessage(
   const { data, error } = await supabase
     .from('signals')
     .select(
-      'id,user_id,channel_id,raw_message,parsed_data,status,parent_signal_id,is_modification,telegram_message_id,reply_to_message_id,created_at,telegram_edit_date_seen',
+      'id,user_id,channel_id,raw_message,parsed_data,status,parent_signal_id,is_modification,telegram_message_id,reply_to_message_id,created_at,telegram_edit_date_seen,user_override',
     )
     .eq('user_id', args.userId)
     .eq('channel_id', args.channelRowId)
@@ -74,7 +75,7 @@ export async function loadSignalById(
   const { data, error } = await supabase
     .from('signals')
     .select(
-      'id,user_id,channel_id,raw_message,parsed_data,status,parent_signal_id,is_modification,telegram_message_id,reply_to_message_id,created_at,telegram_edit_date_seen',
+      'id,user_id,channel_id,raw_message,parsed_data,status,parent_signal_id,is_modification,telegram_message_id,reply_to_message_id,created_at,telegram_edit_date_seen,user_override',
     )
     .eq('id', signalId)
     .maybeSingle()

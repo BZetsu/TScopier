@@ -42,10 +42,11 @@ export const dashboardJa: DashboardBundleTranslations = {
     channelProfitTitle: 'シグナルチャネル別利益（7日間）',
     channelProfitSubtitle: 'ブローカー接続後の Telegram チャネル別コピー取引 P/L',
     channelProfitEmpty: '過去 7 日間にコピー由来の決済取引はありません',
-    channelWorker: 'チャネルワーカー',
-    channelWorkerHint:
+    tradeActivities: 'チャネルワーカー',
+    tradeActivitiesHint:
       'Telegram シグナルチャネルのライブ解析ログです。メッセージがどのように読み取られ、スキップされ、取引プランに変換されたかを確認できます。',
-    noChannelWorkerLogs: 'チャネルワーカーのログはまだありません。',
+    noTradeActivities: 'チャネルワーカーのログはまだありません。',
+    management: 'アクティビティ',
     noData: 'データなし',
     linkedAccounts: {
       title: '連携口座',

@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { interpolate } from '../i18n/interpolate'
 import type { Signal } from '../types/database'
 
 export const MANAGEMENT_COPIER_ACTIONS = new Set([
@@ -11,6 +12,145 @@ export const MANAGEMENT_COPIER_ACTIONS = new Set([
 ])
 
 const ENTRY_COPIER_ACTIONS = new Set(['buy', 'sell'])
+
+export const TRADE_SIGNAL_ACTIONS = new Set([
+  ...ENTRY_COPIER_ACTIONS,
+  ...MANAGEMENT_COPIER_ACTIONS,
+])
+
+const NON_TRADE_SKIP_REASONS = new Set(['non_trade_message', 'channel_filter_ignored'])
+
+export function parsedSignalAction(parsedData: unknown): string {
+  return String((parsedData as Record<string, unknown> | null)?.action ?? '').toLowerCase().trim()
+}
+
+export function isNonTradeSkipReason(value: string | null | undefined): boolean {
+  const normalized = String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_')
+  return NON_TRADE_SKIP_REASONS.has(normalized)
+}
+
+/** True when a Telegram channel row is an actionable trade signal (not commentary / ignore). */
+export function isTelegramTradeSignal(
+  signal: Pick<Signal, 'channel_id' | 'parsed_data' | 'skip_reason'>,
+): boolean {
+  if (!signal.channel_id) return false
+  if (isNonTradeSkipReason(signal.skip_reason)) return false
+  const action = parsedSignalAction(signal.parsed_data)
+  if (!action || action === 'ignore') return false
+  return TRADE_SIGNAL_ACTIONS.has(action)
+}
+
+export type TradeSignalSummaryLabels = {
+  actionBuy: string
+  actionSell: string
+  actionClose: string
+  actionCloseWorseEntries: string
+  actionBreakeven: string
+  actionModify: string
+  actionPartialProfit: string
+  actionPartialBreakeven: string
+  onSymbol: string
+  entryAt: string
+  slAt: string
+  tpAt: string
+}
+
+function formatSignalPrice(value: number): string {
+  return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(5)))
+}
+
+function formatTakeProfitList(tp: unknown): string | null {
+  if (!Array.isArray(tp)) return null
+  const values = tp
+    .filter(v => typeof v === 'number' && Number.isFinite(v) && v > 0)
+    .map(v => formatSignalPrice(v as number))
+  return values.length ? values.join(', ') : null
+}
+
+function onSymbolPhrase(symbol: string, labels: TradeSignalSummaryLabels): string {
+  if (!symbol || symbol === '—') return ''
+  return ` ${interpolate(labels.onSymbol, { symbol })}`
+}
+
+/** Plain-language one-line summary for the Manage Signals page (no raw Telegram jargon). */
+export function formatTradeSignalSummary(
+  signal: SymbolLookupSignal,
+  symbolContext: CopierSymbolContext,
+  batchSignals: SymbolLookupSignal[],
+  labels: TradeSignalSummaryLabels,
+): string {
+  const parsed = signal.parsed_data as Record<string, unknown> | null
+  const action = parsedSignalAction(signal.parsed_data)
+  const symbol = symbolForCopierLog(signal, symbolContext, batchSignals)
+  const sym = onSymbolPhrase(symbol, labels)
+
+  if (action === 'buy' || action === 'sell') {
+    const verb = action === 'buy' ? labels.actionBuy : labels.actionSell
+    const parts = [`${verb}${sym}`]
+    const entry = parsed?.entry ?? parsed?.price
+    if (typeof entry === 'number' && Number.isFinite(entry)) {
+      parts.push(interpolate(labels.entryAt, { price: formatSignalPrice(entry) }))
+    }
+    const sl = parsed?.sl
+    if (typeof sl === 'number' && Number.isFinite(sl) && sl > 0) {
+      parts.push(interpolate(labels.slAt, { price: formatSignalPrice(sl) }))
+    }
+    const tp = formatTakeProfitList(parsed?.tp)
+    if (tp) parts.push(interpolate(labels.tpAt, { prices: tp }))
+    return parts.join(' · ')
+  }
+
+  if (action === 'close') return `${labels.actionClose}${sym}`
+  if (action === 'close_worse_entries') return `${labels.actionCloseWorseEntries}${sym}`
+  if (action === 'breakeven') return `${labels.actionBreakeven}${sym}`
+  if (action === 'modify') return `${labels.actionModify}${sym}`
+  if (action === 'partial_profit') return `${labels.actionPartialProfit}${sym}`
+  if (action === 'partial_breakeven') return `${labels.actionPartialBreakeven}${sym}`
+  return `${verbFromAction(action)}${sym}`
+}
+
+function verbFromAction(action: string): string {
+  return action.replace(/_/g, ' ')
+}
+
+export function tradeSignalActionLabel(
+  action: string,
+  labels: Pick<
+    TradeSignalSummaryLabels,
+    | 'actionBuy'
+    | 'actionSell'
+    | 'actionClose'
+    | 'actionCloseWorseEntries'
+    | 'actionBreakeven'
+    | 'actionModify'
+    | 'actionPartialProfit'
+    | 'actionPartialBreakeven'
+  >,
+): string {
+  switch (action) {
+    case 'buy':
+      return labels.actionBuy
+    case 'sell':
+      return labels.actionSell
+    case 'close':
+      return labels.actionClose
+    case 'close_worse_entries':
+      return labels.actionCloseWorseEntries
+    case 'breakeven':
+      return labels.actionBreakeven
+    case 'modify':
+      return labels.actionModify
+    case 'partial_profit':
+      return labels.actionPartialProfit
+    case 'partial_breakeven':
+      return labels.actionPartialBreakeven
+    default:
+      return verbFromAction(action)
+  }
+}
 
 /** Six-letter tokens parsers sometimes misread from management text (e.g. CHANGE). */
 const BOGUS_SYMBOL_TOKENS = new Set([

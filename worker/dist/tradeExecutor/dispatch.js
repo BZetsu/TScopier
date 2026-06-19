@@ -34,6 +34,7 @@ const tradeComment_1 = require("../tradeComment");
 const helpers_1 = require("./helpers");
 const types_1 = require("./types");
 const signalRevision_1 = require("../signalRevision");
+const signalOverride_1 = require("../signalOverride");
 const messageRevisionDirectionFlipClose_1 = require("./messageRevisionDirectionFlipClose");
 const subscriptionAccess_1 = require("../subscriptionAccess");
 const signalExecutionEligibility_1 = require("../signalExecutionEligibility");
@@ -407,7 +408,14 @@ async function handleSignal(ctx, row, opts) {
             const fresh = await (0, signalRevision_1.loadSignalById)(ctx.supabase, row.id);
             if (!fresh?.parsed_data?.action)
                 return;
-            row.parsed_data = fresh.parsed_data;
+            row = (0, signalOverride_1.applyUserOverrideToSignalRow)({
+                ...row,
+                parsed_data: fresh.parsed_data,
+                user_override: fresh.user_override,
+            });
+        }
+        else {
+            row = (0, signalOverride_1.applyUserOverrideToSignalRow)(row);
         }
         const pipelineT0 = Date.now();
         const parsed = row.parsed_data;

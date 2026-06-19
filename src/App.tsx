@@ -28,6 +28,9 @@ const CopierEnginePage = lazy(() =>
 const CopierLogsPage = lazy(() =>
   import('./pages/dashboard/CopierLogsPage').then(m => ({ default: m.CopierLogsPage })),
 )
+const ManagementPage = lazy(() =>
+  import('./pages/dashboard/ManagementPage').then(m => ({ default: m.ManagementPage })),
+)
 const Backtest = lazy(() =>
   import('./pages/dashboard/Backtest').then(m => ({ default: m.Backtest })),
 )
@@ -126,8 +129,12 @@ export default function App() {
             <Route path="/backtest" element={<LazyPage><Backtest /></LazyPage>} />
             <Route path="/copier-templates" element={<Navigate to="/backtest" replace />} />
             <Route path="/copier-logs" element={<LazyPage><CopierLogsPage /></LazyPage>} />
-            <Route path="/updates" element={<LazyPage><SignalHistoryPage /></LazyPage>} />
-            <Route path="/signal-history" element={<Navigate to="/updates" replace />} />
+            <Route path="/activities" element={<LazyPage><ManagementPage /></LazyPage>} />
+            <Route path="/management" element={<Navigate to="/activities" replace />} />
+            <Route path="/manage-signals" element={<LazyPage><SignalHistoryPage /></LazyPage>} />
+            <Route path="/signals" element={<Navigate to="/manage-signals" replace />} />
+            <Route path="/updates" element={<Navigate to="/manage-signals" replace />} />
+            <Route path="/signal-history" element={<Navigate to="/manage-signals" replace />} />
             <Route path="/market-news" element={<LazyPage><MarketNewsPage /></LazyPage>} />
             <Route path="/economic-calendar" element={<LazyPage><EconomicCalendarPage /></LazyPage>} />
             <Route path="/contact-support" element={<LazyPage><ContactSupportPage /></LazyPage>} />

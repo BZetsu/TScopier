@@ -16,10 +16,11 @@ export const chromePl: AppChromeTranslations = {
       configuration: 'Konfiguracja',
       brokers: 'Brokerzy',
       trades: 'Transakcje',
+      management: 'Aktywności',
       channels: 'Kanały',
       backtest: 'Backtest',
       copierLogs: 'Dzienniki kopiowania',
-      signalHistory: 'Aktualizacje',
+      signalHistory: 'Zarządzaj sygnałami',
       marketNews: 'Wiadomości rynkowe',
       economicCalendar: 'Kalendarz ekonomiczny',
       performance: 'Wyniki',
@@ -191,7 +192,7 @@ export const chromePl: AppChromeTranslations = {
       description: 'Zaawansowane wykresy i narzędzia analityczne oparte na AI dla Twoich sygnałów tradingowych.',
     },
     signalHistory: {
-      title: 'Aktualizacje',
+      title: 'Zarządzaj sygnałami',
       description: 'Przeglądaj sparsowane sygnały powiązane z Twoim kontem. Filtruj według kanału i zakresu dat.',
     },
     copierEngine: {

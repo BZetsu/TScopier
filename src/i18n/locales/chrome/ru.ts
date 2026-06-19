@@ -16,10 +16,11 @@ export const chromeRu: AppChromeTranslations = {
       configuration: 'Конфигурация',
       brokers: 'Брокеры',
       trades: 'Сделки',
+      management: 'Активности',
       channels: 'Каналы',
       backtest: 'Бэктест',
       copierLogs: 'Логи копирования',
-      signalHistory: 'Обновления',
+      signalHistory: 'Управление сигналами',
       marketNews: 'Новости рынка',
       economicCalendar: 'Экономический календарь',
       performance: 'Результаты',
@@ -191,7 +192,7 @@ export const chromeRu: AppChromeTranslations = {
       description: 'Продвинутые графики и инструменты анализа на базе ИИ для ваших торговых сигналов.',
     },
     signalHistory: {
-      title: 'Обновления',
+      title: 'Управление сигналами',
       description: 'Просматривайте распознанные сигналы, связанные с вашим аккаунтом. Фильтруйте по каналу и диапазону дат.',
     },
     copierEngine: {

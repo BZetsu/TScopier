@@ -16,10 +16,11 @@ export const chromeNl: AppChromeTranslations = {
       configuration: 'Configuratie',
       brokers: 'Brokers',
       trades: 'Trades',
+      management: 'Activiteiten',
       channels: 'Kanalen',
       backtest: 'Backtest',
       copierLogs: 'Copierlogs',
-      signalHistory: 'Updates',
+      signalHistory: 'Signalen beheren',
       marketNews: 'Marktnieuws',
       economicCalendar: 'Economische kalender',
       performance: 'Prestaties',
@@ -190,7 +191,7 @@ export const chromeNl: AppChromeTranslations = {
       description: 'Geavanceerde grafieken en AI-gestuurde analysetools voor je handelssignalen.',
     },
     signalHistory: {
-      title: 'Updates',
+      title: 'Signalen beheren',
       description: 'Bekijk geparseerde signalen die aan je account zijn gekoppeld. Filter op kanaal en datumbereik.',
     },
     copierEngine: {

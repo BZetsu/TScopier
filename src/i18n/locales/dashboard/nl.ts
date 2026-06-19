@@ -44,10 +44,11 @@ export const dashboardNl: DashboardBundleTranslations = {
     channelProfitTitle: 'Winst per signaalkanaal (7 dagen)',
     channelProfitSubtitle: 'Copiertrade-P/L per Telegram-kanaal sinds je broker is gekoppeld',
     channelProfitEmpty: 'Geen aan de copier toegeschreven gesloten trades in de afgelopen 7 dagen',
-    channelWorker: 'Kanaalworker',
-    channelWorkerHint:
+    tradeActivities: 'Kanaalworker',
+    tradeActivitiesHint:
       'Live parseractiviteit van je Telegram-signaalkanalen - hoe berichten zijn gelezen, overgeslagen of omgezet naar tradeplannen.',
-    noChannelWorkerLogs: 'Nog geen kanaalworker-logs.',
+    noTradeActivities: 'Nog geen kanaalworker-logs.',
+    management: 'Activiteiten',
     noData: 'Geen gegevens',
     linkedAccounts: {
       title: 'Gekoppelde accounts',

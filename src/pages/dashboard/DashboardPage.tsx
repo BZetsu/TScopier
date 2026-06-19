@@ -55,7 +55,8 @@ import {
   buildCopierLogSymbolLabels,
   buildSignalSymbolLookup,
 } from '../../lib/copierLogDisplay'
-import { channelWorkerLogMessage, filterChannelWorkerDisplayLogs } from '../../lib/channelWorkerLogMessage'
+import { buildDisplayableTradeActivities, buildChannelDisplayNames, dedupePipelineParseAttempts, type TradeActivityLogRow } from '../../lib/tradeActivities'
+import { TradeActivityCard } from '../../components/dashboard/TradeActivityCard'
 import {
   DASHBOARD_ACTIVE_USER_KEY,
   DASHBOARD_CACHE_LEGACY_KEYS,
@@ -170,65 +171,13 @@ interface DashboardStats {
   yesterdayMostTradedAsset: string
 }
 
-interface AiExpertLogRow {
-  id: string
-  created_at: string
-  action: string
-  status: string
-  request_payload: Record<string, unknown> | null
-  response_payload: Record<string, unknown> | null
-  error_message: string | null
-  signal_id?: string | null
-  /** FK embed from trade_execution_logs → signals */
-  signals?: {
-    channel_id?: string | null
-    parsed_data?: Record<string, unknown> | null
-    raw_message?: string | null
-    status?: string | null
-    skip_reason?: string | null
-  } | null
-}
+interface AiExpertLogRow extends TradeActivityLogRow {}
 
-/** Drop in-flight `attempt` rows when the same `signal_id` already has a terminal parse row in this batch (worker logs attempt then success/failed). */
 type ChannelNameRow = { id: string; display_name: string; channel_username?: string | null }
-
-function buildChannelDisplayNames(channels: ChannelNameRow[]): Record<string, string> {
-  const out: Record<string, string> = {}
-  for (const c of channels) {
-    const name = c.display_name?.trim()
-    const username = c.channel_username?.trim().replace(/^@/, '')
-    out[c.id] = name || (username ? `@${username}` : 'Unnamed channel')
-  }
-  return out
-}
 
 function channelLabel(channelId: string | null | undefined, names: Record<string, string>): string {
   if (!channelId) return '—'
   return names[channelId] ?? 'Unknown channel'
-}
-
-function dedupePipelineParseAttempts(logs: AiExpertLogRow[]): AiExpertLogRow[] {
-  const terminalSignalIds = new Set(
-    logs
-      .filter(
-        r =>
-          r.action === 'pipeline_parse_dispatch' &&
-          (r.status === 'success' || r.status === 'failed') &&
-          r.signal_id,
-      )
-      .map(r => String(r.signal_id)),
-  )
-  return logs.filter(r => {
-    if (
-      r.action === 'pipeline_parse_dispatch' &&
-      r.status === 'attempt' &&
-      r.signal_id &&
-      terminalSignalIds.has(String(r.signal_id))
-    ) {
-      return false
-    }
-    return true
-  })
 }
 
 function mtTradesToStatsByAccount(trades: MtTrade[]): Record<string, TradeStatsRow[]> {
@@ -1165,11 +1114,9 @@ export function DashboardPage() {
     return out
   }, [linkedAccounts, linkedAccountBalances])
 
-  const visibleChannelWorkerLogs = useMemo(
-    () => filterChannelWorkerDisplayLogs(aiExpertLogs).filter(
-      row => channelWorkerLogMessage(row, t.channelWorker, channelDisplayNames) != null,
-    ),
-    [aiExpertLogs, channelDisplayNames, t.channelWorker],
+  const visibleTradeActivities = useMemo(
+    () => buildDisplayableTradeActivities(aiExpertLogs, t.channelWorker, t.management, channelDisplayNames),
+    [aiExpertLogs, channelDisplayNames, t.channelWorker, t.management],
   )
 
   const [linkedAccountSortKey, setLinkedAccountSortKey] = useState<LinkedAccountSortKey | null>(null)
@@ -2274,19 +2221,19 @@ export function DashboardPage() {
           <div className="px-4 sm:px-5 py-4 border-b border-neutral-100 dark:border-neutral-800 flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <Clock className="w-4 h-4 text-teal-500" />
-              <span className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">{t.dashboard.channelWorker}</span>
-              <InfoTooltip text={t.dashboard.channelWorkerHint} />
+              <span className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">{t.dashboard.tradeActivities}</span>
+              <InfoTooltip text={t.dashboard.tradeActivitiesHint} />
             </div>
             <button
-              onClick={() => navigate('/channels')}
+              onClick={() => navigate('/activities')}
               className="flex items-center gap-1.5 px-3 py-1.5 border border-teal-500 dark:border-teal-600 text-teal-600 dark:text-teal-400 rounded-lg text-xs font-medium hover:bg-teal-50 dark:hover:bg-teal-950/50 transition-colors"
             >
-              {t.nav.items.channels}
+              {t.dashboard.management}
               <ChevronRight className="w-3 h-3" />
             </button>
           </div>
 
-          {visibleChannelWorkerLogs.length === 0 && chartsEmpty && aiExpertLogs.length === 0 ? (
+          {visibleTradeActivities.length === 0 && chartsEmpty && aiExpertLogs.length === 0 ? (
             <div className="divide-y divide-neutral-100 dark:divide-neutral-800">
               {[...Array(5)].map((_, i) => (
                 <div key={i} className="px-5 py-3">
@@ -2295,12 +2242,12 @@ export function DashboardPage() {
                 </div>
               ))}
             </div>
-          ) : visibleChannelWorkerLogs.length === 0 ? (
-            <div className="px-5 py-10 text-sm text-neutral-400">{t.dashboard.noChannelWorkerLogs}</div>
+          ) : visibleTradeActivities.length === 0 ? (
+            <div className="px-5 py-10 text-sm text-neutral-400">{t.dashboard.noTradeActivities}</div>
           ) : (
             <div className="divide-y divide-neutral-100 dark:divide-neutral-800 max-h-96 overflow-y-auto">
-              {visibleChannelWorkerLogs.map(row => (
-                <AiExpertLogItem key={row.id} row={row} channelDisplayNames={channelDisplayNames} />
+              {visibleTradeActivities.map(activity => (
+                <TradeActivityCard key={activity.row.id} activity={activity} variant="compact" />
               ))}
             </div>
           )}
@@ -2588,25 +2535,6 @@ function OverviewStat({
       </div>
       <p className="text-2xl font-semibold text-neutral-900 dark:text-neutral-50">{value}</p>
       {sub ? <p className="text-xs text-neutral-400 mt-1">{sub}</p> : null}
-    </div>
-  )
-}
-
-function AiExpertLogItem({
-  row,
-  channelDisplayNames,
-}: {
-  row: AiExpertLogRow
-  channelDisplayNames: Record<string, string>
-}) {
-  const t = useT()
-  const message = channelWorkerLogMessage(row, t.channelWorker, channelDisplayNames)
-  if (!message) return null
-
-  return (
-    <div className="px-5 py-3">
-      <p className="text-sm text-neutral-800 dark:text-neutral-100">{message}</p>
-      <p className="text-[11px] text-neutral-400 mt-1">{new Date(row.created_at).toLocaleString()}</p>
     </div>
   )
 }

@@ -31,6 +31,7 @@ export interface NavTranslations {
     configuration: string
     brokers: string
     trades: string
+    management: string
     channels: string
     backtest: string
     copierLogs: string
@@ -245,9 +246,10 @@ export interface DashboardTranslations {
   channelProfitTitle: string
   channelProfitSubtitle: string
   channelProfitEmpty: string
-  channelWorker: string
-  channelWorkerHint: string
-  noChannelWorkerLogs: string
+  tradeActivities: string
+  tradeActivitiesHint: string
+  noTradeActivities: string
+  management: string
   noData: string
   linkedAccounts: DashboardLinkedAccountsTranslations
   brokerStats: DashboardBrokerStatsTranslations
@@ -265,12 +267,75 @@ export interface SignalHistoryPageTranslations {
   resetFilters: string
   totalFound: string
   noSignals: string
+  colChannel: string
+  colSignal: string
+  colTime: string
+  signalsToday: string
+  signalsLast7d: string
+  signalsLast30d: string
+  signalsTotal: string
+  actionBuy: string
+  actionSell: string
+  actionClose: string
+  actionCloseWorseEntries: string
+  actionBreakeven: string
+  actionModify: string
+  actionPartialProfit: string
+  actionPartialBreakeven: string
+  onSymbol: string
+  entryAt: string
+  slAt: string
+  tpAt: string
+  statusOpen: string
+  statusClosed: string
+  editSignal: string
+  saveAndApply: string
+  saving: string
+  originalSignal: string
+  overrideSignal: string
+  applySuccess: string
+  applyFailed: string
+  invalidLevels: string
+  closedReadOnly: string
+  stopLoss: string
+  takeProfits: string
+  addTp: string
+  removeTp: string
+  closeModal: string
+  colStatus: string
+  /** @deprecated legacy stat labels — kept for locale bundles not yet updated */
   updatesReceivedToday: string
   updatesReceivedLast7d: string
   updatesReceivedLast30d: string
   updatesReceivedTotal: string
   updatesReceivedThisWeek: string
   updatesReceivedThisMonth: string
+}
+
+export interface ManagementTranslations {
+  title: string
+  subtitle: string
+  filterAll: string
+  filterSuccessful: string
+  filterSkipped: string
+  filterFailed: string
+  statusSuccessful: string
+  statusSkipped: string
+  statusFailed: string
+  retry: string
+  retryAll: string
+  retryComingSoon: string
+  emptyTitle: string
+  emptySubtitle: string
+  emptyFailedTitle: string
+  kindBreakeven: string
+  kindClose: string
+  kindCloseWorseEntries: string
+  kindModify: string
+  kindOrder: string
+  kindLayering: string
+  kindPipeline: string
+  kindOther: string
 }
 
 export interface CopierLogsTranslations {
@@ -1197,6 +1262,7 @@ export interface Translations {
   landing: LandingTranslations
   accountConfig: AccountConfigTranslations
   dashboard: DashboardTranslations
+  management: ManagementTranslations
   copierLogs: CopierLogsTranslations
   signalHistoryPage: SignalHistoryPageTranslations
   trades: TradesTranslations

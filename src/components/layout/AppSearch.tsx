@@ -30,6 +30,7 @@ import {
   Share2,
   CreditCard,
   Repeat,
+  RefreshCw,
   Server,
   Radio,
 } from 'lucide-react'
@@ -53,7 +54,8 @@ const PAGE_ICONS: Record<string, typeof LayoutDashboard> = {
   '/channels': Send,
   '/backtest': LayoutTemplate,
   '/copier-logs': ScrollText,
-  '/updates': ChartNoAxesColumn,
+  '/activities': RefreshCw,
+  '/manage-signals': ChartNoAxesColumn,
   '/performance': BarChart2,
   '/market-news': Newspaper,
   '/economic-calendar': Calendar,

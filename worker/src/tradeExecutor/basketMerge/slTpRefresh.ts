@@ -24,6 +24,7 @@ import {
   upsertChannelActiveTradeParams,
   type ChannelActiveTradeParams
 } from '../../channelActiveTradeParams'
+import { mergeSignalUserOverride, parseUserOverride } from '../../signalOverride'
 import {
   parsedHasExplicitEntryAnchor,
   planManualOrders,
@@ -138,13 +139,17 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
     }
     let channelParamsForLadder: ChannelActiveTradeParams | null = null
     let anchorCreatedAt: string | null = null
+    let anchorUserOverride = null as ReturnType<typeof parseUserOverride>
     if (anchorSignalId) {
       const { data: anchorRow } = await ctx.supabase
         .from('signals')
-        .select('created_at')
+        .select('created_at,user_override')
         .eq('id', anchorSignalId)
         .maybeSingle()
       anchorCreatedAt = (anchorRow as { created_at?: string } | null)?.created_at ?? null
+      anchorUserOverride = parseUserOverride(
+        (anchorRow as { user_override?: unknown } | null)?.user_override,
+      )
     }
     if (signal.channel_id) {
       channelParamsForLadder = await loadChannelActiveTradeParamsForSymbol(
@@ -195,6 +200,9 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
           symbol,
         )
       }
+    }
+    if (anchorUserOverride) {
+      plannerParsed = mergeSignalUserOverride(plannerParsed, anchorUserOverride, { overlay: true })
     }
     let effectiveParsed: ParsedSignal = {
       ...parsed,

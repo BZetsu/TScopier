@@ -16,10 +16,11 @@ export const chromeSv: AppChromeTranslations = {
       configuration: 'Konfiguration',
       brokers: 'Mäklare',
       trades: 'Affärer',
+      management: 'Aktiviteter',
       channels: 'Kanaler',
       backtest: 'Backtest',
       copierLogs: 'Kopieringsloggar',
-      signalHistory: 'Uppdateringar',
+      signalHistory: 'Hantera signaler',
       marketNews: 'Marknadsnyheter',
       economicCalendar: 'Ekonomisk kalender',
       performance: 'Prestanda',
@@ -190,7 +191,7 @@ export const chromeSv: AppChromeTranslations = {
       description: 'Avancerade diagram och AI-drivna analysverktyg för dina handelssignaler.',
     },
     signalHistory: {
-      title: 'Uppdateringar',
+      title: 'Hantera signaler',
       description: 'Visa tolkade signaler kopplade till ditt konto. Filtrera efter kanal och datumintervall.',
     },
     copierEngine: {

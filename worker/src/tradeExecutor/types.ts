@@ -29,6 +29,7 @@ export interface SignalRow {
   user_id: string
   channel_id: string | null
   parsed_data: ParsedSignal | null
+  user_override?: Record<string, unknown> | null
   status: string
   parent_signal_id: string | null
   is_modification: boolean

@@ -36,6 +36,7 @@ import {
 } from './types'
 import type { ChannelKeywords } from '../manualPlanner'
 import { loadSignalById, MESSAGE_REVISION_DISPATCH_SOURCE, revisionDirectionFlippedFromActions } from '../signalRevision'
+import { applyUserOverrideToSignalRow } from '../signalOverride'
 import {
   closeBasketForRevisionDirectionFlip,
   waitForSignalBasketFlat,
@@ -473,7 +474,13 @@ export async function handleSignal(ctx: TradeExecutorContext,
       if (isMessageRevision) {
         const fresh = await loadSignalById(ctx.supabase, row.id)
         if (!fresh?.parsed_data?.action) return
-        row.parsed_data = fresh.parsed_data as SignalRow['parsed_data']
+        row = applyUserOverrideToSignalRow({
+          ...row,
+          parsed_data: fresh.parsed_data,
+          user_override: fresh.user_override,
+        })
+      } else {
+        row = applyUserOverrideToSignalRow(row)
       }
 
       const pipelineT0 = Date.now()

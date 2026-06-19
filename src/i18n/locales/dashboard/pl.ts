@@ -44,10 +44,11 @@ export const dashboardPl: DashboardBundleTranslations = {
     channelProfitTitle: 'Zysk wg kanału sygnałowego (7 dni)',
     channelProfitSubtitle: 'P/L transakcji kopiatora według kanału Telegram od czasu połączenia brokera',
     channelProfitEmpty: 'Brak zamkniętych transakcji przypisanych do kopiatora w ostatnich 7 dniach',
-    channelWorker: 'Worker kanałów',
-    channelWorkerHint:
+    tradeActivities: 'Worker kanałów',
+    tradeActivitiesHint:
       'Aktywność parsera na żywo z kanałów sygnałowych Telegram - jak wiadomości zostały odczytane, pominięte lub zamienione na plany transakcji.',
-    noChannelWorkerLogs: 'Brak logów workera kanałów.',
+    noTradeActivities: 'Brak logów workera kanałów.',
+    management: 'Aktywności',
     noData: 'Brak danych',
     linkedAccounts: {
       title: 'Połączone konta',

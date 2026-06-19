@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
-import { LayoutDashboard, History, Send, LayoutTemplate, ScrollText, Newspaper, Calendar, ChartBar as BarChart2, ChevronDown, ChartNoAxesColumn, PanelLeftClose, PanelLeftOpen, Menu, X, CreditCard, Share2, Landmark } from 'lucide-react'
+import { LayoutDashboard, History, Send, LayoutTemplate, ScrollText, Newspaper, Calendar, ChartBar as BarChart2, ChevronDown, ChartNoAxesColumn, PanelLeftClose, PanelLeftOpen, Menu, X, CreditCard, Share2, Landmark, RefreshCw } from 'lucide-react'
 import clsx from 'clsx'
 import { TscopierLogo } from '../ui/TscopierLogo'
 import { AppSearchDesktop, AppSearchMobileTrigger, AppSearchProvider } from './AppSearch'
@@ -103,6 +103,7 @@ export function AppLayout() {
           { to: '/dashboard', icon: LayoutDashboard, label: t.nav.items.dashboard },
           { to: '/brokers', icon: Landmark, label: t.nav.items.brokers },
           { to: '/account-trades', icon: History, label: t.nav.items.trades, showOpenTradesIndicator: true },
+          { to: '/activities', icon: RefreshCw, label: t.nav.items.management },
         ],
       },
       {
@@ -111,7 +112,7 @@ export function AppLayout() {
           { to: '/channels', icon: Send, label: t.nav.items.channels },
           { to: '/backtest', icon: LayoutTemplate, label: t.nav.items.backtest },
           { to: '/copier-logs', icon: ScrollText, label: t.nav.items.copierLogs },
-          { to: '/updates', icon: ChartNoAxesColumn, label: t.nav.items.signalHistory },
+          { to: '/manage-signals', icon: ChartNoAxesColumn, label: t.nav.items.signalHistory },
           { to: '/performance', icon: BarChart2, label: t.nav.items.performance },
         ],
       },

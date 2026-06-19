@@ -44,10 +44,11 @@ export const dashboardRu: DashboardBundleTranslations = {
     channelProfitTitle: 'Прибыль по сигнальным каналам (7 дней)',
     channelProfitSubtitle: 'P/L сделок копировщика по Telegram-каналам с момента подключения брокера',
     channelProfitEmpty: 'За последние 7 дней нет закрытых сделок, связанных с копировщиком',
-    channelWorker: 'Обработчик каналов',
-    channelWorkerHint:
+    tradeActivities: 'Обработчик каналов',
+    tradeActivitiesHint:
       'Активность парсера в реальном времени из ваших Telegram-каналов: как сообщения читались, пропускались или превращались в торговые планы.',
-    noChannelWorkerLogs: 'Пока нет логов обработчика каналов.',
+    noTradeActivities: 'Пока нет логов обработчика каналов.',
+    management: 'Активности',
     noData: 'Нет данных',
     linkedAccounts: {
       title: 'Связанные счета',

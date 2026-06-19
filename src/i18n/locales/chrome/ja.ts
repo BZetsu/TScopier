@@ -16,10 +16,11 @@ export const chromeJa: AppChromeTranslations = {
       configuration: '設定',
       brokers: 'ブローカー',
       trades: '取引',
+      management: 'アクティビティ',
       channels: 'チャンネル',
       backtest: 'バックテスト',
       copierLogs: 'コピーログ',
-      signalHistory: '更新情報',
+      signalHistory: 'シグナル管理',
       marketNews: 'マーケットニュース',
       economicCalendar: '経済カレンダー',
       performance: 'パフォーマンス',
@@ -190,7 +191,7 @@ export const chromeJa: AppChromeTranslations = {
       description: '取引シグナル向けの高度なチャート機能と AI 分析ツール。',
     },
     signalHistory: {
-      title: '更新情報',
+      title: 'シグナル管理',
       description: 'アカウントに紐づく解析済みシグナルを表示。チャンネルと期間で絞り込めます。',
     },
     copierEngine: {

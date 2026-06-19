@@ -1,10 +1,28 @@
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
 import {
+  formatTradeSignalSummary,
+  isTelegramTradeSignal,
   resolveRecentChannelEntrySymbol,
   symbolForCopierLog,
+  type TradeSignalSummaryLabels,
 } from './copierLogDisplay'
 import type { Signal } from '../types/database'
+
+const summaryLabels: TradeSignalSummaryLabels = {
+  actionBuy: 'Buy',
+  actionSell: 'Sell',
+  actionClose: 'Close',
+  actionCloseWorseEntries: 'Close worse entries',
+  actionBreakeven: 'Move SL to break-even',
+  actionModify: 'Update SL/TP',
+  actionPartialProfit: 'Take partial profit',
+  actionPartialBreakeven: 'Partial profit + break-even',
+  onSymbol: 'on {symbol}',
+  entryAt: 'Entry {price}',
+  slAt: 'SL {price}',
+  tpAt: 'TP {prices}',
+}
 
 function signal(partial: Partial<Signal> & Pick<Signal, 'id'>): Signal {
   return {
@@ -101,4 +119,44 @@ test('symbolForCopierLog prefers parent chain over channel fallback', () => {
   }
 
   assert.equal(symbolForCopierLog(modify, context, [modify, otherBuy]), 'ETHUSD')
+})
+
+test('isTelegramTradeSignal excludes ignore and non-trade rows', () => {
+  assert.equal(
+    isTelegramTradeSignal({
+      channel_id: 'ch1',
+      parsed_data: { action: 'buy', symbol: 'XAUUSD' },
+      skip_reason: null,
+    }),
+    true,
+  )
+  assert.equal(
+    isTelegramTradeSignal({
+      channel_id: 'ch1',
+      parsed_data: { action: 'ignore' },
+      skip_reason: 'non_trade_message',
+    }),
+    false,
+  )
+  assert.equal(
+    isTelegramTradeSignal({
+      channel_id: null,
+      parsed_data: { action: 'sell' },
+      skip_reason: null,
+    }),
+    false,
+  )
+})
+
+test('formatTradeSignalSummary renders plain buy line', () => {
+  const buy = signal({
+    id: 'buy1',
+    parsed_data: { action: 'buy', symbol: 'XAUUSD', entry: 2650, sl: 2640, tp: [2670, 2680] },
+  })
+  const context = { lookup: new Map(), replyParentBySignalId: new Map() }
+  const summary = formatTradeSignalSummary(buy, context, [buy], summaryLabels)
+  assert.match(summary, /Buy on XAUUSD/)
+  assert.match(summary, /Entry 2650/)
+  assert.match(summary, /SL 2640/)
+  assert.match(summary, /TP 2670, 2680/)
 })

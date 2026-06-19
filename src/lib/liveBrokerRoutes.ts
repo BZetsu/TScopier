@@ -3,6 +3,7 @@ const LIVE_BROKER_CONNECTIVITY_PREFIXES = [
   '/dashboard',
   '/brokers',
   '/channels',
+  '/activities',
   '/performance',
   '/portfolio',
   '/account-trades',
