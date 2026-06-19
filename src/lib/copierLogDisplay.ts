@@ -199,7 +199,9 @@ type SymbolLookupSignal = Pick<
   | 'parent_signal_id'
   | 'reply_to_message_id'
   | 'is_modification'
->
+> & {
+  telegram_message_id?: string | null
+}
 
 function cleanSymbolLabel(v: unknown): string | null {
   const s = typeof v === 'string' ? v.trim() : ''
@@ -372,8 +374,19 @@ async function resolveReplyParents(
 ): Promise<Map<string, string>> {
   const replyParentBySignalId = new Map<string, string>()
   const byChannel = new Map<string, Set<string>>()
+  const inBatchByChannelTelegram = new Map<string, Map<string, SignalSymbolLookupRow>>()
 
   for (const s of signals) {
+    if (s.telegram_message_id && s.channel_id) {
+      const channelMap = inBatchByChannelTelegram.get(s.channel_id) ?? new Map<string, SignalSymbolLookupRow>()
+      channelMap.set(s.telegram_message_id, {
+        id: s.id,
+        parsed_data: s.parsed_data,
+        raw_message: s.raw_message,
+        parent_signal_id: s.parent_signal_id,
+      })
+      inBatchByChannelTelegram.set(s.channel_id, channelMap)
+    }
     if (s.parent_signal_id || !s.reply_to_message_id || !s.channel_id) continue
     const ids = byChannel.get(s.channel_id) ?? new Set<string>()
     ids.add(s.reply_to_message_id)
@@ -381,16 +394,21 @@ async function resolveReplyParents(
   }
 
   for (const [channelId, replyIds] of byChannel) {
-    const { data } = await supabase
-      .from('signals')
-      .select('id,parsed_data,raw_message,parent_signal_id,telegram_message_id')
-      .eq('user_id', userId)
-      .eq('channel_id', channelId)
-      .in('telegram_message_id', [...replyIds])
+    const localByTelegram = inBatchByChannelTelegram.get(channelId) ?? new Map<string, SignalSymbolLookupRow>()
+    const missingReplyIds = [...replyIds].filter(id => !localByTelegram.has(id))
+    const byTelegramId = new Map(localByTelegram)
 
-    const byTelegramId = new Map<string, SignalSymbolLookupRow>()
-    for (const row of (data ?? []) as Array<SignalSymbolLookupRow & { telegram_message_id?: string | null }>) {
-      if (row.telegram_message_id) byTelegramId.set(row.telegram_message_id, row)
+    if (missingReplyIds.length > 0) {
+      const { data } = await supabase
+        .from('signals')
+        .select('id,parsed_data,raw_message,parent_signal_id,telegram_message_id')
+        .eq('user_id', userId)
+        .eq('channel_id', channelId)
+        .in('telegram_message_id', missingReplyIds)
+
+      for (const row of (data ?? []) as Array<SignalSymbolLookupRow & { telegram_message_id?: string | null }>) {
+        if (row.telegram_message_id) byTelegramId.set(row.telegram_message_id, row)
+      }
     }
 
     for (const s of signals) {

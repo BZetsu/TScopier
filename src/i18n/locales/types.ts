@@ -289,7 +289,7 @@ export interface SignalHistoryPageTranslations {
   statusOpen: string
   statusClosed: string
   editSignal: string
-  saveAndApply: string
+  updateLiveTrades: string
   saving: string
   originalSignal: string
   overrideSignal: string

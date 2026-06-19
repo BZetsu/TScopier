@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from 'react'
+import { memo, useCallback, useEffect, useMemo, useState, type KeyboardEvent } from 'react'
 import clsx from 'clsx'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
@@ -24,11 +24,14 @@ import {
   buildConsolidatedEntrySignals,
   buildOpenSignalIdSet,
   effectiveDisplayParsedData,
+  enrichSignalDisplayContext,
   isEditableEntrySignal,
   resolveSignalOpenStatus,
   type SignalBatchRow,
   type SignalDisplayContext,
 } from '../../lib/signalOverride'
+
+const SIGNALS_PAGE_LIMIT = 500
 
 type DatePreset = 'all' | 'today' | '7d' | '30d' | 'custom'
 
@@ -37,9 +40,8 @@ const DESKTOP_TD = 'px-4 py-3.5 align-middle border-b border-neutral-100 dark:bo
 const DESKTOP_TH =
   'px-4 py-3 text-left text-xs font-semibold text-neutral-500 dark:text-neutral-400 uppercase tracking-wide border-b border-neutral-100 dark:border-neutral-800 bg-white dark:bg-neutral-900'
 
-const OPEN_SIGNAL_COLUMN = 'bg-teal-50 dark:bg-teal-950/40'
-
-const SIGNAL_COLUMN = 'bg-teal-50/30 dark:bg-teal-950/20'
+const OPEN_ROW_BG = 'bg-teal-50 dark:bg-teal-950/40'
+const OPEN_ROW_HOVER = 'hover:bg-teal-100/50 dark:hover:bg-teal-950/50'
 
 const selectClass =
   'px-3 py-2.5 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-sm text-neutral-700 dark:text-neutral-300 focus:outline-none focus:ring-2 focus:ring-primary-500 w-full'
@@ -144,39 +146,7 @@ type SignalRowContentProps = {
   statusOpenLabel: string
   statusClosedLabel: string
   timeLabel: string
-  onClick: () => void
-}
-
-function buildSignalRowProps(args: {
-  signal: Signal
-  lastActivityAt: string
-  absorbedEntryUpdates: ReadonlyArray<SignalBatchRow>
-  displayContext: SignalDisplayContext
-  tradeSignals: Signal[]
-  symbolContext: CopierSymbolContext
-  openSignalIds: Set<string>
-  channelById: Map<string, TelegramChannel>
-  summaryLabels: TradeSignalSummaryLabels
-  statusOpenLabel: string
-  statusClosedLabel: string
-  onSelect: (signal: Signal, absorbedEntryUpdates: SignalBatchRow[]) => void
-}): SignalRowContentProps {
-  const displaySignal = signalForDisplay(args.signal, args.displayContext, args.absorbedEntryUpdates)
-  return {
-    channelName: channelDisplayName(args.signal.channel_id ? args.channelById.get(args.signal.channel_id) : undefined),
-    summary: formatTradeSignalSummary(displaySignal, args.symbolContext, args.tradeSignals, args.summaryLabels),
-    actionLabel: tradeSignalActionLabel(parsedSignalAction(args.signal.parsed_data), args.summaryLabels),
-    action: parsedSignalAction(args.signal.parsed_data),
-    symbol: symbolForCopierLog(args.signal, args.symbolContext, args.tradeSignals),
-    openStatus: resolveSignalOpenStatus(args.signal, args.openSignalIds, {
-      batchSignals: args.tradeSignals,
-      replyParentBySignalId: args.symbolContext.replyParentBySignalId,
-    }),
-    statusOpenLabel: args.statusOpenLabel,
-    statusClosedLabel: args.statusClosedLabel,
-    timeLabel: args.lastActivityAt,
-    onClick: () => args.onSelect(args.signal, [...args.absorbedEntryUpdates]),
-  }
+  onClick?: () => void
 }
 
 export function SignalHistoryPage() {
@@ -191,6 +161,7 @@ export function SignalHistoryPage() {
     replyParentBySignalId: new Map(),
   }))
   const [loading, setLoading] = useState(true)
+  const [symbolLookupReady, setSymbolLookupReady] = useState(false)
   const [channelFilter, setChannelFilter] = useState('all')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
@@ -218,6 +189,7 @@ export function SignalHistoryPage() {
   const loadData = useCallback(async () => {
     if (!user) return
     setLoading(true)
+    setSymbolLookupReady(false)
     const [channelsRes, signalsRes, openTradesRes] = await Promise.all([
       supabase
         .from('telegram_channels')
@@ -226,11 +198,11 @@ export function SignalHistoryPage() {
         .order('created_at', { ascending: false }),
       supabase
         .from('signals')
-        .select('*')
+        .select('id,channel_id,created_at,parsed_data,raw_message,parent_signal_id,user_override,reply_to_message_id,is_modification,skip_reason,telegram_message_id')
         .eq('user_id', user.id)
         .or('skip_reason.is.null,skip_reason.neq.non_trade_message')
         .order('created_at', { ascending: false })
-        .limit(1000),
+        .limit(SIGNALS_PAGE_LIMIT),
       supabase
         .from('trades')
         .select('signal_id')
@@ -242,9 +214,35 @@ export function SignalHistoryPage() {
     setChannels(loadedChannels)
     setSignals(loadedSignals)
     setOpenSignalIds(buildOpenSignalIdSet((openTradesRes.data ?? []) as { signal_id?: string | null }[]))
-    setSymbolContext(await buildSignalSymbolLookup(supabase, user.id, loadedSignals))
     setLoading(false)
+
+    const nextSymbolContext = await buildSignalSymbolLookup(supabase, user.id, loadedSignals)
+    setSymbolContext(nextSymbolContext)
+    setSymbolLookupReady(true)
   }, [user])
+
+  const refreshAfterOverrideSave = useCallback(async () => {
+    if (!user) return
+    const [openTradesRes, signalRes] = await Promise.all([
+      supabase
+        .from('trades')
+        .select('signal_id')
+        .eq('user_id', user.id)
+        .eq('status', 'open'),
+      editSignal
+        ? supabase
+          .from('signals')
+          .select('id,channel_id,created_at,parsed_data,raw_message,parent_signal_id,user_override,reply_to_message_id,is_modification,skip_reason,telegram_message_id')
+          .eq('id', editSignal.id)
+          .maybeSingle()
+        : Promise.resolve({ data: null }),
+    ])
+    setOpenSignalIds(buildOpenSignalIdSet((openTradesRes.data ?? []) as { signal_id?: string | null }[]))
+    const updated = signalRes.data as Signal | null
+    if (updated) {
+      setSignals(prev => prev.map(row => (row.id === updated.id ? updated : row)))
+    }
+  }, [user, editSignal])
 
   useEffect(() => {
     void loadData()
@@ -271,20 +269,68 @@ export function SignalHistoryPage() {
     [tradeSignals],
   )
 
-  const displayContext = useMemo((): SignalDisplayContext => ({
+  const displayContext = useMemo((): SignalDisplayContext => enrichSignalDisplayContext({
     batchSignals: tradeSignals,
     symbolContext,
     replyParentBySignalId: symbolContext.replyParentBySignalId,
   }), [tradeSignals, symbolContext])
 
+  const openStatusContext = useMemo(() => ({
+    batchSignals: tradeSignals,
+    replyParentBySignalId: symbolContext.replyParentBySignalId,
+    parentSignalIdByRowId: displayContext.batchIndex?.parentSignalIdByRowId,
+  }), [tradeSignals, symbolContext.replyParentBySignalId, displayContext.batchIndex])
+
+  const allConsolidatedSignals = useMemo(
+    () => buildConsolidatedEntrySignals(tradeSignals, displayContext, openSignalIds),
+    [tradeSignals, displayContext, openSignalIds],
+  )
+
   const consolidatedSignals = useMemo(() => {
-    return buildConsolidatedEntrySignals(tradeSignals, displayContext, openSignalIds)
+    return allConsolidatedSignals
       .filter(({ signal, lastActivityAt }) => {
         if (channelFilter !== 'all' && signal.channel_id !== channelFilter) return false
         return matchesDateFilter(signal.created_at, lastActivityAt, dateFrom, dateTo)
       })
       .sort((a, b) => Date.parse(b.lastActivityAt) - Date.parse(a.lastActivityAt))
-  }, [tradeSignals, displayContext, openSignalIds, channelFilter, dateFrom, dateTo])
+  }, [allConsolidatedSignals, channelFilter, dateFrom, dateTo])
+
+  const handleSelectSignal = useCallback((signal: Signal, absorbedEntryUpdates: SignalBatchRow[]) => {
+    setEditSignal(signal)
+    setEditAbsorbedUpdates(absorbedEntryUpdates)
+  }, [])
+
+  const signalDisplayRows = useMemo(() => {
+    if (!symbolLookupReady) return []
+    return consolidatedSignals.map(({ signal, lastActivityAt, absorbedEntryUpdates }) => {
+      const displaySignal = signalForDisplay(signal, displayContext, absorbedEntryUpdates)
+      const openStatus = resolveSignalOpenStatus(signal, openSignalIds, openStatusContext)
+      return {
+        key: signal.id,
+        channelName: channelDisplayName(signal.channel_id ? channelById.get(signal.channel_id) : undefined),
+        summary: formatTradeSignalSummary(displaySignal, symbolContext, tradeSignals, summaryLabels),
+        actionLabel: tradeSignalActionLabel(parsedSignalAction(signal.parsed_data), summaryLabels),
+        action: parsedSignalAction(signal.parsed_data),
+        symbol: symbolForCopierLog(signal, symbolContext, tradeSignals),
+        openStatus,
+        timeLabel: lastActivityAt,
+        onClick: openStatus === 'open'
+          ? () => handleSelectSignal(signal, [...absorbedEntryUpdates])
+          : undefined,
+      }
+    })
+  }, [
+    symbolLookupReady,
+    consolidatedSignals,
+    displayContext,
+    symbolContext,
+    tradeSignals,
+    summaryLabels,
+    openSignalIds,
+    openStatusContext,
+    channelById,
+    handleSelectSignal,
+  ])
 
   const stats = useMemo(() => {
     const now = new Date()
@@ -303,20 +349,13 @@ export function SignalHistoryPage() {
     }
   }, [entrySignals])
 
-  const rowPropsArgs = useMemo(() => ({
-    displayContext,
-    tradeSignals,
-    symbolContext,
-    openSignalIds,
-    channelById,
-    summaryLabels,
-    statusOpenLabel: sh.statusOpen,
-    statusClosedLabel: sh.statusClosed,
-    onSelect: (signal: Signal, absorbedEntryUpdates: SignalBatchRow[]) => {
-      setEditSignal(signal)
-      setEditAbsorbedUpdates(absorbedEntryUpdates)
-    },
-  }), [displayContext, tradeSignals, symbolContext, openSignalIds, channelById, summaryLabels, sh.statusOpen, sh.statusClosed])
+  const handleSaved = async ({ appliedLegs }: { appliedLegs: number; open: boolean }) => {
+    setBanner({
+      tone: 'success',
+      text: interpolate(sh.applySuccess, { count: String(appliedLegs) }),
+    })
+    await refreshAfterOverrideSave()
+  }
 
   const resetFilters = () => {
     setChannelFilter('all')
@@ -330,13 +369,8 @@ export function SignalHistoryPage() {
     setDateTo(next.dateTo)
   }
 
-  const handleSaved = async ({ appliedLegs }: { appliedLegs: number; open: boolean }) => {
-    setBanner({
-      tone: 'success',
-      text: interpolate(sh.applySuccess, { count: String(appliedLegs) }),
-    })
-    await loadData()
-  }
+  const listLoading = loading || !symbolLookupReady
+  const showEmpty = !listLoading && signalDisplayRows.length === 0
 
   const presetLabels: Record<DatePreset, string> = {
     all: sh.presetAll,
@@ -445,13 +479,13 @@ export function SignalHistoryPage() {
             <thead className="sticky top-0 z-10 bg-white dark:bg-neutral-900">
               <tr>
                 <th className={DESKTOP_TH}>{sh.colChannel}</th>
-                <th className={clsx(DESKTOP_TH, SIGNAL_COLUMN)}>{sh.colSignal}</th>
+                <th className={DESKTOP_TH}>{sh.colSignal}</th>
                 <th className={clsx(DESKTOP_TH, 'text-center')}>{sh.colStatus}</th>
                 <th className={clsx(DESKTOP_TH, 'text-right')}>{sh.colTime}</th>
               </tr>
             </thead>
             <tbody>
-              {loading ? (
+              {listLoading ? (
                 [...Array(6)].map((_, i) => (
                   <tr key={i}>
                     <td colSpan={4} className="px-4 py-4">
@@ -462,15 +496,24 @@ export function SignalHistoryPage() {
                     </td>
                   </tr>
                 ))
-              ) : consolidatedSignals.length === 0 ? (
+              ) : showEmpty ? (
                 <tr>
                   <td colSpan={4} className="py-16 text-center text-neutral-400 text-sm">{sh.noSignals}</td>
                 </tr>
               ) : (
-                consolidatedSignals.map(({ signal, lastActivityAt, absorbedEntryUpdates }) => (
+                signalDisplayRows.map(row => (
                   <SignalRow
-                    key={signal.id}
-                    {...buildSignalRowProps({ signal, lastActivityAt, absorbedEntryUpdates, ...rowPropsArgs })}
+                    key={row.key}
+                    channelName={row.channelName}
+                    summary={row.summary}
+                    actionLabel={row.actionLabel}
+                    action={row.action}
+                    symbol={row.symbol}
+                    openStatus={row.openStatus}
+                    statusOpenLabel={sh.statusOpen}
+                    statusClosedLabel={sh.statusClosed}
+                    timeLabel={row.timeLabel}
+                    onClick={row.onClick}
                   />
                 ))
               )}
@@ -479,21 +522,30 @@ export function SignalHistoryPage() {
         </div>
 
         <div className="md:hidden max-h-[560px] overflow-y-auto divide-y divide-neutral-100 dark:divide-neutral-800">
-          {loading ? (
+          {listLoading ? (
             [...Array(6)].map((_, i) => (
               <div key={i} className="px-4 py-4 space-y-2">
                 <div className="h-4 w-24 bg-neutral-100 dark:bg-neutral-800 rounded animate-pulse" />
                 <div className="h-4 w-full bg-neutral-100 dark:bg-neutral-800 rounded animate-pulse" />
               </div>
             ))
-          ) : consolidatedSignals.length === 0 ? (
+          ) : showEmpty ? (
             <div className="py-16 text-center text-neutral-400 text-sm">{sh.noSignals}</div>
           ) : (
-            consolidatedSignals.map(({ signal, lastActivityAt, absorbedEntryUpdates }) => (
+            signalDisplayRows.map(row => (
               <SignalRow
-                key={`m-${signal.id}`}
+                key={`m-${row.key}`}
                 mobileOnly
-                {...buildSignalRowProps({ signal, lastActivityAt, absorbedEntryUpdates, ...rowPropsArgs })}
+                channelName={row.channelName}
+                summary={row.summary}
+                actionLabel={row.actionLabel}
+                action={row.action}
+                symbol={row.symbol}
+                openStatus={row.openStatus}
+                statusOpenLabel={sh.statusOpen}
+                statusClosedLabel={sh.statusClosed}
+                timeLabel={row.timeLabel}
+                onClick={row.onClick}
               />
             ))
           )}
@@ -514,7 +566,7 @@ export function SignalHistoryPage() {
   )
 }
 
-function SignalRow({
+const SignalRow = memo(function SignalRow({
   mobileOnly,
   channelName,
   summary,
@@ -536,6 +588,8 @@ function SignalRow({
 
   const isOpen = openStatus === 'open'
 
+  const activeRowBg = isOpen ? OPEN_ROW_BG : undefined
+
   const actionTone =
     action === 'buy'
       ? 'text-primary-600 dark:text-primary-400'
@@ -544,18 +598,27 @@ function SignalRow({
         : 'text-neutral-600 dark:text-neutral-300'
 
   const rowInteractiveClass = clsx(
-    'cursor-pointer transition-colors',
-    isOpen
-      ? 'hover:bg-teal-100/50 dark:hover:bg-teal-950/50'
-      : 'hover:bg-neutral-50 dark:hover:bg-neutral-800/40',
+    isOpen && 'cursor-pointer transition-colors',
+    isOpen && OPEN_ROW_HOVER,
+    activeRowBg,
   )
 
   const handleKeyDown = (e: KeyboardEvent) => {
+    if (!onClick) return
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault()
       onClick()
     }
   }
+
+  const rowProps = isOpen && onClick
+    ? {
+        role: 'button' as const,
+        tabIndex: 0,
+        onClick,
+        onKeyDown: handleKeyDown,
+      }
+    : {}
 
   const statusBadge = (
     <span
@@ -573,11 +636,8 @@ function SignalRow({
   if (mobileOnly) {
     return (
       <article
-        role="button"
-        tabIndex={0}
-        onClick={onClick}
-        onKeyDown={handleKeyDown}
-        className={clsx('px-4 py-4', rowInteractiveClass, isOpen && OPEN_SIGNAL_COLUMN)}
+        {...rowProps}
+        className={clsx('px-4 py-4', rowInteractiveClass)}
       >
         <div className="flex items-start justify-between gap-3 mb-2">
           <div className="min-w-0">
@@ -597,29 +657,26 @@ function SignalRow({
 
   return (
     <tr
-      role="button"
-      tabIndex={0}
-      onClick={onClick}
-      onKeyDown={handleKeyDown}
+      {...rowProps}
       className={rowInteractiveClass}
     >
-      <td className={DESKTOP_TD}>
+      <td className={clsx(DESKTOP_TD, activeRowBg)}>
         <p className="text-sm font-medium text-neutral-900 dark:text-neutral-50 truncate">{channelName}</p>
         {symbol !== '—' ? (
           <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">{symbol}</p>
         ) : null}
       </td>
-      <td className={clsx(DESKTOP_TD, isOpen ? OPEN_SIGNAL_COLUMN : SIGNAL_COLUMN)}>
+      <td className={clsx(DESKTOP_TD, activeRowBg)}>
         <p className={clsx('text-xs font-semibold uppercase mb-1', actionTone)}>{actionLabel}</p>
         <p className="text-sm text-neutral-800 dark:text-neutral-100 truncate" title={summary}>{summary}</p>
       </td>
-      <td className={clsx(DESKTOP_TD, 'text-center')}>{statusBadge}</td>
-      <td className={clsx(DESKTOP_TD, 'text-right text-xs text-neutral-500 dark:text-neutral-400 whitespace-nowrap')}>
+      <td className={clsx(DESKTOP_TD, 'text-center', activeRowBg)}>{statusBadge}</td>
+      <td className={clsx(DESKTOP_TD, 'text-right text-xs text-neutral-500 dark:text-neutral-400 whitespace-nowrap', activeRowBg)}>
         {formattedTime}
       </td>
     </tr>
   )
-}
+})
 
 function StatCell({ label, value }: { label: string; value: number }) {
   return (

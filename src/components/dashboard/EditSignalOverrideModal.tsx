@@ -51,6 +51,18 @@ function channelFoldedSummary(
   return { sl, tp: tpArr.length ? tpArr.join(', ') : '—' }
 }
 
+function normalizeTpLevels(levels: string[]): string[] {
+  return levels.map(s => s.trim()).filter(s => s !== '')
+}
+
+function draftsEqual(a: OverrideDraft, b: OverrideDraft): boolean {
+  if (a.sl.trim() !== b.sl.trim()) return false
+  const tpA = normalizeTpLevels(a.tpLevels)
+  const tpB = normalizeTpLevels(b.tpLevels)
+  if (tpA.length !== tpB.length) return false
+  return tpA.every((value, index) => value === tpB[index])
+}
+
 function parseDraft(draft: OverrideDraft): { sl: number | null; tp_levels: number[] } | null {
   const sl = draft.sl.trim() === '' ? null : Number(draft.sl)
   const tp_levels = draft.tpLevels
@@ -70,6 +82,7 @@ export function EditSignalOverrideModal({
   const t = useT()
   const sh = t.signalHistoryPage
   const [draft, setDraft] = useState<OverrideDraft | null>(null)
+  const [initialDraft, setInitialDraft] = useState<OverrideDraft | null>(null)
   const [busy, setBusy] = useState(false)
   const [formError, setFormError] = useState('')
 
@@ -81,12 +94,20 @@ export function EditSignalOverrideModal({
   useEffect(() => {
     if (!signal) {
       setDraft(null)
+      setInitialDraft(null)
       setFormError('')
       return
     }
-    setDraft(overrideToDraft(signal, displayContext, absorbedEntryUpdates))
+    const next = overrideToDraft(signal, displayContext, absorbedEntryUpdates)
+    setDraft(next)
+    setInitialDraft(next)
     setFormError('')
   }, [signal, displayContext, absorbedEntryUpdates])
+
+  const hasChanges = useMemo(() => {
+    if (!draft || !initialDraft) return false
+    return !draftsEqual(draft, initialDraft)
+  }, [draft, initialDraft])
 
   useEffect(() => {
     if (!signal) return
@@ -234,14 +255,14 @@ export function EditSignalOverrideModal({
             <p className="text-xs text-error-600 dark:text-error-400">{formError}</p>
           ) : null}
 
-          <Button className="w-full" disabled={busy} onClick={() => { void handleSave() }}>
+          <Button className="w-full" disabled={busy || !hasChanges} onClick={() => { void handleSave() }}>
             {busy ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin mr-2" />
                 {sh.saving}
               </>
             ) : (
-              sh.saveAndApply
+              sh.updateLiveTrades
             )}
           </Button>
         </div>

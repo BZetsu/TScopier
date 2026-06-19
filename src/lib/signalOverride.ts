@@ -32,10 +32,63 @@ export type SignalBatchRow = Pick<
   | 'is_modification'
 >
 
+export type BatchSignalIndex = {
+  batchSignals: ReadonlyArray<SignalBatchRow>
+  batchById: Map<string, SignalBatchRow>
+  replyParentBySignalId: ReadonlyMap<string, string>
+  symbolContext: CopierSymbolContext
+  anchorCache: Map<string, string | null>
+  entrySymbolById: Map<string, string>
+  entriesByGroupKey: Map<string, SignalBatchRow[]>
+  parentSignalIdByRowId: Map<string, string | null>
+}
+
 export type SignalDisplayContext = {
   batchSignals: ReadonlyArray<SignalBatchRow>
   symbolContext?: CopierSymbolContext
   replyParentBySignalId?: ReadonlyMap<string, string>
+  batchIndex?: BatchSignalIndex
+}
+
+export function buildBatchSignalIndex(ctx: SignalDisplayContext): BatchSignalIndex {
+  const batchSignals = ctx.batchSignals
+  const symbolContext = ctx.symbolContext ?? { lookup: new Map(), replyParentBySignalId: new Map() }
+  const replyParentBySignalId = ctx.replyParentBySignalId ?? symbolContext.replyParentBySignalId
+  const batchById = new Map(batchSignals.map(row => [row.id, row]))
+  const entrySymbolById = new Map<string, string>()
+  const entriesByGroupKey = new Map<string, SignalBatchRow[]>()
+  const parentSignalIdByRowId = new Map<string, string | null>()
+
+  for (const row of batchSignals) {
+    parentSignalIdByRowId.set(row.id, row.parent_signal_id ?? null)
+    if (!ENTRY_ACTIONS.has(parsedSignalAction(row.parsed_data)) || !row.channel_id) continue
+    const sym = symbolForCopierLog(row, symbolContext, batchSignals as SignalBatchRow[])
+    entrySymbolById.set(row.id, sym)
+    if (!sym || sym === '—') continue
+    const key = `${row.channel_id}:${sym}`
+    const list = entriesByGroupKey.get(key) ?? []
+    list.push(row)
+    entriesByGroupKey.set(key, list)
+  }
+
+  for (const list of entriesByGroupKey.values()) {
+    list.sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at))
+  }
+
+  return {
+    batchSignals,
+    batchById,
+    replyParentBySignalId,
+    symbolContext,
+    anchorCache: new Map(),
+    entrySymbolById,
+    entriesByGroupKey,
+    parentSignalIdByRowId,
+  }
+}
+
+export function enrichSignalDisplayContext(ctx: SignalDisplayContext): SignalDisplayContext {
+  return ctx.batchIndex ? ctx : { ...ctx, batchIndex: buildBatchSignalIndex(ctx) }
 }
 
 function positiveLevel(v: unknown): number | null {
@@ -166,22 +219,85 @@ function hasIntermediateEntryForSymbol(
   batchSignals: ReadonlyArray<SignalBatchRow>,
   ctx?: SignalDisplayContext,
 ): boolean {
+  const index = ctx?.batchIndex
   const entryMs = Date.parse(entry.created_at)
   const mgmtMs = Date.parse(mgmt.created_at)
   if (!Number.isFinite(entryMs) || !Number.isFinite(mgmtMs)) return false
-  const symbolContext = ctx?.symbolContext ?? { lookup: new Map(), replyParentBySignalId: new Map() }
-  const sym = symbolForCopierLog(entry, symbolContext, [...batchSignals])
-  if (!sym || sym === '—') return false
 
+  const sym = index?.entrySymbolById.get(entry.id)
+    ?? symbolForCopierLog(
+      entry,
+      ctx?.symbolContext ?? { lookup: new Map(), replyParentBySignalId: new Map() },
+      batchSignals as SignalBatchRow[],
+    )
+  if (!sym || sym === '—' || !entry.channel_id) return false
+
+  const candidates = index?.entriesByGroupKey.get(`${entry.channel_id}:${sym}`)
+  if (candidates) {
+    for (const row of candidates) {
+      if (row.id === entry.id) continue
+      const rowMs = Date.parse(row.created_at)
+      if (!Number.isFinite(rowMs) || rowMs <= entryMs || rowMs >= mgmtMs) continue
+      return true
+    }
+    return false
+  }
+
+  const symbolContext = ctx?.symbolContext ?? { lookup: new Map(), replyParentBySignalId: new Map() }
   for (const row of batchSignals) {
     if (row.id === entry.id) continue
     if (!ENTRY_ACTIONS.has(parsedSignalAction(row.parsed_data))) continue
     const rowMs = Date.parse(row.created_at)
     if (!Number.isFinite(rowMs) || rowMs <= entryMs || rowMs >= mgmtMs) continue
-    const rowSym = symbolForCopierLog(row, symbolContext, [...batchSignals])
+    const rowSym = symbolForCopierLog(row, symbolContext, batchSignals as SignalBatchRow[])
     if (rowSym === sym) return true
   }
   return false
+}
+
+function resolveManagementAnchorEntryIdWithIndex(
+  mgmt: SignalBatchRow,
+  index: BatchSignalIndex,
+): string | null {
+  const cached = index.anchorCache.get(mgmt.id)
+  if (cached !== undefined) return cached
+
+  const action = parsedSignalAction(mgmt.parsed_data)
+  if (!MANAGEMENT_COPIER_ACTIONS.has(action)) {
+    index.anchorCache.set(mgmt.id, null)
+    return null
+  }
+
+  const parentId = mgmt.parent_signal_id?.trim()
+    ?? index.replyParentBySignalId.get(mgmt.id)?.trim()
+  if (parentId) {
+    const entry = findEntryInParentChain(parentId, index.batchById, index.replyParentBySignalId)
+    if (entry) {
+      index.anchorCache.set(mgmt.id, entry.id)
+      return entry.id
+    }
+  }
+
+  const batchSignals = index.batchSignals as SignalBatchRow[]
+  const entryId = resolveRecentChannelEntrySignalId(mgmt, batchSignals)
+  if (!entryId) {
+    index.anchorCache.set(mgmt.id, null)
+    return null
+  }
+
+  const mgmtSymbol = symbolForCopierLog(mgmt, index.symbolContext, batchSignals)
+  const entry = index.batchById.get(entryId)
+  if (!entry) {
+    index.anchorCache.set(mgmt.id, null)
+    return null
+  }
+  const entrySymbol = index.entrySymbolById.get(entry.id)
+    ?? symbolForCopierLog(entry, index.symbolContext, batchSignals)
+  const result = mgmtSymbol !== '—' && entrySymbol !== '—' && mgmtSymbol !== entrySymbol
+    ? null
+    : entryId
+  index.anchorCache.set(mgmt.id, result)
+  return result
 }
 
 export function resolveManagementAnchorEntryId(
@@ -189,6 +305,10 @@ export function resolveManagementAnchorEntryId(
   batchSignals: ReadonlyArray<SignalBatchRow>,
   ctx?: SignalDisplayContext,
 ): string | null {
+  if (ctx?.batchIndex) {
+    return resolveManagementAnchorEntryIdWithIndex(mgmt, ctx.batchIndex)
+  }
+
   const action = parsedSignalAction(mgmt.parsed_data)
   if (!MANAGEMENT_COPIER_ACTIONS.has(action)) return null
 
@@ -202,14 +322,15 @@ export function resolveManagementAnchorEntryId(
     if (entry) return entry.id
   }
 
-  const entryId = resolveRecentChannelEntrySignalId(mgmt, [...batchSignals])
+  const batchArray = batchSignals as SignalBatchRow[]
+  const entryId = resolveRecentChannelEntrySignalId(mgmt, batchArray)
   if (!entryId) return null
 
   const symbolContext = ctx?.symbolContext ?? { lookup: new Map(), replyParentBySignalId: new Map() }
-  const mgmtSymbol = symbolForCopierLog(mgmt, symbolContext, [...batchSignals])
+  const mgmtSymbol = symbolForCopierLog(mgmt, symbolContext, batchArray)
   const entry = batchById.get(entryId)
   if (!entry) return null
-  const entrySymbol = symbolForCopierLog(entry, symbolContext, [...batchSignals])
+  const entrySymbol = symbolForCopierLog(entry, symbolContext, batchArray)
   if (mgmtSymbol !== '—' && entrySymbol !== '—' && mgmtSymbol !== entrySymbol) return null
   return entryId
 }
@@ -303,8 +424,12 @@ function consolidationGroupKey(
   ctx?: SignalDisplayContext,
 ): string | null {
   if (!entry.channel_id) return null
-  const symbolContext = ctx?.symbolContext ?? { lookup: new Map(), replyParentBySignalId: new Map() }
-  const symbol = symbolForCopierLog(entry, symbolContext, [...batchSignals])
+  const symbol = ctx?.batchIndex?.entrySymbolById.get(entry.id)
+    ?? symbolForCopierLog(
+      entry,
+      ctx?.symbolContext ?? { lookup: new Map(), replyParentBySignalId: new Map() },
+      batchSignals as SignalBatchRow[],
+    )
   if (!symbol || symbol === '—') return null
   return `${entry.channel_id}:${symbol}`
 }
@@ -338,13 +463,16 @@ export function buildConsolidatedEntrySignals(
   openSignalIds: ReadonlySet<string> = new Set(),
 ): ConsolidatedEntrySignal[] {
   const batch = ctx?.batchSignals ?? signals
+  const enrichedCtx = ctx
+    ? enrichSignalDisplayContext({ ...ctx, batchSignals: batch })
+    : enrichSignalDisplayContext({ batchSignals: batch })
   const entries = signals.filter(isEditableEntrySignal)
 
   const byGroup = new Map<string, Signal[]>()
   const ungrouped: Signal[] = []
 
   for (const entry of entries) {
-    const key = consolidationGroupKey(entry, batch, ctx)
+    const key = consolidationGroupKey(entry, batch, enrichedCtx)
     if (!key) {
       ungrouped.push(entry)
       continue
@@ -360,7 +488,7 @@ export function buildConsolidatedEntrySignals(
     consolidated.push({
       signal: anchor,
       absorbedEntryUpdates: absorbed,
-      lastActivityAt: lastActivityForConsolidatedRow(anchor, absorbed, batch, ctx),
+      lastActivityAt: lastActivityForConsolidatedRow(anchor, absorbed, batch, enrichedCtx),
     })
   }
 
@@ -395,7 +523,7 @@ export function buildConsolidatedEntrySignals(
     consolidated.push({
       signal: entry,
       absorbedEntryUpdates: [],
-      lastActivityAt: lastActivityForConsolidatedRow(entry, [], batch, ctx),
+      lastActivityAt: lastActivityForConsolidatedRow(entry, [], batch, enrichedCtx),
     })
   }
 
@@ -434,11 +562,15 @@ export type SignalOpenStatusContext = {
     Pick<Signal, 'id' | 'channel_id' | 'created_at' | 'parsed_data' | 'parent_signal_id' | 'raw_message'>
   >
   replyParentBySignalId?: ReadonlyMap<string, string>
+  parentSignalIdByRowId?: ReadonlyMap<string, string | null>
 }
 
 function buildParentSignalIdMap(
   ctx?: SignalOpenStatusContext,
 ): Map<string, string | null> {
+  if (ctx?.parentSignalIdByRowId) {
+    return new Map(ctx.parentSignalIdByRowId)
+  }
   const map = new Map<string, string | null>()
   for (const row of ctx?.batchSignals ?? []) {
     map.set(row.id, row.parent_signal_id ?? null)
@@ -451,7 +583,7 @@ function isOpenViaParentChain(
   openSignalIds: ReadonlySet<string>,
   ctx?: SignalOpenStatusContext,
 ): boolean {
-  const parentMap = buildParentSignalIdMap(ctx)
+  const parentMap = ctx?.parentSignalIdByRowId ?? buildParentSignalIdMap(ctx)
   let current = signal.parent_signal_id?.trim()
     ?? ctx?.replyParentBySignalId?.get(signal.id)?.trim()
     ?? null
@@ -475,7 +607,7 @@ export function resolveSignalOpenStatus(
 
   const action = parsedSignalAction(signal.parsed_data)
   if (MANAGEMENT_COPIER_ACTIONS.has(action) && ctx?.batchSignals?.length) {
-    const entryId = resolveRecentChannelEntrySignalId(signal, [...ctx.batchSignals])
+    const entryId = resolveRecentChannelEntrySignalId(signal, ctx.batchSignals as SignalBatchRow[])
     if (entryId && openSignalIds.has(entryId)) return 'open'
   }
 

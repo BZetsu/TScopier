@@ -673,7 +673,7 @@ export const en: Translations = {
     statusOpen: 'Open',
     statusClosed: 'Closed',
     editSignal: 'Edit SL/TP',
-    saveAndApply: 'Save & apply',
+    updateLiveTrades: 'Update Live Trades',
     saving: 'Saving…',
     originalSignal: 'Channel signal',
     overrideSignal: 'Current override',
