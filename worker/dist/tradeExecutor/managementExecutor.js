@@ -493,6 +493,8 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
         legsTotal += eligibleTrades.length;
     }
     const usedBreakevenTicketsByUuid = new Map();
+    /** Most protective breakeven SL applied per symbol — persisted to channel memory after mgmt. */
+    const channelBreakevenSlBySymbol = new Map();
     const processTrade = async (trade) => {
         const broker = byBroker.get(trade.broker_account_id);
         if (!broker || !(0, helpers_1.brokerHasLinkedSession)(broker))
@@ -711,6 +713,17 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
                     ...(ticketReconciledFrom != null ? { metaapi_order_id: String(effectiveTicket) } : {}),
                 })
                     .eq('id', trade.id);
+                const symKey = trade.symbol;
+                const prev = channelBreakevenSlBySymbol.get(symKey);
+                if (!prev) {
+                    channelBreakevenSlBySymbol.set(symKey, { sl: beSl, isBuy });
+                }
+                else {
+                    channelBreakevenSlBySymbol.set(symKey, {
+                        sl: isBuy ? Math.max(prev.sl, beSl) : Math.min(prev.sl, beSl),
+                        isBuy,
+                    });
+                }
             }
             else if (action === 'modify') {
                 return;
@@ -903,6 +916,49 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
             if (pendingPatched > 0) {
                 console.log(`[tradeExecutor] mgmt patched ${pendingPatched} range_pending_legs from adjust signal=${signal.id}`);
             }
+        }
+    }
+    if (action === 'breakeven'
+        && signal.channel_id
+        && channelBreakevenSlBySymbol.size > 0) {
+        const symbols = (0, channelActiveTradeParams_1.symbolsForChannelParamsPersist)({
+            symbolFromText,
+            tradeSymbols: rows.map(r => r.symbol),
+            pendingSymbols: pendingLegs.map(l => l.symbol),
+        });
+        let bestSl = 0;
+        let bestIsBuy = true;
+        for (const sym of symbols) {
+            const hit = channelBreakevenSlBySymbol.get(sym);
+            if (!hit)
+                continue;
+            if (bestSl <= 0) {
+                bestSl = hit.sl;
+                bestIsBuy = hit.isBuy;
+            }
+            else {
+                bestSl = bestIsBuy ? Math.max(bestSl, hit.sl) : Math.min(bestSl, hit.sl);
+            }
+        }
+        if (bestSl <= 0) {
+            for (const hit of channelBreakevenSlBySymbol.values()) {
+                if (bestSl <= 0) {
+                    bestSl = hit.sl;
+                    bestIsBuy = hit.isBuy;
+                }
+                else {
+                    bestSl = hit.isBuy ? Math.max(bestSl, hit.sl) : Math.min(bestSl, hit.sl);
+                }
+            }
+        }
+        if (bestSl > 0) {
+            await (0, channelActiveTradeParams_1.upsertChannelActiveTradeParams)(ctx.supabase, {
+                userId: signal.user_id,
+                channelId: signal.channel_id,
+                symbols,
+                stoploss: bestSl,
+                replace: false,
+            });
         }
     }
     if (action === 'close' && cancelledPendingScopes.size > 0) {

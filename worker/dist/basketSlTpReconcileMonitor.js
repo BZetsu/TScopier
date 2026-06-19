@@ -161,7 +161,7 @@ class BasketSlTpReconcileMonitor {
         const anchorChannelId = anchorSig?.channel_id ?? row.channel_id;
         const manual = (0, normalizeManualSettings_1.normalizeManualSettingsForExecution)((0, channelTradingConfig_1.resolveChannelTradingConfig)(broker, anchorChannelId).manual_settings);
         const storedTargets = (0, basketSlTpReconcile_1.parsePerLegTargets)(row.per_leg_targets);
-        const { perLegTargets: freshTargets, signalTps: freshSignalTps } = await (0, basketReconcileTargets_1.resolveFreshTargetsForJob)(this.supabase, row, familyTrades, manual);
+        const { perLegTargets: freshTargets, signalTps: freshSignalTps, effectiveStoploss, } = await (0, basketReconcileTargets_1.resolveFreshTargetsForJob)(this.supabase, row, familyTrades, manual);
         const effectiveTargets = freshTargets.length ? freshTargets : storedTargets;
         if (!effectiveTargets.length) {
             await this.releaseJob(row.id, 'empty per_leg_targets', row.attempts);
@@ -209,6 +209,8 @@ class BasketSlTpReconcileMonitor {
             strictEntryPrefetch: null,
             openedTickets,
             skipAlreadySynced: true,
+            internalRebalance: manual.range_trading === true,
+            effectiveStoploss: effectiveStoploss > 0 ? effectiveStoploss : undefined,
             orderCommentsEnabled: manual.order_comments_enabled !== false,
         });
         const mergeFailed = summary.modified < summary.openLegs;

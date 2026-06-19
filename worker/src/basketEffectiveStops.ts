@@ -30,9 +30,16 @@ type ParsedMgmtRow = {
   tp?: number[] | null
 }
 
+const MGMT_SL_ACTIONS = new Set(['modify', 'breakeven', 'partial_breakeven'])
+
 function sanitizeLevel(v: unknown): number {
   const n = typeof v === 'number' ? v : Number(v ?? 0)
   return Number.isFinite(n) && n > 0 ? n : 0
+}
+
+function inferIsBuy(familyTrades: BasketOpenLeg[] | undefined): boolean {
+  const dir = String(familyTrades?.[0]?.direction ?? 'buy').toLowerCase()
+  return dir !== 'sell'
 }
 
 export function unanimousLegSl(familyTrades: BasketOpenLeg[] | undefined): number | null {
@@ -45,6 +52,45 @@ export function unanimousLegSl(familyTrades: BasketOpenLeg[] | undefined): numbe
   }
   if (levels.size !== 1) return null
   return [...levels][0]!
+}
+
+/** Highest SL for buys / lowest for sells among open legs (breakeven-tightened legs). */
+export function mostProtectiveOpenLegSl(
+  familyTrades: BasketOpenLeg[] | undefined,
+  isBuy: boolean,
+): number | null {
+  if (!familyTrades?.length) return null
+  let best: number | null = null
+  for (const tr of familyTrades) {
+    const sl = sanitizeLevel(tr.sl)
+    if (sl <= 0) continue
+    if (best == null) best = sl
+    else if (isBuy) best = Math.max(best, sl)
+    else best = Math.min(best, sl)
+  }
+  return best
+}
+
+export function mergeWithProtectiveLegSl(
+  resolvedSl: number,
+  protectiveSl: number | null,
+  isBuy: boolean,
+): number {
+  if (protectiveSl == null || protectiveSl <= 0) return resolvedSl
+  if (resolvedSl <= 0) return protectiveSl
+  return isBuy ? Math.max(resolvedSl, protectiveSl) : Math.min(resolvedSl, protectiveSl)
+}
+
+/** True when `currentSl` is tighter than `targetSl` for the trade direction. */
+export function isSlMoreProtective(
+  currentSl: number,
+  targetSl: number,
+  isBuy: boolean,
+  epsilon = 1e-8,
+): boolean {
+  if (currentSl <= 0 || targetSl <= 0) return false
+  if (isBuy) return currentSl > targetSl + epsilon
+  return currentSl < targetSl - epsilon
 }
 
 /** Pure SL priority for unit tests. */
@@ -69,7 +115,7 @@ export function resolveEffectiveStoplossPriority(args: {
   return { stoploss: anchor, source: anchor > 0 ? 'anchor' : 'anchor' }
 }
 
-export async function findLatestMgmtModifySl(
+export async function findLatestMgmtSlAdjustment(
   supabase: SupabaseClient,
   args: {
     userId: string
@@ -96,7 +142,8 @@ export async function findLatestMgmtModifySl(
   for (const row of candidates ?? []) {
     const parsed = row.parsed_data as ParsedMgmtRow | null
     if (!parsed?.action) continue
-    if (String(parsed.action).toLowerCase() !== 'modify') continue
+    const action = String(parsed.action).toLowerCase()
+    if (!MGMT_SL_ACTIONS.has(action)) continue
     if (!mgmtSignalMatchesBasketSymbol(parsed, args.symbol)) continue
     const sl = sanitizeLevel(parsed.sl)
     if (sl <= 0) continue
@@ -108,6 +155,9 @@ export async function findLatestMgmtModifySl(
   }
   return null
 }
+
+/** @deprecated Use findLatestMgmtSlAdjustment */
+export const findLatestMgmtModifySl = findLatestMgmtSlAdjustment
 
 export type ResolveEffectiveBasketStopsArgs = {
   supabase: SupabaseClient
@@ -125,11 +175,12 @@ export async function resolveEffectiveBasketStops(
 ): Promise<EffectiveBasketStops> {
   const anchorSl = sanitizeLevel(args.anchorParsed.sl)
   let tpLevels = coercePositiveTpLevels(args.anchorParsed.tp)
+  const isBuy = inferIsBuy(args.familyTrades)
 
   let mgmtSl: number | null = null
   let sourceSignalId: string | undefined
   if (args.channelId && args.basketCreatedAt) {
-    const mgmt = await findLatestMgmtModifySl(args.supabase, {
+    const mgmt = await findLatestMgmtSlAdjustment(args.supabase, {
       userId: args.userId,
       channelId: args.channelId,
       basketCreatedAt: args.basketCreatedAt,
@@ -162,12 +213,15 @@ export async function resolveEffectiveBasketStops(
   }
 
   const legConsensus = unanimousLegSl(args.familyTrades)
-  const { stoploss, source } = resolveEffectiveStoplossPriority({
+  const { stoploss: prioritySl, source } = resolveEffectiveStoplossPriority({
     anchorSl,
     mgmtSl,
     channelSl: channelSl && channelSl > 0 ? channelSl : null,
     legConsensus,
   })
+
+  const protectiveLegSl = mostProtectiveOpenLegSl(args.familyTrades, isBuy)
+  const stoploss = mergeWithProtectiveLegSl(prioritySl, protectiveLegSl, isBuy)
 
   const parsedSlice: RangeBasketParsedSlice = {
     sl: stoploss > 0 ? stoploss : args.anchorParsed.sl,

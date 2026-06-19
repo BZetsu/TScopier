@@ -3,17 +3,26 @@
  * Single source of truth for open-basket SL/TP authority (anchor vs adjust vs channel memory).
  */
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.findLatestMgmtModifySl = void 0;
 exports.unanimousLegSl = unanimousLegSl;
+exports.mostProtectiveOpenLegSl = mostProtectiveOpenLegSl;
+exports.mergeWithProtectiveLegSl = mergeWithProtectiveLegSl;
+exports.isSlMoreProtective = isSlMoreProtective;
 exports.resolveEffectiveStoplossPriority = resolveEffectiveStoplossPriority;
-exports.findLatestMgmtModifySl = findLatestMgmtModifySl;
+exports.findLatestMgmtSlAdjustment = findLatestMgmtSlAdjustment;
 exports.resolveEffectiveBasketStops = resolveEffectiveBasketStops;
 exports.logEffectiveBasketStops = logEffectiveBasketStops;
 const channelActiveTradeParams_1 = require("./channelActiveTradeParams");
 const basketModFollowUp_1 = require("./basketModFollowUp");
 const rangeBasketTpSync_1 = require("./rangeBasketTpSync");
+const MGMT_SL_ACTIONS = new Set(['modify', 'breakeven', 'partial_breakeven']);
 function sanitizeLevel(v) {
     const n = typeof v === 'number' ? v : Number(v ?? 0);
     return Number.isFinite(n) && n > 0 ? n : 0;
+}
+function inferIsBuy(familyTrades) {
+    const dir = String(familyTrades?.[0]?.direction ?? 'buy').toLowerCase();
+    return dir !== 'sell';
 }
 function unanimousLegSl(familyTrades) {
     if (!familyTrades?.length)
@@ -28,6 +37,39 @@ function unanimousLegSl(familyTrades) {
     if (levels.size !== 1)
         return null;
     return [...levels][0];
+}
+/** Highest SL for buys / lowest for sells among open legs (breakeven-tightened legs). */
+function mostProtectiveOpenLegSl(familyTrades, isBuy) {
+    if (!familyTrades?.length)
+        return null;
+    let best = null;
+    for (const tr of familyTrades) {
+        const sl = sanitizeLevel(tr.sl);
+        if (sl <= 0)
+            continue;
+        if (best == null)
+            best = sl;
+        else if (isBuy)
+            best = Math.max(best, sl);
+        else
+            best = Math.min(best, sl);
+    }
+    return best;
+}
+function mergeWithProtectiveLegSl(resolvedSl, protectiveSl, isBuy) {
+    if (protectiveSl == null || protectiveSl <= 0)
+        return resolvedSl;
+    if (resolvedSl <= 0)
+        return protectiveSl;
+    return isBuy ? Math.max(resolvedSl, protectiveSl) : Math.min(resolvedSl, protectiveSl);
+}
+/** True when `currentSl` is tighter than `targetSl` for the trade direction. */
+function isSlMoreProtective(currentSl, targetSl, isBuy, epsilon = 1e-8) {
+    if (currentSl <= 0 || targetSl <= 0)
+        return false;
+    if (isBuy)
+        return currentSl > targetSl + epsilon;
+    return currentSl < targetSl - epsilon;
 }
 /** Pure SL priority for unit tests. */
 function resolveEffectiveStoplossPriority(args) {
@@ -44,7 +86,7 @@ function resolveEffectiveStoplossPriority(args) {
     }
     return { stoploss: anchor, source: anchor > 0 ? 'anchor' : 'anchor' };
 }
-async function findLatestMgmtModifySl(supabase, args) {
+async function findLatestMgmtSlAdjustment(supabase, args) {
     const { data: candidates, error } = await supabase
         .from('signals')
         .select('id, parsed_data, created_at')
@@ -62,7 +104,8 @@ async function findLatestMgmtModifySl(supabase, args) {
         const parsed = row.parsed_data;
         if (!parsed?.action)
             continue;
-        if (String(parsed.action).toLowerCase() !== 'modify')
+        const action = String(parsed.action).toLowerCase();
+        if (!MGMT_SL_ACTIONS.has(action))
             continue;
         if (!(0, basketModFollowUp_1.mgmtSignalMatchesBasketSymbol)(parsed, args.symbol))
             continue;
@@ -77,13 +120,16 @@ async function findLatestMgmtModifySl(supabase, args) {
     }
     return null;
 }
+/** @deprecated Use findLatestMgmtSlAdjustment */
+exports.findLatestMgmtModifySl = findLatestMgmtSlAdjustment;
 async function resolveEffectiveBasketStops(args) {
     const anchorSl = sanitizeLevel(args.anchorParsed.sl);
     let tpLevels = (0, rangeBasketTpSync_1.coercePositiveTpLevels)(args.anchorParsed.tp);
+    const isBuy = inferIsBuy(args.familyTrades);
     let mgmtSl = null;
     let sourceSignalId;
     if (args.channelId && args.basketCreatedAt) {
-        const mgmt = await findLatestMgmtModifySl(args.supabase, {
+        const mgmt = await findLatestMgmtSlAdjustment(args.supabase, {
             userId: args.userId,
             channelId: args.channelId,
             basketCreatedAt: args.basketCreatedAt,
@@ -111,12 +157,14 @@ async function resolveEffectiveBasketStops(args) {
         }
     }
     const legConsensus = unanimousLegSl(args.familyTrades);
-    const { stoploss, source } = resolveEffectiveStoplossPriority({
+    const { stoploss: prioritySl, source } = resolveEffectiveStoplossPriority({
         anchorSl,
         mgmtSl,
         channelSl: channelSl && channelSl > 0 ? channelSl : null,
         legConsensus,
     });
+    const protectiveLegSl = mostProtectiveOpenLegSl(args.familyTrades, isBuy);
+    const stoploss = mergeWithProtectiveLegSl(prioritySl, protectiveLegSl, isBuy);
     const parsedSlice = {
         sl: stoploss > 0 ? stoploss : args.anchorParsed.sl,
         tp: tpLevels.length ? tpLevels : args.anchorParsed.tp,

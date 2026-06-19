@@ -215,20 +215,6 @@ class VirtualPendingMonitor {
                 }
                 catch { /* logging is best-effort */ }
             }
-            const expiredBaskets = new Map();
-            for (const r of expired) {
-                const key = `${r.broker_account_id}|${r.signal_id}|${r.symbol}`;
-                if (!expiredBaskets.has(key))
-                    expiredBaskets.set(key, r);
-            }
-            for (const basketLeg of expiredBaskets.values()) {
-                try {
-                    await this.rebalanceRangeBasketTakeProfits(basketLeg);
-                }
-                catch (rebalErr) {
-                    console.warn(`[virtualPendingMonitor] TP rebalance after pending expiry signal=${basketLeg.signal_id}:`, rebalErr);
-                }
-            }
         }
         // Pull the live pending queue.
         const pendingQ = await (0, monitorIdleGate_1.applyShardToQuery)(this.supabase, this.supabase

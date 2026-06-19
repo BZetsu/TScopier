@@ -21,6 +21,7 @@ import {
   resolveRangeBasketTpPhase,
   type EntryQualityLeg,
   type PerLegStopTargetLike,
+  type RangeBasketTpPhase,
 } from './manualPlanning/tpBucketDistribution'
 import type { PlannerResult } from './manualPlanner'
 import { mergePlanImmediateOrders } from './multiTradeMerge'
@@ -291,6 +292,7 @@ async function logRangeBasketTpRebalance(
     tpCounts: Record<string, number>
     effectiveSl?: number
     effectiveSlSource?: string
+    skippedReason?: string
   },
 ): Promise<void> {
   try {
@@ -310,6 +312,7 @@ async function logRangeBasketTpRebalance(
         target_tp_counts: args.tpCounts,
         effective_sl: args.effectiveSl,
         effective_sl_source: args.effectiveSlSource,
+        skipped_reason: args.skippedReason,
       } as unknown as Record<string, unknown>,
     })
   } catch { /* best-effort */ }
@@ -387,6 +390,67 @@ async function loadScopedChannelTpLevels(
   } catch {
     return null
   }
+}
+
+export type RangeTpRebalanceGateResult = {
+  allowOpenLegTpModify: boolean
+  reason: string
+}
+
+/** When open-leg TP redistribution is allowed for range baskets. */
+export function resolveRangeTpRebalanceGate(args: {
+  activePendingCount: number
+  maxPendingStepIdx: number
+  phase: RangeBasketTpPhase
+  forceLayeringRebalance?: boolean
+  hasClosedBasketLegs: boolean
+}): RangeTpRebalanceGateResult {
+  if (args.forceLayeringRebalance === true) {
+    return { allowOpenLegTpModify: true, reason: 'force_layering_rebalance' }
+  }
+  if (args.phase === 'instant_only') {
+    return { allowOpenLegTpModify: true, reason: 'instant_only' }
+  }
+  if (args.hasClosedBasketLegs) {
+    return { allowOpenLegTpModify: false, reason: 'basket_leg_closed' }
+  }
+  if (args.activePendingCount === 0 && args.maxPendingStepIdx > 0) {
+    return { allowOpenLegTpModify: false, reason: 'layering_complete' }
+  }
+  return { allowOpenLegTpModify: false, reason: 'layering_rebalance_frozen' }
+}
+
+export async function hasClosedBasketLegs(
+  supabase: SupabaseClient,
+  brokerAccountId: string,
+  signalId: string,
+): Promise<boolean> {
+  const { data, error } = await supabase
+    .from('trades')
+    .select('id')
+    .eq('broker_account_id', brokerAccountId)
+    .eq('signal_id', signalId)
+    .eq('status', 'closed')
+    .limit(1)
+  if (error) {
+    console.warn(`[rangeBasketTpSync] closed-leg check failed signal=${signalId}: ${error.message}`)
+    return false
+  }
+  return (data?.length ?? 0) > 0
+}
+
+/** Keep broker/DB take-profits when TP rebalance is frozen. */
+export function preserveOpenLegTakeProfits(
+  familyTrades: BasketOpenLeg[],
+  perLegTargets: PerLegStopTargetLike[],
+): PerLegStopTargetLike[] {
+  return perLegTargets.map((t, i) => {
+    const curTp = Number(familyTrades[i]?.tp)
+    if (Number.isFinite(curTp) && curTp > 0) {
+      return { ...t, takeprofit: curTp }
+    }
+    return t
+  })
 }
 
 async function reloadSignalParsed(
@@ -534,6 +598,19 @@ export async function syncRangeBasketTakeProfits(args: RangeBasketTpSyncArgs): P
   })
   const effectivePhase = args.forceLayeringRebalance ? 'layering_rebalance' : phase
 
+  const hasClosedLegs = await hasClosedBasketLegs(
+    args.supabase,
+    args.brokerAccountId,
+    args.signalId,
+  )
+  const tpGate = resolveRangeTpRebalanceGate({
+    activePendingCount,
+    maxPendingStepIdx,
+    phase: effectivePhase,
+    forceLayeringRebalance: args.forceLayeringRebalance,
+    hasClosedBasketLegs: hasClosedLegs,
+  })
+
   let openedTickets: Set<number> | null = null
   try {
     openedTickets = await fetchOpenBrokerTickets(args.api, args.uuid)
@@ -541,7 +618,7 @@ export async function syncRangeBasketTakeProfits(args: RangeBasketTpSyncArgs): P
 
   const isBuy = args.direction === 'buy'
 
-  if (effectivePhase === 'layering_rebalance') {
+  if (effectivePhase === 'layering_rebalance' && activePendingCount > 0) {
     try {
       await patchPendingRangeLegTakeProfits({
         supabase: args.supabase,
@@ -596,6 +673,12 @@ export async function syncRangeBasketTakeProfits(args: RangeBasketTpSyncArgs): P
     orderCommentsEnabled: args.manual.order_comments_enabled !== false,
   })
 
+  if (!tpGate.allowOpenLegTpModify) {
+    console.log(
+      `[rangeBasketTpSync] skip open-leg TP modify signal=${args.signalId}`
+      + ` broker=${args.brokerAccountId} reason=${tpGate.reason}`,
+    )
+  } else {
   try {
     modifyResult = await runModifyPass(familyTrades, perLegTargets)
 
@@ -631,6 +714,7 @@ export async function syncRangeBasketTakeProfits(args: RangeBasketTpSyncArgs): P
       err instanceof Error ? err.message : String(err),
     )
   }
+  }
 
   await logRangeBasketTpRebalance(args.supabase, {
     userId: args.userId,
@@ -645,6 +729,7 @@ export async function syncRangeBasketTakeProfits(args: RangeBasketTpSyncArgs): P
     tpCounts,
     effectiveSl: effective.stoploss,
     effectiveSlSource: effective.source,
+    skippedReason: tpGate.allowOpenLegTpModify ? undefined : tpGate.reason,
   })
 
   if (modifyResult && modifyResult.summary.modified > 0) {

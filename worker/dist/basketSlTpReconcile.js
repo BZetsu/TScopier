@@ -56,6 +56,7 @@ const tpBucketDistribution_1 = require("./manualPlanning/tpBucketDistribution");
 const basketModFollowUp_1 = require("./basketModFollowUp");
 const channelActiveTradeParams_1 = require("./channelActiveTradeParams");
 const orderModifyBenign_1 = require("./orderModifyBenign");
+const basketEffectiveStops_1 = require("./basketEffectiveStops");
 const parallelPool_1 = require("./parallelPool");
 const tradeComment_1 = require("./tradeComment");
 function isBuySideOp(op) {
@@ -400,14 +401,9 @@ async function runBasketLegModifies(args) {
             if (Number.isFinite(curSl) && curSl > 0)
                 modSl = curSl;
         }
-        if (internalRebalance === true
-            && effectiveStoploss != null
-            && effectiveStoploss > 0) {
+        if (internalRebalance === true && modSl > 0) {
             const curSl = Number(tr.sl);
-            if (Number.isFinite(curSl)
-                && curSl > 0
-                && Math.abs(curSl - effectiveStoploss) < 1e-8
-                && Math.abs(modSl - effectiveStoploss) > 1e-8) {
+            if (Number.isFinite(curSl) && curSl > 0 && (0, basketEffectiveStops_1.isSlMoreProtective)(curSl, modSl, direction === 'buy')) {
                 modSl = curSl;
             }
         }

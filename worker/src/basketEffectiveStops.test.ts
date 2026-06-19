@@ -1,8 +1,11 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  mergeWithProtectiveLegSl,
+  mostProtectiveOpenLegSl,
   resolveEffectiveStoplossPriority,
   unanimousLegSl,
+  isSlMoreProtective,
 } from './basketEffectiveStops'
 import type { BasketOpenLeg } from './basketSlTpReconcile'
 
@@ -74,5 +77,30 @@ describe('unanimousLegSl', () => {
 
   it('returns null when legs disagree', () => {
     assert.equal(unanimousLegSl([leg(4242), leg(4245)]), null)
+  })
+})
+
+describe('mostProtectiveOpenLegSl', () => {
+  it('returns highest SL for buy legs', () => {
+    assert.equal(mostProtectiveOpenLegSl([leg(4242), leg(4248)], true), 4248)
+  })
+
+  it('returns lowest SL for sell legs', () => {
+    const sellLeg = { ...leg(4248), direction: 'sell' as const }
+    const sellLeg2 = { ...leg(4242), direction: 'sell' as const }
+    assert.equal(mostProtectiveOpenLegSl([sellLeg, sellLeg2], false), 4242)
+  })
+})
+
+describe('mergeWithProtectiveLegSl', () => {
+  it('keeps tighter leg SL over anchor for buys', () => {
+    assert.equal(mergeWithProtectiveLegSl(4245, 4248, true), 4248)
+  })
+})
+
+describe('isSlMoreProtective', () => {
+  it('detects buy leg SL above target', () => {
+    assert.equal(isSlMoreProtective(4248, 4245, true), true)
+    assert.equal(isSlMoreProtective(4245, 4248, true), false)
   })
 })

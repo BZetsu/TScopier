@@ -203,7 +203,11 @@ export class BasketSlTpReconcileMonitor {
     )
 
     const storedTargets = parsePerLegTargets(row.per_leg_targets)
-    const { perLegTargets: freshTargets, signalTps: freshSignalTps } = await resolveFreshTargetsForJob(
+    const {
+      perLegTargets: freshTargets,
+      signalTps: freshSignalTps,
+      effectiveStoploss,
+    } = await resolveFreshTargetsForJob(
       this.supabase,
       row,
       familyTrades,
@@ -259,6 +263,8 @@ export class BasketSlTpReconcileMonitor {
       strictEntryPrefetch: null,
       openedTickets,
       skipAlreadySynced: true,
+      internalRebalance: manual.range_trading === true,
+      effectiveStoploss: effectiveStoploss > 0 ? effectiveStoploss : undefined,
       orderCommentsEnabled: manual.order_comments_enabled !== false,
     })
 

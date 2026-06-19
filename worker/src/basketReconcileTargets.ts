@@ -23,8 +23,12 @@ import {
 } from './basketSlTpReconcile'
 import {
   buildRangeBasketTpTargets,
+  hasClosedBasketLegs,
   loadRangePendingMeta,
+  preserveOpenLegTakeProfits,
   resolveRangeBasketFinalTps,
+  resolveRangeBasketLegCounts,
+  resolveRangeTpRebalanceGate,
   toRangeBasketParsedSlice,
 } from './rangeBasketTpSync'
 import { resolveChannelTradingConfig } from './channelTradingConfig'
@@ -50,6 +54,7 @@ export type FreshReconcileTargetsResult = {
   signalTps: number[]
   effectiveStoploss: number
   effectiveSlSource: EffectiveStopSource
+  tpFrozen?: boolean
 }
 
 export async function resolveFreshBasketReconcileTargets(
@@ -100,6 +105,7 @@ export async function resolveFreshBasketReconcileTargets(
   })
 
   let perLegTargets: PerLegStopTarget[]
+  let tpFrozen = false
 
   if (args.manual.range_trading === true && args.familyTrades.length > 0) {
     const { activePendingCount, maxPendingStepIdx } = await loadRangePendingMeta(
@@ -107,6 +113,24 @@ export async function resolveFreshBasketReconcileTargets(
       args.brokerAccountId,
       args.anchorSignalId,
     )
+    const planImmediateLegCount = Math.max(1, args.familyTrades.length - maxPendingStepIdx)
+    const { phase } = resolveRangeBasketLegCounts({
+      openLegCount: args.familyTrades.length,
+      planImmediateLegCount,
+      activePendingCount,
+      maxPendingStepIdx,
+    })
+    const hasClosedLegs = await hasClosedBasketLegs(
+      supabase,
+      args.brokerAccountId,
+      args.anchorSignalId,
+    )
+    const tpGate = resolveRangeTpRebalanceGate({
+      activePendingCount,
+      maxPendingStepIdx,
+      phase,
+      hasClosedBasketLegs: hasClosedLegs,
+    })
     const built = buildRangeBasketTpTargets({
       familyTrades: args.familyTrades,
       plan: null,
@@ -119,10 +143,18 @@ export async function resolveFreshBasketReconcileTargets(
       finalTpsOverride: signalTps.length ? signalTps : null,
       stoplossOverride: effective.stoploss > 0 ? effective.stoploss : null,
     })
-    perLegTargets = built.map(t => ({
+    let mapped = built.map(t => ({
       stoploss: Number(t.stoploss) || 0,
       takeprofit: Number(t.takeprofit) || 0,
     }))
+    if (!tpGate.allowOpenLegTpModify) {
+      mapped = preserveOpenLegTakeProfits(args.familyTrades, mapped).map(t => ({
+        stoploss: Number(t.stoploss) || 0,
+        takeprofit: Number(t.takeprofit) || 0,
+      }))
+    }
+    perLegTargets = mapped
+    tpFrozen = !tpGate.allowOpenLegTpModify
   } else {
     const slNum = typeof parsed.sl === 'number' && parsed.sl > 0 ? parsed.sl : 0
     const sl = slNum > 0 ? slNum : (stored[0]?.stoploss ?? 0)
@@ -150,7 +182,13 @@ export async function resolveFreshBasketReconcileTargets(
     perLegTargets[i] = { ...perLegTargets[i]!, takeprofit: 0 }
   }
 
-  return { perLegTargets, signalTps, effectiveStoploss: effective.stoploss, effectiveSlSource: effective.source }
+  return {
+    perLegTargets,
+    signalTps,
+    effectiveStoploss: effective.stoploss,
+    effectiveSlSource: effective.source,
+    tpFrozen: tpFrozen || undefined,
+  }
 }
 
 /** True when any open leg's DB SL/TP differs from freshly resolved targets. */
@@ -158,7 +196,7 @@ export function basketLegsOutOfSync(
   familyTrades: BasketOpenLeg[],
   perLegTargets: PerLegStopTarget[],
   nImmCwe: number,
-  opts?: { effectiveStoploss?: number },
+  opts?: { effectiveStoploss?: number; tpFrozen?: boolean },
 ): boolean {
   if (!familyTrades.length || !perLegTargets.length) return false
   const expanded = expandPerLegTargetsToCount({
@@ -170,6 +208,7 @@ export function basketLegsOutOfSync(
   const effectiveSl = opts?.effectiveStoploss != null && opts.effectiveStoploss > 0
     ? opts.effectiveStoploss
     : null
+  const tpFrozen = opts?.tpFrozen === true
   for (let i = 0; i < familyTrades.length; i++) {
     const target = expanded[i]
     if (!target) return true
@@ -183,6 +222,16 @@ export function basketLegsOutOfSync(
       ) {
         compareTarget = { ...target, stoploss: effectiveSl }
       }
+    }
+    if (tpFrozen) {
+      const legSl = Number(familyTrades[i]!.sl)
+      const targetSl = compareTarget.stoploss
+      if (targetSl > 0) {
+        if (!Number.isFinite(legSl) || Math.abs(legSl - targetSl) > 1e-8) return true
+      } else if (Number.isFinite(legSl) && legSl > 0) {
+        return true
+      }
+      continue
     }
     if (!stopsAlreadyMatchDb(familyTrades[i]!, compareTarget, nImmCwe, i)) return true
   }
@@ -282,7 +331,7 @@ export async function sweepOpenBasketsForReconcileDrift(
     const jobStatus = (existingJob as { status?: string } | null)?.status
     if (jobStatus === 'pending' || jobStatus === 'claimed') continue
 
-    const { perLegTargets, signalTps, effectiveStoploss } = await resolveFreshBasketReconcileTargets(supabase, {
+    const { perLegTargets, signalTps, effectiveStoploss, tpFrozen } = await resolveFreshBasketReconcileTargets(supabase, {
       anchorSignalId: row.signal_id,
       channelId: row.telegram_channel_id,
       symbol: row.symbol,
@@ -297,7 +346,7 @@ export async function sweepOpenBasketsForReconcileDrift(
     })
 
     if (!perLegTargets.length) continue
-    if (!basketLegsOutOfSync(familyTrades, perLegTargets, 0, { effectiveStoploss })) continue
+    if (!basketLegsOutOfSync(familyTrades, perLegTargets, 0, { effectiveStoploss, tpFrozen })) continue
 
     const jobId = await upsertBasketReconcileJob(supabase, {
       userId: broker.user_id,

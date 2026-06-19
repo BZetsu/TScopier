@@ -56,4 +56,18 @@ describe('basketLegsOutOfSync', () => {
     ]
     assert.equal(basketLegsOutOfSync(family, targets, 0), true)
   })
+
+  it('ignores TP drift when tpFrozen but still detects SL drift', () => {
+    const family = [leg(4332, 4242), leg(4334, 4242)]
+    const targets = [
+      { stoploss: 4245, takeprofit: 9999 },
+      { stoploss: 4245, takeprofit: 8888 },
+    ]
+    assert.equal(basketLegsOutOfSync(family, targets, 0, { tpFrozen: true }), true)
+    const alignedSl = [
+      { stoploss: 4242, takeprofit: 9999 },
+      { stoploss: 4242, takeprofit: 8888 },
+    ]
+    assert.equal(basketLegsOutOfSync(family, alignedSl, 0, { tpFrozen: true }), false)
+  })
 })

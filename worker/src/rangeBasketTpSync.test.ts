@@ -4,8 +4,10 @@ import {
   buildRangeBasketTpTargets,
   coercePositiveTpLevels,
   estimatePlanImmediateLegCount,
+  preserveOpenLegTakeProfits,
   resolveRangeBasketFinalTps,
   resolveRangeBasketLegCounts,
+  resolveRangeTpRebalanceGate,
 } from './rangeBasketTpSync'
 import type { BasketOpenLeg } from './basketSlTpReconcile'
 
@@ -162,4 +164,59 @@ test('buildRangeBasketTpTargets: coerced string TPs produce non-zero phase B tar
   assert.ok(targets.every(t => t.takeprofit > 0))
   assert.ok(targets.some(t => t.takeprofit === 4345))
   assert.ok(targets.some(t => t.takeprofit === 4360))
+})
+
+test('resolveRangeTpRebalanceGate: allows instant_only and force layering', () => {
+  assert.equal(
+    resolveRangeTpRebalanceGate({
+      activePendingCount: 5,
+      maxPendingStepIdx: 10,
+      phase: 'instant_only',
+      hasClosedBasketLegs: false,
+    }).allowOpenLegTpModify,
+    true,
+  )
+  assert.equal(
+    resolveRangeTpRebalanceGate({
+      activePendingCount: 0,
+      maxPendingStepIdx: 10,
+      phase: 'layering_rebalance',
+      forceLayeringRebalance: true,
+      hasClosedBasketLegs: false,
+    }).allowOpenLegTpModify,
+    true,
+  )
+})
+
+test('resolveRangeTpRebalanceGate: denies when layering complete or leg closed', () => {
+  assert.equal(
+    resolveRangeTpRebalanceGate({
+      activePendingCount: 0,
+      maxPendingStepIdx: 10,
+      phase: 'layering_rebalance',
+      hasClosedBasketLegs: false,
+    }).allowOpenLegTpModify,
+    false,
+  )
+  assert.equal(
+    resolveRangeTpRebalanceGate({
+      activePendingCount: 3,
+      maxPendingStepIdx: 10,
+      phase: 'layering_rebalance',
+      hasClosedBasketLegs: true,
+    }).reason,
+    'basket_leg_closed',
+  )
+})
+
+test('preserveOpenLegTakeProfits keeps current leg TPs', () => {
+  const legs = [openLeg('a', 4335, '2026-01-01T00:00:00Z'), openLeg('b', 4330, '2026-01-01T00:00:01Z')]
+  legs[0]!.tp = 4340
+  legs[1]!.tp = 4350
+  const preserved = preserveOpenLegTakeProfits(legs, [
+    { stoploss: 4300, takeprofit: 4530 },
+    { stoploss: 4300, takeprofit: 4510 },
+  ])
+  assert.equal(preserved[0]!.takeprofit, 4340)
+  assert.equal(preserved[1]!.takeprofit, 4350)
 })

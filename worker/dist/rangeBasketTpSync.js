@@ -8,6 +8,9 @@ exports.resolveRangeBasketLegCounts = resolveRangeBasketLegCounts;
 exports.buildRangeBasketTpTargets = buildRangeBasketTpTargets;
 exports.loadRangePendingMeta = loadRangePendingMeta;
 exports.patchPendingRangeLegTakeProfits = patchPendingRangeLegTakeProfits;
+exports.resolveRangeTpRebalanceGate = resolveRangeTpRebalanceGate;
+exports.hasClosedBasketLegs = hasClosedBasketLegs;
+exports.preserveOpenLegTakeProfits = preserveOpenLegTakeProfits;
 exports.syncRangeBasketTakeProfits = syncRangeBasketTakeProfits;
 const basketSlTpReconcile_1 = require("./basketSlTpReconcile");
 const channelActiveTradeParams_1 = require("./channelActiveTradeParams");
@@ -203,6 +206,7 @@ async function logRangeBasketTpRebalance(supabase, args) {
                 target_tp_counts: args.tpCounts,
                 effective_sl: args.effectiveSl,
                 effective_sl_source: args.effectiveSlSource,
+                skipped_reason: args.skippedReason,
             },
         });
     }
@@ -263,6 +267,46 @@ async function loadScopedChannelTpLevels(supabase, args) {
     catch {
         return null;
     }
+}
+/** When open-leg TP redistribution is allowed for range baskets. */
+function resolveRangeTpRebalanceGate(args) {
+    if (args.forceLayeringRebalance === true) {
+        return { allowOpenLegTpModify: true, reason: 'force_layering_rebalance' };
+    }
+    if (args.phase === 'instant_only') {
+        return { allowOpenLegTpModify: true, reason: 'instant_only' };
+    }
+    if (args.hasClosedBasketLegs) {
+        return { allowOpenLegTpModify: false, reason: 'basket_leg_closed' };
+    }
+    if (args.activePendingCount === 0 && args.maxPendingStepIdx > 0) {
+        return { allowOpenLegTpModify: false, reason: 'layering_complete' };
+    }
+    return { allowOpenLegTpModify: false, reason: 'layering_rebalance_frozen' };
+}
+async function hasClosedBasketLegs(supabase, brokerAccountId, signalId) {
+    const { data, error } = await supabase
+        .from('trades')
+        .select('id')
+        .eq('broker_account_id', brokerAccountId)
+        .eq('signal_id', signalId)
+        .eq('status', 'closed')
+        .limit(1);
+    if (error) {
+        console.warn(`[rangeBasketTpSync] closed-leg check failed signal=${signalId}: ${error.message}`);
+        return false;
+    }
+    return (data?.length ?? 0) > 0;
+}
+/** Keep broker/DB take-profits when TP rebalance is frozen. */
+function preserveOpenLegTakeProfits(familyTrades, perLegTargets) {
+    return perLegTargets.map((t, i) => {
+        const curTp = Number(familyTrades[i]?.tp);
+        if (Number.isFinite(curTp) && curTp > 0) {
+            return { ...t, takeprofit: curTp };
+        }
+        return t;
+    });
 }
 async function reloadSignalParsed(supabase, signalId) {
     const { data } = await supabase
@@ -393,13 +437,21 @@ async function syncRangeBasketTakeProfits(args) {
         maxPendingStepIdx,
     });
     const effectivePhase = args.forceLayeringRebalance ? 'layering_rebalance' : phase;
+    const hasClosedLegs = await hasClosedBasketLegs(args.supabase, args.brokerAccountId, args.signalId);
+    const tpGate = resolveRangeTpRebalanceGate({
+        activePendingCount,
+        maxPendingStepIdx,
+        phase: effectivePhase,
+        forceLayeringRebalance: args.forceLayeringRebalance,
+        hasClosedBasketLegs: hasClosedLegs,
+    });
     let openedTickets = null;
     try {
         openedTickets = await (0, basketSlTpReconcile_1.fetchOpenBrokerTickets)(args.api, args.uuid);
     }
     catch { /* optional */ }
     const isBuy = args.direction === 'buy';
-    if (effectivePhase === 'layering_rebalance') {
+    if (effectivePhase === 'layering_rebalance' && activePendingCount > 0) {
         try {
             await patchPendingRangeLegTakeProfits({
                 supabase: args.supabase,
@@ -446,37 +498,43 @@ async function syncRangeBasketTakeProfits(args) {
         effectiveStoploss: effective.stoploss > 0 ? effective.stoploss : undefined,
         orderCommentsEnabled: args.manual.order_comments_enabled !== false,
     });
-    try {
-        modifyResult = await runModifyPass(familyTrades, perLegTargets);
-        if (args.forceLayeringRebalance && modifyResult.summary.failed > 0 && modifyResult.legErrors.length > 0) {
-            await new Promise(r => setTimeout(r, 750));
-            const failedIds = new Set(modifyResult.legErrors.map(e => e.trade_id));
-            const retryTrades = familyTrades.filter(t => failedIds.has(t.id));
-            const retryTargets = retryTrades.map(t => {
-                const idx = familyTrades.findIndex(f => f.id === t.id);
-                return perLegTargets[idx];
-            });
-            if (retryTrades.length > 0) {
-                const retryResult = await runModifyPass(retryTrades, retryTargets);
-                modifyResult = {
-                    summary: {
-                        openLegs: familyTrades.length,
-                        attempted: modifyResult.summary.attempted + retryResult.summary.attempted,
-                        modified: modifyResult.summary.modified + retryResult.summary.modified,
-                        failed: retryResult.summary.failed,
-                        skippedNoTicket: retryResult.summary.skippedNoTicket,
-                        skippedNotOnBroker: retryResult.summary.skippedNotOnBroker,
-                    },
-                    legErrors: retryResult.legErrors,
-                    modifiedTradeIds: [
-                        ...new Set([...modifyResult.modifiedTradeIds, ...retryResult.modifiedTradeIds]),
-                    ],
-                };
+    if (!tpGate.allowOpenLegTpModify) {
+        console.log(`[rangeBasketTpSync] skip open-leg TP modify signal=${args.signalId}`
+            + ` broker=${args.brokerAccountId} reason=${tpGate.reason}`);
+    }
+    else {
+        try {
+            modifyResult = await runModifyPass(familyTrades, perLegTargets);
+            if (args.forceLayeringRebalance && modifyResult.summary.failed > 0 && modifyResult.legErrors.length > 0) {
+                await new Promise(r => setTimeout(r, 750));
+                const failedIds = new Set(modifyResult.legErrors.map(e => e.trade_id));
+                const retryTrades = familyTrades.filter(t => failedIds.has(t.id));
+                const retryTargets = retryTrades.map(t => {
+                    const idx = familyTrades.findIndex(f => f.id === t.id);
+                    return perLegTargets[idx];
+                });
+                if (retryTrades.length > 0) {
+                    const retryResult = await runModifyPass(retryTrades, retryTargets);
+                    modifyResult = {
+                        summary: {
+                            openLegs: familyTrades.length,
+                            attempted: modifyResult.summary.attempted + retryResult.summary.attempted,
+                            modified: modifyResult.summary.modified + retryResult.summary.modified,
+                            failed: retryResult.summary.failed,
+                            skippedNoTicket: retryResult.summary.skippedNoTicket,
+                            skippedNotOnBroker: retryResult.summary.skippedNotOnBroker,
+                        },
+                        legErrors: retryResult.legErrors,
+                        modifiedTradeIds: [
+                            ...new Set([...modifyResult.modifiedTradeIds, ...retryResult.modifiedTradeIds]),
+                        ],
+                    };
+                }
             }
         }
-    }
-    catch (err) {
-        console.warn(`[rangeBasketTpSync] leg modify failed signal=${args.signalId} broker=${args.brokerAccountId}:`, err instanceof Error ? err.message : String(err));
+        catch (err) {
+            console.warn(`[rangeBasketTpSync] leg modify failed signal=${args.signalId} broker=${args.brokerAccountId}:`, err instanceof Error ? err.message : String(err));
+        }
     }
     await logRangeBasketTpRebalance(args.supabase, {
         userId: args.userId,
@@ -491,6 +549,7 @@ async function syncRangeBasketTakeProfits(args) {
         tpCounts,
         effectiveSl: effective.stoploss,
         effectiveSlSource: effective.source,
+        skippedReason: tpGate.allowOpenLegTpModify ? undefined : tpGate.reason,
     });
     if (modifyResult && modifyResult.summary.modified > 0) {
         console.log(`[rangeBasketTpSync] rebalanced signal=${args.signalId} broker=${args.brokerAccountId}`
