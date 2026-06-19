@@ -31,6 +31,7 @@ import {
   type SignalBatchRow,
   type SignalDisplayContext,
 } from '../../lib/signalOverride'
+import { useSignalHistoryRealtime } from '../../hooks/useSignalHistoryRealtime'
 
 const SIGNALS_PAGE_LIMIT = 500
 
@@ -189,10 +190,13 @@ export function SignalHistoryPage() {
 
   const datePreset = useMemo(() => detectPreset(dateFrom, dateTo), [dateFrom, dateTo])
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (opts?: { silent?: boolean }) => {
     if (!user) return
-    setLoading(true)
-    setSymbolLookupReady(false)
+    const silent = opts?.silent ?? false
+    if (!silent) {
+      setLoading(true)
+      setSymbolLookupReady(false)
+    }
     const [channelsRes, signalsRes, openTradesRes] = await Promise.all([
       supabase
         .from('telegram_channels')
@@ -217,7 +221,7 @@ export function SignalHistoryPage() {
     setChannels(loadedChannels)
     setSignals(loadedSignals)
     setOpenSignalIds(buildOpenSignalIdSet((openTradesRes.data ?? []) as { signal_id?: string | null }[]))
-    setLoading(false)
+    if (!silent) setLoading(false)
 
     const nextSymbolContext = await buildSignalSymbolLookup(supabase, user.id, loadedSignals)
     setSymbolContext(nextSymbolContext)
@@ -250,6 +254,12 @@ export function SignalHistoryPage() {
   useEffect(() => {
     void loadData()
   }, [loadData])
+
+  const refreshData = useCallback(() => {
+    void loadData({ silent: true })
+  }, [loadData])
+
+  useSignalHistoryRealtime(user?.id, refreshData)
 
   const channelById = useMemo(() => {
     const map = new Map<string, TelegramChannel>()

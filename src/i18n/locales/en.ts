@@ -684,7 +684,7 @@ export const en: Translations = {
     statusClosed: 'Closed',
     editSignal: 'Edit SL/TP',
     updateLiveTrades: 'Update Live Trades',
-    saving: 'Saving…',
+    saving: 'Sending Order',
     originalSignal: 'Channel signal',
     overrideSignal: 'Current override',
     applySuccess: 'Override saved. Applied to {count} open leg(s).',
