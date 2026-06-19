@@ -5,6 +5,7 @@ import {
   coercePositiveTpLevels,
   estimatePlanImmediateLegCount,
   preserveOpenLegTakeProfits,
+  applyOpenLegStopLossToTargets,
   resolveRangeBasketFinalTps,
   resolveRangeBasketLegCounts,
   resolveRangeTpRebalanceGate,
@@ -131,7 +132,10 @@ test('resolveRangeBasketFinalTps: prefers channel ladder over single open-leg TP
 })
 
 test('buildRangeBasketTpTargets: stoplossOverride wins over anchor parsed.sl', () => {
-  const legs = [openLeg('a', 4255, '2026-01-01T00:00:00Z'), openLeg('b', 4252, '2026-01-01T00:00:01Z')]
+  const legs = [
+    { ...openLeg('a', 4255, '2026-01-01T00:00:00Z'), sl: null },
+    { ...openLeg('b', 4252, '2026-01-01T00:00:01Z'), sl: null },
+  ]
   const targets = buildRangeBasketTpTargets({
     familyTrades: legs,
     plan: null,
@@ -219,4 +223,39 @@ test('preserveOpenLegTakeProfits keeps current leg TPs', () => {
   ])
   assert.equal(preserved[0]!.takeprofit, 4340)
   assert.equal(preserved[1]!.takeprofit, 4350)
+})
+
+test('applyOpenLegStopLossToTargets: propagates sell breakeven SL to legs still on anchor', () => {
+  const legs = [
+    { ...openLeg('a', 4165.25, '2026-01-01T00:00:00Z'), sl: 4164.25, direction: 'sell' as const },
+    { ...openLeg('b', 4165.25, '2026-01-01T00:00:01Z'), sl: 4172.5, direction: 'sell' as const },
+  ]
+  const applied = applyOpenLegStopLossToTargets(
+    legs,
+    [
+      { stoploss: 4172.5, takeprofit: 4155 },
+      { stoploss: 4172.5, takeprofit: 4150 },
+    ],
+    false,
+  )
+  assert.equal(applied[0]!.stoploss, 4164.25)
+  assert.equal(applied[1]!.stoploss, 4164.25)
+})
+
+test('buildRangeBasketTpTargets: sell rebalance copies breakeven SL from open legs', () => {
+  const legs = [
+    { ...openLeg('a', 4165.25, '2026-01-01T00:00:00Z'), sl: 4164.25, direction: 'sell' as const },
+    { ...openLeg('b', 4166, '2026-01-01T00:00:01Z'), sl: 4172.5, direction: 'sell' as const },
+  ]
+  const targets = buildRangeBasketTpTargets({
+    familyTrades: legs,
+    plan: null,
+    parsed: { sl: 4172.5, tp: [4155, 4150] },
+    tpLots: TP_LOTS,
+    direction: 'sell',
+    activePendingCount: 0,
+    maxPendingStepIdx: 10,
+    forceLayeringRebalance: true,
+  })
+  assert.ok(targets.every(t => t.stoploss === 4164.25))
 })

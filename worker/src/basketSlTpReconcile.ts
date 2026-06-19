@@ -517,7 +517,7 @@ export async function runBasketLegModifies(args: {
       const curSl = Number(tr.sl)
       if (Number.isFinite(curSl) && curSl > 0) modSl = curSl
     }
-    if (internalRebalance === true && modSl > 0) {
+    if (modSl > 0) {
       const curSl = Number(tr.sl)
       if (Number.isFinite(curSl) && curSl > 0 && isSlMoreProtective(curSl, modSl, direction === 'buy')) {
         modSl = curSl

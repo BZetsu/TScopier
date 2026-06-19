@@ -10,6 +10,7 @@ exports.loadRangePendingMeta = loadRangePendingMeta;
 exports.patchPendingRangeLegTakeProfits = patchPendingRangeLegTakeProfits;
 exports.resolveRangeTpRebalanceGate = resolveRangeTpRebalanceGate;
 exports.hasClosedBasketLegs = hasClosedBasketLegs;
+exports.applyOpenLegStopLossToTargets = applyOpenLegStopLossToTargets;
 exports.preserveOpenLegTakeProfits = preserveOpenLegTakeProfits;
 exports.syncRangeBasketTakeProfits = syncRangeBasketTakeProfits;
 const basketSlTpReconcile_1 = require("./basketSlTpReconcile");
@@ -166,7 +167,7 @@ function buildRangeBasketTpTargets(args) {
         ...toEntryQualityLeg(tr),
         stoploss: sl,
     }));
-    return (0, tpBucketDistribution_1.buildRangeBasketPerLegStopTargets)({
+    const targets = (0, tpBucketDistribution_1.buildRangeBasketPerLegStopTargets)({
         phase,
         openLegs,
         immediateLegCount,
@@ -175,6 +176,7 @@ function buildRangeBasketTpTargets(args) {
         finalTps,
         tpLots,
     });
+    return applyOpenLegStopLossToTargets(familyTrades, targets, isBuy);
 }
 async function loadRangePendingMeta(supabase, brokerAccountId, signalId) {
     const { data: pendingRows } = await supabase
@@ -297,6 +299,24 @@ async function hasClosedBasketLegs(supabase, brokerAccountId, signalId) {
         return false;
     }
     return (data?.length ?? 0) > 0;
+}
+/**
+ * Propagate the tightest SL already on open legs (e.g. breakeven) to every rebalance target.
+ * New range layers otherwise inherit anchor SL and overwrite breakeven on sibling legs.
+ */
+function applyOpenLegStopLossToTargets(familyTrades, perLegTargets, isBuy) {
+    const basketProtective = (0, basketEffectiveStops_1.mostProtectiveOpenLegSl)(familyTrades, isBuy);
+    return perLegTargets.map((t, i) => {
+        let sl = Number(t.stoploss) || 0;
+        if (basketProtective != null && basketProtective > 0) {
+            sl = (0, basketEffectiveStops_1.mergeWithProtectiveLegSl)(sl, basketProtective, isBuy);
+        }
+        const curSl = Number(familyTrades[i]?.sl);
+        if (Number.isFinite(curSl) && curSl > 0) {
+            sl = (0, basketEffectiveStops_1.mergeWithProtectiveLegSl)(sl, curSl, isBuy);
+        }
+        return { ...t, stoploss: sl };
+    });
 }
 /** Keep broker/DB take-profits when TP rebalance is frozen. */
 function preserveOpenLegTakeProfits(familyTrades, perLegTargets) {

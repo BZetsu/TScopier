@@ -12,6 +12,8 @@ import {
 } from './channelActiveTradeParams'
 import {
   logEffectiveBasketStops,
+  mergeWithProtectiveLegSl,
+  mostProtectiveOpenLegSl,
   resolveEffectiveBasketStops,
 } from './basketEffectiveStops'
 import type { ManualTpLot } from './manualPlanning/types'
@@ -247,7 +249,7 @@ export function buildRangeBasketTpTargets(args: {
     stoploss: sl,
   }))
 
-  return buildRangeBasketPerLegStopTargets({
+  const targets = buildRangeBasketPerLegStopTargets({
     phase,
     openLegs,
     immediateLegCount,
@@ -256,6 +258,7 @@ export function buildRangeBasketTpTargets(args: {
     finalTps,
     tpLots,
   })
+  return applyOpenLegStopLossToTargets(familyTrades, targets, isBuy)
 }
 
 export async function loadRangePendingMeta(
@@ -437,6 +440,29 @@ export async function hasClosedBasketLegs(
     return false
   }
   return (data?.length ?? 0) > 0
+}
+
+/**
+ * Propagate the tightest SL already on open legs (e.g. breakeven) to every rebalance target.
+ * New range layers otherwise inherit anchor SL and overwrite breakeven on sibling legs.
+ */
+export function applyOpenLegStopLossToTargets(
+  familyTrades: BasketOpenLeg[],
+  perLegTargets: PerLegStopTargetLike[],
+  isBuy: boolean,
+): PerLegStopTargetLike[] {
+  const basketProtective = mostProtectiveOpenLegSl(familyTrades, isBuy)
+  return perLegTargets.map((t, i) => {
+    let sl = Number(t.stoploss) || 0
+    if (basketProtective != null && basketProtective > 0) {
+      sl = mergeWithProtectiveLegSl(sl, basketProtective, isBuy)
+    }
+    const curSl = Number(familyTrades[i]?.sl)
+    if (Number.isFinite(curSl) && curSl > 0) {
+      sl = mergeWithProtectiveLegSl(sl, curSl, isBuy)
+    }
+    return { ...t, stoploss: sl }
+  })
 }
 
 /** Keep broker/DB take-profits when TP rebalance is frozen. */

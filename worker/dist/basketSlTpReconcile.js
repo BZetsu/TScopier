@@ -401,7 +401,7 @@ async function runBasketLegModifies(args) {
             if (Number.isFinite(curSl) && curSl > 0)
                 modSl = curSl;
         }
-        if (internalRebalance === true && modSl > 0) {
+        if (modSl > 0) {
             const curSl = Number(tr.sl);
             if (Number.isFinite(curSl) && curSl > 0 && (0, basketEffectiveStops_1.isSlMoreProtective)(curSl, modSl, direction === 'buy')) {
                 modSl = curSl;
