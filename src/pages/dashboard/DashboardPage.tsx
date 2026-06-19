@@ -2327,7 +2327,12 @@ export function DashboardPage() {
         <div className="px-4 sm:px-5 py-4 border-b border-neutral-100 dark:border-neutral-800 flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <div>
-              <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">{la.title}</p>
+              <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-50 inline-flex items-center gap-2">
+                {la.title}
+                <span className="inline-flex items-center justify-center min-w-[1.375rem] h-5 px-1.5 rounded-full bg-neutral-100 dark:bg-neutral-800 text-xs font-semibold text-neutral-500 dark:text-neutral-400 tabular-nums">
+                  {linkedAccounts.length}
+                </span>
+              </p>
               <p className="text-xs text-neutral-400 dark:text-neutral-500">{la.subtitle}</p>
             </div>
           </div>
@@ -2726,7 +2731,7 @@ function LinkedAccountRow({
           onOpenStats()
         }
       }}
-      className="grid grid-cols-9 gap-2 px-4 sm:px-5 py-3 items-center hover:bg-neutral-50 dark:hover:bg-neutral-800/50 transition-colors cursor-pointer"
+      className="grid grid-cols-9 gap-2 px-4 sm:px-5 py-3 items-center hover:bg-teal-50 dark:hover:bg-teal-950/40 transition-colors cursor-pointer"
     >
       <div className="flex flex-col min-w-0">
         <span
