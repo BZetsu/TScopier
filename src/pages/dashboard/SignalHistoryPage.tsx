@@ -39,6 +39,8 @@ const DESKTOP_TH =
 
 const OPEN_SIGNAL_COLUMN = 'bg-teal-50 dark:bg-teal-950/40'
 
+const SIGNAL_COLUMN = 'bg-teal-50/30 dark:bg-teal-950/20'
+
 const selectClass =
   'px-3 py-2.5 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-sm text-neutral-700 dark:text-neutral-300 focus:outline-none focus:ring-2 focus:ring-primary-500 w-full'
 
@@ -443,7 +445,7 @@ export function SignalHistoryPage() {
             <thead className="sticky top-0 z-10 bg-white dark:bg-neutral-900">
               <tr>
                 <th className={DESKTOP_TH}>{sh.colChannel}</th>
-                <th className={DESKTOP_TH}>{sh.colSignal}</th>
+                <th className={clsx(DESKTOP_TH, SIGNAL_COLUMN)}>{sh.colSignal}</th>
                 <th className={clsx(DESKTOP_TH, 'text-center')}>{sh.colStatus}</th>
                 <th className={clsx(DESKTOP_TH, 'text-right')}>{sh.colTime}</th>
               </tr>
@@ -541,7 +543,12 @@ function SignalRow({
         ? 'text-error-600 dark:text-error-400'
         : 'text-neutral-600 dark:text-neutral-300'
 
-  const rowInteractiveClass = 'cursor-pointer transition-colors hover:bg-neutral-50 dark:hover:bg-neutral-800/40'
+  const rowInteractiveClass = clsx(
+    'cursor-pointer transition-colors',
+    isOpen
+      ? 'hover:bg-teal-100/50 dark:hover:bg-teal-950/50'
+      : 'hover:bg-neutral-50 dark:hover:bg-neutral-800/40',
+  )
 
   const handleKeyDown = (e: KeyboardEvent) => {
     if (e.key === 'Enter' || e.key === ' ') {
@@ -602,7 +609,7 @@ function SignalRow({
           <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">{symbol}</p>
         ) : null}
       </td>
-      <td className={clsx(DESKTOP_TD, isOpen && OPEN_SIGNAL_COLUMN)}>
+      <td className={clsx(DESKTOP_TD, isOpen ? OPEN_SIGNAL_COLUMN : SIGNAL_COLUMN)}>
         <p className={clsx('text-xs font-semibold uppercase mb-1', actionTone)}>{actionLabel}</p>
         <p className="text-sm text-neutral-800 dark:text-neutral-100 truncate" title={summary}>{summary}</p>
       </td>
