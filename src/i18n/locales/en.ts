@@ -526,6 +526,9 @@ export const en: Translations = {
     noTradeActivities: 'No trade activities yet.',
     management: 'Activities',
     noData: 'No Data',
+    telegramNotConnectedTitle: 'Telegram not connected',
+    telegramNotConnectedBody: 'Connect your Telegram account to start copying signals from your channels.',
+    connectTelegram: 'Connect Telegram',
     linkedAccounts: {
       title: 'Linked Accounts',
       subtitle: 'Connected broker accounts used by the copier',

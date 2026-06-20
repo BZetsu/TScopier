@@ -112,6 +112,7 @@ import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { formatMoneyWithCode } from '../../lib/currency'
 import { interpolate } from '../../i18n/interpolate'
 import { SubscriptionBanner } from '../../components/billing/SubscriptionBanner'
+import { TelegramConnectBanner } from '../../components/dashboard/TelegramConnectBanner'
 import {
   sortLinkedAccounts,
   type LinkedAccountSortKey,
@@ -1236,7 +1237,7 @@ export function DashboardPage() {
           limit: DASHBOARD_MT_HISTORY_LIMIT,
           accounts: brokerAccountsEarly,
           includeBalanceCashflow: false,
-        })
+        }).catch(() => [] as MtTrade[])
       : Promise.resolve([] as MtTrade[])
 
     const [channelsRes, tradesRes, todaySignalsRes, yesterdaySignalsRes, logsRes, allSignalsRes, channelsMetaRes, attributionRes, aiLogsRes, prefetchedMtTrades] = await Promise.all([
@@ -2126,6 +2127,7 @@ export function DashboardPage() {
         <>
       <PageHeader title={t.dashboard.title} />
       <SubscriptionBanner />
+      <TelegramConnectBanner className="mb-6" />
 
       {/* Stats bar */}
       <div className="bg-white dark:bg-neutral-900 rounded-2xl border border-neutral-200 dark:border-neutral-800 mb-6">

@@ -527,6 +527,9 @@ export const fr: Translations = {
     noTradeActivities: 'Aucun journal du worker des canaux pour le moment.',
     management: 'Activités',
     noData: 'Aucune donnée',
+    telegramNotConnectedTitle: 'Telegram non connecté',
+    telegramNotConnectedBody: 'Connectez votre compte Telegram pour commencer à copier les signaux de vos canaux.',
+    connectTelegram: 'Connecter Telegram',
     linkedAccounts: {
       title: 'Comptes liés',
       subtitle: 'Comptes broker connectés utilisés par le copieur',

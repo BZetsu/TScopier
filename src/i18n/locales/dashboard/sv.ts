@@ -55,6 +55,9 @@ export const dashboardSv: DashboardBundleTranslations = {
     noTradeActivities: 'Inga kanalarbetarloggar ännu.',
     management: 'Aktiviteter',
     noData: 'Ingen data',
+    telegramNotConnectedTitle: 'Telegram not connected',
+    telegramNotConnectedBody: 'Connect your Telegram account to start copying signals from your channels.',
+    connectTelegram: 'Connect Telegram',
     linkedAccounts: {
       title: 'Länkade konton',
       subtitle: 'Anslutna mäklarkonton som används av kopieraren',

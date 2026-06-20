@@ -278,6 +278,9 @@ export interface DashboardTranslations {
   noTradeActivities: string
   management: string
   noData: string
+  telegramNotConnectedTitle: string
+  telegramNotConnectedBody: string
+  connectTelegram: string
   linkedAccounts: DashboardLinkedAccountsTranslations
   brokerStats: DashboardBrokerStatsTranslations
 }

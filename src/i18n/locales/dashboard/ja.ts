@@ -53,6 +53,9 @@ export const dashboardJa: DashboardBundleTranslations = {
     noTradeActivities: 'チャネルワーカーのログはまだありません。',
     management: 'アクティビティ',
     noData: 'データなし',
+    telegramNotConnectedTitle: 'Telegram not connected',
+    telegramNotConnectedBody: 'Connect your Telegram account to start copying signals from your channels.',
+    connectTelegram: 'Connect Telegram',
     linkedAccounts: {
       title: '連携口座',
       subtitle: 'コピー機能で使用する接続済みブローカー口座',

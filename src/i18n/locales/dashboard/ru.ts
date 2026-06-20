@@ -55,6 +55,9 @@ export const dashboardRu: DashboardBundleTranslations = {
     noTradeActivities: 'Пока нет логов обработчика каналов.',
     management: 'Активности',
     noData: 'Нет данных',
+    telegramNotConnectedTitle: 'Telegram not connected',
+    telegramNotConnectedBody: 'Connect your Telegram account to start copying signals from your channels.',
+    connectTelegram: 'Connect Telegram',
     linkedAccounts: {
       title: 'Связанные счета',
       subtitle: 'Подключенные брокерские счета, используемые копировщиком',
