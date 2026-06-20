@@ -18,7 +18,7 @@ import {
   tradePipPnl,
 } from '../../lib/backtestDisplay'
 import { BacktestEditSignalModal } from './BacktestEditSignalModal'
-import { BacktestPriceLadder } from './BacktestPriceLadder'
+import { BacktestTradeReplayChart } from './BacktestTradeReplayChart'
 import { BacktestEventTimeline } from './BacktestEventTimeline'
 
 interface BacktestResultModalProps {
@@ -117,6 +117,7 @@ export function BacktestResultModal({
   }
 
   const handleTradeUpdated = (updated: BacktestTradeRow, run: BacktestRunRow | null) => {
+    backtestApi.clearTradeReplayCache(trade.id)
     setDisplayTrade(updated)
     onTradeUpdated(updated, run)
   }
@@ -138,7 +139,7 @@ export function BacktestResultModal({
         />
         <div
           ref={panelRef}
-          className="relative w-full sm:max-w-lg max-h-[92vh] overflow-y-auto rounded-t-2xl sm:rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 shadow-2xl"
+          className="relative w-full sm:max-w-2xl max-h-[92vh] overflow-y-auto rounded-t-2xl sm:rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 shadow-2xl"
         >
           <div className="sticky top-0 z-10 flex items-center justify-between gap-3 px-5 py-4 border-b border-neutral-100 dark:border-neutral-800 bg-white/95 dark:bg-neutral-900/95 backdrop-blur">
             <h2 id="backtest-result-title" className="text-lg font-semibold text-neutral-900 dark:text-neutral-50">
@@ -239,7 +240,7 @@ export function BacktestResultModal({
               <span className="tabular-nums">{formatSignalTimestamp(displayTrade.signal_at)}</span>
             </div>
 
-            <BacktestPriceLadder trade={displayTrade} labels={btLabels} />
+            <BacktestTradeReplayChart key={displayTrade.id} trade={displayTrade} />
             <BacktestEventTimeline trade={displayTrade} labels={btLabels} />
           </div>
         </div>

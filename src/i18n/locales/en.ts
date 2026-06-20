@@ -1060,6 +1060,15 @@ export const en: Translations = {
       be: 'BE',
       tp: 'TP{n}',
     },
+    replayTitle: 'Price replay',
+    replayLoading: 'Loading price replay…',
+    replayError: 'Could not load price replay.',
+    replayPlay: 'Play',
+    replayPause: 'Pause',
+    replayScrub: 'Scrub replay',
+    replaySourceTicks: 'Tick data',
+    replaySourceBars: 'M1 bars (ticks unavailable)',
+    replayExit: 'Exit',
     errors: {
       rateLimit:
         'Market data unavailable — ensure your broker is connected in Brokers and try again.',

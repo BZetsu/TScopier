@@ -2,7 +2,7 @@ import { FxsocketApiError, type FxsocketClient } from "../fxsocketClient.ts"
 import {
   fxsocketBarsToMidPoints,
   fxsocketTicksToMidPoints,
-  msToFxsocketDate,
+  fxsocketMarketQueryRange,
   resolveBrokerSymbol,
   sanitizeMarketDataErrorMessage,
   isRetriableMarketDataError,
@@ -41,7 +41,7 @@ function signalWindowForSymbol(
   }
 }
 
-async function fetchUtcOffsetSeconds(fx: FxsocketClient, accountId: string): Promise<number> {
+export async function fetchUtcOffsetSeconds(fx: FxsocketClient, accountId: string): Promise<number> {
   try {
     const tz = await fx.serverTimezone(accountId)
     const offset = Number(tz.utcOffsetSeconds ?? tz.utc_offset_seconds ?? 0)
@@ -51,7 +51,7 @@ async function fetchUtcOffsetSeconds(fx: FxsocketClient, accountId: string): Pro
   }
 }
 
-async function fetchBarsForSymbol(
+export async function fetchBarsForSymbol(
   fx: FxsocketClient,
   ctx: BacktestBrokerContext,
   brokerSymbol: string,
@@ -61,13 +61,14 @@ async function fetchBarsForSymbol(
   utcOffsetSeconds: number,
   retry = true,
 ): Promise<{ pts: PricePoint[]; apiCalls: number; log: string; failed: boolean }> {
-  const rangeLabel = `${msToFxsocketDate(fromMs)}→${msToFxsocketDate(toMs)}`
+  const query = fxsocketMarketQueryRange(fromMs, toMs, utcOffsetSeconds)
+  const rangeLabel = `${query.from}→${query.to}`
   try {
     const bars = await fx.priceHistory(ctx.fxsocketAccountId, {
       symbol: brokerSymbol,
       timeframe,
-      from: msToFxsocketDate(fromMs),
-      to: msToFxsocketDate(toMs),
+      from: query.from,
+      to: query.to,
     })
     const pts = fxsocketBarsToMidPoints(bars, utcOffsetSeconds)
     return {
@@ -94,7 +95,7 @@ async function fetchBarsForSymbol(
   }
 }
 
-async function fetchTicksForSymbol(
+export async function fetchTicksForSymbol(
   fx: FxsocketClient,
   ctx: BacktestBrokerContext,
   brokerSymbol: string,
@@ -103,12 +104,13 @@ async function fetchTicksForSymbol(
   utcOffsetSeconds: number,
   retry = true,
 ): Promise<{ pts: PricePoint[]; apiCalls: number; log: string; failed: boolean }> {
-  const rangeLabel = `${msToFxsocketDate(fromMs)}→${msToFxsocketDate(toMs)}`
+  const query = fxsocketMarketQueryRange(fromMs, toMs, utcOffsetSeconds)
+  const rangeLabel = `${query.from}→${query.to}`
   try {
     const ticks = await fx.quoteTicks(ctx.fxsocketAccountId, {
       symbol: brokerSymbol,
-      from: msToFxsocketDate(fromMs),
-      to: msToFxsocketDate(toMs),
+      from: query.from,
+      to: query.to,
     })
     const pts = fxsocketTicksToMidPoints(ticks, utcOffsetSeconds)
     return {

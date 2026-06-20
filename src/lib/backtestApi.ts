@@ -3,6 +3,7 @@ import type {
   BacktestEquityRow,
   BacktestRunMode,
   BacktestRunRow,
+  BacktestTradeReplayResponse,
   BacktestTradeRow,
   SimpleBacktestConfig,
 } from './backtestTypes'
@@ -195,6 +196,8 @@ export async function waitForSignalSyncComplete(
   throw new Error('Signal sync is taking longer than expected. Try again in a moment.')
 }
 
+const tradeReplayCache = new Map<string, BacktestTradeReplayResponse>()
+
 export const backtestApi = {
   async sync(config: SimpleBacktestConfig): Promise<
     | { mode: 'async'; sync_run_id: string }
@@ -270,5 +273,21 @@ export const backtestApi = {
       trade_id: tradeId,
     })
     return { run_id: data.run_id, run: data.run ?? null }
+  },
+
+  async getTradeReplay(tradeId: string): Promise<BacktestTradeReplayResponse> {
+    const cached = tradeReplayCache.get(tradeId)
+    if (cached) return cached
+    const data = await call<BacktestTradeReplayResponse>({
+      action: 'trade_replay',
+      trade_id: tradeId,
+    })
+    tradeReplayCache.set(tradeId, data)
+    return data
+  },
+
+  clearTradeReplayCache(tradeId?: string) {
+    if (tradeId) tradeReplayCache.delete(tradeId)
+    else tradeReplayCache.clear()
   },
 }

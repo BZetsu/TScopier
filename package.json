@@ -18,6 +18,7 @@
     "@livechat/widget-react": "^1.4.0",
     "@supabase/supabase-js": "^2.105.3",
     "clsx": "^2.1.1",
+    "lightweight-charts": "^5.2.0",
     "lucide-react": "^1.14.0",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",

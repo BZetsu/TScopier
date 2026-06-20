@@ -1119,6 +1119,15 @@ export interface BacktestTranslations {
     be: string
     tp: string
   }
+  replayTitle: string
+  replayLoading: string
+  replayError: string
+  replayPlay: string
+  replayPause: string
+  replayScrub: string
+  replaySourceTicks: string
+  replaySourceBars: string
+  replayExit: string
   errors: {
     rateLimit: string
   }

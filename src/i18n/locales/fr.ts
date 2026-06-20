@@ -1061,6 +1061,15 @@ export const fr: Translations = {
       be: 'BE',
       tp: 'TP{n}',
     },
+    replayTitle: 'Relecture du prix',
+    replayLoading: 'Chargement de la relecture…',
+    replayError: 'Impossible de charger la relecture.',
+    replayPlay: 'Lecture',
+    replayPause: 'Pause',
+    replayScrub: 'Parcourir la relecture',
+    replaySourceTicks: 'Données tick',
+    replaySourceBars: 'Barres M1 (ticks indisponibles)',
+    replayExit: 'Sortie',
     errors: {
       rateLimit:
         'Données marché indisponibles — vérifiez que votre courtier est connecté dans Courtiers, puis réessayez.',

@@ -1060,6 +1060,15 @@ export const es: Translations = {
       be: 'BE',
       tp: 'TP{n}',
     },
+    replayTitle: 'Reproducción de precio',
+    replayLoading: 'Cargando reproducción…',
+    replayError: 'No se pudo cargar la reproducción.',
+    replayPlay: 'Reproducir',
+    replayPause: 'Pausa',
+    replayScrub: 'Avanzar reproducción',
+    replaySourceTicks: 'Datos tick',
+    replaySourceBars: 'Barras M1 (ticks no disponibles)',
+    replayExit: 'Salida',
     errors: {
       rateLimit:
         'Datos de mercado no disponibles — asegúrate de que tu bróker esté conectado en Brókers e inténtalo de nuevo.',

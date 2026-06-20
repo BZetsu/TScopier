@@ -12,6 +12,11 @@ import {
   resimulateBacktestTrade,
 } from "../_shared/backtest/resimulateTrade.ts"
 import {
+  fetchTradeReplayData,
+  TradeReplayNoDataError,
+  TradeReplayNotFoundError,
+} from "../_shared/backtest/tradeReplayData.ts"
+import {
   BacktestBrokerNotFoundError,
   BacktestSymbolNotFoundError,
   resolveBacktestBroker,
@@ -307,6 +312,25 @@ Deno.serve(async (req: Request) => {
       return Response.json({ ok: true, trade, run }, { headers: corsHeaders })
     }
 
+    if (action === "trade_replay") {
+      const tradeId = String(body.trade_id ?? "")
+      if (!tradeId) return bad(400, "trade_id required")
+
+      if (!isFxsocketConfigured(Deno.env)) {
+        return bad(503, "FXSOCKET_API_KEY not configured")
+      }
+      const fx = new FxsocketClient(Deno.env)
+
+      try {
+        const replay = await fetchTradeReplayData(supabase, fx, userId, tradeId)
+        return Response.json(replay, { headers: corsHeaders })
+      } catch (e) {
+        if (e instanceof TradeReplayNotFoundError) return bad(404, e.message)
+        if (e instanceof TradeReplayNoDataError) return bad(404, e.message)
+        throw e
+      }
+    }
+
     if (action === "delete_trade") {
       const tradeId = String(body.trade_id ?? "")
       if (!tradeId) return bad(400, "trade_id required")
@@ -339,7 +363,8 @@ Deno.serve(async (req: Request) => {
     return bad(400, `Unknown action: ${action}`)
   } catch (e) {
     const status = e instanceof FxsocketApiError ? e.status
-      : e instanceof BacktestBrokerNotFoundError || e instanceof BacktestSymbolNotFoundError ? 400
+      : e instanceof BacktestBrokerNotFoundError || e instanceof BacktestSymbolNotFoundError
+        || e instanceof TradeReplayNotFoundError || e instanceof TradeReplayNoDataError ? 400
       : 500
     const msg = sanitizeMarketDataErrorMessage(
       e instanceof Error ? e.message : "Internal error",
