@@ -46,6 +46,8 @@ export interface SubscriptionUsage {
 interface SubscriptionContextValue {
   subscription: Subscription | null
   loading: boolean
+  /** Subscription row fetch only (excludes profile loading). */
+  subscriptionLoading: boolean
   isAdmin: boolean
   usage: SubscriptionUsage
   usageLoading: boolean
@@ -77,6 +79,7 @@ const CHECKOUT_SYNC_PENDING_KEY = 'tscopier.checkout.sync.pending'
 const SubscriptionContext = createContext<SubscriptionContextValue>({
   subscription: null,
   loading: true,
+  subscriptionLoading: true,
   isAdmin: false,
   usage: emptyUsage,
   usageLoading: true,
@@ -312,6 +315,7 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
       value={{
         subscription,
         loading: loading || profileLoading,
+        subscriptionLoading: loading,
         isAdmin,
         usage,
         usageLoading,

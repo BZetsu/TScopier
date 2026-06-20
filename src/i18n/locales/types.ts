@@ -1190,6 +1190,7 @@ export interface PricingTranslations {
     currentPlan: string
     billed: string
     noActiveSubscription: string
+    noSubscriptionHeaderBanner: string
     freePlan: string
     freePlanSummary: string
     basicPlanSummary: string

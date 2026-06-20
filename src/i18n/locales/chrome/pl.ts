@@ -48,6 +48,10 @@ export const chromePl: AppChromeTranslations = {
       pausedHint: 'Kopiowanie sygnałów jest wstrzymane',
       statusRunning: 'Kopiator działa',
       statusStopped: 'Wznów kopiator',
+      statusPaused: 'Kopiator wstrzymany',
+      statusCopierStopped: 'Kopiator zatrzymany',
+      stoppedHintSubscription: 'Zasubskrybuj, aby uruchomić kopiator',
+      stoppedHintSetup: 'Połącz Telegram, dodaj kanały i powiąż brokera, aby uruchomić kopiator',
       stopCopier: 'Wstrzymaj kopiator',
       confirmTitle: 'Wstrzymać kopiator',
       confirmBody:

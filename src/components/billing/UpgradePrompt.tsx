@@ -3,6 +3,7 @@ import clsx from 'clsx'
 import { useT } from '../../context/LocaleContext'
 import { useSubscription } from '../../context/SubscriptionContext'
 import { getSubscribeCtaLabel } from '../../lib/subscriptionCta'
+import { lossBadgeOutlineClass, lossBannerClass, lossTextClass } from '../../lib/pnlDisplay'
 import { Button } from '../ui/Button'
 
 export type UpgradePromptVariant = 'inline' | 'banner' | 'compact'
@@ -34,21 +35,21 @@ export function UpgradePrompt({
     return (
       <div
         role="alert"
-        className={clsx(
-          'rounded-xl border border-error-200 bg-error-50 px-4 py-3 dark:border-error-800 dark:bg-error-950/40',
-          className,
-        )}
+        className={clsx('rounded-xl border px-4 py-3', lossBannerClass, className)}
       >
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <p className="text-sm font-semibold text-error-900 dark:text-error-100">{heading}</p>
-            <p className="mt-0.5 text-sm text-error-800/90 dark:text-error-200/80">{reason}</p>
+            <p className={clsx('text-sm font-semibold', lossTextClass)}>{heading}</p>
+            <p className={clsx('mt-0.5 text-sm opacity-90', lossTextClass)}>{reason}</p>
           </div>
           <div className="flex flex-wrap gap-2">
             {manageBilling ? (
               <Link
                 to="/billing"
-                className="inline-flex items-center justify-center gap-2 rounded-lg border border-error-200 bg-white px-3 py-1.5 text-sm font-medium text-error-800 shadow-sm transition-all hover:bg-error-50 dark:border-error-800 dark:bg-error-950 dark:text-error-200 dark:hover:bg-error-900"
+                className={clsx(
+                  'inline-flex items-center justify-center gap-2 rounded-lg border bg-white px-3 py-1.5 text-sm font-medium shadow-sm transition-all hover:bg-error-50 dark:bg-error-950 dark:hover:bg-error-900',
+                  lossBadgeOutlineClass,
+                )}
               >
                 {pw.manageBilling}
               </Link>

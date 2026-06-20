@@ -83,6 +83,7 @@ export const pricingSv: PricingBundleTranslations = {
       currentPlan: 'Nuvarande plan',
       billed: 'Faktureras',
       noActiveSubscription: 'Ingen aktiv prenumeration',
+      noSubscriptionHeaderBanner: 'Du har ingen aktiv prenumeration.',
       freePlan: 'Gratis',
       freePlanSummary: 'Endast visning - prenumerera för att koppla brokers och kopiera signaler',
       basicPlanSummary: '1 broker · 5 kanaler · 3 TP · Enkel trading-läge',

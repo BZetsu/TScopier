@@ -83,6 +83,7 @@ export const pricingJa: PricingBundleTranslations = {
       currentPlan: '現在のプラン',
       billed: '請求',
       noActiveSubscription: '有効なサブスクリプションなし',
+      noSubscriptionHeaderBanner: '有効なサブスクリプションがありません。',
       freePlan: '無料',
       freePlanSummary: '閲覧のみ - ブローカー接続とシグナルコピーには購読が必要です',
       basicPlanSummary: 'ブローカー1件 · チャンネル5件 · TP 3件 · シングルトレードモード',

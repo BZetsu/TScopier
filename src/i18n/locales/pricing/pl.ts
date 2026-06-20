@@ -83,6 +83,7 @@ export const pricingPl: PricingBundleTranslations = {
       currentPlan: 'Aktualny plan',
       billed: 'Rozliczane',
       noActiveSubscription: 'Brak aktywnej subskrypcji',
+      noSubscriptionHeaderBanner: 'Nie masz aktywnej subskrypcji.',
       freePlan: 'Darmowy',
       freePlanSummary: 'Tylko podgląd - zasubskrybuj, aby łączyć brokerów i kopiować sygnały',
       basicPlanSummary: '1 broker · 5 kanałów · 3 TP · Tryb pojedynczego handlu',

@@ -113,7 +113,6 @@ import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { lossTextClass, pnlSignTextClass } from '../../lib/pnlDisplay'
 import { formatMoneyWithCode } from '../../lib/currency'
 import { interpolate } from '../../i18n/interpolate'
-import { SubscriptionBanner } from '../../components/billing/SubscriptionBanner'
 import { TelegramConnectBanner } from '../../components/dashboard/TelegramConnectBanner'
 import {
   sortLinkedAccounts,
@@ -2128,7 +2127,6 @@ export function DashboardPage() {
       ) : (
         <>
       <PageHeader title={t.dashboard.title} />
-      <SubscriptionBanner />
       <TelegramConnectBanner className="mb-6" />
 
       {/* Stats bar */}

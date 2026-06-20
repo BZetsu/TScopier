@@ -55,9 +55,9 @@ export const dashboardNl: DashboardBundleTranslations = {
     noTradeActivities: 'Nog geen kanaalworker-logs.',
     management: 'Activiteiten',
     noData: 'Geen gegevens',
-    telegramNotConnectedTitle: 'Telegram not connected',
-    telegramNotConnectedBody: 'Connect your Telegram account to start copying signals from your channels.',
-    connectTelegram: 'Connect Telegram',
+    telegramNotConnectedTitle: 'Telegram is niet verbonden',
+    telegramNotConnectedBody: 'Verbind je Telegram-account om signalen van je kanalen te gaan kopiëren.',
+    connectTelegram: 'Telegram verbinden',
     linkedAccounts: {
       title: 'Gekoppelde accounts',
       subtitle: 'Gekoppelde brokeraccounts die door de copier worden gebruikt',

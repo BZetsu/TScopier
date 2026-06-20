@@ -19,6 +19,7 @@ import { useSubscription } from '../../context/SubscriptionContext'
 import { useHasOpenTrades } from '../../hooks/useHasOpenTrades'
 import { useHasHighImpactNewsToday } from '../../hooks/useHasHighImpactNewsToday'
 import { useNeedsWelcome } from '../../hooks/useNeedsWelcome'
+import { isRouteAllowedWithoutSubscription } from '../../lib/subscriptionNavAccess'
 
 type NavItem = {
   to: string
@@ -43,8 +44,9 @@ export function AppLayout() {
   const userMenuRef = useRef<HTMLDivElement>(null)
   const userMenuCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const { profile } = useUserProfile()
-  const { planName, hasActiveSubscription, effectivePlan, openUpgrade, isPastDue, hasTrialExpired } =
+  const { planName, hasActiveSubscription, effectivePlan, openUpgrade, isPastDue, hasTrialExpired, loading: subscriptionLoading } =
     useSubscription()
+  const navLocked = !subscriptionLoading && !hasActiveSubscription
   const subscribeCta = getSubscribeCtaLabel(t, {
     isPastDue,
     effectivePlan,
@@ -145,6 +147,12 @@ export function AppLayout() {
   }, [location.pathname])
 
   useEffect(() => {
+    if (!navLocked) return
+    if (isRouteAllowedWithoutSubscription(location.pathname)) return
+    navigate('/dashboard', { replace: true })
+  }, [navLocked, location.pathname, navigate])
+
+  useEffect(() => {
     document.documentElement.classList.add('app-viewport-lock')
     return () => document.documentElement.classList.remove('app-viewport-lock')
   }, [])
@@ -178,19 +186,86 @@ export function AppLayout() {
 
   const sidebarExpanded = !isSidebarCollapsed
 
-  const navLinkClass = (isCollapsed: boolean) =>
+  const navLinkClass = (isCollapsed: boolean, disabled = false) =>
     ({ isActive }: { isActive: boolean }) =>
       clsx(
         'flex items-center px-3 py-2.5 rounded-lg text-sm font-medium transition-colors min-h-[44px]',
         isCollapsed ? 'justify-center' : 'gap-3',
-        isActive
-          ? 'bg-teal-50 text-teal-700 dark:bg-teal-950/60 dark:text-teal-400'
-          : 'text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100',
+        disabled
+          ? 'cursor-pointer text-neutral-400 opacity-45 hover:bg-neutral-50 hover:text-neutral-600 hover:opacity-80 dark:text-neutral-500 dark:hover:bg-neutral-800 dark:hover:text-neutral-300'
+          : isActive
+            ? 'bg-teal-50 text-teal-700 dark:bg-teal-950/60 dark:text-teal-400'
+            : 'text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100',
       )
+
+  const renderNavItemContent = (
+    opts: { collapsed: boolean },
+    {
+      icon: Icon,
+      label,
+      isActive,
+      showOpenTradesIndicator,
+      showHighImpactNewsIndicator,
+    }: {
+      icon: NavItem['icon']
+      label: string
+      isActive: boolean
+      showOpenTradesIndicator?: boolean
+      showHighImpactNewsIndicator?: boolean
+    },
+  ) => {
+    const showOpenIndicator = Boolean(showOpenTradesIndicator && hasOpenTrades)
+    const showFireIndicator = Boolean(showHighImpactNewsIndicator && hasHighImpactNewsToday)
+    return (
+      <>
+        <span className="relative inline-flex shrink-0">
+          <Icon
+            className={clsx(
+              'w-4 h-4',
+              isActive ? 'text-teal-600 dark:text-teal-400' : '',
+            )}
+          />
+          {showOpenIndicator && opts.collapsed ? (
+            <span
+              className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-teal-500 ring-2 ring-white dark:ring-neutral-900"
+              aria-hidden
+            />
+          ) : null}
+          {showFireIndicator && opts.collapsed && !showOpenIndicator ? (
+            <span
+              className="absolute -right-1 -top-1 text-[10px] leading-none"
+              aria-hidden
+            >
+              🔥
+            </span>
+          ) : null}
+        </span>
+        <span className={clsx(opts.collapsed && 'lg:hidden')}>{label}</span>
+        {showOpenIndicator && !opts.collapsed ? (
+          <span
+            className="ml-auto h-2 w-2 shrink-0 rounded-full bg-teal-500"
+            aria-hidden
+          />
+        ) : null}
+        {showFireIndicator && !opts.collapsed && !showOpenIndicator ? (
+          <span className="ml-auto shrink-0 text-sm leading-none" aria-hidden>
+            🔥
+          </span>
+        ) : null}
+      </>
+    )
+  }
 
   const renderNav = (opts: { collapsed: boolean; onNavigate?: () => void }) => (
     <>
-      {navSections.map(section => (
+      {navSections.map(section => {
+        const sectionItems = section.items.map(item => ({
+          ...item,
+          disabled: navLocked && !isRouteAllowedWithoutSubscription(item.to),
+        }))
+        if (sectionItems.every(item => item.disabled)) return null
+
+        return (
         <div key={section.label}>
           <p
             className={clsx(
@@ -201,14 +276,37 @@ export function AppLayout() {
             {section.label}
           </p>
           <div className="space-y-0.5">
-            {section.items.map(({ to, icon: Icon, label, showOpenTradesIndicator, showHighImpactNewsIndicator }) => {
-              const showOpenIndicator = Boolean(showOpenTradesIndicator && hasOpenTrades)
-              const showFireIndicator = Boolean(showHighImpactNewsIndicator && hasHighImpactNewsToday)
-              const ariaExtra = showOpenIndicator
+            {sectionItems.map(({ to, icon: Icon, label, showOpenTradesIndicator, showHighImpactNewsIndicator, disabled }) => {
+              const ariaExtra = showOpenTradesIndicator && hasOpenTrades
                 ? t.nav.openTradesActive
-                : showFireIndicator
+                : showHighImpactNewsIndicator && hasHighImpactNewsToday
                   ? t.nav.highImpactNewsToday
                   : null
+
+              if (disabled) {
+                return (
+                  <button
+                    type="button"
+                    key={to}
+                    title={label}
+                    aria-label={ariaExtra ? `${label} — ${ariaExtra}` : label}
+                    onClick={() => {
+                      openUpgrade('advanced')
+                      opts.onNavigate?.()
+                    }}
+                    className={clsx(navLinkClass(opts.collapsed, true)({ isActive: false }), 'w-full text-left')}
+                  >
+                    {renderNavItemContent(opts, {
+                      icon: Icon,
+                      label,
+                      isActive: false,
+                      showOpenTradesIndicator,
+                      showHighImpactNewsIndicator,
+                    })}
+                  </button>
+                )
+              }
+
               return (
                 <NavLink
                   key={to}
@@ -219,49 +317,21 @@ export function AppLayout() {
                   className={navLinkClass(opts.collapsed)}
                 >
                   {({ isActive }) => (
-                    <>
-                      <span className="relative inline-flex shrink-0">
-                        <Icon
-                          className={clsx(
-                            'w-4 h-4',
-                            isActive ? 'text-teal-600 dark:text-teal-400' : '',
-                          )}
-                        />
-                        {showOpenIndicator && opts.collapsed ? (
-                          <span
-                            className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-teal-500 ring-2 ring-white dark:ring-neutral-900"
-                            aria-hidden
-                          />
-                        ) : null}
-                        {showFireIndicator && opts.collapsed && !showOpenIndicator ? (
-                          <span
-                            className="absolute -right-1 -top-1 text-[10px] leading-none"
-                            aria-hidden
-                          >
-                            🔥
-                          </span>
-                        ) : null}
-                      </span>
-                      <span className={clsx(opts.collapsed && 'lg:hidden')}>{label}</span>
-                      {showOpenIndicator && !opts.collapsed ? (
-                        <span
-                          className="ml-auto h-2 w-2 shrink-0 rounded-full bg-teal-500"
-                          aria-hidden
-                        />
-                      ) : null}
-                      {showFireIndicator && !opts.collapsed && !showOpenIndicator ? (
-                        <span className="ml-auto shrink-0 text-sm leading-none" aria-hidden>
-                          🔥
-                        </span>
-                      ) : null}
-                    </>
+                    renderNavItemContent(opts, {
+                      icon: Icon,
+                      label,
+                      isActive,
+                      showOpenTradesIndicator,
+                      showHighImpactNewsIndicator,
+                    })
                   )}
                 </NavLink>
               )
             })}
           </div>
         </div>
-      ))}
+        )
+      })}
     </>
   )
 
@@ -371,7 +441,7 @@ export function AppLayout() {
           <div className="flex-1 min-w-0 lg:hidden" />
 
           <div className="relative z-40 flex shrink-0 items-center gap-1 sm:gap-2 lg:ml-auto">
-            {!hasActiveSubscription || effectivePlan === 'basic' ? (
+            {hasActiveSubscription && effectivePlan === 'basic' ? (
               <button
                 type="button"
                 onClick={() => openUpgrade('advanced')}

@@ -83,6 +83,7 @@ export const pricingRu: PricingBundleTranslations = {
       currentPlan: 'Текущий тариф',
       billed: 'Списывается',
       noActiveSubscription: 'Нет активной подписки',
+      noSubscriptionHeaderBanner: 'У вас нет активной подписки.',
       freePlan: 'Бесплатно',
       freePlanSummary: 'Только просмотр — оформите подписку, чтобы подключать брокеров и копировать сигналы',
       basicPlanSummary: '1 брокер · 5 каналов · 3 TP · Режим одиночной сделки',

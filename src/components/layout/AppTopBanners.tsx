@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import { AppAnnouncementBar } from './AppAnnouncementBar'
+import { AppSubscriptionBanner } from './AppSubscriptionBanner'
 import { AppWarningBanner } from './AppWarningBanner'
 
 /**
- * Stacked top bars above the app header: announcement (teal) then warning (amber).
+ * Stacked top bars above the app header: announcement, warning, then subscription.
  * Publishes combined height as `--app-banner-h` for fixed header offset.
  */
 export function AppTopBanners() {
@@ -32,6 +33,7 @@ export function AppTopBanners() {
     >
       <AppAnnouncementBar />
       <AppWarningBanner />
+      <AppSubscriptionBanner />
     </div>
   )
 }

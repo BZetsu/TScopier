@@ -3,6 +3,7 @@ import clsx from 'clsx'
 import { CreditCard } from 'lucide-react'
 import { useSubscription } from '../../context/SubscriptionContext'
 import { useT } from '../../context/LocaleContext'
+import { lossBannerClass, lossBarClass, lossTextClass } from '../../lib/pnlDisplay'
 
 interface PastDueSubscriptionBannerProps {
   className?: string
@@ -24,25 +25,25 @@ export function PastDueSubscriptionBanner({ className }: PastDueSubscriptionBann
   return (
     <div
       role="alert"
-      className={clsx(
-        'rounded-xl border border-error-200 bg-error-50 px-4 py-3 dark:border-error-800 dark:bg-error-950/40',
-        className,
-      )}
+      className={clsx('rounded-xl border px-4 py-3', lossBannerClass, className)}
     >
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex gap-3">
           <CreditCard
-            className="mt-0.5 h-5 w-5 shrink-0 text-error-600 dark:text-error-400"
+            className={clsx('mt-0.5 h-5 w-5 shrink-0', lossTextClass)}
             aria-hidden
           />
           <div>
-            <p className="text-sm font-semibold text-error-900 dark:text-error-100">{title}</p>
-            <p className="mt-0.5 text-sm text-error-800/90 dark:text-error-200/80">{body}</p>
+            <p className={clsx('text-sm font-semibold', lossTextClass)}>{title}</p>
+            <p className={clsx('mt-0.5 text-sm opacity-90', lossTextClass)}>{body}</p>
           </div>
         </div>
         <Link
           to="/billing"
-          className="inline-flex shrink-0 items-center justify-center rounded-lg bg-error-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm transition-all hover:bg-error-700 focus:outline-none focus:ring-2 focus:ring-error-500 focus:ring-offset-2 focus:ring-offset-error-50 dark:focus:ring-offset-error-950"
+          className={clsx(
+            'inline-flex shrink-0 items-center justify-center rounded-lg px-3 py-1.5 text-sm font-medium text-white shadow-sm transition-all hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[#E16C6C] focus:ring-offset-2',
+            lossBarClass,
+          )}
         >
           {cta}
         </Link>

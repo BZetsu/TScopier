@@ -190,6 +190,7 @@ export const en: Translations = {
       currentPlan: 'Current Plan',
       billed: 'Billed',
       noActiveSubscription: 'No active subscription',
+      noSubscriptionHeaderBanner: 'You have no active subscription.',
       freePlan: 'Free',
       freePlanSummary: 'Browse only — subscribe to connect brokers & copy signals',
       basicPlanSummary: '1 broker · 5 channels · 3 TPs · Single trade mode',

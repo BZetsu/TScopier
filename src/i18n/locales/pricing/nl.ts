@@ -83,6 +83,7 @@ export const pricingNl: PricingBundleTranslations = {
       currentPlan: 'Huidig plan',
       billed: 'Gefactureerd',
       noActiveSubscription: 'Geen actief abonnement',
+      noSubscriptionHeaderBanner: 'Je hebt geen actief abonnement.',
       freePlan: 'Gratis',
       freePlanSummary: 'Alleen bekijken - abonneer om brokers te koppelen en signalen te kopiëren',
       basicPlanSummary: '1 broker · 5 kanalen · 3 TP\'s · Single trade-modus',

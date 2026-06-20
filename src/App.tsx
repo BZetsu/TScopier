@@ -94,13 +94,13 @@ export default function App() {
       <UserProfileProvider>
       <BrowserRouter>
       <AppTopBannersProvider>
+      <SubscriptionProvider>
       <div className="flex h-[100dvh] min-h-0 flex-col overflow-hidden overscroll-none">
         <AppTopBanners />
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden overscroll-none">
       <GoogleAnalyticsRouteTracker />
       <CookieConsentBanner />
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <SubscriptionProvider>
         <Routes>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
 
@@ -169,10 +169,10 @@ export default function App() {
           </Route>
           </Route>
         </Routes>
-      </SubscriptionProvider>
       </div>
         </div>
       </div>
+      </SubscriptionProvider>
       </AppTopBannersProvider>
       </BrowserRouter>
       </UserProfileProvider>
