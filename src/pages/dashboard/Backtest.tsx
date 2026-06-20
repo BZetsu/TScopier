@@ -14,7 +14,7 @@ import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import { interpolate } from '../../i18n/interpolate'
 import { useT } from '../../context/LocaleContext'
-import { backtestApi, loadBacktestRunFromDb, waitForBacktestRunComplete, waitForSignalSyncComplete } from '../../lib/backtestApi'
+import { backtestApi, loadBacktestRunFromDb, waitForBacktestRunComplete } from '../../lib/backtestApi'
 import type {
   BacktestRunRow,
   BacktestTradeRow,
@@ -245,8 +245,7 @@ export function Backtest() {
     setProfileProgress({ pct: 0, message: bt.pullingSignals })
     try {
       const config = buildConfig(selectedChannelId, dateFrom, dateTo)
-      const { sync_run_id } = await backtestApi.sync(config)
-      const result = await waitForSignalSyncComplete(sync_run_id, user.id, {
+      const result = await backtestApi.syncAndWait(config, user.id, {
         onTick: (run) => {
           setProfileProgress({
             pct: Number(run.progress_pct ?? 0),

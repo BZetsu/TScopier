@@ -150,6 +150,22 @@ function parseSyncSummary(raw: unknown): BacktestSyncResult {
   }
 }
 
+function resolveSyncRunId(data: Record<string, unknown> | null | undefined): string | null {
+  if (!data) return null
+  const syncRunId = data.sync_run_id ?? data.run_id
+  return typeof syncRunId === 'string' && syncRunId.trim() ? syncRunId.trim() : null
+}
+
+function isLegacySyncResponse(data: Record<string, unknown>): boolean {
+  return (
+    data.ok === true
+    || typeof data.messages_scanned === 'number'
+    || typeof data.imported === 'number'
+    || typeof data.candidates === 'number'
+    || Array.isArray(data.errors)
+  )
+}
+
 /** Poll DB until signal sync finishes (sync action returns before worker completes). */
 export async function waitForSignalSyncComplete(
   syncRunId: string,
@@ -180,11 +196,35 @@ export async function waitForSignalSyncComplete(
 }
 
 export const backtestApi = {
-  async sync(config: SimpleBacktestConfig): Promise<{ sync_run_id: string }> {
-    const data = await call<{ sync_run_id?: string }>({ action: 'sync', config })
-    const syncRunId = data?.sync_run_id
-    if (!syncRunId) throw new Error('Signal sync started but no sync run id was returned.')
-    return { sync_run_id: syncRunId }
+  async sync(config: SimpleBacktestConfig): Promise<
+    | { mode: 'async'; sync_run_id: string }
+    | { mode: 'legacy'; result: BacktestSyncResult }
+  > {
+    const data = await call<Record<string, unknown>>({ action: 'sync', config })
+    const syncRunId = resolveSyncRunId(data)
+    if (syncRunId) {
+      return { mode: 'async', sync_run_id: syncRunId }
+    }
+    if (data && isLegacySyncResponse(data)) {
+      return { mode: 'legacy', result: parseSyncSummary(data) }
+    }
+    throw new Error(
+      'Signal sync started but no sync run id was returned. Redeploy the backtest-run edge function (see docs/backtest-setup.md).',
+    )
+  },
+
+  async syncAndWait(
+    config: SimpleBacktestConfig,
+    userId: string,
+    options?: {
+      intervalMs?: number
+      timeoutMs?: number
+      onTick?: (run: BacktestRunRow) => void
+    },
+  ): Promise<BacktestSyncResult> {
+    const started = await backtestApi.sync(config)
+    if (started.mode === 'legacy') return started.result
+    return waitForSignalSyncComplete(started.sync_run_id, userId, options)
   },
 
   waitForSignalSyncComplete,

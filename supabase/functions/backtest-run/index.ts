@@ -248,6 +248,7 @@ Deno.serve(async (req: Request) => {
       return Response.json({
         ok: true,
         sync_run_id: runId,
+        run_id: runId,
         table: "backtest_channel_signals",
       }, { headers: corsHeaders })
     }
