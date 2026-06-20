@@ -99,7 +99,9 @@ export const authEs: AuthTranslations = {
       'Copia operaciones automáticamente con tu configuración de riesgo',
     ],
     exploreDashboard: 'Explorar el panel primero',
+    seePricing: 'Ver precios',
     errorFallback: 'No se pudo continuar. Inténtalo de nuevo.',
+    checkoutFailed: 'No se pudo iniciar el pago. Inténtalo de nuevo.',
   },
   marketing: {
     headline: 'Un copiador fluido para cada señal de Telegram',

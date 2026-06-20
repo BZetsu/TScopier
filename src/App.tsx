@@ -11,7 +11,6 @@ import { ProtectedRoute } from './components/layout/ProtectedRoute'
 import { EmailVerificationGate } from './components/layout/EmailVerificationGate'
 import { SubscriptionGuard } from './components/layout/SubscriptionGuard'
 import { PageLoader } from './components/layout/PageLoader'
-import { WelcomePage } from './pages/onboarding/WelcomePage'
 import { ReferralCodeRedirect } from './pages/auth/ReferralCodeRedirect'
 import { VerifyEmailPage } from './pages/auth/VerifyEmailPage'
 import { AuthConfirmedPage } from './pages/auth/AuthConfirmedPage'
@@ -130,7 +129,7 @@ export default function App() {
               </ProtectedRoute>
             }
           >
-            <Route path="/welcome" element={<WelcomePage />} />
+            <Route path="/welcome" element={<Navigate to="/dashboard" replace />} />
             <Route element={<AppShell />}>
             <Route path="/pricing" element={<LazyPage><AppPricingPage /></LazyPage>} />
             <Route path="/dashboard/*" element={<DashboardRouteAnchor />} />
@@ -163,7 +162,7 @@ export default function App() {
 
             {/* Legacy redirects */}
             <Route path="/trades" element={<Navigate to="/account-trades" replace />} />
-            <Route path="/onboarding" element={<Navigate to="/welcome" replace />} />
+            <Route path="/onboarding" element={<Navigate to="/dashboard" replace />} />
             <Route path="/integrations" element={<Navigate to="/dashboard" replace />} />
             <Route path="/sentiments" element={<Navigate to="/market-news" replace />} />
             </Route>

@@ -33,7 +33,7 @@ export function VerifyEmailPage() {
   useEffect(() => {
     if (profileLoading || !user || !isEmailVerified(user, emailVerifiedAt)) return
     if (hasProfileRow && !onboardingCompletedAt) {
-      navigate('/welcome', { replace: true })
+      navigate('/dashboard', { replace: true })
       return
     }
     navigate('/dashboard', { replace: true })

@@ -99,7 +99,9 @@ export const authFr: AuthTranslations = {
       'Copiez les trades automatiquement avec vos paramètres de risque',
     ],
     exploreDashboard: 'Explorer le tableau de bord d\'abord',
+    seePricing: 'Voir les tarifs',
     errorFallback: 'Impossible de continuer. Veuillez réessayer.',
+    checkoutFailed: 'Impossible de démarrer le paiement. Veuillez réessayer.',
   },
   marketing: {
     headline: 'Un copieur fluide pour chaque signal Telegram',

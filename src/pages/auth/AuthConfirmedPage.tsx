@@ -51,7 +51,7 @@ export function AuthConfirmedPage() {
         const row = await loadUserProfile(activeUser.id)
         await refreshProfile()
         if (isEmailVerified(activeUser, row?.email_verified_at)) {
-          navigate('/welcome', { replace: true })
+          navigate('/dashboard', { replace: true })
           return
         }
         await new Promise(r => setTimeout(r, 400))

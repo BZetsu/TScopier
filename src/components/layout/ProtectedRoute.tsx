@@ -1,12 +1,11 @@
-import { Navigate, useLocation } from 'react-router-dom'
+import { Navigate } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import { useUserProfile } from '../../context/UserProfileContext'
 import { isEmailVerified, verifyEmailPath } from '../../lib/emailVerification'
 
 export function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth()
-  const location = useLocation()
-  const { hasProfileRow, onboardingCompletedAt, emailVerifiedAt, loading: profileLoading } = useUserProfile()
+  const { emailVerifiedAt, loading: profileLoading } = useUserProfile()
 
   if (loading || profileLoading) {
     return (
@@ -22,19 +21,5 @@ export function ProtectedRoute({ children }: { children: React.ReactNode }) {
     return <Navigate to={verifyEmailPath(user.email)} replace />
   }
 
-  const allowedWithoutOnboarding = new Set([
-    '/welcome',
-    '/forgot-password',
-    '/reset-password',
-    '/login',
-    '/signup',
-  ])
-  if (
-    hasProfileRow
-    && !onboardingCompletedAt
-    && !allowedWithoutOnboarding.has(location.pathname)
-  ) {
-    return <Navigate to="/welcome" replace />
-  }
   return <>{children}</>
 }

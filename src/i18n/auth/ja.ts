@@ -97,7 +97,9 @@ export const authJa: AuthTranslations = {
       'Copy trades automatically with your risk settings',
     ],
     exploreDashboard: 'Explore the dashboard first',
+    seePricing: 'See Pricing',
     errorFallback: 'Could not continue. Please try again.',
+    checkoutFailed: 'Could not start checkout. Please try again.',
   },
   marketing: {
     headline: 'すべてのTelegramシグナルに対応するシームレスなコピー',

@@ -3,6 +3,7 @@ import { NotificationsProvider } from '../../context/NotificationsContext'
 import { AddTradingAccountProvider } from '../../context/AddTradingAccountContext'
 import { PendingBrokerConnectionSync } from '../broker/PendingBrokerConnectionSync'
 import { AppLayout } from './AppLayout'
+import { WelcomeModal } from '../onboarding/WelcomeModal'
 
 /** Authenticated app shell: shared broker state + dashboard layout. */
 export function AppShell() {
@@ -13,6 +14,7 @@ export function AppShell() {
         <NotificationsProvider>
           <AddTradingAccountProvider>
             <AppLayout />
+            <WelcomeModal />
           </AddTradingAccountProvider>
         </NotificationsProvider>
       </BrokerAccountsProvider>

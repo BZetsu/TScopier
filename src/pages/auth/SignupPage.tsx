@@ -68,7 +68,7 @@ export function SignupPage() {
     setError('')
     setGoogleLoading(true)
     const normalizedRef = normalizeReferralCode(referralCode)
-    const redirectUrl = new URL(`${window.location.origin}/auth/confirmed`)
+    const redirectUrl = new URL(`${window.location.origin}/dashboard`)
     if (referralCodeLooksValid(normalizedRef)) {
       redirectUrl.searchParams.set('ref', normalizedRef)
     }

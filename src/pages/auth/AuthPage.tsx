@@ -66,7 +66,7 @@ export function AuthPage() {
   const handleGoogleSignIn = async () => {
     setError('')
     setGoogleLoading(true)
-    const redirectTo = new URL(`${window.location.origin}/welcome`)
+    const redirectTo = new URL(`${window.location.origin}/dashboard`)
     if (storedReferralCode && referralCodeLooksValid(storedReferralCode)) {
       redirectTo.searchParams.set('ref', storedReferralCode)
     }
