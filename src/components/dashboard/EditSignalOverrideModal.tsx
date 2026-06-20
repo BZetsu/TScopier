@@ -1,28 +1,34 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Loader2, Plus, X } from 'lucide-react'
 import { useT } from '../../context/LocaleContext'
-import { effectiveDisplayParsedData, foldMgmtUpdatesIntoParsed, validateOverrideLevels, type SignalBatchRow, type SignalDisplayContext } from '../../lib/signalOverride'
+import {
+  effectiveDisplayParsedData,
+  foldMgmtUpdatesIntoParsed,
+  validateOverrideLevels,
+  type SignalBatchRow,
+  type SignalDisplayContext,
+} from '../../lib/signalOverride'
 import { signalOverrideApi } from '../../lib/signalOverrideApi'
 import type { Signal } from '../../types/database'
 import { Button } from '../ui/Button'
 import { Input } from '../ui/Input'
 
-interface OverrideDraft {
+export type OverrideDraft = {
   sl: string
   tpLevels: string[]
 }
 
-interface EditSignalOverrideModalProps {
-  signal: Signal | null
-  displayContext?: SignalDisplayContext
-  absorbedEntryUpdates?: ReadonlyArray<SignalBatchRow>
-  onClose: () => void
-  onSaved: (result: { appliedLegs: number; open: boolean }) => void
+export type EditSignalOverrideSnapshot = {
+  signalId: string
+  initialDraft: OverrideDraft
+  original: { sl: string; tp: string }
+  current: { sl: string; tp: string }
 }
 
 function overrideToDraft(
   signal: Signal,
-  displayContext?: SignalDisplayContext,
+  displayContext: SignalDisplayContext,
   absorbedEntryUpdates: ReadonlyArray<SignalBatchRow> = [],
 ): OverrideDraft {
   const effective = effectiveDisplayParsedData(signal, displayContext, absorbedEntryUpdates)
@@ -38,10 +44,10 @@ function overrideToDraft(
 
 function channelFoldedSummary(
   signal: Signal,
-  displayContext?: SignalDisplayContext,
+  displayContext: SignalDisplayContext,
   absorbedEntryUpdates: ReadonlyArray<SignalBatchRow> = [],
 ): { sl: string; tp: string } {
-  const parsed = displayContext?.batchSignals?.length
+  const parsed = displayContext.batchSignals.length
     ? foldMgmtUpdatesIntoParsed(signal, displayContext.batchSignals, displayContext, absorbedEntryUpdates)
     : ((signal.parsed_data ?? {}) as Record<string, unknown>)
   const sl = typeof parsed.sl === 'number' && parsed.sl > 0 ? String(parsed.sl) : '—'
@@ -49,6 +55,34 @@ function channelFoldedSummary(
     ? parsed.tp.filter(v => typeof v === 'number' && (v as number) > 0).map(String)
     : []
   return { sl, tp: tpArr.length ? tpArr.join(', ') : '—' }
+}
+
+function formatEffectiveSummary(
+  signal: Signal,
+  displayContext: SignalDisplayContext,
+  absorbedEntryUpdates: ReadonlyArray<SignalBatchRow> = [],
+): { sl: string; tp: string } {
+  const effective = effectiveDisplayParsedData(signal, displayContext, absorbedEntryUpdates)
+  const sl = typeof effective.sl === 'number' ? String(effective.sl) : '—'
+  const tp = Array.isArray(effective.tp)
+    ? effective.tp.filter(v => typeof v === 'number').map(String).join(', ') || '—'
+    : '—'
+  return { sl, tp }
+}
+
+/** Capture SL/TP display + form draft once when the modal opens (avoids re-folding 500 signals on each keystroke). */
+export function buildEditSignalOverrideSnapshot(
+  signal: Signal,
+  displayContext: SignalDisplayContext,
+  absorbedEntryUpdates: ReadonlyArray<SignalBatchRow> = [],
+): EditSignalOverrideSnapshot {
+  const absorbed = absorbedEntryUpdates.length ? [...absorbedEntryUpdates] : []
+  return {
+    signalId: signal.id,
+    initialDraft: overrideToDraft(signal, displayContext, absorbed),
+    original: channelFoldedSummary(signal, displayContext, absorbed),
+    current: formatEffectiveSummary(signal, displayContext, absorbed),
+  }
 }
 
 function normalizeTpLevels(levels: string[]): string[] {
@@ -72,53 +106,38 @@ function parseDraft(draft: OverrideDraft): { sl: number | null; tp_levels: numbe
   return { sl, tp_levels }
 }
 
+type EditSignalOverrideModalProps = EditSignalOverrideSnapshot & {
+  onClose: () => void
+  onSaved: (result: { appliedLegs: number; open: boolean }) => void
+}
+
 export function EditSignalOverrideModal({
-  signal,
-  displayContext,
-  absorbedEntryUpdates = [],
+  signalId,
+  initialDraft,
+  original,
+  current,
   onClose,
   onSaved,
 }: EditSignalOverrideModalProps) {
   const t = useT()
   const sh = t.signalHistoryPage
-  const [draft, setDraft] = useState<OverrideDraft | null>(null)
-  const [initialDraft, setInitialDraft] = useState<OverrideDraft | null>(null)
+  const [draft, setDraft] = useState(initialDraft)
   const [busy, setBusy] = useState(false)
   const [formError, setFormError] = useState('')
-
-  const original = useMemo(
-    () => (signal ? channelFoldedSummary(signal, displayContext, absorbedEntryUpdates) : { sl: '—', tp: '—' }),
-    [signal, displayContext, absorbedEntryUpdates],
-  )
+  const hasChanges = !draftsEqual(draft, initialDraft)
 
   useEffect(() => {
-    if (!signal) {
-      setDraft(null)
-      setInitialDraft(null)
-      setFormError('')
-      return
-    }
-    const next = overrideToDraft(signal, displayContext, absorbedEntryUpdates)
-    setDraft(next)
-    setInitialDraft(next)
-    setFormError('')
-  }, [signal, displayContext, absorbedEntryUpdates])
-
-  const hasChanges = useMemo(() => {
-    if (!draft || !initialDraft) return false
-    return !draftsEqual(draft, initialDraft)
-  }, [draft, initialDraft])
-
-  useEffect(() => {
-    if (!signal) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && !busy) onClose()
     }
     document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [signal, onClose, busy])
-
-  if (!signal || !draft) return null
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      document.body.style.overflow = prevOverflow
+    }
+  }, [onClose, busy])
 
   const handleSave = async () => {
     const parsed = parseDraft(draft)
@@ -130,7 +149,7 @@ export function EditSignalOverrideModal({
     setBusy(true)
     try {
       const result = await signalOverrideApi.save({
-        signal_id: signal.id,
+        signal_id: signalId,
         sl: parsed.sl,
         tp_levels: parsed.tp_levels,
       })
@@ -147,13 +166,7 @@ export function EditSignalOverrideModal({
     }
   }
 
-  const effective = effectiveDisplayParsedData(signal, displayContext, absorbedEntryUpdates)
-  const currentSl = typeof effective.sl === 'number' ? String(effective.sl) : '—'
-  const currentTp = Array.isArray(effective.tp)
-    ? effective.tp.filter(v => typeof v === 'number').map(String).join(', ') || '—'
-    : '—'
-
-  return (
+  return createPortal(
     <div
       className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-0 sm:p-6"
       role="dialog"
@@ -162,7 +175,7 @@ export function EditSignalOverrideModal({
     >
       <button
         type="button"
-        className="absolute inset-0 bg-neutral-900/50 backdrop-blur-sm"
+        className="absolute inset-0 bg-neutral-900/50"
         aria-label={sh.closeModal}
         onClick={onClose}
         disabled={busy}
@@ -186,7 +199,7 @@ export function EditSignalOverrideModal({
         <div className="p-5 space-y-4">
           <div className="rounded-xl border border-neutral-100 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-950/50 px-3 py-2.5 text-xs text-neutral-500 space-y-1">
             <p>{sh.originalSignal}: SL {original.sl} · TP {original.tp}</p>
-            <p>{sh.overrideSignal}: SL {currentSl} · TP {currentTp}</p>
+            <p>{sh.overrideSignal}: SL {current.sl} · TP {current.tp}</p>
           </div>
 
           <Input
@@ -197,7 +210,7 @@ export function EditSignalOverrideModal({
             disabled={busy}
             placeholder="—"
             value={draft.sl}
-            onChange={e => setDraft(d => d && ({ ...d, sl: e.target.value }))}
+            onChange={e => setDraft(d => ({ ...d, sl: e.target.value }))}
           />
 
           <div>
@@ -206,7 +219,7 @@ export function EditSignalOverrideModal({
               <button
                 type="button"
                 disabled={busy}
-                onClick={() => setDraft(d => d && ({ ...d, tpLevels: [...d.tpLevels, ''] }))}
+                onClick={() => setDraft(d => ({ ...d, tpLevels: [...d.tpLevels, ''] }))}
                 className="inline-flex items-center gap-1 text-xs font-medium text-teal-600 hover:text-teal-700 dark:text-teal-400"
               >
                 <Plus className="w-3.5 h-3.5" />
@@ -224,7 +237,6 @@ export function EditSignalOverrideModal({
                     placeholder={`TP${idx + 1}`}
                     value={tp}
                     onChange={e => setDraft(d => {
-                      if (!d) return d
                       const next = [...d.tpLevels]
                       next[idx] = e.target.value
                       return { ...d, tpLevels: next }
@@ -237,7 +249,6 @@ export function EditSignalOverrideModal({
                       disabled={busy}
                       aria-label={sh.removeTp}
                       onClick={() => setDraft(d => {
-                        if (!d) return d
                         const next = d.tpLevels.filter((_, i) => i !== idx)
                         return { ...d, tpLevels: next.length ? next : [''] }
                       })}
@@ -267,6 +278,7 @@ export function EditSignalOverrideModal({
           </Button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }

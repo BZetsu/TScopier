@@ -16,6 +16,7 @@ import {
   getBrokerDisplayLabel,
   pruneStaleBrokerChannelIds,
 } from '../../lib/brokerChannelLink'
+import { triggerBackgroundChannelAiTraining } from '../../lib/channelAiTrainingBackground'
 import { defaultChannelFiltersForPlan } from '../../lib/channelMessageFilters'
 import {
   hasValidTelegramChannelIdentity,
@@ -373,6 +374,7 @@ export function CopierEnginePage() {
     }
     if (updated) {
       replaceBroker(updated)
+      void triggerBackgroundChannelAiTraining(channelId, { userId: user.id })
     }
     setConnectMenuChannelId(null)
   }
@@ -404,6 +406,7 @@ export function CopierEnginePage() {
       }
     }
     setBrokers(nextBrokers)
+    void triggerBackgroundChannelAiTraining(channelId, { userId: user.id })
     setConnectingAllChannelId(null)
     setConnectMenuChannelId(null)
   }

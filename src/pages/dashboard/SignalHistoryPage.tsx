@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useState, type KeyboardEvent } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import clsx from 'clsx'
 import { Pencil } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
@@ -9,7 +9,11 @@ import { PageHeader } from '../../components/layout/PageHeader'
 import { PageShell } from '../../components/layout/PageShell'
 import { Card } from '../../components/ui/Card'
 import { Button } from '../../components/ui/Button'
-import { EditSignalOverrideModal } from '../../components/dashboard/EditSignalOverrideModal'
+import {
+  buildEditSignalOverrideSnapshot,
+  EditSignalOverrideModal,
+  type EditSignalOverrideSnapshot,
+} from '../../components/dashboard/EditSignalOverrideModal'
 import type { Json, Signal, TelegramChannel } from '../../types/database'
 import {
   buildSignalSymbolLookup,
@@ -169,8 +173,9 @@ export function SignalHistoryPage() {
   const [channelFilter, setChannelFilter] = useState('all')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
-  const [editSignal, setEditSignal] = useState<Signal | null>(null)
-  const [editAbsorbedUpdates, setEditAbsorbedUpdates] = useState<SignalBatchRow[]>([])
+  const [editSession, setEditSession] = useState<EditSignalOverrideSnapshot | null>(null)
+  const editModalOpenRef = useRef(false)
+  editModalOpenRef.current = editSession != null
   const [banner, setBanner] = useState<{ tone: 'success' | 'error'; text: string } | null>(null)
 
   const summaryLabels = useMemo((): TradeSignalSummaryLabels => ({
@@ -228,7 +233,7 @@ export function SignalHistoryPage() {
     setSymbolLookupReady(true)
   }, [user])
 
-  const refreshAfterOverrideSave = useCallback(async () => {
+  const refreshAfterOverrideSave = useCallback(async (signalId: string) => {
     if (!user) return
     const [openTradesRes, signalRes] = await Promise.all([
       supabase
@@ -236,26 +241,25 @@ export function SignalHistoryPage() {
         .select('signal_id')
         .eq('user_id', user.id)
         .eq('status', 'open'),
-      editSignal
-        ? supabase
-          .from('signals')
-          .select('id,channel_id,created_at,parsed_data,raw_message,parent_signal_id,user_override,reply_to_message_id,is_modification,skip_reason,telegram_message_id')
-          .eq('id', editSignal.id)
-          .maybeSingle()
-        : Promise.resolve({ data: null }),
+      supabase
+        .from('signals')
+        .select('id,channel_id,created_at,parsed_data,raw_message,parent_signal_id,user_override,reply_to_message_id,is_modification,skip_reason,telegram_message_id')
+        .eq('id', signalId)
+        .maybeSingle(),
     ])
     setOpenSignalIds(buildOpenSignalIdSet((openTradesRes.data ?? []) as { signal_id?: string | null }[]))
     const updated = signalRes.data as Signal | null
     if (updated) {
       setSignals(prev => prev.map(row => (row.id === updated.id ? updated : row)))
     }
-  }, [user, editSignal])
+  }, [user])
 
   useEffect(() => {
     void loadData()
   }, [loadData])
 
   const refreshData = useCallback(() => {
+    if (editModalOpenRef.current) return
     void loadData({ silent: true })
   }, [loadData])
 
@@ -308,10 +312,28 @@ export function SignalHistoryPage() {
       .sort((a, b) => Date.parse(b.lastActivityAt) - Date.parse(a.lastActivityAt))
   }, [allConsolidatedSignals, channelFilter, dateFrom, dateTo])
 
-  const handleSelectSignal = useCallback((signal: Signal, absorbedEntryUpdates: SignalBatchRow[]) => {
-    setEditSignal(signal)
-    setEditAbsorbedUpdates(absorbedEntryUpdates)
+  const handleSelectSignal = useCallback((
+    signal: Signal,
+    absorbedEntryUpdates: ReadonlyArray<SignalBatchRow>,
+    ctx: SignalDisplayContext,
+  ) => {
+    setEditSession(buildEditSignalOverrideSnapshot(signal, ctx, absorbedEntryUpdates))
   }, [])
+
+  const closeEditModal = useCallback(() => {
+    setEditSession(null)
+  }, [])
+
+  const handleSaved = useCallback(async (
+    signalId: string,
+    { appliedLegs }: { appliedLegs: number; open: boolean },
+  ) => {
+    setBanner({
+      tone: 'success',
+      text: interpolate(sh.applySuccess, { count: String(appliedLegs) }),
+    })
+    await refreshAfterOverrideSave(signalId)
+  }, [refreshAfterOverrideSave, sh.applySuccess])
 
   const signalDisplayRows = useMemo(() => {
     if (!symbolLookupReady) return []
@@ -328,7 +350,7 @@ export function SignalHistoryPage() {
         openStatus,
         timeLabel: lastActivityAt,
         onClick: openStatus === 'open'
-          ? () => handleSelectSignal(signal, [...absorbedEntryUpdates])
+          ? () => handleSelectSignal(signal, absorbedEntryUpdates, displayContext)
           : undefined,
       }
     })
@@ -362,13 +384,10 @@ export function SignalHistoryPage() {
     }
   }, [entrySignals])
 
-  const handleSaved = async ({ appliedLegs }: { appliedLegs: number; open: boolean }) => {
-    setBanner({
-      tone: 'success',
-      text: interpolate(sh.applySuccess, { count: String(appliedLegs) }),
-    })
-    await refreshAfterOverrideSave()
-  }
+  const handleSavedFromModal = useCallback(async (result: { appliedLegs: number; open: boolean }) => {
+    if (!editSession) return
+    await handleSaved(editSession.signalId, result)
+  }, [editSession, handleSaved])
 
   const resetFilters = () => {
     setChannelFilter('all')
@@ -565,16 +584,14 @@ export function SignalHistoryPage() {
         </div>
       </Card>
 
-      <EditSignalOverrideModal
-        signal={editSignal}
-        displayContext={displayContext}
-        absorbedEntryUpdates={editAbsorbedUpdates}
-        onClose={() => {
-          setEditSignal(null)
-          setEditAbsorbedUpdates([])
-        }}
-        onSaved={handleSaved}
-      />
+      {editSession ? (
+        <EditSignalOverrideModal
+          key={editSession.signalId}
+          {...editSession}
+          onClose={closeEditModal}
+          onSaved={handleSavedFromModal}
+        />
+      ) : null}
     </PageShell>
   )
 }
