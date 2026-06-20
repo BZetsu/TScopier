@@ -233,6 +233,7 @@ export interface LandingStepsVisualsCopy {
 }
 
 export interface LandingReviewTranslation {
+  headline?: string
   quote: string
   author: string
   role?: string
