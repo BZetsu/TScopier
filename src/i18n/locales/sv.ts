@@ -37,4 +37,8 @@ export const sv: Translations = mergeLocaleBundle(en, {
   contactSupportPage: contactSupportSv,
   riskDisclaimerPage: riskDisclaimerSv,
   tradeNotifications: tradeNotificationsSv,
+  management: {
+    ...en.management,
+    subtitle: 'Granska handelsaktiviteter från din copier.',
+  },
 })

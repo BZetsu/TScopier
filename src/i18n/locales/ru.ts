@@ -37,4 +37,8 @@ export const ru: Translations = mergeLocaleBundle(en, {
   contactSupportPage: contactSupportRu,
   riskDisclaimerPage: riskDisclaimerRu,
   tradeNotifications: tradeNotificationsRu,
+  management: {
+    ...en.management,
+    subtitle: 'Просматривайте торговые активности вашего копировщика.',
+  },
 })

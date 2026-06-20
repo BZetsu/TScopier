@@ -632,8 +632,7 @@ export const en: Translations = {
   },
   management: {
     title: 'Activities',
-    subtitle:
-      'Review trade activities from your copier. When something fails — like moving SL to breakeven or closing trades — retry it here instead of managing trades manually at your broker.',
+    subtitle: 'Review trade activities from your copier.',
     filterAll: 'All',
     filterSuccessful: 'Successful',
     filterSkipped: 'Skipped',

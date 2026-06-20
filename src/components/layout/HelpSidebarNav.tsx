@@ -15,11 +15,11 @@ export function HelpSidebarNav({ collapsed, onNavigate }: HelpSidebarNavProps) {
 
   const itemClass = (isActive = false) =>
     clsx(
-      'flex items-center px-3 py-2.5 rounded-lg text-sm font-medium transition-colors min-h-[44px]',
+      'flex items-center px-3 py-2.5 rounded-lg text-sm transition-colors min-h-[44px]',
       collapsed ? 'justify-center' : 'gap-3',
       isActive
-        ? 'bg-teal-50 text-teal-700 dark:bg-teal-950/60 dark:text-teal-400'
-        : 'text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100',
+        ? 'bg-teal-50 text-teal-700 font-semibold dark:bg-teal-950/60 dark:text-teal-400'
+        : 'text-neutral-600 font-medium hover:bg-neutral-50 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100',
     )
 
   return (

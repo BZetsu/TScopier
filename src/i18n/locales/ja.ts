@@ -37,4 +37,8 @@ export const ja: Translations = mergeLocaleBundle(en, {
   contactSupportPage: contactSupportJa,
   riskDisclaimerPage: riskDisclaimerJa,
   tradeNotifications: tradeNotificationsJa,
+  management: {
+    ...en.management,
+    subtitle: 'コピアーの取引アクティビティを確認します。',
+  },
 })

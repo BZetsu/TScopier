@@ -632,8 +632,7 @@ export const fr: Translations = {
   },
   management: {
     title: 'Activités',
-    subtitle:
-      'Consultez les activités de trading de votre copieur. En cas d\'échec — par ex. déplacer le SL au break-even ou fermer des trades — réessayez ici plutôt que de gérer manuellement chez votre broker.',
+    subtitle: 'Consultez les activités de trading de votre copieur.',
     filterAll: 'Tous',
     filterSuccessful: 'Réussies',
     filterSkipped: 'Ignorées',

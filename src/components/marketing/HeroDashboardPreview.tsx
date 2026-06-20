@@ -118,7 +118,7 @@ function HeroLiveMoneyValue({
 
   return (
     <p
-      className={clsx('mb-1.5 text-3xl font-bold', valueToneClass(tone))}
+      className={clsx('mb-1.5 text-2xl font-semibold', valueToneClass(tone))}
       aria-live="polite"
       aria-atomic="true"
     >
@@ -137,7 +137,7 @@ function HeroStatBlock({ stat, label }: { stat: LandingHeroHeadlineStat; label: 
       {stat.live ? (
         <HeroLiveMoneyValue live={stat.live} tone={stat.valueTone} />
       ) : (
-        <p className={clsx('mb-1.5 text-3xl font-bold', valueToneClass(stat.valueTone))}>
+        <p className={clsx('mb-1.5 text-2xl font-semibold', valueToneClass(stat.valueTone))}>
           {stat.value}
         </p>
       )}

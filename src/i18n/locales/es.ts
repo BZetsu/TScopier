@@ -632,8 +632,7 @@ export const es: Translations = {
   },
   management: {
     title: 'Actividades',
-    subtitle:
-      'Revisa las actividades de trading de tu copiador. Cuando algo falle — como mover el SL a break-even o cerrar trades — reinténtalo aquí en lugar de gestionar manualmente en tu bróker.',
+    subtitle: 'Revisa las actividades de trading de tu copiador.',
     filterAll: 'Todos',
     filterSuccessful: 'Correctas',
     filterSkipped: 'Omitidas',

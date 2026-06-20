@@ -2353,7 +2353,7 @@ export function DashboardPage() {
             <div>
               <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-50 inline-flex items-center gap-2">
                 {la.title}
-                <span className="inline-flex items-center justify-center min-w-[1.375rem] h-5 px-1.5 rounded-full bg-neutral-100 dark:bg-neutral-800 text-xs font-semibold text-neutral-500 dark:text-neutral-400 tabular-nums">
+                <span className="inline-flex items-center justify-center min-w-[1.375rem] h-5 px-1.5 rounded-full bg-neutral-100 dark:bg-neutral-800 text-xs font-semibold text-neutral-500 dark:text-neutral-400 ">
                   {linkedAccounts.length}
                 </span>
               </p>
@@ -2523,7 +2523,7 @@ function StatBlock({ label, labelHint, value, sub, subColor, valueColor = 'text-
         {label}
         {labelHint ? <InfoTooltip text={labelHint} /> : null}
       </p>
-      <p className={clsx('text-xl sm:text-3xl font-bold mb-1 sm:mb-1.5', valueColor)}>{value}</p>
+      <p className={clsx('text-xl sm:text-2xl font-semibold mb-1 sm:mb-1.5', valueColor)}>{value}</p>
       {sub === '' ? null : typeof sub === 'string' ? (
         <p className={`text-xs ${subColor}`}>{sub}</p>
       ) : (
@@ -2610,7 +2610,7 @@ function LogRow({ signal, channelName, symbol }: { signal: Signal; channelName: 
       >
         {typeLabel}
       </span>
-      <span className="text-xs text-neutral-400 text-right whitespace-nowrap tabular-nums">
+      <span className="text-xs text-neutral-400 text-right whitespace-nowrap">
         {signal.created_at
           ? new Date(signal.created_at).toLocaleString([], {
               month: 'short',
@@ -2772,7 +2772,7 @@ function LinkedAccountRow({
           {accountLabel}
         </span>
         <span
-          className="text-[11px] font-medium text-primary-600 uppercase tabular-nums truncate"
+          className="text-[11px] font-medium text-primary-600 uppercase  truncate"
           title={platformLine}
         >
           {platformLine}
@@ -2794,7 +2794,7 @@ function LinkedAccountRow({
           </>
         )}
       </span>
-      <span className={`text-sm font-semibold tabular-nums ${openPnlColor}`}>
+      <span className={`text-sm font-semibold  ${openPnlColor}`}>
         {openPnl == null ? '—' : (
           <>
             {openPnl >= 0 ? '+' : '-'}
@@ -2802,8 +2802,8 @@ function LinkedAccountRow({
           </>
         )}
       </span>
-      <span className={`text-sm font-semibold tabular-nums ${winRateColor}`}>{formatPerformancePct(winRate, 0)}</span>
-      <span className={`text-sm font-semibold tabular-nums ${ddColor}`}>{formatPerformancePct(maxDd)}</span>
+      <span className={`text-sm font-semibold  ${winRateColor}`}>{formatPerformancePct(winRate, 0)}</span>
+      <span className={`text-sm font-semibold  ${ddColor}`}>{formatPerformancePct(maxDd)}</span>
       <div className="flex justify-end items-center gap-2">
         {showReconnect ? (
           <Button

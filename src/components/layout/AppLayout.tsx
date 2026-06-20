@@ -183,13 +183,13 @@ export function AppLayout() {
   const navLinkClass = (isCollapsed: boolean, disabled = false) =>
     ({ isActive }: { isActive: boolean }) =>
       clsx(
-        'flex items-center px-3 py-2.5 rounded-lg text-sm font-medium transition-colors min-h-[44px]',
-        isCollapsed ? 'justify-center' : 'gap-3',
+        'flex items-center px-3 py-2.5 rounded-xl text-sm transition-colors min-h-[20px]',
+        isCollapsed ? 'justify-center' : 'gap-2',
         disabled
-          ? 'cursor-pointer text-neutral-400 opacity-45 hover:bg-neutral-50 hover:text-neutral-600 hover:opacity-80 dark:text-neutral-500 dark:hover:bg-neutral-800 dark:hover:text-neutral-300'
+          ? 'cursor-pointer font-medium text-neutral-400 opacity-45 hover:bg-neutral-50 hover:text-neutral-600 hover:opacity-80 dark:text-neutral-500 dark:hover:bg-neutral-800 dark:hover:text-neutral-300'
           : isActive
-            ? 'bg-teal-50 text-teal-700 dark:bg-teal-950/60 dark:text-teal-400'
-            : 'text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100',
+            ? 'bg-teal-50 text-teal-800 font-semibold dark:bg-teal-950/60 dark:text-teal-400'
+            : 'text-neutral-600 font-medium hover:bg-neutral-50 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100',
       )
 
   const renderNavItemContent = (
