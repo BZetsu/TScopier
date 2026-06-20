@@ -1,152 +1,148 @@
-import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { CheckCircle2, Gift, Link2 } from 'lucide-react'
-import { Button } from '../../components/ui/Button'
-import { Input } from '../../components/ui/Input'
-import { Alert } from '../../components/ui/Alert'
-import { Card } from '../../components/ui/Card'
-import { PageHeader } from '../../components/layout/PageHeader'
-import { PageShell } from '../../components/layout/PageShell'
+import { useEffect, useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
+import { CheckCircle2, Loader2 } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { useUserProfile } from '../../context/UserProfileContext'
+import { useSubscription } from '../../context/SubscriptionContext'
 import { saveUserProfile } from '../../lib/userProfile'
-import {
-  captureReferralFromUrl,
-  clearStoredReferralCode,
-  loadStoredReferralCode,
-  normalizeReferralCode,
-  referralCodeLooksValid,
-} from '../../lib/referralCapture'
+import { useLocale, useT } from '../../context/LocaleContext'
+import { getSubscribeCtaLabel } from '../../lib/subscriptionCta'
+import { AuthBrandLogo } from '../../components/auth/AuthBrandLogo'
+import { Button } from '../../components/ui/Button'
 
-async function applyReferralCode(accessToken: string, referralCode: string, source: string) {
-  const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/apply-referral-code`
-  const res = await fetch(apiUrl, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      referral_code: referralCode,
-      source,
-    }),
-  })
-  const data = (await res.json().catch(() => ({}))) as { error?: string; already_applied?: boolean }
-  if (!res.ok && data.error) throw new Error(data.error)
-  return data
-}
-
+/** Post-verification welcome — email confirm or Google signup — before entering the app. */
 export function WelcomePage() {
   const navigate = useNavigate()
-  const { user, session } = useAuth()
-  const { profile, refreshProfile } = useUserProfile()
-  const [referralCode, setReferralCode] = useState('')
+  const t = useT()
+  const { auth } = useLocale()
+  const welcomeT = auth.welcome
+  const { user, loading: authLoading } = useAuth()
+  const { profile, refreshProfile, onboardingCompletedAt } = useUserProfile()
+  const { openUpgrade, isPastDue, effectivePlan, hasTrialExpired, hasActiveSubscription } = useSubscription()
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
-  const [success, setSuccess] = useState('')
+
+  const trialCta = getSubscribeCtaLabel(t, { isPastDue, effectivePlan, hasTrialExpired })
 
   useEffect(() => {
-    const fromUrl = captureReferralFromUrl(window.location.search)
-    const fromStore = loadStoredReferralCode()
-    const code = fromUrl ?? fromStore
-    if (code) setReferralCode(code)
-  }, [])
+    if (authLoading || !user) return
+    if (onboardingCompletedAt) {
+      navigate('/dashboard', { replace: true })
+    }
+  }, [authLoading, user, onboardingCompletedAt, navigate])
 
-  const normalizedCode = useMemo(
-    () => normalizeReferralCode(referralCode),
-    [referralCode],
-  )
-  const canApplyCode = referralCodeLooksValid(normalizedCode)
+  const completeOnboarding = async () => {
+    if (!user) return
+    await saveUserProfile(user.id, {
+      ...profile,
+      onboarding_completed_at: new Date().toISOString(),
+    })
+    await refreshProfile()
+  }
 
-  const finishOnboarding = async () => {
+  const startFreeTrial = async () => {
     if (!user) return
     setError('')
     setSaving(true)
     try {
-      await saveUserProfile(user.id, {
-        ...profile,
-        onboarding_completed_at: new Date().toISOString(),
-      })
-      if (session?.access_token && canApplyCode) {
-        const source = window.location.search.includes('ref=') ? 'signup_url' : 'onboarding'
-        await applyReferralCode(session.access_token, normalizedCode, source)
-        clearStoredReferralCode()
-        setSuccess('Referral code applied successfully.')
+      await completeOnboarding()
+      if (hasActiveSubscription) {
+        navigate('/dashboard', { replace: true })
+        return
       }
-      await refreshProfile()
-      navigate('/dashboard', { replace: true })
+      openUpgrade('advanced')
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not finish onboarding.')
+      setError(e instanceof Error ? e.message : welcomeT.errorFallback)
     } finally {
       setSaving(false)
     }
   }
 
-  const skipReferral = async () => {
-    setReferralCode('')
-    clearStoredReferralCode()
-    await finishOnboarding()
+  const exploreDashboard = async () => {
+    if (!user) return
+    setError('')
+    setSaving(true)
+    try {
+      await completeOnboarding()
+      navigate('/dashboard', { replace: true })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : welcomeT.errorFallback)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (authLoading || !user) {
+    return (
+      <WelcomeShell>
+        <div className="flex flex-col items-center py-16 text-center">
+          <Loader2 className="h-10 w-10 animate-spin text-teal-600 dark:text-teal-400" aria-hidden />
+        </div>
+      </WelcomeShell>
+    )
   }
 
   return (
-    <PageShell maxWidth="sm">
-      <PageHeader
-        title="Welcome to TSCopier"
-        subtitle="One last step before your dashboard."
-      />
+    <WelcomeShell>
+      <div className="py-6 text-center">
+        <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-teal-50 dark:bg-teal-950/40">
+          <CheckCircle2 className="h-9 w-9 text-teal-600 dark:text-teal-400" />
+        </div>
 
-      <div className="mt-6 space-y-4">
-        {error ? <Alert variant="error">{error}</Alert> : null}
-        {success ? <Alert variant="success">{success}</Alert> : null}
+        <h1 className="text-2xl font-semibold tracking-tight text-neutral-900 dark:text-neutral-50 sm:text-3xl">
+          {welcomeT.title}
+        </h1>
+        <p className="mt-3 text-sm text-neutral-500 dark:text-neutral-400">{welcomeT.subtitle}</p>
 
-        <Card padding="lg" className="space-y-4">
-          <div className="flex items-start gap-3">
-            <div className="mt-0.5 flex h-9 w-9 items-center justify-center rounded-lg bg-teal-50 text-teal-700 dark:bg-teal-950/40 dark:text-teal-300">
-              <Gift className="h-4 w-4" />
-            </div>
-            <div>
-              <h2 className="text-base font-semibold text-neutral-900 dark:text-neutral-100">Referral bonus</h2>
-              <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
-                Have a referral code? Enter it now to connect your account to your referrer.
-              </p>
-            </div>
-          </div>
+        <ul className="mt-6 space-y-2 text-left text-sm text-neutral-600 dark:text-neutral-400">
+          {welcomeT.steps.map(step => (
+            <li key={step} className="flex items-start gap-2">
+              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-teal-600 dark:text-teal-400" aria-hidden />
+              <span>{step}</span>
+            </li>
+          ))}
+        </ul>
 
-          <Input
-            label="Referral code (optional)"
-            value={referralCode}
-            onChange={(e) => setReferralCode(normalizeReferralCode(e.target.value))}
-            placeholder="e.g. TSCJOHN4"
-          />
+        {error ? (
+          <p className="mt-5 text-sm text-amber-700 dark:text-amber-300">{error}</p>
+        ) : null}
 
-          <div className="rounded-xl border border-neutral-200 bg-neutral-50 p-3 text-sm text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300">
-            <div className="flex items-center gap-2">
-              <Link2 className="h-4 w-4" />
-              <span className="font-medium">Code tips</span>
-            </div>
-            <p className="mt-1">Codes use letters, numbers, underscores, or dashes and are applied once.</p>
-          </div>
-        </Card>
+        <Button
+          className="mt-8 w-full"
+          size="lg"
+          loading={saving}
+          onClick={() => void startFreeTrial()}
+        >
+          {trialCta}
+        </Button>
 
-        <Card padding="lg" className="space-y-3">
-          <div className="flex items-center gap-2 text-sm font-medium text-neutral-900 dark:text-neutral-100">
-            <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-            Continue to your dashboard
-          </div>
-          <p className="text-sm text-neutral-600 dark:text-neutral-400">
-            You can manage channels, connect brokers, and configure copier settings after this step.
-          </p>
-          <div className="flex flex-wrap gap-2 pt-1">
-            <Button onClick={() => void finishOnboarding()} loading={saving}>
-              Continue
-            </Button>
-            <Button variant="ghost" onClick={() => void skipReferral()} disabled={saving}>
-              Skip code
-            </Button>
-          </div>
-        </Card>
+        <button
+          type="button"
+          onClick={() => void exploreDashboard()}
+          disabled={saving}
+          className="mt-4 text-sm font-medium text-neutral-500 hover:text-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-200"
+        >
+          {welcomeT.exploreDashboard}
+        </button>
       </div>
-    </PageShell>
+    </WelcomeShell>
   )
 }
 
+function WelcomeShell({ children }: { children: React.ReactNode }) {
+  const year = new Date().getFullYear()
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto bg-white dark:bg-neutral-950">
+      <header className="flex shrink-0 items-center justify-center px-6 py-8 pt-[calc(2rem+env(safe-area-inset-top,0px)+var(--app-banner-h,0px))]">
+        <Link to="/" className="flex items-center" aria-label="TSCopier home">
+          <AuthBrandLogo className="h-8 w-auto" />
+        </Link>
+      </header>
+      <main className="mx-auto flex w-full max-w-md flex-1 flex-col px-6 pb-10">{children}</main>
+      <footer className="shrink-0 px-6 pb-8 text-center">
+        <p className="text-xs text-neutral-400 dark:text-neutral-500">© {year} Tartarix Inc.</p>
+      </footer>
+    </div>
+  )
+}

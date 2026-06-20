@@ -87,6 +87,14 @@ export interface AuthTranslations {
     confirming?: string
     confirmingHint?: string
     confirmPending?: string
+    confirmLinkExpired?: string
+  }
+  welcome: {
+    title: string
+    subtitle: string
+    steps: string[]
+    exploreDashboard: string
+    errorFallback: string
   }
   marketing: {
     headline: string

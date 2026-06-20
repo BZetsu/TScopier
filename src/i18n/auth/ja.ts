@@ -88,6 +88,17 @@ export const authJa: AuthTranslations = {
     resent: 'メールを送信しました！',
     backToLogin: 'ログインに戻る',
   },
+  welcome: {
+    title: 'Welcome to TSCopier',
+    subtitle: 'Your account is ready. Start your free trial to copy Telegram signals to your broker.',
+    steps: [
+      'Connect Telegram and choose signal channels',
+      'Link your MT4/MT5 broker account',
+      'Copy trades automatically with your risk settings',
+    ],
+    exploreDashboard: 'Explore the dashboard first',
+    errorFallback: 'Could not continue. Please try again.',
+  },
   marketing: {
     headline: 'すべてのTelegramシグナルに対応するシームレスなコピー',
     trustpilotLabel: 'Trustpilot',
