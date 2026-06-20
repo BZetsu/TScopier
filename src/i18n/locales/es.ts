@@ -846,6 +846,8 @@ export const es: Translations = {
     networkError: 'Error de red',
     failedSendCode: 'No se pudo enviar el código',
     verificationFailed: 'Verificación fallida',
+    telegramAlreadyLinked:
+      'Esta cuenta de Telegram ya está vinculada a otra cuenta de TScopier. Inicia sesión en esa cuenta o contacta con soporte.',
     failedLoadTgChannels: 'No se pudieron cargar los canales de Telegram',
     telegramSessionExpired: 'Tu sesión de Telegram expiró. Vuelve a conectar — tus canales configurados se conservan.',
     telegramConnectionBusy: 'Telegram se está reconectando tras un backtest u otra tarea. Espera 30 segundos y pulsa Actualizar — o usa Reconectar Telegram.',

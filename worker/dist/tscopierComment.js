@@ -1,24 +1,45 @@
 "use strict";
 /** MT order comment parsing (worker-side, mirrors src/lib/tscopierComment.ts). */
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.LEGACY_TSCOPIER_COMMENT_PREFIX = exports.TSCOPIER_COMMENT_PREFIX = void 0;
 exports.signalIdMatchesPrefix = signalIdMatchesPrefix;
+exports.isTscopierComment = isTscopierComment;
 exports.parseTscopierComment = parseTscopierComment;
 exports.tscopierCommentMatchesChannelSlug = tscopierCommentMatchesChannelSlug;
-const TSCOPIER_PREFIX = 'TSCopier:';
+exports.TSCOPIER_COMMENT_PREFIX = 'TScopier:';
+/** Legacy MT comments written before brand casing was standardized. */
+exports.LEGACY_TSCOPIER_COMMENT_PREFIX = 'TSCopier:';
 function signalIdMatchesPrefix(signalId, prefix) {
     const norm = prefix.toLowerCase();
     if (norm.length !== 8 || !/^[a-f0-9]+$/.test(norm))
         return false;
     return signalId.toLowerCase().startsWith(norm);
 }
-/** Parse `TSCopier:ChannelSlug:abc12345` or `TSCopier:abc12345` from MT order comment. */
+/** True when comment uses the current or legacy TScopier order prefix. */
+function isTscopierComment(comment) {
+    if (!comment?.trim())
+        return false;
+    const trimmed = comment.trim();
+    return (trimmed.startsWith(exports.TSCOPIER_COMMENT_PREFIX)
+        || trimmed.startsWith(exports.LEGACY_TSCOPIER_COMMENT_PREFIX));
+}
+function stripTscopierCommentPrefix(trimmed) {
+    if (trimmed.startsWith(exports.TSCOPIER_COMMENT_PREFIX)) {
+        return trimmed.slice(exports.TSCOPIER_COMMENT_PREFIX.length);
+    }
+    if (trimmed.startsWith(exports.LEGACY_TSCOPIER_COMMENT_PREFIX)) {
+        return trimmed.slice(exports.LEGACY_TSCOPIER_COMMENT_PREFIX.length);
+    }
+    return null;
+}
+/** Parse `TScopier:ChannelSlug:abc12345` or `TScopier:abc12345` from MT order comment. */
 function parseTscopierComment(comment) {
     if (!comment?.trim())
         return null;
     const trimmed = comment.trim();
-    if (!trimmed.startsWith(TSCOPIER_PREFIX))
+    const body = stripTscopierCommentPrefix(trimmed);
+    if (body === null)
         return null;
-    const body = trimmed.slice(TSCOPIER_PREFIX.length);
     const segments = body.split(':').map(s => s.trim()).filter(Boolean);
     if (segments.length === 0)
         return null;

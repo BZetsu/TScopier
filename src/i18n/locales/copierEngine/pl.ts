@@ -41,6 +41,8 @@ export const copierEnginePl: CopierEngineBundleTranslations = {
     networkError: 'Błąd sieci',
     failedSendCode: 'Nie udało się wysłać kodu',
     verificationFailed: 'Weryfikacja nie powiodła się',
+    telegramAlreadyLinked:
+      'To konto Telegram jest już powiązane z innym kontem TScopier. Zaloguj się na to konto lub skontaktuj się z pomocą.',
     failedLoadTgChannels: 'Nie udało się wczytać kanałów Telegrama',
     telegramSessionExpired: 'Twoja sesja Telegram wygasła. Połącz ponownie — skonfigurowane kanały zostaną zachowane.',
     telegramConnectionBusy: 'Telegram is reconnecting after a backtest or another task. Wait 30 seconds, then press Refresh — or use Reconnect Telegram.',

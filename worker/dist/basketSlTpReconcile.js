@@ -197,7 +197,7 @@ async function markBasketReconcileDoneForAnchor(supabase, brokerAccountId, ancho
         await markBasketReconcileDone(supabase, existingJob.id);
     }
 }
-exports.GHOST_BASKET_CLOSED_USER_MESSAGE = 'Open basket existed only in TSCopier (not on the broker); stale legs were closed. Send a new entry to open on MT.';
+exports.GHOST_BASKET_CLOSED_USER_MESSAGE = 'Open basket existed only in TScopier (not on the broker); stale legs were closed. Send a new entry to open on MT.';
 function stopsAlreadyMatch(tr, target, nImmCwe, legIdx) {
     return (0, orderModifyBenign_1.stopsAlreadyMatchDb)(tr, target, nImmCwe, legIdx);
 }

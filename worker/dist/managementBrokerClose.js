@@ -48,7 +48,7 @@ function extractOpenOrderFromBrokerRaw(raw) {
 function filterTscopierOrdersForChannelClose(args) {
     const { orders, channelSlug, symbolFilter, channelSignalIdPrefixes } = args;
     return orders.filter(o => {
-        if (!o.comment.startsWith('TSCopier:'))
+        if (!(0, tscopierComment_1.isTscopierComment)(o.comment))
             return false;
         const parsed = (0, tscopierComment_1.parseTscopierComment)(o.comment);
         if (!parsed)

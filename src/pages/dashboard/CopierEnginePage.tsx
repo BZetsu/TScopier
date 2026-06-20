@@ -43,6 +43,7 @@ import {
   setCachedTgChannels,
   type TgChannelListItem,
 } from '../../lib/telegramChannelsCache'
+import { resolveTelegramAuthError } from '../../lib/telegramAuthError'
 import {
   getCachedTgSession,
   invalidateTgSessionCache,
@@ -495,7 +496,7 @@ export function CopierEnginePage() {
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok || data.error) {
-        const msg = typeof data.error === 'string' ? data.error : ce.failedSendCode
+        const msg = resolveTelegramAuthError(data.error, ce.failedSendCode, ce)
         setTgError(msg)
         return
       }
@@ -537,7 +538,7 @@ export function CopierEnginePage() {
         return
       }
       if (!res.ok || data.error) {
-        const msg = typeof data.error === 'string' ? data.error : ce.verificationFailed
+        const msg = resolveTelegramAuthError(data.error, ce.verificationFailed, ce)
         setTgError(msg)
         return
       }

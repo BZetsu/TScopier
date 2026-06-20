@@ -41,6 +41,8 @@ export const copierEngineJa: CopierEngineBundleTranslations = {
     networkError: 'ネットワークエラー',
     failedSendCode: 'コードの送信に失敗しました',
     verificationFailed: '認証に失敗しました',
+    telegramAlreadyLinked:
+      'このTelegramアカウントは別のTScopierアカウントにすでに連携されています。そのアカウントでサインインするか、サポートにお問い合わせください。',
     failedLoadTgChannels: 'Telegramチャンネルの読み込みに失敗しました',
     telegramSessionExpired: 'Telegramセッションの有効期限が切れました。再接続してください — 設定済みチャンネルは保持されます。',
     telegramConnectionBusy: 'Telegram is reconnecting after a backtest or another task. Wait 30 seconds, then press Refresh — or use Reconnect Telegram.',

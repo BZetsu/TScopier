@@ -1,6 +1,6 @@
 "use strict";
 /**
- * MT order comment helpers. All copier trades use a `TSCopier:` prefix so open-
+ * MT order comment helpers. All copier trades use a `TScopier:` prefix so open-
  * order reconciliation can find our legs; when a signal has a channel we embed
  * a short channel slug before the signal id.
  */
@@ -37,15 +37,15 @@ function sanitizeChannelCommentSlug(raw) {
 }
 /**
  * Prefix for planner / OrderSend comments.
- * With channel: `TSCopier:ChannelSlug:abc12345`
- * Without: `TSCopier:abc12345`
+ * With channel: `TScopier:ChannelSlug:abc12345`
+ * Without: `TScopier:abc12345`
  */
 function buildTscopierCommentPrefix(signalId, channelSlug) {
     const id8 = signalId.slice(0, 8);
     const slug = channelSlug?.trim();
     if (slug)
-        return `TSCopier:${slug}:${id8}`;
-    return `TSCopier:${id8}`;
+        return `TScopier:${slug}:${id8}`;
+    return `TScopier:${id8}`;
 }
 /** Default on — only explicit `false` disables MT order comments. */
 function areOrderCommentsEnabled(manual) {
@@ -72,5 +72,5 @@ function appendOrderCommentSuffix(prefix, suffix) {
 function buildBasketRefreshComment(signalId, manual) {
     if (!areOrderCommentsEnabled(manual))
         return '';
-    return `TSCopier:${signalId.slice(0, 8)}:refresh`;
+    return `TScopier:${signalId.slice(0, 8)}:refresh`;
 }

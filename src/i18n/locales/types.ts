@@ -922,6 +922,7 @@ export interface CopierEnginePageTranslations {
   networkError: string
   failedSendCode: string
   verificationFailed: string
+  telegramAlreadyLinked: string
   failedLoadTgChannels: string
   telegramSessionExpired: string
   telegramConnectionBusy: string

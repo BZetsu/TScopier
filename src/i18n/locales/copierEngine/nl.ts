@@ -42,6 +42,8 @@ export const copierEngineNl: CopierEngineBundleTranslations = {
     networkError: 'Netwerkfout',
     failedSendCode: 'Code verzenden mislukt',
     verificationFailed: 'Verificatie mislukt',
+    telegramAlreadyLinked:
+      'Dit Telegram-account is al gekoppeld aan een ander TScopier-account. Log in op dat account of neem contact op met support.',
     failedLoadTgChannels: 'Telegram-kanalen laden mislukt',
     telegramSessionExpired: 'Je Telegram-sessie is verlopen. Verbind opnieuw — je geconfigureerde kanalen blijven behouden.',
     telegramConnectionBusy: 'Telegram is reconnecting after a backtest or another task. Wait 30 seconds, then press Refresh — or use Reconnect Telegram.',

@@ -68,8 +68,14 @@ function startHttpServer(authService, sessionManager) {
                 if (!body.user_id || !body.phone) {
                     return sendJson(res, 400, { error: 'user_id and phone are required' });
                 }
-                const r = await authService.sendCode(body.user_id, body.phone);
-                return sendJson(res, 200, r);
+                try {
+                    const r = await authService.sendCode(body.user_id, body.phone);
+                    return sendJson(res, 200, r);
+                }
+                catch (err) {
+                    const msg = err instanceof Error ? err.message : 'Failed to send code';
+                    return sendJson(res, 400, { error: sanitizeClientError(msg) });
+                }
             }
             if (url === '/auth/verify_code') {
                 if (!body.user_id || !body.phone || !body.code) {

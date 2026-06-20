@@ -41,6 +41,8 @@ export const copierEngineSv: CopierEngineBundleTranslations = {
     networkError: 'Nätverksfel',
     failedSendCode: 'Det gick inte att skicka kod',
     verificationFailed: 'Verifiering misslyckades',
+    telegramAlreadyLinked:
+      'Detta Telegram-konto är redan länkat till ett annat TScopier-konto. Logga in på det kontot eller kontakta support.',
     failedLoadTgChannels: 'Det gick inte att ladda Telegram-kanaler',
     telegramSessionExpired: 'Din Telegram-session har gått ut. Anslut igen — dina konfigurerade kanaler behålls.',
     telegramConnectionBusy: 'Telegram is reconnecting after a backtest or another task. Wait 30 seconds, then press Refresh — or use Reconnect Telegram.',

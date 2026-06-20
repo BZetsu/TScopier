@@ -46,6 +46,7 @@ const signalRevision_1 = require("../signalRevision");
 const tradeSignalActions_1 = require("../tradeSignalActions");
 const workerConfig_1 = require("../workerConfig");
 const monitorIdleGate_1 = require("../monitorIdleGate");
+const tscopierComment_1 = require("../tscopierComment");
 const brokerChannelFilter_1 = require("../brokerChannelFilter");
 const brokerSignalReplay_1 = require("../brokerSignalReplay");
 const channelTradingConfig_2 = require("../channelTradingConfig");
@@ -66,7 +67,7 @@ class TradeExecutor {
         this.supabase = supabase;
         this.sessionManager = sessionManager;
         this.sweepLoop = null;
-        /** Cancels TSCopier broker pendings past `pending_expiry_hours` (1–24) when env enabled. */
+        /** Cancels TScopier broker pendings past `pending_expiry_hours` (1–24) when env enabled. */
         this.brokerPendingSweepTimer = null;
         this.sessionHeartbeatTimer = null;
         this.sessionHeartbeatInFlight = false;
@@ -845,7 +846,7 @@ class TradeExecutor {
                 const ticket = Number(o.ticket ?? o.Ticket ?? o.orderId ?? o.OrderID ?? 0);
                 if (!operation.includes('Limit') && !operation.includes('Stop'))
                     continue;
-                if (!comment.startsWith('TSCopier:'))
+                if (!(0, tscopierComment_1.isTscopierComment)(comment))
                     continue;
                 if (!Number.isFinite(ticket) || ticket <= 0)
                     continue;
@@ -1005,7 +1006,7 @@ class TradeExecutor {
     }
     /**
      * One-time cleanup of broker-side BuyLimit/SellLimit orders left over from
-     * the pre-virtual-pendings era. Filters by our `TSCopier:` comment prefix so
+     * the pre-virtual-pendings era. Filters by our `TScopier:` comment prefix so
      * we never touch orders placed by the user manually or other systems.
      *
      * Gated by env flag `WORKER_LEGACY_PENDING_CLEANUP=true`. Safe to leave on
@@ -1042,7 +1043,7 @@ class TradeExecutor {
                 const ticket = Number(o.ticket ?? o.Ticket ?? o.orderId ?? o.OrderID ?? 0);
                 if (!operation.includes('Limit') && !operation.includes('Stop'))
                     continue;
-                if (!comment.startsWith('TSCopier:'))
+                if (!(0, tscopierComment_1.isTscopierComment)(comment))
                     continue;
                 if (!Number.isFinite(ticket) || ticket <= 0)
                     continue;
