@@ -13,31 +13,15 @@ import { useNavigate } from 'react-router-dom'
 import {
   Search,
   X,
-  LayoutDashboard,
-  Settings,
-  History,
-  Send,
-  LayoutTemplate,
-  ScrollText,
-  Newspaper,
-  Calendar,
-  ChartBar as BarChart2,
-  ChartNoAxesColumn,
-  Landmark,
-  LifeBuoy,
-  Lightbulb,
-  Handshake,
-  Share2,
-  CreditCard,
-  Repeat,
-  RefreshCw,
   Server,
   Radio,
+  type LucideIcon,
 } from 'lucide-react'
 import clsx from 'clsx'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import { useT } from '../../context/LocaleContext'
+import { APP_ROUTE_ICONS, getAppRouteIcon } from '../../lib/appNavIcons'
 import {
   buildAppSearchPages,
   filterSearchResults,
@@ -46,29 +30,10 @@ import {
   type AppSearchResultKind,
 } from '../../lib/appSearch'
 
-const PAGE_ICONS: Record<string, typeof LayoutDashboard> = {
-  '/dashboard': LayoutDashboard,
-  '/brokers': Landmark,
-  '/account-trades': History,
-  '/settings': Settings,
-  '/channels': Send,
-  '/backtest': LayoutTemplate,
-  '/copier-logs': ScrollText,
-  '/activities': RefreshCw,
-  '/manage-signals': ChartNoAxesColumn,
-  '/performance': BarChart2,
-  '/market-news': Newspaper,
-  '/economic-calendar': Calendar,
-  '/contact-support': LifeBuoy,
-  '/feature-request': Lightbulb,
-  '/partner-with-us': Handshake,
-  '/affiliate-program': Share2,
-  '/billing': CreditCard,
-  '/subscriptions': Repeat,
-}
+const PAGE_ICONS = APP_ROUTE_ICONS
 
-const KIND_ICONS: Record<AppSearchResultKind, typeof LayoutDashboard> = {
-  page: LayoutDashboard,
+const KIND_ICONS: Record<AppSearchResultKind, LucideIcon> = {
+  page: getAppRouteIcon('/dashboard'),
   broker: Server,
   channel: Radio,
 }

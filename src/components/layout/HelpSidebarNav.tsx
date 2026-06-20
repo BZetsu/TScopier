@@ -1,7 +1,8 @@
-import { BookOpen, ExternalLink, MessageCircle } from 'lucide-react'
+import { ExternalLink } from 'lucide-react'
 import { NavLink } from 'react-router-dom'
 import clsx from 'clsx'
 import { useT } from '../../context/LocaleContext'
+import { APP_HELP_ICONS, getAppRouteIcon } from '../../lib/appNavIcons'
 import { HELP_LINKS } from '../../lib/helpLinks'
 
 type HelpSidebarNavProps = {
@@ -12,6 +13,8 @@ type HelpSidebarNavProps = {
 export function HelpSidebarNav({ collapsed, onNavigate }: HelpSidebarNavProps) {
   const t = useT()
   const hm = t.nav.helpMenu
+  const ContactSupportIcon = getAppRouteIcon('/contact-support')
+  const DocumentationIcon = APP_HELP_ICONS.documentation
 
   const itemClass = (isActive = false) =>
     clsx(
@@ -40,7 +43,7 @@ export function HelpSidebarNav({ collapsed, onNavigate }: HelpSidebarNavProps) {
           onClick={onNavigate}
           className={({ isActive }) => itemClass(isActive)}
         >
-          <MessageCircle className="h-4 w-4 shrink-0" aria-hidden />
+          <ContactSupportIcon className="h-4 w-4 shrink-0" aria-hidden />
           <span className={clsx(collapsed && 'lg:hidden')}>{hm.liveChat}</span>
         </NavLink>
 
@@ -51,7 +54,7 @@ export function HelpSidebarNav({ collapsed, onNavigate }: HelpSidebarNavProps) {
           title={hm.documentation}
           className={clsx(itemClass(), !collapsed && 'lg:w-full')}
         >
-          <BookOpen className="h-4 w-4 shrink-0" aria-hidden />
+          <DocumentationIcon className="h-4 w-4 shrink-0" aria-hidden />
           <span className={clsx('min-w-0 flex-1', collapsed && 'lg:hidden')}>{hm.documentation}</span>
           {!collapsed ? (
             <ExternalLink className="h-3.5 w-3.5 shrink-0 opacity-50" aria-hidden />

@@ -1,9 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  Settings,
-  CreditCard,
-  Share2,
   LogOut,
   ChevronRight,
   type LucideIcon,
@@ -14,6 +11,7 @@ import { useT } from '../../context/LocaleContext'
 import { useUserProfile } from '../../context/UserProfileContext'
 import { useSubscription } from '../../context/SubscriptionContext'
 import { UserAvatar } from './UserAvatar'
+import { getAppRouteIcon } from '../../lib/appNavIcons'
 
 export interface UserMenuDropdownProps {
   open: boolean
@@ -58,9 +56,9 @@ export function UserMenuDropdown({ open, onClose, onSignOut }: UserMenuDropdownP
   if (!open) return null
 
   const items: MenuItem[] = [
-    { id: 'profile', kind: 'link', label: um.profileSettings, icon: Settings, path: '/settings' },
-    { id: 'billing', kind: 'link', label: um.subscriptionBilling, icon: CreditCard, path: '/billing' },
-    { id: 'affiliate', kind: 'link', label: um.affiliateProgram, icon: Share2, path: '/affiliate-program' },
+    { id: 'profile', kind: 'link', label: um.profileSettings, icon: getAppRouteIcon('/settings'), path: '/settings' },
+    { id: 'billing', kind: 'link', label: um.subscriptionBilling, icon: getAppRouteIcon('/billing'), path: '/billing' },
+    { id: 'affiliate', kind: 'link', label: um.affiliateProgram, icon: getAppRouteIcon('/affiliate-program'), path: '/affiliate-program' },
     { id: 'signout', kind: 'action', label: um.signOut, icon: LogOut, destructive: true },
   ]
 

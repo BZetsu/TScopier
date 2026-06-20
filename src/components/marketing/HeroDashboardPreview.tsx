@@ -1,23 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import {
-  Calendar,
-  ChartBar as BarChart2,
-  ChartNoAxesColumn,
   ChevronRight,
   CircleHelp,
   Clock,
-  History,
   Info,
-  LayoutDashboard,
-  LayoutTemplate,
-  Newspaper,
   PanelLeftClose,
   Plus,
-  ScrollText,
   Search,
-  Send,
-  Landmark,
 } from 'lucide-react'
 import { LanguageSwitcher } from '../auth/LanguageSwitcher'
 import { CopierActiveIndicator } from '../layout/CopierActiveIndicator'
@@ -25,6 +15,7 @@ import { ThemeToggle } from '../ui/ThemeToggle'
 import { TscopierLogo } from '../ui/TscopierLogo'
 import { useT } from '../../context/LocaleContext'
 import { useTheme } from '../../context/ThemeContext'
+import { getAppRouteIcon } from '../../lib/appNavIcons'
 import { chartThemeColors } from '../../lib/chartTheme'
 import { formatHeroLiveMoney, useLiveMoneyTicker } from './useLiveMoneyTicker'
 import type {
@@ -378,26 +369,27 @@ export function HeroDashboardPreview() {
     {
       label: t.nav.sections.general,
       items: [
-        { icon: LayoutDashboard, label: t.nav.items.dashboard, active: true },
-        { icon: Landmark, label: t.nav.items.brokers, active: false },
-        { icon: History, label: t.nav.items.trades, active: false },
+        { to: '/dashboard', label: t.nav.items.dashboard, active: true },
+        { to: '/brokers', label: t.nav.items.brokers, active: false },
+        { to: '/account-trades', label: t.nav.items.trades, active: false },
+        { to: '/activities', label: t.nav.items.management, active: false },
       ],
     },
     {
       label: t.nav.sections.signals,
       items: [
-        { icon: Send, label: t.nav.items.channels, active: false },
-        { icon: LayoutTemplate, label: t.nav.items.backtest, active: false },
-        { icon: ScrollText, label: t.nav.items.copierLogs, active: false },
-        { icon: ChartNoAxesColumn, label: t.nav.items.signalHistory, active: false },
-        { icon: BarChart2, label: t.nav.items.performance, active: false },
+        { to: '/channels', label: t.nav.items.channels, active: false },
+        { to: '/backtest', label: t.nav.items.backtest, active: false },
+        { to: '/copier-logs', label: t.nav.items.copierLogs, active: false },
+        { to: '/manage-signals', label: t.nav.items.signalHistory, active: false },
+        { to: '/performance', label: t.nav.items.performance, active: false },
       ],
     },
     {
       label: t.nav.sections.tradingTools,
       items: [
-        { icon: Newspaper, label: t.nav.items.marketNews, active: false },
-        { icon: Calendar, label: t.nav.items.economicCalendar, active: false },
+        { to: '/market-news', label: t.nav.items.marketNews, active: false },
+        { to: '/economic-calendar', label: t.nav.items.economicCalendar, active: false },
       ],
     },
   ]
@@ -445,7 +437,9 @@ export function HeroDashboardPreview() {
                     {section.label}
                   </p>
                   <div className="space-y-0.5">
-                    {section.items.map(item => (
+                    {section.items.map(item => {
+                      const Icon = getAppRouteIcon(item.to)
+                      return (
                       <div
                         key={item.label}
                         className={clsx(
@@ -455,7 +449,7 @@ export function HeroDashboardPreview() {
                             : 'text-neutral-600 dark:text-neutral-400',
                         )}
                       >
-                        <item.icon
+                        <Icon
                           className={clsx(
                             'h-4 w-4 shrink-0',
                             item.active && 'text-teal-600 dark:text-teal-400',
@@ -463,7 +457,8 @@ export function HeroDashboardPreview() {
                         />
                         <span>{item.label}</span>
                       </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 </div>
               ))}

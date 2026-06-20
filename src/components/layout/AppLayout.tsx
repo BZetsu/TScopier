@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
-import { LayoutDashboard, History, Send, LayoutTemplate, ScrollText, Newspaper, Calendar, ChartBar as BarChart2, ChevronDown, ChartNoAxesColumn, PanelLeftClose, PanelLeftOpen, Menu, X, CreditCard, Share2, Landmark, RefreshCw } from 'lucide-react'
+import { ChevronDown, PanelLeftClose, PanelLeftOpen, Menu, X, type LucideIcon } from 'lucide-react'
 import clsx from 'clsx'
+import { getAppRouteIcon } from '../../lib/appNavIcons'
 import { TscopierLogo } from '../ui/TscopierLogo'
 import { AppSearchDesktop, AppSearchMobileTrigger, AppSearchProvider } from './AppSearch'
 import { useAuth } from '../../context/AuthContext'
@@ -24,7 +25,6 @@ import { isRouteAllowedWithoutSubscription } from '../../lib/subscriptionNavAcce
 
 type NavItem = {
   to: string
-  icon: typeof LayoutDashboard
   label: string
   showOpenTradesIndicator?: boolean
   showHighImpactNewsIndicator?: boolean
@@ -108,34 +108,34 @@ export function AppLayout() {
       {
         label: t.nav.sections.general,
         items: [
-          { to: '/dashboard', icon: LayoutDashboard, label: t.nav.items.dashboard },
-          { to: '/brokers', icon: Landmark, label: t.nav.items.brokers },
-          { to: '/account-trades', icon: History, label: t.nav.items.trades, showOpenTradesIndicator: true },
-          { to: '/activities', icon: RefreshCw, label: t.nav.items.management },
+          { to: '/dashboard', label: t.nav.items.dashboard },
+          { to: '/brokers', label: t.nav.items.brokers },
+          { to: '/account-trades', label: t.nav.items.trades, showOpenTradesIndicator: true },
+          { to: '/activities', label: t.nav.items.management },
         ],
       },
       {
         label: t.nav.sections.signals,
         items: [
-          { to: '/channels', icon: Send, label: t.nav.items.channels },
-          { to: '/backtest', icon: LayoutTemplate, label: t.nav.items.backtest },
-          { to: '/copier-logs', icon: ScrollText, label: t.nav.items.copierLogs },
-          { to: '/manage-signals', icon: ChartNoAxesColumn, label: t.nav.items.signalHistory },
-          { to: '/performance', icon: BarChart2, label: t.nav.items.performance },
+          { to: '/channels', label: t.nav.items.channels },
+          { to: '/backtest', label: t.nav.items.backtest },
+          { to: '/copier-logs', label: t.nav.items.copierLogs },
+          { to: '/manage-signals', label: t.nav.items.signalHistory },
+          { to: '/performance', label: t.nav.items.performance },
         ],
       },
       {
         label: t.nav.sections.tradingTools,
         items: [
-          { to: '/market-news', icon: Newspaper, label: t.nav.items.marketNews },
-          { to: '/economic-calendar', icon: Calendar, label: t.nav.items.economicCalendar, showHighImpactNewsIndicator: true },
+          { to: '/market-news', label: t.nav.items.marketNews },
+          { to: '/economic-calendar', label: t.nav.items.economicCalendar, showHighImpactNewsIndicator: true },
         ],
       },
       {
         label: t.nav.sections.membership,
         items: [
-          { to: '/billing', icon: CreditCard, label: t.nav.userMenu.subscriptionBilling },
-          { to: '/affiliate-program', icon: Share2, label: t.nav.userMenu.affiliateProgram },
+          { to: '/billing', label: t.nav.userMenu.subscriptionBilling },
+          { to: '/affiliate-program', label: t.nav.userMenu.affiliateProgram },
         ],
       },
     ],
@@ -201,7 +201,7 @@ export function AppLayout() {
       showOpenTradesIndicator,
       showHighImpactNewsIndicator,
     }: {
-      icon: NavItem['icon']
+      icon: LucideIcon
       label: string
       isActive: boolean
       showOpenTradesIndicator?: boolean
@@ -270,7 +270,8 @@ export function AppLayout() {
             {section.label}
           </p>
           <div className="space-y-0.5">
-            {sectionItems.map(({ to, icon: Icon, label, showOpenTradesIndicator, showHighImpactNewsIndicator, disabled }) => {
+            {sectionItems.map(({ to, label, showOpenTradesIndicator, showHighImpactNewsIndicator, disabled }) => {
+              const Icon = getAppRouteIcon(to)
               const ariaExtra = showOpenTradesIndicator && hasOpenTrades
                 ? t.nav.openTradesActive
                 : showHighImpactNewsIndicator && hasHighImpactNewsToday
