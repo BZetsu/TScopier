@@ -5,7 +5,6 @@ import { AuthPage } from '../../pages/auth/AuthPage'
 import { ForgotPasswordPage } from '../../pages/auth/ForgotPasswordPage'
 import { ResetPasswordPage } from '../../pages/auth/ResetPasswordPage'
 import { SignupPage } from '../../pages/auth/SignupPage'
-import { VerifyEmailPage } from '../../pages/auth/VerifyEmailPage'
 import { LanguageSwitcher } from '../auth/LanguageSwitcher'
 import { ThemeToggle } from '../ui/ThemeToggle'
 import { AuthBrandLogo } from '../auth/AuthBrandLogo'
@@ -15,7 +14,6 @@ export function AuthLayout() {
   const { auth } = useLocale()
   const { pathname } = useLocation()
   const isSignup = pathname === '/signup'
-  const isVerify = pathname === '/verify-email'
   const isForgotPassword = pathname === '/forgot-password'
   const isResetPassword = pathname === '/reset-password'
   const year = new Date().getFullYear()
@@ -48,9 +46,7 @@ export function AuthLayout() {
           )}
         >
           <div className="mx-auto flex w-full max-w-[420px] flex-col py-6 lg:my-auto lg:py-8">
-            {isVerify ? (
-              <VerifyEmailPage />
-            ) : isResetPassword ? (
+            {isResetPassword ? (
               <ResetPasswordPage />
             ) : isForgotPassword ? (
               <ForgotPasswordPage />

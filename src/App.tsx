@@ -1,16 +1,20 @@
 import { lazy, Suspense } from 'react'
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom'
 import { AuthProvider } from './context/AuthContext'
 import { LocaleProvider } from './context/LocaleContext'
 import { UserProfileProvider } from './context/UserProfileContext'
 import { SubscriptionProvider } from './context/SubscriptionContext'
 import { AuthLayout } from './components/layout/AuthLayout'
+import { VerifyEmailLayout } from './components/layout/VerifyEmailLayout'
 import { AppShell } from './components/layout/AppShell'
 import { ProtectedRoute } from './components/layout/ProtectedRoute'
+import { EmailVerificationGate } from './components/layout/EmailVerificationGate'
 import { SubscriptionGuard } from './components/layout/SubscriptionGuard'
 import { PageLoader } from './components/layout/PageLoader'
 import { WelcomePage } from './pages/onboarding/WelcomePage'
 import { ReferralCodeRedirect } from './pages/auth/ReferralCodeRedirect'
+import { VerifyEmailPage } from './pages/auth/VerifyEmailPage'
+import { AuthConfirmedPage } from './pages/auth/AuthConfirmedPage'
 import { GoogleAnalyticsRouteTracker } from './components/analytics/GoogleAnalyticsRouteTracker'
 import { CookieConsentBanner } from './components/marketing/CookieConsentBanner'
 import { AppTopBannersProvider } from './context/AppTopBannersProvider'
@@ -103,24 +107,33 @@ export default function App() {
 
           <Route path="/login" element={<AuthLayout />} />
           <Route path="/signup" element={<AuthLayout />} />
-          <Route path="/verify-email" element={<AuthLayout />} />
           <Route path="/forgot-password" element={<AuthLayout />} />
           <Route path="/reset-password" element={<AuthLayout />} />
           <Route path="/:referralCode" element={<ReferralCodeRedirect />} />
 
+          <Route element={<VerifyEmailLayout />}>
+            <Route path="/verify-email" element={<VerifyEmailPage />} />
+            <Route path="/auth/confirmed" element={<AuthConfirmedPage />} />
+          </Route>
+
+          <Route
+            element={
+              <EmailVerificationGate />
+            }
+          >
           <Route
             element={
               <ProtectedRoute>
                 <SubscriptionGuard>
-                  <AppShell />
+                  <Outlet />
                 </SubscriptionGuard>
               </ProtectedRoute>
             }
           >
-            <Route path="/pricing" element={<LazyPage><AppPricingPage /></LazyPage>} />
-            {/* Dashboard UI is kept alive in AppShell via DashboardKeepAlive */}
-            <Route path="/dashboard/*" element={<DashboardRouteAnchor />} />
             <Route path="/welcome" element={<WelcomePage />} />
+            <Route element={<AppShell />}>
+            <Route path="/pricing" element={<LazyPage><AppPricingPage /></LazyPage>} />
+            <Route path="/dashboard/*" element={<DashboardRouteAnchor />} />
             <Route path="/brokers" element={<LazyPage><AccountConfigPage /></LazyPage>} />
             <Route path="/account-configuration" element={<Navigate to="/brokers" replace />} />
             <Route path="/account-trades" element={<LazyPage><TradesPage /></LazyPage>} />
@@ -153,6 +166,8 @@ export default function App() {
             <Route path="/onboarding" element={<Navigate to="/welcome" replace />} />
             <Route path="/integrations" element={<Navigate to="/dashboard" replace />} />
             <Route path="/sentiments" element={<Navigate to="/market-news" replace />} />
+            </Route>
+          </Route>
           </Route>
         </Routes>
       </SubscriptionProvider>

@@ -84,9 +84,14 @@ export const authEn: AuthTranslations = {
   verify: {
     heading: 'Check your email',
     subtitle: 'We just sent a verification link to {email}.',
+    instructions:
+      'Open the link in that email to activate your account. You cannot use TSCopier until verification is complete.',
     resend: 'Resend email',
     resent: 'Email sent!',
     backToLogin: 'Back to login',
+    confirming: 'Confirming your email…',
+    confirmingHint: 'You will be redirected in a moment.',
+    confirmPending: 'Verification is still processing. Check your email for the latest link.',
   },
   marketing: {
     headline: 'One Seamless Copier for every Telegram Signal',

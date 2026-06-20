@@ -3,26 +3,52 @@ import { describe, it } from 'node:test'
 import type { User } from '@supabase/supabase-js'
 import {
   isEmailVerified,
+  isOAuthUser,
   isUnconfirmedEmailAuthError,
   verifyEmailPath,
 } from './emailVerification'
 
-function userWith(confirmedAt: string | null): User {
+function userWith(
+  confirmedAt: string | null,
+  providers: string[] = ['email'],
+): User {
   return {
     id: 'user-1',
     email: 'test@example.com',
     email_confirmed_at: confirmedAt,
+    app_metadata: { providers },
   } as User
 }
 
-describe('isEmailVerified', () => {
-  it('returns false when email_confirmed_at is missing', () => {
-    assert.equal(isEmailVerified(userWith(null)), false)
-    assert.equal(isEmailVerified(null), false)
+describe('isOAuthUser', () => {
+  it('detects Google OAuth', () => {
+    assert.equal(isOAuthUser(userWith('2026-01-01T00:00:00Z', ['google'])), true)
   })
 
-  it('returns true when email_confirmed_at is set', () => {
-    assert.equal(isEmailVerified(userWith('2026-01-01T00:00:00Z')), true)
+  it('returns false for email-only signup', () => {
+    assert.equal(isOAuthUser(userWith(null, ['email'])), false)
+  })
+})
+
+describe('isEmailVerified', () => {
+  it('returns false when email/password user has no profile verification', () => {
+    assert.equal(isEmailVerified(userWith(null), null), false)
+    assert.equal(isEmailVerified(userWith('2026-01-01T00:00:00Z'), null), false)
+    assert.equal(isEmailVerified(null, null), false)
+  })
+
+  it('returns true when email/password profile is verified', () => {
+    assert.equal(
+      isEmailVerified(userWith('2026-01-01T00:00:00Z'), '2026-01-01T00:00:00Z'),
+      true,
+    )
+  })
+
+  it('returns true for OAuth when Supabase confirms email', () => {
+    assert.equal(
+      isEmailVerified(userWith('2026-01-01T00:00:00Z', ['google']), null),
+      true,
+    )
   })
 })
 

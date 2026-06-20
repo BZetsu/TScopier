@@ -80,9 +80,13 @@ export interface AuthTranslations {
   verify: {
     heading: string
     subtitle: string
+    instructions?: string
     resend: string
     resent: string
     backToLogin: string
+    confirming?: string
+    confirmingHint?: string
+    confirmPending?: string
   }
   marketing: {
     headline: string

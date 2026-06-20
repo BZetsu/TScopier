@@ -30,6 +30,7 @@ interface UserProfileContextValue {
   adminUntil: string | null
   subscriptionStatus: string | null
   onboardingCompletedAt: string | null
+  emailVerifiedAt: string | null
   baseCurrency: string
   timezone: string
   copierPaused: boolean
@@ -60,6 +61,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
   const [adminUntil, setAdminUntil] = useState<string | null>(null)
   const [subscriptionStatus, setSubscriptionStatus] = useState<string | null>(null)
   const [onboardingCompletedAt, setOnboardingCompletedAt] = useState<string | null>(null)
+  const [emailVerifiedAt, setEmailVerifiedAt] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
   const refreshProfile = useCallback(async () => {
@@ -70,6 +72,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
       setAdminUntil(null)
       setSubscriptionStatus(null)
       setOnboardingCompletedAt(null)
+      setEmailVerifiedAt(null)
       setLoading(false)
       return
     }
@@ -82,6 +85,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
         setAdminUntil(row.admin_until ?? null)
         setSubscriptionStatus(row.subscription_status ?? null)
         setOnboardingCompletedAt(row.onboarding_completed_at ?? null)
+        setEmailVerifiedAt(row.email_verified_at ?? null)
         setProfile(
           sanitizeProfile({
             display_name: row.display_name ?? '',
@@ -103,6 +107,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
         setAdminUntil(null)
         setSubscriptionStatus(null)
         setOnboardingCompletedAt(null)
+        setEmailVerifiedAt(null)
         const meta = user.user_metadata as Record<string, unknown> | undefined
         const full = String(meta?.full_name ?? meta?.name ?? '').trim()
         const parts = full.split(/\s+/)
@@ -189,6 +194,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
       adminUntil,
       subscriptionStatus,
       onboardingCompletedAt,
+      emailVerifiedAt,
       baseCurrency: profile.base_currency,
       timezone: profile.timezone,
       copierPaused: profile.copier_paused === true,
@@ -204,6 +210,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
       adminUntil,
       subscriptionStatus,
       onboardingCompletedAt,
+      emailVerifiedAt,
       patchProfile,
       refreshProfile,
       persistProfile,

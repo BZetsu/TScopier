@@ -6,7 +6,7 @@ import { isEmailVerified, verifyEmailPath } from '../../lib/emailVerification'
 export function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth()
   const location = useLocation()
-  const { hasProfileRow, onboardingCompletedAt, loading: profileLoading } = useUserProfile()
+  const { hasProfileRow, onboardingCompletedAt, emailVerifiedAt, loading: profileLoading } = useUserProfile()
 
   if (loading || profileLoading) {
     return (
@@ -18,7 +18,7 @@ export function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
   if (!user) return <Navigate to="/login" replace />
 
-  if (!isEmailVerified(user)) {
+  if (!isEmailVerified(user, emailVerifiedAt)) {
     return <Navigate to={verifyEmailPath(user.email)} replace />
   }
 

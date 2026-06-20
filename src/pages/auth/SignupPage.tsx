@@ -68,7 +68,7 @@ export function SignupPage() {
     setError('')
     setGoogleLoading(true)
     const normalizedRef = normalizeReferralCode(referralCode)
-    const redirectUrl = new URL(`${window.location.origin}/welcome`)
+    const redirectUrl = new URL(`${window.location.origin}/auth/confirmed`)
     if (referralCodeLooksValid(normalizedRef)) {
       redirectUrl.searchParams.set('ref', normalizedRef)
     }
@@ -102,7 +102,7 @@ export function SignupPage() {
     const trimmedFirst = firstName.trim()
     const trimmedLast = lastName.trim()
     const normalizedRef = normalizeReferralCode(referralCode)
-    const redirectUrl = new URL(`${window.location.origin}/welcome`)
+    const redirectUrl = new URL(`${window.location.origin}/auth/confirmed`)
     if (referralCodeLooksValid(normalizedRef)) {
       redirectUrl.searchParams.set('ref', normalizedRef)
     }
@@ -162,7 +162,7 @@ export function SignupPage() {
       }
     }
 
-    if (data.user && !isEmailVerified(data.user)) {
+    if (data.user && !isEmailVerified(data.user, null)) {
       await supabase.auth.signOut()
     }
 

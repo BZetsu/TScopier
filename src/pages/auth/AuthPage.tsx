@@ -18,6 +18,7 @@ import {
   isUnconfirmedEmailAuthError,
   verifyEmailPath,
 } from '../../lib/emailVerification'
+import { loadUserProfile } from '../../lib/userProfile'
 
 function GoogleIcon({ className }: { className?: string }) {
   return (
@@ -98,7 +99,8 @@ export function AuthPage() {
       return
     }
 
-    if (data.user && !isEmailVerified(data.user)) {
+    const profile = data.user ? await loadUserProfile(data.user.id) : null
+    if (data.user && !isEmailVerified(data.user, profile?.email_verified_at)) {
       await supabase.auth.signOut()
       navigate(verifyEmailPath(email))
       setLoading(false)

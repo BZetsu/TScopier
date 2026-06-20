@@ -17,6 +17,7 @@ export interface UserProfile {
   admin_until?: string | null
   subscription_status?: string | null
   onboarding_completed_at?: string | null
+  email_verified_at?: string | null
   referred_by_user_id?: string | null
   notification_sound_enabled?: boolean
   copier_paused?: boolean
@@ -71,6 +72,7 @@ export async function saveUserProfile(
     admin_until: _adminUntil,
     subscription_status: _subscriptionStatus,
     referred_by_user_id: _referredByUserId,
+    email_verified_at: _emailVerifiedAt,
     ...safePatch
   } = patch
   const { error } = await supabase
