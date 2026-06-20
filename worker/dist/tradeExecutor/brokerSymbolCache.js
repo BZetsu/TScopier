@@ -1,5 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.collectPrewarmSymbolsForBroker = collectPrewarmSymbolsForBroker;
 exports.prewarmSymbolsEnabled = prewarmSymbolsEnabled;
 exports.prewarmBrokerCaches = prewarmBrokerCaches;
 exports.sessionHeartbeatTick = sessionHeartbeatTick;
@@ -25,7 +26,62 @@ const brokerSignalReplay_1 = require("../brokerSignalReplay");
 const helpers_1 = require("./helpers");
 const types_1 = require("./types");
 const HEARTBEAT_FAILURES_BEFORE_DOWN = Math.max(2, Number(process.env.BROKER_HEARTBEAT_FAILURES_BEFORE_DOWN ?? 4) || 4);
+const HEARTBEAT_CONCURRENCY = Math.max(1, Math.min(16, Number(process.env.BROKER_HEARTBEAT_CONCURRENCY ?? 6) || 6));
 const heartbeatFailCounts = new Map();
+function activeBrokersForHeartbeat(ctx) {
+    return [...ctx.brokersById.values()].filter(b => b.is_active && (0, helpers_1.brokerSessionUuid)(b));
+}
+function collectPrewarmSymbolsForBroker(broker) {
+    const manual = (broker.manual_settings ?? {});
+    const symbols = (0, helpers_1.parseSymbolToTradeList)(manual.symbol_to_trade);
+    const base = symbols.length > 0 ? symbols : ['XAUUSD', 'EURUSD'];
+    const out = new Set();
+    for (const sym of base) {
+        out.add(sym);
+        out.add((0, helpers_1.applySymbolMapping)(sym, broker).symbol);
+    }
+    return [...out];
+}
+function prewarmBrokerSymbolCaches(ctx, broker) {
+    const uuid = (0, helpers_1.brokerSessionUuid)(broker);
+    if (!uuid)
+        return;
+    void ctx.getSymbolList(uuid).catch(() => null);
+    for (const sym of collectPrewarmSymbolsForBroker(broker)) {
+        void ctx.getSymbolParams(uuid, sym).catch(() => null);
+    }
+}
+async function pingBrokerSessionInner(ctx, broker, api, uuid, opts) {
+    const now = Date.now();
+    const last = ctx.sessionPingAt.get(uuid) ?? 0;
+    if (!opts?.force && now - last < types_1.SESSION_PING_MIN_INTERVAL_MS)
+        return true;
+    if (ctx.sessionCheckInflight.has(uuid))
+        return false;
+    const wasBlocked = ctx.sessionOrderBlocked.has(broker.id);
+    try {
+        const alive = await api.keepSessionAlive(uuid);
+        if (alive) {
+            heartbeatFailCounts.delete(uuid);
+            ctx.sessionPingAt.set(uuid, Date.now());
+            if (wasBlocked) {
+                ctx.sessionOrderBlocked.delete(broker.id);
+                void (0, brokerSignalReplay_1.replayParsedSignalsForBroker)(ctx, broker);
+            }
+            return true;
+        }
+    }
+    catch {
+        /* fall through to failure count */
+    }
+    const fails = (heartbeatFailCounts.get(uuid) ?? 0) + 1;
+    heartbeatFailCounts.set(uuid, fails);
+    if (fails >= HEARTBEAT_FAILURES_BEFORE_DOWN) {
+        heartbeatFailCounts.delete(uuid);
+        await ctx.markBrokerSessionDown(broker, uuid, 'heartbeat keepSessionAlive failed');
+    }
+    return false;
+}
 function prewarmSymbolsEnabled(ctx) {
     const v = String(process.env.EXECUTOR_PREWARM_SYMBOLS ?? 'true').toLowerCase();
     return v !== '0' && v !== 'false' && v !== 'no';
@@ -37,29 +93,46 @@ async function prewarmBrokerCaches(ctx) {
         const uuid = (0, helpers_1.brokerSessionUuid)(row);
         if (!uuid)
             continue;
-        void ctx.getSymbolList(uuid);
-        const manual = (row.manual_settings ?? {});
-        const symbols = (0, helpers_1.parseSymbolToTradeList)(manual.symbol_to_trade);
-        for (const sym of symbols.length > 0 ? symbols : ['XAUUSD', 'EURUSD']) {
-            // Cache under BOTH the canonical signal symbol and the broker-mapped
-            // variant (e.g. XAUUSD → XAUUSDm). Otherwise the live path looks up
-            // the mapped key and misses every time.
-            const mapping = (0, helpers_1.applySymbolMapping)(sym, row);
-            void ctx.getSymbolParams(uuid, mapping.symbol).catch(() => null);
-            if (mapping.symbol.toUpperCase() !== sym.toUpperCase()) {
-                void ctx.getSymbolParams(uuid, sym).catch(() => null);
-            }
-        }
+        prewarmBrokerSymbolCaches(ctx, row);
     }
 }
-async function sessionHeartbeatTick(_ctx) {
-    /* FxSocket hosts terminals — no session keepalive needed */
+async function sessionHeartbeatTick(ctx) {
+    if (!(0, fxsocketClient_1.hasFxsocketConfigured)())
+        return;
+    const brokers = activeBrokersForHeartbeat(ctx);
+    if (!brokers.length)
+        return;
+    for (let i = 0; i < brokers.length; i += HEARTBEAT_CONCURRENCY) {
+        const batch = brokers.slice(i, i + HEARTBEAT_CONCURRENCY);
+        await Promise.all(batch.map(async (broker) => {
+            const uuid = (0, helpers_1.brokerSessionUuid)(broker);
+            if (!uuid)
+                return;
+            const api = ctx.apiFor(broker);
+            if (!api)
+                return;
+            await pingBrokerSessionInner(ctx, broker, api, uuid);
+        }));
+    }
+    if (ctx.prewarmSymbolsEnabled()) {
+        for (const broker of brokers) {
+            prewarmBrokerSymbolCaches(ctx, broker);
+        }
+    }
 }
 async function reconnectCachedBrokers(_ctx) {
     /* FxSocket manages terminal lifecycle */
 }
-async function pingBrokerSession(_ctx, _row) {
-    /* no-op — FxSocket handles connectivity */
+async function pingBrokerSession(ctx, row) {
+    if (!(0, fxsocketClient_1.hasFxsocketConfigured)() || !row.is_active)
+        return;
+    const uuid = (0, helpers_1.brokerSessionUuid)(row);
+    if (!uuid)
+        return;
+    const api = ctx.apiFor(row);
+    if (!api)
+        return;
+    await pingBrokerSessionInner(ctx, row, api, uuid, { force: true });
 }
 async function symbolCacheKeepaliveTick(ctx) {
     if (!(0, fxsocketClient_1.hasFxsocketConfigured)())

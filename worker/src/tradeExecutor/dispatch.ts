@@ -410,6 +410,7 @@ export async function handleSignal(ctx: TradeExecutorContext,
     let pipelineOutcome: Record<string, unknown> = {
       live_fast: liveFast,
       mgmt_fast_path: liveMgmtFast,
+      dispatch_source: opts?.dispatchSource ?? null,
     }
     const isMessageRevision = opts?.dispatchSource === MESSAGE_REVISION_DISPATCH_SOURCE
     const isActivityRetry = opts?.dispatchSource === ACTIVITY_RETRY_DISPATCH_SOURCE
@@ -516,6 +517,13 @@ export async function handleSignal(ctx: TradeExecutorContext,
         return [withChannelTradingConfig(b, row.channel_id)]
       })
       let brokers = allMatchingBrokers.filter(b => ctx.brokerEligibleForSignal(b, row))
+      const signalSymbolForWarm = parsed.symbol?.trim() ?? ''
+      if (liveFast && signalSymbolForWarm && brokers.length > 0) {
+        pipelineOutcome.brokers_warm_at_dispatch = ctx.brokersWarmForLiveEntry(
+          brokers,
+          signalSymbolForWarm,
+        )
+      }
       if (brokers.length > 0 && row.channel_id) {
         const profileTz = ctx.userTimezoneById.get(row.user_id)
         const channelId = row.channel_id

@@ -202,7 +202,8 @@ Tune via env (see `worker/.env.example`):
 
 Broker keepalive notes:
 
-- `BROKER_SESSION_HEARTBEAT_MS` runs as a fixed interval with single-flight protection (no overlapping heartbeat sweeps).
+- **Worker-side FxSocket keepalive** — `TradeExecutor.sessionHeartbeatTick` runs every `BROKER_SESSION_HEARTBEAT_MS` (default **15s**) with single-flight protection. Each tick calls `keepSessionAlive` (light `checkConnect`) for all active shard brokers and prewarms symbol list/params from each broker's `symbol_to_trade`. The old Supabase edge `broker-session-keepalive` cron was removed during the FxSocket migration; warming is trade-worker local again.
+- Align `BROKER_SESSION_PING_MIN_INTERVAL_MS` with the heartbeat interval (e.g. both **10s**) so `sessionPingAt` stays fresh and `brokers_warm_at_dispatch: true` on live entries.
 - `BROKER_RECONNECT_BACKOFF_MAX_MS` and `BROKER_RECONNECT_BACKOFF_RESET_MS` tune weekend/off-hours retry starvation.
 - `BROKER_HARD_RECONNECT_SWEEP_MS` periodically retries errored accounts with stored credentials even when normal backoff is active.
 
@@ -236,7 +237,7 @@ sequenceDiagram
 1. **Inline parse** — `worker/src/parseSignal.ts` + `channelKeywordsCache` (no edge HTTP on live path).
 2. **Dispatch-first** — Pre-generated `signals.id`, `POST /internal/dispatch-signal` before DB writes; listener persists in background.
 3. **Entry fast path** — Live `buy`/`sell` bypass queue and heavy DB idempotency (`inflight` only); `OrderSend` first, management (opposite close, merge, channel SL/TP, pip stops) in `postFillFollowUp`.
-4. **Broker pre-warm** — `EXECUTOR_PREWARM_SYMBOLS` loads symbol list/params on start; `BROKER_SESSION_HEARTBEAT_MS` (default **15s**) keeps sessions warm.
+4. **Broker pre-warm** — `EXECUTOR_PREWARM_SYMBOLS` loads symbol list/params on start and on each heartbeat tick; `BROKER_SESSION_HEARTBEAT_MS` (default **15s**, recommend **10s** in production) keeps FxSocket sessions warm via `keepSessionAlive`.
 5. **No market `/Quote` on live path** — Clamp from cached `SymbolParams`; pip/channel stops applied via `OrderModify` post-fill.
 6. **Concurrent queue drain** — `EXECUTOR_MAX_CONCURRENT_SIGNALS` (default **4**) for sweep/realtime/management.
 7. **Lease gate cache** — `WORKER_LEASE_GATE_CACHE_MS` (default **8000**).
@@ -283,10 +284,20 @@ limit 1;
 | `order_send_ms` / `send_order_ms` | **Entire `sendOrder`** — includes channel `delay_msec`, planning, virtual-pending DB, and all leg `OrderSend` calls. |
 | `broker_send_ms` | First→last broker `OrderSend` API only (after deploy with stamp fields). |
 | `channel_delay_ms` | Configured Copier Engine delay; on live fast path this is **skipped** (`channel_delay_skipped: true`) so entries are not held 15s+. |
+| `brokers_warm_at_dispatch` | `true` when session ping + symbol caches were fresh at signal dispatch (heartbeat + `symbol_to_trade` prewarm working). |
+| `dispatch_source` | `listener_push`, `sweep`, `queue`, etc. — identifies how the signal reached the trade worker. |
 
 Sweep/realtime/management paths still emit `dispatch_received`, `handle_start`, `handle_end`, and per-leg `order_send` rows.
 
-Look for `parse_ms` &gt; 100 (inline parse should stay &lt;30ms), `order_send_ms` ≈ `channel_delay_ms` (delay was blocking — fixed on live fast path), or large `prep_ms` (broker session cold — check heartbeat logs).
+Look for `parse_ms` &gt; 100 (inline parse should stay &lt;30ms), `order_send_ms` ≈ `channel_delay_ms` (delay was blocking — fixed on live fast path), large `prep_ms` / `broker_resolve_ms` with `brokers_warm_at_dispatch: false` (cold broker — check heartbeat env and `symbol_to_trade`), or rising `dispatch_push_attempt` failures (wrong `TRADE_WORKER_URL` / worker asleep).
+
+| Symptom | Likely cause | Fix |
+|---------|--------------|-----|
+| `brokers_warm_at_dispatch: false`, high `broker_resolve_ms` | Heartbeat disabled/stale or missing `symbol_to_trade` | Set `BROKER_SESSION_HEARTBEAT_MS=10000`, `EXECUTOR_PREWARM_SYMBOLS=true`, list traded symbols in broker settings |
+| High `dispatch_ms`, `dispatch_source: listener_push` | Listener → trade HTTP slow or worker cold | Verify `TRADE_WORKER_URL`, no scale-to-zero on trade entry |
+| `dispatch_push_attempt` failures | Push URL/token mismatch | Fix shard URL env; check listener logs |
+| `order_send_ms` ≈ `channel_delay_ms` | Channel delay blocking | Set channel `delay_msec` = 0; confirm `channel_delay_skipped: true` on live entries |
+| High `parse_ms` or missing listener timestamps | Listener not stamping pipeline | Redeploy listener; signals via sweep only |
 
 ### Range pending legs (duplicate opens)
 

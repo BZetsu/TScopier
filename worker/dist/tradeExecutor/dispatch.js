@@ -349,6 +349,7 @@ async function handleSignal(ctx, row, opts) {
     let pipelineOutcome = {
         live_fast: liveFast,
         mgmt_fast_path: liveMgmtFast,
+        dispatch_source: opts?.dispatchSource ?? null,
     };
     const isMessageRevision = opts?.dispatchSource === signalRevision_1.MESSAGE_REVISION_DISPATCH_SOURCE;
     const isActivityRetry = opts?.dispatchSource === retryActivity_1.ACTIVITY_RETRY_DISPATCH_SOURCE;
@@ -444,6 +445,10 @@ async function handleSignal(ctx, row, opts) {
             return [(0, channelTradingConfig_1.withChannelTradingConfig)(b, row.channel_id)];
         });
         let brokers = allMatchingBrokers.filter(b => ctx.brokerEligibleForSignal(b, row));
+        const signalSymbolForWarm = parsed.symbol?.trim() ?? '';
+        if (liveFast && signalSymbolForWarm && brokers.length > 0) {
+            pipelineOutcome.brokers_warm_at_dispatch = ctx.brokersWarmForLiveEntry(brokers, signalSymbolForWarm);
+        }
         if (brokers.length > 0 && row.channel_id) {
             const profileTz = ctx.userTimezoneById.get(row.user_id);
             const channelId = row.channel_id;

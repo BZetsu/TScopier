@@ -1,8 +1,8 @@
 import {
   Activity,
-  ArrowLeftRight,
   BookOpen,
   CalendarDays,
+  ChartNoAxesCombined,
   ClipboardList,
   CreditCard,
   FlaskConical,
@@ -25,7 +25,7 @@ import {
 export const APP_ROUTE_ICONS: Record<string, LucideIcon> = {
   '/dashboard': LayoutDashboard,
   '/brokers': Landmark,
-  '/account-trades': ArrowLeftRight,
+  '/account-trades': ChartNoAxesCombined,
   '/activities': Activity,
   '/settings': Settings,
   '/channels': Radio,
