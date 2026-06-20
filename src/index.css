@@ -30,8 +30,9 @@ html.dark {
 
 html {
   scroll-behavior: smooth;
-  font-family: "Google Sans", system-ui, sans-serif;
+  font-family: "Instrument Sans", system-ui, sans-serif;
   font-optical-sizing: auto;
+  font-variation-settings: "wdth" 100;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -48,8 +49,9 @@ html.dark body {
 
 body {
   margin: 0;
-  font-family: "Google Sans", system-ui, sans-serif;
+  font-family: "Instrument Sans", system-ui, sans-serif;
   font-optical-sizing: auto;
+  font-variation-settings: "wdth" 100;
   background-color: var(--tsc-page);
   color: var(--tsc-text);
   -webkit-font-smoothing: antialiased;
