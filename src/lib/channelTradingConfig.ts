@@ -252,6 +252,24 @@ export function removeChannelTradingConfigKey(
   return next
 }
 
+/** Keep only configs for the given linked channel ids (drops stale JSONB keys). */
+export function restrictChannelTradingConfigsMap(
+  configs: ChannelTradingConfigsMap,
+  channelIds: readonly string[],
+): ChannelTradingConfigsMap {
+  const allowed = new Set(
+    channelIds.map(id => normalizeChannelUuid(id)).filter(Boolean) as string[],
+  )
+  const out: ChannelTradingConfigsMap = {}
+  for (const [key, value] of Object.entries(configs)) {
+    const normalizedKey = normalizeChannelUuid(key)
+    if (normalizedKey && allowed.has(normalizedKey)) {
+      out[normalizedKey] = value
+    }
+  }
+  return out
+}
+
 export function buildChannelTradingConfigsFromDraft(
   channelIds: string[],
   draftConfigs: Record<string, { mode: 'ai' | 'manual'; manualSettings: ManualSettings }>,

@@ -85,7 +85,9 @@ import {
   channelManualSettingsComplete,
   healChannelTradingConfigsMap,
   normalizeChannelTradingConfigsMap,
+  normalizeChannelUuid,
   resolveChannelConfigEntry,
+  restrictChannelTradingConfigsMap,
   storedPerChannelConfigComplete,
 } from '../../lib/channelTradingConfig'
 import {
@@ -1669,7 +1671,8 @@ export function AccountConfigPage() {
     if (symbolsExcludeDraft !== null) {
       setSymbolsExcludeDraft(null)
     }
-    const channelIds = committedDraft.channelIds
+    const validChannelIdSet = new Set(channelOptions.map(c => c.id))
+    const channelIds = committedDraft.channelIds.filter(id => validChannelIdSet.has(id))
     const previouslyLinkedChannelIds = normalizeSignalChannelIds(configAccount)
     const restrictChannels = channelIds.length > 0
 
@@ -1731,17 +1734,13 @@ export function AccountConfigPage() {
     )
     const existingConfigs = normalizeChannelTradingConfigsMap(configAccount.channel_trading_configs)
     for (const id of channelIds) {
-      const key = id.toLowerCase()
+      const key = normalizeChannelUuid(id)
+      if (!key) continue
       if (!channelTradingConfigs[key] && resolveChannelConfigEntry(existingConfigs, id)) {
         channelTradingConfigs[key] = resolveChannelConfigEntry(existingConfigs, id)!
       }
     }
-    // Preserve configs for linked channels not currently shown in the modal draft.
-    for (const [storedKey, storedCfg] of Object.entries(existingConfigs)) {
-      if (!channelTradingConfigs[storedKey]) {
-        channelTradingConfigs[storedKey] = storedCfg
-      }
-    }
+    const configsToPersist = restrictChannelTradingConfigsMap(channelTradingConfigs, channelIds)
     const selectedId = committedDraft.selectedChannelId && channelIds.includes(committedDraft.selectedChannelId)
       ? committedDraft.selectedChannelId
       : null
@@ -1766,7 +1765,7 @@ export function AccountConfigPage() {
       supabase,
       user.id,
       configAccount.id,
-      channelTradingConfigs,
+      configsToPersist,
     )
     if (tableErr) {
       setConfigSaving(false)
@@ -1789,7 +1788,7 @@ export function AccountConfigPage() {
         copier_mode: AI_CONFIGURATION_ENABLED && fallbackManualConfig?.mode === 'ai' ? 'ai' : 'manual',
         signal_channel_ids: channelIds,
         enforce_signal_channel_filter: restrictChannels,
-        channel_trading_configs: channelTradingConfigs,
+        channel_trading_configs: configsToPersist,
         manual_settings: normalizedFallbackManual,
         channel_message_filters: channelMessageFilters,
       })
