@@ -2647,6 +2647,32 @@ export function AccountConfigPage() {
                             )}
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                               <ConfigureSelect
+                                label={cm.risk.tradeStyle}
+                                hint={cm.risk.tradeStyleHint}
+                                value={channelManualSettings.trade_style ?? 'single'}
+                                disabled={!multiTradeStyleEnabled}
+                                onChange={e => {
+                                  const v = e.target.value as ManualSettings['trade_style']
+                                  if (v === 'multi' && !multiTradeStyleEnabled) {
+                                    setError(cm.risk.basicPlanTradeStyleLimit)
+                                    return
+                                  }
+                                  if (v === 'multi') {
+                                    setManual({ trade_style: v, use_signal_entry_price: false })
+                                  } else {
+                                    setManual({ trade_style: v })
+                                  }
+                                }}
+                                options={multiTradeStyleEnabled
+                                  ? [
+                                      { value: 'single', label: cm.risk.singleTrade },
+                                      { value: 'multi', label: cm.risk.multiTrades },
+                                    ]
+                                  : [
+                                      { value: 'single', label: cm.risk.singleTrade },
+                                    ]}
+                              />
+                              <ConfigureSelect
                                 label={cm.risk.riskMode}
                                 value={channelManualSettings.risk_mode ?? 'fixed_lot'}
                                 onChange={e => setManual({ risk_mode: e.target.value as ManualSettings['risk_mode'] })}
@@ -2711,32 +2737,6 @@ export function AccountConfigPage() {
                                   }}
                                 />
                               )}
-                              <ConfigureSelect
-                                label={cm.risk.tradeStyle}
-                                hint={cm.risk.tradeStyleHint}
-                                value={channelManualSettings.trade_style ?? 'single'}
-                                disabled={!multiTradeStyleEnabled}
-                                onChange={e => {
-                                  const v = e.target.value as ManualSettings['trade_style']
-                                  if (v === 'multi' && !multiTradeStyleEnabled) {
-                                    setError(cm.risk.basicPlanTradeStyleLimit)
-                                    return
-                                  }
-                                  if (v === 'multi') {
-                                    setManual({ trade_style: v, use_signal_entry_price: false })
-                                  } else {
-                                    setManual({ trade_style: v })
-                                  }
-                                }}
-                                options={multiTradeStyleEnabled
-                                  ? [
-                                      { value: 'single', label: cm.risk.singleTrade },
-                                      { value: 'multi', label: cm.risk.multiTrades },
-                                    ]
-                                  : [
-                                      { value: 'single', label: cm.risk.singleTrade },
-                                    ]}
-                              />
                             </div>
 
                             {channelManualSettings.trade_style !== 'multi' && (
