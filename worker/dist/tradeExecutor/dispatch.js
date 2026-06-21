@@ -598,6 +598,8 @@ async function handleSignal(ctx, row, opts) {
             console.warn(`[tradeExecutor] slow pipeline signal=${row.id} user=${row.user_id} ms=${pipelineMs} brokers=${brokers.length}`);
         }
         const strictSkips = outcomes.filter(o => o.signalEntryRequiredSkip === true).length;
+        const rangeRequiredSkips = outcomes.filter(o => o.signalRangeEntryRequiredSkip === true).length;
+        const rangeDeferred = outcomes.some(o => o.signalRangeEntryDeferred === true);
         const finalizeSkipReasons = outcomes
             .map(o => o.finalizeSkipReason)
             .filter((r) => typeof r === 'string' && r.length > 0);
@@ -615,6 +617,24 @@ async function handleSignal(ctx, row, opts) {
             catch {
                 // best-effort
             }
+        }
+        else if (!anyOpened && rangeRequiredSkips === brokers.length && rangeRequiredSkips > 0) {
+            try {
+                const { error: sigErr } = await ctx.supabase
+                    .from('signals')
+                    .update({ status: 'skipped', skip_reason: manualPlanner_1.SKIP_REASON_SIGNAL_ENTRY_RANGE_REQUIRED })
+                    .eq('id', row.id)
+                    .eq('status', 'parsed');
+                if (sigErr) {
+                    console.warn(`[tradeExecutor] signal skip finalize failed id=${row.id}: ${sigErr.message}`);
+                }
+            }
+            catch {
+                // best-effort
+            }
+        }
+        else if (rangeDeferred) {
+            /* signal stays parsed for SignalRangeEntryMonitor */
         }
         else if (!anyOpened && finalizeSkipReasons.length === brokers.length && finalizeSkipReasons.length > 0) {
             const skipReason = finalizeSkipReasons[0];

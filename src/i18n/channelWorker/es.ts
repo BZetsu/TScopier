@@ -60,6 +60,11 @@ export const channelWorkerEs: ChannelWorkerTranslations = {
   entryCancelled: 'Orden de entrada en espera cancelada {on}.',
   entryFailed: 'Falló la orden de entrada {on}{err}',
 
+  rangeEntryWaitingNoPrice: '{side} pendiente — Esperando rango de precio.',
+  rangeEntryWaitingAtPrice: '{side} pendiente — Esperando precio @ {price}.',
+  rangeEntryWaitingZone: '{side} pendiente — Esperando rango {lo}–{hi}.',
+  rangeEntryFired: '{side} ejecutado {on} (precio alcanzó el rango de la señal).',
+
   mergeAddedNamed: 'Añadido a la posición existente en {symbol}.',
   mergeAddedGeneric: 'Añadido a tu operación abierta.',
   mergeSlTpSuccessNamed:

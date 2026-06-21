@@ -23,7 +23,7 @@ import {
 } from '../channelMessageFilters'
 import { shouldRouteAsBasketParameterRefresh, parsedHasSlOrTp } from '../multiTradeMerge'
 import type { ParsedSignal } from '../manualPlanner'
-import { SKIP_REASON_SIGNAL_ENTRY_REQUIRED } from '../manualPlanner'
+import { SKIP_REASON_SIGNAL_ENTRY_REQUIRED, SKIP_REASON_SIGNAL_ENTRY_RANGE_REQUIRED } from '../manualPlanner'
 import { parsePipelineTimestamps, pipelineSummaryPayload } from '../pipelineTimestamps'
 import { resolveChannelLabelForComment, sanitizeChannelCommentSlug } from '../tradeComment'
 import { isMtUuid, operationFor, brokerHasLinkedSession, brokerSessionUuid } from './helpers'
@@ -707,6 +707,8 @@ export async function handleSignal(ctx: TradeExecutorContext,
         )
       }
       const strictSkips = outcomes.filter(o => o.signalEntryRequiredSkip === true).length
+      const rangeRequiredSkips = outcomes.filter(o => o.signalRangeEntryRequiredSkip === true).length
+      const rangeDeferred = outcomes.some(o => o.signalRangeEntryDeferred === true)
       const finalizeSkipReasons = outcomes
         .map(o => o.finalizeSkipReason)
         .filter((r): r is string => typeof r === 'string' && r.length > 0)
@@ -723,6 +725,21 @@ export async function handleSignal(ctx: TradeExecutorContext,
         } catch {
           // best-effort
         }
+      } else if (!anyOpened && rangeRequiredSkips === brokers.length && rangeRequiredSkips > 0) {
+        try {
+          const { error: sigErr } = await ctx.supabase
+            .from('signals')
+            .update({ status: 'skipped', skip_reason: SKIP_REASON_SIGNAL_ENTRY_RANGE_REQUIRED })
+            .eq('id', row.id)
+            .eq('status', 'parsed')
+          if (sigErr) {
+            console.warn(`[tradeExecutor] signal skip finalize failed id=${row.id}: ${sigErr.message}`)
+          }
+        } catch {
+          // best-effort
+        }
+      } else if (rangeDeferred) {
+        /* signal stays parsed for SignalRangeEntryMonitor */
       } else if (!anyOpened && finalizeSkipReasons.length === brokers.length && finalizeSkipReasons.length > 0) {
         const skipReason = finalizeSkipReasons[0]!
         try {

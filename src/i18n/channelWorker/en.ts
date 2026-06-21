@@ -60,6 +60,11 @@ export const channelWorkerEn: ChannelWorkerTranslations = {
   entryCancelled: 'Cancelled the waiting entry order {on}.',
   entryFailed: 'Entry order failed {on}{err}',
 
+  rangeEntryWaitingNoPrice: '{side} pending — Waiting for price range.',
+  rangeEntryWaitingAtPrice: '{side} pending — Waiting for price @ {price}.',
+  rangeEntryWaitingZone: '{side} pending — Waiting for price range {lo}–{hi}.',
+  rangeEntryFired: '{side} entered {on} (price reached signal range).',
+
   mergeAddedNamed: 'Added to the existing {symbol} position.',
   mergeAddedGeneric: 'Added to your open trade.',
   mergeSlTpSuccessNamed:

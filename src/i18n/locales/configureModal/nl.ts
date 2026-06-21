@@ -160,7 +160,11 @@ export const configureModalNl: ConfigureModalTranslations = {
     layerTillClose: 'Laag tot dichtbij',
     layerTillCloseBody: 'Aan: lopende orders in het bereik blijven open totdat de hele transactie is gesloten, zelfs als de prijs zich terugtrekt na een take-profit of close-slechter-inschrijvingen. Uit: openstaande orders worden geannuleerd na de eerste take-profit of wanneer een order wordt gesloten, dus er worden geen diepere orders geopend bij een omkering.',
     useSignalRange: 'Gebruik signaalbereik',
-    useSignalRangeBody: 'Indien ingeschakeld, komt de laagdiepte uit de signaalinvoerzone (bijv. ENTRY 4335 / 4325). Koop ladders, stop in de zone laag; verkoopladders stoppen op de zone hoog. Als het signaal geen ingangszone heeft, wordt in plaats daarvan de bereikafstand (pips) gebruikt.',
+    useSignalRangeBody:
+      'Indien ingeschakeld moet het signaal een geparseerde instapprijs of -zone bevatten (bijv. 4505, 4505/4500, @ 4505). Kale „koop nu”-berichten zonder prijs worden overgeslagen en getoond als wachten op range. In tegenstelling tot signaal instapprijs wordt geen broker pending geplaatst — de copier wacht virtueel en opent wanneer de live prijs het signaalniveau of zone-rand ± piptolerantie bereikt.',
+    useSignalRangePipTolerance: 'Piptolerantie',
+    useSignalRangePipToleranceHint:
+      'Pips boven (koop) of onder (verkoop) het signaal instapniveau waarbinnen entry mag triggeren.',
     useSignalRangeDistanceDisabledHint: 'De diepte wordt uit de signaalinvoerzone gehaald als het signaal er één bevat.',
     previewSignalRangeFootnote: 'Bij uitvoering wordt de bereikdiepte overgenomen van de signaalinvoerzone, indien aanwezig.',
     closeWorseEntries: 'Sluit slechtere inzendingen',

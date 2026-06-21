@@ -11,6 +11,7 @@ import {
   reverseSignalGateSatisfied,
   signalEntryPriceStrictEnabled,
   SKIP_REASON_SIGNAL_ENTRY_REQUIRED,
+  SKIP_REASON_SIGNAL_ENTRY_RANGE_REQUIRED,
   strictSignalEntryQuoteAllowsImmediate,
   type ManualSettings,
   type ParsedSignal,
@@ -1042,6 +1043,50 @@ test('planManualOrders: use_signal_entry_price skips plan without explicit entry
   })
   assert.equal(plan.orders.length, 0)
   assert.equal(plan.skip_reason, 'signal_entry_price_requires_explicit_entry')
+})
+
+test('planManualOrders: use_signal_entry_range skips plan without explicit entry', () => {
+  const plan = planManualOrders({
+    parsed: { ...baseParsed, entry_price: null, entry_zone_low: null, entry_zone_high: null },
+    resolvedSymbol: 'XAUUSD',
+    baseOperation: 'Buy',
+    manual: {
+      ...baseManual,
+      trade_style: 'multi',
+      range_trading: true,
+      use_signal_entry_range: true,
+      signal_entry_pip_tolerance: 10,
+    },
+    channelKeywords: null,
+    manualLot: 1.0,
+    ctx: baseCtx,
+    commentPrefix: 'TScopier:abc',
+  })
+  assert.equal(plan.orders.length, 0)
+  assert.equal(plan.skip_reason, SKIP_REASON_SIGNAL_ENTRY_RANGE_REQUIRED)
+})
+
+test('planManualOrders: use_signal_entry_range emits rangeEntryWait when anchor present', () => {
+  const plan = planManualOrders({
+    parsed: { ...baseParsed, entry_price: 4505 },
+    resolvedSymbol: 'XAUUSD',
+    baseOperation: 'Buy',
+    manual: {
+      ...baseManual,
+      trade_style: 'multi',
+      range_trading: true,
+      use_signal_entry_range: true,
+      signal_entry_pip_tolerance: 10,
+    },
+    channelKeywords: null,
+    manualLot: 1.0,
+    ctx: baseCtx,
+    commentPrefix: 'TScopier:abc',
+  })
+  assert.ok(plan.orders.length > 0)
+  assert.ok(plan.rangeEntryWait)
+  assert.equal(plan.rangeEntryWait!.entryPrice, 4505)
+  assert.equal(plan.rangeEntryWait!.tolerancePips, 10)
 })
 
 test('planManualOrders: multi + use_signal_entry_price does not require explicit entry', () => {

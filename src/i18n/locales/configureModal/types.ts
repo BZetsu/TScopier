@@ -163,6 +163,8 @@ export interface ConfigureModalTranslations {
     layerTillCloseBody: string
     useSignalRange: string
     useSignalRangeBody: string
+    useSignalRangePipTolerance: string
+    useSignalRangePipToleranceHint: string
     useSignalRangeDistanceDisabledHint: string
     previewSignalRangeFootnote: string
     closeWorseEntries: string

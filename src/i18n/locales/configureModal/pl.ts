@@ -160,7 +160,11 @@ export const configureModalPl: ConfigureModalTranslations = {
     layerTillClose: 'Warstwa aż do zamknięcia',
     layerTillCloseBody: 'On: zlecenia oczekujące na zakres otwierają się aż do zamknięcia całej transakcji, nawet jeśli cena spadnie po realizacji zysku lub zamknięciu gorszych pozycji. Wyłączone: zlecenia oczekujące są anulowane po pierwszym zrealizowaniu zysku lub po zamknięciu dowolnego zlecenia, więc w przypadku odwrócenia nie otwierają się żadne głębsze zlecenia.',
     useSignalRange: 'Użyj zakresu sygnału',
-    useSignalRangeBody: 'Gdy jest włączone, głębokość warstw pochodzi ze strefy wejścia sygnału (np. ENTRY 4335 / 4325). Kup drabiny zatrzymujące się w strefie niskiej; sprzedaj drabiny zatrzymują się w strefie wysokiej. Jeśli sygnał nie ma strefy wejściowej, zamiast tego używana jest odległość zasięgu (pipsy).',
+    useSignalRangeBody:
+      'Gdy włączone, sygnał musi zawierać przeanalizowaną cenę lub strefę wejścia (np. 4505, 4505/4325, @ 4505). Same „kup teraz” bez ceny są pomijane i pokazywane jako oczekiwanie na zakres. W przeciwieństwie do ceny wejścia sygnału nie składa się widocznego zlecenia oczekującego u brokera — kopiarka czeka wirtualnie i otwiera, gdy cena osiągnie poziom lub krawędź strefy ± tolerancja w pipach.',
+    useSignalRangePipTolerance: 'Tolerancja (pipsy)',
+    useSignalRangePipToleranceHint:
+      'Pipsy powyżej (kupno) lub poniżej (sprzedaż) poziomu wejścia sygnału, w których dozwolone jest wejście.',
     useSignalRangeDistanceDisabledHint: 'Głębokość jest pobierana ze strefy wejścia sygnału, jeśli sygnał ją zawiera.',
     previewSignalRangeFootnote: 'Podczas wykonywania głębokość zasięgu jest pobierana ze strefy wejścia sygnału, jeśli jest obecna.',
     closeWorseEntries: 'Zamknij gorsze wpisy',

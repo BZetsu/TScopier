@@ -1,5 +1,7 @@
-import type { ManualSettings, ParsedSignal } from './types'
-import { resolvedParsedEntryZone } from './parsedEntry'
+import type { ManualSettings, ParsedSignal, PlannerRangeEntryWait } from './types'
+import { resolvedParsedEntryPrice, resolvedParsedEntryZone } from './parsedEntry'
+import { strictSignalEntryQuoteAllowsImmediate } from './executionShape'
+import { signalEntryRangeStrictEnabled } from './manualSettings'
 
 /** Far edge of the entry zone in the layering direction (buy → low, sell → high). */
 export function signalRangeBoundary(parsed: ParsedSignal, isBuy: boolean): number | null {
@@ -35,6 +37,53 @@ export function resolveRangeDistancePips(args: {
     return { distPips: widthPips, boundary, source: 'signal_zone' }
   }
   return { distPips: manualDist, boundary: null, source: 'manual' }
+}
+
+export function buildRangeEntryWait(args: {
+  manual: ManualSettings
+  parsed: ParsedSignal
+  isBuy: boolean
+}): PlannerRangeEntryWait | undefined {
+  if (!signalEntryRangeStrictEnabled(args.manual)) return undefined
+  const zone = resolvedParsedEntryZone(args.parsed)
+  const entryPrice = resolvedParsedEntryPrice(args.parsed)
+  return {
+    isBuy: args.isBuy,
+    entryPrice,
+    zoneLo: zone?.lo ?? null,
+    zoneHi: zone?.hi ?? null,
+    tolerancePips: Math.max(0, Number(args.manual.signal_entry_pip_tolerance ?? 10)),
+  }
+}
+
+/**
+ * True when live quote is at or better than the signal entry level (point or zone edge) ± tolerance.
+ * Buy: ask <= reference + tol; sell: bid >= reference - tol.
+ */
+export function signalRangeEntryQuoteAllowsImmediate(args: {
+  wait: PlannerRangeEntryWait
+  bid: number
+  ask: number
+  pipSize?: number
+}): boolean {
+  const { wait, bid, ask } = args
+  if (!Number.isFinite(bid) || !Number.isFinite(ask)) return false
+  const pip = Number(args.pipSize ?? 0)
+  const zone = wait.zoneLo != null && wait.zoneHi != null
+    ? { lo: Math.min(wait.zoneLo, wait.zoneHi), hi: Math.max(wait.zoneLo, wait.zoneHi) }
+    : null
+  const reference = wait.isBuy
+    ? (zone?.hi ?? wait.entryPrice)
+    : (zone?.lo ?? wait.entryPrice)
+  if (reference == null || !Number.isFinite(reference) || reference <= 0) return false
+  return strictSignalEntryQuoteAllowsImmediate({
+    isBuy: wait.isBuy,
+    entryPrice: reference,
+    bid,
+    ask,
+    tolerancePips: wait.tolerancePips,
+    pipSize: pip,
+  })
 }
 
 /** True when a virtual leg trigger price is still inside the signal entry zone. */

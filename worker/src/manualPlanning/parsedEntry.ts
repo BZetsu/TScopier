@@ -56,3 +56,6 @@ export function lastPositiveParsedTpPrice(parsed: { tp?: unknown } | null | unde
 
 /** Planner / executor skip when strict signal entry is on but the parse has no entry anchor. */
 export const SKIP_REASON_SIGNAL_ENTRY_REQUIRED = 'signal_entry_price_requires_explicit_entry' as const
+
+/** Planner / executor skip when use signal range is on but the parse has no price or zone. */
+export const SKIP_REASON_SIGNAL_ENTRY_RANGE_REQUIRED = 'signal_entry_range_requires_price' as const

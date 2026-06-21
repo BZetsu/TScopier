@@ -15,7 +15,11 @@ export type {
   PlannerResult,
 } from './manualPlanning/types'
 
-export { signalEntryPriceStrictEnabled, clampPendingExpiryHours } from './manualPlanning/manualSettings'
+export {
+  signalEntryPriceStrictEnabled,
+  signalEntryRangeStrictEnabled,
+  clampPendingExpiryHours,
+} from './manualPlanning/manualSettings'
 
 export {
   resolvedParsedEntryPrice,
@@ -23,7 +27,13 @@ export {
   parsedHasExplicitEntryAnchor,
   lastPositiveParsedTpPrice,
   SKIP_REASON_SIGNAL_ENTRY_REQUIRED,
+  SKIP_REASON_SIGNAL_ENTRY_RANGE_REQUIRED,
 } from './manualPlanning/parsedEntry'
+
+export {
+  buildRangeEntryWait,
+  signalRangeEntryQuoteAllowsImmediate,
+} from './manualPlanning/signalEntryRange'
 
 export { reverseSignalGateSatisfied } from './manualPlanning/manualStops'
 

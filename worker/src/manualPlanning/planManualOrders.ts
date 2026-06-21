@@ -2,13 +2,15 @@ import type { MtOperation } from '../fxsocketClient'
 import type { ChannelKeywords, ManualSettings, ParsedSignal, PlannerContext, PlannerResult } from './types'
 import { deriveManualStopsWithClamp, reverseSignalGateSatisfied } from './manualStops'
 import { flipOperation, resolveOpExecAndStrict } from './executionShape'
-import { signalEntryPriceStrictEnabled } from './manualSettings'
+import { signalEntryPriceStrictEnabled, signalEntryRangeStrictEnabled } from './manualSettings'
 import {
   parsedHasExplicitEntryAnchor,
   resolvedParsedEntryPrice,
   resolvedParsedEntryZone,
   SKIP_REASON_SIGNAL_ENTRY_REQUIRED,
+  SKIP_REASON_SIGNAL_ENTRY_RANGE_REQUIRED,
 } from './parsedEntry'
+import { buildRangeEntryWait } from './signalEntryRange'
 import { planMultiManualOrders } from './planMultiManualOrders'
 import { planSingleManualOrders } from './planSingleManualOrders'
 
@@ -71,6 +73,9 @@ export function planManualOrders(args: {
   }
   if (signalEntryPriceStrictEnabled(manual) && !parsedHasExplicitEntryAnchor(parsed)) {
     return { orders: [], skip_reason: SKIP_REASON_SIGNAL_ENTRY_REQUIRED, delay_ms }
+  }
+  if (signalEntryRangeStrictEnabled(manual) && !parsedHasExplicitEntryAnchor(parsed)) {
+    return { orders: [], skip_reason: SKIP_REASON_SIGNAL_ENTRY_RANGE_REQUIRED, delay_ms }
   }
 
   let entry: number | null = resolvedParsedEntryPrice(parsed)
@@ -146,11 +151,14 @@ export function planManualOrders(args: {
     roundPrice,
   }
 
+  const rangeEntryWait = buildRangeEntryWait({ manual, parsed, isBuy })
+
   if (tradeStyle !== 'multi') {
-    return planSingleManualOrders(singleShared)
+    const result = planSingleManualOrders(singleShared)
+    return rangeEntryWait ? { ...result, rangeEntryWait } : result
   }
 
-  return planMultiManualOrders({
+  const result = planMultiManualOrders({
     ...singleShared,
     parsed,
     commentPrefix,
@@ -159,4 +167,5 @@ export function planManualOrders(args: {
     minStopDist,
     buildSingleOrder: planSingleManualOrders,
   })
+  return rangeEntryWait ? { ...result, rangeEntryWait } : result
 }

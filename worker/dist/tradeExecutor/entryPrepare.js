@@ -12,6 +12,7 @@ const signalEntryZoneSanity_1 = require("../signalEntryZoneSanity");
 const channelActiveTradeParams_1 = require("../channelActiveTradeParams");
 const tradeComment_1 = require("../tradeComment");
 const helpers_1 = require("./helpers");
+const signalRangeEntryHelpers_1 = require("../signalRangeEntryHelpers");
 /** Fill missing symbol for re-enter posts that omit instrument name. */
 async function resolveReEnterSymbolFromChannel(ctx, signal, broker, parsed) {
     if (!(0, signalPriceInference_1.parsedHasReEnterIntent)(parsed))
@@ -113,8 +114,8 @@ async function prepareEntryExecution(ctx, args) {
     const manual = (broker.manual_settings ?? {});
     const commentPrefix = (0, tradeComment_1.resolveTscopierCommentPrefix)(signal.id, sendOpts?.commentSlug, manual, sendOpts?.commentPrefix);
     const needsQuotePrefetch = isManual
-        && (0, manualPlanner_1.signalEntryPriceStrictEnabled)(manual)
-        && (0, manualPlanner_1.parsedHasExplicitEntryAnchor)(parsed);
+        && (((0, manualPlanner_1.signalEntryPriceStrictEnabled)(manual) && (0, manualPlanner_1.parsedHasExplicitEntryAnchor)(parsed))
+            || (0, manualPlanner_1.signalEntryRangeStrictEnabled)(manual));
     const stampOnResolve = liveEntryFast && !!signal.pipeline_ts;
     const sessionPromise = (liveEntryFast
         ? ctx.ensureBrokerSessionLiveFast(api, uuid, broker)
@@ -179,6 +180,7 @@ async function prepareEntryExecution(ctx, args) {
         || parsed.entry_zone_high != null;
     if (isManual
         && hasEntryZone
+        && !(0, manualPlanner_1.signalEntryRangeStrictEnabled)(manual)
         && (entryDirection === 'buy' || entryDirection === 'sell')
         && sendOpts?.sameSignalRefresh !== true) {
         try {
@@ -405,6 +407,10 @@ async function prepareEntryExecution(ctx, args) {
     if (plan.orders.length === 0) {
         await ctx.logSendSkipped(signal, broker, plan.skip_reason ?? 'filtered', { symbol });
         const entryStrict = isManual && plan.skip_reason === manualPlanner_1.SKIP_REASON_SIGNAL_ENTRY_REQUIRED;
+        if (isManual && plan.skip_reason === manualPlanner_1.SKIP_REASON_SIGNAL_ENTRY_RANGE_REQUIRED) {
+            await (0, signalRangeEntryHelpers_1.logSignalRangeEntryNoPrice)(ctx.supabase, signal, broker, parsed, symbol);
+            return { ok: false, outcome: { signalRangeEntryRequiredSkip: true } };
+        }
         return { ok: false, outcome: entryStrict ? { signalEntryRequiredSkip: true } : {} };
     }
     if (plan.fallback_reason) {
@@ -503,6 +509,63 @@ async function prepareEntryExecution(ctx, args) {
             const msg = err instanceof Error ? err.message : String(err);
             console.warn(`[tradeExecutor] strict entry /Quote failed; deferring to broker pending signal=${signal.id} broker=${broker.id} symbol=${symbol}: ${msg}`);
         }
+    }
+    let rangeEntryDeferred = false;
+    if (isManual
+        && (0, manualPlanner_1.signalEntryRangeStrictEnabled)(manual)
+        && plan.rangeEntryWait
+        && api
+        && !strictDeferred) {
+        const wait = plan.rangeEntryWait;
+        const pipSize = plan.pip ?? params?.point ?? 0.00001;
+        const fromWake = signal.dispatch_source === 'signal_range_wake';
+        try {
+            const q = strictEntryPrefetch ?? await api.quote(uuid, symbol);
+            strictEntryPrefetch = q;
+            const allowed = (0, manualPlanner_1.signalRangeEntryQuoteAllowsImmediate)({
+                wait,
+                bid: q.bid,
+                ask: q.ask,
+                pipSize,
+            });
+            if (!allowed) {
+                rangeEntryDeferred = true;
+                await (0, signalRangeEntryHelpers_1.upsertSignalRangeEntryWait)(ctx.supabase, {
+                    signal,
+                    broker,
+                    uuid,
+                    symbol,
+                    wait,
+                    manual,
+                });
+                await (0, signalRangeEntryHelpers_1.logSignalRangeEntryWaiting)(ctx.supabase, signal, broker, wait, symbol, q.bid, q.ask);
+                console.log(`[tradeExecutor] signal range entry deferred signal=${signal.id} broker=${broker.id} symbol=${symbol}`
+                    + ` isBuy=${wait.isBuy} bid=${q.bid} ask=${q.ask} tol=${wait.tolerancePips}p`);
+            }
+            else if (fromWake) {
+                await (0, signalRangeEntryHelpers_1.markSignalRangeEntryFired)(ctx.supabase, signal.id, broker.id);
+                await (0, signalRangeEntryHelpers_1.logSignalRangeEntryFired)(ctx.supabase, signal, broker.id, wait, symbol);
+            }
+        }
+        catch (err) {
+            rangeEntryDeferred = true;
+            const msg = err instanceof Error ? err.message : String(err);
+            console.warn(`[tradeExecutor] signal range entry /Quote failed; deferring signal=${signal.id} broker=${broker.id} symbol=${symbol}: ${msg}`);
+            await (0, signalRangeEntryHelpers_1.upsertSignalRangeEntryWait)(ctx.supabase, {
+                signal,
+                broker,
+                uuid,
+                symbol,
+                wait,
+                manual,
+            });
+        }
+    }
+    if (rangeEntryDeferred) {
+        return {
+            ok: false,
+            outcome: { signalRangeEntryDeferred: true, channelDelayMs, channelDelaySkipped },
+        };
     }
     const effectiveCapped = strictDeferred ? [] : capped;
     if (!strictDeferred && plan.strictEntry) {

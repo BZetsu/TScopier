@@ -9,6 +9,7 @@ import { VirtualPendingMonitor } from './virtualPendingMonitor'
 import { CweCloseMonitor } from './cweCloseMonitor'
 import { PartialTpMonitor } from './partialTpMonitor'
 import { SignalEntryPendingMonitor } from './signalEntryPendingMonitor'
+import { SignalRangeEntryMonitor } from './signalRangeEntryMonitor'
 import { AutoManagementMonitor } from './autoManagementMonitor'
 import { TrailingStopMonitor } from './trailingStopMonitor'
 import { BasketSlTpReconcileMonitor } from './basketSlTpReconcileMonitor'
@@ -58,7 +59,7 @@ function trackMonitor(m: { stop: () => void; getLoopHandle?: () => MonitorLoopHa
   }
 }
 
-function startTradeMonitors() {
+function startTradeMonitors(executor: TradeExecutor | null) {
   if (workerConfig.runsExecutionMonitors) {
     const virtualPendingMonitor = new VirtualPendingMonitor(supabase)
     const cweCloseMonitor = new CweCloseMonitor(supabase)
@@ -75,6 +76,11 @@ function startTradeMonitors() {
     trackMonitor(partialTpMonitor)
     trackMonitor(signalEntryPendingMonitor)
     trackMonitor(openTradeReconcileMonitor)
+    if (executor) {
+      const signalRangeEntryMonitor = new SignalRangeEntryMonitor(supabase, executor)
+      signalRangeEntryMonitor.start()
+      trackMonitor(signalRangeEntryMonitor)
+    }
   }
 
   if (workerConfig.runsTrade) {
@@ -131,7 +137,7 @@ async function main() {
     await tradeExecutor.start()
     const sweepHandle = tradeExecutor.getSweepLoopHandle()
     if (sweepHandle) monitorLoops.push(sweepHandle)
-    startTradeMonitors()
+    startTradeMonitors(tradeExecutor)
     if (monitorLoops.length > 0 && !stopWorkWake) {
       stopWorkWake = subscribeMonitorWorkWake(supabase, monitorLoops)
     }

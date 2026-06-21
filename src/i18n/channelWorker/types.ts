@@ -60,6 +60,11 @@ export interface ChannelWorkerTranslations {
   entryCancelled: string
   entryFailed: string
 
+  rangeEntryWaitingNoPrice: string
+  rangeEntryWaitingAtPrice: string
+  rangeEntryWaitingZone: string
+  rangeEntryFired: string
+
   mergeAddedNamed: string
   mergeAddedGeneric: string
   mergeSlTpSuccessNamed: string

@@ -145,9 +145,9 @@ export const configureModalEn: ConfigureModalTranslations = {
     signalEntryBody:
       'Use Signal Entry Price applies only in Single Trade mode. When enabled, the signal must include an explicit parsed entry (price, zone, @ price, or labels like "Entry Price:"). After any channel delay, the worker compares the live quote to that entry: Buy fills at market only when ask is at or below the entry; otherwise it places a buy limit at the entry. Sell is the inverse. The broker take-profit targets the last parsed TP when you have several targets, with optional partial closes from your TP ladder. Copier tracks each strict-entry pending so fills sync to your trade list; pendings are cancelled when the basket is flat. Bare "buy now" messages with no entry are skipped.',
     useSignalEntryPrice: 'Use Signal Entry Price',
-    pipToleranceLegacy: 'Pip tolerance (legacy)',
+    pipToleranceLegacy: 'Pip tolerance',
     pipToleranceHint:
-      'Unused for strict entry routing; kept for backward compatibility with saved settings.',
+      'Allowed distance from the signal entry level before entry is deferred (single trade strict entry and range signal range).',
     multiIntro:
       'Range Trading splits your fixed lot into many smaller orders (e.g. 1.0 lot @ 5%/leg = 20 trades of 0.05). Legs are distributed across the signal\'s TPs using the percent rows below. If the per-leg size falls below the broker\'s symbol minimum, the planner falls back to a single full-size trade and logs the reason.',
     perLegSize: 'Per-leg size (% of fixed lot)',
@@ -182,11 +182,14 @@ export const configureModalEn: ConfigureModalTranslations = {
       'On: range pending orders keep opening until the whole trade is closed, even if price pulls back after a take-profit or close-worse-entries. Off: pending orders are cancelled after the first take-profit or when any order closes, so no deeper orders open on a reversal.',
     useSignalRange: 'Use signal range',
     useSignalRangeBody:
-      'When on, layering depth comes from the signal entry zone (e.g. ENTRY 4335 / 4325). Buy ladders stop at the zone low; sell ladders stop at the zone high. If the signal has no entry zone, Range distance (pips) is used instead.',
+      'When on, the signal must include a parsed entry price or zone (e.g. 4505, 4505/4500, or @ 4505). Bare "buy now" messages with no price are skipped and shown as waiting for a price range. Unlike Use Signal Entry Price, no broker pending order is placed — the copier waits virtually and opens when live price reaches the signal level or zone edge plus pip tolerance. Layering depth still comes from the signal entry zone when present.',
+    useSignalRangePipTolerance: 'Pip tolerance',
+    useSignalRangePipToleranceHint:
+      'How many pips above (buy) or below (sell) the signal entry level the market may be and still trigger entry.',
     useSignalRangeDistanceDisabledHint:
       'Depth is taken from the signal entry zone when the signal includes one.',
     previewSignalRangeFootnote:
-      ' At execution, range depth is taken from the signal entry zone when present.',
+      ' With Use signal range on, entry waits for price at the signal level ± tolerance; range depth is taken from the entry zone when present.',
     closeWorseEntries: 'Close worse entries',
     closeWorseBody:
       'When the price moves +X pips in your favor from the starting entry, the system automatically closes your immediate trades. When a "Close worse entries" message is enabled and triggered, the system closes any open trade that is within X pips of the current market price. Trades affected by "Close worse entries" do not have a Take-Profit (TP) set on the broker\'s side. Only the Stop-Loss (SL) is sent to the broker.',

@@ -4,8 +4,10 @@ import type { ManualSettings, ParsedSignal } from './types'
 import {
   resolveRangeDistancePips,
   signalRangeBoundary,
+  signalRangeEntryQuoteAllowsImmediate,
   signalZoneWidthPips,
   virtualLegTriggerAllowed,
+  buildRangeEntryWait,
 } from './signalEntryRange'
 import { triggerPriceFor, virtualPendingTriggerAllowed } from '../tradeExecutor/helpers'
 
@@ -126,4 +128,52 @@ test('runtime clamp: buy anchor 4330 step 3 pips rejects legs past 4325', () => 
     comment: 'test',
   }, anchor, digits)
   assert.ok(firstRejected < boundary)
+})
+
+test('signalRangeEntryQuoteAllowsImmediate: buy point price within tolerance', () => {
+  const wait = buildRangeEntryWait({
+    manual: { use_signal_entry_range: true, range_trading: true, trade_style: 'multi', signal_entry_pip_tolerance: 10 },
+    parsed: { ...zoneParsed, entry_price: 4505, entry_zone_low: null, entry_zone_high: null },
+    isBuy: true,
+  })!
+  assert.equal(
+    signalRangeEntryQuoteAllowsImmediate({ wait, bid: 4500, ask: 4505.5, pipSize: 0.1 }),
+    true,
+  )
+  assert.equal(
+    signalRangeEntryQuoteAllowsImmediate({ wait, bid: 4500, ask: 4506.5, pipSize: 0.1 }),
+    false,
+  )
+})
+
+test('signalRangeEntryQuoteAllowsImmediate: buy zone uses high edge', () => {
+  const wait = buildRangeEntryWait({
+    manual: { use_signal_entry_range: true, range_trading: true, trade_style: 'multi', signal_entry_pip_tolerance: 10 },
+    parsed: zoneParsed,
+    isBuy: true,
+  })!
+  assert.equal(
+    signalRangeEntryQuoteAllowsImmediate({ wait, bid: 4320, ask: 4335.5, pipSize: 0.1 }),
+    true,
+  )
+  assert.equal(
+    signalRangeEntryQuoteAllowsImmediate({ wait, bid: 4320, ask: 4336.5, pipSize: 0.1 }),
+    false,
+  )
+})
+
+test('signalRangeEntryQuoteAllowsImmediate: sell zone uses low edge', () => {
+  const wait = buildRangeEntryWait({
+    manual: { use_signal_entry_range: true, range_trading: true, trade_style: 'multi', signal_entry_pip_tolerance: 10 },
+    parsed: zoneParsed,
+    isBuy: false,
+  })!
+  assert.equal(
+    signalRangeEntryQuoteAllowsImmediate({ wait, bid: 4324.5, ask: 4340, pipSize: 0.1 }),
+    true,
+  )
+  assert.equal(
+    signalRangeEntryQuoteAllowsImmediate({ wait, bid: 4323.5, ask: 4340, pipSize: 0.1 }),
+    false,
+  )
 })

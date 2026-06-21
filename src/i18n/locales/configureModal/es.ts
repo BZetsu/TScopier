@@ -182,7 +182,10 @@ export const configureModalEs: ConfigureModalTranslations = {
       'Activado: las órdenes pendientes del rango siguen abriéndose hasta que toda la operación esté cerrada, aunque el precio retroceda tras un take-profit o un cierre CWE. Desactivado: las pendientes se cancelan en el primer take-profit o al cerrar cualquier orden, así que no se abren órdenes más profundas si el precio revierte.',
     useSignalRange: 'Usar rango de la señal',
     useSignalRangeBody:
-      'Activado: la profundidad del escalonado proviene de la zona de entrada de la señal (p. ej. ENTRY 4335 / 4325). Las compras se detienen en el mínimo de la zona; las ventas en el máximo. Sin zona de entrada, se usa la distancia de rango (pips).',
+      'Activado: la señal debe incluir un precio o zona de entrada analizada (p. ej. 4505, 4505/4500, @ 4505). Los mensajes «comprar ahora» sin precio se omiten y se muestran en espera de rango. A diferencia de «Usar precio de entrada de la señal», no se coloca una orden pendiente en el broker — el copiador espera virtualmente y abre cuando el precio alcanza el nivel o borde de zona ± tolerancia en pips.',
+    useSignalRangePipTolerance: 'Tolerancia (pips)',
+    useSignalRangePipToleranceHint:
+      'Pips por encima (compra) o por debajo (venta) del nivel de entrada de la señal para activar la entrada.',
     useSignalRangeDistanceDisabledHint:
       'La profundidad se toma de la zona de entrada de la señal cuando está presente.',
     previewSignalRangeFootnote:

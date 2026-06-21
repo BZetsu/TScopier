@@ -60,6 +60,11 @@ export const channelWorkerFr: ChannelWorkerTranslations = {
   entryCancelled: 'Ordre d\'entrée en attente annulé {on}.',
   entryFailed: 'Échec de l\'ordre d\'entrée {on}{err}',
 
+  rangeEntryWaitingNoPrice: '{side} en attente — En attente du range de prix.',
+  rangeEntryWaitingAtPrice: '{side} en attente — En attente du prix @ {price}.',
+  rangeEntryWaitingZone: '{side} en attente — En attente du range {lo}–{hi}.',
+  rangeEntryFired: '{side} exécuté {on} (prix dans le range du signal).',
+
   mergeAddedNamed: 'Ajout à la position existante sur {symbol}.',
   mergeAddedGeneric: 'Ajout à votre position ouverte.',
   mergeSlTpSuccessNamed:

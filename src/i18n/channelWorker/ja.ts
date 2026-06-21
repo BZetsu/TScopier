@@ -60,6 +60,11 @@ export const channelWorkerJa: ChannelWorkerTranslations = {
   entryCancelled: '待機中のエントリー注文をキャンセルしました {on}。',
   entryFailed: 'エントリー注文に失敗しました {on}{err}',
 
+  rangeEntryWaitingNoPrice: '{side} 保留 — 価格レンジを待機中。',
+  rangeEntryWaitingAtPrice: '{side} 保留 — 価格 @ {price} を待機中。',
+  rangeEntryWaitingZone: '{side} 保留 — レンジ {lo}–{hi} を待機中。',
+  rangeEntryFired: '{side} 約定 {on}（シグナルレンジに到達）。',
+
   mergeAddedNamed: '既存の{symbol}ポジションに追加しました。',
   mergeAddedGeneric: 'あなたの保有中の取引に追加しました。',
   mergeSlTpSuccessNamed:

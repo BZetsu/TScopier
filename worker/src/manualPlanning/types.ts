@@ -147,6 +147,15 @@ export interface PlannerStrictEntry {
   isBuy: boolean
 }
 
+/** Virtual range-entry gate metadata (no broker pending). */
+export interface PlannerRangeEntryWait {
+  isBuy: boolean
+  entryPrice: number | null
+  zoneLo: number | null
+  zoneHi: number | null
+  tolerancePips: number
+}
+
 export interface PlannerPartialTp {
   tpIdx: number
   triggerPrice: number
@@ -177,6 +186,7 @@ export interface PlannerResult {
   closeWorseEntries?: PlannerCloseWorseEntries
   partialTps?: PlannerPartialTp[]
   strictEntry?: PlannerStrictEntry
+  rangeEntryWait?: PlannerRangeEntryWait
   rangeLayering?: PlannerRangeLayering
   skip_reason?: string
   fallback_reason?: string

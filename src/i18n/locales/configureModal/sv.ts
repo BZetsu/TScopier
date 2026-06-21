@@ -160,7 +160,11 @@ export const configureModalSv: ConfigureModalTranslations = {
     layerTillClose: 'Varva tills nära',
     layerTillCloseBody: 'På: intervall väntande order fortsätter att öppna tills hela handeln är stängd, även om priset drar sig tillbaka efter en take-profit eller nära-värre-poster. Av: väntande beställningar avbryts efter den första vinsten eller när någon beställning stänger, så inga djupare beställningar öppnas vid en återföring.',
     useSignalRange: 'Använd signalområdet',
-    useSignalRangeBody: 'När den är på kommer skiktdjupet från signalingångszonen (t.ex. ENTRY 4335 / 4325). Köp stegar stanna vid zonen låg; sälj stegar stanna vid zonen hög. Om signalen inte har någon ingångszon används Range distance (pips) istället.',
+    useSignalRangeBody:
+      'När på måste signalen innehålla ett analyserat ingångspris eller -zon (t.ex. 4505, 4505/4500, @ 4505). Rena „köp nu” utan pris hoppas över och visas som väntar på range. Till skillnad från signal ingångspris placeras ingen mäklarpending — copiern väntar virtuellt och öppnar när livepriset når signalnivån eller zonkanterna ± piptolerans.',
+    useSignalRangePipTolerance: 'Piptolerans',
+    useSignalRangePipToleranceHint:
+      'Pips ovan (köp) eller under (sälj) signalens ingångsnivå inom vilka entry får triggas.',
     useSignalRangeDistanceDisabledHint: 'Djupet tas från signalingångszonen när signalen inkluderar en.',
     previewSignalRangeFootnote: 'Vid exekvering tas avståndsdjupet från signalingångszonen när det finns.',
     closeWorseEntries: 'Stäng sämre poster',

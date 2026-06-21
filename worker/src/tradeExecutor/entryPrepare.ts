@@ -13,7 +13,10 @@ import {
   resolvedParsedEntryPrice,
   resolvedParsedEntryZone,
   signalEntryPriceStrictEnabled,
+  signalEntryRangeStrictEnabled,
   SKIP_REASON_SIGNAL_ENTRY_REQUIRED,
+  SKIP_REASON_SIGNAL_ENTRY_RANGE_REQUIRED,
+  signalRangeEntryQuoteAllowsImmediate,
   strictSignalEntryQuoteAllowsImmediate,
   lastPositiveParsedTpPrice,
   type ChannelKeywords,
@@ -50,6 +53,13 @@ import type {
   SymbolCacheEntry,
   SymbolMappingResult,
 } from './types'
+import {
+  logSignalRangeEntryFired,
+  logSignalRangeEntryNoPrice,
+  logSignalRangeEntryWaiting,
+  markSignalRangeEntryFired,
+  upsertSignalRangeEntryWait,
+} from '../signalRangeEntryHelpers'
 
 export type EntryArgs = {
   signal: SignalRow
@@ -218,8 +228,10 @@ export async function prepareEntryExecution(
 
   const needsQuotePrefetch =
     isManual
-    && signalEntryPriceStrictEnabled(manual)
-    && parsedHasExplicitEntryAnchor(parsed)
+    && (
+      (signalEntryPriceStrictEnabled(manual) && parsedHasExplicitEntryAnchor(parsed))
+      || signalEntryRangeStrictEnabled(manual)
+    )
 
   const stampOnResolve = liveEntryFast && !!signal.pipeline_ts
   const sessionPromise = (liveEntryFast
@@ -293,6 +305,7 @@ export async function prepareEntryExecution(
   if (
     isManual
     && hasEntryZone
+    && !signalEntryRangeStrictEnabled(manual)
     && (entryDirection === 'buy' || entryDirection === 'sell')
     && sendOpts?.sameSignalRefresh !== true
   ) {
@@ -533,6 +546,10 @@ export async function prepareEntryExecution(
     await ctx.logSendSkipped(signal, broker, plan.skip_reason ?? 'filtered', { symbol })
     const entryStrict =
       isManual && plan.skip_reason === SKIP_REASON_SIGNAL_ENTRY_REQUIRED
+    if (isManual && plan.skip_reason === SKIP_REASON_SIGNAL_ENTRY_RANGE_REQUIRED) {
+      await logSignalRangeEntryNoPrice(ctx.supabase, signal, broker, parsed, symbol)
+      return { ok: false, outcome: { signalRangeEntryRequiredSkip: true } }
+    }
     return { ok: false, outcome: entryStrict ? { signalEntryRequiredSkip: true } : {} }
   }
 
@@ -653,6 +670,77 @@ export async function prepareEntryExecution(
       console.warn(
         `[tradeExecutor] strict entry /Quote failed; deferring to broker pending signal=${signal.id} broker=${broker.id} symbol=${symbol}: ${msg}`,
       )
+    }
+  }
+
+  let rangeEntryDeferred = false
+  if (
+    isManual
+    && signalEntryRangeStrictEnabled(manual)
+    && plan.rangeEntryWait
+    && api
+    && !strictDeferred
+  ) {
+    const wait = plan.rangeEntryWait
+    const pipSize = plan.pip ?? params?.point ?? 0.00001
+    const fromWake = signal.dispatch_source === 'signal_range_wake'
+    try {
+      const q = strictEntryPrefetch ?? await api.quote(uuid, symbol)
+      strictEntryPrefetch = q
+      const allowed = signalRangeEntryQuoteAllowsImmediate({
+        wait,
+        bid: q.bid,
+        ask: q.ask,
+        pipSize,
+      })
+      if (!allowed) {
+        rangeEntryDeferred = true
+        await upsertSignalRangeEntryWait(ctx.supabase, {
+          signal,
+          broker,
+          uuid,
+          symbol,
+          wait,
+          manual,
+        })
+        await logSignalRangeEntryWaiting(
+          ctx.supabase,
+          signal,
+          broker,
+          wait,
+          symbol,
+          q.bid,
+          q.ask,
+        )
+        console.log(
+          `[tradeExecutor] signal range entry deferred signal=${signal.id} broker=${broker.id} symbol=${symbol}`
+          + ` isBuy=${wait.isBuy} bid=${q.bid} ask=${q.ask} tol=${wait.tolerancePips}p`,
+        )
+      } else if (fromWake) {
+        await markSignalRangeEntryFired(ctx.supabase, signal.id, broker.id)
+        await logSignalRangeEntryFired(ctx.supabase, signal, broker.id, wait, symbol)
+      }
+    } catch (err) {
+      rangeEntryDeferred = true
+      const msg = err instanceof Error ? err.message : String(err)
+      console.warn(
+        `[tradeExecutor] signal range entry /Quote failed; deferring signal=${signal.id} broker=${broker.id} symbol=${symbol}: ${msg}`,
+      )
+      await upsertSignalRangeEntryWait(ctx.supabase, {
+        signal,
+        broker,
+        uuid,
+        symbol,
+        wait,
+        manual,
+      })
+    }
+  }
+
+  if (rangeEntryDeferred) {
+    return {
+      ok: false,
+      outcome: { signalRangeEntryDeferred: true, channelDelayMs, channelDelaySkipped },
     }
   }
 

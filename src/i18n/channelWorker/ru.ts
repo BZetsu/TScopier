@@ -60,6 +60,11 @@ export const channelWorkerRu: ChannelWorkerTranslations = {
   entryCancelled: 'Ордер ожидания входа отменен {on}.',
   entryFailed: 'Ошибка ордера входа {on}{err}',
 
+  rangeEntryWaitingNoPrice: '{side} ожидание — Ожидание ценового диапазона.',
+  rangeEntryWaitingAtPrice: '{side} ожидание — Ожидание цены @ {price}.',
+  rangeEntryWaitingZone: '{side} ожидание — Ожидание диапазона {lo}–{hi}.',
+  rangeEntryFired: '{side} открыта {on} (цена достигла диапазона сигнала).',
+
   mergeAddedNamed: 'Добавлено к существующей позиции {symbol}.',
   mergeAddedGeneric: 'Добавлено к вашей открытой сделке.',
   mergeSlTpSuccessNamed:

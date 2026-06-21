@@ -60,6 +60,11 @@ export const channelWorkerNl: ChannelWorkerTranslations = {
   entryCancelled: 'Wachtende instaporder geannuleerd {on}.',
   entryFailed: 'Instaporder mislukt {on}{err}',
 
+  rangeEntryWaitingNoPrice: '{side} pending — Wachten op prijsrange.',
+  rangeEntryWaitingAtPrice: '{side} pending — Wachten op prijs @ {price}.',
+  rangeEntryWaitingZone: '{side} pending — Wachten op range {lo}–{hi}.',
+  rangeEntryFired: '{side} geopend {on} (prijs bereikte signaalrange).',
+
   mergeAddedNamed: 'Toegevoegd aan de bestaande {symbol}-positie.',
   mergeAddedGeneric: 'Toegevoegd aan je open positie.',
   mergeSlTpSuccessNamed:

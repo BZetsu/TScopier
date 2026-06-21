@@ -746,6 +746,32 @@ function buildChannelWorkerLogMessage(row: ChannelWorkerLogRow, cw: ChannelWorke
     return interpolate(cw.entryFailed, { on: onInstrument(instr, cw), err })
   }
 
+  if (logAction === 'signal_range_entry_no_price') {
+    const dir = String(payload.direction ?? signalAction ?? 'buy').toLowerCase()
+    const side = dir === 'sell' ? cw.sideSell : cw.sideBuy
+    const sideLabel = side.charAt(0).toUpperCase() + side.slice(1)
+    return interpolate(cw.rangeEntryWaitingNoPrice, { side: sideLabel })
+  }
+  if (logAction === 'signal_range_entry_waiting') {
+    const dir = String(payload.direction ?? signalAction ?? 'buy').toLowerCase()
+    const side = dir === 'sell' ? cw.sideSell : cw.sideBuy
+    const sideLabel = side.charAt(0).toUpperCase() + side.slice(1)
+    const ep = payload.entry_price
+    const lo = payload.zone_lo
+    const hi = payload.zone_hi
+    if (lo != null && hi != null && String(lo) !== '' && String(hi) !== '') {
+      return interpolate(cw.rangeEntryWaitingZone, { side: sideLabel, lo: String(lo), hi: String(hi) })
+    }
+    const price = ep != null && String(ep) !== '' ? String(ep) : '—'
+    return interpolate(cw.rangeEntryWaitingAtPrice, { side: sideLabel, price })
+  }
+  if (logAction === 'signal_range_entry_fired') {
+    const dir = String(payload.direction ?? signalAction ?? 'buy').toLowerCase()
+    const side = dir === 'sell' ? cw.sideSell : cw.sideBuy
+    const sideLabel = side.charAt(0).toUpperCase() + side.slice(1)
+    return interpolate(cw.rangeEntryFired, { side: sideLabel, on: onInstrument(instr, cw) })
+  }
+
   if (logAction === 'signal_merge_into_open_trade') {
     const userMsg = typeof payload.user_message === 'string' ? payload.user_message.trim() : ''
     const errMsg = typeof row.error_message === 'string' ? row.error_message.trim() : ''

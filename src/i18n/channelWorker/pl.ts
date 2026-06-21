@@ -60,6 +60,11 @@ export const channelWorkerPl: ChannelWorkerTranslations = {
   entryCancelled: 'Anulowano oczekujące zlecenie wejścia {on}.',
   entryFailed: 'Zlecenie wejścia nie powiodło się {on}{err}',
 
+  rangeEntryWaitingNoPrice: '{side} oczekujące — Oczekiwanie na zakres cen.',
+  rangeEntryWaitingAtPrice: '{side} oczekujące — Oczekiwanie na cenę @ {price}.',
+  rangeEntryWaitingZone: '{side} oczekujące — Oczekiwanie na zakres {lo}–{hi}.',
+  rangeEntryFired: '{side} otwarte {on} (cena osiągnęła zakres sygnału).',
+
   mergeAddedNamed: 'Dodano do istniejącej pozycji {symbol}.',
   mergeAddedGeneric: 'Dodano do Twojej otwartej pozycji.',
   mergeSlTpSuccessNamed:

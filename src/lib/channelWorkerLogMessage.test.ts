@@ -179,6 +179,27 @@ test('channelWorkerLogMessage: unknown success does not show Completed sell whil
   assert.equal(message, null)
 })
 
+test('channelWorkerLogMessage: signal_range_entry_no_price shows waiting message', () => {
+  const message = channelWorkerLogMessage(
+    {
+      action: 'signal_range_entry_no_price',
+      status: 'skipped',
+      request_payload: { direction: 'buy', symbol: 'XAUUSD' },
+      response_payload: null,
+      error_message: null,
+      signals: {
+        channel_id: 'ch-1',
+        parsed_data: { action: 'buy', symbol: 'XAUUSD' },
+        status: 'skipped',
+      },
+    },
+    channelWorkerEn,
+    { 'ch-1': 'GTMO VIP' },
+  )
+  assert.match(String(message), /Buy pending/i)
+  assert.match(String(message), /Waiting for price range/i)
+})
+
 test('channelWorkerLogMessage: pipeline_summary does not show false Completed sell', () => {
   const message = channelWorkerLogMessage(
     {

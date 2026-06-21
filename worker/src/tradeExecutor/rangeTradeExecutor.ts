@@ -5,6 +5,7 @@ import { prepareEntryExecution } from './entryPrepare'
 import { placeStrictSignalEntryPending } from './strictEntryPending'
 import { materializeVirtualPendingLegs } from './virtualPendingMaterialize'
 import { finishEntrySend, type EntryArgs } from './entryExecution'
+import { cancelSignalRangeEntryWaitsForSignal } from '../signalRangeEntryHelpers'
 
 export type { EntryArgs } from './entryPrepare'
 
@@ -70,5 +71,9 @@ export async function runRangeEntry(
   const strictBrokerPlaced = await placeStrictSignalEntryPending(ctx, prep, false)
   const materializedVirtuals = await materializeVirtualPendingLegs(ctx, prep, strictBrokerPlaced)
 
-  return finishEntrySend(prep, strictBrokerPlaced, materializedVirtuals, true)
+  const outcome = await finishEntrySend(prep, strictBrokerPlaced, materializedVirtuals, true)
+  if (outcome.openedOrMerged === true && prep.plan.rangeEntryWait) {
+    void cancelSignalRangeEntryWaitsForSignal(ctx.supabase, prep.signal.id, prep.broker.id)
+  }
+  return outcome
 }

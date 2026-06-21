@@ -17,6 +17,13 @@ export function signalEntryPriceStrictEnabled(manual: ManualSettings): boolean {
   return manualUseSignalEntryPriceOn(manual) && manual.trade_style !== 'multi'
 }
 
+/** True when range trading should gate entry on parsed price/zone + pip tolerance (no broker pending). */
+export function signalEntryRangeStrictEnabled(manual: ManualSettings): boolean {
+  return manual.use_signal_entry_range === true
+    && manual.range_trading === true
+    && manual.trade_style === 'multi'
+}
+
 /**
  * Pending expiry for broker Limit/Stop sends and virtual range legs.
  * Values are clamped to 1–24 hours; non-positive / invalid → 0 (no expiry).

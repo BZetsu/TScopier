@@ -2864,12 +2864,27 @@ export function AccountConfigPage() {
                                       />
                                     </div>
 
-                                    <div className="flex items-center justify-between">
-                                      <ConfigToggleLabel info={cm.risk.useSignalRangeBody}>{cm.risk.useSignalRange}</ConfigToggleLabel>
-                                      <Toggle
-                                        checked={channelManualSettings.use_signal_entry_range === true}
-                                        onChange={v => setManual({ use_signal_entry_range: v })}
-                                      />
+                                    <div className="rounded-md border border-neutral-200 dark:border-neutral-800 overflow-hidden">
+                                      <div className="flex items-center justify-between gap-3 bg-white dark:bg-neutral-900 px-3 py-2.5">
+                                        <ConfigToggleLabel info={cm.risk.useSignalRangeBody}>{cm.risk.useSignalRange}</ConfigToggleLabel>
+                                        <Toggle
+                                          checked={channelManualSettings.use_signal_entry_range === true}
+                                          onChange={v => setManual({ use_signal_entry_range: v })}
+                                        />
+                                      </div>
+                                      {channelManualSettings.use_signal_entry_range && (
+                                        <div className="border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/80 px-3 py-3 space-y-2">
+                                          <ConfigureInput
+                                            label={cm.risk.useSignalRangePipTolerance}
+                                            type="number"
+                                            min={0}
+                                            step={1}
+                                            hint={cm.risk.useSignalRangePipToleranceHint}
+                                            value={String(channelManualSettings.signal_entry_pip_tolerance ?? 10)}
+                                            onChange={e => setManual({ signal_entry_pip_tolerance: Math.max(0, Number(e.target.value) || 0) })}
+                                          />
+                                        </div>
+                                      )}
                                     </div>
 
                                     <div className="flex items-center justify-between">

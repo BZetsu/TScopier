@@ -182,7 +182,10 @@ export const configureModalFr: ConfigureModalTranslations = {
       'Activé : les ordres en attente du range continuent tant que la position n’est pas entièrement fermée, même si le prix repart après un take-profit ou une fermeture CWE. Désactivé : les ordres en attente sont annulés au premier take-profit ou à la première fermeture, donc aucun ordre plus profond ne s’ouvre en cas de retournement.',
     useSignalRange: 'Utiliser le range du signal',
     useSignalRangeBody:
-      'Activé : la profondeur d’échelonnage vient de la zone d’entrée du signal (ex. ENTRY 4335 / 4325). Les achats s’arrêtent au bas de zone ; les ventes au haut. Sans zone d’entrée, la distance de range (pips) est utilisée.',
+      'Activé : le signal doit inclure un prix ou une zone d’entrée analysée (ex. 4505, 4505/4500, @ 4505). Les messages « acheter maintenant » sans prix sont ignorés et affichés en attente de range. Contrairement à « Utiliser le prix d’entrée du signal », aucun ordre en attente n’est placé chez le courtier — le copieur attend virtuellement et ouvre lorsque le prix atteint le niveau ou le bord de zone ± tolérance en pips. La profondeur d’échelonnage vient toujours de la zone d’entrée lorsqu’elle est présente.',
+    useSignalRangePipTolerance: 'Tolérance (pips)',
+    useSignalRangePipToleranceHint:
+      'Nombre de pips au-dessus (achat) ou en dessous (vente) du niveau d’entrée du signal pour déclencher l’entrée.',
     useSignalRangeDistanceDisabledHint:
       'La profondeur est prise dans la zone d’entrée du signal lorsqu’elle est présente.',
     previewSignalRangeFootnote:

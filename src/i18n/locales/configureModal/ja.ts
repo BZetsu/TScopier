@@ -160,7 +160,11 @@ export const configureModalJa: ConfigureModalTranslations = {
     layerTillClose: '閉じるまで重ねます',
     layerTillCloseBody: 'オン: 利益確定または値下がりエントリー後に価格が反落した場合でも、取引全体が終了するまでレンジ保留注文が開き続けます。オフ: 最初の利益確定後、または注文が終了したときに保留中の注文がキャンセルされるため、反転時にさらに深い注文はオープンされません。',
     useSignalRange: '使用信号範囲',
-    useSignalRangeBody: 'オンの場合、レイヤーの深さは信号エントリ ゾーン (例: ENTRY 4335 / 4325) から決まります。ゾーンの安値でラダーストップを買います。売りはしごはゾーン高で停止します。シグナルにエントリーゾーンがない場合は、代わりにレンジ距離 (pips) が使用されます。',
+    useSignalRangeBody:
+      'オンの場合、シグナルには解析済みのエントリー価格またはゾーン（例: 4505、4505/4500、@ 4505）が必要です。価格のない「今すぐ買い」はスキップされ、レンジ待ちとして表示されます。「シグナルエントリー価格を使用」と異なり、ブローカーに保留注文は出しません — コピアは仮想待機し、ライブ価格がシグナル水準またはゾーン端 ± pip許容値に達したときにエントリーします。',
+    useSignalRangePipTolerance: 'Pip許容値',
+    useSignalRangePipToleranceHint:
+      'シグナルエントリー水準から上（買い）または下（売り）何pipまでエントリーを許可するか。',
     useSignalRangeDistanceDisabledHint: '信号に信号エントリ ゾーンが含まれている場合、深さは信号エントリ ゾーンから取得されます。',
     previewSignalRangeFootnote: '実行時に、信号エントリ ゾーンが存在する場合、レンジ深度はそこから取得されます。',
     closeWorseEntries: '悪質なエントリを閉じる',

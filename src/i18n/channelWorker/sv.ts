@@ -60,6 +60,11 @@ export const channelWorkerSv: ChannelWorkerTranslations = {
   entryCancelled: 'Avbröt den väntande ingångsordern {on}.',
   entryFailed: 'Ingångsordern misslyckades {on}{err}',
 
+  rangeEntryWaitingNoPrice: '{side} väntande — Väntar på prisrange.',
+  rangeEntryWaitingAtPrice: '{side} väntande — Väntar på pris @ {price}.',
+  rangeEntryWaitingZone: '{side} väntande — Väntar på range {lo}–{hi}.',
+  rangeEntryFired: '{side} öppnad {on} (pris nådde signalrange).',
+
   mergeAddedNamed: 'Lade till i den befintliga {symbol}-positionen.',
   mergeAddedGeneric: 'Lade till i din öppna position.',
   mergeSlTpSuccessNamed:

@@ -15,6 +15,8 @@ export function telegramLiveTradeGateEnabled(): boolean {
 export type SendOrderOutcome = {
   openedOrMerged?: boolean
   signalEntryRequiredSkip?: boolean
+  signalRangeEntryRequiredSkip?: boolean
+  signalRangeEntryDeferred?: boolean
   /** Deterministic no-op where retrying the same parsed signal won't change outcome. */
   finalizeSkipReason?: string
   /** Channel `delay_msec` from Copier Engine (skipped on live fast path). */
