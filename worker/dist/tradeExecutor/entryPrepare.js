@@ -209,9 +209,12 @@ async function prepareEntryExecution(ctx, args) {
         }
     }
     // Basket SL/TP refresh — always before OrderSend (not deferred to post-fill).
+    // Skip when Use signal range is on: zone+market-now+SL/TP must open via range entry wait,
+    // not merge into a prior teaser that may never have opened.
     let basketRefreshSucceeded = false;
     const sameSignalRefresh = sendOpts?.sameSignalRefresh === true;
-    if (isManual && ((0, multiTradeMerge_1.shouldRouteAsBasketParameterRefresh)(parsed) || sameSignalRefresh)) {
+    const rangeEntryStrict = (0, manualPlanner_1.signalEntryRangeStrictEnabled)(manual);
+    if (isManual && !rangeEntryStrict && ((0, multiTradeMerge_1.shouldRouteAsBasketParameterRefresh)(parsed) || sameSignalRefresh)) {
         const paramOutcome = await ctx.tryParameterFollowUpMergeModifyOnly({
             signal,
             parsed,
@@ -238,11 +241,9 @@ async function prepareEntryExecution(ctx, args) {
             basketRefreshSucceeded = true;
             return { ok: false, outcome: { openedOrMerged: true } };
         }
-        if (paramOutcome.handled) {
-            return { ok: false, outcome: { openedOrMerged: false } };
-        }
+        // handled + !success: anchor had no open legs — fall through to range entry / OrderSend.
     }
-    if (isManual && !sameSignalRefresh && !basketRefreshSucceeded) {
+    if (isManual && !sameSignalRefresh && !basketRefreshSucceeded && !rangeEntryStrict) {
         const teaserOutcome = await ctx.tryTeaserCompletionMerge({
             signal,
             parsed,

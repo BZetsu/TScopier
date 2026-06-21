@@ -163,6 +163,19 @@ async function tryParameterFollowUpMergeModifyOnly(ctx, args) {
             return { handled: false };
         }
     }
+    const { data: anchorFamilyRows } = await ctx.supabase
+        .from('trades')
+        .select('id,signal_id,metaapi_order_id,opened_at,lot_size,sl,tp,entry_price,direction,symbol')
+        .eq('broker_account_id', broker.id)
+        .eq('signal_id', anchor.anchorSignalId)
+        .eq('status', 'open')
+        .order('opened_at', { ascending: true })
+        .limit(500);
+    const anchorFamily = (anchorFamilyRows ?? []).filter(tr => (0, basketModFollowUp_1.symbolsCompatibleForBasket)(parsed.symbol ?? symbol, tr.symbol)
+        || (0, basketModFollowUp_1.symbolsCompatibleForBasket)(symbol, tr.symbol));
+    if (!anchorFamily.length) {
+        return { handled: false };
+    }
     console.log(`[tradeExecutor] merge_anchor_selected signal=${signal.id} broker=${broker.id}`
         + ` anchor=${anchor.anchorSignalId} symbol=${symbol} direction=${direction}`);
     try {
@@ -182,16 +195,6 @@ async function tryParameterFollowUpMergeModifyOnly(ctx, args) {
         });
     }
     catch { /* best-effort */ }
-    const { data: anchorFamilyRows } = await ctx.supabase
-        .from('trades')
-        .select('id,signal_id,metaapi_order_id,opened_at,lot_size,sl,tp,entry_price,direction,symbol')
-        .eq('broker_account_id', broker.id)
-        .eq('signal_id', anchor.anchorSignalId)
-        .eq('status', 'open')
-        .order('opened_at', { ascending: true })
-        .limit(500);
-    const anchorFamily = (anchorFamilyRows ?? []).filter(tr => (0, basketModFollowUp_1.symbolsCompatibleForBasket)(parsed.symbol ?? symbol, tr.symbol)
-        || (0, basketModFollowUp_1.symbolsCompatibleForBasket)(symbol, tr.symbol));
     const ghostCheck = await (0, helpers_1.reconcileGhostBasketLegs)(ctx, {
         signal,
         broker,
@@ -403,6 +406,9 @@ async function tryTeaserCompletionMerge(ctx, args) {
         .limit(500);
     const anchorFamily = (anchorFamilyRows ?? []).filter(tr => (0, basketModFollowUp_1.symbolsCompatibleForBasket)(parsed.symbol ?? symbol, tr.symbol)
         || (0, basketModFollowUp_1.symbolsCompatibleForBasket)(symbol, tr.symbol));
+    if (!anchorFamily.length) {
+        return { handled: false };
+    }
     const ghostCheck = await (0, helpers_1.reconcileGhostBasketLegs)(ctx, {
         signal,
         broker,

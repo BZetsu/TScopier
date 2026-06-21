@@ -102,10 +102,21 @@ class SignalRangeEntryMonitor {
                 continue;
             let bid;
             let ask;
+            let pipSize = 0.00001;
             try {
                 const q = await api.quote(sample.metaapi_account_id, sample.symbol);
                 bid = q.bid;
                 ask = q.ask;
+                try {
+                    const rawParams = await api.symbolParams(sample.metaapi_account_id, sample.symbol);
+                    const point = (0, fxsocketClient_1.normalizeSymbolParams)(rawParams).point;
+                    if (point != null && Number.isFinite(point) && point > 0) {
+                        pipSize = point;
+                    }
+                }
+                catch {
+                    /* default pipSize */
+                }
             }
             catch (err) {
                 const msg = err instanceof Error ? err.message : String(err);
@@ -114,7 +125,7 @@ class SignalRangeEntryMonitor {
             }
             for (const row of group) {
                 const wait = (0, signalRangeEntryHelpers_1.waitRowToPlannerWait)(row);
-                if (!(0, manualPlanner_1.signalRangeEntryQuoteAllowsImmediate)({ wait, bid, ask }))
+                if (!(0, manualPlanner_1.signalRangeEntryQuoteAllowsImmediate)({ wait, bid, ask, pipSize }))
                     continue;
                 const { data: claimed, error: claimErr } = await this.supabase
                     .from('signal_range_entry_waits')

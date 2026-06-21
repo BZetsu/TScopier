@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { hasFxsocketConfigured } from './fxsocketClient'
+import { hasFxsocketConfigured, normalizeSymbolParams } from './fxsocketClient'
 import { apiForFxsocketAccount, loadPlatformByFxsocketId, type PlatformByFxsocketId } from './mtApiByAccount'
 import { signalRangeEntryQuoteAllowsImmediate } from './manualPlanner'
 import { isUserCopierPausedCached } from './copierPause'
@@ -133,9 +133,10 @@ export class SignalRangeEntryMonitor {
         bid = q.bid
         ask = q.ask
         try {
-          const params = await api.symbolParams(sample.metaapi_account_id, sample.symbol)
-          if (Number.isFinite(params.point) && params.point > 0) {
-            pipSize = params.point
+          const rawParams = await api.symbolParams(sample.metaapi_account_id, sample.symbol)
+          const point = normalizeSymbolParams(rawParams).point
+          if (point != null && Number.isFinite(point) && point > 0) {
+            pipSize = point
           }
         } catch {
           /* default pipSize */
