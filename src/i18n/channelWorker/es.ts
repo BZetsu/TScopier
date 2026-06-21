@@ -64,6 +64,12 @@ export const channelWorkerEs: ChannelWorkerTranslations = {
   rangeEntryWaitingAtPrice: '{side} pendiente — Esperando precio @ {price}.',
   rangeEntryWaitingZone: '{side} pendiente — Esperando rango {lo}–{hi}.',
   rangeEntryFired: '{side} ejecutado {on} (precio alcanzó el rango de la señal).',
+  rangeEntryExpired: '{side} pendiente expirado — ventana de entrada cerrada.',
+  rangeEntryTpBeforeEntry: '{side} pendiente expirado — TP alcanzado antes de la entrada.',
+  rangeEntrySlBeforeEntry: '{side} pendiente expirado — SL alcanzado antes de la entrada.',
+  rangeEntryUpdated: '{side} pendiente — rango actualizado a {lo}–{hi}.',
+  rangeEntryCancelled: '{side} pendiente cancelado ({reason}).',
+  rangeEntryWakeRetry: '{side} pendiente — precio salió del rango; esperando de nuevo.',
 
   mergeAddedNamed: 'Añadido a la posición existente en {symbol}.',
   mergeAddedGeneric: 'Añadido a tu operación abierta.',

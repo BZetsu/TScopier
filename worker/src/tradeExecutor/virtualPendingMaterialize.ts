@@ -27,6 +27,9 @@ export async function materializeVirtualPendingLegs(
       const zoneHi = safe > 0 ? anchor + (safe + 2) * (params?.point ?? 0) : null
       const zoneLo = safe > 0 ? anchor - (safe + 2) * (params?.point ?? 0) : null
       const signalRangeBoundary = plan.rangeLayering?.signalRangeBoundary ?? null
+      const signalZoneLo = plan.rangeLayering?.signalZoneLo ?? null
+      const signalZoneHi = plan.rangeLayering?.signalZoneHi ?? null
+      const useSignalEntryRange = plan.rangeLayering?.useSignalEntryRange === true
       const nowMs = Date.now()
       for (const v of virtualPendings) {
         const triggerPrice = triggerPriceFor(v, anchor, digits)
@@ -36,6 +39,9 @@ export async function materializeVirtualPendingLegs(
           isBuy: v.isBuy,
           stopsZoneLo: zoneLo,
           stopsZoneHi: zoneHi,
+          signalZoneLo,
+          signalZoneHi,
+          useSignalEntryRange,
         })) {
           if (signalRangeBoundary != null && triggerPrice !== anchor) {
             console.warn(

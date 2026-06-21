@@ -1,11 +1,9 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { hasFxsocketConfigured, normalizeSymbolParams } from './fxsocketClient'
 import { pipCalculator } from './pipCalculator'
-import { resolvedParsedEntryZone } from './manualPlanning/parsedEntry'
 import type { ParsedSignal } from './manualPlanning/types'
 import { apiForFxsocketAccount, loadPlatformByFxsocketId, type PlatformByFxsocketId } from './mtApiByAccount'
-import { signalRangeEntryQuoteAllowsImmediate } from './manualPlanner'
-import { isUserCopierPausedCached } from './copierPause'
+import { isUserCopierPausedCached, loadCachedUserCopierPaused } from './copierPause'
 import {
   applyShardToQuery,
   hasWorkOnShard,
@@ -14,21 +12,32 @@ import {
   startMonitorLoop,
   type MonitorLoopHandle,
 } from './monitorIdleGate'
-import { SIGNAL_RANGE_WAKE_DISPATCH_SOURCE, type SignalRangeEntryWaitRow, waitRowToPlannerWait } from './signalRangeEntryHelpers'
+import { SIGNAL_RANGE_WAKE_DISPATCH_SOURCE, type SignalRangeEntryWaitRow } from './signalRangeEntryHelpers'
+import {
+  buildWaitFromParsed,
+  cancelWaitWithLog,
+  evaluatePreEntryStaleness,
+  evaluateWakeEligibility,
+  expireWait,
+  syncWaitRow,
+  waitRowToPlannerWait,
+} from './signalRangeEntryService'
 import type { TradeExecutor } from './tradeExecutor'
 import type { SignalRow } from './tradeExecutor/types'
+import { resolveChannelTradingConfig } from './channelTradingConfig'
 
-const ACTIVE_MS = monitorActiveIntervalMs('SIGNAL_RANGE_ENTRY_TICK_MS', 2_000)
+const ACTIVE_MS = monitorActiveIntervalMs('SIGNAL_RANGE_ENTRY_TICK_MS', 1_000)
 const IDLE_MS = monitorIdleIntervalMs('SIGNAL_RANGE_ENTRY_IDLE_MS', 60_000)
 
 /**
- * Polls /Quote for virtual "Use signal range" waits and re-dispatches when price
- * reaches the signal level or zone edge ± pip tolerance.
+ * Polls /Quote for virtual "Trade Signal Range Only" waits and re-dispatches when price
+ * is inside the signal zone ± pip tolerance.
  */
 export class SignalRangeEntryMonitor {
   private loop: MonitorLoopHandle | null = null
   private platformByUuid: PlatformByFxsocketId = new Map()
   private ticking = false
+  private wakeInflight = new Set<string>()
 
   constructor(
     private readonly supabase: SupabaseClient,
@@ -91,8 +100,7 @@ export class SignalRangeEntryMonitor {
       console.error('[signalRangeEntryMonitor] select failed:', error.message)
       return
     }
-    const rows = ((data ?? []) as SignalRangeEntryWaitRow[])
-      .filter(r => !isUserCopierPausedCached(r.user_id))
+    const rows = (data ?? []) as SignalRangeEntryWaitRow[]
     if (!rows.length) return
 
     this.platformByUuid = await loadPlatformByFxsocketId(
@@ -101,16 +109,32 @@ export class SignalRangeEntryMonitor {
     )
 
     const now = Date.now()
-    const active = rows.filter(r => !r.expires_at || Date.parse(r.expires_at) > now)
+    const active: SignalRangeEntryWaitRow[] = []
     for (const row of rows) {
-      if (row.expires_at && Date.parse(row.expires_at) <= now) {
-        await this.supabase
-          .from('signal_range_entry_waits')
-          .update({ status: 'expired', updated_at: new Date().toISOString() })
-          .eq('id', row.id)
-          .eq('status', 'waiting')
+      if (isUserCopierPausedCached(row.user_id) || await loadCachedUserCopierPaused(this.supabase, row.user_id)) {
+        await cancelWaitWithLog(this.supabase, {
+          waitId: row.id,
+          signalId: row.signal_id,
+          userId: row.user_id,
+          brokerAccountId: row.broker_account_id,
+          reason: 'copier_paused',
+        })
+        continue
       }
+      if (row.expires_at && Date.parse(row.expires_at) <= now) {
+        await expireWait(this.supabase, {
+          waitId: row.id,
+          signalId: row.signal_id,
+          userId: row.user_id,
+          brokerAccountId: row.broker_account_id,
+          reason: 'expired_ttl',
+          symbol: row.symbol,
+        })
+        continue
+      }
+      active.push(row)
     }
+    if (!active.length) return
 
     const quoteGroups = new Map<string, SignalRangeEntryWaitRow[]>()
     for (const row of active) {
@@ -156,52 +180,82 @@ export class SignalRangeEntryMonitor {
       }
 
       for (const row of group) {
-        const wait = waitRowToPlannerWait(row)
-        const { data: signalZoneRow } = await this.supabase
-          .from('signals')
-          .select('parsed_data')
-          .eq('id', row.signal_id)
-          .maybeSingle()
-        const freshZone = signalZoneRow?.parsed_data
-          ? resolvedParsedEntryZone(signalZoneRow.parsed_data as ParsedSignal)
-          : null
-        if (freshZone) {
-          wait.zoneLo = freshZone.lo
-          wait.zoneHi = freshZone.hi
-          if (freshZone.lo !== row.zone_lo || freshZone.hi !== row.zone_hi) {
-            await this.supabase
-              .from('signal_range_entry_waits')
-              .update({
-                zone_lo: freshZone.lo,
-                zone_hi: freshZone.hi,
-                updated_at: new Date().toISOString(),
-              })
-              .eq('id', row.id)
-              .eq('status', 'waiting')
-          }
-        }
-        if (!signalRangeEntryQuoteAllowsImmediate({ wait, bid, ask, pipSize })) continue
-
-        const { data: claimed, error: claimErr } = await this.supabase
-          .from('signal_range_entry_waits')
-          .update({ status: 'fired', updated_at: new Date().toISOString() })
-          .eq('id', row.id)
-          .eq('status', 'waiting')
-          .select('id')
-          .maybeSingle()
-        if (claimErr || !claimed) continue
+        if (this.wakeInflight.has(row.id)) continue
 
         const { data: signalRow, error: sigErr } = await this.supabase
           .from('signals')
           .select('id,user_id,channel_id,parsed_data,user_override,status,parent_signal_id,is_modification,created_at,telegram_message_id,reply_to_message_id')
           .eq('id', row.signal_id)
           .maybeSingle()
-        if (sigErr || !signalRow || signalRow.status !== 'parsed') continue
+        if (sigErr || !signalRow?.parsed_data || signalRow.status !== 'parsed') continue
 
-        this.tradeExecutor.acceptDispatchSignal(
-          { ...(signalRow as SignalRow), dispatch_source: SIGNAL_RANGE_WAKE_DISPATCH_SOURCE },
-          { source: SIGNAL_RANGE_WAKE_DISPATCH_SOURCE, priority: 'high' },
-        )
+        const parsed = signalRow.parsed_data as ParsedSignal
+        const broker = this.tradeExecutor.lookupBroker(row.broker_account_id)
+        let wait = waitRowToPlannerWait(row)
+        if (broker) {
+          const manual = resolveChannelTradingConfig(broker, signalRow.channel_id).manual_settings
+          const syncResult = await syncWaitRow(this.supabase, {
+            signal: signalRow as SignalRow,
+            broker,
+            uuid: row.metaapi_account_id,
+            symbol: row.symbol,
+            parsed,
+            manual,
+            preserveExpiresAt: true,
+            logUpdates: true,
+          })
+          if (!syncResult.ok) continue
+          const freshWait = buildWaitFromParsed({
+            manual,
+            parsed,
+            isBuy: String(parsed.action ?? '').toLowerCase() !== 'sell',
+          })
+          if (freshWait) wait = freshWait
+        }
+        const stale = evaluatePreEntryStaleness({
+          parsed,
+          bid,
+          ask,
+          isBuy: row.is_buy,
+        })
+        if (stale.stale && stale.reason) {
+          await expireWait(this.supabase, {
+            waitId: row.id,
+            signalId: row.signal_id,
+            userId: row.user_id,
+            brokerAccountId: row.broker_account_id,
+            reason: stale.reason,
+            symbol: row.symbol,
+            bid,
+            ask,
+          })
+          continue
+        }
+
+        if (!evaluateWakeEligibility({ wait, bid, ask, pipSize })) continue
+
+        this.wakeInflight.add(row.id)
+        try {
+          const dispatched = await this.tradeExecutor.acceptDispatchSignalAwait(
+            {
+              ...(signalRow as SignalRow),
+              dispatch_source: SIGNAL_RANGE_WAKE_DISPATCH_SOURCE,
+              wake_broker_account_id: row.broker_account_id,
+            },
+            {
+              source: SIGNAL_RANGE_WAKE_DISPATCH_SOURCE,
+              priority: 'high',
+              wakeBrokerAccountId: row.broker_account_id,
+            },
+          )
+          if (!dispatched) {
+            console.warn(
+              `[signalRangeEntryMonitor] wake dispatch rejected signal=${row.signal_id} broker=${row.broker_account_id}`,
+            )
+          }
+        } finally {
+          this.wakeInflight.delete(row.id)
+        }
       }
     }
   }

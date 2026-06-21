@@ -64,6 +64,12 @@ export const channelWorkerPl: ChannelWorkerTranslations = {
   rangeEntryWaitingAtPrice: '{side} oczekujące — Oczekiwanie na cenę @ {price}.',
   rangeEntryWaitingZone: '{side} oczekujące — Oczekiwanie na zakres {lo}–{hi}.',
   rangeEntryFired: '{side} otwarte {on} (cena osiągnęła zakres sygnału).',
+  rangeEntryExpired: '{side} oczekujące wygasło — okno wejścia zamknięte.',
+  rangeEntryTpBeforeEntry: '{side} oczekujące wygasło — TP przed wejściem.',
+  rangeEntrySlBeforeEntry: '{side} oczekujące wygasło — SL przed wejściem.',
+  rangeEntryUpdated: '{side} oczekujące — zakres zaktualizowany {lo}–{hi}.',
+  rangeEntryCancelled: '{side} oczekujące anulowane ({reason}).',
+  rangeEntryWakeRetry: '{side} oczekujące — cena poza zakresem; ponowne oczekiwanie.',
 
   mergeAddedNamed: 'Dodano do istniejącej pozycji {symbol}.',
   mergeAddedGeneric: 'Dodano do Twojej otwartej pozycji.',

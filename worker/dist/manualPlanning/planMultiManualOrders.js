@@ -7,6 +7,7 @@ const rangeSplit_1 = require("./rangeSplit");
 const tpBucketDistribution_1 = require("./tpBucketDistribution");
 const multiTradeLegUnits_1 = require("./multiTradeLegUnits");
 const signalEntryRange_1 = require("./signalEntryRange");
+const parsedEntry_1 = require("./parsedEntry");
 function planMultiManualOrders(args) {
     const { orderBase, expirationFields, strictEntry, manual, manualLot, parsed, ctx, commentPrefix, expertId, slippage, finalSl, finalTps, entryAnchor, isBuy, pip, pipQuote, delay_ms, roundPrice, minStopDist, buildSingleOrder, } = args;
     const minLot = Number.isFinite(ctx.minLot) && ctx.minLot > 0 ? ctx.minLot : 0.01;
@@ -270,6 +271,8 @@ function planMultiManualOrders(args) {
                         ? {
                             useSignalEntryRange: true,
                             signalRangeBoundary: rangeDistance.boundary,
+                            signalZoneLo: (0, parsedEntry_1.resolvedParsedEntryZone)(parsed)?.lo ?? null,
+                            signalZoneHi: (0, parsedEntry_1.resolvedParsedEntryZone)(parsed)?.hi ?? null,
                             effectiveDistancePips: rangeDistance.distPips,
                         }
                         : {}),

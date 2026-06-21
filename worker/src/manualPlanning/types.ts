@@ -173,6 +173,8 @@ export interface PlannerRangeLayering {
   activePendingLegs: number
   useSignalEntryRange?: boolean
   signalRangeBoundary?: number | null
+  signalZoneLo?: number | null
+  signalZoneHi?: number | null
   effectiveDistancePips?: number
 }
 

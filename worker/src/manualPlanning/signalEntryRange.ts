@@ -92,12 +92,32 @@ export function signalRangeEntryQuoteAllowsImmediate(args: {
 }
 
 /** True when a virtual leg trigger price is still inside the signal entry zone. */
+export function virtualLegTriggerInZone(args: {
+  trigger: number
+  zoneLo: number | null
+  zoneHi: number | null
+}): boolean {
+  const { trigger, zoneLo, zoneHi } = args
+  if (zoneLo == null || zoneHi == null) return true
+  if (!Number.isFinite(trigger)) return false
+  const lo = Math.min(zoneLo, zoneHi)
+  const hi = Math.max(zoneLo, zoneHi)
+  return trigger >= lo && trigger <= hi
+}
+
+/** True when a virtual leg trigger price is still inside the signal entry zone. */
 export function virtualLegTriggerAllowed(args: {
   trigger: number
   boundary: number | null
   isBuy: boolean
+  zoneLo?: number | null
+  zoneHi?: number | null
+  useFullZone?: boolean
 }): boolean {
-  const { trigger, boundary, isBuy } = args
+  const { trigger, boundary, isBuy, zoneLo, zoneHi, useFullZone } = args
+  if (useFullZone && zoneLo != null && zoneHi != null) {
+    return virtualLegTriggerInZone({ trigger, zoneLo, zoneHi })
+  }
   if (boundary == null || !Number.isFinite(boundary)) return true
   if (!Number.isFinite(trigger)) return false
   return isBuy ? trigger >= boundary : trigger <= boundary

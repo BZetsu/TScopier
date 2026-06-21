@@ -13,6 +13,7 @@ const channelActiveTradeParams_1 = require("../channelActiveTradeParams");
 const tradeComment_1 = require("../tradeComment");
 const helpers_1 = require("./helpers");
 const signalRangeEntryHelpers_1 = require("../signalRangeEntryHelpers");
+const signalRangeEntryService_1 = require("../signalRangeEntryService");
 const signalBrokerDispatchClaim_1 = require("./signalBrokerDispatchClaim");
 /** Fill missing symbol for re-enter posts that omit instrument name. */
 async function resolveReEnterSymbolFromChannel(ctx, signal, broker, parsed) {
@@ -528,7 +529,38 @@ async function prepareEntryExecution(ctx, args) {
         try {
             const q = strictEntryPrefetch ?? await api.quote(uuid, symbol);
             strictEntryPrefetch = q;
-            const allowed = (0, manualPlanner_1.signalRangeEntryQuoteAllowsImmediate)({
+            const stale = (0, signalRangeEntryService_1.evaluatePreEntryStaleness)({
+                parsed,
+                bid: q.bid,
+                ask: q.ask,
+                isBuy: wait.isBuy,
+            });
+            if (stale.stale && stale.reason) {
+                const { data: waitRow } = await ctx.supabase
+                    .from('signal_range_entry_waits')
+                    .select('id')
+                    .eq('signal_id', signal.id)
+                    .eq('broker_account_id', broker.id)
+                    .eq('status', 'waiting')
+                    .maybeSingle();
+                if (waitRow?.id) {
+                    await (0, signalRangeEntryService_1.expireWait)(ctx.supabase, {
+                        waitId: waitRow.id,
+                        signalId: signal.id,
+                        userId: signal.user_id,
+                        brokerAccountId: broker.id,
+                        reason: stale.reason,
+                        symbol,
+                        bid: q.bid,
+                        ask: q.ask,
+                    });
+                }
+                return {
+                    ok: false,
+                    outcome: { finalizeSkipReason: 'signal_entry_range_expired' },
+                };
+            }
+            const allowed = (0, signalRangeEntryService_1.evaluateWakeEligibility)({
                 wait: waitToStore,
                 bid: q.bid,
                 ask: q.ask,
@@ -543,14 +575,16 @@ async function prepareEntryExecution(ctx, args) {
                     symbol,
                     wait: waitToStore,
                     manual,
+                    parsed,
                 });
-                await (0, signalRangeEntryHelpers_1.logSignalRangeEntryWaiting)(ctx.supabase, signal, broker, waitToStore, symbol, q.bid, q.ask);
+                if (fromWake) {
+                    await (0, signalRangeEntryHelpers_1.logSignalRangeEntryWakeRetry)(ctx.supabase, signal, broker.id, symbol, q.bid, q.ask);
+                }
+                else {
+                    await (0, signalRangeEntryHelpers_1.logSignalRangeEntryWaiting)(ctx.supabase, signal, broker, waitToStore, symbol, q.bid, q.ask);
+                }
                 console.log(`[tradeExecutor] signal range entry deferred signal=${signal.id} broker=${broker.id} symbol=${symbol}`
-                    + ` isBuy=${wait.isBuy} bid=${q.bid} ask=${q.ask} tol=${wait.tolerancePips}p`);
-            }
-            else if (fromWake) {
-                await (0, signalRangeEntryHelpers_1.markSignalRangeEntryFired)(ctx.supabase, signal.id, broker.id);
-                await (0, signalRangeEntryHelpers_1.logSignalRangeEntryFired)(ctx.supabase, signal, broker.id, wait, symbol);
+                    + ` isBuy=${wait.isBuy} bid=${q.bid} ask=${q.ask} tol=${wait.tolerancePips}p fromWake=${fromWake}`);
             }
         }
         catch (err) {
@@ -564,6 +598,7 @@ async function prepareEntryExecution(ctx, args) {
                 symbol,
                 wait: waitToStore,
                 manual,
+                parsed,
             });
         }
     }

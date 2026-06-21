@@ -64,6 +64,12 @@ export const channelWorkerFr: ChannelWorkerTranslations = {
   rangeEntryWaitingAtPrice: '{side} en attente — En attente du prix @ {price}.',
   rangeEntryWaitingZone: '{side} en attente — En attente du range {lo}–{hi}.',
   rangeEntryFired: '{side} exécuté {on} (prix dans le range du signal).',
+  rangeEntryExpired: '{side} en attente expiré — fenêtre d’entrée fermée.',
+  rangeEntryTpBeforeEntry: '{side} en attente expiré — TP atteint avant l’entrée.',
+  rangeEntrySlBeforeEntry: '{side} en attente expiré — SL atteint avant l’entrée.',
+  rangeEntryUpdated: '{side} en attente — range mis à jour {lo}–{hi}.',
+  rangeEntryCancelled: '{side} en attente annulé ({reason}).',
+  rangeEntryWakeRetry: '{side} en attente — prix hors range; nouvelle attente.',
 
   mergeAddedNamed: 'Ajout à la position existante sur {symbol}.',
   mergeAddedGeneric: 'Ajout à votre position ouverte.',

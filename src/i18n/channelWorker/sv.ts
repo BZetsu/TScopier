@@ -64,6 +64,12 @@ export const channelWorkerSv: ChannelWorkerTranslations = {
   rangeEntryWaitingAtPrice: '{side} väntande — Väntar på pris @ {price}.',
   rangeEntryWaitingZone: '{side} väntande — Väntar på range {lo}–{hi}.',
   rangeEntryFired: '{side} öppnad {on} (pris nådde signalrange).',
+  rangeEntryExpired: '{side} väntande utgånget — ingångsfönster stängt.',
+  rangeEntryTpBeforeEntry: '{side} väntande utgånget — TP före ingång.',
+  rangeEntrySlBeforeEntry: '{side} väntande utgånget — SL före ingång.',
+  rangeEntryUpdated: '{side} väntande — range uppdaterad {lo}–{hi}.',
+  rangeEntryCancelled: '{side} väntande avbruten ({reason}).',
+  rangeEntryWakeRetry: '{side} väntande — pris utanför range; väntar igen.',
 
   mergeAddedNamed: 'Lade till i den befintliga {symbol}-positionen.',
   mergeAddedGeneric: 'Lade till i din öppna position.',

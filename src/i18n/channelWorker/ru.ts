@@ -64,6 +64,12 @@ export const channelWorkerRu: ChannelWorkerTranslations = {
   rangeEntryWaitingAtPrice: '{side} ожидание — Ожидание цены @ {price}.',
   rangeEntryWaitingZone: '{side} ожидание — Ожидание диапазона {lo}–{hi}.',
   rangeEntryFired: '{side} открыта {on} (цена достигла диапазона сигнала).',
+  rangeEntryExpired: '{side} ожидание истекло — окно входа закрыто.',
+  rangeEntryTpBeforeEntry: '{side} ожидание истекло — TP до входа.',
+  rangeEntrySlBeforeEntry: '{side} ожидание истекло — SL до входа.',
+  rangeEntryUpdated: '{side} ожидание — диапазон обновлён {lo}–{hi}.',
+  rangeEntryCancelled: '{side} ожидание отменено ({reason}).',
+  rangeEntryWakeRetry: '{side} ожидание — цена вне диапазона; снова ждём.',
 
   mergeAddedNamed: 'Добавлено к существующей позиции {symbol}.',
   mergeAddedGeneric: 'Добавлено к вашей открытой сделке.',

@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.SKIP_REASON_SIGNAL_ENTRY_RANGE_REQUIRED = exports.SKIP_REASON_SIGNAL_ENTRY_REQUIRED = void 0;
+exports.SKIP_REASON_SIGNAL_ENTRY_RANGE_EXPIRED = exports.SKIP_REASON_SIGNAL_ENTRY_RANGE_REQUIRED = exports.SKIP_REASON_SIGNAL_ENTRY_REQUIRED = void 0;
 exports.resolvedParsedEntryPrice = resolvedParsedEntryPrice;
 exports.resolvedParsedEntryZone = resolvedParsedEntryZone;
 exports.parsedHasExplicitEntryAnchor = parsedHasExplicitEntryAnchor;
@@ -62,3 +62,5 @@ function lastPositiveParsedTpPrice(parsed) {
 exports.SKIP_REASON_SIGNAL_ENTRY_REQUIRED = 'signal_entry_price_requires_explicit_entry';
 /** Planner / executor skip when use signal range is on but the parse has no price or zone. */
 exports.SKIP_REASON_SIGNAL_ENTRY_RANGE_REQUIRED = 'signal_entry_range_requires_price';
+/** All range-entry waits expired without opening a basket. */
+exports.SKIP_REASON_SIGNAL_ENTRY_RANGE_EXPIRED = 'signal_entry_range_expired';

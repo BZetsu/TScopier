@@ -42,6 +42,8 @@ export interface SignalRow {
   pipeline_ts?: PipelineTimestamps
   /** In-memory dispatch hint (not persisted on signals row). */
   dispatch_source?: string
+  /** Range wake: execute only this broker account. */
+  wake_broker_account_id?: string
   /** Prior parsed action before a same-message revision (in-memory only). */
   revision_prior_action?: string | null
 }

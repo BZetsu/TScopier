@@ -64,6 +64,12 @@ export interface ChannelWorkerTranslations {
   rangeEntryWaitingAtPrice: string
   rangeEntryWaitingZone: string
   rangeEntryFired: string
+  rangeEntryExpired: string
+  rangeEntryTpBeforeEntry: string
+  rangeEntrySlBeforeEntry: string
+  rangeEntryUpdated: string
+  rangeEntryCancelled: string
+  rangeEntryWakeRetry: string
 
   mergeAddedNamed: string
   mergeAddedGeneric: string

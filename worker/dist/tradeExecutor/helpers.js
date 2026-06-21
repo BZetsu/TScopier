@@ -186,7 +186,19 @@ function triggerPriceFor(leg, anchor, digits) {
 }
 /** Whether a virtual range leg should be persisted (broker stops zone + signal entry zone). */
 function virtualPendingTriggerAllowed(args) {
-    if (args.signalRangeBoundary != null
+    if (args.useSignalEntryRange && args.signalZoneLo != null && args.signalZoneHi != null) {
+        if (!(0, signalEntryRange_1.virtualLegTriggerAllowed)({
+            trigger: args.triggerPrice,
+            boundary: args.signalRangeBoundary ?? null,
+            isBuy: args.isBuy,
+            zoneLo: args.signalZoneLo,
+            zoneHi: args.signalZoneHi,
+            useFullZone: true,
+        })) {
+            return false;
+        }
+    }
+    else if (args.signalRangeBoundary != null
         && !(0, signalEntryRange_1.virtualLegTriggerAllowed)({
             trigger: args.triggerPrice,
             boundary: args.signalRangeBoundary,

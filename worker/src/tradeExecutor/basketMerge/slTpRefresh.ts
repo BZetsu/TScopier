@@ -613,6 +613,9 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
             isBuy: v.isBuy,
             stopsZoneLo: zoneLo,
             stopsZoneHi: zoneHi,
+            signalZoneLo: plan.rangeLayering?.signalZoneLo ?? null,
+            signalZoneHi: plan.rangeLayering?.signalZoneHi ?? null,
+            useSignalEntryRange: plan.rangeLayering?.useSignalEntryRange === true,
           })) {
             return null
           }

@@ -561,6 +561,10 @@ export class TradeExecutor {
     this.brokerActivatedAt.delete(id)
   }
 
+  lookupBroker(id: string): BrokerRow | undefined {
+    return this.brokersById.get(id)
+  }
+
   /**
    * Maintain `brokerActivatedAt` so the executor can reject signals that
    * pre-date a reactivation. Prefers the DB-persisted `last_activated_at`
@@ -813,13 +817,14 @@ export class TradeExecutor {
    */
   async acceptDispatchSignalAwait(
     row: SignalRow,
-    opts?: { priority?: 'high' | 'normal'; source?: string },
+    opts?: { priority?: 'high' | 'normal'; source?: string; wakeBrokerAccountId?: string },
   ): Promise<boolean> {
     if (!PARSED_STATUSES.has(row.status)) return false
     if (!signalMatchesExecutorMode(row.parsed_data, workerConfig.tradeExecutorMode)) {
       return false
     }
     const source = opts?.source ?? 'queue'
+    const isRangeWake = source === SIGNAL_RANGE_WAKE_DISPATCH_SOURCE
     const receivedAt = Date.now()
     const rowWithTs: SignalRow = {
       ...row,
@@ -829,7 +834,7 @@ export class TradeExecutor {
       },
     }
     this.prewarmForDispatch(rowWithTs)
-    const entryFast = this.shouldUseEntryFastPath(rowWithTs)
+    const entryFast = isRangeWake || this.shouldUseEntryFastPath(rowWithTs)
     const mgmtFast = dispatch.shouldUseMgmtFastPath(rowWithTs, source)
     const useFastPath = entryFast || mgmtFast
     if (entryFast) this.kickLiveEntryPrewarm(rowWithTs)
@@ -845,8 +850,10 @@ export class TradeExecutor {
           row.id,
           dispatch.revisionInflightWaitMs(rowWithTs, source),
         )
-      } else {
+      } else if (!isRangeWake) {
         return true
+      } else {
+        await dispatch.waitForSignalInflightClear(this, row.id, 15_000)
       }
     }
 
@@ -854,7 +861,8 @@ export class TradeExecutor {
       liveDispatch: true,
       dispatchSource: source,
       dispatchReceivedAt: receivedAt,
-      lightIdempotency: useFastPath,
+      lightIdempotency: useFastPath || isRangeWake,
+      wakeBrokerAccountId: opts?.wakeBrokerAccountId ?? row.wake_broker_account_id,
     })
     return true
   }
@@ -951,6 +959,7 @@ export class TradeExecutor {
       lightIdempotency?: boolean
       dispatchSource?: string
       dispatchReceivedAt?: number
+      wakeBrokerAccountId?: string
     },) {
     return await dispatch.handleSignal(this, row, opts)
   }
@@ -1552,6 +1561,9 @@ export class TradeExecutor {
     const zoneHi = safe > 0 ? anchor + (safe + 2) * (params?.point ?? 0) : null
     const zoneLo = safe > 0 ? anchor - (safe + 2) * (params?.point ?? 0) : null
     const signalRangeBoundary = plan.rangeLayering?.signalRangeBoundary ?? null
+    const signalZoneLo = plan.rangeLayering?.signalZoneLo ?? null
+    const signalZoneHi = plan.rangeLayering?.signalZoneHi ?? null
+    const useSignalEntryRange = plan.rangeLayering?.useSignalEntryRange === true
     const nowMs = Date.now()
     const insertRows: Record<string, unknown>[] = []
     for (const v of virtualPendings) {
@@ -1562,6 +1574,9 @@ export class TradeExecutor {
         isBuy: v.isBuy,
         stopsZoneLo: zoneLo,
         stopsZoneHi: zoneHi,
+        signalZoneLo,
+        signalZoneHi,
+        useSignalEntryRange,
       })) {
         continue
       }

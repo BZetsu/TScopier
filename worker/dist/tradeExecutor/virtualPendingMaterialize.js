@@ -18,6 +18,9 @@ async function materializeVirtualPendingLegs(ctx, prep, strictBrokerPlaced) {
             const zoneHi = safe > 0 ? anchor + (safe + 2) * (params?.point ?? 0) : null;
             const zoneLo = safe > 0 ? anchor - (safe + 2) * (params?.point ?? 0) : null;
             const signalRangeBoundary = plan.rangeLayering?.signalRangeBoundary ?? null;
+            const signalZoneLo = plan.rangeLayering?.signalZoneLo ?? null;
+            const signalZoneHi = plan.rangeLayering?.signalZoneHi ?? null;
+            const useSignalEntryRange = plan.rangeLayering?.useSignalEntryRange === true;
             const nowMs = Date.now();
             for (const v of virtualPendings) {
                 const triggerPrice = (0, helpers_1.triggerPriceFor)(v, anchor, digits);
@@ -27,6 +30,9 @@ async function materializeVirtualPendingLegs(ctx, prep, strictBrokerPlaced) {
                     isBuy: v.isBuy,
                     stopsZoneLo: zoneLo,
                     stopsZoneHi: zoneHi,
+                    signalZoneLo,
+                    signalZoneHi,
+                    useSignalEntryRange,
                 })) {
                     if (signalRangeBoundary != null && triggerPrice !== anchor) {
                         console.warn(`[tradeExecutor] dropped virtual pending stepIdx=${v.stepIdx} signal=${signal.id}`

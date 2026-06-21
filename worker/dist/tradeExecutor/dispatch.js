@@ -36,6 +36,8 @@ const types_1 = require("./types");
 const retryActivity_1 = require("../retryActivity");
 const signalRevision_1 = require("../signalRevision");
 const signalRangeEntryHelpers_1 = require("../signalRangeEntryHelpers");
+const signalRangeEntryService_1 = require("../signalRangeEntryService");
+const manualSettings_1 = require("../manualPlanning/manualSettings");
 const signalOverride_1 = require("../signalOverride");
 const messageRevisionDirectionFlipClose_1 = require("./messageRevisionDirectionFlipClose");
 const subscriptionAccess_1 = require("../subscriptionAccess");
@@ -334,7 +336,9 @@ async function handleSignal(ctx, row, opts) {
         return;
     }
     const handleStartMs = Date.now();
-    const liveFast = opts?.liveDispatch === true && opts?.lightIdempotency === true;
+    const isRangeWake = opts?.dispatchSource === signalRangeEntryHelpers_1.SIGNAL_RANGE_WAKE_DISPATCH_SOURCE;
+    const liveFast = isRangeWake
+        || (opts?.liveDispatch === true && opts?.lightIdempotency === true);
     const liveMgmtFast = isLiveMgmtFast(opts, row.parsed_data, row);
     const channelMetaPromise = (liveFast || liveMgmtFast) && row.channel_id
         ? ctx.getChannelMeta(row.channel_id)
@@ -349,7 +353,6 @@ async function handleSignal(ctx, row, opts) {
     };
     const isMessageRevision = opts?.dispatchSource === signalRevision_1.MESSAGE_REVISION_DISPATCH_SOURCE;
     const isActivityRetry = opts?.dispatchSource === retryActivity_1.ACTIVITY_RETRY_DISPATCH_SOURCE;
-    const isRangeWake = opts?.dispatchSource === signalRangeEntryHelpers_1.SIGNAL_RANGE_WAKE_DISPATCH_SOURCE;
     try {
         if (!opts?.liveDispatch && !isMessageRevision && !isActivityRetry && ctx.signalTooOldForReplay(row))
             return;
@@ -413,6 +416,37 @@ async function handleSignal(ctx, row, opts) {
                 parsed_data: fresh.parsed_data,
                 user_override: fresh.user_override,
             });
+            const { data: activeWaits } = await ctx.supabase
+                .from('signal_range_entry_waits')
+                .select('id, broker_account_id, metaapi_account_id, symbol')
+                .eq('signal_id', row.id)
+                .eq('status', 'waiting');
+            if (activeWaits?.length && row.parsed_data) {
+                for (const waitRow of activeWaits) {
+                    const broker = ctx.brokersById.get(waitRow.broker_account_id);
+                    if (!broker)
+                        continue;
+                    const manual = (0, channelTradingConfig_1.resolveChannelTradingConfig)(broker, row.channel_id).manual_settings;
+                    if (!(0, manualSettings_1.signalEntryRangeStrictEnabled)(manual)) {
+                        await ctx.supabase
+                            .from('signal_range_entry_waits')
+                            .update({ status: 'cancelled', updated_at: new Date().toISOString() })
+                            .eq('id', waitRow.id)
+                            .eq('status', 'waiting');
+                        continue;
+                    }
+                    await (0, signalRangeEntryService_1.syncWaitRow)(ctx.supabase, {
+                        signal: row,
+                        broker,
+                        uuid: waitRow.metaapi_account_id,
+                        symbol: waitRow.symbol,
+                        parsed: row.parsed_data,
+                        manual,
+                        preserveExpiresAt: true,
+                        logUpdates: true,
+                    });
+                }
+            }
         }
         else {
             row = (0, signalOverride_1.applyUserOverrideToSignalRow)(row);
@@ -442,6 +476,10 @@ async function handleSignal(ctx, row, opts) {
             return [(0, channelTradingConfig_1.withChannelTradingConfig)(b, row.channel_id)];
         });
         let brokers = allMatchingBrokers.filter(b => ctx.brokerEligibleForSignal(b, row));
+        const wakeBrokerId = opts?.wakeBrokerAccountId ?? row.wake_broker_account_id;
+        if (isRangeWake && wakeBrokerId) {
+            brokers = brokers.filter(b => b.id === wakeBrokerId);
+        }
         const signalSymbolForWarm = parsed.symbol?.trim() ?? '';
         if (liveFast && signalSymbolForWarm && brokers.length > 0) {
             pipelineOutcome.brokers_warm_at_dispatch = ctx.brokersWarmForLiveEntry(brokers, signalSymbolForWarm);
@@ -662,7 +700,43 @@ async function handleSignal(ctx, row, opts) {
             }
         }
         else if (anyOpened) {
-            await ctx.markSignalExecuted(row.id);
+            const { count: waitingWaits } = await ctx.supabase
+                .from('signal_range_entry_waits')
+                .select('id', { count: 'exact', head: true })
+                .eq('signal_id', row.id)
+                .eq('status', 'waiting');
+            if ((waitingWaits ?? 0) === 0) {
+                await ctx.markSignalExecuted(row.id);
+            }
+        }
+        else if (!anyOpened && isRangeWake) {
+            await (0, signalRangeEntryService_1.finalizeSignalIfAllWaitsTerminal)(ctx.supabase, row.id);
+        }
+        else if (!anyOpened && !rangeDeferred) {
+            const { count: waitingWaits } = await ctx.supabase
+                .from('signal_range_entry_waits')
+                .select('id', { count: 'exact', head: true })
+                .eq('signal_id', row.id)
+                .eq('status', 'waiting');
+            if ((waitingWaits ?? 0) === 0) {
+                const { count: expiredWaits } = await ctx.supabase
+                    .from('signal_range_entry_waits')
+                    .select('id', { count: 'exact', head: true })
+                    .eq('signal_id', row.id)
+                    .eq('status', 'expired');
+                if ((expiredWaits ?? 0) > 0) {
+                    try {
+                        await ctx.supabase
+                            .from('signals')
+                            .update({ status: 'skipped', skip_reason: manualPlanner_1.SKIP_REASON_SIGNAL_ENTRY_RANGE_EXPIRED })
+                            .eq('id', row.id)
+                            .eq('status', 'parsed');
+                    }
+                    catch {
+                        // best-effort
+                    }
+                }
+            }
         }
         else if (isMessageRevision) {
             const revisionApplied = outcomes.some(o => o.openedOrMerged === true);

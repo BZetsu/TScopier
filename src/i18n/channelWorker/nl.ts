@@ -64,6 +64,12 @@ export const channelWorkerNl: ChannelWorkerTranslations = {
   rangeEntryWaitingAtPrice: '{side} pending — Wachten op prijs @ {price}.',
   rangeEntryWaitingZone: '{side} pending — Wachten op range {lo}–{hi}.',
   rangeEntryFired: '{side} geopend {on} (prijs bereikte signaalrange).',
+  rangeEntryExpired: '{side} pending verlopen — instapvenster gesloten.',
+  rangeEntryTpBeforeEntry: '{side} pending verlopen — TP bereikt vóór instap.',
+  rangeEntrySlBeforeEntry: '{side} pending verlopen — SL bereikt vóór instap.',
+  rangeEntryUpdated: '{side} pending — range bijgewerkt naar {lo}–{hi}.',
+  rangeEntryCancelled: '{side} pending geannuleerd ({reason}).',
+  rangeEntryWakeRetry: '{side} pending — prijs buiten range; opnieuw wachten.',
 
   mergeAddedNamed: 'Toegevoegd aan de bestaande {symbol}-positie.',
   mergeAddedGeneric: 'Toegevoegd aan je open positie.',

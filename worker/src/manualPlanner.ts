@@ -28,6 +28,7 @@ export {
   lastPositiveParsedTpPrice,
   SKIP_REASON_SIGNAL_ENTRY_REQUIRED,
   SKIP_REASON_SIGNAL_ENTRY_RANGE_REQUIRED,
+  SKIP_REASON_SIGNAL_ENTRY_RANGE_EXPIRED,
 } from './manualPlanning/parsedEntry'
 
 export {

@@ -1,7 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.SIGNAL_RANGE_WAKE_DISPATCH_SOURCE = void 0;
-exports.waitRowToPlannerWait = waitRowToPlannerWait;
+exports.waitRowToPlannerWait = exports.SIGNAL_RANGE_WAKE_DISPATCH_SOURCE = void 0;
 exports.upsertSignalRangeEntryWait = upsertSignalRangeEntryWait;
 exports.markSignalRangeEntryFired = markSignalRangeEntryFired;
 exports.hasActiveSignalRangeEntryWait = hasActiveSignalRangeEntryWait;
@@ -9,43 +8,25 @@ exports.cancelSignalRangeEntryWaitsForSignal = cancelSignalRangeEntryWaitsForSig
 exports.logSignalRangeEntryNoPrice = logSignalRangeEntryNoPrice;
 exports.logSignalRangeEntryWaiting = logSignalRangeEntryWaiting;
 exports.logSignalRangeEntryFired = logSignalRangeEntryFired;
+exports.logSignalRangeEntryWakeRetry = logSignalRangeEntryWakeRetry;
+const signalRangeEntryService_1 = require("./signalRangeEntryService");
 exports.SIGNAL_RANGE_WAKE_DISPATCH_SOURCE = 'signal_range_wake';
-const manualPlanner_1 = require("./manualPlanner");
-function waitRowToPlannerWait(row) {
-    return {
-        isBuy: row.is_buy,
-        entryPrice: row.entry_price,
-        zoneLo: row.zone_lo,
-        zoneHi: row.zone_hi,
-        tolerancePips: row.tolerance_pips,
-    };
-}
+var signalRangeEntryService_2 = require("./signalRangeEntryService");
+Object.defineProperty(exports, "waitRowToPlannerWait", { enumerable: true, get: function () { return signalRangeEntryService_2.waitRowToPlannerWait; } });
 async function upsertSignalRangeEntryWait(supabase, args) {
-    const hours = (0, manualPlanner_1.clampPendingExpiryHours)(args.manual.pending_expiry_hours);
-    const expiresAt = hours > 0
-        ? new Date(Date.now() + hours * 60 * 60 * 1000).toISOString()
-        : null;
-    const row = {
-        signal_id: args.signal.id,
-        user_id: args.signal.user_id,
-        broker_account_id: args.broker.id,
-        metaapi_account_id: args.uuid,
+    const parsed = args.parsed ?? args.signal.parsed_data;
+    if (!parsed)
+        return;
+    await (0, signalRangeEntryService_1.syncWaitRow)(supabase, {
+        signal: args.signal,
+        broker: args.broker,
+        uuid: args.uuid,
         symbol: args.symbol,
-        is_buy: args.wait.isBuy,
-        entry_price: args.wait.entryPrice,
-        zone_lo: args.wait.zoneLo,
-        zone_hi: args.wait.zoneHi,
-        tolerance_pips: args.wait.tolerancePips,
-        status: 'waiting',
-        expires_at: expiresAt,
-        updated_at: new Date().toISOString(),
-    };
-    const { error } = await supabase
-        .from('signal_range_entry_waits')
-        .upsert(row, { onConflict: 'signal_id,broker_account_id' });
-    if (error) {
-        console.warn(`[signalRangeEntry] upsert wait failed signal=${args.signal.id} broker=${args.broker.id}: ${error.message}`);
-    }
+        parsed,
+        manual: args.manual,
+        preserveExpiresAt: args.preserveExpiresAt ?? true,
+        logUpdates: false,
+    });
 }
 async function markSignalRangeEntryFired(supabase, signalId, brokerAccountId) {
     await supabase
@@ -53,7 +34,7 @@ async function markSignalRangeEntryFired(supabase, signalId, brokerAccountId) {
         .update({ status: 'fired', updated_at: new Date().toISOString() })
         .eq('signal_id', signalId)
         .eq('broker_account_id', brokerAccountId)
-        .eq('status', 'waiting');
+        .in('status', ['waiting', 'fired']);
 }
 async function hasActiveSignalRangeEntryWait(supabase, signalId) {
     const { count, error } = await supabase
@@ -138,6 +119,21 @@ async function logSignalRangeEntryFired(supabase, signal, brokerAccountId, wait,
                 zone_hi: wait.zoneHi,
                 tolerance_pips: wait.tolerancePips,
             },
+        });
+    }
+    catch {
+        /* best-effort */
+    }
+}
+async function logSignalRangeEntryWakeRetry(supabase, signal, brokerAccountId, symbol, bid, ask) {
+    try {
+        await supabase.from('trade_execution_logs').insert({
+            user_id: signal.user_id,
+            signal_id: signal.id,
+            broker_account_id: brokerAccountId,
+            action: 'signal_range_entry_wake_retry',
+            status: 'success',
+            request_payload: { symbol, bid, ask },
         });
     }
     catch {

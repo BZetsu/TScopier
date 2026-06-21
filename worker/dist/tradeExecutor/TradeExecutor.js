@@ -392,6 +392,9 @@ class TradeExecutor {
         this.brokersByUser.set(row.user_id, list);
         this.brokerActivatedAt.delete(id);
     }
+    lookupBroker(id) {
+        return this.brokersById.get(id);
+    }
     /**
      * Maintain `brokerActivatedAt` so the executor can reject signals that
      * pre-date a reactivation. Prefers the DB-persisted `last_activated_at`
@@ -627,6 +630,7 @@ class TradeExecutor {
             return false;
         }
         const source = opts?.source ?? 'queue';
+        const isRangeWake = source === signalRangeEntryHelpers_1.SIGNAL_RANGE_WAKE_DISPATCH_SOURCE;
         const receivedAt = Date.now();
         const rowWithTs = {
             ...row,
@@ -636,7 +640,7 @@ class TradeExecutor {
             },
         };
         this.prewarmForDispatch(rowWithTs);
-        const entryFast = this.shouldUseEntryFastPath(rowWithTs);
+        const entryFast = isRangeWake || this.shouldUseEntryFastPath(rowWithTs);
         const mgmtFast = dispatch.shouldUseMgmtFastPath(rowWithTs, source);
         const useFastPath = entryFast || mgmtFast;
         if (entryFast)
@@ -648,15 +652,19 @@ class TradeExecutor {
             if (source === signalRevision_1.MESSAGE_REVISION_DISPATCH_SOURCE) {
                 await dispatch.waitForSignalInflightClear(this, row.id, dispatch.revisionInflightWaitMs(rowWithTs, source));
             }
-            else {
+            else if (!isRangeWake) {
                 return true;
+            }
+            else {
+                await dispatch.waitForSignalInflightClear(this, row.id, 15000);
             }
         }
         await this.handleSignal(rowWithTs, {
             liveDispatch: true,
             dispatchSource: source,
             dispatchReceivedAt: receivedAt,
-            lightIdempotency: useFastPath,
+            lightIdempotency: useFastPath || isRangeWake,
+            wakeBrokerAccountId: opts?.wakeBrokerAccountId ?? row.wake_broker_account_id,
         });
         return true;
     }
@@ -1122,6 +1130,9 @@ class TradeExecutor {
         const zoneHi = safe > 0 ? anchor + (safe + 2) * (params?.point ?? 0) : null;
         const zoneLo = safe > 0 ? anchor - (safe + 2) * (params?.point ?? 0) : null;
         const signalRangeBoundary = plan.rangeLayering?.signalRangeBoundary ?? null;
+        const signalZoneLo = plan.rangeLayering?.signalZoneLo ?? null;
+        const signalZoneHi = plan.rangeLayering?.signalZoneHi ?? null;
+        const useSignalEntryRange = plan.rangeLayering?.useSignalEntryRange === true;
         const nowMs = Date.now();
         const insertRows = [];
         for (const v of virtualPendings) {
@@ -1132,6 +1143,9 @@ class TradeExecutor {
                 isBuy: v.isBuy,
                 stopsZoneLo: zoneLo,
                 stopsZoneHi: zoneHi,
+                signalZoneLo,
+                signalZoneHi,
+                useSignalEntryRange,
             })) {
                 continue;
             }

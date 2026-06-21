@@ -21,10 +21,9 @@ function manualUseSignalEntryPriceOn(manual) {
 function signalEntryPriceStrictEnabled(manual) {
     return manualUseSignalEntryPriceOn(manual) && manual.trade_style !== 'multi';
 }
-/** True when range trading should gate entry on parsed price/zone + pip tolerance (no broker pending). */
+/** True when entry should gate on parsed price/zone + pip tolerance (virtual wait, no broker pending). */
 function signalEntryRangeStrictEnabled(manual) {
     return manual.use_signal_entry_range === true
-        && manual.range_trading === true
         && manual.trade_style === 'multi';
 }
 /**

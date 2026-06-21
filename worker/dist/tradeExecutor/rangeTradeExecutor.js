@@ -58,7 +58,8 @@ async function runRangeEntry(ctx, args) {
     const materializedVirtuals = await (0, virtualPendingMaterialize_1.materializeVirtualPendingLegs)(ctx, prep, strictBrokerPlaced);
     const outcome = await (0, entryExecution_1.finishEntrySend)(prep, strictBrokerPlaced, materializedVirtuals, true);
     if (outcome.openedOrMerged === true && prep.plan.rangeEntryWait) {
-        void (0, signalRangeEntryHelpers_1.cancelSignalRangeEntryWaitsForSignal)(ctx.supabase, prep.signal.id, prep.broker.id);
+        await (0, signalRangeEntryHelpers_1.markSignalRangeEntryFired)(ctx.supabase, prep.signal.id, prep.broker.id);
+        await (0, signalRangeEntryHelpers_1.logSignalRangeEntryFired)(ctx.supabase, prep.signal, prep.broker.id, prep.plan.rangeEntryWait, prep.symbol);
     }
     return outcome;
 }

@@ -16,7 +16,6 @@ import {
   signalEntryRangeStrictEnabled,
   SKIP_REASON_SIGNAL_ENTRY_REQUIRED,
   SKIP_REASON_SIGNAL_ENTRY_RANGE_REQUIRED,
-  signalRangeEntryQuoteAllowsImmediate,
   strictSignalEntryQuoteAllowsImmediate,
   lastPositiveParsedTpPrice,
   type ChannelKeywords,
@@ -54,13 +53,17 @@ import type {
   SymbolMappingResult,
 } from './types'
 import {
-  logSignalRangeEntryFired,
   logSignalRangeEntryNoPrice,
   logSignalRangeEntryWaiting,
-  markSignalRangeEntryFired,
+  logSignalRangeEntryWakeRetry,
   SIGNAL_RANGE_WAKE_DISPATCH_SOURCE,
   upsertSignalRangeEntryWait,
 } from '../signalRangeEntryHelpers'
+import {
+  evaluatePreEntryStaleness,
+  evaluateWakeEligibility,
+  expireWait,
+} from '../signalRangeEntryService'
 import { releaseSignalBrokerDispatchClaim } from './signalBrokerDispatchClaim'
 
 export type EntryArgs = {
@@ -694,7 +697,38 @@ export async function prepareEntryExecution(
     try {
       const q = strictEntryPrefetch ?? await api.quote(uuid, symbol)
       strictEntryPrefetch = q
-      const allowed = signalRangeEntryQuoteAllowsImmediate({
+      const stale = evaluatePreEntryStaleness({
+        parsed,
+        bid: q.bid,
+        ask: q.ask,
+        isBuy: wait.isBuy,
+      })
+      if (stale.stale && stale.reason) {
+        const { data: waitRow } = await ctx.supabase
+          .from('signal_range_entry_waits')
+          .select('id')
+          .eq('signal_id', signal.id)
+          .eq('broker_account_id', broker.id)
+          .eq('status', 'waiting')
+          .maybeSingle()
+        if (waitRow?.id) {
+          await expireWait(ctx.supabase, {
+            waitId: waitRow.id,
+            signalId: signal.id,
+            userId: signal.user_id,
+            brokerAccountId: broker.id,
+            reason: stale.reason,
+            symbol,
+            bid: q.bid,
+            ask: q.ask,
+          })
+        }
+        return {
+          ok: false,
+          outcome: { finalizeSkipReason: 'signal_entry_range_expired' },
+        }
+      }
+      const allowed = evaluateWakeEligibility({
         wait: waitToStore,
         bid: q.bid,
         ask: q.ask,
@@ -709,23 +743,25 @@ export async function prepareEntryExecution(
           symbol,
           wait: waitToStore,
           manual,
+          parsed,
         })
-        await logSignalRangeEntryWaiting(
-          ctx.supabase,
-          signal,
-          broker,
-          waitToStore,
-          symbol,
-          q.bid,
-          q.ask,
-        )
+        if (fromWake) {
+          await logSignalRangeEntryWakeRetry(ctx.supabase, signal, broker.id, symbol, q.bid, q.ask)
+        } else {
+          await logSignalRangeEntryWaiting(
+            ctx.supabase,
+            signal,
+            broker,
+            waitToStore,
+            symbol,
+            q.bid,
+            q.ask,
+          )
+        }
         console.log(
           `[tradeExecutor] signal range entry deferred signal=${signal.id} broker=${broker.id} symbol=${symbol}`
-          + ` isBuy=${wait.isBuy} bid=${q.bid} ask=${q.ask} tol=${wait.tolerancePips}p`,
+          + ` isBuy=${wait.isBuy} bid=${q.bid} ask=${q.ask} tol=${wait.tolerancePips}p fromWake=${fromWake}`,
         )
-      } else if (fromWake) {
-        await markSignalRangeEntryFired(ctx.supabase, signal.id, broker.id)
-        await logSignalRangeEntryFired(ctx.supabase, signal, broker.id, wait, symbol)
       }
     } catch (err) {
       rangeEntryDeferred = true
@@ -740,6 +776,7 @@ export async function prepareEntryExecution(
         symbol,
         wait: waitToStore,
         manual,
+        parsed,
       })
     }
   }

@@ -771,6 +771,45 @@ function buildChannelWorkerLogMessage(row: ChannelWorkerLogRow, cw: ChannelWorke
     const sideLabel = side.charAt(0).toUpperCase() + side.slice(1)
     return interpolate(cw.rangeEntryFired, { side: sideLabel, on: onInstrument(instr, cw) })
   }
+  if (logAction === 'signal_range_entry_expired') {
+    const dir = String(payload.direction ?? signalAction ?? 'buy').toLowerCase()
+    const side = dir === 'sell' ? cw.sideSell : cw.sideBuy
+    const sideLabel = side.charAt(0).toUpperCase() + side.slice(1)
+    return interpolate(cw.rangeEntryExpired, { side: sideLabel })
+  }
+  if (logAction === 'signal_range_entry_tp_before_entry') {
+    const dir = String(payload.direction ?? signalAction ?? 'buy').toLowerCase()
+    const side = dir === 'sell' ? cw.sideSell : cw.sideBuy
+    const sideLabel = side.charAt(0).toUpperCase() + side.slice(1)
+    return interpolate(cw.rangeEntryTpBeforeEntry, { side: sideLabel })
+  }
+  if (logAction === 'signal_range_entry_sl_before_entry') {
+    const dir = String(payload.direction ?? signalAction ?? 'buy').toLowerCase()
+    const side = dir === 'sell' ? cw.sideSell : cw.sideBuy
+    const sideLabel = side.charAt(0).toUpperCase() + side.slice(1)
+    return interpolate(cw.rangeEntrySlBeforeEntry, { side: sideLabel })
+  }
+  if (logAction === 'signal_range_entry_updated') {
+    const dir = String(payload.direction ?? signalAction ?? 'buy').toLowerCase()
+    const side = dir === 'sell' ? cw.sideSell : cw.sideBuy
+    const sideLabel = side.charAt(0).toUpperCase() + side.slice(1)
+    const lo = payload.zone_lo != null ? String(payload.zone_lo) : '—'
+    const hi = payload.zone_hi != null ? String(payload.zone_hi) : '—'
+    return interpolate(cw.rangeEntryUpdated, { side: sideLabel, lo, hi })
+  }
+  if (logAction === 'signal_range_entry_cancelled') {
+    const dir = String(payload.direction ?? signalAction ?? 'buy').toLowerCase()
+    const side = dir === 'sell' ? cw.sideSell : cw.sideBuy
+    const sideLabel = side.charAt(0).toUpperCase() + side.slice(1)
+    const reason = String(payload.reason ?? 'cancelled')
+    return interpolate(cw.rangeEntryCancelled, { side: sideLabel, reason })
+  }
+  if (logAction === 'signal_range_entry_wake_retry') {
+    const dir = String(payload.direction ?? signalAction ?? 'buy').toLowerCase()
+    const side = dir === 'sell' ? cw.sideSell : cw.sideBuy
+    const sideLabel = side.charAt(0).toUpperCase() + side.slice(1)
+    return interpolate(cw.rangeEntryWakeRetry, { side: sideLabel })
+  }
 
   if (logAction === 'signal_merge_into_open_trade') {
     const userMsg = typeof payload.user_message === 'string' ? payload.user_message.trim() : ''

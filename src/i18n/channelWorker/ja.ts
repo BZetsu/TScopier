@@ -64,6 +64,12 @@ export const channelWorkerJa: ChannelWorkerTranslations = {
   rangeEntryWaitingAtPrice: '{side} 保留 — 価格 @ {price} を待機中。',
   rangeEntryWaitingZone: '{side} 保留 — レンジ {lo}–{hi} を待機中。',
   rangeEntryFired: '{side} 約定 {on}（シグナルレンジに到達）。',
+  rangeEntryExpired: '{side} 待機期限切れ — エントリー窗口終了。',
+  rangeEntryTpBeforeEntry: '{side} 待機期限切れ — エントリー前にTP到達。',
+  rangeEntrySlBeforeEntry: '{side} 待機期限切れ — エントリー前にSL到達。',
+  rangeEntryUpdated: '{side} 待機 — レンジ更新 {lo}–{hi}。',
+  rangeEntryCancelled: '{side} 待機キャンセル ({reason})。',
+  rangeEntryWakeRetry: '{side} 待機 — レンジ外に価格; 再待機。',
 
   mergeAddedNamed: '既存の{symbol}ポジションに追加しました。',
   mergeAddedGeneric: 'あなたの保有中の取引に追加しました。',

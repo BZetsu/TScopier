@@ -15,6 +15,7 @@ import { planRangeSplit } from './rangeSplit'
 import { buildDistributedPerLegTakeProfits, buildEntryQualityTakeProfitMap } from './tpBucketDistribution'
 import { resolveMultiTradeTargetUnits, multiTradeUnitsToLot } from './multiTradeLegUnits'
 import { resolveRangeDistancePips } from './signalEntryRange'
+import { resolvedParsedEntryZone } from './parsedEntry'
 
 export interface PlanMultiManualOrdersArgs {
   parsed: ParsedSignal
@@ -333,6 +334,8 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
               ? {
                   useSignalEntryRange: true,
                   signalRangeBoundary: rangeDistance.boundary,
+                  signalZoneLo: resolvedParsedEntryZone(parsed)?.lo ?? null,
+                  signalZoneHi: resolvedParsedEntryZone(parsed)?.hi ?? null,
                   effectiveDistancePips: rangeDistance.distPips,
                 }
               : {}),

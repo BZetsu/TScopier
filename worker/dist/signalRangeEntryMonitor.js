@@ -3,17 +3,17 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.SignalRangeEntryMonitor = void 0;
 const fxsocketClient_1 = require("./fxsocketClient");
 const pipCalculator_1 = require("./pipCalculator");
-const parsedEntry_1 = require("./manualPlanning/parsedEntry");
 const mtApiByAccount_1 = require("./mtApiByAccount");
-const manualPlanner_1 = require("./manualPlanner");
 const copierPause_1 = require("./copierPause");
 const monitorIdleGate_1 = require("./monitorIdleGate");
 const signalRangeEntryHelpers_1 = require("./signalRangeEntryHelpers");
-const ACTIVE_MS = (0, monitorIdleGate_1.monitorActiveIntervalMs)('SIGNAL_RANGE_ENTRY_TICK_MS', 2000);
+const signalRangeEntryService_1 = require("./signalRangeEntryService");
+const channelTradingConfig_1 = require("./channelTradingConfig");
+const ACTIVE_MS = (0, monitorIdleGate_1.monitorActiveIntervalMs)('SIGNAL_RANGE_ENTRY_TICK_MS', 1000);
 const IDLE_MS = (0, monitorIdleGate_1.monitorIdleIntervalMs)('SIGNAL_RANGE_ENTRY_IDLE_MS', 60000);
 /**
- * Polls /Quote for virtual "Use signal range" waits and re-dispatches when price
- * reaches the signal level or zone edge ± pip tolerance.
+ * Polls /Quote for virtual "Trade Signal Range Only" waits and re-dispatches when price
+ * is inside the signal zone ± pip tolerance.
  */
 class SignalRangeEntryMonitor {
     constructor(supabase, tradeExecutor) {
@@ -22,6 +22,7 @@ class SignalRangeEntryMonitor {
         this.loop = null;
         this.platformByUuid = new Map();
         this.ticking = false;
+        this.wakeInflight = new Set();
     }
     start() {
         if (this.loop)
@@ -74,22 +75,38 @@ class SignalRangeEntryMonitor {
             console.error('[signalRangeEntryMonitor] select failed:', error.message);
             return;
         }
-        const rows = (data ?? [])
-            .filter(r => !(0, copierPause_1.isUserCopierPausedCached)(r.user_id));
+        const rows = (data ?? []);
         if (!rows.length)
             return;
         this.platformByUuid = await (0, mtApiByAccount_1.loadPlatformByFxsocketId)(this.supabase, rows.map(r => r.metaapi_account_id));
         const now = Date.now();
-        const active = rows.filter(r => !r.expires_at || Date.parse(r.expires_at) > now);
+        const active = [];
         for (const row of rows) {
-            if (row.expires_at && Date.parse(row.expires_at) <= now) {
-                await this.supabase
-                    .from('signal_range_entry_waits')
-                    .update({ status: 'expired', updated_at: new Date().toISOString() })
-                    .eq('id', row.id)
-                    .eq('status', 'waiting');
+            if ((0, copierPause_1.isUserCopierPausedCached)(row.user_id) || await (0, copierPause_1.loadCachedUserCopierPaused)(this.supabase, row.user_id)) {
+                await (0, signalRangeEntryService_1.cancelWaitWithLog)(this.supabase, {
+                    waitId: row.id,
+                    signalId: row.signal_id,
+                    userId: row.user_id,
+                    brokerAccountId: row.broker_account_id,
+                    reason: 'copier_paused',
+                });
+                continue;
             }
+            if (row.expires_at && Date.parse(row.expires_at) <= now) {
+                await (0, signalRangeEntryService_1.expireWait)(this.supabase, {
+                    waitId: row.id,
+                    signalId: row.signal_id,
+                    userId: row.user_id,
+                    brokerAccountId: row.broker_account_id,
+                    reason: 'expired_ttl',
+                    symbol: row.symbol,
+                });
+                continue;
+            }
+            active.push(row);
         }
+        if (!active.length)
+            return;
         const quoteGroups = new Map();
         for (const row of active) {
             const key = `${row.metaapi_account_id}:${row.symbol.toUpperCase()}`;
@@ -128,49 +145,79 @@ class SignalRangeEntryMonitor {
                 continue;
             }
             for (const row of group) {
-                const wait = (0, signalRangeEntryHelpers_1.waitRowToPlannerWait)(row);
-                const { data: signalZoneRow } = await this.supabase
-                    .from('signals')
-                    .select('parsed_data')
-                    .eq('id', row.signal_id)
-                    .maybeSingle();
-                const freshZone = signalZoneRow?.parsed_data
-                    ? (0, parsedEntry_1.resolvedParsedEntryZone)(signalZoneRow.parsed_data)
-                    : null;
-                if (freshZone) {
-                    wait.zoneLo = freshZone.lo;
-                    wait.zoneHi = freshZone.hi;
-                    if (freshZone.lo !== row.zone_lo || freshZone.hi !== row.zone_hi) {
-                        await this.supabase
-                            .from('signal_range_entry_waits')
-                            .update({
-                            zone_lo: freshZone.lo,
-                            zone_hi: freshZone.hi,
-                            updated_at: new Date().toISOString(),
-                        })
-                            .eq('id', row.id)
-                            .eq('status', 'waiting');
-                    }
-                }
-                if (!(0, manualPlanner_1.signalRangeEntryQuoteAllowsImmediate)({ wait, bid, ask, pipSize }))
-                    continue;
-                const { data: claimed, error: claimErr } = await this.supabase
-                    .from('signal_range_entry_waits')
-                    .update({ status: 'fired', updated_at: new Date().toISOString() })
-                    .eq('id', row.id)
-                    .eq('status', 'waiting')
-                    .select('id')
-                    .maybeSingle();
-                if (claimErr || !claimed)
+                if (this.wakeInflight.has(row.id))
                     continue;
                 const { data: signalRow, error: sigErr } = await this.supabase
                     .from('signals')
                     .select('id,user_id,channel_id,parsed_data,user_override,status,parent_signal_id,is_modification,created_at,telegram_message_id,reply_to_message_id')
                     .eq('id', row.signal_id)
                     .maybeSingle();
-                if (sigErr || !signalRow || signalRow.status !== 'parsed')
+                if (sigErr || !signalRow?.parsed_data || signalRow.status !== 'parsed')
                     continue;
-                this.tradeExecutor.acceptDispatchSignal({ ...signalRow, dispatch_source: signalRangeEntryHelpers_1.SIGNAL_RANGE_WAKE_DISPATCH_SOURCE }, { source: signalRangeEntryHelpers_1.SIGNAL_RANGE_WAKE_DISPATCH_SOURCE, priority: 'high' });
+                const parsed = signalRow.parsed_data;
+                const broker = this.tradeExecutor.lookupBroker(row.broker_account_id);
+                let wait = (0, signalRangeEntryService_1.waitRowToPlannerWait)(row);
+                if (broker) {
+                    const manual = (0, channelTradingConfig_1.resolveChannelTradingConfig)(broker, signalRow.channel_id).manual_settings;
+                    const syncResult = await (0, signalRangeEntryService_1.syncWaitRow)(this.supabase, {
+                        signal: signalRow,
+                        broker,
+                        uuid: row.metaapi_account_id,
+                        symbol: row.symbol,
+                        parsed,
+                        manual,
+                        preserveExpiresAt: true,
+                        logUpdates: true,
+                    });
+                    if (!syncResult.ok)
+                        continue;
+                    const freshWait = (0, signalRangeEntryService_1.buildWaitFromParsed)({
+                        manual,
+                        parsed,
+                        isBuy: String(parsed.action ?? '').toLowerCase() !== 'sell',
+                    });
+                    if (freshWait)
+                        wait = freshWait;
+                }
+                const stale = (0, signalRangeEntryService_1.evaluatePreEntryStaleness)({
+                    parsed,
+                    bid,
+                    ask,
+                    isBuy: row.is_buy,
+                });
+                if (stale.stale && stale.reason) {
+                    await (0, signalRangeEntryService_1.expireWait)(this.supabase, {
+                        waitId: row.id,
+                        signalId: row.signal_id,
+                        userId: row.user_id,
+                        brokerAccountId: row.broker_account_id,
+                        reason: stale.reason,
+                        symbol: row.symbol,
+                        bid,
+                        ask,
+                    });
+                    continue;
+                }
+                if (!(0, signalRangeEntryService_1.evaluateWakeEligibility)({ wait, bid, ask, pipSize }))
+                    continue;
+                this.wakeInflight.add(row.id);
+                try {
+                    const dispatched = await this.tradeExecutor.acceptDispatchSignalAwait({
+                        ...signalRow,
+                        dispatch_source: signalRangeEntryHelpers_1.SIGNAL_RANGE_WAKE_DISPATCH_SOURCE,
+                        wake_broker_account_id: row.broker_account_id,
+                    }, {
+                        source: signalRangeEntryHelpers_1.SIGNAL_RANGE_WAKE_DISPATCH_SOURCE,
+                        priority: 'high',
+                        wakeBrokerAccountId: row.broker_account_id,
+                    });
+                    if (!dispatched) {
+                        console.warn(`[signalRangeEntryMonitor] wake dispatch rejected signal=${row.signal_id} broker=${row.broker_account_id}`);
+                    }
+                }
+                finally {
+                    this.wakeInflight.delete(row.id);
+                }
             }
         }
     }

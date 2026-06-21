@@ -5,7 +5,10 @@ import { prepareEntryExecution } from './entryPrepare'
 import { placeStrictSignalEntryPending } from './strictEntryPending'
 import { materializeVirtualPendingLegs } from './virtualPendingMaterialize'
 import { finishEntrySend, type EntryArgs } from './entryExecution'
-import { cancelSignalRangeEntryWaitsForSignal } from '../signalRangeEntryHelpers'
+import {
+  logSignalRangeEntryFired,
+  markSignalRangeEntryFired,
+} from '../signalRangeEntryHelpers'
 
 export type { EntryArgs } from './entryPrepare'
 
@@ -73,7 +76,14 @@ export async function runRangeEntry(
 
   const outcome = await finishEntrySend(prep, strictBrokerPlaced, materializedVirtuals, true)
   if (outcome.openedOrMerged === true && prep.plan.rangeEntryWait) {
-    void cancelSignalRangeEntryWaitsForSignal(ctx.supabase, prep.signal.id, prep.broker.id)
+    await markSignalRangeEntryFired(ctx.supabase, prep.signal.id, prep.broker.id)
+    await logSignalRangeEntryFired(
+      ctx.supabase,
+      prep.signal,
+      prep.broker.id,
+      prep.plan.rangeEntryWait,
+      prep.symbol,
+    )
   }
   return outcome
 }
