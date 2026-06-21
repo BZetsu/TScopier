@@ -5,6 +5,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.parseTradeWorkerShardUrls = parseTradeWorkerShardUrls;
 exports.pushParsedSignalToTradeWorker = pushParsedSignalToTradeWorker;
+exports.pushParsedSignalToTradeWorkerAccept = pushParsedSignalToTradeWorkerAccept;
 exports.pushParsedSignalToTradeWorkerAwait = pushParsedSignalToTradeWorkerAwait;
 exports.validateListenerTradeShardConfig = validateListenerTradeShardConfig;
 exports.validateListenerQueueConfig = validateListenerQueueConfig;
@@ -214,7 +215,14 @@ function pushParsedSignalToTradeWorker(row, opts) {
         source: opts?.source ?? row.dispatch_source,
     });
 }
-/** Awaitable push — used when caller needs confirmation of HTTP accept (not full execution). */
+/** Awaitable push — worker accepts dispatch only; execution continues in-process (mgmt hot path). */
+async function pushParsedSignalToTradeWorkerAccept(row, opts) {
+    return pushParsedSignalToTradeWorkerInner(row, {
+        awaitExecution: false,
+        source: opts?.source ?? row.dispatch_source,
+    });
+}
+/** Await full handleSignal completion (queue consumer / diagnostics only). */
 async function pushParsedSignalToTradeWorkerAwait(row, opts) {
     return pushParsedSignalToTradeWorkerInner(row, {
         awaitExecution: true,

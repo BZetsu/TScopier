@@ -460,7 +460,7 @@ export async function handleSignal(ctx: TradeExecutorContext,
       let userSub: Awaited<ReturnType<typeof loadCachedUserSubscription>>
       let isAdmin: boolean
       if (
-        liveFast
+        (liveFast || liveMgmtFast)
         && telegramLiveTradeGateEnabled()
         && row.channel_id
         && ctx.sessionManager
@@ -586,7 +586,7 @@ export async function handleSignal(ctx: TradeExecutorContext,
           signalSymbolForWarm,
         )
       }
-      if (brokers.length > 0 && row.channel_id) {
+      if (brokers.length > 0 && row.channel_id && !(liveMgmtFast && isManagementAction(action))) {
         const profileTz = ctx.userTimezoneById.get(row.user_id)
         const channelId = row.channel_id
         if (liveFast && parsed.symbol) {

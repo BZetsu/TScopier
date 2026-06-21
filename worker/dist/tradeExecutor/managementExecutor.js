@@ -27,6 +27,88 @@ const helpers_1 = require("./helpers");
 function mgmtCloseOpts(liveMgmtFast) {
     return { maxAttempts: 2, slippageEscalation: 50, liveFast: liveMgmtFast };
 }
+async function finalizeMgmtSignal(ctx, signalId) {
+    try {
+        const { error: sigErr } = await ctx.supabase
+            .from('signals')
+            .update({ status: 'executed' })
+            .eq('id', signalId)
+            .eq('status', 'parsed');
+        if (sigErr) {
+            console.warn(`[tradeExecutor] mgmt signal finalize failed id=${signalId}: ${sigErr.message}`);
+        }
+    }
+    catch {
+        // best-effort
+    }
+}
+/** Pending/range cancel + broker straggler sweep — safe after open legs are closed. */
+function deferMgmtCloseCleanup(args) {
+    void (async () => {
+        const { ctx, signal, parsed, brokers, brokerAccountIds, byBroker, cancelledPendingScopes, liveMgmtFast, onPendingCancelled, onBrokerStragglersClosed, } = args;
+        if (!signal.channel_id)
+            return;
+        try {
+            if (cancelledPendingScopes.size > 0) {
+                const scopes = Array.from(cancelledPendingScopes)
+                    .map(enc => JSON.parse(enc))
+                    .filter(scope => {
+                    const broker = byBroker.get(scope.brokerAccountId);
+                    if (!broker)
+                        return false;
+                    return !(0, channelMessageFilters_1.isPendingCancelBlocked)((0, channelMessageFilters_1.normalizeChannelMessageFiltersMap)(broker.channel_message_filters), signal.channel_id);
+                });
+                if (scopes.length > 0) {
+                    await ctx.cancelRangePendingLegsForScopes(signal.user_id, signal.id, scopes, 'signal_closed');
+                }
+            }
+            const pendingCancelled = await (0, managementBrokerClose_1.cancelChannelBrokerPendingOrders)({
+                supabase: ctx.supabase,
+                userId: signal.user_id,
+                channelId: signal.channel_id,
+                brokerAccountIds,
+                apiFor: uuid => {
+                    for (const broker of brokers) {
+                        if ((0, helpers_1.brokerSessionUuid)(broker) === uuid)
+                            return ctx.apiFor(broker);
+                    }
+                    return null;
+                },
+                reason: 'signal_closed',
+            });
+            if (pendingCancelled > 0) {
+                onPendingCancelled?.(pendingCancelled);
+                console.log(`[tradeExecutor] mgmt deferred cancelled ${pendingCancelled} broker pendings signal=${signal.id}`);
+            }
+            const channelMeta = await ctx.getChannelMeta(signal.channel_id);
+            let brokerClosed = 0;
+            await Promise.allSettled(brokers.map(async (broker) => {
+                const api = ctx.apiFor(broker);
+                const uuid = (0, helpers_1.brokerSessionUuid)(broker);
+                if (!api || !uuid || uuid.includes('|'))
+                    return;
+                const one = await (0, managementBrokerClose_1.tryBrokerFallbackClose)({
+                    supabase: ctx.supabase,
+                    api,
+                    signal,
+                    parsed,
+                    brokers: [broker],
+                    channelDisplayName: channelMeta.commentSlug,
+                    channelUsername: null,
+                    closeWithVerification: (a, u, ticket) => (0, managementClose_1.closeWithVerification)(a, u, ticket, mgmtCloseOpts(liveMgmtFast)),
+                });
+                brokerClosed += one.closed;
+            }));
+            if (brokerClosed > 0) {
+                onBrokerStragglersClosed?.(brokerClosed);
+                console.log(`[tradeExecutor] mgmt deferred broker sweep closed ${brokerClosed} stragglers signal=${signal.id}`);
+            }
+        }
+        catch (err) {
+            console.warn(`[tradeExecutor] mgmt deferred close cleanup failed signal=${signal.id}:`, err instanceof Error ? err.message : err);
+        }
+    })();
+}
 function emptyMgmtResult(parallelism = 1) {
     return { legsTotal: 0, legsParallelism: parallelism };
 }
@@ -343,7 +425,7 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
                 return false;
             return !(0, channelMessageFilters_1.isPendingCancelBlocked)((0, channelMessageFilters_1.normalizeChannelMessageFiltersMap)(broker.channel_message_filters), signal.channel_id);
         });
-        if (earlyScopes.length) {
+        if (earlyScopes.length && !(liveMgmtFast && action === 'close')) {
             await ctx.cancelRangePendingLegsForScopes(signal.user_id, signal.id, earlyScopes, 'signal_closed');
         }
     }
@@ -502,7 +584,7 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
             return;
         try {
             if (action === 'close') {
-                const maxAttempts = 3;
+                const maxAttempts = liveMgmtFast ? 1 : 3;
                 let closeConfirmed = false;
                 let lastCloseReason;
                 for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -813,6 +895,22 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
     else {
         await Promise.allSettled(eligibleTrades.map(trade => processTrade(trade)));
     }
+    if (action === 'close' && liveMgmtFast && signal.channel_id) {
+        await finalizeMgmtSignal(ctx, signal.id);
+        deferMgmtCloseCleanup({
+            ctx,
+            signal,
+            parsed,
+            brokers,
+            brokerAccountIds,
+            byBroker,
+            cancelledPendingScopes,
+            liveMgmtFast,
+            onPendingCancelled: n => { legsTotal += n; },
+            onBrokerStragglersClosed: n => { legsTotal += n; },
+        });
+        return { legsTotal, legsParallelism: legConcurrency };
+    }
     if (action === 'modify' && (hasNewSl || hasNewTp)) {
         for (const brokerRows of rowsByBrokerSignal.values()) {
             legsTotal += brokerRows.filter(r => {
@@ -951,7 +1049,7 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
             });
         }
     }
-    if (action === 'close' && cancelledPendingScopes.size > 0) {
+    if (action === 'close' && cancelledPendingScopes.size > 0 && !liveMgmtFast) {
         const scopes = Array.from(cancelledPendingScopes)
             .map(enc => JSON.parse(enc))
             .filter(scope => {
@@ -964,7 +1062,7 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
             await ctx.cancelRangePendingLegsForScopes(signal.user_id, signal.id, scopes, 'signal_closed');
         }
     }
-    if (action === 'close' && signal.channel_id) {
+    if (action === 'close' && signal.channel_id && !liveMgmtFast) {
         const pendingCancelled = await (0, managementBrokerClose_1.cancelChannelBrokerPendingOrders)({
             supabase: ctx.supabase,
             userId: signal.user_id,
@@ -1011,19 +1109,7 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
     // so `sweep()` never skips them via the "trade already exists" guard.
     // Flip off `parsed` after one dispatch so we never double-apply the same
     // Close half / breakeven / modify intent on every 15s tick.
-    try {
-        const { error: sigErr } = await ctx.supabase
-            .from('signals')
-            .update({ status: 'executed' })
-            .eq('id', signal.id)
-            .eq('status', 'parsed');
-        if (sigErr) {
-            console.warn(`[tradeExecutor] mgmt signal finalize failed id=${signal.id}: ${sigErr.message}`);
-        }
-    }
-    catch {
-        // best-effort
-    }
+    await finalizeMgmtSignal(ctx, signal.id);
     return { legsTotal, legsParallelism: legConcurrency };
 }
 async function applyCloseWorseEntriesInstruction(ctx, signal, parsed, rows, byBroker, mgmtOpts) {

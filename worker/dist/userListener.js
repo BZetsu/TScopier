@@ -1154,6 +1154,12 @@ class UserListener {
     async parseSignalForListener(args) {
         const { keywords, lexicon } = await (0, channelKeywordsCache_1.getChannelParseContext)(this.supabase, args.channelRowId);
         if (this.isModificationClassMessage(args.rawMessage, args.isReply, keywords, lexicon)) {
+            if (listenerInlineParseEnabled()) {
+                const detMod = (0, parseSignal_1.parseModificationDeterministic)(args.rawMessage, keywords, lexicon);
+                if (detMod.status === 'parsed' && detMod.parsed.action !== 'ignore') {
+                    return { parseResult: detMod, channelKeywords: keywords };
+                }
+            }
             const aiResult = await (0, aiParseModification_1.aiParseModification)(this.supabase, {
                 userId: this.userId,
                 channelRowId: args.channelRowId,
@@ -1510,7 +1516,7 @@ class UserListener {
             if (shouldHttpPush) {
                 const action = (0, tradeSignalActions_1.parsedAction)(dispatchRow.parsed_data);
                 if ((0, tradeSignalActions_1.isManagementAction)(action)) {
-                    httpPushOk = await (0, tradeSignalPush_1.pushParsedSignalToTradeWorkerAwait)(dispatchRow);
+                    httpPushOk = await (0, tradeSignalPush_1.pushParsedSignalToTradeWorkerAccept)(dispatchRow);
                 }
                 else {
                     (0, tradeSignalPush_1.pushParsedSignalToTradeWorker)(dispatchRow);
@@ -1531,7 +1537,7 @@ class UserListener {
                     queue_error: queueResult?.error ?? null,
                     http_push_fallback: shouldHttpPush,
                     http_push_ok: httpPushOk,
-                    mgmt_push_awaited: (0, tradeSignalActions_1.isManagementAction)((0, tradeSignalActions_1.parsedAction)(dispatchRow.parsed_data)),
+                    mgmt_push_accept_only: (0, tradeSignalActions_1.isManagementAction)((0, tradeSignalActions_1.parsedAction)(dispatchRow.parsed_data)),
                     runs_trade: workerConfig_1.workerConfig.runsTrade,
                     runs_listener: workerConfig_1.workerConfig.runsListener,
                     persist_before_dispatch: false,

@@ -19,10 +19,14 @@ import { tradeableFromParsed } from './backtestSignal'
 import type { SignalRow } from './tradeExecutor'
 import { enqueueParsedSignal } from './queue/signalQueuePublisher'
 import { signalQueueConfig } from './queue/signalQueueConfig'
-import { pushParsedSignalToTradeWorker, pushParsedSignalToTradeWorkerAwait } from './tradeSignalPush'
+import {
+  pushParsedSignalToTradeWorker,
+  pushParsedSignalToTradeWorkerAccept,
+  pushParsedSignalToTradeWorkerAwait,
+} from './tradeSignalPush'
 import { persistListenerEvent } from './listenerEvents'
 import { getChannelParseContext, invalidateChannelParseCache } from './channelKeywordsCache'
-import { parseChannelMessageSync, parseRawChannelMessage } from './parseSignal'
+import { parseChannelMessageSync, parseModificationDeterministic, parseRawChannelMessage } from './parseSignal'
 import { looksLikeTradingSignal, looksLikeTrainingCandidate } from './signalTradingHeuristic'
 import { looksLikeChannelManagementUpdate } from './signalManagementIntent'
 import { normalizeSignalMessageForParse } from './normalizeTelegramMessageText'
@@ -1421,6 +1425,12 @@ export class UserListener {
   }> {
     const { keywords, lexicon } = await getChannelParseContext(this.supabase, args.channelRowId)
     if (this.isModificationClassMessage(args.rawMessage, args.isReply, keywords, lexicon)) {
+      if (listenerInlineParseEnabled()) {
+        const detMod = parseModificationDeterministic(args.rawMessage, keywords, lexicon)
+        if (detMod.status === 'parsed' && detMod.parsed.action !== 'ignore') {
+          return { parseResult: detMod, channelKeywords: keywords }
+        }
+      }
       const aiResult = await aiParseModification(this.supabase, {
         userId: this.userId,
         channelRowId: args.channelRowId,
@@ -1820,7 +1830,7 @@ export class UserListener {
       if (shouldHttpPush) {
         const action = parsedAction(dispatchRow.parsed_data)
         if (isManagementAction(action)) {
-          httpPushOk = await pushParsedSignalToTradeWorkerAwait(dispatchRow)
+          httpPushOk = await pushParsedSignalToTradeWorkerAccept(dispatchRow)
         } else {
           pushParsedSignalToTradeWorker(dispatchRow)
           httpPushOk = true
@@ -1840,7 +1850,7 @@ export class UserListener {
           queue_error: queueResult?.error ?? null,
           http_push_fallback: shouldHttpPush,
           http_push_ok: httpPushOk,
-          mgmt_push_awaited: isManagementAction(parsedAction(dispatchRow.parsed_data)),
+          mgmt_push_accept_only: isManagementAction(parsedAction(dispatchRow.parsed_data)),
           runs_trade: workerConfig.runsTrade,
           runs_listener: workerConfig.runsListener,
           persist_before_dispatch: false,

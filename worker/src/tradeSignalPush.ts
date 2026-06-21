@@ -282,7 +282,18 @@ export function pushParsedSignalToTradeWorker(
   })
 }
 
-/** Awaitable push — used when caller needs confirmation of HTTP accept (not full execution). */
+/** Awaitable push — worker accepts dispatch only; execution continues in-process (mgmt hot path). */
+export async function pushParsedSignalToTradeWorkerAccept(
+  row: TradeSignalPushPayload,
+  opts?: { source?: string },
+): Promise<boolean> {
+  return pushParsedSignalToTradeWorkerInner(row, {
+    awaitExecution: false,
+    source: opts?.source ?? row.dispatch_source,
+  })
+}
+
+/** Await full handleSignal completion (queue consumer / diagnostics only). */
 export async function pushParsedSignalToTradeWorkerAwait(
   row: TradeSignalPushPayload,
   opts?: { source?: string },

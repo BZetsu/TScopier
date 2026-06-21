@@ -392,7 +392,7 @@ async function handleSignal(ctx, row, opts) {
         }
         let userSub;
         let isAdmin;
-        if (liveFast
+        if ((liveFast || liveMgmtFast)
             && (0, types_1.telegramLiveTradeGateEnabled)()
             && row.channel_id
             && ctx.sessionManager) {
@@ -507,7 +507,7 @@ async function handleSignal(ctx, row, opts) {
         if (liveFast && signalSymbolForWarm && brokers.length > 0) {
             pipelineOutcome.brokers_warm_at_dispatch = ctx.brokersWarmForLiveEntry(brokers, signalSymbolForWarm);
         }
-        if (brokers.length > 0 && row.channel_id) {
+        if (brokers.length > 0 && row.channel_id && !(liveMgmtFast && (0, tradeSignalActions_1.isManagementAction)(action))) {
             const profileTz = ctx.userTimezoneById.get(row.user_id);
             const channelId = row.channel_id;
             if (liveFast && parsed.symbol) {
