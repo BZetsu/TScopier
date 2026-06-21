@@ -42,6 +42,7 @@ const channelTradingConfig_1 = require("../channelTradingConfig");
 const brokerChannelTradingConfigs_1 = require("../brokerChannelTradingConfigs");
 const helpers_1 = require("./basketMerge/helpers");
 const signalBrokerDispatchClaim_1 = require("./signalBrokerDispatchClaim");
+const signalRangeEntryHelpers_1 = require("../signalRangeEntryHelpers");
 const signalRevision_1 = require("../signalRevision");
 const tradeSignalActions_1 = require("../tradeSignalActions");
 const workerConfig_1 = require("../workerConfig");
@@ -549,6 +550,8 @@ class TradeExecutor {
         for (const row of (data ?? [])) {
             if (this.inflight.has(row.id))
                 continue;
+            if (await (0, signalRangeEntryHelpers_1.hasActiveSignalRangeEntryWait)(this.supabase, row.id))
+                continue;
             if (await this.signalAlreadyHandled(row.id)) {
                 await this.markSignalExecuted(row.id);
                 continue;
@@ -945,6 +948,7 @@ class TradeExecutor {
             }
         }
         const isRevisionRefresh = sendOpts?.sameSignalRefresh === true;
+        const isRangeWake = signal.dispatch_source === signalRangeEntryHelpers_1.SIGNAL_RANGE_WAKE_DISPATCH_SOURCE;
         if (this.entryBrokerInflight.has(entryKey)) {
             if (isRevisionRefresh) {
                 const deadline = Date.now() + 60000;
@@ -964,6 +968,9 @@ class TradeExecutor {
         this.entryBrokerInflight.add(entryKey);
         try {
             if (!isRevisionRefresh) {
+                if (isRangeWake) {
+                    await (0, signalBrokerDispatchClaim_1.releaseSignalBrokerDispatchClaim)(this.supabase, signal.id, effectiveBroker.id);
+                }
                 const claimed = await (0, signalBrokerDispatchClaim_1.claimSignalBrokerDispatch)(this.supabase, signal.id, effectiveBroker.id);
                 if (!claimed) {
                     const materialized = await (0, helpers_1.manualDispatchAlreadyMaterialized)(this, signal.id, effectiveBroker.id);

@@ -58,8 +58,10 @@ import {
   logSignalRangeEntryNoPrice,
   logSignalRangeEntryWaiting,
   markSignalRangeEntryFired,
+  SIGNAL_RANGE_WAKE_DISPATCH_SOURCE,
   upsertSignalRangeEntryWait,
 } from '../signalRangeEntryHelpers'
+import { releaseSignalBrokerDispatchClaim } from './signalBrokerDispatchClaim'
 
 export type EntryArgs = {
   signal: SignalRow
@@ -688,7 +690,7 @@ export async function prepareEntryExecution(
       ? { ...wait, zoneLo: zoneFromParsed.lo, zoneHi: zoneFromParsed.hi }
       : wait
     const pipSize = plan.pip ?? params?.point ?? 0.00001
-    const fromWake = signal.dispatch_source === 'signal_range_wake'
+    const fromWake = signal.dispatch_source === SIGNAL_RANGE_WAKE_DISPATCH_SOURCE
     try {
       const q = strictEntryPrefetch ?? await api.quote(uuid, symbol)
       strictEntryPrefetch = q
@@ -743,6 +745,7 @@ export async function prepareEntryExecution(
   }
 
   if (rangeEntryDeferred) {
+    await releaseSignalBrokerDispatchClaim(ctx.supabase, signal.id, broker.id)
     return {
       ok: false,
       outcome: { signalRangeEntryDeferred: true, channelDelayMs, channelDelaySkipped },

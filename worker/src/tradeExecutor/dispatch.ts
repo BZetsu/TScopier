@@ -37,6 +37,7 @@ import {
 import type { ChannelKeywords } from '../manualPlanner'
 import { ACTIVITY_RETRY_DISPATCH_SOURCE } from '../retryActivity'
 import { loadSignalById, MESSAGE_REVISION_DISPATCH_SOURCE, revisionDirectionFlippedFromActions } from '../signalRevision'
+import { hasActiveSignalRangeEntryWait, SIGNAL_RANGE_WAKE_DISPATCH_SOURCE } from '../signalRangeEntryHelpers'
 import { applyUserOverrideToSignalRow } from '../signalOverride'
 import {
   closeBasketForRevisionDirectionFlip,
@@ -296,7 +297,7 @@ export async function markSignalExecuted(ctx: TradeExecutorContext, signalId: st
   }
 
 async function signalDispatchAlreadyHandled(ctx: TradeExecutorContext, signalId: string): Promise<boolean> {
-    const [trades, range, entry, logs, claims] = await Promise.all([
+    const [trades, range, entry, logs] = await Promise.all([
       ctx.supabase
         .from('trades')
         .select('id', { count: 'exact', head: true })
@@ -315,17 +316,12 @@ async function signalDispatchAlreadyHandled(ctx: TradeExecutorContext, signalId:
         .eq('signal_id', signalId)
         .eq('status', 'success')
         .in('action', [...EXECUTION_LOG_ACTIONS_HANDLED]),
-      ctx.supabase
-        .from('signal_broker_dispatch_claims')
-        .select('id', { count: 'exact', head: true })
-        .eq('signal_id', signalId),
     ])
     return (
       (trades.count ?? 0) > 0
       || (range.count ?? 0) > 0
       || (entry.count ?? 0) > 0
       || (logs.count ?? 0) > 0
-      || (claims.count ?? 0) > 0
     )
   }
 
@@ -414,6 +410,7 @@ export async function handleSignal(ctx: TradeExecutorContext,
     }
     const isMessageRevision = opts?.dispatchSource === MESSAGE_REVISION_DISPATCH_SOURCE
     const isActivityRetry = opts?.dispatchSource === ACTIVITY_RETRY_DISPATCH_SOURCE
+    const isRangeWake = opts?.dispatchSource === SIGNAL_RANGE_WAKE_DISPATCH_SOURCE
     try {
       if (!opts?.liveDispatch && !isMessageRevision && !isActivityRetry && ctx.signalTooOldForReplay(row)) return
 
@@ -425,7 +422,7 @@ export async function handleSignal(ctx: TradeExecutorContext,
         })
       }
 
-      if (!isMessageRevision && !isActivityRetry && !liveFast && !liveMgmtFast && await ctx.signalAlreadyHandled(row.id)) {
+      if (!isMessageRevision && !isActivityRetry && !isRangeWake && !liveFast && !liveMgmtFast && await ctx.signalAlreadyHandled(row.id)) {
         await ctx.markSignalExecuted(row.id)
         return
       }

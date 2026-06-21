@@ -35,6 +35,7 @@ const helpers_1 = require("./helpers");
 const types_1 = require("./types");
 const retryActivity_1 = require("../retryActivity");
 const signalRevision_1 = require("../signalRevision");
+const signalRangeEntryHelpers_1 = require("../signalRangeEntryHelpers");
 const signalOverride_1 = require("../signalOverride");
 const messageRevisionDirectionFlipClose_1 = require("./messageRevisionDirectionFlipClose");
 const subscriptionAccess_1 = require("../subscriptionAccess");
@@ -258,7 +259,7 @@ async function markSignalExecuted(ctx, signalId) {
     }
 }
 async function signalDispatchAlreadyHandled(ctx, signalId) {
-    const [trades, range, entry, logs, claims] = await Promise.all([
+    const [trades, range, entry, logs] = await Promise.all([
         ctx.supabase
             .from('trades')
             .select('id', { count: 'exact', head: true })
@@ -277,16 +278,11 @@ async function signalDispatchAlreadyHandled(ctx, signalId) {
             .eq('signal_id', signalId)
             .eq('status', 'success')
             .in('action', [...types_1.EXECUTION_LOG_ACTIONS_HANDLED]),
-        ctx.supabase
-            .from('signal_broker_dispatch_claims')
-            .select('id', { count: 'exact', head: true })
-            .eq('signal_id', signalId),
     ]);
     return ((trades.count ?? 0) > 0
         || (range.count ?? 0) > 0
         || (entry.count ?? 0) > 0
-        || (logs.count ?? 0) > 0
-        || (claims.count ?? 0) > 0);
+        || (logs.count ?? 0) > 0);
 }
 async function signalLiveDispatchAlreadyHandled(ctx, signalId) {
     return signalDispatchAlreadyHandled(ctx, signalId);
@@ -353,6 +349,7 @@ async function handleSignal(ctx, row, opts) {
     };
     const isMessageRevision = opts?.dispatchSource === signalRevision_1.MESSAGE_REVISION_DISPATCH_SOURCE;
     const isActivityRetry = opts?.dispatchSource === retryActivity_1.ACTIVITY_RETRY_DISPATCH_SOURCE;
+    const isRangeWake = opts?.dispatchSource === signalRangeEntryHelpers_1.SIGNAL_RANGE_WAKE_DISPATCH_SOURCE;
     try {
         if (!opts?.liveDispatch && !isMessageRevision && !isActivityRetry && ctx.signalTooOldForReplay(row))
             return;
@@ -363,7 +360,7 @@ async function handleSignal(ctx, row, opts) {
                 queue_wait_ms: queueWaitMs,
             });
         }
-        if (!isMessageRevision && !isActivityRetry && !liveFast && !liveMgmtFast && await ctx.signalAlreadyHandled(row.id)) {
+        if (!isMessageRevision && !isActivityRetry && !isRangeWake && !liveFast && !liveMgmtFast && await ctx.signalAlreadyHandled(row.id)) {
             await ctx.markSignalExecuted(row.id);
             return;
         }

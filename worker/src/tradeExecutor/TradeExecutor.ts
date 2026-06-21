@@ -39,7 +39,8 @@ import {
   type BrokerChannelTradingConfigRow,
 } from '../brokerChannelTradingConfigs'
 import { manualDispatchAlreadyMaterialized } from './basketMerge/helpers'
-import { claimSignalBrokerDispatch } from './signalBrokerDispatchClaim'
+import { claimSignalBrokerDispatch, releaseSignalBrokerDispatchClaim } from './signalBrokerDispatchClaim'
+import { hasActiveSignalRangeEntryWait, SIGNAL_RANGE_WAKE_DISPATCH_SOURCE } from '../signalRangeEntryHelpers'
 import { MESSAGE_REVISION_DISPATCH_SOURCE } from '../signalRevision'
 import { findActiveNewsBlackout } from '../newsTrading/blackout'
 import { getCalendarEventsCached } from '../newsTrading/calendarProvider'
@@ -733,6 +734,7 @@ export class TradeExecutor {
     const { data } = await signalsQ
     for (const row of (data ?? []) as SignalRow[]) {
       if (this.inflight.has(row.id)) continue
+      if (await hasActiveSignalRangeEntryWait(this.supabase, row.id)) continue
       if (await this.signalAlreadyHandled(row.id)) {
         await this.markSignalExecuted(row.id)
         continue
@@ -1316,6 +1318,7 @@ export class TradeExecutor {
     }
 
     const isRevisionRefresh = sendOpts?.sameSignalRefresh === true
+    const isRangeWake = signal.dispatch_source === SIGNAL_RANGE_WAKE_DISPATCH_SOURCE
     if (this.entryBrokerInflight.has(entryKey)) {
       if (isRevisionRefresh) {
         const deadline = Date.now() + 60_000
@@ -1336,6 +1339,9 @@ export class TradeExecutor {
     this.entryBrokerInflight.add(entryKey)
     try {
       if (!isRevisionRefresh) {
+        if (isRangeWake) {
+          await releaseSignalBrokerDispatchClaim(this.supabase, signal.id, effectiveBroker.id)
+        }
         const claimed = await claimSignalBrokerDispatch(this.supabase, signal.id, effectiveBroker.id)
         if (!claimed) {
           const materialized = await manualDispatchAlreadyMaterialized(this, signal.id, effectiveBroker.id)

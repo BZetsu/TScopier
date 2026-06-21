@@ -1,4 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+
+export const SIGNAL_RANGE_WAKE_DISPATCH_SOURCE = 'signal_range_wake' as const
 import { clampPendingExpiryHours } from './manualPlanner'
 import type { ManualSettings, PlannerRangeEntryWait } from './manualPlanning/types'
 import type { BrokerRow, ParsedSignal, SignalRow } from './tradeExecutor/types'
@@ -80,6 +82,24 @@ export async function markSignalRangeEntryFired(
     .eq('signal_id', signalId)
     .eq('broker_account_id', brokerAccountId)
     .eq('status', 'waiting')
+}
+
+export async function hasActiveSignalRangeEntryWait(
+  supabase: SupabaseClient,
+  signalId: string,
+): Promise<boolean> {
+  const { count, error } = await supabase
+    .from('signal_range_entry_waits')
+    .select('id', { count: 'exact', head: true })
+    .eq('signal_id', signalId)
+    .eq('status', 'waiting')
+  if (error) {
+    console.warn(
+      `[signalRangeEntry] hasActiveWait failed signal=${signalId}: ${error.message}`,
+    )
+    return false
+  }
+  return (count ?? 0) > 0
 }
 
 export async function cancelSignalRangeEntryWaitsForSignal(

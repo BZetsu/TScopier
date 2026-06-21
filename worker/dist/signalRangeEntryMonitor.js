@@ -170,8 +170,7 @@ class SignalRangeEntryMonitor {
                     .maybeSingle();
                 if (sigErr || !signalRow || signalRow.status !== 'parsed')
                     continue;
-                await (0, signalRangeEntryHelpers_1.logSignalRangeEntryFired)(this.supabase, signalRow, row.broker_account_id, wait, row.symbol);
-                this.tradeExecutor.acceptDispatchSignal({ ...signalRow, dispatch_source: 'signal_range_wake' }, { source: 'signal_range_wake', priority: 'high' });
+                this.tradeExecutor.acceptDispatchSignal({ ...signalRow, dispatch_source: signalRangeEntryHelpers_1.SIGNAL_RANGE_WAKE_DISPATCH_SOURCE }, { source: signalRangeEntryHelpers_1.SIGNAL_RANGE_WAKE_DISPATCH_SOURCE, priority: 'high' });
             }
         }
     }

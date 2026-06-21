@@ -13,6 +13,7 @@ const channelActiveTradeParams_1 = require("../channelActiveTradeParams");
 const tradeComment_1 = require("../tradeComment");
 const helpers_1 = require("./helpers");
 const signalRangeEntryHelpers_1 = require("../signalRangeEntryHelpers");
+const signalBrokerDispatchClaim_1 = require("./signalBrokerDispatchClaim");
 /** Fill missing symbol for re-enter posts that omit instrument name. */
 async function resolveReEnterSymbolFromChannel(ctx, signal, broker, parsed) {
     if (!(0, signalPriceInference_1.parsedHasReEnterIntent)(parsed))
@@ -523,7 +524,7 @@ async function prepareEntryExecution(ctx, args) {
             ? { ...wait, zoneLo: zoneFromParsed.lo, zoneHi: zoneFromParsed.hi }
             : wait;
         const pipSize = plan.pip ?? params?.point ?? 0.00001;
-        const fromWake = signal.dispatch_source === 'signal_range_wake';
+        const fromWake = signal.dispatch_source === signalRangeEntryHelpers_1.SIGNAL_RANGE_WAKE_DISPATCH_SOURCE;
         try {
             const q = strictEntryPrefetch ?? await api.quote(uuid, symbol);
             strictEntryPrefetch = q;
@@ -567,6 +568,7 @@ async function prepareEntryExecution(ctx, args) {
         }
     }
     if (rangeEntryDeferred) {
+        await (0, signalBrokerDispatchClaim_1.releaseSignalBrokerDispatchClaim)(ctx.supabase, signal.id, broker.id);
         return {
             ok: false,
             outcome: { signalRangeEntryDeferred: true, channelDelayMs, channelDelaySkipped },

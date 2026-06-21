@@ -14,13 +14,9 @@ import {
   startMonitorLoop,
   type MonitorLoopHandle,
 } from './monitorIdleGate'
+import { SIGNAL_RANGE_WAKE_DISPATCH_SOURCE, type SignalRangeEntryWaitRow, waitRowToPlannerWait } from './signalRangeEntryHelpers'
 import type { TradeExecutor } from './tradeExecutor'
 import type { SignalRow } from './tradeExecutor/types'
-import {
-  logSignalRangeEntryFired,
-  type SignalRangeEntryWaitRow,
-  waitRowToPlannerWait,
-} from './signalRangeEntryHelpers'
 
 const ACTIVE_MS = monitorActiveIntervalMs('SIGNAL_RANGE_ENTRY_TICK_MS', 2_000)
 const IDLE_MS = monitorIdleIntervalMs('SIGNAL_RANGE_ENTRY_IDLE_MS', 60_000)
@@ -202,17 +198,9 @@ export class SignalRangeEntryMonitor {
           .maybeSingle()
         if (sigErr || !signalRow || signalRow.status !== 'parsed') continue
 
-        await logSignalRangeEntryFired(
-          this.supabase,
-          signalRow as SignalRow,
-          row.broker_account_id,
-          wait,
-          row.symbol,
-        )
-
         this.tradeExecutor.acceptDispatchSignal(
-          { ...(signalRow as SignalRow), dispatch_source: 'signal_range_wake' },
-          { source: 'signal_range_wake', priority: 'high' },
+          { ...(signalRow as SignalRow), dispatch_source: SIGNAL_RANGE_WAKE_DISPATCH_SOURCE },
+          { source: SIGNAL_RANGE_WAKE_DISPATCH_SOURCE, priority: 'high' },
         )
       }
     }

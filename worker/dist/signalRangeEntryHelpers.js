@@ -1,12 +1,15 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.SIGNAL_RANGE_WAKE_DISPATCH_SOURCE = void 0;
 exports.waitRowToPlannerWait = waitRowToPlannerWait;
 exports.upsertSignalRangeEntryWait = upsertSignalRangeEntryWait;
 exports.markSignalRangeEntryFired = markSignalRangeEntryFired;
+exports.hasActiveSignalRangeEntryWait = hasActiveSignalRangeEntryWait;
 exports.cancelSignalRangeEntryWaitsForSignal = cancelSignalRangeEntryWaitsForSignal;
 exports.logSignalRangeEntryNoPrice = logSignalRangeEntryNoPrice;
 exports.logSignalRangeEntryWaiting = logSignalRangeEntryWaiting;
 exports.logSignalRangeEntryFired = logSignalRangeEntryFired;
+exports.SIGNAL_RANGE_WAKE_DISPATCH_SOURCE = 'signal_range_wake';
 const manualPlanner_1 = require("./manualPlanner");
 function waitRowToPlannerWait(row) {
     return {
@@ -51,6 +54,18 @@ async function markSignalRangeEntryFired(supabase, signalId, brokerAccountId) {
         .eq('signal_id', signalId)
         .eq('broker_account_id', brokerAccountId)
         .eq('status', 'waiting');
+}
+async function hasActiveSignalRangeEntryWait(supabase, signalId) {
+    const { count, error } = await supabase
+        .from('signal_range_entry_waits')
+        .select('id', { count: 'exact', head: true })
+        .eq('signal_id', signalId)
+        .eq('status', 'waiting');
+    if (error) {
+        console.warn(`[signalRangeEntry] hasActiveWait failed signal=${signalId}: ${error.message}`);
+        return false;
+    }
+    return (count ?? 0) > 0;
 }
 async function cancelSignalRangeEntryWaitsForSignal(supabase, signalId, brokerAccountId, reason = 'basket_opened') {
     let q = supabase
