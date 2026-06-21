@@ -39,6 +39,10 @@ const role = parseRole(process.env.WORKER_ROLE)
 const runsTradeRole =
   role === 'all' || role === 'trade' || role === 'trade_entry' || role === 'trade_mgmt'
 
+/** One heartbeat loop per shard is enough — trade_mgmt shares FxSocket sessions with trade_entry. */
+const runsBrokerSessionHeartbeat =
+  role === 'all' || role === 'trade' || role === 'trade_entry'
+
 export const workerConfig = {
   role,
   instanceId: String(
@@ -49,6 +53,7 @@ export const workerConfig = {
   shardCount: Math.max(1, Math.floor(Number(process.env.WORKER_SHARD_COUNT ?? 1))),
   runsListener: role === 'all' || role === 'listener',
   runsTrade: runsTradeRole,
+  runsBrokerSessionHeartbeat,
   tradeExecutorMode: tradeExecutorModeForRole(role) as TradeExecutorMode,
   runsExecutionMonitors:
     role === 'all' || role === 'trade' || role === 'trade_entry',

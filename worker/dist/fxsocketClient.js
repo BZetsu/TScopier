@@ -10,6 +10,10 @@ exports.isMtSessionGoneMessage = isMtSessionGoneMessage;
 exports.isBrokerDisconnectedMessage = isBrokerDisconnectedMessage;
 exports.isMtSessionGoneError = isMtSessionGoneError;
 exports.isTransientMtApiError = isTransientMtApiError;
+exports.isApiThrottleError = isApiThrottleError;
+exports.parseApiThrottleBackoffMs = parseApiThrottleBackoffMs;
+exports.checkConnectGlobalMinMs = checkConnectGlobalMinMs;
+exports.resetCheckConnectPacing = resetCheckConnectPacing;
 exports.mtPlatformFrom = mtPlatformFrom;
 exports.getFxsocketClient = getFxsocketClient;
 const undici_1 = require("undici");
@@ -328,6 +332,36 @@ function isTransientMtApiError(err) {
     }
     const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
     return /timeout|econnreset|econnrefused|fetch failed|network error|socket hang up|epipe|ehostunreach|abort/.test(msg);
+}
+/** FxSocket / upstream rate limit (also matches Supabase-style throttle text). */
+function isApiThrottleError(err) {
+    if (err instanceof FxsocketApiError && err.status === 429)
+        return true;
+    const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+    return /throttl|rate limit|too many requests|expected available in/i.test(msg);
+}
+function parseApiThrottleBackoffMs(err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const m = /expected available in (\d+)\s*seconds?/i.exec(msg);
+    if (m)
+        return Math.max(1000, Number(m[1]) * 1000 + 500);
+    const raw = Number(process.env.BROKER_API_THROTTLE_BACKOFF_MS ?? 8000);
+    return Number.isFinite(raw) && raw >= 1000 ? raw : 8000;
+}
+const checkConnectSoftUntil = new Map();
+const checkConnectLastAt = new Map();
+function checkConnectGlobalMinMs() {
+    return Math.max(5000, Math.min(120000, Number(process.env.FXSOCKET_CHECK_CONNECT_MIN_MS ?? 25000)));
+}
+/** Test helper — reset per-account checkConnect pacing. */
+function resetCheckConnectPacing(accountId) {
+    if (accountId) {
+        checkConnectSoftUntil.delete(accountId);
+        checkConnectLastAt.delete(accountId);
+        return;
+    }
+    checkConnectSoftUntil.clear();
+    checkConnectLastAt.clear();
 }
 exports.MT_SESSION_EXPIRED_HINT = 'Trading session expired on the broker API. In Account Configuration, use Reconnect and enter your MT password (or remove and link the account again).';
 function formatMtApiDateTime(d) {
@@ -697,19 +731,43 @@ class FxsocketBrokerClient {
         return normalizeAccountSummary(raw);
     }
     async checkConnect(id) {
+        const trimmed = String(id ?? '').trim();
+        if (!trimmed)
+            throw new FxsocketApiError('account id required', 400);
+        const now = Date.now();
+        const softUntil = checkConnectSoftUntil.get(trimmed) ?? 0;
+        if (now < softUntil)
+            return;
+        const minGap = checkConnectGlobalMinMs();
+        const lastAt = checkConnectLastAt.get(trimmed) ?? 0;
+        if (now - lastAt < minGap)
+            return;
         const checkTimeoutMs = Math.max(500, Math.min(5000, Number(process.env.FXSOCKET_CHECK_CONNECT_TIMEOUT_MS ?? 1500)));
-        const raw = await this.get(`${this.v1BaseUrl}/accounts/${encodeURIComponent(id)}`, undefined, checkTimeoutMs);
-        assertNoApiError(raw);
-        const acct = normalizeV1Account(raw);
-        this.platformCache.set(id, mtPlatformFrom(acct.platform));
-        if (acct.status === 'error') {
-            throw new FxsocketApiError(acct.error || 'Broker session is not connected', 502);
+        try {
+            const raw = await this.get(`${this.v1BaseUrl}/accounts/${encodeURIComponent(trimmed)}`, undefined, checkTimeoutMs);
+            assertNoApiError(raw);
+            const acct = normalizeV1Account(raw);
+            this.platformCache.set(trimmed, mtPlatformFrom(acct.platform));
+            if (acct.status === 'error') {
+                throw new FxsocketApiError(acct.error || 'Broker session is not connected', 502);
+            }
+            if (acct.status === 'disconnected') {
+                throw new FxsocketApiError('Broker session is not connected', 502);
+            }
+            if (!isCheckConnectOk(acct.status)) {
+                throw new FxsocketApiError('Broker session is not connected', 502);
+            }
+            checkConnectLastAt.set(trimmed, Date.now());
+            checkConnectSoftUntil.delete(trimmed);
         }
-        if (acct.status === 'disconnected') {
-            throw new FxsocketApiError('Broker session is not connected', 502);
-        }
-        if (!isCheckConnectOk(acct.status)) {
-            throw new FxsocketApiError('Broker session is not connected', 502);
+        catch (err) {
+            if (isApiThrottleError(err)) {
+                const backoff = parseApiThrottleBackoffMs(err);
+                checkConnectSoftUntil.set(trimmed, Date.now() + backoff);
+                console.warn(`[fxsocketClient] CheckConnect throttled id=${trimmed}; backing off ${backoff}ms`);
+                return;
+            }
+            throw err;
         }
     }
     async symbolParams(id, symbol) {

@@ -314,10 +314,14 @@ export class TradeExecutor {
       )
     }
     void this.prewarmBrokerCaches()
-    this.sessionHeartbeatTimer = setInterval(() => {
-      void this.runSessionHeartbeatTick()
-    }, BROKER_SESSION_HEARTBEAT_MS)
-    this.sessionHeartbeatTimer.unref?.()
+    if (workerConfig.runsBrokerSessionHeartbeat) {
+      this.sessionHeartbeatTimer = setInterval(() => {
+        void this.runSessionHeartbeatTick()
+      }, BROKER_SESSION_HEARTBEAT_MS)
+      this.sessionHeartbeatTimer.unref?.()
+    } else {
+      console.log('[tradeExecutor] broker session heartbeat disabled on this role (trade_entry handles keepalive)')
+    }
     // Re-fetch every cached symbol list / params entry before its TTL expires
     // so the live-entry hot path always finds a warm cache. Without this,
     // signal symbols outside `symbol_to_trade` fall back to a cold broker

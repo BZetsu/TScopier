@@ -3,7 +3,9 @@ import type { ParsedSignal } from './types'
 import {
   hasFxsocketConfigured,
   FxsocketBrokerClient,
+  isApiThrottleError,
   normalizeSymbolParams,
+  parseApiThrottleBackoffMs,
   type SymbolParams,
 } from '../fxsocketClient'
 import type { ManualSettings } from '../manualPlanner'
@@ -27,7 +29,15 @@ const HEARTBEAT_FAILURES_BEFORE_DOWN = Math.max(
 )
 const HEARTBEAT_CONCURRENCY = Math.max(
   1,
-  Math.min(16, Number(process.env.BROKER_HEARTBEAT_CONCURRENCY ?? 6) || 6),
+  Math.min(8, Number(process.env.BROKER_HEARTBEAT_CONCURRENCY ?? 2) || 2),
+)
+const HEARTBEAT_BATCH_GAP_MS = Math.max(
+  0,
+  Math.min(2000, Number(process.env.BROKER_HEARTBEAT_BATCH_GAP_MS ?? 250) || 250),
+)
+const SYMBOL_KEEPALIVE_CONCURRENCY = Math.max(
+  1,
+  Math.min(8, Number(process.env.SYMBOL_KEEPALIVE_CONCURRENCY ?? 2) || 2),
 )
 const heartbeatFailCounts = new Map<string, number>()
 
@@ -80,7 +90,15 @@ async function pingBrokerSessionInner(
       }
       return true
     }
-  } catch {
+  } catch (err) {
+    if (isApiThrottleError(err)) {
+      const backoff = parseApiThrottleBackoffMs(err)
+      ctx.sessionPingAt.set(uuid, Date.now())
+      console.warn(
+        `[tradeExecutor] keepSessionAlive throttled broker=${broker.id} uuid=${uuid}; backoff ${backoff}ms`,
+      )
+      return true
+    }
     /* fall through to failure count */
   }
 
@@ -113,6 +131,9 @@ export async function sessionHeartbeatTick(ctx: TradeExecutorContext): Promise<v
   if (!brokers.length) return
 
   for (let i = 0; i < brokers.length; i += HEARTBEAT_CONCURRENCY) {
+    if (i > 0 && HEARTBEAT_BATCH_GAP_MS > 0) {
+      await new Promise(resolve => setTimeout(resolve, HEARTBEAT_BATCH_GAP_MS))
+    }
     const batch = brokers.slice(i, i + HEARTBEAT_CONCURRENCY)
     await Promise.all(batch.map(async broker => {
       const uuid = brokerSessionUuid(broker)
@@ -121,12 +142,6 @@ export async function sessionHeartbeatTick(ctx: TradeExecutorContext): Promise<v
       if (!api) return
       await pingBrokerSessionInner(ctx, broker, api, uuid)
     }))
-  }
-
-  if (ctx.prewarmSymbolsEnabled()) {
-    for (const broker of brokers) {
-      prewarmBrokerSymbolCaches(ctx, broker)
-    }
   }
 }
 
@@ -148,38 +163,50 @@ export async function symbolCacheKeepaliveTick(ctx: TradeExecutorContext, ): Pro
     if (!ctx.prewarmSymbolsEnabled()) return
 
     const uuidsWithList = [...ctx.symbolListCache.keys()]
-    await Promise.all(uuidsWithList.map(async uuid => {
-      try {
-        const fresh = await ctx.fetchSymbolList(uuid)
-        if (fresh) ctx.symbolListCache.set(uuid, fresh)
-      } catch { /* best-effort */ }
-    }))
+    for (let i = 0; i < uuidsWithList.length; i += SYMBOL_KEEPALIVE_CONCURRENCY) {
+      const batch = uuidsWithList.slice(i, i + SYMBOL_KEEPALIVE_CONCURRENCY)
+      await Promise.all(batch.map(async uuid => {
+        try {
+          const fresh = await ctx.fetchSymbolList(uuid)
+          if (fresh) ctx.symbolListCache.set(uuid, fresh)
+        } catch { /* best-effort */ }
+      }))
+      if (i + SYMBOL_KEEPALIVE_CONCURRENCY < uuidsWithList.length && HEARTBEAT_BATCH_GAP_MS > 0) {
+        await new Promise(resolve => setTimeout(resolve, HEARTBEAT_BATCH_GAP_MS))
+      }
+    }
 
     const paramsKeys = [...ctx.symbolCache.keys()]
-    await Promise.all(paramsKeys.map(async key => {
-      const sepIdx = key.indexOf(':')
-      if (sepIdx < 0) return
-      const uuid = key.slice(0, sepIdx)
-      const symbol = key.slice(sepIdx + 1)
-      if (!isMtUuid(uuid) || !symbol) return
-      const api = ctx.apiForUuid(uuid)
-      if (!api) return
-      try {
-        const p: SymbolParams = await api.symbolParams(uuid, symbol)
-        const n = normalizeSymbolParams(p)
-        ctx.symbolCache.set(key, {
-          digits: n.digits ?? 5,
-          point: n.point ?? 0.00001,
-          minLot: n.minLot ?? 0.01,
-          maxLot: n.maxLot ?? 100,
-          lotStep: n.lotStep ?? 0.01,
-          contractSize: Number.isFinite(n.contractSize) && (n.contractSize ?? 0) > 0 ? Number(n.contractSize) : null,
-          stopsLevel: Math.max(0, n.stopsLevel ?? 0),
-          freezeLevel: Math.max(0, n.freezeLevel ?? 0),
-          loadedAt: Date.now(),
-        })
-      } catch { /* best-effort */ }
-    }))
+    for (let i = 0; i < paramsKeys.length; i += SYMBOL_KEEPALIVE_CONCURRENCY) {
+      const batch = paramsKeys.slice(i, i + SYMBOL_KEEPALIVE_CONCURRENCY)
+      await Promise.all(batch.map(async key => {
+        const sepIdx = key.indexOf(':')
+        if (sepIdx < 0) return
+        const uuid = key.slice(0, sepIdx)
+        const symbol = key.slice(sepIdx + 1)
+        if (!isMtUuid(uuid) || !symbol) return
+        const api = ctx.apiForUuid(uuid)
+        if (!api) return
+        try {
+          const p: SymbolParams = await api.symbolParams(uuid, symbol)
+          const n = normalizeSymbolParams(p)
+          ctx.symbolCache.set(key, {
+            digits: n.digits ?? 5,
+            point: n.point ?? 0.00001,
+            minLot: n.minLot ?? 0.01,
+            maxLot: n.maxLot ?? 100,
+            lotStep: n.lotStep ?? 0.01,
+            contractSize: Number.isFinite(n.contractSize) && (n.contractSize ?? 0) > 0 ? Number(n.contractSize) : null,
+            stopsLevel: Math.max(0, n.stopsLevel ?? 0),
+            freezeLevel: Math.max(0, n.freezeLevel ?? 0),
+            loadedAt: Date.now(),
+          })
+        } catch { /* best-effort */ }
+      }))
+      if (i + SYMBOL_KEEPALIVE_CONCURRENCY < paramsKeys.length && HEARTBEAT_BATCH_GAP_MS > 0) {
+        await new Promise(resolve => setTimeout(resolve, HEARTBEAT_BATCH_GAP_MS))
+      }
+    }
   }
 
 export async function markBrokerSessionDown(ctx: TradeExecutorContext, broker: BrokerRow, uuid: string, reason: string): Promise<void> {

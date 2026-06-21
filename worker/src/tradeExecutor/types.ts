@@ -150,12 +150,12 @@ export const SYMBOL_CACHE_KEEPALIVE_MS = Math.max(
   Math.min(SYMBOL_CACHE_TTL_MS, Number(process.env.SYMBOL_CACHE_KEEPALIVE_MS ?? 5 * 60_000)),
 )
 export const BROKER_SESSION_HEARTBEAT_MS = Math.max(
-  5_000,
-  Math.min(60_000, Number(process.env.BROKER_SESSION_HEARTBEAT_MS ?? 15_000)),
+  10_000,
+  Math.min(120_000, Number(process.env.BROKER_SESSION_HEARTBEAT_MS ?? 30_000)),
 )
 export const SESSION_PING_MIN_INTERVAL_MS = Math.max(
-  5_000,
-  Math.min(120_000, Number(process.env.BROKER_SESSION_PING_MIN_INTERVAL_MS ?? BROKER_SESSION_HEARTBEAT_MS)),
+  10_000,
+  Math.min(120_000, Number(process.env.BROKER_SESSION_PING_MIN_INTERVAL_MS ?? 25_000)),
 )
 export const EXECUTOR_PARSED_SWEEP_MS = monitorActiveIntervalMs('EXECUTOR_PARSED_SWEEP_MS', 1_000)
 export const EXECUTOR_SWEEP_IDLE_MS = monitorIdleIntervalMs('EXECUTOR_SWEEP_IDLE_MS', 15_000)

@@ -99,6 +99,22 @@ test('pingBrokerSession forces ping even when sessionPingAt is fresh', async () 
   assert.equal(calls, 1)
 })
 
+test('sessionHeartbeatTick treats throttle as soft success without marking broker down', async () => {
+  let downCalls = 0
+  const ctx = makeCtx({
+    keepAlive: async () => {
+      throw new Error('Request was throttled. Expected available in 4 seconds.')
+    },
+    markDown: async () => {
+      downCalls += 1
+    },
+  })
+  ctx.sessionPingAt.delete(FX_UUID)
+  await brokerSymbolCache.sessionHeartbeatTick(ctx)
+  assert.equal(downCalls, 0)
+  assert.equal(ctx.sessionPingAt.has(FX_UUID), true)
+})
+
 test('sessionHeartbeatTick marks broker down after repeated failures', async () => {
   let downCalls = 0
   const ctx = makeCtx({
