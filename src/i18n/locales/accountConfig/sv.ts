@@ -114,6 +114,10 @@ export const accountConfigSv: AccountConfigBundleTranslations = {
       channelsNoneSelected: 'Inga valda',
       channelsEmptySaveWarning:
         'Inga signalkanaler valda — den här mäklaren kommer inte att kopiera några Telegram-signaler. Spara ändå?',
+      channelsSaveChannelListNotReady:
+        'Kanallistan laddas fortfarande. Vänta en stund och försök spara igen.',
+      channelsSaveLinkedChannelsInvalid:
+        'Länkade signalkanaler kunde inte sparas. Uppdatera sidan och försök igen.',
       channelsSignalChannel: 'Signalkanal',
       channelsAll: 'Alla signalkanaler',
       relinkOne:

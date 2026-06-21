@@ -83,6 +83,7 @@ import {
   buildChannelTradingConfigsFromDraft,
   buildDefaultChannelTradingConfig,
   channelManualSettingsComplete,
+  filterChannelIdsToActiveOptions,
   healChannelTradingConfigsMap,
   normalizeChannelTradingConfigsMap,
   normalizeChannelUuid,
@@ -1316,8 +1317,9 @@ export function AccountConfigPage() {
       return
     }
     const merged = mergeBrokerWithChannelTradingConfigRows(fresh, rows)
-    const channelIds = normalizeSignalChannelIds(merged).filter(id =>
-      channelOptions.some(c => c.id === id),
+    const channelIds = filterChannelIdsToActiveOptions(
+      normalizeSignalChannelIds(merged),
+      channelOptions,
     )
     setConfigAccount(merged)
     const limitStateMap: Record<string, CopyLimitState> = {}
@@ -1394,8 +1396,9 @@ export function AccountConfigPage() {
 
       replaceBroker(updated)
       setConfigAccount(updated)
-      const linkedIds = normalizeSignalChannelIds(updated).filter(id =>
-        channelOptions.some(c => c.id === id),
+      const linkedIds = filterChannelIdsToActiveOptions(
+        normalizeSignalChannelIds(updated),
+        channelOptions,
       )
       setConfigDraft(prev => {
         const channelConfigs = { ...prev.channelConfigs }
@@ -1671,10 +1674,18 @@ export function AccountConfigPage() {
     if (symbolsExcludeDraft !== null) {
       setSymbolsExcludeDraft(null)
     }
-    const validChannelIdSet = new Set(channelOptions.map(c => c.id))
-    const channelIds = committedDraft.channelIds.filter(id => validChannelIdSet.has(id))
+    const channelIds = filterChannelIdsToActiveOptions(committedDraft.channelIds, channelOptions)
     const previouslyLinkedChannelIds = normalizeSignalChannelIds(configAccount)
     const restrictChannels = channelIds.length > 0
+
+    if (committedDraft.channelIds.length > 0 && channelIds.length === 0) {
+      setError(
+        channelOptions.length === 0 || channelsLoading
+          ? bl.channelsSaveChannelListNotReady
+          : bl.channelsSaveLinkedChannelsInvalid,
+      )
+      return
+    }
 
       if (channelIds.length === 0) {
       const proceed = window.confirm(bl.channelsEmptySaveWarning)
@@ -1812,8 +1823,9 @@ export function AccountConfigPage() {
       )
       replaceBroker(fresh)
       setConfigAccount(fresh)
-      const persistedChannelIds = normalizeSignalChannelIds(fresh).filter(id =>
-        channelOptions.some(c => c.id === id),
+      const persistedChannelIds = filterChannelIdsToActiveOptions(
+        normalizeSignalChannelIds(fresh),
+        channelOptions,
       )
       const rebuilt = buildChannelConfigDraftFromBroker(fresh, persistedChannelIds, keywordFiltersEnabled)
       const selectedChannelId = choosePersistedSelectedChannelId({

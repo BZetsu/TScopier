@@ -405,6 +405,10 @@ export const en: Translations = {
       channelsNoneSelected: 'None selected',
       channelsEmptySaveWarning:
         'No signal channels selected — this broker will not copy any Telegram signals. Save anyway?',
+      channelsSaveChannelListNotReady:
+        'Channel list is still loading. Wait a moment and try saving again.',
+      channelsSaveLinkedChannelsInvalid:
+        'Linked signal channels could not be saved. Refresh the page and try again.',
       channelsSignalChannel: 'Signal channel',
       channelsAll: 'All signal channels',
       relinkOne:

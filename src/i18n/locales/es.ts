@@ -405,6 +405,10 @@ export const es: Translations = {
       channelsNoneSelected: 'Ninguno seleccionado',
       channelsEmptySaveWarning:
         'No hay canales de señales seleccionados — este broker no copiará señales de Telegram. ¿Guardar de todos modos?',
+      channelsSaveChannelListNotReady:
+        'La lista de canales aún se está cargando. Espera un momento e inténtalo de nuevo.',
+      channelsSaveLinkedChannelsInvalid:
+        'No se pudieron guardar los canales vinculados. Actualiza la página e inténtalo de nuevo.',
       channelsSignalChannel: 'Canal de señales',
       channelsAll: 'Todos los canales de señales',
       relinkOne:

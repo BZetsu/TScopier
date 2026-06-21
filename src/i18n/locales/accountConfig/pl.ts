@@ -114,6 +114,10 @@ export const accountConfigPl: AccountConfigBundleTranslations = {
       channelsNoneSelected: 'Nic nie wybrano',
       channelsEmptySaveWarning:
         'Nie wybrano żadnych kanałów sygnałowych — to konto brokera nie będzie kopiować żadnych sygnałów z Telegrama. Zapisać mimo to?',
+      channelsSaveChannelListNotReady:
+        'Lista kanałów wciąż się ładuje. Poczekaj chwilę i spróbuj ponownie.',
+      channelsSaveLinkedChannelsInvalid:
+        'Nie udało się zapisać powiązanych kanałów. Odśwież stronę i spróbuj ponownie.',
       channelsSignalChannel: 'Kanał sygnałowy',
       channelsAll: 'Wszystkie kanały sygnałowe',
       relinkOne:

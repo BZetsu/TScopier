@@ -30,6 +30,31 @@ export function normalizeChannelUuid(id: string | null | undefined): string | nu
   return s ? s.toLowerCase() : null
 }
 
+export type ChannelOptionLike = { id: string }
+
+export function activeChannelIdSet(channelOptions: readonly ChannelOptionLike[]): Set<string> {
+  return new Set(
+    channelOptions.map(c => normalizeChannelUuid(c.id)).filter(Boolean) as string[],
+  )
+}
+
+/** Keep linked channel ids that still exist in the user's active telegram_channels list. */
+export function filterChannelIdsToActiveOptions(
+  channelIds: readonly string[],
+  channelOptions: readonly ChannelOptionLike[],
+): string[] {
+  const valid = activeChannelIdSet(channelOptions)
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const raw of channelIds) {
+    const id = normalizeChannelUuid(raw)
+    if (!id || !valid.has(id) || seen.has(id)) continue
+    seen.add(id)
+    out.push(id)
+  }
+  return out
+}
+
 export function normalizeChannelTradingConfigsMap(raw: unknown): ChannelTradingConfigsMap {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
   const out: ChannelTradingConfigsMap = {}

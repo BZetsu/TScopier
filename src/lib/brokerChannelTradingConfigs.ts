@@ -164,9 +164,13 @@ export async function deleteBrokerChannelTradingConfigsExcept(
       return !keep.has(id)
     })
 
-  for (const channelId of toRemove) {
-    const { error } = await deleteBrokerChannelTradingConfig(supabase, brokerAccountId, channelId)
-    if (error) return { error }
-  }
-  return { error: null }
+  if (!toRemove.length) return { error: null }
+
+  const { error } = await supabase
+    .from('broker_channel_trading_configs')
+    .delete()
+    .eq('broker_account_id', brokerAccountId)
+    .in('channel_id', toRemove)
+
+  return { error: error?.message ?? null }
 }

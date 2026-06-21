@@ -114,6 +114,10 @@ export const accountConfigRu: AccountConfigBundleTranslations = {
       channelsNoneSelected: 'Ничего не выбрано',
       channelsEmptySaveWarning:
         'Не выбрано ни одного сигнального канала — этот брокер не будет копировать сигналы Telegram. Все равно сохранить?',
+      channelsSaveChannelListNotReady:
+        'Список каналов еще загружается. Подождите немного и попробуйте сохранить снова.',
+      channelsSaveLinkedChannelsInvalid:
+        'Не удалось сохранить привязанные каналы. Обновите страницу и попробуйте снова.',
       channelsSignalChannel: 'Сигнальный канал',
       channelsAll: 'Все сигнальные каналы',
       relinkOne:

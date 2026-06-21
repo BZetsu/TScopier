@@ -46,7 +46,11 @@ export async function ensureFreshAuthSession(): Promise<string> {
   if (expiresAt - nowSec > 120) return token
 
   const { data: refreshed, error: refreshErr } = await supabase.auth.refreshSession()
-  if (refreshErr || !refreshed.session?.access_token) return token
+  if (refreshErr) {
+    if (/throttled/i.test(refreshErr.message) && token) return token
+    return token
+  }
+  if (!refreshed.session?.access_token) return token
   return refreshed.session.access_token
 }
 
@@ -79,6 +83,8 @@ async function call<T = unknown>(opts: CallOpts<T>): Promise<T> {
     const retryToken = refreshed.session?.access_token
     if (!refreshErr && retryToken) {
       token = retryToken
+      res = await doFetch(token)
+    } else if (refreshErr && /throttled/i.test(refreshErr.message)) {
       res = await doFetch(token)
     }
   }

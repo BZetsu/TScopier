@@ -114,6 +114,10 @@ export const accountConfigJa: AccountConfigBundleTranslations = {
       channelsNoneSelected: '未選択',
       channelsEmptySaveWarning:
         'シグナルチャンネルが選択されていません — このブローカーは Telegram シグナルをコピーしません。それでも保存しますか？',
+      channelsSaveChannelListNotReady:
+        'チャンネル一覧を読み込み中です。しばらく待ってから再度保存してください。',
+      channelsSaveLinkedChannelsInvalid:
+        'リンク済みチャンネルを保存できませんでした。ページを更新して再度お試しください。',
       channelsSignalChannel: 'シグナルチャンネル',
       channelsAll: 'すべてのシグナルチャンネル',
       relinkOne:

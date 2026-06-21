@@ -114,6 +114,10 @@ export const accountConfigNl: AccountConfigBundleTranslations = {
       channelsNoneSelected: 'Geen geselecteerd',
       channelsEmptySaveWarning:
         'Er zijn geen signaalkanalen geselecteerd — deze broker zal geen Telegram-signalen kopiëren. Toch opslaan?',
+      channelsSaveChannelListNotReady:
+        'De kanalenlijst wordt nog geladen. Wacht even en probeer opnieuw op te slaan.',
+      channelsSaveLinkedChannelsInvalid:
+        'Gekoppelde signaalkanalen konden niet worden opgeslagen. Vernieuw de pagina en probeer opnieuw.',
       channelsSignalChannel: 'Signaalkanaal',
       channelsAll: 'Alle signaalkanalen',
       relinkOne:

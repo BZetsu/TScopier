@@ -1,5 +1,18 @@
 import { describe, expect, it } from 'vitest'
-import { restrictChannelTradingConfigsMap } from './channelTradingConfig'
+import {
+  filterChannelIdsToActiveOptions,
+  restrictChannelTradingConfigsMap,
+} from './channelTradingConfig'
+
+describe('filterChannelIdsToActiveOptions', () => {
+  it('matches channel ids case-insensitively', () => {
+    const filtered = filterChannelIdsToActiveOptions(
+      ['CHANNEL-A'],
+      [{ id: 'channel-a' }],
+    )
+    expect(filtered).toEqual(['channel-a'])
+  })
+})
 
 describe('restrictChannelTradingConfigsMap', () => {
   it('drops stale JSONB keys not in linked channel ids', () => {

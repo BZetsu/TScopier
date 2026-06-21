@@ -516,6 +516,8 @@ export interface AccountConfigBrokerListTranslations {
   detailEquity: string
   channelsNoneSelected: string
   channelsEmptySaveWarning: string
+  channelsSaveChannelListNotReady: string
+  channelsSaveLinkedChannelsInvalid: string
   channelsSignalChannel: string
   channelsAll: string
   relinkOne: string
