@@ -32,11 +32,15 @@ export interface AuthTranslations {
     sentHeading: string
     sentSubtitle: string
     sentHint: string
+    sendError: string
     backToLogin: string
   }
   resetPassword: {
     heading: string
     subtitle: string
+    verifyingHeading: string
+    verifyingSubtitle: string
+    securityNote: string
     password: string
     passwordPlaceholder: string
     confirmPassword: string
@@ -45,6 +49,8 @@ export interface AuthTranslations {
     passwordTooShort: string
     passwordMismatch: string
     submit: string
+    successHeading: string
+    successSubtitle: string
     invalidHeading: string
     invalidSubtitle: string
     requestNewLink: string

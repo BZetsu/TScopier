@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Mail } from 'lucide-react'
-import { supabase } from '../../lib/supabase'
 import { authRedirectUrl } from '../../lib/authRedirect'
+import { sendPasswordResetEmail } from '../../lib/sendPasswordResetEmail'
 import { Input } from '../../components/ui/Input'
 import { Button } from '../../components/ui/Button'
+import { Alert } from '../../components/ui/Alert'
 import { AuthBackHome } from '../../components/auth/AuthBackHome'
 import { useLocale } from '../../context/LocaleContext'
 
@@ -15,17 +16,25 @@ export function ForgotPasswordPage() {
   const [email, setEmail] = useState('')
   const [loading, setLoading] = useState(false)
   const [sent, setSent] = useState(false)
+  const [error, setError] = useState('')
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    setError('')
     setLoading(true)
 
-    await supabase.auth.resetPasswordForEmail(email.trim(), {
+    const result = await sendPasswordResetEmail({
+      email: email.trim(),
       redirectTo: authRedirectUrl('/reset-password'),
     })
 
-    setSent(true)
     setLoading(false)
+    if (!result.ok) {
+      setError(result.error ?? t.sendError)
+      return
+    }
+
+    setSent(true)
   }
 
   if (sent) {
@@ -61,6 +70,8 @@ export function ForgotPasswordPage() {
         {t.heading}
       </h1>
       <p className="mt-2 mb-8 text-sm text-neutral-500 dark:text-neutral-400">{t.subtitle}</p>
+
+      {error ? <Alert variant="error" className="mb-5 py-2.5">{error}</Alert> : null}
 
       <form onSubmit={handleSubmit} className="space-y-4">
         <Input

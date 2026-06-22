@@ -1,19 +1,35 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { KeyRound } from 'lucide-react'
+import clsx from 'clsx'
+import { CheckCircle2, KeyRound, Loader2, ShieldCheck } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
+import { isPasswordRecoveryLink } from '../../lib/isPasswordRecoveryLink'
+import { waitForAuthSession } from '../../lib/waitForAuthSession'
 import { PasswordInput } from '../../components/auth/PasswordInput'
 import { Button } from '../../components/ui/Button'
 import { Alert } from '../../components/ui/Alert'
 import { AuthBackHome } from '../../components/auth/AuthBackHome'
 import { useLocale } from '../../context/LocaleContext'
 
-type RecoveryState = 'checking' | 'ready' | 'invalid'
+type PagePhase = 'verifying' | 'ready' | 'invalid' | 'success'
 
-function isRecoveryHash(): boolean {
-  const hash = window.location.hash.replace(/^#/, '')
-  if (!hash) return false
-  return new URLSearchParams(hash).get('type') === 'recovery'
+function ResetCard({
+  children,
+  className,
+}: {
+  children: React.ReactNode
+  className?: string
+}) {
+  return (
+    <div
+      className={clsx(
+        'rounded-2xl border border-neutral-200 bg-neutral-50/90 p-6 shadow-sm dark:border-neutral-800 dark:bg-neutral-900/60 sm:p-8',
+        className,
+      )}
+    >
+      {children}
+    </div>
+  )
 }
 
 export function ResetPasswordPage() {
@@ -21,21 +37,21 @@ export function ResetPasswordPage() {
   const { auth } = useLocale()
   const t = auth.resetPassword
 
-  const [recoveryState, setRecoveryState] = useState<RecoveryState>('checking')
+  const [phase, setPhase] = useState<PagePhase>('verifying')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
   useEffect(() => {
-    const recoveryLink = isRecoveryHash()
     let cancelled = false
+    const recoveryLink = isPasswordRecoveryLink()
 
     const markReady = () => {
-      if (!cancelled) setRecoveryState('ready')
+      if (!cancelled) setPhase('ready')
     }
     const markInvalid = () => {
-      if (!cancelled) setRecoveryState('invalid')
+      if (!cancelled) setPhase('invalid')
     }
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
@@ -44,29 +60,26 @@ export function ResetPasswordPage() {
       }
     })
 
-    void supabase.auth.getSession().then(({ data: { session } }) => {
-      if (cancelled) return
-      if (session && recoveryLink) {
-        markReady()
+    void (async () => {
+      if (!recoveryLink) {
+        const { data: { session } } = await supabase.auth.getSession()
+        if (cancelled) return
+        if (session) {
+          markReady()
+        } else {
+          markInvalid()
+        }
         return
       }
-      if (!recoveryLink) {
+
+      const session = await waitForAuthSession()
+      if (cancelled) return
+      if (session) {
+        markReady()
+      } else {
         markInvalid()
       }
-    })
-
-    if (recoveryLink) {
-      const timeout = window.setTimeout(() => {
-        void supabase.auth.getSession().then(({ data: { session } }) => {
-          if (!cancelled && !session) markInvalid()
-        })
-      }, 5000)
-      return () => {
-        cancelled = true
-        clearTimeout(timeout)
-        subscription.unsubscribe()
-      }
-    }
+    })()
 
     return () => {
       cancelled = true
@@ -96,23 +109,35 @@ export function ResetPasswordPage() {
       return
     }
 
+    setPhase('success')
     await supabase.auth.signOut()
-    navigate('/login?reset=success', { replace: true })
+    window.setTimeout(() => {
+      navigate('/login?reset=success', { replace: true })
+    }, 1800)
   }
 
-  if (recoveryState === 'checking') {
+  if (phase === 'verifying') {
     return (
-      <div className="flex w-full justify-center py-16">
-        <div className="h-6 w-6 animate-spin rounded-full border-2 border-teal-600 border-t-transparent" />
+      <div className="w-full">
+        <AuthBackHome />
+        <ResetCard className="text-center">
+          <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-full bg-teal-50 dark:bg-teal-900/30">
+            <Loader2 className="h-7 w-7 animate-spin text-teal-600 dark:text-teal-400" aria-hidden />
+          </div>
+          <h1 className="text-xl font-semibold tracking-tight text-neutral-900 dark:text-neutral-50 sm:text-2xl">
+            {t.verifyingHeading}
+          </h1>
+          <p className="mt-2 text-sm text-neutral-500 dark:text-neutral-400">{t.verifyingSubtitle}</p>
+        </ResetCard>
       </div>
     )
   }
 
-  if (recoveryState === 'invalid') {
+  if (phase === 'invalid') {
     return (
       <div className="w-full">
         <AuthBackHome />
-        <div className="text-center">
+        <ResetCard className="text-center">
           <h1 className="text-2xl font-semibold tracking-tight text-neutral-900 dark:text-neutral-50 sm:text-3xl">
             {t.invalidHeading}
           </h1>
@@ -131,7 +156,24 @@ export function ResetPasswordPage() {
               {t.backToLogin}
             </Link>
           </p>
-        </div>
+        </ResetCard>
+      </div>
+    )
+  }
+
+  if (phase === 'success') {
+    return (
+      <div className="w-full">
+        <AuthBackHome />
+        <ResetCard className="text-center">
+          <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-full bg-teal-50 dark:bg-teal-900/30">
+            <CheckCircle2 className="h-8 w-8 text-teal-600 dark:text-teal-400" aria-hidden />
+          </div>
+          <h1 className="text-2xl font-semibold tracking-tight text-neutral-900 dark:text-neutral-50 sm:text-3xl">
+            {t.successHeading}
+          </h1>
+          <p className="mt-3 text-sm text-neutral-500 dark:text-neutral-400">{t.successSubtitle}</p>
+        </ResetCard>
       </div>
     )
   }
@@ -139,40 +181,60 @@ export function ResetPasswordPage() {
   return (
     <div className="w-full">
       <AuthBackHome />
-      <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-full bg-teal-50 dark:bg-teal-900/20">
-        <KeyRound className="h-7 w-7 text-teal-600 dark:text-teal-400" />
+      <div className="mb-6 flex items-center gap-3">
+        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-teal-50 dark:bg-teal-900/30">
+          <KeyRound className="h-6 w-6 text-teal-600 dark:text-teal-400" aria-hidden />
+        </div>
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight text-neutral-900 dark:text-neutral-50 sm:text-3xl">
+            {t.heading}
+          </h1>
+          <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">{t.subtitle}</p>
+        </div>
       </div>
-      <h1 className="text-2xl font-semibold tracking-tight text-neutral-900 dark:text-neutral-50 sm:text-3xl">
-        {t.heading}
-      </h1>
-      <p className="mt-2 mb-8 text-sm text-neutral-500 dark:text-neutral-400">{t.subtitle}</p>
 
-      {error ? <Alert variant="error" className="mb-5 py-2.5">{error}</Alert> : null}
+      <ResetCard>
+        <div className="mb-6 flex items-start gap-3 rounded-xl border border-teal-100 bg-teal-50/70 px-4 py-3 dark:border-teal-900/50 dark:bg-teal-950/30">
+          <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-teal-600 dark:text-teal-400" aria-hidden />
+          <p className="text-sm leading-relaxed text-neutral-600 dark:text-neutral-300">{t.securityNote}</p>
+        </div>
 
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <PasswordInput
-          label={t.password}
-          placeholder={t.passwordPlaceholder}
-          value={password}
-          onChange={e => setPassword(e.target.value)}
-          required
-          autoComplete="new-password"
-          hint={t.passwordHint}
-        />
+        {error ? <Alert variant="error" className="mb-5 py-2.5">{error}</Alert> : null}
 
-        <PasswordInput
-          label={t.confirmPassword}
-          placeholder={t.confirmPasswordPlaceholder}
-          value={confirmPassword}
-          onChange={e => setConfirmPassword(e.target.value)}
-          required
-          autoComplete="new-password"
-        />
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <PasswordInput
+            label={t.password}
+            placeholder={t.passwordPlaceholder}
+            value={password}
+            onChange={e => setPassword(e.target.value)}
+            required
+            autoComplete="new-password"
+            hint={t.passwordHint}
+          />
 
-        <Button type="submit" loading={loading} className="w-full !mt-6" size="lg">
-          {t.submit}
-        </Button>
-      </form>
+          <PasswordInput
+            label={t.confirmPassword}
+            placeholder={t.confirmPasswordPlaceholder}
+            value={confirmPassword}
+            onChange={e => setConfirmPassword(e.target.value)}
+            required
+            autoComplete="new-password"
+          />
+
+          <Button type="submit" loading={loading} className="w-full !mt-6" size="lg">
+            {t.submit}
+          </Button>
+        </form>
+      </ResetCard>
+
+      <p className="mt-6 text-center text-sm text-neutral-500 dark:text-neutral-400">
+        <Link
+          to="/login"
+          className="font-medium text-teal-600 hover:text-teal-700 dark:text-teal-400 dark:hover:text-teal-300"
+        >
+          {t.backToLogin}
+        </Link>
+      </p>
     </div>
   )
 }
