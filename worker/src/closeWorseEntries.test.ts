@@ -12,7 +12,7 @@ import {
   selectWorseImmediateLegsForCweInstruction,
 } from './closeWorseEntries'
 
-const pip = 0.1 // XAU-style
+const pip = 0.01 // XAU cent pip
 
 const trade = (
   id: string,
@@ -35,7 +35,7 @@ test('isEntryWithinPipsOfReference: buy ladder example', () => {
   const anchor = 4565.1
   const ref = anchor + 30 * pip // market +30 pips from signal entry
   assert.equal(isEntryWithinPipsOfReference(4565.1, ref, 30, pip), true)
-  assert.equal(isEntryWithinPipsOfReference(4556.0, ref, 30, pip), false)
+  assert.equal(isEntryWithinPipsOfReference(4564.7, ref, 30, pip), false)
 })
 
 test('referencePriceForDirection uses bid for buy and ask for sell', () => {

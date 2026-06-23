@@ -25,7 +25,7 @@ test('breakevenStopLossForSymbol: buy XAUUSD entry + 3 pips', () => {
       manual: { breakeven_offset_pips: 3 },
       symbol: 'XAUUSD',
     }),
-    4330.3,
+    4330.03,
   )
 })
 

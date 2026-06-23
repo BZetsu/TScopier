@@ -29,7 +29,7 @@ const baseSplit = {
   rangePct: 50,
   stepPips: 10,
   distPips: 100,
-  pip: 0.1,
+  pip: 0.01,
   minStepPriceUnits: 0,
   hasSignalAnchor: true,
 }
@@ -60,7 +60,7 @@ test('planRangeSplit: 50% × 20 legs → 10 pendings @ 10 pip step', () => {
   assert.equal(r.activePendingLegs, 10)
   assert.equal(r.maxStepIdx, 10)
   assert.equal(r.effectiveStepPips, 10)
-  assert.ok(Math.abs(r.stepPriceOffset - 1.0) < 1e-9) // 10 × 0.1
+  assert.ok(Math.abs(r.stepPriceOffset - 0.1) < 1e-9) // 10 × 0.01
   assert.equal(r.fallbackReason, undefined)
 })
 
@@ -89,10 +89,10 @@ test('planRangeSplit: step changes spacing but not reserved count', () => {
 })
 
 test('planRangeSplit: auto-expands step when below broker minimum', () => {
-  // pip = 0.1, configured step = 2 pips = 0.2 price units, but broker requires 1.02.
-  // ceil(1.02 / 0.1) = 11 pips.
+  // pip = 0.01, configured step = 2 pips = 0.02 price units, but broker requires 1.02.
+  // ceil(1.02 / 0.01) = 102 pips.
   const r = planRangeSplit({ ...baseSplit, stepPips: 2, minStepPriceUnits: 1.02 })
-  assert.equal(r.effectiveStepPips, 11)
+  assert.equal(r.effectiveStepPips, 102)
   assert.equal(r.fallbackReason, 'range_trading_step_auto_expanded')
 })
 
@@ -109,10 +109,9 @@ test('planRangeSplit: no signal anchor + no immediates → runtime-only fallback
 test('computeCwOverrideTp: buy → anchor + pips × pip', () => {
   const policy: PlannerCloseWorseEntries = { immediates: 2, pipsFromAnchor: 30 }
   const out = computeCwOverrideTp({
-    policy, anchor: 1850, isBuy: true, pip: 0.1, digits: 2, minStopDistance: 1.02,
+    policy, anchor: 1850, isBuy: true, pip: 0.01, digits: 2, minStopDistance: 1.02,
   })
-  // 1850 + 30 × 0.1 = 1853 (already outside the 1.02 floor).
-  assert.equal(out, 1853)
+  assert.equal(out, 1850.3)
 })
 
 test('computeCwOverrideTp: ignores broker stops/freeze floor (worker-managed close)', () => {
@@ -131,15 +130,15 @@ test('computeCwOverrideTp: ignores broker stops/freeze floor (worker-managed clo
 test('computeCwOverrideTp: sell direction inverts override', () => {
   const policy: PlannerCloseWorseEntries = { immediates: 1, pipsFromAnchor: 30 }
   const out = computeCwOverrideTp({
-    policy, anchor: 1850, isBuy: false, pip: 0.1, digits: 2, minStopDistance: 0,
+    policy, anchor: 1850, isBuy: false, pip: 0.01, digits: 2, minStopDistance: 0,
   })
-  assert.equal(out, 1847) // 1850 - 30 × 0.1
+  assert.equal(out, 1849.7)
 })
 
 test('computeCwOverrideTp: zero anchor returns null', () => {
   const policy: PlannerCloseWorseEntries = { immediates: 1, pipsFromAnchor: 30 }
   const out = computeCwOverrideTp({
-    policy, anchor: 0, isBuy: true, pip: 0.1, digits: 2, minStopDistance: 0,
+    policy, anchor: 0, isBuy: true, pip: 0.01, digits: 2, minStopDistance: 0,
   })
   assert.equal(out, null)
 })
@@ -147,7 +146,7 @@ test('computeCwOverrideTp: zero anchor returns null', () => {
 test('computeCwOverrideTp: zero pipsFromAnchor returns null', () => {
   const policy: PlannerCloseWorseEntries = { immediates: 1, pipsFromAnchor: 0 }
   const out = computeCwOverrideTp({
-    policy, anchor: 1850, isBuy: true, pip: 0.1, digits: 2, minStopDistance: 0,
+    policy, anchor: 1850, isBuy: true, pip: 0.01, digits: 2, minStopDistance: 0,
   })
   assert.equal(out, null)
 })
@@ -466,17 +465,43 @@ test('planManualOrders: XAUUSD range 30/3/50% spans 30 pips across 10 layering l
   assert.equal(rl.maxStepIdx, 10)
   assert.equal(rl.reservedPendingLegs, 10)
   assert.equal(rl.activePendingLegs, 10)
-  assert.ok(Math.abs(rl.stepPriceOffset - 0.3) < 1e-9)
+  assert.ok(Math.abs(rl.stepPriceOffset - 0.03) < 1e-9)
 
   const virtuals = plan.virtualPendings!
   assert.equal(virtuals[0]!.stepIdx, 1)
   assert.equal(virtuals[9]!.stepIdx, 10)
-  assert.ok(Math.abs(virtuals[0]!.stepPriceOffset - 0.3) < 1e-9)
+  assert.ok(Math.abs(virtuals[0]!.stepPriceOffset - 0.03) < 1e-9)
 
   const first = triggerPriceFor(virtuals[0]!, 2650, 2)
   const last = triggerPriceFor(virtuals[9]!, 2650, 2)
-  assert.equal(first, 2649.7)
-  assert.equal(last, 2647)
+  assert.equal(first, 2649.97)
+  assert.equal(last, 2649.7)
+})
+
+test('planManualOrders: XAUUSD cent pip layering at 2350.50 spans 30 pips in 3-pip steps', () => {
+  const manual: ManualSettings = {
+    ...baseManual,
+    range_percent: 100,
+    range_step_pips: 3,
+    range_distance_pips: 30,
+  }
+  const anchor = 2350.5
+  const plan = planManualOrders({
+    parsed: { ...baseParsed, entry_price: anchor },
+    resolvedSymbol: 'XAUUSD',
+    baseOperation: 'Buy',
+    manual,
+    channelKeywords: null,
+    manualLot: 1.0,
+    ctx: baseCtx,
+    commentPrefix: 'TScopier:abc',
+  })
+  const virtuals = plan.virtualPendings ?? []
+  assert.equal(virtuals.length, 10)
+  const first = triggerPriceFor(virtuals[0]!, anchor, 2)
+  const last = triggerPriceFor(virtuals[virtuals.length - 1]!, anchor, 2)
+  assert.equal(first, 2350.47)
+  assert.equal(last, 2350.2)
 })
 
 test('planManualOrders: range distance caps layering when reserved exceeds floor(dist/step)', () => {
@@ -1252,7 +1277,7 @@ test('planManualOrders: predefined SL wins over rr_for_sl when both apply', () =
     ctx: { ...baseCtx, point: 0.0001, digits: 5 },
     commentPrefix: 'TScopier:abc',
   })
-  const pip = signalPipPrice('EURUSD')
+  const pip = pipCalculator('EURUSD', 0.0001, 5).pipPrice
   const expectedSl = Number((entry - 50 * pip).toFixed(5))
   assert.equal(plan.orders[0]?.stoploss, expectedSl)
 })
@@ -1282,7 +1307,7 @@ test('planManualOrders: use_signal_entry_range uses zone width for range layerin
   assert.ok(rl)
   assert.equal(rl.useSignalEntryRange, true)
   assert.equal(rl.signalRangeBoundary, 4325)
-  assert.equal(rl.effectiveDistancePips, 100) // 10 price units / 0.1 pip
+  assert.equal(rl.effectiveDistancePips, 1000) // 10 price units / 0.01 pip
   assert.equal(rl.activePendingLegs, 5) // 50% of 10 legs reserved; zone width allows all 5
 })
 

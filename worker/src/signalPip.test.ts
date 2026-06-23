@@ -9,7 +9,8 @@ test('signalPipPrice: FX and metals match backtest multipliers', () => {
   assert.equal(signalPipPrice('EURUSD'), 0.0001)
   assert.equal(getPipMultiplierForSymbol('EURUSD'), 10_000)
   assert.equal(signalPipPrice('USDJPY'), 0.01)
-  assert.equal(signalPipPrice('XAUUSD'), 0.10)
+  assert.equal(signalPipPrice('XAUUSD'), 0.01)
+  assert.equal(getPipMultiplierForSymbol('XAUUSD'), 100)
   assert.equal(signalPipPrice('XAGUSD'), 0.10)
 })
 

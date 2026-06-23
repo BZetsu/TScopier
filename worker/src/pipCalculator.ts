@@ -2,7 +2,7 @@
  * Broker-driven pip calculator (standard myfxbook convention).
  *
  * Produces both:
- *   • `pipPrice` — the price-unit size of 1 pip (e.g. 0.10 on XAUUSD).
+ *   • `pipPrice` — the price-unit size of 1 pip (e.g. 0.01 on XAUUSD).
  *     Used by the planner for SL/TP placement and range-step math.
  *   • `pipValuePer{Std,Mini,Micro}Lot` — the quote-currency value of 1 pip
  *     on a 1.00 / 0.10 / 0.01 lot. Used by the UI for risk hints (and
@@ -16,7 +16,7 @@
  * Conventions follow the **standard myfxbook** definition:
  *   FX major          1 pip = 0.0001 price → $10 per 1.00 lot
  *   USDJPY            1 pip = 0.01 price   → 1000 JPY per 1.00 lot
- *   XAUUSD            1 pip = 0.10 price   → $10 per 1.00 lot
+ *   XAUUSD            1 pip = 0.01 price   → $1 per 1.00 lot
  *   XAGUSD            1 pip = 0.01 price   → $50 per 1.00 lot (5000 oz)
  *
  * Pip values are returned in the symbol's **quote currency**. We do not
@@ -28,7 +28,7 @@
 import { classifySymbol, type SymbolClass } from './pipMath'
 
 export interface PipQuote {
-  /** Price-unit size of 1 pip (e.g. 0.10 on XAU, 0.0001 on EURUSD). */
+  /** Price-unit size of 1 pip (e.g. 0.01 on XAU, 0.0001 on EURUSD). */
   pipPrice: number
   /** Quote-currency value of 1 pip on a 1.00 lot. */
   pipValuePerStdLot: number
@@ -110,13 +110,12 @@ function pipPriceFor(symbol: string, klass: SymbolClass, point: number, digits: 
   }
 
   if (klass === 'metal') {
-    const upper = String(symbol || '').toUpperCase()
-    // Silver pip ($0.01) is smaller than gold/platinum/palladium pip ($0.10)
-    // because silver trades at ~1/100th the gold price. Both float ABOVE the
-    // 10×point baseline so that 3/5-digit brokers can't shrink the pip into
-    // the broker's stops_level.
-    const floor = upper.includes('XAG') ? 0.01 : 0.10
-    return Math.max(point * 10, floor)
+    const core = String(symbol || '').toUpperCase().replace(/[^A-Z].*$/, '')
+    const base = core.length >= 3 ? core.slice(0, 3) : core
+    // Gold/platinum/palladium: retail convention is 1 pip = $0.01 (second decimal).
+    if (base === 'XAU' || base === 'XPT' || base === 'XPD') return 0.01
+    // Silver: keep 10×point floor so 3/5-digit brokers can't shrink the pip.
+    return Math.max(point * 10, 0.01)
   }
 
   if (klass === 'index') {

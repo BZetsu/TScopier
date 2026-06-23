@@ -23,12 +23,18 @@ export function normalizeSignalSymbol(userSymbol: string): string {
   return raw
 }
 
+function metalPipMultiplier(base: string): number {
+  if (base === "XAU" || base === "XPT" || base === "XPD") return 100
+  if (base === "XAG") return 10
+  return 100
+}
+
 export function getPipMultiplierForSymbol(userSymbol: string): number {
   const pair = normalizeSignalSymbol(userSymbol)
   if (pair.length >= 6) {
     const base = pair.slice(0, 3)
     const quote = pair.slice(3, 6)
-    if (base === "XAU" || base === "XAG" || base === "XPT" || base === "XPD") return 10
+    if (base === "XAU" || base === "XAG" || base === "XPT" || base === "XPD") return metalPipMultiplier(base)
     if (quote === "JPY") return 100
     return 10_000
   }
@@ -40,7 +46,7 @@ export function getPipMultiplierForSymbol(userSymbol: string): number {
     case "fx_major":
       return 10_000
     case "metal":
-      return 10
+      return 100
     case "index":
       return 1
     case "crypto":

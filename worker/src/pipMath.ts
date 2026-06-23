@@ -8,7 +8,7 @@
  *   - FX 5-digit majors (EURUSD = 1.23456)        → pip = 10 × point   (0.0001)
  *   - FX 2-digit JPY    (USDJPY = 156.12)         → pip = point        (0.01)
  *   - FX 3-digit JPY    (USDJPY = 156.123)        → pip = 10 × point   (0.01)
- *   - XAU/XPT/XPD       any digits                → pip = $0.10 floor
+ *   - XAU/XPT/XPD       any digits                → pip = $0.01 (second decimal)
  *   - XAG (silver)      any digits                → pip = $0.01 floor
  *   - Indices, crypto, energy, exotics            → pip = 10 × point
  *
@@ -21,9 +21,9 @@
  * For **everything else** (indices, crypto, energy) the conventional pip is
  * `10 × point` — the broker's `point` is the sub-pip increment.
  *
- * Why we need this: on XAUUSD the executor was treating `pip = point = $0.01`,
- * so "10 pips" rendered as $0.10 — well inside the broker's stops_level. Every
- * Invalid Stops error and silent step auto-expand traced back to this.
+ * Range layering uses `planRangeSplit` step auto-expand when a cent-based step
+ * is below the broker `stopsLevel` minimum — so gold can use $0.01 pips without
+ * placing stops inside the broker freeze band.
  */
 
 export type SymbolClass = 'fx_major' | 'fx_jpy' | 'metal' | 'index' | 'crypto' | 'energy' | 'other'

@@ -146,6 +146,6 @@ describe('updateRangePendingLegsForManagement', () => {
       parsedTpLevels: [],
     })
     assert.equal(n, 1)
-    assert.equal(updates[0]!.patch.stoploss, 4330.5)
+    assert.equal(updates[0]!.patch.stoploss, 4330.05)
   })
 })

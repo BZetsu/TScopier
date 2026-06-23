@@ -4,6 +4,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { symbolsCompatibleForBasket } from './basketModFollowUp'
+import { classifySymbol } from './pipMath'
 import { signalPipPrice } from './signalPip'
 import { sanitizeParsedSymbol } from './tradableSymbol'
 
@@ -35,6 +36,13 @@ export type MgmtTradeRow = {
 }
 
 const MAX_PLAUSIBLE_PIPS = 500
+/** Legacy gold mgmt used 500 × $0.10 = $50; keep the same price ceiling at cent pips. */
+const METAL_MAX_MGMT_PRICE_DIST = 50
+
+function maxMgmtPriceDistance(symbol: string, pip: number): number {
+  if (classifySymbol(symbol) === 'metal') return METAL_MAX_MGMT_PRICE_DIST
+  return MAX_PLAUSIBLE_PIPS * pip
+}
 
 export function isReplyScopedManagement(signal: MgmtSignalLike): boolean {
   return Boolean(String(signal.reply_to_message_id ?? '').trim())
@@ -108,7 +116,7 @@ function levelPlausibleForBucket(
   const sample = rows[0]
   const pip = signalPipPrice(sample?.symbol ?? parsed.symbol ?? 'EURUSD')
   if (!(pip > 0)) return false
-  const maxDist = MAX_PLAUSIBLE_PIPS * pip
+  const maxDist = maxMgmtPriceDistance(sample?.symbol ?? parsed.symbol ?? 'EURUSD', pip)
 
   const isBuy = rows.every(r => String(r.direction).toLowerCase() === 'buy')
   const isSell = rows.every(r => String(r.direction).toLowerCase() === 'sell')

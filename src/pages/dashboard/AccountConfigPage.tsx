@@ -64,7 +64,7 @@ import { computeMinMultiTradeLegPercent, resolveMultiTradePerLegLot } from '../.
 import { formatPreviewLotSize, resolvePreviewManualLot } from '../../lib/manualLotSizing'
 import { pipCalculator, pipValueForLots, type PipQuote } from '../../lib/pipCalculator'
 import { classifySymbol } from '../../lib/pipMath'
-import { pipsToPriceOffset, signalPipPrice } from '../../lib/signalPip'
+import { signalPipPrice } from '../../lib/signalPip'
 import { formatMoneyWithCode } from '../../lib/currency'
 import type { BrokerAccount, ManualSettings, ManualTpLot } from '../../types/database'
 import {
@@ -1177,7 +1177,7 @@ export function AccountConfigPage() {
       const parts = raw.split(/[,;\s]+/).map(s => s.trim()).filter(Boolean)
       if (parts.length !== 1) return null
       const symbol = parts[0].toUpperCase()
-      const pipPx = signalPipPrice(symbol)
+      const pipPx = livePipQuote?.pipPrice ?? signalPipPrice(symbol)
       const klass = classifySymbol(symbol)
       const priceDigits =
         klass === 'fx_major' ? 4
@@ -1185,7 +1185,7 @@ export function AccountConfigPage() {
             : klass === 'index' ? 0
               : 2
       const fmtPrice = (n: number) => n.toFixed(priceDigits)
-      const priceOffset = pipCount > 0 ? pipsToPriceOffset(pipCount, symbol) : pipPx
+      const priceOffset = pipCount > 0 ? pipCount * pipPx : pipPx
       const fixedLot = Number(channelManualSettings.fixed_lot ?? 0.01) || 0.01
       const perPip = livePipQuote ? pipValueForLots(livePipQuote, fixedLot) : 0
       const ccy = livePipQuote?.quoteCurrency ?? undefined
@@ -1202,6 +1202,33 @@ export function AccountConfigPage() {
       })
     }
   }, [cm.pipHint, livePipQuote, channelManualSettings.fixed_lot, channelManualSettings.symbol_to_trade])
+
+  const rangeDistanceFieldHint = useMemo(() => {
+    if (channelManualSettings.use_signal_entry_range === true) {
+      return cm.risk.useSignalRangeDistanceDisabledHint
+    }
+    const distPips = Number(channelManualSettings.range_distance_pips ?? DEFAULT_MANUAL_SETTINGS.range_distance_pips) || 0
+    const base = formatPipHint(distPips) ?? cm.risk.rangeDistanceFallback
+    if (channelManualSettings.range_trading) {
+      const activePending = multiTradePreview.activePending ?? 0
+      const pending = multiTradePreview.pending ?? 0
+      if (activePending > 0 && activePending < pending) {
+        return `${base}${interpolate(cm.risk.previewLadderDistanceCap, {
+          active: String(activePending),
+          pending: String(pending),
+        })}`
+      }
+    }
+    return base
+  }, [
+    channelManualSettings.use_signal_entry_range,
+    channelManualSettings.range_trading,
+    channelManualSettings.range_distance_pips,
+    cm.risk,
+    formatPipHint,
+    multiTradePreview.activePending,
+    multiTradePreview.pending,
+  ])
 
   const resolvedSingleSymbol = useMemo(() => {
     const raw = (channelManualSettings.symbol_to_trade ?? '').trim()
@@ -2885,14 +2912,7 @@ export function AccountConfigPage() {
                                         step={1}
                                         placeholder="100"
                                         disabled={channelManualSettings.use_signal_entry_range === true}
-                                        hint={
-                                          channelManualSettings.use_signal_entry_range === true
-                                            ? cm.risk.useSignalRangeDistanceDisabledHint
-                                            : (
-                                              formatPipHint(Number(channelManualSettings.range_distance_pips ?? DEFAULT_MANUAL_SETTINGS.range_distance_pips) || 0)
-                                              ?? cm.risk.rangeDistanceFallback
-                                            )
-                                        }
+                                        hint={rangeDistanceFieldHint}
                                         value={String(channelManualSettings.range_distance_pips ?? DEFAULT_MANUAL_SETTINGS.range_distance_pips)}
                                         onChange={e => setManual({ range_distance_pips: Math.max(1, Number(e.target.value) || 1) })}
                                       />

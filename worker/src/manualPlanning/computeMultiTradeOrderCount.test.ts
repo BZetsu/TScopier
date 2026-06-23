@@ -31,6 +31,20 @@ test('computeMultiTradeOrderCount: 0.2 lot @ 5% → 20 orders', () => {
   )
 })
 
+test('computeMultiTradeOrderCount: range distance caps pending legs', () => {
+  assert.equal(
+    computeMultiTradeOrderCount({
+      manualLot: 4,
+      legPercent: 2.5,
+      rangeTrading: true,
+      rangePercent: 50,
+      rangeStepPips: 3,
+      rangeDistancePips: 30,
+    }),
+    30,
+  )
+})
+
 test('normalizeManualSettingsForExecution seeds multi_trade_max_orders from leg%', () => {
   const ms = normalizeManualSettingsForExecution({
     trade_style: 'multi',
@@ -63,5 +77,5 @@ test('normalizeManualSettingsForExecution recomputes burst cap for dynamic balan
     range_step_pips: 3,
     range_distance_pips: 30,
   }, { accountBalance: 31_054.79 })
-  assert.equal(ms.multi_trade_max_orders, 34)
+  assert.equal(ms.multi_trade_max_orders, 27)
 })

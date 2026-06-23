@@ -21,8 +21,8 @@ test('computeFollowUpStops: breakeven applies offset beyond entry', () => {
     { action: 'breakeven' },
   )
   assert.ok(stops)
-  assert.equal(stops!.stoploss, 4330.5)
-  assert.equal(stops!.dbPatch.sl, 4330.5)
+  assert.equal(stops!.stoploss, 4330.05)
+  assert.equal(stops!.dbPatch.sl, 4330.05)
 })
 
 test('computeFollowUpStops: sell breakeven offsets below entry', () => {
@@ -44,5 +44,5 @@ test('computeFollowUpStops: sell breakeven offsets below entry', () => {
     { action: 'breakeven' },
   )
   assert.ok(stops)
-  assert.equal(stops!.stoploss, 4299.5)
+  assert.equal(stops!.stoploss, 4299.95)
 })

@@ -22,8 +22,8 @@ const zoneParsed: ParsedSignal = {
   lot_size: null,
 }
 
-test('signalZoneWidthPips: XAUUSD zone 4335/4325 → 100 pips at pip 0.1', () => {
-  assert.equal(signalZoneWidthPips(zoneParsed, 0.1), 100)
+test('signalZoneWidthPips: XAUUSD zone 4335/4325 → 1000 pips at pip 0.01', () => {
+  assert.equal(signalZoneWidthPips(zoneParsed, 0.01), 1000)
 })
 
 test('signalRangeBoundary: buy → low, sell → high', () => {
@@ -36,9 +36,9 @@ test('resolveRangeDistancePips: toggle on + zone uses signal width and boundary'
     range_distance_pips: 30,
     use_signal_entry_range: true,
   }
-  const r = resolveRangeDistancePips({ manual, parsed: zoneParsed, pip: 0.1, isBuy: true })
+  const r = resolveRangeDistancePips({ manual, parsed: zoneParsed, pip: 0.01, isBuy: true })
   assert.equal(r.source, 'signal_zone')
-  assert.equal(r.distPips, 100)
+  assert.equal(r.distPips, 1000)
   assert.equal(r.boundary, 4325)
 })
 
@@ -48,7 +48,7 @@ test('resolveRangeDistancePips: toggle on + no zone falls back to manual distanc
     use_signal_entry_range: true,
   }
   const parsed: ParsedSignal = { ...zoneParsed, entry_zone_low: null, entry_zone_high: null, entry_price: 4330 }
-  const r = resolveRangeDistancePips({ manual, parsed, pip: 0.1, isBuy: true })
+  const r = resolveRangeDistancePips({ manual, parsed, pip: 0.01, isBuy: true })
   assert.equal(r.source, 'manual')
   assert.equal(r.distPips, 30)
   assert.equal(r.boundary, null)
@@ -59,7 +59,7 @@ test('resolveRangeDistancePips: toggle off ignores zone', () => {
     range_distance_pips: 30,
     use_signal_entry_range: false,
   }
-  const r = resolveRangeDistancePips({ manual, parsed: zoneParsed, pip: 0.1, isBuy: true })
+  const r = resolveRangeDistancePips({ manual, parsed: zoneParsed, pip: 0.01, isBuy: true })
   assert.equal(r.source, 'manual')
   assert.equal(r.distPips, 30)
   assert.equal(r.boundary, null)
@@ -80,10 +80,10 @@ test('virtualLegTriggerAllowed: sell ladder stops at zone high', () => {
 test('runtime clamp: buy anchor 4330 step 3 pips rejects legs past 4325', () => {
   const anchor = 4330
   const boundary = 4325
-  const stepPriceOffset = 0.3 // 3 pips × 0.1
+  const stepPriceOffset = 0.03 // 3 pips × 0.01
   const digits = 2
   let allowed = 0
-  for (let stepIdx = 1; stepIdx <= 20; stepIdx++) {
+  for (let stepIdx = 1; stepIdx <= 200; stepIdx++) {
     const trigger = triggerPriceFor({
       stepIdx,
       stepPriceOffset,
@@ -104,10 +104,10 @@ test('runtime clamp: buy anchor 4330 step 3 pips rejects legs past 4325', () => 
       allowed += 1
     }
   }
-  // span 5.0 / 0.3 = 16.66 → steps 1..16 allowed, 17+ rejected
-  assert.equal(allowed, 16)
+  // span 5.0 / 0.03 = 166.66 → steps 1..166 allowed, 167+ rejected
+  assert.equal(allowed, 166)
   const lastAllowed = triggerPriceFor({
-    stepIdx: 16,
+    stepIdx: 166,
     stepPriceOffset,
     isBuy: true,
     volume: 0.01,
@@ -118,7 +118,7 @@ test('runtime clamp: buy anchor 4330 step 3 pips rejects legs past 4325', () => 
   }, anchor, digits)
   assert.ok(lastAllowed >= boundary)
   const firstRejected = triggerPriceFor({
-    stepIdx: 17,
+    stepIdx: 167,
     stepPriceOffset,
     isBuy: true,
     volume: 0.01,
@@ -137,11 +137,11 @@ test('signalRangeEntryQuoteAllowsImmediate: buy point price within tolerance', (
     isBuy: true,
   })!
   assert.equal(
-    signalRangeEntryQuoteAllowsImmediate({ wait, bid: 4500, ask: 4505.5, pipSize: 0.1 }),
+    signalRangeEntryQuoteAllowsImmediate({ wait, bid: 4500, ask: 4505.05, pipSize: 0.01 }),
     true,
   )
   assert.equal(
-    signalRangeEntryQuoteAllowsImmediate({ wait, bid: 4500, ask: 4506.5, pipSize: 0.1 }),
+    signalRangeEntryQuoteAllowsImmediate({ wait, bid: 4500, ask: 4505.15, pipSize: 0.01 }),
     false,
   )
 })
@@ -161,19 +161,19 @@ test('signalRangeEntryQuoteAllowsImmediate: buy zone 4500-4505 full band matrix'
     },
     isBuy: true,
   })!
-  const pipSize = 0.1 // 10 pips → 1.0 tolerance
-  // Above hi + tol (4506) — bid entirely above band
+  const pipSize = 0.01 // 10 pips → 0.10 tolerance
+  // Above hi + tol (4505.10) — bid entirely above band
   assert.equal(signalRangeEntryQuoteAllowsImmediate({ wait, bid: 4507, ask: 4510, pipSize }), false)
-  // At hi + tol (4506) → trade
-  assert.equal(signalRangeEntryQuoteAllowsImmediate({ wait, bid: 4500, ask: 4506, pipSize }), true)
+  // At hi + tol (4505.10) → trade
+  assert.equal(signalRangeEntryQuoteAllowsImmediate({ wait, bid: 4500, ask: 4505.1, pipSize }), true)
   // Inside zone → trade
   assert.equal(signalRangeEntryQuoteAllowsImmediate({ wait, bid: 4498, ask: 4502, pipSize }), true)
   // At zone lo (4500) → trade
   assert.equal(signalRangeEntryQuoteAllowsImmediate({ wait, bid: 4498, ask: 4500, pipSize }), true)
   // Below lo - tol — spread entirely under band (ask must clear lo - tol)
-  assert.equal(signalRangeEntryQuoteAllowsImmediate({ wait, bid: 4498, ask: 4498.99, pipSize }), false)
-  // At lo - tol (4499) → trade (ask touches band bottom)
-  assert.equal(signalRangeEntryQuoteAllowsImmediate({ wait, bid: 4496, ask: 4499, pipSize }), true)
+  assert.equal(signalRangeEntryQuoteAllowsImmediate({ wait, bid: 4498, ask: 4499.89, pipSize }), false)
+  // At lo - tol (4499.90) → trade (ask touches band bottom)
+  assert.equal(signalRangeEntryQuoteAllowsImmediate({ wait, bid: 4496, ask: 4499.9, pipSize }), true)
 })
 
 test('signalRangeEntryQuoteAllowsImmediate: buy zone band hi and lo bounds', () => {
@@ -182,13 +182,13 @@ test('signalRangeEntryQuoteAllowsImmediate: buy zone band hi and lo bounds', () 
     parsed: zoneParsed,
     isBuy: true,
   })!
-  const pipSize = 0.1
+  const pipSize = 0.01
   assert.equal(
-    signalRangeEntryQuoteAllowsImmediate({ wait, bid: 4320, ask: 4335.5, pipSize }),
+    signalRangeEntryQuoteAllowsImmediate({ wait, bid: 4320, ask: 4335.05, pipSize }),
     true,
   )
   assert.equal(
-    signalRangeEntryQuoteAllowsImmediate({ wait, bid: 4337, ask: 4340, pipSize }),
+    signalRangeEntryQuoteAllowsImmediate({ wait, bid: 4335.2, ask: 4340, pipSize }),
     false,
   )
   // Mid-zone without touching either edge
@@ -204,13 +204,13 @@ test('signalRangeEntryQuoteAllowsImmediate: sell zone band lo and hi bounds', ()
     parsed: zoneParsed,
     isBuy: false,
   })!
-  const pipSize = 0.1
+  const pipSize = 0.01
   assert.equal(
-    signalRangeEntryQuoteAllowsImmediate({ wait, bid: 4324.5, ask: 4340, pipSize }),
+    signalRangeEntryQuoteAllowsImmediate({ wait, bid: 4324.95, ask: 4340, pipSize }),
     true,
   )
   assert.equal(
-    signalRangeEntryQuoteAllowsImmediate({ wait, bid: 4320, ask: 4323.5, pipSize }),
+    signalRangeEntryQuoteAllowsImmediate({ wait, bid: 4320, ask: 4324.85, pipSize }),
     false,
   )
   // Mid-zone
