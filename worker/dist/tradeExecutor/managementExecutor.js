@@ -15,6 +15,7 @@ const managementBrokerClose_2 = require("../managementBrokerClose");
 const managementClose_1 = require("../managementClose");
 const signalEntryPendingHelpers_1 = require("../signalEntryPendingHelpers");
 const managementModifyBaskets_1 = require("../managementModifyBaskets");
+const channelStopApply_1 = require("../channelStopApply");
 const managementPendingLegs_1 = require("../managementPendingLegs");
 const managementScope_1 = require("../managementScope");
 const fxsocketClient_1 = require("../fxsocketClient");
@@ -243,6 +244,19 @@ async function skipMgmtSignal(ctx, signalId, reason) {
     }
     catch { /* best-effort */ }
 }
+async function logBrokerMgmtSkip(ctx, signal, brokerId, reason, extra) {
+    try {
+        await ctx.supabase.from('trade_execution_logs').insert({
+            user_id: signal.user_id,
+            signal_id: signal.id,
+            broker_account_id: brokerId,
+            action: 'mgmt_skip',
+            status: 'skipped',
+            request_payload: { skip_reason: reason, ...extra },
+        });
+    }
+    catch { /* best-effort */ }
+}
 async function skipMgmtSignalWithLog(ctx, signal, reason, extra) {
     await skipMgmtSignal(ctx, signal.id, reason);
     try {
@@ -273,6 +287,7 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
     let mgmtSymbolHint = symbolFromText;
     let basketAnchorId = null;
     let rows = [];
+    let modifyApplyResult = null;
     if (replyScoped && signal.parent_signal_id) {
         let symbolHint = symbolFromText;
         let parentParsed = null;
@@ -364,16 +379,25 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
                 brokerAccountIds,
                 symbolFilter: symbolFromText,
             })
-            : await (0, managementScope_1.loadOpenTradesForManagement)(ctx.supabase, {
-                userId: signal.user_id,
-                channelId: signal.channel_id,
-                brokerAccountIds,
-                symbolFilter: symbolFromText,
-            });
+            : (0, channelStopApply_1.mgmtUseChannelStopApply)() && actionPre === 'modify'
+                ? await (0, channelStopApply_1.ensureChannelModifyScope)(ctx.supabase, {
+                    userId: signal.user_id,
+                    channelId: signal.channel_id,
+                    brokerAccountIds,
+                    symbolFilter: symbolFromText,
+                })
+                : await (0, managementScope_1.loadOpenTradesForManagement)(ctx.supabase, {
+                    userId: signal.user_id,
+                    channelId: signal.channel_id,
+                    brokerAccountIds,
+                    symbolFilter: symbolFromText,
+                });
         if (actionPre === 'modify'
             && !symbolFromText
             && channelRows.length > 0) {
-            channelRows = (0, managementScope_1.resolveChannelModifyTargets)(channelRows, parsed);
+            channelRows = (0, channelStopApply_1.mgmtUseChannelStopApply)()
+                ? (0, channelStopApply_1.allChannelModifySymbolBuckets)(channelRows)
+                : (0, managementScope_1.resolveChannelModifyTargets)(channelRows, parsed);
         }
         rows = channelRows;
         basketAnchorId = rows[0]?.signal_id ?? null;
@@ -918,22 +942,57 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
                 return Number.isFinite(ticket) && ticket > 0;
             }).length;
         }
-        await (0, managementModifyBaskets_1.applyMgmtModifyToBasketGroups)({
-            supabase: ctx.supabase,
-            apiFor: broker => ctx.apiFor(broker),
-            signal: {
-                id: signal.id,
-                user_id: signal.user_id,
-                channel_id: signal.channel_id,
-            },
-            parsed,
-            rowsByBrokerSignal,
-            brokersById: byBroker,
-            hasNewSl,
-            hasNewTp,
-            parsedTpLevels,
-            liveMgmtFast,
-        });
+        if ((0, channelStopApply_1.mgmtUseChannelStopApply)()) {
+            const stopLegs = (0, channelStopApply_1.mgmtRowsToStopLegs)(rows);
+            const rowsByBrokerSignalStop = (0, channelStopApply_1.groupLegsByBrokerSignal)(stopLegs);
+            for (const broker of brokers) {
+                const hasBasket = [...rowsByBrokerSignalStop.keys()].some(k => k.startsWith(`${broker.id}|`));
+                if (!hasBasket) {
+                    if (!(0, helpers_1.brokerHasLinkedSession)(broker)) {
+                        await logBrokerMgmtSkip(ctx, signal, broker.id, 'no_broker_session');
+                    }
+                    else {
+                        await logBrokerMgmtSkip(ctx, signal, broker.id, 'mgmt_no_open_trades_broker', {
+                            channel_id: signal.channel_id,
+                        });
+                    }
+                }
+            }
+            modifyApplyResult = await (0, channelStopApply_1.applyChannelStopsToBaskets)({
+                supabase: ctx.supabase,
+                apiFor: broker => ctx.apiFor(broker),
+                userId: signal.user_id,
+                channelId: signal.channel_id,
+                signalId: signal.id,
+                brokersById: byBroker,
+                rowsByBrokerSignal: rowsByBrokerSignalStop,
+                hasNewSl,
+                hasNewTp,
+                parsedSl: hasNewSl ? parsed.sl : null,
+                parsedTpLevels,
+                verifyOnBroker: true,
+            });
+            await (0, channelStopApply_1.logMgmtModifyBrokerSummaries)(ctx.supabase, signal.user_id, signal.id, modifyApplyResult.brokers);
+            legsTotal += modifyApplyResult.totalModified;
+        }
+        else {
+            await (0, managementModifyBaskets_1.applyMgmtModifyToBasketGroups)({
+                supabase: ctx.supabase,
+                apiFor: broker => ctx.apiFor(broker),
+                signal: {
+                    id: signal.id,
+                    user_id: signal.user_id,
+                    channel_id: signal.channel_id,
+                },
+                parsed,
+                rowsByBrokerSignal,
+                brokersById: byBroker,
+                hasNewSl,
+                hasNewTp,
+                parsedTpLevels,
+                liveMgmtFast,
+            });
+        }
     }
     if ((action === 'modify' || action === 'breakeven' || action === 'partial_breakeven')
         && pendingLegs.length
@@ -1109,7 +1168,19 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
     // so `sweep()` never skips them via the "trade already exists" guard.
     // Flip off `parsed` after one dispatch so we never double-apply the same
     // Close half / breakeven / modify intent on every 15s tick.
-    await finalizeMgmtSignal(ctx, signal.id);
+    const modifyNeedsRetry = action === 'modify'
+        && (hasNewSl || hasNewTp)
+        && (0, channelStopApply_1.mgmtUseChannelStopApply)()
+        && modifyApplyResult != null
+        && !modifyApplyResult.allFullySynced;
+    if (modifyNeedsRetry) {
+        console.warn(`[tradeExecutor] mgmt modify partial — leaving signal parsed for reconcile`
+            + ` signal=${signal.id} modified=${modifyApplyResult.totalModified}`
+            + ` failed=${modifyApplyResult.totalFailed}`);
+    }
+    else {
+        await finalizeMgmtSignal(ctx, signal.id);
+    }
     return { legsTotal, legsParallelism: legConcurrency };
 }
 async function applyCloseWorseEntriesInstruction(ctx, signal, parsed, rows, byBroker, mgmtOpts) {

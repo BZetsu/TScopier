@@ -27,57 +27,14 @@ exports.runPushSignalStops = runPushSignalStops;
 require("dotenv/config");
 const supabase_js_1 = require("@supabase/supabase-js");
 const fxsocketClient_1 = require("../fxsocketClient");
-const helpers_1 = require("../tradeExecutor/helpers");
-const tpBucketDistribution_1 = require("../manualPlanning/tpBucketDistribution");
 const channelActiveTradeParams_1 = require("../channelActiveTradeParams");
-const orderModifyBenign_1 = require("../orderModifyBenign");
+const channelStopApply_1 = require("../channelStopApply");
 const supabase = (0, supabase_js_1.createClient)(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 function num(v) {
     if (v == null)
         return null;
     const n = typeof v === 'number' ? v : Number(v);
     return Number.isFinite(n) && n > 0 ? n : null;
-}
-async function resolveTargetSl(args) {
-    const override = num(process.env.SL_OVERRIDE);
-    if (override != null)
-        return override;
-    const parsed = (args.signal.parsed_data ?? {});
-    const parsedSl = num(parsed.sl);
-    const channelId = args.channelId ?? args.signal.channel_id;
-    const tryChannel = async () => {
-        if (!channelId)
-            return null;
-        const ch = await (0, channelActiveTradeParams_1.loadChannelActiveTradeParamsForSymbol)(supabase, args.signal.user_id, channelId, args.symbol);
-        return ch?.stoploss != null ? num(ch.stoploss) : null;
-    };
-    if (args.slFrom === 'trade') {
-        const fromTrade = num(args.tradeSl);
-        if (fromTrade != null)
-            return fromTrade;
-        const fromCh = await tryChannel();
-        if (fromCh != null)
-            return fromCh;
-        if (parsedSl != null)
-            return parsedSl;
-    }
-    if (args.slFrom === 'signal') {
-        if (parsedSl != null)
-            return parsedSl;
-        const fromCh = await tryChannel();
-        if (fromCh != null)
-            return fromCh;
-    }
-    // default: channel first (catches SL adjustments like 4319 after initial 4321)
-    const fromCh = await tryChannel();
-    if (fromCh != null)
-        return fromCh;
-    if (parsedSl != null)
-        return parsedSl;
-    const fromTrade = num(args.tradeSl);
-    if (fromTrade != null)
-        return fromTrade;
-    throw new Error('No SL — set SL_OVERRIDE, channel_active_trade_params, or SIGNAL_ID with parsed SL');
 }
 async function resolveTpLadder(signal, symbol) {
     const parsed = (signal.parsed_data ?? {});
@@ -101,7 +58,6 @@ async function runPushSignalStops(config) {
     const dryRun = config.dryRun === true;
     const slOnly = config.slOnly === true;
     const tpOnly = config.tpOnly === true;
-    const slFrom = config.slFrom ?? 'channel';
     const tradeScope = config.tradeScope ?? 'since';
     const allChannels = config.allChannels !== false;
     const fxsocketOnly = config.fxsocketOnly === true;
@@ -119,18 +75,19 @@ async function runPushSignalStops(config) {
     const parsed = (signal.parsed_data ?? {});
     const symbolPrefix = String(config.symbolPrefix ?? process.env.SYMBOL_PREFIX ?? parsed.symbol ?? 'XAU').trim().toUpperCase();
     const signalTps = slOnly ? [] : (await resolveTpLadder(signal, symbolPrefix)).tps;
+    const slOverride = config.slOverride ?? num(process.env.SL_OVERRIDE);
     const sinceIso = config.sinceIso?.trim()
         || process.env.SINCE_ISO?.trim()
         || new Date(new Date(signal.created_at).getTime() - 2 * 60000).toISOString();
     console.log(`Signal ${signalId}`);
     if (slOnly) {
-        console.log(`  mode=SL_ONLY  SL_FROM=${slFrom}`);
+        console.log(`  mode=SL_ONLY  SL_FROM=${config.slFrom ?? 'channel'}`);
     }
     else if (tpOnly) {
         console.log(`  mode=TP_ONLY  TPs=${signalTps.join(',')}`);
     }
     else {
-        console.log(`  SL_FROM=${slFrom}  TPs=${signalTps.join(',')}`);
+        console.log(`  SL_FROM=${config.slFrom ?? 'channel'}  TPs=${signalTps.join(',')}`);
     }
     console.log(`  channel=${signal.channel_id}  tradeScope=${tradeScope}`);
     if (tradeScope === 'since')
@@ -140,7 +97,7 @@ async function runPushSignalStops(config) {
     console.log(`  dryRun=${dryRun}\n`);
     let tradesQ = supabase
         .from('trades')
-        .select('id,signal_id,broker_account_id,metaapi_order_id,symbol,direction,sl,tp,opened_at,entry_price,telegram_channel_id')
+        .select('id,signal_id,broker_account_id,metaapi_order_id,symbol,direction,sl,tp,opened_at,entry_price,telegram_channel_id,lot_size')
         .eq('status', 'open')
         .not('metaapi_order_id', 'is', null)
         .order('opened_at', { ascending: true });
@@ -166,10 +123,6 @@ async function runPushSignalStops(config) {
             : 'No open trades matched — widen SINCE_ISO or check channel_id');
         return;
     }
-    const slOverride = config.slOverride ?? num(process.env.SL_OVERRIDE);
-    const prevSlOverride = process.env.SL_OVERRIDE;
-    if (slOverride != null)
-        process.env.SL_OVERRIDE = String(slOverride);
     const brokerIds = [...new Set(rows.map(r => r.broker_account_id))];
     const { data: brokers } = await supabase
         .from('broker_accounts')
@@ -177,172 +130,34 @@ async function runPushSignalStops(config) {
         .in('id', brokerIds);
     const brokerById = new Map((brokers ?? []).map(b => [b.id, b]));
     const api = (0, fxsocketClient_1.getFxsocketClient)();
-    let modified = 0;
-    let failed = 0;
-    let skipped = 0;
-    try {
-        for (const brokerId of brokerIds) {
-            const broker = brokerById.get(brokerId);
-            const uuid = broker ? (0, helpers_1.brokerSessionUuid)(broker) : null;
-            if (!broker || !uuid) {
-                console.warn(`SKIP broker ${brokerId}: no FxSocket session id`);
-                skipped += rows.filter(r => r.broker_account_id === brokerId).length;
-                continue;
-            }
-            if (fxsocketOnly && !(0, helpers_1.brokerHasLinkedSession)(broker)) {
-                const legCount = rows.filter(r => r.broker_account_id === brokerId).length;
-                console.log(`SKIP ${broker.label ?? brokerId}: not FxSocket-only (${legCount} leg(s))`);
-                skipped += legCount;
-                continue;
-            }
-            const client = api;
-            if (!client && !dryRun) {
-                console.warn('SKIP all: FXSOCKET client unavailable');
-                break;
-            }
-            const platform = (0, fxsocketClient_1.mtPlatformFrom)(broker.platform);
-            client?.seedPlatformCache(uuid, platform);
-            const legs = rows
-                .filter(r => r.broker_account_id === brokerId)
-                .sort((a, b) => new Date(a.opened_at).getTime() - new Date(b.opened_at).getTime());
-            const tpLots = broker.manual_settings?.tp_lots ?? null;
-            const isBuy = String(legs[0]?.direction ?? '').toLowerCase() === 'buy';
-            const tpMap = slOnly || tpOnly
-                ? new Map()
-                : (0, tpBucketDistribution_1.buildEntryQualityTakeProfitMap)({
-                    legs: legs.map(tr => ({
-                        id: tr.id,
-                        entryPrice: Number(tr.entry_price ?? 0),
-                        openedAt: tr.opened_at,
-                    })),
-                    isBuy,
-                    slotLegCount: legs.length,
-                    finalTps: signalTps,
-                    tpLots: tpLots ?? null,
-                });
-            console.log(`\n${broker.label ?? brokerId} (${broker.platform}) — ${legs.length} leg(s)`);
-            const slCache = new Map();
-            for (let i = 0; i < legs.length; i++) {
-                const tr = legs[i];
-                const ticket = Number(tr.metaapi_order_id);
-                if (!Number.isFinite(ticket) || ticket <= 0) {
-                    skipped++;
-                    continue;
-                }
-                const keepTp = num(tr.tp);
-                const keepSl = num(tr.sl);
-                const targetTp = tpOnly ? (tpMap.get(tr.id) ?? keepTp) : slOnly ? keepTp : (tpMap.get(tr.id) ?? keepTp);
-                let targetSl = tpOnly ? keepSl : null;
-                if (!tpOnly) {
-                    const chKey = `${tr.telegram_channel_id ?? signal.channel_id ?? ''}|${tr.symbol}|${slFrom}`;
-                    const cached = slCache.get(chKey);
-                    if (cached != null) {
-                        targetSl = cached;
-                    }
-                    else {
-                        targetSl = await resolveTargetSl({
-                            signal,
-                            symbol: tr.symbol,
-                            slFrom,
-                            tradeSl: tr.sl,
-                            channelId: tr.telegram_channel_id ?? signal.channel_id,
-                        });
-                        slCache.set(chKey, targetSl);
-                    }
-                }
-                if (targetSl == null && !tpOnly) {
-                    skipped++;
-                    continue;
-                }
-                if (!slOnly && !tpOnly && (targetTp == null || !(targetTp > 0))) {
-                    skipped++;
-                    continue;
-                }
-                if (!tpOnly
-                    && targetSl != null
-                    && targetSl > 0
-                    && (0, orderModifyBenign_1.stopsAlreadyMatchDb)({ sl: tr.sl, tp: tr.tp }, { stoploss: targetSl, takeprofit: targetTp ?? 0 }, 0, 0)) {
-                    console.log(`  leg ${i + 1}/${legs.length} ticket=${ticket} — SL/TP already match, skip`);
-                    skipped++;
-                    continue;
-                }
-                const slLabel = targetSl != null ? targetSl : '—';
-                const tpLabel = targetTp != null ? targetTp : '—';
-                console.log(`  leg ${i + 1}/${legs.length} ticket=${ticket} ${tr.symbol}`
-                    + ` → SL=${slLabel} TP=${tpLabel}${slOnly ? ' (TP unchanged)' : ''}`);
-                if (dryRun)
-                    continue;
-                try {
-                    const modifyArgs = { ticket };
-                    if (!tpOnly && targetSl != null && targetSl > 0)
-                        modifyArgs.stoploss = targetSl;
-                    if (!slOnly && targetTp != null && targetTp > 0)
-                        modifyArgs.takeprofit = targetTp;
-                    if (modifyArgs.stoploss == null && modifyArgs.takeprofit == null) {
-                        skipped++;
-                        continue;
-                    }
-                    await client.orderModify(uuid, modifyArgs);
-                    const dbPatch = {};
-                    if (!tpOnly && targetSl != null)
-                        dbPatch.sl = targetSl;
-                    if (!slOnly && targetTp != null)
-                        dbPatch.tp = targetTp;
-                    if (Object.keys(dbPatch).length > 0) {
-                        await supabase.from('trades').update(dbPatch).eq('id', tr.id);
-                    }
-                    await supabase.from('trade_execution_logs').insert({
-                        user_id: signal.user_id,
-                        signal_id: signalId,
-                        broker_account_id: brokerId,
-                        action: 'mgmt_modify',
-                        status: 'success',
-                        request_payload: {
-                            ticket,
-                            action: 'modify',
-                            target_sl: modifyArgs.stoploss ?? null,
-                            target_tp: modifyArgs.takeprofit ?? null,
-                            manual_push: true,
-                            sl_only: slOnly,
-                            tp_only: tpOnly,
-                            sl_from: slFrom,
-                            trade_id: tr.id,
-                        },
-                    });
-                    modified++;
-                }
-                catch (err) {
-                    const msg = err instanceof Error ? err.message : String(err);
-                    if ((0, orderModifyBenign_1.isBenignOrderModifyError)(msg)) {
-                        console.log(`    SKIP (benign): ${msg}`);
-                        skipped++;
-                        continue;
-                    }
-                    console.error(`    FAILED: ${msg}`);
-                    failed++;
-                    try {
-                        await supabase.from('trade_execution_logs').insert({
-                            user_id: signal.user_id,
-                            signal_id: signalId,
-                            broker_account_id: brokerId,
-                            action: 'mgmt_modify',
-                            status: 'failed',
-                            error_message: msg,
-                            request_payload: { ticket, manual_push: true, trade_id: tr.id },
-                        });
-                    }
-                    catch { /* best-effort */ }
-                }
-            }
-        }
+    const result = await (0, channelStopApply_1.applyChannelStopsToBaskets)({
+        supabase,
+        apiFor: () => api,
+        userId: signal.user_id,
+        channelId: signal.channel_id,
+        signalId,
+        brokersById: brokerById,
+        rowsByBrokerSignal: (0, channelStopApply_1.groupLegsByBrokerSignal)(rows),
+        hasNewSl: slOnly || (!tpOnly && (slOverride != null || num(parsed.sl) != null)),
+        hasNewTp: tpOnly || (!slOnly && signalTps.length > 0),
+        parsedSl: slOverride ?? num(parsed.sl),
+        parsedTpLevels: signalTps,
+        slOverride,
+        slFrom: config.slFrom ?? 'channel',
+        slOnly,
+        tpOnly,
+        dryRun,
+        manualPush: true,
+        verifyOnBroker: !dryRun,
+        fxsocketOnly,
+    });
+    for (const br of result.brokers) {
+        const broker = brokerById.get(br.brokerId);
+        console.log(`\n${broker?.label ?? br.brokerId} — legs=${br.openLegs}`
+            + ` modified=${br.modified} failed=${br.failed} skipped=${br.skipped}`);
     }
-    finally {
-        if (prevSlOverride == null)
-            delete process.env.SL_OVERRIDE;
-        else
-            process.env.SL_OVERRIDE = prevSlOverride;
-    }
-    console.log(`\nDone: modified=${modified} failed=${failed} skipped=${skipped}`);
+    console.log(`\nDone: modified=${result.totalModified} failed=${result.totalFailed}`
+        + ` skipped=${result.totalSkipped} allSynced=${result.allFullySynced}`);
 }
 async function resolveSignalId() {
     const pinned = String(process.env.SIGNAL_ID ?? '').trim();

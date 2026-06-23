@@ -14,6 +14,7 @@ import {
 import { expandPerLegTargetsToCount } from './manualPlanning/tpBucketDistribution'
 import type { ManualTpLot } from './manualPlanning/types'
 import { stopsAlreadyMatchDb } from './orderModifyBenign'
+import { readBrokerOrderStopLoss } from './signalEntryPendingHelpers'
 import {
   type BasketOpenLeg,
   type BasketReconcileJobRow,
@@ -34,6 +35,10 @@ import {
 import { resolveChannelTradingConfig } from './channelTradingConfig'
 import { normalizeManualSettingsForExecution } from './manualPlanning/normalizeManualSettings'
 import { isUserCopierPausedCached } from './copierPause'
+import { hasFxsocketConfigured } from './fxsocketClient'
+import { apiForFxsocketAccount, loadPlatformByFxsocketId, type PlatformByFxsocketId } from './mtApiByAccount'
+import { fetchBrokerOrdersByTicket } from './channelStopApply'
+import { brokerSessionUuid } from './tradeExecutor/helpers'
 
 export type FreshReconcileTargetsArgs = {
   anchorSignalId: string
@@ -238,9 +243,48 @@ export function basketLegsOutOfSync(
   return false
 }
 
+function brokerSlMatchesTarget(brokerSl: number | null, targetSl: number): boolean {
+  if (brokerSl == null || !(brokerSl > 0) || !(targetSl > 0)) return false
+  return Math.abs(brokerSl - targetSl) <= 1e-6
+}
+
+/**
+ * True when broker /OpenedOrders SL differs from target (DB may already match).
+ * Falls back to DB-only basketLegsOutOfSync when orders map is empty.
+ */
+export function basketLegsOutOfSyncOnBroker(
+  familyTrades: BasketOpenLeg[],
+  perLegTargets: PerLegStopTarget[],
+  ordersByTicket: Map<number, unknown>,
+  nImmCwe: number,
+  opts?: { effectiveStoploss?: number; tpFrozen?: boolean },
+): boolean {
+  if (basketLegsOutOfSync(familyTrades, perLegTargets, nImmCwe, opts)) return true
+  if (!ordersByTicket.size) return false
+
+  const expanded = expandPerLegTargetsToCount({
+    targets: perLegTargets,
+    openLegCount: familyTrades.length,
+    finalTps: perLegTargets.map(t => t.takeprofit).filter(tp => tp > 0),
+    tpLots: null,
+  })
+
+  for (let i = 0; i < familyTrades.length; i++) {
+    const target = expanded[i]
+    if (!target || !(target.stoploss > 0)) continue
+    const ticket = Number(familyTrades[i]!.metaapi_order_id)
+    if (!Number.isFinite(ticket) || ticket <= 0) continue
+    const raw = ordersByTicket.get(ticket)
+    if (!raw) continue
+    const brokerSl = readBrokerOrderStopLoss(raw)
+    if (!brokerSlMatchesTarget(brokerSl, target.stoploss)) return true
+  }
+  return false
+}
+
 const SWEEP_BATCH = Math.min(
-  50,
-  Math.max(5, Number(process.env.BASKET_RECONCILE_SWEEP_BATCH ?? 20)),
+  80,
+  Math.max(5, Number(process.env.BASKET_RECONCILE_SWEEP_BATCH ?? 50)),
 )
 
 type SweepBasketRow = {
@@ -249,15 +293,73 @@ type SweepBasketRow = {
   symbol: string
   direction: string
   telegram_channel_id: string | null
+  updated_at?: string | null
 }
 
 type SweepBrokerRow = {
   id: string
   user_id: string
+  fxsocket_account_id?: string | null
+  metaapi_account_id?: string | null
+  platform?: string | null
   manual_settings?: unknown
   channel_trading_configs?: unknown
   copier_mode?: string | null
   ai_settings?: unknown
+}
+
+/** Prefer baskets whose channel SL/TP memory is newer than leg rows (recent mgmt modify). */
+export function sortSweepBasketsByChannelParamFreshness(
+  rows: SweepBasketRow[],
+  channelParamUpdatedAt: Map<string, string>,
+  legUpdatedAtByKey: Map<string, string>,
+): SweepBasketRow[] {
+  return [...rows].sort((a, b) => {
+    const keyA = `${a.broker_account_id}|${a.signal_id}`
+    const keyB = `${b.broker_account_id}|${b.signal_id}`
+    const chKeyA = a.telegram_channel_id && a.symbol
+      ? `${a.telegram_channel_id}|${a.symbol}`
+      : ''
+    const chKeyB = b.telegram_channel_id && b.symbol
+      ? `${b.telegram_channel_id}|${b.symbol}`
+      : ''
+    const paramA = chKeyA ? channelParamUpdatedAt.get(chKeyA) : null
+    const paramB = chKeyB ? channelParamUpdatedAt.get(chKeyB) : null
+    const legA = legUpdatedAtByKey.get(keyA)
+    const legB = legUpdatedAtByKey.get(keyB)
+    const freshA = paramA && legA ? new Date(paramA).getTime() > new Date(legA).getTime() : false
+    const freshB = paramB && legB ? new Date(paramB).getTime() > new Date(legB).getTime() : false
+    if (freshA !== freshB) return freshA ? -1 : 1
+    const tA = paramA ? new Date(paramA).getTime() : 0
+    const tB = paramB ? new Date(paramB).getTime() : 0
+    return tB - tA
+  })
+}
+
+async function loadSweepBrokerOrders(
+  supabase: SupabaseClient,
+  broker: SweepBrokerRow,
+  platformByUuid: PlatformByFxsocketId,
+  cache: Map<string, Map<number, unknown>>,
+): Promise<Map<number, unknown>> {
+  const uuid = brokerSessionUuid(broker)
+  if (!uuid) return new Map()
+  const cached = cache.get(uuid)
+  if (cached) return cached
+
+  const api = apiForFxsocketAccount(platformByUuid, uuid)
+  if (!api) return new Map()
+
+  try {
+    const alive = await api.keepSessionAlive(uuid)
+    if (!alive) return new Map()
+  } catch {
+    return new Map()
+  }
+
+  const orders = await fetchBrokerOrdersByTicket(api, uuid)
+  cache.set(uuid, orders)
+  return orders
 }
 
 /**
@@ -269,7 +371,7 @@ export async function sweepOpenBasketsForReconcileDrift(
 ): Promise<number> {
   const { data: tradeRows, error } = await supabase
     .from('trades')
-    .select('broker_account_id,signal_id,symbol,direction,telegram_channel_id')
+    .select('broker_account_id,signal_id,symbol,direction,telegram_channel_id,updated_at')
     .eq('status', 'open')
     .not('broker_account_id', 'is', null)
     .limit(500)
@@ -277,26 +379,70 @@ export async function sweepOpenBasketsForReconcileDrift(
   if (error || !tradeRows?.length) return 0
 
   const basketKeys = new Map<string, SweepBasketRow>()
+  const legUpdatedAtByKey = new Map<string, string>()
   for (const raw of tradeRows) {
     const row = raw as SweepBasketRow
     const key = `${row.broker_account_id}|${row.signal_id}`
     if (!basketKeys.has(key)) basketKeys.set(key, row)
+    const prev = legUpdatedAtByKey.get(key)
+    const rowAt = row.updated_at ?? ''
+    if (!prev || (rowAt && new Date(rowAt).getTime() > new Date(prev).getTime())) {
+      legUpdatedAtByKey.set(key, rowAt)
+    }
   }
 
-  const brokerIds = [...new Set([...basketKeys.values()].map(r => r.broker_account_id))]
+  const channelIds = [...new Set(
+    [...basketKeys.values()]
+      .map(r => r.telegram_channel_id)
+      .filter((id): id is string => typeof id === 'string' && id.length > 0),
+  )]
+  const channelParamUpdatedAt = new Map<string, string>()
+  if (channelIds.length) {
+    const { data: paramRows } = await supabase
+      .from('channel_active_trade_params')
+      .select('telegram_channel_id,symbol,updated_at')
+      .in('telegram_channel_id', channelIds)
+    for (const raw of paramRows ?? []) {
+      const pr = raw as { telegram_channel_id?: string; symbol?: string; updated_at?: string }
+      if (!pr.telegram_channel_id || !pr.symbol || !pr.updated_at) continue
+      const k = `${pr.telegram_channel_id}|${pr.symbol}`
+      const prev = channelParamUpdatedAt.get(k)
+      if (!prev || new Date(pr.updated_at).getTime() > new Date(prev).getTime()) {
+        channelParamUpdatedAt.set(k, pr.updated_at)
+      }
+    }
+  }
+
+  const sortedBaskets = sortSweepBasketsByChannelParamFreshness(
+    [...basketKeys.values()],
+    channelParamUpdatedAt,
+    legUpdatedAtByKey,
+  )
+
+  const brokerIds = [...new Set(sortedBaskets.map(r => r.broker_account_id))]
   const { data: brokers } = await supabase
     .from('broker_accounts')
-    .select('id,user_id,manual_settings,channel_trading_configs,copier_mode,ai_settings')
+    .select('id,user_id,fxsocket_account_id,metaapi_account_id,platform,manual_settings,channel_trading_configs,copier_mode,ai_settings')
     .in('id', brokerIds)
 
   const brokerById = new Map(
     ((brokers ?? []) as SweepBrokerRow[]).map(b => [b.id, b]),
   )
 
+  const brokerUuids = [...new Set(
+    ((brokers ?? []) as SweepBrokerRow[])
+      .map(b => brokerSessionUuid(b))
+      .filter((u): u is string => typeof u === 'string' && u.length > 0 && !u.includes('|')),
+  )]
+  const platformByUuid = brokerUuids.length && hasFxsocketConfigured()
+    ? await loadPlatformByFxsocketId(supabase, brokerUuids)
+    : new Map()
+  const ordersCache = new Map<string, Map<number, unknown>>()
+
   let enqueued = 0
   let scanned = 0
 
-  for (const row of basketKeys.values()) {
+  for (const row of sortedBaskets) {
     if (scanned >= SWEEP_BATCH) break
     scanned += 1
 
@@ -346,7 +492,18 @@ export async function sweepOpenBasketsForReconcileDrift(
     })
 
     if (!perLegTargets.length) continue
-    if (!basketLegsOutOfSync(familyTrades, perLegTargets, 0, { effectiveStoploss, tpFrozen })) continue
+
+    const ordersByTicket = hasFxsocketConfigured()
+      ? await loadSweepBrokerOrders(supabase, broker, platformByUuid, ordersCache)
+      : new Map<number, unknown>()
+    const outOfSync = basketLegsOutOfSyncOnBroker(
+      familyTrades,
+      perLegTargets,
+      ordersByTicket,
+      0,
+      { effectiveStoploss, tpFrozen },
+    )
+    if (!outOfSync) continue
 
     const jobId = await upsertBasketReconcileJob(supabase, {
       userId: broker.user_id,

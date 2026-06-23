@@ -25,6 +25,16 @@ import { extractOpenOrderFromBrokerRaw } from '../managementBrokerClose'
 import { closeWithVerification } from '../managementClose'
 import { findOpenedRowByTicket, readBrokerOrderStopLoss } from '../signalEntryPendingHelpers'
 import { applyMgmtModifyToBasketGroups } from '../managementModifyBaskets'
+import {
+  allChannelModifySymbolBuckets,
+  applyChannelStopsToBaskets,
+  ensureChannelModifyScope,
+  groupLegsByBrokerSignal,
+  logMgmtModifyBrokerSummaries,
+  mgmtRowsToStopLegs,
+  mgmtUseChannelStopApply,
+  type ChannelStopApplyResult,
+} from '../channelStopApply'
 import type { MgmtExecOptions, MgmtExecResult } from '../mgmtExecOptions'
 import { loadRangePendingLegsInMgmtScope, pendingLegsToCancelScopes, updateRangePendingLegsForManagement } from '../managementPendingLegs'
 import {
@@ -328,6 +338,25 @@ export async function skipMgmtSignal(ctx: TradeExecutorContext, signalId: string
     } catch { /* best-effort */ }
   }
 
+async function logBrokerMgmtSkip(
+  ctx: TradeExecutorContext,
+  signal: SignalRow,
+  brokerId: string,
+  reason: string,
+  extra?: Record<string, unknown>,
+): Promise<void> {
+  try {
+    await ctx.supabase.from('trade_execution_logs').insert({
+      user_id: signal.user_id,
+      signal_id: signal.id,
+      broker_account_id: brokerId,
+      action: 'mgmt_skip',
+      status: 'skipped',
+      request_payload: { skip_reason: reason, ...extra } as unknown as Record<string, unknown>,
+    })
+  } catch { /* best-effort */ }
+}
+
 async function skipMgmtSignalWithLog(
   ctx: TradeExecutorContext,
   signal: SignalRow,
@@ -370,6 +399,7 @@ export async function applyManagement(
     let mgmtSymbolHint: string | null = symbolFromText
     let basketAnchorId: string | null = null
     let rows: MgmtTradeRow[] = []
+    let modifyApplyResult: ChannelStopApplyResult | null = null
 
     if (replyScoped && signal.parent_signal_id) {
       let symbolHint: string | null = symbolFromText
@@ -458,18 +488,27 @@ export async function applyManagement(
           brokerAccountIds,
           symbolFilter: symbolFromText,
         })
-        : await loadOpenTradesForManagement(ctx.supabase, {
-          userId: signal.user_id,
-          channelId: signal.channel_id,
-          brokerAccountIds,
-          symbolFilter: symbolFromText,
-        })
+        : mgmtUseChannelStopApply() && actionPre === 'modify'
+          ? await ensureChannelModifyScope(ctx.supabase, {
+            userId: signal.user_id,
+            channelId: signal.channel_id,
+            brokerAccountIds,
+            symbolFilter: symbolFromText,
+          })
+          : await loadOpenTradesForManagement(ctx.supabase, {
+            userId: signal.user_id,
+            channelId: signal.channel_id,
+            brokerAccountIds,
+            symbolFilter: symbolFromText,
+          })
       if (
         actionPre === 'modify'
         && !symbolFromText
         && channelRows.length > 0
       ) {
-        channelRows = resolveChannelModifyTargets(channelRows, parsed)
+        channelRows = mgmtUseChannelStopApply()
+          ? allChannelModifySymbolBuckets(channelRows)
+          : resolveChannelModifyTargets(channelRows, parsed)
       }
       rows = channelRows
       basketAnchorId = rows[0]?.signal_id ?? null
@@ -1065,22 +1104,58 @@ export async function applyManagement(
           return Number.isFinite(ticket) && ticket > 0
         }).length
       }
-      await applyMgmtModifyToBasketGroups({
-        supabase: ctx.supabase,
-        apiFor: broker => ctx.apiFor(broker as BrokerRow),
-        signal: {
-          id: signal.id,
-          user_id: signal.user_id,
-          channel_id: signal.channel_id,
-        },
-        parsed,
-        rowsByBrokerSignal,
-        brokersById: byBroker,
-        hasNewSl,
-        hasNewTp,
-        parsedTpLevels,
-        liveMgmtFast,
-      })
+
+      if (mgmtUseChannelStopApply()) {
+        const stopLegs = mgmtRowsToStopLegs(rows)
+        const rowsByBrokerSignalStop = groupLegsByBrokerSignal(stopLegs)
+
+        for (const broker of brokers) {
+          const hasBasket = [...rowsByBrokerSignalStop.keys()].some(k => k.startsWith(`${broker.id}|`))
+          if (!hasBasket) {
+            if (!brokerHasLinkedSession(broker)) {
+              await logBrokerMgmtSkip(ctx, signal, broker.id, 'no_broker_session')
+            } else {
+              await logBrokerMgmtSkip(ctx, signal, broker.id, 'mgmt_no_open_trades_broker', {
+                channel_id: signal.channel_id,
+              })
+            }
+          }
+        }
+
+        modifyApplyResult = await applyChannelStopsToBaskets({
+          supabase: ctx.supabase,
+          apiFor: broker => ctx.apiFor(broker as BrokerRow),
+          userId: signal.user_id,
+          channelId: signal.channel_id,
+          signalId: signal.id,
+          brokersById: byBroker,
+          rowsByBrokerSignal: rowsByBrokerSignalStop,
+          hasNewSl,
+          hasNewTp,
+          parsedSl: hasNewSl ? (parsed.sl as number) : null,
+          parsedTpLevels,
+          verifyOnBroker: true,
+        })
+        await logMgmtModifyBrokerSummaries(ctx.supabase, signal.user_id, signal.id, modifyApplyResult.brokers)
+        legsTotal += modifyApplyResult.totalModified
+      } else {
+        await applyMgmtModifyToBasketGroups({
+          supabase: ctx.supabase,
+          apiFor: broker => ctx.apiFor(broker as BrokerRow),
+          signal: {
+            id: signal.id,
+            user_id: signal.user_id,
+            channel_id: signal.channel_id,
+          },
+          parsed,
+          rowsByBrokerSignal,
+          brokersById: byBroker,
+          hasNewSl,
+          hasNewTp,
+          parsedTpLevels,
+          liveMgmtFast,
+        })
+      }
     }
 
     if (
@@ -1283,7 +1358,21 @@ export async function applyManagement(
     // so `sweep()` never skips them via the "trade already exists" guard.
     // Flip off `parsed` after one dispatch so we never double-apply the same
     // Close half / breakeven / modify intent on every 15s tick.
-    await finalizeMgmtSignal(ctx, signal.id)
+    const modifyNeedsRetry = action === 'modify'
+      && (hasNewSl || hasNewTp)
+      && mgmtUseChannelStopApply()
+      && modifyApplyResult != null
+      && !modifyApplyResult.allFullySynced
+
+    if (modifyNeedsRetry) {
+      console.warn(
+        `[tradeExecutor] mgmt modify partial — leaving signal parsed for reconcile`
+        + ` signal=${signal.id} modified=${modifyApplyResult!.totalModified}`
+        + ` failed=${modifyApplyResult!.totalFailed}`,
+      )
+    } else {
+      await finalizeMgmtSignal(ctx, signal.id)
+    }
     return { legsTotal, legsParallelism: legConcurrency }
   }
 

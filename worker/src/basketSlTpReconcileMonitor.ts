@@ -11,7 +11,8 @@ import {
   type BasketReconcileJobRow,
   type BasketSymbolParams,
 } from './basketSlTpReconcile'
-import { resolveFreshTargetsForJob, sweepOpenBasketsForReconcileDrift } from './basketReconcileTargets'
+import { resolveFreshTargetsForJob, basketLegsOutOfSyncOnBroker, sweepOpenBasketsForReconcileDrift } from './basketReconcileTargets'
+import { fetchBrokerOrdersByTicket } from './channelStopApply'
 import {
   hasWorkOnShard,
   monitorActiveIntervalMs,
@@ -27,8 +28,17 @@ import { brokerSessionUuid } from './tradeExecutor/helpers'
 
 const ACTIVE_MS = monitorActiveIntervalMs('BASKET_RECONCILE_TICK_MS', 15_000)
 const IDLE_MS = monitorIdleIntervalMs('BASKET_RECONCILE_IDLE_MS', 120_000)
-const BATCH_LIMIT = 20
+const JOB_BATCH_LIMIT = Math.min(
+  80,
+  Math.max(5, Number(process.env.BASKET_RECONCILE_SWEEP_BATCH ?? 50)),
+)
 const HOST_ID = `worker-${process.pid}`
+
+function reconcileTargetsHaveSl(
+  targets: Array<{ stoploss?: number; takeprofit?: number }>,
+): boolean {
+  return targets.some(t => (t.stoploss ?? 0) > 0)
+}
 const SWEEP_INTERVAL_MS = Math.min(
   600_000,
   Math.max(60_000, Number(process.env.BASKET_RECONCILE_SWEEP_MS ?? 180_000)),
@@ -93,7 +103,7 @@ export class BasketSlTpReconcileMonitor {
       .eq('status', 'pending')
       .lte('next_run_at', now)
       .order('next_run_at', { ascending: true })
-      .limit(BATCH_LIMIT)
+      .limit(JOB_BATCH_LIMIT)
 
     if (error) {
       console.warn(`[basketSlTpReconcileMonitor] select failed: ${error.message}`)
@@ -269,9 +279,21 @@ export class BasketSlTpReconcileMonitor {
     })
 
     const mergeFailed = summary.modified < summary.openLegs
-    const partialMsg = mergeFailed
+    let brokerStillDrift = false
+    if (!mergeFailed && reconcileTargetsHaveSl(effectiveTargets)) {
+      const ordersByTicket = await fetchBrokerOrdersByTicket(api, uuid)
+      brokerStillDrift = basketLegsOutOfSyncOnBroker(
+        familyTrades,
+        effectiveTargets,
+        ordersByTicket,
+        row.n_imm_cwe ?? 0,
+        { effectiveStoploss: effectiveStoploss > 0 ? effectiveStoploss : undefined },
+      )
+    }
+    const partialMsg = mergeFailed || brokerStillDrift
       ? `Reconcile: ${summary.modified}/${summary.openLegs} legs`
         + (summary.failed > 0 ? `; ${summary.failed} broker errors` : '')
+        + (brokerStillDrift ? '; broker SL still drifted' : '')
       : null
 
     try {
@@ -280,7 +302,7 @@ export class BasketSlTpReconcileMonitor {
         signal_id: row.source_signal_id,
         broker_account_id: row.broker_account_id,
         action: 'basket_reconcile_tick',
-        status: mergeFailed ? 'failed' : 'success',
+        status: mergeFailed || brokerStillDrift ? 'failed' : 'success',
         error_message: partialMsg,
         request_payload: {
           job_id: row.id,
@@ -291,7 +313,7 @@ export class BasketSlTpReconcileMonitor {
       })
     } catch { /* best-effort */ }
 
-    if (!mergeFailed) {
+    if (!mergeFailed && !brokerStillDrift) {
       await markBasketReconcileDone(this.supabase, row.id)
       await this.supabase
         .from('signals')

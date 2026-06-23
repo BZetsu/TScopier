@@ -7,16 +7,23 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.resolveFreshBasketReconcileTargets = resolveFreshBasketReconcileTargets;
 exports.basketLegsOutOfSync = basketLegsOutOfSync;
+exports.basketLegsOutOfSyncOnBroker = basketLegsOutOfSyncOnBroker;
+exports.sortSweepBasketsByChannelParamFreshness = sortSweepBasketsByChannelParamFreshness;
 exports.sweepOpenBasketsForReconcileDrift = sweepOpenBasketsForReconcileDrift;
 exports.resolveFreshTargetsForJob = resolveFreshTargetsForJob;
 const basketEffectiveStops_1 = require("./basketEffectiveStops");
 const tpBucketDistribution_1 = require("./manualPlanning/tpBucketDistribution");
 const orderModifyBenign_1 = require("./orderModifyBenign");
+const signalEntryPendingHelpers_1 = require("./signalEntryPendingHelpers");
 const basketSlTpReconcile_1 = require("./basketSlTpReconcile");
 const rangeBasketTpSync_1 = require("./rangeBasketTpSync");
 const channelTradingConfig_1 = require("./channelTradingConfig");
 const normalizeManualSettings_1 = require("./manualPlanning/normalizeManualSettings");
 const copierPause_1 = require("./copierPause");
+const fxsocketClient_1 = require("./fxsocketClient");
+const mtApiByAccount_1 = require("./mtApiByAccount");
+const channelStopApply_1 = require("./channelStopApply");
+const helpers_1 = require("./tradeExecutor/helpers");
 async function resolveFreshBasketReconcileTargets(supabase, args) {
     const stored = args.storedTargets;
     const { data: anchorSig } = await supabase
@@ -169,7 +176,89 @@ function basketLegsOutOfSync(familyTrades, perLegTargets, nImmCwe, opts) {
     }
     return false;
 }
-const SWEEP_BATCH = Math.min(50, Math.max(5, Number(process.env.BASKET_RECONCILE_SWEEP_BATCH ?? 20)));
+function brokerSlMatchesTarget(brokerSl, targetSl) {
+    if (brokerSl == null || !(brokerSl > 0) || !(targetSl > 0))
+        return false;
+    return Math.abs(brokerSl - targetSl) <= 1e-6;
+}
+/**
+ * True when broker /OpenedOrders SL differs from target (DB may already match).
+ * Falls back to DB-only basketLegsOutOfSync when orders map is empty.
+ */
+function basketLegsOutOfSyncOnBroker(familyTrades, perLegTargets, ordersByTicket, nImmCwe, opts) {
+    if (basketLegsOutOfSync(familyTrades, perLegTargets, nImmCwe, opts))
+        return true;
+    if (!ordersByTicket.size)
+        return false;
+    const expanded = (0, tpBucketDistribution_1.expandPerLegTargetsToCount)({
+        targets: perLegTargets,
+        openLegCount: familyTrades.length,
+        finalTps: perLegTargets.map(t => t.takeprofit).filter(tp => tp > 0),
+        tpLots: null,
+    });
+    for (let i = 0; i < familyTrades.length; i++) {
+        const target = expanded[i];
+        if (!target || !(target.stoploss > 0))
+            continue;
+        const ticket = Number(familyTrades[i].metaapi_order_id);
+        if (!Number.isFinite(ticket) || ticket <= 0)
+            continue;
+        const raw = ordersByTicket.get(ticket);
+        if (!raw)
+            continue;
+        const brokerSl = (0, signalEntryPendingHelpers_1.readBrokerOrderStopLoss)(raw);
+        if (!brokerSlMatchesTarget(brokerSl, target.stoploss))
+            return true;
+    }
+    return false;
+}
+const SWEEP_BATCH = Math.min(80, Math.max(5, Number(process.env.BASKET_RECONCILE_SWEEP_BATCH ?? 50)));
+/** Prefer baskets whose channel SL/TP memory is newer than leg rows (recent mgmt modify). */
+function sortSweepBasketsByChannelParamFreshness(rows, channelParamUpdatedAt, legUpdatedAtByKey) {
+    return [...rows].sort((a, b) => {
+        const keyA = `${a.broker_account_id}|${a.signal_id}`;
+        const keyB = `${b.broker_account_id}|${b.signal_id}`;
+        const chKeyA = a.telegram_channel_id && a.symbol
+            ? `${a.telegram_channel_id}|${a.symbol}`
+            : '';
+        const chKeyB = b.telegram_channel_id && b.symbol
+            ? `${b.telegram_channel_id}|${b.symbol}`
+            : '';
+        const paramA = chKeyA ? channelParamUpdatedAt.get(chKeyA) : null;
+        const paramB = chKeyB ? channelParamUpdatedAt.get(chKeyB) : null;
+        const legA = legUpdatedAtByKey.get(keyA);
+        const legB = legUpdatedAtByKey.get(keyB);
+        const freshA = paramA && legA ? new Date(paramA).getTime() > new Date(legA).getTime() : false;
+        const freshB = paramB && legB ? new Date(paramB).getTime() > new Date(legB).getTime() : false;
+        if (freshA !== freshB)
+            return freshA ? -1 : 1;
+        const tA = paramA ? new Date(paramA).getTime() : 0;
+        const tB = paramB ? new Date(paramB).getTime() : 0;
+        return tB - tA;
+    });
+}
+async function loadSweepBrokerOrders(supabase, broker, platformByUuid, cache) {
+    const uuid = (0, helpers_1.brokerSessionUuid)(broker);
+    if (!uuid)
+        return new Map();
+    const cached = cache.get(uuid);
+    if (cached)
+        return cached;
+    const api = (0, mtApiByAccount_1.apiForFxsocketAccount)(platformByUuid, uuid);
+    if (!api)
+        return new Map();
+    try {
+        const alive = await api.keepSessionAlive(uuid);
+        if (!alive)
+            return new Map();
+    }
+    catch {
+        return new Map();
+    }
+    const orders = await (0, channelStopApply_1.fetchBrokerOrdersByTicket)(api, uuid);
+    cache.set(uuid, orders);
+    return orders;
+}
 /**
  * Scan open baskets and enqueue reconcile jobs when legs drift from channel SL/TP ladder.
  * Runs periodically from BasketSlTpReconcileMonitor (not only when jobs already exist).
@@ -177,28 +266,62 @@ const SWEEP_BATCH = Math.min(50, Math.max(5, Number(process.env.BASKET_RECONCILE
 async function sweepOpenBasketsForReconcileDrift(supabase) {
     const { data: tradeRows, error } = await supabase
         .from('trades')
-        .select('broker_account_id,signal_id,symbol,direction,telegram_channel_id')
+        .select('broker_account_id,signal_id,symbol,direction,telegram_channel_id,updated_at')
         .eq('status', 'open')
         .not('broker_account_id', 'is', null)
         .limit(500);
     if (error || !tradeRows?.length)
         return 0;
     const basketKeys = new Map();
+    const legUpdatedAtByKey = new Map();
     for (const raw of tradeRows) {
         const row = raw;
         const key = `${row.broker_account_id}|${row.signal_id}`;
         if (!basketKeys.has(key))
             basketKeys.set(key, row);
+        const prev = legUpdatedAtByKey.get(key);
+        const rowAt = row.updated_at ?? '';
+        if (!prev || (rowAt && new Date(rowAt).getTime() > new Date(prev).getTime())) {
+            legUpdatedAtByKey.set(key, rowAt);
+        }
     }
-    const brokerIds = [...new Set([...basketKeys.values()].map(r => r.broker_account_id))];
+    const channelIds = [...new Set([...basketKeys.values()]
+            .map(r => r.telegram_channel_id)
+            .filter((id) => typeof id === 'string' && id.length > 0))];
+    const channelParamUpdatedAt = new Map();
+    if (channelIds.length) {
+        const { data: paramRows } = await supabase
+            .from('channel_active_trade_params')
+            .select('telegram_channel_id,symbol,updated_at')
+            .in('telegram_channel_id', channelIds);
+        for (const raw of paramRows ?? []) {
+            const pr = raw;
+            if (!pr.telegram_channel_id || !pr.symbol || !pr.updated_at)
+                continue;
+            const k = `${pr.telegram_channel_id}|${pr.symbol}`;
+            const prev = channelParamUpdatedAt.get(k);
+            if (!prev || new Date(pr.updated_at).getTime() > new Date(prev).getTime()) {
+                channelParamUpdatedAt.set(k, pr.updated_at);
+            }
+        }
+    }
+    const sortedBaskets = sortSweepBasketsByChannelParamFreshness([...basketKeys.values()], channelParamUpdatedAt, legUpdatedAtByKey);
+    const brokerIds = [...new Set(sortedBaskets.map(r => r.broker_account_id))];
     const { data: brokers } = await supabase
         .from('broker_accounts')
-        .select('id,user_id,manual_settings,channel_trading_configs,copier_mode,ai_settings')
+        .select('id,user_id,fxsocket_account_id,metaapi_account_id,platform,manual_settings,channel_trading_configs,copier_mode,ai_settings')
         .in('id', brokerIds);
     const brokerById = new Map((brokers ?? []).map(b => [b.id, b]));
+    const brokerUuids = [...new Set((brokers ?? [])
+            .map(b => (0, helpers_1.brokerSessionUuid)(b))
+            .filter((u) => typeof u === 'string' && u.length > 0 && !u.includes('|')))];
+    const platformByUuid = brokerUuids.length && (0, fxsocketClient_1.hasFxsocketConfigured)()
+        ? await (0, mtApiByAccount_1.loadPlatformByFxsocketId)(supabase, brokerUuids)
+        : new Map();
+    const ordersCache = new Map();
     let enqueued = 0;
     let scanned = 0;
-    for (const row of basketKeys.values()) {
+    for (const row of sortedBaskets) {
         if (scanned >= SWEEP_BATCH)
             break;
         scanned += 1;
@@ -236,7 +359,11 @@ async function sweepOpenBasketsForReconcileDrift(supabase) {
         });
         if (!perLegTargets.length)
             continue;
-        if (!basketLegsOutOfSync(familyTrades, perLegTargets, 0, { effectiveStoploss, tpFrozen }))
+        const ordersByTicket = (0, fxsocketClient_1.hasFxsocketConfigured)()
+            ? await loadSweepBrokerOrders(supabase, broker, platformByUuid, ordersCache)
+            : new Map();
+        const outOfSync = basketLegsOutOfSyncOnBroker(familyTrades, perLegTargets, ordersByTicket, 0, { effectiveStoploss, tpFrozen });
+        if (!outOfSync)
             continue;
         const jobId = await (0, basketSlTpReconcile_1.upsertBasketReconcileJob)(supabase, {
             userId: broker.user_id,

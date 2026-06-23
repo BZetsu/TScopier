@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { basketLegsOutOfSync } from './basketReconcileTargets'
+import { basketLegsOutOfSync, basketLegsOutOfSyncOnBroker, sortSweepBasketsByChannelParamFreshness } from './basketReconcileTargets'
 import type { BasketOpenLeg } from './basketSlTpReconcile'
 
 function leg(tp: number, sl = 4321): BasketOpenLeg {
@@ -69,5 +69,57 @@ describe('basketLegsOutOfSync', () => {
       { stoploss: 4242, takeprofit: 8888 },
     ]
     assert.equal(basketLegsOutOfSync(family, alignedSl, 0, { tpFrozen: true }), false)
+  })
+})
+
+describe('basketLegsOutOfSyncOnBroker', () => {
+  it('detects broker SL drift when DB matches target', () => {
+    const family = [leg(4332, 4104)]
+    const targets = [{ stoploss: 4104, takeprofit: 4332 }]
+    assert.equal(basketLegsOutOfSync(family, targets, 0), false)
+    const orders = new Map<number, unknown>([[100, { stopLoss: 4100 }]])
+    assert.equal(basketLegsOutOfSyncOnBroker(family, targets, orders, 0), true)
+  })
+
+  it('returns false when broker SL matches target', () => {
+    const family = [leg(4332, 4104)]
+    const targets = [{ stoploss: 4104, takeprofit: 4332 }]
+    const orders = new Map<number, unknown>([[100, { stopLoss: 4104 }]])
+    assert.equal(basketLegsOutOfSyncOnBroker(family, targets, orders, 0), false)
+  })
+})
+
+describe('sortSweepBasketsByChannelParamFreshness', () => {
+  it('prioritizes baskets with newer channel params than leg rows', () => {
+    const rows = [
+      {
+        broker_account_id: 'b1',
+        signal_id: 's1',
+        symbol: 'XAUUSD',
+        direction: 'sell',
+        telegram_channel_id: 'ch-1',
+      },
+      {
+        broker_account_id: 'b2',
+        signal_id: 's2',
+        symbol: 'EURUSD',
+        direction: 'buy',
+        telegram_channel_id: 'ch-2',
+      },
+    ]
+    const channelParamUpdatedAt = new Map([
+      ['ch-1|XAUUSD', '2026-06-20T12:00:00Z'],
+      ['ch-2|EURUSD', '2026-06-19T10:00:00Z'],
+    ])
+    const legUpdatedAtByKey = new Map([
+      ['b1|s1', '2026-06-20T11:00:00Z'],
+      ['b2|s2', '2026-06-20T11:00:00Z'],
+    ])
+    const sorted = sortSweepBasketsByChannelParamFreshness(
+      rows,
+      channelParamUpdatedAt,
+      legUpdatedAtByKey,
+    )
+    assert.equal(sorted[0]?.broker_account_id, 'b1')
   })
 })
