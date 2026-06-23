@@ -49,6 +49,12 @@ describe('brokerTerminalHealthPhase', () => {
     ).toBe('unhealthy')
   })
 
+  it('returns checking when trade_allowed unknown', () => {
+    expect(
+      brokerTerminalHealthPhase(broker({ terminal_connected: true, trade_allowed: null })),
+    ).toBe('checking')
+  })
+
   it('returns unhealthy when terminal is disconnected', () => {
     expect(
       brokerTerminalHealthPhase(broker({ terminal_connected: false, trade_allowed: true })),
@@ -66,7 +72,7 @@ describe('brokerTerminalHealthLabel', () => {
       brokerTerminalHealthLabel(broker({ terminal_connected: true, trade_allowed: true }), labels),
     ).toBe('Healthy')
     expect(
-      brokerTerminalHealthLabel(broker({ terminal_connected: false }), labels),
+      brokerTerminalHealthLabel(broker({ terminal_connected: false, trade_allowed: false }), labels),
     ).toBe('Unhealthy')
     expect(brokerTerminalHealthLabel(broker({}), labels)).toBe('Checking…')
   })

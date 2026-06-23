@@ -1,6 +1,19 @@
 import { Agent, request } from 'undici'
 import { isMtBridgeGlitchMessage } from './brokerConnectError'
 import { ingestMtHistoryRows, type MtHistoryProfile } from './mtTradeFields'
+import {
+  isFxsocketMtStatusHealthy,
+  legacyTerminalStatusFromMtStatus,
+  normalizeFxsocketMtStatus,
+  type FxsocketMtStatus,
+} from './fxsocketMtStatus'
+
+export type { FxsocketMtStatus }
+export {
+  isFxsocketMtStatusHealthy,
+  normalizeFxsocketMtStatus,
+  terminalHealthRowPatchFromMtStatus,
+} from './fxsocketMtStatus'
 
 /**
  * FxSocket MT5 REST client for the worker.
@@ -506,35 +519,13 @@ function normalizeAccountSummary(body: unknown): AccountSummary {
   }
 }
 
-function boolField(v: unknown): boolean | undefined {
-  if (v === null || v === undefined) return undefined
-  if (typeof v === 'boolean') return v
-  if (typeof v === 'number') return v !== 0
-  if (typeof v === 'string') {
-    const s = v.trim().toLowerCase()
-    if (s === 'true' || s === '1' || s === 'yes') return true
-    if (s === 'false' || s === '0' || s === 'no') return false
-  }
-  return undefined
-}
-
 export function normalizeTerminalStatus(raw: unknown): FxsocketTerminalStatus {
-  const o = (raw && typeof raw === 'object') ? raw as Record<string, unknown> : {}
-  return {
-    connected: boolField(o.connected ?? o.Connected ?? o.isConnected ?? o.IsConnected),
-    tradeAllowed: boolField(o.tradeAllowed ?? o.TradeAllowed ?? o.trade_allowed),
-    loggedIn: boolField(o.loggedIn ?? o.LoggedIn ?? o.logged_in),
-    serverTime: o.serverTime != null
-      ? String(o.serverTime)
-      : o.server_time != null
-        ? String(o.server_time)
-        : undefined,
-  }
+  return legacyTerminalStatusFromMtStatus(normalizeFxsocketMtStatus(raw))
 }
 
-/** Terminal is healthy when broker is connected and trading is allowed. */
+/** @deprecated Use isFxsocketMtStatusHealthy on the full snapshot. */
 export function isTerminalHealthy(status: FxsocketTerminalStatus): boolean {
-  return status.connected === true && status.tradeAllowed !== false
+  return status.connected === true && status.tradeAllowed === true
 }
 
 function symbolInfoToParams(info: Record<string, unknown>, symbol: string): SymbolParams {
@@ -942,21 +933,26 @@ export class FxsocketBrokerClient {
     return normalizeAccountSummary(raw)
   }
 
-  /** GET /Status — terminal connection and trade permission (falls back to /status). */
-  async terminalStatus(id: string, platformHint?: MtPlatform): Promise<FxsocketTerminalStatus> {
+  /** GET /status — full health snapshot (falls back to /Status). */
+  async mtStatus(id: string, platformHint?: MtPlatform): Promise<FxsocketMtStatus> {
     const base = await this.accountBase(id, platformHint)
     try {
-      const raw = await this.get<unknown>(`${base}/Status`, undefined, 10_000)
+      const raw = await this.get<unknown>(`${base}/status`, undefined, 10_000)
       assertNoApiError(raw)
-      return normalizeTerminalStatus(raw)
+      return normalizeFxsocketMtStatus(raw)
     } catch (err) {
       if (err instanceof FxsocketApiError && err.status === 404) {
-        const raw = await this.get<unknown>(`${base}/status`, undefined, 10_000)
+        const raw = await this.get<unknown>(`${base}/Status`, undefined, 10_000)
         assertNoApiError(raw)
-        return normalizeTerminalStatus(raw)
+        return normalizeFxsocketMtStatus(raw)
       }
       throw err
     }
+  }
+
+  /** @deprecated Use mtStatus — legacy flat terminal fields. */
+  async terminalStatus(id: string, platformHint?: MtPlatform): Promise<FxsocketTerminalStatus> {
+    return legacyTerminalStatusFromMtStatus(await this.mtStatus(id, platformHint))
   }
 
   async checkConnect(id: string): Promise<void> {

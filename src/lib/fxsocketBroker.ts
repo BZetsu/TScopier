@@ -1,5 +1,6 @@
 import { supabase } from './supabase'
 import type { BrokerAccount } from '../types/database'
+import type { FxsocketMtStatus } from './fxsocketMtStatus'
 import type { FxsocketStreamSubscribeFrame } from './fxsocketStreamTypes'
 
 const FXSOCKET_EDGE_TIMEOUT_MS = 120_000
@@ -170,6 +171,30 @@ export type { FxsocketStreamSubscribeFrame } from './fxsocketStreamTypes'
 export const FXSOCKET_DOCS_URL = 'https://fxsocket.com/docs#request-builder'
 export const FXSOCKET_V1_DOCS_URL = 'https://api.fxsocket.com/v1/docs#/'
 
+function fetchBrokerStatusCall(accountId: string): Promise<{
+  account: BrokerAccount
+  healthy: boolean
+  status: FxsocketMtStatus
+}> {
+  return call({
+    body: { action: 'broker_status', account_id: accountId },
+    timeoutMs: 15_000,
+    expect: (b) => {
+      const row = b as {
+        account?: BrokerAccount
+        healthy?: boolean
+        status?: FxsocketMtStatus
+      }
+      const account = row.account
+      const status = row.status
+      if (!account || !status || typeof status !== 'object') {
+        throw new BrokerHealthCheckUnsupportedError()
+      }
+      return { account, healthy: row.healthy === true, status }
+    },
+  })
+}
+
 export const fxsocketBroker = {
   list(): Promise<BrokerAccount[]> {
     return call({
@@ -291,23 +316,9 @@ export const fxsocketBroker = {
     })
   },
 
-  checkStatus(accountId: string): Promise<{
-    account: BrokerAccount
-    healthy: boolean
-  }> {
-    return call({
-      body: { action: 'live_snapshot', account_id: accountId, check_terminal: true },
-      timeoutMs: 15_000,
-      expect: (b) => {
-        const row = b as { account?: BrokerAccount; healthy?: boolean }
-        const account = row.account
-        if (!account) {
-          throw new BrokerHealthCheckUnsupportedError()
-        }
-        return { account, healthy: row.healthy === true }
-      },
-    })
-  },
+  checkStatus: fetchBrokerStatusCall,
+
+  fetchBrokerStatus: fetchBrokerStatusCall,
 
   /** Lightweight AccountSummary poll — no baseline/history work (for live Open P/L). */
   liveSnapshot(accountId: string): Promise<{ summary: AccountSummary }> {

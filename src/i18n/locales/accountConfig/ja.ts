@@ -1,4 +1,5 @@
 import { configureModalJa } from '../configureModal/ja'
+import { statusModalEn } from './statusModal'
 import type { AccountConfigBundleTranslations } from './types'
 
 export const accountConfigJa: AccountConfigBundleTranslations = {
@@ -100,6 +101,7 @@ export const accountConfigJa: AccountConfigBundleTranslations = {
       statusHealthy: '正常',
       statusUnhealthy: '異常',
       statusHealthChecking: '確認中…',
+      statusHealthView: 'View broker health status',
       copyTrades: '取引をコピー',
       reconnect: '再接続',
       reconnectAll: 'すべて再接続',
@@ -193,5 +195,6 @@ export const accountConfigJa: AccountConfigBundleTranslations = {
       configure: '設定',
     },
     configureModal: configureModalJa,
+    statusModal: statusModalEn,
   },
 }

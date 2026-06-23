@@ -34,6 +34,7 @@ import {
   brokerTerminalHealthBadgeVariant,
   brokerTerminalHealthLabel,
 } from '../../lib/brokerHealth'
+import { BrokerStatusModal } from '../../components/broker/BrokerStatusModal'
 import {
   brokerConnectErrorLabelsFromI18n,
   brokerConnectErrorText,
@@ -735,6 +736,7 @@ export function AccountConfigPage() {
     isReconnecting: isBrokerReconnecting,
     setReconnectErrorHandler,
     setHealthPollingPaused,
+    upsertBroker,
   } = useBrokerAccounts()
   const brokerBalanceRefreshStartedRef = useRef(false)
   const { openAddTradingAccount, pendingConfigureBrokerId, clearPendingConfigureBroker } = useAddTradingAccount()
@@ -839,11 +841,12 @@ export function AccountConfigPage() {
     (brokersLoading && brokers.length === 0)
     || (channelsLoading && channelOptions.length === 0)
   const [brokerPendingDelete, setBrokerPendingDelete] = useState<BrokerAccount | null>(null)
+  const [statusModalBroker, setStatusModalBroker] = useState<BrokerAccount | null>(null)
   const [deleteInProgress, setDeleteInProgress] = useState(false)
 
   useEffect(() => {
-    setHealthPollingPaused(Boolean(configAccount || brokerPendingDelete))
-  }, [brokerPendingDelete, configAccount, setHealthPollingPaused])
+    setHealthPollingPaused(Boolean(configAccount || brokerPendingDelete || statusModalBroker))
+  }, [brokerPendingDelete, configAccount, setHealthPollingPaused, statusModalBroker])
   const [togglingBrokerId, setTogglingBrokerId] = useState<string | null>(null)
   const [brokerFilter, setBrokerFilter] = useState('all')
   const [brokerSearchQuery, setBrokerSearchQuery] = useState('')
@@ -2120,7 +2123,14 @@ export function AccountConfigPage() {
                           <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">{broker.label}</h3>
                         <Badge variant={statusVariant} size="sm">{statusLabel}</Badge>
                         {healthVariant && healthLabel ? (
-                          <Badge variant={healthVariant} size="sm">{healthLabel}</Badge>
+                          <button
+                            type="button"
+                            onClick={() => setStatusModalBroker(broker)}
+                            className="inline-flex rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+                            aria-label={bl.statusHealthView}
+                          >
+                            <Badge variant={healthVariant} size="sm">{healthLabel}</Badge>
+                          </button>
                         ) : null}
                         <Badge variant="neutral" size="sm">{broker.platform}</Badge>
                         {brokerLabel && (
@@ -2255,6 +2265,14 @@ export function AccountConfigPage() {
         symbol={resolvedSingleSymbol}
         copy={cm.risk.lotCalculator}
         cancelLabel={cm.cancel}
+      />
+
+      <BrokerStatusModal
+        open={statusModalBroker != null}
+        broker={statusModalBroker}
+        copy={t.accountConfig.statusModal}
+        onClose={() => setStatusModalBroker(null)}
+        onAccountUpdate={upsertBroker}
       />
 
       {brokerPendingDelete && (

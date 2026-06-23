@@ -1,5 +1,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { FxsocketTerminalStatus } from './fxsocketClient'
+import {
+  terminalHealthRowPatchFromMtStatus,
+  type FxsocketMtStatus,
+} from './fxsocketMtStatus'
 
 const MIN_WRITE_INTERVAL_MS = Math.max(
   30_000,
@@ -13,11 +16,8 @@ type HealthSnapshot = {
 
 const lastWritten = new Map<string, { snapshot: HealthSnapshot; at: number }>()
 
-function snapshotFromStatus(status: FxsocketTerminalStatus): HealthSnapshot {
-  return {
-    terminal_connected: status.connected ?? null,
-    trade_allowed: status.tradeAllowed ?? null,
-  }
+function snapshotFromStatus(status: FxsocketMtStatus): HealthSnapshot {
+  return terminalHealthRowPatchFromMtStatus(status)
 }
 
 function snapshotsEqual(a: HealthSnapshot, b: HealthSnapshot): boolean {
@@ -30,7 +30,7 @@ function snapshotsEqual(a: HealthSnapshot, b: HealthSnapshot): boolean {
 export async function writeBrokerTerminalHealth(
   supabase: SupabaseClient,
   brokerId: string,
-  status: FxsocketTerminalStatus,
+  status: FxsocketMtStatus,
   opts?: { force?: boolean },
 ): Promise<void> {
   const snapshot = snapshotFromStatus(status)
@@ -67,7 +67,13 @@ export async function writeBrokerTerminalUnhealthy(
   await writeBrokerTerminalHealth(
     supabase,
     brokerId,
-    { connected: false, tradeAllowed: false },
+    {
+      status: 'error',
+      terminal: { alive: false },
+      broker: { connected: false },
+      account: { tradeAllowed: false, loggedIn: false },
+      bridge: { tradeEaReady: false, symbolsSynced: false },
+    },
     opts,
   )
 }

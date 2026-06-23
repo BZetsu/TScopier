@@ -9,6 +9,7 @@ import { cookiePolicyEn } from '../legal/cookiePolicyEn'
 import { landingEn } from './landing/en'
 import type { Translations } from './types'
 import { configureModalEn } from './configureModal/en'
+import { statusModalEn } from './accountConfig/statusModal'
 
 export const en: Translations = {
   auth: authEn,
@@ -391,6 +392,7 @@ export const en: Translations = {
       statusHealthy: 'Healthy',
       statusUnhealthy: 'Unhealthy',
       statusHealthChecking: 'Checking…',
+      statusHealthView: 'View broker health status',
       copyTrades: 'Copy trades',
       reconnect: 'Reconnect',
       reconnectAll: 'Reconnect all',
@@ -484,6 +486,7 @@ export const en: Translations = {
       configure: 'Configure',
     },
     configureModal: configureModalEn,
+    statusModal: statusModalEn,
   },
   dashboard: {
     title: 'Dashboard',

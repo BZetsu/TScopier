@@ -4,16 +4,19 @@ import {
   buildV1CreateAccountBody,
   getFxsocketV1BaseUrl,
   isAccountSummaryReady,
-  isTerminalHealthy,
   isV1AccountLinkPending,
   normalizeAccountSummary,
   normalizeOrderResponse,
-  normalizeTerminalStatus,
   normalizeV1Account,
   parsePriceHistoryResponse,
   parseQuoteTicksResponse,
   trimPreview,
 } from "./fxsocketClient.ts"
+import {
+  isFxsocketMtStatusHealthy,
+  listFxsocketMtStatusChecks,
+  normalizeFxsocketMtStatus,
+} from "./fxsocketMtStatus.ts"
 
 Deno.test("normalizeAccountSummary maps FxSocket AccountSummary JSON", () => {
   const summary = normalizeAccountSummary({
@@ -122,32 +125,27 @@ Deno.test("isAccountSummaryReady requires balance or equity", () => {
   assertEquals(isAccountSummaryReady({ currency: "USD" }), false)
 })
 
-Deno.test("normalizeTerminalStatus maps FxSocket Status JSON", () => {
-  const status = normalizeTerminalStatus({
-    connected: true,
-    tradeAllowed: true,
-    serverTime: "2026-06-11T08:55:57.000Z",
+Deno.test("normalizeFxsocketMtStatus parses FxSocket /status snapshot", () => {
+  const status = normalizeFxsocketMtStatus({
+    status: "ready",
+    terminal: { alive: true, build: 5836, pingMs: 39 },
+    broker: { connected: true, server: "FTMO-Server3" },
+    account: { loggedIn: true, login: 531347665, tradeAllowed: true },
+    bridge: { tradeEaReady: true, symbolsSynced: true, version: "0.5.0" },
   })
-  assertEquals(status.connected, true)
-  assertEquals(status.tradeAllowed, true)
-  assertEquals(status.serverTime, "2026-06-11T08:55:57.000Z")
-  assertEquals(isTerminalHealthy(status), true)
+  assertEquals(isFxsocketMtStatusHealthy(status), true)
+  assertEquals(listFxsocketMtStatusChecks(status).every(c => c.ok), true)
 })
 
-Deno.test("normalizeTerminalStatus maps PascalCase fields", () => {
-  const status = normalizeTerminalStatus({
-    Connected: true,
-    TradeAllowed: false,
+Deno.test("isFxsocketMtStatusHealthy fails when any boolean check is false", () => {
+  const status = normalizeFxsocketMtStatus({
+    status: "ready",
+    terminal: { alive: true },
+    broker: { connected: true },
+    account: { loggedIn: true, tradeAllowed: true },
+    bridge: { tradeEaReady: false, symbolsSynced: true },
   })
-  assertEquals(status.connected, true)
-  assertEquals(status.tradeAllowed, false)
-  assertEquals(isTerminalHealthy(status), false)
-})
-
-Deno.test("isTerminalHealthy requires connected and tradeAllowed", () => {
-  assertEquals(isTerminalHealthy({ connected: true, tradeAllowed: true }), true)
-  assertEquals(isTerminalHealthy({ connected: true, tradeAllowed: false }), false)
-  assertEquals(isTerminalHealthy({ connected: false, tradeAllowed: true }), false)
+  assertEquals(isFxsocketMtStatusHealthy(status), false)
 })
 
 Deno.test("parsePriceHistoryResponse returns empty for non-array", () => {

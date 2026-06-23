@@ -90,7 +90,7 @@ async function pingBrokerSessionInner(
         void replayParsedSignalsForBroker(ctx, broker)
       }
       try {
-        const terminal = await api.terminalStatus(uuid)
+        const terminal = await api.mtStatus(uuid)
         await writeBrokerTerminalHealth(ctx.supabase, broker.id, terminal)
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)

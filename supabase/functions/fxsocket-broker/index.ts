@@ -5,11 +5,14 @@ import { friendlyBrokerConnectError } from "../_shared/brokerConnectError.ts"
 import {
   FxsocketApiError,
   isFxsocketConfigured,
-  isTerminalHealthy,
   makeFxsocketClientFromEnv,
   type FxsocketAccountSummary,
-  type FxsocketTerminalStatus,
+  type FxsocketMtStatus,
 } from "../_shared/fxsocketClient.ts"
+import {
+  isFxsocketMtStatusHealthy,
+  terminalHealthRowPatchFromMtStatus,
+} from "../_shared/fxsocketMtStatus.ts"
 import {
   resolvePerformanceBaselineBalance,
 } from "../_shared/performanceBaseline.ts"
@@ -49,11 +52,8 @@ function summaryToRowPatch(summary: FxsocketAccountSummary) {
   }
 }
 
-function terminalHealthRowPatch(terminal: FxsocketTerminalStatus) {
-  return {
-    terminal_connected: terminal.connected ?? null,
-    trade_allowed: terminal.tradeAllowed ?? null,
-  }
+function terminalHealthRowPatch(status: FxsocketMtStatus) {
+  return terminalHealthRowPatchFromMtStatus(status)
 }
 
 async function fetchTerminalHealthPatch(
@@ -62,11 +62,29 @@ async function fetchTerminalHealthPatch(
   platform: string,
 ): Promise<Record<string, boolean | null>> {
   try {
-    const terminal = await fx.terminalStatus(fxsocketAccountId, platform)
-    return terminalHealthRowPatch(terminal)
+    const status = await fx.mtStatus(fxsocketAccountId, platform)
+    return terminalHealthRowPatch(status)
   } catch {
     return { terminal_connected: false, trade_allowed: false }
   }
+}
+
+async function persistBrokerMtStatus(
+  supabase: ReturnType<typeof createClient>,
+  userId: string,
+  accountRowId: string,
+  status: FxsocketMtStatus,
+) {
+  const healthy = isFxsocketMtStatusHealthy(status)
+  const { data: updated, error } = await supabase
+    .from("broker_accounts")
+    .update(terminalHealthRowPatch(status))
+    .eq("id", accountRowId)
+    .eq("user_id", userId)
+    .select("*")
+    .single()
+  if (error) throw new Error(error.message)
+  return { healthy, account: updated }
 }
 
 function buildWorkerStreamWsUrl(brokerAccountId: string): string {
@@ -368,23 +386,15 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    if (action === "check_status") {
+    if (action === "broker_status" || action === "check_status") {
       const accountRowId = String(body.account_id ?? "")
       if (!accountRowId) return bad(400, "account_id required")
       const row = await loadOwnedBrokerRow(supabase, userId, accountRowId)
       try {
-        const terminal = await fx.terminalStatus(row.fxsocket_account_id, brokerApiPlatform(row))
-        const healthy = isTerminalHealthy(terminal)
-        const { data: updated, error } = await supabase
-          .from("broker_accounts")
-          .update(terminalHealthRowPatch(terminal))
-          .eq("id", accountRowId)
-          .eq("user_id", userId)
-          .select("*")
-          .single()
-        if (error) return bad(500, error.message)
+        const status = await fx.mtStatus(row.fxsocket_account_id, brokerApiPlatform(row))
+        const { healthy, account } = await persistBrokerMtStatus(supabase, userId, accountRowId, status)
         return Response.json(
-          { ok: true, healthy, terminal, account: updated },
+          { ok: true, healthy, status, account },
           { headers: corsHeaders },
         )
       } catch (e) {
@@ -468,18 +478,10 @@ Deno.serve(async (req: Request) => {
       }
 
       try {
-        const terminal = await fx.terminalStatus(row.fxsocket_account_id, brokerApiPlatform(row))
-        const healthy = isTerminalHealthy(terminal)
-        const { data: updated, error } = await supabase
-          .from("broker_accounts")
-          .update(terminalHealthRowPatch(terminal))
-          .eq("id", accountRowId)
-          .eq("user_id", userId)
-          .select("*")
-          .single()
-        if (error) return bad(500, error.message)
+        const status = await fx.mtStatus(row.fxsocket_account_id, brokerApiPlatform(row))
+        const { healthy, account } = await persistBrokerMtStatus(supabase, userId, accountRowId, status)
         return Response.json(
-          { ok: true, summary, terminal, healthy, account: updated },
+          { ok: true, summary, status, healthy, account },
           { headers: corsHeaders },
         )
       } catch (e) {

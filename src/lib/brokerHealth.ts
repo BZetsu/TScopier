@@ -24,8 +24,10 @@ export function brokerTerminalHealthPhase(
 ): BrokerTerminalHealthPhase {
   if (!account.is_active) return 'paused'
   if (isBrokerLinking(account)) return 'checking'
-  if (account.terminal_connected == null) return 'checking'
-  if (account.terminal_connected === true && account.trade_allowed !== false) return 'healthy'
+  if (account.terminal_connected == null || account.trade_allowed == null) return 'checking'
+  if (account.terminal_connected === true && account.trade_allowed === true) {
+    return 'healthy'
+  }
   return 'unhealthy'
 }
 

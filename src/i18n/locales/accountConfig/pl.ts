@@ -1,4 +1,5 @@
 import { configureModalPl } from '../configureModal/pl'
+import { statusModalEn } from './statusModal'
 import type { AccountConfigBundleTranslations } from './types'
 
 export const accountConfigPl: AccountConfigBundleTranslations = {
@@ -100,6 +101,7 @@ export const accountConfigPl: AccountConfigBundleTranslations = {
       statusHealthy: 'Sprawny',
       statusUnhealthy: 'Niesprawny',
       statusHealthChecking: 'Sprawdzanie…',
+      statusHealthView: 'View broker health status',
       copyTrades: 'Kopiuj transakcje',
       reconnect: 'Połącz ponownie',
       reconnectAll: 'Połącz wszystkie ponownie',
@@ -193,5 +195,6 @@ export const accountConfigPl: AccountConfigBundleTranslations = {
       configure: 'Konfiguruj',
     },
     configureModal: configureModalPl,
+    statusModal: statusModalEn,
   },
 }

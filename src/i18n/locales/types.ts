@@ -503,6 +503,7 @@ export interface AccountConfigBrokerListTranslations {
   statusHealthy: string
   statusUnhealthy: string
   statusHealthChecking: string
+  statusHealthView: string
   copyTrades: string
   reconnect: string
   reconnectAll: string
@@ -564,6 +565,42 @@ export interface AccountConfigBrokerListTranslations {
   accountSearchNoMatch: string
 }
 
+export interface BrokerStatusModalCopy {
+  title: string
+  subtitle: string
+  healthyTitle: string
+  unhealthyTitle: string
+  healthyBody: string
+  unhealthyBody: string
+  refresh: string
+  close: string
+  loading: string
+  unsupported: string
+  loadFailed: string
+  sectionOverall: string
+  sectionTerminal: string
+  sectionBroker: string
+  sectionAccount: string
+  sectionBridge: string
+  serverTime: string
+  checkStatusReady: string
+  checkTerminalAlive: string
+  checkBrokerConnected: string
+  checkAccountLoggedIn: string
+  checkAccountTradeAllowed: string
+  checkBridgeTradeEaReady: string
+  checkBridgeSymbolsSynced: string
+  labelBuild: string
+  labelPing: string
+  labelServer: string
+  labelLogin: string
+  labelCurrency: string
+  labelAccountType: string
+  labelBridgeVersion: string
+  valueYes: string
+  valueNo: string
+}
+
 export interface AccountConfigBrokerConnectedSuccessTranslations {
   title: string
   titlePending: string
@@ -579,6 +616,7 @@ export interface AccountConfigTranslations {
   addAccount: AccountConfigAddAccountModalTranslations
   connectForm: AccountConfigConnectFormTranslations
   brokerList: AccountConfigBrokerListTranslations
+  statusModal: BrokerStatusModalCopy
   configureModal: ConfigureModalTranslations
   brokerConnectedSuccess: AccountConfigBrokerConnectedSuccessTranslations
   bulkConnect: AccountConfigBulkConnectTranslations
