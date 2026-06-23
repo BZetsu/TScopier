@@ -462,7 +462,41 @@ Deno.serve(async (req: Request) => {
       if (!accountRowId) return bad(400, "account_id required")
       const row = await loadOwnedBrokerRow(supabase, userId, accountRowId)
       const summary = await fx.accountSummary(row.fxsocket_account_id, brokerApiPlatform(row))
-      return Response.json({ ok: true, summary }, { headers: corsHeaders })
+
+      if (body.check_terminal !== true) {
+        return Response.json({ ok: true, summary }, { headers: corsHeaders })
+      }
+
+      try {
+        const terminal = await fx.terminalStatus(row.fxsocket_account_id, brokerApiPlatform(row))
+        const healthy = isTerminalHealthy(terminal)
+        const { data: updated, error } = await supabase
+          .from("broker_accounts")
+          .update(terminalHealthRowPatch(terminal))
+          .eq("id", accountRowId)
+          .eq("user_id", userId)
+          .select("*")
+          .single()
+        if (error) return bad(500, error.message)
+        return Response.json(
+          { ok: true, summary, terminal, healthy, account: updated },
+          { headers: corsHeaders },
+        )
+      } catch (e) {
+        const msg = e instanceof FxsocketApiError ? e.message : e instanceof Error ? e.message : "Status check failed"
+        const { data: updated, error } = await supabase
+          .from("broker_accounts")
+          .update({ terminal_connected: false, trade_allowed: false })
+          .eq("id", accountRowId)
+          .eq("user_id", userId)
+          .select("*")
+          .single()
+        if (error) return bad(500, error.message)
+        return Response.json(
+          { ok: true, summary, healthy: false, account: updated, error: msg },
+          { headers: corsHeaders },
+        )
+      }
     }
 
     if (action === "stream_ticket") {

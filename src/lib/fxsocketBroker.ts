@@ -11,6 +11,14 @@ export const FXSOCKET_BULK_CONNECT_TIMEOUT_MS = 300_000
 const FXSOCKET_WAIT_CONNECTED_MS = 180_000
 const FXSOCKET_WAIT_CONNECTED_INTERVAL_MS = 1_000
 
+/** Thrown when the edge function has not been deployed with terminal health support yet. */
+export class BrokerHealthCheckUnsupportedError extends Error {
+  constructor() {
+    super('Broker terminal health check is not available on this server yet')
+    this.name = 'BrokerHealthCheckUnsupportedError'
+  }
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => window.setTimeout(resolve, ms))
 }
@@ -288,12 +296,14 @@ export const fxsocketBroker = {
     healthy: boolean
   }> {
     return call({
-      body: { action: 'check_status', account_id: accountId },
+      body: { action: 'live_snapshot', account_id: accountId, check_terminal: true },
       timeoutMs: 15_000,
       expect: (b) => {
         const row = b as { account?: BrokerAccount; healthy?: boolean }
         const account = row.account
-        if (!account) throw new Error('Status check did not return an account')
+        if (!account) {
+          throw new BrokerHealthCheckUnsupportedError()
+        }
         return { account, healthy: row.healthy === true }
       },
     })
