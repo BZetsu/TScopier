@@ -7,6 +7,7 @@ import {
   computeNextLayerTrigger,
   inactiveLayerTrigger,
   rangeLayerRelativeStepEnabled,
+  resolveEffectiveLayerTriggerPrice,
   resolveLayerReferenceEntry,
   stepPriceOffsetFromPips,
 } from './rangeLayering'
@@ -76,6 +77,32 @@ describe('rangeLayering', () => {
       false,
     )
     assert.equal(ref, 4131.08)
+  })
+
+  it('resolveEffectiveLayerTriggerPrice uses worst open fill in relative mode', () => {
+    const trigger = resolveEffectiveLayerTriggerPrice({
+      relativeMode: true,
+      isBuy: true,
+      plannedTrigger: 4124.70,
+      anchorPrice: 4129.70,
+      lastEntry: 4125.00,
+      stepPriceOffset: 0.3,
+      digits: 2,
+    })
+    assert.equal(trigger, 4124.70)
+  })
+
+  it('resolveEffectiveLayerTriggerPrice ignores stale low planned trigger when relative ref is higher', () => {
+    const trigger = resolveEffectiveLayerTriggerPrice({
+      relativeMode: true,
+      isBuy: true,
+      plannedTrigger: 4124.20,
+      anchorPrice: 4129.70,
+      lastEntry: 4129.70,
+      stepPriceOffset: 0.3,
+      digits: 2,
+    })
+    assert.equal(trigger, 4129.40)
   })
 
   it('buildRelativeMaterializationTriggers only activates shallowest step', () => {

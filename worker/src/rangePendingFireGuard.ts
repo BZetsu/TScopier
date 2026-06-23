@@ -305,7 +305,7 @@ export function shouldBlockLayerOnRetracement(args: {
   if (lastEntry == null) return { block: false }
 
   if (args.isBuy) {
-    if (Number.isFinite(args.ask) && args.ask > lastEntry) {
+    if (Number.isFinite(args.bid) && args.bid > lastEntry) {
       return { block: true, reason: 'favorable_retrace' }
     }
     let bestEntry: number | null = null

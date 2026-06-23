@@ -201,6 +201,16 @@ describe('shouldBlockVirtualLegFire', () => {
     assert.equal(out.reason, 'favorable_retrace')
   })
 
+  it('does not block buy layering when only ask is above last entry but bid is adverse', () => {
+    const out = shouldBlockLayerOnRetracement({
+      isBuy: true,
+      openTrades: [{ entry_price: 4125, lot_size: 0.18 }],
+      bid: 4124.65,
+      ask: 4125.05,
+    })
+    assert.equal(out.block, false)
+  })
+
   it('blocks buy layering when price retraces above last entry', () => {
     const out = shouldBlockLayerOnRetracement({
       isBuy: true,

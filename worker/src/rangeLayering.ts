@@ -76,6 +76,34 @@ export function computeNextLayerTrigger(args: {
   return roundLayerPrice(lastEntryPrice + dir * stepPriceOffset, digits)
 }
 
+/** Live trigger for a pending leg (relative step from worst open fill, else planned row). */
+export function resolveEffectiveLayerTriggerPrice(args: {
+  relativeMode: boolean
+  isBuy: boolean
+  plannedTrigger: number
+  anchorPrice: number
+  lastEntry: number | null
+  stepPriceOffset: number
+  digits: number
+}): number {
+  if (!args.relativeMode) return args.plannedTrigger
+
+  const ref = args.lastEntry ?? (args.anchorPrice > 0 ? args.anchorPrice : null)
+  if (ref != null && args.stepPriceOffset > 0) {
+    return computeNextLayerTrigger({
+      isBuy: args.isBuy,
+      lastEntryPrice: ref,
+      stepPriceOffset: args.stepPriceOffset,
+      digits: args.digits,
+    })
+  }
+
+  if (isInactiveLayerTrigger(args.isBuy, args.plannedTrigger)) {
+    return args.plannedTrigger
+  }
+  return args.plannedTrigger
+}
+
 /** True when live quote has moved step pips against the position from lastEntry. */
 export function adverseMoveReached(args: {
   isBuy: boolean
@@ -164,9 +192,28 @@ export async function refreshPendingLayerTriggersAfterFire(
 
   if (error || !data?.length) return 0
 
+  const { data: openRows, error: openErr } = await supabase
+    .from('trades')
+    .select('entry_price')
+    .eq('signal_id', args.signalId)
+    .eq('broker_account_id', args.brokerAccountId)
+    .eq('status', 'open')
+
+  const openTrades: OpenLayerTrade[] = []
+  if (!openErr && openRows?.length) {
+    for (const row of openRows as Array<{ entry_price?: number | null }>) {
+      const px = Number(row.entry_price)
+      if (Number.isFinite(px) && px > 0) openTrades.push({ entry_price: px })
+    }
+  }
+  if (!openTrades.some(t => Math.abs(t.entry_price - args.newFillPrice) < 1e-9)) {
+    openTrades.push({ entry_price: args.newFillPrice })
+  }
+
+  const referenceEntry = resolveLayerReferenceEntry(openTrades, args.isBuy) ?? args.newFillPrice
   const nextTrigger = computeNextLayerTrigger({
     isBuy: args.isBuy,
-    lastEntryPrice: args.newFillPrice,
+    lastEntryPrice: referenceEntry,
     stepPriceOffset: args.stepPriceOffset,
     digits: args.digits,
   })
@@ -178,7 +225,7 @@ export async function refreshPendingLayerTriggersAfterFire(
       .from('range_pending_legs')
       .update({
         trigger_price: nextTrigger,
-        anchor_price: args.newFillPrice,
+        anchor_price: referenceEntry,
         updated_at: new Date().toISOString(),
       })
       .eq('id', shallowest.id)

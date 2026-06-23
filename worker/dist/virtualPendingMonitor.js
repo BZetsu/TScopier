@@ -31,6 +31,8 @@ const SYMBOL_TTL_MS = 10 * 60000;
 const ACTIVE_MS = (0, monitorIdleGate_1.monitorActiveIntervalMs)('VIRTUAL_PENDING_TICK_MS', 400);
 const IDLE_MS = (0, monitorIdleGate_1.monitorIdleIntervalMs)('VIRTUAL_PENDING_IDLE_MS', 15000);
 const STALE_CLAIM_AFTER_MS = 30000;
+/** Max extra range layers per basket per tick when price gaps through multiple rungs. */
+const MAX_CATCHUP_FIRES_PER_TICK = 8;
 async function virtualPendingHasWork(supabase, staleCut) {
     const pending = await (0, monitorIdleGate_1.hasWorkOnShard)(supabase, 'range_pending_legs', q => q
         .eq('status', 'pending')
@@ -285,6 +287,47 @@ class VirtualPendingMonitor {
                 return;
             }
             const tpTouchedBaskets = await this.detectAndLockTpTouchedBaskets(legs, q.bid, q.ask);
+            const openByBasket = await this.loadOpenTradesByBasket(legs);
+            const relativeMode = (0, rangeLayering_1.rangeLayerRelativeStepEnabled)();
+            const symbolParams = await this.getSymbolParams(uuid, symbol);
+            const digits = Math.max(0, Math.min(8, Number(symbolParams?.digits) || 5));
+            const channelBySignal = await this.loadSignalChannelIds(legs.map(l => l.signal_id));
+            const stepMetaByBroker = new Map();
+            const effectiveTriggerFor = (leg) => {
+                const bk = `${leg.signal_id}|${leg.broker_account_id}`;
+                const openTrades = openByBasket.get(bk) ?? [];
+                const lastEntry = (0, rangeLayering_1.resolveLayerReferenceEntry)(openTrades, leg.is_buy)
+                    ?? (leg.anchor_price > 0 ? leg.anchor_price : null);
+                let stepMeta = stepMetaByBroker.get(leg.broker_account_id);
+                if (!stepMeta) {
+                    const channelId = channelBySignal.get(leg.signal_id) ?? null;
+                    const manual = this.brokerConfigCache.get(`${leg.broker_account_id}|${channelId ?? ''}`)?.manual
+                        ?? {};
+                    stepMeta = (0, rangeLayering_1.resolveEffectiveStepPips)(manual, null, leg.symbol);
+                    stepMetaByBroker.set(leg.broker_account_id, stepMeta);
+                }
+                return (0, rangeLayering_1.resolveEffectiveLayerTriggerPrice)({
+                    relativeMode,
+                    isBuy: leg.is_buy,
+                    plannedTrigger: leg.trigger_price,
+                    anchorPrice: leg.anchor_price,
+                    lastEntry,
+                    stepPriceOffset: stepMeta.stepPriceOffset,
+                    digits,
+                });
+            };
+            // Preload broker manual settings for step resolution (cached on monitor).
+            for (const leg of legs) {
+                const channelId = channelBySignal.get(leg.signal_id) ?? null;
+                const cacheKey = `${leg.broker_account_id}|${channelId ?? ''}`;
+                if (!this.brokerConfigCache.has(cacheKey)) {
+                    await this.loadManualSettingsForLeg(leg.broker_account_id, channelId);
+                }
+                if (!stepMetaByBroker.has(leg.broker_account_id)) {
+                    const manual = this.brokerConfigCache.get(cacheKey)?.manual ?? {};
+                    stepMetaByBroker.set(leg.broker_account_id, (0, rangeLayering_1.resolveEffectiveStepPips)(manual, null, leg.symbol));
+                }
+            }
             // How far is the nearest trigger? Useful diagnostic when nothing fires.
             let nearestGap = Number.POSITIVE_INFINITY;
             const triggeredInGroup = [];
@@ -292,11 +335,12 @@ class VirtualPendingMonitor {
                 const basketKey = `${leg.signal_id}|${leg.broker_account_id}`;
                 if (tpTouchedBaskets.has(basketKey))
                     continue;
+                const trigger = effectiveTriggerFor(leg);
                 const ref = leg.is_buy ? q.bid : q.ask;
-                const gap = leg.is_buy ? ref - leg.trigger_price : leg.trigger_price - ref;
+                const gap = leg.is_buy ? ref - trigger : trigger - ref;
                 if (Number.isFinite(gap) && gap < nearestGap)
                     nearestGap = gap;
-                if (isTriggered(leg.is_buy, leg.trigger_price, q.bid, q.ask))
+                if (isTriggered(leg.is_buy, trigger, q.bid, q.ask))
                     triggeredInGroup.push(leg);
             }
             const cancelledStaleIds = new Set();
@@ -344,7 +388,8 @@ class VirtualPendingMonitor {
             for (const leg of triggeredInGroup) {
                 if (cancelledStaleIds.has(leg.id))
                     continue;
-                if (!isTriggered(leg.is_buy, leg.trigger_price, q.bid, q.ask))
+                const trigger = effectiveTriggerFor(leg);
+                if (!isTriggered(leg.is_buy, trigger, q.bid, q.ask))
                     continue;
                 if (isBlockedByShallowerStep(leg, activeStepsByBasket))
                     continue;
@@ -355,15 +400,34 @@ class VirtualPendingMonitor {
             }
             for (const [, arr] of byBasket) {
                 arr.sort((a, b) => a.step_idx - b.step_idx || a.id.localeCompare(b.id));
-                const winner = arr[0];
-                if (!winner)
-                    continue;
-                triggeredTotal += 1;
-                const ok = await this.fireLeg(winner, q.bid, q.ask);
-                if (ok)
+                let winner = arr[0];
+                for (let catchUp = 0; catchUp < MAX_CATCHUP_FIRES_PER_TICK && winner; catchUp += 1) {
+                    triggeredTotal += 1;
+                    const ok = await this.fireLeg(winner, q.bid, q.ask);
+                    if (!ok) {
+                        firedErrTotal += 1;
+                        break;
+                    }
                     firedOkTotal += 1;
-                else
-                    firedErrTotal += 1;
+                    const bk = `${winner.signal_id}|${winner.broker_account_id}`;
+                    openByBasket.set(bk, await (0, rangePendingFireGuard_1.loadOpenTradesForBasket)(this.supabase, winner.signal_id, winner.broker_account_id));
+                    const activeSteps = await this.fetchShallowActiveSteps(uuid, symbol, [winner.signal_id]);
+                    const { data: pendingRows } = await this.supabase
+                        .from('range_pending_legs')
+                        .select('*')
+                        .eq('signal_id', winner.signal_id)
+                        .eq('broker_account_id', winner.broker_account_id)
+                        .eq('metaapi_account_id', uuid)
+                        .eq('symbol', symbol)
+                        .eq('status', 'pending')
+                        .not('comment', 'ilike', '%:strictEntry%')
+                        .not('comment', 'ilike', '%:strictEntryAgg%');
+                    const nextCandidates = (pendingRows ?? [])
+                        .filter(l => !isBlockedByShallowerStep(l, activeSteps))
+                        .filter(l => isTriggered(l.is_buy, effectiveTriggerFor(l), q.bid, q.ask))
+                        .sort((a, b) => a.step_idx - b.step_idx || a.id.localeCompare(b.id));
+                    winner = nextCandidates[0];
+                }
             }
             distances.push({ symbol, bid: q.bid, ask: q.ask, gapPriceUnits: nearestGap, legs: legs.length });
         }));
@@ -516,20 +580,18 @@ class VirtualPendingMonitor {
         const openTrades = await (0, rangePendingFireGuard_1.loadOpenTradesForBasket)(this.supabase, leg.signal_id, leg.broker_account_id);
         const lastEntry = (0, rangeLayering_1.resolveLayerReferenceEntry)(openTrades, leg.is_buy)
             ?? (leg.anchor_price > 0 ? leg.anchor_price : null);
-        const computedTrigger = lastEntry != null && stepMeta.stepPriceOffset > 0
-            ? (0, rangeLayering_1.computeNextLayerTrigger)({
-                isBuy: leg.is_buy,
-                lastEntryPrice: lastEntry,
-                stepPriceOffset: stepMeta.stepPriceOffset,
-                digits,
-            })
-            : plannedTrigger;
-        const useTrigger = (0, rangeLayering_1.isInactiveLayerTrigger)(leg.is_buy, plannedTrigger)
-            ? computedTrigger
-            : ((0, rangeLayering_1.rangeLayerRelativeStepEnabled)() ? computedTrigger : plannedTrigger);
+        const computedTrigger = (0, rangeLayering_1.resolveEffectiveLayerTriggerPrice)({
+            relativeMode: (0, rangeLayering_1.rangeLayerRelativeStepEnabled)(),
+            isBuy: leg.is_buy,
+            plannedTrigger,
+            anchorPrice: leg.anchor_price,
+            lastEntry,
+            stepPriceOffset: stepMeta.stepPriceOffset,
+            digits,
+        });
         return {
             plannedTrigger,
-            computedTrigger: useTrigger,
+            computedTrigger,
             lastEntry,
             stepPriceOffset: stepMeta.stepPriceOffset,
             effectiveStepPips: stepMeta.stepPips,
@@ -984,6 +1046,51 @@ class VirtualPendingMonitor {
             channelId,
             basketCreatedAt,
         });
+    }
+    async loadOpenTradesByBasket(legs) {
+        const out = new Map();
+        const signalIds = [...new Set(legs.map(l => l.signal_id))];
+        const brokerIds = [...new Set(legs.map(l => l.broker_account_id))];
+        if (!signalIds.length || !brokerIds.length)
+            return out;
+        const { data, error } = await this.supabase
+            .from('trades')
+            .select('signal_id, broker_account_id, entry_price, lot_size')
+            .in('signal_id', signalIds)
+            .in('broker_account_id', brokerIds)
+            .eq('status', 'open');
+        if (error || !data?.length)
+            return out;
+        for (const row of data) {
+            const entry = Number(row.entry_price);
+            const lots = Number(row.lot_size);
+            if (!Number.isFinite(entry) || entry <= 0)
+                continue;
+            const bk = `${row.signal_id}|${row.broker_account_id}`;
+            const arr = out.get(bk) ?? [];
+            arr.push({
+                entry_price: entry,
+                lot_size: Number.isFinite(lots) && lots > 0 ? lots : undefined,
+            });
+            out.set(bk, arr);
+        }
+        return out;
+    }
+    async loadSignalChannelIds(signalIds) {
+        const out = new Map();
+        const unique = [...new Set(signalIds)].filter(Boolean);
+        if (!unique.length)
+            return out;
+        const { data, error } = await this.supabase
+            .from('signals')
+            .select('id, channel_id')
+            .in('id', unique);
+        if (error || !data?.length)
+            return out;
+        for (const row of data) {
+            out.set(row.id, row.channel_id ?? null);
+        }
+        return out;
     }
     async loadManualSettingsForLeg(brokerAccountId, channelId) {
         const cacheKey = `${brokerAccountId}|${channelId ?? ''}`;
