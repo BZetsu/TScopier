@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.materializeVirtualPendingLegs = materializeVirtualPendingLegs;
 const helpers_1 = require("./helpers");
+const rangeLayering_1 = require("../rangeLayering");
 /**
  * Persist virtual pending ladder rows to `range_pending_legs` for the worker monitor.
  */
@@ -21,9 +22,28 @@ async function materializeVirtualPendingLegs(ctx, prep, strictBrokerPlaced) {
             const signalZoneLo = plan.rangeLayering?.signalZoneLo ?? null;
             const signalZoneHi = plan.rangeLayering?.signalZoneHi ?? null;
             const useSignalEntryRange = plan.rangeLayering?.useSignalEntryRange === true;
+            const relativeMode = (0, rangeLayering_1.rangeLayerRelativeStepEnabled)();
+            const stepIndices = virtualPendings.map(v => v.stepIdx);
             const nowMs = Date.now();
             for (const v of virtualPendings) {
-                const triggerPrice = (0, helpers_1.triggerPriceFor)(v, anchor, digits);
+                let triggerPrice;
+                if (relativeMode) {
+                    triggerPrice = (0, rangeLayering_1.resolveRangePendingTrigger)({
+                        relativeMode: true,
+                        anchor,
+                        virtual: {
+                            stepIdx: v.stepIdx,
+                            isBuy: v.isBuy,
+                            volume: v.volume,
+                            stepPriceOffset: v.stepPriceOffset,
+                        },
+                        digits,
+                        allStepIndices: stepIndices,
+                    });
+                }
+                else {
+                    triggerPrice = (0, helpers_1.triggerPriceFor)(v, anchor, digits);
+                }
                 if (!(0, helpers_1.virtualPendingTriggerAllowed)({
                     triggerPrice,
                     signalRangeBoundary,
@@ -111,6 +131,8 @@ async function materializeVirtualPendingLegs(ctx, prep, strictBrokerPlaced) {
                 anchor,
                 anchorSource,
                 symbol,
+                relative_layer_step: (0, rangeLayering_1.rangeLayerRelativeStepEnabled)(),
+                effective_step_pips: (0, rangeLayering_1.resolveEffectiveStepPips)(null, plan.rangeLayering ?? null, symbol).stepPips,
                 stepIdxs: insertRows.map(r => r.step_idx),
                 triggers: insertRows.map(r => r.trigger_price),
                 range_layering: plan.rangeLayering ?? null,

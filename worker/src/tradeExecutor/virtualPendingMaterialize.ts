@@ -1,6 +1,11 @@
 import type { TradeExecutorContext } from './context'
 import { roundLot, triggerPriceFor, virtualPendingTriggerAllowed } from './helpers'
 import type { PreparedEntry } from './entryPrepare'
+import {
+  rangeLayerRelativeStepEnabled,
+  resolveEffectiveStepPips,
+  resolveRangePendingTrigger,
+} from '../rangeLayering'
 
 /**
  * Persist virtual pending ladder rows to `range_pending_legs` for the worker monitor.
@@ -30,9 +35,27 @@ export async function materializeVirtualPendingLegs(
       const signalZoneLo = plan.rangeLayering?.signalZoneLo ?? null
       const signalZoneHi = plan.rangeLayering?.signalZoneHi ?? null
       const useSignalEntryRange = plan.rangeLayering?.useSignalEntryRange === true
+      const relativeMode = rangeLayerRelativeStepEnabled()
+      const stepIndices = virtualPendings.map(v => v.stepIdx)
       const nowMs = Date.now()
       for (const v of virtualPendings) {
-        const triggerPrice = triggerPriceFor(v, anchor, digits)
+        let triggerPrice: number
+        if (relativeMode) {
+          triggerPrice = resolveRangePendingTrigger({
+            relativeMode: true,
+            anchor,
+            virtual: {
+              stepIdx: v.stepIdx,
+              isBuy: v.isBuy,
+              volume: v.volume,
+              stepPriceOffset: v.stepPriceOffset,
+            },
+            digits,
+            allStepIndices: stepIndices,
+          })
+        } else {
+          triggerPrice = triggerPriceFor(v, anchor, digits)
+        }
         if (!virtualPendingTriggerAllowed({
           triggerPrice,
           signalRangeBoundary,
@@ -131,6 +154,8 @@ export async function materializeVirtualPendingLegs(
         anchor,
         anchorSource,
         symbol,
+        relative_layer_step: rangeLayerRelativeStepEnabled(),
+        effective_step_pips: resolveEffectiveStepPips(null, plan.rangeLayering ?? null, symbol).stepPips,
         stepIdxs: insertRows.map(r => r.step_idx),
         triggers: insertRows.map(r => r.trigger_price),
         range_layering: plan.rangeLayering ?? null,

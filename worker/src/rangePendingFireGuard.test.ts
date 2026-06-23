@@ -4,6 +4,7 @@ import {
   basketInProfitAtQuote,
   hasTpTouchedLock,
   loadExistingRangeStepIndices,
+  shouldBlockLayerOnRetracement,
   shouldBlockVirtualLegFire,
 } from './rangePendingFireGuard'
 
@@ -187,6 +188,28 @@ describe('shouldBlockVirtualLegFire', () => {
     assert.equal(out.block, true)
     assert.equal(out.reason, 'basket_in_profit')
     assert.equal(legUpdateCalled, false)
+  })
+
+  it('blocks sell layering when price retraces below last entry', () => {
+    const out = shouldBlockLayerOnRetracement({
+      isBuy: false,
+      openTrades: [{ entry_price: 4131.08, lot_size: 0.18 }],
+      bid: 4130.4,
+      ask: 4130.6,
+    })
+    assert.equal(out.block, true)
+    assert.equal(out.reason, 'favorable_retrace')
+  })
+
+  it('blocks buy layering when price retraces above last entry', () => {
+    const out = shouldBlockLayerOnRetracement({
+      isBuy: true,
+      openTrades: [{ entry_price: 4100, lot_size: 0.1 }],
+      bid: 4100.1,
+      ask: 4100.5,
+    })
+    assert.equal(out.block, true)
+    assert.equal(out.reason, 'favorable_retrace')
   })
 
   it('ignores tp lock when layerTillClose is enabled', async () => {
