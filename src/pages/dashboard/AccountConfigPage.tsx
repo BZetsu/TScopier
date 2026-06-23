@@ -31,6 +31,10 @@ import { isLegacyBrokerLink, countLinkedBrokerSessions, hasFxsocketBrokerSession
 import { resolveBrokerTotalBalance } from '../../lib/effectiveBrokerBalance'
 import { brokerCanReconnect, brokerConnectionBadgeVariant, brokerConnectionStatusLabel } from '../../lib/brokerReconnect'
 import {
+  brokerTerminalHealthBadgeVariant,
+  brokerTerminalHealthLabel,
+} from '../../lib/brokerHealth'
+import {
   brokerConnectErrorLabelsFromI18n,
   brokerConnectErrorText,
   brokerReconnectBannerText,
@@ -730,6 +734,7 @@ export function AccountConfigPage() {
     brokersNeedingReconnect,
     isReconnecting: isBrokerReconnecting,
     setReconnectErrorHandler,
+    setHealthPollingPaused,
   } = useBrokerAccounts()
   const brokerBalanceRefreshStartedRef = useRef(false)
   const { openAddTradingAccount, pendingConfigureBrokerId, clearPendingConfigureBroker } = useAddTradingAccount()
@@ -835,6 +840,10 @@ export function AccountConfigPage() {
     || (channelsLoading && channelOptions.length === 0)
   const [brokerPendingDelete, setBrokerPendingDelete] = useState<BrokerAccount | null>(null)
   const [deleteInProgress, setDeleteInProgress] = useState(false)
+
+  useEffect(() => {
+    setHealthPollingPaused(Boolean(configAccount || brokerPendingDelete))
+  }, [brokerPendingDelete, configAccount, setHealthPollingPaused])
   const [togglingBrokerId, setTogglingBrokerId] = useState<string | null>(null)
   const [brokerFilter, setBrokerFilter] = useState('all')
   const [brokerSearchQuery, setBrokerSearchQuery] = useState('')
@@ -2089,6 +2098,8 @@ export function AccountConfigPage() {
               const statusVariant = brokerConnectionBadgeVariant(broker)
               const isReconnecting = isBrokerReconnecting(broker.id)
               const statusLabel = brokerConnectionStatusLabel(broker, bl)
+              const healthVariant = brokerTerminalHealthBadgeVariant(broker)
+              const healthLabel = brokerTerminalHealthLabel(broker, bl)
               const brokerLabel = broker.broker_name
                 || inferBrokerLabelFromServer(broker.broker_server ?? null)
                 || broker.broker_server
@@ -2108,6 +2119,9 @@ export function AccountConfigPage() {
                         <div className="flex flex-wrap items-center gap-2">
                           <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">{broker.label}</h3>
                         <Badge variant={statusVariant} size="sm">{statusLabel}</Badge>
+                        {healthVariant && healthLabel ? (
+                          <Badge variant={healthVariant} size="sm">{healthLabel}</Badge>
+                        ) : null}
                         <Badge variant="neutral" size="sm">{broker.platform}</Badge>
                         {brokerLabel && (
                           <Badge variant="neutral" size="sm">{brokerLabel}</Badge>

@@ -5,8 +5,10 @@ import { friendlyBrokerConnectError } from "../_shared/brokerConnectError.ts"
 import {
   FxsocketApiError,
   isFxsocketConfigured,
+  isTerminalHealthy,
   makeFxsocketClientFromEnv,
   type FxsocketAccountSummary,
+  type FxsocketTerminalStatus,
 } from "../_shared/fxsocketClient.ts"
 import {
   resolvePerformanceBaselineBalance,
@@ -44,6 +46,26 @@ function summaryToRowPatch(summary: FxsocketAccountSummary) {
     last_equity: summary.equity ?? null,
     last_currency: summary.currency ?? null,
     last_synced_at: new Date().toISOString(),
+  }
+}
+
+function terminalHealthRowPatch(terminal: FxsocketTerminalStatus) {
+  return {
+    terminal_connected: terminal.connected ?? null,
+    trade_allowed: terminal.tradeAllowed ?? null,
+  }
+}
+
+async function fetchTerminalHealthPatch(
+  fx: ReturnType<typeof makeFxsocketClientFromEnv>,
+  fxsocketAccountId: string,
+  platform: string,
+): Promise<Record<string, boolean | null>> {
+  try {
+    const terminal = await fx.terminalStatus(fxsocketAccountId, platform)
+    return terminalHealthRowPatch(terminal)
+  } catch {
+    return { terminal_connected: false, trade_allowed: false }
   }
 }
 
@@ -270,6 +292,12 @@ Deno.serve(async (req: Request) => {
             }
           }
 
+          const terminalPatch = await fetchTerminalHealthPatch(
+            fx,
+            row.fxsocket_account_id,
+            brokerApiPlatform(row),
+          )
+
           const { data: updated, error } = await supabase
             .from("broker_accounts")
             .update({
@@ -278,6 +306,7 @@ Deno.serve(async (req: Request) => {
               connection_error: null,
               ...summaryToRowPatch(readiness.summary),
               ...baselinePatch,
+              ...terminalPatch,
             })
             .eq("id", accountRowId)
             .eq("user_id", userId)
@@ -336,6 +365,36 @@ Deno.serve(async (req: Request) => {
           .eq("id", accountRowId)
           .eq("user_id", userId)
         return bad(502, msg)
+      }
+    }
+
+    if (action === "check_status") {
+      const accountRowId = String(body.account_id ?? "")
+      if (!accountRowId) return bad(400, "account_id required")
+      const row = await loadOwnedBrokerRow(supabase, userId, accountRowId)
+      try {
+        const terminal = await fx.terminalStatus(row.fxsocket_account_id, brokerApiPlatform(row))
+        const healthy = isTerminalHealthy(terminal)
+        const { data: updated, error } = await supabase
+          .from("broker_accounts")
+          .update(terminalHealthRowPatch(terminal))
+          .eq("id", accountRowId)
+          .eq("user_id", userId)
+          .select("*")
+          .single()
+        if (error) return bad(500, error.message)
+        return Response.json(
+          { ok: true, healthy, terminal, account: updated },
+          { headers: corsHeaders },
+        )
+      } catch (e) {
+        const msg = e instanceof FxsocketApiError ? e.message : e instanceof Error ? e.message : "Status check failed"
+        await supabase
+          .from("broker_accounts")
+          .update({ terminal_connected: false, trade_allowed: false })
+          .eq("id", accountRowId)
+          .eq("user_id", userId)
+        return bad(e instanceof FxsocketApiError ? e.status : 502, msg)
       }
     }
 

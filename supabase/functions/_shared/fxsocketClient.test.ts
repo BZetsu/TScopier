@@ -4,9 +4,11 @@ import {
   buildV1CreateAccountBody,
   getFxsocketV1BaseUrl,
   isAccountSummaryReady,
+  isTerminalHealthy,
   isV1AccountLinkPending,
   normalizeAccountSummary,
   normalizeOrderResponse,
+  normalizeTerminalStatus,
   normalizeV1Account,
   parsePriceHistoryResponse,
   parseQuoteTicksResponse,
@@ -118,6 +120,34 @@ Deno.test("isAccountSummaryReady requires balance or equity", () => {
   assertEquals(isAccountSummaryReady({ balance: 1000 }), true)
   assertEquals(isAccountSummaryReady({ equity: 0 }), true)
   assertEquals(isAccountSummaryReady({ currency: "USD" }), false)
+})
+
+Deno.test("normalizeTerminalStatus maps FxSocket Status JSON", () => {
+  const status = normalizeTerminalStatus({
+    connected: true,
+    tradeAllowed: true,
+    serverTime: "2026-06-11T08:55:57.000Z",
+  })
+  assertEquals(status.connected, true)
+  assertEquals(status.tradeAllowed, true)
+  assertEquals(status.serverTime, "2026-06-11T08:55:57.000Z")
+  assertEquals(isTerminalHealthy(status), true)
+})
+
+Deno.test("normalizeTerminalStatus maps PascalCase fields", () => {
+  const status = normalizeTerminalStatus({
+    Connected: true,
+    TradeAllowed: false,
+  })
+  assertEquals(status.connected, true)
+  assertEquals(status.tradeAllowed, false)
+  assertEquals(isTerminalHealthy(status), false)
+})
+
+Deno.test("isTerminalHealthy requires connected and tradeAllowed", () => {
+  assertEquals(isTerminalHealthy({ connected: true, tradeAllowed: true }), true)
+  assertEquals(isTerminalHealthy({ connected: true, tradeAllowed: false }), false)
+  assertEquals(isTerminalHealthy({ connected: false, tradeAllowed: true }), false)
 })
 
 Deno.test("parsePriceHistoryResponse returns empty for non-array", () => {

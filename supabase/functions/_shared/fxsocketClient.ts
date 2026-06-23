@@ -14,6 +14,7 @@ export const FXSOCKET_V1_DOCS_URL = "https://api.fxsocket.com/v1/docs#/"
 
 export const FXSOCKET_DOCUMENTED_ENDPOINTS = [
   "GET /AccountSummary",
+  "GET /Status",
   "GET /OpenedOrders",
   "GET /OrderHistory",
   "GET /symbols",
@@ -168,7 +169,39 @@ export interface FxsocketOrderResult {
 export interface FxsocketTerminalStatus {
   connected?: boolean
   tradeAllowed?: boolean
+  loggedIn?: boolean
   serverTime?: string
+}
+
+function boolField(v: unknown): boolean | undefined {
+  if (v === null || v === undefined) return undefined
+  if (typeof v === "boolean") return v
+  if (typeof v === "number") return v !== 0
+  if (typeof v === "string") {
+    const s = v.trim().toLowerCase()
+    if (s === "true" || s === "1" || s === "yes") return true
+    if (s === "false" || s === "0" || s === "no") return false
+  }
+  return undefined
+}
+
+export function normalizeTerminalStatus(raw: unknown): FxsocketTerminalStatus {
+  const o = (raw && typeof raw === "object") ? raw as Record<string, unknown> : {}
+  return {
+    connected: boolField(o.connected ?? o.Connected ?? o.isConnected ?? o.IsConnected),
+    tradeAllowed: boolField(o.tradeAllowed ?? o.TradeAllowed ?? o.trade_allowed),
+    loggedIn: boolField(o.loggedIn ?? o.LoggedIn ?? o.logged_in),
+    serverTime: o.serverTime != null
+      ? String(o.serverTime)
+      : o.server_time != null
+        ? String(o.server_time)
+        : undefined,
+  }
+}
+
+/** Terminal is healthy when broker is connected and trading is allowed. */
+export function isTerminalHealthy(status: FxsocketTerminalStatus): boolean {
+  return status.connected === true && status.tradeAllowed !== false
 }
 
 function num(v: unknown): number | undefined {
@@ -513,6 +546,21 @@ export class FxsocketClient {
   async accountSummary(accountId: string, platform?: string | null): Promise<FxsocketAccountSummary> {
     const raw = await this.request(`${this.accountBase(accountId, platform)}/AccountSummary`, { method: "GET" })
     return normalizeAccountSummary(raw)
+  }
+
+  /** GET /Status — terminal connection and trade permission (falls back to /status). */
+  async terminalStatus(accountId: string, platform?: string | null): Promise<FxsocketTerminalStatus> {
+    const base = this.accountBase(accountId, platform)
+    try {
+      const raw = await this.request(`${base}/Status`, { method: "GET", timeoutMs: 10_000 })
+      return normalizeTerminalStatus(raw)
+    } catch (e) {
+      if (e instanceof FxsocketApiError && e.status === 404) {
+        const raw = await this.request(`${base}/status`, { method: "GET", timeoutMs: 10_000 })
+        return normalizeTerminalStatus(raw)
+      }
+      throw e
+    }
   }
 
   async openedOrders(accountId: string, platform?: string | null): Promise<FxsocketOpenedOrder[]> {

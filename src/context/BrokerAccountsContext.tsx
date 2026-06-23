@@ -35,6 +35,7 @@ interface BrokerAccountsContextValue {
   brokersNeedingReconnect: BrokerAccount[]
   isReconnecting: (brokerId: string) => boolean
   setHealthPollingPaused: (paused: boolean) => void
+  healthPollingPaused: boolean
   setBackgroundConnectivityPaused: (paused: boolean) => void
   setReconnectErrorHandler: (handler: ((message: string) => void) | null) => void
   setReconnectSuccessHandler: (handler: ((brokerId: string) => void) | null) => void
@@ -57,6 +58,7 @@ export function BrokerAccountsProvider({
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const initialLoadDoneRef = useRef(false)
+  const [healthPollingPaused, setHealthPollingPaused] = useState(false)
 
   const refreshBrokers = useCallback(async (options?: { silent?: boolean }) => {
     if (!user?.id) {
@@ -151,7 +153,8 @@ export function BrokerAccountsProvider({
       reconnectingBrokerIds: emptySet,
       brokersNeedingReconnect: [],
       isReconnecting: () => false,
-      setHealthPollingPaused: () => {},
+      setHealthPollingPaused,
+      healthPollingPaused,
       setBackgroundConnectivityPaused: () => {},
       setReconnectErrorHandler: () => {},
       setReconnectSuccessHandler: () => {},
@@ -170,6 +173,7 @@ export function BrokerAccountsProvider({
       emptySet,
       noopAsync,
       noopClear,
+      healthPollingPaused,
     ],
   )
 

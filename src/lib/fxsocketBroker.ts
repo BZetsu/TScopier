@@ -283,6 +283,22 @@ export const fxsocketBroker = {
     })
   },
 
+  checkStatus(accountId: string): Promise<{
+    account: BrokerAccount
+    healthy: boolean
+  }> {
+    return call({
+      body: { action: 'check_status', account_id: accountId },
+      timeoutMs: 15_000,
+      expect: (b) => {
+        const row = b as { account?: BrokerAccount; healthy?: boolean }
+        const account = row.account
+        if (!account) throw new Error('Status check did not return an account')
+        return { account, healthy: row.healthy === true }
+      },
+    })
+  },
+
   /** Lightweight AccountSummary poll — no baseline/history work (for live Open P/L). */
   liveSnapshot(accountId: string): Promise<{ summary: AccountSummary }> {
     return call({

@@ -10,6 +10,7 @@ import {
 } from '../fxsocketClient'
 import type { ManualSettings } from '../manualPlanner'
 import { writeBrokerConnectionStatus } from '../brokerConnectionStatus'
+import { writeBrokerTerminalHealth, writeBrokerTerminalUnhealthy } from '../brokerTerminalHealth'
 import { replayParsedSignalsForBroker } from '../brokerSignalReplay'
 import { applySymbolMapping, brokerSessionUuid, isMtUuid, parseSymbolToTradeList } from './helpers'
 import {
@@ -87,6 +88,13 @@ async function pingBrokerSessionInner(
       if (wasBlocked) {
         ctx.sessionOrderBlocked.delete(broker.id)
         void replayParsedSignalsForBroker(ctx, broker)
+      }
+      try {
+        const terminal = await api.terminalStatus(uuid)
+        await writeBrokerTerminalHealth(ctx.supabase, broker.id, terminal)
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        console.warn(`[tradeExecutor] terminalStatus failed broker=${broker.id}: ${msg}`)
       }
       return true
     }
@@ -215,6 +223,7 @@ export async function markBrokerSessionDown(ctx: TradeExecutorContext, broker: B
     console.warn(`[tradeExecutor] broker ${broker.id} session down: ${reason}`)
     broker.connection_status = 'error'
     await writeBrokerConnectionStatus(ctx.supabase, broker.id, 'error', { rawError: reason })
+    await writeBrokerTerminalUnhealthy(ctx.supabase, broker.id, { force: true })
   }
 
 export async function ensureBrokerSession(ctx: TradeExecutorContext,

@@ -4,6 +4,7 @@ import { BrokerAccountsProvider } from '../../context/BrokerAccountsContext'
 import { NotificationsProvider } from '../../context/NotificationsContext'
 import { AddTradingAccountProvider } from '../../context/AddTradingAccountContext'
 import { PendingBrokerConnectionSync } from '../broker/PendingBrokerConnectionSync'
+import { BrokerTerminalHealthSync } from '../broker/BrokerTerminalHealthSync'
 import { AppLayout } from './AppLayout'
 import { useNeedsWelcome } from '../../hooks/useNeedsWelcome'
 
@@ -28,6 +29,7 @@ export function AppShell() {
   return (
     <BrokerAccountsProvider enabled={!deferAppBootstrap}>
       {!deferAppBootstrap ? <PendingBrokerConnectionSync /> : null}
+      {!deferAppBootstrap ? <BrokerTerminalHealthSync /> : null}
       <NotificationsProvider enabled={!deferAppBootstrap}>
         <AddTradingAccountProvider>
           <AppLayout />

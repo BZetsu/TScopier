@@ -500,6 +500,9 @@ export interface AccountConfigBrokerListTranslations {
   statusRecovering: string
   statusError: string
   statusDisconnected: string
+  statusHealthy: string
+  statusUnhealthy: string
+  statusHealthChecking: string
   copyTrades: string
   reconnect: string
   reconnectAll: string

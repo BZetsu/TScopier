@@ -107,6 +107,13 @@ export interface AccountSummary {
   currency?: string
 }
 
+export interface FxsocketTerminalStatus {
+  connected?: boolean
+  tradeAllowed?: boolean
+  loggedIn?: boolean
+  serverTime?: string
+}
+
 export interface SymbolParams {
   symbolName?: string
   symbol?: {
@@ -497,6 +504,37 @@ function normalizeAccountSummary(body: unknown): AccountSummary {
     leverage: num(o.leverage ?? o.Leverage),
     currency: typeof o.currency === 'string' ? o.currency : typeof o.Currency === 'string' ? o.Currency : undefined,
   }
+}
+
+function boolField(v: unknown): boolean | undefined {
+  if (v === null || v === undefined) return undefined
+  if (typeof v === 'boolean') return v
+  if (typeof v === 'number') return v !== 0
+  if (typeof v === 'string') {
+    const s = v.trim().toLowerCase()
+    if (s === 'true' || s === '1' || s === 'yes') return true
+    if (s === 'false' || s === '0' || s === 'no') return false
+  }
+  return undefined
+}
+
+export function normalizeTerminalStatus(raw: unknown): FxsocketTerminalStatus {
+  const o = (raw && typeof raw === 'object') ? raw as Record<string, unknown> : {}
+  return {
+    connected: boolField(o.connected ?? o.Connected ?? o.isConnected ?? o.IsConnected),
+    tradeAllowed: boolField(o.tradeAllowed ?? o.TradeAllowed ?? o.trade_allowed),
+    loggedIn: boolField(o.loggedIn ?? o.LoggedIn ?? o.logged_in),
+    serverTime: o.serverTime != null
+      ? String(o.serverTime)
+      : o.server_time != null
+        ? String(o.server_time)
+        : undefined,
+  }
+}
+
+/** Terminal is healthy when broker is connected and trading is allowed. */
+export function isTerminalHealthy(status: FxsocketTerminalStatus): boolean {
+  return status.connected === true && status.tradeAllowed !== false
 }
 
 function symbolInfoToParams(info: Record<string, unknown>, symbol: string): SymbolParams {
@@ -902,6 +940,23 @@ export class FxsocketBrokerClient {
     const raw = await this.get<unknown>(`${await this.accountBase(id)}/AccountSummary`)
     assertNoApiError(raw)
     return normalizeAccountSummary(raw)
+  }
+
+  /** GET /Status — terminal connection and trade permission (falls back to /status). */
+  async terminalStatus(id: string, platformHint?: MtPlatform): Promise<FxsocketTerminalStatus> {
+    const base = await this.accountBase(id, platformHint)
+    try {
+      const raw = await this.get<unknown>(`${base}/Status`, undefined, 10_000)
+      assertNoApiError(raw)
+      return normalizeTerminalStatus(raw)
+    } catch (err) {
+      if (err instanceof FxsocketApiError && err.status === 404) {
+        const raw = await this.get<unknown>(`${base}/status`, undefined, 10_000)
+        assertNoApiError(raw)
+        return normalizeTerminalStatus(raw)
+      }
+      throw err
+    }
   }
 
   async checkConnect(id: string): Promise<void> {
