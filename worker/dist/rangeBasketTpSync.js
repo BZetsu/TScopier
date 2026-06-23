@@ -543,6 +543,8 @@ async function syncRangeBasketTakeProfits(args) {
                             failed: retryResult.summary.failed,
                             skippedNoTicket: retryResult.summary.skippedNoTicket,
                             skippedNotOnBroker: retryResult.summary.skippedNotOnBroker,
+                            skippedUnfixable: (modifyResult.summary.skippedUnfixable ?? 0)
+                                + (retryResult.summary.skippedUnfixable ?? 0),
                         },
                         legErrors: retryResult.legErrors,
                         modifiedTradeIds: [

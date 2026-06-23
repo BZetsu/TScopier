@@ -6,6 +6,8 @@ import {
   clampBasketOrderStops,
   classifyGhostBasketLegs,
   GHOST_BASKET_CLOSED_USER_MESSAGE,
+  basketLegModifyMergeFailed,
+  runBasketLegModifies,
 } from './basketSlTpReconcile'
 import { isSlMoreProtective } from './basketEffectiveStops'
 import type { BasketOpenLeg } from './basketSlTpReconcile'
@@ -100,5 +102,98 @@ describe('internal rebalance SL guard', () => {
   it('isSlMoreProtective blocks loosening breakeven SL on buys', () => {
     assert.equal(isSlMoreProtective(4258, 4245, true), true)
     assert.equal(isSlMoreProtective(4245, 4258, true), false)
+  })
+})
+
+describe('basketLegModifyMergeFailed', () => {
+  it('completes when unfixable legs were skipped (market moved)', () => {
+    assert.equal(
+      basketLegModifyMergeFailed({
+        openLegs: 32,
+        attempted: 30,
+        modified: 30,
+        failed: 0,
+        skippedNoTicket: 0,
+        skippedUnfixable: 2,
+      }),
+      false,
+    )
+  })
+
+  it('fails when broker modify errors remain', () => {
+    assert.equal(
+      basketLegModifyMergeFailed({
+        openLegs: 32,
+        attempted: 32,
+        modified: 30,
+        failed: 2,
+        skippedNoTicket: 0,
+        skippedUnfixable: 0,
+      }),
+      true,
+    )
+  })
+})
+
+describe('runBasketLegModifies wrong-side guard', () => {
+  it('skips sell leg when channel TP is above live bid (explicit targets)', async () => {
+    const familyLeg: BasketOpenLeg = {
+      id: 'trade-1',
+      signal_id: 'sig-mod',
+      metaapi_order_id: '9001',
+      opened_at: new Date().toISOString(),
+      lot_size: 0.05,
+      sl: null,
+      tp: null,
+      entry_price: 4118.75,
+      direction: 'sell',
+      symbol: 'XAUUSD',
+    }
+    const api = {
+      quote: async () => ({ bid: 4110, ask: 4110.2, symbol: 'XAUUSD' }),
+      orderModify: async () => {
+        throw new Error('orderModify should not be called')
+      },
+    }
+    const inserts: unknown[] = []
+    const supabase = {
+      from: () => ({
+        insert: async (row: unknown) => {
+          inserts.push(row)
+          return { error: null }
+        },
+        update: () => ({ eq: async () => ({ error: null }) }),
+      }),
+    }
+
+    const { summary, legErrors } = await runBasketLegModifies({
+      supabase: supabase as never,
+      api: api as never,
+      uuid: 'broker-uuid',
+      symbol: 'XAUUSD',
+      direction: 'sell',
+      baseLot: 0.05,
+      params: { point: 0.01, stopsLevel: 0, freezeLevel: 0, minLot: 0.01, lotStep: 0.01, contractSize: null, digits: 2 },
+      signalId: 'sig-mod',
+      userId: 'user-1',
+      brokerAccountId: 'broker-1',
+      familyTrades: [familyLeg],
+      perLegTargets: [{ stoploss: 4100, takeprofit: 4116 }],
+      nImmCwe: 0,
+      overrideTp: null,
+      strictEntryPrefetch: null,
+      openedTickets: new Set([9001]),
+      explicitChannelTargets: true,
+      internalRebalance: true,
+    })
+
+    assert.equal(summary.skippedUnfixable, 1)
+    assert.equal(summary.failed, 0)
+    assert.equal(legErrors.length, 0)
+    assert.equal(basketLegModifyMergeFailed(summary), false)
+    const skipped = inserts.find(
+      (row) => (row as { status?: string }).status === 'skipped',
+    ) as { request_payload?: { skip_reason?: string } } | undefined
+    assert.equal(skipped?.request_payload?.skip_reason, 'wrong_side_sl')
   })
 })

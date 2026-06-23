@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.FxsocketBrokerClient = exports.MT_SESSION_EXPIRED_HINT = exports.FxsocketApiError = void 0;
+exports.FxsocketBrokerClient = exports.MT_SESSION_EXPIRED_HINT = exports.FxsocketApiError = exports.terminalHealthRowPatchFromMtStatus = exports.normalizeFxsocketMtStatus = exports.isFxsocketMtStatusHealthy = void 0;
 exports.normalizeOrderResponse = normalizeOrderResponse;
 exports.normalizeSymbolParams = normalizeSymbolParams;
 exports.unwrapOrderList = unwrapOrderList;
@@ -14,11 +14,18 @@ exports.isApiThrottleError = isApiThrottleError;
 exports.parseApiThrottleBackoffMs = parseApiThrottleBackoffMs;
 exports.checkConnectGlobalMinMs = checkConnectGlobalMinMs;
 exports.resetCheckConnectPacing = resetCheckConnectPacing;
+exports.normalizeTerminalStatus = normalizeTerminalStatus;
+exports.isTerminalHealthy = isTerminalHealthy;
 exports.mtPlatformFrom = mtPlatformFrom;
 exports.getFxsocketClient = getFxsocketClient;
 const undici_1 = require("undici");
 const brokerConnectError_1 = require("./brokerConnectError");
 const mtTradeFields_1 = require("./mtTradeFields");
+const fxsocketMtStatus_1 = require("./fxsocketMtStatus");
+var fxsocketMtStatus_2 = require("./fxsocketMtStatus");
+Object.defineProperty(exports, "isFxsocketMtStatusHealthy", { enumerable: true, get: function () { return fxsocketMtStatus_2.isFxsocketMtStatusHealthy; } });
+Object.defineProperty(exports, "normalizeFxsocketMtStatus", { enumerable: true, get: function () { return fxsocketMtStatus_2.normalizeFxsocketMtStatus; } });
+Object.defineProperty(exports, "terminalHealthRowPatchFromMtStatus", { enumerable: true, get: function () { return fxsocketMtStatus_2.terminalHealthRowPatchFromMtStatus; } });
 /**
  * FxSocket MT5 REST client for the worker.
  *
@@ -386,6 +393,13 @@ function normalizeAccountSummary(body) {
         currency: typeof o.currency === 'string' ? o.currency : typeof o.Currency === 'string' ? o.Currency : undefined,
     };
 }
+function normalizeTerminalStatus(raw) {
+    return (0, fxsocketMtStatus_1.legacyTerminalStatusFromMtStatus)((0, fxsocketMtStatus_1.normalizeFxsocketMtStatus)(raw));
+}
+/** @deprecated Use isFxsocketMtStatusHealthy on the full snapshot. */
+function isTerminalHealthy(status) {
+    return status.connected === true && status.tradeAllowed === true;
+}
 function symbolInfoToParams(info, symbol) {
     return {
         symbolName: typeof info.symbol === 'string' ? info.symbol : symbol,
@@ -729,6 +743,27 @@ class FxsocketBrokerClient {
         const raw = await this.get(`${await this.accountBase(id)}/AccountSummary`);
         assertNoApiError(raw);
         return normalizeAccountSummary(raw);
+    }
+    /** GET /status — full health snapshot (falls back to /Status). */
+    async mtStatus(id, platformHint) {
+        const base = await this.accountBase(id, platformHint);
+        try {
+            const raw = await this.get(`${base}/status`, undefined, 10000);
+            assertNoApiError(raw);
+            return (0, fxsocketMtStatus_1.normalizeFxsocketMtStatus)(raw);
+        }
+        catch (err) {
+            if (err instanceof FxsocketApiError && err.status === 404) {
+                const raw = await this.get(`${base}/Status`, undefined, 10000);
+                assertNoApiError(raw);
+                return (0, fxsocketMtStatus_1.normalizeFxsocketMtStatus)(raw);
+            }
+            throw err;
+        }
+    }
+    /** @deprecated Use mtStatus — legacy flat terminal fields. */
+    async terminalStatus(id, platformHint) {
+        return (0, fxsocketMtStatus_1.legacyTerminalStatusFromMtStatus)(await this.mtStatus(id, platformHint));
     }
     async checkConnect(id) {
         const trimmed = String(id ?? '').trim();

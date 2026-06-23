@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.normalizeTelegramMessageText = normalizeTelegramMessageText;
+exports.stripSignalDecorativeEmojis = stripSignalDecorativeEmojis;
 exports.normalizeSignalMessageForParse = normalizeSignalMessageForParse;
 /**
  * Strip Telegram / Markdown / HTML formatting so signal parsers see plain trade text.
@@ -32,7 +33,14 @@ function normalizeTelegramMessageText(raw) {
         .replace(/&gt;/gi, '>');
     return text.trim();
 }
+/**
+ * Remove decorative emoji glued to SL/TP/entry labels (e.g. BUY 🟢4110, TP1 🎯4127, SL ⛔️4104).
+ * Parsers match word boundaries and digits; emoji between label and price breaks those regexes.
+ */
+function stripSignalDecorativeEmojis(text) {
+    return String(text ?? '').replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE00}-\u{FE0F}\u{200D}\u{20E3}\u{1F1E6}-\u{1F1FF}]/gu, '');
+}
 /** Telegram format strip + casual management typo collapse for parsers. */
 function normalizeSignalMessageForParse(raw) {
-    return (0, collapseCasualSignalTypos_1.collapseCasualSignalTypos)(normalizeTelegramMessageText(raw));
+    return (0, collapseCasualSignalTypos_1.collapseCasualSignalTypos)(stripSignalDecorativeEmojis(normalizeTelegramMessageText(raw)));
 }

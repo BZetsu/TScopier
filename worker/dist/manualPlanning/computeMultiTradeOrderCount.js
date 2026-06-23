@@ -31,7 +31,9 @@ function computeMultiTradeOrderCount(args) {
         const pct = Math.max(0, Math.min(100, Number(args.rangePercent ?? 0)));
         const pending = Math.max(0, Math.round((baseLegs * pct) / 100));
         const immediate = Math.max(0, baseLegs - pending);
-        return Math.min(exports.MULTI_TRADE_ABS_MAX_LEGS, immediate + pending);
+        const maxStepIdx = Math.max(0, Math.floor((args.rangeDistancePips ?? 0) / (args.rangeStepPips ?? 1)));
+        const activePending = Math.min(pending, maxStepIdx);
+        return Math.min(exports.MULTI_TRADE_ABS_MAX_LEGS, immediate + activePending);
     }
     const extraRemainderLeg = remainderUnits >= minUnits && baseLegs < exports.MULTI_TRADE_ABS_MAX_LEGS;
     return Math.min(exports.MULTI_TRADE_ABS_MAX_LEGS, baseLegs + (extraRemainderLeg ? 1 : 0));

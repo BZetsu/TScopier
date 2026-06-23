@@ -16,9 +16,17 @@ exports.loadOpenTradesForChannelWideCwe = loadOpenTradesForChannelWideCwe;
 exports.resolveChannelModifyTargets = resolveChannelModifyTargets;
 exports.expandMgmtRowsToFullBaskets = expandMgmtRowsToFullBaskets;
 const basketModFollowUp_1 = require("./basketModFollowUp");
+const pipMath_1 = require("./pipMath");
 const signalPip_1 = require("./signalPip");
 const tradableSymbol_1 = require("./tradableSymbol");
 const MAX_PLAUSIBLE_PIPS = 500;
+/** Legacy gold mgmt used 500 × $0.10 = $50; keep the same price ceiling at cent pips. */
+const METAL_MAX_MGMT_PRICE_DIST = 50;
+function maxMgmtPriceDistance(symbol, pip) {
+    if ((0, pipMath_1.classifySymbol)(symbol) === 'metal')
+        return METAL_MAX_MGMT_PRICE_DIST;
+    return MAX_PLAUSIBLE_PIPS * pip;
+}
 function isReplyScopedManagement(signal) {
     return Boolean(String(signal.reply_to_message_id ?? '').trim());
 }
@@ -78,7 +86,7 @@ function levelPlausibleForBucket(rows, parsed) {
     const pip = (0, signalPip_1.signalPipPrice)(sample?.symbol ?? parsed.symbol ?? 'EURUSD');
     if (!(pip > 0))
         return false;
-    const maxDist = MAX_PLAUSIBLE_PIPS * pip;
+    const maxDist = maxMgmtPriceDistance(sample?.symbol ?? parsed.symbol ?? 'EURUSD', pip);
     const isBuy = rows.every(r => String(r.direction).toLowerCase() === 'buy');
     const isSell = rows.every(r => String(r.direction).toLowerCase() === 'sell');
     if (!isBuy && !isSell)

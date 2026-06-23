@@ -4,7 +4,6 @@ exports.usesPredefinedStops = usesPredefinedStops;
 exports.reverseSignalGateSatisfied = reverseSignalGateSatisfied;
 exports.deriveManualStopsWithClamp = deriveManualStopsWithClamp;
 const pipCalculator_1 = require("../pipCalculator");
-const signalPip_1 = require("../signalPip");
 /** True when manual settings request pip-based SL and/or TP overrides. */
 function usesPredefinedStops(manual) {
     return manual.use_predefined_sl_pips === true || manual.use_predefined_tp_pips === true;
@@ -28,7 +27,7 @@ function reverseSignalGateSatisfied(manual, entryAnchor) {
 function deriveManualStopsWithClamp(args) {
     const { parsed, manual, channelKeywords, resolvedSymbol, ctx, entryAnchor, isBuy } = args;
     const pipQuote = (0, pipCalculator_1.pipCalculator)(resolvedSymbol, ctx.point, ctx.digits, ctx.contractSize ?? null);
-    const pip = (0, signalPip_1.signalPipPrice)(resolvedSymbol);
+    const pip = pipQuote.pipPrice;
     const slInPips = channelKeywords?.additional?.sl_in_pips === true;
     const tpInPips = channelKeywords?.additional?.tp_in_pips === true;
     const usePreSl = manual.use_predefined_sl_pips === true;

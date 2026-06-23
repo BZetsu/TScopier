@@ -7,6 +7,7 @@ import {
   markBasketReconcileDoneForAnchor,
   runBasketLegModifies,
   upsertBasketReconcileJob,
+  basketLegModifyMergeFailed,
   type BasketOpenLeg,
   type BasketSymbolParams
 } from '../../basketSlTpReconcile'
@@ -448,13 +449,14 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
 
     const modifiedTradeIds = new Set<string>()
     let legErrors: Array<{ error: string; leg_index: number }> = []
-    let summary: MergeModifySummary & { skippedNotOnBroker?: number } = {
+    let summary: MergeModifySummary & { skippedNotOnBroker?: number; skippedUnfixable?: number } = {
       openLegs: familyTrades.length,
       attempted: 0,
       modified: 0,
       failed: 0,
       skippedNoTicket: 0,
       skippedNotOnBroker: 0,
+      skippedUnfixable: 0,
     }
     const stragglerRounds = liveMgmtFast
       ? Math.min(4, Math.max(1, Number(process.env.BASKET_REFRESH_STRAGGLER_ROUNDS ?? 2)))
@@ -723,7 +725,7 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
       }
     }
 
-    let mergeFailed = summary.modified < summary.openLegs
+    let mergeFailed = basketLegModifyMergeFailed(summary)
     const skippedBroker = summary.skippedNotOnBroker ?? 0
     const allLegsGhostOnBroker =
       summary.openLegs > 0

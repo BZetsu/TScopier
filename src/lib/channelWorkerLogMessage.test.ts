@@ -362,6 +362,49 @@ test('channelWorkerLogMessage: hides internal range rebalance leg modify failure
   assert.equal(message, null)
 })
 
+test('channelWorkerLogMessage: hides internal rebalance failures on modify signals', () => {
+  const message = channelWorkerLogMessage(
+    {
+      action: 'basket_leg_modify',
+      status: 'failed',
+      request_payload: {
+        internal_rebalance: true,
+        broker_symbol: 'XAUUSD',
+        target_sl: 4125,
+        target_tp: 4116,
+      },
+      response_payload: null,
+      error_message: 'Order rejected',
+      signals: {
+        parsed_data: { action: 'modify', symbol: 'XAUUSD', sl: 4125, tp: [4116, 4114, 4110] },
+      },
+    },
+    channelWorkerEn,
+    { 'ch-1': 'SIGNALS 2' },
+  )
+  assert.equal(message, null)
+})
+
+test('channelWorkerLogMessage: hides internal rebalance when flag is string true', () => {
+  const message = channelWorkerLogMessage(
+    {
+      action: 'basket_leg_modify',
+      status: 'failed',
+      request_payload: {
+        internal_rebalance: 'true',
+        broker_symbol: 'XAUUSD',
+      },
+      response_payload: null,
+      error_message: 'Order rejected',
+      signals: {
+        parsed_data: { action: 'modify', symbol: 'XAUUSD' },
+      },
+    },
+    channelWorkerEn,
+  )
+  assert.equal(message, null)
+})
+
 test('channelWorkerLogMessage: still hides non-trade commentary', () => {
   const message = channelWorkerLogMessage(
     {

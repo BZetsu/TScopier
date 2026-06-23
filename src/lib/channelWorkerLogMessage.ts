@@ -366,6 +366,12 @@ function isMgmtPipelineNoiseLogAction(logAction: string): boolean {
     || logAction === 'dispatch_received'
 }
 
+/** Internal range-basket rebalance rows — never user-facing (even on modify signals). */
+function isInternalRebalancePayload(payload: Record<string, unknown>): boolean {
+  const v = payload.internal_rebalance
+  return v === true || v === 'true'
+}
+
 /** Remap success-style execution logs when the linked signal was ultimately skipped. */
 function applySkippedSignalOverride(
   row: ChannelWorkerLogRow,
@@ -673,6 +679,13 @@ function buildChannelWorkerLogMessage(row: ChannelWorkerLogRow, cw: ChannelWorke
     return interpolate(cw.orderSent, { on })
   }
 
+  if (logAction === 'basket_leg_modify' && isInternalRebalancePayload(payload)) {
+    return ''
+  }
+  if (logAction === 'range_basket_tp_rebalance') {
+    return ''
+  }
+
   if (logAction.startsWith('mgmt_') || MANAGEMENT_COPIER_ACTIONS.has(signalAction)) {
     const mgmt = logAction.startsWith('mgmt_') ? logAction.slice(5) : signalAction
     if ((signalMarkedIgnored(row) || signalWasSkipped(row)) && status === 'success') {
@@ -712,12 +725,6 @@ function buildChannelWorkerLogMessage(row: ChannelWorkerLogRow, cw: ChannelWorke
   }
   if (logAction === 'virtual_pending_fired') {
     return interpolate(cw.virtualFired, { on: onInstrument(instr, cw) })
-  }
-  if (logAction === 'basket_leg_modify' && payload.internal_rebalance === true) {
-    return ''
-  }
-  if (logAction === 'range_basket_tp_rebalance') {
-    return ''
   }
   if (logAction === 'virtual_pending_cancelled') {
     return interpolate(cw.virtualCancelled, { on: onInstrument(instr, cw) })

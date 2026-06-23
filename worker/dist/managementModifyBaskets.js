@@ -136,6 +136,7 @@ async function applyMgmtModifyToBasketGroups(args) {
             failed: 0,
             skippedNoTicket: 0,
             skippedNotOnBroker: 0,
+            skippedUnfixable: 0,
         };
         let legErrors = [];
         const stragglerRounds = liveMgmtFast
@@ -189,7 +190,7 @@ async function applyMgmtModifyToBasketGroups(args) {
             if (modifiedTradeIds.size >= familyTrades.length)
                 break;
         }
-        const mergeFailed = summary.modified < summary.openLegs;
+        const mergeFailed = (0, basketSlTpReconcile_1.basketLegModifyMergeFailed)(summary);
         const partialMsg = mergeFailed
             ? `Mgmt modify: ${summary.modified}/${summary.openLegs} legs on broker=${broker.id} anchor=${anchorSignalId}`
                 + (summary.failed > 0 ? `; ${summary.failed} broker errors` : '')

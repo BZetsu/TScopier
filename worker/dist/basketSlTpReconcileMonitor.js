@@ -216,8 +216,9 @@ class BasketSlTpReconcileMonitor {
             internalRebalance: manual.range_trading === true,
             effectiveStoploss: effectiveStoploss > 0 ? effectiveStoploss : undefined,
             orderCommentsEnabled: manual.order_comments_enabled !== false,
+            explicitChannelTargets: row.source_signal_id !== row.anchor_signal_id,
         });
-        const mergeFailed = summary.modified < summary.openLegs;
+        const mergeFailed = (0, basketSlTpReconcile_1.basketLegModifyMergeFailed)(summary);
         let brokerStillDrift = false;
         if (!mergeFailed && reconcileTargetsHaveSl(effectiveTargets)) {
             const ordersByTicket = await (0, channelStopApply_1.fetchBrokerOrdersByTicket)(api, uuid);
@@ -226,6 +227,7 @@ class BasketSlTpReconcileMonitor {
         const partialMsg = mergeFailed || brokerStillDrift
             ? `Reconcile: ${summary.modified}/${summary.openLegs} legs`
                 + (summary.failed > 0 ? `; ${summary.failed} broker errors` : '')
+                + (summary.skippedUnfixable > 0 ? `; ${summary.skippedUnfixable} skipped (market moved)` : '')
                 + (brokerStillDrift ? '; broker SL still drifted' : '')
             : null;
         try {
@@ -246,6 +248,26 @@ class BasketSlTpReconcileMonitor {
         }
         catch { /* best-effort */ }
         if (!mergeFailed && !brokerStillDrift) {
+            try {
+                await this.supabase.from('trade_execution_logs').insert({
+                    user_id: row.user_id,
+                    signal_id: row.source_signal_id,
+                    broker_account_id: row.broker_account_id,
+                    action: 'merge_modify_summary',
+                    status: 'success',
+                    error_message: partialMsg,
+                    request_payload: {
+                        parent_signal_id: row.anchor_signal_id,
+                        symbol: row.symbol,
+                        modify_only: true,
+                        reconcile_job_id: row.id,
+                        user_message: partialMsg,
+                        ...summary,
+                        leg_errors: legErrors.slice(0, 10),
+                    },
+                });
+            }
+            catch { /* best-effort */ }
             await (0, basketSlTpReconcile_1.markBasketReconcileDone)(this.supabase, row.id);
             await this.supabase
                 .from('signals')

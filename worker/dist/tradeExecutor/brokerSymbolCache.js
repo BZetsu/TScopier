@@ -22,6 +22,7 @@ exports.resolveBrokerSymbolForLiveEntry = resolveBrokerSymbolForLiveEntry;
 exports.resolveBrokerSymbol = resolveBrokerSymbol;
 const fxsocketClient_1 = require("../fxsocketClient");
 const brokerConnectionStatus_1 = require("../brokerConnectionStatus");
+const brokerTerminalHealth_1 = require("../brokerTerminalHealth");
 const brokerSignalReplay_1 = require("../brokerSignalReplay");
 const helpers_1 = require("./helpers");
 const types_1 = require("./types");
@@ -69,6 +70,14 @@ async function pingBrokerSessionInner(ctx, broker, api, uuid, opts) {
             if (wasBlocked) {
                 ctx.sessionOrderBlocked.delete(broker.id);
                 void (0, brokerSignalReplay_1.replayParsedSignalsForBroker)(ctx, broker);
+            }
+            try {
+                const terminal = await api.mtStatus(uuid);
+                await (0, brokerTerminalHealth_1.writeBrokerTerminalHealth)(ctx.supabase, broker.id, terminal);
+            }
+            catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                console.warn(`[tradeExecutor] terminalStatus failed broker=${broker.id}: ${msg}`);
             }
             return true;
         }
@@ -202,6 +211,7 @@ async function markBrokerSessionDown(ctx, broker, uuid, reason) {
     console.warn(`[tradeExecutor] broker ${broker.id} session down: ${reason}`);
     broker.connection_status = 'error';
     await (0, brokerConnectionStatus_1.writeBrokerConnectionStatus)(ctx.supabase, broker.id, 'error', { rawError: reason });
+    await (0, brokerTerminalHealth_1.writeBrokerTerminalUnhealthy)(ctx.supabase, broker.id, { force: true });
 }
 async function ensureBrokerSession(ctx, api, uuid, broker, opts) {
     const now = Date.now();

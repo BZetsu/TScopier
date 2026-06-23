@@ -48,6 +48,7 @@ exports.markBasketReconcileDoneForAnchor = markBasketReconcileDoneForAnchor;
 exports.logBasketLegModify = logBasketLegModify;
 exports.runBasketLegModifies = runBasketLegModifies;
 exports.reconcileBackoffMs = reconcileBackoffMs;
+exports.basketLegModifyMergeFailed = basketLegModifyMergeFailed;
 exports.upsertBasketReconcileJob = upsertBasketReconcileJob;
 exports.markBasketReconcileDone = markBasketReconcileDone;
 exports.loadOpenBasketLegs = loadOpenBasketLegs;
@@ -242,6 +243,7 @@ async function runBasketLegModifies(args) {
         failed: 0,
         skippedNoTicket: 0,
         skippedNotOnBroker: 0,
+        skippedUnfixable: 0,
     };
     const legErrors = [];
     const modifiedTradeIds = [];
@@ -262,6 +264,7 @@ async function runBasketLegModifies(args) {
         failed: 0,
         skippedNoTicket: 0,
         skippedNotOnBroker: 0,
+        skippedUnfixable: 0,
     });
     const processLeg = async (i) => {
         const tr = familyTrades[i];
@@ -361,16 +364,6 @@ async function runBasketLegModifies(args) {
             stoploss = stripped.stoploss;
             takeprofit = stripped.takeprofit;
             if (stoploss <= 0 && takeprofit <= 0) {
-                const err = {
-                    trade_id: tr.id,
-                    ticket,
-                    leg_index: i + 1,
-                    broker_symbol: tr.symbol,
-                    target_sl: target.stoploss,
-                    target_tp: target.takeprofit,
-                    error: 'wrong_side_sl',
-                    skip_reason: 'wrong_side_sl',
-                };
                 await logLegModify({
                     userId,
                     signalId,
@@ -384,7 +377,7 @@ async function runBasketLegModifies(args) {
                     targetTp: target.takeprofit,
                     skipReason: 'wrong_side_sl',
                 });
-                return { ...noopOutcome(), legError: err, attempted: 1, failed: 1 };
+                return { ...noopOutcome(), skippedUnfixable: 1 };
             }
         }
         const sendShape = {
@@ -418,16 +411,6 @@ async function runBasketLegModifies(args) {
             }
         }
         if (modSl <= 0 && modTp <= 0) {
-            const err = {
-                trade_id: tr.id,
-                ticket,
-                leg_index: i + 1,
-                broker_symbol: tr.symbol,
-                target_sl: target.stoploss,
-                target_tp: target.takeprofit,
-                error: 'no_stops_to_apply',
-                skip_reason: 'no_stops_to_apply',
-            };
             await logLegModify({
                 userId,
                 signalId,
@@ -441,7 +424,33 @@ async function runBasketLegModifies(args) {
                 targetTp: target.takeprofit,
                 skipReason: 'no_stops_to_apply',
             });
-            return { ...noopOutcome(), legError: err, attempted: 1, failed: 1 };
+            return { ...noopOutcome(), skippedUnfixable: 1 };
+        }
+        const postClampStripped = (0, channelActiveTradeParams_1.stripInvalidStopsForSide)({
+            stoploss: modSl,
+            takeprofit: modTp,
+            referencePrice: ref,
+            isBuy: direction === 'buy',
+        });
+        if (postClampStripped.stripped.length) {
+            modSl = postClampStripped.stoploss;
+            modTp = postClampStripped.takeprofit;
+            if (modSl <= 0 && modTp <= 0) {
+                await logLegModify({
+                    userId,
+                    signalId,
+                    brokerAccountId,
+                    status: 'skipped',
+                    tradeId: tr.id,
+                    ticket,
+                    legIndex: i + 1,
+                    brokerSymbol: tr.symbol,
+                    targetSl: target.stoploss,
+                    targetTp: target.takeprofit,
+                    skipReason: 'wrong_side_sl',
+                });
+                return { ...noopOutcome(), skippedUnfixable: 1 };
+            }
         }
         try {
             const modRes = await api.orderModify(uuid, {
@@ -535,6 +544,7 @@ async function runBasketLegModifies(args) {
         summary.failed += o.failed;
         summary.skippedNoTicket += o.skippedNoTicket;
         summary.skippedNotOnBroker += o.skippedNotOnBroker;
+        summary.skippedUnfixable += o.skippedUnfixable;
         if (o.modifiedId)
             modifiedTradeIds.push(o.modifiedId);
         if (o.legError)
@@ -545,13 +555,21 @@ async function runBasketLegModifies(args) {
         return !Number.isFinite(t) || t <= 0;
     }).length;
     summary.skippedNoTicket = stillMissingTicket;
-    summary.failed = Math.max(0, familyTrades.length - summary.modified - stillMissingTicket - summary.skippedNotOnBroker);
+    summary.failed = Math.max(0, familyTrades.length
+        - summary.modified
+        - stillMissingTicket
+        - summary.skippedNotOnBroker
+        - summary.skippedUnfixable);
     return { summary, legErrors, modifiedTradeIds };
 }
 function reconcileBackoffMs(attempts) {
     const base = Number(process.env.BASKET_RECONCILE_BACKOFF_MS ?? 15000);
     const capped = Math.min(base * Math.pow(2, Math.min(attempts, 4)), 300000);
     return capped;
+}
+/** True when any leg still needs a broker modify (hard failures only — skips do not block). */
+function basketLegModifyMergeFailed(summary) {
+    return summary.failed > 0;
 }
 async function upsertBasketReconcileJob(supabase, args) {
     const maxAttempts = Math.min(120, Math.max(6, Number(process.env.BASKET_RECONCILE_MAX_ATTEMPTS ?? 48)));

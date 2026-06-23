@@ -51,7 +51,7 @@ export type LegModifyError = {
 }
 
 export type RunBasketLegModifyResult = {
-  summary: MergeModifySummary & { skippedNotOnBroker: number }
+  summary: MergeModifySummary & { skippedNotOnBroker: number; skippedUnfixable: number }
   legErrors: LegModifyError[]
   modifiedTradeIds: string[]
 }
@@ -337,13 +337,14 @@ export async function runBasketLegModifies(args: {
     tpLots,
   }) as PerLegStopTarget[]
 
-  const summary: MergeModifySummary & { skippedNotOnBroker: number } = {
+  const summary: MergeModifySummary & { skippedNotOnBroker: number; skippedUnfixable: number } = {
     openLegs: familyTrades.length,
     attempted: 0,
     modified: 0,
     failed: 0,
     skippedNoTicket: 0,
     skippedNotOnBroker: 0,
+    skippedUnfixable: 0,
   }
   const legErrors: LegModifyError[] = []
   const modifiedTradeIds: string[] = []
@@ -369,6 +370,7 @@ export async function runBasketLegModifies(args: {
     failed: number
     skippedNoTicket: number
     skippedNotOnBroker: number
+    skippedUnfixable: number
   }
   const noopOutcome = (): LegOutcome => ({
     attempted: 0,
@@ -376,6 +378,7 @@ export async function runBasketLegModifies(args: {
     failed: 0,
     skippedNoTicket: 0,
     skippedNotOnBroker: 0,
+    skippedUnfixable: 0,
   })
 
   const processLeg = async (i: number): Promise<LegOutcome> => {
@@ -479,16 +482,6 @@ export async function runBasketLegModifies(args: {
       stoploss = stripped.stoploss
       takeprofit = stripped.takeprofit
       if (stoploss <= 0 && takeprofit <= 0) {
-        const err: LegModifyError = {
-          trade_id: tr.id,
-          ticket,
-          leg_index: i + 1,
-          broker_symbol: tr.symbol,
-          target_sl: target.stoploss,
-          target_tp: target.takeprofit,
-          error: 'wrong_side_sl',
-          skip_reason: 'wrong_side_sl',
-        }
         await logLegModify({
           userId,
           signalId,
@@ -502,7 +495,7 @@ export async function runBasketLegModifies(args: {
           targetTp: target.takeprofit,
           skipReason: 'wrong_side_sl',
         })
-        return { ...noopOutcome(), legError: err, attempted: 1, failed: 1 }
+        return { ...noopOutcome(), skippedUnfixable: 1 }
       }
     }
 
@@ -535,16 +528,6 @@ export async function runBasketLegModifies(args: {
       }
     }
     if (modSl <= 0 && modTp <= 0) {
-      const err: LegModifyError = {
-        trade_id: tr.id,
-        ticket,
-        leg_index: i + 1,
-        broker_symbol: tr.symbol,
-        target_sl: target.stoploss,
-        target_tp: target.takeprofit,
-        error: 'no_stops_to_apply',
-        skip_reason: 'no_stops_to_apply',
-      }
       await logLegModify({
         userId,
         signalId,
@@ -558,7 +541,34 @@ export async function runBasketLegModifies(args: {
         targetTp: target.takeprofit,
         skipReason: 'no_stops_to_apply',
       })
-      return { ...noopOutcome(), legError: err, attempted: 1, failed: 1 }
+      return { ...noopOutcome(), skippedUnfixable: 1 }
+    }
+
+    const postClampStripped = stripInvalidStopsForSide({
+      stoploss: modSl,
+      takeprofit: modTp,
+      referencePrice: ref,
+      isBuy: direction === 'buy',
+    })
+    if (postClampStripped.stripped.length) {
+      modSl = postClampStripped.stoploss
+      modTp = postClampStripped.takeprofit
+      if (modSl <= 0 && modTp <= 0) {
+        await logLegModify({
+          userId,
+          signalId,
+          brokerAccountId,
+          status: 'skipped',
+          tradeId: tr.id,
+          ticket,
+          legIndex: i + 1,
+          brokerSymbol: tr.symbol,
+          targetSl: target.stoploss,
+          targetTp: target.takeprofit,
+          skipReason: 'wrong_side_sl',
+        })
+        return { ...noopOutcome(), skippedUnfixable: 1 }
+      }
     }
 
     try {
@@ -655,6 +665,7 @@ export async function runBasketLegModifies(args: {
     summary.failed += o.failed
     summary.skippedNoTicket += o.skippedNoTicket
     summary.skippedNotOnBroker += o.skippedNotOnBroker
+    summary.skippedUnfixable += o.skippedUnfixable
     if (o.modifiedId) modifiedTradeIds.push(o.modifiedId)
     if (o.legError) legErrors.push(o.legError)
   }
@@ -666,7 +677,11 @@ export async function runBasketLegModifies(args: {
   summary.skippedNoTicket = stillMissingTicket
   summary.failed = Math.max(
     0,
-    familyTrades.length - summary.modified - stillMissingTicket - summary.skippedNotOnBroker,
+    familyTrades.length
+      - summary.modified
+      - stillMissingTicket
+      - summary.skippedNotOnBroker
+      - summary.skippedUnfixable,
   )
 
   return { summary, legErrors, modifiedTradeIds }
@@ -676,6 +691,13 @@ export function reconcileBackoffMs(attempts: number): number {
   const base = Number(process.env.BASKET_RECONCILE_BACKOFF_MS ?? 15_000)
   const capped = Math.min(base * Math.pow(2, Math.min(attempts, 4)), 300_000)
   return capped
+}
+
+/** True when any leg still needs a broker modify (hard failures only — skips do not block). */
+export function basketLegModifyMergeFailed(
+  summary: MergeModifySummary & { skippedNotOnBroker?: number; skippedUnfixable?: number },
+): boolean {
+  return summary.failed > 0
 }
 
 export async function upsertBasketReconcileJob(

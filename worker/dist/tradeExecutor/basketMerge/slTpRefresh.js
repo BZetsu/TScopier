@@ -324,6 +324,7 @@ async function applyBasketSlTpRefresh(ctx, args) {
         failed: 0,
         skippedNoTicket: 0,
         skippedNotOnBroker: 0,
+        skippedUnfixable: 0,
     };
     const stragglerRounds = liveMgmtFast
         ? Math.min(4, Math.max(1, Number(process.env.BASKET_REFRESH_STRAGGLER_ROUNDS ?? 2)))
@@ -565,7 +566,7 @@ async function applyBasketSlTpRefresh(ctx, args) {
                 + ` broker=${broker.id} updated=${pendingPatched}`);
         }
     }
-    let mergeFailed = summary.modified < summary.openLegs;
+    let mergeFailed = (0, basketSlTpReconcile_1.basketLegModifyMergeFailed)(summary);
     const skippedBroker = summary.skippedNotOnBroker ?? 0;
     const allLegsGhostOnBroker = summary.openLegs > 0
         && skippedBroker >= summary.openLegs

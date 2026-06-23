@@ -29,13 +29,20 @@ function normalizeSignalSymbol(userSymbol) {
         return 'XAGUSD';
     return raw;
 }
+function metalPipMultiplier(base) {
+    if (base === 'XAU' || base === 'XPT' || base === 'XPD')
+        return 100;
+    if (base === 'XAG')
+        return 10;
+    return 100;
+}
 function getPipMultiplierForSymbol(userSymbol) {
     const pair = normalizeSignalSymbol(userSymbol);
     if (pair.length >= 6) {
         const base = pair.slice(0, 3);
         const quote = pair.slice(3, 6);
         if (base === 'XAU' || base === 'XAG' || base === 'XPT' || base === 'XPD')
-            return 10;
+            return metalPipMultiplier(base);
         if (quote === 'JPY')
             return 100;
         return 10000;
@@ -47,7 +54,7 @@ function getPipMultiplierForSymbol(userSymbol) {
         case 'fx_major':
             return 10000;
         case 'metal':
-            return 10;
+            return 100;
         case 'index':
             return 1;
         case 'crypto':

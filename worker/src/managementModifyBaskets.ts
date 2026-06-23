@@ -11,6 +11,7 @@ import {
   markBasketReconcileDoneForAnchor,
   runBasketLegModifies,
   upsertBasketReconcileJob,
+  basketLegModifyMergeFailed,
   type BasketOpenLeg,
   type BasketSymbolParams,
   type LegModifyError,
@@ -204,13 +205,14 @@ export async function applyMgmtModifyToBasketGroups(args: {
     const overrideTp = brokerRows.find(r => r.cwe_close_price != null)?.cwe_close_price ?? null
 
     const modifiedTradeIds = new Set<string>()
-    let summary: MergeModifySummary & { skippedNotOnBroker: number } = {
+    let summary: MergeModifySummary & { skippedNotOnBroker: number; skippedUnfixable: number } = {
       openLegs: familyTrades.length,
       attempted: 0,
       modified: 0,
       failed: 0,
       skippedNoTicket: 0,
       skippedNotOnBroker: 0,
+      skippedUnfixable: 0,
     }
     let legErrors: LegModifyError[] = []
 
@@ -269,7 +271,7 @@ export async function applyMgmtModifyToBasketGroups(args: {
       if (modifiedTradeIds.size >= familyTrades.length) break
     }
 
-    const mergeFailed = summary.modified < summary.openLegs
+    const mergeFailed = basketLegModifyMergeFailed(summary)
     const partialMsg = mergeFailed
       ? `Mgmt modify: ${summary.modified}/${summary.openLegs} legs on broker=${broker.id} anchor=${anchorSignalId}`
         + (summary.failed > 0 ? `; ${summary.failed} broker errors` : '')
