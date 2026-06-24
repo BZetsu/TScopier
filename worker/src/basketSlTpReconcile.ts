@@ -762,14 +762,16 @@ export async function applyBasketLegSync(args: {
   }
   let legErrors: LegModifyError[] = []
 
+  // Fast mode: 1 round only — failures go straight to event-driven reconcile.
+  // Non-fast: up to 4 rounds with short sleeps for straggler ticket resolution.
   const stragglerRounds = liveMgmtFast
-    ? Math.min(4, Math.max(1, Number(process.env.BASKET_MGMT_STRAGGLER_ROUNDS ?? 3)))
+    ? Math.min(2, Math.max(1, Number(process.env.BASKET_MGMT_STRAGGLER_ROUNDS ?? 1)))
     : Math.min(8, Math.max(2, Number(process.env.BASKET_MGMT_STRAGGLER_ROUNDS ?? 4)))
 
   for (let round = 0; round < stragglerRounds; round++) {
     if (round > 0) {
-      const sleepMs = liveMgmtFast ? Math.min(round, 2) * 100 : Math.min(round, 3) * 200
-      await new Promise(resolve => setTimeout(resolve, sleepMs))
+      const sleepMs = liveMgmtFast ? 0 : Math.min(round, 3) * 200
+      if (sleepMs > 0) await new Promise(resolve => setTimeout(resolve, sleepMs))
       if (round === 1) {
         try {
           openedTickets = await fetchOpenBrokerTickets(api, uuid)
@@ -849,8 +851,11 @@ export async function applyBasketLegSync(args: {
 }
 
 export function reconcileBackoffMs(attempts: number): number {
-  const base = Number(process.env.BASKET_RECONCILE_BACKOFF_MS ?? 15_000)
-  const capped = Math.min(base * Math.pow(2, Math.min(attempts, 4)), 300_000)
+  // First attempt: immediate (0ms) — event-driven monitor picks up instantly.
+  // Subsequent attempts: exponential backoff from 5s base, capped at 60s.
+  if (attempts <= 1) return 0
+  const base = Number(process.env.BASKET_RECONCILE_BACKOFF_MS ?? 5_000)
+  const capped = Math.min(base * Math.pow(2, Math.min(attempts - 1, 4)), 60_000)
   return capped
 }
 

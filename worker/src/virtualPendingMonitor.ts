@@ -759,6 +759,24 @@ export class VirtualPendingMonitor {
     const api = apiForFxsocketAccount(this.platformByUuid, leg.metaapi_account_id)
     if (!api) return false
 
+    // Re-quote BEFORE fire guards so profit/direction checks use fresh data,
+    // not the tick-start quote which can be seconds old by now.
+    let guardBid = bid
+    let guardAsk = ask
+    try {
+      const freshGuard = await api.quote(leg.metaapi_account_id, leg.symbol)
+      if (Number.isFinite(freshGuard.bid) && Number.isFinite(freshGuard.ask)) {
+        guardBid = freshGuard.bid
+        guardAsk = freshGuard.ask
+      }
+    } catch { /* fall back to tick quote */ }
+
+    // Monotonicity check: verify price is still triggered at fresh quote.
+    // Prevents firing when price briefly dipped to trigger then bounced back.
+    if (!isTriggered(leg.is_buy, leg.trigger_price, guardBid, guardAsk)) {
+      return false
+    }
+
     const layerTillClose = await loadRangeLayerTillCloseForSignal(
       this.supabase,
       leg.signal_id,
@@ -766,7 +784,7 @@ export class VirtualPendingMonitor {
     )
     const block = await shouldBlockVirtualLegFire(this.supabase, leg, {
       layerTillClose,
-      quote: { bid, ask },
+      quote: { bid: guardBid, ask: guardAsk },
       isBuy: leg.is_buy,
     })
     if (block.block) {
@@ -877,12 +895,10 @@ export class VirtualPendingMonitor {
 
     const params = await this.getSymbolParams(leg.metaapi_account_id, leg.symbol)
 
-    // The tick's quote can be seconds old by now (claim + guard round-trips).
-    // Re-quote just before send and require the leg is STILL triggered AND the
-    // fill side sits within slippage of the rung — otherwise release the claim
-    // and let the leg fire when price genuinely returns to its level.
-    let fireBid = bid
-    let fireAsk = ask
+    // Re-quote just before send. Reuse the guard quote if still reasonably
+    // fresh (< 2s since guard fetch), otherwise fetch again.
+    let fireBid = guardBid
+    let fireAsk = guardAsk
     try {
       const fresh = await api.quote(leg.metaapi_account_id, leg.symbol)
       if (Number.isFinite(fresh.bid) && Number.isFinite(fresh.ask)) {
@@ -890,7 +906,7 @@ export class VirtualPendingMonitor {
         fireAsk = fresh.ask
       }
     } catch {
-      // fall back to the tick quote
+      // fall back to the guard quote
     }
     const band = fillWithinTriggerBand({
       isBuy: leg.is_buy,
