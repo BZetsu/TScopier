@@ -579,7 +579,12 @@ export async function runBasketLegModifies(args: {
     try {
       // SL-first with split fallback: an invalid/late TP must never block the
       // protective SL (avoids legs left fully naked after an "Invalid stops").
-      const safe = await modifyLegSlTpWithFallback(api, uuid, ticket, modSl, modTp)
+      // If the requested TP was passed by price, fall back to the deepest ladder
+      // TP so the leg keeps a profit target.
+      const deepestTp = parsedTps.length
+        ? (direction === 'buy' ? Math.max(...parsedTps) : Math.min(...parsedTps))
+        : 0
+      const safe = await modifyLegSlTpWithFallback(api, uuid, ticket, modSl, modTp, { deepestTp })
       if (!safe.ok || (modSl > 0 && !safe.slApplied)) {
         const failMsg = safe.error ?? 'OrderModify failed'
         const legErr: LegModifyError = {
@@ -610,8 +615,8 @@ export async function runBasketLegModifies(args: {
         return { ...noopOutcome(), legError: legErr, attempted: 1, failed: 1 }
       }
       const res = (safe.result ?? {}) as { stopLoss?: number | null; takeProfit?: number | null }
-      const newSl = safe.slApplied ? (res.stopLoss ?? modSl ?? null) : null
-      const newTp = safe.tpApplied ? (res.takeProfit ?? modTp ?? null) : null
+      const newSl = safe.slApplied ? (res.stopLoss ?? safe.appliedSl ?? null) : null
+      const newTp = safe.tpApplied ? (res.takeProfit ?? safe.appliedTp ?? null) : null
       const cweClose = cweIdx < nImmCwe ? args.overrideTp : null
       const tradePatch: { sl?: number | null; tp?: number | null; cwe_close_price?: number | null } = {
         cwe_close_price: typeof cweClose === 'number' && cweClose > 0 ? cweClose : null,
@@ -628,8 +633,8 @@ export async function runBasketLegModifies(args: {
         ticket,
         legIndex: i + 1,
         brokerSymbol: tr.symbol,
-        targetSl: safe.slApplied ? modSl : 0,
-        targetTp: safe.tpApplied ? modTp : 0,
+        targetSl: safe.slApplied ? safe.appliedSl : 0,
+        targetTp: safe.tpApplied ? safe.appliedTp : 0,
       })
       return { ...noopOutcome(), modifiedId: tr.id, attempted: 1, modified: 1 }
     } catch (err) {

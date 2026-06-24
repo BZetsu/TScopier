@@ -61,6 +61,32 @@ describe('modifyLegSlTpWithFallback', () => {
     assert.equal(api.calls.length, 3, 'combined + SL-only + TP-only')
   })
 
+  it('reassigns the deepest ladder TP when the requested TP was passed by price', async () => {
+    // Combined invalid; SL-only ok; requested TP 4083 invalid (passed); deepest 4089 ok.
+    const api = mockApi(call => {
+      if (call.stoploss != null && call.takeprofit != null) return 'invalid'
+      if (call.stoploss != null) return 'ok'
+      if (call.takeprofit === 4083) return 'invalid'
+      return 'ok'
+    })
+    const out = await modifyLegSlTpWithFallback(api, 'u', 111, 4065, 4083, { deepestTp: 4089 })
+    assert.equal(out.ok, true)
+    assert.equal(out.slApplied, true)
+    assert.equal(out.tpApplied, true, 'TP landed on the deepest valid level')
+    assert.equal(out.appliedTp, 4089, 'reassigned to the deepest ladder TP')
+    assert.equal(out.appliedSl, 4065)
+    assert.equal(api.calls.length, 4, 'combined + SL-only + TP(4083) + TP(4089)')
+  })
+
+  it('defers TP only when even the deepest ladder TP is rejected', async () => {
+    const api = mockApi(call => (call.takeprofit != null ? 'invalid' : 'ok'))
+    const out = await modifyLegSlTpWithFallback(api, 'u', 111, 4065, 4083, { deepestTp: 4089 })
+    assert.equal(out.ok, true, 'SL still protected')
+    assert.equal(out.slApplied, true)
+    assert.equal(out.tpApplied, false)
+    assert.equal(out.appliedTp, 0)
+  })
+
   it('reports failure when even the SL cannot be applied', async () => {
     const api = mockApi(() => 'invalid')
     const out = await modifyLegSlTpWithFallback(api, 'u', 111, 4065, 4083)

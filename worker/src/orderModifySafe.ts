@@ -40,10 +40,24 @@ export type SafeModifyOutcome = {
   ok: boolean
   slApplied: boolean
   tpApplied: boolean
+  /** The SL value actually applied (0 if none). */
+  appliedSl: number
+  /** The TP value actually applied — may differ from the requested TP when the
+   *  original was passed by price and the deepest ladder TP was used (0 if none). */
+  appliedTp: number
   mode: 'combined' | 'split' | 'none'
   result?: OrderModifyResultLike
   /** Set when the SL could not be applied (the critical failure). */
   error?: string
+}
+
+export type SafeModifyOpts = {
+  /**
+   * Deepest ladder TP (farthest target) to fall back to when the requested TP is
+   * rejected because price has already passed it. Lets a leg keep a profit target
+   * instead of ending up with none.
+   */
+  deepestTp?: number
 }
 
 /**
@@ -56,11 +70,12 @@ export async function modifyLegSlTpWithFallback(
   ticket: number,
   stoploss: number,
   takeprofit: number,
+  opts?: SafeModifyOpts,
 ): Promise<SafeModifyOutcome> {
   const hasSl = Number.isFinite(stoploss) && stoploss > 0
   const hasTp = Number.isFinite(takeprofit) && takeprofit > 0
   if (!hasSl && !hasTp) {
-    return { ok: false, slApplied: false, tpApplied: false, mode: 'none' }
+    return { ok: false, slApplied: false, tpApplied: false, appliedSl: 0, appliedTp: 0, mode: 'none' }
   }
 
   try {
@@ -69,17 +84,32 @@ export async function modifyLegSlTpWithFallback(
       ...(hasSl ? { stoploss } : {}),
       ...(hasTp ? { takeprofit } : {}),
     })
-    return { ok: true, slApplied: hasSl, tpApplied: hasTp, mode: 'combined', result }
+    return {
+      ok: true,
+      slApplied: hasSl,
+      tpApplied: hasTp,
+      appliedSl: hasSl ? stoploss : 0,
+      appliedTp: hasTp ? takeprofit : 0,
+      mode: 'combined',
+      result,
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     if (isBenignOrderModifyError(msg)) {
-      return { ok: true, slApplied: hasSl, tpApplied: hasTp, mode: 'combined' }
+      return {
+        ok: true,
+        slApplied: hasSl,
+        tpApplied: hasTp,
+        appliedSl: hasSl ? stoploss : 0,
+        appliedTp: hasTp ? takeprofit : 0,
+        mode: 'combined',
+      }
     }
     // Only splitting helps an invalid-stops rejection, and only when both sides
     // were requested. Timeouts / unknown-ticket / disconnects are returned as-is
     // so the caller's existing transient handling and reconcile fallback apply.
     if (!isInvalidStopsError(msg) || !(hasSl && hasTp)) {
-      return { ok: false, slApplied: false, tpApplied: false, mode: 'combined', error: msg }
+      return { ok: false, slApplied: false, tpApplied: false, appliedSl: 0, appliedTp: 0, mode: 'combined', error: msg }
     }
 
     // SL first — protecting the position is the priority.
@@ -95,21 +125,38 @@ export async function modifyLegSlTpWithFallback(
       else slErr = m2
     }
 
-    // TP best-effort — its failure must not mark the leg as failed.
+    // TP best-effort: try the requested TP, then (if price passed it) the deepest
+    // ladder TP so the leg still carries a profit target rather than none.
+    const deepest = opts?.deepestTp
+    const tpCandidates: number[] = [takeprofit]
+    if (deepest != null && Number.isFinite(deepest) && deepest > 0 && deepest !== takeprofit) {
+      tpCandidates.push(deepest)
+    }
     let tpApplied = false
-    try {
-      await api.orderModify(uuid, { ticket, takeprofit })
-      tpApplied = true
-    } catch (e) {
-      const m3 = e instanceof Error ? e.message : String(e)
-      if (isBenignOrderModifyError(m3)) tpApplied = true
-      // otherwise ignore: the TP is genuinely unreachable right now
+    let appliedTp = 0
+    for (const candidate of tpCandidates) {
+      try {
+        await api.orderModify(uuid, { ticket, takeprofit: candidate })
+        tpApplied = true
+        appliedTp = candidate
+        break
+      } catch (e) {
+        const m3 = e instanceof Error ? e.message : String(e)
+        if (isBenignOrderModifyError(m3)) {
+          tpApplied = true
+          appliedTp = candidate
+          break
+        }
+        // otherwise try the next (deeper) candidate
+      }
     }
 
     return {
       ok: slApplied || tpApplied,
       slApplied,
       tpApplied,
+      appliedSl: slApplied ? stoploss : 0,
+      appliedTp,
       mode: 'split',
       result: slResult,
       error: slApplied ? undefined : (slErr ?? msg),

@@ -639,6 +639,7 @@ export async function applyChannelStopsToBaskets(
           ticket,
           modifyArgs.stoploss ?? 0,
           modifyArgs.takeprofit ?? 0,
+          { deepestTp: frozenDeepestTp },
         )
         if (!safe.ok) {
           await supabase.from('trade_execution_logs').insert({
@@ -683,12 +684,15 @@ export async function applyChannelStopsToBaskets(
         }
 
         const dbPatch: { sl?: number | null; tp?: number | null } = {}
-        if (!tpOnly && target.stoploss > 0 && safe.slApplied) dbPatch.sl = target.stoploss
-        if (!slOnly && target.takeprofit > 0 && safe.tpApplied) dbPatch.tp = target.takeprofit
+        if (!tpOnly && target.stoploss > 0 && safe.slApplied) dbPatch.sl = safe.appliedSl
+        if (!slOnly && target.takeprofit > 0 && safe.tpApplied) dbPatch.tp = safe.appliedTp
         if (Object.keys(dbPatch).length > 0) {
           await supabase.from('trades').update(dbPatch).eq('id', tr.id)
         }
 
+        const tpReassigned = safe.tpApplied
+          && (modifyArgs.takeprofit ?? 0) > 0
+          && safe.appliedTp !== (modifyArgs.takeprofit ?? 0)
         await supabase.from('trade_execution_logs').insert({
           user_id: userId,
           signal_id: signalId,
@@ -698,9 +702,11 @@ export async function applyChannelStopsToBaskets(
           request_payload: {
             ticket,
             action: 'modify',
-            target_sl: safe.slApplied ? (modifyArgs.stoploss ?? null) : null,
-            target_tp: safe.tpApplied ? (modifyArgs.takeprofit ?? null) : null,
+            target_sl: safe.slApplied ? safe.appliedSl : null,
+            target_tp: safe.tpApplied ? safe.appliedTp : null,
+            requested_tp: modifyArgs.takeprofit ?? null,
             modify_mode: safe.mode,
+            tp_reassigned: tpReassigned,
             tp_deferred: !safe.tpApplied && (modifyArgs.takeprofit ?? 0) > 0,
             manual_push: manualPush,
             trade_id: tr.id,
