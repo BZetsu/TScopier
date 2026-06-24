@@ -61,6 +61,30 @@ export async function loadBasketSlTpTarget(
 }
 
 /**
+ * Returns the subset of basket keys (`${brokerAccountId}|${anchorSignalId}`)
+ * whose recorded target is from a strictly NEWER instruction than `instructionAt`.
+ * Applying an instruction with this timestamp to those baskets would be stale
+ * (the live broker write would conflict with the latest recorded instruction).
+ */
+export async function findStaleBasketKeys(
+  supabase: SupabaseClient,
+  basketKeys: Iterable<string>,
+  instructionAt: string | null | undefined,
+): Promise<Set<string>> {
+  const stale = new Set<string>()
+  if (!instructionAt) return stale
+  const at = Date.parse(instructionAt)
+  if (!Number.isFinite(at)) return stale
+  for (const key of basketKeys) {
+    const [brokerId, anchorSignalId] = key.split('|')
+    if (!brokerId || !anchorSignalId) continue
+    const target = await loadBasketSlTpTarget(supabase, brokerId, anchorSignalId)
+    if (target?.instructionAt && Date.parse(target.instructionAt) > at) stale.add(key)
+  }
+  return stale
+}
+
+/**
  * Record the latest SL/TP intent for a basket — "latest INSTRUCTION wins".
  *
  * Ordering is by `instructionAt` (the source signal's created_at / auto-BE time),

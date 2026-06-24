@@ -49,7 +49,7 @@ import {
 import { type ManualSettings } from '../manualPlanner'
 import { hasFxsocketConfigured } from '../fxsocketClient'
 import { upsertBasketReconcileJob, type BasketOpenLeg } from '../basketSlTpReconcile'
-import { upsertBasketSlTpTarget } from '../basketTargetStore'
+import { findStaleBasketKeys, upsertBasketSlTpTarget } from '../basketTargetStore'
 import type { PerLegStopTarget } from '../multiTradeMerge'
 import { resolveLatestOpenBasketAnchor } from '../multiTradeMerge'
 import { isBenignOrderModifyError } from '../orderModifyBenign'
@@ -1233,7 +1233,27 @@ export async function applyManagement(
     }
 
     if (action === 'modify' && (hasNewSl || hasNewTp)) {
-      for (const brokerRows of rowsByBrokerSignal.values()) {
+      // One-shot staleness gate: if a basket already recorded a NEWER instruction
+      // (a later signal created_at) than this modify, applying this late-processed
+      // modify would push a stale SL/TP that the reconcile loop would then have to
+      // revert — the visible SL "conflict". Skip those baskets; the authoritative
+      // per-basket target already holds the newer value.
+      const staleBasketKeys = await findStaleBasketKeys(
+        ctx.supabase,
+        rowsByBrokerSignal.keys(),
+        signal.created_at,
+      )
+      for (const key of staleBasketKeys) {
+        const [brokerId, anchorSignalId] = key.split('|')
+        if (!brokerId || !anchorSignalId) continue
+        await logBrokerMgmtSkip(ctx, signal, brokerId, 'mgmt_stale_instruction', {
+          anchor_signal_id: anchorSignalId,
+          signal_created_at: signal.created_at ?? null,
+        })
+      }
+
+      for (const [key, brokerRows] of rowsByBrokerSignal) {
+        if (staleBasketKeys.has(key)) continue
         legsTotal += brokerRows.filter(r => {
           const ticket = Number(r.metaapi_order_id)
           return Number.isFinite(ticket) && ticket > 0
@@ -1242,10 +1262,15 @@ export async function applyManagement(
 
       if (mgmtUseChannelStopApply()) {
         const stopLegs = mgmtRowsToStopLegs(rows)
-        const rowsByBrokerSignalStop = groupLegsByBrokerSignal(stopLegs)
+        const fullRowsByBrokerSignalStop = groupLegsByBrokerSignal(stopLegs)
+        const rowsByBrokerSignalStop = staleBasketKeys.size
+          ? new Map([...fullRowsByBrokerSignalStop].filter(([k]) => !staleBasketKeys.has(k)))
+          : fullRowsByBrokerSignalStop
 
         for (const broker of brokers) {
-          const hasBasket = [...rowsByBrokerSignalStop.keys()].some(k => k.startsWith(`${broker.id}|`))
+          // Use the unfiltered grouping so a basket skipped only for staleness is
+          // not mislabeled as "no open trades".
+          const hasBasket = [...fullRowsByBrokerSignalStop.keys()].some(k => k.startsWith(`${broker.id}|`))
           if (!hasBasket) {
             if (!brokerHasLinkedSession(broker)) {
               await logBrokerMgmtSkip(ctx, signal, broker.id, 'no_broker_session')
@@ -1257,39 +1282,46 @@ export async function applyManagement(
           }
         }
 
-        modifyApplyResult = await applyChannelStopsToBaskets({
-          supabase: ctx.supabase,
-          apiFor: broker => ctx.apiFor(broker as BrokerRow),
-          userId: signal.user_id,
-          channelId: signal.channel_id,
-          signalId: signal.id,
-          brokersById: byBroker,
-          rowsByBrokerSignal: rowsByBrokerSignalStop,
-          hasNewSl,
-          hasNewTp,
-          parsedSl: hasNewSl ? (parsed.sl as number) : null,
-          parsedTpLevels,
-          verifyOnBroker: true,
-        })
-        await logMgmtModifyBrokerSummaries(ctx.supabase, signal.user_id, signal.id, modifyApplyResult.brokers)
-        legsTotal += modifyApplyResult.totalModified
+        if (rowsByBrokerSignalStop.size > 0) {
+          modifyApplyResult = await applyChannelStopsToBaskets({
+            supabase: ctx.supabase,
+            apiFor: broker => ctx.apiFor(broker as BrokerRow),
+            userId: signal.user_id,
+            channelId: signal.channel_id,
+            signalId: signal.id,
+            brokersById: byBroker,
+            rowsByBrokerSignal: rowsByBrokerSignalStop,
+            hasNewSl,
+            hasNewTp,
+            parsedSl: hasNewSl ? (parsed.sl as number) : null,
+            parsedTpLevels,
+            verifyOnBroker: true,
+          })
+          await logMgmtModifyBrokerSummaries(ctx.supabase, signal.user_id, signal.id, modifyApplyResult.brokers)
+          legsTotal += modifyApplyResult.totalModified
+        }
       } else {
-        await applyMgmtModifyToBasketGroups({
-          supabase: ctx.supabase,
-          apiFor: broker => ctx.apiFor(broker as BrokerRow),
-          signal: {
-            id: signal.id,
-            user_id: signal.user_id,
-            channel_id: signal.channel_id,
-          },
-          parsed,
-          rowsByBrokerSignal,
-          brokersById: byBroker,
-          hasNewSl,
-          hasNewTp,
-          parsedTpLevels,
-          liveMgmtFast,
-        })
+        const mgmtRowsForApply = staleBasketKeys.size
+          ? new Map([...rowsByBrokerSignal].filter(([k]) => !staleBasketKeys.has(k)))
+          : rowsByBrokerSignal
+        if (mgmtRowsForApply.size > 0) {
+          await applyMgmtModifyToBasketGroups({
+            supabase: ctx.supabase,
+            apiFor: broker => ctx.apiFor(broker as BrokerRow),
+            signal: {
+              id: signal.id,
+              user_id: signal.user_id,
+              channel_id: signal.channel_id,
+            },
+            parsed,
+            rowsByBrokerSignal: mgmtRowsForApply,
+            brokersById: byBroker,
+            hasNewSl,
+            hasNewTp,
+            parsedTpLevels,
+            liveMgmtFast,
+          })
+        }
       }
     }
 

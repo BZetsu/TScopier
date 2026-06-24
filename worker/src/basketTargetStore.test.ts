@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { loadBasketSlTpTarget, upsertBasketSlTpTarget } from './basketTargetStore'
+import { findStaleBasketKeys, loadBasketSlTpTarget, upsertBasketSlTpTarget } from './basketTargetStore'
 
 type Row = {
   stoploss: number | null
@@ -90,6 +90,43 @@ describe('basketTargetStore', () => {
       source: 'adjust',
     })
     assert.deepEqual(captured.calls[0]!.params.p_tp_levels, [4270, 4290])
+  })
+
+  it('flags baskets whose recorded instruction is newer than the incoming one', async () => {
+    // Two baskets. Store rows keyed by broker|anchor with differing instruction_at.
+    const rows: Record<string, Row> = {
+      'b1|sigA': { stoploss: 4090, tp_levels: [], source: 'adjust', updated_at: null, instruction_at: '2026-06-24T05:39:14Z' },
+      'b1|sigB': { stoploss: 4090, tp_levels: [], source: 'adjust', updated_at: null, instruction_at: '2026-06-24T05:30:00Z' },
+    }
+    let lastKey = ''
+    const supabase = {
+      from() {
+        const b: Record<string, unknown> = {}
+        b.select = () => b
+        b.eq = (_col: string, val: string) => {
+          if (val === 'b1') lastKey = 'b1|'
+          else lastKey += val
+          return b
+        }
+        b.maybeSingle = () => Promise.resolve({ data: rows[lastKey] ?? null, error: null })
+        return b
+      },
+    }
+    // Incoming "Adjust SL to 4090" at 05:35:42 — older than sigA's breakeven (05:39),
+    // newer than sigB (05:30).
+    const stale = await findStaleBasketKeys(
+      supabase as never,
+      ['b1|sigA', 'b1|sigB'],
+      '2026-06-24T05:35:42Z',
+    )
+    assert.ok(stale.has('b1|sigA'), 'basket with a newer recorded instruction is stale')
+    assert.ok(!stale.has('b1|sigB'), 'basket with an older recorded instruction is applied')
+  })
+
+  it('flags nothing when the instruction timestamp is missing', async () => {
+    const supabase = { from() { return { select: () => ({}) } } }
+    const stale = await findStaleBasketKeys(supabase as never, ['b1|sigA'], null)
+    assert.equal(stale.size, 0)
   })
 
   it('does not call the RPC when neither SL nor TP is provided', async () => {
