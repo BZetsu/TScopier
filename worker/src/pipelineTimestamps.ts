@@ -24,6 +24,10 @@ export type PipelineTimestamps = {
   t_symbol_resolved?: number
   /** Diagnostic: time the symbol-params fetch promise resolved. */
   t_params_resolved?: number
+  /** Diagnostic: merge-detection routing finished (before planning). */
+  t_merge_done?: number
+  /** Diagnostic: planManualOrders finished building the order plan. */
+  t_plan_done?: number
   /** First broker OrderSend call for this signal. */
   t_first_broker_send?: number
   /** Last broker OrderSend call returned for this signal. */
@@ -50,6 +54,8 @@ export function parsePipelineTimestamps(raw: unknown): PipelineTimestamps | unde
     t_session_resolved: n('t_session_resolved'),
     t_symbol_resolved: n('t_symbol_resolved'),
     t_params_resolved: n('t_params_resolved'),
+    t_merge_done: n('t_merge_done'),
+    t_plan_done: n('t_plan_done'),
     t_first_broker_send: n('t_first_broker_send'),
     t_last_broker_send: n('t_last_broker_send'),
     t_order_send_done: n('t_order_send_done'),
@@ -92,6 +98,16 @@ export function pipelineSummaryPayload(
   const sendPlanMs = ts.t_first_broker_send != null && ts.t_send_caches_resolved != null
     ? ts.t_first_broker_send - ts.t_send_caches_resolved
     : null
+  /** Diagnostic split of send_plan_ms. */
+  const mergeRouteMs = ts.t_merge_done != null && ts.t_send_caches_resolved != null
+    ? ts.t_merge_done - ts.t_send_caches_resolved
+    : null
+  const planBuildMs = ts.t_plan_done != null && ts.t_merge_done != null
+    ? ts.t_plan_done - ts.t_merge_done
+    : null
+  const postPlanMs = ts.t_first_broker_send != null && ts.t_plan_done != null
+    ? ts.t_first_broker_send - ts.t_plan_done
+    : null
   const sessionMs = ts.t_session_resolved != null && ts.t_order_send_start != null
     ? ts.t_session_resolved - ts.t_order_send_start
     : null
@@ -117,6 +133,9 @@ export function pipelineSummaryPayload(
     send_order_prep_ms: sendOrderPrepMs,
     broker_resolve_ms: brokerResolveMs,
     send_plan_ms: sendPlanMs,
+    merge_route_ms: mergeRouteMs,
+    plan_build_ms: planBuildMs,
+    post_plan_ms: postPlanMs,
     session_resolve_ms: sessionMs,
     symbol_resolve_ms: symbolMs,
     params_resolve_ms: paramsMs,

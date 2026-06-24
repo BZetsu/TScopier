@@ -463,6 +463,7 @@ export async function prepareEntryExecution(
   // Build the order list. In AI mode we keep the original single-order shape;
   // manual mode delegates to the planner so filters / multi-TP / pip-derived
   // SL & TP / pending expiry / reverse all apply consistently.
+  if (signal.pipeline_ts) signal.pipeline_ts.t_merge_done = Date.now()
   let mergedChannelParams = false
   let entryChannelParams: ChannelActiveTradeParams | null = null
   let channelParamsRefreshedFromSignal = false
@@ -548,6 +549,7 @@ export async function prepareEntryExecution(
     }
   }
 
+  if (signal.pipeline_ts) signal.pipeline_ts.t_plan_done = Date.now()
   if (plan.orders.length === 0) {
     await ctx.logSendSkipped(signal, broker, plan.skip_reason ?? 'filtered', { symbol })
     const entryStrict =
