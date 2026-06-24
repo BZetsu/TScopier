@@ -182,12 +182,22 @@ export class V2ReconcileMonitor {
   }
 
   private async reconcileBasket(basket: BasketKey, session: BrokerSession): Promise<{ modified: number; closed: number }> {
-    const [legs, desired, snapshot] = await Promise.all([
+    const [legs, desired] = await Promise.all([
       loadOpenBasketLegs(this.supabase, basket.brokerAccountId, basket.anchorSignalId, basket.symbol),
       loadDesiredBasket(this.supabase, basket.brokerAccountId, basket.anchorSignalId),
-      this.fx.openedOrders(session.uuid, session.platform).catch(() => [] as FxOpenOrder[]),
     ])
     if (!legs.length) return { modified: 0, closed: 0 }
+
+    // SAFETY: the broker snapshot is the source of truth for "is this leg still open?".
+    // If the fetch FAILS we must NOT proceed - an empty list would be read as
+    // "every leg vanished" and wrongly mark all legs closed in the DB. Abort instead.
+    let snapshot: FxOpenOrder[]
+    try {
+      snapshot = await this.fx.openedOrders(session.uuid, session.platform)
+    } catch (err) {
+      console.warn(`[v2ReconcileMonitor] snapshot failed broker=${basket.brokerAccountId} anchor=${basket.anchorSignalId} — skipping (no close): ${err instanceof Error ? err.message : String(err)}`)
+      return { modified: 0, closed: 0 }
+    }
 
     const desiredTargets = buildDesiredLegTargets({ legs, snapshot, desired, isBuy: basket.isBuy })
     const trackedTickets = legs.map(legTicket).filter((t): t is number => t != null)
@@ -200,6 +210,15 @@ export class V2ReconcileMonitor {
     // Orphan adoption is log-only on the first management-first run.
     const orphanCount = actions.adopt.length
     actions.adopt = []
+
+    // SAFETY: never mass-close a basket off an empty snapshot. A disconnected
+    // FxSocket session can return an empty (but successful) OpenedOrders list; that
+    // must not be read as "all legs closed". Only honor closes when the snapshot
+    // actually shows other open orders (a real account picture).
+    if (snapshot.length === 0 && actions.closedTickets.length > 0) {
+      console.warn(`[v2ReconcileMonitor] empty snapshot with ${actions.closedTickets.length} tracked legs broker=${basket.brokerAccountId} anchor=${basket.anchorSignalId} — deferring close (suspected disconnect)`)
+      actions.closedTickets = []
+    }
 
     const ticketToTradeId = new Map<number, string>()
     for (const leg of legs) {

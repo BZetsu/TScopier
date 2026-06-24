@@ -57,6 +57,19 @@ describe('buildDesiredLegTargets', () => {
     assert.equal(t[0]!.stoploss, 4078, 'newer auto-BE wins over older adjust')
   })
 
+  it('marks an individual vanished leg closed when the snapshot still shows others', () => {
+    // computeReconcileActions is covered in reconciler.test; here we assert the builder
+    // still returns the present leg so a real partial-close is detectable.
+    const t = buildDesiredLegTargets({
+      legs: [leg({ metaapi_order_id: '100' }), leg({ id: 'l2', metaapi_order_id: '101' })],
+      snapshot: [open(100)],
+      desired: desired(),
+      isBuy: true,
+    })
+    assert.equal(t.length, 1)
+    assert.equal(t[0]!.ticket, 100)
+  })
+
   it('skips legs not present at the broker (left for closedTickets)', () => {
     const t = buildDesiredLegTargets({
       legs: [leg({ metaapi_order_id: '100' }), leg({ id: 'l2', metaapi_order_id: '999' })],
