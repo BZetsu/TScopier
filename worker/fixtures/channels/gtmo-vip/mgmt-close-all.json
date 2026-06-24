@@ -1,0 +1,5 @@
+{
+  "name": "Management: close all open positions",
+  "message": "Close all now",
+  "expect": { "status": "parsed", "action": "close" }
+}

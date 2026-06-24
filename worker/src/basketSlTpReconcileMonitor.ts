@@ -44,6 +44,16 @@ const SWEEP_INTERVAL_MS = Math.min(
   600_000,
   Math.max(60_000, Number(process.env.BASKET_RECONCILE_SWEEP_MS ?? 180_000)),
 )
+/**
+ * A job stuck in `claimed` longer than this (worker crashed mid-process, or pod
+ * killed during deploy) is reset to `pending` so it is reprocessed. processJob
+ * makes a single runBasketLegModifies pass, so legitimate work finishes well
+ * within this window.
+ */
+const STALE_CLAIM_MS = Math.min(
+  600_000,
+  Math.max(60_000, Number(process.env.BASKET_RECONCILE_STALE_CLAIM_MS ?? 120_000)),
+)
 
 export class BasketSlTpReconcileMonitor {
   private loop: MonitorLoopHandle | null = null
@@ -96,7 +106,36 @@ export class BasketSlTpReconcileMonitor {
     }
   }
 
+  /**
+   * Reset jobs stranded in `claimed` (crashed worker / killed pod) back to
+   * `pending` so they are reprocessed. Without this they were invisible to both
+   * the pending job select and the drift sweep (which skips claimed rows).
+   */
+  private async reclaimStaleClaimedJobs(): Promise<void> {
+    const cutoff = new Date(Date.now() - STALE_CLAIM_MS).toISOString()
+    const nowIso = new Date().toISOString()
+    const { data, error } = await this.supabase
+      .from('basket_reconcile_jobs')
+      .update({
+        status: 'pending',
+        next_run_at: nowIso,
+        locked_at: null,
+        locked_by: null,
+        last_error: 'reclaimed stale claim',
+        updated_at: nowIso,
+      })
+      .eq('status', 'claimed')
+      .lt('locked_at', cutoff)
+      .select('id')
+    if (error) {
+      console.warn(`[basketSlTpReconcileMonitor] stale-claim reclaim failed: ${error.message}`)
+    } else if ((data ?? []).length > 0) {
+      console.warn(`[basketSlTpReconcileMonitor] reclaimed ${(data ?? []).length} stale claimed job(s)`)
+    }
+  }
+
   private async tick(): Promise<void> {
+    await this.reclaimStaleClaimedJobs()
     const now = new Date().toISOString()
     const { data: jobs, error } = await this.supabase
       .from('basket_reconcile_jobs')

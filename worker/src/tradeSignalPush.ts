@@ -43,13 +43,26 @@ export function parseTradeWorkerShardUrls(raw: string | undefined): string[] {
   return raw.split(',').map(s => s.trim().replace(/\/$/, '')).filter(Boolean)
 }
 
-function pickTradeWorkerUrl(action: string, userId?: string): string | null {
+export function pickTradeWorkerUrl(action: string, userId?: string): string | null {
   const shardUrls = parseTradeWorkerShardUrls(process.env.TRADE_WORKER_SHARD_URLS)
+  const mgmtShardUrls = parseTradeWorkerShardUrls(process.env.TRADE_MGMT_WORKER_SHARD_URLS)
   const entryUrl = String(process.env.TRADE_WORKER_URL ?? '').trim().replace(/\/$/, '')
   const mgmtUrl = String(process.env.TRADE_MGMT_WORKER_URL ?? '').trim().replace(/\/$/, '')
+  const mgmt = isManagementAction(action)
+
+  // Sharded management routing takes precedence for mgmt actions so heavy
+  // management bursts (Adjust SL/TP, breakeven, close half on a busy channel)
+  // fan out across the management fleet instead of hammering one mgmt URL.
+  if (mgmt && mgmtShardUrls.length > 1 && userId) {
+    const sharded = mgmtShardUrls[shardForUserId(userId, mgmtShardUrls.length)]
+    if (sharded) return sharded
+  }
+  if (mgmt && mgmtShardUrls.length === 1) {
+    return mgmtShardUrls[0]!
+  }
 
   let base: string | null
-  if (isManagementAction(action)) {
+  if (mgmt) {
     base = mgmtUrl || entryUrl || null
   } else {
     base = entryUrl || null
@@ -59,12 +72,12 @@ function pickTradeWorkerUrl(action: string, userId?: string): string | null {
     const shard = shardForUserId(userId, shardUrls.length)
     const sharded = shardUrls[shard]
     if (sharded) {
-      if (isManagementAction(action) && mgmtUrl) return mgmtUrl
+      if (mgmt && mgmtUrl) return mgmtUrl
       return sharded
     }
   }
 
-  if (shardUrls.length === 1 && userId && !isManagementAction(action)) {
+  if (shardUrls.length === 1 && userId && !mgmt) {
     return shardUrls[0]!
   }
 
@@ -322,6 +335,29 @@ export function validateListenerTradeShardConfig(): string | null {
   }
   if (shardUrls.length !== expected) {
     return `TRADE_WORKER_SHARD_URLS has ${shardUrls.length} URL(s) but TRADE_WORKER_SHARD_COUNT=${expected}`
+  }
+  return null
+}
+
+/**
+ * Listener startup check: TRADE_MGMT_WORKER_SHARD_URLS (when set) must match the
+ * trade shard count so management dispatch hashes onto an existing mgmt shard.
+ * Returns an error message or null if valid / not applicable.
+ */
+export function validateListenerMgmtShardConfig(): string | null {
+  const mgmtShardUrls = parseTradeWorkerShardUrls(process.env.TRADE_MGMT_WORKER_SHARD_URLS)
+  if (mgmtShardUrls.length === 0) return null
+
+  const expectedRaw = process.env.TRADE_WORKER_SHARD_COUNT
+  const expected = expectedRaw != null && expectedRaw !== ''
+    ? Math.max(1, Math.floor(Number(expectedRaw)))
+    : mgmtShardUrls.length
+
+  if (!Number.isFinite(expected) || expected < 1) {
+    return `TRADE_WORKER_SHARD_COUNT must be a positive integer (got ${expectedRaw})`
+  }
+  if (mgmtShardUrls.length !== expected) {
+    return `TRADE_MGMT_WORKER_SHARD_URLS has ${mgmtShardUrls.length} URL(s) but TRADE_WORKER_SHARD_COUNT=${expected}`
   }
   return null
 }

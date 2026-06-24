@@ -14,6 +14,31 @@ import {
   parseChannelMessageSync,
 } from '../parseSignal'
 import { looksLikeTradingSignal } from '../signalTradingHeuristic'
+import {
+  GTMO_VIP_FIXTURES_DIR,
+  evaluateChannelFixture,
+  loadChannelFixtures,
+} from '../channelFixtures'
+
+/**
+ * Offline golden-scenario run (no Supabase). Returns a non-zero exit code when
+ * any fixture parse mismatches, so it doubles as a CI gate.
+ */
+function runFixtures(dir: string): void {
+  const fixtures = loadChannelFixtures(dir)
+  let failed = 0
+  for (const { file, fixture } of fixtures) {
+    const { ok, failures } = evaluateChannelFixture(fixture)
+    if (ok) {
+      console.log(`PASS ${file} — ${fixture.name}`)
+    } else {
+      failed += 1
+      console.error(`FAIL ${file} — ${fixture.name}\n  ${failures.join('\n  ')}`)
+    }
+  }
+  console.log(`\n${fixtures.length - failed}/${fixtures.length} fixtures passed`)
+  if (failed > 0) process.exit(1)
+}
 
 function parseArgs(argv: string[]): { channelId: string; message: string; telethonHeuristic: boolean } {
   let channelId = ''
@@ -43,6 +68,15 @@ function parseArgs(argv: string[]): { channelId: string; message: string; teleth
 }
 
 async function main() {
+  const fixturesFlagIdx = process.argv.indexOf('--fixtures')
+  if (fixturesFlagIdx !== -1) {
+    const dir = process.argv[fixturesFlagIdx + 1] && !process.argv[fixturesFlagIdx + 1]!.startsWith('--')
+      ? process.argv[fixturesFlagIdx + 1]!
+      : GTMO_VIP_FIXTURES_DIR
+    runFixtures(dir)
+    return
+  }
+
   const { channelId, message, telethonHeuristic } = parseArgs(process.argv)
   const url = String(process.env.SUPABASE_URL ?? '').trim()
   const key = String(process.env.SUPABASE_SERVICE_ROLE_KEY ?? '').trim()

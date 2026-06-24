@@ -1,0 +1,5 @@
+{
+  "name": "Gold sell with explicit entry anchor",
+  "message": "SELL GOLD 2655\nSL 2665\nTP 2640",
+  "expect": { "status": "parsed", "action": "sell", "symbol": "XAUUSD", "sl": 2665 }
+}

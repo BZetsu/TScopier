@@ -48,6 +48,8 @@ import {
 } from '../managementScope'
 import { type ManualSettings } from '../manualPlanner'
 import { hasFxsocketConfigured } from '../fxsocketClient'
+import { upsertBasketReconcileJob, type BasketOpenLeg } from '../basketSlTpReconcile'
+import type { PerLegStopTarget } from '../multiTradeMerge'
 import { resolveLatestOpenBasketAnchor } from '../multiTradeMerge'
 import { isBenignOrderModifyError } from '../orderModifyBenign'
 import { mgmtLegConcurrency, parallelMap } from '../parallelPool'
@@ -64,6 +66,25 @@ import {
 
 function mgmtCloseOpts(liveMgmtFast: boolean) {
   return { maxAttempts: 2, slippageEscalation: 50, liveFast: liveMgmtFast }
+}
+
+function normBasketSymbolKey(sym: string): string {
+  return String(sym ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+}
+
+function mgmtRowToBasketLegForReconcile(row: MgmtTradeRow): BasketOpenLeg {
+  return {
+    id: row.id,
+    signal_id: row.signal_id,
+    metaapi_order_id: row.metaapi_order_id,
+    opened_at: row.opened_at ?? '',
+    lot_size: row.lot_size,
+    sl: row.sl,
+    tp: row.tp,
+    entry_price: row.entry_price,
+    direction: row.direction,
+    symbol: row.symbol,
+  }
 }
 
 async function finalizeMgmtSignal(ctx: TradeExecutorContext, signalId: string): Promise<void> {
@@ -741,6 +762,11 @@ export async function applyManagement(
     const usedBreakevenTicketsByUuid = new Map<string, Set<number>>()
     /** Most protective breakeven SL applied per symbol — persisted to channel memory after mgmt. */
     const channelBreakevenSlBySymbol = new Map<string, { sl: number; isBuy: boolean }>()
+    /** Breakeven leg-level outcome tracking for the reconcile fallback + memory gating. */
+    const breakevenAppliedTradeIds = new Set<string>()
+    const breakevenSlByTradeId = new Map<string, number>()
+    const breakevenFailedSymbolKeys = new Set<string>()
+    let breakevenNeedsRetry = false
 
     const processTrade = async (trade: MgmtTradeRow): Promise<void> => {
       const broker = byBroker.get(trade.broker_account_id)
@@ -902,6 +928,7 @@ export async function applyManagement(
           } catch {
             /* quote optional; use computed breakeven SL */
           }
+          breakevenSlByTradeId.set(trade.id, beSl)
           const usedTickets = usedBreakevenTicketsByUuid.get(uuid) ?? new Set<number>()
           const maxAttempts = 3
           let lastErr: unknown = null
@@ -972,6 +999,7 @@ export async function applyManagement(
               ...(ticketReconciledFrom != null ? { metaapi_order_id: String(effectiveTicket) } : {}),
             })
             .eq('id', trade.id)
+          breakevenAppliedTradeIds.add(trade.id)
           const symKey = trade.symbol
           const prev = channelBreakevenSlBySymbol.get(symKey)
           if (!prev) {
@@ -1042,6 +1070,13 @@ export async function applyManagement(
             benign = false
           }
         }
+        if (action === 'breakeven') {
+          if (benign) {
+            breakevenAppliedTradeIds.add(trade.id)
+          } else {
+            breakevenFailedSymbolKeys.add(normBasketSymbolKey(trade.symbol))
+          }
+        }
         await ctx.supabase.from('trade_execution_logs').insert({
           user_id: signal.user_id,
           signal_id: signal.id,
@@ -1062,16 +1097,87 @@ export async function applyManagement(
       }
     }
 
+    // Breakeven reconcile fallback: any eligible leg that did not verify at
+    // breakeven gets a basket_reconcile_job (per broker + anchor) so the basket
+    // SL converges on later monitor ticks — mirroring the modify path. Without
+    // this, a partial breakeven on a multi-leg basket was silently final.
+    const enqueueBreakevenReconcileFallback = async (): Promise<void> => {
+      const failed = eligibleTrades.filter(t => {
+        const ticket = Number(t.metaapi_order_id)
+        return Number.isFinite(ticket) && ticket > 0 && !breakevenAppliedTradeIds.has(t.id)
+      })
+      if (!failed.length) return
+      breakevenNeedsRetry = true
+
+      const groups = new Map<string, MgmtTradeRow[]>()
+      for (const t of failed) {
+        const key = `${t.broker_account_id}|${t.signal_id}`
+        const list = groups.get(key) ?? []
+        list.push(t)
+        groups.set(key, list)
+      }
+
+      for (const [key, legs] of groups) {
+        const [brokerId, anchorSignalId] = key.split('|')
+        if (!brokerId || !anchorSignalId) continue
+        const broker = byBroker.get(brokerId)
+        if (!broker) continue
+        const symbol = legs[0]!.symbol
+        const direction = String(legs[0]!.direction).toLowerCase().includes('sell') ? 'sell' : 'buy'
+        const familyTrades: BasketOpenLeg[] = legs.map(mgmtRowToBasketLegForReconcile)
+        const perLegTargets: PerLegStopTarget[] = legs.map(t => ({
+          stoploss: breakevenSlByTradeId.get(t.id) ?? sanitizeLevel(t.sl),
+          takeprofit: sanitizeLevel(t.tp),
+        }))
+        await upsertBasketReconcileJob(ctx.supabase, {
+          userId: signal.user_id,
+          brokerAccountId: brokerId,
+          anchorSignalId,
+          sourceSignalId: signal.id,
+          channelId: signal.channel_id,
+          symbol,
+          direction,
+          perLegTargets,
+          familyTrades,
+          signalTps: [],
+          tpLots: ((broker.manual_settings ?? {}) as ManualSettings).tp_lots,
+          virtualPendingsSnapshot: null,
+          nImmCwe: 0,
+          overrideTp: null,
+          lastError: `Breakeven partial: ${failed.length} leg(s) did not verify at breakeven`,
+        })
+      }
+      console.warn(
+        `[tradeExecutor] breakeven partial — ${failed.length} leg(s) queued for reconcile signal=${signal.id}`,
+      )
+    }
+
     if (action === 'breakeven') {
-      if (liveMgmtFast && eligibleTrades.length > 1) {
+      // Serialize legs that share one broker session so the breakeven
+      // ticket-exclusion map (usedBreakevenTicketsByUuid) is never
+      // read-modify-written concurrently — that race could target the same
+      // ticket twice or skip a just-reconciled leg. Distinct broker sessions
+      // still run in parallel for fan-out speed.
+      const legsByUuid = new Map<string, MgmtTradeRow[]>()
+      for (const trade of eligibleTrades) {
+        const broker = byBroker.get(trade.broker_account_id)
+        const uuid = (broker ? brokerSessionUuid(broker) : null) ?? trade.broker_account_id
+        const list = legsByUuid.get(uuid) ?? []
+        list.push(trade)
+        legsByUuid.set(uuid, list)
+      }
+      if (liveMgmtFast && legsByUuid.size > 1) {
         await Promise.allSettled(
-          await parallelMap(eligibleTrades, legConcurrency, trade => processTrade(trade)),
+          [...legsByUuid.values()].map(async group => {
+            for (const trade of group) await processTrade(trade)
+          }),
         )
       } else {
         for (const trade of eligibleTrades) {
           await processTrade(trade)
         }
       }
+      await enqueueBreakevenReconcileFallback()
     } else if (liveMgmtFast && eligibleTrades.length > 1) {
       await Promise.allSettled(
         await parallelMap(eligibleTrades, legConcurrency, trade => processTrade(trade)),
@@ -1257,9 +1363,16 @@ export async function applyManagement(
         tradeSymbols: rows.map(r => r.symbol),
         pendingSymbols: pendingLegs.map(l => l.symbol),
       })
+      // Only persist "at breakeven" to channel memory for symbols where every
+      // eligible leg verified. Otherwise pending ladder legs would inherit a
+      // breakeven SL the open legs never actually reached (split-basket state).
+      // Failed symbols are healed by the reconcile fallback instead.
+      const symbolBreakevenOk = (sym: string): boolean =>
+        !breakevenFailedSymbolKeys.has(normBasketSymbolKey(sym))
       let bestSl = 0
       let bestIsBuy = true
       for (const sym of symbols) {
+        if (!symbolBreakevenOk(sym)) continue
         const hit = channelBreakevenSlBySymbol.get(sym)
         if (!hit) continue
         if (bestSl <= 0) {
@@ -1270,7 +1383,8 @@ export async function applyManagement(
         }
       }
       if (bestSl <= 0) {
-        for (const hit of channelBreakevenSlBySymbol.values()) {
+        for (const [sym, hit] of channelBreakevenSlBySymbol) {
+          if (!symbolBreakevenOk(sym)) continue
           if (bestSl <= 0) {
             bestSl = hit.sl
             bestIsBuy = hit.isBuy
@@ -1369,6 +1483,10 @@ export async function applyManagement(
         `[tradeExecutor] mgmt modify partial — leaving signal parsed for reconcile`
         + ` signal=${signal.id} modified=${modifyApplyResult!.totalModified}`
         + ` failed=${modifyApplyResult!.totalFailed}`,
+      )
+    } else if (breakevenNeedsRetry) {
+      console.warn(
+        `[tradeExecutor] mgmt breakeven partial — leaving signal parsed for reconcile signal=${signal.id}`,
       )
     } else {
       await finalizeMgmtSignal(ctx, signal.id)

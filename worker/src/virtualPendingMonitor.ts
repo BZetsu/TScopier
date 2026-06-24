@@ -2,6 +2,7 @@ import os from 'node:os'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import {
   hasFxsocketConfigured,
+  isTransientMtApiError,
   normalizeSymbolParams,
   OrderSendArgs,
   SymbolParams,
@@ -9,6 +10,8 @@ import {
 import { apiForFxsocketAccount, loadPlatformByFxsocketId, type PlatformByFxsocketId } from './mtApiByAccount'
 import { autoManagementTradeSnapshot } from './autoManagement'
 import { tryApplyBasketFollowUpToNewFill } from './basketModFollowUp'
+import { loadOpenBasketLegs, upsertBasketReconcileJob } from './basketSlTpReconcile'
+import { resolveFreshBasketReconcileTargets } from './basketReconcileTargets'
 import { channelParamsPredateBasket, loadChannelActiveTradeParamsForSymbol } from './channelActiveTradeParams'
 import { resolveChannelTradingConfig } from './channelTradingConfig'
 import { markRangeLegFired, markRangeLegsExpired } from './rangePendingLadderSync'
@@ -656,6 +659,69 @@ export class VirtualPendingMonitor {
     }
   }
 
+  /**
+   * Enqueue a basket reconcile job for a freshly-filled range leg's basket.
+   * Used when the post-fill SL/TP follow-up or TP rebalance fails, so the new
+   * leg (and its siblings) converge to the channel SL/TP ladder on later
+   * reconcile ticks instead of being left mis-aligned until the periodic sweep.
+   */
+  private async enqueueReconcileForLegBasket(
+    leg: PendingRow,
+    channelId: string | null,
+  ): Promise<void> {
+    try {
+      const familyTrades = await loadOpenBasketLegs(
+        this.supabase,
+        leg.broker_account_id,
+        leg.signal_id,
+        leg.symbol,
+      )
+      if (!familyTrades.length) return
+      const manualRaw = await this.loadManualSettingsForLeg(leg.broker_account_id, channelId)
+      const manual = {
+        range_trading: (manualRaw as { range_trading?: boolean }).range_trading === true,
+        tp_lots: (manualRaw as { tp_lots?: unknown }).tp_lots as never,
+      }
+      const direction: 'buy' | 'sell' = leg.is_buy ? 'buy' : 'sell'
+      const { perLegTargets, signalTps } = await resolveFreshBasketReconcileTargets(this.supabase, {
+        anchorSignalId: leg.signal_id,
+        channelId,
+        symbol: leg.symbol,
+        direction,
+        userId: leg.user_id,
+        brokerAccountId: leg.broker_account_id,
+        familyTrades,
+        storedTargets: [],
+        manual,
+        nImmCwe: 0,
+        overrideTp: null,
+      })
+      if (!perLegTargets.length) return
+      await upsertBasketReconcileJob(this.supabase, {
+        userId: leg.user_id,
+        brokerAccountId: leg.broker_account_id,
+        anchorSignalId: leg.signal_id,
+        sourceSignalId: leg.signal_id,
+        channelId,
+        symbol: leg.symbol,
+        direction,
+        perLegTargets,
+        familyTrades,
+        signalTps,
+        tpLots: manual.tp_lots,
+        virtualPendingsSnapshot: null,
+        nImmCwe: 0,
+        overrideTp: null,
+        lastError: 'Range fill follow-up failed; reconcile basket SL/TP',
+      })
+    } catch (err) {
+      console.warn(
+        `[virtualPendingMonitor] enqueue reconcile failed leg=${leg.id}:`
+        + ` ${err instanceof Error ? err.message : String(err)}`,
+      )
+    }
+  }
+
   private async markLegFiredWithRetry(
     legId: string,
     ticket: number | string | null,
@@ -899,7 +965,25 @@ export class VirtualPendingMonitor {
         ...autoBeCols,
       }).select('id').maybeSingle()
       if (insErr) {
+        // The broker position is open but we failed to record the trades row.
+        // Surface it as an orphan so ops/reconcile can reconcile it from the
+        // broker (reconcile-by-anchor cannot see a leg missing from `trades`).
         console.warn(`[virtualPendingMonitor] trades insert failed leg=${leg.id}: ${insErr.message}`)
+        try {
+          await this.supabase.from('trade_execution_logs').insert({
+            user_id: leg.user_id,
+            signal_id: leg.signal_id,
+            broker_account_id: leg.broker_account_id,
+            action: 'virtual_pending_orphan',
+            status: 'failed',
+            request_payload: {
+              leg_id: leg.id,
+              ticket: result.ticket ?? null,
+              step_idx: leg.step_idx,
+            } as unknown as Record<string, unknown>,
+            error_message: `trades insert failed after fire: ${insErr.message}`,
+          })
+        } catch { /* best-effort */ }
       }
 
       const ticketNum = result.ticket != null ? Number(result.ticket) : NaN
@@ -929,6 +1013,7 @@ export class VirtualPendingMonitor {
             `[virtualPendingMonitor] SL/TP follow-up for range leg=${leg.id} signal=${leg.signal_id}:`,
             hookErr,
           )
+          await this.enqueueReconcileForLegBasket(leg, channelIdForTrade)
         }
         // Brief pause so the new trade row is visible before the basket-wide rebalance query.
         await new Promise(r => setTimeout(r, 500))
@@ -939,6 +1024,7 @@ export class VirtualPendingMonitor {
             `[virtualPendingMonitor] TP rebalance after range fill leg=${leg.id} signal=${leg.signal_id}:`,
             rebalErr,
           )
+          await this.enqueueReconcileForLegBasket(leg, channelIdForTrade)
         }
       } else if (tradeRowId && Number.isFinite(ticketNum) && ticketNum > 0) {
         console.warn(
@@ -969,7 +1055,7 @@ export class VirtualPendingMonitor {
       console.error(
         `[virtualPendingMonitor] fire failed leg=${leg.id} signal=${leg.signal_id} stepIdx=${leg.step_idx}: ${msg}`,
       )
-      if (isMtBridgeGlitchMessage(msg)) {
+      if (isMtBridgeGlitchMessage(msg) || isTransientMtApiError(err)) {
         await this.supabase
           .from('range_pending_legs')
           .update({
@@ -980,7 +1066,7 @@ export class VirtualPendingMonitor {
           })
           .eq('id', leg.id)
         console.warn(
-          `[virtualPendingMonitor] bridge glitch leg=${leg.id} — released back to pending for retry`,
+          `[virtualPendingMonitor] transient fire error leg=${leg.id} — released back to pending for retry: ${msg}`,
         )
         return false
       }

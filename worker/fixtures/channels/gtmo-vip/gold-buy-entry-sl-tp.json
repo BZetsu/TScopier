@@ -1,0 +1,5 @@
+{
+  "name": "Gold buy with entry, SL and TP (post-edit form)",
+  "message": "Gold buy now @ 4500\nSL 4490\nTP: 4510",
+  "expect": { "status": "parsed", "action": "buy", "symbol": "XAUUSD", "sl": 4490, "tp": [4510] }
+}

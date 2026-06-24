@@ -1,0 +1,5 @@
+{
+  "name": "Gold market buy with stacked take-profits",
+  "message": "BUY XAUUSD NOW SL 2650 TP 2700 TP 2750",
+  "expect": { "status": "parsed", "action": "buy", "symbol": "XAUUSD", "sl": 2650, "tpCount": 2 }
+}

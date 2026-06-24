@@ -687,6 +687,164 @@ export async function runBasketLegModifies(args: {
   return { summary, legErrors, modifiedTradeIds }
 }
 
+export type ApplyBasketLegSyncResult = {
+  summary: MergeModifySummary & { skippedNotOnBroker: number; skippedUnfixable: number }
+  legErrors: LegModifyError[]
+  modifiedTradeIds: Set<string>
+  mergeFailed: boolean
+  reconcileEnqueued: boolean
+}
+
+/**
+ * Canonical "apply target SL/TP to every leg in a basket" primitive.
+ *
+ * Runs straggler rounds of {@link runBasketLegModifies} (re-trying only the legs
+ * that have not yet synced), refreshing the broker's OpenedOrders snapshot once,
+ * then either:
+ *  - enqueues a basket_reconcile_job when any leg still has a hard broker failure
+ *    (so the BasketSlTpReconcileMonitor keeps converging the basket), or
+ *  - marks the anchor's reconcile job done when fully synced.
+ *
+ * Used by channel "modify" (Adjust SL/TP) and the breakeven reconcile fallback so
+ * both share one retry + reconcile path instead of ad-hoc per-action loops.
+ */
+export async function applyBasketLegSync(args: {
+  supabase: SupabaseClient
+  api: FxsocketBrokerClient
+  uuid: string
+  symbol: string
+  direction: 'buy' | 'sell'
+  baseLot: number
+  params: BasketSymbolParams | null
+  signalId: string
+  userId: string
+  brokerAccountId: string
+  channelId: string | null
+  anchorSignalId: string
+  familyTrades: BasketOpenLeg[]
+  perLegTargets: PerLegStopTarget[]
+  signalTps?: number[]
+  tpLots?: ManualTpLot[] | null
+  nImmCwe: number
+  overrideTp: number | null
+  openedTickets: Set<number> | null
+  liveMgmtFast?: boolean
+  internalRebalance?: boolean
+  effectiveStoploss?: number
+  orderCommentsEnabled?: boolean
+  explicitChannelTargets?: boolean
+  virtualPendingsSnapshot?: unknown
+  /** Default true. When false, caller owns reconcile-job lifecycle. */
+  enqueueReconcileOnFailure?: boolean
+}): Promise<ApplyBasketLegSyncResult> {
+  const {
+    supabase, api, uuid, symbol, direction, baseLot, params,
+    signalId, userId, brokerAccountId, channelId, anchorSignalId,
+    familyTrades, perLegTargets, signalTps, tpLots, nImmCwe, overrideTp,
+    liveMgmtFast, internalRebalance, effectiveStoploss,
+    orderCommentsEnabled, explicitChannelTargets, virtualPendingsSnapshot,
+  } = args
+  const enqueueReconcileOnFailure = args.enqueueReconcileOnFailure !== false
+
+  const modifiedTradeIds = new Set<string>()
+  let openedTickets = args.openedTickets
+  let summary: MergeModifySummary & { skippedNotOnBroker: number; skippedUnfixable: number } = {
+    openLegs: familyTrades.length,
+    attempted: 0,
+    modified: 0,
+    failed: 0,
+    skippedNoTicket: 0,
+    skippedNotOnBroker: 0,
+    skippedUnfixable: 0,
+  }
+  let legErrors: LegModifyError[] = []
+
+  const stragglerRounds = liveMgmtFast
+    ? Math.min(4, Math.max(1, Number(process.env.BASKET_MGMT_STRAGGLER_ROUNDS ?? 3)))
+    : Math.min(8, Math.max(2, Number(process.env.BASKET_MGMT_STRAGGLER_ROUNDS ?? 4)))
+
+  for (let round = 0; round < stragglerRounds; round++) {
+    if (round > 0) {
+      const sleepMs = liveMgmtFast ? Math.min(round, 2) * 100 : Math.min(round, 3) * 200
+      await new Promise(resolve => setTimeout(resolve, sleepMs))
+      if (round === 1) {
+        try {
+          openedTickets = await fetchOpenBrokerTickets(api, uuid)
+        } catch {
+          openedTickets = null
+        }
+      }
+    }
+
+    const pendingLegs = familyTrades.filter(tr => !modifiedTradeIds.has(tr.id))
+    if (!pendingLegs.length) break
+
+    const pass = await runBasketLegModifies({
+      supabase,
+      api,
+      uuid,
+      symbol,
+      direction,
+      baseLot,
+      params,
+      signalId,
+      userId,
+      brokerAccountId,
+      familyTrades,
+      perLegTargets,
+      signalTps,
+      tpLots,
+      nImmCwe,
+      overrideTp,
+      strictEntryPrefetch: null,
+      openedTickets,
+      skipAlreadySynced: round > 0,
+      alreadyModified: modifiedTradeIds,
+      liveMgmtFast,
+      internalRebalance,
+      effectiveStoploss,
+      orderCommentsEnabled,
+      explicitChannelTargets,
+    })
+
+    for (const id of pass.modifiedTradeIds) modifiedTradeIds.add(id)
+    summary = pass.summary
+    legErrors = pass.legErrors
+    if (modifiedTradeIds.size >= familyTrades.length) break
+  }
+
+  const mergeFailed = basketLegModifyMergeFailed(summary)
+  let reconcileEnqueued = false
+
+  if (mergeFailed && enqueueReconcileOnFailure) {
+    const partialMsg = `Basket leg sync: ${summary.modified}/${summary.openLegs} legs`
+      + (summary.failed > 0 ? `; ${summary.failed} broker errors` : '')
+      + (summary.skippedNotOnBroker > 0 ? `; ${summary.skippedNotOnBroker} not on broker` : '')
+    const jobId = await upsertBasketReconcileJob(supabase, {
+      userId,
+      brokerAccountId,
+      anchorSignalId,
+      sourceSignalId: signalId,
+      channelId,
+      symbol,
+      direction,
+      perLegTargets,
+      familyTrades,
+      signalTps,
+      tpLots,
+      virtualPendingsSnapshot: virtualPendingsSnapshot ?? null,
+      nImmCwe,
+      overrideTp,
+      lastError: partialMsg,
+    })
+    reconcileEnqueued = jobId != null
+  } else if (!mergeFailed) {
+    await markBasketReconcileDoneForAnchor(supabase, brokerAccountId, anchorSignalId)
+  }
+
+  return { summary, legErrors, modifiedTradeIds, mergeFailed, reconcileEnqueued }
+}
+
 export function reconcileBackoffMs(attempts: number): number {
   const base = Number(process.env.BASKET_RECONCILE_BACKOFF_MS ?? 15_000)
   const capped = Math.min(base * Math.pow(2, Math.min(attempts, 4)), 300_000)

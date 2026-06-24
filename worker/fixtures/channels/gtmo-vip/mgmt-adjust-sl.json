@@ -1,0 +1,5 @@
+{
+  "name": "Management: adjust SL to explicit level",
+  "message": "Adjust SL + 20 pips for now to 4505.",
+  "expect": { "status": "parsed", "action": "modify", "sl": 4505 }
+}

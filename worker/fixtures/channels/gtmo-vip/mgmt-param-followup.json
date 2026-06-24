@@ -1,0 +1,5 @@
+{
+  "name": "Management: symbol-less SL/TP parameter follow-up",
+  "message": "Entry price: 4567\nTP1: 4564\nTP2: 4527\nSL: 4577 (4577.10)",
+  "expect": { "status": "parsed", "action": "modify", "sl": 4577, "tp": [4564, 4527] }
+}

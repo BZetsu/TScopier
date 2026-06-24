@@ -19,7 +19,7 @@ import { attachBrokerStreamProxy } from './brokerStreamProxy'
 import { getFxsocketStreamManager } from './fxsocketStreamManager'
 import { CopyLimitMonitor } from './copyLimitMonitor'
 import { workerConfig } from './workerConfig'
-import { validateListenerTradeShardConfig, validateListenerQueueConfig } from './tradeSignalPush'
+import { validateListenerTradeShardConfig, validateListenerMgmtShardConfig, validateListenerQueueConfig } from './tradeSignalPush'
 import { SignalQueueConsumerManager } from './queue/signalQueueConsumer'
 import { deployedTradeShardCount, signalQueueConfig, redisQueueConfigured } from './queue/signalQueueConfig'
 import { setQueueMetricsProvider } from './queue/queueHealth'
@@ -112,6 +112,11 @@ async function main() {
     const shardErr = validateListenerTradeShardConfig()
     if (shardErr) {
       console.error(`[worker] FATAL: ${shardErr}`)
+      process.exit(1)
+    }
+    const mgmtShardErr = validateListenerMgmtShardConfig()
+    if (mgmtShardErr) {
+      console.error(`[worker] FATAL: ${mgmtShardErr}`)
       process.exit(1)
     }
     const queueErr = validateListenerQueueConfig()

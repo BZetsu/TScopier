@@ -1,0 +1,5 @@
+{
+  "name": "Gold market buy (teaser entry)",
+  "message": "Gold buy now",
+  "expect": { "status": "parsed", "action": "buy", "symbol": "XAUUSD" }
+}

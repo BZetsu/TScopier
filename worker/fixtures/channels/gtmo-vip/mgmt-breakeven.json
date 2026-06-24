@@ -1,0 +1,5 @@
+{
+  "name": "Management: move SL to breakeven",
+  "message": "Move SL to breakeven on XAUUSD",
+  "expect": { "status": "parsed", "action": "breakeven" }
+}
