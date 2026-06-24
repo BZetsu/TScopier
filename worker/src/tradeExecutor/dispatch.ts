@@ -55,6 +55,37 @@ import {
 import { evaluateParsedSignalExecutionEligibility } from '../signalExecutionEligibility'
 import { evaluateChannelCopyLimitPauseForBroker } from '../copyLimitDispatch'
 import type { MgmtExecOptions } from '../mgmtExecOptions'
+import { isV2 } from '../engine/executionMode'
+import { upsertBasketSlTpTarget } from '../basketTargetStore'
+
+/** Seed basket desired-state (source 'entry') for v2-flagged brokers only, so the v2
+ * reconciler has the full SL/TP ladder. No-op for v1 brokers (zero behavior change). */
+async function seedV2EntryDesiredState(
+  ctx: TradeExecutorContext,
+  row: SignalRow,
+  parsed: ParsedSignal,
+  brokers: BrokerRow[],
+): Promise<void> {
+  const sl = typeof parsed.sl === 'number' && parsed.sl > 0 ? parsed.sl : null
+  const tps = Array.isArray(parsed.tp)
+    ? parsed.tp.filter((t): t is number => typeof t === 'number' && Number.isFinite(t) && t > 0)
+    : []
+  if (sl == null && tps.length === 0) return
+  for (const b of brokers) {
+    if (!isV2({ brokerAccountId: b.id, userId: row.user_id })) continue
+    await upsertBasketSlTpTarget(ctx.supabase, {
+      userId: row.user_id,
+      brokerAccountId: b.id,
+      anchorSignalId: row.id,
+      channelId: row.channel_id,
+      symbol: parsed.symbol ?? 'UNKNOWN',
+      stoploss: sl,
+      tpLevels: tps.length ? tps : null,
+      source: 'entry',
+      instructionAt: row.created_at,
+    }).catch(() => {})
+  }
+}
 
 export function shouldUseEntryFastPath(ctx: TradeExecutorContext, row: SignalRow): boolean {
     const mode = workerConfig.tradeExecutorMode
@@ -765,6 +796,12 @@ export async function handleSignal(ctx: TradeExecutorContext,
         row.pipeline_ts.t_order_send_done = Date.now()
       }
       const anyOpened = outcomes.some(o => o.openedOrMerged === true)
+      if (anyOpened) {
+        // v2 cutover: seed the basket desired-state at entry so the single v2
+        // reconciler can fill naked legs from the ladder and converge every future
+        // layer to the same SL/TP (no "new layers take old SL", no naked legs).
+        void seedV2EntryDesiredState(ctx, row, parsed, brokers)
+      }
       const pipelineMs = Date.now() - pipelineT0
       const channelDelayMs = Math.max(...outcomes.map(o => o.channelDelayMs ?? 0))
       const channelDelaySkipped = outcomes.some(o => o.channelDelaySkipped === true)

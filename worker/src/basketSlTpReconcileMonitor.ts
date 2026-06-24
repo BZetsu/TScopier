@@ -26,6 +26,7 @@ import { resolveChannelTradingConfig } from './channelTradingConfig'
 import { normalizeSymbolParams } from './fxsocketClient'
 import { isUserCopierPausedCached } from './copierPause'
 import { brokerSessionUuid } from './tradeExecutor/helpers'
+import { isV2 } from './engine/executionMode'
 
 const ACTIVE_MS = monitorActiveIntervalMs('BASKET_RECONCILE_TICK_MS', 5_000)
 const IDLE_MS = monitorIdleIntervalMs('BASKET_RECONCILE_IDLE_MS', 15_000)
@@ -199,6 +200,14 @@ export class BasketSlTpReconcileMonitor {
     const uuid = broker ? brokerSessionUuid(broker as { fxsocket_account_id?: string; metaapi_account_id?: string }) : null
     if (!broker || !uuid) {
       await this.releaseJob(row.id, 'broker not found', row.attempts)
+      return
+    }
+
+    // Management-first v2 cutover: the single V2ReconcileMonitor owns background
+    // convergence for v2-flagged brokers. Retire this v1 job so the two loops never
+    // both modify the same basket (the old multi-applier flip-flop).
+    if (isV2({ brokerAccountId: row.broker_account_id, userId: String(broker.user_id ?? '') || null })) {
+      await markBasketReconcileDone(this.supabase, row.id)
       return
     }
 

@@ -14,6 +14,8 @@ import { AutoManagementMonitor } from './autoManagementMonitor'
 import { TrailingStopMonitor } from './trailingStopMonitor'
 import { BasketSlTpReconcileMonitor } from './basketSlTpReconcileMonitor'
 import { NewsTradingMonitor } from './newsTradingMonitor'
+import { V2ReconcileMonitor } from './engine/v2ReconcileMonitor'
+import { v2EngineConfigured } from './engine/executionMode'
 import { OpenTradeReconcileMonitor } from './openTradeReconcileMonitor'
 import { attachBrokerStreamProxy } from './brokerStreamProxy'
 import { getFxsocketStreamManager } from './fxsocketStreamManager'
@@ -102,6 +104,14 @@ function startTradeMonitors(executor: TradeExecutor | null) {
     trackMonitor(autoManagementMonitor)
     trackMonitor(basketSlTpReconcileMonitor)
     trackMonitor(newsTradingMonitor)
+
+    // Management-first v2 cutover: a single reconcile loop owns background
+    // convergence for v2-flagged brokers (the v1 job reconciler skips them).
+    if (v2EngineConfigured()) {
+      const v2ReconcileMonitor = new V2ReconcileMonitor(supabase)
+      v2ReconcileMonitor.start()
+      trackMonitor(v2ReconcileMonitor)
+    }
   }
 
   stopLogRetention = startTradeLogRetention(supabase)

@@ -50,6 +50,8 @@ import { type ManualSettings } from '../manualPlanner'
 import { hasFxsocketConfigured } from '../fxsocketClient'
 import { upsertBasketReconcileJob, type BasketOpenLeg } from '../basketSlTpReconcile'
 import { findStaleBasketKeys, upsertBasketSlTpTarget } from '../basketTargetStore'
+import { isV2 } from '../engine/executionMode'
+import { getFxClient, toMtPlatform } from '../engine/fxClient'
 import type { PerLegStopTarget } from '../multiTradeMerge'
 import { resolveLatestOpenBasketAnchor } from '../multiTradeMerge'
 import { isBenignOrderModifyError } from '../orderModifyBenign'
@@ -833,37 +835,51 @@ export async function applyManagement(
 
       try {
         if (action === 'close') {
-          const maxAttempts = liveMgmtFast ? 1 : 3
           let closeConfirmed = false
           let lastCloseReason: string | undefined
-          for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-            const closeResult = await closeWithVerification(
-              api,
-              uuid,
-              effectiveTicket,
-              mgmtCloseOpts(liveMgmtFast),
-            )
-            if (closeResult.confirmed) {
-              closeConfirmed = true
+          if (isV2({ brokerAccountId: broker.id, userId: signal.user_id })) {
+            // v2 fast close: strict retcode-validated single call (~200ms live),
+            // no slow verify/retry loop. Idempotent - a gone ticket reads as closed.
+            const r = await getFxClient().orderClose(uuid, toMtPlatform(broker.platform), { ticket: effectiveTicket })
+            closeConfirmed = r.ok
+            if (!r.ok) {
+              lastCloseReason = r.message
+              if (r.retcodeName === 'AMBIGUOUS') {
+                const stillOpen = await getFxClient().openedOrders(uuid, toMtPlatform(broker.platform)).catch(() => [])
+                closeConfirmed = !stillOpen.some(o => o.ticket === effectiveTicket)
+              }
+            }
+          } else {
+            const maxAttempts = liveMgmtFast ? 1 : 3
+            for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+              const closeResult = await closeWithVerification(
+                api,
+                uuid,
+                effectiveTicket,
+                mgmtCloseOpts(liveMgmtFast),
+              )
+              if (closeResult.confirmed) {
+                closeConfirmed = true
+                break
+              }
+              lastCloseReason = closeResult.reason
+              const rawOrders = await api.openedOrders(uuid).catch(() => [])
+              const reconciledTicket = resolveReconciledTicketForTrade(
+                trade,
+                rawOrders ?? [],
+                new Set(),
+              )
+              if (reconciledTicket && reconciledTicket !== effectiveTicket) {
+                ticketReconciledFrom = ticketReconciledFrom ?? effectiveTicket
+                effectiveTicket = reconciledTicket
+                continue
+              }
+              if (attempt < maxAttempts && isUnknownTicketError(lastCloseReason ?? '')) {
+                await sleepMs(250 * attempt)
+                continue
+              }
               break
             }
-            lastCloseReason = closeResult.reason
-            const rawOrders = await api.openedOrders(uuid).catch(() => [])
-            const reconciledTicket = resolveReconciledTicketForTrade(
-              trade,
-              rawOrders ?? [],
-              new Set(),
-            )
-            if (reconciledTicket && reconciledTicket !== effectiveTicket) {
-              ticketReconciledFrom = ticketReconciledFrom ?? effectiveTicket
-              effectiveTicket = reconciledTicket
-              continue
-            }
-            if (attempt < maxAttempts && isUnknownTicketError(lastCloseReason ?? '')) {
-              await sleepMs(250 * attempt)
-              continue
-            }
-            break
           }
           if (!closeConfirmed) {
             throw new Error(
