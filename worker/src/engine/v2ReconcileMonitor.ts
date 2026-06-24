@@ -26,8 +26,8 @@ import {
   computeReconcileActions,
   type DesiredLegTarget,
 } from './reconciler'
-import { loadDesiredBasket, resolveLegTargets, type DesiredBasket } from './basketStore'
 import { type BasketOpenLeg, closeStaleOpenTrades, loadOpenBasketLegs } from '../basketSlTpReconcile'
+import { resolveEffectiveBasketStops } from '../basketEffectiveStops'
 import { brokerSessionUuid } from '../tradeExecutor/helpers'
 import { hasFxsocketConfigured } from '../fxsocketClient'
 import { isV2 } from './executionMode'
@@ -46,22 +46,24 @@ function deepestTp(tpLevels: number[], isBuy: boolean): number | null {
 }
 
 /**
- * Pure: compute the per-leg SL/TP the basket SHOULD have right now.
- *  - SL: the desired-state SL (honoring a newer per-leg auto-breakeven), applied to
- *    every leg, so an instruction-ordered adjust/BE can never be reverted.
- *  - TP: keep the leg's existing broker TP (never repaint); only fill a naked leg with
- *    the deepest ladder TP so it has a protective target.
+ * Pure: compute the per-leg SL/TP the basket SHOULD have right now, given the
+ * basket-level effective SL/TP (resolved upstream by v1's resolveEffectiveBasketStops,
+ * which already merges target store + channel memory + latest mgmt instruction).
+ *  - SL: the effective basket SL applied to every leg, EXCEPT a leg whose per-leg
+ *    auto-breakeven SL is MORE protective is preserved (never loosen a BE'd leg).
+ *  - TP: keep the leg's existing broker TP (never repaint a hit/active target); only
+ *    fill a naked leg (no broker TP) with the deepest ladder TP.
  */
 export function buildDesiredLegTargets(args: {
   legs: BasketOpenLeg[]
   snapshot: FxOpenOrder[]
-  desired: DesiredBasket | null
+  effectiveSl: number | null
+  effectiveTpLevels: number[]
   isBuy: boolean
-  anchorSl?: number | null
-  anchorTps?: number[]
 }): DesiredLegTarget[] {
   const byTicket = new Map<number, FxOpenOrder>()
   for (const o of args.snapshot) byTicket.set(o.ticket, o)
+  const baseSl = args.effectiveSl != null && args.effectiveSl > 0 ? args.effectiveSl : null
 
   const out: DesiredLegTarget[] = []
   for (const leg of args.legs) {
@@ -70,19 +72,18 @@ export function buildDesiredLegTargets(args: {
     const o = byTicket.get(ticket)
     if (!o) continue // not at broker -> reconciler closedTickets handles it
 
-    const resolved = resolveLegTargets({
-      desired: args.desired,
-      autoBeAt: leg.auto_be_applied_at ?? null,
-      autoBeSl: leg.auto_be_applied_at ? leg.sl ?? null : null,
-      anchorSl: args.anchorSl ?? leg.sl ?? null,
-      anchorTps: args.anchorTps ?? (leg.tp != null && leg.tp > 0 ? [leg.tp] : []),
-      isBuy: args.isBuy,
-    })
+    let sl = baseSl
+    // Preserve a more-protective per-leg auto-breakeven SL (a stale basket SL must
+    // never loosen a leg that auto-BE already tightened after a TP touch).
+    const beSl = leg.auto_be_applied_at && leg.sl != null && leg.sl > 0 ? leg.sl : null
+    if (beSl != null) {
+      sl = sl == null ? beSl : (args.isBuy ? Math.max(sl, beSl) : Math.min(sl, beSl))
+    }
 
     const existingTp = o.takeProfit != null && o.takeProfit > 0 ? o.takeProfit : null
-    const fillTp = existingTp ?? deepestTp(resolved.tpLevels, args.isBuy)
+    const fillTp = existingTp ?? deepestTp(args.effectiveTpLevels, args.isBuy)
 
-    out.push({ ticket, stoploss: resolved.stoploss, takeProfit: fillTp })
+    out.push({ ticket, stoploss: sl, takeProfit: fillTp })
   }
   return out
 }
@@ -182,11 +183,29 @@ export class V2ReconcileMonitor {
   }
 
   private async reconcileBasket(basket: BasketKey, session: BrokerSession): Promise<{ modified: number; closed: number }> {
-    const [legs, desired] = await Promise.all([
-      loadOpenBasketLegs(this.supabase, basket.brokerAccountId, basket.anchorSignalId, basket.symbol),
-      loadDesiredBasket(this.supabase, basket.brokerAccountId, basket.anchorSignalId),
-    ])
+    const legs = await loadOpenBasketLegs(this.supabase, basket.brokerAccountId, basket.anchorSignalId, basket.symbol)
     if (!legs.length) return { modified: 0, closed: 0 }
+
+    // Resolve the basket's effective SL/TP exactly like v1 (target store + channel
+    // memory + latest mgmt instruction + auto-BE recency) so merged baskets and
+    // channel-memory adjustments are honored - not just the raw target-store row.
+    const { data: anchorSig } = await this.supabase
+      .from('signals')
+      .select('parsed_data, channel_id, user_id, created_at')
+      .eq('id', basket.anchorSignalId)
+      .maybeSingle()
+    const anchorParsed = (anchorSig as { parsed_data?: { sl?: number | null; tp?: number[] | null } } | null)?.parsed_data ?? {}
+    const eff = await resolveEffectiveBasketStops({
+      supabase: this.supabase,
+      userId: (anchorSig as { user_id?: string } | null)?.user_id ?? session.userId ?? '',
+      channelId: (anchorSig as { channel_id?: string | null } | null)?.channel_id ?? null,
+      anchorSignalId: basket.anchorSignalId,
+      symbol: basket.symbol,
+      basketCreatedAt: (anchorSig as { created_at?: string | null } | null)?.created_at ?? legs[0]?.opened_at ?? null,
+      anchorParsed: { sl: anchorParsed.sl ?? null, tp: anchorParsed.tp ?? null },
+      familyTrades: legs,
+      brokerAccountId: basket.brokerAccountId,
+    }).catch(() => null)
 
     // SAFETY: the broker snapshot is the source of truth for "is this leg still open?".
     // If the fetch FAILS we must NOT proceed - an empty list would be read as
@@ -199,7 +218,13 @@ export class V2ReconcileMonitor {
       return { modified: 0, closed: 0 }
     }
 
-    const desiredTargets = buildDesiredLegTargets({ legs, snapshot, desired, isBuy: basket.isBuy })
+    const desiredTargets = buildDesiredLegTargets({
+      legs,
+      snapshot,
+      effectiveSl: eff && eff.stoploss > 0 ? eff.stoploss : null,
+      effectiveTpLevels: eff?.tpLevels ?? [],
+      isBuy: basket.isBuy,
+    })
     const trackedTickets = legs.map(legTicket).filter((t): t is number => t != null)
 
     const actions = computeReconcileActions({
