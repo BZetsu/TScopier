@@ -143,6 +143,51 @@ describe('resolveEffectiveBasketStops explicit-adjustment wins', () => {
     assert.equal(eff.stoploss, 4155, 'explicit channel adjust wins, not the tighter 4258 leg SL')
   })
 
+  it('keeps breakeven SL when a breakeven happened AFTER an older Adjust SL', async () => {
+    // Older "Adjust SL to 4100" then a newer "Move SL to breakeven" (legs at 4150).
+    const supabase = mockSupabase({
+      signals: [
+        { id: 'be-1', parsed_data: { action: 'breakeven', sl: null, symbol: null }, created_at: '2026-06-17T13:00:00Z' },
+        { id: 'mod-1', parsed_data: { action: 'modify', sl: 4100, symbol: null }, created_at: '2026-06-17T12:00:00Z' },
+      ],
+      channel_active_trade_params: [],
+    })
+    const eff = await resolveEffectiveBasketStops({
+      supabase: supabase as never,
+      userId: 'u',
+      channelId: 'c',
+      anchorSignalId: 'sig',
+      symbol: 'XAUUSD',
+      basketCreatedAt: '2026-06-17T11:00:00Z',
+      anchorParsed: { sl: 4100, tp: [4265] },
+      familyTrades: [leg(4150), leg(4150)],
+    })
+    assert.notEqual(eff.source, 'mgmt_signal', 'stale adjust must not be authoritative after a breakeven')
+    assert.equal(eff.stoploss, 4150, 'breakeven SL preserved, not reverted to the older 4100 adjust')
+  })
+
+  it('lets a newer Adjust SL win (loosen) when it came AFTER the breakeven', async () => {
+    const supabase = mockSupabase({
+      signals: [
+        { id: 'mod-2', parsed_data: { action: 'modify', sl: 4090, symbol: null }, created_at: '2026-06-17T14:00:00Z' },
+        { id: 'be-1', parsed_data: { action: 'breakeven', sl: null, symbol: null }, created_at: '2026-06-17T13:00:00Z' },
+      ],
+      channel_active_trade_params: [],
+    })
+    const eff = await resolveEffectiveBasketStops({
+      supabase: supabase as never,
+      userId: 'u',
+      channelId: 'c',
+      anchorSignalId: 'sig',
+      symbol: 'XAUUSD',
+      basketCreatedAt: '2026-06-17T11:00:00Z',
+      anchorParsed: { sl: 4100, tp: [4265] },
+      familyTrades: [leg(4150), leg(4150)],
+    })
+    assert.equal(eff.source, 'mgmt_signal')
+    assert.equal(eff.stoploss, 4090, 'newest adjust wins even though it loosens off breakeven')
+  })
+
   it('non-mgmt source (channel memory) still merges the most-protective leg SL', async () => {
     const supabase = mockSupabase({
       signals: [],

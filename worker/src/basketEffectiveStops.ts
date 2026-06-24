@@ -123,7 +123,7 @@ export async function findLatestMgmtSlAdjustment(
     basketCreatedAt: string
     symbol: string
   },
-): Promise<{ sl: number; signalId: string; tpLevels: number[] } | null> {
+): Promise<{ sl: number; signalId: string; tpLevels: number[]; latestActionIsBreakeven: boolean } | null> {
   const { data: candidates, error } = await supabase
     .from('signals')
     .select('id, parsed_data, created_at')
@@ -139,21 +139,38 @@ export async function findLatestMgmtSlAdjustment(
     return null
   }
 
+  // Candidates are newest-first. The newest management action determines which
+  // instruction is authoritative. A breakeven message carries no price (sl=null),
+  // so we must track it explicitly: an older "Adjust SL" must NOT override a
+  // newer breakeven (that would revert the basket off breakeven).
+  let newestMgmtAction: string | null = null
+  let priceAdjust: { sl: number; signalId: string; tpLevels: number[] } | null = null
   for (const row of candidates ?? []) {
     const parsed = row.parsed_data as ParsedMgmtRow | null
     if (!parsed?.action) continue
     const action = String(parsed.action).toLowerCase()
     if (!MGMT_SL_ACTIONS.has(action)) continue
     if (!mgmtSignalMatchesBasketSymbol(parsed, args.symbol)) continue
-    const sl = sanitizeLevel(parsed.sl)
-    if (sl <= 0) continue
-    return {
-      sl,
-      signalId: String(row.id),
-      tpLevels: coercePositiveTpLevels(parsed.tp),
+    if (newestMgmtAction == null) newestMgmtAction = action
+    if (priceAdjust == null && action === 'modify') {
+      const sl = sanitizeLevel(parsed.sl)
+      if (sl > 0) {
+        priceAdjust = {
+          sl,
+          signalId: String(row.id),
+          tpLevels: coercePositiveTpLevels(parsed.tp),
+        }
+      }
     }
+    if (newestMgmtAction != null && priceAdjust != null) break
   }
-  return null
+
+  if (!priceAdjust) return null
+  return {
+    ...priceAdjust,
+    latestActionIsBreakeven:
+      newestMgmtAction === 'breakeven' || newestMgmtAction === 'partial_breakeven',
+  }
 }
 
 /** @deprecated Use findLatestMgmtSlAdjustment */
@@ -187,9 +204,15 @@ export async function resolveEffectiveBasketStops(
       symbol: args.symbol,
     })
     if (mgmt) {
-      mgmtSl = mgmt.sl
-      sourceSignalId = mgmt.signalId
+      // TP authority always follows the latest Adjust. SL authority only follows
+      // it when no breakeven happened AFTER it — otherwise the breakeven is the
+      // latest instruction and its (tighter) SL on the legs must be preserved
+      // via the protective merge below (do not set mgmtSl from a stale adjust).
       if (mgmt.tpLevels.length) tpLevels = mgmt.tpLevels
+      if (!mgmt.latestActionIsBreakeven) {
+        mgmtSl = mgmt.sl
+        sourceSignalId = mgmt.signalId
+      }
     }
   }
 
