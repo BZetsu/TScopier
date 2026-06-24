@@ -1358,6 +1358,7 @@ export async function applyManagement(
           stoploss: hasNewSl ? (parsed.sl as number) : null,
           tpLevels: hasNewTp ? parsedTpLevels : null,
           source: 'adjust',
+          instructionAt: signal.created_at,
         })
       }
       if (pendingLegs.length > 0) {
@@ -1462,6 +1463,7 @@ export async function applyManagement(
             symbol: basketSymbol,
             stoploss: bestSl,
             source: 'breakeven',
+            instructionAt: signal.created_at,
           })
         }
       }

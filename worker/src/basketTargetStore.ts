@@ -16,6 +16,8 @@ export type BasketSlTpTarget = {
   tpLevels: number[]
   source: string
   updatedAt: string | null
+  /** The source instruction's own timestamp (signal created_at / auto-BE time). */
+  instructionAt: string | null
 }
 
 function positiveLevel(v: unknown): number | null {
@@ -37,24 +39,35 @@ export async function loadBasketSlTpTarget(
 ): Promise<BasketSlTpTarget | null> {
   const { data, error } = await supabase
     .from('basket_sl_tp_targets')
-    .select('stoploss,tp_levels,source,updated_at')
+    .select('stoploss,tp_levels,source,updated_at,instruction_at')
     .eq('broker_account_id', brokerAccountId)
     .eq('anchor_signal_id', anchorSignalId)
     .maybeSingle()
   if (error || !data) return null
-  const row = data as { stoploss: number | null; tp_levels: unknown; source: string | null; updated_at: string | null }
+  const row = data as {
+    stoploss: number | null
+    tp_levels: unknown
+    source: string | null
+    updated_at: string | null
+    instruction_at: string | null
+  }
   return {
     stoploss: positiveLevel(row.stoploss),
     tpLevels: normalizeTpLevels(row.tp_levels),
     source: row.source ?? 'entry',
     updatedAt: row.updated_at ?? null,
+    instructionAt: row.instruction_at ?? row.updated_at ?? null,
   }
 }
 
 /**
- * Record the latest SL/TP intent for a basket. Merges with the existing row:
- * a side that is not supplied (or supplied as null/empty) keeps its prior value,
- * so a breakeven (SL only) does not wipe the TP ladder and vice versa.
+ * Record the latest SL/TP intent for a basket — "latest INSTRUCTION wins".
+ *
+ * Ordering is by `instructionAt` (the source signal's created_at / auto-BE time),
+ * NOT wall-clock write time, because signals are processed out of order (retries,
+ * reconcile jobs, multi-shard). The DB function applies the write atomically and
+ * refuses to overwrite a newer instruction with an older one, and merges so a
+ * side that is not supplied keeps its prior value (breakeven keeps the TP ladder).
  */
 export async function upsertBasketSlTpTarget(
   supabase: SupabaseClient,
@@ -67,27 +80,25 @@ export async function upsertBasketSlTpTarget(
     stoploss?: number | null
     tpLevels?: number[] | null
     source: BasketTargetSource
+    /** The instruction's own timestamp (signal created_at). Defaults to now(). */
+    instructionAt?: string | null
   },
 ): Promise<void> {
   const sl = positiveLevel(args.stoploss)
   const tps = args.tpLevels != null ? normalizeTpLevels(args.tpLevels) : null
   if (sl == null && (tps == null || tps.length === 0)) return
 
-  const existing = await loadBasketSlTpTarget(supabase, args.brokerAccountId, args.anchorSignalId)
-  const row = {
-    user_id: args.userId,
-    broker_account_id: args.brokerAccountId,
-    anchor_signal_id: args.anchorSignalId,
-    channel_id: args.channelId,
-    symbol: args.symbol,
-    stoploss: sl ?? existing?.stoploss ?? null,
-    tp_levels: tps != null && tps.length > 0 ? tps : (existing?.tpLevels ?? []),
-    source: args.source,
-    updated_at: new Date().toISOString(),
-  }
-  const { error } = await supabase
-    .from('basket_sl_tp_targets')
-    .upsert(row, { onConflict: 'broker_account_id,anchor_signal_id' })
+  const { error } = await supabase.rpc('upsert_basket_sl_tp_target', {
+    p_user_id: args.userId,
+    p_broker_account_id: args.brokerAccountId,
+    p_anchor_signal_id: args.anchorSignalId,
+    p_channel_id: args.channelId,
+    p_symbol: args.symbol,
+    p_stoploss: sl,
+    p_tp_levels: tps,
+    p_source: args.source,
+    p_instruction_at: args.instructionAt ?? new Date().toISOString(),
+  })
   if (error) {
     console.warn(
       `[basketTargetStore] upsert failed broker=${args.brokerAccountId} anchor=${args.anchorSignalId}: ${error.message}`,

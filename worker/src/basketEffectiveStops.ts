@@ -238,9 +238,10 @@ export async function resolveEffectiveBasketStops(
   if (args.brokerAccountId) {
     const target = await loadBasketSlTpTarget(args.supabase, args.brokerAccountId, args.anchorSignalId)
     if (target) {
+      const targetAt = target.instructionAt ?? target.updatedAt
       const autoBeNewerThanTarget = autoBeAt != null
-        && target.updatedAt != null
-        && Date.parse(autoBeAt) > Date.parse(target.updatedAt)
+        && targetAt != null
+        && Date.parse(autoBeAt) > Date.parse(targetAt)
       if (!autoBeNewerThanTarget && target.stoploss != null && target.stoploss > 0) {
         basketTargetSl = target.stoploss
       }
