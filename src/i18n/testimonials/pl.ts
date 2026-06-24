@@ -1,1 +1,1 @@
-export { testimonialsEn as testimonialsPl } from './en'
+export const testimonialsPl: { quote: string; author: string; headline?: string; role?: string }[] = []
