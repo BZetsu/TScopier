@@ -37,6 +37,8 @@ export type BasketOpenLeg = {
   entry_price: number | null
   direction: string
   symbol: string
+  /** Set by autoManagementMonitor when the leg was moved to breakeven. */
+  auto_be_applied_at?: string | null
 }
 
 export type LegModifyError = {
@@ -983,7 +985,7 @@ export async function loadOpenBasketLegs(
 ): Promise<BasketOpenLeg[]> {
   const { data, error } = await supabase
     .from('trades')
-    .select('id,signal_id,metaapi_order_id,opened_at,lot_size,sl,tp,entry_price,direction,symbol')
+    .select('id,signal_id,metaapi_order_id,opened_at,lot_size,sl,tp,entry_price,direction,symbol,auto_be_applied_at')
     .eq('broker_account_id', brokerAccountId)
     .eq('signal_id', anchorSignalId)
     .eq('status', 'open')

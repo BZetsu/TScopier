@@ -30,6 +30,8 @@ import { readBrokerOrderStopLoss } from './signalEntryPendingHelpers'
 import { brokerSessionUuid, brokerHasLinkedSession } from './tradeExecutor/helpers'
 import { incMetric } from './workerMetrics'
 import { mgmtLegConcurrency, parallelMap } from './parallelPool'
+import { deepestFinalTp, hasClosedBasketLegs } from './rangeBasketTpSync'
+import { hasTpTouchedLock } from './rangePendingFireGuard'
 
 export type ChannelStopLeg = {
   id: string
@@ -467,7 +469,21 @@ export async function applyChannelStopsToBaskets(
 
     const tpLots = broker.manual_settings?.tp_lots ?? null
     const isBuy = direction === 'buy'
-    const tpMap = slOnly || tpOnly
+    // Freeze: once a TP has been hit (a leg closed OR a sticky TP-touch lock),
+    // never repaint TP across remaining legs. Keep each leg's existing TP and
+    // only backfill a naked leg with the deepest TP — mirrors the
+    // rebalance/reconcile freeze, which this live modify path previously bypassed.
+    let tpFrozen = false
+    if (!dryRun && anchorSignalId) {
+      try {
+        tpFrozen = (await hasClosedBasketLegs(supabase, brokerId, anchorSignalId))
+          || (await hasTpTouchedLock(supabase, { signalId: anchorSignalId, brokerAccountId: brokerId, symbol }))
+      } catch {
+        tpFrozen = false
+      }
+    }
+    const frozenDeepestTp = deepestFinalTp(parsedTpLevels, isBuy)
+    const tpMap = slOnly || tpOnly || tpFrozen
       ? new Map<string, number>()
       : buildEntryQualityTakeProfitMap({
           legs: legs.map(tr => ({
@@ -513,11 +529,13 @@ export async function applyChannelStopsToBaskets(
       const ticket = Number(tr.metaapi_order_id)
       const keepTp = positiveNum(tr.tp)
       const keepSl = positiveNum(tr.sl)
-      const targetTp = tpOnly
-        ? (tpMap.get(tr.id) ?? keepTp)
-        : slOnly
-          ? keepTp
-          : (tpMap.get(tr.id) ?? keepTp)
+      const targetTp = tpFrozen
+        ? (keepTp ?? (frozenDeepestTp > 0 ? frozenDeepestTp : null))
+        : tpOnly
+          ? (tpMap.get(tr.id) ?? keepTp)
+          : slOnly
+            ? keepTp
+            : (tpMap.get(tr.id) ?? keepTp)
 
       let targetSl: number | null = tpOnly ? keepSl : null
       if (!tpOnly && hasNewSl) {

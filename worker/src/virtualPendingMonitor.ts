@@ -851,6 +851,7 @@ export class VirtualPendingMonitor {
         basketCreatedAt,
         anchorParsed,
         familyTrades,
+        brokerAccountId: leg.broker_account_id,
       })
       const firing = resolveFiringLegStops({
         legStoploss: leg.stoploss,

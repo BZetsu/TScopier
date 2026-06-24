@@ -20,6 +20,7 @@ function mockSupabase(dataByTable: Record<string, unknown[]>) {
     b.gte = self
     b.order = self
     b.limit = () => Promise.resolve({ data: dataByTable[table] ?? [], error: null })
+    b.maybeSingle = () => Promise.resolve({ data: (dataByTable[table] ?? [])[0] ?? null, error: null })
     return b
   }
   return { from: (t: string) => builder(t) }
@@ -166,6 +167,51 @@ describe('resolveEffectiveBasketStops explicit-adjustment wins', () => {
     assert.equal(eff.stoploss, 4150, 'breakeven SL preserved, not reverted to the older 4100 adjust')
   })
 
+  it('keeps AUTO-breakeven SL (no signal) when it is newer than an older Adjust SL', async () => {
+    // Auto-BE leaves no signal/channel memory — only trades.auto_be_applied_at.
+    const supabase = mockSupabase({
+      signals: [
+        { id: 'mod-1', parsed_data: { action: 'modify', sl: 4100, symbol: null }, created_at: '2026-06-17T12:00:00Z' },
+      ],
+      channel_active_trade_params: [],
+    })
+    const beLeg = (sl: number) => ({ ...leg(sl), auto_be_applied_at: '2026-06-17T13:00:00Z' })
+    const eff = await resolveEffectiveBasketStops({
+      supabase: supabase as never,
+      userId: 'u',
+      channelId: 'c',
+      anchorSignalId: 'sig',
+      symbol: 'XAUUSD',
+      basketCreatedAt: '2026-06-17T11:00:00Z',
+      anchorParsed: { sl: 4100, tp: [4265] },
+      familyTrades: [beLeg(4150), beLeg(4150)],
+    })
+    assert.notEqual(eff.source, 'mgmt_signal', 'stale adjust must not override a newer auto-breakeven')
+    assert.equal(eff.stoploss, 4150, 'auto-breakeven SL preserved, not reverted to 4100')
+  })
+
+  it('lets the Adjust SL win when it is newer than the auto-breakeven', async () => {
+    const supabase = mockSupabase({
+      signals: [
+        { id: 'mod-1', parsed_data: { action: 'modify', sl: 4090, symbol: null }, created_at: '2026-06-17T14:00:00Z' },
+      ],
+      channel_active_trade_params: [],
+    })
+    const beLeg = (sl: number) => ({ ...leg(sl), auto_be_applied_at: '2026-06-17T13:00:00Z' })
+    const eff = await resolveEffectiveBasketStops({
+      supabase: supabase as never,
+      userId: 'u',
+      channelId: 'c',
+      anchorSignalId: 'sig',
+      symbol: 'XAUUSD',
+      basketCreatedAt: '2026-06-17T11:00:00Z',
+      anchorParsed: { sl: 4100, tp: [4265] },
+      familyTrades: [beLeg(4150), beLeg(4150)],
+    })
+    assert.equal(eff.source, 'mgmt_signal')
+    assert.equal(eff.stoploss, 4090, 'newer adjust wins over the older auto-breakeven')
+  })
+
   it('lets a newer Adjust SL win (loosen) when it came AFTER the breakeven', async () => {
     const supabase = mockSupabase({
       signals: [
@@ -207,5 +253,81 @@ describe('resolveEffectiveBasketStops explicit-adjustment wins', () => {
     })
     assert.equal(eff.source, 'channel_memory')
     assert.equal(eff.stoploss, 4258, 'protective merge still applies for non-explicit sources')
+  })
+})
+
+describe('resolveEffectiveBasketStops per-basket target store', () => {
+  it('uses the basket target as the authoritative SL/TP (skips protective merge)', async () => {
+    const supabase = mockSupabase({
+      basket_sl_tp_targets: [
+        { stoploss: 4090, tp_levels: [4280], source: 'adjust', updated_at: '2026-06-17T14:00:00Z' },
+      ],
+      // A stale older mgmt adjust + tighter open legs must NOT win.
+      signals: [
+        { id: 'mod-1', parsed_data: { action: 'modify', sl: 4155, symbol: null }, created_at: '2026-06-17T12:00:00Z' },
+      ],
+      channel_active_trade_params: [],
+    })
+    const eff = await resolveEffectiveBasketStops({
+      supabase: supabase as never,
+      userId: 'u',
+      channelId: 'c',
+      anchorSignalId: 'sig',
+      symbol: 'XAUUSD',
+      basketCreatedAt: '2026-06-17T11:00:00Z',
+      anchorParsed: { sl: 4100, tp: [4265] },
+      familyTrades: [leg(4258), leg(4258)],
+      brokerAccountId: 'broker-1',
+    })
+    assert.equal(eff.source, 'basket_target', 'basket target is the single source of truth')
+    assert.equal(eff.stoploss, 4090, 'basket target SL wins over older adjust and tighter leg SL')
+    assert.deepEqual(eff.tpLevels, [4280], 'basket target TP wins')
+  })
+
+  it('keeps a newer auto-breakeven over an older basket target (no revert after TP hit)', async () => {
+    const supabase = mockSupabase({
+      basket_sl_tp_targets: [
+        { stoploss: 4100, tp_levels: [4265], source: 'adjust', updated_at: '2026-06-17T12:00:00Z' },
+      ],
+      signals: [],
+      channel_active_trade_params: [],
+    })
+    const beLeg = (sl: number) => ({ ...leg(sl), auto_be_applied_at: '2026-06-17T13:00:00Z' })
+    const eff = await resolveEffectiveBasketStops({
+      supabase: supabase as never,
+      userId: 'u',
+      channelId: 'c',
+      anchorSignalId: 'sig',
+      symbol: 'XAUUSD',
+      basketCreatedAt: '2026-06-17T11:00:00Z',
+      anchorParsed: { sl: 4100, tp: [4265] },
+      familyTrades: [beLeg(4150), beLeg(4150)],
+      brokerAccountId: 'broker-1',
+    })
+    assert.notEqual(eff.source, 'basket_target', 'stale target must not override a newer auto-breakeven')
+    assert.equal(eff.stoploss, 4150, 'auto-breakeven SL preserved, not reverted to the 4100 target')
+  })
+
+  it('falls back to existing logic when no basket target row exists', async () => {
+    const supabase = mockSupabase({
+      basket_sl_tp_targets: [],
+      signals: [
+        { id: 'mod-1', parsed_data: { action: 'modify', sl: 4155, symbol: null }, created_at: '2026-06-17T12:00:00Z' },
+      ],
+      channel_active_trade_params: [],
+    })
+    const eff = await resolveEffectiveBasketStops({
+      supabase: supabase as never,
+      userId: 'u',
+      channelId: 'c',
+      anchorSignalId: 'sig',
+      symbol: 'XAUUSD',
+      basketCreatedAt: '2026-06-17T11:00:00Z',
+      anchorParsed: { sl: 4100, tp: [4265] },
+      familyTrades: [leg(4258), leg(4258)],
+      brokerAccountId: 'broker-1',
+    })
+    assert.equal(eff.source, 'mgmt_signal', 'absent target -> existing resolver behavior')
+    assert.equal(eff.stoploss, 4155)
   })
 })

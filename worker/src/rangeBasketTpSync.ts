@@ -633,7 +633,7 @@ export async function syncRangeBasketTakeProfits(args: RangeBasketTpSyncArgs): P
 
   const { data: familyRows, error } = await args.supabase
     .from('trades')
-    .select('id,signal_id,metaapi_order_id,opened_at,lot_size,sl,tp,entry_price,direction,symbol')
+    .select('id,signal_id,metaapi_order_id,opened_at,lot_size,sl,tp,entry_price,direction,symbol,auto_be_applied_at')
     .eq('broker_account_id', args.brokerAccountId)
     .eq('signal_id', args.signalId)
     .eq('status', 'open')
@@ -658,6 +658,7 @@ export async function syncRangeBasketTakeProfits(args: RangeBasketTpSyncArgs): P
     basketCreatedAt: args.basketCreatedAt ?? familyTrades[0]?.opened_at ?? null,
     anchorParsed,
     familyTrades,
+    brokerAccountId: args.brokerAccountId,
   })
   logEffectiveBasketStops('[rangeBasketTpSync]', args.signalId, effective)
 
@@ -697,6 +698,7 @@ export async function syncRangeBasketTakeProfits(args: RangeBasketTpSyncArgs): P
         basketCreatedAt: args.basketCreatedAt ?? familyTrades[0]?.opened_at ?? null,
         anchorParsed: { ...anchorParsed, ...reloadedAnchor },
         familyTrades,
+        brokerAccountId: args.brokerAccountId,
       })
       parsed = { ...reEffective.parsedSlice }
     }

@@ -220,6 +220,7 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
         basketCreatedAt: anchorCreatedAt,
         anchorParsed: toRangeBasketParsedSlice(effectiveParsed),
         familyTrades,
+        brokerAccountId: broker.id,
       })
       logEffectiveBasketStops('[tradeExecutor]', anchorSignalId, resolvedStops)
       if (resolvedStops.stoploss > 0) {

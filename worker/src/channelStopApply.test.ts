@@ -184,4 +184,71 @@ describe('channelStopApply', () => {
     assert.ok(maxConcurrent > 1, `expected parallel modifies, got max concurrency ${maxConcurrent}`)
     assert.equal(openedOrdersCalls, 1, 'single OpenedOrders snapshot (no duplicate fetch)')
   })
+
+  it('does NOT repaint TP after a TP hit (freeze keeps existing leg TP)', async () => {
+    const prevKey = process.env.FXSOCKET_API_KEY
+    process.env.FXSOCKET_API_KEY = 'test-key'
+    const legs: ChannelStopLeg[] = Array.from({ length: 8 }, (_, i) => ({
+      id: `t${i}`,
+      signal_id: 'anchor',
+      broker_account_id: 'b1',
+      metaapi_order_id: String(2000 + i),
+      symbol: 'XAUUSD',
+      direction: 'buy',
+      sl: null,
+      tp: 4200, // existing TP on each open leg
+      opened_at: `2026-06-20T10:00:0${i}Z`,
+      entry_price: 4150,
+      telegram_channel_id: 'ch-1',
+    }))
+    const broker: ChannelStopBroker = { id: 'b1', platform: 'mt5', fxsocket_account_id: FX_UUID, manual_settings: { tp_lots: null } }
+
+    const modifiedTps: number[] = []
+    const api = {
+      seedPlatformCache: () => {},
+      openedOrders: async () => legs.map(l => ({ ticket: Number(l.metaapi_order_id) })),
+      orderModify: async (_uuid: string, a: { takeprofit?: number }) => {
+        if (a.takeprofit != null) modifiedTps.push(a.takeprofit)
+        return { stopLoss: 4180, takeProfit: a.takeprofit }
+      },
+    }
+
+    // Supabase where hasClosedBasketLegs returns a closed leg -> basket frozen.
+    function frozenSupabase() {
+      function builder(table: string) {
+        const b: Record<string, unknown> = {}
+        const self = () => b
+        b.insert = () => Promise.resolve({ data: null, error: null })
+        b.update = self
+        b.upsert = () => Promise.resolve({ data: { id: 'job' }, error: null })
+        b.delete = self; b.select = self; b.eq = self; b.in = self
+        b.lte = self; b.lt = self; b.gte = self; b.not = self; b.ilike = self; b.order = self
+        b.limit = () => Promise.resolve({ data: table === 'trades' ? [{ id: 'closed-1' }] : [], error: null })
+        b.maybeSingle = () => Promise.resolve({ data: null, error: null })
+        b.single = () => Promise.resolve({ data: { id: 'job' }, error: null })
+        b.then = (res: (v: unknown) => unknown) => Promise.resolve({ data: null, error: null }).then(res)
+        return b
+      }
+      return { from: (t: string) => builder(t) }
+    }
+
+    await applyChannelStopsToBaskets({
+      supabase: frozenSupabase() as never,
+      apiFor: () => api as never,
+      userId: 'u', channelId: 'ch-1', signalId: 'mod-1',
+      brokersById: new Map([['b1', broker]]),
+      rowsByBrokerSignal: new Map([['b1|anchor', legs]]),
+      // Channel sends a NEW TP ladder after the TP hit — must be ignored on open legs.
+      hasNewSl: true, hasNewTp: true, parsedSl: 4180, parsedTpLevels: [4300, 4310, 4320], verifyOnBroker: false,
+    })
+
+    if (prevKey == null) delete process.env.FXSOCKET_API_KEY
+    else process.env.FXSOCKET_API_KEY = prevKey
+
+    assert.ok(modifiedTps.length > 0, 'legs were modified')
+    assert.ok(
+      modifiedTps.every(tp => tp === 4200),
+      `frozen basket must keep existing TP 4200, got ${JSON.stringify([...new Set(modifiedTps)])}`,
+    )
+  })
 })

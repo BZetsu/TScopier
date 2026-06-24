@@ -98,6 +98,7 @@ export async function resolveFreshBasketReconcileTargets(
     basketCreatedAt: anchorCreatedAt,
     anchorParsed,
     familyTrades: args.familyTrades,
+    brokerAccountId: args.brokerAccountId,
   })
   logEffectiveBasketStops('[basketReconcileTargets]', args.anchorSignalId, effective)
 

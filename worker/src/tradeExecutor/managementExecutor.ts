@@ -49,6 +49,7 @@ import {
 import { type ManualSettings } from '../manualPlanner'
 import { hasFxsocketConfigured } from '../fxsocketClient'
 import { upsertBasketReconcileJob, type BasketOpenLeg } from '../basketSlTpReconcile'
+import { upsertBasketSlTpTarget } from '../basketTargetStore'
 import type { PerLegStopTarget } from '../multiTradeMerge'
 import { resolveLatestOpenBasketAnchor } from '../multiTradeMerge'
 import { isBenignOrderModifyError } from '../orderModifyBenign'
@@ -1343,6 +1344,22 @@ export async function applyManagement(
         tpLevels: hasNewTp ? parsedTpLevels : undefined,
         replace: true,
       })
+      // Record the latest adjustment as the authoritative per-basket target so
+      // new layers + reconcile use it (single source of truth, latest wins).
+      for (const [basketKey, brokerRows] of rowsByBrokerSignal) {
+        const [brokerId, anchorSignalId] = basketKey.split('|')
+        if (!brokerId || !anchorSignalId) continue
+        await upsertBasketSlTpTarget(ctx.supabase, {
+          userId: signal.user_id,
+          brokerAccountId: brokerId,
+          anchorSignalId,
+          channelId: signal.channel_id,
+          symbol: brokerRows[0]?.symbol ?? symbols[0] ?? 'UNKNOWN',
+          stoploss: hasNewSl ? (parsed.sl as number) : null,
+          tpLevels: hasNewTp ? parsedTpLevels : null,
+          source: 'adjust',
+        })
+      }
       if (pendingLegs.length > 0) {
         const tpLotsByBroker = new Map(
           brokers.map(b => [b.id, ((b.manual_settings ?? {}) as ManualSettings).tp_lots]),
@@ -1429,6 +1446,24 @@ export async function applyManagement(
           stoploss: bestSl,
           replace: false,
         })
+        // Record breakeven as the authoritative per-basket target (SL only —
+        // merge keeps the existing TP ladder). Only for baskets whose symbol
+        // verified at breakeven.
+        for (const [basketKey, brokerRows] of rowsByBrokerSignal) {
+          const [brokerId, anchorSignalId] = basketKey.split('|')
+          if (!brokerId || !anchorSignalId) continue
+          const basketSymbol = brokerRows[0]?.symbol ?? symbols[0] ?? 'UNKNOWN'
+          if (!symbolBreakevenOk(basketSymbol)) continue
+          await upsertBasketSlTpTarget(ctx.supabase, {
+            userId: signal.user_id,
+            brokerAccountId: brokerId,
+            anchorSignalId,
+            channelId: signal.channel_id,
+            symbol: basketSymbol,
+            stoploss: bestSl,
+            source: 'breakeven',
+          })
+        }
       }
     }
 
