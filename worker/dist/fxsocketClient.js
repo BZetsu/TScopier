@@ -10,6 +10,8 @@ exports.isMtSessionGoneMessage = isMtSessionGoneMessage;
 exports.isBrokerDisconnectedMessage = isBrokerDisconnectedMessage;
 exports.isMtSessionGoneError = isMtSessionGoneError;
 exports.isTransientMtApiError = isTransientMtApiError;
+exports.isOrderOpTimedOutMessage = isOrderOpTimedOutMessage;
+exports.perAccountTradeConcurrency = perAccountTradeConcurrency;
 exports.isApiThrottleError = isApiThrottleError;
 exports.parseApiThrottleBackoffMs = parseApiThrottleBackoffMs;
 exports.checkConnectGlobalMinMs = checkConnectGlobalMinMs;
@@ -20,6 +22,7 @@ exports.mtPlatformFrom = mtPlatformFrom;
 exports.getFxsocketClient = getFxsocketClient;
 const undici_1 = require("undici");
 const brokerConnectError_1 = require("./brokerConnectError");
+const perAccountConcurrency_1 = require("./perAccountConcurrency");
 const mtTradeFields_1 = require("./mtTradeFields");
 const fxsocketMtStatus_1 = require("./fxsocketMtStatus");
 var fxsocketMtStatus_2 = require("./fxsocketMtStatus");
@@ -34,13 +37,16 @@ Object.defineProperty(exports, "terminalHealthRowPatchFromMtStatus", { enumerabl
  * - Auth: X-API-Key header (FXSOCKET_API_KEY)
  */
 const DEFAULT_BASE_URL = 'https://api.fxsocket.com';
-const FXSOCKET_HTTP_CONNECTIONS = Math.max(8, Math.min(512, Number(process.env.FXSOCKET_HTTP_CONNECTIONS ?? 128)));
+const FXSOCKET_HTTP_CONNECTIONS = Math.max(8, Math.min(512, Number(process.env.FXSOCKET_HTTP_CONNECTIONS ?? 64)));
+const FXSOCKET_HTTP_PIPELINING = Math.max(1, Math.min(10, Number(process.env.FXSOCKET_HTTP_PIPELINING ?? 1)));
 const KEEP_ALIVE_AGENT = new undici_1.Agent({
     keepAliveTimeout: 60000,
     keepAliveMaxTimeout: 600000,
     connections: FXSOCKET_HTTP_CONNECTIONS,
-    pipelining: 1,
+    pipelining: FXSOCKET_HTTP_PIPELINING,
 });
+// #region agent log
+const FX_INFLIGHT = new Map();
 function orderOperationRequiresPrice(operation) {
     return (operation === 'BuyLimit'
         || operation === 'SellLimit'
@@ -340,6 +346,25 @@ function isTransientMtApiError(err) {
     const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
     return /timeout|econnreset|econnrefused|fetch failed|network error|socket hang up|epipe|ehostunreach|abort/.test(msg);
 }
+/**
+ * Bridge-side "TradingHelper.OrderModify timed out" — the terminal didn't ack in
+ * time. Safe to retry only for IDEMPOTENT ops (OrderModify/OrderClose); never for
+ * OrderSend, where a lost ack could mean the order actually opened (duplicate risk).
+ */
+function isOrderOpTimedOutMessage(message) {
+    return /\btimed\s+out\b/i.test(String(message ?? ''));
+}
+/**
+ * An MT terminal executes order operations serially; firing many concurrently at
+ * one terminal makes the bridge queue them and time out. Bound in-flight trade
+ * ops per account so a single terminal is never overwhelmed (shared across all
+ * client instances in the process).
+ */
+const tradeOpGate = (0, perAccountConcurrency_1.createConcurrencyGate)();
+function perAccountTradeConcurrency() {
+    const raw = Number(process.env.MT_PER_ACCOUNT_TRADE_CONCURRENCY ?? 3);
+    return Number.isFinite(raw) && raw >= 1 ? Math.min(8, Math.floor(raw)) : 3;
+}
 /** FxSocket / upstream rate limit (also matches Supabase-style throttle text). */
 function isApiThrottleError(err) {
     if (err instanceof FxsocketApiError && err.status === 429)
@@ -492,33 +517,52 @@ class FxsocketBrokerClient {
             headers['Content-Type'] = 'application/json';
             body = JSON.stringify(opts.body);
         }
-        const res = await (0, undici_1.request)(url, {
-            method,
-            headers,
-            body,
-            dispatcher: KEEP_ALIVE_AGENT,
-            headersTimeout: t,
-            bodyTimeout: t,
-        });
-        const text = await res.body.text();
-        let parsed = null;
-        if (text) {
-            try {
-                parsed = JSON.parse(text);
+        // #region agent log
+        const _acct = (() => { const m = /\/(?:mt4|mt5|accounts)\/([^/?]+)/i.exec(url); return m ? m[1].slice(0, 8) : 'unknown'; })();
+        const _ep = (() => { const p = url.split('?')[0].split('/'); return p[p.length - 1] || url; })();
+        const _inflight = (FX_INFLIGHT.get(_acct) ?? 0) + 1;
+        FX_INFLIGHT.set(_acct, _inflight);
+        const _httpT0 = Date.now();
+        // #endregion
+        try {
+            const res = await (0, undici_1.request)(url, {
+                method,
+                headers,
+                body,
+                dispatcher: KEEP_ALIVE_AGENT,
+                headersTimeout: t,
+                bodyTimeout: t,
+            });
+            const text = await res.body.text();
+            let parsed = null;
+            if (text) {
+                try {
+                    parsed = JSON.parse(text);
+                }
+                catch {
+                    parsed = text;
+                }
             }
-            catch {
-                parsed = text;
+            const status = res.statusCode;
+            if (status < 200 || status >= 300) {
+                const err = parseErrorEnvelope(parsed);
+                if (status === 404 && (url.includes('/mt5/') || url.includes('/mt4/'))) {
+                    throw new FxsocketApiError('FxSocket account or endpoint not found. Check the account UUID and that the terminal is running.', 404, err.code, err.commandId);
+                }
+                throw new FxsocketApiError(err.message || text || `HTTP ${status}`, status, err.code, err.commandId);
             }
+            return parsed;
         }
-        const status = res.statusCode;
-        if (status < 200 || status >= 300) {
-            const err = parseErrorEnvelope(parsed);
-            if (status === 404 && (url.includes('/mt5/') || url.includes('/mt4/'))) {
-                throw new FxsocketApiError('FxSocket account or endpoint not found. Check the account UUID and that the terminal is running.', 404, err.code, err.commandId);
+        finally {
+            // #region agent log
+            const _dur = Date.now() - _httpT0;
+            const _after = (FX_INFLIGHT.get(_acct) ?? 1) - 1;
+            FX_INFLIGHT.set(_acct, _after);
+            if (_inflight >= 4 || _dur > 3000) {
+                fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '89d082' }, body: JSON.stringify({ sessionId: '89d082', runId: 'r5', hypothesisId: 'H9-capacity', location: 'fxsocketClient.ts:http', message: 'bridge request', data: { acct: _acct, endpoint: _ep, method, inFlightPerAcct: _inflight, durMs: _dur }, timestamp: Date.now() }) }).catch(() => { });
             }
-            throw new FxsocketApiError(err.message || text || `HTTP ${status}`, status, err.code, err.commandId);
+            // #endregion
         }
-        return parsed;
     }
     get(path, params, timeoutMs) {
         const out = new URLSearchParams();
@@ -620,7 +664,13 @@ class FxsocketBrokerClient {
         }
     }
     async openedOrders(id) {
+        // #region agent log
+        const _t0 = Date.now();
+        // #endregion
         const raw = await this.get(`${await this.accountBase(id)}/OpenedOrders`);
+        // #region agent log
+        fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '89d082' }, body: JSON.stringify({ sessionId: '89d082', hypothesisId: 'H3', location: 'fxsocketClient.ts:openedOrders', message: 'openedOrders timing', data: { callMs: Date.now() - _t0 }, timestamp: Date.now() }) }).catch(() => { });
+        // #endregion
         assertNoApiError(raw);
         return unwrapOrderList(raw);
     }
@@ -832,31 +882,49 @@ class FxsocketBrokerClient {
         };
     }
     async orderSend(id, args) {
-        const MAX_ATTEMPTS = Math.max(1, Number(process.env.MT_ORDERSEND_MAX_ATTEMPTS ?? 3) || 3);
-        let lastErr;
-        for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-            try {
-                return await this.orderSendOnce(id, args);
-            }
-            catch (err) {
-                lastErr = err;
-                if (isBrokerDisconnectedMessage(err instanceof Error ? err.message : String(err)))
-                    throw err;
-                if (isMtSessionGoneError(err))
-                    throw err;
-                const msg = err instanceof Error ? err.message : String(err);
-                const retryable = (0, brokerConnectError_1.isMtBridgeGlitchMessage)(msg) || isTransientMtApiError(err);
-                if (!retryable || attempt >= MAX_ATTEMPTS - 1)
-                    throw err;
-                if ((0, brokerConnectError_1.isMtBridgeGlitchMessage)(msg)) {
-                    await this.keepSessionAlive(id).catch(() => { });
+        // #region agent log
+        const _t0 = Date.now();
+        // #endregion
+        const release = await tradeOpGate.acquire(id, perAccountTradeConcurrency());
+        // #region agent log
+        const _gateWaitMs = Date.now() - _t0;
+        const _tCall = Date.now();
+        // #endregion
+        try {
+            const MAX_ATTEMPTS = Math.max(1, Number(process.env.MT_ORDERSEND_MAX_ATTEMPTS ?? 3) || 3);
+            let lastErr;
+            for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+                try {
+                    return await this.orderSendOnce(id, args);
                 }
-                const jitterMs = 600 + Math.random() * 900 + attempt * 400;
-                console.warn(`[fxsocketClient] OrderSend retry id=${id} symbol=${args.symbol} attempt=${attempt + 1}/${MAX_ATTEMPTS}: ${msg}`);
-                await new Promise(r => setTimeout(r, jitterMs));
+                catch (err) {
+                    lastErr = err;
+                    if (isBrokerDisconnectedMessage(err instanceof Error ? err.message : String(err)))
+                        throw err;
+                    if (isMtSessionGoneError(err))
+                        throw err;
+                    const msg = err instanceof Error ? err.message : String(err);
+                    // NOTE: do NOT retry on a bare "timed out" here — a lost ack could mean
+                    // the order actually opened, so retrying risks a duplicate position.
+                    const retryable = (0, brokerConnectError_1.isMtBridgeGlitchMessage)(msg) || isTransientMtApiError(err);
+                    if (!retryable || attempt >= MAX_ATTEMPTS - 1)
+                        throw err;
+                    if ((0, brokerConnectError_1.isMtBridgeGlitchMessage)(msg)) {
+                        await this.keepSessionAlive(id).catch(() => { });
+                    }
+                    const jitterMs = 600 + Math.random() * 900 + attempt * 400;
+                    console.warn(`[fxsocketClient] OrderSend retry id=${id} symbol=${args.symbol} attempt=${attempt + 1}/${MAX_ATTEMPTS}: ${msg}`);
+                    await new Promise(r => setTimeout(r, jitterMs));
+                }
             }
+            throw lastErr instanceof Error ? lastErr : new FxsocketApiError(String(lastErr), 502);
         }
-        throw lastErr instanceof Error ? lastErr : new FxsocketApiError(String(lastErr), 502);
+        finally {
+            // #region agent log
+            fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '89d082' }, body: JSON.stringify({ sessionId: '89d082', hypothesisId: 'H2', location: 'fxsocketClient.ts:orderSend', message: 'orderSend timing', data: { op: 'orderSend', symbol: args.symbol, gateWaitMs: _gateWaitMs, callMs: Date.now() - _tCall }, timestamp: Date.now() }) }).catch(() => { });
+            // #endregion
+            release();
+        }
     }
     async orderSendOnce(id, args) {
         const op = String(args.operation);
@@ -890,32 +958,61 @@ class FxsocketBrokerClient {
         return out;
     }
     async orderModify(id, args) {
-        const MAX_ATTEMPTS = Math.max(1, Number(process.env.MT_ORDERMODIFY_MAX_ATTEMPTS ?? 3) || 3);
-        let lastErr;
-        for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-            try {
-                return await this.orderModifyOnce(id, args);
-            }
-            catch (err) {
-                lastErr = err;
-                if (isBrokerDisconnectedMessage(err instanceof Error ? err.message : String(err)))
-                    throw err;
-                if (isMtSessionGoneError(err))
-                    throw err;
-                const msg = err instanceof Error ? err.message : String(err);
-                const retryable = (0, brokerConnectError_1.isMtBridgeGlitchMessage)(msg) || isTransientMtApiError(err);
-                if (!retryable || attempt >= MAX_ATTEMPTS - 1)
-                    throw err;
-                if ((0, brokerConnectError_1.isMtBridgeGlitchMessage)(msg)) {
-                    await this.keepSessionAlive(id).catch(() => { });
+        // #region agent log
+        const _t0 = Date.now();
+        // #endregion
+        const release = await tradeOpGate.acquire(id, perAccountTradeConcurrency());
+        // #region agent log
+        const _gateWaitMs = Date.now() - _t0;
+        const _tCall = Date.now();
+        // #endregion
+        try {
+            const MAX_ATTEMPTS = Math.max(1, Number(process.env.MT_ORDERMODIFY_MAX_ATTEMPTS ?? 3) || 3);
+            let lastErr;
+            for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+                // #region agent log
+                const _attemptT0 = Date.now();
+                // #endregion
+                try {
+                    const _r = await this.orderModifyOnce(id, args);
+                    // #region agent log
+                    fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '89d082' }, body: JSON.stringify({ sessionId: '89d082', runId: 'r4', hypothesisId: 'H8', location: 'fxsocketClient.ts:orderModifyOnce', message: 'orderModify attempt ok', data: { ticket: args.ticket, attempt: attempt + 1, attemptMs: Date.now() - _attemptT0 }, timestamp: Date.now() }) }).catch(() => { });
+                    // #endregion
+                    return _r;
                 }
-                const jitterMs = 600 + Math.random() * 900 + attempt * 400;
-                console.warn(`[fxsocketClient] OrderModify retry id=${id} ticket=${args.ticket}`
-                    + ` attempt=${attempt + 1}/${MAX_ATTEMPTS}: ${msg}`);
-                await new Promise(r => setTimeout(r, jitterMs));
+                catch (err) {
+                    // #region agent log
+                    fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '89d082' }, body: JSON.stringify({ sessionId: '89d082', runId: 'r4', hypothesisId: 'H8', location: 'fxsocketClient.ts:orderModifyOnce', message: 'orderModify attempt failed', data: { ticket: args.ticket, attempt: attempt + 1, attemptMs: Date.now() - _attemptT0, err: (err instanceof Error ? err.message : String(err)).slice(0, 80) }, timestamp: Date.now() }) }).catch(() => { });
+                    // #endregion
+                    lastErr = err;
+                    if (isBrokerDisconnectedMessage(err instanceof Error ? err.message : String(err)))
+                        throw err;
+                    if (isMtSessionGoneError(err))
+                        throw err;
+                    const msg = err instanceof Error ? err.message : String(err);
+                    // OrderModify is idempotent, so a bridge "timed out" is safe to retry.
+                    const retryable = (0, brokerConnectError_1.isMtBridgeGlitchMessage)(msg)
+                        || isTransientMtApiError(err)
+                        || isOrderOpTimedOutMessage(msg);
+                    if (!retryable || attempt >= MAX_ATTEMPTS - 1)
+                        throw err;
+                    if ((0, brokerConnectError_1.isMtBridgeGlitchMessage)(msg)) {
+                        await this.keepSessionAlive(id).catch(() => { });
+                    }
+                    const jitterMs = 600 + Math.random() * 900 + attempt * 400;
+                    console.warn(`[fxsocketClient] OrderModify retry id=${id} ticket=${args.ticket}`
+                        + ` attempt=${attempt + 1}/${MAX_ATTEMPTS}: ${msg}`);
+                    await new Promise(r => setTimeout(r, jitterMs));
+                }
             }
+            throw lastErr instanceof Error ? lastErr : new FxsocketApiError(String(lastErr), 502);
         }
-        throw lastErr instanceof Error ? lastErr : new FxsocketApiError(String(lastErr), 502);
+        finally {
+            // #region agent log
+            fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '89d082' }, body: JSON.stringify({ sessionId: '89d082', runId: 'r3', hypothesisId: 'H7', location: 'fxsocketClient.ts:orderModify', message: 'orderModify timing', data: { op: 'orderModify', ticket: args.ticket, gateWaitMs: _gateWaitMs, callMs: Date.now() - _tCall, caller: (new Error().stack || '').split('\n').slice(2, 8).map(s => s.trim().replace(/^at\s+/, '')).join(' <- ') }, timestamp: Date.now() }) }).catch(() => { });
+            // #endregion
+            release();
+        }
     }
     async orderModifyOnce(id, args) {
         const payload = { ticket: args.ticket };
@@ -932,17 +1029,33 @@ class FxsocketBrokerClient {
         return normalizeOrderResponse(raw);
     }
     async orderClose(id, args) {
-        const payload = {
-            ticket: args.ticket,
-            slippage: args.slippage ?? 20,
-        };
-        if (args.lots != null && args.lots > 0)
-            payload.volume = args.lots;
-        if (args.price != null && args.price > 0)
-            payload.price = args.price;
-        const raw = await this.post(`${await this.accountBase(id)}/OrderClose`, payload, 90000);
-        assertNoApiError(raw);
-        return normalizeOrderResponse(raw);
+        // #region agent log
+        const _t0 = Date.now();
+        // #endregion
+        const release = await tradeOpGate.acquire(id, perAccountTradeConcurrency());
+        // #region agent log
+        const _gateWaitMs = Date.now() - _t0;
+        const _tCall = Date.now();
+        // #endregion
+        try {
+            const payload = {
+                ticket: args.ticket,
+                slippage: args.slippage ?? 20,
+            };
+            if (args.lots != null && args.lots > 0)
+                payload.volume = args.lots;
+            if (args.price != null && args.price > 0)
+                payload.price = args.price;
+            const raw = await this.post(`${await this.accountBase(id)}/OrderClose`, payload, 90000);
+            assertNoApiError(raw);
+            return normalizeOrderResponse(raw);
+        }
+        finally {
+            // #region agent log
+            fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '89d082' }, body: JSON.stringify({ sessionId: '89d082', hypothesisId: 'H2', location: 'fxsocketClient.ts:orderClose', message: 'orderClose timing', data: { op: 'orderClose', ticket: args.ticket, gateWaitMs: _gateWaitMs, callMs: Date.now() - _tCall }, timestamp: Date.now() }) }).catch(() => { });
+            // #endregion
+            release();
+        }
     }
 }
 exports.FxsocketBrokerClient = FxsocketBrokerClient;

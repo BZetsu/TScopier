@@ -47,6 +47,7 @@ exports.closeStaleOpenTrades = closeStaleOpenTrades;
 exports.markBasketReconcileDoneForAnchor = markBasketReconcileDoneForAnchor;
 exports.logBasketLegModify = logBasketLegModify;
 exports.runBasketLegModifies = runBasketLegModifies;
+exports.applyBasketLegSync = applyBasketLegSync;
 exports.reconcileBackoffMs = reconcileBackoffMs;
 exports.basketLegModifyMergeFailed = basketLegModifyMergeFailed;
 exports.upsertBasketReconcileJob = upsertBasketReconcileJob;
@@ -57,6 +58,7 @@ const tpBucketDistribution_1 = require("./manualPlanning/tpBucketDistribution");
 const basketModFollowUp_1 = require("./basketModFollowUp");
 const channelActiveTradeParams_1 = require("./channelActiveTradeParams");
 const orderModifyBenign_1 = require("./orderModifyBenign");
+const orderModifySafe_1 = require("./orderModifySafe");
 const basketEffectiveStops_1 = require("./basketEffectiveStops");
 const parallelPool_1 = require("./parallelPool");
 const tradeComment_1 = require("./tradeComment");
@@ -226,7 +228,7 @@ async function logBasketLegModify(supabase, args) {
     catch { /* best-effort */ }
 }
 async function runBasketLegModifies(args) {
-    const { supabase, api, uuid, symbol, direction, baseLot, params, signalId, userId, brokerAccountId, familyTrades, perLegTargets: rawTargets, signalTps, tpLots, nImmCwe, strictEntryPrefetch, openedTickets, skipAlreadySynced, alreadyModified, liveMgmtFast, internalRebalance, effectiveStoploss, orderCommentsEnabled, explicitChannelTargets, } = args;
+    const { supabase, api, uuid, symbol, direction, baseLot, params, signalId, userId, brokerAccountId, familyTrades, perLegTargets: rawTargets, signalTps, tpLots, nImmCwe, strictEntryPrefetch, openedTickets, skipAlreadySynced, alreadyModified, liveMgmtFast, parallelLegs, internalRebalance, effectiveStoploss, orderCommentsEnabled, explicitChannelTargets, } = args;
     const parsedTps = (signalTps ?? []).filter(t => typeof t === 'number' && Number.isFinite(t) && t > 0);
     const perLegTargets = (0, tpBucketDistribution_1.expandPerLegTargetsToCount)({
         targets: rawTargets,
@@ -453,19 +455,53 @@ async function runBasketLegModifies(args) {
             }
         }
         try {
-            const modRes = await api.orderModify(uuid, {
-                ticket,
-                stoploss: modSl,
-                takeprofit: modTp,
-            });
-            const newSl = modRes.stopLoss ?? modSl ?? null;
-            const newTp = modRes.takeProfit ?? modTp ?? null;
+            // SL-first with split fallback: an invalid/late TP must never block the
+            // protective SL (avoids legs left fully naked after an "Invalid stops").
+            // If the requested TP was passed by price, fall back to the deepest ladder
+            // TP so the leg keeps a profit target.
+            const deepestTp = parsedTps.length
+                ? (direction === 'buy' ? Math.max(...parsedTps) : Math.min(...parsedTps))
+                : 0;
+            const safe = await (0, orderModifySafe_1.modifyLegSlTpWithFallback)(api, uuid, ticket, modSl, modTp, { deepestTp });
+            if (!safe.ok || (modSl > 0 && !safe.slApplied)) {
+                const failMsg = safe.error ?? 'OrderModify failed';
+                const legErr = {
+                    trade_id: tr.id,
+                    ticket,
+                    leg_index: i + 1,
+                    broker_symbol: tr.symbol,
+                    target_sl: modSl,
+                    target_tp: modTp,
+                    error: failMsg,
+                };
+                console.warn(`[basketSlTpReconcile] OrderModify failed leg=${i + 1}/${familyTrades.length} trade=${tr.id}: ${failMsg}`);
+                await logLegModify({
+                    userId,
+                    signalId,
+                    brokerAccountId,
+                    status: 'failed',
+                    tradeId: tr.id,
+                    ticket,
+                    legIndex: i + 1,
+                    brokerSymbol: tr.symbol,
+                    targetSl: modSl,
+                    targetTp: modTp,
+                    errorMessage: failMsg,
+                });
+                return { ...noopOutcome(), legError: legErr, attempted: 1, failed: 1 };
+            }
+            const res = (safe.result ?? {});
+            const newSl = safe.slApplied ? (res.stopLoss ?? safe.appliedSl ?? null) : null;
+            const newTp = safe.tpApplied ? (res.takeProfit ?? safe.appliedTp ?? null) : null;
             const cweClose = cweIdx < nImmCwe ? args.overrideTp : null;
-            await supabase.from('trades').update({
-                sl: typeof newSl === 'number' && newSl > 0 ? newSl : null,
-                tp: typeof newTp === 'number' && newTp > 0 ? newTp : null,
+            const tradePatch = {
                 cwe_close_price: typeof cweClose === 'number' && cweClose > 0 ? cweClose : null,
-            }).eq('id', tr.id);
+            };
+            if (safe.slApplied)
+                tradePatch.sl = typeof newSl === 'number' && newSl > 0 ? newSl : null;
+            if (safe.tpApplied)
+                tradePatch.tp = typeof newTp === 'number' && newTp > 0 ? newTp : null;
+            await supabase.from('trades').update(tradePatch).eq('id', tr.id);
             await logLegModify({
                 userId,
                 signalId,
@@ -475,8 +511,8 @@ async function runBasketLegModifies(args) {
                 ticket,
                 legIndex: i + 1,
                 brokerSymbol: tr.symbol,
-                targetSl: modSl,
-                targetTp: modTp,
+                targetSl: safe.slApplied ? safe.appliedSl : 0,
+                targetTp: safe.tpApplied ? safe.appliedTp : 0,
             });
             return { ...noopOutcome(), modifiedId: tr.id, attempted: 1, modified: 1 };
         }
@@ -525,8 +561,9 @@ async function runBasketLegModifies(args) {
         }
     };
     const legIndices = familyTrades.map((_, idx) => idx);
+    const runParallel = (liveFast || parallelLegs === true) && familyTrades.length > 1;
     let legOutcomes;
-    if (liveFast && familyTrades.length > 1) {
+    if (runParallel) {
         legOutcomes = await (0, parallelPool_1.parallelMap)(legIndices, (0, parallelPool_1.mgmtLegConcurrency)(), idx => processLeg(idx));
     }
     else {
@@ -562,9 +599,127 @@ async function runBasketLegModifies(args) {
         - summary.skippedUnfixable);
     return { summary, legErrors, modifiedTradeIds };
 }
+/**
+ * Canonical "apply target SL/TP to every leg in a basket" primitive.
+ *
+ * Runs straggler rounds of {@link runBasketLegModifies} (re-trying only the legs
+ * that have not yet synced), refreshing the broker's OpenedOrders snapshot once,
+ * then either:
+ *  - enqueues a basket_reconcile_job when any leg still has a hard broker failure
+ *    (so the BasketSlTpReconcileMonitor keeps converging the basket), or
+ *  - marks the anchor's reconcile job done when fully synced.
+ *
+ * Used by channel "modify" (Adjust SL/TP) and the breakeven reconcile fallback so
+ * both share one retry + reconcile path instead of ad-hoc per-action loops.
+ */
+async function applyBasketLegSync(args) {
+    const { supabase, api, uuid, symbol, direction, baseLot, params, signalId, userId, brokerAccountId, channelId, anchorSignalId, familyTrades, perLegTargets, signalTps, tpLots, nImmCwe, overrideTp, liveMgmtFast, internalRebalance, effectiveStoploss, orderCommentsEnabled, explicitChannelTargets, virtualPendingsSnapshot, } = args;
+    const enqueueReconcileOnFailure = args.enqueueReconcileOnFailure !== false;
+    const modifiedTradeIds = new Set();
+    let openedTickets = args.openedTickets;
+    let summary = {
+        openLegs: familyTrades.length,
+        attempted: 0,
+        modified: 0,
+        failed: 0,
+        skippedNoTicket: 0,
+        skippedNotOnBroker: 0,
+        skippedUnfixable: 0,
+    };
+    let legErrors = [];
+    // Fast mode: 1 round only — failures go straight to event-driven reconcile.
+    // Non-fast: up to 4 rounds with short sleeps for straggler ticket resolution.
+    const stragglerRounds = liveMgmtFast
+        ? Math.min(2, Math.max(1, Number(process.env.BASKET_MGMT_STRAGGLER_ROUNDS ?? 1)))
+        : Math.min(8, Math.max(2, Number(process.env.BASKET_MGMT_STRAGGLER_ROUNDS ?? 4)));
+    for (let round = 0; round < stragglerRounds; round++) {
+        if (round > 0) {
+            const sleepMs = liveMgmtFast ? 0 : Math.min(round, 3) * 200;
+            if (sleepMs > 0)
+                await new Promise(resolve => setTimeout(resolve, sleepMs));
+            if (round === 1) {
+                try {
+                    openedTickets = await fetchOpenBrokerTickets(api, uuid);
+                }
+                catch {
+                    openedTickets = null;
+                }
+            }
+        }
+        const pendingLegs = familyTrades.filter(tr => !modifiedTradeIds.has(tr.id));
+        if (!pendingLegs.length)
+            break;
+        const pass = await runBasketLegModifies({
+            supabase,
+            api,
+            uuid,
+            symbol,
+            direction,
+            baseLot,
+            params,
+            signalId,
+            userId,
+            brokerAccountId,
+            familyTrades,
+            perLegTargets,
+            signalTps,
+            tpLots,
+            nImmCwe,
+            overrideTp,
+            strictEntryPrefetch: null,
+            openedTickets,
+            skipAlreadySynced: round > 0,
+            alreadyModified: modifiedTradeIds,
+            liveMgmtFast,
+            internalRebalance,
+            effectiveStoploss,
+            orderCommentsEnabled,
+            explicitChannelTargets,
+        });
+        for (const id of pass.modifiedTradeIds)
+            modifiedTradeIds.add(id);
+        summary = pass.summary;
+        legErrors = pass.legErrors;
+        if (modifiedTradeIds.size >= familyTrades.length)
+            break;
+    }
+    const mergeFailed = basketLegModifyMergeFailed(summary);
+    let reconcileEnqueued = false;
+    if (mergeFailed && enqueueReconcileOnFailure) {
+        const partialMsg = `Basket leg sync: ${summary.modified}/${summary.openLegs} legs`
+            + (summary.failed > 0 ? `; ${summary.failed} broker errors` : '')
+            + (summary.skippedNotOnBroker > 0 ? `; ${summary.skippedNotOnBroker} not on broker` : '');
+        const jobId = await upsertBasketReconcileJob(supabase, {
+            userId,
+            brokerAccountId,
+            anchorSignalId,
+            sourceSignalId: signalId,
+            channelId,
+            symbol,
+            direction,
+            perLegTargets,
+            familyTrades,
+            signalTps,
+            tpLots,
+            virtualPendingsSnapshot: virtualPendingsSnapshot ?? null,
+            nImmCwe,
+            overrideTp,
+            lastError: partialMsg,
+        });
+        reconcileEnqueued = jobId != null;
+    }
+    else if (!mergeFailed) {
+        await markBasketReconcileDoneForAnchor(supabase, brokerAccountId, anchorSignalId);
+    }
+    return { summary, legErrors, modifiedTradeIds, mergeFailed, reconcileEnqueued };
+}
 function reconcileBackoffMs(attempts) {
-    const base = Number(process.env.BASKET_RECONCILE_BACKOFF_MS ?? 15000);
-    const capped = Math.min(base * Math.pow(2, Math.min(attempts, 4)), 300000);
+    // First attempt: immediate (0ms) — event-driven monitor picks up instantly.
+    // Subsequent attempts: exponential backoff from 5s base, capped at 60s.
+    if (attempts <= 1)
+        return 0;
+    const base = Number(process.env.BASKET_RECONCILE_BACKOFF_MS ?? 5000);
+    const capped = Math.min(base * Math.pow(2, Math.min(attempts - 1, 4)), 60000);
     return capped;
 }
 /** True when any leg still needs a broker modify (hard failures only — skips do not block). */
@@ -655,7 +810,7 @@ async function markBasketReconcileDone(supabase, jobId) {
 async function loadOpenBasketLegs(supabase, brokerAccountId, anchorSignalId, symbolHint) {
     const { data, error } = await supabase
         .from('trades')
-        .select('id,signal_id,metaapi_order_id,opened_at,lot_size,sl,tp,entry_price,direction,symbol')
+        .select('id,signal_id,metaapi_order_id,opened_at,lot_size,sl,tp,entry_price,direction,symbol,auto_be_applied_at')
         .eq('broker_account_id', brokerAccountId)
         .eq('signal_id', anchorSignalId)
         .eq('status', 'open')

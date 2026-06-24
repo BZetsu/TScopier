@@ -4,10 +4,12 @@
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.parseTradeWorkerShardUrls = parseTradeWorkerShardUrls;
+exports.pickTradeWorkerUrl = pickTradeWorkerUrl;
 exports.pushParsedSignalToTradeWorker = pushParsedSignalToTradeWorker;
 exports.pushParsedSignalToTradeWorkerAccept = pushParsedSignalToTradeWorkerAccept;
 exports.pushParsedSignalToTradeWorkerAwait = pushParsedSignalToTradeWorkerAwait;
 exports.validateListenerTradeShardConfig = validateListenerTradeShardConfig;
+exports.validateListenerMgmtShardConfig = validateListenerMgmtShardConfig;
 exports.validateListenerQueueConfig = validateListenerQueueConfig;
 const tradeSignalActions_1 = require("./tradeSignalActions");
 const signalQueueConfig_1 = require("./queue/signalQueueConfig");
@@ -30,10 +32,23 @@ function parseTradeWorkerShardUrls(raw) {
 }
 function pickTradeWorkerUrl(action, userId) {
     const shardUrls = parseTradeWorkerShardUrls(process.env.TRADE_WORKER_SHARD_URLS);
+    const mgmtShardUrls = parseTradeWorkerShardUrls(process.env.TRADE_MGMT_WORKER_SHARD_URLS);
     const entryUrl = String(process.env.TRADE_WORKER_URL ?? '').trim().replace(/\/$/, '');
     const mgmtUrl = String(process.env.TRADE_MGMT_WORKER_URL ?? '').trim().replace(/\/$/, '');
+    const mgmt = (0, tradeSignalActions_1.isManagementAction)(action);
+    // Sharded management routing takes precedence for mgmt actions so heavy
+    // management bursts (Adjust SL/TP, breakeven, close half on a busy channel)
+    // fan out across the management fleet instead of hammering one mgmt URL.
+    if (mgmt && mgmtShardUrls.length > 1 && userId) {
+        const sharded = mgmtShardUrls[(0, workerConfig_1.shardForUserId)(userId, mgmtShardUrls.length)];
+        if (sharded)
+            return sharded;
+    }
+    if (mgmt && mgmtShardUrls.length === 1) {
+        return mgmtShardUrls[0];
+    }
     let base;
-    if ((0, tradeSignalActions_1.isManagementAction)(action)) {
+    if (mgmt) {
         base = mgmtUrl || entryUrl || null;
     }
     else {
@@ -43,12 +58,12 @@ function pickTradeWorkerUrl(action, userId) {
         const shard = (0, workerConfig_1.shardForUserId)(userId, shardUrls.length);
         const sharded = shardUrls[shard];
         if (sharded) {
-            if ((0, tradeSignalActions_1.isManagementAction)(action) && mgmtUrl)
+            if (mgmt && mgmtUrl)
                 return mgmtUrl;
             return sharded;
         }
     }
-    if (shardUrls.length === 1 && userId && !(0, tradeSignalActions_1.isManagementAction)(action)) {
+    if (shardUrls.length === 1 && userId && !mgmt) {
         return shardUrls[0];
     }
     return base;
@@ -246,6 +261,27 @@ function validateListenerTradeShardConfig() {
     }
     if (shardUrls.length !== expected) {
         return `TRADE_WORKER_SHARD_URLS has ${shardUrls.length} URL(s) but TRADE_WORKER_SHARD_COUNT=${expected}`;
+    }
+    return null;
+}
+/**
+ * Listener startup check: TRADE_MGMT_WORKER_SHARD_URLS (when set) must match the
+ * trade shard count so management dispatch hashes onto an existing mgmt shard.
+ * Returns an error message or null if valid / not applicable.
+ */
+function validateListenerMgmtShardConfig() {
+    const mgmtShardUrls = parseTradeWorkerShardUrls(process.env.TRADE_MGMT_WORKER_SHARD_URLS);
+    if (mgmtShardUrls.length === 0)
+        return null;
+    const expectedRaw = process.env.TRADE_WORKER_SHARD_COUNT;
+    const expected = expectedRaw != null && expectedRaw !== ''
+        ? Math.max(1, Math.floor(Number(expectedRaw)))
+        : mgmtShardUrls.length;
+    if (!Number.isFinite(expected) || expected < 1) {
+        return `TRADE_WORKER_SHARD_COUNT must be a positive integer (got ${expectedRaw})`;
+    }
+    if (mgmtShardUrls.length !== expected) {
+        return `TRADE_MGMT_WORKER_SHARD_URLS has ${mgmtShardUrls.length} URL(s) but TRADE_WORKER_SHARD_COUNT=${expected}`;
     }
     return null;
 }

@@ -105,6 +105,11 @@ async function main() {
             console.error(`[worker] FATAL: ${shardErr}`);
             process.exit(1);
         }
+        const mgmtShardErr = (0, tradeSignalPush_1.validateListenerMgmtShardConfig)();
+        if (mgmtShardErr) {
+            console.error(`[worker] FATAL: ${mgmtShardErr}`);
+            process.exit(1);
+        }
         const queueErr = (0, tradeSignalPush_1.validateListenerQueueConfig)();
         if (queueErr) {
             console.error(`[worker] FATAL: ${queueErr}`);

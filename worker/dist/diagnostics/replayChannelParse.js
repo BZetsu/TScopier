@@ -12,6 +12,28 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const supabase_js_1 = require("@supabase/supabase-js");
 const parseSignal_1 = require("../parseSignal");
 const signalTradingHeuristic_1 = require("../signalTradingHeuristic");
+const channelFixtures_1 = require("../channelFixtures");
+/**
+ * Offline golden-scenario run (no Supabase). Returns a non-zero exit code when
+ * any fixture parse mismatches, so it doubles as a CI gate.
+ */
+function runFixtures(dir) {
+    const fixtures = (0, channelFixtures_1.loadChannelFixtures)(dir);
+    let failed = 0;
+    for (const { file, fixture } of fixtures) {
+        const { ok, failures } = (0, channelFixtures_1.evaluateChannelFixture)(fixture);
+        if (ok) {
+            console.log(`PASS ${file} — ${fixture.name}`);
+        }
+        else {
+            failed += 1;
+            console.error(`FAIL ${file} — ${fixture.name}\n  ${failures.join('\n  ')}`);
+        }
+    }
+    console.log(`\n${fixtures.length - failed}/${fixtures.length} fixtures passed`);
+    if (failed > 0)
+        process.exit(1);
+}
 function parseArgs(argv) {
     let channelId = '';
     let message = '';
@@ -43,6 +65,14 @@ function parseArgs(argv) {
     return { channelId, message, telethonHeuristic };
 }
 async function main() {
+    const fixturesFlagIdx = process.argv.indexOf('--fixtures');
+    if (fixturesFlagIdx !== -1) {
+        const dir = process.argv[fixturesFlagIdx + 1] && !process.argv[fixturesFlagIdx + 1].startsWith('--')
+            ? process.argv[fixturesFlagIdx + 1]
+            : channelFixtures_1.GTMO_VIP_FIXTURES_DIR;
+        runFixtures(dir);
+        return;
+    }
     const { channelId, message, telethonHeuristic } = parseArgs(process.argv);
     const url = String(process.env.SUPABASE_URL ?? '').trim();
     const key = String(process.env.SUPABASE_SERVICE_ROLE_KEY ?? '').trim();

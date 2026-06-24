@@ -28,6 +28,8 @@ const copierPause_1 = require("../copierPause");
 const channelTradingConfig_1 = require("../channelTradingConfig");
 const channelMessageFilters_1 = require("../channelMessageFilters");
 const multiTradeMerge_1 = require("../multiTradeMerge");
+// #region agent log
+fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '89d082' }, body: JSON.stringify({ sessionId: '89d082', runId: 'r5', hypothesisId: 'build', location: 'dispatch.ts:module-load', message: 'dispatch module loaded (r5 build marker)', data: { build: 'r5-inflight' }, timestamp: Date.now() }) }).catch(() => { });
 const manualPlanner_1 = require("../manualPlanner");
 const pipelineTimestamps_1 = require("../pipelineTimestamps");
 const tradeComment_1 = require("../tradeComment");
@@ -375,6 +377,9 @@ async function handleSignal(ctx, row, opts) {
     const liveFast = isRangeWake
         || (opts?.liveDispatch === true && opts?.lightIdempotency === true);
     const liveMgmtFast = isLiveMgmtFast(opts, row.parsed_data, row);
+    // #region agent log
+    fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '89d082' }, body: JSON.stringify({ sessionId: '89d082', hypothesisId: 'H1', location: 'dispatch.ts:446', message: 'mgmt fast-path decision', data: { action: (0, tradeSignalActions_1.parsedAction)(row.parsed_data), liveDispatch: opts?.liveDispatch ?? null, lightIdempotency: opts?.lightIdempotency ?? null, dispatchSource: opts?.dispatchSource ?? null, liveFast, liveMgmtFast }, timestamp: Date.now() }) }).catch(() => { });
+    // #endregion
     const channelMetaPromise = (liveFast || liveMgmtFast) && row.channel_id
         ? ctx.getChannelMeta(row.channel_id)
         : null;
@@ -616,6 +621,9 @@ async function handleSignal(ctx, row, opts) {
             }
             const mgmtWallStart = Date.now();
             const mgmtResult = await ctx.applyManagement(row, parsed, mgmtBrokers, { liveMgmtFast });
+            // #region agent log
+            fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '89d082' }, body: JSON.stringify({ sessionId: '89d082', runId: 'r4', hypothesisId: 'H6', location: 'dispatch.ts:726', message: 'applyManagement done', data: { action, dispatchSource: opts?.dispatchSource ?? null, liveMgmtFast, mgmt_wall_ms: Date.now() - mgmtWallStart, legs: mgmtResult.legsTotal }, timestamp: Date.now() }) }).catch(() => { });
+            // #endregion
             pipelineOutcome = {
                 ...pipelineOutcome,
                 mgmt_wall_ms: Date.now() - mgmtWallStart,

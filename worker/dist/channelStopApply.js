@@ -9,6 +9,7 @@ exports.ensureChannelModifyScope = ensureChannelModifyScope;
 exports.allChannelModifySymbolBuckets = allChannelModifySymbolBuckets;
 exports.brokerOrderSlMatchesTarget = brokerOrderSlMatchesTarget;
 exports.fetchBrokerOrdersByTicket = fetchBrokerOrdersByTicket;
+exports.fetchBrokerOrdersSnapshot = fetchBrokerOrdersSnapshot;
 exports.verifyLegStopOnBroker = verifyLegStopOnBroker;
 exports.applyChannelStopsToBaskets = applyChannelStopsToBaskets;
 exports.logMgmtModifyBrokerSummaries = logMgmtModifyBrokerSummaries;
@@ -18,11 +19,15 @@ const fxsocketClient_1 = require("./fxsocketClient");
 const channelActiveTradeParams_1 = require("./channelActiveTradeParams");
 const tpBucketDistribution_1 = require("./manualPlanning/tpBucketDistribution");
 const orderModifyBenign_1 = require("./orderModifyBenign");
+const orderModifySafe_1 = require("./orderModifySafe");
 const basketSlTpReconcile_1 = require("./basketSlTpReconcile");
 const managementScope_1 = require("./managementScope");
 const signalEntryPendingHelpers_1 = require("./signalEntryPendingHelpers");
 const helpers_1 = require("./tradeExecutor/helpers");
 const workerMetrics_1 = require("./workerMetrics");
+const parallelPool_1 = require("./parallelPool");
+const rangeBasketTpSync_1 = require("./rangeBasketTpSync");
+const rangePendingFireGuard_1 = require("./rangePendingFireGuard");
 const SL_VERIFY_TOLERANCE = 1e-6;
 function mgmtUseChannelStopApply() {
     const v = String(process.env.MGMT_USE_CHANNEL_STOP_APPLY ?? 'true').toLowerCase().trim();
@@ -150,6 +155,28 @@ async function fetchBrokerOrdersByTicket(api, uuid) {
         /* caller falls back to ticket-set preflight only */
     }
     return map;
+}
+/** One OpenedOrders call -> both the open-ticket set and the ticket->order map. */
+async function fetchBrokerOrdersSnapshot(api, uuid) {
+    const tickets = new Set();
+    const ordersByTicket = new Map();
+    try {
+        const orders = await api.openedOrders(uuid);
+        for (const raw of orders ?? []) {
+            if (!raw || typeof raw !== 'object')
+                continue;
+            const o = raw;
+            const ticket = Number(o.ticket ?? o.Ticket ?? o.orderId ?? o.OrderID ?? 0);
+            if (Number.isFinite(ticket) && ticket > 0) {
+                tickets.add(ticket);
+                ordersByTicket.set(ticket, raw);
+            }
+        }
+    }
+    catch {
+        /* caller treats empty as skip-preflight */
+    }
+    return { tickets, ordersByTicket };
 }
 function verifyLegStopOnBroker(ordersByTicket, ticket, targetSl) {
     const raw = ordersByTicket.get(ticket);
@@ -300,7 +327,22 @@ async function applyChannelStopsToBaskets(args) {
         }
         const tpLots = broker.manual_settings?.tp_lots ?? null;
         const isBuy = direction === 'buy';
-        const tpMap = slOnly || tpOnly
+        // Freeze: once a TP has been hit (a leg closed OR a sticky TP-touch lock),
+        // never repaint TP across remaining legs. Keep each leg's existing TP and
+        // only backfill a naked leg with the deepest TP — mirrors the
+        // rebalance/reconcile freeze, which this live modify path previously bypassed.
+        let tpFrozen = false;
+        if (!dryRun && anchorSignalId) {
+            try {
+                tpFrozen = (await (0, rangeBasketTpSync_1.hasClosedBasketLegs)(supabase, brokerId, anchorSignalId))
+                    || (await (0, rangePendingFireGuard_1.hasTpTouchedLock)(supabase, { signalId: anchorSignalId, brokerAccountId: brokerId, symbol }));
+            }
+            catch {
+                tpFrozen = false;
+            }
+        }
+        const frozenDeepestTp = (0, rangeBasketTpSync_1.deepestFinalTp)(parsedTpLevels, isBuy);
+        const tpMap = slOnly || tpOnly || tpFrozen
             ? new Map()
             : (0, tpBucketDistribution_1.buildEntryQualityTakeProfitMap)({
                 legs: legs.map(tr => ({
@@ -317,10 +359,10 @@ async function applyChannelStopsToBaskets(args) {
         let ordersByTicket = new Map();
         if (api) {
             try {
-                openedTickets = await (0, basketSlTpReconcile_1.fetchOpenBrokerTickets)(api, uuid);
-                if (verifyOnBroker) {
-                    ordersByTicket = await fetchBrokerOrdersByTicket(api, uuid);
-                }
+                // Single OpenedOrders snapshot serves both preflight and SL verification.
+                const snapshot = await fetchBrokerOrdersSnapshot(api, uuid);
+                openedTickets = snapshot.tickets;
+                ordersByTicket = snapshot.ordersByTicket;
             }
             catch {
                 openedTickets = null;
@@ -328,17 +370,20 @@ async function applyChannelStopsToBaskets(args) {
         }
         const slCache = new Map();
         const perLegTargets = [];
+        const execPlan = [];
         for (let i = 0; i < legs.length; i++) {
             const tr = legs[i];
             baseResult.attempted += 1;
             const ticket = Number(tr.metaapi_order_id);
             const keepTp = positiveNum(tr.tp);
             const keepSl = positiveNum(tr.sl);
-            const targetTp = tpOnly
-                ? (tpMap.get(tr.id) ?? keepTp)
-                : slOnly
-                    ? keepTp
-                    : (tpMap.get(tr.id) ?? keepTp);
+            const targetTp = tpFrozen
+                ? (keepTp ?? (frozenDeepestTp > 0 ? frozenDeepestTp : null))
+                : tpOnly
+                    ? (tpMap.get(tr.id) ?? keepTp)
+                    : slOnly
+                        ? keepTp
+                        : (tpMap.get(tr.id) ?? keepTp);
             let targetSl = tpOnly ? keepSl : null;
             if (!tpOnly && hasNewSl) {
                 const chKey = `${tr.telegram_channel_id ?? channelId ?? ''}|${tr.symbol}`;
@@ -398,41 +443,75 @@ async function applyChannelStopsToBaskets(args) {
             }
             if (dryRun)
                 continue;
+            const modifyArgs = { ticket };
+            if (!tpOnly && target.stoploss > 0)
+                modifyArgs.stoploss = target.stoploss;
+            if (!slOnly && target.takeprofit > 0)
+                modifyArgs.takeprofit = target.takeprofit;
+            if (modifyArgs.stoploss == null && modifyArgs.takeprofit == null) {
+                baseResult.skipped += 1;
+                totalSkipped += 1;
+                continue;
+            }
+            execPlan.push({ tr, ticket, target, modifyArgs });
+        }
+        const noop = () => ({ modified: 0, failed: 0, skipped: 0, verified: 0 });
+        const execOne = async (plan) => {
+            const { tr, ticket, target, modifyArgs } = plan;
             try {
-                const modifyArgs = { ticket };
-                if (!tpOnly && target.stoploss > 0)
-                    modifyArgs.stoploss = target.stoploss;
-                if (!slOnly && target.takeprofit > 0)
-                    modifyArgs.takeprofit = target.takeprofit;
-                if (modifyArgs.stoploss == null && modifyArgs.takeprofit == null) {
-                    baseResult.skipped += 1;
-                    totalSkipped += 1;
-                    continue;
+                // SL-first with split fallback: an invalid/late TP must never block the
+                // protective SL (previously a rejected combined modify left the leg naked).
+                const safe = await (0, orderModifySafe_1.modifyLegSlTpWithFallback)(api, uuid, ticket, modifyArgs.stoploss ?? 0, modifyArgs.takeprofit ?? 0, { deepestTp: frozenDeepestTp });
+                if (!safe.ok) {
+                    await supabase.from('trade_execution_logs').insert({
+                        user_id: userId,
+                        signal_id: signalId,
+                        broker_account_id: brokerId,
+                        action: 'mgmt_modify',
+                        status: 'failed',
+                        error_message: safe.error ?? 'OrderModify failed',
+                        request_payload: { ticket, trade_id: tr.id, channel_stop_apply: true },
+                    });
+                    return { ...noop(), failed: 1, error: { tradeId: tr.id, ticket, message: safe.error ?? 'OrderModify failed' } };
                 }
-                await api.orderModify(uuid, modifyArgs);
+                // The SL is the protective stop — if it was requested but not applied
+                // (split TP-only success), the leg is not safe; flag for reconcile.
+                const slRequested = !tpOnly && target.stoploss > 0;
+                if (slRequested && !safe.slApplied) {
+                    return {
+                        ...noop(),
+                        failed: 1,
+                        error: { tradeId: tr.id, ticket, message: safe.error ?? 'SL not applied', skipReason: 'sl_not_applied' },
+                    };
+                }
                 const brokerOk = !verifyOnBroker
                     || !hasNewSl
                     || target.stoploss <= 0
+                    || !safe.slApplied
                     || verifyLegStopOnBroker(ordersByTicket, ticket, target.stoploss);
                 if (!brokerOk) {
-                    baseResult.failed += 1;
-                    totalFailed += 1;
-                    baseResult.errors.push({
-                        tradeId: tr.id,
-                        ticket,
-                        message: 'broker SL mismatch after OrderModify',
-                        skipReason: 'broker_verify_failed',
-                    });
-                    continue;
+                    return {
+                        ...noop(),
+                        failed: 1,
+                        error: {
+                            tradeId: tr.id,
+                            ticket,
+                            message: 'broker SL mismatch after OrderModify',
+                            skipReason: 'broker_verify_failed',
+                        },
+                    };
                 }
                 const dbPatch = {};
-                if (!tpOnly && target.stoploss > 0)
-                    dbPatch.sl = target.stoploss;
-                if (!slOnly && target.takeprofit > 0)
-                    dbPatch.tp = target.takeprofit;
+                if (!tpOnly && target.stoploss > 0 && safe.slApplied)
+                    dbPatch.sl = safe.appliedSl;
+                if (!slOnly && target.takeprofit > 0 && safe.tpApplied)
+                    dbPatch.tp = safe.appliedTp;
                 if (Object.keys(dbPatch).length > 0) {
                     await supabase.from('trades').update(dbPatch).eq('id', tr.id);
                 }
+                const tpReassigned = safe.tpApplied
+                    && (modifyArgs.takeprofit ?? 0) > 0
+                    && safe.appliedTp !== (modifyArgs.takeprofit ?? 0);
                 await supabase.from('trade_execution_logs').insert({
                     user_id: userId,
                     signal_id: signalId,
@@ -442,27 +521,24 @@ async function applyChannelStopsToBaskets(args) {
                     request_payload: {
                         ticket,
                         action: 'modify',
-                        target_sl: modifyArgs.stoploss ?? null,
-                        target_tp: modifyArgs.takeprofit ?? null,
+                        target_sl: safe.slApplied ? safe.appliedSl : null,
+                        target_tp: safe.tpApplied ? safe.appliedTp : null,
+                        requested_tp: modifyArgs.takeprofit ?? null,
+                        modify_mode: safe.mode,
+                        tp_reassigned: tpReassigned,
+                        tp_deferred: !safe.tpApplied && (modifyArgs.takeprofit ?? 0) > 0,
                         manual_push: manualPush,
                         trade_id: tr.id,
                         channel_stop_apply: true,
                     },
                 });
-                baseResult.modified += 1;
-                baseResult.verified += 1;
-                totalModified += 1;
+                return { ...noop(), modified: 1, verified: 1 };
             }
             catch (err) {
                 const msg = err instanceof Error ? err.message : String(err);
                 if ((0, orderModifyBenign_1.isBenignOrderModifyError)(msg)) {
-                    baseResult.skipped += 1;
-                    totalSkipped += 1;
-                    continue;
+                    return { ...noop(), skipped: 1 };
                 }
-                baseResult.failed += 1;
-                totalFailed += 1;
-                baseResult.errors.push({ tradeId: tr.id, ticket, message: msg });
                 try {
                     await supabase.from('trade_execution_logs').insert({
                         user_id: userId,
@@ -475,7 +551,22 @@ async function applyChannelStopsToBaskets(args) {
                     });
                 }
                 catch { /* best-effort */ }
+                return { ...noop(), failed: 1, error: { tradeId: tr.id, ticket, message: msg } };
             }
+        };
+        const outcomes = execPlan.length > 1
+            ? await (0, parallelPool_1.parallelMap)(execPlan, (0, parallelPool_1.mgmtLegConcurrency)(), execOne)
+            : await Promise.all(execPlan.map(execOne));
+        for (const o of outcomes) {
+            baseResult.modified += o.modified;
+            baseResult.failed += o.failed;
+            baseResult.skipped += o.skipped;
+            baseResult.verified += o.verified;
+            totalModified += o.modified;
+            totalFailed += o.failed;
+            totalSkipped += o.skipped;
+            if (o.error)
+                baseResult.errors.push(o.error);
         }
         baseResult.fullySynced = baseResult.openLegs > 0
             && baseResult.failed === 0

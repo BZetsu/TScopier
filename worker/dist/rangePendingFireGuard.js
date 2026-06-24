@@ -313,6 +313,9 @@ async function reconcileStaleClaimedLegs(supabase, staleBeforeIso) {
             stats.cancelled += 1;
             continue;
         }
+        // Only reset to pending — the monitor will re-evaluate trigger conditions
+        // with a fresh quote on the next tick. This is safe because isTriggered()
+        // is re-checked before every CAS claim attempt.
         const { data: reset } = await supabase
             .from('range_pending_legs')
             .update({ status: 'pending', claimed_at: null, claimed_by: null })

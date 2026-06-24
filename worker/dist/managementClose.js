@@ -21,6 +21,10 @@ async function closeOrderFast(api, uuid, ticket, slippage = 20) {
 async function closeWithVerification(api, uuid, ticket, opts = {}) {
     const liveFast = opts.liveFast === true;
     const verifySleepMs = mgmtCloseVerifySleepMs(liveFast);
+    // #region agent log
+    const _cwvStart = Date.now();
+    fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '89d082' }, body: JSON.stringify({ sessionId: '89d082', hypothesisId: 'H1', location: 'managementClose.ts:closeWithVerification', message: 'close path', data: { ticket, liveFast, verifySleepMs, maxAttempts: opts.maxAttempts ?? (liveFast && verifySleepMs === 0 ? 2 : 2) }, timestamp: _cwvStart }) }).catch(() => { });
+    // #endregion
     if (liveFast && verifySleepMs === 0) {
         const maxAttempts = opts.maxAttempts ?? 2;
         const slippageStep = opts.slippageEscalation ?? 50;

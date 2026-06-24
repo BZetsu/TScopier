@@ -1177,7 +1177,12 @@ class UserListener {
             const det = (0, parseSignal_1.parseChannelMessageSync)(args.rawMessage, keywords, lexicon);
             const detEntryParsed = det.status === 'parsed'
                 && (det.parsed.action === 'buy' || det.parsed.action === 'sell');
-            if (detEntryParsed) {
+            // A deterministically-parsed management action (breakeven / modify / close /
+            // partial / close-worse) must never be overridden by the AI entry parser —
+            // otherwise an instruction like "SL to Entry" gets re-guessed as a fresh
+            // entry on a hallucinated symbol and skipped as entry_requires_now.
+            const detManagementParsed = det.status === 'parsed' && (0, tradeSignalActions_1.isManagementAction)((0, tradeSignalActions_1.parsedAction)(det.parsed));
+            if (detEntryParsed || detManagementParsed) {
                 return { parseResult: det, channelKeywords: keywords };
             }
             if (!this.isModificationClassMessage(args.rawMessage, args.isReply, keywords, lexicon)) {

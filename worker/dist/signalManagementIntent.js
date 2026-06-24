@@ -9,6 +9,7 @@ exports.partialCloseFractionFromMessage = partialCloseFractionFromMessage;
 exports.isPipCountInMessage = isPipCountInMessage;
 exports.bareTradePricesExcludingPips = bareTradePricesExcludingPips;
 const multilingualManagementTerms_1 = require("./multilingualManagementTerms");
+const multilingualSignalTerms_1 = require("./multilingualSignalTerms");
 const trainingManagementKeywords_1 = require("./trainingManagementKeywords");
 const EXPLICIT_CLOSE_SYMBOL = 'gold|xauusd|xau|silver|xagusd|btc|bitcoin|btcusd|ethusd|eurusd|gbpusd|us30|nas100';
 /** All trained management aliases from channel keywords + lexicon buckets. */
@@ -128,12 +129,18 @@ function looksLikeChannelManagementUpdate(text, channelKeywords, lexicon) {
     const trained = trainedManagementAliases(channelKeywords, lexicon);
     if (trained.length > 0 && hasAnyKeyword(t, trained))
         return true;
+    // Breakeven cues ("sl to entry", "sl to be", "be now", …) are universal and
+    // safe — recognize them even when the channel has trained management config,
+    // otherwise "SL to Entry" is misrouted to the AI entry parser.
+    if (multilingualManagementTerms_1.COMMON_BREAKEVEN_PHRASES.some(p => (0, multilingualSignalTerms_1.messageContainsKeyword)(t, p)))
+        return true;
     if (!channelHasTrainedManagement(channelKeywords, lexicon)) {
         if ((0, multilingualManagementTerms_1.textLooksLikeMultilingualManagement)(t))
             return true;
     }
     return (/\b(move\s+stop|move\s+sl|move\s+risk|stop\s+to\s+breakeven|breakeven|break\s*even)\b/i.test(t)
-        || /\b(?:adjust|move|set|change|update)\s+(?:sl|stop\s*loss|stoploss|risk)\b/i.test(t)
+        || /\b(?:sl|stop\s*loss|stoploss|risk|stop)\s+to\s+(?:be|entry|breakeven|break\s*even)\b/i.test(t)
+        || /\b(?:adjust|move|set|change|update|make|bring)\s+(?:sl|stop\s*loss|stoploss|risk)\b/i.test(t)
         || /\b(?:sl|stop\s*loss|stoploss|risk)\s+to\s+\d/i.test(t)
         || /\b(close\s+partial|closing\s+partial|take\s+partial|partial\s+(?:lot|lots|lotsize|position|trade))\b/i.test(t)
         || /\bsecure\s+\d+\s*%\s*profit/i.test(t)

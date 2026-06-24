@@ -147,17 +147,21 @@ async function sendImmediateLegs(input) {
             };
             if (liveEntryFast) {
                 filledLegs.push(filledLeg);
-                const tradeInsert = await ctx.supabase
-                    .from('trades')
-                    .insert(tradeRowPayload)
-                    .select('id')
-                    .maybeSingle();
-                if (tradeInsert.error) {
-                    console.error(`[tradeExecutor] trades INSERT failed signal=${signal.id} broker=${broker.id} ticket=${result.ticket}: ${tradeInsert.error.message}`);
-                }
-                const tradeRowId = tradeInsert.data?.id ?? null;
-                filledLeg.tradeRowId = tradeRowId;
-                await persistPostFillDb(tradeRowId);
+                void (async () => {
+                    const tradeInsert = await ctx.supabase
+                        .from('trades')
+                        .insert(tradeRowPayload)
+                        .select('id')
+                        .maybeSingle();
+                    if (tradeInsert.error) {
+                        console.error(`[tradeExecutor] trades INSERT failed signal=${signal.id} broker=${broker.id} ticket=${result.ticket}: ${tradeInsert.error.message}`);
+                    }
+                    const tradeRowId = tradeInsert.data?.id ?? null;
+                    filledLeg.tradeRowId = tradeRowId;
+                    await persistPostFillDb(tradeRowId);
+                })().catch(err => {
+                    console.error(`[tradeExecutor] post-fill persist failed signal=${signal.id} broker=${broker.id} ticket=${result.ticket}:`, err instanceof Error ? err.message : String(err));
+                });
             }
             else {
                 const tradeInsert = await ctx.supabase

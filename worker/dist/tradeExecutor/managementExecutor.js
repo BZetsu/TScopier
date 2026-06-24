@@ -19,14 +19,34 @@ const channelStopApply_1 = require("../channelStopApply");
 const managementPendingLegs_1 = require("../managementPendingLegs");
 const managementScope_1 = require("../managementScope");
 const fxsocketClient_1 = require("../fxsocketClient");
+const basketSlTpReconcile_1 = require("../basketSlTpReconcile");
+const basketTargetStore_1 = require("../basketTargetStore");
 const multiTradeMerge_1 = require("../multiTradeMerge");
 const orderModifyBenign_1 = require("../orderModifyBenign");
+const orderModifySafe_1 = require("../orderModifySafe");
 const parallelPool_1 = require("../parallelPool");
 const rangePendingLadderSync_1 = require("../rangePendingLadderSync");
 const basketModFollowUp_1 = require("../basketModFollowUp");
 const helpers_1 = require("./helpers");
 function mgmtCloseOpts(liveMgmtFast) {
     return { maxAttempts: 2, slippageEscalation: 50, liveFast: liveMgmtFast };
+}
+function normBasketSymbolKey(sym) {
+    return String(sym ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+function mgmtRowToBasketLegForReconcile(row) {
+    return {
+        id: row.id,
+        signal_id: row.signal_id,
+        metaapi_order_id: row.metaapi_order_id,
+        opened_at: row.opened_at ?? '',
+        lot_size: row.lot_size,
+        sl: row.sl,
+        tp: row.tp,
+        entry_price: row.entry_price,
+        direction: row.direction,
+        symbol: row.symbol,
+    };
 }
 async function finalizeMgmtSignal(ctx, signalId) {
     try {
@@ -163,8 +183,8 @@ function findRawOrderByTicket(rawOrders, ticket) {
     return (0, signalEntryPendingHelpers_1.findOpenedRowByTicket)(rawOrders, ticket);
 }
 async function verifyBreakevenApplied(args) {
-    const { api, uuid, ticket, expectedSl, isBuy, pipPrice, confirmSl } = args;
-    const rawOrders = await api.openedOrders(uuid);
+    const { api, uuid, ticket, expectedSl, isBuy, pipPrice, confirmSl, ordersSnapshot } = args;
+    const rawOrders = ordersSnapshot ?? await api.openedOrders(uuid);
     const order = findRawOrderByTicket(rawOrders ?? [], ticket);
     if (!order)
         return { ok: false, reason: 'verify failed: ticket missing from opened orders' };
@@ -587,9 +607,58 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
     if (action === 'close' || action === 'breakeven' || action === 'partial_profit' || action === 'partial_breakeven') {
         legsTotal += eligibleTrades.length;
     }
-    const usedBreakevenTicketsByUuid = new Map();
     /** Most protective breakeven SL applied per symbol — persisted to channel memory after mgmt. */
     const channelBreakevenSlBySymbol = new Map();
+    /** Breakeven leg-level outcome tracking for the reconcile fallback + memory gating. */
+    const breakevenAppliedTradeIds = new Set();
+    const breakevenSlByTradeId = new Map();
+    const breakevenFailedSymbolKeys = new Set();
+    let breakevenNeedsRetry = false;
+    // Breakeven: one OpenedOrders snapshot per broker session + pre-assigned
+    // distinct tickets per leg, so legs run in parallel race-free (no shared
+    // ticket-exclusion map mutated mid-flight).
+    const breakevenOrdersByUuid = new Map();
+    const breakevenAssignedTicket = new Map();
+    const breakevenExcludeByTradeId = new Map();
+    const prepareBreakevenTickets = async () => {
+        const byUuid = new Map();
+        for (const trade of eligibleTrades) {
+            const broker = byBroker.get(trade.broker_account_id);
+            const u = broker ? (0, helpers_1.brokerSessionUuid)(broker) : null;
+            if (!u)
+                continue;
+            const list = byUuid.get(u) ?? [];
+            list.push(trade);
+            byUuid.set(u, list);
+        }
+        await Promise.all([...byUuid.entries()].map(async ([u, legs]) => {
+            const broker = byBroker.get(legs[0].broker_account_id);
+            const api = broker ? ctx.apiFor(broker) : null;
+            if (!api)
+                return;
+            const raw = (await api.openedOrders(u).catch(() => [])) ?? [];
+            breakevenOrdersByUuid.set(u, raw);
+            const used = new Set();
+            for (const leg of legs) {
+                const reconciled = resolveReconciledTicketForTrade(leg, raw, used);
+                const stored = Number(leg.metaapi_order_id);
+                const ticket = reconciled ?? (Number.isFinite(stored) && stored > 0 ? stored : null);
+                if (ticket != null) {
+                    breakevenAssignedTicket.set(leg.id, ticket);
+                    used.add(ticket);
+                }
+            }
+            // Each leg's exclude set = the other legs' assigned tickets (immutable).
+            for (const leg of legs) {
+                const mine = breakevenAssignedTicket.get(leg.id);
+                const excl = new Set();
+                for (const t of used)
+                    if (t !== mine)
+                        excl.add(t);
+                breakevenExcludeByTradeId.set(leg.id, excl);
+            }
+        }));
+    };
     const processTrade = async (trade) => {
         const broker = byBroker.get(trade.broker_account_id);
         if (!broker || !(0, helpers_1.brokerHasLinkedSession)(broker))
@@ -678,9 +747,12 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
                 }
             }
             else if (action === 'breakeven') {
-                const excludeTickets = usedBreakevenTicketsByUuid.get(uuid) ?? new Set();
-                const rawOrdersForReconcile = await api.openedOrders(uuid).catch(() => []);
-                const upfrontTicket = resolveReconciledTicketForTrade(trade, rawOrdersForReconcile ?? [], excludeTickets);
+                // Tickets were pre-reconciled once from a single OpenedOrders snapshot;
+                // use the pre-assigned ticket (no per-leg broker read here).
+                const excludeTickets = breakevenExcludeByTradeId.get(trade.id) ?? new Set();
+                const snapshotOrders = breakevenOrdersByUuid.get(uuid) ?? null;
+                const upfrontTicket = breakevenAssignedTicket.get(trade.id)
+                    ?? resolveReconciledTicketForTrade(trade, snapshotOrders ?? [], excludeTickets);
                 if (upfrontTicket && upfrontTicket !== effectiveTicket) {
                     ticketReconciledFrom = effectiveTicket;
                     effectiveTicket = upfrontTicket;
@@ -736,11 +808,13 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
                 catch {
                     /* quote optional; use computed breakeven SL */
                 }
-                const usedTickets = usedBreakevenTicketsByUuid.get(uuid) ?? new Set();
+                breakevenSlByTradeId.set(trade.id, beSl);
+                const verifyAfter = (0, parallelPool_1.mgmtVerifyAfterModify)();
                 const maxAttempts = 3;
                 let lastErr = null;
                 for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
                     try {
+                        // Pre-verify against the pre-fetched snapshot (no extra broker read).
                         const preVerify = await verifyBreakevenApplied({
                             api,
                             uuid,
@@ -748,37 +822,44 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
                             expectedSl: beSl,
                             isBuy,
                             pipPrice,
+                            ordersSnapshot: snapshotOrders ?? undefined,
                         });
                         if (preVerify.ok) {
                             lastErr = null;
                             break;
                         }
-                        const modRes = await api.orderModify(uuid, {
-                            ticket: effectiveTicket,
-                            stoploss: beSl,
-                            takeprofit: modifyTp,
-                        });
-                        const verify = await verifyBreakevenApplied({
-                            api,
-                            uuid,
-                            ticket: effectiveTicket,
-                            expectedSl: beSl,
-                            isBuy,
-                            pipPrice,
-                            confirmSl: modRes.stopLoss ?? beSl,
-                        });
-                        if (!verify.ok)
-                            throw new Error(verify.reason ?? 'verify failed');
+                        // SL-first with split fallback: the breakeven SL is the protective
+                        // stop and must land even if the (best-effort) TP is invalid.
+                        const safe = await (0, orderModifySafe_1.modifyLegSlTpWithFallback)(api, uuid, effectiveTicket, beSl, modifyTp);
+                        if (!safe.ok || (beSl > 0 && !safe.slApplied)) {
+                            throw new Error(safe.error ?? 'OrderModify failed');
+                        }
+                        const modRes = (safe.result ?? {});
+                        // Post-modify broker re-verify is off by default for speed; the
+                        // reconcile monitor re-checks broker SL and re-applies on drift.
+                        if (verifyAfter) {
+                            const verify = await verifyBreakevenApplied({
+                                api,
+                                uuid,
+                                ticket: effectiveTicket,
+                                expectedSl: beSl,
+                                isBuy,
+                                pipPrice,
+                                confirmSl: modRes.stopLoss ?? beSl,
+                            });
+                            if (!verify.ok)
+                                throw new Error(verify.reason ?? 'verify failed');
+                        }
                         lastErr = null;
                         break;
                     }
                     catch (err) {
                         lastErr = err;
                         const msg = err instanceof Error ? err.message : String(err);
-                        const excludeTickets = usedBreakevenTicketsByUuid.get(uuid) ?? new Set();
+                        // Re-reconcile from the pre-fetched snapshot + this leg's immutable
+                        // exclude set (other legs' tickets) — race-free under parallelism.
                         if (isUnknownTicketError(msg)) {
-                            const rawOrders = await api.openedOrders(uuid);
-                            const reconciledTicket = resolveReconciledTicketForTrade(trade, rawOrders ?? [], excludeTickets);
+                            const reconciledTicket = resolveReconciledTicketForTrade(trade, snapshotOrders ?? [], excludeTickets);
                             if (reconciledTicket && reconciledTicket !== effectiveTicket) {
                                 ticketReconciledFrom = effectiveTicket;
                                 effectiveTicket = reconciledTicket;
@@ -787,12 +868,6 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
                         }
                         if (attempt < maxAttempts && isRetryableBreakevenError(msg)) {
                             await sleepMs(250 * attempt);
-                            const rawOrders = await api.openedOrders(uuid).catch(() => []);
-                            const reconciledTicket = resolveReconciledTicketForTrade(trade, rawOrders ?? [], excludeTickets);
-                            if (reconciledTicket && reconciledTicket !== effectiveTicket) {
-                                ticketReconciledFrom = effectiveTicket;
-                                effectiveTicket = reconciledTicket;
-                            }
                             continue;
                         }
                         break;
@@ -800,8 +875,6 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
                 }
                 if (lastErr)
                     throw lastErr;
-                usedTickets.add(effectiveTicket);
-                usedBreakevenTicketsByUuid.set(uuid, usedTickets);
                 await ctx.supabase
                     .from('trades')
                     .update({
@@ -809,6 +882,7 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
                     ...(ticketReconciledFrom != null ? { metaapi_order_id: String(effectiveTicket) } : {}),
                 })
                     .eq('id', trade.id);
+                breakevenAppliedTradeIds.add(trade.id);
                 const symKey = trade.symbol;
                 const prev = channelBreakevenSlBySymbol.get(symKey);
                 if (!prev) {
@@ -884,6 +958,14 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
                     benign = false;
                 }
             }
+            if (action === 'breakeven') {
+                if (benign) {
+                    breakevenAppliedTradeIds.add(trade.id);
+                }
+                else {
+                    breakevenFailedSymbolKeys.add(normBasketSymbolKey(trade.symbol));
+                }
+            }
             await ctx.supabase.from('trade_execution_logs').insert({
                 user_id: signal.user_id,
                 signal_id: signal.id,
@@ -903,8 +985,65 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
             });
         }
     };
+    // Breakeven reconcile fallback: any eligible leg that did not verify at
+    // breakeven gets a basket_reconcile_job (per broker + anchor) so the basket
+    // SL converges on later monitor ticks — mirroring the modify path. Without
+    // this, a partial breakeven on a multi-leg basket was silently final.
+    const enqueueBreakevenReconcileFallback = async () => {
+        const failed = eligibleTrades.filter(t => {
+            const ticket = Number(t.metaapi_order_id);
+            return Number.isFinite(ticket) && ticket > 0 && !breakevenAppliedTradeIds.has(t.id);
+        });
+        if (!failed.length)
+            return;
+        breakevenNeedsRetry = true;
+        const groups = new Map();
+        for (const t of failed) {
+            const key = `${t.broker_account_id}|${t.signal_id}`;
+            const list = groups.get(key) ?? [];
+            list.push(t);
+            groups.set(key, list);
+        }
+        for (const [key, legs] of groups) {
+            const [brokerId, anchorSignalId] = key.split('|');
+            if (!brokerId || !anchorSignalId)
+                continue;
+            const broker = byBroker.get(brokerId);
+            if (!broker)
+                continue;
+            const symbol = legs[0].symbol;
+            const direction = String(legs[0].direction).toLowerCase().includes('sell') ? 'sell' : 'buy';
+            const familyTrades = legs.map(mgmtRowToBasketLegForReconcile);
+            const perLegTargets = legs.map(t => ({
+                stoploss: breakevenSlByTradeId.get(t.id) ?? sanitizeLevel(t.sl),
+                takeprofit: sanitizeLevel(t.tp),
+            }));
+            await (0, basketSlTpReconcile_1.upsertBasketReconcileJob)(ctx.supabase, {
+                userId: signal.user_id,
+                brokerAccountId: brokerId,
+                anchorSignalId,
+                sourceSignalId: signal.id,
+                channelId: signal.channel_id,
+                symbol,
+                direction,
+                perLegTargets,
+                familyTrades,
+                signalTps: [],
+                tpLots: (broker.manual_settings ?? {}).tp_lots,
+                virtualPendingsSnapshot: null,
+                nImmCwe: 0,
+                overrideTp: null,
+                lastError: `Breakeven partial: ${failed.length} leg(s) did not verify at breakeven`,
+            });
+        }
+        console.warn(`[tradeExecutor] breakeven partial — ${failed.length} leg(s) queued for reconcile signal=${signal.id}`);
+    };
     if (action === 'breakeven') {
-        if (liveMgmtFast && eligibleTrades.length > 1) {
+        // Pre-reconcile each leg to a distinct ticket from a single OpenedOrders
+        // snapshot per broker, so legs can run in parallel without racing on a
+        // shared ticket-exclusion map (the old serial-per-session bottleneck).
+        await prepareBreakevenTickets();
+        if (eligibleTrades.length > 1) {
             await Promise.allSettled(await (0, parallelPool_1.parallelMap)(eligibleTrades, legConcurrency, trade => processTrade(trade)));
         }
         else {
@@ -912,6 +1051,7 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
                 await processTrade(trade);
             }
         }
+        await enqueueBreakevenReconcileFallback();
     }
     else if (liveMgmtFast && eligibleTrades.length > 1) {
         await Promise.allSettled(await (0, parallelPool_1.parallelMap)(eligibleTrades, legConcurrency, trade => processTrade(trade)));
@@ -936,7 +1076,24 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
         return { legsTotal, legsParallelism: legConcurrency };
     }
     if (action === 'modify' && (hasNewSl || hasNewTp)) {
-        for (const brokerRows of rowsByBrokerSignal.values()) {
+        // One-shot staleness gate: if a basket already recorded a NEWER instruction
+        // (a later signal created_at) than this modify, applying this late-processed
+        // modify would push a stale SL/TP that the reconcile loop would then have to
+        // revert — the visible SL "conflict". Skip those baskets; the authoritative
+        // per-basket target already holds the newer value.
+        const staleBasketKeys = await (0, basketTargetStore_1.findStaleBasketKeys)(ctx.supabase, rowsByBrokerSignal.keys(), signal.created_at);
+        for (const key of staleBasketKeys) {
+            const [brokerId, anchorSignalId] = key.split('|');
+            if (!brokerId || !anchorSignalId)
+                continue;
+            await logBrokerMgmtSkip(ctx, signal, brokerId, 'mgmt_stale_instruction', {
+                anchor_signal_id: anchorSignalId,
+                signal_created_at: signal.created_at ?? null,
+            });
+        }
+        for (const [key, brokerRows] of rowsByBrokerSignal) {
+            if (staleBasketKeys.has(key))
+                continue;
             legsTotal += brokerRows.filter(r => {
                 const ticket = Number(r.metaapi_order_id);
                 return Number.isFinite(ticket) && ticket > 0;
@@ -944,9 +1101,14 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
         }
         if ((0, channelStopApply_1.mgmtUseChannelStopApply)()) {
             const stopLegs = (0, channelStopApply_1.mgmtRowsToStopLegs)(rows);
-            const rowsByBrokerSignalStop = (0, channelStopApply_1.groupLegsByBrokerSignal)(stopLegs);
+            const fullRowsByBrokerSignalStop = (0, channelStopApply_1.groupLegsByBrokerSignal)(stopLegs);
+            const rowsByBrokerSignalStop = staleBasketKeys.size
+                ? new Map([...fullRowsByBrokerSignalStop].filter(([k]) => !staleBasketKeys.has(k)))
+                : fullRowsByBrokerSignalStop;
             for (const broker of brokers) {
-                const hasBasket = [...rowsByBrokerSignalStop.keys()].some(k => k.startsWith(`${broker.id}|`));
+                // Use the unfiltered grouping so a basket skipped only for staleness is
+                // not mislabeled as "no open trades".
+                const hasBasket = [...fullRowsByBrokerSignalStop.keys()].some(k => k.startsWith(`${broker.id}|`));
                 if (!hasBasket) {
                     if (!(0, helpers_1.brokerHasLinkedSession)(broker)) {
                         await logBrokerMgmtSkip(ctx, signal, broker.id, 'no_broker_session');
@@ -958,40 +1120,47 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
                     }
                 }
             }
-            modifyApplyResult = await (0, channelStopApply_1.applyChannelStopsToBaskets)({
-                supabase: ctx.supabase,
-                apiFor: broker => ctx.apiFor(broker),
-                userId: signal.user_id,
-                channelId: signal.channel_id,
-                signalId: signal.id,
-                brokersById: byBroker,
-                rowsByBrokerSignal: rowsByBrokerSignalStop,
-                hasNewSl,
-                hasNewTp,
-                parsedSl: hasNewSl ? parsed.sl : null,
-                parsedTpLevels,
-                verifyOnBroker: true,
-            });
-            await (0, channelStopApply_1.logMgmtModifyBrokerSummaries)(ctx.supabase, signal.user_id, signal.id, modifyApplyResult.brokers);
-            legsTotal += modifyApplyResult.totalModified;
+            if (rowsByBrokerSignalStop.size > 0) {
+                modifyApplyResult = await (0, channelStopApply_1.applyChannelStopsToBaskets)({
+                    supabase: ctx.supabase,
+                    apiFor: broker => ctx.apiFor(broker),
+                    userId: signal.user_id,
+                    channelId: signal.channel_id,
+                    signalId: signal.id,
+                    brokersById: byBroker,
+                    rowsByBrokerSignal: rowsByBrokerSignalStop,
+                    hasNewSl,
+                    hasNewTp,
+                    parsedSl: hasNewSl ? parsed.sl : null,
+                    parsedTpLevels,
+                    verifyOnBroker: true,
+                });
+                await (0, channelStopApply_1.logMgmtModifyBrokerSummaries)(ctx.supabase, signal.user_id, signal.id, modifyApplyResult.brokers);
+                legsTotal += modifyApplyResult.totalModified;
+            }
         }
         else {
-            await (0, managementModifyBaskets_1.applyMgmtModifyToBasketGroups)({
-                supabase: ctx.supabase,
-                apiFor: broker => ctx.apiFor(broker),
-                signal: {
-                    id: signal.id,
-                    user_id: signal.user_id,
-                    channel_id: signal.channel_id,
-                },
-                parsed,
-                rowsByBrokerSignal,
-                brokersById: byBroker,
-                hasNewSl,
-                hasNewTp,
-                parsedTpLevels,
-                liveMgmtFast,
-            });
+            const mgmtRowsForApply = staleBasketKeys.size
+                ? new Map([...rowsByBrokerSignal].filter(([k]) => !staleBasketKeys.has(k)))
+                : rowsByBrokerSignal;
+            if (mgmtRowsForApply.size > 0) {
+                await (0, managementModifyBaskets_1.applyMgmtModifyToBasketGroups)({
+                    supabase: ctx.supabase,
+                    apiFor: broker => ctx.apiFor(broker),
+                    signal: {
+                        id: signal.id,
+                        user_id: signal.user_id,
+                        channel_id: signal.channel_id,
+                    },
+                    parsed,
+                    rowsByBrokerSignal: mgmtRowsForApply,
+                    brokersById: byBroker,
+                    hasNewSl,
+                    hasNewTp,
+                    parsedTpLevels,
+                    liveMgmtFast,
+                });
+            }
         }
     }
     if ((action === 'modify' || action === 'breakeven' || action === 'partial_breakeven')
@@ -1034,6 +1203,24 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
             tpLevels: hasNewTp ? parsedTpLevels : undefined,
             replace: true,
         });
+        // Record the latest adjustment as the authoritative per-basket target so
+        // new layers + reconcile use it (single source of truth, latest wins).
+        for (const [basketKey, brokerRows] of rowsByBrokerSignal) {
+            const [brokerId, anchorSignalId] = basketKey.split('|');
+            if (!brokerId || !anchorSignalId)
+                continue;
+            await (0, basketTargetStore_1.upsertBasketSlTpTarget)(ctx.supabase, {
+                userId: signal.user_id,
+                brokerAccountId: brokerId,
+                anchorSignalId,
+                channelId: signal.channel_id,
+                symbol: brokerRows[0]?.symbol ?? symbols[0] ?? 'UNKNOWN',
+                stoploss: hasNewSl ? parsed.sl : null,
+                tpLevels: hasNewTp ? parsedTpLevels : null,
+                source: 'adjust',
+                instructionAt: signal.created_at,
+            });
+        }
         if (pendingLegs.length > 0) {
             const tpLotsByBroker = new Map(brokers.map(b => [b.id, (b.manual_settings ?? {}).tp_lots]));
             const mgmtChannelParams = {
@@ -1073,9 +1260,16 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
             tradeSymbols: rows.map(r => r.symbol),
             pendingSymbols: pendingLegs.map(l => l.symbol),
         });
+        // Only persist "at breakeven" to channel memory for symbols where every
+        // eligible leg verified. Otherwise pending ladder legs would inherit a
+        // breakeven SL the open legs never actually reached (split-basket state).
+        // Failed symbols are healed by the reconcile fallback instead.
+        const symbolBreakevenOk = (sym) => !breakevenFailedSymbolKeys.has(normBasketSymbolKey(sym));
         let bestSl = 0;
         let bestIsBuy = true;
         for (const sym of symbols) {
+            if (!symbolBreakevenOk(sym))
+                continue;
             const hit = channelBreakevenSlBySymbol.get(sym);
             if (!hit)
                 continue;
@@ -1088,7 +1282,9 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
             }
         }
         if (bestSl <= 0) {
-            for (const hit of channelBreakevenSlBySymbol.values()) {
+            for (const [sym, hit] of channelBreakevenSlBySymbol) {
+                if (!symbolBreakevenOk(sym))
+                    continue;
                 if (bestSl <= 0) {
                     bestSl = hit.sl;
                     bestIsBuy = hit.isBuy;
@@ -1106,6 +1302,27 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
                 stoploss: bestSl,
                 replace: false,
             });
+            // Record breakeven as the authoritative per-basket target (SL only —
+            // merge keeps the existing TP ladder). Only for baskets whose symbol
+            // verified at breakeven.
+            for (const [basketKey, brokerRows] of rowsByBrokerSignal) {
+                const [brokerId, anchorSignalId] = basketKey.split('|');
+                if (!brokerId || !anchorSignalId)
+                    continue;
+                const basketSymbol = brokerRows[0]?.symbol ?? symbols[0] ?? 'UNKNOWN';
+                if (!symbolBreakevenOk(basketSymbol))
+                    continue;
+                await (0, basketTargetStore_1.upsertBasketSlTpTarget)(ctx.supabase, {
+                    userId: signal.user_id,
+                    brokerAccountId: brokerId,
+                    anchorSignalId,
+                    channelId: signal.channel_id,
+                    symbol: basketSymbol,
+                    stoploss: bestSl,
+                    source: 'breakeven',
+                    instructionAt: signal.created_at,
+                });
+            }
         }
     }
     if (action === 'close' && cancelledPendingScopes.size > 0 && !liveMgmtFast) {
@@ -1177,6 +1394,9 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
         console.warn(`[tradeExecutor] mgmt modify partial — leaving signal parsed for reconcile`
             + ` signal=${signal.id} modified=${modifyApplyResult.totalModified}`
             + ` failed=${modifyApplyResult.totalFailed}`);
+    }
+    else if (breakevenNeedsRetry) {
+        console.warn(`[tradeExecutor] mgmt breakeven partial — leaving signal parsed for reconcile signal=${signal.id}`);
     }
     else {
         await finalizeMgmtSignal(ctx, signal.id);

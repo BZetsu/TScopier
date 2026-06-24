@@ -12,9 +12,15 @@ exports.resolveRangeTpRebalanceGate = resolveRangeTpRebalanceGate;
 exports.hasClosedBasketLegs = hasClosedBasketLegs;
 exports.applyOpenLegStopLossToTargets = applyOpenLegStopLossToTargets;
 exports.preserveOpenLegTakeProfits = preserveOpenLegTakeProfits;
+exports.deepestFinalTp = deepestFinalTp;
+exports.resolveFiringLegStops = resolveFiringLegStops;
+exports.backfillNakedLegTakeProfits = backfillNakedLegTakeProfits;
+exports.fillZeroTargetsWithDeepest = fillZeroTargetsWithDeepest;
+exports.setActivePendingRangeLegsTakeProfit = setActivePendingRangeLegsTakeProfit;
 exports.syncRangeBasketTakeProfits = syncRangeBasketTakeProfits;
 const basketSlTpReconcile_1 = require("./basketSlTpReconcile");
 const channelActiveTradeParams_1 = require("./channelActiveTradeParams");
+const rangePendingFireGuard_1 = require("./rangePendingFireGuard");
 const basketEffectiveStops_1 = require("./basketEffectiveStops");
 const tpBucketDistribution_1 = require("./manualPlanning/tpBucketDistribution");
 const multiTradeMerge_1 = require("./multiTradeMerge");
@@ -126,7 +132,7 @@ function resolveRangeBasketLegCounts(args) {
     return { immediateLegCount, firedRangeLegCount, phase };
 }
 function buildRangeBasketTpTargets(args) {
-    const { familyTrades, plan, parsed, tpLots, direction, activePendingCount, maxPendingStepIdx, forceLayeringRebalance, channelTpLevels, finalTpsOverride, stoplossOverride, } = args;
+    const { familyTrades, plan, parsed, tpLots, direction, activePendingCount, maxPendingStepIdx, forceLayeringRebalance, channelTpLevels, finalTpsOverride, stoplossOverride, explicitSl, } = args;
     if (!familyTrades.length)
         return [];
     const fromPlan = (plan ? (0, multiTradeMerge_1.mergePlanImmediateOrders)(plan) : []).map(o => ({
@@ -176,7 +182,9 @@ function buildRangeBasketTpTargets(args) {
         finalTps,
         tpLots,
     });
-    return applyOpenLegStopLossToTargets(familyTrades, targets, isBuy);
+    return applyOpenLegStopLossToTargets(familyTrades, targets, isBuy, {
+        skipProtectiveMerge: explicitSl === true,
+    });
 }
 async function loadRangePendingMeta(supabase, brokerAccountId, signalId) {
     const { data: pendingRows } = await supabase
@@ -270,21 +278,33 @@ async function loadScopedChannelTpLevels(supabase, args) {
         return null;
     }
 }
-/** When open-leg TP redistribution is allowed for range baskets. */
+/**
+ * Decide how a range basket's open-leg TPs may change.
+ *
+ * Once any TP has been hit (`tpHit`: a closed leg OR a sticky live-quote TP
+ * touch) the basket is frozen — even under `forceLayeringRebalance` — so a price
+ * retrace can never repaint TP1/TP2 onto the remaining legs. New layering legs
+ * (Layer-till-close ON) are still given the deepest TP via the backfill pass.
+ */
 function resolveRangeTpRebalanceGate(args) {
+    const tpHit = args.hasClosedBasketLegs || args.tpTouched === true;
+    if (tpHit) {
+        return {
+            mode: 'backfill_only',
+            allowOpenLegTpModify: false,
+            reason: args.hasClosedBasketLegs ? 'basket_leg_closed' : 'tp_touched',
+        };
+    }
     if (args.forceLayeringRebalance === true) {
-        return { allowOpenLegTpModify: true, reason: 'force_layering_rebalance' };
+        return { mode: 'redistribute', allowOpenLegTpModify: true, reason: 'force_layering_rebalance' };
     }
     if (args.phase === 'instant_only') {
-        return { allowOpenLegTpModify: true, reason: 'instant_only' };
-    }
-    if (args.hasClosedBasketLegs) {
-        return { allowOpenLegTpModify: false, reason: 'basket_leg_closed' };
+        return { mode: 'redistribute', allowOpenLegTpModify: true, reason: 'instant_only' };
     }
     if (args.activePendingCount === 0 && args.maxPendingStepIdx > 0) {
-        return { allowOpenLegTpModify: false, reason: 'layering_complete' };
+        return { mode: 'backfill_only', allowOpenLegTpModify: false, reason: 'layering_complete' };
     }
-    return { allowOpenLegTpModify: false, reason: 'layering_rebalance_frozen' };
+    return { mode: 'backfill_only', allowOpenLegTpModify: false, reason: 'layering_rebalance_frozen' };
 }
 async function hasClosedBasketLegs(supabase, brokerAccountId, signalId) {
     const { data, error } = await supabase
@@ -304,7 +324,11 @@ async function hasClosedBasketLegs(supabase, brokerAccountId, signalId) {
  * Propagate the tightest SL already on open legs (e.g. breakeven) to every rebalance target.
  * New range layers otherwise inherit anchor SL and overwrite breakeven on sibling legs.
  */
-function applyOpenLegStopLossToTargets(familyTrades, perLegTargets, isBuy) {
+function applyOpenLegStopLossToTargets(familyTrades, perLegTargets, isBuy, opts) {
+    // When the SL is an explicit latest channel adjustment, it must win as-is —
+    // do not re-tighten it to the most-protective/current leg SL.
+    if (opts?.skipProtectiveMerge)
+        return perLegTargets;
     const basketProtective = (0, basketEffectiveStops_1.mostProtectiveOpenLegSl)(familyTrades, isBuy);
     return perLegTargets.map((t, i) => {
         let sl = Number(t.stoploss) || 0;
@@ -328,6 +352,81 @@ function preserveOpenLegTakeProfits(familyTrades, perLegTargets) {
         return t;
     });
 }
+/** Farthest/final TP for a direction-sorted ladder (buy: max, sell: min). */
+function deepestFinalTp(finalTps, isBuy) {
+    const tps = finalTps.filter(t => Number.isFinite(t) && t > 0);
+    if (!tps.length)
+        return 0;
+    return isBuy ? Math.max(...tps) : Math.min(...tps);
+}
+/**
+ * SL/TP a newly-firing range layer should open with, using the basket's
+ * resolved effective stops (latest Adjust signal / edit > channel memory >
+ * anchor, already merged with the most-protective open-leg SL).
+ *
+ *  - SL: always the latest effective SL when available (this is the fix — new
+ *    layers must not open with the stale anchor SL).
+ *  - TP: never repaint a leg that already carries a TP (it was distributed or
+ *    deepest-backfilled); a naked leg gets the deepest/final TP. CWE legs ride
+ *    with no TP (closed by cweCloseMonitor).
+ */
+function resolveFiringLegStops(args) {
+    const curSl = Number(args.legStoploss);
+    const effSl = Number(args.effective.stoploss);
+    const stoploss = Number.isFinite(effSl) && effSl > 0
+        ? effSl
+        : (Number.isFinite(curSl) && curSl > 0 ? curSl : 0);
+    if (args.cweClosePrice != null) {
+        return { stoploss, takeprofit: 0 };
+    }
+    const curTp = Number(args.legTakeprofit);
+    if (Number.isFinite(curTp) && curTp > 0) {
+        return { stoploss, takeprofit: curTp };
+    }
+    const deepest = deepestFinalTp(args.effective.tpLevels, args.isBuy);
+    return { stoploss, takeprofit: deepest > 0 ? deepest : 0 };
+}
+/**
+ * Freeze mode targets: never repaint a leg that already has a TP; assign the
+ * deepest/final TP to any leg that is naked (tp <= 0). This guarantees every
+ * open leg ends with SL + TP without redistributing after a TP has been hit.
+ */
+function backfillNakedLegTakeProfits(familyTrades, perLegTargets, finalTps, isBuy) {
+    const deepest = deepestFinalTp(finalTps, isBuy);
+    return perLegTargets.map((t, i) => {
+        const curTp = Number(familyTrades[i]?.tp);
+        if (Number.isFinite(curTp) && curTp > 0) {
+            return { ...t, takeprofit: curTp };
+        }
+        if (deepest > 0)
+            return { ...t, takeprofit: deepest };
+        return t;
+    });
+}
+/** Redistribute-mode safety net: never leave a target at 0 when a ladder exists. */
+function fillZeroTargetsWithDeepest(perLegTargets, finalTps, isBuy) {
+    const deepest = deepestFinalTp(finalTps, isBuy);
+    if (deepest <= 0)
+        return perLegTargets;
+    return perLegTargets.map(t => Number(t.takeprofit) > 0 ? t : { ...t, takeprofit: deepest });
+}
+/** Assign the deepest/final TP to all active (pending/claimed) range legs (frozen basket). */
+async function setActivePendingRangeLegsTakeProfit(supabase, brokerAccountId, signalId, takeprofit) {
+    if (!(takeprofit > 0))
+        return 0;
+    const { data, error } = await supabase
+        .from('range_pending_legs')
+        .update({ takeprofit })
+        .eq('broker_account_id', brokerAccountId)
+        .eq('signal_id', signalId)
+        .in('status', ['pending', 'claimed'])
+        .select('id');
+    if (error) {
+        console.warn(`[rangeBasketTpSync] freeze pending TP set failed signal=${signalId}: ${error.message}`);
+        return 0;
+    }
+    return (data?.length ?? 0);
+}
 async function reloadSignalParsed(supabase, signalId) {
     const { data } = await supabase
         .from('signals')
@@ -345,7 +444,7 @@ async function syncRangeBasketTakeProfits(args) {
         return;
     const { data: familyRows, error } = await args.supabase
         .from('trades')
-        .select('id,signal_id,metaapi_order_id,opened_at,lot_size,sl,tp,entry_price,direction,symbol')
+        .select('id,signal_id,metaapi_order_id,opened_at,lot_size,sl,tp,entry_price,direction,symbol,auto_be_applied_at')
         .eq('broker_account_id', args.brokerAccountId)
         .eq('signal_id', args.signalId)
         .eq('status', 'open')
@@ -365,6 +464,7 @@ async function syncRangeBasketTakeProfits(args) {
         basketCreatedAt: args.basketCreatedAt ?? familyTrades[0]?.opened_at ?? null,
         anchorParsed,
         familyTrades,
+        brokerAccountId: args.brokerAccountId,
     });
     (0, basketEffectiveStops_1.logEffectiveBasketStops)('[rangeBasketTpSync]', args.signalId, effective);
     let parsed = { ...effective.parsedSlice };
@@ -401,6 +501,7 @@ async function syncRangeBasketTakeProfits(args) {
                 basketCreatedAt: args.basketCreatedAt ?? familyTrades[0]?.opened_at ?? null,
                 anchorParsed: { ...anchorParsed, ...reloadedAnchor },
                 familyTrades,
+                brokerAccountId: args.brokerAccountId,
             });
             parsed = { ...reEffective.parsedSlice };
         }
@@ -441,9 +542,11 @@ async function syncRangeBasketTakeProfits(args) {
         channelTpLevels,
         finalTpsOverride: finalTps,
         stoplossOverride: effective.stoploss > 0 ? effective.stoploss : null,
+        explicitSl: effective.source === 'mgmt_signal',
     });
     if (!perLegTargets.length)
         return;
+    const explicitMgmtSl = effective.source === 'mgmt_signal';
     const planImmediateLegCount = estimatePlanImmediateLegCount({
         openLegCount: familyTrades.length,
         activePendingCount,
@@ -458,12 +561,18 @@ async function syncRangeBasketTakeProfits(args) {
     });
     const effectivePhase = args.forceLayeringRebalance ? 'layering_rebalance' : phase;
     const hasClosedLegs = await hasClosedBasketLegs(args.supabase, args.brokerAccountId, args.signalId);
+    const tpTouched = await (0, rangePendingFireGuard_1.hasTpTouchedLock)(args.supabase, {
+        signalId: args.signalId,
+        brokerAccountId: args.brokerAccountId,
+        symbol: args.symbol,
+    });
     const tpGate = resolveRangeTpRebalanceGate({
         activePendingCount,
         maxPendingStepIdx,
         phase: effectivePhase,
         forceLayeringRebalance: args.forceLayeringRebalance,
         hasClosedBasketLegs: hasClosedLegs,
+        tpTouched,
     });
     let openedTickets = null;
     try {
@@ -471,7 +580,23 @@ async function syncRangeBasketTakeProfits(args) {
     }
     catch { /* optional */ }
     const isBuy = args.direction === 'buy';
-    if (effectivePhase === 'layering_rebalance' && activePendingCount > 0) {
+    const deepestTp = deepestFinalTp(finalTps, isBuy);
+    const frozen = tpGate.mode === 'backfill_only';
+    // Pending (future) range legs.
+    if (frozen) {
+        // A TP has been hit: future legs are "new" and must fire with the deepest
+        // TP (never repaint existing open legs). Only relevant when Layer-till-close
+        // keeps the ladder active.
+        if (activePendingCount > 0 && deepestTp > 0) {
+            try {
+                await setActivePendingRangeLegsTakeProfit(args.supabase, args.brokerAccountId, args.signalId, deepestTp);
+            }
+            catch (err) {
+                console.warn(`[rangeBasketTpSync] freeze pending TP set failed signal=${args.signalId}:`, err instanceof Error ? err.message : String(err));
+            }
+        }
+    }
+    else if (effectivePhase === 'layering_rebalance' && activePendingCount > 0) {
         try {
             await patchPendingRangeLegTakeProfits({
                 supabase: args.supabase,
@@ -487,13 +612,23 @@ async function syncRangeBasketTakeProfits(args) {
             console.warn(`[rangeBasketTpSync] pending TP patch failed signal=${args.signalId}:`, err instanceof Error ? err.message : String(err));
         }
     }
+    // Open-leg targets: redistribute by % while layering (no TP hit), otherwise
+    // freeze existing TPs and only backfill naked legs with the deepest TP.
+    const openLegTargets = frozen
+        ? backfillNakedLegTakeProfits(familyTrades, perLegTargets, finalTps, isBuy)
+        : fillZeroTargetsWithDeepest(perLegTargets, finalTps, isBuy);
     const tpCounts = {};
-    for (const target of perLegTargets) {
+    for (const target of openLegTargets) {
         const key = String(target.takeprofit);
         tpCounts[key] = (tpCounts[key] ?? 0) + 1;
     }
     let modifyResult = null;
     const internalRebalance = effectivePhase === 'layering_rebalance';
+    let sharedQuote = null;
+    try {
+        sharedQuote = await args.api.quote(args.uuid, args.symbol);
+    }
+    catch { /* per-leg fallback inside runBasketLegModifies */ }
     const runModifyPass = (trades, targets) => (0, basketSlTpReconcile_1.runBasketLegModifies)({
         supabase: args.supabase,
         api: args.api,
@@ -511,52 +646,51 @@ async function syncRangeBasketTakeProfits(args) {
         tpLots: args.manual.tp_lots,
         nImmCwe: 0,
         overrideTp: null,
-        strictEntryPrefetch: null,
+        strictEntryPrefetch: sharedQuote,
         openedTickets,
         skipAlreadySynced: true,
+        parallelLegs: true,
         internalRebalance,
         effectiveStoploss: effective.stoploss > 0 ? effective.stoploss : undefined,
         orderCommentsEnabled: args.manual.order_comments_enabled !== false,
+        // Explicit latest channel adjustment must apply even if it loosens.
+        explicitChannelTargets: explicitMgmtSl,
     });
-    if (!tpGate.allowOpenLegTpModify) {
-        console.log(`[rangeBasketTpSync] skip open-leg TP modify signal=${args.signalId}`
-            + ` broker=${args.brokerAccountId} reason=${tpGate.reason}`);
-    }
-    else {
-        try {
-            modifyResult = await runModifyPass(familyTrades, perLegTargets);
-            if (args.forceLayeringRebalance && modifyResult.summary.failed > 0 && modifyResult.legErrors.length > 0) {
-                await new Promise(r => setTimeout(r, 750));
-                const failedIds = new Set(modifyResult.legErrors.map(e => e.trade_id));
-                const retryTrades = familyTrades.filter(t => failedIds.has(t.id));
-                const retryTargets = retryTrades.map(t => {
-                    const idx = familyTrades.findIndex(f => f.id === t.id);
-                    return perLegTargets[idx];
-                });
-                if (retryTrades.length > 0) {
-                    const retryResult = await runModifyPass(retryTrades, retryTargets);
-                    modifyResult = {
-                        summary: {
-                            openLegs: familyTrades.length,
-                            attempted: modifyResult.summary.attempted + retryResult.summary.attempted,
-                            modified: modifyResult.summary.modified + retryResult.summary.modified,
-                            failed: retryResult.summary.failed,
-                            skippedNoTicket: retryResult.summary.skippedNoTicket,
-                            skippedNotOnBroker: retryResult.summary.skippedNotOnBroker,
-                            skippedUnfixable: (modifyResult.summary.skippedUnfixable ?? 0)
-                                + (retryResult.summary.skippedUnfixable ?? 0),
-                        },
-                        legErrors: retryResult.legErrors,
-                        modifiedTradeIds: [
-                            ...new Set([...modifyResult.modifiedTradeIds, ...retryResult.modifiedTradeIds]),
-                        ],
-                    };
-                }
+    // Always run a modify pass: in frozen mode this only touches naked legs (and
+    // SL propagation); synced legs are skipped by stopsAlreadyMatch.
+    try {
+        modifyResult = await runModifyPass(familyTrades, openLegTargets);
+        if (modifyResult.summary.failed > 0 && modifyResult.legErrors.length > 0) {
+            await new Promise(r => setTimeout(r, Number(process.env.RANGE_REBALANCE_RETRY_DELAY_MS ?? 300)));
+            const failedIds = new Set(modifyResult.legErrors.map(e => e.trade_id));
+            const retryTrades = familyTrades.filter(t => failedIds.has(t.id));
+            const retryTargets = retryTrades.map(t => {
+                const idx = familyTrades.findIndex(f => f.id === t.id);
+                return openLegTargets[idx];
+            });
+            if (retryTrades.length > 0) {
+                const retryResult = await runModifyPass(retryTrades, retryTargets);
+                modifyResult = {
+                    summary: {
+                        openLegs: familyTrades.length,
+                        attempted: modifyResult.summary.attempted + retryResult.summary.attempted,
+                        modified: modifyResult.summary.modified + retryResult.summary.modified,
+                        failed: retryResult.summary.failed,
+                        skippedNoTicket: retryResult.summary.skippedNoTicket,
+                        skippedNotOnBroker: retryResult.summary.skippedNotOnBroker,
+                        skippedUnfixable: (modifyResult.summary.skippedUnfixable ?? 0)
+                            + (retryResult.summary.skippedUnfixable ?? 0),
+                    },
+                    legErrors: retryResult.legErrors,
+                    modifiedTradeIds: [
+                        ...new Set([...modifyResult.modifiedTradeIds, ...retryResult.modifiedTradeIds]),
+                    ],
+                };
             }
         }
-        catch (err) {
-            console.warn(`[rangeBasketTpSync] leg modify failed signal=${args.signalId} broker=${args.brokerAccountId}:`, err instanceof Error ? err.message : String(err));
-        }
+    }
+    catch (err) {
+        console.warn(`[rangeBasketTpSync] leg modify failed signal=${args.signalId} broker=${args.brokerAccountId}:`, err instanceof Error ? err.message : String(err));
     }
     await logRangeBasketTpRebalance(args.supabase, {
         userId: args.userId,
@@ -571,7 +705,7 @@ async function syncRangeBasketTakeProfits(args) {
         tpCounts,
         effectiveSl: effective.stoploss,
         effectiveSlSource: effective.source,
-        skippedReason: tpGate.allowOpenLegTpModify ? undefined : tpGate.reason,
+        skippedReason: frozen ? tpGate.reason : undefined,
     });
     if (modifyResult && modifyResult.summary.modified > 0) {
         console.log(`[rangeBasketTpSync] rebalanced signal=${args.signalId} broker=${args.brokerAccountId}`

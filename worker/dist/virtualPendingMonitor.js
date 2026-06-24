@@ -14,7 +14,9 @@ const fxsocketClient_1 = require("./fxsocketClient");
 const mtApiByAccount_1 = require("./mtApiByAccount");
 const autoManagement_1 = require("./autoManagement");
 const basketModFollowUp_1 = require("./basketModFollowUp");
-const channelActiveTradeParams_1 = require("./channelActiveTradeParams");
+const basketSlTpReconcile_1 = require("./basketSlTpReconcile");
+const basketReconcileTargets_1 = require("./basketReconcileTargets");
+const basketEffectiveStops_1 = require("./basketEffectiveStops");
 const channelTradingConfig_1 = require("./channelTradingConfig");
 const rangePendingLadderSync_1 = require("./rangePendingLadderSync");
 const normalizeManualSettings_1 = require("./manualPlanning/normalizeManualSettings");
@@ -135,6 +137,7 @@ class VirtualPendingMonitor {
          *  still log one line every N ticks so it's obvious the monitor is alive
          *  and how far the live quote sits from the nearest trigger. */
         this.quietTicks = 0;
+        this.reconcileTicks = 0;
         this.firstTickLogged = false;
         /** Throttle basket_in_profit skip logs — legs re-check every tick. */
         this.profitSkipLogAt = new Map();
@@ -245,7 +248,11 @@ class VirtualPendingMonitor {
         }
         this.platformByUuid = await (0, mtApiByAccount_1.loadPlatformByFxsocketId)(this.supabase, rows.map(r => r.metaapi_account_id));
         // SL/TP/manual broker closes leave DB trades "open" — reconcile before triggers.
-        await (0, rangePendingBasketCleanup_1.reconcilePendingLegBasketsFromBroker)(this.supabase, rows, uuid => (0, mtApiByAccount_1.apiForFxsocketAccount)(this.platformByUuid, uuid));
+        // Run every 5th tick (~7.5s) instead of every tick to avoid blocking the fire path.
+        this.reconcileTicks += 1;
+        if (this.reconcileTicks % 5 === 1) {
+            await (0, rangePendingBasketCleanup_1.reconcilePendingLegBasketsFromBroker)(this.supabase, rows, uuid => (0, mtApiByAccount_1.apiForFxsocketAccount)(this.platformByUuid, uuid));
+        }
         // Group by (account, symbol) so we issue at most ONE /Quote per group.
         const groups = new Map();
         for (const r of rows) {
@@ -345,14 +352,18 @@ class VirtualPendingMonitor {
                 arr.push(leg);
                 byBasket.set(bk, arr);
             }
+            const fireJobs = [];
             for (const [, arr] of byBasket) {
                 arr.sort((a, b) => a.step_idx - b.step_idx || a.id.localeCompare(b.id));
                 const winner = arr[0];
                 if (!winner)
                     continue;
                 triggeredTotal += 1;
-                const ok = await this.fireLeg(winner, q.bid, q.ask);
-                if (ok)
+                fireJobs.push({ leg: winner, bid: q.bid, ask: q.ask });
+            }
+            const fireResults = await Promise.allSettled(fireJobs.map(j => this.fireLeg(j.leg, j.bid, j.ask)));
+            for (const r of fireResults) {
+                if (r.status === 'fulfilled' && r.value)
                     firedOkTotal += 1;
                 else
                     firedErrTotal += 1;
@@ -430,8 +441,22 @@ class VirtualPendingMonitor {
             if (!userId)
                 continue;
             const layerTillClose = await (0, rangeLayerTillClose_1.loadRangeLayerTillCloseForSignal)(this.supabase, signalId, brokerAccountId);
-            if (layerTillClose)
+            if (layerTillClose) {
+                // Layer-till-close ON: keep layering (legs must keep firing, so do NOT
+                // add to `touched`), but still record a sticky TP-touch marker so the
+                // TP-distribution freeze engages — new legs get the deepest TP and
+                // existing legs are never repainted after a TP is hit.
+                await (0, rangePendingFireGuard_1.setTpTouchedLock)(this.supabase, {
+                    signalId,
+                    brokerAccountId,
+                    symbol,
+                    userId,
+                    lockReason: decision.reason ?? 'tp_touched',
+                    triggerPrice: decision.triggerPrice ?? null,
+                    triggerSide: decision.triggerSide ?? null,
+                });
                 continue;
+            }
             const { stopped, deleted } = await (0, rangeLayerTillClose_1.stopRangeLayeringUnlessEnabled)(this.supabase, { signalId, brokerAccountId, symbol, userId }, decision.reason ?? 'tp_touched');
             if (!stopped)
                 continue;
@@ -475,6 +500,61 @@ class VirtualPendingMonitor {
             console.warn(`[virtualPendingMonitor] release claim failed leg=${legId}: ${error.message}`);
         }
     }
+    /**
+     * Enqueue a basket reconcile job for a freshly-filled range leg's basket.
+     * Used when the post-fill SL/TP follow-up or TP rebalance fails, so the new
+     * leg (and its siblings) converge to the channel SL/TP ladder on later
+     * reconcile ticks instead of being left mis-aligned until the periodic sweep.
+     */
+    async enqueueReconcileForLegBasket(leg, channelId) {
+        try {
+            const familyTrades = await (0, basketSlTpReconcile_1.loadOpenBasketLegs)(this.supabase, leg.broker_account_id, leg.signal_id, leg.symbol);
+            if (!familyTrades.length)
+                return;
+            const manualRaw = await this.loadManualSettingsForLeg(leg.broker_account_id, channelId);
+            const manual = {
+                range_trading: manualRaw.range_trading === true,
+                tp_lots: manualRaw.tp_lots,
+            };
+            const direction = leg.is_buy ? 'buy' : 'sell';
+            const { perLegTargets, signalTps } = await (0, basketReconcileTargets_1.resolveFreshBasketReconcileTargets)(this.supabase, {
+                anchorSignalId: leg.signal_id,
+                channelId,
+                symbol: leg.symbol,
+                direction,
+                userId: leg.user_id,
+                brokerAccountId: leg.broker_account_id,
+                familyTrades,
+                storedTargets: [],
+                manual,
+                nImmCwe: 0,
+                overrideTp: null,
+            });
+            if (!perLegTargets.length)
+                return;
+            await (0, basketSlTpReconcile_1.upsertBasketReconcileJob)(this.supabase, {
+                userId: leg.user_id,
+                brokerAccountId: leg.broker_account_id,
+                anchorSignalId: leg.signal_id,
+                sourceSignalId: leg.signal_id,
+                channelId,
+                symbol: leg.symbol,
+                direction,
+                perLegTargets,
+                familyTrades,
+                signalTps,
+                tpLots: manual.tp_lots,
+                virtualPendingsSnapshot: null,
+                nImmCwe: 0,
+                overrideTp: null,
+                lastError: 'Range fill follow-up failed; reconcile basket SL/TP',
+            });
+        }
+        catch (err) {
+            console.warn(`[virtualPendingMonitor] enqueue reconcile failed leg=${leg.id}:`
+                + ` ${err instanceof Error ? err.message : String(err)}`);
+        }
+    }
     async markLegFiredWithRetry(legId, ticket) {
         let lastErr;
         for (let attempt = 0; attempt < 3; attempt++) {
@@ -493,10 +573,19 @@ class VirtualPendingMonitor {
         const api = (0, mtApiByAccount_1.apiForFxsocketAccount)(this.platformByUuid, leg.metaapi_account_id);
         if (!api)
             return false;
+        // Use the tick-level quote directly — it was fetched moments ago in this
+        // same tick cycle. The monotonicity check below still prevents stale fires.
+        let guardBid = bid;
+        let guardAsk = ask;
+        // Monotonicity check: verify price is still triggered at fresh quote.
+        // Prevents firing when price briefly dipped to trigger then bounced back.
+        if (!isTriggered(leg.is_buy, leg.trigger_price, guardBid, guardAsk)) {
+            return false;
+        }
         const layerTillClose = await (0, rangeLayerTillClose_1.loadRangeLayerTillCloseForSignal)(this.supabase, leg.signal_id, leg.broker_account_id);
         const block = await (0, rangePendingFireGuard_1.shouldBlockVirtualLegFire)(this.supabase, leg, {
             layerTillClose,
-            quote: { bid, ask },
+            quote: { bid: guardBid, ask: guardAsk },
             isBuy: leg.is_buy,
         });
         if (block.block) {
@@ -545,26 +634,44 @@ class VirtualPendingMonitor {
         catch {
             // best-effort — fire with stops from the tick snapshot
         }
-        // Channel memory may hold a newer SL than the leg row (e.g. symbol-less Adjust SL).
-        // Only when the memory was written during this basket's lifetime — older
-        // memory belongs to a previous signal and produces wrong-side stops.
+        // A new layer must fire with the LATEST SL/TP, not the stale anchor value.
+        // resolveEffectiveBasketStops is the same source of truth the rebalance and
+        // reconcile paths use: latest Adjust signal (incl. entry edits) > channel
+        // memory > anchor, merged with the most-protective open-leg SL. Reading the
+        // anchor's current parsed_data means message edits are honored too.
         let channelIdForTrade = null;
         try {
             const { data: sigMeta } = await this.supabase
                 .from('signals')
-                .select('channel_id,created_at')
+                .select('channel_id,created_at,parsed_data')
                 .eq('id', leg.signal_id)
                 .maybeSingle();
             channelIdForTrade = sigMeta?.channel_id ?? null;
             const basketCreatedAt = sigMeta?.created_at ?? null;
-            if (channelIdForTrade) {
-                const channelParams = await (0, channelActiveTradeParams_1.loadChannelActiveTradeParamsForSymbol)(this.supabase, leg.user_id, channelIdForTrade, leg.symbol);
-                if (channelParams?.stoploss != null
-                    && channelParams.stoploss > 0
-                    && !(0, channelActiveTradeParams_1.channelParamsPredateBasket)(channelParams, basketCreatedAt)) {
-                    leg.stoploss = channelParams.stoploss;
-                }
-            }
+            const anchorParsed = (0, rangeBasketTpSync_1.toRangeBasketParsedSlice)(sigMeta?.parsed_data);
+            const familyTrades = await (0, basketSlTpReconcile_1.loadOpenBasketLegs)(this.supabase, leg.broker_account_id, leg.signal_id, leg.symbol);
+            const effective = await (0, basketEffectiveStops_1.resolveEffectiveBasketStops)({
+                supabase: this.supabase,
+                userId: leg.user_id,
+                channelId: channelIdForTrade,
+                anchorSignalId: leg.signal_id,
+                symbol: leg.symbol,
+                basketCreatedAt,
+                anchorParsed,
+                familyTrades,
+                brokerAccountId: leg.broker_account_id,
+            });
+            const firing = (0, rangeBasketTpSync_1.resolveFiringLegStops)({
+                legStoploss: leg.stoploss,
+                legTakeprofit: leg.takeprofit,
+                cweClosePrice: leg.cwe_close_price,
+                effective,
+                isBuy: leg.is_buy,
+            });
+            if (firing.stoploss > 0)
+                leg.stoploss = firing.stoploss;
+            if (leg.cwe_close_price == null && firing.takeprofit > 0)
+                leg.takeprofit = firing.takeprofit;
         }
         catch {
             // best-effort — fire with stops from pending leg row
@@ -575,22 +682,9 @@ class VirtualPendingMonitor {
             return true;
         }
         const params = await this.getSymbolParams(leg.metaapi_account_id, leg.symbol);
-        // The tick's quote can be seconds old by now (claim + guard round-trips).
-        // Re-quote just before send and require the leg is STILL triggered AND the
-        // fill side sits within slippage of the rung — otherwise release the claim
-        // and let the leg fire when price genuinely returns to its level.
-        let fireBid = bid;
-        let fireAsk = ask;
-        try {
-            const fresh = await api.quote(leg.metaapi_account_id, leg.symbol);
-            if (Number.isFinite(fresh.bid) && Number.isFinite(fresh.ask)) {
-                fireBid = fresh.bid;
-                fireAsk = fresh.ask;
-            }
-        }
-        catch {
-            // fall back to the tick quote
-        }
+        // Reuse the tick quote — already validated by monotonicity check above.
+        const fireBid = guardBid;
+        const fireAsk = guardAsk;
         const band = fillWithinTriggerBand({
             isBuy: leg.is_buy,
             triggerPrice: leg.trigger_price,
@@ -684,7 +778,26 @@ class VirtualPendingMonitor {
                 ...autoBeCols,
             }).select('id').maybeSingle();
             if (insErr) {
+                // The broker position is open but we failed to record the trades row.
+                // Surface it as an orphan so ops/reconcile can reconcile it from the
+                // broker (reconcile-by-anchor cannot see a leg missing from `trades`).
                 console.warn(`[virtualPendingMonitor] trades insert failed leg=${leg.id}: ${insErr.message}`);
+                try {
+                    await this.supabase.from('trade_execution_logs').insert({
+                        user_id: leg.user_id,
+                        signal_id: leg.signal_id,
+                        broker_account_id: leg.broker_account_id,
+                        action: 'virtual_pending_orphan',
+                        status: 'failed',
+                        request_payload: {
+                            leg_id: leg.id,
+                            ticket: result.ticket ?? null,
+                            step_idx: leg.step_idx,
+                        },
+                        error_message: `trades insert failed after fire: ${insErr.message}`,
+                    });
+                }
+                catch { /* best-effort */ }
             }
             const ticketNum = result.ticket != null ? Number(result.ticket) : NaN;
             const tradeRowId = insTrade?.id ?? null;
@@ -709,14 +822,16 @@ class VirtualPendingMonitor {
                 }
                 catch (hookErr) {
                     console.warn(`[virtualPendingMonitor] SL/TP follow-up for range leg=${leg.id} signal=${leg.signal_id}:`, hookErr);
+                    await this.enqueueReconcileForLegBasket(leg, channelIdForTrade);
                 }
                 // Brief pause so the new trade row is visible before the basket-wide rebalance query.
-                await new Promise(r => setTimeout(r, 500));
+                await new Promise(r => setTimeout(r, Number(process.env.RANGE_REBALANCE_SETTLE_MS ?? 150)));
                 try {
                     await this.rebalanceRangeBasketTakeProfits(leg, { forceLayeringRebalance: true });
                 }
                 catch (rebalErr) {
                     console.warn(`[virtualPendingMonitor] TP rebalance after range fill leg=${leg.id} signal=${leg.signal_id}:`, rebalErr);
+                    await this.enqueueReconcileForLegBasket(leg, channelIdForTrade);
                 }
             }
             else if (tradeRowId && Number.isFinite(ticketNum) && ticketNum > 0) {
@@ -746,7 +861,7 @@ class VirtualPendingMonitor {
         catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             console.error(`[virtualPendingMonitor] fire failed leg=${leg.id} signal=${leg.signal_id} stepIdx=${leg.step_idx}: ${msg}`);
-            if ((0, brokerConnectError_1.isMtBridgeGlitchMessage)(msg)) {
+            if ((0, brokerConnectError_1.isMtBridgeGlitchMessage)(msg) || (0, fxsocketClient_1.isTransientMtApiError)(err)) {
                 await this.supabase
                     .from('range_pending_legs')
                     .update({
@@ -756,7 +871,7 @@ class VirtualPendingMonitor {
                     error_message: null,
                 })
                     .eq('id', leg.id);
-                console.warn(`[virtualPendingMonitor] bridge glitch leg=${leg.id} — released back to pending for retry`);
+                console.warn(`[virtualPendingMonitor] transient fire error leg=${leg.id} — released back to pending for retry: ${msg}`);
                 return false;
             }
             await this.supabase

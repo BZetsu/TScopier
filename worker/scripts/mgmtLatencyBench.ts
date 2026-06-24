@@ -18,6 +18,8 @@ process.env.FXSOCKET_API_KEY = process.env.FXSOCKET_API_KEY ?? 'bench'
 
 import { applyChannelStopsToBaskets, type ChannelStopBroker, type ChannelStopLeg } from '../src/channelStopApply'
 import { runBasketLegModifies, type BasketOpenLeg, type BasketSymbolParams } from '../src/basketSlTpReconcile'
+import { perAccountTradeConcurrency } from '../src/fxsocketClient'
+import { createConcurrencyGate, runWithAccountLimit, type ConcurrencyGate } from '../src/perAccountConcurrency'
 
 const RTT = Math.max(0, Number(process.env.BENCH_RTT_MS ?? 250))
 const LEGS = Math.max(1, Number(process.env.BENCH_LEGS ?? 32))
@@ -32,15 +34,26 @@ const SYMBOL_PARAMS: BasketSymbolParams = {
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 
-function makeApi(tickets: number[]) {
-  const calls = { openedOrders: 0, quote: 0, orderModify: 0, symbolParams: 0 }
+function makeApi(tickets: number[], opts?: { gate?: ConcurrencyGate; gateLimit?: number }) {
+  const calls = { openedOrders: 0, quote: 0, orderModify: 0, symbolParams: 0, peakModify: 0 }
+  let activeModify = 0
+  // Mirror the real client: only trade ops (orderModify here) are gated per account.
+  const gatedModify = async (a: { stoploss?: number; takeprofit?: number }) => {
+    activeModify++; calls.peakModify = Math.max(calls.peakModify, activeModify)
+    calls.orderModify++
+    await sleep(RTT)
+    activeModify--
+    return { stopLoss: a.stoploss, takeProfit: a.takeprofit }
+  }
   const api = {
     calls,
     seedPlatformCache() {},
     async openedOrders() { calls.openedOrders++; await sleep(RTT); return tickets.map(t => ({ ticket: t })) },
     async quote() { calls.quote++; await sleep(RTT); return { bid: ENTRY, ask: ENTRY + 0.2, symbol: SYMBOL } },
     async orderModify(_uuid: string, a: { stoploss?: number; takeprofit?: number }) {
-      calls.orderModify++; await sleep(RTT); return { stopLoss: a.stoploss, takeProfit: a.takeprofit }
+      return opts?.gate
+        ? runWithAccountLimit(opts.gate, 'b1', opts.gateLimit ?? perAccountTradeConcurrency(), () => gatedModify(a))
+        : gatedModify(a)
     },
     async symbolParams() { calls.symbolParams++; await sleep(RTT); return SYMBOL_PARAMS },
   }
@@ -120,8 +133,8 @@ async function benchChannelStopApply() {
   return { ms, calls: api.calls }
 }
 
-async function benchRunBasketLegModifies(opts: { parallel: boolean; sharedQuote: boolean }) {
-  const api = makeApi(tickets)
+async function benchRunBasketLegModifies(opts: { parallel: boolean; sharedQuote: boolean; gate?: ConcurrencyGate; gateLimit?: number }) {
+  const api = makeApi(tickets, { gate: opts.gate, gateLimit: opts.gateLimit })
   const prefetch = opts.sharedQuote ? { bid: ENTRY, ask: ENTRY + 0.2 } : null
   const { ms } = await timed(() => runBasketLegModifies({
     supabase: makeSupabase() as never,
@@ -140,25 +153,35 @@ async function benchRunBasketLegModifies(opts: { parallel: boolean; sharedQuote:
 }
 
 async function main() {
-  console.log(`mgmt latency bench: legs=${LEGS} rtt=${RTT}ms concurrency=${process.env.MGMT_LEG_CONCURRENCY ?? 8}\n`)
+  const gateLimit = perAccountTradeConcurrency()
+  console.log(
+    `mgmt latency bench: legs=${LEGS} rtt=${RTT}ms apply_concurrency=${process.env.MGMT_LEG_CONCURRENCY ?? 8}`
+    + ` per_account_gate=${gateLimit}\n`,
+  )
 
-  const rows: Array<{ scenario: string; wall_ms: number; openedOrders: number; quote: number; orderModify: number }> = []
+  const rows: Array<{ scenario: string; wall_ms: number; openedOrders: number; quote: number; orderModify: number; peak: number }> = []
 
   const cs = await benchChannelStopApply()
-  rows.push({ scenario: 'modify: applyChannelStopsToBaskets (current)', wall_ms: cs.ms, openedOrders: cs.calls.openedOrders, quote: cs.calls.quote, orderModify: cs.calls.orderModify })
+  rows.push({ scenario: 'modify: applyChannelStopsToBaskets', wall_ms: cs.ms, openedOrders: cs.calls.openedOrders, quote: cs.calls.quote, orderModify: cs.calls.orderModify, peak: cs.calls.peakModify })
 
   const serialPerLegQuote = await benchRunBasketLegModifies({ parallel: false, sharedQuote: false })
-  rows.push({ scenario: 'rebalance: serial + per-leg quote (old)', wall_ms: serialPerLegQuote.ms, openedOrders: serialPerLegQuote.calls.openedOrders, quote: serialPerLegQuote.calls.quote, orderModify: serialPerLegQuote.calls.orderModify })
+  rows.push({ scenario: 'rebalance: serial + per-leg quote (old)', wall_ms: serialPerLegQuote.ms, openedOrders: serialPerLegQuote.calls.openedOrders, quote: serialPerLegQuote.calls.quote, orderModify: serialPerLegQuote.calls.orderModify, peak: serialPerLegQuote.calls.peakModify })
 
-  const parallelSharedQuote = await benchRunBasketLegModifies({ parallel: true, sharedQuote: true })
-  rows.push({ scenario: 'rebalance: parallel + shared quote (current)', wall_ms: parallelSharedQuote.ms, openedOrders: parallelSharedQuote.calls.openedOrders, quote: parallelSharedQuote.calls.quote, orderModify: parallelSharedQuote.calls.orderModify })
+  const parallelUngated = await benchRunBasketLegModifies({ parallel: true, sharedQuote: true })
+  rows.push({ scenario: 'rebalance: parallel + shared quote (no gate)', wall_ms: parallelUngated.ms, openedOrders: parallelUngated.calls.openedOrders, quote: parallelUngated.calls.quote, orderModify: parallelUngated.calls.orderModify, peak: parallelUngated.calls.peakModify })
+
+  const gate = createConcurrencyGate()
+  const parallelGated = await benchRunBasketLegModifies({ parallel: true, sharedQuote: true, gate, gateLimit })
+  rows.push({ scenario: `rebalance: parallel + per-account gate=${gateLimit} (live)`, wall_ms: parallelGated.ms, openedOrders: parallelGated.calls.openedOrders, quote: parallelGated.calls.quote, orderModify: parallelGated.calls.orderModify, peak: parallelGated.calls.peakModify })
 
   const pad = (s: string, n: number) => s.padEnd(n)
-  console.log(pad('scenario', 46), pad('wall_ms', 9), pad('openedOrders', 13), pad('quote', 7), 'orderModify')
+  console.log(pad('scenario', 48), pad('wall_ms', 9), pad('orderModify', 12), 'peak_concurrent')
   for (const r of rows) {
-    console.log(pad(r.scenario, 46), pad(String(r.wall_ms), 9), pad(String(r.openedOrders), 13), pad(String(r.quote), 7), r.orderModify)
+    console.log(pad(r.scenario, 48), pad(String(r.wall_ms), 9), pad(String(r.orderModify), 12), r.peak)
   }
-  console.log(`\nTheoretical floor (1 wave of orderModify at concurrency): ~${RTT}ms + snapshot ${RTT}ms = ~${2 * RTT}ms`)
+  console.log(
+    `\nWaves (gated) = ceil(${LEGS}/${gateLimit}) = ${Math.ceil(LEGS / gateLimit)} -> ~${Math.ceil(LEGS / gateLimit) * RTT}ms + snapshot ${RTT}ms`,
+  )
 }
 
 main().catch(err => { console.error(err); process.exit(1) })

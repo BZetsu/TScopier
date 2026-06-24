@@ -12,14 +12,21 @@ const channelTradingConfig_1 = require("./channelTradingConfig");
 const fxsocketClient_2 = require("./fxsocketClient");
 const copierPause_1 = require("./copierPause");
 const helpers_1 = require("./tradeExecutor/helpers");
-const ACTIVE_MS = (0, monitorIdleGate_1.monitorActiveIntervalMs)('BASKET_RECONCILE_TICK_MS', 15000);
-const IDLE_MS = (0, monitorIdleGate_1.monitorIdleIntervalMs)('BASKET_RECONCILE_IDLE_MS', 120000);
+const ACTIVE_MS = (0, monitorIdleGate_1.monitorActiveIntervalMs)('BASKET_RECONCILE_TICK_MS', 5000);
+const IDLE_MS = (0, monitorIdleGate_1.monitorIdleIntervalMs)('BASKET_RECONCILE_IDLE_MS', 15000);
 const JOB_BATCH_LIMIT = Math.min(80, Math.max(5, Number(process.env.BASKET_RECONCILE_SWEEP_BATCH ?? 50)));
 const HOST_ID = `worker-${process.pid}`;
 function reconcileTargetsHaveSl(targets) {
     return targets.some(t => (t.stoploss ?? 0) > 0);
 }
-const SWEEP_INTERVAL_MS = Math.min(600000, Math.max(60000, Number(process.env.BASKET_RECONCILE_SWEEP_MS ?? 180000)));
+const SWEEP_INTERVAL_MS = Math.min(600000, Math.max(30000, Number(process.env.BASKET_RECONCILE_SWEEP_MS ?? 90000)));
+/**
+ * A job stuck in `claimed` longer than this (worker crashed mid-process, or pod
+ * killed during deploy) is reset to `pending` so it is reprocessed. processJob
+ * makes a single runBasketLegModifies pass, so legitimate work finishes well
+ * within this window.
+ */
+const STALE_CLAIM_MS = Math.min(600000, Math.max(60000, Number(process.env.BASKET_RECONCILE_STALE_CLAIM_MS ?? 120000)));
 class BasketSlTpReconcileMonitor {
     constructor(supabase) {
         this.supabase = supabase;
@@ -69,7 +76,36 @@ class BasketSlTpReconcileMonitor {
             this.ticking = false;
         }
     }
+    /**
+     * Reset jobs stranded in `claimed` (crashed worker / killed pod) back to
+     * `pending` so they are reprocessed. Without this they were invisible to both
+     * the pending job select and the drift sweep (which skips claimed rows).
+     */
+    async reclaimStaleClaimedJobs() {
+        const cutoff = new Date(Date.now() - STALE_CLAIM_MS).toISOString();
+        const nowIso = new Date().toISOString();
+        const { data, error } = await this.supabase
+            .from('basket_reconcile_jobs')
+            .update({
+            status: 'pending',
+            next_run_at: nowIso,
+            locked_at: null,
+            locked_by: null,
+            last_error: 'reclaimed stale claim',
+            updated_at: nowIso,
+        })
+            .eq('status', 'claimed')
+            .lt('locked_at', cutoff)
+            .select('id');
+        if (error) {
+            console.warn(`[basketSlTpReconcileMonitor] stale-claim reclaim failed: ${error.message}`);
+        }
+        else if ((data ?? []).length > 0) {
+            console.warn(`[basketSlTpReconcileMonitor] reclaimed ${(data ?? []).length} stale claimed job(s)`);
+        }
+    }
     async tick() {
+        await this.reclaimStaleClaimedJobs();
         const now = new Date().toISOString();
         const { data: jobs, error } = await this.supabase
             .from('basket_reconcile_jobs')
@@ -165,7 +201,7 @@ class BasketSlTpReconcileMonitor {
         const anchorChannelId = anchorSig?.channel_id ?? row.channel_id;
         const manual = (0, normalizeManualSettings_1.normalizeManualSettingsForExecution)((0, channelTradingConfig_1.resolveChannelTradingConfig)(broker, anchorChannelId).manual_settings);
         const storedTargets = (0, basketSlTpReconcile_1.parsePerLegTargets)(row.per_leg_targets);
-        const { perLegTargets: freshTargets, signalTps: freshSignalTps, effectiveStoploss, } = await (0, basketReconcileTargets_1.resolveFreshTargetsForJob)(this.supabase, row, familyTrades, manual);
+        const { perLegTargets: freshTargets, signalTps: freshSignalTps, effectiveStoploss, effectiveSlSource, } = await (0, basketReconcileTargets_1.resolveFreshTargetsForJob)(this.supabase, row, familyTrades, manual);
         const effectiveTargets = freshTargets.length ? freshTargets : storedTargets;
         if (!effectiveTargets.length) {
             await this.releaseJob(row.id, 'empty per_leg_targets', row.attempts);
@@ -193,6 +229,12 @@ class BasketSlTpReconcileMonitor {
         catch { /* optional */ }
         const openedTickets = await (0, basketSlTpReconcile_1.fetchOpenBrokerTickets)(api, uuid);
         const baseLot = Number(broker.default_lot_size ?? 0.01);
+        // One shared quote for the whole basket instead of one per leg.
+        let sharedQuote = null;
+        try {
+            sharedQuote = await api.quote(uuid, row.symbol);
+        }
+        catch { /* per-leg fallback inside runBasketLegModifies */ }
         const { summary, legErrors } = await (0, basketSlTpReconcile_1.runBasketLegModifies)({
             supabase: this.supabase,
             api,
@@ -210,13 +252,17 @@ class BasketSlTpReconcileMonitor {
             tpLots: manual.tp_lots,
             nImmCwe: row.n_imm_cwe ?? 0,
             overrideTp: row.override_tp,
-            strictEntryPrefetch: null,
+            strictEntryPrefetch: sharedQuote,
             openedTickets,
             skipAlreadySynced: true,
+            parallelLegs: true,
             internalRebalance: manual.range_trading === true,
             effectiveStoploss: effectiveStoploss > 0 ? effectiveStoploss : undefined,
             orderCommentsEnabled: manual.order_comments_enabled !== false,
-            explicitChannelTargets: row.source_signal_id !== row.anchor_signal_id,
+            // Explicit latest channel adjustment must apply even if it loosens; also
+            // when this job was enqueued from a mgmt signal (source != anchor).
+            explicitChannelTargets: row.source_signal_id !== row.anchor_signal_id
+                || effectiveSlSource === 'mgmt_signal',
         });
         const mergeFailed = (0, basketSlTpReconcile_1.basketLegModifyMergeFailed)(summary);
         let brokerStillDrift = false;

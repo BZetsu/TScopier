@@ -17,6 +17,7 @@ const orderModifyBenign_1 = require("./orderModifyBenign");
 const signalEntryPendingHelpers_1 = require("./signalEntryPendingHelpers");
 const basketSlTpReconcile_1 = require("./basketSlTpReconcile");
 const rangeBasketTpSync_1 = require("./rangeBasketTpSync");
+const rangePendingFireGuard_1 = require("./rangePendingFireGuard");
 const channelTradingConfig_1 = require("./channelTradingConfig");
 const normalizeManualSettings_1 = require("./manualPlanning/normalizeManualSettings");
 const copierPause_1 = require("./copierPause");
@@ -47,6 +48,7 @@ async function resolveFreshBasketReconcileTargets(supabase, args) {
         basketCreatedAt: anchorCreatedAt,
         anchorParsed,
         familyTrades: args.familyTrades,
+        brokerAccountId: args.brokerAccountId,
     });
     (0, basketEffectiveStops_1.logEffectiveBasketStops)('[basketReconcileTargets]', args.anchorSignalId, effective);
     const parsed = { ...effective.parsedSlice };
@@ -69,11 +71,17 @@ async function resolveFreshBasketReconcileTargets(supabase, args) {
             maxPendingStepIdx,
         });
         const hasClosedLegs = await (0, rangeBasketTpSync_1.hasClosedBasketLegs)(supabase, args.brokerAccountId, args.anchorSignalId);
+        const tpTouched = await (0, rangePendingFireGuard_1.hasTpTouchedLock)(supabase, {
+            signalId: args.anchorSignalId,
+            brokerAccountId: args.brokerAccountId,
+            symbol: args.symbol,
+        });
         const tpGate = (0, rangeBasketTpSync_1.resolveRangeTpRebalanceGate)({
             activePendingCount,
             maxPendingStepIdx,
             phase,
             hasClosedBasketLegs: hasClosedLegs,
+            tpTouched,
         });
         const built = (0, rangeBasketTpSync_1.buildRangeBasketTpTargets)({
             familyTrades: args.familyTrades,
@@ -86,19 +94,23 @@ async function resolveFreshBasketReconcileTargets(supabase, args) {
             channelTpLevels,
             finalTpsOverride: signalTps.length ? signalTps : null,
             stoplossOverride: effective.stoploss > 0 ? effective.stoploss : null,
+            explicitSl: effective.source === 'mgmt_signal',
         });
+        const isBuy = args.direction === 'buy';
         let mapped = built.map(t => ({
             stoploss: Number(t.stoploss) || 0,
             takeprofit: Number(t.takeprofit) || 0,
         }));
-        if (!tpGate.allowOpenLegTpModify) {
-            mapped = (0, rangeBasketTpSync_1.preserveOpenLegTakeProfits)(args.familyTrades, mapped).map(t => ({
-                stoploss: Number(t.stoploss) || 0,
-                takeprofit: Number(t.takeprofit) || 0,
-            }));
-        }
+        // Frozen (a TP was hit): never repaint existing legs; only backfill naked
+        // legs with the deepest TP. Otherwise distribute, but never leave a 0 TP.
+        mapped = (tpGate.mode === 'backfill_only'
+            ? (0, rangeBasketTpSync_1.backfillNakedLegTakeProfits)(args.familyTrades, mapped, signalTps, isBuy)
+            : (0, rangeBasketTpSync_1.fillZeroTargetsWithDeepest)(mapped, signalTps, isBuy)).map(t => ({
+            stoploss: Number(t.stoploss) || 0,
+            takeprofit: Number(t.takeprofit) || 0,
+        }));
         perLegTargets = mapped;
-        tpFrozen = !tpGate.allowOpenLegTpModify;
+        tpFrozen = tpGate.mode === 'backfill_only';
     }
     else {
         const slNum = typeof parsed.sl === 'number' && parsed.sl > 0 ? parsed.sl : 0;

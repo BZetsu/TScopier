@@ -400,7 +400,7 @@ function wantsExplicitFullClose(message, kwClose, channelKeywords, lexicon) {
 /** Stop-loss labels used in management updates (providers often say "risk" or "stoploss"). */
 const SL_TEXT_LABELS = 'sl|stop\\s*loss|stoploss|risk';
 const TP_TEXT_LABELS = 'tp|take\\s*profit|target';
-const SL_MGMT_VERBS = 'set|move|adjust|bring|change|update';
+const SL_MGMT_VERBS = 'set|move|adjust|bring|change|update|make';
 function slPriceFromClause(clause) {
     const slClauseTo = clause.match(new RegExp(`\\bto\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'i'));
     if (slClauseTo?.[1])

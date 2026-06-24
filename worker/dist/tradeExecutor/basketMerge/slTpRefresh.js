@@ -115,6 +115,7 @@ async function applyBasketSlTpRefresh(ctx, args) {
         sl: plannerParsed.sl,
         tp: plannerParsed.tp,
     };
+    let effectiveSlIsExplicitMgmt = false;
     if (manual.range_trading === true && anchorSignalId && signal.channel_id) {
         const resolvedStops = await (0, basketEffectiveStops_1.resolveEffectiveBasketStops)({
             supabase: ctx.supabase,
@@ -125,6 +126,7 @@ async function applyBasketSlTpRefresh(ctx, args) {
             basketCreatedAt: anchorCreatedAt,
             anchorParsed: (0, rangeBasketTpSync_1.toRangeBasketParsedSlice)(effectiveParsed),
             familyTrades,
+            brokerAccountId: broker.id,
         });
         (0, basketEffectiveStops_1.logEffectiveBasketStops)('[tradeExecutor]', anchorSignalId, resolvedStops);
         if (resolvedStops.stoploss > 0) {
@@ -133,6 +135,12 @@ async function applyBasketSlTpRefresh(ctx, args) {
         if (resolvedStops.tpLevels.length) {
             effectiveParsed = { ...effectiveParsed, tp: resolvedStops.tpLevels };
         }
+        effectiveSlIsExplicitMgmt = resolvedStops.source === 'mgmt_signal';
+    }
+    if (!effectiveSlIsExplicitMgmt && logAction === 'merge_routed_modify_only') {
+        const parsedSl = typeof effectiveParsed.sl === 'number' ? effectiveParsed.sl : 0;
+        if (parsedSl > 0)
+            effectiveSlIsExplicitMgmt = true;
     }
     if (!(0, manualPlanner_1.parsedHasExplicitEntryAnchor)(plannerParsed)) {
         const ep = Number(newest.entry_price);
@@ -263,6 +271,10 @@ async function applyBasketSlTpRefresh(ctx, args) {
             direction: direction,
             activePendingCount,
             maxPendingStepIdx,
+            stoplossOverride: effectiveSlIsExplicitMgmt
+                ? (typeof effectiveParsed.sl === 'number' && effectiveParsed.sl > 0 ? effectiveParsed.sl : null)
+                : null,
+            explicitSl: effectiveSlIsExplicitMgmt,
         })
         : (0, multiTradeMerge_1.buildPerLegStopTargets)({
             plan,
@@ -393,6 +405,7 @@ async function applyBasketSlTpRefresh(ctx, args) {
             skipAlreadySynced: true,
             liveMgmtFast,
             orderCommentsEnabled: manual.order_comments_enabled !== false,
+            explicitChannelTargets: effectiveSlIsExplicitMgmt,
         });
         for (const id of pass.modifiedTradeIds)
             modifiedTradeIds.add(id);
