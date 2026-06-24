@@ -28,12 +28,12 @@ const DEFAULT_BASE_URL = 'https://api.fxsocket.com'
 
 const FXSOCKET_HTTP_CONNECTIONS = Math.max(
   8,
-  Math.min(512, Number(process.env.FXSOCKET_HTTP_CONNECTIONS ?? 128)),
+  Math.min(512, Number(process.env.FXSOCKET_HTTP_CONNECTIONS ?? 64)),
 )
 
 const FXSOCKET_HTTP_PIPELINING = Math.max(
   1,
-  Math.min(10, Number(process.env.FXSOCKET_HTTP_PIPELINING ?? 6)),
+  Math.min(10, Number(process.env.FXSOCKET_HTTP_PIPELINING ?? 1)),
 )
 
 const KEEP_ALIVE_AGENT = new Agent({
