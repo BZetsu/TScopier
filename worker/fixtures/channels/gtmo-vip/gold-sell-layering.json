@@ -1,0 +1,5 @@
+{
+  "name": "Gold sell now with SL and multi-TP ladder (range layering)",
+  "message": "SELL XAUUSD NOW SL 2665 TP 2640 TP 2630 TP 2620",
+  "expect": { "status": "parsed", "action": "sell", "symbol": "XAUUSD", "sl": 2665, "tpCount": 3 }
+}

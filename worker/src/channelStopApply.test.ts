@@ -2,13 +2,34 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
   allChannelModifySymbolBuckets,
+  applyChannelStopsToBaskets,
   brokerOrderSlMatchesTarget,
   groupLegsByBrokerSignal,
   mgmtUseChannelStopApply,
   verifyLegStopOnBroker,
 } from './channelStopApply'
-import type { ChannelStopLeg } from './channelStopApply'
+import type { ChannelStopBroker, ChannelStopLeg } from './channelStopApply'
 import type { MgmtTradeRow } from './managementScope'
+
+const FX_UUID = '11111111-1111-1111-1111-111111111111'
+
+function chainableSupabase() {
+  const builder: Record<string, unknown> = {}
+  const self = () => builder
+  builder.insert = () => Promise.resolve({ data: null, error: null })
+  builder.update = self
+  builder.upsert = () => Promise.resolve({ data: { id: 'job-1' }, error: null })
+  builder.delete = self
+  builder.select = self
+  builder.eq = self
+  builder.in = self
+  builder.order = self
+  builder.limit = self
+  builder.maybeSingle = () => Promise.resolve({ data: null, error: null })
+  builder.single = () => Promise.resolve({ data: null, error: null })
+  builder.then = (res: (v: unknown) => unknown) => Promise.resolve({ data: null, error: null }).then(res)
+  return { from: () => builder }
+}
 
 describe('channelStopApply', () => {
   it('mgmtUseChannelStopApply defaults to true', () => {
@@ -95,5 +116,67 @@ describe('channelStopApply', () => {
       },
     ]
     assert.equal(allChannelModifySymbolBuckets(trades).length, 2)
+  })
+
+  it('modifies legs in parallel (faster mgmt on big baskets)', async () => {
+    const prevKey = process.env.FXSOCKET_API_KEY
+    process.env.FXSOCKET_API_KEY = 'test-key'
+    const legs: ChannelStopLeg[] = Array.from({ length: 16 }, (_, i) => ({
+      id: `t${i}`,
+      signal_id: 'sig-a',
+      broker_account_id: 'b1',
+      metaapi_order_id: String(1000 + i),
+      symbol: 'XAUUSD',
+      direction: 'sell',
+      sl: 4200,
+      tp: 4100,
+      opened_at: `2026-06-20T10:00:${String(i).padStart(2, '0')}Z`,
+      entry_price: 4150,
+      telegram_channel_id: 'ch-1',
+    }))
+    const broker: ChannelStopBroker = {
+      id: 'b1',
+      platform: 'mt5',
+      fxsocket_account_id: FX_UUID,
+      manual_settings: { tp_lots: null },
+    }
+
+    let inFlight = 0
+    let maxConcurrent = 0
+    const attempted = new Set<number>()
+    const api = {
+      seedPlatformCache: () => {},
+      openedOrders: async () => legs.map(l => ({ ticket: Number(l.metaapi_order_id) })),
+      orderModify: async (_uuid: string, modifyArgs: { ticket: number }) => {
+        attempted.add(modifyArgs.ticket)
+        inFlight += 1
+        maxConcurrent = Math.max(maxConcurrent, inFlight)
+        await new Promise(r => setTimeout(r, 10))
+        inFlight -= 1
+        return { stopLoss: 4180 }
+      },
+    }
+
+    const result = await applyChannelStopsToBaskets({
+      supabase: chainableSupabase() as never,
+      apiFor: () => api as never,
+      userId: 'user-1',
+      channelId: 'ch-1',
+      signalId: 'sig-mod',
+      brokersById: new Map([['b1', broker]]),
+      rowsByBrokerSignal: new Map([['b1|sig-a', legs]]),
+      hasNewSl: true,
+      hasNewTp: false,
+      parsedSl: 4180,
+      parsedTpLevels: [],
+      verifyOnBroker: false,
+    })
+
+    if (prevKey == null) delete process.env.FXSOCKET_API_KEY
+    else process.env.FXSOCKET_API_KEY = prevKey
+
+    assert.equal(attempted.size, 16, 'all legs attempted')
+    assert.equal(result.totalModified, 16)
+    assert.ok(maxConcurrent > 1, `expected parallel modifies, got max concurrency ${maxConcurrent}`)
   })
 })

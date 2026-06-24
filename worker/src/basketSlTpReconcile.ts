@@ -310,6 +310,8 @@ export async function runBasketLegModifies(args: {
   alreadyModified?: Set<string>
   /** Live Telegram mgmt: parallel leg modifies, no inter-leg gap. */
   liveMgmtFast?: boolean
+  /** Force parallel leg modifies (e.g. range rebalance) without liveMgmtFast semantics. */
+  parallelLegs?: boolean
   /** Range-basket TP rebalance — tag per-leg logs for UI suppression. */
   internalRebalance?: boolean
   /** When set, internal rebalance must not revert legs to anchor SL below this value. */
@@ -323,7 +325,7 @@ export async function runBasketLegModifies(args: {
     supabase, api, uuid, symbol, direction, baseLot, params,
     signalId, userId, brokerAccountId, familyTrades, perLegTargets: rawTargets,
     signalTps, tpLots, nImmCwe, strictEntryPrefetch, openedTickets, skipAlreadySynced, alreadyModified,
-    liveMgmtFast, internalRebalance, effectiveStoploss,
+    liveMgmtFast, parallelLegs, internalRebalance, effectiveStoploss,
     orderCommentsEnabled, explicitChannelTargets,
   } = args
 
@@ -646,8 +648,9 @@ export async function runBasketLegModifies(args: {
   }
 
   const legIndices = familyTrades.map((_, idx) => idx)
+  const runParallel = (liveFast || parallelLegs === true) && familyTrades.length > 1
   let legOutcomes: LegOutcome[]
-  if (liveFast && familyTrades.length > 1) {
+  if (runParallel) {
     legOutcomes = await parallelMap(legIndices, mgmtLegConcurrency(), idx => processLeg(idx))
   } else {
     legOutcomes = []

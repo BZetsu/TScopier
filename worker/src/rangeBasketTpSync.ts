@@ -10,6 +10,7 @@ import {
   channelParamsPredateBasket,
   loadChannelActiveTradeParamsForSymbol,
 } from './channelActiveTradeParams'
+import { hasTpTouchedLock } from './rangePendingFireGuard'
 import {
   logEffectiveBasketStops,
   mergeWithProtectiveLegSl,
@@ -395,32 +396,57 @@ async function loadScopedChannelTpLevels(
   }
 }
 
+/**
+ * TP-distribution lifecycle mode for a range basket:
+ *  - `redistribute`: actively re-spread TP across all open legs by % (during
+ *    layering, before any TP is hit).
+ *  - `backfill_only`: a TP has been hit (frozen) OR layering is complete — never
+ *    repaint existing legs; only assign the deepest TP to legs that have none.
+ */
+export type TpRebalanceMode = 'redistribute' | 'backfill_only'
+
 export type RangeTpRebalanceGateResult = {
+  mode: TpRebalanceMode
+  /** Back-compat: true only when full redistribution is allowed. */
   allowOpenLegTpModify: boolean
   reason: string
 }
 
-/** When open-leg TP redistribution is allowed for range baskets. */
+/**
+ * Decide how a range basket's open-leg TPs may change.
+ *
+ * Once any TP has been hit (`tpHit`: a closed leg OR a sticky live-quote TP
+ * touch) the basket is frozen — even under `forceLayeringRebalance` — so a price
+ * retrace can never repaint TP1/TP2 onto the remaining legs. New layering legs
+ * (Layer-till-close ON) are still given the deepest TP via the backfill pass.
+ */
 export function resolveRangeTpRebalanceGate(args: {
   activePendingCount: number
   maxPendingStepIdx: number
   phase: RangeBasketTpPhase
   forceLayeringRebalance?: boolean
   hasClosedBasketLegs: boolean
+  /** Sticky live-quote TP touch (range_pending_tp_locks). */
+  tpTouched?: boolean
 }): RangeTpRebalanceGateResult {
+  const tpHit = args.hasClosedBasketLegs || args.tpTouched === true
+  if (tpHit) {
+    return {
+      mode: 'backfill_only',
+      allowOpenLegTpModify: false,
+      reason: args.hasClosedBasketLegs ? 'basket_leg_closed' : 'tp_touched',
+    }
+  }
   if (args.forceLayeringRebalance === true) {
-    return { allowOpenLegTpModify: true, reason: 'force_layering_rebalance' }
+    return { mode: 'redistribute', allowOpenLegTpModify: true, reason: 'force_layering_rebalance' }
   }
   if (args.phase === 'instant_only') {
-    return { allowOpenLegTpModify: true, reason: 'instant_only' }
-  }
-  if (args.hasClosedBasketLegs) {
-    return { allowOpenLegTpModify: false, reason: 'basket_leg_closed' }
+    return { mode: 'redistribute', allowOpenLegTpModify: true, reason: 'instant_only' }
   }
   if (args.activePendingCount === 0 && args.maxPendingStepIdx > 0) {
-    return { allowOpenLegTpModify: false, reason: 'layering_complete' }
+    return { mode: 'backfill_only', allowOpenLegTpModify: false, reason: 'layering_complete' }
   }
-  return { allowOpenLegTpModify: false, reason: 'layering_rebalance_frozen' }
+  return { mode: 'backfill_only', allowOpenLegTpModify: false, reason: 'layering_rebalance_frozen' }
 }
 
 export async function hasClosedBasketLegs(
@@ -477,6 +503,70 @@ export function preserveOpenLegTakeProfits(
     }
     return t
   })
+}
+
+/** Farthest/final TP for a direction-sorted ladder (buy: max, sell: min). */
+export function deepestFinalTp(finalTps: number[], isBuy: boolean): number {
+  const tps = finalTps.filter(t => Number.isFinite(t) && t > 0)
+  if (!tps.length) return 0
+  return isBuy ? Math.max(...tps) : Math.min(...tps)
+}
+
+/**
+ * Freeze mode targets: never repaint a leg that already has a TP; assign the
+ * deepest/final TP to any leg that is naked (tp <= 0). This guarantees every
+ * open leg ends with SL + TP without redistributing after a TP has been hit.
+ */
+export function backfillNakedLegTakeProfits(
+  familyTrades: BasketOpenLeg[],
+  perLegTargets: PerLegStopTargetLike[],
+  finalTps: number[],
+  isBuy: boolean,
+): PerLegStopTargetLike[] {
+  const deepest = deepestFinalTp(finalTps, isBuy)
+  return perLegTargets.map((t, i) => {
+    const curTp = Number(familyTrades[i]?.tp)
+    if (Number.isFinite(curTp) && curTp > 0) {
+      return { ...t, takeprofit: curTp }
+    }
+    if (deepest > 0) return { ...t, takeprofit: deepest }
+    return t
+  })
+}
+
+/** Redistribute-mode safety net: never leave a target at 0 when a ladder exists. */
+export function fillZeroTargetsWithDeepest(
+  perLegTargets: PerLegStopTargetLike[],
+  finalTps: number[],
+  isBuy: boolean,
+): PerLegStopTargetLike[] {
+  const deepest = deepestFinalTp(finalTps, isBuy)
+  if (deepest <= 0) return perLegTargets
+  return perLegTargets.map(t =>
+    Number(t.takeprofit) > 0 ? t : { ...t, takeprofit: deepest },
+  )
+}
+
+/** Assign the deepest/final TP to all active (pending/claimed) range legs (frozen basket). */
+export async function setActivePendingRangeLegsTakeProfit(
+  supabase: SupabaseClient,
+  brokerAccountId: string,
+  signalId: string,
+  takeprofit: number,
+): Promise<number> {
+  if (!(takeprofit > 0)) return 0
+  const { data, error } = await supabase
+    .from('range_pending_legs')
+    .update({ takeprofit })
+    .eq('broker_account_id', brokerAccountId)
+    .eq('signal_id', signalId)
+    .in('status', ['pending', 'claimed'])
+    .select('id')
+  if (error) {
+    console.warn(`[rangeBasketTpSync] freeze pending TP set failed signal=${signalId}: ${error.message}`)
+    return 0
+  }
+  return (data?.length ?? 0)
 }
 
 async function reloadSignalParsed(
@@ -629,12 +719,18 @@ export async function syncRangeBasketTakeProfits(args: RangeBasketTpSyncArgs): P
     args.brokerAccountId,
     args.signalId,
   )
+  const tpTouched = await hasTpTouchedLock(args.supabase, {
+    signalId: args.signalId,
+    brokerAccountId: args.brokerAccountId,
+    symbol: args.symbol,
+  })
   const tpGate = resolveRangeTpRebalanceGate({
     activePendingCount,
     maxPendingStepIdx,
     phase: effectivePhase,
     forceLayeringRebalance: args.forceLayeringRebalance,
     hasClosedBasketLegs: hasClosedLegs,
+    tpTouched,
   })
 
   let openedTickets: Set<number> | null = null
@@ -643,8 +739,30 @@ export async function syncRangeBasketTakeProfits(args: RangeBasketTpSyncArgs): P
   } catch { /* optional */ }
 
   const isBuy = args.direction === 'buy'
+  const deepestTp = deepestFinalTp(finalTps, isBuy)
+  const frozen = tpGate.mode === 'backfill_only'
 
-  if (effectivePhase === 'layering_rebalance' && activePendingCount > 0) {
+  // Pending (future) range legs.
+  if (frozen) {
+    // A TP has been hit: future legs are "new" and must fire with the deepest
+    // TP (never repaint existing open legs). Only relevant when Layer-till-close
+    // keeps the ladder active.
+    if (activePendingCount > 0 && deepestTp > 0) {
+      try {
+        await setActivePendingRangeLegsTakeProfit(
+          args.supabase,
+          args.brokerAccountId,
+          args.signalId,
+          deepestTp,
+        )
+      } catch (err) {
+        console.warn(
+          `[rangeBasketTpSync] freeze pending TP set failed signal=${args.signalId}:`,
+          err instanceof Error ? err.message : String(err),
+        )
+      }
+    }
+  } else if (effectivePhase === 'layering_rebalance' && activePendingCount > 0) {
     try {
       await patchPendingRangeLegTakeProfits({
         supabase: args.supabase,
@@ -663,14 +781,24 @@ export async function syncRangeBasketTakeProfits(args: RangeBasketTpSyncArgs): P
     }
   }
 
+  // Open-leg targets: redistribute by % while layering (no TP hit), otherwise
+  // freeze existing TPs and only backfill naked legs with the deepest TP.
+  const openLegTargets = frozen
+    ? backfillNakedLegTakeProfits(familyTrades, perLegTargets, finalTps, isBuy)
+    : fillZeroTargetsWithDeepest(perLegTargets, finalTps, isBuy)
+
   const tpCounts: Record<string, number> = {}
-  for (const target of perLegTargets) {
+  for (const target of openLegTargets) {
     const key = String(target.takeprofit)
     tpCounts[key] = (tpCounts[key] ?? 0) + 1
   }
 
   let modifyResult: Awaited<ReturnType<typeof runBasketLegModifies>> | null = null
   const internalRebalance = effectivePhase === 'layering_rebalance'
+  let sharedQuote: { bid: number; ask: number } | null = null
+  try {
+    sharedQuote = await args.api.quote(args.uuid, args.symbol)
+  } catch { /* per-leg fallback inside runBasketLegModifies */ }
   const runModifyPass = (
     trades: BasketOpenLeg[],
     targets: PerLegStopTargetLike[],
@@ -691,30 +819,27 @@ export async function syncRangeBasketTakeProfits(args: RangeBasketTpSyncArgs): P
     tpLots: args.manual.tp_lots,
     nImmCwe: 0,
     overrideTp: null,
-    strictEntryPrefetch: null,
+    strictEntryPrefetch: sharedQuote,
     openedTickets,
     skipAlreadySynced: true,
+    parallelLegs: true,
     internalRebalance,
     effectiveStoploss: effective.stoploss > 0 ? effective.stoploss : undefined,
     orderCommentsEnabled: args.manual.order_comments_enabled !== false,
   })
 
-  if (!tpGate.allowOpenLegTpModify) {
-    console.log(
-      `[rangeBasketTpSync] skip open-leg TP modify signal=${args.signalId}`
-      + ` broker=${args.brokerAccountId} reason=${tpGate.reason}`,
-    )
-  } else {
+  // Always run a modify pass: in frozen mode this only touches naked legs (and
+  // SL propagation); synced legs are skipped by stopsAlreadyMatch.
   try {
-    modifyResult = await runModifyPass(familyTrades, perLegTargets)
+    modifyResult = await runModifyPass(familyTrades, openLegTargets)
 
-    if (args.forceLayeringRebalance && modifyResult.summary.failed > 0 && modifyResult.legErrors.length > 0) {
-      await new Promise(r => setTimeout(r, 750))
+    if (modifyResult.summary.failed > 0 && modifyResult.legErrors.length > 0) {
+      await new Promise(r => setTimeout(r, Number(process.env.RANGE_REBALANCE_RETRY_DELAY_MS ?? 300)))
       const failedIds = new Set(modifyResult.legErrors.map(e => e.trade_id))
       const retryTrades = familyTrades.filter(t => failedIds.has(t.id))
       const retryTargets = retryTrades.map(t => {
         const idx = familyTrades.findIndex(f => f.id === t.id)
-        return perLegTargets[idx]!
+        return openLegTargets[idx]!
       })
       if (retryTrades.length > 0) {
         const retryResult = await runModifyPass(retryTrades, retryTargets)
@@ -742,7 +867,6 @@ export async function syncRangeBasketTakeProfits(args: RangeBasketTpSyncArgs): P
       err instanceof Error ? err.message : String(err),
     )
   }
-  }
 
   await logRangeBasketTpRebalance(args.supabase, {
     userId: args.userId,
@@ -757,7 +881,7 @@ export async function syncRangeBasketTakeProfits(args: RangeBasketTpSyncArgs): P
     tpCounts,
     effectiveSl: effective.stoploss,
     effectiveSlSource: effective.source,
-    skippedReason: tpGate.allowOpenLegTpModify ? undefined : tpGate.reason,
+    skippedReason: frozen ? tpGate.reason : undefined,
   })
 
   if (modifyResult && modifyResult.summary.modified > 0) {

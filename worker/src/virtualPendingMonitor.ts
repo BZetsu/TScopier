@@ -32,6 +32,7 @@ import {
 import { isUserCopierPausedCached } from './copierPause'
 import {
   reconcileStaleClaimedLegs,
+  setTpTouchedLock,
   shouldBlockVirtualLegFire,
 } from './rangePendingFireGuard'
 import { isMtBridgeGlitchMessage } from './brokerConnectError'
@@ -608,7 +609,22 @@ export class VirtualPendingMonitor {
         signalId,
         brokerAccountId,
       )
-      if (layerTillClose) continue
+      if (layerTillClose) {
+        // Layer-till-close ON: keep layering (legs must keep firing, so do NOT
+        // add to `touched`), but still record a sticky TP-touch marker so the
+        // TP-distribution freeze engages — new legs get the deepest TP and
+        // existing legs are never repainted after a TP is hit.
+        await setTpTouchedLock(this.supabase, {
+          signalId,
+          brokerAccountId,
+          symbol,
+          userId,
+          lockReason: decision.reason ?? 'tp_touched',
+          triggerPrice: decision.triggerPrice ?? null,
+          triggerSide: decision.triggerSide ?? null,
+        })
+        continue
+      }
 
       const { stopped, deleted } = await stopRangeLayeringUnlessEnabled(
         this.supabase,
@@ -1016,7 +1032,7 @@ export class VirtualPendingMonitor {
           await this.enqueueReconcileForLegBasket(leg, channelIdForTrade)
         }
         // Brief pause so the new trade row is visible before the basket-wide rebalance query.
-        await new Promise(r => setTimeout(r, 500))
+        await new Promise(r => setTimeout(r, Number(process.env.RANGE_REBALANCE_SETTLE_MS ?? 150)))
         try {
           await this.rebalanceRangeBasketTakeProfits(leg, { forceLayeringRebalance: true })
         } catch (rebalErr) {

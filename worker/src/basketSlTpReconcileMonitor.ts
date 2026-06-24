@@ -293,6 +293,11 @@ export class BasketSlTpReconcileMonitor {
 
     const openedTickets = await fetchOpenBrokerTickets(api, uuid)
     const baseLot = Number(broker.default_lot_size ?? 0.01)
+    // One shared quote for the whole basket instead of one per leg.
+    let sharedQuote: { bid: number; ask: number } | null = null
+    try {
+      sharedQuote = await api.quote(uuid, row.symbol)
+    } catch { /* per-leg fallback inside runBasketLegModifies */ }
     const { summary, legErrors } = await runBasketLegModifies({
       supabase: this.supabase,
       api,
@@ -310,9 +315,10 @@ export class BasketSlTpReconcileMonitor {
       tpLots: manual.tp_lots,
       nImmCwe: row.n_imm_cwe ?? 0,
       overrideTp: row.override_tp,
-      strictEntryPrefetch: null,
+      strictEntryPrefetch: sharedQuote,
       openedTickets,
       skipAlreadySynced: true,
+      parallelLegs: true,
       internalRebalance: manual.range_trading === true,
       effectiveStoploss: effectiveStoploss > 0 ? effectiveStoploss : undefined,
       orderCommentsEnabled: manual.order_comments_enabled !== false,

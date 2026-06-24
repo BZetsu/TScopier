@@ -23,15 +23,17 @@ import {
   upsertBasketReconcileJob,
 } from './basketSlTpReconcile'
 import {
+  backfillNakedLegTakeProfits,
   buildRangeBasketTpTargets,
+  fillZeroTargetsWithDeepest,
   hasClosedBasketLegs,
   loadRangePendingMeta,
-  preserveOpenLegTakeProfits,
   resolveRangeBasketFinalTps,
   resolveRangeBasketLegCounts,
   resolveRangeTpRebalanceGate,
   toRangeBasketParsedSlice,
 } from './rangeBasketTpSync'
+import { hasTpTouchedLock } from './rangePendingFireGuard'
 import { resolveChannelTradingConfig } from './channelTradingConfig'
 import { normalizeManualSettingsForExecution } from './manualPlanning/normalizeManualSettings'
 import { isUserCopierPausedCached } from './copierPause'
@@ -130,11 +132,17 @@ export async function resolveFreshBasketReconcileTargets(
       args.brokerAccountId,
       args.anchorSignalId,
     )
+    const tpTouched = await hasTpTouchedLock(supabase, {
+      signalId: args.anchorSignalId,
+      brokerAccountId: args.brokerAccountId,
+      symbol: args.symbol,
+    })
     const tpGate = resolveRangeTpRebalanceGate({
       activePendingCount,
       maxPendingStepIdx,
       phase,
       hasClosedBasketLegs: hasClosedLegs,
+      tpTouched,
     })
     const built = buildRangeBasketTpTargets({
       familyTrades: args.familyTrades,
@@ -148,18 +156,22 @@ export async function resolveFreshBasketReconcileTargets(
       finalTpsOverride: signalTps.length ? signalTps : null,
       stoplossOverride: effective.stoploss > 0 ? effective.stoploss : null,
     })
+    const isBuy = args.direction === 'buy'
     let mapped = built.map(t => ({
       stoploss: Number(t.stoploss) || 0,
       takeprofit: Number(t.takeprofit) || 0,
     }))
-    if (!tpGate.allowOpenLegTpModify) {
-      mapped = preserveOpenLegTakeProfits(args.familyTrades, mapped).map(t => ({
-        stoploss: Number(t.stoploss) || 0,
-        takeprofit: Number(t.takeprofit) || 0,
-      }))
-    }
+    // Frozen (a TP was hit): never repaint existing legs; only backfill naked
+    // legs with the deepest TP. Otherwise distribute, but never leave a 0 TP.
+    mapped = (tpGate.mode === 'backfill_only'
+      ? backfillNakedLegTakeProfits(args.familyTrades, mapped, signalTps, isBuy)
+      : fillZeroTargetsWithDeepest(mapped, signalTps, isBuy)
+    ).map(t => ({
+      stoploss: Number(t.stoploss) || 0,
+      takeprofit: Number(t.takeprofit) || 0,
+    }))
     perLegTargets = mapped
-    tpFrozen = !tpGate.allowOpenLegTpModify
+    tpFrozen = tpGate.mode === 'backfill_only'
   } else {
     const slNum = typeof parsed.sl === 'number' && parsed.sl > 0 ? parsed.sl : 0
     const sl = slNum > 0 ? slNum : (stored[0]?.stoploss ?? 0)

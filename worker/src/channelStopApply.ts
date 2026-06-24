@@ -30,6 +30,7 @@ import {
 import { readBrokerOrderStopLoss } from './signalEntryPendingHelpers'
 import { brokerSessionUuid, brokerHasLinkedSession } from './tradeExecutor/helpers'
 import { incMetric } from './workerMetrics'
+import { mgmtLegConcurrency, parallelMap } from './parallelPool'
 
 export type ChannelStopLeg = {
   id: string
@@ -473,6 +474,15 @@ export async function applyChannelStopsToBaskets(
     const slCache = new Map<string, number>()
     const perLegTargets: Array<{ stoploss: number; takeprofit: number }> = []
 
+    // Phase 1 (serial, DB-only): build each leg's target and decide skip/execute.
+    type LegModPlan = {
+      tr: typeof legs[number]
+      ticket: number
+      target: { stoploss: number; takeprofit: number }
+      modifyArgs: { ticket: number; stoploss?: number; takeprofit?: number }
+    }
+    const execPlan: LegModPlan[] = []
+
     for (let i = 0; i < legs.length; i++) {
       const tr = legs[i]!
       baseResult.attempted += 1
@@ -553,16 +563,32 @@ export async function applyChannelStopsToBaskets(
 
       if (dryRun) continue
 
-      try {
-        const modifyArgs: { ticket: number; stoploss?: number; takeprofit?: number } = { ticket }
-        if (!tpOnly && target.stoploss > 0) modifyArgs.stoploss = target.stoploss
-        if (!slOnly && target.takeprofit > 0) modifyArgs.takeprofit = target.takeprofit
-        if (modifyArgs.stoploss == null && modifyArgs.takeprofit == null) {
-          baseResult.skipped += 1
-          totalSkipped += 1
-          continue
-        }
+      const modifyArgs: { ticket: number; stoploss?: number; takeprofit?: number } = { ticket }
+      if (!tpOnly && target.stoploss > 0) modifyArgs.stoploss = target.stoploss
+      if (!slOnly && target.takeprofit > 0) modifyArgs.takeprofit = target.takeprofit
+      if (modifyArgs.stoploss == null && modifyArgs.takeprofit == null) {
+        baseResult.skipped += 1
+        totalSkipped += 1
+        continue
+      }
 
+      execPlan.push({ tr, ticket, target, modifyArgs })
+    }
+
+    // Phase 2 (parallel): fire OrderModify across legs concurrently. Serial
+    // bridge round-trips were the main "modify too slow" cause on big baskets.
+    type LegModOutcome = {
+      modified: number
+      failed: number
+      skipped: number
+      verified: number
+      error?: { tradeId: string; ticket: number; message: string; skipReason?: string }
+    }
+    const noop = (): LegModOutcome => ({ modified: 0, failed: 0, skipped: 0, verified: 0 })
+
+    const execOne = async (plan: LegModPlan): Promise<LegModOutcome> => {
+      const { tr, ticket, target, modifyArgs } = plan
+      try {
         await api!.orderModify(uuid, modifyArgs)
 
         const brokerOk = !verifyOnBroker
@@ -571,15 +597,16 @@ export async function applyChannelStopsToBaskets(
           || verifyLegStopOnBroker(ordersByTicket, ticket, target.stoploss)
 
         if (!brokerOk) {
-          baseResult.failed += 1
-          totalFailed += 1
-          baseResult.errors.push({
-            tradeId: tr.id,
-            ticket,
-            message: 'broker SL mismatch after OrderModify',
-            skipReason: 'broker_verify_failed',
-          })
-          continue
+          return {
+            ...noop(),
+            failed: 1,
+            error: {
+              tradeId: tr.id,
+              ticket,
+              message: 'broker SL mismatch after OrderModify',
+              skipReason: 'broker_verify_failed',
+            },
+          }
         }
 
         const dbPatch: { sl?: number | null; tp?: number | null } = {}
@@ -606,19 +633,12 @@ export async function applyChannelStopsToBaskets(
           } as unknown as Record<string, unknown>,
         })
 
-        baseResult.modified += 1
-        baseResult.verified += 1
-        totalModified += 1
+        return { ...noop(), modified: 1, verified: 1 }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
         if (isBenignOrderModifyError(msg)) {
-          baseResult.skipped += 1
-          totalSkipped += 1
-          continue
+          return { ...noop(), skipped: 1 }
         }
-        baseResult.failed += 1
-        totalFailed += 1
-        baseResult.errors.push({ tradeId: tr.id, ticket, message: msg })
         try {
           await supabase.from('trade_execution_logs').insert({
             user_id: userId,
@@ -630,7 +650,23 @@ export async function applyChannelStopsToBaskets(
             request_payload: { ticket, trade_id: tr.id, channel_stop_apply: true } as unknown as Record<string, unknown>,
           })
         } catch { /* best-effort */ }
+        return { ...noop(), failed: 1, error: { tradeId: tr.id, ticket, message: msg } }
       }
+    }
+
+    const outcomes = execPlan.length > 1
+      ? await parallelMap(execPlan, mgmtLegConcurrency(), execOne)
+      : await Promise.all(execPlan.map(execOne))
+
+    for (const o of outcomes) {
+      baseResult.modified += o.modified
+      baseResult.failed += o.failed
+      baseResult.skipped += o.skipped
+      baseResult.verified += o.verified
+      totalModified += o.modified
+      totalFailed += o.failed
+      totalSkipped += o.skipped
+      if (o.error) baseResult.errors.push(o.error)
     }
 
     baseResult.fullySynced = baseResult.openLegs > 0

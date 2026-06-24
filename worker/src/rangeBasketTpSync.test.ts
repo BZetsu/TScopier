@@ -1,9 +1,12 @@
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
 import {
+  backfillNakedLegTakeProfits,
   buildRangeBasketTpTargets,
   coercePositiveTpLevels,
+  deepestFinalTp,
   estimatePlanImmediateLegCount,
+  fillZeroTargetsWithDeepest,
   preserveOpenLegTakeProfits,
   applyOpenLegStopLossToTargets,
   resolveRangeBasketFinalTps,
@@ -211,6 +214,93 @@ test('resolveRangeTpRebalanceGate: denies when layering complete or leg closed',
     }).reason,
     'basket_leg_closed',
   )
+})
+
+test('resolveRangeTpRebalanceGate: sticky TP touch freezes even under forceLayeringRebalance', () => {
+  const gate = resolveRangeTpRebalanceGate({
+    activePendingCount: 5,
+    maxPendingStepIdx: 10,
+    phase: 'layering_rebalance',
+    forceLayeringRebalance: true,
+    hasClosedBasketLegs: false,
+    tpTouched: true,
+  })
+  assert.equal(gate.mode, 'backfill_only')
+  assert.equal(gate.allowOpenLegTpModify, false)
+  assert.equal(gate.reason, 'tp_touched')
+})
+
+test('resolveRangeTpRebalanceGate: redistributes while layering before any TP hit', () => {
+  const gate = resolveRangeTpRebalanceGate({
+    activePendingCount: 5,
+    maxPendingStepIdx: 10,
+    phase: 'layering_rebalance',
+    forceLayeringRebalance: true,
+    hasClosedBasketLegs: false,
+    tpTouched: false,
+  })
+  assert.equal(gate.mode, 'redistribute')
+  assert.equal(gate.allowOpenLegTpModify, true)
+})
+
+test('deepestFinalTp: buy uses max, sell uses min', () => {
+  assert.equal(deepestFinalTp([4530, 4510, 4490], true), 4530)
+  assert.equal(deepestFinalTp([4530, 4510, 4490], false), 4490)
+  assert.equal(deepestFinalTp([], true), 0)
+})
+
+test('backfillNakedLegTakeProfits: assigns deepest TP to naked legs, never repaints others', () => {
+  const legs = [
+    { ...openLeg('a', 4335, '2026-01-01T00:00:00Z'), tp: 4490 },
+    { ...openLeg('b', 4330, '2026-01-01T00:00:01Z'), tp: 0 },
+    { ...openLeg('c', 4325, '2026-01-01T00:00:02Z'), tp: null as unknown as number },
+  ]
+  const out = backfillNakedLegTakeProfits(
+    legs,
+    [
+      { stoploss: 4300, takeprofit: 9999 },
+      { stoploss: 4300, takeprofit: 9999 },
+      { stoploss: 4300, takeprofit: 9999 },
+    ],
+    [4530, 4510, 4490],
+    true,
+  )
+  assert.equal(out[0]!.takeprofit, 4490, 'existing TP preserved, not repainted')
+  assert.equal(out[1]!.takeprofit, 4530, 'naked leg gets deepest TP (buy=max)')
+  assert.equal(out[2]!.takeprofit, 4530, 'null TP leg gets deepest TP')
+})
+
+test('fillZeroTargetsWithDeepest: only fills zero targets', () => {
+  const out = fillZeroTargetsWithDeepest(
+    [
+      { stoploss: 4300, takeprofit: 4490 },
+      { stoploss: 4300, takeprofit: 0 },
+    ],
+    [4530, 4510, 4490],
+    true,
+  )
+  assert.equal(out[0]!.takeprofit, 4490)
+  assert.equal(out[1]!.takeprofit, 4530)
+})
+
+test('every layering leg ends with SL and TP (Fix 1: no SL-only legs)', () => {
+  const legs = Array.from({ length: 9 }, (_, i) =>
+    openLeg(`i${i}`, 4335 - i * 0.1, `2026-01-01T00:00:0${i}Z`),
+  )
+  const targets = buildRangeBasketTpTargets({
+    familyTrades: legs,
+    plan: null,
+    parsed: { sl: 4300, tp: [4530, 4510, 4490] },
+    tpLots: TP_LOTS,
+    direction: 'buy',
+    activePendingCount: 3,
+    maxPendingStepIdx: 10,
+    forceLayeringRebalance: true,
+  })
+  const filled = fillZeroTargetsWithDeepest(targets, [4530, 4510, 4490], true)
+  assert.equal(filled.length, 9)
+  assert.ok(filled.every(t => t.stoploss > 0), 'all legs have SL')
+  assert.ok(filled.every(t => t.takeprofit > 0), 'all legs have TP')
 })
 
 test('preserveOpenLegTakeProfits keeps current leg TPs', () => {
