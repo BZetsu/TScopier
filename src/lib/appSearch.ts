@@ -32,7 +32,7 @@ export function buildAppSearchPages(t: Translations): AppSearchPageDef[] {
     { path: '/channels', title: t.nav.items.channels, sectionLabel: t.nav.sections.signals, subtitle: p.copierEngine.description, keywords: ['telegram', 'signals'] },
     { path: '/backtest', title: t.nav.items.backtest, sectionLabel: t.nav.sections.signals, subtitle: t.backtest.subtitle, keywords: ['simulate', 'test'] },
     { path: '/copier-logs', title: t.nav.items.copierLogs, sectionLabel: t.nav.sections.signals, keywords: ['logs', 'executed', 'skipped'] },
-    { path: '/activities', title: t.management.title, sectionLabel: t.nav.sections.general, subtitle: t.management.subtitle, keywords: ['retry', 'breakeven', 'activities', 'failed', 'trade'] },
+    { path: '/activities', title: t.management.title, sectionLabel: t.nav.sections.general, subtitle: t.management.subtitle, keywords: ['retry', 'breakeven', 'copier engine', 'activities', 'failed', 'trade'] },
     { path: '/manage-signals', title: t.nav.items.signalHistory, sectionLabel: t.nav.sections.signals, subtitle: p.signalHistory.description, keywords: ['parsed', 'messages', 'signals', 'buy', 'sell', 'manage'] },
     { path: '/performance', title: t.nav.items.performance, sectionLabel: t.nav.sections.signals, subtitle: p.performance.description, keywords: ['roi', 'win rate', 'stats'] },
     { path: '/market-news', title: t.nav.items.marketNews, sectionLabel: t.nav.sections.tradingTools, subtitle: p.marketNews.description, keywords: ['news', 'forex'] },
