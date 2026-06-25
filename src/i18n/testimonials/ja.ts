@@ -1,1 +1,1 @@
-export const testimonialsJa: { quote: string; author: string; headline?: string; role?: string }[] = []
+export { testimonialsEn as testimonialsJa } from './en'

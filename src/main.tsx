@@ -2,6 +2,7 @@ import { StrictMode, lazy, Suspense, useEffect } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import { applyThemeToDocument, readStoredTheme, ThemeProvider } from './context/ThemeContext.tsx'
+import { isAppHost } from './lib/site.ts'
 import { clearChunkReloadGuard, registerChunkLoadRecovery } from './lib/chunkLoadRecovery.ts'
 
 registerChunkLoadRecovery()
@@ -9,6 +10,9 @@ registerChunkLoadRecovery()
 applyThemeToDocument(readStoredTheme())
 
 const App = lazy(() => import('./App.tsx'))
+const MarketingApp = lazy(() => import('./MarketingApp.tsx'))
+
+const RootComponent = isAppHost() ? App : MarketingApp
 
 function BootGuardClear() {
   useEffect(() => {
@@ -28,7 +32,7 @@ createRoot(document.getElementById('root')!).render(
           </div>
         }
       >
-        <App />
+        <RootComponent />
       </Suspense>
     </ThemeProvider>
   </StrictMode>,

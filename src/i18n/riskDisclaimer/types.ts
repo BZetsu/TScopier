@@ -1,4 +1,11 @@
+export interface RiskDisclaimerSection {
+  title: string
+  paragraphs: string[]
+}
+
 export interface RiskDisclaimerPageTranslations {
   title: string
-  content: string
+  intro: string
+  sections: RiskDisclaimerSection[]
+  closing: string
 }
