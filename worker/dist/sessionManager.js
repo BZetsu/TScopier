@@ -41,7 +41,27 @@ const userListener_1 = require("./userListener");
 const sessionLease_1 = require("./sessionLease");
 const workerMetrics_1 = require("./workerMetrics");
 const workerConfig_1 = require("./workerConfig");
+const parallelPool_1 = require("./parallelPool");
 const tradeSignalActions_1 = require("./tradeSignalActions");
+/**
+ * Race a promise against a timeout so a single wedged network call cannot
+ * stall a whole loop forever. Does not cancel the underlying work (the
+ * caller just stops waiting), which is enough to keep periodic loops alive.
+ */
+async function withTimeout(p, ms, label) {
+    let timer;
+    const timeout = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+        timer.unref?.();
+    });
+    try {
+        return await Promise.race([p, timeout]);
+    }
+    finally {
+        if (timer)
+            clearTimeout(timer);
+    }
+}
 function listenerInProcessDispatch(executor, row) {
     return executor.acceptDispatchSignal(row, {
         priority: (0, tradeSignalActions_1.dispatchPriorityForAction)((0, tradeSignalActions_1.parsedAction)(row.parsed_data)),
@@ -73,6 +93,8 @@ class UserSessionManager {
         /** True while adoptClient is handing off the auth-time MTProto socket. */
         this.adoptingUsers = new Set();
         this.authGuard = null;
+        /** Guards renewAllLeases so slow cycles cannot stack up and exhaust sockets. */
+        this.renewLeasesInFlight = false;
         this.supabase = supabase;
     }
     /** In-memory pending auth check (send_code → verify_code window on this process). */
@@ -157,28 +179,47 @@ class UserSessionManager {
         this.subscribeToAuthPendingChanges();
     }
     async renewAllLeases() {
-        const staleMs = Math.max(60000, Math.min(600000, Number(process.env.WORKER_HEALTH_STALE_MS ?? 180000)));
-        for (const [userId, listener] of this.listeners) {
-            if (!listener.isTelegramConnected())
-                continue;
-            try {
-                const result = await (0, sessionLease_1.ensureSessionLeaseFresh)(this.supabase, userId);
-                if (!result.ok) {
-                    console.warn(`[sessionManager] lease refresh failed ${userId}: ${result.reason}`);
-                    continue;
+        // A previous cycle is still running (a wedged Supabase call). Skip rather
+        // than stacking overlapping runs that each re-hang and leak sockets — that
+        // race froze every lease but the first listener, taking the engine offline.
+        if (this.renewLeasesInFlight) {
+            console.warn('[sessionManager] renewAllLeases skipped — previous cycle still running');
+            return;
+        }
+        this.renewLeasesInFlight = true;
+        try {
+            const staleMs = Math.max(60000, Math.min(600000, Number(process.env.WORKER_HEALTH_STALE_MS ?? 180000)));
+            const perUserTimeoutMs = Math.max(3000, Math.min(30000, Number(process.env.WORKER_LEASE_RENEW_TIMEOUT_MS ?? 8000)));
+            const concurrency = Math.max(1, Math.min(16, Number(process.env.WORKER_LEASE_RENEW_CONCURRENCY ?? 6)));
+            // Renew with bounded parallelism and a per-user timeout so a single slow
+            // or wedged lease write cannot block renewal for every other listener.
+            const entries = Array.from(this.listeners.entries());
+            await (0, parallelPool_1.parallelMap)(entries, concurrency, async ([userId, listener]) => {
+                if (!listener.isTelegramConnected())
+                    return;
+                try {
+                    const result = await withTimeout((0, sessionLease_1.ensureSessionLeaseFresh)(this.supabase, userId), perUserTimeoutMs, `lease renew ${userId}`);
+                    if (!result.ok) {
+                        console.warn(`[sessionManager] lease refresh failed ${userId}: ${result.reason}`);
+                        return;
+                    }
+                    if (result.recovered && this.tradeExecutor) {
+                        const { replaySignalsAfterListenerRecovery } = await Promise.resolve().then(() => __importStar(require('./listenerSignalReplay')));
+                        void replaySignalsAfterListenerRecovery(this.tradeExecutor, userId);
+                    }
                 }
-                if (result.recovered && this.tradeExecutor) {
-                    const { replaySignalsAfterListenerRecovery } = await Promise.resolve().then(() => __importStar(require('./listenerSignalReplay')));
-                    void replaySignalsAfterListenerRecovery(this.tradeExecutor, userId);
+                catch (err) {
+                    console.warn(`[sessionManager] lease refresh failed ${userId}:`, err instanceof Error ? err.message : err);
+                    return;
                 }
-            }
-            catch (err) {
-                console.warn(`[sessionManager] lease refresh failed ${userId}:`, err);
-            }
-            if (!listener.isListenerHealthy(staleMs)) {
-                console.warn(`[sessionManager] listener quiet but lease renewed user=${userId}`
-                    + ' (no Telegram events recently — normal for low-traffic channels)');
-            }
+                if (!listener.isListenerHealthy(staleMs)) {
+                    console.warn(`[sessionManager] listener quiet but lease renewed user=${userId}`
+                        + ' (no Telegram events recently — normal for low-traffic channels)');
+                }
+            });
+        }
+        finally {
+            this.renewLeasesInFlight = false;
         }
     }
     subscribeToChannelChanges() {

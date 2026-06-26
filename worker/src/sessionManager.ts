@@ -12,9 +12,28 @@ import {
 } from './sessionLease'
 import { getMetricsSnapshot } from './workerMetrics'
 import { userBelongsToShard, workerConfig } from './workerConfig'
+import { parallelMap } from './parallelPool'
 import type { TradeExecutor } from './tradeExecutor'
 import type { SignalRow } from './tradeExecutor/types'
 import { dispatchPriorityForAction, parsedAction } from './tradeSignalActions'
+
+/**
+ * Race a promise against a timeout so a single wedged network call cannot
+ * stall a whole loop forever. Does not cancel the underlying work (the
+ * caller just stops waiting), which is enough to keep periodic loops alive.
+ */
+async function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
+    timer.unref?.()
+  })
+  try {
+    return await Promise.race([p, timeout])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
 
 function listenerInProcessDispatch(executor: TradeExecutor, row: SignalRow): boolean {
   return executor.acceptDispatchSignal(row, {
@@ -52,6 +71,8 @@ export class UserSessionManager {
   /** True while adoptClient is handing off the auth-time MTProto socket. */
   private adoptingUsers = new Set<string>()
   private authGuard: ((userId: string) => boolean) | null = null
+  /** Guards renewAllLeases so slow cycles cannot stack up and exhaust sockets. */
+  private renewLeasesInFlight = false
 
   constructor(supabase: SupabaseClient) {
     this.supabase = supabase
@@ -154,33 +175,65 @@ export class UserSessionManager {
   }
 
   async renewAllLeases(): Promise<void> {
-    const staleMs = Math.max(
-      60_000,
-      Math.min(600_000, Number(process.env.WORKER_HEALTH_STALE_MS ?? 180_000)),
-    )
-    for (const [userId, listener] of this.listeners) {
-      if (!listener.isTelegramConnected()) continue
+    // A previous cycle is still running (a wedged Supabase call). Skip rather
+    // than stacking overlapping runs that each re-hang and leak sockets — that
+    // race froze every lease but the first listener, taking the engine offline.
+    if (this.renewLeasesInFlight) {
+      console.warn('[sessionManager] renewAllLeases skipped — previous cycle still running')
+      return
+    }
+    this.renewLeasesInFlight = true
+    try {
+      const staleMs = Math.max(
+        60_000,
+        Math.min(600_000, Number(process.env.WORKER_HEALTH_STALE_MS ?? 180_000)),
+      )
+      const perUserTimeoutMs = Math.max(
+        3_000,
+        Math.min(30_000, Number(process.env.WORKER_LEASE_RENEW_TIMEOUT_MS ?? 8_000)),
+      )
+      const concurrency = Math.max(
+        1,
+        Math.min(16, Number(process.env.WORKER_LEASE_RENEW_CONCURRENCY ?? 6)),
+      )
 
-      try {
-        const result = await ensureSessionLeaseFresh(this.supabase, userId)
-        if (!result.ok) {
-          console.warn(`[sessionManager] lease refresh failed ${userId}: ${result.reason}`)
-          continue
-        }
-        if (result.recovered && this.tradeExecutor) {
-          const { replaySignalsAfterListenerRecovery } = await import('./listenerSignalReplay')
-          void replaySignalsAfterListenerRecovery(this.tradeExecutor, userId)
-        }
-      } catch (err) {
-        console.warn(`[sessionManager] lease refresh failed ${userId}:`, err)
-      }
+      // Renew with bounded parallelism and a per-user timeout so a single slow
+      // or wedged lease write cannot block renewal for every other listener.
+      const entries = Array.from(this.listeners.entries())
+      await parallelMap(entries, concurrency, async ([userId, listener]) => {
+        if (!listener.isTelegramConnected()) return
 
-      if (!listener.isListenerHealthy(staleMs)) {
-        console.warn(
-          `[sessionManager] listener quiet but lease renewed user=${userId}`
-          + ' (no Telegram events recently — normal for low-traffic channels)',
-        )
-      }
+        try {
+          const result = await withTimeout(
+            ensureSessionLeaseFresh(this.supabase, userId),
+            perUserTimeoutMs,
+            `lease renew ${userId}`,
+          )
+          if (!result.ok) {
+            console.warn(`[sessionManager] lease refresh failed ${userId}: ${result.reason}`)
+            return
+          }
+          if (result.recovered && this.tradeExecutor) {
+            const { replaySignalsAfterListenerRecovery } = await import('./listenerSignalReplay')
+            void replaySignalsAfterListenerRecovery(this.tradeExecutor, userId)
+          }
+        } catch (err) {
+          console.warn(
+            `[sessionManager] lease refresh failed ${userId}:`,
+            err instanceof Error ? err.message : err,
+          )
+          return
+        }
+
+        if (!listener.isListenerHealthy(staleMs)) {
+          console.warn(
+            `[sessionManager] listener quiet but lease renewed user=${userId}`
+            + ' (no Telegram events recently — normal for low-traffic channels)',
+          )
+        }
+      })
+    } finally {
+      this.renewLeasesInFlight = false
     }
   }
 
