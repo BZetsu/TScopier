@@ -206,16 +206,26 @@ async function main() {
   }
 
   if (workerConfig.runsListener) {
-    await sessionManager.loadAll()
-    setInterval(async () => {
-      await sessionManager.syncSessions()
+    // Register periodic lease renewal + session sync BEFORE (and independent of)
+    // loadAll. Previously loadAll was awaited first, so a single hung listener
+    // connect during startup (e.g. a wedged Telegram warm-up) blocked loadAll
+    // forever, the renewal interval was never scheduled, and every lease expired
+    // and never refreshed — taking the whole engine offline while the process
+    // otherwise kept running. loadAll now runs in the background and adds
+    // listeners as they connect; renewal keeps whatever is connected alive.
+    setInterval(() => {
+      void sessionManager.syncSessions()
     }, 30_000)
 
     if (workerConfig.role === 'listener' || workerConfig.role === 'all') {
-      setInterval(async () => {
-        await sessionManager.renewAllLeases()
+      setInterval(() => {
+        void sessionManager.renewAllLeases()
       }, Math.max(10_000, Number(process.env.WORKER_LEASE_RENEW_INTERVAL_MS ?? 20_000)))
     }
+
+    void sessionManager.loadAll().catch(err =>
+      console.error('[worker] loadAll failed:', err instanceof Error ? err.message : err),
+    )
   } else if (workerConfig.runsBacktestHttp) {
     console.log('[worker] backtest-only: no live Telegram listeners loaded')
   }

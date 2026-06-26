@@ -97,7 +97,7 @@ export function userBelongsToShard(userId: string): boolean {
  * reading worker_session_leases.worker_id. Bump on meaningful worker changes.
  * Used symmetrically by acquire/renew/release, so changing it is safe.
  */
-export const WORKER_BUILD_TAG = String(process.env.WORKER_BUILD_TAG ?? 'lease-hardening-1')
+export const WORKER_BUILD_TAG = String(process.env.WORKER_BUILD_TAG ?? 'startup-nonblock-2')
 
 export function listenerWorkerId(): string {
   return `listener:${workerConfig.shardId}:${workerConfig.instanceId}:${WORKER_BUILD_TAG}`

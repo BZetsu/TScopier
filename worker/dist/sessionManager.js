@@ -163,16 +163,19 @@ class UserSessionManager {
         console.log(`[sessionManager] Loading ${owned.length}/${sessions?.length ?? 0} sessions`
             + ` (shard ${workerConfig_1.workerConfig.shardId}/${workerConfig_1.workerConfig.shardCount})`);
         const staggerMs = Math.max(0, Math.min(30000, Number(process.env.TELEGRAM_MULTI_SESSION_STAGGER_MS ?? 600)));
+        const startTimeoutMs = Math.max(15000, Math.min(180000, Number(process.env.LISTENER_START_TIMEOUT_MS ?? 60000)));
         let i = 0;
         for (const session of owned) {
             if (i++ > 0 && staggerMs > 0) {
                 await new Promise(r => setTimeout(r, staggerMs));
             }
             try {
-                await this.startListener(session.user_id, session.session_string);
+                // Bound each connect so one wedged listener (e.g. a hung Telegram
+                // warm-up) cannot stall startup for every other session.
+                await withTimeout(this.startListener(session.user_id, session.session_string), startTimeoutMs, `startListener ${session.user_id}`);
             }
             catch (err) {
-                console.error(`[sessionManager] Failed to start listener for ${session.user_id}:`, err);
+                console.error(`[sessionManager] Failed to start listener for ${session.user_id}:`, err instanceof Error ? err.message : err);
             }
         }
         this.subscribeToChannelChanges();
