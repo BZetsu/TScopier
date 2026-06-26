@@ -45,7 +45,7 @@ import {
   logEffectiveBasketStops,
   resolveEffectiveBasketStops,
 } from '../../basketEffectiveStops'
-import { buildRangeBasketTpTargets, toRangeBasketParsedSlice } from '../../rangeBasketTpSync'
+import { buildRangeBasketTpTargets, preserveOpenLegTakeProfits, toRangeBasketParsedSlice } from '../../rangeBasketTpSync'
 import { isRangeLayerTillCloseEnabled } from '../../rangeLayerTillClose'
 import {
   patchActiveRangePendingLegStops,
@@ -61,6 +61,16 @@ import {
   type SymbolCacheEntry
 } from '../types'
 import { persistRangePendingLegRows } from './helpers'
+
+/**
+ * On v2, a split signal (bare entry, then TP/SL follow-up) leaves legs naked and
+ * the reconciler only backfills the deepest TP. When enabled (default), the merge
+ * does a one-time distributed TP apply so TP1/TP2/TP3 spread across the naked legs
+ * immediately instead of waiting for / relying on the reconcile tick.
+ */
+function v2MergeDistributeTpEnabled(): boolean {
+  return String(process.env.V2_MERGE_DISTRIBUTE_TP ?? 'true').toLowerCase().trim() !== 'false'
+}
 
 export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
     signal: SignalRow
@@ -506,6 +516,54 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
               instructionAt: signal.created_at,
             }).catch(() => {})
           }
+        }
+        // One-time distributed TP apply: a bare entry followed by a TP/SL
+        // follow-up leaves legs naked, and the reconciler only backfills the
+        // deepest TP (so a sell basket shows SL + TP3 fast, TP1/TP2 lag). Spread
+        // TP1/TP2/TP3 across the naked legs now (single event-driven parallel
+        // pass, off the dispatch hot path) so a split signal matches a single
+        // complete signal. Existing-TP legs are preserved (no repaint), and the
+        // reconciler leaves the distributed TPs alone on subsequent ticks.
+        if (
+          v2MergeDistributeTpEnabled()
+          && manual.trade_style === 'multi'
+          && refreshTpLevels.length > 0
+          && familyTrades.some(tr => !(Number(tr.tp) > 0))
+        ) {
+          const distributedTargets = preserveOpenLegTakeProfits(familyTrades, perLegTargets)
+          const distributeFamily = [...familyTrades]
+          const distributeSignalTps = (effectiveParsed.tp ?? []).filter(
+            (t): t is number => typeof t === 'number' && Number.isFinite(t) && t > 0,
+          )
+          void runBasketLegModifies({
+            supabase: ctx.supabase,
+            api,
+            uuid,
+            symbol,
+            direction,
+            baseLot,
+            params: basketParams,
+            signalId: signal.id,
+            userId: signal.user_id,
+            brokerAccountId: broker.id,
+            familyTrades: distributeFamily,
+            perLegTargets: distributedTargets,
+            signalTps: distributeSignalTps,
+            tpLots: manual.tp_lots,
+            nImmCwe,
+            overrideTp,
+            strictEntryPrefetch,
+            openedTickets,
+            skipAlreadySynced: true,
+            parallelLegs: true,
+            orderCommentsEnabled: manual.order_comments_enabled !== false,
+            explicitChannelTargets: effectiveSlIsExplicitMgmt,
+          }).catch(err =>
+            console.warn(
+              `[tradeExecutor] v2 merge TP distribute failed signal=${signal.id} broker=${broker.id}:`,
+              err instanceof Error ? err.message : err,
+            ),
+          )
         }
         summary.openLegs = familyTrades.length
         summary.attempted = familyTrades.length

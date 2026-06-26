@@ -376,6 +376,39 @@ test('preserveOpenLegTakeProfits keeps current leg TPs', () => {
   assert.equal(preserved[1]!.takeprofit, 4350)
 })
 
+test('preserveOpenLegTakeProfits: naked legs take the distributed TP spread (split-signal merge)', () => {
+  // Bare entry opened 3 naked legs (tp=0); a TP/SL follow-up distributes TP1/TP2/TP3.
+  // The v2 merge applies preserveOpenLegTakeProfits over the distributed per-leg
+  // targets so each naked leg lands on its own TP (not all the deepest TP3).
+  const legs = [
+    openLeg('a', 4080, '2026-01-01T00:00:00Z'),
+    openLeg('b', 4082, '2026-01-01T00:00:01Z'),
+    openLeg('c', 4084, '2026-01-01T00:00:02Z'),
+  ].map(l => ({ ...l, direction: 'sell' as const, tp: 0 }))
+  const distributed = preserveOpenLegTakeProfits(legs, [
+    { stoploss: 4090, takeprofit: 4075 },
+    { stoploss: 4090, takeprofit: 4070 },
+    { stoploss: 4090, takeprofit: 4065 },
+  ])
+  assert.deepEqual(distributed.map(t => t.takeprofit), [4075, 4070, 4065])
+})
+
+test('preserveOpenLegTakeProfits: never repaints legs that already carry a TP', () => {
+  // Mixed basket: leg a already has a broker TP (distributed/hit), leg b is naked.
+  // The existing TP must be preserved (no repaint after a TP is set); only the
+  // naked leg receives its distributed value.
+  const legs = [
+    { ...openLeg('a', 4080, '2026-01-01T00:00:00Z'), direction: 'sell' as const, tp: 4075 },
+    { ...openLeg('b', 4082, '2026-01-01T00:00:01Z'), direction: 'sell' as const, tp: 0 },
+  ]
+  const out = preserveOpenLegTakeProfits(legs, [
+    { stoploss: 4090, takeprofit: 4070 },
+    { stoploss: 4090, takeprofit: 4065 },
+  ])
+  assert.equal(out[0]!.takeprofit, 4075)
+  assert.equal(out[1]!.takeprofit, 4065)
+})
+
 test('applyOpenLegStopLossToTargets: skipProtectiveMerge keeps the explicit resolved SL', () => {
   const legs = [
     { ...openLeg('a', 4165.25, '2026-01-01T00:00:00Z'), sl: 4164.25, direction: 'sell' as const },
