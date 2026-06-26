@@ -23,7 +23,6 @@ const basketSlTpReconcile_1 = require("../basketSlTpReconcile");
 const basketTargetStore_1 = require("../basketTargetStore");
 const executionMode_1 = require("../engine/executionMode");
 const fxClient_1 = require("../engine/fxClient");
-const multiTradeMerge_1 = require("../multiTradeMerge");
 const orderModifyBenign_1 = require("../orderModifyBenign");
 const orderModifySafe_1 = require("../orderModifySafe");
 const parallelPool_1 = require("../parallelPool");
@@ -316,120 +315,60 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
     let basketAnchorId = null;
     let rows = [];
     let modifyApplyResult = null;
-    if (replyScoped && signal.parent_signal_id) {
-        let symbolHint = symbolFromText;
-        let parentParsed = null;
-        try {
-            const { data: ps } = await ctx.supabase
-                .from('signals')
-                .select('parsed_data')
-                .eq('id', signal.parent_signal_id)
-                .maybeSingle();
-            const p = ps?.parsed_data;
-            parentParsed = p ?? null;
-            const fromParent = p?.symbol != null && String(p.symbol).trim() ? String(p.symbol).trim() : null;
-            if (!symbolHint && fromParent)
-                symbolHint = fromParent;
-            if (symbolHint)
-                mgmtSymbolHint = symbolHint;
-        }
-        catch {
-            // best-effort
-        }
-        basketAnchorId = signal.parent_signal_id;
-        const { count: parentOpenCount } = await ctx.supabase
-            .from('trades')
-            .select('id', { count: 'exact', head: true })
-            .eq('signal_id', signal.parent_signal_id)
-            .in('broker_account_id', brokerAccountIds)
-            .in('status', ['open', 'pending']);
-        if ((parentOpenCount ?? 0) === 0) {
-            const mgmtAction = String(parsed.action ?? '').toLowerCase();
-            let mgmtDir = mgmtAction === 'buy' || mgmtAction === 'sell'
-                ? mgmtAction
-                : null;
-            if (!mgmtDir && parentParsed) {
-                const parentAction = String(parentParsed.action ?? '').toLowerCase();
-                if (parentAction === 'buy' || parentAction === 'sell')
-                    mgmtDir = parentAction;
-            }
-            const symForResolve = symbolHint?.trim() ?? '';
-            if (mgmtDir && symForResolve && signal.channel_id && brokerAccountIds[0]) {
-                const latest = await (0, multiTradeMerge_1.resolveLatestOpenBasketAnchor)(ctx.supabase, {
-                    userId: signal.user_id,
-                    brokerAccountId: brokerAccountIds[0],
-                    brokerSymbol: symForResolve,
-                    signalSymbol: symForResolve,
-                    direction: mgmtDir,
-                    channelId: signal.channel_id,
-                });
-                if (latest)
-                    basketAnchorId = latest.anchorSignalId;
-            }
-            if (!basketAnchorId || basketAnchorId === signal.parent_signal_id) {
-                basketAnchorId = await ctx.resolveBasketAnchorSignalIdForOpenTrades({
-                    userId: signal.user_id,
-                    brokerAccountIds,
-                    channelId: signal.channel_id,
-                    parentSignalId: signal.parent_signal_id,
-                    symbolHint,
-                });
-            }
-        }
-        if (!basketAnchorId) {
-            if (String(parsed.action ?? '').toLowerCase() !== 'close_worse_entries') {
-                await skipMgmtSignalWithLog(ctx, signal, 'mgmt_no_open_trades_db', { scope: 'reply_basket' });
-                return emptyMgmtResult(legConcurrency);
-            }
-        }
-        else {
-            const { data } = await ctx.supabase
-                .from('trades')
-                .select('id,signal_id,broker_account_id,metaapi_order_id,symbol,direction,lot_size,status,sl,tp,entry_price,opened_at,cwe_close_price')
-                .eq('signal_id', basketAnchorId)
-                .in('broker_account_id', brokerAccountIds)
-                .in('status', ['open', 'pending'])
-                .order('opened_at', { ascending: true })
-                .limit(500);
-            rows = (data ?? []);
+    // Every management instruction is channel-scoped: it applies to every open basket on
+    // the channel for the relevant symbol across ALL brokers, even when posted as a reply
+    // to one entry (channels broadcast basket-wide close / breakeven / SL changes as
+    // replies). The symbol is inherited from the replied/parent entry so an instruction
+    // never crosses to an unrelated symbol (e.g. a gold close must not touch USDCAD).
+    if (!signal.channel_id) {
+        await skipMgmtSignalWithLog(ctx, signal, 'mgmt_no_open_trades_db', { scope: 'no_channel' });
+        return emptyMgmtResult(legConcurrency);
+    }
+    const actionPre = String(parsed.action ?? '').toLowerCase();
+    let scopeSymbolFilter = symbolFromText;
+    if (replyScoped && !scopeSymbolFilter && signal.parent_signal_id) {
+        const { data: ps } = await ctx.supabase
+            .from('signals')
+            .select('parsed_data')
+            .eq('id', signal.parent_signal_id)
+            .maybeSingle();
+        const parentSym = (0, managementScope_1.explicitMgmtSymbol)({
+            symbol: ps?.parsed_data?.symbol ?? null,
+        });
+        if (parentSym) {
+            scopeSymbolFilter = parentSym;
+            mgmtSymbolHint = parentSym;
         }
     }
-    else {
-        if (!signal.channel_id) {
-            await skipMgmtSignalWithLog(ctx, signal, 'mgmt_no_open_trades_db', { scope: 'no_channel' });
-            return emptyMgmtResult(legConcurrency);
-        }
-        const actionPre = String(parsed.action ?? '').toLowerCase();
-        let channelRows = actionPre === 'close_worse_entries'
-            ? await (0, managementScope_1.loadOpenTradesForChannelWideCwe)(ctx.supabase, {
+    let channelRows = actionPre === 'close_worse_entries'
+        ? await (0, managementScope_1.loadOpenTradesForChannelWideCwe)(ctx.supabase, {
+            userId: signal.user_id,
+            channelId: signal.channel_id,
+            brokerAccountIds,
+            symbolFilter: scopeSymbolFilter,
+        })
+        : (0, channelStopApply_1.mgmtUseChannelStopApply)() && actionPre === 'modify'
+            ? await (0, channelStopApply_1.ensureChannelModifyScope)(ctx.supabase, {
                 userId: signal.user_id,
                 channelId: signal.channel_id,
                 brokerAccountIds,
-                symbolFilter: symbolFromText,
+                symbolFilter: scopeSymbolFilter,
             })
-            : (0, channelStopApply_1.mgmtUseChannelStopApply)() && actionPre === 'modify'
-                ? await (0, channelStopApply_1.ensureChannelModifyScope)(ctx.supabase, {
-                    userId: signal.user_id,
-                    channelId: signal.channel_id,
-                    brokerAccountIds,
-                    symbolFilter: symbolFromText,
-                })
-                : await (0, managementScope_1.loadOpenTradesForManagement)(ctx.supabase, {
-                    userId: signal.user_id,
-                    channelId: signal.channel_id,
-                    brokerAccountIds,
-                    symbolFilter: symbolFromText,
-                });
-        if (actionPre === 'modify'
-            && !symbolFromText
-            && channelRows.length > 0) {
-            channelRows = (0, channelStopApply_1.mgmtUseChannelStopApply)()
-                ? (0, channelStopApply_1.allChannelModifySymbolBuckets)(channelRows)
-                : (0, managementScope_1.resolveChannelModifyTargets)(channelRows, parsed);
-        }
-        rows = channelRows;
-        basketAnchorId = rows[0]?.signal_id ?? null;
+            : await (0, managementScope_1.loadOpenTradesForManagement)(ctx.supabase, {
+                userId: signal.user_id,
+                channelId: signal.channel_id,
+                brokerAccountIds,
+                symbolFilter: scopeSymbolFilter,
+            });
+    if (actionPre === 'modify'
+        && !scopeSymbolFilter
+        && channelRows.length > 0) {
+        channelRows = (0, channelStopApply_1.mgmtUseChannelStopApply)()
+            ? (0, channelStopApply_1.allChannelModifySymbolBuckets)(channelRows)
+            : (0, managementScope_1.resolveChannelModifyTargets)(channelRows, parsed);
     }
+    rows = channelRows;
+    basketAnchorId = rows[0]?.signal_id ?? null;
     const byBroker = new Map(brokers.map(b => [b.id, b]));
     const action = String(parsed.action).toLowerCase();
     if (action === 'modify' && rows.length > 0) {
