@@ -1,6 +1,7 @@
 import {
   type BasketSymbolParams
 } from '../../basketSlTpReconcile'
+import { isV2 } from '../../engine/executionMode'
 import { type ManualSettings, type PlannerResult } from '../../manualPlanner'
 import { syncRangeBasketTakeProfits, toRangeBasketParsedSlice } from '../../rangeBasketTpSync'
 import { buildPerLegStopTargets, mergePlanImmediateOrders } from '../../multiTradeMerge'
@@ -31,6 +32,13 @@ export async function syncMultiBasketLegTakeProfits(ctx: TradeExecutorContext, a
     const { signal, parsed, broker, plan, symbol, uuid, params, manual, direction } = args
     const api = ctx.apiFor(broker)
     if (!api) return
+
+    // v2 brokers: the single reconcile loop converges every leg's SL/TP from the
+    // seeded desired-state (entry seed + channel memory) within its ~2-4s tick, so
+    // these synchronous per-leg broker modifies are redundant. Skipping them keeps
+    // the (already async) post-fill path off the broker for v2 — matching the v2
+    // skip in applyBasketSlTpRefresh and removing duplicate OrderModify round-trips.
+    if (isV2({ brokerAccountId: broker.id, userId: signal.user_id })) return
 
     await new Promise(r => setTimeout(r, 250))
 

@@ -27,6 +27,7 @@ import {
 } from '../../channelActiveTradeParams'
 import { mergeSignalUserOverride, parseUserOverride } from '../../signalOverride'
 import { isV2 } from '../../engine/executionMode'
+import { upsertBasketSlTpTarget } from '../../basketTargetStore'
 import {
   parsedHasExplicitEntryAnchor,
   planManualOrders,
@@ -484,6 +485,28 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
         // desired-state was already written above, and the single v2 reconcile loop
         // converges every existing leg to it within its ~2s tick - off the entry hot
         // path. This removes ~4s (merge_route) from v2 entries.
+        // Seed the per-anchor desired-state target explicitly so the reconciler has
+        // an authoritative SL/TP for THIS basket (teaser completion merges into a
+        // prior anchor, so the entry-time seed keyed by the new signal id won't cover
+        // it; channel memory alone can be overwritten by later signals).
+        if (anchorSignalId && signal.channel_id) {
+          const seedSl = typeof effectiveParsed.sl === 'number' && effectiveParsed.sl > 0
+            ? effectiveParsed.sl
+            : null
+          if (seedSl != null || refreshTpLevels.length > 0) {
+            await upsertBasketSlTpTarget(ctx.supabase, {
+              userId: signal.user_id,
+              brokerAccountId: broker.id,
+              anchorSignalId,
+              channelId: signal.channel_id,
+              symbol,
+              stoploss: seedSl,
+              tpLevels: refreshTpLevels.length ? refreshTpLevels : null,
+              source: logAction === 'merge_routed_modify_only' ? 'adjust' : 'entry',
+              instructionAt: signal.created_at,
+            }).catch(() => {})
+          }
+        }
         summary.openLegs = familyTrades.length
         summary.attempted = familyTrades.length
         summary.modified = familyTrades.length

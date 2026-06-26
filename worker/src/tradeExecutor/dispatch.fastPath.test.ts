@@ -65,3 +65,30 @@ test('isLiveMgmtFast: listener_push mgmt uses fast path', () => {
     true,
   )
 })
+
+test('isLiveMgmtFast: listener_push teaser completion (param refresh) uses fast path', () => {
+  // Zone + market-now + SL/TP completes a teaser basket → routes to merge-modify,
+  // so leg modifies must run on the parallel fast path even from listener_push.
+  const teaserCompletion: SignalRow = {
+    ...mgmtSignal,
+    id: 'sig-teaser',
+    parsed_data: {
+      ...baseParsed,
+      action: 'sell',
+      symbol: 'XAUUSD',
+      entry_zone_low: 4033.6,
+      entry_zone_high: 4037,
+      sl: 4041,
+      tp: [4031, 4029, 4027],
+      raw_instruction: 'Gold sell now 4033.6 - 4037 SL: 4041 TP: 4031',
+    },
+  }
+  assert.equal(
+    isLiveMgmtFast(
+      { liveDispatch: true, lightIdempotency: true, dispatchSource: 'listener_push' },
+      teaserCompletion.parsed_data,
+      teaserCompletion,
+    ),
+    true,
+  )
+})

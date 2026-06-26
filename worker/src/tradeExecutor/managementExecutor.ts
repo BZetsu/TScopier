@@ -56,7 +56,7 @@ import type { PerLegStopTarget } from '../multiTradeMerge'
 import { resolveLatestOpenBasketAnchor } from '../multiTradeMerge'
 import { isBenignOrderModifyError } from '../orderModifyBenign'
 import { modifyLegSlTpWithFallback } from '../orderModifySafe'
-import { mgmtLegConcurrency, mgmtVerifyAfterModify, parallelMap } from '../parallelPool'
+import { mgmtBasketConcurrency, mgmtLegConcurrency, mgmtVerifyAfterModify, parallelMap } from '../parallelPool'
 import { patchActiveRangePendingLegStops } from '../rangePendingLadderSync'
 import { symbolsCompatibleForBasket } from '../basketModFollowUp'
 import { type TradeExecutorContext } from './context'
@@ -413,6 +413,12 @@ export async function applyManagement(
     const liveMgmtFast = mgmtOpts?.liveMgmtFast === true
     const legConcurrency = liveMgmtFast ? mgmtLegConcurrency() : 1
     let legsTotal = 0
+    // Diagnostics for multi-account modify latency (scope load vs broker apply).
+    const scopeLoadStart = Date.now()
+    let scopeLoadMs: number | undefined
+    let basketsTotal: number | undefined
+    let basketApplyMs: number | undefined
+    let basketConcurrency: number | undefined
     if (!hasFxsocketConfigured()) {
       await skipMgmtSignalWithLog(ctx, signal, 'broker_api_not_configured', {
         action: String(parsed.action ?? '').toLowerCase(),
@@ -551,6 +557,7 @@ export async function applyManagement(
       })
       basketAnchorId = rows[0]?.signal_id ?? basketAnchorId
     }
+    scopeLoadMs = Date.now() - scopeLoadStart
 
     if (
       (action === 'close' || action === 'breakeven' || action === 'partial_profit' || action === 'partial_breakeven')
@@ -1248,7 +1255,7 @@ export async function applyManagement(
         onPendingCancelled: n => { legsTotal += n },
         onBrokerStragglersClosed: n => { legsTotal += n },
       })
-      return { legsTotal, legsParallelism: legConcurrency }
+      return { legsTotal, legsParallelism: legConcurrency, scopeLoadMs }
     }
 
     if (action === 'modify' && (hasNewSl || hasNewTp)) {
@@ -1302,6 +1309,9 @@ export async function applyManagement(
         }
 
         if (rowsByBrokerSignalStop.size > 0) {
+          const basketApplyStart = Date.now()
+          basketsTotal = rowsByBrokerSignalStop.size
+          basketConcurrency = mgmtBasketConcurrency()
           modifyApplyResult = await applyChannelStopsToBaskets({
             supabase: ctx.supabase,
             apiFor: broker => ctx.apiFor(broker as BrokerRow),
@@ -1314,8 +1324,13 @@ export async function applyManagement(
             hasNewTp,
             parsedSl: hasNewSl ? (parsed.sl as number) : null,
             parsedTpLevels,
-            verifyOnBroker: true,
+            // Inline broker re-read/verify is off by default — the v2 reconciler
+            // (or v1 basket reconcile monitor) re-verifies broker drift, so this
+            // synchronous per-leg snapshot check is redundant and previously caused
+            // broker_verify_failed spam on multi-account channel modifies.
+            verifyOnBroker: mgmtVerifyAfterModify(),
           })
+          basketApplyMs = Date.now() - basketApplyStart
           await logMgmtModifyBrokerSummaries(ctx.supabase, signal.user_id, signal.id, modifyApplyResult.brokers)
           legsTotal += modifyApplyResult.totalModified
         }
@@ -1607,7 +1622,14 @@ export async function applyManagement(
     } else {
       await finalizeMgmtSignal(ctx, signal.id)
     }
-    return { legsTotal, legsParallelism: legConcurrency }
+    return {
+      legsTotal,
+      legsParallelism: legConcurrency,
+      scopeLoadMs,
+      basketsTotal,
+      basketApplyMs,
+      basketConcurrency,
+    }
   }
 
 export async function applyCloseWorseEntriesInstruction(ctx: TradeExecutorContext,

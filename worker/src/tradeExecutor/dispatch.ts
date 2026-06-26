@@ -92,8 +92,11 @@ export function shouldUseEntryFastPath(ctx: TradeExecutorContext, row: SignalRow
     if (mode !== 'entry' && mode !== 'all') return false
     const parsed = row.parsed_data
     if (!parsed) return false
-    // SL/TP follow-ups (replies / adjust posts) must modify the open basket — never OrderSend first.
-    if (shouldRouteAsBasketParameterRefresh(parsed)) return false
+    // Entry actions (buy/sell) take the live fast path — including teaser-completion
+    // and SL/TP follow-up signals that route to merge-modify inside entryPrepare.
+    // Whether the signal opens a trade or modifies the open basket is decided there
+    // (never OrderSend-first for parameter refresh); the fast path only bypasses the
+    // in-process queue + heavy idempotency and enables parallel leg modifies.
     return isEntryAction(parsedAction(parsed))
   }
 
@@ -142,11 +145,10 @@ export function isLiveMgmtFast(
   }
   const action = parsedAction(parsed)
   if (isManagementAction(action)) return true
-  if (
-    opts.dispatchSource === MESSAGE_REVISION_DISPATCH_SOURCE
-    && parsed
-    && shouldRouteAsBasketParameterRefresh(parsed as ParsedSignal)
-  ) {
+  // Parameter-refresh entries (teaser completion: zone + market-now + SL/TP, and
+  // SL/TP follow-ups) route to merge-modify, so run their leg modifies on the fast
+  // (parallel) path regardless of dispatch source — not just message revisions.
+  if (parsed && shouldRouteAsBasketParameterRefresh(parsed as ParsedSignal)) {
     return true
   }
   return false
@@ -760,6 +762,10 @@ export async function handleSignal(ctx: TradeExecutorContext,
           mgmt_wall_ms: Date.now() - mgmtWallStart,
           mgmt_legs_total: mgmtResult.legsTotal,
           mgmt_legs_parallelism: mgmtResult.legsParallelism,
+          mgmt_scope_load_ms: mgmtResult.scopeLoadMs ?? null,
+          mgmt_baskets_total: mgmtResult.basketsTotal ?? null,
+          mgmt_basket_apply_ms: mgmtResult.basketApplyMs ?? null,
+          mgmt_basket_concurrency: mgmtResult.basketConcurrency ?? null,
           mgmt_action: action,
         }
         return

@@ -8,4 +8,12 @@ export type MgmtExecOptions = {
 export type MgmtExecResult = {
   legsTotal: number
   legsParallelism: number
+  /** Diagnostics: ms spent loading the management scope (channel open trades). */
+  scopeLoadMs?: number
+  /** Diagnostics: number of distinct baskets (accounts) the modify touched. */
+  basketsTotal?: number
+  /** Diagnostics: ms spent applying SL/TP across all baskets (broker work). */
+  basketApplyMs?: number
+  /** Diagnostics: configured cross-basket apply concurrency. */
+  basketConcurrency?: number
 }

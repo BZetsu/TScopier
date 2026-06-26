@@ -30,7 +30,7 @@ import {
 import { readBrokerOrderStopLoss } from './signalEntryPendingHelpers'
 import { brokerSessionUuid, brokerHasLinkedSession } from './tradeExecutor/helpers'
 import { incMetric } from './workerMetrics'
-import { mgmtLegConcurrency, parallelMap } from './parallelPool'
+import { mgmtBasketConcurrency, mgmtLegConcurrency, parallelMap } from './parallelPool'
 import { deepestFinalTp, hasClosedBasketLegs } from './rangeBasketTpSync'
 import { hasTpTouchedLock } from './rangePendingFireGuard'
 
@@ -142,6 +142,10 @@ export async function ensureChannelModifyScope(
     for (const row of rows) byId.set(row.id, row)
   }
 
+  // Single all-broker channel load covers every account in one scope query. The
+  // previous design re-ran this per broker (O(accounts) serial DB round-trips),
+  // the dominant pre-broker latency on channel-wide modify/breakeven at 10-15
+  // accounts.
   ingest(await loadOpenTradesForManagement(supabase, {
     userId,
     channelId,
@@ -149,43 +153,49 @@ export async function ensureChannelModifyScope(
     symbolFilter: args.symbolFilter,
   }))
 
-  for (const brokerId of brokerAccountIds) {
-    ingest(await loadOpenTradesForManagement(supabase, {
-      userId,
-      channelId,
-      brokerAccountIds: [brokerId],
-      symbolFilter: args.symbolFilter,
-    }))
+  // Only brokers with zero attributed legs need the anchor-discovery fallback
+  // (open legs whose telegram_channel_id / attribution lag behind fresh fills).
+  // Run that fallback in parallel, bounded, instead of serially per account.
+  const brokersWithLegs = new Set<string>()
+  for (const row of byId.values()) brokersWithLegs.add(row.broker_account_id)
+  const emptyBrokerIds = brokerAccountIds.filter(id => !brokersWithLegs.has(id))
 
-    const brokerLegs = [...byId.values()].filter(r => r.broker_account_id === brokerId)
-    if (brokerLegs.length > 0) continue
+  if (emptyBrokerIds.length > 0) {
+    const fallbackRows = await parallelMap(
+      emptyBrokerIds,
+      mgmtBasketConcurrency(),
+      async (brokerId): Promise<MgmtTradeRow[]> => {
+        const found: MgmtTradeRow[] = []
+        const { data: latestOpen } = await supabase
+          .from('trades')
+          .select('signal_id')
+          .eq('user_id', userId)
+          .eq('broker_account_id', brokerId)
+          .eq('status', 'open')
+          .not('metaapi_order_id', 'is', null)
+          .order('opened_at', { ascending: false })
+          .limit(5)
 
-    const { data: latestOpen } = await supabase
-      .from('trades')
-      .select('signal_id')
-      .eq('user_id', userId)
-      .eq('broker_account_id', brokerId)
-      .eq('status', 'open')
-      .not('metaapi_order_id', 'is', null)
-      .order('opened_at', { ascending: false })
-      .limit(5)
-
-    for (const row of latestOpen ?? []) {
-      const anchorId = (row as { signal_id?: string }).signal_id
-      if (!anchorId) continue
-      const { data: sig } = await supabase
-        .from('signals')
-        .select('channel_id')
-        .eq('id', anchorId)
-        .maybeSingle()
-      if ((sig as { channel_id?: string } | null)?.channel_id !== channelId) continue
-      const basket = await loadTradesForBasketAnchor(supabase, {
-        userId,
-        brokerAccountIds: [brokerId],
-        anchorSignalId: anchorId,
-      })
-      ingest(basket)
-    }
+        for (const row of latestOpen ?? []) {
+          const anchorId = (row as { signal_id?: string }).signal_id
+          if (!anchorId) continue
+          const { data: sig } = await supabase
+            .from('signals')
+            .select('channel_id')
+            .eq('id', anchorId)
+            .maybeSingle()
+          if ((sig as { channel_id?: string } | null)?.channel_id !== channelId) continue
+          const basket = await loadTradesForBasketAnchor(supabase, {
+            userId,
+            brokerAccountIds: [brokerId],
+            anchorSignalId: anchorId,
+          })
+          found.push(...basket)
+        }
+        return found
+      },
+    )
+    for (const rows of fallbackRows) ingest(rows)
   }
 
   return [...byId.values()].sort((a, b) => {
@@ -387,7 +397,14 @@ export async function applyChannelStopsToBaskets(
     }
   }
 
-  for (const [basketKey, brokerRows] of rowsByBrokerSignal) {
+  // Apply baskets (one per account) concurrently — each targets a different MT
+  // terminal, so distinct baskets don't contend. Per-leg modifies within a basket
+  // still run under mgmtLegConcurrency(), and the fxClient per-terminal gate keeps
+  // a single terminal from being overloaded. Serial basket passes were the main
+  // "modify too slow across many accounts" cause at 10-15 accounts.
+  const processOneBasket = async (
+    [basketKey, brokerRows]: [string, ChannelStopLeg[]],
+  ): Promise<void> => {
     const brokerId = basketKey.split('|')[0]!
     const broker = brokersById.get(brokerId)
     const uuid = broker ? brokerSessionUuid(broker) : null
@@ -424,7 +441,7 @@ export async function applyChannelStopsToBaskets(
       totalSkipped += brokerRows.length
       brokerResults.push(baseResult)
       incMetric('mgmt_modify_broker_skipped')
-      continue
+      return
     }
 
     if (fxsocketOnly && !brokerHasLinkedSession(broker)) {
@@ -438,7 +455,7 @@ export async function applyChannelStopsToBaskets(
       totalSkipped += brokerRows.length
       brokerResults.push(baseResult)
       incMetric('mgmt_modify_broker_skipped')
-      continue
+      return
     }
 
     const api = apiFor(broker)
@@ -446,7 +463,7 @@ export async function applyChannelStopsToBaskets(
       baseResult.failed = brokerRows.length
       totalFailed += brokerRows.length
       brokerResults.push(baseResult)
-      continue
+      return
     }
 
     api?.seedPlatformCache(uuid, mtPlatformFrom(broker.platform ?? 'mt5'))
@@ -465,7 +482,7 @@ export async function applyChannelStopsToBaskets(
     baseResult.openLegs = legs.length
     if (!legs.length) {
       brokerResults.push(baseResult)
-      continue
+      return
     }
 
     const tpLots = broker.manual_settings?.tp_lots ?? null
@@ -783,6 +800,12 @@ export async function applyChannelStopsToBaskets(
 
     brokerResults.push(baseResult)
   }
+
+  await parallelMap(
+    [...rowsByBrokerSignal.entries()],
+    mgmtBasketConcurrency(),
+    processOneBasket,
+  )
 
   const allFullySynced = brokerResults.length > 0
     && brokerResults.every(r => r.openLegs === 0 || r.fullySynced)
