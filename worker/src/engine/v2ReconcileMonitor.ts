@@ -28,10 +28,6 @@ import {
 } from './reconciler'
 import { type BasketOpenLeg, closeStaleOpenTrades, loadOpenBasketLegs } from '../basketSlTpReconcile'
 import { resolveEffectiveBasketStops, type EffectiveStopSource } from '../basketEffectiveStops'
-import { resolveFreshBasketReconcileTargets } from '../basketReconcileTargets'
-import { setActivePendingRangeLegsTakeProfit } from '../rangeBasketTpSync'
-import { resolveChannelTradingConfig, type BrokerChannelTradingFields } from '../channelTradingConfig'
-import { normalizeManualSettingsForExecution } from '../manualPlanning/normalizeManualSettings'
 import { brokerSessionUuid } from '../tradeExecutor/helpers'
 import { hasFxsocketConfigured } from '../fxsocketClient'
 import { isV2 } from './executionMode'
@@ -71,29 +67,15 @@ export function buildDesiredLegTargets(args: {
   isBuy: boolean
   /** Source of effectiveSl; explicit instructions (basket_target/mgmt_signal) win over per-leg BE. */
   effectiveSource?: EffectiveStopSource
-  /**
-   * Per-leg desired TP from Targets % distribution (50/30/20 by entry quality),
-   * aligned with `legs` by index. Used to ladder TP1/TP2/TP3 across the basket
-   * instead of collapsing every leg onto the deepest TP.
-   */
-  perLegTakeProfit?: Array<number | null>
-  /**
-   * When true, repaint a leg's broker TP to its distributed target (range layering
-   * in progress, no TP hit yet). When false (frozen / a TP was hit), never repaint a
-   * present broker TP — only fill a naked leg.
-   */
-  allowTpRepaint?: boolean
 }): DesiredLegTarget[] {
   const byTicket = new Map<number, FxOpenOrder>()
   for (const o of args.snapshot) byTicket.set(o.ticket, o)
   const baseSl = args.effectiveSl != null && args.effectiveSl > 0 ? args.effectiveSl : null
   const explicitBasketInstruction =
     args.effectiveSource === 'basket_target' || args.effectiveSource === 'mgmt_signal'
-  const deepest = deepestTp(args.effectiveTpLevels, args.isBuy)
 
   const out: DesiredLegTarget[] = []
-  for (let i = 0; i < args.legs.length; i++) {
-    const leg = args.legs[i]!
+  for (const leg of args.legs) {
     const ticket = legTicket(leg)
     if (ticket == null) continue
     const o = byTicket.get(ticket)
@@ -109,15 +91,7 @@ export function buildDesiredLegTargets(args: {
     }
 
     const existingTp = o.takeProfit != null && o.takeProfit > 0 ? o.takeProfit : null
-    const distributedRaw = args.perLegTakeProfit?.[i]
-    const distributedTp =
-      typeof distributedRaw === 'number' && distributedRaw > 0 ? distributedRaw : null
-    // Repaint to the distributed Targets % TP while layering (no TP hit yet); otherwise
-    // keep a present broker TP (never repaint a hit/active target) and only fill a naked
-    // leg. Falls back to the deepest ladder TP when no distribution is available.
-    const fillTp = args.allowTpRepaint
-      ? (distributedTp ?? existingTp ?? deepest)
-      : (existingTp ?? distributedTp ?? deepest)
+    const fillTp = existingTp ?? deepestTp(args.effectiveTpLevels, args.isBuy)
 
     out.push({ ticket, stoploss: sl, takeProfit: fillTp })
   }
@@ -126,13 +100,7 @@ export function buildDesiredLegTargets(args: {
 
 type BasketKey = { brokerAccountId: string; anchorSignalId: string; symbol: string; isBuy: boolean }
 
-type BrokerSession = {
-  uuid: string
-  platform: MtPlatform
-  userId: string | null
-  /** Raw broker config fields for per-channel manual settings resolution. */
-  config: BrokerChannelTradingFields
-}
+type BrokerSession = { uuid: string; platform: MtPlatform; userId: string | null }
 
 /** The single management-first reconcile loop for v2 brokers. */
 export class V2ReconcileMonitor {
@@ -213,26 +181,13 @@ export class V2ReconcileMonitor {
     if (!unique.length) return out
     const { data } = await this.supabase
       .from('broker_accounts')
-      .select('id,user_id,fxsocket_account_id,metaapi_account_id,platform,copier_mode,manual_settings,ai_settings,channel_trading_configs,signal_channel_ids,last_balance,last_equity')
+      .select('id,user_id,fxsocket_account_id,metaapi_account_id,platform')
       .in('id', unique)
-    for (const b of (data ?? []) as Array<{ id: string; user_id?: string; fxsocket_account_id?: string; metaapi_account_id?: string; platform?: string } & BrokerChannelTradingFields>) {
+    for (const b of (data ?? []) as Array<{ id: string; user_id?: string; fxsocket_account_id?: string; metaapi_account_id?: string; platform?: string }>) {
       const uuid = brokerSessionUuid(b)
       if (!uuid) continue
       const platform: MtPlatform = String(b.platform).toUpperCase() === 'MT4' ? 'MT4' : 'MT5'
-      out.set(b.id, {
-        uuid,
-        platform,
-        userId: b.user_id ?? null,
-        config: {
-          copier_mode: b.copier_mode ?? null,
-          manual_settings: b.manual_settings ?? null,
-          ai_settings: b.ai_settings ?? null,
-          channel_trading_configs: b.channel_trading_configs ?? null,
-          signal_channel_ids: b.signal_channel_ids ?? null,
-          last_balance: b.last_balance ?? null,
-          last_equity: b.last_equity ?? null,
-        },
-      })
+      out.set(b.id, { uuid, platform, userId: b.user_id ?? null })
     }
     return out
   }
@@ -250,12 +205,10 @@ export class V2ReconcileMonitor {
       .eq('id', basket.anchorSignalId)
       .maybeSingle()
     const anchorParsed = (anchorSig as { parsed_data?: { sl?: number | null; tp?: number[] | null } } | null)?.parsed_data ?? {}
-    const userId = (anchorSig as { user_id?: string } | null)?.user_id ?? session.userId ?? ''
-    const channelId = (anchorSig as { channel_id?: string | null } | null)?.channel_id ?? null
     const eff = await resolveEffectiveBasketStops({
       supabase: this.supabase,
-      userId,
-      channelId,
+      userId: (anchorSig as { user_id?: string } | null)?.user_id ?? session.userId ?? '',
+      channelId: (anchorSig as { channel_id?: string | null } | null)?.channel_id ?? null,
       anchorSignalId: basket.anchorSignalId,
       symbol: basket.symbol,
       basketCreatedAt: (anchorSig as { created_at?: string | null } | null)?.created_at ?? legs[0]?.opened_at ?? null,
@@ -275,19 +228,6 @@ export class V2ReconcileMonitor {
       return { modified: 0, closed: 0 }
     }
 
-    // Per-leg TP distribution (Targets % 50/30/20 by entry quality), resolved with the
-    // SAME logic v1 reconcile jobs use so v2 ladders TP1/TP2/TP3 across the basket instead
-    // of collapsing every naked leg onto the deepest TP. The rebalance gate freezes
-    // distribution once a TP is hit / a leg closed (then we only backfill naked legs).
-    const { perLegTakeProfit, allowTpRepaint } = await this.resolvePerLegTakeProfits(
-      basket,
-      session,
-      legs,
-      userId,
-      channelId,
-      !!eff && eff.tpLevels.length > 0,
-    )
-
     const desiredTargets = buildDesiredLegTargets({
       legs,
       snapshot,
@@ -295,8 +235,6 @@ export class V2ReconcileMonitor {
       effectiveTpLevels: eff?.tpLevels ?? [],
       isBuy: basket.isBuy,
       effectiveSource: eff?.source,
-      perLegTakeProfit,
-      allowTpRepaint,
     })
     const trackedTickets = legs.map(legTicket).filter((t): t is number => t != null)
 
@@ -342,71 +280,6 @@ export class V2ReconcileMonitor {
       await this.logTick(basket, session.userId, { ...result, legs: legs.length, orphanCount })
     }
     return { modified: result.modified, closed: result.closed }
-  }
-
-  /**
-   * Per-leg desired TP aligned with `legs` by index, using the same Targets %
-   * distribution v1 reconcile jobs use ({@link resolveFreshBasketReconcileTargets}).
-   * `allowTpRepaint` is true only while range layering is active and no TP has been hit
-   * (gate not frozen) — then v2 ladders TP1/TP2/TP3 across legs; otherwise we only
-   * backfill naked legs and never repaint a present broker TP.
-   */
-  private async resolvePerLegTakeProfits(
-    basket: BasketKey,
-    session: BrokerSession,
-    legs: BasketOpenLeg[],
-    userId: string,
-    channelId: string | null,
-    hasLadder: boolean,
-  ): Promise<{ perLegTakeProfit?: Array<number | null>; allowTpRepaint: boolean }> {
-    if (!hasLadder || !userId) return { allowTpRepaint: false }
-    try {
-      const manual = normalizeManualSettingsForExecution(
-        resolveChannelTradingConfig(session.config, channelId).manual_settings,
-      )
-      const fresh = await resolveFreshBasketReconcileTargets(this.supabase, {
-        anchorSignalId: basket.anchorSignalId,
-        channelId,
-        symbol: basket.symbol,
-        direction: basket.isBuy ? 'buy' : 'sell',
-        userId,
-        brokerAccountId: basket.brokerAccountId,
-        familyTrades: legs,
-        storedTargets: [],
-        manual,
-        nImmCwe: 0,
-        overrideTp: null,
-      })
-      const perLegTakeProfit = fresh.perLegTargets.map(t =>
-        Number(t.takeprofit) > 0 ? Number(t.takeprofit) : null,
-      )
-      // Only repaint open legs for range baskets that are actively layering (gate not
-      // frozen). Non-range baskets and frozen baskets keep present TPs (naked-leg fill
-      // still uses the distributed value).
-      const allowTpRepaint = manual.range_trading === true && fresh.tpFrozen !== true
-
-      // Frozen (a TP was hit): any range legs that still fire later are "new" and must
-      // carry the deepest TP — never an already-passed early TP. Seed pending rows so a
-      // late layer materializes with the correct target (mirrors v1 rangeBasketTpSync).
-      if (manual.range_trading === true && fresh.tpFrozen === true) {
-        const deepest = deepestTp(fresh.signalTps, basket.isBuy)
-        if (deepest != null && deepest > 0) {
-          await setActivePendingRangeLegsTakeProfit(
-            this.supabase,
-            basket.brokerAccountId,
-            basket.anchorSignalId,
-            deepest,
-          ).catch(() => 0)
-        }
-      }
-      return { perLegTakeProfit, allowTpRepaint }
-    } catch (err) {
-      console.warn(
-        `[v2ReconcileMonitor] per-leg TP resolve failed broker=${basket.brokerAccountId}`
-        + ` anchor=${basket.anchorSignalId}: ${err instanceof Error ? err.message : String(err)}`,
-      )
-      return { allowTpRepaint: false }
-    }
   }
 
   private async logTick(
