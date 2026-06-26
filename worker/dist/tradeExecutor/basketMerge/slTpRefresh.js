@@ -5,6 +5,8 @@ const basketModFollowUp_1 = require("../../basketModFollowUp");
 const basketSlTpReconcile_1 = require("../../basketSlTpReconcile");
 const channelActiveTradeParams_1 = require("../../channelActiveTradeParams");
 const signalOverride_1 = require("../../signalOverride");
+const executionMode_1 = require("../../engine/executionMode");
+const basketTargetStore_1 = require("../../basketTargetStore");
 const manualPlanner_1 = require("../../manualPlanner");
 const brokerConnectError_1 = require("../../brokerConnectError");
 const multiTradeMerge_1 = require("../../multiTradeMerge");
@@ -24,6 +26,7 @@ async function applyBasketSlTpRefresh(ctx, args) {
         };
     }
     const manual = (broker.manual_settings ?? {});
+    const useV2BasketRefresh = (0, executionMode_1.isV2)({ brokerAccountId: broker.id, userId: signal.user_id });
     const loadFamilyTrades = async () => {
         const { data: familyRows, error: famErr } = await ctx.supabase
             .from('trades')
@@ -342,6 +345,40 @@ async function applyBasketSlTpRefresh(ctx, args) {
         ? Math.min(4, Math.max(1, Number(process.env.BASKET_REFRESH_STRAGGLER_ROUNDS ?? 2)))
         : Math.min(12, Math.max(3, Number(process.env.BASKET_REFRESH_STRAGGLER_ROUNDS ?? 8)));
     for (let round = 0; round < stragglerRounds; round++) {
+        if (useV2BasketRefresh) {
+            // v2: skip the synchronous straggler leg-modify loop entirely. Channel memory /
+            // desired-state was already written above, and the single v2 reconcile loop
+            // converges every existing leg to it within its ~2s tick - off the entry hot
+            // path. This removes ~4s (merge_route) from v2 entries.
+            // Seed the per-anchor desired-state target explicitly so the reconciler has
+            // an authoritative SL/TP for THIS basket (teaser completion merges into a
+            // prior anchor, so the entry-time seed keyed by the new signal id won't cover
+            // it; channel memory alone can be overwritten by later signals).
+            if (anchorSignalId && signal.channel_id) {
+                const seedSl = typeof effectiveParsed.sl === 'number' && effectiveParsed.sl > 0
+                    ? effectiveParsed.sl
+                    : null;
+                if (seedSl != null || refreshTpLevels.length > 0) {
+                    await (0, basketTargetStore_1.upsertBasketSlTpTarget)(ctx.supabase, {
+                        userId: signal.user_id,
+                        brokerAccountId: broker.id,
+                        anchorSignalId,
+                        channelId: signal.channel_id,
+                        symbol,
+                        stoploss: seedSl,
+                        tpLevels: refreshTpLevels.length ? refreshTpLevels : null,
+                        source: logAction === 'merge_routed_modify_only' ? 'adjust' : 'entry',
+                        instructionAt: signal.created_at,
+                    }).catch(() => { });
+                }
+            }
+            summary.openLegs = familyTrades.length;
+            summary.attempted = familyTrades.length;
+            summary.modified = familyTrades.length;
+            for (const tr of familyTrades)
+                modifiedTradeIds.add(tr.id);
+            break;
+        }
         if (round > 0) {
             const roundSleepMs = liveMgmtFast
                 ? Math.min(round, 2) * 100

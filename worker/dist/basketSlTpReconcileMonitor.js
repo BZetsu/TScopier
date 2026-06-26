@@ -12,6 +12,7 @@ const channelTradingConfig_1 = require("./channelTradingConfig");
 const fxsocketClient_2 = require("./fxsocketClient");
 const copierPause_1 = require("./copierPause");
 const helpers_1 = require("./tradeExecutor/helpers");
+const executionMode_1 = require("./engine/executionMode");
 const ACTIVE_MS = (0, monitorIdleGate_1.monitorActiveIntervalMs)('BASKET_RECONCILE_TICK_MS', 5000);
 const IDLE_MS = (0, monitorIdleGate_1.monitorIdleIntervalMs)('BASKET_RECONCILE_IDLE_MS', 15000);
 const JOB_BATCH_LIMIT = Math.min(80, Math.max(5, Number(process.env.BASKET_RECONCILE_SWEEP_BATCH ?? 50)));
@@ -164,6 +165,13 @@ class BasketSlTpReconcileMonitor {
         const uuid = broker ? (0, helpers_1.brokerSessionUuid)(broker) : null;
         if (!broker || !uuid) {
             await this.releaseJob(row.id, 'broker not found', row.attempts);
+            return;
+        }
+        // Management-first v2 cutover: the single V2ReconcileMonitor owns background
+        // convergence for v2-flagged brokers. Retire this v1 job so the two loops never
+        // both modify the same basket (the old multi-applier flip-flop).
+        if ((0, executionMode_1.isV2)({ brokerAccountId: row.broker_account_id, userId: String(broker.user_id ?? '') || null })) {
+            await (0, basketSlTpReconcile_1.markBasketReconcileDone)(this.supabase, row.id);
             return;
         }
         if ((0, copierPause_1.isUserCopierPausedCached)(String(broker.user_id ?? ''))) {

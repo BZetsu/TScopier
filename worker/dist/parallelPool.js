@@ -2,10 +2,20 @@
 /** Bounded-concurrency async map for multi-leg management (CWE, close, modify). */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.mgmtLegConcurrency = mgmtLegConcurrency;
+exports.mgmtBasketConcurrency = mgmtBasketConcurrency;
 exports.mgmtVerifyAfterModify = mgmtVerifyAfterModify;
 exports.parallelMap = parallelMap;
 function mgmtLegConcurrency() {
     return Math.max(1, Math.min(16, Number(process.env.MGMT_LEG_CONCURRENCY ?? 8)));
+}
+/**
+ * Concurrency for applying management across distinct baskets (accounts) at once.
+ * Each basket targets a different MT terminal, so this is bounded separately from
+ * per-leg concurrency (which shares one terminal). Default 6 — tuned for 10-15
+ * accounts copying a management-heavy channel (e.g. GTMO VIP).
+ */
+function mgmtBasketConcurrency() {
+    return Math.max(1, Math.min(16, Number(process.env.MGMT_BASKET_CONCURRENCY ?? 6)));
 }
 /**
  * Post-OrderModify broker re-read/verification. Off by default for speed — the

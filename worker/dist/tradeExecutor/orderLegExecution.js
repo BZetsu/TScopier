@@ -8,6 +8,8 @@ const channelActiveTradeParams_1 = require("../channelActiveTradeParams");
 const trailingStop_1 = require("../trailingStop");
 const postFillFollowUp_1 = require("../postFillFollowUp");
 const helpers_1 = require("./helpers");
+const executionMode_1 = require("../engine/executionMode");
+const fxClient_1 = require("../engine/fxClient");
 async function sendImmediateLegs(input) {
     const { ctx, signal, parsed, broker, manual, api, uuid, symbol, requestedSymbol, mapping, params, legs, liveEntryFast, pipelineT0, strictEntryPrefetch, channelDelayMs, channelDelaySkipped, deferVirtualAnchor, virtualPendings, plan, materializedVirtuals, strictBrokerPlaced, strictDeferred, op, channelKeywords, baseLot, syncMultiLegTps, } = input;
     if (legs.length === 0) {
@@ -29,6 +31,14 @@ async function sendImmediateLegs(input) {
         orderLogContext.allowed_symbols = mapping.whitelist;
     }
     const filledLegs = [];
+    // v2 entries fire PROTECTED-at-send through the strict fxClient (bounded timeout,
+    // strict retcode, no blind 3x retries) instead of the old client. One pre-burst
+    // OpenedOrders snapshot powers ambiguous-send adoption so retries never duplicate.
+    const useV2 = (0, executionMode_1.isV2)({ brokerAccountId: broker.id, userId: signal.user_id });
+    const v2Platform = (0, fxClient_1.toMtPlatform)(broker.platform);
+    const v2Snapshot = useV2
+        ? await (0, fxClient_1.getFxClient)().openedOrders(uuid, v2Platform).catch(() => [])
+        : [];
     const sendLeg = async (leg) => {
         let args = leg.args;
         const isBuyLeg = (0, helpers_1.isBuySideOp)(String(args.operation));
@@ -67,12 +77,44 @@ async function sendImmediateLegs(input) {
             signal.pipeline_ts.t_first_broker_send = t0;
         }
         try {
-            const result = await api.orderSend(uuid, args);
+            let result;
+            if (useV2) {
+                const r = await (0, fxClient_1.getFxClient)().orderSend(uuid, v2Platform, {
+                    symbol: args.symbol,
+                    operation: args.operation,
+                    volume: args.volume,
+                    price: Number(args.price) > 0 ? Number(args.price) : undefined,
+                    stopLoss: Number(args.stoploss) > 0 ? Number(args.stoploss) : undefined,
+                    takeProfit: Number(args.takeprofit) > 0 ? Number(args.takeprofit) : undefined,
+                    comment: args.comment,
+                    slippage: args.slippage,
+                    expertId: args.expertID,
+                }, { anchorSignalId: signal.id, legIndex: leg.idx, preSnapshot: v2Snapshot });
+                if (!r.ok || !r.ticket)
+                    throw new Error(r.message || `v2 order_send rejected (${r.retcodeName})`);
+                result = {
+                    ticket: r.ticket,
+                    openPrice: r.price,
+                    stopLoss: Number(args.stoploss) > 0 ? Number(args.stoploss) : null,
+                    takeProfit: Number(args.takeprofit) > 0 ? Number(args.takeprofit) : null,
+                    lots: r.volume ?? args.volume,
+                };
+            }
+            else {
+                const raw = await api.orderSend(uuid, args);
+                result = {
+                    ticket: raw.ticket,
+                    openPrice: raw.openPrice ?? null,
+                    stopLoss: raw.stopLoss ?? null,
+                    takeProfit: raw.takeProfit ?? null,
+                    lots: raw.lots ?? null,
+                };
+            }
             const latencyMs = Date.now() - t0;
             if (liveEntryFast && signal.pipeline_ts) {
                 signal.pipeline_ts.t_last_broker_send = Date.now();
             }
-            console.log(`[tradeExecutor] OrderSend ok signal=${signal.id} broker=${broker.id} ticket=${result.ticket} leg=${leg.idx + 1}/${totalCount} price=${args.price ?? 0} ${latencyMs}ms`);
+            console.log(`[tradeExecutor] OrderSend ok signal=${signal.id} broker=${broker.id} ticket=${result.ticket} leg=${leg.idx + 1}/${totalCount} price=${args.price ?? 0} ${latencyMs}ms v2=${useV2}`);
             const isBuy = !args.operation.toLowerCase().includes('sell');
             const entryPx = result.openPrice ?? args.price ?? null;
             const openSl = result.stopLoss ?? args.stoploss ?? null;

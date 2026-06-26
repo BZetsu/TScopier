@@ -27,7 +27,7 @@ import {
   type DesiredLegTarget,
 } from './reconciler'
 import { type BasketOpenLeg, closeStaleOpenTrades, loadOpenBasketLegs } from '../basketSlTpReconcile'
-import { resolveEffectiveBasketStops } from '../basketEffectiveStops'
+import { resolveEffectiveBasketStops, type EffectiveStopSource } from '../basketEffectiveStops'
 import { brokerSessionUuid } from '../tradeExecutor/helpers'
 import { hasFxsocketConfigured } from '../fxsocketClient'
 import { isV2 } from './executionMode'
@@ -49,8 +49,13 @@ function deepestTp(tpLevels: number[], isBuy: boolean): number | null {
  * Pure: compute the per-leg SL/TP the basket SHOULD have right now, given the
  * basket-level effective SL/TP (resolved upstream by v1's resolveEffectiveBasketStops,
  * which already merges target store + channel memory + latest mgmt instruction).
- *  - SL: the effective basket SL applied to every leg, EXCEPT a leg whose per-leg
- *    auto-breakeven SL is MORE protective is preserved (never loosen a BE'd leg).
+ *  - SL: the effective basket SL applied to every leg, EXCEPT a leg with its own
+ *    breakeven SL (auto-breakeven OR manual channel breakeven, both stamp
+ *    auto_be_applied_at). Such a leg keeps its OWN entry-relative SL so a multi-entry
+ *    basket is never collapsed onto one shared breakeven SL — UNLESS the effective SL
+ *    comes from an explicit, newer instruction (basket_target / mgmt_signal), which
+ *    resolveEffectiveBasketStops only surfaces when it is newer than the breakeven;
+ *    then the latest instruction wins for the whole basket.
  *  - TP: keep the leg's existing broker TP (never repaint a hit/active target); only
  *    fill a naked leg (no broker TP) with the deepest ladder TP.
  */
@@ -60,10 +65,14 @@ export function buildDesiredLegTargets(args: {
   effectiveSl: number | null
   effectiveTpLevels: number[]
   isBuy: boolean
+  /** Source of effectiveSl; explicit instructions (basket_target/mgmt_signal) win over per-leg BE. */
+  effectiveSource?: EffectiveStopSource
 }): DesiredLegTarget[] {
   const byTicket = new Map<number, FxOpenOrder>()
   for (const o of args.snapshot) byTicket.set(o.ticket, o)
   const baseSl = args.effectiveSl != null && args.effectiveSl > 0 ? args.effectiveSl : null
+  const explicitBasketInstruction =
+    args.effectiveSource === 'basket_target' || args.effectiveSource === 'mgmt_signal'
 
   const out: DesiredLegTarget[] = []
   for (const leg of args.legs) {
@@ -73,11 +82,12 @@ export function buildDesiredLegTargets(args: {
     if (!o) continue // not at broker -> reconciler closedTickets handles it
 
     let sl = baseSl
-    // Preserve a more-protective per-leg auto-breakeven SL (a stale basket SL must
-    // never loosen a leg that auto-BE already tightened after a TP touch).
+    // A leg at breakeven (per-leg, entry-relative) keeps EXACTLY its own SL — never
+    // merged up to a basket-level / most-protective SL, which would force every leg
+    // onto the deepest leg's breakeven. An explicit newer instruction overrides it.
     const beSl = leg.auto_be_applied_at && leg.sl != null && leg.sl > 0 ? leg.sl : null
     if (beSl != null) {
-      sl = sl == null ? beSl : (args.isBuy ? Math.max(sl, beSl) : Math.min(sl, beSl))
+      sl = explicitBasketInstruction ? (baseSl ?? beSl) : beSl
     }
 
     const existingTp = o.takeProfit != null && o.takeProfit > 0 ? o.takeProfit : null
@@ -224,6 +234,7 @@ export class V2ReconcileMonitor {
       effectiveSl: eff && eff.stoploss > 0 ? eff.stoploss : null,
       effectiveTpLevels: eff?.tpLevels ?? [],
       isBuy: basket.isBuy,
+      effectiveSource: eff?.source,
     })
     const trackedTickets = legs.map(legTicket).filter((t): t is number => t != null)
 

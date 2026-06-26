@@ -21,6 +21,8 @@ const managementScope_1 = require("../managementScope");
 const fxsocketClient_1 = require("../fxsocketClient");
 const basketSlTpReconcile_1 = require("../basketSlTpReconcile");
 const basketTargetStore_1 = require("../basketTargetStore");
+const executionMode_1 = require("../engine/executionMode");
+const fxClient_1 = require("../engine/fxClient");
 const multiTradeMerge_1 = require("../multiTradeMerge");
 const orderModifyBenign_1 = require("../orderModifyBenign");
 const orderModifySafe_1 = require("../orderModifySafe");
@@ -295,6 +297,12 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
     const liveMgmtFast = mgmtOpts?.liveMgmtFast === true;
     const legConcurrency = liveMgmtFast ? (0, parallelPool_1.mgmtLegConcurrency)() : 1;
     let legsTotal = 0;
+    // Diagnostics for multi-account modify latency (scope load vs broker apply).
+    const scopeLoadStart = Date.now();
+    let scopeLoadMs;
+    let basketsTotal;
+    let basketApplyMs;
+    let basketConcurrency;
     if (!(0, fxsocketClient_1.hasFxsocketConfigured)()) {
         await skipMgmtSignalWithLog(ctx, signal, 'broker_api_not_configured', {
             action: String(parsed.action ?? '').toLowerCase(),
@@ -431,6 +439,7 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
         });
         basketAnchorId = rows[0]?.signal_id ?? basketAnchorId;
     }
+    scopeLoadMs = Date.now() - scopeLoadStart;
     if ((action === 'close' || action === 'breakeven' || action === 'partial_profit' || action === 'partial_breakeven')
         && rows.length > 0) {
         rows = await (0, managementScope_1.expandMgmtRowsToFullBaskets)(ctx.supabase, {
@@ -677,28 +686,43 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
             return;
         try {
             if (action === 'close') {
-                const maxAttempts = liveMgmtFast ? 1 : 3;
                 let closeConfirmed = false;
                 let lastCloseReason;
-                for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-                    const closeResult = await (0, managementClose_1.closeWithVerification)(api, uuid, effectiveTicket, mgmtCloseOpts(liveMgmtFast));
-                    if (closeResult.confirmed) {
-                        closeConfirmed = true;
+                if ((0, executionMode_1.isV2)({ brokerAccountId: broker.id, userId: signal.user_id })) {
+                    // v2 fast close: strict retcode-validated single call (~200ms live),
+                    // no slow verify/retry loop. Idempotent - a gone ticket reads as closed.
+                    const r = await (0, fxClient_1.getFxClient)().orderClose(uuid, (0, fxClient_1.toMtPlatform)(broker.platform), { ticket: effectiveTicket });
+                    closeConfirmed = r.ok;
+                    if (!r.ok) {
+                        lastCloseReason = r.message;
+                        if (r.retcodeName === 'AMBIGUOUS') {
+                            const stillOpen = await (0, fxClient_1.getFxClient)().openedOrders(uuid, (0, fxClient_1.toMtPlatform)(broker.platform)).catch(() => []);
+                            closeConfirmed = !stillOpen.some(o => o.ticket === effectiveTicket);
+                        }
+                    }
+                }
+                else {
+                    const maxAttempts = liveMgmtFast ? 1 : 3;
+                    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+                        const closeResult = await (0, managementClose_1.closeWithVerification)(api, uuid, effectiveTicket, mgmtCloseOpts(liveMgmtFast));
+                        if (closeResult.confirmed) {
+                            closeConfirmed = true;
+                            break;
+                        }
+                        lastCloseReason = closeResult.reason;
+                        const rawOrders = await api.openedOrders(uuid).catch(() => []);
+                        const reconciledTicket = resolveReconciledTicketForTrade(trade, rawOrders ?? [], new Set());
+                        if (reconciledTicket && reconciledTicket !== effectiveTicket) {
+                            ticketReconciledFrom = ticketReconciledFrom ?? effectiveTicket;
+                            effectiveTicket = reconciledTicket;
+                            continue;
+                        }
+                        if (attempt < maxAttempts && isUnknownTicketError(lastCloseReason ?? '')) {
+                            await sleepMs(250 * attempt);
+                            continue;
+                        }
                         break;
                     }
-                    lastCloseReason = closeResult.reason;
-                    const rawOrders = await api.openedOrders(uuid).catch(() => []);
-                    const reconciledTicket = resolveReconciledTicketForTrade(trade, rawOrders ?? [], new Set());
-                    if (reconciledTicket && reconciledTicket !== effectiveTicket) {
-                        ticketReconciledFrom = ticketReconciledFrom ?? effectiveTicket;
-                        effectiveTicket = reconciledTicket;
-                        continue;
-                    }
-                    if (attempt < maxAttempts && isUnknownTicketError(lastCloseReason ?? '')) {
-                        await sleepMs(250 * attempt);
-                        continue;
-                    }
-                    break;
                 }
                 if (!closeConfirmed) {
                     throw new Error(lastCloseReason ?? 'orderClose succeeded but ticket still open on broker');
@@ -879,6 +903,10 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
                     .from('trades')
                     .update({
                     sl: beSl,
+                    // Mark the leg as at-breakeven (per-leg, entry-relative) so the reconcile
+                    // loop preserves THIS leg's own SL and never collapses the basket to one
+                    // shared SL. Mirrors auto-breakeven, which the reconciler already preserves.
+                    auto_be_applied_at: new Date().toISOString(),
                     ...(ticketReconciledFrom != null ? { metaapi_order_id: String(effectiveTicket) } : {}),
                 })
                     .eq('id', trade.id);
@@ -1073,7 +1101,7 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
             onPendingCancelled: n => { legsTotal += n; },
             onBrokerStragglersClosed: n => { legsTotal += n; },
         });
-        return { legsTotal, legsParallelism: legConcurrency };
+        return { legsTotal, legsParallelism: legConcurrency, scopeLoadMs };
     }
     if (action === 'modify' && (hasNewSl || hasNewTp)) {
         // One-shot staleness gate: if a basket already recorded a NEWER instruction
@@ -1121,6 +1149,9 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
                 }
             }
             if (rowsByBrokerSignalStop.size > 0) {
+                const basketApplyStart = Date.now();
+                basketsTotal = rowsByBrokerSignalStop.size;
+                basketConcurrency = (0, parallelPool_1.mgmtBasketConcurrency)();
                 modifyApplyResult = await (0, channelStopApply_1.applyChannelStopsToBaskets)({
                     supabase: ctx.supabase,
                     apiFor: broker => ctx.apiFor(broker),
@@ -1133,8 +1164,13 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
                     hasNewTp,
                     parsedSl: hasNewSl ? parsed.sl : null,
                     parsedTpLevels,
-                    verifyOnBroker: true,
+                    // Inline broker re-read/verify is off by default — the v2 reconciler
+                    // (or v1 basket reconcile monitor) re-verifies broker drift, so this
+                    // synchronous per-leg snapshot check is redundant and previously caused
+                    // broker_verify_failed spam on multi-account channel modifies.
+                    verifyOnBroker: (0, parallelPool_1.mgmtVerifyAfterModify)(),
                 });
+                basketApplyMs = Date.now() - basketApplyStart;
                 await (0, channelStopApply_1.logMgmtModifyBrokerSummaries)(ctx.supabase, signal.user_id, signal.id, modifyApplyResult.brokers);
                 legsTotal += modifyApplyResult.totalModified;
             }
@@ -1295,6 +1331,16 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
             }
         }
         if (bestSl > 0) {
+            // Seed channel memory only — used to give NEW layers a sensible SL after a
+            // breakeven. Existing legs keep their OWN per-leg breakeven SL (written to
+            // trades.sl + auto_be_applied_at above), which the reconcile loop preserves.
+            //
+            // Do NOT write a single breakeven SL to basket_sl_tp_targets: that per-basket
+            // target is applied to every leg by the reconciler and would collapse a
+            // multi-entry basket onto one shared SL. Breakeven is inherently per-leg
+            // (entry-relative), so the per-leg trades.sl + auto_be stamp is authoritative,
+            // and resolveEffectiveBasketStops uses latestAutoBreakevenAt for recency so a
+            // stale older "Adjust SL" cannot revert it.
             await (0, channelActiveTradeParams_1.upsertChannelActiveTradeParams)(ctx.supabase, {
                 userId: signal.user_id,
                 channelId: signal.channel_id,
@@ -1302,27 +1348,6 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
                 stoploss: bestSl,
                 replace: false,
             });
-            // Record breakeven as the authoritative per-basket target (SL only —
-            // merge keeps the existing TP ladder). Only for baskets whose symbol
-            // verified at breakeven.
-            for (const [basketKey, brokerRows] of rowsByBrokerSignal) {
-                const [brokerId, anchorSignalId] = basketKey.split('|');
-                if (!brokerId || !anchorSignalId)
-                    continue;
-                const basketSymbol = brokerRows[0]?.symbol ?? symbols[0] ?? 'UNKNOWN';
-                if (!symbolBreakevenOk(basketSymbol))
-                    continue;
-                await (0, basketTargetStore_1.upsertBasketSlTpTarget)(ctx.supabase, {
-                    userId: signal.user_id,
-                    brokerAccountId: brokerId,
-                    anchorSignalId,
-                    channelId: signal.channel_id,
-                    symbol: basketSymbol,
-                    stoploss: bestSl,
-                    source: 'breakeven',
-                    instructionAt: signal.created_at,
-                });
-            }
         }
     }
     if (action === 'close' && cancelledPendingScopes.size > 0 && !liveMgmtFast) {
@@ -1401,7 +1426,14 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
     else {
         await finalizeMgmtSignal(ctx, signal.id);
     }
-    return { legsTotal, legsParallelism: legConcurrency };
+    return {
+        legsTotal,
+        legsParallelism: legConcurrency,
+        scopeLoadMs,
+        basketsTotal,
+        basketApplyMs,
+        basketConcurrency,
+    };
 }
 async function applyCloseWorseEntriesInstruction(ctx, signal, parsed, rows, byBroker, mgmtOpts) {
     const liveMgmtFast = mgmtOpts?.liveMgmtFast === true;

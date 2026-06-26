@@ -28,8 +28,6 @@ const copierPause_1 = require("../copierPause");
 const channelTradingConfig_1 = require("../channelTradingConfig");
 const channelMessageFilters_1 = require("../channelMessageFilters");
 const multiTradeMerge_1 = require("../multiTradeMerge");
-// #region agent log
-fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '89d082' }, body: JSON.stringify({ sessionId: '89d082', runId: 'r5', hypothesisId: 'build', location: 'dispatch.ts:module-load', message: 'dispatch module loaded (r5 build marker)', data: { build: 'r5-inflight' }, timestamp: Date.now() }) }).catch(() => { });
 const manualPlanner_1 = require("../manualPlanner");
 const pipelineTimestamps_1 = require("../pipelineTimestamps");
 const tradeComment_1 = require("../tradeComment");
@@ -46,6 +44,33 @@ const messageRevisionDirectionFlipClose_1 = require("./messageRevisionDirectionF
 const subscriptionAccess_1 = require("../subscriptionAccess");
 const signalExecutionEligibility_1 = require("../signalExecutionEligibility");
 const copyLimitDispatch_1 = require("../copyLimitDispatch");
+const executionMode_1 = require("../engine/executionMode");
+const basketTargetStore_1 = require("../basketTargetStore");
+/** Seed basket desired-state (source 'entry') for v2-flagged brokers only, so the v2
+ * reconciler has the full SL/TP ladder. No-op for v1 brokers (zero behavior change). */
+async function seedV2EntryDesiredState(ctx, row, parsed, brokers) {
+    const sl = typeof parsed.sl === 'number' && parsed.sl > 0 ? parsed.sl : null;
+    const tps = Array.isArray(parsed.tp)
+        ? parsed.tp.filter((t) => typeof t === 'number' && Number.isFinite(t) && t > 0)
+        : [];
+    if (sl == null && tps.length === 0)
+        return;
+    for (const b of brokers) {
+        if (!(0, executionMode_1.isV2)({ brokerAccountId: b.id, userId: row.user_id }))
+            continue;
+        await (0, basketTargetStore_1.upsertBasketSlTpTarget)(ctx.supabase, {
+            userId: row.user_id,
+            brokerAccountId: b.id,
+            anchorSignalId: row.id,
+            channelId: row.channel_id,
+            symbol: parsed.symbol ?? 'UNKNOWN',
+            stoploss: sl,
+            tpLevels: tps.length ? tps : null,
+            source: 'entry',
+            instructionAt: row.created_at,
+        }).catch(() => { });
+    }
+}
 function shouldUseEntryFastPath(ctx, row) {
     const mode = workerConfig_1.workerConfig.tradeExecutorMode;
     if (mode !== 'entry' && mode !== 'all')
@@ -53,9 +78,11 @@ function shouldUseEntryFastPath(ctx, row) {
     const parsed = row.parsed_data;
     if (!parsed)
         return false;
-    // SL/TP follow-ups (replies / adjust posts) must modify the open basket — never OrderSend first.
-    if ((0, multiTradeMerge_1.shouldRouteAsBasketParameterRefresh)(parsed))
-        return false;
+    // Entry actions (buy/sell) take the live fast path — including teaser-completion
+    // and SL/TP follow-up signals that route to merge-modify inside entryPrepare.
+    // Whether the signal opens a trade or modifies the open basket is decided there
+    // (never OrderSend-first for parameter refresh); the fast path only bypasses the
+    // in-process queue + heavy idempotency and enables parallel leg modifies.
     return (0, tradeSignalActions_1.isEntryAction)((0, tradeSignalActions_1.parsedAction)(parsed));
 }
 function revisionDirectionFlip(row) {
@@ -95,9 +122,10 @@ function isLiveMgmtFast(opts, parsed, row) {
     const action = (0, tradeSignalActions_1.parsedAction)(parsed);
     if ((0, tradeSignalActions_1.isManagementAction)(action))
         return true;
-    if (opts.dispatchSource === signalRevision_1.MESSAGE_REVISION_DISPATCH_SOURCE
-        && parsed
-        && (0, multiTradeMerge_1.shouldRouteAsBasketParameterRefresh)(parsed)) {
+    // Parameter-refresh entries (teaser completion: zone + market-now + SL/TP, and
+    // SL/TP follow-ups) route to merge-modify, so run their leg modifies on the fast
+    // (parallel) path regardless of dispatch source — not just message revisions.
+    if (parsed && (0, multiTradeMerge_1.shouldRouteAsBasketParameterRefresh)(parsed)) {
         return true;
     }
     return false;
@@ -377,9 +405,6 @@ async function handleSignal(ctx, row, opts) {
     const liveFast = isRangeWake
         || (opts?.liveDispatch === true && opts?.lightIdempotency === true);
     const liveMgmtFast = isLiveMgmtFast(opts, row.parsed_data, row);
-    // #region agent log
-    fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '89d082' }, body: JSON.stringify({ sessionId: '89d082', hypothesisId: 'H1', location: 'dispatch.ts:446', message: 'mgmt fast-path decision', data: { action: (0, tradeSignalActions_1.parsedAction)(row.parsed_data), liveDispatch: opts?.liveDispatch ?? null, lightIdempotency: opts?.lightIdempotency ?? null, dispatchSource: opts?.dispatchSource ?? null, liveFast, liveMgmtFast }, timestamp: Date.now() }) }).catch(() => { });
-    // #endregion
     const channelMetaPromise = (liveFast || liveMgmtFast) && row.channel_id
         ? ctx.getChannelMeta(row.channel_id)
         : null;
@@ -621,14 +646,15 @@ async function handleSignal(ctx, row, opts) {
             }
             const mgmtWallStart = Date.now();
             const mgmtResult = await ctx.applyManagement(row, parsed, mgmtBrokers, { liveMgmtFast });
-            // #region agent log
-            fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '89d082' }, body: JSON.stringify({ sessionId: '89d082', runId: 'r4', hypothesisId: 'H6', location: 'dispatch.ts:726', message: 'applyManagement done', data: { action, dispatchSource: opts?.dispatchSource ?? null, liveMgmtFast, mgmt_wall_ms: Date.now() - mgmtWallStart, legs: mgmtResult.legsTotal }, timestamp: Date.now() }) }).catch(() => { });
-            // #endregion
             pipelineOutcome = {
                 ...pipelineOutcome,
                 mgmt_wall_ms: Date.now() - mgmtWallStart,
                 mgmt_legs_total: mgmtResult.legsTotal,
                 mgmt_legs_parallelism: mgmtResult.legsParallelism,
+                mgmt_scope_load_ms: mgmtResult.scopeLoadMs ?? null,
+                mgmt_baskets_total: mgmtResult.basketsTotal ?? null,
+                mgmt_basket_apply_ms: mgmtResult.basketApplyMs ?? null,
+                mgmt_basket_concurrency: mgmtResult.basketConcurrency ?? null,
                 mgmt_action: action,
             };
             return;
@@ -659,6 +685,12 @@ async function handleSignal(ctx, row, opts) {
             row.pipeline_ts.t_order_send_done = Date.now();
         }
         const anyOpened = outcomes.some(o => o.openedOrMerged === true);
+        if (anyOpened) {
+            // v2 cutover: seed the basket desired-state at entry so the single v2
+            // reconciler can fill naked legs from the ladder and converge every future
+            // layer to the same SL/TP (no "new layers take old SL", no naked legs).
+            void seedV2EntryDesiredState(ctx, row, parsed, brokers);
+        }
         const pipelineMs = Date.now() - pipelineT0;
         const channelDelayMs = Math.max(...outcomes.map(o => o.channelDelayMs ?? 0));
         const channelDelaySkipped = outcomes.some(o => o.channelDelaySkipped === true);

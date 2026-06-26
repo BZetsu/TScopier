@@ -19,6 +19,8 @@ const autoManagementMonitor_1 = require("./autoManagementMonitor");
 const trailingStopMonitor_1 = require("./trailingStopMonitor");
 const basketSlTpReconcileMonitor_1 = require("./basketSlTpReconcileMonitor");
 const newsTradingMonitor_1 = require("./newsTradingMonitor");
+const v2ReconcileMonitor_1 = require("./engine/v2ReconcileMonitor");
+const executionMode_1 = require("./engine/executionMode");
 const openTradeReconcileMonitor_1 = require("./openTradeReconcileMonitor");
 const brokerStreamProxy_1 = require("./brokerStreamProxy");
 const fxsocketStreamManager_1 = require("./fxsocketStreamManager");
@@ -95,6 +97,13 @@ function startTradeMonitors(executor) {
         trackMonitor(autoManagementMonitor);
         trackMonitor(basketSlTpReconcileMonitor);
         trackMonitor(newsTradingMonitor);
+        // Management-first v2 cutover: a single reconcile loop owns background
+        // convergence for v2-flagged brokers (the v1 job reconciler skips them).
+        if ((0, executionMode_1.v2EngineConfigured)()) {
+            const v2ReconcileMonitor = new v2ReconcileMonitor_1.V2ReconcileMonitor(supabase);
+            v2ReconcileMonitor.start();
+            trackMonitor(v2ReconcileMonitor);
+        }
     }
     stopLogRetention = (0, tradeLogRetention_1.startTradeLogRetention)(supabase);
 }

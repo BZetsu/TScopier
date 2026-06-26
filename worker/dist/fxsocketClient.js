@@ -45,8 +45,6 @@ const KEEP_ALIVE_AGENT = new undici_1.Agent({
     connections: FXSOCKET_HTTP_CONNECTIONS,
     pipelining: FXSOCKET_HTTP_PIPELINING,
 });
-// #region agent log
-const FX_INFLIGHT = new Map();
 function orderOperationRequiresPrice(operation) {
     return (operation === 'BuyLimit'
         || operation === 'SellLimit'
@@ -517,52 +515,33 @@ class FxsocketBrokerClient {
             headers['Content-Type'] = 'application/json';
             body = JSON.stringify(opts.body);
         }
-        // #region agent log
-        const _acct = (() => { const m = /\/(?:mt4|mt5|accounts)\/([^/?]+)/i.exec(url); return m ? m[1].slice(0, 8) : 'unknown'; })();
-        const _ep = (() => { const p = url.split('?')[0].split('/'); return p[p.length - 1] || url; })();
-        const _inflight = (FX_INFLIGHT.get(_acct) ?? 0) + 1;
-        FX_INFLIGHT.set(_acct, _inflight);
-        const _httpT0 = Date.now();
-        // #endregion
-        try {
-            const res = await (0, undici_1.request)(url, {
-                method,
-                headers,
-                body,
-                dispatcher: KEEP_ALIVE_AGENT,
-                headersTimeout: t,
-                bodyTimeout: t,
-            });
-            const text = await res.body.text();
-            let parsed = null;
-            if (text) {
-                try {
-                    parsed = JSON.parse(text);
-                }
-                catch {
-                    parsed = text;
-                }
+        const res = await (0, undici_1.request)(url, {
+            method,
+            headers,
+            body,
+            dispatcher: KEEP_ALIVE_AGENT,
+            headersTimeout: t,
+            bodyTimeout: t,
+        });
+        const text = await res.body.text();
+        let parsed = null;
+        if (text) {
+            try {
+                parsed = JSON.parse(text);
             }
-            const status = res.statusCode;
-            if (status < 200 || status >= 300) {
-                const err = parseErrorEnvelope(parsed);
-                if (status === 404 && (url.includes('/mt5/') || url.includes('/mt4/'))) {
-                    throw new FxsocketApiError('FxSocket account or endpoint not found. Check the account UUID and that the terminal is running.', 404, err.code, err.commandId);
-                }
-                throw new FxsocketApiError(err.message || text || `HTTP ${status}`, status, err.code, err.commandId);
+            catch {
+                parsed = text;
             }
-            return parsed;
         }
-        finally {
-            // #region agent log
-            const _dur = Date.now() - _httpT0;
-            const _after = (FX_INFLIGHT.get(_acct) ?? 1) - 1;
-            FX_INFLIGHT.set(_acct, _after);
-            if (_inflight >= 4 || _dur > 3000) {
-                fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '89d082' }, body: JSON.stringify({ sessionId: '89d082', runId: 'r5', hypothesisId: 'H9-capacity', location: 'fxsocketClient.ts:http', message: 'bridge request', data: { acct: _acct, endpoint: _ep, method, inFlightPerAcct: _inflight, durMs: _dur }, timestamp: Date.now() }) }).catch(() => { });
+        const status = res.statusCode;
+        if (status < 200 || status >= 300) {
+            const err = parseErrorEnvelope(parsed);
+            if (status === 404 && (url.includes('/mt5/') || url.includes('/mt4/'))) {
+                throw new FxsocketApiError('FxSocket account or endpoint not found. Check the account UUID and that the terminal is running.', 404, err.code, err.commandId);
             }
-            // #endregion
+            throw new FxsocketApiError(err.message || text || `HTTP ${status}`, status, err.code, err.commandId);
         }
+        return parsed;
     }
     get(path, params, timeoutMs) {
         const out = new URLSearchParams();
@@ -664,13 +643,7 @@ class FxsocketBrokerClient {
         }
     }
     async openedOrders(id) {
-        // #region agent log
-        const _t0 = Date.now();
-        // #endregion
         const raw = await this.get(`${await this.accountBase(id)}/OpenedOrders`);
-        // #region agent log
-        fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '89d082' }, body: JSON.stringify({ sessionId: '89d082', hypothesisId: 'H3', location: 'fxsocketClient.ts:openedOrders', message: 'openedOrders timing', data: { callMs: Date.now() - _t0 }, timestamp: Date.now() }) }).catch(() => { });
-        // #endregion
         assertNoApiError(raw);
         return unwrapOrderList(raw);
     }
@@ -882,14 +855,7 @@ class FxsocketBrokerClient {
         };
     }
     async orderSend(id, args) {
-        // #region agent log
-        const _t0 = Date.now();
-        // #endregion
         const release = await tradeOpGate.acquire(id, perAccountTradeConcurrency());
-        // #region agent log
-        const _gateWaitMs = Date.now() - _t0;
-        const _tCall = Date.now();
-        // #endregion
         try {
             const MAX_ATTEMPTS = Math.max(1, Number(process.env.MT_ORDERSEND_MAX_ATTEMPTS ?? 3) || 3);
             let lastErr;
@@ -920,9 +886,6 @@ class FxsocketBrokerClient {
             throw lastErr instanceof Error ? lastErr : new FxsocketApiError(String(lastErr), 502);
         }
         finally {
-            // #region agent log
-            fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '89d082' }, body: JSON.stringify({ sessionId: '89d082', hypothesisId: 'H2', location: 'fxsocketClient.ts:orderSend', message: 'orderSend timing', data: { op: 'orderSend', symbol: args.symbol, gateWaitMs: _gateWaitMs, callMs: Date.now() - _tCall }, timestamp: Date.now() }) }).catch(() => { });
-            // #endregion
             release();
         }
     }
@@ -958,32 +921,15 @@ class FxsocketBrokerClient {
         return out;
     }
     async orderModify(id, args) {
-        // #region agent log
-        const _t0 = Date.now();
-        // #endregion
         const release = await tradeOpGate.acquire(id, perAccountTradeConcurrency());
-        // #region agent log
-        const _gateWaitMs = Date.now() - _t0;
-        const _tCall = Date.now();
-        // #endregion
         try {
             const MAX_ATTEMPTS = Math.max(1, Number(process.env.MT_ORDERMODIFY_MAX_ATTEMPTS ?? 3) || 3);
             let lastErr;
             for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-                // #region agent log
-                const _attemptT0 = Date.now();
-                // #endregion
                 try {
-                    const _r = await this.orderModifyOnce(id, args);
-                    // #region agent log
-                    fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '89d082' }, body: JSON.stringify({ sessionId: '89d082', runId: 'r4', hypothesisId: 'H8', location: 'fxsocketClient.ts:orderModifyOnce', message: 'orderModify attempt ok', data: { ticket: args.ticket, attempt: attempt + 1, attemptMs: Date.now() - _attemptT0 }, timestamp: Date.now() }) }).catch(() => { });
-                    // #endregion
-                    return _r;
+                    return await this.orderModifyOnce(id, args);
                 }
                 catch (err) {
-                    // #region agent log
-                    fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '89d082' }, body: JSON.stringify({ sessionId: '89d082', runId: 'r4', hypothesisId: 'H8', location: 'fxsocketClient.ts:orderModifyOnce', message: 'orderModify attempt failed', data: { ticket: args.ticket, attempt: attempt + 1, attemptMs: Date.now() - _attemptT0, err: (err instanceof Error ? err.message : String(err)).slice(0, 80) }, timestamp: Date.now() }) }).catch(() => { });
-                    // #endregion
                     lastErr = err;
                     if (isBrokerDisconnectedMessage(err instanceof Error ? err.message : String(err)))
                         throw err;
@@ -1008,9 +954,6 @@ class FxsocketBrokerClient {
             throw lastErr instanceof Error ? lastErr : new FxsocketApiError(String(lastErr), 502);
         }
         finally {
-            // #region agent log
-            fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '89d082' }, body: JSON.stringify({ sessionId: '89d082', runId: 'r3', hypothesisId: 'H7', location: 'fxsocketClient.ts:orderModify', message: 'orderModify timing', data: { op: 'orderModify', ticket: args.ticket, gateWaitMs: _gateWaitMs, callMs: Date.now() - _tCall, caller: (new Error().stack || '').split('\n').slice(2, 8).map(s => s.trim().replace(/^at\s+/, '')).join(' <- ') }, timestamp: Date.now() }) }).catch(() => { });
-            // #endregion
             release();
         }
     }
@@ -1029,14 +972,7 @@ class FxsocketBrokerClient {
         return normalizeOrderResponse(raw);
     }
     async orderClose(id, args) {
-        // #region agent log
-        const _t0 = Date.now();
-        // #endregion
         const release = await tradeOpGate.acquire(id, perAccountTradeConcurrency());
-        // #region agent log
-        const _gateWaitMs = Date.now() - _t0;
-        const _tCall = Date.now();
-        // #endregion
         try {
             const payload = {
                 ticket: args.ticket,
@@ -1051,9 +987,6 @@ class FxsocketBrokerClient {
             return normalizeOrderResponse(raw);
         }
         finally {
-            // #region agent log
-            fetch('http://127.0.0.1:7911/ingest/9eb853c4-6a95-4829-9e4e-863df98c5251', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '89d082' }, body: JSON.stringify({ sessionId: '89d082', hypothesisId: 'H2', location: 'fxsocketClient.ts:orderClose', message: 'orderClose timing', data: { op: 'orderClose', ticket: args.ticket, gateWaitMs: _gateWaitMs, callMs: Date.now() - _tCall }, timestamp: Date.now() }) }).catch(() => { });
-            // #endregion
             release();
         }
     }

@@ -13,6 +13,8 @@ const rangePendingFireGuard_1 = require("../../rangePendingFireGuard");
 const rangePendingLegPersist_1 = require("../../rangePendingLegPersist");
 const signalMergeLink_1 = require("../../signalMergeLink");
 const basketModFollowUp_1 = require("../../basketModFollowUp");
+const executionMode_1 = require("../../engine/executionMode");
+const fxClient_1 = require("../../engine/fxClient");
 async function hasOpenTradeForSymbol(ctx, brokerId, symbol) {
     try {
         const { count } = await ctx.supabase
@@ -31,20 +33,35 @@ async function reconcileGhostBasketLegs(ctx, args) {
     const { signal, broker, uuid, anchorSignalId, symbol, familyTrades } = args;
     if (!familyTrades.length)
         return { isGhostBasket: false, closedCount: 0 };
-    const api = ctx.apiFor(broker);
-    if (!api)
-        return { isGhostBasket: false, closedCount: 0 };
-    const alive = await api.keepSessionAlive(uuid);
-    if (!alive)
-        return { isGhostBasket: false, closedCount: 0 };
     let brokerTickets;
-    try {
-        brokerTickets = await (0, basketSlTpReconcile_1.fetchOpenBrokerTicketsStrict)(api, uuid);
+    if ((0, executionMode_1.isV2)({ brokerAccountId: broker.id, userId: signal.user_id })) {
+        // v2: one fast, stateless fxClient read (~200-500ms). No keepSessionAlive ping
+        // (fxClient authenticates per call) - this removes ~4s from the entry merge path.
+        try {
+            const orders = await (0, fxClient_1.getFxClient)().openedOrders(uuid, (0, fxClient_1.toMtPlatform)(broker.platform));
+            brokerTickets = new Set(orders.map(o => o.ticket));
+        }
+        catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.warn(`[tradeExecutor] ghost basket check skipped (v2) broker=${broker.id} anchor=${anchorSignalId}: ${msg}`);
+            return { isGhostBasket: false, closedCount: 0 };
+        }
     }
-    catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.warn(`[tradeExecutor] ghost basket check skipped broker=${broker.id} anchor=${anchorSignalId}: ${msg}`);
-        return { isGhostBasket: false, closedCount: 0 };
+    else {
+        const api = ctx.apiFor(broker);
+        if (!api)
+            return { isGhostBasket: false, closedCount: 0 };
+        const alive = await api.keepSessionAlive(uuid);
+        if (!alive)
+            return { isGhostBasket: false, closedCount: 0 };
+        try {
+            brokerTickets = await (0, basketSlTpReconcile_1.fetchOpenBrokerTicketsStrict)(api, uuid);
+        }
+        catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.warn(`[tradeExecutor] ghost basket check skipped broker=${broker.id} anchor=${anchorSignalId}: ${msg}`);
+            return { isGhostBasket: false, closedCount: 0 };
+        }
     }
     const { onBroker, ghost } = (0, basketSlTpReconcile_1.classifyGhostBasketLegs)(familyTrades, brokerTickets);
     if (onBroker.length > 0)

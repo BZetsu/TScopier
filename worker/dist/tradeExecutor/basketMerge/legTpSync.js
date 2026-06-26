@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.syncMultiBasketLegTakeProfits = syncMultiBasketLegTakeProfits;
+const executionMode_1 = require("../../engine/executionMode");
 const rangeBasketTpSync_1 = require("../../rangeBasketTpSync");
 const multiTradeMerge_1 = require("../../multiTradeMerge");
 const basketSlTpReconcile_1 = require("../../basketSlTpReconcile");
@@ -8,6 +9,13 @@ async function syncMultiBasketLegTakeProfits(ctx, args) {
     const { signal, parsed, broker, plan, symbol, uuid, params, manual, direction } = args;
     const api = ctx.apiFor(broker);
     if (!api)
+        return;
+    // v2 brokers: the single reconcile loop converges every leg's SL/TP from the
+    // seeded desired-state (entry seed + channel memory) within its ~2-4s tick, so
+    // these synchronous per-leg broker modifies are redundant. Skipping them keeps
+    // the (already async) post-fill path off the broker for v2 — matching the v2
+    // skip in applyBasketSlTpRefresh and removing duplicate OrderModify round-trips.
+    if ((0, executionMode_1.isV2)({ brokerAccountId: broker.id, userId: signal.user_id }))
         return;
     await new Promise(r => setTimeout(r, 250));
     if (manual.range_trading === true) {

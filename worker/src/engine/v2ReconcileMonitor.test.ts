@@ -68,6 +68,40 @@ describe('buildDesiredLegTargets', () => {
     assert.equal(t[0]!.stoploss, 4078, 'BE SL kept; not loosened to 4065')
   })
 
+  it('keeps each leg its own breakeven SL — never collapses a multi-entry basket onto one SL', () => {
+    // Two layered entries breakevened at different entry-relative SLs. The basket-level
+    // effectiveSl equals the deepest leg BE (4078); it must NOT be forced onto leg 2.
+    const t = buildDesiredLegTargets({
+      legs: [
+        leg({ id: 'l1', metaapi_order_id: '100', sl: 4078, auto_be_applied_at: '2026-06-24T11:00:00Z' }),
+        leg({ id: 'l2', metaapi_order_id: '101', sl: 4072, auto_be_applied_at: '2026-06-24T11:00:00Z' }),
+      ],
+      snapshot: [open(100, { stopLoss: 4078 }), open(101, { stopLoss: 4072 })],
+      effectiveSl: 4078,
+      effectiveTpLevels: [4089],
+      isBuy: true,
+      effectiveSource: 'channel_memory',
+    })
+    const byTicket = new Map(t.map(x => [x.ticket, x.stoploss]))
+    assert.equal(byTicket.get(100), 4078, 'leg 1 keeps its own breakeven')
+    assert.equal(byTicket.get(101), 4072, 'leg 2 keeps its own breakeven, not collapsed to 4078')
+  })
+
+  it('lets an explicit newer instruction (basket_target) override per-leg breakeven on all legs', () => {
+    const t = buildDesiredLegTargets({
+      legs: [
+        leg({ id: 'l1', metaapi_order_id: '100', sl: 4078, auto_be_applied_at: '2026-06-24T11:00:00Z' }),
+        leg({ id: 'l2', metaapi_order_id: '101', sl: 4072, auto_be_applied_at: '2026-06-24T11:00:00Z' }),
+      ],
+      snapshot: [open(100, { stopLoss: 4078 }), open(101, { stopLoss: 4072 })],
+      effectiveSl: 4090,
+      effectiveTpLevels: [4089],
+      isBuy: true,
+      effectiveSource: 'basket_target',
+    })
+    assert.ok(t.every(x => x.stoploss === 4090), 'explicit Adjust applies to every leg (latest instruction wins)')
+  })
+
   it('skips legs not present at the broker (left for closedTickets)', () => {
     const t = buildDesiredLegTargets({
       legs: [leg({ metaapi_order_id: '100' }), leg({ id: 'l2', metaapi_order_id: '999' })],

@@ -77,49 +77,57 @@ async function ensureChannelModifyScope(supabase, args) {
         for (const row of rows)
             byId.set(row.id, row);
     };
+    // Single all-broker channel load covers every account in one scope query. The
+    // previous design re-ran this per broker (O(accounts) serial DB round-trips),
+    // the dominant pre-broker latency on channel-wide modify/breakeven at 10-15
+    // accounts.
     ingest(await (0, managementScope_1.loadOpenTradesForManagement)(supabase, {
         userId,
         channelId,
         brokerAccountIds,
         symbolFilter: args.symbolFilter,
     }));
-    for (const brokerId of brokerAccountIds) {
-        ingest(await (0, managementScope_1.loadOpenTradesForManagement)(supabase, {
-            userId,
-            channelId,
-            brokerAccountIds: [brokerId],
-            symbolFilter: args.symbolFilter,
-        }));
-        const brokerLegs = [...byId.values()].filter(r => r.broker_account_id === brokerId);
-        if (brokerLegs.length > 0)
-            continue;
-        const { data: latestOpen } = await supabase
-            .from('trades')
-            .select('signal_id')
-            .eq('user_id', userId)
-            .eq('broker_account_id', brokerId)
-            .eq('status', 'open')
-            .not('metaapi_order_id', 'is', null)
-            .order('opened_at', { ascending: false })
-            .limit(5);
-        for (const row of latestOpen ?? []) {
-            const anchorId = row.signal_id;
-            if (!anchorId)
-                continue;
-            const { data: sig } = await supabase
-                .from('signals')
-                .select('channel_id')
-                .eq('id', anchorId)
-                .maybeSingle();
-            if (sig?.channel_id !== channelId)
-                continue;
-            const basket = await (0, managementScope_1.loadTradesForBasketAnchor)(supabase, {
-                userId,
-                brokerAccountIds: [brokerId],
-                anchorSignalId: anchorId,
-            });
-            ingest(basket);
-        }
+    // Only brokers with zero attributed legs need the anchor-discovery fallback
+    // (open legs whose telegram_channel_id / attribution lag behind fresh fills).
+    // Run that fallback in parallel, bounded, instead of serially per account.
+    const brokersWithLegs = new Set();
+    for (const row of byId.values())
+        brokersWithLegs.add(row.broker_account_id);
+    const emptyBrokerIds = brokerAccountIds.filter(id => !brokersWithLegs.has(id));
+    if (emptyBrokerIds.length > 0) {
+        const fallbackRows = await (0, parallelPool_1.parallelMap)(emptyBrokerIds, (0, parallelPool_1.mgmtBasketConcurrency)(), async (brokerId) => {
+            const found = [];
+            const { data: latestOpen } = await supabase
+                .from('trades')
+                .select('signal_id')
+                .eq('user_id', userId)
+                .eq('broker_account_id', brokerId)
+                .eq('status', 'open')
+                .not('metaapi_order_id', 'is', null)
+                .order('opened_at', { ascending: false })
+                .limit(5);
+            for (const row of latestOpen ?? []) {
+                const anchorId = row.signal_id;
+                if (!anchorId)
+                    continue;
+                const { data: sig } = await supabase
+                    .from('signals')
+                    .select('channel_id')
+                    .eq('id', anchorId)
+                    .maybeSingle();
+                if (sig?.channel_id !== channelId)
+                    continue;
+                const basket = await (0, managementScope_1.loadTradesForBasketAnchor)(supabase, {
+                    userId,
+                    brokerAccountIds: [brokerId],
+                    anchorSignalId: anchorId,
+                });
+                found.push(...basket);
+            }
+            return found;
+        });
+        for (const rows of fallbackRows)
+            ingest(rows);
     }
     return [...byId.values()].sort((a, b) => {
         const ta = a.opened_at ? new Date(a.opened_at).getTime() : 0;
@@ -253,7 +261,12 @@ async function applyChannelStopsToBaskets(args) {
             totalSkipped: 0,
         };
     }
-    for (const [basketKey, brokerRows] of rowsByBrokerSignal) {
+    // Apply baskets (one per account) concurrently — each targets a different MT
+    // terminal, so distinct baskets don't contend. Per-leg modifies within a basket
+    // still run under mgmtLegConcurrency(), and the fxClient per-terminal gate keeps
+    // a single terminal from being overloaded. Serial basket passes were the main
+    // "modify too slow across many accounts" cause at 10-15 accounts.
+    const processOneBasket = async ([basketKey, brokerRows]) => {
         const brokerId = basketKey.split('|')[0];
         const broker = brokersById.get(brokerId);
         const uuid = broker ? (0, helpers_1.brokerSessionUuid)(broker) : null;
@@ -287,7 +300,7 @@ async function applyChannelStopsToBaskets(args) {
             totalSkipped += brokerRows.length;
             brokerResults.push(baseResult);
             (0, workerMetrics_1.incMetric)('mgmt_modify_broker_skipped');
-            continue;
+            return;
         }
         if (fxsocketOnly && !(0, helpers_1.brokerHasLinkedSession)(broker)) {
             baseResult.skipped = brokerRows.length;
@@ -300,14 +313,14 @@ async function applyChannelStopsToBaskets(args) {
             totalSkipped += brokerRows.length;
             brokerResults.push(baseResult);
             (0, workerMetrics_1.incMetric)('mgmt_modify_broker_skipped');
-            continue;
+            return;
         }
         const api = apiFor(broker);
         if (!api && !dryRun) {
             baseResult.failed = brokerRows.length;
             totalFailed += brokerRows.length;
             brokerResults.push(baseResult);
-            continue;
+            return;
         }
         api?.seedPlatformCache(uuid, (0, fxsocketClient_1.mtPlatformFrom)(broker.platform ?? 'mt5'));
         const legs = brokerRows
@@ -323,7 +336,7 @@ async function applyChannelStopsToBaskets(args) {
         baseResult.openLegs = legs.length;
         if (!legs.length) {
             brokerResults.push(baseResult);
-            continue;
+            return;
         }
         const tpLots = broker.manual_settings?.tp_lots ?? null;
         const isBuy = direction === 'buy';
@@ -598,7 +611,8 @@ async function applyChannelStopsToBaskets(args) {
             });
         }
         brokerResults.push(baseResult);
-    }
+    };
+    await (0, parallelPool_1.parallelMap)([...rowsByBrokerSignal.entries()], (0, parallelPool_1.mgmtBasketConcurrency)(), processOneBasket);
     const allFullySynced = brokerResults.length > 0
         && brokerResults.every(r => r.openLegs === 0 || r.fullySynced);
     return {

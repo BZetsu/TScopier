@@ -53,7 +53,6 @@ import { findStaleBasketKeys, upsertBasketSlTpTarget } from '../basketTargetStor
 import { isV2 } from '../engine/executionMode'
 import { getFxClient, toMtPlatform } from '../engine/fxClient'
 import type { PerLegStopTarget } from '../multiTradeMerge'
-import { resolveLatestOpenBasketAnchor } from '../multiTradeMerge'
 import { isBenignOrderModifyError } from '../orderModifyBenign'
 import { modifyLegSlTpWithFallback } from '../orderModifySafe'
 import { mgmtBasketConcurrency, mgmtLegConcurrency, mgmtVerifyAfterModify, parallelMap } from '../parallelPool'
@@ -434,118 +433,62 @@ export async function applyManagement(
     let rows: MgmtTradeRow[] = []
     let modifyApplyResult: ChannelStopApplyResult | null = null
 
-    if (replyScoped && signal.parent_signal_id) {
-      let symbolHint: string | null = symbolFromText
-      let parentParsed: ParsedSignal | null = null
-      try {
-        const { data: ps } = await ctx.supabase
-          .from('signals')
-          .select('parsed_data')
-          .eq('id', signal.parent_signal_id)
-          .maybeSingle()
-        const p = (ps as { parsed_data?: ParsedSignal | null } | null)?.parsed_data
-        parentParsed = p ?? null
-        const fromParent = p?.symbol != null && String(p.symbol).trim() ? String(p.symbol).trim() : null
-        if (!symbolHint && fromParent) symbolHint = fromParent
-        if (symbolHint) mgmtSymbolHint = symbolHint
-      } catch {
-        // best-effort
+    // Every management instruction is channel-scoped: it applies to every open basket on
+    // the channel for the relevant symbol across ALL brokers, even when posted as a reply
+    // to one entry (channels broadcast basket-wide close / breakeven / SL changes as
+    // replies). The symbol is inherited from the replied/parent entry so an instruction
+    // never crosses to an unrelated symbol (e.g. a gold close must not touch USDCAD).
+    if (!signal.channel_id) {
+      await skipMgmtSignalWithLog(ctx, signal, 'mgmt_no_open_trades_db', { scope: 'no_channel' })
+      return emptyMgmtResult(legConcurrency)
+    }
+    const actionPre = String(parsed.action ?? '').toLowerCase()
+    let scopeSymbolFilter = symbolFromText
+    if (replyScoped && !scopeSymbolFilter && signal.parent_signal_id) {
+      const { data: ps } = await ctx.supabase
+        .from('signals')
+        .select('parsed_data')
+        .eq('id', signal.parent_signal_id)
+        .maybeSingle()
+      const parentSym = explicitMgmtSymbol({
+        symbol: (ps as { parsed_data?: { symbol?: string | null } } | null)?.parsed_data?.symbol ?? null,
+      })
+      if (parentSym) {
+        scopeSymbolFilter = parentSym
+        mgmtSymbolHint = parentSym
       }
-
-      basketAnchorId = signal.parent_signal_id
-      const { count: parentOpenCount } = await ctx.supabase
-        .from('trades')
-        .select('id', { count: 'exact', head: true })
-        .eq('signal_id', signal.parent_signal_id)
-        .in('broker_account_id', brokerAccountIds)
-        .in('status', ['open', 'pending'])
-      if ((parentOpenCount ?? 0) === 0) {
-        const mgmtAction = String(parsed.action ?? '').toLowerCase()
-        let mgmtDir: 'buy' | 'sell' | null = mgmtAction === 'buy' || mgmtAction === 'sell'
-          ? mgmtAction
-          : null
-        if (!mgmtDir && parentParsed) {
-          const parentAction = String(parentParsed.action ?? '').toLowerCase()
-          if (parentAction === 'buy' || parentAction === 'sell') mgmtDir = parentAction
-        }
-        const symForResolve = symbolHint?.trim() ?? ''
-        if (mgmtDir && symForResolve && signal.channel_id && brokerAccountIds[0]) {
-          const latest = await resolveLatestOpenBasketAnchor(ctx.supabase, {
-            userId: signal.user_id,
-            brokerAccountId: brokerAccountIds[0]!,
-            brokerSymbol: symForResolve,
-            signalSymbol: symForResolve,
-            direction: mgmtDir,
-            channelId: signal.channel_id,
-          })
-          if (latest) basketAnchorId = latest.anchorSignalId
-        }
-        if (!basketAnchorId || basketAnchorId === signal.parent_signal_id) {
-          basketAnchorId = await ctx.resolveBasketAnchorSignalIdForOpenTrades({
-            userId: signal.user_id,
-            brokerAccountIds,
-            channelId: signal.channel_id,
-            parentSignalId: signal.parent_signal_id,
-            symbolHint,
-          })
-        }
-      }
-      if (!basketAnchorId) {
-        if (String(parsed.action ?? '').toLowerCase() !== 'close_worse_entries') {
-          await skipMgmtSignalWithLog(ctx, signal, 'mgmt_no_open_trades_db', { scope: 'reply_basket' })
-          return emptyMgmtResult(legConcurrency)
-        }
-      } else {
-        const { data } = await ctx.supabase
-          .from('trades')
-          .select(
-            'id,signal_id,broker_account_id,metaapi_order_id,symbol,direction,lot_size,status,sl,tp,entry_price,opened_at,cwe_close_price',
-          )
-          .eq('signal_id', basketAnchorId)
-          .in('broker_account_id', brokerAccountIds)
-          .in('status', ['open', 'pending'])
-          .order('opened_at', { ascending: true })
-          .limit(500)
-        rows = (data ?? []) as MgmtTradeRow[]
-      }
-    } else {
-      if (!signal.channel_id) {
-        await skipMgmtSignalWithLog(ctx, signal, 'mgmt_no_open_trades_db', { scope: 'no_channel' })
-        return emptyMgmtResult(legConcurrency)
-      }
-      const actionPre = String(parsed.action ?? '').toLowerCase()
-      let channelRows = actionPre === 'close_worse_entries'
-        ? await loadOpenTradesForChannelWideCwe(ctx.supabase, {
+    }
+    let channelRows = actionPre === 'close_worse_entries'
+      ? await loadOpenTradesForChannelWideCwe(ctx.supabase, {
+        userId: signal.user_id,
+        channelId: signal.channel_id,
+        brokerAccountIds,
+        symbolFilter: scopeSymbolFilter,
+      })
+      : mgmtUseChannelStopApply() && actionPre === 'modify'
+        ? await ensureChannelModifyScope(ctx.supabase, {
           userId: signal.user_id,
           channelId: signal.channel_id,
           brokerAccountIds,
-          symbolFilter: symbolFromText,
+          symbolFilter: scopeSymbolFilter,
         })
-        : mgmtUseChannelStopApply() && actionPre === 'modify'
-          ? await ensureChannelModifyScope(ctx.supabase, {
-            userId: signal.user_id,
-            channelId: signal.channel_id,
-            brokerAccountIds,
-            symbolFilter: symbolFromText,
-          })
-          : await loadOpenTradesForManagement(ctx.supabase, {
-            userId: signal.user_id,
-            channelId: signal.channel_id,
-            brokerAccountIds,
-            symbolFilter: symbolFromText,
-          })
-      if (
-        actionPre === 'modify'
-        && !symbolFromText
-        && channelRows.length > 0
-      ) {
-        channelRows = mgmtUseChannelStopApply()
-          ? allChannelModifySymbolBuckets(channelRows)
-          : resolveChannelModifyTargets(channelRows, parsed)
-      }
-      rows = channelRows
-      basketAnchorId = rows[0]?.signal_id ?? null
+        : await loadOpenTradesForManagement(ctx.supabase, {
+          userId: signal.user_id,
+          channelId: signal.channel_id,
+          brokerAccountIds,
+          symbolFilter: scopeSymbolFilter,
+        })
+    if (
+      actionPre === 'modify'
+      && !scopeSymbolFilter
+      && channelRows.length > 0
+    ) {
+      channelRows = mgmtUseChannelStopApply()
+        ? allChannelModifySymbolBuckets(channelRows)
+        : resolveChannelModifyTargets(channelRows, parsed)
     }
+    rows = channelRows
+    basketAnchorId = rows[0]?.signal_id ?? null
 
     const byBroker = new Map(brokers.map(b => [b.id, b]))
     const action = String(parsed.action).toLowerCase()
@@ -1062,6 +1005,10 @@ export async function applyManagement(
             .from('trades')
             .update({
               sl: beSl,
+              // Mark the leg as at-breakeven (per-leg, entry-relative) so the reconcile
+              // loop preserves THIS leg's own SL and never collapses the basket to one
+              // shared SL. Mirrors auto-breakeven, which the reconciler already preserves.
+              auto_be_applied_at: new Date().toISOString(),
               ...(ticketReconciledFrom != null ? { metaapi_order_id: String(effectiveTicket) } : {}),
             })
             .eq('id', trade.id)
@@ -1506,6 +1453,16 @@ export async function applyManagement(
         }
       }
       if (bestSl > 0) {
+        // Seed channel memory only — used to give NEW layers a sensible SL after a
+        // breakeven. Existing legs keep their OWN per-leg breakeven SL (written to
+        // trades.sl + auto_be_applied_at above), which the reconcile loop preserves.
+        //
+        // Do NOT write a single breakeven SL to basket_sl_tp_targets: that per-basket
+        // target is applied to every leg by the reconciler and would collapse a
+        // multi-entry basket onto one shared SL. Breakeven is inherently per-leg
+        // (entry-relative), so the per-leg trades.sl + auto_be stamp is authoritative,
+        // and resolveEffectiveBasketStops uses latestAutoBreakevenAt for recency so a
+        // stale older "Adjust SL" cannot revert it.
         await upsertChannelActiveTradeParams(ctx.supabase, {
           userId: signal.user_id,
           channelId: signal.channel_id,
@@ -1513,25 +1470,6 @@ export async function applyManagement(
           stoploss: bestSl,
           replace: false,
         })
-        // Record breakeven as the authoritative per-basket target (SL only —
-        // merge keeps the existing TP ladder). Only for baskets whose symbol
-        // verified at breakeven.
-        for (const [basketKey, brokerRows] of rowsByBrokerSignal) {
-          const [brokerId, anchorSignalId] = basketKey.split('|')
-          if (!brokerId || !anchorSignalId) continue
-          const basketSymbol = brokerRows[0]?.symbol ?? symbols[0] ?? 'UNKNOWN'
-          if (!symbolBreakevenOk(basketSymbol)) continue
-          await upsertBasketSlTpTarget(ctx.supabase, {
-            userId: signal.user_id,
-            brokerAccountId: brokerId,
-            anchorSignalId,
-            channelId: signal.channel_id,
-            symbol: basketSymbol,
-            stoploss: bestSl,
-            source: 'breakeven',
-            instructionAt: signal.created_at,
-          })
-        }
       }
     }
 
