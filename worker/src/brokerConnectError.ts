@@ -132,3 +132,12 @@ export function friendlyBrokerConnectError(
         || 'Broker connection failed. Check your MT login details or use Reconnect if this account was linked before.'
   }
 }
+
+/** Definitive credential rejections that should hard-fail even mid-establishment. */
+export function isDefinitiveCredentialError(kind: BrokerConnectErrorKind): boolean {
+  return kind === 'wrong_password'
+    || kind === 'wrong_login'
+    || kind === 'wrong_server'
+    || kind === 'investor_password'
+    || kind === 'account_disabled'
+}

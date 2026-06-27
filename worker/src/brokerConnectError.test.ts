@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import {
   classifyBrokerConnectError,
   friendlyBrokerConnectError,
+  isDefinitiveCredentialError,
   isMtBridgeGlitchMessage,
   isSessionDropMessage,
 } from './brokerConnectError'
@@ -55,5 +56,18 @@ describe('brokerConnectError', () => {
       friendlyBrokerConnectError('Could not fetch account summary from the broker terminal'),
       /could not load your account from the broker yet/i,
     )
+  })
+
+  it('only hard-fails on definitive credential errors mid-establishment', () => {
+    assert.equal(isDefinitiveCredentialError('wrong_password'), true)
+    assert.equal(isDefinitiveCredentialError('wrong_login'), true)
+    assert.equal(isDefinitiveCredentialError('wrong_server'), true)
+    assert.equal(isDefinitiveCredentialError('investor_password'), true)
+    assert.equal(isDefinitiveCredentialError('account_disabled'), true)
+    // Transient / ambiguous kinds must stay recoverable (pending), not hard-fail.
+    assert.equal(isDefinitiveCredentialError('terminal_not_ready'), false)
+    assert.equal(isDefinitiveCredentialError('credentials_rejected'), false)
+    assert.equal(isDefinitiveCredentialError('session_expired'), false)
+    assert.equal(isDefinitiveCredentialError('unknown'), false)
   })
 })

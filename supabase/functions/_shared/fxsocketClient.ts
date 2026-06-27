@@ -11,6 +11,7 @@
 
 import {
   isFxsocketMtStatusHealthy,
+  isFxsocketTerminalLinked,
   legacyTerminalStatusFromMtStatus,
   normalizeFxsocketMtStatus,
   type FxsocketMtStatus,
@@ -519,10 +520,22 @@ export class FxsocketClient {
 
     const apiPlatform = v1.platform || undefined
 
+    let summary: FxsocketAccountSummary | undefined
     try {
-      const summary = await this.accountSummary(accountId, apiPlatform)
+      summary = await this.accountSummary(accountId, apiPlatform)
       if (isAccountSummaryReady(summary)) {
         return { ready: true, summary, v1 }
+      }
+    } catch (e) {
+      if (e instanceof FxsocketApiError && e.status === 401) throw e
+    }
+
+    // Terminal-health fallback: a healthy MT terminal (broker connected + logged in
+    // + trade allowed) is connected even when AccountSummary has no balance/equity yet.
+    try {
+      const status = await this.mtStatus(accountId, apiPlatform)
+      if (isFxsocketTerminalLinked(status)) {
+        return { ready: true, summary: summary ?? {}, v1 }
       }
     } catch (e) {
       if (e instanceof FxsocketApiError && e.status === 401) throw e

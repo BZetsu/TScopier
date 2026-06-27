@@ -2,8 +2,9 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { createClient } from "npm:@supabase/supabase-js@2"
 import { searchBrokerDirectory } from "../_shared/fxsocketBsaClient.ts"
 import {
+  classifyBrokerConnectError,
   friendlyBrokerConnectError,
-  isTransientTerminalLinkMessage,
+  isDefinitiveCredentialError,
 } from "../_shared/brokerConnectError.ts"
 import {
   FxsocketApiError,
@@ -316,9 +317,10 @@ Deno.serve(async (req: Request) => {
           { headers: corsHeaders },
         )
       }
-      // While first establishing, transient terminal startup errors must not flip the
-      // account to a hard error — keep it pending so polling / background sync recovers.
-      const establishing = row.connection_status === "pending" || row.connection_status === "connecting"
+      // While establishing (incl. recovering a stuck `error` row), only definitive
+      // credential failures flip the account to a hard error — everything else stays
+      // pending so polling / background sync can recover.
+      const establishing = ["pending", "connecting", "error"].includes(row.connection_status)
 
       try {
         const readiness = await fx.resolveLinkReadiness(row.fxsocket_account_id)
@@ -368,7 +370,8 @@ Deno.serve(async (req: Request) => {
         }
 
         const rawMsg = readiness.error || "FxSocket terminal connection failed"
-        if (establishing && isTransientTerminalLinkMessage(rawMsg)) {
+        const readinessKind = classifyBrokerConnectError(rawMsg, { credentialConnect: establishing })
+        if (establishing && !isDefinitiveCredentialError(readinessKind)) {
           return await respondPending()
         }
         const msg = friendlyBrokerConnectError(rawMsg, { credentialConnect: establishing })
@@ -384,7 +387,8 @@ Deno.serve(async (req: Request) => {
         return bad(502, msg)
       } catch (e) {
         const rawMsg = e instanceof Error ? e.message : "Refresh failed"
-        if (establishing && isTransientTerminalLinkMessage(rawMsg)) {
+        const errorKind = classifyBrokerConnectError(rawMsg, { credentialConnect: establishing })
+        if (establishing && !isDefinitiveCredentialError(errorKind)) {
           return await respondPending()
         }
         const msg = friendlyBrokerConnectError(rawMsg, { credentialConnect: establishing })

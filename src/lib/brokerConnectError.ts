@@ -103,6 +103,15 @@ export function isCredentialConnectError(kind: BrokerConnectErrorKind): boolean 
     || kind === 'credentials_rejected'
 }
 
+/** Definitive credential rejections that should hard-fail even mid-establishment. */
+export function isDefinitiveCredentialError(kind: BrokerConnectErrorKind): boolean {
+  return kind === 'wrong_password'
+    || kind === 'wrong_login'
+    || kind === 'wrong_server'
+    || kind === 'investor_password'
+    || kind === 'account_disabled'
+}
+
 export interface BrokerConnectErrorLabels {
   wrongPassword: string
   wrongLogin: string

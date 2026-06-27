@@ -120,6 +120,18 @@ export function isFxsocketMtStatusHealthy(status: FxsocketMtStatus): boolean {
   return listFxsocketMtStatusChecks(status).every(check => check.ok)
 }
 
+/**
+ * Broker link is usable for trading even if AccountSummary or bridge sync still
+ * lags. Lighter than isFxsocketMtStatusHealthy (no status==='ready'/bridge checks)
+ * so a freshly linked terminal counts as connected.
+ */
+export function isFxsocketTerminalLinked(status: FxsocketMtStatus): boolean {
+  return status.terminal?.alive === true
+    && status.broker?.connected === true
+    && status.account?.loggedIn === true
+    && status.account?.tradeAllowed === true
+}
+
 export function listFxsocketMtStatusChecks(status: FxsocketMtStatus): FxsocketMtStatusCheck[] {
   const statusValue = (status.status ?? "").trim().toLowerCase()
   return [
