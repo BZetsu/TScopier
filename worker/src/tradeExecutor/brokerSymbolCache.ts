@@ -89,6 +89,7 @@ async function pingBrokerSessionInner(
         ctx.sessionOrderBlocked.delete(broker.id)
         void replayParsedSignalsForBroker(ctx, broker)
       }
+      await markBrokerSessionRecovered(ctx, broker)
       try {
         const terminal = await api.mtStatus(uuid)
         await writeBrokerTerminalHealth(ctx.supabase, broker.id, terminal)
@@ -226,6 +227,18 @@ export async function markBrokerSessionDown(ctx: TradeExecutorContext, broker: B
     await writeBrokerTerminalUnhealthy(ctx.supabase, broker.id, { force: true })
   }
 
+/**
+ * Symmetric counterpart to markBrokerSessionDown. The worker is the sole writer
+ * of connection_status but otherwise only ever degrades it to 'error'; without
+ * this, a row stays stuck 'error' forever after a transient heartbeat blip even
+ * once the session recovers. Called from every heartbeat success path.
+ */
+export async function markBrokerSessionRecovered(ctx: TradeExecutorContext, broker: BrokerRow): Promise<void> {
+    if (broker.connection_status === 'connected') return
+    broker.connection_status = 'connected'
+    await writeBrokerConnectionStatus(ctx.supabase, broker.id, 'connected')
+  }
+
 export async function ensureBrokerSession(ctx: TradeExecutorContext,
     api: FxsocketBrokerClient,
     uuid: string,
@@ -241,6 +254,7 @@ export async function ensureBrokerSession(ctx: TradeExecutorContext,
       ctx.sessionPingAt.set(uuid, now)
       if (blocked) void replayParsedSignalsForBroker(ctx, broker)
       ctx.sessionOrderBlocked.delete(broker.id)
+      await markBrokerSessionRecovered(ctx, broker)
       return true
     }
     await ctx.markBrokerSessionDown(
@@ -273,6 +287,7 @@ export async function ensureBrokerSessionLiveFast(ctx: TradeExecutorContext,
           ctx.sessionPingAt.set(uuid, Date.now())
           if (blocked) void replayParsedSignalsForBroker(ctx, broker)
           ctx.sessionOrderBlocked.delete(broker.id)
+          await markBrokerSessionRecovered(ctx, broker)
           return true
         }
         await ctx.markBrokerSessionDown(
