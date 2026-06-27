@@ -364,13 +364,6 @@ async function loadSweepBrokerOrders(
   const api = apiForFxsocketAccount(platformByUuid, uuid)
   if (!api) return new Map()
 
-  try {
-    const alive = await api.keepSessionAlive(uuid)
-    if (!alive) return new Map()
-  } catch {
-    return new Map()
-  }
-
   const orders = await fetchBrokerOrdersByTicket(api, uuid)
   cache.set(uuid, orders)
   return orders

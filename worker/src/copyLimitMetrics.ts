@@ -145,9 +145,8 @@ export function resolveReferenceEquity(
  * broker row, because a stale equity here silently disables profit/risk
  * limits exactly when they matter (floating P/L running up):
  *   1. AccountSummary
- *   2. keepSessionAlive (token reconnect) + AccountSummary retry
- *   3. last_balance + live floating P/L from /OpenedOrders
- *   4. cached fallbackEquity
+ *   2. last_balance + live floating P/L from /OpenedOrders
+ *   3. cached fallbackEquity
  */
 export async function fetchLiveAccountEquity(
   metaapiAccountId: string,
@@ -174,15 +173,6 @@ export async function fetchLiveAccountEquity(
       '[copyLimitMetrics] accountSummary failed:',
       err instanceof Error ? err.message : String(err),
     )
-    try {
-      const alive = await api.keepSessionAlive(metaapiAccountId)
-      if (alive) {
-        const eq = await readEquity()
-        if (eq != null) return eq
-      }
-    } catch {
-      /* fall through to balance + floating */
-    }
   }
 
   const bal = Number(opts?.lastBalance)

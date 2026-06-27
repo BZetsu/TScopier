@@ -223,17 +223,6 @@ export class BasketSlTpReconcileMonitor {
       return
     }
 
-    try {
-      const alive = await api.keepSessionAlive(uuid)
-      if (!alive) {
-        await this.releaseJob(row.id, 'broker session not connected', row.attempts)
-        return
-      }
-    } catch (err) {
-      await this.releaseJob(row.id, (err as Error).message, row.attempts)
-      return
-    }
-
     const familyTrades = await loadOpenBasketLegs(
       this.supabase,
       row.broker_account_id,

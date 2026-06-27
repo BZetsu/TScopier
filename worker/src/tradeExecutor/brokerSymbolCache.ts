@@ -10,7 +10,7 @@ import {
 } from '../fxsocketClient'
 import type { ManualSettings } from '../manualPlanner'
 import { writeBrokerConnectionStatus } from '../brokerConnectionStatus'
-import { writeBrokerTerminalHealth, writeBrokerTerminalUnhealthy } from '../brokerTerminalHealth'
+import { writeBrokerTerminalUnhealthy } from '../brokerTerminalHealth'
 import { replayParsedSignalsForBroker } from '../brokerSignalReplay'
 import { applySymbolMapping, brokerSessionUuid, isMtUuid, parseSymbolToTradeList } from './helpers'
 import {
@@ -90,13 +90,6 @@ async function pingBrokerSessionInner(
         void replayParsedSignalsForBroker(ctx, broker)
       }
       await markBrokerSessionRecovered(ctx, broker)
-      try {
-        const terminal = await api.mtStatus(uuid)
-        await writeBrokerTerminalHealth(ctx.supabase, broker.id, terminal)
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        console.warn(`[tradeExecutor] terminalStatus failed broker=${broker.id}: ${msg}`)
-      }
       return true
     }
   } catch (err) {
@@ -249,8 +242,8 @@ export async function ensureBrokerSession(ctx: TradeExecutorContext,
     const last = ctx.sessionPingAt.get(uuid) ?? 0
     const blocked = ctx.sessionOrderBlocked.has(broker.id)
     if (!opts?.force && !blocked && now - last < SESSION_PING_MIN_INTERVAL_MS) return true
-    const ready = await api.verifyTradingReady(uuid)
-    if (ready) {
+    const alive = await api.keepSessionAlive(uuid)
+    if (alive) {
       ctx.sessionPingAt.set(uuid, now)
       if (blocked) void replayParsedSignalsForBroker(ctx, broker)
       ctx.sessionOrderBlocked.delete(broker.id)
@@ -262,7 +255,7 @@ export async function ensureBrokerSession(ctx: TradeExecutorContext,
       uuid,
       blocked
         ? 'session blocked after prior OrderSend disconnect'
-        : 'verifyTradingReady failed before OrderSend',
+        : 'keepSessionAlive failed before OrderSend',
     )
     return false
   }

@@ -57,8 +57,6 @@ export async function reconcileGhostBasketLegs(ctx: TradeExecutorContext, args: 
     } else {
       const api = ctx.apiFor(broker)
       if (!api) return { isGhostBasket: false, closedCount: 0 }
-      const alive = await api.keepSessionAlive(uuid)
-      if (!alive) return { isGhostBasket: false, closedCount: 0 }
       try {
         brokerTickets = await fetchOpenBrokerTicketsStrict(api, uuid)
       } catch (err) {
