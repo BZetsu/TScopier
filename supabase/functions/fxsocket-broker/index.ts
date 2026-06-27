@@ -1,7 +1,10 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { createClient } from "npm:@supabase/supabase-js@2"
 import { searchBrokerDirectory } from "../_shared/fxsocketBsaClient.ts"
-import { friendlyBrokerConnectError } from "../_shared/brokerConnectError.ts"
+import {
+  friendlyBrokerConnectError,
+  isTransientTerminalLinkMessage,
+} from "../_shared/brokerConnectError.ts"
 import {
   FxsocketApiError,
   isFxsocketConfigured,
@@ -294,6 +297,29 @@ Deno.serve(async (req: Request) => {
       const accountRowId = String(body.account_id ?? "")
       if (!accountRowId) return bad(400, "account_id required")
       const row = await loadOwnedBrokerRow(supabase, userId, accountRowId)
+
+      const respondPending = async () => {
+        const { data: updated, error } = await supabase
+          .from("broker_accounts")
+          .update({
+            fxsocket_status: "connecting",
+            connection_status: "pending",
+            connection_error: null,
+          })
+          .eq("id", accountRowId)
+          .eq("user_id", userId)
+          .select("*")
+          .single()
+        if (error) return bad(500, error.message)
+        return Response.json(
+          { ok: true, account: updated ?? row, pending: true },
+          { headers: corsHeaders },
+        )
+      }
+      // While first establishing, transient terminal startup errors must not flip the
+      // account to a hard error — keep it pending so polling / background sync recovers.
+      const establishing = row.connection_status === "pending" || row.connection_status === "connecting"
+
       try {
         const readiness = await fx.resolveLinkReadiness(row.fxsocket_account_id)
 
@@ -338,26 +364,13 @@ Deno.serve(async (req: Request) => {
         }
 
         if (readiness.pending) {
-          const { data: updated, error } = await supabase
-            .from("broker_accounts")
-            .update({
-              fxsocket_status: "connecting",
-              connection_status: "pending",
-              connection_error: null,
-            })
-            .eq("id", accountRowId)
-            .eq("user_id", userId)
-            .select("*")
-            .single()
-          if (error) return bad(500, error.message)
-          return Response.json(
-            { ok: true, account: updated ?? row, pending: true },
-            { headers: corsHeaders },
-          )
+          return await respondPending()
         }
 
         const rawMsg = readiness.error || "FxSocket terminal connection failed"
-        const establishing = row.connection_status === "pending" || row.connection_status === "connecting"
+        if (establishing && isTransientTerminalLinkMessage(rawMsg)) {
+          return await respondPending()
+        }
         const msg = friendlyBrokerConnectError(rawMsg, { credentialConnect: establishing })
         await supabase
           .from("broker_accounts")
@@ -371,7 +384,9 @@ Deno.serve(async (req: Request) => {
         return bad(502, msg)
       } catch (e) {
         const rawMsg = e instanceof Error ? e.message : "Refresh failed"
-        const establishing = row.connection_status === "pending" || row.connection_status === "connecting"
+        if (establishing && isTransientTerminalLinkMessage(rawMsg)) {
+          return await respondPending()
+        }
         const msg = friendlyBrokerConnectError(rawMsg, { credentialConnect: establishing })
         await supabase
           .from("broker_accounts")

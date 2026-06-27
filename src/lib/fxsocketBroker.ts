@@ -2,6 +2,7 @@ import { supabase } from './supabase'
 import type { BrokerAccount } from '../types/database'
 import type { FxsocketMtStatus } from './fxsocketMtStatus'
 import type { FxsocketStreamSubscribeFrame } from './fxsocketStreamTypes'
+import { classifyBrokerConnectError } from './brokerConnectError'
 
 const FXSOCKET_EDGE_TIMEOUT_MS = 120_000
 /** Full-account PositionHistory can require many chunked broker calls. */
@@ -284,6 +285,12 @@ export const fxsocketBroker = {
         }
       } catch (e) {
         lastError = e instanceof Error ? e.message : lastError
+        // Transient terminal startup failures classify as terminal_not_ready —
+        // keep polling until the MT terminal finishes spinning up or maxMs elapses.
+        if (classifyBrokerConnectError(lastError) === 'terminal_not_ready') {
+          await sleep(intervalMs)
+          continue
+        }
         if (!/timed out|connecting|pending|not ready/i.test(lastError)) throw e
       }
       await sleep(intervalMs)

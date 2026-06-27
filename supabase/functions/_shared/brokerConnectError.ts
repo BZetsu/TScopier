@@ -40,11 +40,22 @@ const CREDENTIAL_CONNECT_AMBIGUOUS =
 const TERMINAL_NOT_READY =
   /could not fetch account summary|accountsummary returned no data|terminal did not reach connected|fxsocket terminal connection failed/i
 
+/** Startup-phase failures that resolve once the MT terminal finishes spinning up. */
+const TRANSIENT_TERMINAL_LINK =
+  /not connected|broker session is not connected|could not fetch account summary|accountsummary returned no data|fxsocket terminal connection failed|terminal did not reach connected/i
+
 const BRIDGE_GLITCH =
   /object reference not set|nullreferenceexception|null reference|unexpected error|internal server error|an error occurred while handling|sequence contains no elements/i
 
 export function isMtBridgeGlitchMessage(message: string | null | undefined): boolean {
   return BRIDGE_GLITCH.test(String(message ?? '').trim())
+}
+
+/** True for transient MT terminal startup errors (not credential rejection). */
+export function isTransientTerminalLinkMessage(message: string | null | undefined): boolean {
+  const m = String(message ?? '').trim()
+  if (!m) return false
+  return TRANSIENT_TERMINAL_LINK.test(m)
 }
 
 export function isSessionDropMessage(message: string | null | undefined): boolean {
@@ -71,6 +82,7 @@ export function classifyBrokerConnectError(
   }
   if (SESSION_EXPIRED.test(message)) {
     if (opts?.credentialConnect && !isMtBridgeGlitchMessage(message)) {
+      if (isTransientTerminalLinkMessage(message)) return 'terminal_not_ready'
       return 'credentials_rejected'
     }
     return 'session_expired'
@@ -79,6 +91,7 @@ export function classifyBrokerConnectError(
     return 'terminal_not_ready'
   }
   if (opts?.credentialConnect && CREDENTIAL_CONNECT_AMBIGUOUS.test(message)) {
+    if (isTransientTerminalLinkMessage(message)) return 'terminal_not_ready'
     return 'credentials_rejected'
   }
   return 'unknown'

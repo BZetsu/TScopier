@@ -24,13 +24,24 @@ describe('brokerConnectError', () => {
     assert.equal(classifyBrokerConnectError('Not connected (:52886408)'), 'session_expired')
   })
 
-  it('classifies not connected as credentials_rejected during fresh credential connect', () => {
+  it('classifies not connected as terminal_not_ready during fresh credential connect (terminal still starting)', () => {
     assert.equal(
       classifyBrokerConnectError('Not connected (:52886408)', { credentialConnect: true }),
-      'credentials_rejected',
+      'terminal_not_ready',
     )
     assert.match(
       friendlyBrokerConnectError('Not connected (:52886408)', { credentialConnect: true }),
+      /could not load your account from the broker yet/i,
+    )
+  })
+
+  it('still classifies genuine auth failures as credentials_rejected during fresh credential connect', () => {
+    assert.equal(
+      classifyBrokerConnectError('Could not authenticate', { credentialConnect: true }),
+      'credentials_rejected',
+    )
+    assert.match(
+      friendlyBrokerConnectError('Could not authenticate', { credentialConnect: true }),
       /account number, trading password/i,
     )
   })

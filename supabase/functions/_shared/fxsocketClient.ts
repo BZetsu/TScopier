@@ -15,6 +15,7 @@ import {
   normalizeFxsocketMtStatus,
   type FxsocketMtStatus,
 } from "./fxsocketMtStatus.ts"
+import { isTransientTerminalLinkMessage } from "./brokerConnectError.ts"
 
 export type { FxsocketMtStatus }
 export {
@@ -504,6 +505,10 @@ export class FxsocketClient {
   async resolveLinkReadiness(accountId: string): Promise<FxsocketLinkReadiness> {
     const v1 = await this.getV1Account(accountId)
     if (isV1AccountLinkError(v1)) {
+      // Transient terminal startup noise: keep polling instead of failing fast.
+      if (isTransientTerminalLinkMessage(v1.error)) {
+        return { ready: false, pending: true, v1 }
+      }
       return {
         ready: false,
         pending: false,
