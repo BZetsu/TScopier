@@ -26,7 +26,9 @@
  * placing stops inside the broker freeze band.
  */
 
-export type SymbolClass = 'fx_major' | 'fx_jpy' | 'metal' | 'index' | 'crypto' | 'energy' | 'other'
+import { isDerivSyntheticSymbol } from './derivSymbols'
+
+export type SymbolClass = 'fx_major' | 'fx_jpy' | 'metal' | 'index' | 'crypto' | 'energy' | 'synthetic' | 'other'
 
 /** Common ISO-4217 currency codes seen in retail FX brokers. */
 const FX_CURRENCY_CODES = new Set([
@@ -65,6 +67,8 @@ const INDEX_ROOTS = [
 function cleanSymbol(symbol: string): string {
   const upper = String(symbol || '').toUpperCase().trim()
   if (!upper) return ''
+  // Deriv canonical codes (R_75, RB_100…) must survive the punctuation strip.
+  if (isDerivSyntheticSymbol(upper)) return upper
   // Drop trailing punctuation + the suffix that follows it (e.g. ".r", "_pro", ".x").
   const punctMatch = upper.match(/^([A-Z0-9]+)[.#_-]/)
   let core = punctMatch ? punctMatch[1] : upper
@@ -81,6 +85,10 @@ function cleanSymbol(symbol: string): string {
 export function classifySymbol(symbol: string): SymbolClass {
   const s = cleanSymbol(symbol)
   if (!s) return 'other'
+
+  // Deriv synthetics quote at large absolute prices; treat pip like an index
+  // (broker `point` is the sub-pip increment → pip = 10 × point).
+  if (isDerivSyntheticSymbol(s)) return 'synthetic'
 
   // Metals first — XAUUSD, XAGUSD, XPTUSD, XPDUSD share the FX pair shape
   // (6 letters, both halves look like currency codes), so they must be detected

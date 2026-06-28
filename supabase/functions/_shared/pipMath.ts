@@ -1,6 +1,8 @@
 /** Mirror of `src/lib/pipMath.ts` — keep in sync. */
 
-export type SymbolClass = "fx_major" | "fx_jpy" | "metal" | "index" | "crypto" | "energy" | "other"
+import { isDerivSyntheticSymbol } from "./derivSymbols.ts"
+
+export type SymbolClass = "fx_major" | "fx_jpy" | "metal" | "index" | "crypto" | "energy" | "synthetic" | "other"
 
 const FX_CURRENCY_CODES = new Set([
   "USD", "EUR", "GBP", "JPY", "CHF", "AUD", "NZD", "CAD",
@@ -30,6 +32,8 @@ const INDEX_ROOTS = [
 function cleanSymbol(symbol: string): string {
   const upper = String(symbol || "").toUpperCase().trim()
   if (!upper) return ""
+  // Deriv canonical codes (R_75, RB_100…) must survive the punctuation strip.
+  if (isDerivSyntheticSymbol(upper)) return upper
   const punctMatch = upper.match(/^([A-Z0-9]+)[.#_-]/)
   let core = punctMatch ? punctMatch[1] : upper
   while (core.length > 6 && /[A-Z]$/.test(core)) {
@@ -43,6 +47,9 @@ function cleanSymbol(symbol: string): string {
 export function classifySymbol(symbol: string): SymbolClass {
   const s = cleanSymbol(symbol)
   if (!s) return "other"
+
+  // Deriv synthetics quote at large absolute prices; treat pip like an index.
+  if (isDerivSyntheticSymbol(s)) return "synthetic"
 
   for (const p of METAL_PREFIXES) {
     if (s.startsWith(p)) return "metal"

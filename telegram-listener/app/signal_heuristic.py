@@ -19,6 +19,17 @@ _EXPLICIT_SYMBOLS = re.compile(
 _SLASH_PAIR = re.compile(r"\b([A-Z]{3,})\s*/\s*([A-Z]{3,})\b", re.I)
 _TOKEN = re.compile(r"\b[A-Z][A-Z0-9]{2,11}\b")
 
+# Deriv synthetic indices (mirror of worker DERIV_SYNTHETIC_HINT_RE): V75, Vix75,
+# R_75, 1HZ75V, Boom 1000, Crash 500, Step Index, Jump 75, Range Break, Bull/Bear.
+_DERIV_SYNTHETIC = re.compile(
+    r"\b("
+    r"v(?:ix)?\s*\d{2,3}|vol(?:atility)?\s*\d{2,3}|r_?\d{2,3}|1hz\d{1,3}v|"
+    r"boom\s*\d{3,4}|crash\s*\d{3,4}|step(?:\s*index)?|stprng\d?|"
+    r"jump\s*\d{2,3}|jd\d{2,3}|range\s*break|rdbull|rdbear|bull\s*market|bear\s*market"
+    r")\b",
+    re.I,
+)
+
 _ENGLISH_DIRECTION = re.compile(
     r"\b(buy|sell|long|short|tp|take profit|sl|stop loss|breakeven|be)\b",
     re.I,
@@ -58,6 +69,8 @@ _NUMERIC_PRICE = re.compile(r"\b\d{1,5}(?:\.\d{1,5})\b")
 def _has_tradable_instrument_in_text(text: str) -> bool:
     raw = text or ""
     if _EXPLICIT_SYMBOLS.search(raw):
+        return True
+    if _DERIV_SYNTHETIC.search(raw):
         return True
     if _SLASH_PAIR.search(raw):
         return True

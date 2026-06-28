@@ -13,6 +13,7 @@ import { writeBrokerConnectionStatus } from '../brokerConnectionStatus'
 import { writeBrokerTerminalUnhealthy } from '../brokerTerminalHealth'
 import { replayParsedSignalsForBroker } from '../brokerSignalReplay'
 import { applySymbolMapping, brokerSessionUuid, isMtUuid, parseSymbolToTradeList } from './helpers'
+import { isDerivSyntheticSymbol, resolveDerivCanonicalToBrokerSymbol } from '../derivSymbols'
 import {
   SESSION_PING_MIN_INTERVAL_MS,
   SYMBOL_CACHE_STALE_MS,
@@ -486,6 +487,20 @@ export function resolveBrokerSymbolFromInventory(ctx: TradeExecutorContext,
     opts?: { userDecorated?: boolean },
   ): string {
     const target = requested.toUpperCase()
+
+    // Deriv synthetics: the canonical code (R_75, BOOM1000…) rarely matches the
+    // broker's display name (`Volatility 75 Index`), so resolve via the Deriv
+    // alias map before the generic FX suffix/contains heuristics. The synthetic
+    // gate is broker-safe — only canonical synthetic codes ever reach here.
+    if (isDerivSyntheticSymbol(target)) {
+      const brokerSymbol = resolveDerivCanonicalToBrokerSymbol(target, inventory.list)
+      if (brokerSymbol) return brokerSymbol
+      console.warn(
+        `[tradeExecutor] Deriv synthetic ${requested} not found in broker /Symbols list`,
+      )
+      return requested
+    }
+
     if (opts?.userDecorated === true) {
       if (inventory.set.has(target)) {
         const exact = inventory.list.find(s => s.toUpperCase() === target)

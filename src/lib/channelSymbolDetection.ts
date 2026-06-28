@@ -22,9 +22,56 @@ const KNOWN_SYMBOL_ALIASES: Record<string, string> = {
 const SYMBOL_TOKEN_RE =
   /\b(XAUUSD|XAGUSD|US30|NAS100|SPX500|GER40|UK100|BTCUSDT|ETHUSDT|[A-Z]{6}|GOLD|SILVER|XAU|XAG|BTC|ETH)\b/i
 
+/** Volatility levels Deriv publishes (kept in sync with worker/derivSymbols.ts). */
+const DERIV_VOL_LEVELS = new Set([10, 15, 25, 30, 50, 75, 90, 100, 150, 200, 250])
+
+/**
+ * Minimal Deriv synthetic alias → canonical normalizer for frontend channel
+ * detection. Mirror of the worker's `normalizeDerivAlias`; ambiguous aliases
+ * (no tick marker) default to the 2-second `R_n` symbol.
+ */
+function normalizeDerivSymbol(raw: string | null | undefined): string | null {
+  const u = String(raw ?? '').toUpperCase()
+  if (!u.trim()) return null
+
+  if (/\bRDBULL\b/.test(u) || /\bBULL\s*MARKET\b/.test(u)) return 'RDBULL'
+  if (/\bRDBEAR\b/.test(u) || /\bBEAR\s*MARKET\b/.test(u)) return 'RDBEAR'
+
+  let m = u.match(/\bSTPRNG\s*([25])?\b/)
+  if (m) return m[1] === '2' ? 'STPRNG2' : m[1] === '5' ? 'STPRNG5' : 'STPRNG'
+  m = u.match(/\bSTEP\s*(\d{3})\b/)
+  if (m) return m[1] === '200' ? 'STPRNG2' : m[1] === '500' ? 'STPRNG5' : 'STPRNG'
+  if (/\bSTEP(?:\s*INDEX)?\b/.test(u)) return 'STPRNG'
+
+  m = u.match(/\bBOOM\s*(\d{3,4})\b/)
+  if (m) return `BOOM${m[1]}`
+  m = u.match(/\bCRASH\s*(\d{3,4})\b/)
+  if (m) return `CRASH${m[1]}`
+  m = u.match(/\b(?:JD|JUMP)\s*(\d{2,3})\b/)
+  if (m) return `JD${m[1]}`
+  m = u.match(/\bRANGE\s*BREAK\s*(\d{2,3})\b/) ?? u.match(/\bRB[_\s]?(\d{2,3})\b/)
+  if (m) return `RB_${m[1]}`
+
+  const vm = u.match(/\b1HZ(\d{1,3})V\b/)
+    ?? u.match(/\bR_?(\d{1,3})\b/)
+    ?? u.match(/\bVIX\s*(\d{1,3})\b/)
+    ?? u.match(/\bVOL(?:ATILITY)?\s*(\d{1,3})\b/)
+    ?? u.match(/\bV(\d{2,3})\b/)
+  if (vm && DERIV_VOL_LEVELS.has(Number(vm[1]))) {
+    const oneSec = /\b1HZ\d{1,3}V\b/.test(u) || /\(\s*1\s*S\s*\)/.test(u) || /\b1\s*S\b/.test(u)
+    return oneSec ? `1HZ${vm[1]}V` : `R_${vm[1]}`
+  }
+
+  return null
+}
+
 /** Normalize a raw token to a broker-safe symbol code (mirrors analyze-channel-profile). */
 export function normalizeAssetSymbol(raw: string | null | undefined): string | null {
   if (!raw) return null
+
+  const deriv = normalizeDerivSymbol(raw)
+  if (deriv) return deriv
+
   const token = raw.toUpperCase().replace(/[^A-Z0-9]/g, '')
   if (!token) return null
 
@@ -55,6 +102,10 @@ function symbolFromParsed(parsed: unknown): string | null {
 function symbolFromRawMessage(message: string): string | null {
   const text = (message ?? '').trim()
   if (!text) return null
+  // Deriv synthetics first — aliases like "Boom 1000" / "Step Index" span
+  // multiple tokens that the single-token regex below would miss.
+  const deriv = normalizeDerivSymbol(text)
+  if (deriv) return deriv
   const match = text.match(SYMBOL_TOKEN_RE)
   return normalizeAssetSymbol(match ? match[1] : null)
 }

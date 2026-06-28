@@ -49,6 +49,7 @@ export function getPipMultiplierForSymbol(userSymbol: string): number {
     case 'metal':
       return 100
     case 'index':
+    case 'synthetic':
       return 1
     case 'crypto':
     case 'energy':

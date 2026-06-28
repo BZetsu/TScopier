@@ -39,6 +39,11 @@ export function resolveMtServerCandidate(
   return legacyServerFromMetaapiId(account.metaapi_account_id)
 }
 
+/** True when the MT server string belongs to a Deriv account (Deriv-Demo/Real/SVG…). */
+export function isDerivBrokerServer(server: string | null | undefined): boolean {
+  return /\bderiv\b/i.test(String(server ?? ''))
+}
+
 /**
  * Best-effort broker display name from an MT server string.
  * Prefer API-provided broker when available; use this as fallback.
