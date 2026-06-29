@@ -176,7 +176,7 @@ export function SignalHistoryPage() {
   const [editSession, setEditSession] = useState<EditSignalOverrideSnapshot | null>(null)
   const editModalOpenRef = useRef(false)
   editModalOpenRef.current = editSession != null
-  const [banner, setBanner] = useState<{ tone: 'success' | 'error'; text: string } | null>(null)
+  const [banner, setBanner] = useState<{ tone: 'success' | 'warning' | 'error'; text: string } | null>(null)
 
   const summaryLabels = useMemo((): TradeSignalSummaryLabels => ({
     actionBuy: sh.actionBuy,
@@ -326,14 +326,30 @@ export function SignalHistoryPage() {
 
   const handleSaved = useCallback(async (
     signalId: string,
-    { appliedLegs }: { appliedLegs: number; open: boolean },
+    { appliedLegs, brokersUpdated, brokersTotal }: {
+      appliedLegs: number
+      open: boolean
+      brokersUpdated?: number
+      brokersTotal?: number
+    },
   ) => {
+    const total = brokersTotal ?? 0
+    const updated = brokersUpdated ?? 0
+    let text: string
+    if (total > 1 && updated < total) {
+      text = interpolate(sh.applyPartialBrokers, { updated: String(updated), total: String(total) })
+    } else if (total > 1) {
+      text = `${interpolate(sh.applySuccess, { count: String(appliedLegs) })} `
+        + interpolate(sh.applyBrokerSummary, { updated: String(updated), total: String(total) })
+    } else {
+      text = interpolate(sh.applySuccess, { count: String(appliedLegs) })
+    }
     setBanner({
-      tone: 'success',
-      text: interpolate(sh.applySuccess, { count: String(appliedLegs) }),
+      tone: total > 1 && updated < total ? 'warning' : 'success',
+      text,
     })
     await refreshAfterOverrideSave(signalId)
-  }, [refreshAfterOverrideSave, sh.applySuccess])
+  }, [refreshAfterOverrideSave, sh.applySuccess, sh.applyBrokerSummary, sh.applyPartialBrokers])
 
   const signalDisplayRows = useMemo(() => {
     if (!symbolLookupReady) return []
@@ -422,7 +438,9 @@ export function SignalHistoryPage() {
             'mb-4 rounded-xl border px-4 py-3 text-sm',
             banner.tone === 'success'
               ? 'border-teal-200 bg-teal-50 text-teal-900 dark:border-teal-900/50 dark:bg-teal-950/40 dark:text-teal-100'
-              : 'border-error-200 bg-error-50 text-error-800 dark:border-error-900/50 dark:bg-error-950/40 dark:text-error-100',
+              : banner.tone === 'warning'
+                ? 'border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-100'
+                : 'border-error-200 bg-error-50 text-error-800 dark:border-error-900/50 dark:bg-error-950/40 dark:text-error-100',
           )}
         >
           {banner.text}

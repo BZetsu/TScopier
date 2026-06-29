@@ -4,6 +4,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { symbolsCompatibleForBasket } from './basketModFollowUp'
+import { mgmtBasketConcurrency, parallelMap } from './parallelPool'
 import { classifySymbol } from './pipMath'
 import { signalPipPrice } from './signalPip'
 import { sanitizeParsedSymbol } from './tradableSymbol'
@@ -185,6 +186,12 @@ export function isMgmtEligibleTradeStatus(status: string): boolean {
   return s === 'open' || s === 'pending'
 }
 
+/** Per-broker row cap. Applied per broker (not shared) so a busy channel with
+ *  many accounts never truncates coverage for later brokers. */
+const MGMT_PER_BROKER_LIMIT = 500
+/** Run per-broker scoped queries in parallel once the account count crosses this. */
+const MGMT_PER_BROKER_SCOPE_THRESHOLD = 4
+
 export async function loadOpenTradesForManagement(
   supabase: SupabaseClient,
   args: {
@@ -194,7 +201,8 @@ export async function loadOpenTradesForManagement(
     symbolFilter?: string | null
   },
 ): Promise<MgmtTradeRow[]> {
-  const { userId, channelId, brokerAccountIds } = args
+  const { userId, channelId } = args
+  const brokerAccountIds = [...new Set(args.brokerAccountIds)]
   if (!channelId || !brokerAccountIds.length) return []
 
   const { data: channelSignals } = await supabase
@@ -206,55 +214,68 @@ export async function loadOpenTradesForManagement(
 
   const signalIds = (channelSignals ?? []).map((r: { id: string }) => r.id)
 
-  const { data: byChannelCol } = await supabase
-    .from('trades')
-    .select(MGMT_TRADE_SELECT)
-    .eq('user_id', userId)
-    .in('broker_account_id', brokerAccountIds)
-    .in('status', ['open', 'pending'])
-    .eq('telegram_channel_id', channelId)
-    .order('opened_at', { ascending: true })
-    .limit(500)
-
-  const { data: bySignalId } = signalIds.length
-    ? await supabase
+  // The three discovery queries (by telegram_channel_id, by channel signal_ids,
+  // by attribution) for a given broker subset. Each query is scoped to the
+  // subset so its row cap belongs to that subset alone.
+  const loadForBrokers = async (brokerIds: string[]): Promise<MgmtTradeRow[]> => {
+    const { data: byChannelCol } = await supabase
       .from('trades')
       .select(MGMT_TRADE_SELECT)
       .eq('user_id', userId)
-      .in('broker_account_id', brokerAccountIds)
+      .in('broker_account_id', brokerIds)
       .in('status', ['open', 'pending'])
-      .in('signal_id', signalIds)
+      .eq('telegram_channel_id', channelId)
       .order('opened_at', { ascending: true })
-      .limit(500)
-    : { data: [] as MgmtTradeRow[] }
+      .limit(MGMT_PER_BROKER_LIMIT)
 
-  const { data: attribRows } = await supabase
-    .from('trade_channel_attributions')
-    .select('trade_id')
-    .eq('user_id', userId)
-    .eq('channel_id', channelId)
-    .in('broker_account_id', brokerAccountIds)
-    .limit(500)
+    const { data: bySignalId } = signalIds.length
+      ? await supabase
+        .from('trades')
+        .select(MGMT_TRADE_SELECT)
+        .eq('user_id', userId)
+        .in('broker_account_id', brokerIds)
+        .in('status', ['open', 'pending'])
+        .in('signal_id', signalIds)
+        .order('opened_at', { ascending: true })
+        .limit(MGMT_PER_BROKER_LIMIT)
+      : { data: [] as MgmtTradeRow[] }
 
-  const attribTradeIds = (attribRows ?? []).map((r: { trade_id: string }) => r.trade_id).filter(Boolean)
-  const { data: byAttribution } = attribTradeIds.length
-    ? await supabase
-      .from('trades')
-      .select(MGMT_TRADE_SELECT)
+    const { data: attribRows } = await supabase
+      .from('trade_channel_attributions')
+      .select('trade_id')
       .eq('user_id', userId)
-      .in('broker_account_id', brokerAccountIds)
-      .in('status', ['open', 'pending'])
-      .in('id', attribTradeIds)
-      .order('opened_at', { ascending: true })
-      .limit(500)
-    : { data: [] as MgmtTradeRow[] }
+      .eq('channel_id', channelId)
+      .in('broker_account_id', brokerIds)
+      .limit(MGMT_PER_BROKER_LIMIT)
+
+    const attribTradeIds = (attribRows ?? []).map((r: { trade_id: string }) => r.trade_id).filter(Boolean)
+    const { data: byAttribution } = attribTradeIds.length
+      ? await supabase
+        .from('trades')
+        .select(MGMT_TRADE_SELECT)
+        .eq('user_id', userId)
+        .in('broker_account_id', brokerIds)
+        .in('status', ['open', 'pending'])
+        .in('id', attribTradeIds)
+        .order('opened_at', { ascending: true })
+        .limit(MGMT_PER_BROKER_LIMIT)
+      : { data: [] as MgmtTradeRow[] }
+
+    return [
+      ...(byChannelCol ?? []),
+      ...(bySignalId ?? []),
+      ...(byAttribution ?? []),
+    ] as MgmtTradeRow[]
+  }
+
+  // For many accounts, scope each broker independently in parallel so a single
+  // shared row cap can't starve later brokers (the multi-broker partial-apply bug).
+  const collected: MgmtTradeRow[] = brokerAccountIds.length >= MGMT_PER_BROKER_SCOPE_THRESHOLD
+    ? (await parallelMap(brokerAccountIds, mgmtBasketConcurrency(), id => loadForBrokers([id]))).flat()
+    : await loadForBrokers(brokerAccountIds)
 
   const merged = new Map<string, MgmtTradeRow>()
-  for (const row of [
-    ...(byChannelCol ?? []),
-    ...(bySignalId ?? []),
-    ...(byAttribution ?? []),
-  ] as MgmtTradeRow[]) {
+  for (const row of collected) {
     if (row.status === 'pending') {
       const ticket = Number(row.metaapi_order_id)
       if (!Number.isFinite(ticket) || ticket <= 0) continue
@@ -434,4 +455,45 @@ export async function expandMgmtRowsToFullBaskets(
     const tb = b.opened_at ? new Date(b.opened_at).getTime() : 0
     return ta - tb
   })
+}
+
+export type SignalScopedTrades = {
+  rows: MgmtTradeRow[]
+  brokersFound: string[]
+  brokersMissing: string[]
+}
+
+/**
+ * Load every open/pending leg for a single signal across all linked brokers.
+ *
+ * Unlike the channel-wide loader, this is anchored to one `signal_id`, so it can
+ * never truncate broker coverage on busy channels (a single entry basket across
+ * 12 brokers is far below any row cap). Returns explicit found/missing broker
+ * lists so callers can heal (reconcile) brokers that have no legs in scope.
+ */
+export async function loadOpenTradesForSignalAcrossBrokers(
+  supabase: SupabaseClient,
+  args: {
+    userId: string
+    signalId: string
+    brokerAccountIds: string[]
+  },
+): Promise<SignalScopedTrades> {
+  const uniqueBrokers = [...new Set(args.brokerAccountIds)]
+  if (!args.signalId || !uniqueBrokers.length) {
+    return { rows: [], brokersFound: [], brokersMissing: uniqueBrokers }
+  }
+
+  // Anchoring on signal_id returns all legs for this signal across every broker
+  // in one query (range/layer legs share the anchor signal_id).
+  const rows = await loadTradesForBasketAnchor(supabase, {
+    userId: args.userId,
+    brokerAccountIds: uniqueBrokers,
+    anchorSignalId: args.signalId,
+  })
+
+  const found = new Set<string>()
+  for (const r of rows) found.add(r.broker_account_id)
+  const brokersMissing = uniqueBrokers.filter(id => !found.has(id))
+  return { rows, brokersFound: [...found], brokersMissing }
 }

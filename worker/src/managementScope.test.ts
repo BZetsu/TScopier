@@ -5,6 +5,8 @@ import {
   filterTradesByPlausibleMgmtLevels,
   filterTradesBySymbolFilter,
   isReplyScopedManagement,
+  loadOpenTradesForManagement,
+  loadOpenTradesForSignalAcrossBrokers,
   resolveChannelCweTargets,
   resolveChannelModifyTargets,
   resolveNewestOpenSymbolTrades,
@@ -175,5 +177,122 @@ describe('explicitMgmtSymbol', () => {
   it('sanitizes parsed symbol', () => {
     assert.equal(explicitMgmtSymbol({ symbol: 'eurusd' }), 'EURUSD')
     assert.equal(explicitMgmtSymbol({ symbol: 'CHANGE' }), null)
+  })
+})
+
+type FakeTrade = MgmtTradeRow & { telegram_channel_id?: string }
+
+/**
+ * Minimal Supabase stub that honours `.limit()` (so we can prove the per-broker
+ * scope avoids the shared row-cap truncation) and filters trades by the
+ * `broker_account_id` IN list and `signal_id` eq.
+ */
+function makeSupabase(opts: {
+  channelSignalIds?: string[]
+  tradesByBroker: Record<string, FakeTrade[]>
+  attributions?: Array<{ trade_id: string; broker_account_id: string }>
+}) {
+  return {
+    from(table: string) {
+      const eqs: Record<string, unknown> = {}
+      const ins: Record<string, unknown[]> = {}
+      let limitN = Infinity
+      const resolve = () => {
+        let data: unknown[] = []
+        if (table === 'signals') {
+          data = (opts.channelSignalIds ?? []).map(id => ({ id }))
+        } else if (table === 'trade_channel_attributions') {
+          data = opts.attributions ?? []
+        } else if (table === 'trades') {
+          const brokerIds = (ins.broker_account_id as string[] | undefined)
+            ?? Object.keys(opts.tradesByBroker)
+          let rows = brokerIds.flatMap(id => opts.tradesByBroker[id] ?? [])
+          const sigId = eqs.signal_id as string | undefined
+          if (sigId) rows = rows.filter(r => r.signal_id === sigId)
+          rows = rows.slice(0, limitN)
+          data = rows
+        }
+        return Promise.resolve({ data, error: null, count: data.length })
+      }
+      const chain: Record<string, unknown> = {
+        select() { return chain },
+        eq(col: string, val: unknown) { eqs[col] = val; return chain },
+        in(col: string, vals: unknown[]) { ins[col] = vals; return chain },
+        not() { return chain },
+        order() { return chain },
+        limit(n: number) { limitN = n; return resolve() },
+        maybeSingle() { return resolve() },
+        then(onF: (v: unknown) => unknown, onR?: (e: unknown) => unknown) {
+          return resolve().then(onF, onR)
+        },
+      }
+      return chain
+    },
+  }
+}
+
+function leg(brokerId: string, signalId: string, n: number): FakeTrade {
+  return {
+    id: `${brokerId}-${signalId}-${n}`,
+    signal_id: signalId,
+    broker_account_id: brokerId,
+    metaapi_order_id: String(1000 + n),
+    symbol: 'XAUUSD',
+    direction: 'buy',
+    lot_size: 0.1,
+    status: 'open',
+    sl: null,
+    tp: null,
+    entry_price: 2650,
+    opened_at: `2026-01-01T10:${String(n).padStart(2, '0')}:00.000Z`,
+    telegram_channel_id: 'ch-1',
+  }
+}
+
+describe('loadOpenTradesForSignalAcrossBrokers', () => {
+  it('returns all 12 brokers for one signal and flags the missing broker', async () => {
+    const brokers = Array.from({ length: 12 }, (_, i) => `b${i + 1}`)
+    const tradesByBroker: Record<string, FakeTrade[]> = {}
+    for (const b of brokers) tradesByBroker[b] = [leg(b, 'sig-1', 1)]
+    const supabase = makeSupabase({ tradesByBroker })
+
+    const out = await loadOpenTradesForSignalAcrossBrokers(supabase as never, {
+      userId: 'u1',
+      signalId: 'sig-1',
+      brokerAccountIds: [...brokers, 'b13'],
+    })
+    assert.equal(out.rows.length, 12)
+    assert.equal(out.brokersFound.length, 12)
+    assert.deepEqual(out.brokersMissing, ['b13'])
+  })
+
+  it('returns all missing when signalId is empty', async () => {
+    const out = await loadOpenTradesForSignalAcrossBrokers({} as never, {
+      userId: 'u1',
+      signalId: '',
+      brokerAccountIds: ['b1', 'b2'],
+    })
+    assert.equal(out.rows.length, 0)
+    assert.deepEqual(out.brokersMissing, ['b1', 'b2'])
+  })
+})
+
+describe('loadOpenTradesForManagement multi-broker scope', () => {
+  it('does not truncate 12 brokers × 50 legs against a shared 500 row cap', async () => {
+    const brokers = Array.from({ length: 12 }, (_, i) => `b${i + 1}`)
+    const tradesByBroker: Record<string, FakeTrade[]> = {}
+    for (const b of brokers) {
+      tradesByBroker[b] = Array.from({ length: 50 }, (_, n) => leg(b, `sig-${b}`, n))
+    }
+    const supabase = makeSupabase({ tradesByBroker })
+
+    const rows = await loadOpenTradesForManagement(supabase as never, {
+      userId: 'u1',
+      channelId: 'ch-1',
+      brokerAccountIds: brokers,
+    })
+    assert.equal(rows.length, 600)
+    const distinctBrokers = new Set(rows.map(r => r.broker_account_id))
+    assert.equal(distinctBrokers.size, 12)
   })
 })

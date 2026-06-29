@@ -165,8 +165,9 @@ export async function ensureChannelModifyScope(
       emptyBrokerIds,
       mgmtBasketConcurrency(),
       async (brokerId): Promise<MgmtTradeRow[]> => {
-        const found: MgmtTradeRow[] = []
-        const { data: latestOpen } = await supabase
+        // Scan all open legs for this broker (not just the latest 5) so older
+        // channel baskets on a busy multi-broker account are not missed.
+        const { data: openRows } = await supabase
           .from('trades')
           .select('signal_id')
           .eq('user_id', userId)
@@ -174,24 +175,33 @@ export async function ensureChannelModifyScope(
           .eq('status', 'open')
           .not('metaapi_order_id', 'is', null)
           .order('opened_at', { ascending: false })
-          .limit(5)
+          .limit(500)
 
-        for (const row of latestOpen ?? []) {
-          const anchorId = (row as { signal_id?: string }).signal_id
-          if (!anchorId) continue
-          const { data: sig } = await supabase
-            .from('signals')
-            .select('channel_id')
-            .eq('id', anchorId)
-            .maybeSingle()
-          if ((sig as { channel_id?: string } | null)?.channel_id !== channelId) continue
+        const signalIds = [...new Set(
+          (openRows ?? [])
+            .map(r => (r as { signal_id?: string }).signal_id)
+            .filter((id): id is string => Boolean(id)),
+        )]
+        if (!signalIds.length) return []
+
+        // One batched query resolves which of those signals belong to this channel.
+        const { data: sigRows } = await supabase
+          .from('signals')
+          .select('id')
+          .in('id', signalIds)
+          .eq('channel_id', channelId)
+        const channelSignalIds = (sigRows ?? []).map(s => (s as { id: string }).id)
+        if (!channelSignalIds.length) return []
+
+        const found: MgmtTradeRow[] = []
+        await parallelMap(channelSignalIds, mgmtBasketConcurrency(), async (anchorId) => {
           const basket = await loadTradesForBasketAnchor(supabase, {
             userId,
             brokerAccountIds: [brokerId],
             anchorSignalId: anchorId,
           })
           found.push(...basket)
-        }
+        })
         return found
       },
     )

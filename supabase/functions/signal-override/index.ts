@@ -48,16 +48,62 @@ async function upsertChannelActiveTradeParams(
   if (error) console.warn(`[signal-override] channel params upsert failed: ${error.message}`)
 }
 
-async function callWorkerApply(args: {
-  userId: string
-  signalId: string
-}): Promise<{ applied_legs: number; errors?: string[] }> {
-  const workerUrl = (
+/** Stable per-user shard hash — must match worker `shardForUserId`. */
+function shardForUserId(userId: string, shardCount: number): number {
+  let h = 0
+  for (let i = 0; i < userId.length; i++) {
+    h = (h * 31 + userId.charCodeAt(i)) | 0
+  }
+  return Math.abs(h) % Math.max(1, shardCount)
+}
+
+function parseShardUrls(raw: string | undefined): string[] {
+  if (!raw?.trim()) return []
+  return raw.split(",").map(s => s.trim().replace(/\/+$/, "")).filter(Boolean)
+}
+
+/**
+ * Pick the worker URL for a user, mirroring `pickTradeWorkerUrl` for management
+ * actions. Override apply is management-style (modifies open legs), so prefer the
+ * mgmt fleet and shard by user so we hit the worker that owns this user's session.
+ */
+function pickWorkerUrl(userId: string): string {
+  const mgmtShardUrls = parseShardUrls(Deno.env.get("TRADE_MGMT_WORKER_SHARD_URLS"))
+  if (mgmtShardUrls.length > 1) {
+    return mgmtShardUrls[shardForUserId(userId, mgmtShardUrls.length)] ?? ""
+  }
+  if (mgmtShardUrls.length === 1) return mgmtShardUrls[0]!
+
+  const mgmtUrl = (Deno.env.get("TRADE_MGMT_WORKER_URL") ?? "").trim().replace(/\/+$/, "")
+  const shardUrls = parseShardUrls(Deno.env.get("TRADE_WORKER_SHARD_URLS"))
+  if (shardUrls.length > 1) {
+    if (mgmtUrl) return mgmtUrl
+    return shardUrls[shardForUserId(userId, shardUrls.length)] ?? ""
+  }
+  if (mgmtUrl) return mgmtUrl
+  if (shardUrls.length === 1) return shardUrls[0]!
+
+  return (
     Deno.env.get("TRADE_WORKER_URL")
     ?? Deno.env.get("WORKER_URL")
     ?? Deno.env.get("WORKER_PUBLIC_URL")
     ?? ""
   ).trim().replace(/\/+$/, "")
+}
+
+type BrokerOutcome = { broker_id: string; applied: number; skipped: number; failed: number }
+
+async function callWorkerApply(args: {
+  userId: string
+  signalId: string
+}): Promise<{
+  applied_legs: number
+  failed_legs?: number
+  errors?: string[]
+  brokers?: BrokerOutcome[]
+  brokers_missing?: string[]
+}> {
+  const workerUrl = pickWorkerUrl(args.userId)
   const token = (Deno.env.get("WORKER_INTERNAL_TOKEN") ?? "").trim()
   if (!workerUrl || !token) {
     return { applied_legs: 0, errors: ["WORKER_URL not configured"] }
@@ -79,6 +125,8 @@ async function callWorkerApply(args: {
     failed_legs?: number
     error?: string
     errors?: string[]
+    brokers?: BrokerOutcome[]
+    brokers_missing?: string[]
   }
   if (!res.ok) {
     return { applied_legs: 0, failed_legs: 0, errors: [data.error ?? `Worker apply failed (${res.status})`] }
@@ -87,6 +135,8 @@ async function callWorkerApply(args: {
     applied_legs: Number(data.applied_legs ?? 0),
     failed_legs: Number(data.failed_legs ?? 0),
     errors: data.errors,
+    brokers: data.brokers,
+    brokers_missing: data.brokers_missing,
   }
 }
 
@@ -176,17 +226,18 @@ Deno.serve(async (req: Request) => {
       .eq("status", "open")
 
     let open = (signalOpenCount ?? 0) > 0
-    let appliedLegs = 0
-    let failedLegs = 0
-    let applyErrors: string[] | undefined
     const workerResult = await callWorkerApply({ userId, signalId })
-    appliedLegs = workerResult.applied_legs
-    failedLegs = workerResult.failed_legs ?? 0
-    applyErrors = workerResult.errors
+    const appliedLegs = workerResult.applied_legs
+    const failedLegs = workerResult.failed_legs ?? 0
+    const applyErrors = workerResult.errors
     open = open || appliedLegs > 0
     if (applyErrors?.length) {
       console.warn(`[signal-override] worker apply warnings: ${applyErrors.join("; ")}`)
     }
+
+    const brokers = workerResult.brokers ?? []
+    const brokersTotal = brokers.length + (workerResult.brokers_missing?.length ?? 0)
+    const brokersUpdated = brokers.filter(b => b.applied > 0).length
 
     return Response.json(
       {
@@ -195,6 +246,10 @@ Deno.serve(async (req: Request) => {
         failed_legs: failedLegs,
         open,
         errors: applyErrors,
+        brokers,
+        brokers_missing: workerResult.brokers_missing ?? [],
+        brokers_total: brokersTotal,
+        brokers_updated: brokersUpdated,
       },
       { status: 200, headers: corsHeaders },
     )

@@ -10,6 +10,7 @@ function chainQuery<T>(data: T, error: { message: string } | null = null) {
     not: () => chain,
     order: () => chain,
     in: () => chain,
+    limit: () => result,
     maybeSingle: () => result,
     then: result.then.bind(result),
     catch: result.catch.bind(result),
@@ -71,6 +72,63 @@ describe('applySignalOverride dry-run', () => {
     assert.equal(result.failed_legs, 0)
   })
 
+  test('applies to all 12 brokers via channel signal scope', async () => {
+    const signalId = 'sig-1'
+    const userId = 'user-1'
+    const brokers = Array.from({ length: 12 }, (_, i) => `b${i + 1}`)
+    const legs = brokers.map((b, i) => ({
+      id: `${b}-leg`,
+      signal_id: signalId,
+      broker_account_id: b,
+      metaapi_order_id: String(2000 + i),
+      symbol: 'XAUUSD',
+      direction: 'sell',
+      sl: 4165,
+      tp: 4155,
+      opened_at: '2026-06-17T10:00:00.000Z',
+      entry_price: 4160,
+      lot_size: 0.1,
+      status: 'open',
+    }))
+    const brokerAccounts = brokers.map((b, i) => ({
+      id: b,
+      label: `Demo ${i + 1}`,
+      platform: 'MT5',
+      signal_channel_ids: ['ch-1'],
+      is_active: true,
+      fxsocket_account_id: `00000000-0000-4000-8000-0000000000${String(i + 10)}`,
+      metaapi_account_id: null,
+      manual_settings: null,
+    }))
+
+    const supabase = {
+      from(table: string) {
+        if (table === 'signals') {
+          return chainQuery({
+            id: signalId,
+            user_id: userId,
+            channel_id: 'ch-1',
+            parsed_data: { action: 'sell', symbol: 'XAUUSD', sl: 4165, tp: [4155] },
+            user_override: { sl: 4159, tp: [4150, 4148] },
+          })
+        }
+        if (table === 'trades') return chainQuery(legs)
+        if (table === 'broker_accounts') return chainQuery(brokerAccounts)
+        throw new Error(`unexpected table ${table}`)
+      },
+    }
+
+    const result = await applySignalOverride(supabase as never, {
+      userId,
+      signalId,
+      dryRun: true,
+    })
+    assert.equal(result.applied_legs, 12)
+    assert.equal(result.brokers?.length, 12)
+    assert.ok(result.brokers?.every(b => b.applied === 1))
+    assert.equal(result.brokers_missing, undefined)
+  })
+
   test('returns zero when no open legs', async () => {
     const supabase = {
       from(table: string) {
@@ -84,6 +142,7 @@ describe('applySignalOverride dry-run', () => {
           })
         }
         if (table === 'trades') return chainQuery([])
+        if (table === 'broker_accounts') return chainQuery([])
         throw new Error(`unexpected table ${table}`)
       },
     }

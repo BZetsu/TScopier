@@ -737,6 +737,8 @@ export const en: Translations = {
     originalSignal: 'Channel signal',
     overrideSignal: 'Current override',
     applySuccess: 'Override saved. Applied to {count} open leg(s).',
+    applyBrokerSummary: 'Updated {updated} of {total} broker(s).',
+    applyPartialBrokers: 'Override saved. Updated {updated} of {total} broker(s) — the rest are being reconciled.',
     applyFailed: 'Could not save override',
     invalidLevels: 'Enter a valid SL and/or at least one TP level.',
     closedReadOnly: 'Closed signals are read-only.',

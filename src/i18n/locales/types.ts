@@ -330,6 +330,8 @@ export interface SignalHistoryPageTranslations {
   originalSignal: string
   overrideSignal: string
   applySuccess: string
+  applyBrokerSummary: string
+  applyPartialBrokers: string
   applyFailed: string
   invalidLevels: string
   closedReadOnly: string

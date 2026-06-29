@@ -6,12 +6,23 @@ export type SignalOverrideSaveRequest = {
   tp_levels: number[]
 }
 
+export type SignalOverrideBrokerOutcome = {
+  broker_id: string
+  applied: number
+  skipped: number
+  failed: number
+}
+
 export type SignalOverrideSaveResponse = {
   ok: true
   applied_legs: number
   failed_legs?: number
   open: boolean
   errors?: string[]
+  brokers?: SignalOverrideBrokerOutcome[]
+  brokers_missing?: string[]
+  brokers_total?: number
+  brokers_updated?: number
 }
 
 async function call<T>(body: Record<string, unknown>): Promise<T> {

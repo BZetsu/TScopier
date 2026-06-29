@@ -108,7 +108,12 @@ function parseDraft(draft: OverrideDraft): { sl: number | null; tp_levels: numbe
 
 type EditSignalOverrideModalProps = EditSignalOverrideSnapshot & {
   onClose: () => void
-  onSaved: (result: { appliedLegs: number; open: boolean }) => void
+  onSaved: (result: {
+    appliedLegs: number
+    open: boolean
+    brokersUpdated?: number
+    brokersTotal?: number
+  }) => void
 }
 
 export function EditSignalOverrideModal({
@@ -157,7 +162,12 @@ export function EditSignalOverrideModal({
         setFormError(result.errors?.[0] ?? sh.applyFailed)
         return
       }
-      onSaved({ appliedLegs: result.applied_legs, open: result.open })
+      onSaved({
+        appliedLegs: result.applied_legs,
+        open: result.open,
+        brokersUpdated: result.brokers_updated,
+        brokersTotal: result.brokers_total,
+      })
       onClose()
     } catch (e) {
       setFormError(e instanceof Error ? e.message : sh.applyFailed)
