@@ -11,6 +11,7 @@ import {
   type BasketOpenLeg,
   type BasketSymbolParams,
 } from './basketSlTpReconcile'
+import { upsertBasketSlTpTarget } from './basketTargetStore'
 import {
   getFxsocketClient,
   hasFxsocketConfigured,
@@ -24,7 +25,8 @@ import {
 import type { ManualTpLot } from './manualPlanning/types'
 import { isBenignOrderModifyError, stopsAlreadyMatchDb } from './orderModifyBenign'
 import { mgmtBasketConcurrency, parallelMap } from './parallelPool'
-import { effectiveParsedFromSignalRow } from './signalOverride'
+import { effectiveParsedFromSignalRow, parseUserOverride } from './signalOverride'
+import { reapplyChannelParamsToPendingLegs } from './channelActiveTradeParams'
 import { brokerHasLinkedSession, brokerSessionUuid } from './tradeExecutor/helpers'
 import { loadOpenTradesForSignalAcrossBrokers } from './managementScope'
 
@@ -99,6 +101,8 @@ export async function applySignalOverride(
     parsed_data: Parameters<typeof effectiveParsedFromSignalRow>[0]['parsed_data']
     user_override: unknown
   })
+  const overrideMeta = parseUserOverride((signal as { user_override?: unknown }).user_override)
+  const instructionAt = overrideMeta?.updated_at ?? new Date().toISOString()
   const targetSl = num(effective.sl)
   const targetTps = (effective.tp ?? []).filter((t): t is number => num(t) != null)
 
@@ -335,20 +339,24 @@ export async function applySignalOverride(
         if (Object.keys(dbPatch).length > 0) {
           await supabase.from('trades').update(dbPatch).eq('id', tr.id)
         }
-        await supabase.from('trade_execution_logs').insert({
-          user_id: args.userId,
-          signal_id: args.signalId,
-          broker_account_id: brokerId,
-          action: 'user_signal_override',
-          status: 'success',
-          request_payload: {
-            ticket,
-            target_sl: modifyArgs.stoploss ?? null,
-            target_tp: modifyArgs.takeprofit ?? null,
-            trade_id: tr.id,
-            leg_index: i + 1,
-          } as unknown as Record<string, unknown>,
-        })
+        try {
+          await supabase.from('trade_execution_logs').insert({
+            user_id: args.userId,
+            signal_id: args.signalId,
+            broker_account_id: brokerId,
+            action: 'user_signal_override',
+            status: 'success',
+            request_payload: {
+              ticket,
+              target_sl: modifyArgs.stoploss ?? null,
+              target_tp: modifyArgs.takeprofit ?? null,
+              trade_id: tr.id,
+              leg_index: i + 1,
+            } as unknown as Record<string, unknown>,
+          })
+        } catch {
+          // best-effort log — broker modify already succeeded
+        }
         applied++
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
@@ -411,6 +419,66 @@ export async function applySignalOverride(
     skippedLegs += outcome.skipped
     failedLegs += outcome.failed
     for (const e of be) errors.push(e)
+  }
+
+  // Keep authoritative basket targets + pending ladder legs aligned with the override
+  // so reconcile monitors do not revert to pre-override SL/TP.
+  if (!dryRun && channelId && (targetSl != null || targetTps.length > 0)) {
+    const symbolHint = String(effective.symbol ?? rows[0]?.symbol ?? '').trim()
+    const signalIds = [...new Set(rows.map(r => r.signal_id))]
+    const tpLotsByBroker = new Map<string, ManualTpLot[] | null>()
+    for (const brokerId of brokerIds) {
+      tpLotsByBroker.set(brokerId, brokerById.get(brokerId)?.manual_settings?.tp_lots ?? null)
+    }
+
+    if (symbolHint) {
+      try {
+        await reapplyChannelParamsToPendingLegs({
+          supabase,
+          userId: args.userId,
+          channelId,
+          brokerAccountIds: brokerIds,
+          symbolHint,
+          signalIds,
+          tpLotsByBroker,
+          paramsOverride: {
+            symbol: symbolHint,
+            stoploss: targetSl,
+            tpLevels: targetTps,
+            updatedAt: instructionAt,
+          },
+        })
+      } catch (e) {
+        errors.push(`pending_legs_refresh: ${e instanceof Error ? e.message : String(e)}`)
+      }
+    }
+
+    const basketsByBroker = new Map<string, TradeRow[]>()
+    for (const row of rows) {
+      const list = basketsByBroker.get(row.broker_account_id) ?? []
+      list.push(row)
+      basketsByBroker.set(row.broker_account_id, list)
+    }
+    for (const [brokerId, legs] of basketsByBroker) {
+      const anchorSignalId = legs[0]?.signal_id
+      const sym = legs[0]?.symbol ?? symbolHint
+      if (!anchorSignalId || !sym) continue
+      try {
+        await upsertBasketSlTpTarget(supabase, {
+          userId: args.userId,
+          brokerAccountId: brokerId,
+          anchorSignalId,
+          channelId,
+          symbol: sym,
+          stoploss: targetSl,
+          tpLevels: targetTps,
+          source: 'adjust',
+          instructionAt,
+        })
+      } catch (e) {
+        errors.push(`basket_target broker=${brokerId}: ${e instanceof Error ? e.message : String(e)}`)
+      }
+    }
   }
 
   return {
