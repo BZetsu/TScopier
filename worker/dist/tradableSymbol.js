@@ -1,7 +1,8 @@
 "use strict";
 /**
  * Strict instrument detection for Telegram signals.
- * Only forex pairs, metals, crypto, and indices — not arbitrary 6-letter words.
+ * Only forex pairs, metals, crypto, indices, and Deriv synthetics — not
+ * arbitrary 6-letter words.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.cleanInstrumentSymbol = cleanInstrumentSymbol;
@@ -11,6 +12,7 @@ exports.extractTradableSymbolFromMessage = extractTradableSymbolFromMessage;
 exports.sanitizeParsedSymbol = sanitizeParsedSymbol;
 exports.minPlausibleQuotePrice = minPlausibleQuotePrice;
 exports.filterPlausibleInstrumentPrices = filterPlausibleInstrumentPrices;
+const derivSymbols_1 = require("./derivSymbols");
 const FX_CURRENCY_CODES = new Set([
     'USD', 'EUR', 'GBP', 'JPY', 'CHF', 'AUD', 'NZD', 'CAD',
     'SEK', 'NOK', 'DKK', 'ZAR', 'MXN', 'SGD', 'HKD', 'TRY',
@@ -40,6 +42,10 @@ function cleanInstrumentSymbol(symbol) {
     const upper = String(symbol || '').toUpperCase().trim();
     if (!upper)
         return '';
+    // Deriv canonical codes (R_75, RB_100, 1HZ75V, BOOM1000…) must survive intact;
+    // the punctuation strip below would otherwise truncate "R_75" to "R".
+    if ((0, derivSymbols_1.isDerivSyntheticSymbol)(upper))
+        return upper;
     const punctMatch = upper.match(/^([A-Z0-9]+)[.#_-]/);
     let core = punctMatch ? punctMatch[1] : upper;
     // Broker mini suffix on 6-char FX only (EURUSDm → EURUSD). Do not trim crypto/index quotes.
@@ -57,6 +63,8 @@ function classifyTradableInstrument(symbol) {
     const s = cleanInstrumentSymbol(symbol);
     if (!s || s.length < 3 || s.length > 12)
         return null;
+    if ((0, derivSymbols_1.isDerivSyntheticSymbol)(s))
+        return 'deriv_synthetic';
     if (EXPLICIT_SYMBOLS.has(s)) {
         if (s.startsWith('XAU') || s.startsWith('XAG') || s.startsWith('XPT') || s.startsWith('XPD'))
             return 'metal';
@@ -151,6 +159,11 @@ function extractTradableSymbolFromMessage(raw) {
         return 'XAUUSD';
     if (/\bSILVER\b|\bXAG\b|\bXAGUSD\b/.test(u))
         return 'XAGUSD';
+    // Deriv synthetics (V75, Vix75, R_75, Boom 1000, Step Index…). Run after the
+    // forex/metal/crypto checks so normal pairs are never hijacked.
+    const deriv = (0, derivSymbols_1.normalizeDerivAlias)(raw);
+    if (deriv)
+        return deriv;
     const tokens = u.match(/\b[A-Z][A-Z0-9]{2,11}\b/g) ?? [];
     const seen = new Set();
     for (const tok of [...tokens].sort((a, b) => b.length - a.length)) {
@@ -167,7 +180,10 @@ function sanitizeParsedSymbol(symbol) {
     if (symbol == null || !String(symbol).trim())
         return null;
     const cleaned = cleanInstrumentSymbol(String(symbol).trim());
-    return isTradableInstrumentSymbol(cleaned) ? cleaned : null;
+    if (isTradableInstrumentSymbol(cleaned))
+        return cleaned;
+    // Accept a Deriv alias that slipped through un-normalized (e.g. "V75").
+    return (0, derivSymbols_1.normalizeDerivAlias)(String(symbol).trim());
 }
 /** Minimum plausible quote price — filters commentary percentages mistaken for SL/TP. */
 function minPlausibleQuotePrice(symbol) {
@@ -183,6 +199,10 @@ function minPlausibleQuotePrice(symbol) {
     if (s.startsWith('ETH'))
         return 50;
     const cls = classifyTradableInstrument(s);
+    if (cls === 'deriv_synthetic') {
+        // Synthetic indices quote at large absolute prices; Step trades highest.
+        return /^STPRNG/.test(s) ? 1000 : 100;
+    }
     if (cls === 'forex')
         return 0.01;
     if (cls === 'index')

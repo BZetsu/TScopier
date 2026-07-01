@@ -8,6 +8,7 @@ exports.reconnectCachedBrokers = reconnectCachedBrokers;
 exports.pingBrokerSession = pingBrokerSession;
 exports.symbolCacheKeepaliveTick = symbolCacheKeepaliveTick;
 exports.markBrokerSessionDown = markBrokerSessionDown;
+exports.markBrokerSessionRecovered = markBrokerSessionRecovered;
 exports.ensureBrokerSession = ensureBrokerSession;
 exports.ensureBrokerSessionLiveFast = ensureBrokerSessionLiveFast;
 exports.brokersWarmForLiveEntry = brokersWarmForLiveEntry;
@@ -25,6 +26,7 @@ const brokerConnectionStatus_1 = require("../brokerConnectionStatus");
 const brokerTerminalHealth_1 = require("../brokerTerminalHealth");
 const brokerSignalReplay_1 = require("../brokerSignalReplay");
 const helpers_1 = require("./helpers");
+const derivSymbols_1 = require("../derivSymbols");
 const types_1 = require("./types");
 const HEARTBEAT_FAILURES_BEFORE_DOWN = Math.max(2, Number(process.env.BROKER_HEARTBEAT_FAILURES_BEFORE_DOWN ?? 4) || 4);
 const HEARTBEAT_CONCURRENCY = Math.max(1, Math.min(8, Number(process.env.BROKER_HEARTBEAT_CONCURRENCY ?? 2) || 2));
@@ -71,14 +73,7 @@ async function pingBrokerSessionInner(ctx, broker, api, uuid, opts) {
                 ctx.sessionOrderBlocked.delete(broker.id);
                 void (0, brokerSignalReplay_1.replayParsedSignalsForBroker)(ctx, broker);
             }
-            try {
-                const terminal = await api.mtStatus(uuid);
-                await (0, brokerTerminalHealth_1.writeBrokerTerminalHealth)(ctx.supabase, broker.id, terminal);
-            }
-            catch (err) {
-                const msg = err instanceof Error ? err.message : String(err);
-                console.warn(`[tradeExecutor] terminalStatus failed broker=${broker.id}: ${msg}`);
-            }
+            await markBrokerSessionRecovered(ctx, broker);
             return true;
         }
     }
@@ -213,23 +208,36 @@ async function markBrokerSessionDown(ctx, broker, uuid, reason) {
     await (0, brokerConnectionStatus_1.writeBrokerConnectionStatus)(ctx.supabase, broker.id, 'error', { rawError: reason });
     await (0, brokerTerminalHealth_1.writeBrokerTerminalUnhealthy)(ctx.supabase, broker.id, { force: true });
 }
+/**
+ * Symmetric counterpart to markBrokerSessionDown. The worker is the sole writer
+ * of connection_status but otherwise only ever degrades it to 'error'; without
+ * this, a row stays stuck 'error' forever after a transient heartbeat blip even
+ * once the session recovers. Called from every heartbeat success path.
+ */
+async function markBrokerSessionRecovered(ctx, broker) {
+    if (broker.connection_status === 'connected')
+        return;
+    broker.connection_status = 'connected';
+    await (0, brokerConnectionStatus_1.writeBrokerConnectionStatus)(ctx.supabase, broker.id, 'connected');
+}
 async function ensureBrokerSession(ctx, api, uuid, broker, opts) {
     const now = Date.now();
     const last = ctx.sessionPingAt.get(uuid) ?? 0;
     const blocked = ctx.sessionOrderBlocked.has(broker.id);
     if (!opts?.force && !blocked && now - last < types_1.SESSION_PING_MIN_INTERVAL_MS)
         return true;
-    const ready = await api.verifyTradingReady(uuid);
-    if (ready) {
+    const alive = await api.keepSessionAlive(uuid);
+    if (alive) {
         ctx.sessionPingAt.set(uuid, now);
         if (blocked)
             void (0, brokerSignalReplay_1.replayParsedSignalsForBroker)(ctx, broker);
         ctx.sessionOrderBlocked.delete(broker.id);
+        await markBrokerSessionRecovered(ctx, broker);
         return true;
     }
     await ctx.markBrokerSessionDown(broker, uuid, blocked
         ? 'session blocked after prior OrderSend disconnect'
-        : 'verifyTradingReady failed before OrderSend');
+        : 'keepSessionAlive failed before OrderSend');
     return false;
 }
 async function ensureBrokerSessionLiveFast(ctx, api, uuid, broker) {
@@ -249,6 +257,7 @@ async function ensureBrokerSessionLiveFast(ctx, api, uuid, broker) {
                 if (blocked)
                     void (0, brokerSignalReplay_1.replayParsedSignalsForBroker)(ctx, broker);
                 ctx.sessionOrderBlocked.delete(broker.id);
+                await markBrokerSessionRecovered(ctx, broker);
                 return true;
             }
             await ctx.markBrokerSessionDown(broker, uuid, blocked
@@ -455,6 +464,17 @@ async function fetchSymbolList(ctx, uuid) {
 }
 function resolveBrokerSymbolFromInventory(ctx, inventory, requested, opts) {
     const target = requested.toUpperCase();
+    // Deriv synthetics: the canonical code (R_75, BOOM1000…) rarely matches the
+    // broker's display name (`Volatility 75 Index`), so resolve via the Deriv
+    // alias map before the generic FX suffix/contains heuristics. The synthetic
+    // gate is broker-safe — only canonical synthetic codes ever reach here.
+    if ((0, derivSymbols_1.isDerivSyntheticSymbol)(target)) {
+        const brokerSymbol = (0, derivSymbols_1.resolveDerivCanonicalToBrokerSymbol)(target, inventory.list);
+        if (brokerSymbol)
+            return brokerSymbol;
+        console.warn(`[tradeExecutor] Deriv synthetic ${requested} not found in broker /Symbols list`);
+        return requested;
+    }
     if (opts?.userDecorated === true) {
         if (inventory.set.has(target)) {
             const exact = inventory.list.find(s => s.toUpperCase() === target);

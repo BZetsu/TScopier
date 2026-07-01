@@ -432,6 +432,11 @@ export async function applySignalOverride(
     }
 
     if (symbolHint) {
+      const openLegCountByBasket = new Map<string, number>()
+      for (const row of rows) {
+        const key = `${row.signal_id}|${row.broker_account_id}`
+        openLegCountByBasket.set(key, (openLegCountByBasket.get(key) ?? 0) + 1)
+      }
       try {
         await reapplyChannelParamsToPendingLegs({
           supabase,
@@ -441,6 +446,7 @@ export async function applySignalOverride(
           symbolHint,
           signalIds,
           tpLotsByBroker,
+          openLegCountByBasket,
           paramsOverride: {
             symbol: symbolHint,
             stoploss: targetSl,

@@ -119,9 +119,7 @@ async function prepareEntryExecution(ctx, args) {
         && (((0, manualPlanner_1.signalEntryPriceStrictEnabled)(manual) && (0, manualPlanner_1.parsedHasExplicitEntryAnchor)(parsed))
             || (0, manualPlanner_1.signalEntryRangeStrictEnabled)(manual));
     const stampOnResolve = liveEntryFast && !!signal.pipeline_ts;
-    const sessionPromise = (liveEntryFast
-        ? ctx.ensureBrokerSessionLiveFast(api, uuid, broker)
-        : ctx.ensureBrokerSession(api, uuid, broker, { force: true })).then(r => {
+    const sessionPromise = ctx.ensureBrokerSessionLiveFast(api, uuid, broker).then(r => {
         if (stampOnResolve && signal.pipeline_ts && signal.pipeline_ts.t_session_resolved == null) {
             signal.pipeline_ts.t_session_resolved = Date.now();
         }

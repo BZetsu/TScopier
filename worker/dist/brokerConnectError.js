@@ -2,10 +2,12 @@
 /** Mirror of supabase/functions/_shared/brokerConnectError.ts for worker DB writes. */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.isMtBridgeGlitchMessage = isMtBridgeGlitchMessage;
+exports.isTransientTerminalLinkMessage = isTransientTerminalLinkMessage;
 exports.isMtBridgeGlitchError = isMtBridgeGlitchError;
 exports.isSessionDropMessage = isSessionDropMessage;
 exports.classifyBrokerConnectError = classifyBrokerConnectError;
 exports.friendlyBrokerConnectError = friendlyBrokerConnectError;
+exports.isDefinitiveCredentialError = isDefinitiveCredentialError;
 const WRONG_PASSWORD = /invalid password|wrong password|incorrect password|bad password|authorization failed|not authorized|invalid credentials|auth(?:entication)? failed|login failed|password (?:is )?invalid|invalid account password|access denied|invalid_password|(?:^|\D)3006(?:\D|$)/i;
 const WRONG_LOGIN = /invalid account|unknown account|account not found|invalid login|wrong login|user not found|login (?:is )?invalid|invalid user|no such account|account disabled|account has been disabled|account blocked|trade account disabled|invalid_account|(?:^|\D)1001(?:\D|$)/i;
 const WRONG_SERVER = /server not found|unknown server|invalid server|cannot find server|no such server|server (?:is )?invalid|host not found|server does not exist|cannot connect to (?:the )?server|failed to resolve server|invalid_server|invalid_terminal|(?:^|\D)1008(?:\D|$)|(?:^|\D)1000(?:\D|$)/i;
@@ -13,9 +15,18 @@ const INVESTOR = /investor password|read[- ]?only|trade disabled|not allowed to 
 const SESSION_EXPIRED = /session expired|client with id|client not found|unknown client|session not found|broker session is not connected|not connected|trading session expired|verifytradingready failed|keepsessionalive failed|heartbeat keepsessionalive failed/i;
 const CREDENTIAL_CONNECT_AMBIGUOUS = /not connected|broker session is not connected|accountsummary returned no data|could not verify broker|connect failed|authentication failed|could not authenticate/i;
 const TERMINAL_NOT_READY = /could not fetch account summary|accountsummary returned no data|terminal did not reach connected|fxsocket terminal connection failed/i;
+/** Startup-phase failures that resolve once the MT terminal finishes spinning up. */
+const TRANSIENT_TERMINAL_LINK = /not connected|broker session is not connected|could not fetch account summary|accountsummary returned no data|fxsocket terminal connection failed|terminal did not reach connected/i;
 const BRIDGE_GLITCH = /object reference not set|nullreferenceexception|null reference|unexpected error|internal server error|an error occurred while handling|sequence contains no elements/i;
 function isMtBridgeGlitchMessage(message) {
     return BRIDGE_GLITCH.test(String(message ?? '').trim());
+}
+/** True for transient MT terminal startup errors (not credential rejection). */
+function isTransientTerminalLinkMessage(message) {
+    const m = String(message ?? '').trim();
+    if (!m)
+        return false;
+    return TRANSIENT_TERMINAL_LINK.test(m);
 }
 function isMtBridgeGlitchError(err) {
     if (err instanceof Error)
@@ -50,6 +61,8 @@ function classifyBrokerConnectError(raw, opts) {
     }
     if (SESSION_EXPIRED.test(message)) {
         if (opts?.credentialConnect && !isMtBridgeGlitchMessage(message)) {
+            if (isTransientTerminalLinkMessage(message))
+                return 'terminal_not_ready';
             return 'credentials_rejected';
         }
         return 'session_expired';
@@ -58,6 +71,8 @@ function classifyBrokerConnectError(raw, opts) {
         return 'terminal_not_ready';
     }
     if (opts?.credentialConnect && CREDENTIAL_CONNECT_AMBIGUOUS.test(message)) {
+        if (isTransientTerminalLinkMessage(message))
+            return 'terminal_not_ready';
         return 'credentials_rejected';
     }
     return 'unknown';
@@ -91,4 +106,12 @@ function friendlyBrokerConnectError(raw, opts) {
             return String(raw ?? '').trim()
                 || 'Broker connection failed. Check your MT login details or use Reconnect if this account was linked before.';
     }
+}
+/** Definitive credential rejections that should hard-fail even mid-establishment. */
+function isDefinitiveCredentialError(kind) {
+    return kind === 'wrong_password'
+        || kind === 'wrong_login'
+        || kind === 'wrong_server'
+        || kind === 'investor_password'
+        || kind === 'account_disabled';
 }

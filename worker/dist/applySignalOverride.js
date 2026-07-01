@@ -7,10 +7,13 @@ exports.applySignalOverride = applySignalOverride;
 const channelActiveTradeParams_1 = require("./channelActiveTradeParams");
 const brokerChannelFilter_1 = require("./brokerChannelFilter");
 const basketSlTpReconcile_1 = require("./basketSlTpReconcile");
+const basketTargetStore_1 = require("./basketTargetStore");
 const fxsocketClient_1 = require("./fxsocketClient");
 const tpBucketDistribution_1 = require("./manualPlanning/tpBucketDistribution");
 const orderModifyBenign_1 = require("./orderModifyBenign");
+const parallelPool_1 = require("./parallelPool");
 const signalOverride_1 = require("./signalOverride");
+const channelActiveTradeParams_2 = require("./channelActiveTradeParams");
 const helpers_1 = require("./tradeExecutor/helpers");
 const managementScope_1 = require("./managementScope");
 function num(v) {
@@ -35,15 +38,17 @@ async function applySignalOverride(supabase, args) {
         throw sigErr ?? new Error(`signal not found: ${args.signalId}`);
     }
     const effective = (0, signalOverride_1.effectiveParsedFromSignalRow)(signal);
+    const overrideMeta = (0, signalOverride_1.parseUserOverride)(signal.user_override);
+    const instructionAt = overrideMeta?.updated_at ?? new Date().toISOString();
     const targetSl = num(effective.sl);
     const targetTps = (effective.tp ?? []).filter((t) => num(t) != null);
     if (targetSl == null && targetTps.length === 0) {
         return { applied_legs: 0, skipped_legs: 0, failed_legs: 0, errors: ['no_sl_or_tp_in_override'] };
     }
     const channelId = signal.channel_id ?? null;
-    const symbol = String(effective.symbol ?? '').trim() || null;
     let rows = [];
-    if (channelId && symbol) {
+    let brokersMissing = [];
+    if (channelId) {
         const { data: brokerRows } = await supabase
             .from('broker_accounts')
             .select('id,signal_channel_ids,is_active,fxsocket_account_id,metaapi_account_id')
@@ -53,17 +58,15 @@ async function applySignalOverride(supabase, args) {
             .filter(b => (0, brokerChannelFilter_1.channelMatchesBrokerSignal)(b, channelId))
             .map(b => b.id);
         if (brokerAccountIds.length) {
-            const scoped = await (0, managementScope_1.loadOpenTradesForManagement)(supabase, {
+            // Signal-scoped (not channel-wide) so every linked broker that holds this
+            // signal's legs is covered without truncation and without cross-signal bleed.
+            const scoped = await (0, managementScope_1.loadOpenTradesForSignalAcrossBrokers)(supabase, {
                 userId: args.userId,
-                channelId,
+                signalId: args.signalId,
                 brokerAccountIds,
-                symbolFilter: symbol,
             });
-            const expanded = await (0, managementScope_1.expandMgmtRowsToFullBaskets)(supabase, {
-                userId: args.userId,
-                rows: scoped.filter(r => r.status === 'open'),
-            });
-            rows = expanded
+            brokersMissing = scoped.brokersMissing;
+            rows = scoped.rows
                 .filter(r => r.status === 'open' && r.metaapi_order_id)
                 .map(r => ({
                 id: r.id,
@@ -76,13 +79,14 @@ async function applySignalOverride(supabase, args) {
                 tp: r.tp,
                 opened_at: r.opened_at ?? '',
                 entry_price: r.entry_price,
+                lot_size: r.lot_size,
             }));
         }
     }
     if (!rows.length) {
         const { data: trades, error: trErr } = await supabase
             .from('trades')
-            .select('id,signal_id,broker_account_id,metaapi_order_id,symbol,direction,sl,tp,opened_at,entry_price')
+            .select('id,signal_id,broker_account_id,metaapi_order_id,symbol,direction,sl,tp,opened_at,entry_price,lot_size')
             .eq('user_id', args.userId)
             .eq('signal_id', args.signalId)
             .eq('status', 'open')
@@ -93,7 +97,7 @@ async function applySignalOverride(supabase, args) {
         rows = (trades ?? []);
     }
     if (!rows.length) {
-        return { applied_legs: 0, skipped_legs: 0, failed_legs: 0 };
+        return { applied_legs: 0, skipped_legs: 0, failed_legs: 0, brokers_missing: brokersMissing };
     }
     if (!dryRun && !(0, fxsocketClient_1.hasFxsocketConfigured)()) {
         throw new Error('FXSOCKET_API_KEY not set — cannot call broker');
@@ -105,18 +109,24 @@ async function applySignalOverride(supabase, args) {
         .in('id', brokerIds);
     const brokerById = new Map((brokers ?? []).map(b => [b.id, b]));
     const api = (0, fxsocketClient_1.getFxsocketClient)();
-    for (const brokerId of brokerIds) {
+    // Apply one broker basket. Each broker targets a distinct MT terminal, so
+    // brokers run in parallel (bounded); legs within a broker stay sequential
+    // because they share one terminal's request gate.
+    const processBroker = async (brokerId) => {
+        const legCount = rows.filter(r => r.broker_account_id === brokerId).length;
+        const localErrors = [];
+        let applied = 0;
+        let skipped = 0;
+        let failed = 0;
         const broker = brokerById.get(brokerId);
         const uuid = broker ? (0, helpers_1.brokerSessionUuid)(broker) : null;
         if (!broker || !uuid || !(0, helpers_1.brokerHasLinkedSession)(broker)) {
-            skippedLegs += rows.filter(r => r.broker_account_id === brokerId).length;
-            continue;
+            return { outcome: { broker_id: brokerId, applied: 0, skipped: legCount, failed: 0 }, errors: localErrors };
         }
         const client = api;
         if (!client && !dryRun) {
-            errors.push(`broker ${brokerId}: fxsocket client unavailable`);
-            skippedLegs += rows.filter(r => r.broker_account_id === brokerId).length;
-            continue;
+            localErrors.push(`broker ${brokerId}: fxsocket client unavailable`);
+            return { outcome: { broker_id: brokerId, applied: 0, skipped: legCount, failed: 0 }, errors: localErrors };
         }
         client?.seedPlatformCache(uuid, (0, fxsocketClient_1.mtPlatformFrom)(broker.platform));
         const legs = rows
@@ -171,7 +181,7 @@ async function applySignalOverride(supabase, args) {
             const tr = legs[i];
             const ticket = Number(tr.metaapi_order_id);
             if (!Number.isFinite(ticket) || ticket <= 0) {
-                skippedLegs++;
+                skipped++;
                 continue;
             }
             const keepTp = num(tr.tp);
@@ -210,17 +220,17 @@ async function applySignalOverride(supabase, args) {
                 }
             }
             if (targetSlForLeg == null && targetTp == null) {
-                skippedLegs++;
+                skipped++;
                 continue;
             }
             if (targetSlForLeg != null
                 && targetTp != null
                 && (0, orderModifyBenign_1.stopsAlreadyMatchDb)({ sl: tr.sl, tp: tr.tp }, { stoploss: targetSlForLeg, takeprofit: targetTp }, 0, 0)) {
-                skippedLegs++;
+                skipped++;
                 continue;
             }
             if (dryRun) {
-                appliedLegs++;
+                applied++;
                 continue;
             }
             try {
@@ -230,7 +240,7 @@ async function applySignalOverride(supabase, args) {
                 if (targetTp != null && targetTp > 0)
                     modifyArgs.takeprofit = targetTp;
                 if (modifyArgs.stoploss == null && modifyArgs.takeprofit == null) {
-                    skippedLegs++;
+                    skipped++;
                     continue;
                 }
                 await client.orderModify(uuid, modifyArgs);
@@ -242,30 +252,35 @@ async function applySignalOverride(supabase, args) {
                 if (Object.keys(dbPatch).length > 0) {
                     await supabase.from('trades').update(dbPatch).eq('id', tr.id);
                 }
-                await supabase.from('trade_execution_logs').insert({
-                    user_id: args.userId,
-                    signal_id: args.signalId,
-                    broker_account_id: brokerId,
-                    action: 'user_signal_override',
-                    status: 'success',
-                    request_payload: {
-                        ticket,
-                        target_sl: modifyArgs.stoploss ?? null,
-                        target_tp: modifyArgs.takeprofit ?? null,
-                        trade_id: tr.id,
-                        leg_index: i + 1,
-                    },
-                });
-                appliedLegs++;
+                try {
+                    await supabase.from('trade_execution_logs').insert({
+                        user_id: args.userId,
+                        signal_id: args.signalId,
+                        broker_account_id: brokerId,
+                        action: 'user_signal_override',
+                        status: 'success',
+                        request_payload: {
+                            ticket,
+                            target_sl: modifyArgs.stoploss ?? null,
+                            target_tp: modifyArgs.takeprofit ?? null,
+                            trade_id: tr.id,
+                            leg_index: i + 1,
+                        },
+                    });
+                }
+                catch {
+                    // best-effort log — broker modify already succeeded
+                }
+                applied++;
             }
             catch (err) {
                 const msg = err instanceof Error ? err.message : String(err);
                 if ((0, orderModifyBenign_1.isBenignOrderModifyError)(msg)) {
-                    skippedLegs++;
+                    skipped++;
                     continue;
                 }
-                failedLegs++;
-                errors.push(`leg ${tr.id}: ${msg}`);
+                failed++;
+                localErrors.push(`leg ${tr.id}: ${msg}`);
                 try {
                     await supabase.from('trade_execution_logs').insert({
                         user_id: args.userId,
@@ -286,11 +301,149 @@ async function applySignalOverride(supabase, args) {
                 }
             }
         }
+        // Any broker leg that failed to modify is queued for the reconcile monitor
+        // so the override SL/TP heals even if the live apply was partial.
+        if (!dryRun && failed > 0 && legs.length) {
+            try {
+                await queueOverrideReconcile({
+                    supabase,
+                    userId: args.userId,
+                    sourceSignalId: args.signalId,
+                    channelId,
+                    brokerId,
+                    legs,
+                    isBuy,
+                    targetSl,
+                    targetTps,
+                    tpMap,
+                    tpLots,
+                    failed,
+                });
+            }
+            catch (e) {
+                localErrors.push(`broker ${brokerId}: reconcile enqueue failed: ${e instanceof Error ? e.message : String(e)}`);
+            }
+        }
+        return { outcome: { broker_id: brokerId, applied, skipped, failed }, errors: localErrors };
+    };
+    const perBroker = await (0, parallelPool_1.parallelMap)(brokerIds, (0, parallelPool_1.mgmtBasketConcurrency)(), processBroker);
+    for (const { outcome, errors: be } of perBroker) {
+        appliedLegs += outcome.applied;
+        skippedLegs += outcome.skipped;
+        failedLegs += outcome.failed;
+        for (const e of be)
+            errors.push(e);
+    }
+    // Keep authoritative basket targets + pending ladder legs aligned with the override
+    // so reconcile monitors do not revert to pre-override SL/TP.
+    if (!dryRun && channelId && (targetSl != null || targetTps.length > 0)) {
+        const symbolHint = String(effective.symbol ?? rows[0]?.symbol ?? '').trim();
+        const signalIds = [...new Set(rows.map(r => r.signal_id))];
+        const tpLotsByBroker = new Map();
+        for (const brokerId of brokerIds) {
+            tpLotsByBroker.set(brokerId, brokerById.get(brokerId)?.manual_settings?.tp_lots ?? null);
+        }
+        if (symbolHint) {
+            const openLegCountByBasket = new Map();
+            for (const row of rows) {
+                const key = `${row.signal_id}|${row.broker_account_id}`;
+                openLegCountByBasket.set(key, (openLegCountByBasket.get(key) ?? 0) + 1);
+            }
+            try {
+                await (0, channelActiveTradeParams_2.reapplyChannelParamsToPendingLegs)({
+                    supabase,
+                    userId: args.userId,
+                    channelId,
+                    brokerAccountIds: brokerIds,
+                    symbolHint,
+                    signalIds,
+                    tpLotsByBroker,
+                    openLegCountByBasket,
+                    paramsOverride: {
+                        symbol: symbolHint,
+                        stoploss: targetSl,
+                        tpLevels: targetTps,
+                        updatedAt: instructionAt,
+                    },
+                });
+            }
+            catch (e) {
+                errors.push(`pending_legs_refresh: ${e instanceof Error ? e.message : String(e)}`);
+            }
+        }
+        const basketsByBroker = new Map();
+        for (const row of rows) {
+            const list = basketsByBroker.get(row.broker_account_id) ?? [];
+            list.push(row);
+            basketsByBroker.set(row.broker_account_id, list);
+        }
+        for (const [brokerId, legs] of basketsByBroker) {
+            const anchorSignalId = legs[0]?.signal_id;
+            const sym = legs[0]?.symbol ?? symbolHint;
+            if (!anchorSignalId || !sym)
+                continue;
+            try {
+                await (0, basketTargetStore_1.upsertBasketSlTpTarget)(supabase, {
+                    userId: args.userId,
+                    brokerAccountId: brokerId,
+                    anchorSignalId,
+                    channelId,
+                    symbol: sym,
+                    stoploss: targetSl,
+                    tpLevels: targetTps,
+                    source: 'adjust',
+                    instructionAt,
+                });
+            }
+            catch (e) {
+                errors.push(`basket_target broker=${brokerId}: ${e instanceof Error ? e.message : String(e)}`);
+            }
+        }
     }
     return {
         applied_legs: appliedLegs,
         skipped_legs: skippedLegs,
         failed_legs: failedLegs,
         errors: errors.length ? errors : undefined,
+        brokers: perBroker.map(p => p.outcome),
+        brokers_missing: brokersMissing.length ? brokersMissing : undefined,
     };
+}
+/** Queue a basket reconcile job so the monitor re-applies override SL/TP that failed live. */
+async function queueOverrideReconcile(args) {
+    const { legs, targetSl, targetTps, tpMap } = args;
+    const anchorSignalId = legs[0].signal_id;
+    const familyTrades = legs.map(l => ({
+        id: l.id,
+        signal_id: l.signal_id,
+        metaapi_order_id: l.metaapi_order_id,
+        opened_at: l.opened_at,
+        lot_size: Number(l.lot_size ?? 0),
+        sl: l.sl,
+        tp: l.tp,
+        entry_price: l.entry_price,
+        direction: l.direction,
+        symbol: l.symbol,
+    }));
+    const perLegTargets = legs.map(l => ({
+        stoploss: targetSl ?? l.sl ?? 0,
+        takeprofit: (targetTps.length ? (tpMap.get(l.id) ?? l.tp) : l.tp) ?? 0,
+    }));
+    await (0, basketSlTpReconcile_1.upsertBasketReconcileJob)(args.supabase, {
+        userId: args.userId,
+        brokerAccountId: args.brokerId,
+        anchorSignalId,
+        sourceSignalId: args.sourceSignalId,
+        channelId: args.channelId,
+        symbol: legs[0].symbol,
+        direction: args.isBuy ? 'buy' : 'sell',
+        perLegTargets,
+        familyTrades,
+        signalTps: targetTps,
+        tpLots: args.tpLots ?? null,
+        virtualPendingsSnapshot: null,
+        nImmCwe: 0,
+        overrideTp: null,
+        lastError: `user_signal_override partial: ${args.failed} leg(s) failed`,
+    });
 }

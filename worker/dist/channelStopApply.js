@@ -96,8 +96,9 @@ async function ensureChannelModifyScope(supabase, args) {
     const emptyBrokerIds = brokerAccountIds.filter(id => !brokersWithLegs.has(id));
     if (emptyBrokerIds.length > 0) {
         const fallbackRows = await (0, parallelPool_1.parallelMap)(emptyBrokerIds, (0, parallelPool_1.mgmtBasketConcurrency)(), async (brokerId) => {
-            const found = [];
-            const { data: latestOpen } = await supabase
+            // Scan all open legs for this broker (not just the latest 5) so older
+            // channel baskets on a busy multi-broker account are not missed.
+            const { data: openRows } = await supabase
                 .from('trades')
                 .select('signal_id')
                 .eq('user_id', userId)
@@ -105,25 +106,30 @@ async function ensureChannelModifyScope(supabase, args) {
                 .eq('status', 'open')
                 .not('metaapi_order_id', 'is', null)
                 .order('opened_at', { ascending: false })
-                .limit(5);
-            for (const row of latestOpen ?? []) {
-                const anchorId = row.signal_id;
-                if (!anchorId)
-                    continue;
-                const { data: sig } = await supabase
-                    .from('signals')
-                    .select('channel_id')
-                    .eq('id', anchorId)
-                    .maybeSingle();
-                if (sig?.channel_id !== channelId)
-                    continue;
+                .limit(500);
+            const signalIds = [...new Set((openRows ?? [])
+                    .map(r => r.signal_id)
+                    .filter((id) => Boolean(id)))];
+            if (!signalIds.length)
+                return [];
+            // One batched query resolves which of those signals belong to this channel.
+            const { data: sigRows } = await supabase
+                .from('signals')
+                .select('id')
+                .in('id', signalIds)
+                .eq('channel_id', channelId);
+            const channelSignalIds = (sigRows ?? []).map(s => s.id);
+            if (!channelSignalIds.length)
+                return [];
+            const found = [];
+            await (0, parallelPool_1.parallelMap)(channelSignalIds, (0, parallelPool_1.mgmtBasketConcurrency)(), async (anchorId) => {
                 const basket = await (0, managementScope_1.loadTradesForBasketAnchor)(supabase, {
                     userId,
                     brokerAccountIds: [brokerId],
                     anchorSignalId: anchorId,
                 });
                 found.push(...basket);
-            }
+            });
             return found;
         });
         for (const rows of fallbackRows)

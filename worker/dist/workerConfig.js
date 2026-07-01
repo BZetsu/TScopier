@@ -33,10 +33,25 @@ function parseRole(raw) {
     }
     return 'all';
 }
+function parseEnvBool(raw, defaultValue) {
+    if (raw === undefined || raw === '')
+        return defaultValue;
+    const v = raw.toLowerCase().trim();
+    if (v === '0' || v === 'false' || v === 'no')
+        return false;
+    if (v === '1' || v === 'true' || v === 'yes')
+        return true;
+    return defaultValue;
+}
 const role = parseRole(process.env.WORKER_ROLE);
 const runsTradeRole = role === 'all' || role === 'trade' || role === 'trade_entry' || role === 'trade_mgmt';
-/** One heartbeat loop per shard is enough — trade_mgmt shares FxSocket sessions with trade_entry. */
-const runsBrokerSessionHeartbeat = role === 'all' || role === 'trade' || role === 'trade_entry';
+/**
+ * FxSocket terminals stay connected server-side; REST calls authenticate per request.
+ * Background keepSessionAlive polling is opt-in (legacy MetaApi-style warm-up).
+ * One heartbeat loop per shard is enough — trade_mgmt shares FxSocket sessions with trade_entry.
+ */
+const runsBrokerSessionHeartbeat = parseEnvBool(process.env.BROKER_SESSION_BACKGROUND_HEARTBEAT, false)
+    && (role === 'all' || role === 'trade' || role === 'trade_entry');
 exports.workerConfig = {
     role,
     instanceId: String(process.env.WORKER_INSTANCE_ID
@@ -60,16 +75,6 @@ exports.workerConfig = {
      */
     tradeExecutorRealtime: parseEnvBool(process.env.EXECUTOR_REALTIME_SIGNALS, role === 'all' || role === 'trade'),
 };
-function parseEnvBool(raw, defaultValue) {
-    if (raw === undefined || raw === '')
-        return defaultValue;
-    const v = raw.toLowerCase().trim();
-    if (v === '0' || v === 'false' || v === 'no')
-        return false;
-    if (v === '1' || v === 'true' || v === 'yes')
-        return true;
-    return defaultValue;
-}
 function shardForUserId(userId, shardCount) {
     let h = 0;
     for (let i = 0; i < userId.length; i++) {

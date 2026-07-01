@@ -259,14 +259,6 @@ async function loadSweepBrokerOrders(supabase, broker, platformByUuid, cache) {
     const api = (0, mtApiByAccount_1.apiForFxsocketAccount)(platformByUuid, uuid);
     if (!api)
         return new Map();
-    try {
-        const alive = await api.keepSessionAlive(uuid);
-        if (!alive)
-            return new Map();
-    }
-    catch {
-        return new Map();
-    }
     const orders = await (0, channelStopApply_1.fetchBrokerOrdersByTicket)(api, uuid);
     cache.set(uuid, orders);
     return orders;
@@ -278,7 +270,7 @@ async function loadSweepBrokerOrders(supabase, broker, platformByUuid, cache) {
 async function sweepOpenBasketsForReconcileDrift(supabase) {
     const { data: tradeRows, error } = await supabase
         .from('trades')
-        .select('broker_account_id,signal_id,symbol,direction,telegram_channel_id,updated_at')
+        .select('broker_account_id,signal_id,symbol,direction,telegram_channel_id,opened_at')
         .eq('status', 'open')
         .not('broker_account_id', 'is', null)
         .limit(500);
@@ -292,7 +284,7 @@ async function sweepOpenBasketsForReconcileDrift(supabase) {
         if (!basketKeys.has(key))
             basketKeys.set(key, row);
         const prev = legUpdatedAtByKey.get(key);
-        const rowAt = row.updated_at ?? '';
+        const rowAt = row.opened_at ?? '';
         if (!prev || (rowAt && new Date(rowAt).getTime() > new Date(prev).getTime())) {
             legUpdatedAtByKey.set(key, rowAt);
         }
@@ -304,13 +296,13 @@ async function sweepOpenBasketsForReconcileDrift(supabase) {
     if (channelIds.length) {
         const { data: paramRows } = await supabase
             .from('channel_active_trade_params')
-            .select('telegram_channel_id,symbol,updated_at')
-            .in('telegram_channel_id', channelIds);
+            .select('channel_id,symbol,updated_at')
+            .in('channel_id', channelIds);
         for (const raw of paramRows ?? []) {
             const pr = raw;
-            if (!pr.telegram_channel_id || !pr.symbol || !pr.updated_at)
+            if (!pr.channel_id || !pr.symbol || !pr.updated_at)
                 continue;
-            const k = `${pr.telegram_channel_id}|${pr.symbol}`;
+            const k = `${pr.channel_id}|${pr.symbol}`;
             const prev = channelParamUpdatedAt.get(k);
             if (!prev || new Date(pr.updated_at).getTime() > new Date(prev).getTime()) {
                 channelParamUpdatedAt.set(k, pr.updated_at);

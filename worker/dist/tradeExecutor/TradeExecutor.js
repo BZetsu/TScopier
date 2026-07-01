@@ -163,7 +163,8 @@ class TradeExecutor {
             this.sessionHeartbeatTimer.unref?.();
         }
         else {
-            console.log('[tradeExecutor] broker session heartbeat disabled on this role (trade_entry handles keepalive)');
+            console.log('[tradeExecutor] broker session background heartbeat disabled'
+                + ' (FxSocket REST is stateless; set BROKER_SESSION_BACKGROUND_HEARTBEAT=true to re-enable)');
         }
         // Re-fetch every cached symbol list / params entry before its TTL expires
         // so the live-entry hot path always finds a warm cache. Without this,

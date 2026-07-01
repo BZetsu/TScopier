@@ -18,6 +18,8 @@ const multilingualManagementTerms_1 = require("./multilingualManagementTerms");
 const trainingManagementKeywords_1 = require("./trainingManagementKeywords");
 const multilingualSignalTerms_1 = require("./multilingualSignalTerms");
 const signalEntryNowRequirement_1 = require("./signalEntryNowRequirement");
+/** Loose hint that a message references a Deriv synthetic index (any alias form). */
+const DERIV_SYNTHETIC_HINT_RE = /\b(?:v(?:ix)?\s*\d{2,3}|vol(?:atility)?\s*\d{2,3}|r_?\d{2,3}|1hz\d{1,3}v|boom\s*\d{3,4}|crash\s*\d{3,4}|step(?:\s*index)?|stprng\d?|jump\s*\d{2,3}|jd\d{2,3}|range\s*break|rdbull|rdbear|bull\s*market|bear\s*market)\b/i;
 exports.DEFAULT_CHANNEL_KEYWORDS = {
     signal: {
         entry_point: "ENTRY",
@@ -854,7 +856,8 @@ function parseSimpleSignal(message, lexicon, channelKeywords) {
     const hasInstrumentContext = (0, tradableSymbol_1.isTradableInstrumentSymbol)(instrument) ||
         /\b(gold|xau|xauusd|btc|bitcoin|btcusd|btcusdt|eth|ethereum|silver|eur|gbp)\b/i.test(text) ||
         /\bEUR\/USD|EURUSD|GBPUSD|USDJPY|XAUUSD|BTCUSD|BTCUSDT\b/i.test(message) ||
-        /\b(us30|nas100|ger40|uk100|ustec|spx500)\b/i.test(text);
+        /\b(us30|nas100|ger40|uk100|ustec|spx500)\b/i.test(text) ||
+        DERIV_SYNTHETIC_HINT_RE.test(text);
     if (!hasInstrumentContext)
         return null;
     const sl = parseSlFromText(text) ?? extractPriceByLabels(message, splitKeywordAliases(channelKeywords.signal.sl, delim));
@@ -968,7 +971,7 @@ function applyRawSymbolRepair(parsed, rawMsg) {
     const goldHints = /\b(gold|xau|xauusd)\b/i.test(rawMsg);
     const btcHints = /\b(btc|bitcoin|btcusd|btcusdt)\b/i.test(rawMsg);
     const hasAnySymbolHint = /([A-Z]{3,}\/[A-Z]{3,})|\b([A-Z]{6}|XAUUSD|XAGUSD|BTCUSD|BTCUSDT|ETHUSD|ETHUSDT)\b|(\bgold\b|\bxau\b|\bbtc\b|\bbitcoin\b|\beth\b|\bether)\b/i
-        .test(rawMsg);
+        .test(rawMsg) || DERIV_SYNTHETIC_HINT_RE.test(rawMsg);
     const mgmt = new Set([
         "close",
         "close_worse_entries",

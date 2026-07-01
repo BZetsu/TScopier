@@ -28,6 +28,7 @@
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.classifySymbol = classifySymbol;
+const derivSymbols_1 = require("./derivSymbols");
 /** Common ISO-4217 currency codes seen in retail FX brokers. */
 const FX_CURRENCY_CODES = new Set([
     'USD', 'EUR', 'GBP', 'JPY', 'CHF', 'AUD', 'NZD', 'CAD',
@@ -61,6 +62,9 @@ function cleanSymbol(symbol) {
     const upper = String(symbol || '').toUpperCase().trim();
     if (!upper)
         return '';
+    // Deriv canonical codes (R_75, RB_100…) must survive the punctuation strip.
+    if ((0, derivSymbols_1.isDerivSyntheticSymbol)(upper))
+        return upper;
     // Drop trailing punctuation + the suffix that follows it (e.g. ".r", "_pro", ".x").
     const punctMatch = upper.match(/^([A-Z0-9]+)[.#_-]/);
     let core = punctMatch ? punctMatch[1] : upper;
@@ -78,6 +82,10 @@ function classifySymbol(symbol) {
     const s = cleanSymbol(symbol);
     if (!s)
         return 'other';
+    // Deriv synthetics quote at large absolute prices; treat pip like an index
+    // (broker `point` is the sub-pip increment → pip = 10 × point).
+    if ((0, derivSymbols_1.isDerivSyntheticSymbol)(s))
+        return 'synthetic';
     // Metals first — XAUUSD, XAGUSD, XPTUSD, XPDUSD share the FX pair shape
     // (6 letters, both halves look like currency codes), so they must be detected
     // ahead of the FX rule.

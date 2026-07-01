@@ -56,6 +56,7 @@ function getPipMultiplierForSymbol(userSymbol) {
         case 'metal':
             return 100;
         case 'index':
+        case 'synthetic':
             return 1;
         case 'crypto':
         case 'energy':

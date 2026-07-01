@@ -184,17 +184,6 @@ class BasketSlTpReconcileMonitor {
             await this.releaseJob(row.id, 'MT API not configured', row.attempts);
             return;
         }
-        try {
-            const alive = await api.keepSessionAlive(uuid);
-            if (!alive) {
-                await this.releaseJob(row.id, 'broker session not connected', row.attempts);
-                return;
-            }
-        }
-        catch (err) {
-            await this.releaseJob(row.id, err.message, row.attempts);
-            return;
-        }
         const familyTrades = await (0, basketSlTpReconcile_1.loadOpenBasketLegs)(this.supabase, row.broker_account_id, row.anchor_signal_id, row.symbol);
         if (!familyTrades.length) {
             await (0, basketSlTpReconcile_1.markBasketReconcileDone)(this.supabase, row.id);
