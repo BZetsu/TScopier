@@ -1,5 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { buildAuthEmailHtml } from "../_shared/authEmailLayout.ts";
+import { resolveEmailLogoUrl } from "../_shared/brandEmailAssets.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -7,68 +9,6 @@ const corsHeaders = {
   "Access-Control-Allow-Headers":
     "Content-Type, Authorization, X-Client-Info, Apikey",
 };
-
-function buildEmailHtml(firstName: string, confirmUrl: string): string {
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Confirm your account</title>
-</head>
-<body style="margin:0;padding:0;background-color:#f4f4f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f4f5;padding:40px 20px;">
-    <tr>
-      <td align="center">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background-color:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.08);">
-          <tr>
-            <td style="padding:40px 40px 0 40px;">
-              <h1 style="margin:0 0 24px 0;font-size:22px;font-weight:600;color:#171717;line-height:1.3;">
-                Confirm your account
-              </h1>
-              <p style="margin:0 0 16px 0;font-size:15px;line-height:1.6;color:#404040;">
-                Hello ${firstName}
-              </p>
-              <p style="margin:0 0 32px 0;font-size:15px;line-height:1.6;color:#404040;">
-                Thank you for signing up for TScopier. To confirm your account, please click the button below.
-              </p>
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:0 40px 40px 40px;">
-              <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto;">
-                <tr>
-                  <td style="border-radius:8px;background-color:#0d9488;">
-                    <a href="${confirmUrl}" target="_blank" style="display:inline-block;padding:12px 32px;font-size:14px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:8px;">
-                      Confirm account
-                    </a>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:0 40px;">
-              <hr style="border:none;border-top:1px solid #e5e5e5;margin:0;">
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:32px 40px 40px 40px;text-align:center;">
-              <p style="margin:0;font-size:12px;line-height:1.6;color:#a3a3a3;">
-                Tartarix Inc.<br>
-                131 Continental Dr<br>
-                Suite 305<br>
-                Newark, DE 19713 US
-              </p>
-            </td>
-          </tr>
-        </table>
-      </td>
-    </tr>
-  </table>
-</body>
-</html>`;
-}
 
 function json(
   body: Record<string, unknown>,
@@ -168,8 +108,21 @@ Deno.serve(async (req: Request) => {
     }
 
     const confirmUrl = linkData.properties.action_link;
+    const logoUrl = resolveEmailLogoUrl({
+      supabaseUrl,
+      appUrl: Deno.env.get("VITE_APP_URL"),
+      variant: "light",
+      explicitUrl: Deno.env.get("EMAIL_LOGO_URL"),
+    });
 
-    const html = buildEmailHtml(firstName, confirmUrl);
+    const html = buildAuthEmailHtml({
+      title: "Confirm your account",
+      greeting: `Hello ${firstName},`,
+      bodyHtml: `<p style="margin:0;">Thank you for signing up for TScopier. Click the button below to confirm your email and activate your account.</p>`,
+      buttonLabel: "Confirm account",
+      buttonUrl: confirmUrl,
+      logoUrl,
+    });
 
     const resendRes = await fetch("https://api.resend.com/emails", {
       method: "POST",

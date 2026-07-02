@@ -10,10 +10,15 @@ export function buildAuthEmailHtml(args: {
   buttonLabel: string
   buttonUrl: string
   footerNote?: string
+  logoUrl?: string | null
 }): string {
   const footerNote = args.footerNote
     ? `<p style="margin:0 0 24px 0;font-size:13px;line-height:1.6;color:#737373;">${args.footerNote}</p>`
     : ""
+
+  const logoBlock = args.logoUrl
+    ? `<img src="${args.logoUrl}" alt="TScopier" width="148" height="36" style="display:block;margin:0 0 20px 0;height:36px;width:auto;max-width:180px;border:0;" />`
+    : `<p style="margin:0 0 8px 0;font-size:12px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;color:#0d9488;">TScopier</p>`
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -29,7 +34,7 @@ export function buildAuthEmailHtml(args: {
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background-color:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.08);">
           <tr>
             <td style="padding:40px 40px 0 40px;">
-              <p style="margin:0 0 8px 0;font-size:12px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;color:#0d9488;">TScopier</p>
+              ${logoBlock}
               <h1 style="margin:0 0 24px 0;font-size:22px;font-weight:600;color:#171717;line-height:1.3;">
                 ${args.title}
               </h1>

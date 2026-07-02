@@ -1,6 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { buildAuthEmailHtml } from "../_shared/authEmailLayout.ts";
+import { resolveEmailLogoUrl } from "../_shared/brandEmailAssets.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -89,6 +90,12 @@ Deno.serve(async (req: Request) => {
     const fromMeta = typeof meta?.first_name === "string" ? meta.first_name.trim() : "";
     const firstName = fromMeta || await resolveFirstName(supabase, targetEmail);
     const resetUrl = linkData.properties.action_link;
+    const logoUrl = resolveEmailLogoUrl({
+      supabaseUrl,
+      appUrl: Deno.env.get("VITE_APP_URL"),
+      variant: "light",
+      explicitUrl: Deno.env.get("EMAIL_LOGO_URL"),
+    });
     const html = buildAuthEmailHtml({
       title: "Reset your password",
       greeting: `Hello ${firstName},`,
@@ -97,6 +104,7 @@ Deno.serve(async (req: Request) => {
       buttonUrl: resetUrl,
       footerNote:
         "If you did not request this, you can ignore this email. This link expires after a short time.",
+      logoUrl,
     });
 
     const resendRes = await fetch("https://api.resend.com/emails", {
