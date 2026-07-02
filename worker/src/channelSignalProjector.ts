@@ -8,6 +8,7 @@ import type { SignalRow } from './tradeExecutor/types'
 import { recordSignalChannelMetric } from './channelListenerConfig'
 import { parallelMap } from './parallelPool'
 import { incMetric } from './workerMetrics'
+import { findRecentEntrySignalByProviderNumber } from './managementScope'
 
 export interface CanonicalChannelSignal {
   id: string
@@ -145,10 +146,46 @@ export async function projectChannelSignalToSubscribers(
       recordSignalChannelMetric(canonical.signal_channel_id, 'channel_signal_projected')
 
       if (dispatch) {
-        const ok = dispatch(row) === true
-        if (ok) {
-          dispatched++
-          incMetric('channel_signal_dispatched')
+        const pd = row.parsed_data as {
+          action?: string
+          symbol?: string | null
+          provider_signal_number?: number | null
+        } | null
+        const entryAction = String(pd?.action ?? '').toLowerCase()
+        const providerNum = pd?.provider_signal_number
+        let skipDispatch = false
+        if (
+          row.status === 'parsed'
+          && (entryAction === 'buy' || entryAction === 'sell')
+          && typeof providerNum === 'number'
+          && Number.isFinite(providerNum)
+          && providerNum > 0
+        ) {
+          const dupEntry = await findRecentEntrySignalByProviderNumber(supabase, {
+            userId: subscription.user_id,
+            channelId: subscription.id,
+            providerSignalNumber: providerNum,
+            symbol: typeof pd?.symbol === 'string' ? pd.symbol : null,
+            excludeSignalId: row.id,
+            excludeTelegramMessageId: canonical.telegram_message_id,
+          })
+          if (dupEntry) {
+            skipDispatch = true
+            void supabase
+              .from('signals')
+              .update({
+                status: 'skipped',
+                skip_reason: 'duplicate_provider_signal',
+              })
+              .eq('id', row.id)
+          }
+        }
+        if (!skipDispatch) {
+          const ok = dispatch(row) === true
+          if (ok) {
+            dispatched++
+            incMetric('channel_signal_dispatched')
+          }
         }
       }
     },

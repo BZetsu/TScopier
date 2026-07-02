@@ -42,6 +42,7 @@ import {
 } from './multilingualSignalTerms'
 import { entryMissingSlTpRequiresNow } from './signalEntryNowRequirement'
 import {
+  collapseForexBroBilingualMessage,
   extractProviderSignalNumber,
   parseForexBroManagementMessage,
 } from './forexBroSignalPatterns'
@@ -1375,7 +1376,8 @@ export function parseChannelMessageSync(
   channelKeywords: ChannelKeywords,
   lexicon: ChannelLexiconRow | null,
 ): ParseChannelMessageResult {
-  const message = normalizeSignalMessageForParse(rawMessage)
+  const collapsedMessage = collapseForexBroBilingualMessage(rawMessage)
+  const message = normalizeSignalMessageForParse(collapsedMessage)
   const displayMessage = normalizeTelegramMessageText(rawMessage)
   const ignoreAliases = [
     ...splitKeywordAliases(channelKeywords.additional.ignore_keyword, channelKeywords.additional.delimiters),

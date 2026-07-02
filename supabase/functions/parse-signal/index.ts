@@ -27,6 +27,7 @@ import {
 import { SIGNAL_PRICE_NUM, parseSignalPriceListBlock, parseSignalPriceToken } from "../_shared/signalPriceFormat.ts"
 import { normalizeTelegramMessageText, normalizeSignalMessageForParse } from "../_shared/normalizeTelegramMessageText.ts"
 import {
+  collapseForexBroBilingualMessage,
   extractProviderSignalNumber,
   parseForexBroManagementMessage,
 } from "../_shared/forexBroSignalPatterns.ts"
@@ -1240,7 +1241,8 @@ async function parseRawChannelMessage(
   channelId: string | null,
   rawMessage: string,
 ): Promise<{ parsed: ParsedSignal; status: string; skip_reason: string | null }> {
-  const message = normalizeSignalMessageForParse(rawMessage)
+  const collapsedMessage = collapseForexBroBilingualMessage(rawMessage)
+  const message = normalizeSignalMessageForParse(collapsedMessage)
   const displayMessage = normalizeTelegramMessageText(rawMessage)
   const lexicon = await loadChannelLexicon(supabase, channelId)
   const channelKeywords = await loadChannelKeywords(supabase, channelId)

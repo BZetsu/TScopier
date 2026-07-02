@@ -60,7 +60,7 @@ import {
   telegramMessageText,
 } from './signalTelegramReconcile'
 import { evaluateParsedSignalExecutionEligibility } from './signalExecutionEligibility'
-import { resolveEntrySignalIdByProviderNumber } from './managementScope'
+import { resolveEntrySignalIdByProviderNumber, findRecentEntrySignalByProviderNumber } from './managementScope'
 import {
   handlePostParseChannelIngest,
   isChannelRowPassive,
@@ -1817,7 +1817,7 @@ export class UserListener {
       rawMessage,
       channelKeywords,
     )
-    const effectiveParseResult = (
+    let effectiveParseResult = (
       parseResult.status === 'parsed' && !executionEligibility.eligible
     )
       ? {
@@ -1831,6 +1831,39 @@ export class UserListener {
           skip_reason: executionEligibility.skipReason ?? parseResult.skip_reason,
         }
       : parseResult
+
+    if (effectiveParseResult.status === 'parsed') {
+      const entryAction = String(effectiveParseResult.parsed.action ?? '').toLowerCase()
+      const providerNum = (effectiveParseResult.parsed as { provider_signal_number?: number | null })
+        .provider_signal_number
+      const entrySymbol = effectiveParseResult.parsed.symbol
+      if (
+        (entryAction === 'buy' || entryAction === 'sell')
+        && typeof providerNum === 'number'
+        && Number.isFinite(providerNum)
+        && providerNum > 0
+      ) {
+        const dupEntry = await findRecentEntrySignalByProviderNumber(this.supabase, {
+          userId: this.userId,
+          channelId: channelRow.id,
+          providerSignalNumber: providerNum,
+          symbol: typeof entrySymbol === 'string' ? entrySymbol : null,
+          excludeTelegramMessageId: messageId,
+        })
+        if (dupEntry) {
+          effectiveParseResult = {
+            ...effectiveParseResult,
+            parsed: {
+              ...effectiveParseResult.parsed,
+              action: 'ignore',
+              confidence: 0,
+            },
+            status: 'skipped',
+            skip_reason: 'duplicate_provider_signal',
+          }
+        }
+      }
+    }
 
     if (effectiveParseResult.status !== 'parsed') {
       if (signalChannelId) {

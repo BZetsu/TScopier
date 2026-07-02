@@ -6,6 +6,7 @@ import {
   parseChannelMessageSync,
   type ChannelLexiconRow,
 } from './parseSignal'
+import { collapseForexBroBilingualMessage } from './forexBroSignalPatterns'
 
 describe('parseChannelMessageSync', () => {
   const lexicon: ChannelLexiconRow | null = null
@@ -772,5 +773,65 @@ After the Lock-Profit alert, your stop-loss was moved to your entry price. Price
     assert.equal(result.status, 'skipped')
     assert.equal(result.parsed.action, 'ignore')
     assert.match(result.skip_reason ?? '', /Post-facto breakeven/i)
+  })
+
+  it('parses bilingual ForexBro New Signal #900 as a single buy entry', () => {
+    const msg = `New Signal #900 🟢 📊
+Market: XPTUSD · BUY
+📍 Entry Zone: 1616.79 – 1618.51
+🎯 TP1: 1629.15
+🎯 TP2: 1640.65
+🎯 TP3: 1658.65
+🛑 SL: 1594.65
+Type: Short term
+
+ℹ️ Note: Manage your risk and watch closely — once you're satisfied with the profit, you're not bound to hold to the end.
+
+━━━━━━━━━━━━━━━
+
+صفقة حديثة #900 🟢 📊
+السوق: XPTUSD · شراء
+📍 منطقة الدخول: ‏1616.79 – 1618.51
+🎯 الهدف الأول TP1: ‏1629.15
+🎯 الهدف الثاني TP2: ‏1640.65
+🎯 الهدف الثالث TP3: ‏1658.65
+🛑 وقف الخسارة SL: ‏1594.65
+النوع: قصيرة المدى`
+    const result = parseChannelMessageSync(msg, forexBroPollutedKeywords(), lexicon)
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.action, 'buy')
+    assert.equal(result.parsed.symbol, 'XPTUSD')
+    assert.equal(result.parsed.provider_signal_number, 900)
+    assert.equal(result.parsed.entry_zone_low, 1616.79)
+    assert.equal(result.parsed.entry_zone_high, 1618.51)
+    assert.equal(result.parsed.sl, 1594.65)
+    assert.deepEqual(result.parsed.tp, [1629.15, 1640.65, 1658.65])
+  })
+})
+
+describe('collapseForexBroBilingualMessage', () => {
+  it('keeps only the English block when EN and AR share the same signal number', () => {
+    const msg = `New Signal #900
+Market: XPTUSD · BUY
+━━━━━━━━━━━━━━━
+صفقة حديثة #900
+السوق: XPTUSD · شراء`
+    const collapsed = collapseForexBroBilingualMessage(msg)
+    assert.match(collapsed, /New Signal #900/i)
+    assert.doesNotMatch(collapsed, /صفقة حديثة/)
+  })
+
+  it('returns original text when only one language is present', () => {
+    const enOnly = 'New Signal #901\nMarket: EURUSD · BUY'
+    assert.equal(collapseForexBroBilingualMessage(enOnly), enOnly)
+    const arOnly = 'صفقة حديثة #902\nالسوق: GBPUSD · شراء'
+    assert.equal(collapseForexBroBilingualMessage(arOnly), arOnly)
+  })
+
+  it('does not collapse when English and Arabic signal numbers differ', () => {
+    const msg = `New Signal #900
+━━━━━━━━━━━━━━━
+صفقة حديثة #901`
+    assert.equal(collapseForexBroBilingualMessage(msg), msg)
   })
 })

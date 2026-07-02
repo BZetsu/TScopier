@@ -19,6 +19,42 @@ export type ForexBroParseResult = {
   skip_reason?: string
 }
 
+const FOREXBRO_EN_BANNER = /\b(?:new\s+signal|signal)\s*#/i
+const FOREXBRO_AR_BANNER = /صفقة\s+(?:رقم|حديثة)\s*#/
+
+/**
+ * ForexBro posts the same trade in English then Arabic (often separated by ━━━).
+ * Keep only the first block for parsing so labels/prices are not duplicated.
+ */
+export function collapseForexBroBilingualMessage(raw: string): string {
+  const rawText = String(raw ?? '')
+  if (!rawText.trim()) return rawText
+
+  const hasEnglish = FOREXBRO_EN_BANNER.test(rawText)
+  const hasArabic = FOREXBRO_AR_BANNER.test(rawText)
+  if (!hasEnglish || !hasArabic) return rawText
+
+  const providerNum = extractProviderSignalNumber(rawText)
+  if (providerNum == null) return rawText
+
+  const arMatch = rawText.match(/صفقة\s+(?:رقم|حديثة)\s*#\s*(\d{1,6})/i)
+  if (!arMatch?.[1] || Number(arMatch[1]) !== providerNum) return rawText
+
+  const separatorIdx = rawText.search(/━{3,}/)
+  if (separatorIdx >= 0) {
+    const first = rawText.slice(0, separatorIdx).trim()
+    if (first) return first
+  }
+
+  const arStart = rawText.search(FOREXBRO_AR_BANNER)
+  if (arStart > 0) {
+    const first = rawText.slice(0, arStart).trim()
+    if (first) return first
+  }
+
+  return rawText
+}
+
 /** Provider trade id: Signal #899, New Signal #899, صفقة رقم #899 */
 export function extractProviderSignalNumber(message: string): number | null {
   const t = String(message ?? '').replace(/\s+/g, ' ').trim()

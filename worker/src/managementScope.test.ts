@@ -4,6 +4,7 @@ import {
   explicitMgmtSymbol,
   filterTradesByPlausibleMgmtLevels,
   filterTradesBySymbolFilter,
+  findRecentEntrySignalByProviderNumber,
   isReplyScopedManagement,
   loadOpenTradesForManagement,
   loadOpenTradesForSignalAcrossBrokers,
@@ -12,6 +13,7 @@ import {
   resolveNewestOpenSymbolTrades,
   type MgmtTradeRow,
 } from './managementScope'
+import type { SupabaseClient } from '@supabase/supabase-js'
 
 function row(partial: Partial<MgmtTradeRow> & Pick<MgmtTradeRow, 'id' | 'symbol' | 'direction'>): MgmtTradeRow {
   return {
@@ -294,5 +296,70 @@ describe('loadOpenTradesForManagement multi-broker scope', () => {
     assert.equal(rows.length, 600)
     const distinctBrokers = new Set(rows.map(r => r.broker_account_id))
     assert.equal(distinctBrokers.size, 12)
+  })
+})
+
+describe('findRecentEntrySignalByProviderNumber', () => {
+  function makeDedupSupabase(rows: Array<Record<string, unknown>>) {
+    return {
+      from() {
+        return {
+          select() {
+            const chain = {
+              eq() { return chain },
+              gte() { return chain },
+              order() { return chain },
+              limit() { return Promise.resolve({ data: rows }) },
+            }
+            return chain
+          },
+        }
+      },
+    } as unknown as SupabaseClient
+  }
+
+  it('returns a prior entry for the same provider signal number and symbol', async () => {
+    const supabase = makeDedupSupabase([
+      {
+        id: 'prior-sig',
+        telegram_message_id: '2920',
+        parsed_data: { action: 'buy', symbol: 'XPTUSD', provider_signal_number: 900 },
+        raw_message: 'New Signal #900',
+        status: 'executed',
+        created_at: new Date().toISOString(),
+      },
+    ])
+
+    const dup = await findRecentEntrySignalByProviderNumber(supabase, {
+      userId: 'u1',
+      channelId: 'ch1',
+      providerSignalNumber: 900,
+      symbol: 'XPTUSD',
+      excludeTelegramMessageId: '2925',
+    })
+    assert.equal(dup?.id, 'prior-sig')
+    assert.equal(dup?.telegram_message_id, '2920')
+  })
+
+  it('returns null when only the excluded telegram message matches', async () => {
+    const supabase = makeDedupSupabase([
+      {
+        id: 'same-msg',
+        telegram_message_id: '2925',
+        parsed_data: { action: 'buy', symbol: 'XPTUSD', provider_signal_number: 900 },
+        raw_message: 'New Signal #900',
+        status: 'executed',
+        created_at: new Date().toISOString(),
+      },
+    ])
+
+    const dup = await findRecentEntrySignalByProviderNumber(supabase, {
+      userId: 'u1',
+      channelId: 'ch1',
+      providerSignalNumber: 900,
+      symbol: 'XPTUSD',
+      excludeTelegramMessageId: '2925',
+    })
+    assert.equal(dup, null)
   })
 })
