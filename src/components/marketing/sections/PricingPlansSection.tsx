@@ -9,6 +9,7 @@ import { interpolate } from '../../../i18n/interpolate'
 import { appUrl } from '../../../lib/site'
 import { HELP_LINKS } from '../../../lib/helpLinks'
 import { startPlanCheckout } from '../../../lib/planCheckout'
+import { getSubscribeCtaLabel } from '../../../lib/subscriptionCta'
 import { Button } from '../../ui/Button'
 import {
   PRICING_ADVANCED_INCLUDED_ACCOUNTS,
@@ -27,11 +28,18 @@ export function PricingPlansSection({ variant = 'marketing' }: PricingPlansSecti
   const [extraAccounts, setExtraAccounts] = useState(0)
 
   const { session } = useAuth()
-  const { effectivePlan } = useSubscription()
+  const { effectivePlan, isPastDue, hasTrialExpired } = useSubscription()
   const [checkoutLoading, setCheckoutLoading] = useState<'basic' | 'advanced' | null>(null)
   const [checkoutError, setCheckoutError] = useState('')
 
+  const advancedCheckoutCta = getSubscribeCtaLabel(t, {
+    isPastDue,
+    effectivePlan,
+    hasTrialExpired,
+  })
+
   const isApp = variant === 'app'
+  const showAdvancedTrialNote = !isApp || !hasTrialExpired
   const isAnnual = interval === 'annual'
   const prices = pricingDisplayPrices(interval, extraAccounts)
 
@@ -254,7 +262,7 @@ export function PricingPlansSection({ variant = 'marketing' }: PricingPlansSecti
               disabled={checkoutLoading !== null || effectivePlan === 'advanced'}
               onClick={() => void startCheckout('advanced')}
             >
-              {effectivePlan === 'advanced' ? pt.billing.currentPlan : pt.startTrial}
+              {effectivePlan === 'advanced' ? pt.billing.currentPlan : advancedCheckoutCta}
             </Button>
           ) : (
             <a
@@ -264,7 +272,9 @@ export function PricingPlansSection({ variant = 'marketing' }: PricingPlansSecti
               {pt.startTrial}
             </a>
           )}
-          <p className="mt-2 text-center text-xs text-neutral-400 dark:text-neutral-500">{pt.trialDays}</p>
+          {showAdvancedTrialNote ? (
+            <p className="mt-2 text-center text-xs text-neutral-400 dark:text-neutral-500">{pt.trialDays}</p>
+          ) : null}
 
           <div className="mt-8">
             <p className="text-xs font-semibold uppercase tracking-wider text-neutral-400 dark:text-neutral-500">
