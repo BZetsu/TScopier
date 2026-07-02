@@ -15,6 +15,8 @@ export interface ParsedSignal {
   raw_instruction?: string
   /** Explicit channel intent to open a new trade (not modify existing). */
   re_enter?: boolean
+  /** Provider-side trade id (e.g. ForexBro Signal #899). */
+  provider_signal_number?: number | null
 }
 
 export interface ManualTpLot {

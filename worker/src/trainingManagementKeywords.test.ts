@@ -42,4 +42,11 @@ describe('trainingManagementKeywords', () => {
     assert.match(applied.update.break_even ?? '', /POINT MORT/i)
     assert.match(applied.update.adjust_sl ?? '', /DÉPLACER LE SL/i)
   })
+
+  it('does not bucket ForexBro disclaimer into modify_sl', () => {
+    const disclaimer = 'Manage your risk and watch closely — once you are satisfied with the profit, you are not bound to hold to the end.'
+    const groups = bucketFlatManagementCues([disclaimer, 'modify your stop-loss to'])
+    assert.equal(groups.modify_sl.length, 1)
+    assert.match(groups.modify_sl[0] ?? '', /modify your stop-loss/i)
+  })
 })

@@ -60,6 +60,7 @@ import {
   telegramMessageText,
 } from './signalTelegramReconcile'
 import { evaluateParsedSignalExecutionEligibility } from './signalExecutionEligibility'
+import { resolveEntrySignalIdByProviderNumber } from './managementScope'
 import {
   handlePostParseChannelIngest,
   isChannelRowPassive,
@@ -1770,6 +1771,18 @@ export class UserListener {
     }
     pipelineTs.t_parse_done = Date.now()
     if (aiMeta) pipelineTs.t_ai_parse_done = pipelineTs.t_parse_done
+
+    if (!parentSignalId && parseResult.status === 'parsed') {
+      const providerNum = (parseResult.parsed as { provider_signal_number?: number | null }).provider_signal_number
+      if (typeof providerNum === 'number' && Number.isFinite(providerNum) && providerNum > 0) {
+        const linked = await resolveEntrySignalIdByProviderNumber(this.supabase, {
+          userId: this.userId,
+          channelId: channelRow.id,
+          providerSignalNumber: providerNum,
+        })
+        if (linked) parentSignalId = linked
+      }
+    }
 
     if (aiMeta && parseResult.status === 'parsed') {
       const eventType = aiMeta.intent === 'entry' ? 'ai_entry_parsed' : 'ai_modification_parsed'

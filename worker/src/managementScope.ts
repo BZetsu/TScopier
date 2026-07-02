@@ -14,6 +14,7 @@ export type MgmtParsedLike = {
   symbol?: string | null
   sl?: number | null
   tp?: number[] | null
+  provider_signal_number?: number | null
 }
 
 export type MgmtSignalLike = {
@@ -496,4 +497,33 @@ export async function loadOpenTradesForSignalAcrossBrokers(
   for (const r of rows) found.add(r.broker_account_id)
   const brokersMissing = uniqueBrokers.filter(id => !found.has(id))
   return { rows, brokersFound: [...found], brokersMissing }
+}
+
+/** Find the entry signal row for a provider trade number (ForexBro Signal #NNN). */
+export async function resolveEntrySignalIdByProviderNumber(
+  supabase: SupabaseClient,
+  args: {
+    userId: string
+    channelId: string
+    providerSignalNumber: number
+  },
+): Promise<string | null> {
+  const n = args.providerSignalNumber
+  if (!Number.isFinite(n) || n <= 0) return null
+  const { data } = await supabase
+    .from('signals')
+    .select('id, parsed_data, raw_message')
+    .eq('user_id', args.userId)
+    .eq('channel_id', args.channelId)
+    .order('created_at', { ascending: false })
+    .limit(300)
+  const ref = new RegExp(`(?:new\\s+signal|signal)\\s*#\\s*${n}\\b`, 'i')
+  for (const row of data ?? []) {
+    const pd = row.parsed_data as { action?: string; raw_instruction?: string } | null
+    const action = String(pd?.action ?? '').toLowerCase()
+    if (action !== 'buy' && action !== 'sell') continue
+    const text = String(row.raw_message ?? pd?.raw_instruction ?? '')
+    if (ref.test(text)) return String(row.id)
+  }
+  return null
 }

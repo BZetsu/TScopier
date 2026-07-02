@@ -4,6 +4,7 @@
 
 import { SIGNAL_PRICE_NUM, parseSignalPriceListBlock, parseSignalPriceToken, signalPriceTokenRegex } from './signalPriceFormat'
 import { isPercentagePriceAt } from './signalCommentaryGuard'
+import { isProviderSignalNumberToken } from './forexBroSignalPatterns'
 
 export type TradeDirection = 'buy' | 'sell'
 
@@ -178,6 +179,7 @@ export function extractUnlabeledPrices(message: string): number[] {
     if (isInsideSpan(index, raw.length, labeled)) continue
     if (isInsideParenthetical(index, text)) continue
     if (isPercentagePriceAt(text, index, raw.length)) continue
+    if (isProviderSignalNumberToken(text, index, raw)) continue
 
     const prefix = text.slice(Math.max(0, index - 3), index)
     if (/[£$€]\s*$/.test(prefix)) continue

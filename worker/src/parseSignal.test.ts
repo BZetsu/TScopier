@@ -713,4 +713,64 @@ Market: AUDUSD · BUY
     assert.equal(result.parsed.sl, 0.68741)
     assert.deepEqual(result.parsed.tp, [0.6894, 0.69047, 0.69186])
   })
+
+  const forexBroPollutedKeywords = () => normalizeChannelKeywords({
+    signal: {
+      sl: 'وقف الخسارة|sl',
+      tp: 'tp1|tp2|tp3',
+      buy: 'buy|شراء',
+      sell: 'sell|بيع',
+      entry_point: 'entry zone|منطقة الدخول',
+      market_order: 'now',
+    },
+    update: {
+      set_sl: 'manage your risk and watch closely|اضبط مخاطرتك وراقب الصفقة',
+      adjust_sl: 'manage your risk and watch closely|اضبط مخاطرتك وراقب الصفقة',
+    },
+    additional: { close_all: '' },
+  })
+
+  it('parses ForexBro TP1 done + SL trail as modify with provider_signal_number', () => {
+    const msg = `🟢 Signal #899 📊
+✅ TP1 : Done ✅
+📈 +8.8 pips
+✋ Important: modify your stop-loss to 0.69211 now to secure the trade.`
+    const result = parseChannelMessageSync(msg, forexBroPollutedKeywords(), lexicon)
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.action, 'modify')
+    assert.equal(result.parsed.sl, 0.69211)
+    assert.equal(result.parsed.provider_signal_number, 899)
+  })
+
+  it('skips ForexBro TP3 complete notice as non-actionable', () => {
+    const msg = `🟢 Signal #898 📊
+🏆 TP3 : Done 🏆
+📈 +30.6 pips
+Note: all targets of this trade were achieved successfully.`
+    const result = parseChannelMessageSync(msg, forexBroPollutedKeywords(), lexicon)
+    assert.equal(result.status, 'skipped')
+    assert.equal(result.parsed.action, 'ignore')
+    assert.match(result.skip_reason ?? '', /TP complete notice/i)
+  })
+
+  it('parses ForexBro Lock-Profit alert as breakeven at entry price (not signal #)', () => {
+    const msg = `🟢 Signal #898 📊
+🛡️ Lock-Profit Alert 🛡️
+move your Stop-Loss to your Entry price (0.6888) (break-even) now`
+    const result = parseChannelMessageSync(msg, forexBroPollutedKeywords(), lexicon)
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.action, 'breakeven')
+    assert.equal(result.parsed.sl, 0.6888)
+    assert.notEqual(result.parsed.sl, 898)
+  })
+
+  it('skips ForexBro post-facto breakeven narrative', () => {
+    const msg = `🟢 Signal #896 📊
+🛡️ Break-Even — No Loss 🛡️
+After the Lock-Profit alert, your stop-loss was moved to your entry price. Price came back to entry, so the trade closed at break-even with ZERO loss.`
+    const result = parseChannelMessageSync(msg, forexBroPollutedKeywords(), lexicon)
+    assert.equal(result.status, 'skipped')
+    assert.equal(result.parsed.action, 'ignore')
+    assert.match(result.skip_reason ?? '', /Post-facto breakeven/i)
+  })
 })

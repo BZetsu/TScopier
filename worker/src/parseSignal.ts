@@ -41,6 +41,10 @@ import {
   messageContainsKeyword,
 } from './multilingualSignalTerms'
 import { entryMissingSlTpRequiresNow } from './signalEntryNowRequirement'
+import {
+  extractProviderSignalNumber,
+  parseForexBroManagementMessage,
+} from './forexBroSignalPatterns'
 
 /** Loose hint that a message references a Deriv synthetic index (any alias form). */
 const DERIV_SYNTHETIC_HINT_RE =
@@ -62,6 +66,8 @@ export interface ChannelParsedSignal {
   partial_close_fraction?: number | null
   /** Explicit channel intent to open a new trade (not modify existing). */
   re_enter?: boolean
+  /** Provider-side trade id (e.g. ForexBro Signal #899). */
+  provider_signal_number?: number | null
 }
 
 export type ChannelLexiconRow = {
@@ -507,6 +513,7 @@ function normalizeParsedFromModel(raw: unknown, fallbackText: string): ChannelPa
   }
 
   const re_enter = j.re_enter === true || detectReEnterIntent(raw_instruction)
+  const provider_signal_number = numOrNull(j.provider_signal_number)
 
   return {
     action,
@@ -522,6 +529,7 @@ function normalizeParsedFromModel(raw: unknown, fallbackText: string): ChannelPa
     open_tp: Boolean(j.open_tp ?? detectOpenTp(fallbackText)),
     ...(partial_close_fraction != null ? { partial_close_fraction } : {}),
     ...(re_enter ? { re_enter: true } : {}),
+    ...(provider_signal_number != null ? { provider_signal_number } : {}),
   }
 }
 
@@ -540,7 +548,7 @@ function wantsExplicitFullClose(
 /** Stop-loss labels used in management updates (providers often say "risk" or "stoploss"). */
 const SL_TEXT_LABELS = 'sl|stop\\s*loss|stoploss|risk'
 const TP_TEXT_LABELS = 'tp|take\\s*profit|target'
-const SL_MGMT_VERBS = 'set|move|adjust|bring|change|update|make'
+const SL_MGMT_VERBS = 'set|move|adjust|bring|change|update|make|modify'
 
 function slPriceFromClause(clause: string): number | null {
   const slClauseTo = clause.match(new RegExp(`\\bto\\s*(${SIGNAL_PRICE_NUM})\\b`, 'i'))
@@ -1298,7 +1306,10 @@ function enrichParsedKeywordMatch(
     rawMessage,
   )
   const repaired = applyRawSymbolRepair(enriched, rawMessage)
-  return dropInvalidTradeSymbol(repaired)
+  const dropped = dropInvalidTradeSymbol(repaired)
+  const providerNum = dropped.provider_signal_number ?? extractProviderSignalNumber(rawMessage)
+  if (providerNum == null) return dropped
+  return { ...dropped, provider_signal_number: providerNum }
 }
 
 /** Deterministic management / SL-TP follow-up parse only (no entry parsers). */
@@ -1372,8 +1383,26 @@ export function parseChannelMessageSync(
   ]
 
   const explicitIgnore = hasAnyKeyword(message, ignoreAliases)
-  const keywordMatch =
-    parseDeterministicManagement(message, lexicon, channelKeywords) ??
+
+  const forexBro = parseForexBroManagementMessage(message)
+  const keywordMatch = forexBro
+    ? {
+      action: forexBro.action,
+      symbol: forexBro.symbol,
+      entry_price: forexBro.entry_price,
+      entry_zone_low: forexBro.entry_zone_low,
+      entry_zone_high: forexBro.entry_zone_high,
+      sl: forexBro.sl,
+      tp: forexBro.tp,
+      lot_size: forexBro.lot_size,
+      confidence: forexBro.confidence,
+      raw_instruction: displayMessage,
+      open_tp: forexBro.open_tp,
+      ...(forexBro.provider_signal_number != null
+        ? { provider_signal_number: forexBro.provider_signal_number }
+        : {}),
+    } satisfies ChannelParsedSignal
+    : parseDeterministicManagement(message, lexicon, channelKeywords) ??
     parseChannelParameterFollowUp(message, lexicon, channelKeywords) ??
     parseSimpleSignal(message, lexicon, channelKeywords) ??
     parseEntryFromKeywords(message, lexicon, channelKeywords)
@@ -1412,7 +1441,9 @@ export function parseChannelMessageSync(
 
   const status = parsed.action === "ignore" ? "skipped" : "parsed"
   const skip_reason = parsed.action === "ignore"
-    ? (explicitIgnore ? "Non-trade message" : "No matching channel keywords or price pattern")
+    ? (explicitIgnore
+      ? "Non-trade message"
+      : (forexBro?.skip_reason ?? "No matching channel keywords or price pattern"))
     : null
 
   return { parsed, status, skip_reason }

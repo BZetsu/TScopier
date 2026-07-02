@@ -586,6 +586,8 @@ Return strict JSON only with keys:
 Rules:
 - Include channel-native words/synonyms from any language (use exact phrases from the samples).
 - management_keyword_groups: classify management/update instructions seen in the channel (close all, partial, breakeven, SL/TP adjust). Use full phrases like "FERMEZ TOUT", not single generic words when the channel uses them.
+- Do NOT put entry footers, risk disclaimers ("manage your risk", "watch closely"), TP-done celebration-only lines, Lock-Profit narratives, or post-facto breakeven confirmations into modify_sl.
+- Good modify_sl examples: "modify your stop-loss to", "move stop loss to", "adjust SL to", Arabic "عدّل وقف الخسارة إلى".
 - management_cues: optional flat union of all management_keyword_groups (may be omitted).
 - market_order_cues: immediate / market-entry words (NOW, IMMÉDIAT, AHORA, etc.) used by this channel.
 - For "language_hints", include only real languages/scripts (example: "english", "arabic", "latin", "cyrillic").

@@ -26,6 +26,10 @@ import {
 } from "../_shared/signalManagementIntent.ts"
 import { SIGNAL_PRICE_NUM, parseSignalPriceListBlock, parseSignalPriceToken } from "../_shared/signalPriceFormat.ts"
 import { normalizeTelegramMessageText, normalizeSignalMessageForParse } from "../_shared/normalizeTelegramMessageText.ts"
+import {
+  extractProviderSignalNumber,
+  parseForexBroManagementMessage,
+} from "../_shared/forexBroSignalPatterns.ts"
 
 /** Loose hint that a message references a Deriv synthetic index (any alias form). */
 const DERIV_SYNTHETIC_HINT_RE =
@@ -52,6 +56,7 @@ interface ParsedSignal {
   open_tp?: boolean
   partial_close_fraction?: number | null
   re_enter?: boolean
+  provider_signal_number?: number | null
 }
 
 type ChannelLexiconRow = {
@@ -431,7 +436,7 @@ function extractPriceByLabels(message: string, labels: string[]): number | null 
 /** Stop-loss labels used in management updates (providers often say "risk" or "stoploss"). */
 const SL_TEXT_LABELS = 'sl|stop\\s*loss|stoploss|risk'
 const TP_TEXT_LABELS = 'tp|take\\s*profit|target'
-const SL_MGMT_VERBS = 'set|move|adjust|bring|change|update'
+const SL_MGMT_VERBS = 'set|move|adjust|bring|change|update|modify'
 
 function slPriceFromClause(clause: string): number | null {
   const slClauseTo = clause.match(new RegExp(`\\bto\\s*(${SIGNAL_PRICE_NUM})\\b`, 'i'))
@@ -530,6 +535,7 @@ function normalizeParsedFromModel(raw: unknown, fallbackText: string): ParsedSig
   }
 
   const re_enter = j.re_enter === true || detectReEnterIntent(raw_instruction)
+  const provider_signal_number = numOrNull(j.provider_signal_number)
 
   return {
     action,
@@ -545,6 +551,7 @@ function normalizeParsedFromModel(raw: unknown, fallbackText: string): ParsedSig
     open_tp: Boolean(j.open_tp ?? detectOpenTp(fallbackText)),
     ...(partial_close_fraction != null ? { partial_close_fraction } : {}),
     ...(re_enter ? { re_enter: true } : {}),
+    ...(provider_signal_number != null ? { provider_signal_number } : {}),
   }
 }
 
@@ -1244,8 +1251,25 @@ async function parseRawChannelMessage(
   ]
 
   const explicitIgnore = hasAnyKeyword(message, ignoreAliases)
-  const keywordMatch =
-    parseDeterministicManagement(message, lexicon, channelKeywords) ??
+  const forexBro = parseForexBroManagementMessage(message)
+  const keywordMatch = forexBro
+    ? {
+      action: forexBro.action,
+      symbol: forexBro.symbol,
+      entry_price: forexBro.entry_price,
+      entry_zone_low: forexBro.entry_zone_low,
+      entry_zone_high: forexBro.entry_zone_high,
+      sl: forexBro.sl,
+      tp: forexBro.tp,
+      lot_size: forexBro.lot_size,
+      confidence: forexBro.confidence,
+      raw_instruction: displayMessage,
+      open_tp: forexBro.open_tp,
+      ...(forexBro.provider_signal_number != null
+        ? { provider_signal_number: forexBro.provider_signal_number }
+        : {}),
+    } satisfies ParsedSignal
+    : parseDeterministicManagement(message, lexicon, channelKeywords) ??
     parseChannelParameterFollowUp(message, lexicon, channelKeywords) ??
     parseSimpleSignal(message, lexicon, channelKeywords) ??
     parseEntryFromKeywords(message, lexicon, channelKeywords)
@@ -1276,7 +1300,11 @@ async function parseRawChannelMessage(
 
   const repaired = applyRawSymbolRepair(enriched, message)
   const dropped = dropInvalidTradeSymbol(repaired)
-  if (entryMissingSlTpRequiresNow(dropped, message, channelKeywords)) {
+  const providerNum = dropped.provider_signal_number ?? extractProviderSignalNumber(message)
+  const withProvider = providerNum != null
+    ? { ...dropped, provider_signal_number: providerNum }
+    : dropped
+  if (entryMissingSlTpRequiresNow(withProvider, message, channelKeywords)) {
     return {
       parsed: {
         ...dropped,
@@ -1289,11 +1317,13 @@ async function parseRawChannelMessage(
     }
   }
 
-  const parsed = dropped
+  const parsed = withProvider
 
   const status = parsed.action === "ignore" ? "skipped" : "parsed"
   const skip_reason = parsed.action === "ignore"
-    ? (explicitIgnore ? "Non-trade message" : "No matching channel keywords or price pattern")
+    ? (explicitIgnore
+      ? "Non-trade message"
+      : (forexBro?.skip_reason ?? "No matching channel keywords or price pattern"))
     : null
 
   return { parsed, status, skip_reason }
