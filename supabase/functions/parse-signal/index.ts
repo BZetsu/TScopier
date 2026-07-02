@@ -21,6 +21,7 @@ import {
   bareTradePricesExcludingPips,
   looksLikeChannelManagementUpdate,
   looksLikeExplicitFullCloseCommand,
+  looksLikeStructuredEntrySignal,
   partialCloseFractionFromMessage,
 } from "../_shared/signalManagementIntent.ts"
 import { SIGNAL_PRICE_NUM, parseSignalPriceListBlock, parseSignalPriceToken } from "../_shared/signalPriceFormat.ts"
@@ -561,6 +562,7 @@ function parseDeterministicManagement(
 ): ParsedSignal | null {
   const t = message.replace(/\s+/g, " ").trim()
   if (!t) return null
+  if (looksLikeStructuredEntrySignal(t)) return null
   const tl = t.toLowerCase()
 
   const sym = extractTradableSymbolFromMessage(t)
@@ -975,10 +977,12 @@ function parseSimpleSignal(
   ]
 
   if (
-    /\b(flatten|exit\s+trade|breakeven|break\s+even|partial|move\s+(?:sl|tp|risk|stop\s*loss|stoploss))\b/i.test(text)
-    || looksLikeStopOrTpAdjustCommand(message)
-    || looksLikeExplicitFullCloseCommand(message)
-    || hasAnyKeyword(message, mgmtAliases)
+    !looksLikeStructuredEntrySignal(message) && (
+      /\b(flatten|exit\s+trade|breakeven|break\s+even|partial|move\s+(?:sl|tp|risk|stop\s*loss|stoploss))\b/i.test(text)
+      || looksLikeStopOrTpAdjustCommand(message)
+      || looksLikeExplicitFullCloseCommand(message)
+      || hasAnyKeyword(message, mgmtAliases)
+    )
   ) {
     return null
   }
@@ -1063,7 +1067,7 @@ function parseEntryFromKeywords(
     ...splitKeywordAliases(channelKeywords.update.close_tp3, delim),
     ...splitKeywordAliases(channelKeywords.update.close_tp4, delim),
   ]
-  if (hasAnyKeyword(message, mgmtAliases)) return null
+  if (hasAnyKeyword(message, mgmtAliases) && !looksLikeStructuredEntrySignal(message)) return null
 
   const isBuy = parseBuySideFromKeywords(message, buyAliases)
   const isSell = parseSellSideFromKeywords(message, sellAliases)

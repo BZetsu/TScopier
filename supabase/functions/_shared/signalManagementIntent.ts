@@ -9,6 +9,45 @@ import {
 const EXPLICIT_CLOSE_SYMBOL =
   "gold|xauusd|xau|silver|xagusd|btc|bitcoin|btcusd|ethusd|eurusd|gbpusd|us30|nas100"
 
+/**
+ * Full new-trade templates (e.g. ForexBro "New Signal #898 / Market: AUDUSD · BUY / Entry Zone …")
+ * must not be classified as SL/TP management when channel keywords include footer disclaimers.
+ */
+export function looksLikeStructuredEntrySignal(message: string): boolean {
+  const t = String(message ?? "").replace(/\s+/g, " ").trim()
+  if (!t) return false
+
+  const hasTradeSide = /\b(?:buy|sell|long|short|شراء|بيع)\b/i.test(t)
+  if (!hasTradeSide) return false
+
+  const hasEntryZone =
+    /\bentry\s*zone\b/i.test(t)
+    || /\bمنطقة\s+الدخول\b/.test(t)
+
+  const hasNewSignalBanner =
+    /\bnew\s+signal\b/i.test(t)
+    || /\bصفقة\s+حديثة\b/.test(t)
+
+  const hasMarketPairLine =
+    /\bmarket\s*:\s*[A-Z]{3,12}\s*[·•|]\s*(?:buy|sell|شراء|بيع)\b/i.test(t)
+    || /\bالسوق\s*:\s*[A-Z]{3,12}/i.test(t)
+
+  const hasSlPrice =
+    /\b(?:sl|stop\s*loss|stoploss|وقف\s+الخسارة)\s*[:=]?\s*\d/i.test(t)
+
+  const hasTpPrice =
+    /\b(?:tp\s*\d|take\s+profit\s*\d|الهدف\s+(?:الأول|الثاني|الثالث))\s*[:=]?\s*\d/i.test(t)
+    || /\btp\s*1\s*[:=]/i.test(t)
+
+  if (hasNewSignalBanner && hasTradeSide && hasEntryZone && hasSlPrice && hasTpPrice) {
+    return true
+  }
+  if (hasMarketPairLine && hasEntryZone && hasSlPrice && hasTpPrice) {
+    return true
+  }
+  return false
+}
+
 export type ManagementKeywordFields = {
   update?: Record<string, string | undefined>
   additional?: { close_all?: string; delimiters?: string }
@@ -80,6 +119,7 @@ export function looksLikeChannelManagementUpdate(
 ): boolean {
   const t = String(text ?? "").replace(/\s+/g, " ").trim()
   if (!t) return false
+  if (looksLikeStructuredEntrySignal(t)) return false
 
   const configured = managementAliasesFromKeywords(channelKeywords)
   if (configured.length > 0 && hasAnyKeyword(t, configured)) return true

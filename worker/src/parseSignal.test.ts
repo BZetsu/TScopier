@@ -666,4 +666,51 @@ SL ⛔️4104`
     assert.equal(result.parsed.sl, 4104)
     assert.deepEqual(result.parsed.tp, [4127, 4130, 4135])
   })
+
+  it('parses ForexBro New Signal entry even when disclaimer is misconfigured as set_sl keyword', () => {
+    const disclaimer = 'اضبط مخاطرتك وراقب الصفقة. حين يحصل ربح وتكتفي به لست ملزماً بالبقاء حتى نهايتها.'
+    const keywords = normalizeChannelKeywords({
+      signal: {
+        sl: 'وقف الخسارة|sl',
+        tp: 'الهدف الأول|tp1|الهدف الثاني|tp2|الهدف الثالث|tp3',
+        buy: 'شراء|buy|🟢',
+        sell: 'بيع|sell|🔴',
+        entry_point: 'منطقة الدخول|entry zone',
+        market_order: 'now',
+      },
+      update: {
+        set_sl: disclaimer,
+        adjust_sl: disclaimer,
+      },
+      additional: {
+        close_all: '',
+        ai_management_keyword_groups: {
+          modify_sl: [disclaimer],
+          modify_tp: [],
+          break_even: [],
+          close_half: [],
+          close_partial: [],
+          close_worse_entries: [],
+          close_all: [],
+        },
+      },
+    })
+    const msg = `New Signal #898 🟢 📊
+Market: AUDUSD · BUY
+📍 Entry Zone: 0.68873 – 0.68887
+🎯 TP1: 0.68940
+🎯 TP2: 0.69047
+🎯 TP3: 0.69186
+🛑 SL: 0.68741
+
+ℹ ملاحظة: ${disclaimer}`
+    const result = parseChannelMessageSync(msg, keywords, lexicon)
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.action, 'buy')
+    assert.equal(result.parsed.symbol, 'AUDUSD')
+    assert.equal(result.parsed.entry_zone_low, 0.68873)
+    assert.equal(result.parsed.entry_zone_high, 0.68887)
+    assert.equal(result.parsed.sl, 0.68741)
+    assert.deepEqual(result.parsed.tp, [0.6894, 0.69047, 0.69186])
+  })
 })
