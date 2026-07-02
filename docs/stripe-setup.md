@@ -100,6 +100,19 @@ Enable in Stripe Dashboard: plan changes, cancellation, payment method updates. 
 5. Checkout always collects a card (`payment_method_collection: always`) and saves it on the subscription (`save_default_payment_method: on_subscription`) so Stripe can charge automatically when the trial ends.
 6. Success redirect: `/dashboard?checkout=success` (SubscriptionContext refreshes).
 
+### Checkout troubleshooting
+
+Checkout runs on Stripe Hosted Checkout (custom domain e.g. `billing.tartarix.com`). If Stripe logs show `parameter_invalid_empty` for `payment_method_data[card][number]` with empty `cvc`/`exp_month`/`number`, the **browser** submitted a blank card form — this is not sent by `create-checkout-session`.
+
+Common causes:
+
+- User clicked Pay before the card fields finished loading
+- Ad blocker / privacy extension blocking Stripe.js iframes
+- Stripe Checkout **preview/beta** UI (`custom_checkout_payment_form`) glitch on **$0 trial** sessions (`expected_amount: 0`)
+- Stripe Link or “automatic” payment method selected without a valid saved card
+
+**Fixes:** retry in incognito without extensions; ensure all card fields are filled; in Stripe Dashboard disable Checkout preview/beta features if enabled; `create-checkout-session` forces `payment_method_types: [card]` to reduce empty Link/auto submissions.
+
 ## Soft paywall (plan limits)
 
 | Feature | Basic | Advanced |

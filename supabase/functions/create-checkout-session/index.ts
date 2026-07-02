@@ -134,6 +134,8 @@ Deno.serve(async (req: Request) => {
       customer: customerId,
       mode: "subscription",
       line_items: lineItems,
+      // Card-only avoids Link/automatic PM flows submitting empty card payloads on $0 trials.
+      payment_method_types: ["card"],
       payment_method_collection: "always",
       success_url:
         successUrl || `${origin}/dashboard?checkout=success`,
