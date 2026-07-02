@@ -1,8 +1,9 @@
 /** Mirror of `src/lib/pipMath.ts` — keep in sync. */
 
 import { isDerivSyntheticSymbol } from "./derivSymbols.ts"
+import { isUsStockEtfTicker } from "./tradableSymbol.ts"
 
-export type SymbolClass = "fx_major" | "fx_jpy" | "metal" | "index" | "crypto" | "energy" | "synthetic" | "other"
+export type SymbolClass = "fx_major" | "fx_jpy" | "metal" | "index" | "crypto" | "energy" | "synthetic" | "stock" | "other"
 
 const FX_CURRENCY_CODES = new Set([
   "USD", "EUR", "GBP", "JPY", "CHF", "AUD", "NZD", "CAD",
@@ -63,6 +64,8 @@ export function classifySymbol(symbol: string): SymbolClass {
   for (const root of INDEX_ROOTS) {
     if (s.includes(root)) return "index"
   }
+
+  if (isUsStockEtfTicker(s)) return "stock"
 
   if (s.length === 6 && /^[A-Z]{6}$/.test(s)) {
     const base = s.slice(0, 3)

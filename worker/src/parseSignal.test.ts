@@ -807,6 +807,24 @@ Type: Short term
     assert.equal(result.parsed.sl, 1594.65)
     assert.deepEqual(result.parsed.tp, [1629.15, 1640.65, 1658.65])
   })
+
+  it('parses ForexBro New Signal #901 QQQ stock entry', () => {
+    const msg = `New Signal #901 🟢 📊
+Market: QQQ · BUY
+📍 Entry Zone: 729.67 – 729.89
+🎯 TP1: 731.97
+🎯 TP2: 733.27
+🎯 TP3: 735.57
+🛑 SL: 725.41`
+    const result = parseChannelMessageSync(msg, forexBroPollutedKeywords(), lexicon)
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.action, 'buy')
+    assert.equal(result.parsed.symbol, 'QQQ')
+    assert.equal(result.parsed.entry_zone_low, 729.67)
+    assert.equal(result.parsed.entry_zone_high, 729.89)
+    assert.equal(result.parsed.sl, 725.41)
+    assert.deepEqual(result.parsed.tp, [731.97, 733.27, 735.57])
+  })
 })
 
 describe('collapseForexBroBilingualMessage', () => {

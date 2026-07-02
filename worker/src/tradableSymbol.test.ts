@@ -59,3 +59,18 @@ test('Deriv synthetics get a large minimum plausible quote price', () => {
   assert.equal(minPlausibleQuotePrice('R_75'), 100)
   assert.equal(minPlausibleQuotePrice('STPRNG'), 1000)
 })
+
+test('extracts US stock/ETF tickers from ForexBro Market line', () => {
+  assert.equal(extractTradableSymbolFromMessage('Market: QQQ · BUY'), 'QQQ')
+  assert.equal(extractTradableSymbolFromMessage('Market: SPY · BUY'), 'SPY')
+  assert.equal(extractTradableSymbolFromMessage('Market: IWM · SELL'), 'IWM')
+  assert.equal(isTradableInstrumentSymbol('QQQ'), true)
+  assert.equal(minPlausibleQuotePrice('QQQ'), 1)
+})
+
+test('random 3-letter words are not tradable without Market line', () => {
+  for (const word of ['NEW', 'THE', 'FOR']) {
+    assert.equal(isTradableInstrumentSymbol(word), false)
+    assert.equal(extractTradableSymbolFromMessage(`Please ${word} the channel`), null)
+  }
+})

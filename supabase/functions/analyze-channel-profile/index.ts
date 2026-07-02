@@ -88,6 +88,10 @@ function normalizeAssetSymbol(raw: string | null | undefined): string | null {
     return token
   }
 
+  if (/^(SPY|QQQ|IWM|DIA|VOO|IVV|TQQQ|SQQQ|GLD|SLV|AAPL|MSFT|NVDA|TSLA|AMZN|META|GOOGL|GOOG|AMD|NFLX)$/.test(token)) {
+    return token
+  }
+
   // Forex pairs only when quote is a valid FX quote currency.
   if (/^[A-Z]{6}$/.test(token)) {
     const base = token.slice(0, 3)
@@ -109,8 +113,14 @@ function parseFromRawMessage(message: string): ParsedSignal {
         : /\bclose\b/i.test(lower) ? "close"
           : /\bsl|stop\s*loss|tp|take\s*profit\b/i.test(lower) ? "modify"
             : "unknown"
-  const symbolMatch = text.match(/\b(XAUUSD|XAGUSD|US30|NAS100|SPX500|GER40|UK100|BTCUSDT|ETHUSDT|[A-Z]{6}|GOLD|SILVER|XAU|XAG|BTC|ETH)\b/i)
-  const symbol = normalizeAssetSymbol(symbolMatch ? symbolMatch[1] : null)
+  const symbolMatch = text.match(
+    /\b(XAUUSD|XAGUSD|US30|NAS100|SPX500|GER40|UK100|BTCUSDT|ETHUSDT|SPY|QQQ|IWM|DIA|VOO|IVV|TQQQ|SQQQ|GLD|SLV|AAPL|MSFT|NVDA|TSLA|AMZN|META|GOOGL|GOOG|AMD|NFLX|[A-Z]{6}|GOLD|SILVER|XAU|XAG|BTC|ETH)\b/i,
+  )
+  let symbol = normalizeAssetSymbol(symbolMatch ? symbolMatch[1] : null)
+  if (!symbol) {
+    const marketMatch = text.match(/\bmarket\s*:\s*([A-Za-z]{1,5})\s*[·•|]/i)
+    if (marketMatch?.[1]) symbol = normalizeAssetSymbol(marketMatch[1])
+  }
   const entryMatch = text.match(/(?:@|entry)\s*[:=]?\s*(\d+(?:\.\d+)?)/i)
   const rangeMatch = text.match(/(\d+(?:\.\d+)?)\s*[-–]\s*(\d+(?:\.\d+)?)/)
   const slMatch = text.match(/\b(?:sl|stop\s*loss)\s*[:=]?\s*(\d+(?:\.\d+)?)/i)

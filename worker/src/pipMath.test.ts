@@ -39,6 +39,12 @@ test('classifySymbol: indices', () => {
   assert.equal(classifySymbol('UK100'), 'index')
 })
 
+test('classifySymbol: US stocks and ETFs', () => {
+  assert.equal(classifySymbol('QQQ'), 'stock')
+  assert.equal(classifySymbol('SPY'), 'stock')
+  assert.equal(classifySymbol('IWM'), 'stock')
+})
+
 test('classifySymbol: energy', () => {
   assert.equal(classifySymbol('USOIL'), 'energy')
   assert.equal(classifySymbol('UKOIL'), 'energy')

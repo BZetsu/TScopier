@@ -29,6 +29,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.classifySymbol = classifySymbol;
 const derivSymbols_1 = require("./derivSymbols");
+const tradableSymbol_1 = require("./tradableSymbol");
 /** Common ISO-4217 currency codes seen in retail FX brokers. */
 const FX_CURRENCY_CODES = new Set([
     'USD', 'EUR', 'GBP', 'JPY', 'CHF', 'AUD', 'NZD', 'CAD',
@@ -108,6 +109,8 @@ function classifySymbol(symbol) {
         if (s.includes(root))
             return 'index';
     }
+    if ((0, tradableSymbol_1.isUsStockEtfTicker)(s))
+        return 'stock';
     // FX: exactly 6 letters and both halves are known currency codes.
     if (s.length === 6 && /^[A-Z]{6}$/.test(s)) {
         const base = s.slice(0, 3);

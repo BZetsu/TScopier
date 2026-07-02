@@ -19,8 +19,14 @@ const KNOWN_SYMBOL_ALIASES: Record<string, string> = {
   ETH: 'ETHUSDT',
 }
 
+const STOCK_ETF_TICKERS =
+  'SPY|QQQ|IWM|DIA|VOO|IVV|TQQQ|SQQQ|GLD|SLV|AAPL|MSFT|NVDA|TSLA|AMZN|META|GOOGL|GOOG|AMD|NFLX'
+
 const SYMBOL_TOKEN_RE =
-  /\b(XAUUSD|XAGUSD|US30|NAS100|SPX500|GER40|UK100|BTCUSDT|ETHUSDT|[A-Z]{6}|GOLD|SILVER|XAU|XAG|BTC|ETH)\b/i
+  new RegExp(
+    `\\b(XAUUSD|XAGUSD|US30|NAS100|SPX500|GER40|UK100|BTCUSDT|ETHUSDT|${STOCK_ETF_TICKERS}|[A-Z]{6}|GOLD|SILVER|XAU|XAG|BTC|ETH)\\b`,
+    'i',
+  )
 
 /** Volatility levels Deriv publishes (kept in sync with worker/derivSymbols.ts). */
 const DERIV_VOL_LEVELS = new Set([10, 15, 25, 30, 50, 75, 90, 100, 150, 200, 250])
@@ -81,6 +87,10 @@ export function normalizeAssetSymbol(raw: string | null | undefined): string | n
     return token
   }
 
+  if (/^(SPY|QQQ|IWM|DIA|VOO|IVV|TQQQ|SQQQ|GLD|SLV|AAPL|MSFT|NVDA|TSLA|AMZN|META|GOOGL|GOOG|AMD|NFLX)$/.test(token)) {
+    return token
+  }
+
   if (/^[A-Z]{6}$/.test(token)) {
     const base = token.slice(0, 3)
     const quote = token.slice(3, 6)
@@ -102,6 +112,11 @@ function symbolFromParsed(parsed: unknown): string | null {
 function symbolFromRawMessage(message: string): string | null {
   const text = (message ?? '').trim()
   if (!text) return null
+  const marketMatch = text.match(/\bmarket\s*:\s*([A-Za-z]{1,5})\s*[·•|]/i)
+  if (marketMatch?.[1]) {
+    const fromMarket = normalizeAssetSymbol(marketMatch[1])
+    if (fromMarket) return fromMarket
+  }
   // Deriv synthetics first — aliases like "Boom 1000" / "Step Index" span
   // multiple tokens that the single-token regex below would miss.
   const deriv = normalizeDerivSymbol(text)

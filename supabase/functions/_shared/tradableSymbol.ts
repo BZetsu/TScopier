@@ -1,7 +1,7 @@
 /**
  * Strict instrument detection for Telegram signals.
- * Only forex pairs, metals, crypto, indices, and Deriv synthetics — not
- * arbitrary 6-letter words.
+ * Forex pairs, metals, crypto, indices, US stocks/ETFs, and Deriv synthetics —
+ * not arbitrary 6-letter words.
  */
 
 import { isDerivSyntheticSymbol, normalizeDerivAlias } from "./derivSymbols.ts"
@@ -37,13 +37,47 @@ const EXPLICIT_SYMBOLS = new Set([
   "XAUUSD", "XAGUSD", "US30", "US500", "US100", "NAS100", "GER40", "UK100", "SPX500", "USTEC",
 ])
 
-export type TradableInstrumentClass = "forex" | "metal" | "crypto" | "index" | "deriv_synthetic"
+/** Curated US equities/ETFs commonly signaled (ForexBro "Market: QQQ · BUY" and similar). */
+export const US_STOCK_ETF_TICKERS = new Set([
+  "SPY", "QQQ", "IWM", "DIA", "VOO", "IVV", "TQQQ", "SQQQ", "GLD", "SLV",
+  "AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "META", "GOOGL", "GOOG", "AMD", "NFLX",
+])
+
+const MARKET_LINE_REJECT = new Set([
+  "BUY", "SELL", "LONG", "SHORT", "NOW", "USD", "EUR", "GBP", "JPY", "AUD", "CAD",
+  "CHF", "NZD", "THE", "NEW", "ALL", "FOR", "AND", "NOT", "OUT", "TOP", "SL", "TP",
+])
+
+export type TradableInstrumentClass =
+  | "forex"
+  | "metal"
+  | "crypto"
+  | "index"
+  | "stock"
+  | "deriv_synthetic"
+
+export function isUsStockEtfTicker(symbol: string): boolean {
+  const s = cleanInstrumentSymbol(symbol)
+  return s.length >= 1 && s.length <= 5 && US_STOCK_ETF_TICKERS.has(s)
+}
+
+/** ForexBro template: "Market: QQQ · BUY" */
+export function extractMarketLineSymbol(raw: string): string | null {
+  const m = String(raw ?? "").match(
+    /\bmarket\s*:\s*([A-Za-z]{1,12})\s*[·•|]/i,
+  )
+  if (!m?.[1]) return null
+  const ticker = cleanInstrumentSymbol(m[1])
+  if (!ticker || ticker.length > 5) return null
+  if (MARKET_LINE_REJECT.has(ticker)) return null
+  if (US_STOCK_ETF_TICKERS.has(ticker)) return ticker
+  if (/^[A-Z]{1,5}$/.test(ticker)) return ticker
+  return null
+}
 
 export function cleanInstrumentSymbol(symbol: string): string {
   const upper = String(symbol || "").toUpperCase().trim()
   if (!upper) return ""
-  // Deriv canonical codes (R_75, RB_100, 1HZ75V, BOOM1000…) must survive intact;
-  // the punctuation strip below would otherwise truncate "R_75" to "R".
   if (isDerivSyntheticSymbol(upper)) return upper
   const punctMatch = upper.match(/^([A-Z0-9]+)[.#_-]/)
   let core = punctMatch ? punctMatch[1] : upper
@@ -60,10 +94,14 @@ export function cleanInstrumentSymbol(symbol: string): string {
 
 export function classifyTradableInstrument(symbol: string): TradableInstrumentClass | null {
   const s = cleanInstrumentSymbol(symbol)
-  if (!s || s.length < 3 || s.length > 12) return null
+  if (!s || s.length > 12) return null
+  if (isUsStockEtfTicker(s)) return "stock"
+  if (s.length < 3) return null
   if (isDerivSyntheticSymbol(s)) return "deriv_synthetic"
   if (EXPLICIT_SYMBOLS.has(s)) {
-    if (s.startsWith("XAU") || s.startsWith("XAG") || s.startsWith("XPT") || s.startsWith("XPD")) return "metal"
+    if (s.startsWith("XAU") || s.startsWith("XAG") || s.startsWith("XPT") || s.startsWith("XPD")) {
+      return "metal"
+    }
     for (const tok of CRYPTO_TOKENS) {
       if (s.startsWith(tok) || s.endsWith(tok)) return "crypto"
     }
@@ -112,6 +150,9 @@ export function extractTradableSymbolFromMessage(raw: string): string | null {
   if (!raw || typeof raw !== "string") return null
   const u = raw.toUpperCase().replace(/\s+/g, " ")
 
+  const marketLine = extractMarketLineSymbol(raw)
+  if (marketLine) return marketLine
+
   const slash = raw.match(/\b([A-Z]{3,})\s*\/\s*([A-Z]{3,})\b/i)
   if (slash) {
     const combined = cleanInstrumentSymbol(slash[1] + slash[2])
@@ -137,21 +178,21 @@ export function extractTradableSymbolFromMessage(raw: string): string | null {
   }
 
   const explicit = u.match(
-    /\b(BTCUSDT|BTCEUR|BTCUSD|ETHUSDT|ETHUSD|EURUSD|GBPUSD|USDJPY|AUDUSD|NZDUSD|USDCAD|USDCHF|XAUUSD|XAGUSD|NAS100|SPX500|USTEC|US100|US500|US30|GER40|UK100|DJ30|DJI|DAX40|JP225|JPN225|AUS200|HK50|EU50|FRA40|DE40|CHN50|CN50)\b/,
+    /\b(BTCUSDT|BTCEUR|BTCUSD|ETHUSDT|ETHUSD|EURUSD|GBPUSD|USDJPY|AUDUSD|NZDUSD|USDCAD|USDCHF|XAUUSD|XAGUSD|NAS100|SPX500|USTEC|US100|US500|US30|GER40|UK100|DJ30|DJI|DAX40|JP225|JPN225|AUS200|HK50|EU50|FRA40|DE40|CHN50|CN50|SPY|QQQ|IWM|DIA|VOO|IVV|TQQQ|GLD|SLV|AAPL|MSFT|NVDA|TSLA|AMZN|META|GOOGL|GOOG|AMD|NFLX)\b/,
   )
   if (explicit) {
     const sym = cleanInstrumentSymbol(explicit[1])
     if (isTradableInstrumentSymbol(sym)) return sym
   }
 
-  if (/\bBITCOIN\b|\bBTC\b/.test(u) && /\bEUR\b/.test(u) && !/\bUSD\b|\bUSDT\b|\bPERP\b/.test(u)) return "BTCEUR"
+  if (/\bBITCOIN\b|\bBTC\b/.test(u) && /\bEUR\b/.test(u) && !/\bUSD\b|\bUSDT\b|\bPERP\b/.test(u)) {
+    return "BTCEUR"
+  }
   if (/\bBITCOIN\b|\bBTC\b/.test(u)) return /\bUSDT\b/.test(u) ? "BTCUSDT" : "BTCUSD"
   if (/\bETHER(EUM)?\b|\bETH\b/.test(u)) return /\bUSDT\b/.test(u) ? "ETHUSDT" : "ETHUSD"
   if (/\b(XAUUSD|XAU\b|GOLD)\b/.test(u)) return "XAUUSD"
   if (/\bSILVER\b|\bXAG\b|\bXAGUSD\b/.test(u)) return "XAGUSD"
 
-  // Deriv synthetics (V75, Vix75, R_75, Boom 1000, Step Index…). Run after the
-  // forex/metal/crypto checks so normal pairs are never hijacked.
   const deriv = normalizeDerivAlias(raw)
   if (deriv) return deriv
 
@@ -171,24 +212,23 @@ export function sanitizeParsedSymbol(symbol: string | null | undefined): string 
   if (symbol == null || !String(symbol).trim()) return null
   const cleaned = cleanInstrumentSymbol(String(symbol).trim())
   if (isTradableInstrumentSymbol(cleaned)) return cleaned
-  // Accept a Deriv alias that slipped through un-normalized (e.g. "V75").
   return normalizeDerivAlias(String(symbol).trim())
 }
 
 export function minPlausibleQuotePrice(symbol: string | null | undefined): number | null {
   const s = sanitizeParsedSymbol(symbol ?? null)
   if (!s) return null
-  if (s === 'XAUUSD' || s.startsWith('XAU')) return 500
-  if (s === 'XAGUSD' || s.startsWith('XAG')) return 5
-  if (s.startsWith('BTC')) return 1000
-  if (s.startsWith('ETH')) return 50
+  if (s === "XAUUSD" || s.startsWith("XAU")) return 500
+  if (s === "XAGUSD" || s.startsWith("XAG")) return 5
+  if (s.startsWith("BTC")) return 1000
+  if (s.startsWith("ETH")) return 50
   const cls = classifyTradableInstrument(s)
-  if (cls === 'deriv_synthetic') {
-    // Synthetic indices quote at large absolute prices; Step trades highest.
+  if (cls === "deriv_synthetic") {
     return /^STPRNG/.test(s) ? 1000 : 100
   }
-  if (cls === 'forex') return 0.01
-  if (cls === 'index') return 100
+  if (cls === "forex") return 0.01
+  if (cls === "index") return 100
+  if (cls === "stock") return 1
   return null
 }
 
@@ -198,5 +238,5 @@ export function filterPlausibleInstrumentPrices(
 ): number[] {
   const min = minPlausibleQuotePrice(symbol)
   if (min == null) return prices
-  return prices.filter(p => Number.isFinite(p) && p >= min)
+  return prices.filter((p) => Number.isFinite(p) && p >= min)
 }

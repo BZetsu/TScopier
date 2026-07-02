@@ -1065,7 +1065,8 @@ function parseSimpleSignal(
     isTradableInstrumentSymbol(instrument) ||
     /\b(gold|xau|xauusd|btc|bitcoin|btcusd|btcusdt|eth|ethereum|silver|eur|gbp)\b/i.test(text) ||
     /\bEUR\/USD|EURUSD|GBPUSD|USDJPY|XAUUSD|BTCUSD|BTCUSDT\b/i.test(message) ||
-    /\b(us30|nas100|ger40|uk100|ustec|spx500)\b/i.test(text) ||
+    /\b(us30|nas100|ger40|uk100|ustec|spx500|spy|qqq|iwm|dia|voo|tqqq|gld|slv)\b/i.test(text) ||
+    /\bmarket\s*:\s*[A-Za-z]/i.test(message) ||
     DERIV_SYNTHETIC_HINT_RE.test(text)
 
   if (!hasInstrumentContext) return null

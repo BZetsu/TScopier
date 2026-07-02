@@ -27,8 +27,9 @@
  */
 
 import { isDerivSyntheticSymbol } from './derivSymbols'
+import { isUsStockEtfTicker } from './tradableSymbol'
 
-export type SymbolClass = 'fx_major' | 'fx_jpy' | 'metal' | 'index' | 'crypto' | 'energy' | 'synthetic' | 'other'
+export type SymbolClass = 'fx_major' | 'fx_jpy' | 'metal' | 'index' | 'crypto' | 'energy' | 'synthetic' | 'stock' | 'other'
 
 /** Common ISO-4217 currency codes seen in retail FX brokers. */
 const FX_CURRENCY_CODES = new Set([
@@ -111,6 +112,8 @@ export function classifySymbol(symbol: string): SymbolClass {
   for (const root of INDEX_ROOTS) {
     if (s.includes(root)) return 'index'
   }
+
+  if (isUsStockEtfTicker(s)) return 'stock'
 
   // FX: exactly 6 letters and both halves are known currency codes.
   if (s.length === 6 && /^[A-Z]{6}$/.test(s)) {

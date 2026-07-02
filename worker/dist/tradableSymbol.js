@@ -1,10 +1,13 @@
 "use strict";
 /**
  * Strict instrument detection for Telegram signals.
- * Only forex pairs, metals, crypto, indices, and Deriv synthetics — not
- * arbitrary 6-letter words.
+ * Forex pairs, metals, crypto, indices, US stocks/ETFs, and Deriv synthetics —
+ * not arbitrary 6-letter words.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.US_STOCK_ETF_TICKERS = void 0;
+exports.isUsStockEtfTicker = isUsStockEtfTicker;
+exports.extractMarketLineSymbol = extractMarketLineSymbol;
 exports.cleanInstrumentSymbol = cleanInstrumentSymbol;
 exports.isTradableInstrumentSymbol = isTradableInstrumentSymbol;
 exports.hasTradableInstrumentInText = hasTradableInstrumentInText;
@@ -38,6 +41,35 @@ const EXPLICIT_SYMBOLS = new Set([
     'AUDUSD', 'NZDUSD', 'USDCAD', 'USDCHF', 'EURGBP', 'EURJPY', 'GBPJPY', 'AUDJPY',
     'XAUUSD', 'XAGUSD', 'US30', 'US500', 'US100', 'NAS100', 'GER40', 'UK100', 'SPX500', 'USTEC',
 ]);
+/** Curated US equities/ETFs commonly signaled (ForexBro "Market: QQQ · BUY" and similar). */
+exports.US_STOCK_ETF_TICKERS = new Set([
+    'SPY', 'QQQ', 'IWM', 'DIA', 'VOO', 'IVV', 'TQQQ', 'SQQQ', 'GLD', 'SLV',
+    'AAPL', 'MSFT', 'NVDA', 'TSLA', 'AMZN', 'META', 'GOOGL', 'GOOG', 'AMD', 'NFLX',
+]);
+const MARKET_LINE_REJECT = new Set([
+    'BUY', 'SELL', 'LONG', 'SHORT', 'NOW', 'USD', 'EUR', 'GBP', 'JPY', 'AUD', 'CAD',
+    'CHF', 'NZD', 'THE', 'NEW', 'ALL', 'FOR', 'AND', 'NOT', 'OUT', 'TOP', 'SL', 'TP',
+]);
+function isUsStockEtfTicker(symbol) {
+    const s = cleanInstrumentSymbol(symbol);
+    return s.length >= 1 && s.length <= 5 && exports.US_STOCK_ETF_TICKERS.has(s);
+}
+/** ForexBro template: "Market: QQQ · BUY" */
+function extractMarketLineSymbol(raw) {
+    const m = String(raw ?? '').match(/\bmarket\s*:\s*([A-Za-z]{1,12})\s*[·•|]/i);
+    if (!m?.[1])
+        return null;
+    const ticker = cleanInstrumentSymbol(m[1]);
+    if (!ticker || ticker.length > 5)
+        return null;
+    if (MARKET_LINE_REJECT.has(ticker))
+        return null;
+    if (exports.US_STOCK_ETF_TICKERS.has(ticker))
+        return ticker;
+    if (/^[A-Z]{1,5}$/.test(ticker))
+        return ticker;
+    return null;
+}
 function cleanInstrumentSymbol(symbol) {
     const upper = String(symbol || '').toUpperCase().trim();
     if (!upper)
@@ -61,7 +93,11 @@ function cleanInstrumentSymbol(symbol) {
 }
 function classifyTradableInstrument(symbol) {
     const s = cleanInstrumentSymbol(symbol);
-    if (!s || s.length < 3 || s.length > 12)
+    if (!s || s.length > 12)
+        return null;
+    if (isUsStockEtfTicker(s))
+        return 'stock';
+    if (s.length < 3)
         return null;
     if ((0, derivSymbols_1.isDerivSyntheticSymbol)(s))
         return 'deriv_synthetic';
@@ -117,6 +153,9 @@ function extractTradableSymbolFromMessage(raw) {
     if (!raw || typeof raw !== 'string')
         return null;
     const u = raw.toUpperCase().replace(/\s+/g, ' ');
+    const marketLine = extractMarketLineSymbol(raw);
+    if (marketLine)
+        return marketLine;
     const slash = raw.match(/\b([A-Z]{3,})\s*\/\s*([A-Z]{3,})\b/i);
     if (slash) {
         const combined = cleanInstrumentSymbol(slash[1] + slash[2]);
@@ -143,7 +182,7 @@ function extractTradableSymbolFromMessage(raw) {
         if (isTradableInstrumentSymbol(sym))
             return sym;
     }
-    const explicit = u.match(/\b(BTCUSDT|BTCEUR|BTCUSD|ETHUSDT|ETHUSD|EURUSD|GBPUSD|USDJPY|AUDUSD|NZDUSD|USDCAD|USDCHF|XAUUSD|XAGUSD|NAS100|SPX500|USTEC|US100|US500|US30|GER40|UK100|DJ30|DJI|DAX40|JP225|JPN225|AUS200|HK50|EU50|FRA40|DE40|CHN50|CN50)\b/);
+    const explicit = u.match(/\b(BTCUSDT|BTCEUR|BTCUSD|ETHUSDT|ETHUSD|EURUSD|GBPUSD|USDJPY|AUDUSD|NZDUSD|USDCAD|USDCHF|XAUUSD|XAGUSD|NAS100|SPX500|USTEC|US100|US500|US30|GER40|UK100|DJ30|DJI|DAX40|JP225|JPN225|AUS200|HK50|EU50|FRA40|DE40|CHN50|CN50|SPY|QQQ|IWM|DIA|VOO|IVV|TQQQ|GLD|SLV|AAPL|MSFT|NVDA|TSLA|AMZN|META|GOOGL|GOOG|AMD|NFLX)\b/);
     if (explicit) {
         const sym = cleanInstrumentSymbol(explicit[1]);
         if (isTradableInstrumentSymbol(sym))
@@ -207,6 +246,8 @@ function minPlausibleQuotePrice(symbol) {
         return 0.01;
     if (cls === 'index')
         return 100;
+    if (cls === 'stock')
+        return 1;
     return null;
 }
 function filterPlausibleInstrumentPrices(symbol, prices) {
