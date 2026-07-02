@@ -11,6 +11,7 @@ import {
   revokeCopierAccessOnSubscriptionEnd,
 } from "../_shared/subscriptionAccess.ts";
 import { DEFAULT_AFFILIATE_COMMISSION_RATE } from "../_shared/affiliate.ts";
+import { handleInvoicePaymentIssue } from "../_shared/billingPaymentNotification.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -310,25 +311,13 @@ Deno.serve(async (req: Request) => {
 
       case "invoice.payment_failed": {
         const invoice = event.data.object as Stripe.Invoice;
-        const subscriptionId = invoice.subscription as string | null;
+        await handleInvoicePaymentIssue(stripe, supabase, invoice, "failed");
+        break;
+      }
 
-        if (subscriptionId) {
-          await supabase
-            .from("subscriptions")
-            .update({
-              status: "past_due",
-              updated_at: new Date().toISOString(),
-            })
-            .eq("stripe_subscription_id", subscriptionId);
-          const { data: subRow } = await supabase
-            .from("subscriptions")
-            .select("user_id")
-            .eq("stripe_subscription_id", subscriptionId)
-            .maybeSingle();
-          if (subRow?.user_id) {
-            await revokeCopierAccessOnSubscriptionEnd(supabase, subRow.user_id as string);
-          }
-        }
+      case "invoice.payment_action_required": {
+        const invoice = event.data.object as Stripe.Invoice;
+        await handleInvoicePaymentIssue(stripe, supabase, invoice, "action_required");
         break;
       }
 
@@ -338,13 +327,34 @@ Deno.serve(async (req: Request) => {
           ? invoice.subscription
           : invoice.subscription?.id ?? null;
         if (subscriptionId) {
-          await supabase
-            .from("subscriptions")
-            .update({
-              status: "active",
-              updated_at: new Date().toISOString(),
-            })
-            .eq("stripe_subscription_id", subscriptionId);
+          const subscription = await stripe.subscriptions.retrieve(subscriptionId, {
+            expand: ["items.data.price"],
+          });
+          const userId = await resolveUserIdFromSubscription(
+            stripe,
+            subscription,
+            supabase,
+          );
+          const customerId =
+            typeof subscription.customer === "string"
+              ? subscription.customer
+              : subscription.customer?.id ?? null;
+          if (userId && customerId) {
+            await supabase
+              .from("subscriptions")
+              .upsert(
+                subscriptionRowFromStripe(subscription, userId, customerId, priceIds),
+                { onConflict: "user_id", ignoreDuplicates: false },
+              );
+          } else {
+            await supabase
+              .from("subscriptions")
+              .update({
+                status: "active",
+                updated_at: new Date().toISOString(),
+              })
+              .eq("stripe_subscription_id", subscriptionId);
+          }
         }
         await accrueInvoiceCommission(stripe, supabase, invoice);
         break;

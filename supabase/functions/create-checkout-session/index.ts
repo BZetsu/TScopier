@@ -107,10 +107,34 @@ Deno.serve(async (req: Request) => {
     }
 
     const origin = req.headers.get("origin") || "http://localhost:5173";
+    const subscriptionData: Stripe.Checkout.SessionCreateParams.SubscriptionData = {
+      metadata: {
+        supabase_user_id: user.id,
+        plan,
+        interval: billingInterval,
+        extra_accounts: String(extraAccounts || 0),
+      },
+      // Attach checkout card as the subscription default for off-session renewal at trial end.
+      payment_settings: {
+        save_default_payment_method: "on_subscription",
+      },
+    };
+
+    // Advanced plan gets a 10-day free trial for first-time subscribers only
+    if (plan === "advanced" && !existingSub?.trial_ends_at) {
+      subscriptionData.trial_period_days = 10;
+      subscriptionData.trial_settings = {
+        end_behavior: {
+          missing_payment_method: "create_invoice",
+        },
+      };
+    }
+
     const sessionParams: Stripe.Checkout.SessionCreateParams = {
       customer: customerId,
       mode: "subscription",
       line_items: lineItems,
+      payment_method_collection: "always",
       success_url:
         successUrl || `${origin}/dashboard?checkout=success`,
       cancel_url: cancelUrl || `${origin}/pricing`,
@@ -120,20 +144,8 @@ Deno.serve(async (req: Request) => {
         interval: billingInterval,
         extra_accounts: String(extraAccounts || 0),
       },
-      subscription_data: {
-        metadata: {
-          supabase_user_id: user.id,
-          plan,
-          interval: billingInterval,
-          extra_accounts: String(extraAccounts || 0),
-        },
-      },
+      subscription_data: subscriptionData,
     };
-
-    // Advanced plan gets a 10-day free trial for first-time subscribers only
-    if (plan === "advanced" && !existingSub?.trial_ends_at) {
-      sessionParams.subscription_data!.trial_period_days = 10;
-    }
 
     const session = await stripe.checkout.sessions.create(sessionParams);
 

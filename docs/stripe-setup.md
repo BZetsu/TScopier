@@ -21,12 +21,14 @@ Configure in the Stripe Dashboard (or via CLI) and store price IDs as Supabase E
 
 **URL:** `https://sso.tscopier.ai/functions/v1/stripe-webhook`
 
-**Events:**
+**Events** (enable all of these on the Stripe webhook endpoint):
 
 - `checkout.session.completed`
 - `customer.subscription.updated`
 - `customer.subscription.deleted`
+- `invoice.paid`
 - `invoice.payment_failed`
+- `invoice.payment_action_required`
 
 `stripe-webhook` has `verify_jwt = false` in `supabase/config.toml` (Stripe uses signature verification instead).
 
@@ -94,8 +96,9 @@ Enable in Stripe Dashboard: plan changes, cancellation, payment method updates. 
 1. Authenticated user opens `/pricing` and starts checkout (`create-checkout-session`).
 2. Checkout metadata includes `supabase_user_id`, `plan`, `extra_accounts`.
 3. Subscription metadata mirrors checkout metadata for portal updates.
-4. Advanced plan: 10-day trial (`trial_period_days = 10`).
-5. Success redirect: `/dashboard?checkout=success` (SubscriptionContext refreshes).
+4. Advanced plan: 10-day trial (`trial_period_days = 10`) for first-time subscribers only.
+5. Checkout always collects a card (`payment_method_collection: always`) and saves it on the subscription (`save_default_payment_method: on_subscription`) so Stripe can charge automatically when the trial ends.
+6. Success redirect: `/dashboard?checkout=success` (SubscriptionContext refreshes).
 
 ## Soft paywall (plan limits)
 
@@ -112,6 +115,8 @@ Enable in Stripe Dashboard: plan changes, cancellation, payment method updates. 
 **Server:** `broker-metatrader` register, `backtest-run`, worker `handleSignal` (subscription + advanced manual settings).
 
 `past_due` is treated as inactive for feature gates; billing page links to Customer Portal.
+
+When Stripe needs 3DS or another customer step (`invoice.payment_action_required`), or a charge fails (`invoice.payment_failed`), the webhook sets `past_due`, pauses the copier, and emails the user a link to the hosted invoice (or `/billing` as fallback).
 
 ## Manual smoke test checklist
 
