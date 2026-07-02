@@ -7,6 +7,7 @@ import {
   type SubscriptionStatus,
 } from './planLimits'
 import { isAdminAccessActive } from './adminAccess'
+import { loadCachedUserCopierPaused } from './copierPause'
 
 export interface UserSubscriptionRow {
   plan: SubscriptionPlan
@@ -94,6 +95,17 @@ export function subscriptionBlocksSignalExecution(
     return 'plan_advanced_feature_required'
   }
   return null
+}
+
+/** True when the worker may start or renew a Telegram listener for this user. */
+export async function userMayRunCopierListener(
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<boolean> {
+  if (await loadCachedUserIsAdmin(supabase, userId)) return true
+  if (await loadCachedUserCopierPaused(supabase, userId)) return false
+  const sub = await loadCachedUserSubscription(supabase, userId)
+  return isSubscriptionActive(sub?.status)
 }
 
 export { isSubscriptionActive, effectivePlan, manualSettingsUseAdvancedFeatures }

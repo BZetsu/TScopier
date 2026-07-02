@@ -6,6 +6,10 @@ import {
   subscriptionRowFromStripe,
   mapStripeSubscriptionStatus,
 } from "../_shared/stripeSubscriptionSync.ts";
+import {
+  isSubscriptionActive,
+  revokeCopierAccessOnSubscriptionEnd,
+} from "../_shared/subscriptionAccess.ts";
 import { DEFAULT_AFFILIATE_COMMISSION_RATE } from "../_shared/affiliate.ts";
 
 const corsHeaders = {
@@ -258,17 +262,19 @@ Deno.serve(async (req: Request) => {
             : subscription.customer?.id ?? null;
 
         if (userId && customerId) {
+          const row = subscriptionRowFromStripe(subscription, userId, customerId, priceIds);
           await supabase
             .from("subscriptions")
-            .upsert(
-              subscriptionRowFromStripe(subscription, userId, customerId, priceIds),
-              { onConflict: "user_id", ignoreDuplicates: false },
-            );
+            .upsert(row, { onConflict: "user_id", ignoreDuplicates: false });
+          if (!isSubscriptionActive(row.status)) {
+            await revokeCopierAccessOnSubscriptionEnd(supabase, userId);
+          }
         } else if (userId) {
+          const mappedStatus = mapStripeSubscriptionStatus(subscription.status);
           await supabase
             .from("subscriptions")
             .update({
-              status: mapStripeSubscriptionStatus(subscription.status),
+              status: mappedStatus,
               current_period_end: new Date(
                 subscription.current_period_end * 1000,
               ).toISOString(),
@@ -278,6 +284,9 @@ Deno.serve(async (req: Request) => {
               updated_at: new Date().toISOString(),
             })
             .eq("user_id", userId);
+          if (!isSubscriptionActive(mappedStatus)) {
+            await revokeCopierAccessOnSubscriptionEnd(supabase, userId);
+          }
         }
         break;
       }
@@ -294,6 +303,7 @@ Deno.serve(async (req: Request) => {
               updated_at: new Date().toISOString(),
             })
             .eq("user_id", userId);
+          await revokeCopierAccessOnSubscriptionEnd(supabase, userId);
         }
         break;
       }
@@ -310,6 +320,14 @@ Deno.serve(async (req: Request) => {
               updated_at: new Date().toISOString(),
             })
             .eq("stripe_subscription_id", subscriptionId);
+          const { data: subRow } = await supabase
+            .from("subscriptions")
+            .select("user_id")
+            .eq("stripe_subscription_id", subscriptionId)
+            .maybeSingle();
+          if (subRow?.user_id) {
+            await revokeCopierAccessOnSubscriptionEnd(supabase, subRow.user_id as string);
+          }
         }
         break;
       }

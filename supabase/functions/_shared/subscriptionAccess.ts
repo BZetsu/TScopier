@@ -179,3 +179,31 @@ export async function assertTelegramChannelLimit(
 }
 
 export { isSubscriptionActive, effectivePlan };
+
+/** Pause copier and drop listener lease when subscription is no longer active. */
+export async function revokeCopierAccessOnSubscriptionEnd(
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<void> {
+  if (await loadUserIsAdmin(supabase, userId)) return
+
+  const { error: pauseErr } = await supabase
+    .from("user_profiles")
+    .update({ copier_paused: true })
+    .eq("user_id", userId)
+  if (pauseErr) {
+    console.warn(
+      `[subscriptionAccess] copier_paused update failed for ${userId}: ${pauseErr.message}`,
+    )
+  }
+
+  const { error: leaseErr } = await supabase
+    .from("worker_session_leases")
+    .delete()
+    .eq("user_id", userId)
+  if (leaseErr) {
+    console.warn(
+      `[subscriptionAccess] lease delete failed for ${userId}: ${leaseErr.message}`,
+    )
+  }
+}

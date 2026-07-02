@@ -4,6 +4,7 @@ import { ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, Clock, Loader2, P
 import clsx from 'clsx'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import { useSubscription } from '../../context/SubscriptionContext'
 import type { BrokerAccount, Signal, Trade } from '../../types/database'
 import {
   inferBrokerLabelFromServer,
@@ -834,6 +835,7 @@ export function DashboardPage() {
   const t = useT()
   const la = t.dashboard.linkedAccounts
   const { user } = useAuth()
+  const { hasActiveSubscription } = useSubscription()
   const {
     brokers: linkedAccounts,
     loading: brokersLoading,
@@ -1564,7 +1566,7 @@ export function DashboardPage() {
       openTrades: resolvedOpenTradesCount,
       tradesCopiedToday: copiedToday,
       activeChannels: channelsRes.data?.length ?? 0,
-      copierHealth: activeBrokerCount > 0 ? 'Stable' : 'Offline',
+      copierHealth: !hasActiveSubscription ? 'Offline' : (activeBrokerCount > 0 ? 'Stable' : 'Offline'),
       totalSignals: (todaySignalsRes.data ?? []).length,
       yesterdayTotalSignals: (yesterdaySignalsRes.data ?? []).length,
       totalVolume,
@@ -2099,7 +2101,9 @@ export function DashboardPage() {
       setStats(s => ({
         ...s,
         accounts: activeCount,
-        copierHealth: activeCount > 0 ? (s.copierHealth === 'Offline' ? 'Stable' : s.copierHealth) : 'Offline',
+        copierHealth: !hasActiveSubscription
+          ? 'Offline'
+          : (activeCount > 0 ? (s.copierHealth === 'Offline' ? 'Stable' : s.copierHealth) : 'Offline'),
       }))
     }
     applyActiveStats(snapshot.map(a => (a.id === id ? { ...a, is_active } : a)))

@@ -47,6 +47,7 @@ const channelListenerManager_1 = require("./channelListenerManager");
 const channelReconcileMonitor_1 = require("./channelReconcileMonitor");
 const channelFeedGate_1 = require("./channelFeedGate");
 const channelListenerConfig_1 = require("./channelListenerConfig");
+const subscriptionAccess_1 = require("./subscriptionAccess");
 /**
  * Race a promise against a timeout so a single wedged network call cannot
  * stall a whole loop forever. Does not cancel the underlying work (the
@@ -170,7 +171,23 @@ class UserSessionManager {
     async shouldSkipListenerStart(userId) {
         if (this.isAuthBlocked(userId))
             return true;
-        return this.hasActivePendingAuthInDb(userId);
+        if (await this.hasActivePendingAuthInDb(userId))
+            return true;
+        if (!(await (0, subscriptionAccess_1.userMayRunCopierListener)(this.supabase, userId)))
+            return true;
+        return false;
+    }
+    /** Stop listener + release lease when subscription lapses or copier is paused. */
+    async stopListenerIfCopierInactive(userId) {
+        if (await (0, subscriptionAccess_1.userMayRunCopierListener)(this.supabase, userId))
+            return;
+        if (this.listeners.has(userId)) {
+            console.log(`[sessionManager] stopping listener for ${userId}: subscription inactive or copier paused`);
+            await this.stopListener(userId);
+        }
+        else {
+            await (0, sessionLease_1.releaseSessionLease)(this.supabase, userId);
+        }
     }
     getSupabase() {
         return this.supabase;
@@ -235,6 +252,10 @@ class UserSessionManager {
             // or wedged lease write cannot block renewal for every other listener.
             const entries = Array.from(this.listeners.entries());
             await (0, parallelPool_1.parallelMap)(entries, concurrency, async ([userId, listener]) => {
+                if (!(await (0, subscriptionAccess_1.userMayRunCopierListener)(this.supabase, userId))) {
+                    await this.stopListenerIfCopierInactive(userId);
+                    return;
+                }
                 if (!listener.isTelegramConnected())
                     return;
                 try {

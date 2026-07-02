@@ -727,8 +727,11 @@ export function CopierEnginePage() {
               </div>
               <span className="flex-shrink-0 hidden sm:inline-flex gap-1.5">
                 <Badge variant="primary" size="sm">{ce.connected}</Badge>
-                {listenerLease.status === 'live' && (
+                {hasActiveSubscription && listenerLease.status === 'live' && (
                   <Badge variant="primary" size="sm">{ce.listenerLeaseLive}</Badge>
+                )}
+                {!hasActiveSubscription && listenerLease.status === 'live' && (
+                  <Badge variant="warning" size="sm">{ce.listenerLeaseExpired}</Badge>
                 )}
                 {listenerLease.status === 'unknown' && (
                   <Badge variant="neutral" size="sm">{ce.listenerLeaseUnknown}</Badge>

@@ -20,6 +20,7 @@ import { ChannelListenerManager } from './channelListenerManager'
 import { ChannelReconcileMonitor } from './channelReconcileMonitor'
 import { isChannelFeedLiveForSubscriber } from './channelFeedGate'
 import { channelListenerPrimaryMode } from './channelListenerConfig'
+import { userMayRunCopierListener } from './subscriptionAccess'
 
 /**
  * Race a promise against a timeout so a single wedged network call cannot
@@ -157,7 +158,20 @@ export class UserSessionManager {
 
   private async shouldSkipListenerStart(userId: string): Promise<boolean> {
     if (this.isAuthBlocked(userId)) return true
-    return this.hasActivePendingAuthInDb(userId)
+    if (await this.hasActivePendingAuthInDb(userId)) return true
+    if (!(await userMayRunCopierListener(this.supabase, userId))) return true
+    return false
+  }
+
+  /** Stop listener + release lease when subscription lapses or copier is paused. */
+  private async stopListenerIfCopierInactive(userId: string): Promise<void> {
+    if (await userMayRunCopierListener(this.supabase, userId)) return
+    if (this.listeners.has(userId)) {
+      console.log(`[sessionManager] stopping listener for ${userId}: subscription inactive or copier paused`)
+      await this.stopListener(userId)
+    } else {
+      await releaseSessionLease(this.supabase, userId)
+    }
   }
 
   getSupabase(): SupabaseClient {
@@ -255,6 +269,10 @@ export class UserSessionManager {
       // or wedged lease write cannot block renewal for every other listener.
       const entries = Array.from(this.listeners.entries())
       await parallelMap(entries, concurrency, async ([userId, listener]) => {
+        if (!(await userMayRunCopierListener(this.supabase, userId))) {
+          await this.stopListenerIfCopierInactive(userId)
+          return
+        }
         if (!listener.isTelegramConnected()) return
 
         try {
