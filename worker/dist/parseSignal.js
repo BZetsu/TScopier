@@ -18,6 +18,7 @@ const multilingualManagementTerms_1 = require("./multilingualManagementTerms");
 const trainingManagementKeywords_1 = require("./trainingManagementKeywords");
 const multilingualSignalTerms_1 = require("./multilingualSignalTerms");
 const signalEntryNowRequirement_1 = require("./signalEntryNowRequirement");
+const forexBroSignalPatterns_1 = require("./forexBroSignalPatterns");
 /** Loose hint that a message references a Deriv synthetic index (any alias form). */
 const DERIV_SYNTHETIC_HINT_RE = /\b(?:v(?:ix)?\s*\d{2,3}|vol(?:atility)?\s*\d{2,3}|r_?\d{2,3}|1hz\d{1,3}v|boom\s*\d{3,4}|crash\s*\d{3,4}|step(?:\s*index)?|stprng\d?|jump\s*\d{2,3}|jd\d{2,3}|range\s*break|rdbull|rdbear|bull\s*market|bear\s*market)\b/i;
 exports.DEFAULT_CHANNEL_KEYWORDS = {
@@ -377,6 +378,7 @@ function normalizeParsedFromModel(raw, fallbackText) {
             partial_close_fraction = n;
     }
     const re_enter = j.re_enter === true || (0, signalPriceInference_1.detectReEnterIntent)(raw_instruction);
+    const provider_signal_number = numOrNull(j.provider_signal_number);
     return {
         action,
         symbol,
@@ -391,6 +393,7 @@ function normalizeParsedFromModel(raw, fallbackText) {
         open_tp: Boolean(j.open_tp ?? detectOpenTp(fallbackText)),
         ...(partial_close_fraction != null ? { partial_close_fraction } : {}),
         ...(re_enter ? { re_enter: true } : {}),
+        ...(provider_signal_number != null ? { provider_signal_number } : {}),
     };
 }
 const ENTRY_KW = /\b(buy|sell|long|short)\b/i;
@@ -402,7 +405,7 @@ function wantsExplicitFullClose(message, kwClose, channelKeywords, lexicon) {
 /** Stop-loss labels used in management updates (providers often say "risk" or "stoploss"). */
 const SL_TEXT_LABELS = 'sl|stop\\s*loss|stoploss|risk';
 const TP_TEXT_LABELS = 'tp|take\\s*profit|target';
-const SL_MGMT_VERBS = 'set|move|adjust|bring|change|update|make';
+const SL_MGMT_VERBS = 'set|move|adjust|bring|change|update|make|modify';
 function slPriceFromClause(clause) {
     const slClauseTo = clause.match(new RegExp(`\\bto\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'i'));
     if (slClauseTo?.[1])
@@ -446,6 +449,8 @@ function parseSlFromText(text) {
 function parseDeterministicManagement(message, lexicon, channelKeywords) {
     const t = message.replace(/\s+/g, " ").trim();
     if (!t)
+        return null;
+    if ((0, signalManagementIntent_1.looksLikeStructuredEntrySignal)(t))
         return null;
     const tl = t.toLowerCase();
     const sym = (0, tradableSymbol_1.extractTradableSymbolFromMessage)(t);
@@ -834,10 +839,10 @@ function parseSimpleSignal(message, lexicon, channelKeywords) {
         ...splitKeywordAliases(channelKeywords.update.close_tp3, delim),
         ...splitKeywordAliases(channelKeywords.update.close_tp4, delim),
     ];
-    if (/\b(flatten|exit\s+trade|breakeven|break\s+even|partial|move\s+(?:sl|tp|risk|stop\s*loss|stoploss))\b/i.test(text)
+    if (!(0, signalManagementIntent_1.looksLikeStructuredEntrySignal)(message) && (/\b(flatten|exit\s+trade|breakeven|break\s+even|partial|move\s+(?:sl|tp|risk|stop\s*loss|stoploss))\b/i.test(text)
         || looksLikeStopOrTpAdjustCommand(message)
         || (0, signalManagementIntent_1.looksLikeExplicitFullCloseCommand)(message)
-        || hasAnyKeyword(message, mgmtAliases)) {
+        || hasAnyKeyword(message, mgmtAliases))) {
         return null;
     }
     const side = resolveTradeSideFromMessage(message, channelKeywords, lexicon);
@@ -911,7 +916,7 @@ function parseEntryFromKeywords(message, lexicon, channelKeywords) {
         ...splitKeywordAliases(channelKeywords.update.close_tp3, delim),
         ...splitKeywordAliases(channelKeywords.update.close_tp4, delim),
     ];
-    if (hasAnyKeyword(message, mgmtAliases))
+    if (hasAnyKeyword(message, mgmtAliases) && !(0, signalManagementIntent_1.looksLikeStructuredEntrySignal)(message))
         return null;
     const isBuy = parseBuySideFromKeywords(message, buyAliases);
     const isSell = parseSellSideFromKeywords(message, sellAliases);
@@ -1060,7 +1065,11 @@ Object.defineProperty(exports, "looksLikeExplicitFullCloseCommand", { enumerable
 function enrichParsedKeywordMatch(keywordMatch, rawMessage) {
     const enriched = applyReEnterFlag(applyDirectionalPriceInference(normalizeParsedFromModel(keywordMatch, rawMessage), rawMessage), rawMessage);
     const repaired = applyRawSymbolRepair(enriched, rawMessage);
-    return dropInvalidTradeSymbol(repaired);
+    const dropped = dropInvalidTradeSymbol(repaired);
+    const providerNum = dropped.provider_signal_number ?? (0, forexBroSignalPatterns_1.extractProviderSignalNumber)(rawMessage);
+    if (providerNum == null)
+        return dropped;
+    return { ...dropped, provider_signal_number: providerNum };
 }
 /** Deterministic management / SL-TP follow-up parse only (no entry parsers). */
 function parseModificationDeterministic(rawMessage, channelKeywords, lexicon) {
@@ -1112,17 +1121,36 @@ function normalizeAiParsedOutput(raw, fallbackText) {
 }
 /** Synchronous parse when keywords/lexicon are already loaded (hot path). */
 function parseChannelMessageSync(rawMessage, channelKeywords, lexicon) {
-    const message = (0, normalizeTelegramMessageText_1.normalizeSignalMessageForParse)(rawMessage);
+    const collapsedMessage = (0, forexBroSignalPatterns_1.collapseForexBroBilingualMessage)(rawMessage);
+    const message = (0, normalizeTelegramMessageText_1.normalizeSignalMessageForParse)(collapsedMessage);
     const displayMessage = (0, normalizeTelegramMessageText_1.normalizeTelegramMessageText)(rawMessage);
     const ignoreAliases = [
         ...splitKeywordAliases(channelKeywords.additional.ignore_keyword, channelKeywords.additional.delimiters),
         ...splitKeywordAliases(channelKeywords.additional.skip_keyword, channelKeywords.additional.delimiters),
     ];
     const explicitIgnore = hasAnyKeyword(message, ignoreAliases);
-    const keywordMatch = parseDeterministicManagement(message, lexicon, channelKeywords) ??
-        parseChannelParameterFollowUp(message, lexicon, channelKeywords) ??
-        parseSimpleSignal(message, lexicon, channelKeywords) ??
-        parseEntryFromKeywords(message, lexicon, channelKeywords);
+    const forexBro = (0, forexBroSignalPatterns_1.parseForexBroManagementMessage)(message);
+    const keywordMatch = forexBro
+        ? {
+            action: forexBro.action,
+            symbol: forexBro.symbol,
+            entry_price: forexBro.entry_price,
+            entry_zone_low: forexBro.entry_zone_low,
+            entry_zone_high: forexBro.entry_zone_high,
+            sl: forexBro.sl,
+            tp: forexBro.tp,
+            lot_size: forexBro.lot_size,
+            confidence: forexBro.confidence,
+            raw_instruction: displayMessage,
+            open_tp: forexBro.open_tp,
+            ...(forexBro.provider_signal_number != null
+                ? { provider_signal_number: forexBro.provider_signal_number }
+                : {}),
+        }
+        : parseDeterministicManagement(message, lexicon, channelKeywords) ??
+            parseChannelParameterFollowUp(message, lexicon, channelKeywords) ??
+            parseSimpleSignal(message, lexicon, channelKeywords) ??
+            parseEntryFromKeywords(message, lexicon, channelKeywords);
     const rawParsed = explicitIgnore
         ? ignorePayload(displayMessage)
         : keywordMatch ?? {
@@ -1154,7 +1182,9 @@ function parseChannelMessageSync(rawMessage, channelKeywords, lexicon) {
     const parsed = dropped;
     const status = parsed.action === "ignore" ? "skipped" : "parsed";
     const skip_reason = parsed.action === "ignore"
-        ? (explicitIgnore ? "Non-trade message" : "No matching channel keywords or price pattern")
+        ? (explicitIgnore
+            ? "Non-trade message"
+            : (forexBro?.skip_reason ?? "No matching channel keywords or price pattern"))
         : null;
     return { parsed, status, skip_reason };
 }

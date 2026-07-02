@@ -8,6 +8,7 @@ exports.emptyManagementGroups = emptyManagementGroups;
 exports.normalizeManagementGroups = normalizeManagementGroups;
 exports.flattenManagementGroups = flattenManagementGroups;
 exports.hasTrainedManagementGroups = hasTrainedManagementGroups;
+exports.isDisclaimerOrNoteCue = isDisclaimerOrNoteCue;
 exports.bucketFlatManagementCues = bucketFlatManagementCues;
 exports.resolveManagementGroups = resolveManagementGroups;
 exports.joinKeywordPipe = joinKeywordPipe;
@@ -32,13 +33,13 @@ function cleanTokens(raw) {
 function normalizeManagementGroups(raw) {
     const src = raw && typeof raw === 'object' ? raw : {};
     return {
-        close_all: cleanTokens(src.close_all),
-        close_partial: cleanTokens(src.close_partial),
-        close_half: cleanTokens(src.close_half),
-        break_even: cleanTokens(src.break_even),
-        modify_sl: cleanTokens(src.modify_sl),
-        modify_tp: cleanTokens(src.modify_tp),
-        close_worse_entries: cleanTokens(src.close_worse_entries),
+        close_all: filterManagementGroupList(cleanTokens(src.close_all)),
+        close_partial: filterManagementGroupList(cleanTokens(src.close_partial)),
+        close_half: filterManagementGroupList(cleanTokens(src.close_half)),
+        break_even: filterManagementGroupList(cleanTokens(src.break_even)),
+        modify_sl: filterManagementGroupList(cleanTokens(src.modify_sl)),
+        modify_tp: filterManagementGroupList(cleanTokens(src.modify_tp)),
+        close_worse_entries: filterManagementGroupList(cleanTokens(src.close_worse_entries)),
     };
 }
 function flattenManagementGroups(groups) {
@@ -49,6 +50,38 @@ function hasTrainedManagementGroups(groups) {
 }
 function fold(s) {
     return s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+}
+/** Entry footers / TP celebration lines must not become SL-modify channel keywords. */
+function isDisclaimerOrNoteCue(phrase) {
+    const cue = String(phrase ?? '').trim();
+    if (!cue)
+        return true;
+    const f = fold(cue);
+    if (cue.length > 72 && !/\b(?:sl|stop|tp|modify|move|adjust|عدّل|وقف)\b/.test(f))
+        return true;
+    if (/\bmanage\s+your\s+risk\b/.test(f))
+        return true;
+    if (/\bwatch\s+closely\b/.test(f))
+        return true;
+    if (/\bnot\s+bound\s+to\s+hold\b/.test(f))
+        return true;
+    if (/\bonce\s+you.?re\s+satisfied\b/.test(f))
+        return true;
+    if (/اضبط\s+مخاطرتك\s+وراقب\s+الصفقة/.test(cue))
+        return true;
+    if (/\btp\s*\d?\s*:?\s*done\b/.test(f) && !/\b(?:modify|move|adjust|stop)\b/.test(f))
+        return true;
+    if (/\ball\s+targets\b/.test(f) && /\bachieved\b/.test(f))
+        return true;
+    if (/\block[- ]?profit\s+alert\b/.test(f))
+        return true;
+    return false;
+}
+function filterManagementCue(phrase) {
+    return !isDisclaimerOrNoteCue(phrase);
+}
+function filterManagementGroupList(tokens) {
+    return tokens.filter(filterManagementCue);
 }
 function looksConditionalCloseCue(raw) {
     const f = fold(raw);
@@ -68,6 +101,8 @@ function bucketFlatManagementCues(cues) {
         if (!cue)
             continue;
         if (looksConditionalCloseCue(cue))
+            continue;
+        if (isDisclaimerOrNoteCue(cue))
             continue;
         const f = fold(cue);
         if (/\b(close\s+all|close\s+everything|flatten|exit\s+all)\b/.test(f)

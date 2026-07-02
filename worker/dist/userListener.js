@@ -26,6 +26,7 @@ const aiParseModification_1 = require("./aiParseModification");
 const aiParseEntry_1 = require("./aiParseEntry");
 const signalTelegramReconcile_1 = require("./signalTelegramReconcile");
 const signalExecutionEligibility_1 = require("./signalExecutionEligibility");
+const managementScope_1 = require("./managementScope");
 const channelListenerIntegration_1 = require("./channelListenerIntegration");
 const channelListenerConfig_1 = require("./channelListenerConfig");
 const channelRegistry_1 = require("./channelRegistry");
@@ -1452,6 +1453,18 @@ class UserListener {
         pipelineTs.t_parse_done = Date.now();
         if (aiMeta)
             pipelineTs.t_ai_parse_done = pipelineTs.t_parse_done;
+        if (!parentSignalId && parseResult.status === 'parsed') {
+            const providerNum = parseResult.parsed.provider_signal_number;
+            if (typeof providerNum === 'number' && Number.isFinite(providerNum) && providerNum > 0) {
+                const linked = await (0, managementScope_1.resolveEntrySignalIdByProviderNumber)(this.supabase, {
+                    userId: this.userId,
+                    channelId: channelRow.id,
+                    providerSignalNumber: providerNum,
+                });
+                if (linked)
+                    parentSignalId = linked;
+            }
+        }
         if (aiMeta && parseResult.status === 'parsed') {
             const eventType = aiMeta.intent === 'entry' ? 'ai_entry_parsed' : 'ai_modification_parsed';
             void (0, listenerEvents_1.persistListenerEvent)(this.supabase, {
@@ -1481,7 +1494,7 @@ class UserListener {
             });
         }
         const executionEligibility = (0, signalExecutionEligibility_1.evaluateParsedSignalExecutionEligibility)(parseResult.parsed, rawMessage, channelKeywords);
-        const effectiveParseResult = (parseResult.status === 'parsed' && !executionEligibility.eligible)
+        let effectiveParseResult = (parseResult.status === 'parsed' && !executionEligibility.eligible)
             ? {
                 ...parseResult,
                 parsed: {
@@ -1493,6 +1506,36 @@ class UserListener {
                 skip_reason: executionEligibility.skipReason ?? parseResult.skip_reason,
             }
             : parseResult;
+        if (effectiveParseResult.status === 'parsed') {
+            const entryAction = String(effectiveParseResult.parsed.action ?? '').toLowerCase();
+            const providerNum = effectiveParseResult.parsed
+                .provider_signal_number;
+            const entrySymbol = effectiveParseResult.parsed.symbol;
+            if ((entryAction === 'buy' || entryAction === 'sell')
+                && typeof providerNum === 'number'
+                && Number.isFinite(providerNum)
+                && providerNum > 0) {
+                const dupEntry = await (0, managementScope_1.findRecentEntrySignalByProviderNumber)(this.supabase, {
+                    userId: this.userId,
+                    channelId: channelRow.id,
+                    providerSignalNumber: providerNum,
+                    symbol: typeof entrySymbol === 'string' ? entrySymbol : null,
+                    excludeTelegramMessageId: messageId,
+                });
+                if (dupEntry) {
+                    effectiveParseResult = {
+                        ...effectiveParseResult,
+                        parsed: {
+                            ...effectiveParseResult.parsed,
+                            action: 'ignore',
+                            confidence: 0,
+                        },
+                        status: 'skipped',
+                        skip_reason: 'duplicate_provider_signal',
+                    };
+                }
+            }
+        }
         if (effectiveParseResult.status !== 'parsed') {
             if (signalChannelId) {
                 const channelResult = await (0, channelListenerIntegration_1.handlePostParseChannelIngest)({

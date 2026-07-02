@@ -11,6 +11,7 @@ exports.extractBarePriceRangeZone = extractBarePriceRangeZone;
 exports.entryReferenceFromParsed = entryReferenceFromParsed;
 const signalPriceFormat_1 = require("./signalPriceFormat");
 const signalCommentaryGuard_1 = require("./signalCommentaryGuard");
+const forexBroSignalPatterns_1 = require("./forexBroSignalPatterns");
 /** True when the channel explicitly asks to add a new trade (not modify existing). */
 function detectReEnterIntent(message) {
     return /\b(?:re[-\s]?(?:entry|enter)|reenter)\b/i.test(String(message ?? ''));
@@ -148,6 +149,8 @@ function extractUnlabeledPrices(message) {
         if (isInsideParenthetical(index, text))
             continue;
         if ((0, signalCommentaryGuard_1.isPercentagePriceAt)(text, index, raw.length))
+            continue;
+        if ((0, forexBroSignalPatterns_1.isProviderSignalNumberToken)(text, index, raw))
             continue;
         const prefix = text.slice(Math.max(0, index - 3), index);
         if (/[£$€]\s*$/.test(prefix))

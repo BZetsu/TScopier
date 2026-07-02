@@ -326,7 +326,7 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
     }
     const actionPre = String(parsed.action ?? '').toLowerCase();
     let scopeSymbolFilter = symbolFromText;
-    if (replyScoped && !scopeSymbolFilter && signal.parent_signal_id) {
+    if (!scopeSymbolFilter && signal.parent_signal_id) {
         const { data: ps } = await ctx.supabase
             .from('signals')
             .select('parsed_data')
@@ -486,7 +486,7 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
                 return { legsTotal, legsParallelism: legConcurrency };
             }
         }
-        let skipReason = action === 'modify' && !symbolFromText && !replyScoped
+        let skipReason = action === 'modify' && !symbolFromText && !replyScoped && !signal.parent_signal_id
             ? 'mgmt_ambiguous_modify'
             : 'mgmt_no_open_trades_broker';
         if (action === 'close'

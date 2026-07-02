@@ -162,8 +162,8 @@ export async function projectChannelSignalToSubscribers(
           && providerNum > 0
         ) {
           const dupEntry = await findRecentEntrySignalByProviderNumber(supabase, {
-            userId: subscription.user_id,
-            channelId: subscription.id,
+            userId: sub.user_id,
+            channelId: sub.id,
             providerSignalNumber: providerNum,
             symbol: typeof pd?.symbol === 'string' ? pd.symbol : null,
             excludeSignalId: row.id,

@@ -10,6 +10,7 @@ const node_crypto_1 = require("node:crypto");
 const channelListenerConfig_1 = require("./channelListenerConfig");
 const parallelPool_1 = require("./parallelPool");
 const workerMetrics_1 = require("./workerMetrics");
+const managementScope_1 = require("./managementScope");
 async function loadActiveSubscriptions(supabase, signalChannelId) {
     const { data } = await supabase
         .from('telegram_channels')
@@ -93,10 +94,40 @@ async function projectChannelSignalToSubscribers(supabase, canonical, dispatch) 
         (0, workerMetrics_1.incMetric)('channel_signal_projected');
         (0, channelListenerConfig_1.recordSignalChannelMetric)(canonical.signal_channel_id, 'channel_signal_projected');
         if (dispatch) {
-            const ok = dispatch(row) === true;
-            if (ok) {
-                dispatched++;
-                (0, workerMetrics_1.incMetric)('channel_signal_dispatched');
+            const pd = row.parsed_data;
+            const entryAction = String(pd?.action ?? '').toLowerCase();
+            const providerNum = pd?.provider_signal_number;
+            let skipDispatch = false;
+            if (row.status === 'parsed'
+                && (entryAction === 'buy' || entryAction === 'sell')
+                && typeof providerNum === 'number'
+                && Number.isFinite(providerNum)
+                && providerNum > 0) {
+                const dupEntry = await (0, managementScope_1.findRecentEntrySignalByProviderNumber)(supabase, {
+                    userId: sub.user_id,
+                    channelId: sub.id,
+                    providerSignalNumber: providerNum,
+                    symbol: typeof pd?.symbol === 'string' ? pd.symbol : null,
+                    excludeSignalId: row.id,
+                    excludeTelegramMessageId: canonical.telegram_message_id,
+                });
+                if (dupEntry) {
+                    skipDispatch = true;
+                    void supabase
+                        .from('signals')
+                        .update({
+                        status: 'skipped',
+                        skip_reason: 'duplicate_provider_signal',
+                    })
+                        .eq('id', row.id);
+                }
+            }
+            if (!skipDispatch) {
+                const ok = dispatch(row) === true;
+                if (ok) {
+                    dispatched++;
+                    (0, workerMetrics_1.incMetric)('channel_signal_dispatched');
+                }
             }
         }
     });

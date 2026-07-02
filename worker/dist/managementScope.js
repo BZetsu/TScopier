@@ -3,6 +3,7 @@
  * Scope resolution for channel management instructions (close half, modify SL, etc.).
  */
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.PROVIDER_ENTRY_DEDUP_WINDOW_MS = void 0;
 exports.isReplyScopedManagement = isReplyScopedManagement;
 exports.explicitMgmtSymbol = explicitMgmtSymbol;
 exports.filterTradesBySymbolFilter = filterTradesBySymbolFilter;
@@ -16,11 +17,14 @@ exports.loadOpenTradesForChannelWideCwe = loadOpenTradesForChannelWideCwe;
 exports.resolveChannelModifyTargets = resolveChannelModifyTargets;
 exports.expandMgmtRowsToFullBaskets = expandMgmtRowsToFullBaskets;
 exports.loadOpenTradesForSignalAcrossBrokers = loadOpenTradesForSignalAcrossBrokers;
+exports.resolveEntrySignalIdByProviderNumber = resolveEntrySignalIdByProviderNumber;
+exports.findRecentEntrySignalByProviderNumber = findRecentEntrySignalByProviderNumber;
 const basketModFollowUp_1 = require("./basketModFollowUp");
 const parallelPool_1 = require("./parallelPool");
 const pipMath_1 = require("./pipMath");
 const signalPip_1 = require("./signalPip");
 const tradableSymbol_1 = require("./tradableSymbol");
+const forexBroSignalPatterns_1 = require("./forexBroSignalPatterns");
 const MAX_PLAUSIBLE_PIPS = 500;
 /** Legacy gold mgmt used 500 × $0.10 = $50; keep the same price ceiling at cent pips. */
 const METAL_MAX_MGMT_PRICE_DIST = 50;
@@ -390,4 +394,79 @@ async function loadOpenTradesForSignalAcrossBrokers(supabase, args) {
         found.add(r.broker_account_id);
     const brokersMissing = uniqueBrokers.filter(id => !found.has(id));
     return { rows, brokersFound: [...found], brokersMissing };
+}
+/** Find the entry signal row for a provider trade number (ForexBro Signal #NNN). */
+async function resolveEntrySignalIdByProviderNumber(supabase, args) {
+    const n = args.providerSignalNumber;
+    if (!Number.isFinite(n) || n <= 0)
+        return null;
+    const { data } = await supabase
+        .from('signals')
+        .select('id, parsed_data, raw_message')
+        .eq('user_id', args.userId)
+        .eq('channel_id', args.channelId)
+        .order('created_at', { ascending: false })
+        .limit(300);
+    const ref = new RegExp(`(?:new\\s+signal|signal)\\s*#\\s*${n}\\b`, 'i');
+    for (const row of data ?? []) {
+        const pd = row.parsed_data;
+        const action = String(pd?.action ?? '').toLowerCase();
+        if (action !== 'buy' && action !== 'sell')
+            continue;
+        const text = String(row.raw_message ?? pd?.raw_instruction ?? '');
+        if (ref.test(text))
+            return String(row.id);
+    }
+    return null;
+}
+exports.PROVIDER_ENTRY_DEDUP_WINDOW_MS = 24 * 60 * 60 * 1000;
+function providerNumberFromSignalRow(row) {
+    const pd = row.parsed_data;
+    if (typeof pd?.provider_signal_number === 'number' && pd.provider_signal_number > 0) {
+        return pd.provider_signal_number;
+    }
+    return (0, forexBroSignalPatterns_1.extractProviderSignalNumber)(String(row.raw_message ?? ''));
+}
+/** Block duplicate entry dispatch when the same provider Signal #NNN was already ingested. */
+async function findRecentEntrySignalByProviderNumber(supabase, args) {
+    const n = args.providerSignalNumber;
+    if (!Number.isFinite(n) || n <= 0)
+        return null;
+    const windowMs = args.windowMs ?? exports.PROVIDER_ENTRY_DEDUP_WINDOW_MS;
+    const since = new Date(Date.now() - windowMs).toISOString();
+    const sym = String(args.symbol ?? '').toUpperCase();
+    const { data } = await supabase
+        .from('signals')
+        .select('id, telegram_message_id, parsed_data, raw_message, status, created_at')
+        .eq('user_id', args.userId)
+        .eq('channel_id', args.channelId)
+        .gte('created_at', since)
+        .order('created_at', { ascending: false })
+        .limit(100);
+    for (const row of data ?? []) {
+        if (args.excludeSignalId && String(row.id) === args.excludeSignalId)
+            continue;
+        if (args.excludeTelegramMessageId
+            && String(row.telegram_message_id ?? '') === String(args.excludeTelegramMessageId)) {
+            continue;
+        }
+        const pd = row.parsed_data;
+        const action = String(pd?.action ?? '').toLowerCase();
+        if (action !== 'buy' && action !== 'sell')
+            continue;
+        if (providerNumberFromSignalRow(row) !== n)
+            continue;
+        if (sym && String(pd?.symbol ?? '').toUpperCase() !== sym)
+            continue;
+        const status = String(row.status ?? '').toLowerCase();
+        if (status === 'skipped' || status === 'error')
+            continue;
+        return {
+            id: String(row.id),
+            telegram_message_id: row.telegram_message_id != null
+                ? String(row.telegram_message_id)
+                : null,
+        };
+    }
+    return null;
 }
