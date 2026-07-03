@@ -1,11 +1,10 @@
-import { useState } from 'react'
 import { ChevronDown, BookOpen, Mail, MessageCircle } from 'lucide-react'
 import clsx from 'clsx'
 import { useT } from '../../context/LocaleContext'
+import { useLiveChat } from '../../context/LiveChatContext'
 import { DOCS_URL, SUPPORT_EMAIL } from '../../lib/supportContacts'
 import { PageHeader } from '../../components/layout/PageHeader'
 import { PageShell } from '../../components/layout/PageShell'
-import { LiveChatWidget, maximizeLiveChat, type LiveChatVisibility } from '../../components/layout/LiveChatWidget'
 import { Button } from '../../components/ui/Button'
 
 function ContactChannelCard({
@@ -64,15 +63,10 @@ export function ContactSupportPage() {
   const t = useT()
   const page = t.pages.contactSupport
   const cs = t.contactSupportPage
-  const [chatVisibility, setChatVisibility] = useState<LiveChatVisibility>('minimized')
-  const openLiveChat = () => {
-    setChatVisibility('maximized')
-    maximizeLiveChat()
-  }
+  const { openLiveChat } = useLiveChat()
 
   return (
     <PageShell maxWidth="lg" spacing="loose">
-      <LiveChatWidget visibility={chatVisibility} onVisibilityChanged={setChatVisibility} />
       <PageHeader title={page.title} subtitle={page.description} />
 
       <section aria-labelledby="support-channels-heading">

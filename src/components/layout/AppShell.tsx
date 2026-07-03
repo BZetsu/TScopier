@@ -7,6 +7,7 @@ import { PendingBrokerConnectionSync } from '../broker/PendingBrokerConnectionSy
 import { BrokerTerminalHealthSync } from '../broker/BrokerTerminalHealthSync'
 import { AppLayout } from './AppLayout'
 import { useNeedsWelcome } from '../../hooks/useNeedsWelcome'
+import { LiveChatProvider } from '../../context/LiveChatContext'
 
 const WelcomeModal = lazy(() =>
   import('../onboarding/WelcomeModal').then(m => ({ default: m.WelcomeModal })),
@@ -32,12 +33,14 @@ export function AppShell() {
       {!deferAppBootstrap ? <BrokerTerminalHealthSync /> : null}
       <NotificationsProvider enabled={!deferAppBootstrap}>
         <AddTradingAccountProvider>
-          <AppLayout />
-          {needsWelcome ? (
-            <Suspense fallback={null}>
-              <WelcomeModal />
-            </Suspense>
-          ) : null}
+          <LiveChatProvider>
+            <AppLayout />
+            {needsWelcome ? (
+              <Suspense fallback={null}>
+                <WelcomeModal />
+              </Suspense>
+            ) : null}
+          </LiveChatProvider>
         </AddTradingAccountProvider>
       </NotificationsProvider>
     </BrokerAccountsProvider>

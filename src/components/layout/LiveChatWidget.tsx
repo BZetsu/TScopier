@@ -37,7 +37,6 @@ export function LiveChatWidget({ visibility, onVisibilityChanged }: LiveChatWidg
       license={LIVECHAT_LICENSE}
       visibility={visibility}
       onVisibilityChanged={data => {
-        if (data.visibility === 'hidden') return
         onVisibilityChanged?.(data.visibility)
       }}
     />
