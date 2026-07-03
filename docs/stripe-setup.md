@@ -97,7 +97,7 @@ Enable in Stripe Dashboard: plan changes, cancellation, payment method updates. 
 2. Checkout metadata includes `supabase_user_id`, `plan`, `extra_accounts`.
 3. Subscription metadata mirrors checkout metadata for portal updates.
 4. Advanced plan: 10-day trial (`trial_period_days = 10`) for first-time subscribers only.
-5. Checkout always collects a card (`payment_method_collection: always`) and saves it on the subscription (`save_default_payment_method: on_subscription`) so Stripe can charge automatically when the trial ends.
+5. Checkout always collects a card (`payment_method_collection: always`). After checkout completes, the webhook sets `payment_settings.save_default_payment_method: on_subscription` on the Stripe subscription so renewal at trial end can charge off-session.
 6. Success redirect: `/dashboard?checkout=success` (SubscriptionContext refreshes).
 
 ### Checkout troubleshooting

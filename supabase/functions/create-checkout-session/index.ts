@@ -114,10 +114,6 @@ Deno.serve(async (req: Request) => {
         interval: billingInterval,
         extra_accounts: String(extraAccounts || 0),
       },
-      // Attach checkout card as the subscription default for off-session renewal at trial end.
-      payment_settings: {
-        save_default_payment_method: "on_subscription",
-      },
     };
 
     // Advanced plan gets a 10-day free trial for first-time subscribers only

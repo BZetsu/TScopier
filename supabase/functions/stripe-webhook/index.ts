@@ -241,13 +241,34 @@ Deno.serve(async (req: Request) => {
         if (userId && session.subscription && customerId) {
           const subscription = await stripe.subscriptions.retrieve(
             session.subscription as string,
+            { expand: ["items.data.price", "default_payment_method"] },
+          );
+
+          // Checkout Session subscription_data does not accept payment_settings; set it here
+          // so Stripe keeps default_payment_method current for off-session trial renewal.
+          const subUpdate: Stripe.SubscriptionUpdateParams = {
+            payment_settings: { save_default_payment_method: "on_subscription" },
+          };
+          if (!subscription.default_payment_method && session.setup_intent) {
+            const setupIntentId =
+              typeof session.setup_intent === "string"
+                ? session.setup_intent
+                : session.setup_intent.id;
+            const setupIntent = await stripe.setupIntents.retrieve(setupIntentId);
+            const pm = setupIntent.payment_method;
+            const pmId = typeof pm === "string" ? pm : pm?.id;
+            if (pmId) subUpdate.default_payment_method = pmId;
+          }
+          await stripe.subscriptions.update(subscription.id, subUpdate);
+          const subscriptionForDb = await stripe.subscriptions.retrieve(
+            subscription.id,
             { expand: ["items.data.price"] },
           );
 
           await supabase
             .from("subscriptions")
             .upsert(
-              subscriptionRowFromStripe(subscription, userId, customerId, priceIds),
+              subscriptionRowFromStripe(subscriptionForDb, userId, customerId, priceIds),
               { onConflict: "user_id", ignoreDuplicates: false },
             );
         }
