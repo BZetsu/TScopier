@@ -23,5 +23,16 @@ export const logsRu: LogsBundleTranslations = {
     statusFailed: 'Не выполнено',
     statusPending: 'В ожидании',
     statusParsed: 'Разобрано',
+    retry: 'Повторить',
+    retrySuccess: 'Повтор отправлен — копировщик снова попробует этот сигнал.',
+    retryFailedGeneric: 'Не удалось повторить этот сигнал.',
+    retryFailedDetail: 'Не удалось повторить: {reason}',
+    retryReasonNotRetryable: 'Этот сигнал нельзя повторить.',
+    retryReasonDispatchRejected: 'Копировщик не принял повтор.',
+    skipReasons: {
+      entry_not_opened: 'Брокер не открыл позицию по этому сигналу',
+      entry_zone_far_from_market: 'Зона входа слишком далеко от текущей цены',
+      broker_session_not_connected: 'Брокер не подключен',
+    },
   },
 }

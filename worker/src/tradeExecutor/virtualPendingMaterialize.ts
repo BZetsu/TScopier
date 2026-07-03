@@ -86,33 +86,24 @@ export async function materializeVirtualPendingLegs(
   if (insertRows.length === 0) return false
 
   const persistLabel = `standard signal=${signal.id} broker=${broker.id}`
-  if (liveEntryFast) {
-    void ctx.persistRangePendingLegRows(insertRows, persistLabel).then(persist => {
-      if (!persist.ok) {
-        console.error(
-          `[tradeExecutor] range_pending_legs persist failed signal=${signal.id} broker=${broker.id}: ${persist.lastError ?? 'unknown'}`,
-        )
-      }
-    })
-    return true
-  }
-
   const persist = await ctx.persistRangePendingLegRows(insertRows, persistLabel)
   if (!persist.ok) {
     console.error(
       `[tradeExecutor] range_pending_legs persist failed signal=${signal.id} broker=${broker.id}: ${persist.lastError ?? 'unknown'}`,
     )
-    try {
-      await ctx.supabase.from('trade_execution_logs').insert({
-        user_id: signal.user_id,
-        signal_id: signal.id,
-        broker_account_id: broker.id,
-        action: 'virtual_pending_failed',
-        status: 'failed',
-        request_payload: { rows: insertRows.length, anchor, anchorSource } as unknown as Record<string, unknown>,
-        error_message: persist.lastError ?? 'unknown',
-      })
-    } catch { /* logging is best-effort */ }
+    if (!liveEntryFast) {
+      try {
+        await ctx.supabase.from('trade_execution_logs').insert({
+          user_id: signal.user_id,
+          signal_id: signal.id,
+          broker_account_id: broker.id,
+          action: 'virtual_pending_failed',
+          status: 'failed',
+          request_payload: { rows: insertRows.length, anchor, anchorSource } as unknown as Record<string, unknown>,
+          error_message: persist.lastError ?? 'unknown',
+        })
+      } catch { /* logging is best-effort */ }
+    }
     return false
   }
 

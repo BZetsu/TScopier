@@ -23,5 +23,16 @@ export const logsPl: LogsBundleTranslations = {
     statusFailed: 'Nieudane',
     statusPending: 'Oczekujące',
     statusParsed: 'Sparsowane',
+    retry: 'Ponów',
+    retrySuccess: 'Wysłano ponowienie — kopiator spróbuje ponownie tego sygnału.',
+    retryFailedGeneric: 'Nie udało się ponowić tego sygnału.',
+    retryFailedDetail: 'Nie udało się ponowić: {reason}',
+    retryReasonNotRetryable: 'Tego sygnału nie można ponowić.',
+    retryReasonDispatchRejected: 'Kopiator nie przyjął ponowienia.',
+    skipReasons: {
+      entry_not_opened: 'Broker nie otworzył pozycji dla tego sygnału',
+      entry_zone_far_from_market: 'Strefa wejścia zbyt daleko od aktualnej ceny',
+      broker_session_not_connected: 'Broker nie jest połączony',
+    },
   },
 }

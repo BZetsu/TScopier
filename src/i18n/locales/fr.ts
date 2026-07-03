@@ -697,6 +697,17 @@ export const fr: Translations = {
     statusFailed: 'Échoué',
     statusPending: 'En attente',
     statusParsed: 'Analysé',
+    retry: 'Réessayer',
+    retrySuccess: 'Nouvelle tentative envoyée — le copieur va réessayer ce signal.',
+    retryFailedGeneric: 'Impossible de réessayer ce signal.',
+    retryFailedDetail: 'Impossible de réessayer : {reason}',
+    retryReasonNotRetryable: 'Ce signal ne peut pas être relancé.',
+    retryReasonDispatchRejected: 'Le copieur n\'a pas accepté la nouvelle tentative.',
+    skipReasons: {
+      entry_not_opened: 'Le courtier n\'a ouvert aucune position pour ce signal',
+      entry_zone_far_from_market: 'Zone d\'entrée trop éloignée du prix actuel',
+      broker_session_not_connected: 'Courtier non connecté',
+    },
   },
   signalHistoryPage: {
     allChannels: 'Tous les canaux',

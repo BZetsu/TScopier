@@ -30,6 +30,7 @@ const channelMessageFilters_1 = require("../channelMessageFilters");
 const multiTradeMerge_1 = require("../multiTradeMerge");
 const manualPlanner_1 = require("../manualPlanner");
 const pipelineTimestamps_1 = require("../pipelineTimestamps");
+const signalExecutionProven_1 = require("../signalExecutionProven");
 const tradeComment_1 = require("../tradeComment");
 const helpers_1 = require("./helpers");
 const types_1 = require("./types");
@@ -314,6 +315,8 @@ function logPipelineSummaryBackground(ctx, signal, extra) {
     });
 }
 async function markSignalExecuted(ctx, signalId) {
+    if (!(await (0, signalExecutionProven_1.signalExecutionProven)(ctx.supabase, signalId)))
+        return;
     try {
         await ctx.supabase
             .from('signals')
@@ -325,31 +328,14 @@ async function markSignalExecuted(ctx, signalId) {
         /* best-effort */
     }
 }
+function aggregateEntryFailureReason(outcomes) {
+    const reasons = outcomes
+        .map(o => o.finalizeSkipReason ?? o.failureReason)
+        .filter((r) => typeof r === 'string' && r.length > 0);
+    return reasons[0] ?? manualPlanner_1.SKIP_REASON_ENTRY_NOT_OPENED;
+}
 async function signalDispatchAlreadyHandled(ctx, signalId) {
-    const [trades, range, entry, logs] = await Promise.all([
-        ctx.supabase
-            .from('trades')
-            .select('id', { count: 'exact', head: true })
-            .eq('signal_id', signalId),
-        ctx.supabase
-            .from('range_pending_legs')
-            .select('id', { count: 'exact', head: true })
-            .eq('signal_id', signalId),
-        ctx.supabase
-            .from('signal_entry_pending_orders')
-            .select('id', { count: 'exact', head: true })
-            .eq('signal_id', signalId),
-        ctx.supabase
-            .from('trade_execution_logs')
-            .select('id', { count: 'exact', head: true })
-            .eq('signal_id', signalId)
-            .eq('status', 'success')
-            .in('action', [...types_1.EXECUTION_LOG_ACTIONS_HANDLED]),
-    ]);
-    return ((trades.count ?? 0) > 0
-        || (range.count ?? 0) > 0
-        || (entry.count ?? 0) > 0
-        || (logs.count ?? 0) > 0);
+    return (0, signalExecutionProven_1.signalExecutionProven)(ctx.supabase, signalId);
 }
 async function signalLiveDispatchAlreadyHandled(ctx, signalId) {
     return signalDispatchAlreadyHandled(ctx, signalId);
@@ -685,6 +671,9 @@ async function handleSignal(ctx, row, opts) {
             row.pipeline_ts.t_order_send_done = Date.now();
         }
         const anyOpened = outcomes.some(o => o.openedOrMerged === true);
+        const entryFailureReason = !anyOpened && (0, tradeSignalActions_1.isEntryAction)(action)
+            ? aggregateEntryFailureReason(outcomes)
+            : null;
         if (anyOpened) {
             // v2 cutover: seed the basket desired-state at entry so the single v2
             // reconciler can fill naked legs from the ladder and converge every future
@@ -697,6 +686,7 @@ async function handleSignal(ctx, row, opts) {
         pipelineOutcome = {
             ...pipelineOutcome,
             any_opened: anyOpened,
+            failure_reason: entryFailureReason,
             pipeline_ms: pipelineMs,
             brokers: brokers.length,
             dispatch_source: opts?.dispatchSource ?? null,
@@ -804,6 +794,19 @@ async function handleSignal(ctx, row, opts) {
                         await ctx.supabase
                             .from('signals')
                             .update({ status: 'skipped', skip_reason: manualPlanner_1.SKIP_REASON_SIGNAL_ENTRY_RANGE_EXPIRED })
+                            .eq('id', row.id)
+                            .eq('status', 'parsed');
+                    }
+                    catch {
+                        // best-effort
+                    }
+                }
+                else if ((0, tradeSignalActions_1.isEntryAction)(action)) {
+                    const failReason = entryFailureReason ?? manualPlanner_1.SKIP_REASON_ENTRY_NOT_OPENED;
+                    try {
+                        await ctx.supabase
+                            .from('signals')
+                            .update({ status: 'failed', skip_reason: failReason })
                             .eq('id', row.id)
                             .eq('status', 'parsed');
                     }

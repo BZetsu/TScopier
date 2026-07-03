@@ -1347,9 +1347,7 @@ export class TradeExecutor {
           await new Promise(resolve => setTimeout(resolve, 100))
         }
       } else {
-        const materialized = liveFast
-          ? true
-          : await manualDispatchAlreadyMaterialized(this, signal.id, effectiveBroker.id)
+        const materialized = await manualDispatchAlreadyMaterialized(this, signal.id, effectiveBroker.id)
         console.warn(
           `[tradeExecutor] skip duplicate in-flight sendOrder signal=${signal.id} broker=${effectiveBroker.id}`
           + ` materialized=${materialized}`,

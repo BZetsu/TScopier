@@ -23,5 +23,16 @@ export const logsSv: LogsBundleTranslations = {
     statusFailed: 'Misslyckade',
     statusPending: 'Väntande',
     statusParsed: 'Tolkade',
+    retry: 'Försök igen',
+    retrySuccess: 'Nytt försök skickat — kopieraren försöker signalen igen.',
+    retryFailedGeneric: 'Det gick inte att försöka igen med denna signal.',
+    retryFailedDetail: 'Kunde inte försöka igen: {reason}',
+    retryReasonNotRetryable: 'Denna signal kan inte försökas igen.',
+    retryReasonDispatchRejected: 'Kopieraren accepterade inte det nya försöket.',
+    skipReasons: {
+      entry_not_opened: 'Mäklaren öppnade ingen position för denna signal',
+      entry_zone_far_from_market: 'Ingångszon för långt från aktuellt marknadspris',
+      broker_session_not_connected: 'Mäklare inte ansluten',
+    },
   },
 }

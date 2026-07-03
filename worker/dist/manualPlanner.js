@@ -6,7 +6,7 @@
  * stable public surface so callers (e.g. `tradeExecutor`) keep importing `./manualPlanner`.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.planManualOrders = exports.strictSignalEntryQuoteAllowsImmediate = exports.computeCwOverrideTp = exports.planRangeSplit = exports.planSinglePartialTps = exports.reverseSignalGateSatisfied = exports.signalRangeEntryQuoteAllowsImmediate = exports.buildRangeEntryWait = exports.SKIP_REASON_SIGNAL_ENTRY_RANGE_EXPIRED = exports.SKIP_REASON_SIGNAL_ENTRY_RANGE_REQUIRED = exports.SKIP_REASON_SIGNAL_ENTRY_REQUIRED = exports.lastPositiveParsedTpPrice = exports.parsedHasExplicitEntryAnchor = exports.resolvedParsedEntryZone = exports.resolvedParsedEntryPrice = exports.clampPendingExpiryHours = exports.signalEntryRangeStrictEnabled = exports.signalEntryPriceStrictEnabled = void 0;
+exports.planManualOrders = exports.strictSignalEntryQuoteAllowsImmediate = exports.computeCwOverrideTp = exports.planRangeSplit = exports.planSinglePartialTps = exports.reverseSignalGateSatisfied = exports.signalRangeEntryQuoteAllowsImmediate = exports.buildRangeEntryWait = exports.SKIP_REASON_ENTRY_NOT_OPENED = exports.SKIP_REASON_SIGNAL_ENTRY_RANGE_EXPIRED = exports.SKIP_REASON_SIGNAL_ENTRY_RANGE_REQUIRED = exports.SKIP_REASON_SIGNAL_ENTRY_REQUIRED = exports.lastPositiveParsedTpPrice = exports.parsedHasExplicitEntryAnchor = exports.resolvedParsedEntryZone = exports.resolvedParsedEntryPrice = exports.clampPendingExpiryHours = exports.signalEntryRangeStrictEnabled = exports.signalEntryPriceStrictEnabled = void 0;
 var manualSettings_1 = require("./manualPlanning/manualSettings");
 Object.defineProperty(exports, "signalEntryPriceStrictEnabled", { enumerable: true, get: function () { return manualSettings_1.signalEntryPriceStrictEnabled; } });
 Object.defineProperty(exports, "signalEntryRangeStrictEnabled", { enumerable: true, get: function () { return manualSettings_1.signalEntryRangeStrictEnabled; } });
@@ -19,6 +19,7 @@ Object.defineProperty(exports, "lastPositiveParsedTpPrice", { enumerable: true, 
 Object.defineProperty(exports, "SKIP_REASON_SIGNAL_ENTRY_REQUIRED", { enumerable: true, get: function () { return parsedEntry_1.SKIP_REASON_SIGNAL_ENTRY_REQUIRED; } });
 Object.defineProperty(exports, "SKIP_REASON_SIGNAL_ENTRY_RANGE_REQUIRED", { enumerable: true, get: function () { return parsedEntry_1.SKIP_REASON_SIGNAL_ENTRY_RANGE_REQUIRED; } });
 Object.defineProperty(exports, "SKIP_REASON_SIGNAL_ENTRY_RANGE_EXPIRED", { enumerable: true, get: function () { return parsedEntry_1.SKIP_REASON_SIGNAL_ENTRY_RANGE_EXPIRED; } });
+Object.defineProperty(exports, "SKIP_REASON_ENTRY_NOT_OPENED", { enumerable: true, get: function () { return parsedEntry_1.SKIP_REASON_ENTRY_NOT_OPENED; } });
 var signalEntryRange_1 = require("./manualPlanning/signalEntryRange");
 Object.defineProperty(exports, "buildRangeEntryWait", { enumerable: true, get: function () { return signalEntryRange_1.buildRangeEntryWait; } });
 Object.defineProperty(exports, "signalRangeEntryQuoteAllowsImmediate", { enumerable: true, get: function () { return signalEntryRange_1.signalRangeEntryQuoteAllowsImmediate; } });

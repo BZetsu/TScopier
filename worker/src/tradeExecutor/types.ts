@@ -19,6 +19,8 @@ export type SendOrderOutcome = {
   signalRangeEntryDeferred?: boolean
   /** Deterministic no-op where retrying the same parsed signal won't change outcome. */
   finalizeSkipReason?: string
+  /** Broker-level failure detail for entry finalize aggregation. */
+  failureReason?: string
   /** Channel `delay_msec` from Copier Engine (skipped on live fast path). */
   channelDelayMs?: number
   channelDelaySkipped?: boolean

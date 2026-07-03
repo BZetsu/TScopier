@@ -177,6 +177,8 @@ export const channelWorkerEn: ChannelWorkerTranslations = {
       'Telegram listener is not connected — open Copier Engine and reconnect Telegram',
     explicit_stops_required_when_add_to_existing_off:
       'this channel is in single-slot mode (Add to Existing Trades is off), so new entries must include TP/SL parameters',
+    entry_not_opened: 'broker did not open any position for this signal',
+    entry_zone_far_from_market: 'entry zone too far from current market price',
   },
   dispatchSkipped: 'Did not copy this signal ({reason}).',
   errorTicketNotFound: 'Ticket {ticket} not found',

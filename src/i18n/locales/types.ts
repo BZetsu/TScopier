@@ -408,6 +408,13 @@ export interface CopierLogsTranslations {
   statusFailed: string
   statusPending: string
   statusParsed: string
+  retry: string
+  retrySuccess: string
+  retryFailedGeneric: string
+  retryFailedDetail: string
+  retryReasonNotRetryable: string
+  retryReasonDispatchRejected: string
+  skipReasons: Record<string, string>
 }
 
 export interface AccountConfigAddAccountModalTranslations {

@@ -15,6 +15,7 @@ import type { BrokerRow, ParsedSignal, SendOrderOutcome, SignalRow, SymbolCacheE
 import { isV2 } from '../engine/executionMode'
 import { getFxClient, toMtPlatform } from '../engine/fxClient'
 import type { FxOpenOrder } from '../engine/fxContract'
+import { SKIP_REASON_ENTRY_NOT_OPENED } from '../manualPlanner'
 
 /** Normalized broker fill shape shared by the v1 client and the v2 fxClient. */
 type NormalizedFill = {
@@ -68,7 +69,11 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
     // No immediates — virtual range ladder and/or broker strict-entry pending.
     return (materializedVirtuals || strictBrokerPlaced)
       ? { openedOrMerged: true, channelDelayMs, channelDelaySkipped }
-      : { channelDelayMs, channelDelaySkipped }
+      : {
+        channelDelayMs,
+        channelDelaySkipped,
+        failureReason: SKIP_REASON_ENTRY_NOT_OPENED,
+      }
   }
 
   if (manual.trade_style !== 'multi' && legs.length > 1) {
@@ -88,6 +93,7 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
   }
 
   const filledLegs: PostFillTradeLeg[] = []
+  let lastSendError: string | null = null
 
   // v2 entries fire PROTECTED-at-send through the strict fxClient (bounded timeout,
   // strict retcode, no blind 3x retries) instead of the old client. One pre-burst
@@ -303,6 +309,7 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
       return true
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
+      lastSendError = msg
       if (isBrokerDisconnectedMessage(msg) && !isMtBridgeGlitchMessage(msg)) {
         await ctx.markBrokerSessionDown(broker, uuid, msg)
       }
@@ -310,27 +317,15 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
         `[tradeExecutor] OrderSend failed signal=${signal.id} broker=${broker.id} leg=${leg.idx + 1}/${totalCount} op=${args.operation} price=${args.price ?? 0}:`,
         msg,
       )
-      if (liveEntryFast) {
-        void ctx.supabase.from('trade_execution_logs').insert({
-          user_id: signal.user_id,
-          signal_id: signal.id,
-          broker_account_id: broker.id,
-          action: 'order_send',
-          status: 'failed',
-          request_payload: { ...args, ...orderLogContext } as unknown as Record<string, unknown>,
-          error_message: msg,
-        })
-      } else {
-        await ctx.supabase.from('trade_execution_logs').insert({
-          user_id: signal.user_id,
-          signal_id: signal.id,
-          broker_account_id: broker.id,
-          action: 'order_send',
-          status: 'failed',
-          request_payload: { ...args, ...orderLogContext } as unknown as Record<string, unknown>,
-          error_message: msg,
-        })
-      }
+      await ctx.supabase.from('trade_execution_logs').insert({
+        user_id: signal.user_id,
+        signal_id: signal.id,
+        broker_account_id: broker.id,
+        action: 'order_send',
+        status: 'failed',
+        request_payload: { ...args, ...orderLogContext } as unknown as Record<string, unknown>,
+        error_message: msg,
+      })
       return false
     }
   }
@@ -446,9 +441,13 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
       )
     }
   }
+  const openedOrMerged = anyImmediateOpened || materializedVirtuals || strictBrokerPlaced
   return {
-    openedOrMerged: anyImmediateOpened || materializedVirtuals || strictBrokerPlaced,
+    openedOrMerged,
     channelDelayMs,
     channelDelaySkipped,
+    ...(!openedOrMerged
+      ? { failureReason: lastSendError ?? SKIP_REASON_ENTRY_NOT_OPENED }
+      : {}),
   }
 }

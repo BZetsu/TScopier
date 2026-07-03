@@ -1,6 +1,6 @@
 import type { TradeExecutorContext } from './context'
 import { hasFxsocketConfigured } from '../fxsocketClient'
-import type { BrokerRow, QueuedSignal, SignalRow } from './types'
+import type { BrokerRow, QueuedSignal, SendOrderOutcome, SignalRow } from './types'
 import {
   dispatchPriorityForAction,
   isEntryAction,
@@ -23,12 +23,12 @@ import {
 } from '../channelMessageFilters'
 import { shouldRouteAsBasketParameterRefresh, parsedHasSlOrTp } from '../multiTradeMerge'
 import type { ParsedSignal } from '../manualPlanner'
-import { SKIP_REASON_SIGNAL_ENTRY_REQUIRED, SKIP_REASON_SIGNAL_ENTRY_RANGE_REQUIRED, SKIP_REASON_SIGNAL_ENTRY_RANGE_EXPIRED } from '../manualPlanner'
+import { SKIP_REASON_SIGNAL_ENTRY_REQUIRED, SKIP_REASON_SIGNAL_ENTRY_RANGE_REQUIRED, SKIP_REASON_SIGNAL_ENTRY_RANGE_EXPIRED, SKIP_REASON_ENTRY_NOT_OPENED } from '../manualPlanner'
 import { parsePipelineTimestamps, pipelineSummaryPayload } from '../pipelineTimestamps'
+import { signalExecutionProven } from '../signalExecutionProven'
 import { resolveChannelLabelForComment, sanitizeChannelCommentSlug } from '../tradeComment'
 import { isMtUuid, operationFor, brokerHasLinkedSession, brokerSessionUuid } from './helpers'
 import {
-  EXECUTION_LOG_ACTIONS_HANDLED,
   EXECUTOR_MAX_CONCURRENT_SIGNALS,
   EXECUTOR_REPLAY_MAX_AGE_MS,
   PARSED_STATUSES,
@@ -362,6 +362,7 @@ export function logPipelineSummaryBackground(ctx: TradeExecutorContext,
   }
 
 export async function markSignalExecuted(ctx: TradeExecutorContext, signalId: string): Promise<void> {
+    if (!(await signalExecutionProven(ctx.supabase, signalId))) return
     try {
       await ctx.supabase
         .from('signals')
@@ -373,33 +374,15 @@ export async function markSignalExecuted(ctx: TradeExecutorContext, signalId: st
     }
   }
 
+export function aggregateEntryFailureReason(outcomes: SendOrderOutcome[]): string {
+  const reasons = outcomes
+    .map(o => o.finalizeSkipReason ?? o.failureReason)
+    .filter((r): r is string => typeof r === 'string' && r.length > 0)
+  return reasons[0] ?? SKIP_REASON_ENTRY_NOT_OPENED
+}
+
 async function signalDispatchAlreadyHandled(ctx: TradeExecutorContext, signalId: string): Promise<boolean> {
-    const [trades, range, entry, logs] = await Promise.all([
-      ctx.supabase
-        .from('trades')
-        .select('id', { count: 'exact', head: true })
-        .eq('signal_id', signalId),
-      ctx.supabase
-        .from('range_pending_legs')
-        .select('id', { count: 'exact', head: true })
-        .eq('signal_id', signalId),
-      ctx.supabase
-        .from('signal_entry_pending_orders')
-        .select('id', { count: 'exact', head: true })
-        .eq('signal_id', signalId),
-      ctx.supabase
-        .from('trade_execution_logs')
-        .select('id', { count: 'exact', head: true })
-        .eq('signal_id', signalId)
-        .eq('status', 'success')
-        .in('action', [...EXECUTION_LOG_ACTIONS_HANDLED]),
-    ])
-    return (
-      (trades.count ?? 0) > 0
-      || (range.count ?? 0) > 0
-      || (entry.count ?? 0) > 0
-      || (logs.count ?? 0) > 0
-    )
+    return signalExecutionProven(ctx.supabase, signalId)
   }
 
 export async function signalLiveDispatchAlreadyHandled(ctx: TradeExecutorContext, signalId: string): Promise<boolean> {
@@ -802,6 +785,9 @@ export async function handleSignal(ctx: TradeExecutorContext,
         row.pipeline_ts.t_order_send_done = Date.now()
       }
       const anyOpened = outcomes.some(o => o.openedOrMerged === true)
+      const entryFailureReason = !anyOpened && isEntryAction(action)
+        ? aggregateEntryFailureReason(outcomes)
+        : null
       if (anyOpened) {
         // v2 cutover: seed the basket desired-state at entry so the single v2
         // reconciler can fill naked legs from the ladder and converge every future
@@ -814,6 +800,7 @@ export async function handleSignal(ctx: TradeExecutorContext,
       pipelineOutcome = {
         ...pipelineOutcome,
         any_opened: anyOpened,
+        failure_reason: entryFailureReason,
         pipeline_ms: pipelineMs,
         brokers: brokers.length,
         dispatch_source: opts?.dispatchSource ?? null,
@@ -913,6 +900,17 @@ export async function handleSignal(ctx: TradeExecutorContext,
               await ctx.supabase
                 .from('signals')
                 .update({ status: 'skipped', skip_reason: SKIP_REASON_SIGNAL_ENTRY_RANGE_EXPIRED })
+                .eq('id', row.id)
+                .eq('status', 'parsed')
+            } catch {
+              // best-effort
+            }
+          } else if (isEntryAction(action)) {
+            const failReason = entryFailureReason ?? SKIP_REASON_ENTRY_NOT_OPENED
+            try {
+              await ctx.supabase
+                .from('signals')
+                .update({ status: 'failed', skip_reason: failReason })
                 .eq('id', row.id)
                 .eq('status', 'parsed')
             } catch {

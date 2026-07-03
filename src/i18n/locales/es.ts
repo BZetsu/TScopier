@@ -697,6 +697,17 @@ export const es: Translations = {
     statusFailed: 'Fallida',
     statusPending: 'Pendiente',
     statusParsed: 'Analizada',
+    retry: 'Reintentar',
+    retrySuccess: 'Reintento enviado — el copiador volverá a intentar esta señal.',
+    retryFailedGeneric: 'No se pudo reintentar esta señal.',
+    retryFailedDetail: 'No se pudo reintentar: {reason}',
+    retryReasonNotRetryable: 'Esta señal no se puede reintentar.',
+    retryReasonDispatchRejected: 'El copiador no aceptó el reintento.',
+    skipReasons: {
+      entry_not_opened: 'El bróker no abrió ninguna posición para esta señal',
+      entry_zone_far_from_market: 'La zona de entrada está demasiado lejos del precio actual',
+      broker_session_not_connected: 'Bróker no conectado',
+    },
   },
   signalHistoryPage: {
     allChannels: 'Todos los canales',

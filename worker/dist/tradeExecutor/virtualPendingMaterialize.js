@@ -73,29 +73,23 @@ async function materializeVirtualPendingLegs(ctx, prep, strictBrokerPlaced) {
     if (insertRows.length === 0)
         return false;
     const persistLabel = `standard signal=${signal.id} broker=${broker.id}`;
-    if (liveEntryFast) {
-        void ctx.persistRangePendingLegRows(insertRows, persistLabel).then(persist => {
-            if (!persist.ok) {
-                console.error(`[tradeExecutor] range_pending_legs persist failed signal=${signal.id} broker=${broker.id}: ${persist.lastError ?? 'unknown'}`);
-            }
-        });
-        return true;
-    }
     const persist = await ctx.persistRangePendingLegRows(insertRows, persistLabel);
     if (!persist.ok) {
         console.error(`[tradeExecutor] range_pending_legs persist failed signal=${signal.id} broker=${broker.id}: ${persist.lastError ?? 'unknown'}`);
-        try {
-            await ctx.supabase.from('trade_execution_logs').insert({
-                user_id: signal.user_id,
-                signal_id: signal.id,
-                broker_account_id: broker.id,
-                action: 'virtual_pending_failed',
-                status: 'failed',
-                request_payload: { rows: insertRows.length, anchor, anchorSource },
-                error_message: persist.lastError ?? 'unknown',
-            });
+        if (!liveEntryFast) {
+            try {
+                await ctx.supabase.from('trade_execution_logs').insert({
+                    user_id: signal.user_id,
+                    signal_id: signal.id,
+                    broker_account_id: broker.id,
+                    action: 'virtual_pending_failed',
+                    status: 'failed',
+                    request_payload: { rows: insertRows.length, anchor, anchorSource },
+                    error_message: persist.lastError ?? 'unknown',
+                });
+            }
+            catch { /* logging is best-effort */ }
         }
-        catch { /* logging is best-effort */ }
         return false;
     }
     console.log(`[tradeExecutor] virtual pendings inserted=${insertRows.length} signal=${signal.id} broker=${broker.id} symbol=${symbol} anchor=${anchor ?? 'n/a'} (${anchorSource})`);

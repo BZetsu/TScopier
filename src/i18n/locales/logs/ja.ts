@@ -23,5 +23,16 @@ export const logsJa: LogsBundleTranslations = {
     statusFailed: '失敗',
     statusPending: '保留中',
     statusParsed: '解析済み',
+    retry: '再試行',
+    retrySuccess: '再試行を送信しました — コピー機能がこのシグナルを再実行します。',
+    retryFailedGeneric: 'このシグナルを再試行できませんでした。',
+    retryFailedDetail: '再試行できませんでした: {reason}',
+    retryReasonNotRetryable: 'このシグナルは再試行できません。',
+    retryReasonDispatchRejected: 'コピー機能が再試行を受け付けませんでした。',
+    skipReasons: {
+      entry_not_opened: 'ブローカーはこのシグナルでポジションを開きませんでした',
+      entry_zone_far_from_market: 'エントリーゾーンが現在価格から離れすぎています',
+      broker_session_not_connected: 'ブローカーが接続されていません',
+    },
   },
 }

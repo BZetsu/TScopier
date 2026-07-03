@@ -697,6 +697,17 @@ export const en: Translations = {
     statusFailed: 'Failed',
     statusPending: 'Pending',
     statusParsed: 'Parsed',
+    retry: 'Retry',
+    retrySuccess: 'Retry sent — the copier will attempt this signal again.',
+    retryFailedGeneric: 'Could not retry this signal.',
+    retryFailedDetail: 'Could not retry: {reason}',
+    retryReasonNotRetryable: 'This signal cannot be retried.',
+    retryReasonDispatchRejected: 'The copier did not accept the retry.',
+    skipReasons: {
+      entry_not_opened: 'Broker did not open any position for this signal',
+      entry_zone_far_from_market: 'Entry zone too far from current market price',
+      broker_session_not_connected: 'Broker not connected',
+    },
   },
   signalHistoryPage: {
     allChannels: 'All channels',

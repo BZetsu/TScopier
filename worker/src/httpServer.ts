@@ -14,6 +14,7 @@ import { aiParseModification, aiResultToParseResult } from './aiParseModificatio
 import { applySignalOverride } from './applySignalOverride'
 import { forceCloseSignalTrades } from './forceCloseSignalTrades'
 import { retryTradeActivity } from './retryActivity'
+import { retrySignal } from './retrySignal'
 
 const INTERNAL_TOKEN = process.env.WORKER_INTERNAL_TOKEN ?? ''
 const PORT = parseInt(process.env.WORKER_PORT ?? '8080', 10)
@@ -416,6 +417,38 @@ export function startTradeHttpServer(
         }
         try {
           const result = await retryTradeActivity(tradeExecutor, { userId, logId })
+          return sendJson(res, 200, result)
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : 'retry failed'
+          return sendJson(res, 500, { error: msg })
+        }
+      }
+
+      if (url === '/internal/retry-signal' && req.method === 'POST') {
+        if (!INTERNAL_TOKEN) {
+          return sendJson(res, 503, { error: 'WORKER_INTERNAL_TOKEN not configured' })
+        }
+        const token = req.headers['x-internal-token']
+        if (token !== INTERNAL_TOKEN) {
+          return sendJson(res, 401, { error: 'Unauthorized' })
+        }
+        if (!tradeExecutor) {
+          return sendJson(res, 503, { error: 'trade_executor_not_running' })
+        }
+        const body = (await readJson(req)) as {
+          user_id?: string
+          signal_id?: string
+        }
+        const userId = body.user_id?.trim()
+        const signalId = body.signal_id?.trim()
+        if (!userId || !signalId) {
+          return sendJson(res, 400, { error: 'user_id and signal_id required' })
+        }
+        if (!userBelongsToShard(userId)) {
+          return sendJson(res, 200, { ok: false, reason: 'wrong_shard' })
+        }
+        try {
+          const result = await retrySignal(tradeExecutor, { userId, signalId })
           return sendJson(res, 200, result)
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : 'retry failed'

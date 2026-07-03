@@ -10,13 +10,18 @@ const postFillFollowUp_1 = require("../postFillFollowUp");
 const helpers_1 = require("./helpers");
 const executionMode_1 = require("../engine/executionMode");
 const fxClient_1 = require("../engine/fxClient");
+const manualPlanner_1 = require("../manualPlanner");
 async function sendImmediateLegs(input) {
     const { ctx, signal, parsed, broker, manual, api, uuid, symbol, requestedSymbol, mapping, params, legs, liveEntryFast, pipelineT0, strictEntryPrefetch, channelDelayMs, channelDelaySkipped, deferVirtualAnchor, virtualPendings, plan, materializedVirtuals, strictBrokerPlaced, strictDeferred, op, channelKeywords, baseLot, syncMultiLegTps, } = input;
     if (legs.length === 0) {
         // No immediates — virtual range ladder and/or broker strict-entry pending.
         return (materializedVirtuals || strictBrokerPlaced)
             ? { openedOrMerged: true, channelDelayMs, channelDelaySkipped }
-            : { channelDelayMs, channelDelaySkipped };
+            : {
+                channelDelayMs,
+                channelDelaySkipped,
+                failureReason: manualPlanner_1.SKIP_REASON_ENTRY_NOT_OPENED,
+            };
     }
     if (manual.trade_style !== 'multi' && legs.length > 1) {
         console.error(`[tradeExecutor] single trade_style aborting ${legs.length} legs signal=${signal.id} broker=${broker.id}`);
@@ -31,6 +36,7 @@ async function sendImmediateLegs(input) {
         orderLogContext.allowed_symbols = mapping.whitelist;
     }
     const filledLegs = [];
+    let lastSendError = null;
     // v2 entries fire PROTECTED-at-send through the strict fxClient (bounded timeout,
     // strict retcode, no blind 3x retries) instead of the old client. One pre-burst
     // OpenedOrders snapshot powers ambiguous-send adoption so retries never duplicate.
@@ -222,32 +228,20 @@ async function sendImmediateLegs(input) {
         }
         catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
+            lastSendError = msg;
             if ((0, fxsocketClient_1.isBrokerDisconnectedMessage)(msg) && !(0, brokerConnectError_1.isMtBridgeGlitchMessage)(msg)) {
                 await ctx.markBrokerSessionDown(broker, uuid, msg);
             }
             console.error(`[tradeExecutor] OrderSend failed signal=${signal.id} broker=${broker.id} leg=${leg.idx + 1}/${totalCount} op=${args.operation} price=${args.price ?? 0}:`, msg);
-            if (liveEntryFast) {
-                void ctx.supabase.from('trade_execution_logs').insert({
-                    user_id: signal.user_id,
-                    signal_id: signal.id,
-                    broker_account_id: broker.id,
-                    action: 'order_send',
-                    status: 'failed',
-                    request_payload: { ...args, ...orderLogContext },
-                    error_message: msg,
-                });
-            }
-            else {
-                await ctx.supabase.from('trade_execution_logs').insert({
-                    user_id: signal.user_id,
-                    signal_id: signal.id,
-                    broker_account_id: broker.id,
-                    action: 'order_send',
-                    status: 'failed',
-                    request_payload: { ...args, ...orderLogContext },
-                    error_message: msg,
-                });
-            }
+            await ctx.supabase.from('trade_execution_logs').insert({
+                user_id: signal.user_id,
+                signal_id: signal.id,
+                broker_account_id: broker.id,
+                action: 'order_send',
+                status: 'failed',
+                request_payload: { ...args, ...orderLogContext },
+                error_message: msg,
+            });
             return false;
         }
     };
@@ -349,9 +343,13 @@ async function sendImmediateLegs(input) {
             console.warn(`[tradeExecutor] stripped virtual pendings (zero successful immediates) signal=${signal.id} broker=${broker.id}`);
         }
     }
+    const openedOrMerged = anyImmediateOpened || materializedVirtuals || strictBrokerPlaced;
     return {
-        openedOrMerged: anyImmediateOpened || materializedVirtuals || strictBrokerPlaced,
+        openedOrMerged,
         channelDelayMs,
         channelDelaySkipped,
+        ...(!openedOrMerged
+            ? { failureReason: lastSendError ?? manualPlanner_1.SKIP_REASON_ENTRY_NOT_OPENED }
+            : {}),
     };
 }

@@ -23,5 +23,16 @@ export const logsNl: LogsBundleTranslations = {
     statusFailed: 'Mislukt',
     statusPending: 'In afwachting',
     statusParsed: 'Geparseerd',
+    retry: 'Opnieuw proberen',
+    retrySuccess: 'Opnieuw proberen verzonden — de copier probeert dit signaal opnieuw.',
+    retryFailedGeneric: 'Dit signaal kon niet opnieuw worden geprobeerd.',
+    retryFailedDetail: 'Opnieuw proberen mislukt: {reason}',
+    retryReasonNotRetryable: 'Dit signaal kan niet opnieuw worden geprobeerd.',
+    retryReasonDispatchRejected: 'De copier accepteerde de nieuwe poging niet.',
+    skipReasons: {
+      entry_not_opened: 'Broker opende geen positie voor dit signaal',
+      entry_zone_far_from_market: 'Invoerzone te ver van de huidige marktprijs',
+      broker_session_not_connected: 'Broker niet verbonden',
+    },
   },
 }

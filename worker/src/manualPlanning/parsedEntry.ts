@@ -62,3 +62,6 @@ export const SKIP_REASON_SIGNAL_ENTRY_RANGE_REQUIRED = 'signal_entry_range_requi
 
 /** All range-entry waits expired without opening a basket. */
 export const SKIP_REASON_SIGNAL_ENTRY_RANGE_EXPIRED = 'signal_entry_range_expired' as const
+
+/** Entry dispatch ran but no broker opened or merged a position. */
+export const SKIP_REASON_ENTRY_NOT_OPENED = 'entry_not_opened' as const
