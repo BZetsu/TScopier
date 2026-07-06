@@ -33,6 +33,8 @@ export const logsNl: LogsBundleTranslations = {
       entry_not_opened: 'Broker opende geen positie voor dit signaal',
       entry_zone_far_from_market: 'Invoerzone te ver van de huidige marktprijs',
       broker_session_not_connected: 'Broker niet verbonden',
+      broker_bridge_unavailable:
+        'Brokerbrug niet beschikbaar — schakel Algo Trading in op MT5 en controleer Trade EA ready',
     },
   },
 }

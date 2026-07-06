@@ -1,11 +1,13 @@
 import { interpolate } from '../i18n/interpolate'
 import type { CopierLogsTranslations } from '../i18n/locales/types'
 import type { Signal } from '../types/database'
+import { normalizeCopierSkipReasonKey } from './brokerBridgeErrorDisplay'
 
 const RETRYABLE_SKIP_REASONS = new Set([
   'entry_not_opened',
   'entry_zone_far_from_market',
   'broker_session_not_connected',
+  'broker_bridge_unavailable',
 ])
 
 const RETRY_REASON_LABELS: Partial<Record<string, keyof CopierLogsTranslations>> = {
@@ -20,7 +22,7 @@ export function formatCopierSkipReason(
 ): string {
   const raw = String(reason ?? '').trim()
   if (!raw) return '—'
-  const key = raw.toLowerCase()
+  const key = normalizeCopierSkipReasonKey(raw)
   return copierLogs.skipReasons[key] ?? raw.replace(/_/g, ' ')
 }
 

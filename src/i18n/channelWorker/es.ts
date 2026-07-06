@@ -178,10 +178,16 @@ export const channelWorkerEs: ChannelWorkerTranslations = {
       'listener de Telegram inactivo — abra Copier Engine y reconecte Telegram',
     explicit_stops_required_when_add_to_existing_off:
       'este canal está en modo de operación única (Agregar a operaciones existentes desactivado), las nuevas entradas deben incluir TP/SL',
+    broker_bridge_unavailable:
+      'puente del bróker no disponible — active Algo Trading en MT5 y confirme que Trade EA esté listo',
   },
   dispatchSkipped: 'No se copió la señal ({reason}).',
   errorTicketNotFound: 'Ticket {ticket} no encontrado',
   errorSymbolNotFound: 'Símbolo no encontrado: {symbol}',
+  errorBrokerBridgeUnavailable:
+    'Puente del bróker temporalmente no disponible — abra Configuración de cuenta → salud del bróker, active Algo Trading en MT5 y espere Trade EA en verde',
+  errorTradeEaNotReady:
+    'El EA de trading no está listo en MT5 — active Algo Trading, mantenga el terminal abierto y actualice la salud del bróker',
   errorBrokerNotConnected:
     'Broker no conectado — en Configuración de cuenta, use Reconnect e ingrese su contraseña MT',
   errorInvalidStops:

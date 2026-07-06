@@ -393,6 +393,8 @@ export const fr: Translations = {
       statusUnhealthy: 'Non sain',
       statusHealthChecking: 'Vérification…',
       statusHealthView: 'Voir l’état de santé du broker',
+      statusHealthEaHint:
+        'Les comptes connectés ont encore besoin de l’EA de trading MT5 — touchez Santé pour vérifier Algo Trading et Trade EA ready.',
       copyTrades: 'Copier les trades',
       reconnect: 'Reconnecter',
       reconnectAll: 'Tout reconnecter',
@@ -707,6 +709,8 @@ export const fr: Translations = {
       entry_not_opened: 'Le courtier n\'a ouvert aucune position pour ce signal',
       entry_zone_far_from_market: 'Zone d\'entrée trop éloignée du prix actuel',
       broker_session_not_connected: 'Courtier non connecté',
+      broker_bridge_unavailable:
+        'Pont courtier indisponible — ouvrez Configuration du compte → santé du courtier, activez Algo Trading sur MT5 et attendez que Trade EA soit vert',
     },
   },
   signalHistoryPage: {

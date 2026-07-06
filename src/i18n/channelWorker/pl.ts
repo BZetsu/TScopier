@@ -183,6 +183,10 @@ export const channelWorkerPl: ChannelWorkerTranslations = {
   dispatchSkipped: 'Nie skopiowano tego sygnału ({reason}).',
   errorTicketNotFound: 'Nie znaleziono ticketu {ticket}',
   errorSymbolNotFound: 'Nie znaleziono symbolu: {symbol}',
+  errorBrokerBridgeUnavailable:
+    'Broker bridge temporarily unavailable — enable Algo Trading on MT5 and confirm Trade EA ready in Account Configuration',
+  errorTradeEaNotReady:
+    'Trade EA is not ready on your MT5 terminal — enable Algo Trading and refresh broker health',
   errorBrokerNotConnected:
     'Broker nie jest połączony — w Konfiguracji konta użyj Reconnect i wpisz hasło MT dla tego konta',
   errorInvalidStops:

@@ -33,6 +33,8 @@ export const logsJa: LogsBundleTranslations = {
       entry_not_opened: 'ブローカーはこのシグナルでポジションを開きませんでした',
       entry_zone_far_from_market: 'エントリーゾーンが現在価格から離れすぎています',
       broker_session_not_connected: 'ブローカーが接続されていません',
+      broker_bridge_unavailable:
+        'ブローカーブリッジが利用できません — MT5でアルゴ取引を有効にし、Trade EA readyを確認してください',
     },
   },
 }

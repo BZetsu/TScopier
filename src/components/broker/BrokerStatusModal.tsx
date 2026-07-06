@@ -21,6 +21,7 @@ import {
   type FxsocketMtStatus,
   type FxsocketMtStatusCheckId,
 } from '../../lib/fxsocketMtStatus'
+import { isTradeEaNotReadyStatus } from '../../lib/brokerBridgeErrorDisplay'
 
 import type { BrokerStatusModalCopy } from '../../i18n/locales/types'
 
@@ -189,6 +190,7 @@ function BrokerStatusModalInner({
 
   const logo = platformLogo(broker.platform)
   const healthy = status ? isFxsocketMtStatusHealthy(status) : false
+  const tradeEaNotReady = status ? isTradeEaNotReadyStatus(status) : false
   const checks = status ? listFxsocketMtStatusChecks(status) : []
 
   const modal = (
@@ -254,6 +256,20 @@ function BrokerStatusModalInner({
                   {healthy ? copy.healthyBody : copy.unhealthyBody}
                 </span>
               </div>
+            </div>
+          ) : null}
+
+          {status && !loading && tradeEaNotReady ? (
+            <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50/90 px-3 py-3 dark:border-amber-900/50 dark:bg-amber-950/30">
+              <p className="text-sm font-medium text-amber-900 dark:text-amber-100">
+                {copy.tradeEaNotReadyTitle}
+              </p>
+              <p className="mt-1 text-xs leading-relaxed text-amber-800/90 dark:text-amber-200/90">
+                {copy.tradeEaNotReadyBody}
+              </p>
+              <p className="mt-2 text-xs leading-relaxed text-amber-700 dark:text-amber-300/90">
+                {copy.checkBridgeTradeEaReadyHint}
+              </p>
             </div>
           ) : null}
         </div>
@@ -339,6 +355,11 @@ function BrokerStatusModalInner({
                 <StatusRow
                   label={copy.checkBridgeTradeEaReady}
                   ok={status.bridge?.tradeEaReady === true}
+                  detail={
+                    status.bridge?.tradeEaReady === true
+                      ? undefined
+                      : copy.checkBridgeTradeEaReadyHint
+                  }
                 />
                 <StatusRow
                   label={copy.checkBridgeSymbolsSynced}

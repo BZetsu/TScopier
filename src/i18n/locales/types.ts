@@ -513,6 +513,7 @@ export interface AccountConfigBrokerListTranslations {
   statusUnhealthy: string
   statusHealthChecking: string
   statusHealthView: string
+  statusHealthEaHint: string
   copyTrades: string
   reconnect: string
   reconnectAll: string
@@ -599,6 +600,9 @@ export interface BrokerStatusModalCopy {
   checkAccountTradeAllowed: string
   checkBridgeTradeEaReady: string
   checkBridgeSymbolsSynced: string
+  checkBridgeTradeEaReadyHint: string
+  tradeEaNotReadyTitle: string
+  tradeEaNotReadyBody: string
   labelBuild: string
   labelPing: string
   labelServer: string

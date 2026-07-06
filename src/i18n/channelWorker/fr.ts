@@ -182,6 +182,10 @@ export const channelWorkerFr: ChannelWorkerTranslations = {
   dispatchSkipped: 'Signal non copié ({reason}).',
   errorTicketNotFound: 'Ticket {ticket} introuvable',
   errorSymbolNotFound: 'Symbole introuvable : {symbol}',
+  errorBrokerBridgeUnavailable:
+    'Pont courtier temporairement indisponible — ouvrez Configuration du compte → santé du courtier, activez Algo Trading sur MT5 et attendez que Trade EA soit prêt',
+  errorTradeEaNotReady:
+    'L’EA de trading n’est pas prêt sur votre terminal MT5 — activez Algo Trading, gardez le terminal ouvert, puis actualisez la santé du courtier',
   errorBrokerNotConnected:
     'Courtier non connecté — dans Configuration du compte, utilisez Reconnect et entrez votre mot de passe MT',
   errorInvalidStops:

@@ -1,6 +1,10 @@
 import type { ChannelWorkerTranslations } from '../i18n/channelWorker/types'
 import { interpolate } from '../i18n/interpolate'
 import {
+  formatBrokerBridgeErrorMessage,
+  normalizeCopierSkipReasonKey,
+} from './brokerBridgeErrorDisplay'
+import {
   instrumentGuessFromRawTelegram,
   isPlausibleCopierSymbol,
   MANAGEMENT_COPIER_ACTIONS,
@@ -196,6 +200,11 @@ function signalActionFromLog(row: ChannelWorkerLogRow): string {
 }
 
 function translateBrokerError(message: string, cw: ChannelWorkerTranslations): string {
+  const bridgeMsg = formatBrokerBridgeErrorMessage(message, {
+    bridgeUnavailable: cw.errorBrokerBridgeUnavailable,
+    tradeEaNotReady: cw.errorTradeEaNotReady,
+  })
+  if (bridgeMsg) return bridgeMsg
   if (/uuid\s*~~\*|operator does not exist.*uuid/i.test(message)) {
     return cw.errorSignalLinkFailed ?? 'Could not link this trade to its signal.'
   }
@@ -230,7 +239,7 @@ function errSuffix(row: ChannelWorkerLogRow, cw: ChannelWorkerTranslations): str
 }
 
 function translateSkipReason(reason: string, cw: ChannelWorkerTranslations): string {
-  const key = reason.trim().toLowerCase()
+  const key = normalizeCopierSkipReasonKey(reason)
   return cw.skipReasons[key] ?? reason.replace(/_/g, ' ')
 }
 

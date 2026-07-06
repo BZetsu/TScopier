@@ -25,6 +25,11 @@ export const statusModalEn: BrokerStatusModalCopy = {
   checkAccountTradeAllowed: 'Trading allowed',
   checkBridgeTradeEaReady: 'Trade EA ready',
   checkBridgeSymbolsSynced: 'Symbols synced',
+  checkBridgeTradeEaReadyHint:
+    'Enable Algo Trading in MT5, keep the terminal running where FxSocket is linked, then refresh until this check is green.',
+  tradeEaNotReadyTitle: 'Trade EA not ready',
+  tradeEaNotReadyBody:
+    'Your terminal is connected but orders cannot be sent yet. Enable Algo Trading on MT5 and wait for the trade bridge to finish starting.',
   labelBuild: 'Build',
   labelPing: 'Ping',
   labelServer: 'Server',

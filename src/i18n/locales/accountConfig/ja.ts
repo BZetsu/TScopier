@@ -102,6 +102,8 @@ export const accountConfigJa: AccountConfigBundleTranslations = {
       statusUnhealthy: '異常',
       statusHealthChecking: '確認中…',
       statusHealthView: 'View broker health status',
+      statusHealthEaHint:
+        'Connected accounts still need the MT5 trade EA — tap Health to verify Algo Trading is on and Trade EA ready is green.',
       copyTrades: '取引をコピー',
       reconnect: '再接続',
       reconnectAll: 'すべて再接続',

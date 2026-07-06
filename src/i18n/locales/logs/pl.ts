@@ -33,6 +33,8 @@ export const logsPl: LogsBundleTranslations = {
       entry_not_opened: 'Broker nie otworzył pozycji dla tego sygnału',
       entry_zone_far_from_market: 'Strefa wejścia zbyt daleko od aktualnej ceny',
       broker_session_not_connected: 'Broker nie jest połączony',
+      broker_bridge_unavailable:
+        'Mostek brokera niedostępny — włącz Algo Trading w MT5 i sprawdź Trade EA ready',
     },
   },
 }

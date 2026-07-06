@@ -444,6 +444,27 @@ test('channelWorkerLogMessage: hides unlinked channel dispatch skips', () => {
   assert.equal(message, null)
 })
 
+test('channelWorkerLogMessage: HTTP 503 shows bridge unavailable guidance', () => {
+  const message = channelWorkerLogMessage(
+    {
+      action: 'order_send',
+      status: 'failed',
+      request_payload: { symbol: 'XAUUSDm', operation: 'Buy' },
+      response_payload: null,
+      error_message: 'HTTP 503',
+      signals: {
+        channel_id: 'ch-1',
+        parsed_data: { action: 'buy', symbol: 'XAUUSD' },
+        status: 'failed',
+        skip_reason: 'HTTP 503',
+      },
+    },
+    channelWorkerEn,
+    { 'ch-1': 'Gold Trader Mo' },
+  )
+  assert.ok(message?.includes('Broker bridge temporarily unavailable'))
+})
+
 test('channelWorkerLogMessage: hides unlinked channel mgmt-style skipped remap', () => {
   const message = channelWorkerLogMessage(
     {

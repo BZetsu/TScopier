@@ -33,6 +33,7 @@ import { brokerCanReconnect, brokerConnectionBadgeVariant, brokerConnectionStatu
 import {
   brokerTerminalHealthBadgeVariant,
   brokerTerminalHealthLabel,
+  brokerTerminalHealthPhase,
 } from '../../lib/brokerHealth'
 import { BrokerStatusModal } from '../../components/broker/BrokerStatusModal'
 import {
@@ -2148,6 +2149,17 @@ export function AccountConfigPage() {
                               connectErrorLabels,
                             )}
                           </p>
+                        ) : null}
+                        {hasFxsocketBrokerSession(broker)
+                          && broker.connection_status === 'connected'
+                          && brokerTerminalHealthPhase(broker) === 'healthy' ? (
+                          <button
+                            type="button"
+                            onClick={() => setStatusModalBroker(broker)}
+                            className="mt-1 text-left text-xs text-amber-700 dark:text-amber-300 leading-relaxed hover:underline"
+                          >
+                            {bl.statusHealthEaHint}
+                          </button>
                         ) : null}
                     </div>
                     </div>

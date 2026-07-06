@@ -393,6 +393,8 @@ export const es: Translations = {
       statusUnhealthy: 'No saludable',
       statusHealthChecking: 'Comprobando…',
       statusHealthView: 'Ver estado de salud del broker',
+      statusHealthEaHint:
+        'Las cuentas conectadas aún necesitan el EA de trading en MT5 — pulse Salud para verificar Algo Trading y Trade EA ready.',
       copyTrades: 'Copiar operaciones',
       reconnect: 'Reconectar',
       reconnectAll: 'Reconectar todas',
@@ -707,6 +709,8 @@ export const es: Translations = {
       entry_not_opened: 'El bróker no abrió ninguna posición para esta señal',
       entry_zone_far_from_market: 'La zona de entrada está demasiado lejos del precio actual',
       broker_session_not_connected: 'Bróker no conectado',
+      broker_bridge_unavailable:
+        'Puente del bróker no disponible — abra Configuración de cuenta → salud del bróker, active Algo Trading en MT5 y espere a que Trade EA esté en verde',
     },
   },
   signalHistoryPage: {

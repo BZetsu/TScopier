@@ -179,10 +179,16 @@ export const channelWorkerEn: ChannelWorkerTranslations = {
       'this channel is in single-slot mode (Add to Existing Trades is off), so new entries must include TP/SL parameters',
     entry_not_opened: 'broker did not open any position for this signal',
     entry_zone_far_from_market: 'entry zone too far from current market price',
+    broker_bridge_unavailable:
+      'broker bridge unavailable — enable Algo Trading on MT5 and confirm Trade EA ready in Account Configuration',
   },
   dispatchSkipped: 'Did not copy this signal ({reason}).',
   errorTicketNotFound: 'Ticket {ticket} not found',
   errorSymbolNotFound: 'Symbol not found: {symbol}',
+  errorBrokerBridgeUnavailable:
+    'Broker bridge temporarily unavailable — open Account Configuration → broker health, enable Algo Trading on MT5, and wait until Trade EA ready is green',
+  errorTradeEaNotReady:
+    'Trade EA is not ready on your MT5 terminal — enable Algo Trading, keep the terminal running, then refresh broker health',
   errorBrokerNotConnected:
     'Broker not connected — in Account Configuration, use Reconnect and enter your MT password for this account',
   errorInvalidStops:

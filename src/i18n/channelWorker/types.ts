@@ -148,6 +148,8 @@ export interface ChannelWorkerTranslations {
   skipReasons: Record<string, string>
   errorTicketNotFound: string
   errorSymbolNotFound: string
+  errorBrokerBridgeUnavailable: string
+  errorTradeEaNotReady: string
   errorBrokerNotConnected: string
   errorInvalidStops: string
   errorBridgeGlitch: string
