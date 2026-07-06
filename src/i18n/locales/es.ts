@@ -393,8 +393,6 @@ export const es: Translations = {
       statusUnhealthy: 'No saludable',
       statusHealthChecking: 'Comprobando…',
       statusHealthView: 'Ver estado de salud del broker',
-      statusHealthEaHint:
-        'Las cuentas conectadas aún necesitan el EA de trading en MT5 — pulse Salud para verificar Algo Trading y Trade EA ready.',
       copyTrades: 'Copiar operaciones',
       reconnect: 'Reconectar',
       reconnectAll: 'Reconectar todas',

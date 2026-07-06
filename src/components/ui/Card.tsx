@@ -1,12 +1,13 @@
 import clsx from 'clsx'
+import type { ComponentPropsWithoutRef, ReactNode } from 'react'
 
-interface CardProps {
-  children: React.ReactNode
+interface CardProps extends ComponentPropsWithoutRef<'div'> {
+  children: ReactNode
   className?: string
   padding?: 'sm' | 'md' | 'lg' | 'none'
 }
 
-export function Card({ children, className, padding = 'md' }: CardProps) {
+export function Card({ children, className, padding = 'md', ...rest }: CardProps) {
   return (
     <div
       className={clsx(
@@ -19,6 +20,7 @@ export function Card({ children, className, padding = 'md' }: CardProps) {
         },
         className
       )}
+      {...rest}
     >
       {children}
     </div>

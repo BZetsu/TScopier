@@ -102,8 +102,6 @@ export const accountConfigSv: AccountConfigBundleTranslations = {
       statusUnhealthy: 'Inte frisk',
       statusHealthChecking: 'Kontrollerar…',
       statusHealthView: 'View broker health status',
-      statusHealthEaHint:
-        'Connected accounts still need the MT5 trade EA — tap Health to verify Algo Trading is on and Trade EA ready is green.',
       copyTrades: 'Kopiera affärer',
       reconnect: 'Återanslut',
       reconnectAll: 'Återanslut alla',

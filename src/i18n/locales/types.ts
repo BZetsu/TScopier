@@ -513,7 +513,6 @@ export interface AccountConfigBrokerListTranslations {
   statusUnhealthy: string
   statusHealthChecking: string
   statusHealthView: string
-  statusHealthEaHint: string
   copyTrades: string
   reconnect: string
   reconnectAll: string

@@ -33,7 +33,6 @@ import { brokerCanReconnect, brokerConnectionBadgeVariant, brokerConnectionStatu
 import {
   brokerTerminalHealthBadgeVariant,
   brokerTerminalHealthLabel,
-  brokerTerminalHealthPhase,
 } from '../../lib/brokerHealth'
 import { BrokerStatusModal } from '../../components/broker/BrokerStatusModal'
 import {
@@ -2113,20 +2112,43 @@ export function AccountConfigPage() {
                 brokerAccountTypes[broker.id]
                 ?? resolveLinkedAccountTypeForBroker(broker)
               return (
-                <Card key={broker.id} padding="none" className="overflow-hidden">
+                <Card
+                  key={broker.id}
+                  padding="none"
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`${bl.configure} ${broker.label}`}
+                  onClick={() => { void openConfigureModal(broker) }}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      void openConfigureModal(broker)
+                    }
+                  }}
+                  className={clsx(
+                    'group overflow-hidden cursor-pointer transition-all duration-150',
+                    'hover:border-primary-300 hover:shadow-md dark:hover:border-primary-700',
+                    'hover:bg-primary-50/40 dark:hover:bg-primary-950/25',
+                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2',
+                    'dark:focus-visible:ring-offset-neutral-950',
+                  )}
+                >
                   <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="flex min-w-0 items-center gap-3">
-                      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-primary-50 dark:bg-teal-950/60">
+                    <div className="flex min-w-0 flex-1 items-center gap-3">
+                      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-primary-50 transition-colors group-hover:bg-primary-100 dark:bg-teal-950/60 dark:group-hover:bg-teal-950">
                       <PlatformIcon platform={broker.platform} />
                     </div>
-                      <div className="min-w-0">
+                      <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
                           <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">{broker.label}</h3>
                         <Badge variant={statusVariant} size="sm">{statusLabel}</Badge>
                         {healthVariant && healthLabel ? (
                           <button
                             type="button"
-                            onClick={() => setStatusModalBroker(broker)}
+                            onClick={e => {
+                              e.stopPropagation()
+                              setStatusModalBroker(broker)
+                            }}
                             className="inline-flex rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
                             aria-label={bl.statusHealthView}
                           >
@@ -2137,6 +2159,10 @@ export function AccountConfigPage() {
                         {brokerLabel && (
                           <Badge variant="neutral" size="sm">{brokerLabel}</Badge>
                         )}
+                        <ChevronRight
+                          className="h-4 w-4 shrink-0 text-primary-500 opacity-0 transition-opacity group-hover:opacity-100 dark:text-primary-400"
+                          aria-hidden
+                        />
                       </div>
                         {broker.broker_server && (
                           <p className="mt-0.5 truncate text-xs text-neutral-500 dark:text-neutral-400">{broker.broker_server}</p>
@@ -2150,20 +2176,13 @@ export function AccountConfigPage() {
                             )}
                           </p>
                         ) : null}
-                        {hasFxsocketBrokerSession(broker)
-                          && broker.connection_status === 'connected'
-                          && brokerTerminalHealthPhase(broker) === 'healthy' ? (
-                          <button
-                            type="button"
-                            onClick={() => setStatusModalBroker(broker)}
-                            className="mt-1 text-left text-xs text-amber-700 dark:text-amber-300 leading-relaxed hover:underline"
-                          >
-                            {bl.statusHealthEaHint}
-                          </button>
-                        ) : null}
                     </div>
                     </div>
-                    <div className="flex shrink-0 items-center gap-2">
+                    <div
+                      className="flex shrink-0 items-center gap-2"
+                      onClick={e => e.stopPropagation()}
+                      onKeyDown={e => e.stopPropagation()}
+                    >
                       <div className="flex items-center gap-2 pr-1 border-r border-neutral-200 dark:border-neutral-700 mr-1">
                         <span className="text-xs font-medium text-neutral-500 dark:text-neutral-400 hidden sm:inline">
                           {bl.copyTrades}
@@ -2188,8 +2207,14 @@ export function AccountConfigPage() {
                       ) : null}
                       <button
                         type="button"
-                        onClick={() => openConfigureModal(broker)}
-                        className="rounded-lg border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 px-3 py-1.5 text-xs font-medium text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-700 transition-colors"
+                        onClick={() => { void openConfigureModal(broker) }}
+                        className={clsx(
+                          'rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors',
+                          'border-primary-200 bg-primary-50 text-primary-800',
+                          'group-hover:border-primary-300 group-hover:bg-primary-100',
+                          'dark:border-primary-800 dark:bg-primary-950/50 dark:text-primary-200',
+                          'dark:group-hover:border-primary-700 dark:group-hover:bg-primary-950/80',
+                        )}
                       >
                         {bl.configure}
                       </button>
@@ -2203,7 +2228,7 @@ export function AccountConfigPage() {
                       </button>
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 border-t border-neutral-100 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/60 lg:grid-cols-6">
+                  <div className="grid grid-cols-2 border-t border-neutral-100 dark:border-neutral-800 bg-neutral-50 transition-colors group-hover:bg-primary-50/50 dark:bg-neutral-800/60 dark:group-hover:bg-primary-950/20 lg:grid-cols-6">
                     <AccountDetailCell label={bl.detailLogin} value={broker.account_login || '—'} />
                     <AccountDetailCell
                       label={bl.detailAccountType}
