@@ -22,7 +22,6 @@ import { prepareChannelSubscriptionUpsert } from '../../lib/signalChannelRegistr
 import {
   hasValidTelegramChannelIdentity,
   isNumericTelegramChatId,
-  normalizeTelegramUsername,
 } from '../../lib/telegramChannelIdentity'
 import {
   reconcileChannelIdentitiesFromTelegram,
