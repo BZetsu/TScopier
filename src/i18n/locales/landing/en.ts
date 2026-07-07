@@ -15,10 +15,10 @@ export const landingEn: LandingTranslations = {
     menuClose: 'Close menu',
   },
   hero: {
-    trustedBy: '30,000+ Traders from 156 Countries Already Joined',
+    trustedBy: 'Trusted by 30,000+ Traders from 132 Countries',
     avatarAlts: ['TScopier trader', 'TScopier trader', 'TScopier trader'],
-    headline: 'Copy Your Trading Signal Providers',
-    headlineAccent: '24/7 On Autopilot.',
+    headline: '#1 Telegram Signal Copier for MT4 & MT5',
+    headlineAccent: '',
     subheadline:
       'Connect your Telegram and copy trading signals directly to your MT4/MT5 accounts in under 2 minutes - No complicated setups, no EA, and no VPS required. ',
     primaryCta: 'Start Your 10-Day Free Trial',

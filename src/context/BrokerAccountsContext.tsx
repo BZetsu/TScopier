@@ -97,14 +97,14 @@ export function BrokerAccountsProvider({
   }, [enabled, refreshBrokers, user?.id])
 
   const replaceBroker = useCallback((broker: BrokerAccount) => {
-    setBrokers(prev => prev.map(b => (b.id === broker.id ? broker : b)))
+    setBrokers(prev => prev.map(b => (b.id === broker.id ? { ...b, ...broker } : b)))
   }, [])
 
   const upsertBroker = useCallback((broker: BrokerAccount) => {
     setBrokers(prev => {
       const idx = prev.findIndex(b => b.id === broker.id)
       if (idx < 0) return sortBrokerAccountsNewestFirst([...prev, broker])
-      return prev.map(b => (b.id === broker.id ? broker : b))
+      return prev.map(b => (b.id === broker.id ? { ...b, ...broker } : b))
     })
   }, [])
 

@@ -15,10 +15,10 @@ export const landingSv: LandingTranslations = {
     menuClose: 'Stäng menyn',
   },
   hero: {
-    trustedBy: '30 000+ handlare från 156 länder har redan gått med',
+    trustedBy: 'Betrodd av 30 000+ handlare från 132 länder',
     avatarAlts: ['TScopier handlare', 'TScopier handlare', 'TScopier handlare'],
-    headline: 'Kopiera dina signalleverantörer',
-    headlineAccent: '24/7 på autopilot.',
+    headline: 'Telegram-signal kopierare nr 1 för MT4 och MT5',
+    headlineAccent: '',
     subheadline:
       'Anslut Telegram och kopiera handelssignaler direkt till dina MT4/MT5-konton på under 2 minuter — inga komplicerade inställningar, ingen EA och ingen VPS krävs.',
     primaryCta: 'Starta din 10-dagars gratis provperiod',

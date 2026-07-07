@@ -1,6 +1,5 @@
 import { Lock } from 'lucide-react'
 import { HeroDashboardPreview } from '../HeroDashboardPreview'
-import { HeroPlatformFlow } from '../HeroPlatformFlow'
 import { MarketingAuthCta } from '../MarketingAuthCta'
 import { MarketingPricingHint } from '../MarketingPricingHint'
 import { useT } from '../../../context/LocaleContext'
@@ -17,30 +16,9 @@ export function HeroSection() {
   return (
     <section id="product" className="relative scroll-mt-28 overflow-hidden">
       <div className="marketing-hero-grid" aria-hidden />
-      <div className="relative z-[1] mx-auto max-w-6xl px-5 pb-4 pt-6 sm:px-8 sm:pt-8 sm:pb-8 lg:pt-10">
+      <div className="relative z-[1] mx-auto max-w-6xl px-5 pb-4 pt-6 sm:px-8 sm:pt-8 sm:pb-8 lg:max-w-7xl lg:pt-10">
         <div className="mx-auto max-w-3xl text-center">
-          <div className="mb-6 sm:mb-8">
-            <HeroPlatformFlow />
-          </div>
-
-          <h1 className="text-4xl font-bold tracking-tighter sm:text-5xl xl:text-[3.75rem] xl:leading-[1.08]">
-            <span className="block text-neutral-900 dark:text-neutral-50">{l.hero.headline}</span>
-            <span className="mt-1 block text-teal-600 dark:text-teal-400">{l.hero.headlineAccent}</span>
-          </h1>
-
-          <p className="mt-5 text-base leading-relaxed text-neutral-600 dark:text-neutral-400 sm:text-xl">
-            {l.hero.subheadline}
-          </p>
-
-          <div className="mt-10 flex flex-col items-center">
-            <MarketingAuthCta variant="hero" />
-            <MarketingPricingHint
-              basic={l.pricingSnippet.basic}
-              advanced={l.pricingSnippet.advanced}
-            />
-          </div>
-
-          <div className="mt-8 flex flex-wrap items-center justify-center gap-3 sm:mt-10">
+          <div className="mb-5 flex flex-wrap items-center justify-center gap-3 sm:mb-6">
             <div className="flex -space-x-2.5">
               {HERO_AVATARS.map((src, i) => (
                 <img
@@ -57,9 +35,28 @@ export function HeroSection() {
               {l.hero.trustedBy}
             </p>
           </div>
+
+          <h1 className="text-4xl font-semibold tracking-tighter sm:text-5xl xl:text-[4.75rem] xl:leading-[1.08]">
+            <span className="block text-neutral-900 dark:text-neutral-50">{l.hero.headline}</span>
+            {l.hero.headlineAccent ? (
+              <span className="mt-1 block text-teal-600 dark:text-teal-400">{l.hero.headlineAccent}</span>
+            ) : null}
+          </h1>
+
+          <p className="mt-5 text-base leading-relaxed text-neutral-600 dark:text-neutral-400 sm:text-xl">
+            {l.hero.subheadline}
+          </p>
+
+          <div className="mt-10 flex flex-col items-center">
+            <MarketingAuthCta variant="hero" />
+            <MarketingPricingHint
+              basic={l.pricingSnippet.basic}
+              advanced={l.pricingSnippet.advanced}
+            />
+          </div>
         </div>
 
-        <div className="hero-product-showcase relative mx-auto mt-6 w-full max-w-5xl sm:mt-8 lg:mt-10">
+        <div className="hero-product-showcase relative mx-auto mt-6 w-full max-w-5xl sm:mt-8 lg:mt-10 lg:max-w-7xl">
           <div className="hero-product-frame">
             <div className="hero-product-chrome">
               <div className="flex shrink-0 items-center gap-1.5" aria-hidden>

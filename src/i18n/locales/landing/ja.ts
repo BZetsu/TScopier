@@ -15,10 +15,10 @@ export const landingJa: LandingTranslations = {
     menuClose: 'メニューを閉じる',
   },
   hero: {
-    trustedBy: '156か国・30,000人以上のトレーダーが利用中',
+    trustedBy: '132か国・30,000人以上のトレーダーに信頼されています',
     avatarAlts: ['TScopierトレーダー', 'TScopierトレーダー', 'TScopierトレーダー'],
-    headline: '取引シグナル提供者をコピー',
-    headlineAccent: '24時間365日、完全自動。',
+    headline: 'MT4・MT5対応 No.1 Telegramシグナルコピー',
+    headlineAccent: '',
     subheadline:
       'Telegramを接続し、2分以内にMT4/MT5口座へ直接シグナルをコピー。複雑な設定、EA、VPSは不要です。',
     primaryCta: '10日間の無料トライアルを始める',

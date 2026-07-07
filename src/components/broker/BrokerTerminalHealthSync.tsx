@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from 'react'
 import { useLocation } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import { useBrokerAccounts } from '../../context/BrokerAccountsContext'
+import { brokerAccountHealthPatchFromMtStatus } from '../../lib/brokerHealth'
 import { BrokerHealthCheckUnsupportedError, fxsocketBroker } from '../../lib/fxsocketBroker'
 import { hasFxsocketBrokerSession } from '../../lib/brokerLink'
 import { routeNeedsLiveBrokerConnectivity } from '../../lib/liveBrokerRoutes'
@@ -45,9 +46,12 @@ export function BrokerTerminalHealthSync() {
       for (const id of brokerIdsKey.split(',')) {
         if (cancelled || !id || !terminalHealthSupportedRef.current) continue
         try {
-          const { account } = await fxsocketBroker.checkStatus(id)
+          const { account, status } = await fxsocketBroker.checkStatus(id)
           if (cancelled) return
-          upsertBroker(account)
+          upsertBroker({
+            ...account,
+            ...brokerAccountHealthPatchFromMtStatus(status),
+          })
         } catch (err) {
           if (err instanceof BrokerHealthCheckUnsupportedError) {
             terminalHealthSupportedRef.current = false

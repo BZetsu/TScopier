@@ -15,10 +15,10 @@ export const landingNl: LandingTranslations = {
     menuClose: 'Menu sluiten',
   },
   hero: {
-    trustedBy: 'Al 30.000+ traders uit 156 landen zijn aangesloten',
+    trustedBy: 'Vertrouwd door 30.000+ traders uit 132 landen',
     avatarAlts: ['TScopier-trader', 'TScopier-trader', 'TScopier-trader'],
-    headline: 'Kopieer je trading signaalleveranciers',
-    headlineAccent: '24/7 op autopilot.',
+    headline: 'Telegram-signaalkopieerder #1 voor MT4 en MT5',
+    headlineAccent: '',
     subheadline:
       'Koppel Telegram en kopieer handelssignalen direct naar je MT4/MT5-accounts in minder dan 2 minuten — geen complexe setup, geen EA en geen VPS nodig.',
     primaryCta: 'Start je gratis proefperiode van 10 dagen',

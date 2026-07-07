@@ -15,6 +15,7 @@ import { useOverlayDismiss } from '../../hooks/useOverlayDismiss'
 import { Button } from '../ui/Button'
 import { Badge } from '../ui/Badge'
 import { BrokerHealthCheckUnsupportedError, fxsocketBroker } from '../../lib/fxsocketBroker'
+import { brokerAccountHealthPatchFromMtStatus } from '../../lib/brokerHealth'
 import {
   isFxsocketMtStatusHealthy,
   listFxsocketMtStatusChecks,
@@ -137,7 +138,10 @@ function BrokerStatusModalInner({
     try {
       const result = await fxsocketBroker.fetchBrokerStatus(broker.id)
       setStatus(result.status)
-      onAccountUpdate?.(result.account)
+      onAccountUpdate?.({
+        ...result.account,
+        ...brokerAccountHealthPatchFromMtStatus(result.status),
+      })
     } catch (e) {
       setStatus(null)
       if (e instanceof BrokerHealthCheckUnsupportedError) {

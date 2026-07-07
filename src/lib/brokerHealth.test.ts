@@ -15,7 +15,12 @@ function broker(
   patch: Partial<BrokerAccount>,
 ): Pick<
   BrokerAccount,
-  'is_active' | 'connection_status' | 'fxsocket_status' | 'terminal_connected' | 'trade_allowed'
+  | 'is_active'
+  | 'connection_status'
+  | 'fxsocket_status'
+  | 'terminal_connected'
+  | 'trade_allowed'
+  | 'live_terminal_health_phase'
 > {
   return {
     is_active: true,
@@ -23,6 +28,7 @@ function broker(
     fxsocket_status: 'connected',
     terminal_connected: null,
     trade_allowed: null,
+    live_terminal_health_phase: null,
     ...patch,
   }
 }
@@ -58,6 +64,18 @@ describe('brokerTerminalHealthPhase', () => {
   it('returns unhealthy when terminal is disconnected', () => {
     expect(
       brokerTerminalHealthPhase(broker({ terminal_connected: false, trade_allowed: true })),
+    ).toBe('unhealthy')
+  })
+
+  it('prefers live FxSocket health when available', () => {
+    expect(
+      brokerTerminalHealthPhase(
+        broker({
+          terminal_connected: true,
+          trade_allowed: true,
+          live_terminal_health_phase: 'unhealthy',
+        }),
+      ),
     ).toBe('unhealthy')
   })
 })

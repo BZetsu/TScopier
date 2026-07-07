@@ -15,10 +15,10 @@ export const landingPl: LandingTranslations = {
     menuClose: 'Zamknij menu',
   },
   hero: {
-    trustedBy: 'Ponad 30 000 handlowców ze 156 krajów już dołączyło',
+    trustedBy: 'Zaufane przez ponad 30 000 handlowców z 132 krajów',
     avatarAlts: ['TScopier handlarz', 'TScopier handlarz', 'TScopier handlarz'],
-    headline: 'Kopiuj swoich dostawców sygnałów tradingowych',
-    headlineAccent: '24/7 na autopilocie.',
+    headline: 'Kopiarka sygnałów Telegram nr 1 dla MT4 i MT5',
+    headlineAccent: '',
     subheadline:
       'Połącz Telegram i kopiuj sygnały bezpośrednio na konta MT4/MT5 w mniej niż 2 minuty — bez skomplikowanych konfiguracji, bez EA i bez VPS.',
     primaryCta: 'Rozpocznij 10-dniowy bezpłatny okres próbny',
