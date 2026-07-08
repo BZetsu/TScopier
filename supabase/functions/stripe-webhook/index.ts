@@ -11,7 +11,10 @@ import {
   revokeCopierAccessOnSubscriptionEnd,
 } from "../_shared/subscriptionAccess.ts";
 import { DEFAULT_AFFILIATE_COMMISSION_RATE } from "../_shared/affiliate.ts";
-import { handleInvoicePaymentIssue } from "../_shared/billingPaymentNotification.ts";
+import {
+  handleInvoiceDue,
+  handleInvoicePaymentIssue,
+} from "../_shared/billingPaymentNotification.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -327,6 +330,12 @@ Deno.serve(async (req: Request) => {
             .eq("user_id", userId);
           await revokeCopierAccessOnSubscriptionEnd(supabase, userId);
         }
+        break;
+      }
+
+      case "invoice.finalized": {
+        const invoice = event.data.object as Stripe.Invoice;
+        await handleInvoiceDue(stripe, supabase, invoice);
         break;
       }
 

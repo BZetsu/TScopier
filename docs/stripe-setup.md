@@ -27,6 +27,7 @@ Configure in the Stripe Dashboard (or via CLI) and store price IDs as Supabase E
 - `customer.subscription.updated`
 - `customer.subscription.deleted`
 - `invoice.paid`
+- `invoice.finalized`
 - `invoice.payment_failed`
 - `invoice.payment_action_required`
 
@@ -128,6 +129,8 @@ Common causes:
 **Server:** `broker-metatrader` register, `backtest-run`, worker `handleSignal` (subscription + advanced manual settings).
 
 `past_due` is treated as inactive for feature gates; billing page links to Customer Portal.
+
+When Stripe finalizes an open invoice billed via `send_invoice` (`invoice.finalized`), the webhook emails an **Invoice Due** notice with a link to the hosted invoice (or `/billing` as fallback). Auto-charged (`charge_automatically`) renewals are skipped so card subscribers are not emailed every cycle.
 
 When Stripe needs 3DS or another customer step (`invoice.payment_action_required`), or a charge fails (`invoice.payment_failed`), the webhook sets `past_due`, pauses the copier, and emails the user a link to the hosted invoice (or `/billing` as fallback).
 
