@@ -15,6 +15,9 @@ interface MarketingAuthCtaProps {
 const primaryBtnClass =
   'inline-flex shrink-0 items-center justify-center rounded-lg border border-teal-600 bg-teal-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:border-teal-700 hover:bg-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2 dark:focus:ring-offset-neutral-950'
 
+const heroCtaClass =
+  'group inline-flex w-full items-center justify-center gap-2 rounded-xl border border-teal-600 bg-teal-600 px-7 py-3.5 text-base font-semibold text-white shadow-lg shadow-teal-600/25 transition-all duration-300 hover:border-teal-500 hover:bg-teal-500 hover:shadow-[0_0_28px_rgba(45,212,191,0.55),0_0_56px_rgba(13,148,136,0.22)] sm:w-auto'
+
 export function MarketingAuthCta({ variant, onNavigate }: MarketingAuthCtaProps) {
   const { isSignedIn, loading } = useMarketingAuthState()
   const nav = useT().landing.nav
@@ -47,8 +50,7 @@ export function MarketingAuthCta({ variant, onNavigate }: MarketingAuthCtaProps)
         href={appUrl('/dashboard')}
         onClick={() => onCtaClick('dashboard')}
         className={clsx(
-          variant === 'hero' &&
-            'group inline-flex w-full items-center justify-center gap-2 rounded-xl border border-teal-600 bg-teal-600 px-7 py-3.5 text-base font-semibold text-white transition-colors hover:border-teal-700 hover:bg-teal-700 sm:w-auto',
+          variant === 'hero' && heroCtaClass,
           variant === 'header' && primaryBtnClass,
           variant === 'headerMobile' &&
             'rounded-lg px-3 py-2.5 text-sm font-medium text-teal-600 transition-colors hover:bg-teal-50 dark:text-teal-400 dark:hover:bg-teal-950/40',
@@ -74,20 +76,13 @@ export function MarketingAuthCta({ variant, onNavigate }: MarketingAuthCtaProps)
 
   if (variant === 'hero') {
     return (
-      <div className="flex w-full flex-col items-center justify-center gap-3 sm:flex-row">
+      <div className="flex w-full flex-col items-center justify-center">
         <a
           href={`${appUrl('/signup')}${referralSuffix}`}
           onClick={() => onCtaClick('signup')}
-          className="group inline-flex w-full items-center justify-center gap-2 rounded-xl border border-teal-600 bg-teal-600 px-7 py-3.5 text-base font-semibold text-white transition-colors hover:border-teal-700 hover:bg-teal-700 sm:w-auto"
+          className={heroCtaClass}
         >
           {hero.primaryCta}
-        </a>
-        <a
-          href={`${appUrl('/login')}${referralSuffix}`}
-          onClick={() => onCtaClick('login')}
-          className="inline-flex w-full items-center justify-center rounded-xl border border-neutral-200 bg-white px-7 py-3.5 text-base font-medium text-neutral-700 transition-colors hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100 dark:hover:bg-neutral-700 sm:w-auto"
-        >
-          {hero.secondaryCta}
         </a>
       </div>
     )
