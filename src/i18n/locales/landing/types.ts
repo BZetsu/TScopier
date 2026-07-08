@@ -337,8 +337,6 @@ export interface LandingTranslations {
     menuClose: string
   }
   hero: {
-    trustedBy: string
-    avatarAlts: [string, string, string]
     headline: string
     headlineAccent: string
     subheadline: string

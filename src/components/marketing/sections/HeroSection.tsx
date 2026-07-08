@@ -1,14 +1,9 @@
 import { Lock } from 'lucide-react'
+import { TrustpilotWidget } from '../../auth/TrustpilotStars'
 import { HeroDashboardPreview } from '../HeroDashboardPreview'
 import { MarketingAuthCta } from '../MarketingAuthCta'
 import { MarketingPricingHint } from '../MarketingPricingHint'
 import { useT } from '../../../context/LocaleContext'
-
-const HERO_AVATARS = [
-  '/marketing/hero-avatar-1.jpg',
-  '/marketing/hero-avatar-2.jpg',
-  '/marketing/hero-avatar-3.jpg',
-] as const
 
 export function HeroSection() {
   const l = useT().landing
@@ -18,25 +13,11 @@ export function HeroSection() {
       <div className="marketing-hero-grid" aria-hidden />
       <div className="relative z-[1] mx-auto max-w-6xl px-5 pb-4 pt-6 sm:px-8 sm:pt-8 sm:pb-8 lg:max-w-7xl lg:pt-10">
         <div className="mx-auto max-w-3xl text-center">
-          <div className="mb-5 flex flex-wrap items-center justify-center gap-3 sm:mb-6">
-            <div className="flex -space-x-2.5">
-              {HERO_AVATARS.map((src, i) => (
-                <img
-                  key={src}
-                  src={src}
-                  alt={l.hero.avatarAlts[i]}
-                  width={36}
-                  height={36}
-                  className="h-6 w-6 rounded-full border-2 border-white object-cover dark:border-neutral-700"
-                />
-              ))}
-            </div>
-            <p className="text-sm font-medium text-neutral-600 dark:text-neutral-400">
-              {l.hero.trustedBy}
-            </p>
+          <div className="mb-5 sm:mb-6">
+            <TrustpilotWidget excellentLabel="Excellent" trustpilotLabel={l.reviews.trustpilotLabel} />
           </div>
 
-          <h1 className="text-4xl font-semibold tracking-tighter sm:text-5xl xl:text-[4.75rem] xl:leading-[1.08]">
+          <h1 className="text-4xl font-semibold tracking-tighter sm:text-5xl xl:text-[4.05rem] xl:leading-[1.08]">
             <span className="block text-neutral-900 dark:text-neutral-50">{l.hero.headline}</span>
             {l.hero.headlineAccent ? (
               <span className="mt-1 block text-teal-600 dark:text-teal-400">{l.hero.headlineAccent}</span>

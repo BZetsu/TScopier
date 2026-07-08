@@ -15,10 +15,8 @@ export const landingRu: LandingTranslations = {
     menuClose: 'Закрыть меню',
   },
   hero: {
-    trustedBy: 'Нам доверяют более 30 000 трейдеров из 132 стран',
-    avatarAlts: ['TScopier трейдер', 'TScopier трейдер', 'TScopier трейдер'],
-    headline: 'Копировщик сигналов Telegram №1 для MT4 и MT5',
-    headlineAccent: '',
+    headline: 'Копируйте торговые сигналы из любого канала Telegram',
+    headlineAccent: '24/7 на автопилоте.',
     subheadline:
       'Подключите Telegram и копируйте торговые сигналы напрямую на счета MT4/MT5 менее чем за 2 минуты — без сложных настроек, советников и VPS.',
     primaryCta: 'Начните 10-дневный бесплатный пробный период',
