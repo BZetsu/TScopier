@@ -1,5 +1,6 @@
 import type { SubscriptionPlan } from './planLimits'
 import type { Translations } from '../i18n/locales/types'
+import { isTrialEnded } from './planLimits'
 
 type SubscribeCtaOptions = {
   isPastDue: boolean
@@ -16,6 +17,7 @@ export function getSubscribeCtaLabel(t: Translations, opts: SubscribeCtaOptions)
   return t.pricing.startTrial
 }
 
+/** True when trial_ends_at is set and that timestamp is in the past. */
 export function hasTrialExpired(trialEndsAt: string | null | undefined): boolean {
-  return trialEndsAt != null && trialEndsAt.length > 0
+  return isTrialEnded(trialEndsAt)
 }

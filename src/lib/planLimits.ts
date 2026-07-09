@@ -34,8 +34,30 @@ export const PLAN_LIMITS = {
   },
 } as const
 
-export function isSubscriptionActive(status: string | null | undefined): boolean {
-  return status === 'active' || status === 'trialing'
+/** True when trial_ends_at is a parseable timestamp strictly before `now`. */
+export function isTrialEnded(
+  trialEndsAt: string | Date | null | undefined,
+  now: Date = new Date(),
+): boolean {
+  if (trialEndsAt == null || trialEndsAt === '') return false
+  const end =
+    typeof trialEndsAt === 'string' ? Date.parse(trialEndsAt) : trialEndsAt.getTime()
+  if (!Number.isFinite(end)) return false
+  return end < now.getTime()
+}
+
+/**
+ * Paid `active` always counts. `trialing` counts only while trial_ends_at is
+ * unset/unparseable or still in the future — so stuck Stripe sync cannot keep
+ * access open after the trial calendar end.
+ */
+export function isSubscriptionActive(
+  status: string | null | undefined,
+  trialEndsAt?: string | Date | null,
+): boolean {
+  if (status === 'active') return true
+  if (status === 'trialing') return !isTrialEnded(trialEndsAt)
+  return false
 }
 
 export function maxBrokerAccounts(
@@ -67,8 +89,9 @@ export function maxTpRows(plan: SubscriptionPlan | null | undefined): number | n
 export function effectivePlan(
   plan: SubscriptionPlan | null | undefined,
   status: string | null | undefined,
+  trialEndsAt?: string | Date | null,
 ): SubscriptionPlan | null {
-  if (!isSubscriptionActive(status)) return null
+  if (!isSubscriptionActive(status, trialEndsAt)) return null
   return plan ?? null
 }
 
@@ -76,8 +99,9 @@ export function canUseFeature(
   plan: SubscriptionPlan | null | undefined,
   status: string | null | undefined,
   feature: PlanFeatureKey,
+  trialEndsAt?: string | Date | null,
 ): boolean {
-  const effective = effectivePlan(plan, status)
+  const effective = effectivePlan(plan, status, trialEndsAt)
   if (!effective) return false
   if (effective === 'advanced') return true
   switch (feature) {
@@ -97,13 +121,17 @@ export function canUseFeature(
 /** Plan + status for persisting channel manual settings (admin → advanced/active). */
 export function planContextForManualSettings(
   effectivePlan: SubscriptionPlan | null,
-  subscription: { plan?: SubscriptionPlan; status?: string | null } | null,
+  subscription: {
+    plan?: SubscriptionPlan
+    status?: string | null
+    trial_ends_at?: string | null
+  } | null,
 ): { plan: SubscriptionPlan | null | undefined; status: string | null | undefined } {
   if (effectivePlan) {
     const st = subscription?.status
     return {
       plan: effectivePlan,
-      status: st && isSubscriptionActive(st) ? st : 'active',
+      status: st && isSubscriptionActive(st, subscription?.trial_ends_at) ? st : 'active',
     }
   }
   return { plan: subscription?.plan, status: subscription?.status ?? null }
@@ -113,8 +141,9 @@ export function normalizeManualSettingsForPlan<T extends Record<string, unknown>
   plan: SubscriptionPlan | null | undefined,
   status: string | null | undefined,
   settings: T,
+  trialEndsAt?: string | Date | null,
 ): T {
-  const effective = effectivePlan(plan, status)
+  const effective = effectivePlan(plan, status, trialEndsAt)
   if (effective === 'advanced') return settings
   const next = { ...settings } as Record<string, unknown>
 
@@ -155,8 +184,9 @@ export function planLimitsSnapshot(
   plan: SubscriptionPlan | null | undefined,
   status: string | null | undefined,
   extraAccounts = 0,
+  trialEndsAt?: string | Date | null,
 ): PlanLimitsSnapshot {
-  const effective = effectivePlan(plan, status)
+  const effective = effectivePlan(plan, status, trialEndsAt)
   return {
     maxBrokerAccounts: maxBrokerAccounts(effective ?? undefined, extraAccounts),
     maxTelegramChannels: maxTelegramChannels(effective ?? undefined),

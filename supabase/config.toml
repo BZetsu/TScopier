@@ -41,3 +41,9 @@ verify_jwt = false
 
 [functions.fxsocket-broker]
 verify_jwt = true
+
+[functions.reconcile-expired-trials]
+verify_jwt = false
+
+[functions.signal-reconcile-sweep]
+verify_jwt = false

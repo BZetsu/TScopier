@@ -291,11 +291,14 @@ Deno.serve(async (req: Request) => {
           await supabase
             .from("subscriptions")
             .upsert(row, { onConflict: "user_id", ignoreDuplicates: false });
-          if (!isSubscriptionActive(row.status)) {
+          if (!isSubscriptionActive(row.status, row.trial_ends_at)) {
             await revokeCopierAccessOnSubscriptionEnd(supabase, userId);
           }
         } else if (userId) {
           const mappedStatus = mapStripeSubscriptionStatus(subscription.status);
+          const trialEndsAt = subscription.trial_end
+            ? new Date(subscription.trial_end * 1000).toISOString()
+            : null;
           await supabase
             .from("subscriptions")
             .update({
@@ -303,13 +306,11 @@ Deno.serve(async (req: Request) => {
               current_period_end: new Date(
                 subscription.current_period_end * 1000,
               ).toISOString(),
-              trial_ends_at: subscription.trial_end
-                ? new Date(subscription.trial_end * 1000).toISOString()
-                : null,
+              trial_ends_at: trialEndsAt,
               updated_at: new Date().toISOString(),
             })
             .eq("user_id", userId);
-          if (!isSubscriptionActive(mappedStatus)) {
+          if (!isSubscriptionActive(mappedStatus, trialEndsAt)) {
             await revokeCopierAccessOnSubscriptionEnd(supabase, userId);
           }
         }

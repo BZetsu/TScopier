@@ -13,6 +13,7 @@ export interface UserSubscriptionRow {
   plan: SubscriptionPlan
   status: SubscriptionStatus
   extra_accounts: number
+  trial_ends_at: string | null
 }
 
 const CACHE_TTL_MS = 60_000
@@ -28,7 +29,7 @@ export async function loadCachedUserSubscription(
 
   const { data } = await supabase
     .from('subscriptions')
-    .select('plan,status,extra_accounts')
+    .select('plan,status,extra_accounts,trial_ends_at')
     .eq('user_id', userId)
     .maybeSingle()
 
@@ -89,8 +90,8 @@ export function subscriptionBlocksSignalExecution(
   isAdmin = false,
 ): string | null {
   if (isAdmin) return null
-  if (!isSubscriptionActive(sub?.status)) return 'subscription_inactive'
-  const plan = effectivePlan(sub?.plan, sub?.status)
+  if (!isSubscriptionActive(sub?.status, sub?.trial_ends_at)) return 'subscription_inactive'
+  const plan = effectivePlan(sub?.plan, sub?.status, sub?.trial_ends_at)
   if (plan === 'basic' && brokerManualSettingsUseAdvancedFeatures(manualSettings)) {
     return 'plan_advanced_feature_required'
   }
@@ -105,7 +106,7 @@ export async function userMayRunCopierListener(
   if (await loadCachedUserIsAdmin(supabase, userId)) return true
   if (await loadCachedUserCopierPaused(supabase, userId)) return false
   const sub = await loadCachedUserSubscription(supabase, userId)
-  return isSubscriptionActive(sub?.status)
+  return isSubscriptionActive(sub?.status, sub?.trial_ends_at)
 }
 
 export { isSubscriptionActive, effectivePlan, manualSettingsUseAdvancedFeatures }

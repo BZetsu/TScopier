@@ -53,7 +53,7 @@ interface SubscriptionContextValue {
   usageLoading: boolean
   hasActiveSubscription: boolean
   isPastDue: boolean
-  /** User previously had a trial period (expired or converted); show Purchase Subscription. */
+  /** Trial calendar end is in the past (even if Stripe status is still stuck as trialing). */
   hasTrialExpired: boolean
   effectivePlan: SubscriptionPlan | null
   limits: PlanLimitsSnapshot
@@ -245,19 +245,26 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
     navigate('/pricing')
   }, [navigate])
 
-  const hasActiveSubscription = isAdmin || isSubscriptionActive(subscription?.status)
+  const hasActiveSubscription =
+    isAdmin || isSubscriptionActive(subscription?.status, subscription?.trial_ends_at)
   const isPastDue = !isAdmin && subscription?.status === 'past_due'
+  // Date-aware: stuck `trialing` after trial_ends_at is inactive, so this becomes true.
   const hasTrialExpired =
     !isAdmin && !hasActiveSubscription && subscriptionHasTrialExpired(subscription?.trial_ends_at)
   const activePlan: SubscriptionPlan | null = isAdmin
     ? 'advanced'
-    : effectivePlan(subscription?.plan, subscription?.status)
+    : effectivePlan(subscription?.plan, subscription?.status, subscription?.trial_ends_at)
 
   const limits = useMemo(
     () =>
       isAdmin
         ? planLimitsSnapshot('advanced', 'active', 95)
-        : planLimitsSnapshot(subscription?.plan, subscription?.status, subscription?.extra_accounts ?? 0),
+        : planLimitsSnapshot(
+            subscription?.plan,
+            subscription?.status,
+            subscription?.extra_accounts ?? 0,
+            subscription?.trial_ends_at,
+          ),
     [subscription, isAdmin],
   )
 
@@ -284,7 +291,13 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
 
   const canUseFeatureFn = useCallback(
     (feature: PlanFeatureKey) =>
-      isAdmin || canUseFeature(subscription?.plan, subscription?.status, feature),
+      isAdmin ||
+      canUseFeature(
+        subscription?.plan,
+        subscription?.status,
+        feature,
+        subscription?.trial_ends_at,
+      ),
     [isAdmin, subscription],
   )
 

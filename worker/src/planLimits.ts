@@ -7,15 +7,37 @@ export type SubscriptionStatus =
   | 'past_due'
   | 'incomplete'
 
-export function isSubscriptionActive(status: string | null | undefined): boolean {
-  return status === 'active' || status === 'trialing'
+/** True when trial_ends_at is a parseable timestamp strictly before `now`. */
+export function isTrialEnded(
+  trialEndsAt: string | Date | null | undefined,
+  now: Date = new Date(),
+): boolean {
+  if (trialEndsAt == null || trialEndsAt === '') return false
+  const end =
+    typeof trialEndsAt === 'string' ? Date.parse(trialEndsAt) : trialEndsAt.getTime()
+  if (!Number.isFinite(end)) return false
+  return end < now.getTime()
+}
+
+/**
+ * Paid `active` always counts. `trialing` counts only while trial_ends_at is
+ * unset/unparseable or still in the future.
+ */
+export function isSubscriptionActive(
+  status: string | null | undefined,
+  trialEndsAt?: string | Date | null,
+): boolean {
+  if (status === 'active') return true
+  if (status === 'trialing') return !isTrialEnded(trialEndsAt)
+  return false
 }
 
 export function effectivePlan(
   plan: SubscriptionPlan | null | undefined,
   status: string | null | undefined,
+  trialEndsAt?: string | Date | null,
 ): SubscriptionPlan | null {
-  if (!isSubscriptionActive(status)) return null
+  if (!isSubscriptionActive(status, trialEndsAt)) return null
   return plan ?? null
 }
 

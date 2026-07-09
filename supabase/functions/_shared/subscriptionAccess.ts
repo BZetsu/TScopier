@@ -14,6 +14,7 @@ export interface UserSubscriptionRow {
   plan: SubscriptionPlan;
   status: SubscriptionStatus;
   extra_accounts: number;
+  trial_ends_at: string | null;
 }
 
 export async function loadUserSubscription(
@@ -22,7 +23,7 @@ export async function loadUserSubscription(
 ): Promise<UserSubscriptionRow | null> {
   const { data } = await supabase
     .from("subscriptions")
-    .select("plan,status,extra_accounts")
+    .select("plan,status,extra_accounts,trial_ends_at")
     .eq("user_id", userId)
     .maybeSingle();
   if (!data) return null;
@@ -91,7 +92,7 @@ export async function assertBrokerAccountLimit(
 ): Promise<Response | null> {
   if (await loadUserIsAdmin(supabase, userId)) return null;
 
-  const plan = effectivePlan(sub?.plan, sub?.status);
+  const plan = effectivePlan(sub?.plan, sub?.status, sub?.trial_ends_at);
   if (!plan) {
     return subscriptionAccessDenied(
       "An active subscription is required to connect broker accounts.",
@@ -122,7 +123,7 @@ export async function assertBacktestMonthlyLimit(
 ): Promise<Response | null> {
   if (await loadUserIsAdmin(supabase, userId)) return null;
 
-  const plan = effectivePlan(sub?.plan, sub?.status);
+  const plan = effectivePlan(sub?.plan, sub?.status, sub?.trial_ends_at);
   if (!plan) {
     return subscriptionAccessDenied(
       "An active subscription is required to run backtests.",
@@ -156,7 +157,7 @@ export async function assertTelegramChannelLimit(
 ): Promise<Response | null> {
   if (await loadUserIsAdmin(supabase, userId)) return null;
 
-  const plan = effectivePlan(sub?.plan, sub?.status);
+  const plan = effectivePlan(sub?.plan, sub?.status, sub?.trial_ends_at);
   if (!plan) {
     return subscriptionAccessDenied(
       "An active subscription is required to add Telegram channels.",

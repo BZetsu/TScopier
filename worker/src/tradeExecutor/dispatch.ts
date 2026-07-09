@@ -528,7 +528,7 @@ export async function handleSignal(ctx: TradeExecutorContext,
           loadCachedUserIsAdmin(ctx.supabase, row.user_id),
         ])
       }
-      if (!isAdmin && (!userSub || !isSubscriptionActive(userSub.status))) {
+      if (!isAdmin && (!userSub || !isSubscriptionActive(userSub.status, userSub.trial_ends_at))) {
         await ctx.logDispatchSkipped(row, 'subscription_inactive')
         return
       }
