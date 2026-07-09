@@ -103,6 +103,12 @@ export const landingNl: LandingTranslations = {
     },
   },
   whyChoose: {
+    stats: [
+      { label: 'Traders', value: '30K+' },
+      { label: 'Verbonden brokers', value: '25K+' },
+      { label: 'Actieve Telegram-kanalen', value: '150K+' },
+      { label: 'Geopende trades', value: '500K+' },
+    ],
     eyebrow: 'Slim kopieren begint met slimmere tools',
     title: 'Elke feature in TScopier is gebouwd voor controle, duidelijkheid en meetbaar resultaat.',
     cards: [

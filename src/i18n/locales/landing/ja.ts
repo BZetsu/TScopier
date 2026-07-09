@@ -102,6 +102,12 @@ export const landingJa: LandingTranslations = {
     },
   },
   whyChoose: {
+    stats: [
+      { label: 'トレーダー', value: '30K+' },
+      { label: '接続ブローカー', value: '25K+' },
+      { label: 'アクティブなTelegramチャンネル', value: '150K+' },
+      { label: '開始取引', value: '500K+' },
+    ],
     eyebrow: '賢いコピーは、賢いツールから',
     title: 'TScopierのすべての機能は、コントロール・可視性・成果のために設計されています。',
     cards: [

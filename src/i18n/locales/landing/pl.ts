@@ -103,6 +103,12 @@ export const landingPl: LandingTranslations = {
     },
   },
   whyChoose: {
+    stats: [
+      { label: 'Traderzy', value: '30K+' },
+      { label: 'Połączeni brokerzy', value: '25K+' },
+      { label: 'Aktywne kanały Telegram', value: '150K+' },
+      { label: 'Otwarte transakcje', value: '500K+' },
+    ],
     eyebrow: 'Inteligentniejsze kopiowanie zaczyna się od inteligentniejszych narzędzi',
     title:
       'Każda funkcja TScopier została stworzona, aby zapewnić kontrolę, przejrzystość i wymierne wyniki.',

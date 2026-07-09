@@ -103,6 +103,12 @@ export const landingSv: LandingTranslations = {
     },
   },
   whyChoose: {
+    stats: [
+      { label: 'Traders', value: '30K+' },
+      { label: 'Anslutna mäklare', value: '25K+' },
+      { label: 'Aktiva Telegram-kanaler', value: '150K+' },
+      { label: 'Öppnade affärer', value: '500K+' },
+    ],
     eyebrow: 'Smartare kopiering börjar med smartare verktyg',
     title:
       'Varje funktion i TScopier är byggd för att ge dig kontroll, tydlighet och mätbara resultat.',

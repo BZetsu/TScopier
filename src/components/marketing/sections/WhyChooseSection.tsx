@@ -12,6 +12,7 @@ import {
   Settings,
   Zap,
 } from 'lucide-react'
+import { MarketingStatsBar } from '../MarketingStatsBar'
 import { useT } from '../../../context/LocaleContext'
 import type {
   LandingBentoCard,
@@ -119,6 +120,8 @@ export function WhyChooseSection() {
 
   return (
     <section className="mx-auto max-w-6xl px-5 py-16 sm:px-8 sm:py-24">
+      <MarketingStatsBar stats={l.stats} />
+
       <div className="mx-auto max-w-3xl text-center">
         <p className="text-xs font-semibold uppercase tracking-wider text-teal-600 dark:text-teal-400">
           {l.eyebrow}

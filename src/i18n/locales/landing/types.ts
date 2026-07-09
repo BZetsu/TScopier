@@ -1,3 +1,8 @@
+export interface LandingStatItem {
+  label: string
+  value: string
+}
+
 export interface LandingFeatureTranslation {
   title: string
   description: string
@@ -347,6 +352,7 @@ export interface LandingTranslations {
     dashboard: LandingHeroDashboardCopy
   }
   whyChoose: {
+    stats: LandingStatItem[]
     eyebrow: string
     title: string
     cards: LandingBentoCard[]

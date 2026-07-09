@@ -103,6 +103,12 @@ export const landingFr: LandingTranslations = {
     },
   },
   whyChoose: {
+    stats: [
+      { label: 'Traders', value: '30K+' },
+      { label: 'Courtiers connectés', value: '25K+' },
+      { label: 'Canaux Telegram actifs', value: '150K+' },
+      { label: 'Trades ouverts', value: '500K+' },
+    ],
     eyebrow: 'Une copie plus intelligente commence par de meilleurs outils',
     title:
       'Chaque fonction de TScopier est conçue pour vous donner contrôle, clarté et des résultats mesurables.',

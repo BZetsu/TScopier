@@ -103,6 +103,12 @@ export const landingRu: LandingTranslations = {
     },
   },
   whyChoose: {
+    stats: [
+      { label: 'Трейдеры', value: '30K+' },
+      { label: 'Подключённые брокеры', value: '25K+' },
+      { label: 'Активные каналы Telegram', value: '150K+' },
+      { label: 'Открытые сделки', value: '500K+' },
+    ],
     eyebrow: 'Умное копирование начинается с более умных инструментов',
     title:
       'Каждая функция в TScopier создана для того, чтобы дать вам контроль, ясность и измеримые результаты.',
