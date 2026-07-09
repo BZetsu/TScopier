@@ -43,6 +43,47 @@ export function looksLikeMarketNewsOrCommentary(message: string): boolean {
   return false
 }
 
+/**
+ * Retrospective Q&A / soft trade discussion that mentions buy/sell/gold/entry
+ * but is not an imperative order (e.g. "Did you manage this buy… not a bad entry…").
+ */
+export function looksLikeRetrospectiveTradeDiscussion(message: string): boolean {
+  const text = String(message ?? '').replace(/\s+/g, ' ').trim()
+  if (!text) return false
+  if (hasExecutableTradeStructure(text)) return false
+
+  // Imperative market entries must never be treated as discussion.
+  if (/\b(?:gold|xau(?:usd)?)\s+(?:buy|sell)\s+now\b/i.test(text)) return false
+  if (/\b(?:buy|sell)\s+(?:gold|xau(?:usd)?)\s+now\b/i.test(text)) return false
+  if (/\b(?:buy|sell)\s+now\b/i.test(text)) return false
+
+  const mentionsTradeSide = /\b(?:buy|sell|long|short)\b/i.test(text)
+  const mentionsInstrument = /\b(?:gold|xau(?:usd)?|silver|xag(?:usd)?)\b/i.test(text)
+  if (!mentionsTradeSide && !mentionsInstrument) return false
+
+  const isQuestion =
+    /\?/.test(text)
+    || /\b(?:did you|have you|anyone|guys|manage this|caught this|get in)\b/i.test(text)
+
+  const softEntryTalk =
+    /\b(?:not a bad|good|nice|solid|decent|bad)\s+entry\b/i.test(text)
+    || /\b(?:our|the|this|that)\s+entry\b/i.test(text)
+    || /\bclose to (?:our\s+)?entry\b/i.test(text)
+    || /\bmanage this\s+(?:buy|sell)\b/i.test(text)
+    || /\b(?:strong|key)\s+(?:support|resistance)\s+zone\b/i.test(text)
+    || /\bfund[ae]mentals?\b/i.test(text)
+    || /\b(?:too\s+)?(?:bearish|bullish)\s+for\b/i.test(text)
+
+  if (!(isQuestion || softEntryTalk)) return false
+
+  // Need at least one discussion cue plus trade vocabulary without executable levels.
+  if (isQuestion && softEntryTalk) return true
+  if (isQuestion && mentionsTradeSide && mentionsInstrument) return true
+  if (softEntryTalk && (mentionsTradeSide || mentionsInstrument)) return true
+
+  return false
+}
+
 /** Detect lifestyle/commentary messages that mention gold or "buy" but are not trade signals. */
 export function looksLikeCasualNonTradeMessage(message: string): boolean {
   const text = String(message ?? '').replace(/\s+/g, ' ').trim()
@@ -68,6 +109,7 @@ export function looksLikeCasualNonTradeMessage(message: string): boolean {
 
   if (looksLikeProfitResultCommentary(text)) return true
   if (looksLikeTradeRecapCommentary(text)) return true
+  if (looksLikeRetrospectiveTradeDiscussion(text)) return true
 
   return false
 }

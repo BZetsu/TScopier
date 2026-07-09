@@ -4,6 +4,7 @@ import {
   looksLikeCasualNonTradeMessage,
   looksLikeMarketNewsOrCommentary,
   looksLikeProfitResultCommentary,
+  looksLikeRetrospectiveTradeDiscussion,
   looksLikeTradeRecapCommentary,
 } from './signalCommentaryGuard'
 import {
@@ -94,6 +95,33 @@ The key lesson here: wait for confirmation, execute clean, manage risk.`
 Stop Loss: 4265
 Target: 4365.0`
     assert.equal(looksLikeTradeRecapCommentary(signal), false)
+  })
+})
+
+describe('looksLikeRetrospectiveTradeDiscussion', () => {
+  const gtmoVipChat =
+    'Did you guys manage this buy quick enough? It was actually not a bad entry, a very strong support zone but fundementals to bearish for gold right now.'
+
+  it('detects GTMO VIP retrospective buy Q&A as commentary', () => {
+    assert.equal(looksLikeRetrospectiveTradeDiscussion(gtmoVipChat), true)
+    assert.equal(looksLikeCasualNonTradeMessage(gtmoVipChat), true)
+  })
+
+  it('detects soft entry discussion without a question mark', () => {
+    const msg = 'Not a bad entry on gold, strong support zone but fundamentals look bearish right now.'
+    assert.equal(looksLikeRetrospectiveTradeDiscussion(msg), true)
+    assert.equal(looksLikeCasualNonTradeMessage(msg), true)
+  })
+
+  it('does not flag Gold buy now', () => {
+    assert.equal(looksLikeRetrospectiveTradeDiscussion('Gold buy now'), false)
+    assert.equal(looksLikeCasualNonTradeMessage('Gold buy now'), false)
+  })
+
+  it('does not flag structured entry with SL/TP', () => {
+    const signal = 'Gold buy now 4465.2 - 4462\nSL: 4458\nTP: 4467'
+    assert.equal(looksLikeRetrospectiveTradeDiscussion(signal), false)
+    assert.equal(looksLikeCasualNonTradeMessage(signal), false)
   })
 })
 

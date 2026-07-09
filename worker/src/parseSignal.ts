@@ -263,6 +263,64 @@ function hasAnyKeyword(text: string, words: string[]): boolean {
   })
 }
 
+/** Soft prose around "entry" that is discussion, not a priced entry level. */
+function isSoftEntryProse(message: string): boolean {
+  return (
+    /\b(?:not a bad|good|nice|solid|decent|bad)\s+entry\b/i.test(message)
+    || /\b(?:our|the|this|that)\s+entry\b/i.test(message)
+    || /\bclose to (?:our\s+)?entry\b/i.test(message)
+  )
+}
+
+/**
+ * True when an entry_point keyword is backed by a numeric price/zone nearby,
+ * or the alias itself is an imperative phrase (e.g. "gold buy now") rather than bare "ENTRY".
+ * Bare prose "not a bad entry" must not count as price evidence.
+ */
+function hasEntryPointPriceEvidence(
+  message: string,
+  entryPointAliases: string[],
+): boolean {
+  if (!entryPointAliases.length) return false
+  if (isSoftEntryProse(message) && !/\bentry\s*(?:price|level)?\s*[:=\-]?\s*\d/i.test(message)) {
+    return false
+  }
+
+  const text = message.replace(/\s+/g, ' ').trim()
+  for (const alias of entryPointAliases) {
+    const a = String(alias ?? '').trim()
+    if (!a) continue
+    if (!hasAnyKeyword(message, [a])) continue
+
+    // Phrase aliases that already encode an imperative entry (not the word "entry" alone).
+    if (!/^\s*entr(?:y|ée|ee)\s*$/i.test(a) && !/\bentry\b/i.test(a)) {
+      return true
+    }
+    if (/\b(?:buy|sell)\s+now\b/i.test(a) || /\b(?:now|market)\b/i.test(a)) {
+      return true
+    }
+
+    // Require a numeric price adjacent to this entry label.
+    const labeled = new RegExp(
+      `${escapeRegExp(a).replace(/\s+/g, '\\s+')}\\s*(?:price|level)?\\s*[:=\\-]?\\s*(${SIGNAL_PRICE_NUM})`,
+      'i',
+    )
+    if (labeled.test(text)) return true
+
+    const zone = new RegExp(
+      `${escapeRegExp(a).replace(/\s+/g, '\\s+')}\\s*(?:price|level)?\\s*[:=\\-]?\\s*(${SIGNAL_PRICE_NUM})\\s*(?:\\/|\\band\\b|-|–|to)\\s*(${SIGNAL_PRICE_NUM})`,
+      'i',
+    )
+    if (zone.test(text)) return true
+  }
+
+  // Generic "entry 2650" / "entry: 2650-2655" even when alias is just ENTRY.
+  if (/\bentry\s*(?:price|level)?\s*[:=]?\s*\d/i.test(text)) return true
+  if (/\bentry\s+zone\b/i.test(text) && new RegExp(SIGNAL_PRICE_NUM).test(text)) return true
+
+  return false
+}
+
 function lexiconActionAliases(lexicon: ChannelLexiconRow | null, key: string): string[] {
   const raw = lexicon?.action_aliases?.[key]
   if (!Array.isArray(raw)) return []
@@ -898,7 +956,9 @@ function hasParameterEvidence(message: string, channelKeywords: ChannelKeywords)
   if (extractTpLevels(message, buildExtraTpLabels(null, channelKeywords)).length > 0) return true
   if (/\bentry\s*(?:price)?\s*[:=]\s*\d/i.test(text)) return true
   if (new RegExp(`@\\s*${SIGNAL_PRICE_NUM}`).test(text)) return true
-  if (hasAnyKeyword(message, splitKeywordAliases(channelKeywords.signal.entry_point, delim))) return true
+  if (hasEntryPointPriceEvidence(message, splitKeywordAliases(channelKeywords.signal.entry_point, delim))) {
+    return true
+  }
   const bare = bareTradePricesExcludingPips(message, extractUnlabeledPrices(message))
   return bare.length > 0
 }
@@ -1153,7 +1213,8 @@ function parseEntryFromKeywords(
   ]
   const tp = extractTpLevels(message, extraTp)
 
-  const entryPointHit = hasAnyKeyword(message, splitKeywordAliases(channelKeywords.signal.entry_point, delim))
+  const entryAliases = splitKeywordAliases(channelKeywords.signal.entry_point, delim)
+  const entryPointHit = hasEntryPointPriceEvidence(message, entryAliases)
   const hasPriceEvidence =
     entryPointHit ||
     (sl != null && Number.isFinite(sl)) ||

@@ -649,6 +649,40 @@ The key lesson here: wait for confirmation, execute clean, manage risk.`
     assert.equal(result.parsed.action, 'ignore')
   })
 
+  it('skips GTMO VIP retrospective buy Q&A commentary', () => {
+    const msg =
+      'Did you guys manage this buy quick enough? It was actually not a bad entry, a very strong support zone but fundementals to bearish for gold right now.'
+    const gtmoKeywords = normalizeChannelKeywords({
+      signal: {
+        sl: 'sl: 4180',
+        tp: 'tp: open|tp: 4467',
+        buy: 'gold buy now',
+        sell: 'gold sell now|tp: open|all tp‘s doneeeee',
+        entry_point: 'gold buy now|gold sell now',
+      },
+      additional: { delimiters: '|', ai_signal_requires_price: true },
+    })
+    for (const keywords of [DEFAULT_CHANNEL_KEYWORDS, gtmoKeywords]) {
+      const result = parseChannelMessageSync(msg, keywords, lexicon)
+      assert.equal(result.status, 'skipped', `keywords delimiters=${keywords.additional.delimiters}`)
+      assert.equal(result.parsed.action, 'ignore')
+    }
+  })
+
+  it('skips soft entry discussion without treating prose entry as price evidence', () => {
+    const msg = 'It was actually not a bad entry on gold, strong support but fundamentals look bearish right now.'
+    const result = parseChannelMessageSync(msg, DEFAULT_CHANNEL_KEYWORDS, lexicon)
+    assert.equal(result.status, 'skipped')
+    assert.equal(result.parsed.action, 'ignore')
+  })
+
+  it('still parses Gold buy now after commentary guard', () => {
+    const result = parseChannelMessageSync('Gold buy now', DEFAULT_CHANNEL_KEYWORDS, lexicon)
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.action, 'buy')
+    assert.equal(result.parsed.symbol, 'XAUUSD')
+  })
+
   it('parses FOREX KING Gold buy with emoji-glued entry zone, SL, and TP tiers', () => {
     const msg = `Gold（XAUUSD）📊
 BUY 🟢4110-4120
