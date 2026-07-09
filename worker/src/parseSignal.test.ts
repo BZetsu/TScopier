@@ -116,6 +116,21 @@ describe('parseChannelMessageSync', () => {
     }
   })
 
+  it('parses Move SL to entry and close half as partial_breakeven with 50% fraction', () => {
+    for (const msg of [
+      'Move SL to entry and close half',
+      'Move stop to entry and close half',
+      'Close half and move SL to entry',
+      'SL to entry and close half',
+      'Move SL to breakeven and close half',
+    ]) {
+      const result = parseChannelMessageSync(msg, DEFAULT_CHANNEL_KEYWORDS, lexicon)
+      assert.equal(result.status, 'parsed', msg)
+      assert.equal(result.parsed.action, 'partial_breakeven', msg)
+      assert.equal(result.parsed.partial_close_fraction, 0.5, msg)
+    }
+  })
+
   it('parses "Make SL 4155" / "Make SL to 4155" as modify with the new SL', () => {
     for (const msg of ['Make SL 4155', 'Make SL to 4155']) {
       const result = parseChannelMessageSync(msg, DEFAULT_CHANNEL_KEYWORDS, lexicon)

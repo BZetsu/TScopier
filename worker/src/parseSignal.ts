@@ -751,11 +751,11 @@ function parseDeterministicManagement(
   const wantsBreakeven =
     COMMON_BREAKEVEN_PHRASES.some(p => messageContainsKeyword(t, p)) ||
     /\bbreakeven|break\s*even\b/i.test(t) ||
-    /\bmove\s+stop\s+to\s+breakeven\b/i.test(t) ||
+    /\bmove\s+stop\s+to\s+(?:breakeven|break\s*even|entry|be)\b/i.test(t) ||
     /\bmoved?\s+(sl\s+)?to\s+(be|entry|entr(y)?\s?price)|\b(be|bk)\s*now\b/i.test(t) ||
     /\bstop\s*loss\s+to\s+(be|entry|breakeven|break\s*even)\b/i.test(t) ||
-    /\bsl\s+to\s+(be|entry)\b/i.test(t) ||
-    /\bmove\s+.*\b(stop\s*loss|sl)\b.*\b(breakeven|break\s*even|entry|be)\b/i.test(t) ||
+    /\b(?:sl|stop)\s+to\s+(be|entry|breakeven|break\s*even)\b/i.test(t) ||
+    /\bmove\s+.*\b(stop\s*loss|sl|stop)\b.*\b(breakeven|break\s*even|entry|be)\b/i.test(t) ||
     hasAnyKeyword(t, kwBreakeven)
 
   const wantsCloseWorseEntries =
@@ -763,29 +763,36 @@ function parseDeterministicManagement(
     /\bclose\s+worse\b/i.test(t) ||
     hasAnyKeyword(t, kwCloseWorse)
 
-  if (wantsCloseWorseEntries) {
-    action = "close_worse_entries"
-    confidence = 0.95
-  }
-  else if (wantsPartialHalf && wantsBreakeven) action = "partial_breakeven"
-  else if (wantsPartialHalf) {
-    action = "partial_profit"
+  const resolvePartialFraction = (): number | null => {
     if (
       hitCloseHalfKw ||
       /\b(close\s+half|take\s+half|close\s+50%|take\s+50%|c\s+half|half\s+of\s+(the\s+)?(position|trade))\b/i.test(t) ||
       /\b(50|half)\s*%?\s*(of\s+)?(the\s+)?(position|trade|lot|profit)\b/i.test(t)
     ) {
-      partial_close_fraction = 0.5
-    } else if (
+      return 0.5
+    }
+    if (
       hitClosePartialKw ||
       /\b(close\s+partials?|take\s+partials?|close\s+25%|take\s+25%)\b/i.test(t) ||
       /\b(25|quarter)\s*%?\s*(of\s+)?(the\s+)?(position|trade|lot|profit)\b/i.test(tl)
     ) {
-      partial_close_fraction = 0.25
-    } else {
-      const pct = partialCloseFractionFromMessage(t)
-      if (pct != null) partial_close_fraction = pct
+      return 0.25
     }
+    return partialCloseFractionFromMessage(t)
+  }
+
+  if (wantsCloseWorseEntries) {
+    action = "close_worse_entries"
+    confidence = 0.95
+  }
+  else if (wantsPartialHalf && wantsBreakeven) {
+    action = "partial_breakeven"
+    partial_close_fraction = resolvePartialFraction() ?? 0.5
+  }
+  else if (wantsPartialHalf) {
+    action = "partial_profit"
+    const frac = resolvePartialFraction()
+    if (frac != null) partial_close_fraction = frac
   } else if (wantsBreakeven) action = "breakeven"
   else if (wantsExplicitFullClose(t, kwClose, channelKeywords, lexicon)) {
     if (looksLikeConditionalCloseSuggestion(t)) return null
@@ -835,7 +842,9 @@ function parseDeterministicManagement(
     confidence,
     raw_instruction: message,
     open_tp: detectOpenTp(message),
-    ...(action === "partial_profit" && partial_close_fraction != null ? { partial_close_fraction } : {}),
+    ...((action === "partial_profit" || action === "partial_breakeven") && partial_close_fraction != null
+      ? { partial_close_fraction }
+      : {}),
   }
 }
 
