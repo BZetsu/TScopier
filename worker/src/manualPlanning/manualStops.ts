@@ -1,4 +1,9 @@
 import { pipCalculator, type PipQuote } from '../pipCalculator'
+import {
+  convertPipOffsetToPrice,
+  convertPipOffsetsToPrices,
+  resolvePipSize,
+} from '../signalStopUnits'
 import type { ChannelKeywords, ManualSettings, ParsedSignal, PlannerContext } from './types'
 
 /** True when manual settings request pip-based SL and/or TP overrides. */
@@ -41,9 +46,11 @@ export function deriveManualStopsWithClamp(args: {
   const { parsed, manual, channelKeywords, resolvedSymbol, ctx, entryAnchor, isBuy } = args
 
   const pipQuote = pipCalculator(resolvedSymbol, ctx.point, ctx.digits, ctx.contractSize ?? null)
-  const pip = pipQuote.pipPrice
-  const slInPips = channelKeywords?.additional?.sl_in_pips === true
-  const tpInPips = channelKeywords?.additional?.tp_in_pips === true
+  const pip = resolvePipSize({ symbol: resolvedSymbol, brokerPipPrice: pipQuote.pipPrice })
+  const slInPips =
+    parsed.sl_unit === 'pips' || channelKeywords?.additional?.sl_in_pips === true
+  const tpInPips =
+    parsed.tp_unit === 'pips' || channelKeywords?.additional?.tp_in_pips === true
 
   const usePreSl = manual.use_predefined_sl_pips === true
   const usePreTp = manual.use_predefined_tp_pips === true
@@ -53,10 +60,20 @@ export function deriveManualStopsWithClamp(args: {
     ? []
     : (parsed.tp ?? []).filter((n): n is number => typeof n === 'number' && Number.isFinite(n))
   if (!usePreSl && slInPips && parsedSl != null && entryAnchor != null) {
-    parsedSl = isBuy ? entryAnchor - parsedSl * pip : entryAnchor + parsedSl * pip
+    parsedSl = convertPipOffsetToPrice({
+      offset: parsedSl,
+      entryAnchor,
+      isBuy,
+      pipSize: pip,
+    })
   }
   if (!usePreTp && tpInPips && parsedTps.length && entryAnchor != null) {
-    parsedTps = parsedTps.map(t => (isBuy ? entryAnchor + t * pip : entryAnchor - t * pip))
+    parsedTps = convertPipOffsetsToPrices({
+      offsets: parsedTps,
+      entryAnchor,
+      isBuy,
+      pipSize: pip,
+    })
   }
 
   let finalSl = parsedSl

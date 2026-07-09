@@ -9,6 +9,8 @@ export interface ParsedSignal {
   entry_zone_high: number | null
   sl: number | null
   tp: number[] | null
+  tp_unit?: 'price' | 'pips'
+  sl_unit?: 'price' | 'pips'
   lot_size: number | null
   open_tp?: boolean
   partial_close_fraction?: number | null

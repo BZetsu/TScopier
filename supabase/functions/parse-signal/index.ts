@@ -51,6 +51,8 @@ interface ParsedSignal {
   entry_zone_high: number | null
   sl: number | null
   tp: number[]
+  tp_unit?: 'price' | 'pips'
+  sl_unit?: 'price' | 'pips'
   lot_size: number | null
   confidence: number
   raw_instruction: string
@@ -365,16 +367,39 @@ function buildTpRegex(extraLabels: string[] = []): RegExp {
   )
 }
 
-function extractTpLevels(message: string, extraLabels: string[] = []): number[] {
+function tpClauseHasExplicitPips(message: string): boolean {
+  const text = String(message ?? '')
+  const TP_LABEL = '(?:tp|take\\s*profit|target(?:\\s+level)?)'
+  if (
+    new RegExp(
+      `\\b${TP_LABEL}\\s*#?\\s*\\d*\\s*[:=\\-]?\\s*[\\d./\\s|&and]+\\s*pips?\\b`,
+      'i',
+    ).test(text)
+  ) {
+    return true
+  }
+  if (new RegExp(`\\b${TP_LABEL}\\s*[:=\\-]?\\s*\\d+(?:\\.\\d+)?(?:\\s*[/|]\\s*\\d+(?:\\.\\d+)?)*pips?\\b`, 'i').test(text)) {
+    return true
+  }
+  return false
+}
+
+function extractTpLevels(message: string, extraLabels: string[] = []): {
+  values: number[]
+  explicitPips: boolean
+} {
   const text = String(message ?? "")
   type TpHit = { index: number; value: number }
   const hits: TpHit[] = []
+  let explicitPips = tpClauseHasExplicitPips(text)
 
   const collect = (rx: RegExp) => {
     for (const m of text.matchAll(rx)) {
       const value = parseSignalPriceToken(m[1])
       if (value == null) continue
       hits.push({ index: m.index ?? 0, value })
+      const after = text.slice((m.index ?? 0) + m[0].length, (m.index ?? 0) + m[0].length + 12)
+      if (/^\s*pips?\b/i.test(after) || /^pips?\b/i.test(after)) explicitPips = true
     }
   }
 
@@ -384,12 +409,13 @@ function extractTpLevels(message: string, extraLabels: string[] = []): number[] 
   collect(new RegExp(`\\b(?:tp|target(?:\\s+level)?)\\s*\\d+\\s*[:=\\-]\\s*(${SIGNAL_PRICE_NUM})`, 'gi'))
   collect(new RegExp(`\\b(?:tp|target(?:\\s+level)?)\\s*\\d+\\s+(${SIGNAL_PRICE_NUM})`, 'gi'))
   for (const m of text.matchAll(
-    /\b(?:tp|take\s*profit|target(?:\s+level)?)\s*[:=]?\s*((?:\d+(?:\.\d+)?(?:\s*(?:\/|\band\b|\|)\s*)+)+\d+(?:\.\d+)?)/gi,
+    /\b(?:tp|take\s*profit|target(?:\s+level)?)\s*[:=]?\s*((?:\d+(?:\.\d+)?(?:\s*(?:\/|\band\b|\|)\s*)+)+\d+(?:\.\d+)?)(?:\s*pips?\b)?/gi,
   )) {
     const block = m[1] ?? ''
     const base = m.index ?? 0
     const offset = m[0].indexOf(block)
     const normalized = block.replace(/,/g, '')
+    if (/\bpips?\b/i.test(m[0])) explicitPips = true
     for (const part of normalized.split(/\s*(?:\/|\band\b|\|)\s*/i)) {
       const value = parseSignalPriceToken(part.trim())
       if (value == null) continue
@@ -398,7 +424,7 @@ function extractTpLevels(message: string, extraLabels: string[] = []): number[] 
     }
   }
 
-  if (!hits.length) return []
+  if (!hits.length) return { values: [], explicitPips: false }
 
   hits.sort((a, b) => a.index - b.index)
   const seenIndex = new Set<number>()
@@ -411,7 +437,7 @@ function extractTpLevels(message: string, extraLabels: string[] = []): number[] 
     seenValues.add(hit.value)
     values.push(hit.value)
   }
-  return values
+  return { values, explicitPips }
 }
 
 function detectOpenTp(message: string): boolean {
@@ -684,8 +710,8 @@ function parseDeterministicManagement(
     ...splitKeywordAliases(channelKeywords.update.set_tp, delim),
     ...splitKeywordAliases(channelKeywords.update.adjust_tp, delim),
   ]
-  const tp = extractTpLevels(t, extraTp)
-
+  const tpExtract = extractTpLevels(t, extraTp)
+  const tp = tpExtract.values
   return {
     action,
     symbol: sym,
@@ -694,6 +720,7 @@ function parseDeterministicManagement(
     entry_zone_high: null,
     sl,
     tp,
+    ...(tpExtract.explicitPips ? { tp_unit: 'pips' as const } : {}),
     lot_size: null,
     confidence,
     raw_instruction: message,
@@ -726,6 +753,12 @@ function extractOptionalEntryAnchor(
       entry_zone_high = Math.max(a, b)
     }
   } else {
+    const znZone = text.match(
+      new RegExp(
+        `\\b(?:zn|zone|z)\\s*[:=]?\\s*(${SIGNAL_PRICE_NUM})\\s*(?:-|–|to)\\s*(${SIGNAL_PRICE_NUM})\\b`,
+        'i',
+      ),
+    )
     const nowZone = text.match(
       new RegExp(`\\b(?:now|instant|market|mkt)\\s+(${SIGNAL_PRICE_NUM})\\s*(?:-|–|to)\\s*(${SIGNAL_PRICE_NUM})\\b`, 'i'),
     )
@@ -735,7 +768,7 @@ function extractOptionalEntryAnchor(
         'i',
       ),
     )
-    const zoneMatch = nowZone ?? reentryZone
+    const zoneMatch = znZone ?? nowZone ?? reentryZone
     if (zoneMatch?.[1] && zoneMatch?.[2]) {
       const a = parseSignalPriceToken(zoneMatch[1])
       const b = parseSignalPriceToken(zoneMatch[2])
@@ -845,7 +878,7 @@ function hasParameterEvidence(message: string, channelKeywords: ChannelKeywords)
   const text = message.replace(/\s+/g, ' ').trim()
   const delim = channelKeywords.additional.delimiters
   if (extractSlFromMessage(message, channelKeywords) != null) return true
-  if (extractTpLevels(message, buildExtraTpLabels(null, channelKeywords)).length > 0) return true
+  if (extractTpLevels(message, buildExtraTpLabels(null, channelKeywords)).values.length > 0) return true
   if (/\bentry\s*(?:price)?\s*[:=]\s*\d/i.test(text)) return true
   if (/@\s*\d+(?:\.\d+)?/.test(text)) return true
   if (hasAnyKeyword(message, splitKeywordAliases(channelKeywords.signal.entry_point, delim))) return true
@@ -874,7 +907,8 @@ function parseChannelParameterFollowUp(
 
   const extraTp = buildExtraTpLabels(lexicon, channelKeywords)
   const sl = extractSlFromMessage(message, channelKeywords)
-  const tp = extractTpLevels(message, extraTp)
+  const tpExtract = extractTpLevels(message, extraTp)
+  const tp = tpExtract.values
   const { entry_price, entry_zone_low, entry_zone_high } = extractOptionalEntryAnchor(message, channelKeywords)
   const reEnter = detectReEnterIntent(message)
 
@@ -889,6 +923,7 @@ function parseChannelParameterFollowUp(
       entry_zone_high,
       sl,
       tp,
+      ...(tpExtract.explicitPips ? { tp_unit: 'pips' as const } : {}),
       lot_size: null,
       confidence: 0.91,
       raw_instruction: message,
@@ -905,6 +940,7 @@ function parseChannelParameterFollowUp(
     entry_zone_high,
     sl,
     tp,
+    ...(tpExtract.explicitPips ? { tp_unit: 'pips' as const } : {}),
     lot_size: null,
     confidence: 0.9,
     raw_instruction: message,
@@ -1027,8 +1063,8 @@ function parseSimpleSignal(
     ...splitKeywordAliases(channelKeywords.update.set_tp, delim),
     ...splitKeywordAliases(channelKeywords.update.adjust_tp, delim),
   ]
-  const tp = extractTpLevels(message, extraTp)
-
+  const tpExtract = extractTpLevels(message, extraTp)
+  const tp = tpExtract.values
   const { entry_price, entry_zone_low, entry_zone_high } = entryAnchor
 
   return {
@@ -1039,6 +1075,7 @@ function parseSimpleSignal(
     entry_zone_high,
     sl,
     tp,
+    ...(tpExtract.explicitPips ? { tp_unit: 'pips' as const } : {}),
     lot_size: null,
     confidence: 0.99,
     raw_instruction: message,
@@ -1099,8 +1136,8 @@ function parseEntryFromKeywords(
     ...splitKeywordAliases(channelKeywords.update.set_tp, delim),
     ...splitKeywordAliases(channelKeywords.update.adjust_tp, delim),
   ]
-  const tp = extractTpLevels(message, extraTp)
-
+  const tpExtract = extractTpLevels(message, extraTp)
+  const tp = tpExtract.values
   const entryPointHit = hasAnyKeyword(message, splitKeywordAliases(channelKeywords.signal.entry_point, delim))
   const hasPriceEvidence =
     entryPointHit ||
@@ -1124,6 +1161,7 @@ function parseEntryFromKeywords(
     entry_zone_high,
     sl,
     tp,
+    ...(tpExtract.explicitPips ? { tp_unit: 'pips' as const } : {}),
     lot_size: null,
     confidence: 0.93,
     raw_instruction: message,

@@ -33,6 +33,12 @@ import {
   ENTRY_ZONE_FAR_FROM_MARKET_REASON,
   entryZoneFarFromQuote,
 } from '../signalEntryZoneSanity'
+import { pipCalculator } from '../pipCalculator'
+import {
+  convertPipOffsetToPrice,
+  convertPipOffsetsToPrices,
+  resolvePipSize,
+} from '../signalStopUnits'
 import {
   applyChannelParamsToVirtualPendingList,
   parsedSignalHasExplicitStops,
@@ -43,7 +49,7 @@ import {
 } from '../channelActiveTradeParams'
 import { resolveTscopierCommentPrefix } from '../tradeComment'
 import type { TradeExecutorContext } from './context'
-import { applySymbolMapping, computeLot, isExcluded, isMt5OnlyOperation, roundLot, triggerPriceFor, brokerSessionUuid, type Leg } from './helpers'
+import { applySymbolMapping, computeLot, isBuySideOp, isExcluded, isMt5OnlyOperation, roundLot, triggerPriceFor, brokerSessionUuid, type Leg } from './helpers'
 import type {
   BrokerRow,
   ParsedSignal,
@@ -475,6 +481,8 @@ export async function prepareEntryExecution(
       entry_zone_high: rzo?.hi ?? parsed.entry_zone_high,
       sl: parsed.sl,
       tp: parsed.tp,
+      tp_unit: parsed.tp_unit,
+      sl_unit: parsed.sl_unit,
       lot_size: parsed.lot_size,
       open_tp: parsed.open_tp,
       partial_close_fraction: parsed.partial_close_fraction,
@@ -529,14 +537,58 @@ export async function prepareEntryExecution(
       slippage: 20,
     })
   } else {
+    const entryAnchor =
+      resolvedParsedEntryPrice(parsed)
+      ?? (() => {
+        const z = resolvedParsedEntryZone(parsed)
+        return z != null ? (z.lo + z.hi) / 2 : null
+      })()
+      ?? (Number.isFinite(strictEntryPrefetch?.bid) && Number.isFinite(strictEntryPrefetch?.ask)
+        ? ((Number(strictEntryPrefetch!.bid) + Number(strictEntryPrefetch!.ask)) / 2)
+        : null)
+    const isBuy = isBuySideOp(String(op))
+    const pipQuote = pipCalculator(
+      symbol,
+      params?.point ?? 0.00001,
+      params?.digits ?? 5,
+      params?.contractSize ?? null,
+    )
+    const pip = resolvePipSize({ symbol, brokerPipPrice: pipQuote.pipPrice })
+    const tpInPips =
+      parsed.tp_unit === 'pips' || channelKeywords?.additional?.tp_in_pips === true
+    const slInPips =
+      parsed.sl_unit === 'pips' || channelKeywords?.additional?.sl_in_pips === true
+
+    let stoploss = parsed.sl ?? 0
+    let takeprofit = parsed.tp?.[0] ?? 0
+    if (entryAnchor != null && entryAnchor > 0) {
+      if (slInPips && parsed.sl != null && Number.isFinite(parsed.sl) && parsed.sl > 0) {
+        stoploss = convertPipOffsetToPrice({
+          offset: parsed.sl,
+          entryAnchor,
+          isBuy,
+          pipSize: pip,
+        }) ?? 0
+      }
+      if (tpInPips && Array.isArray(parsed.tp) && parsed.tp.length) {
+        const converted = convertPipOffsetsToPrices({
+          offsets: parsed.tp,
+          entryAnchor,
+          isBuy,
+          pipSize: pip,
+        })
+        takeprofit = converted[0] ?? 0
+      }
+    }
+
     plan = {
       orders: [{
         symbol,
         operation: op,
         volume: baseLot,
         price: resolvedParsedEntryPrice(parsed) ?? 0,
-        stoploss: parsed.sl ?? 0,
-        takeprofit: parsed.tp?.[0] ?? 0,
+        stoploss,
+        takeprofit,
         slippage: 20,
         comment: commentPrefix,
         expertID: 909090,
