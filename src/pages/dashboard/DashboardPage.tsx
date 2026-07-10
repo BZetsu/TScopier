@@ -2731,8 +2731,8 @@ function LinkedAccountRow({
   const fromServer = inferBrokerLabelFromServer(server) || (server?.trim() ?? '')
   const brokerText = fromApi || fromServer || '—'
   const accountType: LinkedAccountType | '—' =
-    accountSummary?.account_type
-    ?? resolveLinkedAccountTypeForBroker(account, undefined, accountSummary?.mt_server_hint)
+    resolveLinkedAccountTypeForBroker(account, undefined, accountSummary?.mt_server_hint)
+    ?? accountSummary?.account_type
     ?? '—'
   const accountTypeClass = linkedAccountTypeValueClass(accountType === '—' ? undefined : accountType)
 

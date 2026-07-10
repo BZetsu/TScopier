@@ -81,8 +81,8 @@ function accountTypeRank(
   summary: BrokerBalanceSnapshot | undefined,
 ): number {
   const type =
-    summary?.account_type
-    ?? resolveLinkedAccountTypeForBroker(account, undefined, summary?.mt_server_hint)
+    resolveLinkedAccountTypeForBroker(account, undefined, summary?.mt_server_hint)
+    ?? summary?.account_type
   if (type === 'Demo') return 1
   if (type === 'PropFirm') return 2
   if (type === 'Live') return 3

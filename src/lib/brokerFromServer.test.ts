@@ -55,6 +55,22 @@ describe('resolveLinkedAccountType', () => {
   it('returns undefined when nothing matches', () => {
     assert.equal(resolveLinkedAccountType(undefined, 'UnknownBroker-Server'), undefined)
   })
+
+  it('prefers health-linked account type over Exness live server heuristic', () => {
+    assert.equal(resolveLinkedAccountTypeForBroker({
+      broker_name: 'Exness',
+      broker_server: 'ExnessBV-MT5Real',
+      metaapi_account_id: 'x',
+      label: 'Trial',
+      linked_account_type: 'Demo',
+    }), 'Demo')
+    assert.equal(resolveLinkedAccountTypeForBroker({
+      broker_name: 'Exness',
+      broker_server: 'ExnessBV-MT5Real',
+      metaapi_account_id: 'x',
+      label: 'Trial',
+    }), 'Live')
+  })
 })
 
 describe('inferPropFirmAccount', () => {

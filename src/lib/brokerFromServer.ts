@@ -347,12 +347,17 @@ export function resolveLinkedAccountType(
 
 /** Resolve account type for a linked broker row (server + stored/inferred broker labels). */
 export function resolveLinkedAccountTypeForBroker(
-  account: Pick<BrokerAccount, 'broker_name' | 'broker_server' | 'metaapi_account_id' | 'label'>,
+  account: Pick<
+    BrokerAccount,
+    'broker_name' | 'broker_server' | 'metaapi_account_id' | 'label' | 'linked_account_type'
+  >,
   mtSummaryType?: string | number | null,
   serverHint?: string | null,
 ): LinkedAccountType | undefined {
   const { server, hints } = brokerAccountTypeHints(account, serverHint)
   const [primary, ...rest] = hints
+  if (inferPropFirmAccount(server, primary, ...rest)) return 'PropFirm'
+  if (account.linked_account_type) return account.linked_account_type
   return (
     resolveLinkedAccountType(mtSummaryType, server, primary, ...rest)
     ?? inferRetailLiveFromHints(server, hints)

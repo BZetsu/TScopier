@@ -1,4 +1,5 @@
 import type { BrokerAccount } from '../types/database'
+import { parseMtAccountTradeMode } from './brokerFromServer'
 import {
   isFxsocketMtStatusHealthy,
   terminalHealthRowPatchFromMtStatus,
@@ -81,10 +82,14 @@ export function brokerTerminalHealthBadgeVariant(
 
 export function brokerAccountHealthPatchFromMtStatus(
   status: FxsocketMtStatus,
-): Pick<BrokerAccount, 'terminal_connected' | 'trade_allowed' | 'live_terminal_health_phase'> {
+): Pick<
+  BrokerAccount,
+  'terminal_connected' | 'trade_allowed' | 'live_terminal_health_phase' | 'linked_account_type'
+> {
   const legacyPatch = terminalHealthRowPatchFromMtStatus(status)
   return {
     ...legacyPatch,
     live_terminal_health_phase: isFxsocketMtStatusHealthy(status) ? 'healthy' : 'unhealthy',
+    linked_account_type: parseMtAccountTradeMode(status.account?.type),
   }
 }

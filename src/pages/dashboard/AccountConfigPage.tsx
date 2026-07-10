@@ -26,13 +26,14 @@ import { CopyLimitsTargetsSection } from '../../components/configure/CopyLimitsT
 import { useUserProfile } from '../../context/UserProfileContext'
 import { normalizeCopyLimitState, type CopyLimitState } from '../../lib/copyLimitTypes'
 import { ConfigTitle, ConfigToggleLabel, ConfigureInput, ConfigureSelect, InfoTooltip } from '../../components/ui/InfoTooltip'
-import { fxsocketBroker } from '../../lib/fxsocketBroker'
+import { fxsocketBroker, BrokerHealthCheckUnsupportedError } from '../../lib/fxsocketBroker'
 import { isLegacyBrokerLink, countLinkedBrokerSessions, hasFxsocketBrokerSession } from '../../lib/brokerLink'
 import { resolveBrokerTotalBalance } from '../../lib/effectiveBrokerBalance'
 import { brokerCanReconnect, brokerConnectionBadgeVariant, brokerConnectionStatusLabel } from '../../lib/brokerReconnect'
 import {
   brokerTerminalHealthBadgeVariant,
   brokerTerminalHealthLabel,
+  brokerAccountHealthPatchFromMtStatus,
 } from '../../lib/brokerHealth'
 import { BrokerStatusModal } from '../../components/broker/BrokerStatusModal'
 import {
@@ -854,9 +855,12 @@ export function AccountConfigPage() {
   const [fixedLotDraft, setFixedLotDraft] = useState<string | null>(null)
   const [symbolsExcludeDraft, setSymbolsExcludeDraft] = useState<string | null>(null)
   const [riskCalcOpen, setRiskCalcOpen] = useState(false)
-  const [brokerAccountTypes, setBrokerAccountTypes] = useState<Record<string, LinkedAccountType>>({})
-  const brokerAccountTypeKey = useMemo(
-    () => brokers.map(b => `${b.id}:${b.broker_server ?? ''}`).join('|'),
+  const brokerHealthSyncKey = useMemo(
+    () => brokers
+      .filter(b => hasFxsocketBrokerSession(b))
+      .map(b => b.id)
+      .sort()
+      .join(','),
     [brokers],
   )
 
@@ -912,8 +916,9 @@ export function AccountConfigPage() {
   }, [configAccount])
 
   useEffect(() => {
-    if (brokers.length > 0) void syncBrokerAccountTypes(brokers)
-  }, [brokerAccountTypeKey])
+    if (!brokerHealthSyncKey) return
+    void syncBrokerAccountTypesFromHealth(brokers)
+  }, [brokerHealthSyncKey])
 
   const channelManualSettings = useMemo(() => {
     const id = configDraft.selectedChannelId
@@ -939,11 +944,8 @@ export function AccountConfigPage() {
 
   const configureAccountType = useMemo((): LinkedAccountType | undefined => {
     if (!configAccount) return undefined
-    return (
-      brokerAccountTypes[configAccount.id]
-      ?? resolveLinkedAccountTypeForBroker(configAccount)
-    )
-  }, [configAccount, brokerAccountTypes])
+    return resolveLinkedAccountTypeForBroker(configAccount)
+  }, [configAccount])
 
   const keywordFiltersEnabled = canUsePlanFeature('channel_keyword_filters')
   const multiTradeStyleEnabled = canUsePlanFeature('multi_trade_style')
@@ -1293,38 +1295,32 @@ export function AccountConfigPage() {
     }
   }
 
-  const syncBrokerAccountTypes = async (list: BrokerAccount[]) => {
+  const syncBrokerAccountTypesFromHealth = async (list: BrokerAccount[]) => {
     const linked = list.filter(b => hasFxsocketBrokerSession(b))
     if (linked.length === 0) return
 
-    const fromServer: Record<string, LinkedAccountType> = {}
-    for (const b of linked) {
-      const inferred = resolveLinkedAccountTypeForBroker(b)
-      if (inferred) fromServer[b.id] = inferred
-    }
-    setBrokerAccountTypes(prev => ({ ...prev, ...fromServer }))
-
-    const needSummary = linked.filter(b => !fromServer[b.id])
-    if (needSummary.length === 0) return
-
     const results = await Promise.all(
-      needSummary.map(async b => {
+      linked.map(async b => {
         try {
-          const { summary } = await fxsocketBroker.refreshSummary(b.id)
-          const accountType = resolveLinkedAccountTypeForBroker(b, summary?.type)
-          return accountType ? { id: b.id, accountType } as const : null
-        } catch {
+          const { account, status } = await fxsocketBroker.checkStatus(b.id)
+          return { account, status } as const
+        } catch (err) {
+          if (err instanceof BrokerHealthCheckUnsupportedError) {
+            return 'unsupported' as const
+          }
           return null
         }
       }),
     )
 
-    const fromSummary: Record<string, LinkedAccountType> = {}
+    if (results.some(r => r === 'unsupported')) return
+
     for (const row of results) {
-      if (row) fromSummary[row.id] = row.accountType
-    }
-    if (Object.keys(fromSummary).length > 0) {
-      setBrokerAccountTypes(prev => ({ ...prev, ...fromSummary }))
+      if (!row) continue
+      upsertBroker({
+        ...row.account,
+        ...brokerAccountHealthPatchFromMtStatus(row.status),
+      })
     }
   }
 
@@ -2108,9 +2104,7 @@ export function AccountConfigPage() {
                 || broker.broker_server
                 || ''
               const channelsLabel = getBrokerSignalChannelsLabel(broker.id)
-              const accountType =
-                brokerAccountTypes[broker.id]
-                ?? resolveLinkedAccountTypeForBroker(broker)
+              const accountType = resolveLinkedAccountTypeForBroker(broker)
               return (
                 <Card
                   key={broker.id}

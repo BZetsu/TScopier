@@ -371,6 +371,8 @@ export interface BrokerAccount {
   trade_allowed?: boolean | null
   /** Client-side live terminal health from FxSocket /status polling. */
   live_terminal_health_phase?: 'healthy' | 'unhealthy' | 'checking' | 'paused' | null
+  /** Client-side account type from FxSocket /status (Demo/Live/Prop Firm). */
+  linked_account_type?: 'Live' | 'Demo' | 'PropFirm' | null
   connection_error?: string | null
   /** MT login number, kept separate from the UUID for display. */
   account_login?: string | null

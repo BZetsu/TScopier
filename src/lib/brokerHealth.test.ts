@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  brokerAccountHealthPatchFromMtStatus,
   brokerTerminalHealthLabel,
   brokerTerminalHealthPhase,
 } from './brokerHealth'
@@ -93,5 +94,28 @@ describe('brokerTerminalHealthLabel', () => {
       brokerTerminalHealthLabel(broker({ terminal_connected: false, trade_allowed: false }), labels),
     ).toBe('Unhealthy')
     expect(brokerTerminalHealthLabel(broker({}), labels)).toBe('Checking…')
+  })
+})
+
+describe('brokerAccountHealthPatchFromMtStatus', () => {
+  it('parses linked_account_type from status.account.type', () => {
+    expect(
+      brokerAccountHealthPatchFromMtStatus({
+        status: 'ready',
+        account: { type: 'Demo', loggedIn: true },
+      }).linked_account_type,
+    ).toBe('Demo')
+    expect(
+      brokerAccountHealthPatchFromMtStatus({
+        status: 'ready',
+        account: { type: 'Real', loggedIn: true },
+      }).linked_account_type,
+    ).toBe('Live')
+  })
+
+  it('omits linked_account_type when account type is missing', () => {
+    expect(
+      brokerAccountHealthPatchFromMtStatus({ status: 'ready' }).linked_account_type,
+    ).toBeUndefined()
   })
 })
