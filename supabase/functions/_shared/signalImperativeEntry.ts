@@ -9,7 +9,7 @@ import {
 import { messageHasExplicitSlTpLabels } from "./signalEntryNowRequirement.ts"
 
 export type ImperativeEntryKeywordFields = {
-  signal?: { buy?: string; sell?: string }
+  signal?: { buy?: string; sell?: string; market_order?: string }
   additional?: { delimiters?: string }
 }
 

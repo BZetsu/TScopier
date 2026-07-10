@@ -2,7 +2,9 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.hasExecutableTradeStructure = hasExecutableTradeStructure;
 exports.looksLikeMarketNewsOrCommentary = looksLikeMarketNewsOrCommentary;
+exports.looksLikeRetrospectiveTradeDiscussion = looksLikeRetrospectiveTradeDiscussion;
 exports.looksLikeCasualNonTradeMessage = looksLikeCasualNonTradeMessage;
+exports.looksLikePositionStatusCommentary = looksLikePositionStatusCommentary;
 exports.looksLikeTradeRecapCommentary = looksLikeTradeRecapCommentary;
 exports.looksLikeProfitResultCommentary = looksLikeProfitResultCommentary;
 exports.isPercentagePriceAt = isPercentagePriceAt;
@@ -61,6 +63,47 @@ function looksLikeMarketNewsOrCommentary(message) {
         return true;
     return false;
 }
+/**
+ * Retrospective Q&A / soft trade discussion that mentions buy/sell/gold/entry
+ * but is not an imperative order (e.g. "Did you manage this buy… not a bad entry…").
+ */
+function looksLikeRetrospectiveTradeDiscussion(message) {
+    const text = String(message ?? '').replace(/\s+/g, ' ').trim();
+    if (!text)
+        return false;
+    if (hasExecutableTradeStructure(text))
+        return false;
+    // Imperative market entries must never be treated as discussion.
+    if (/\b(?:gold|xau(?:usd)?)\s+(?:buy|sell)\s+now\b/i.test(text))
+        return false;
+    if (/\b(?:buy|sell)\s+(?:gold|xau(?:usd)?)\s+now\b/i.test(text))
+        return false;
+    if (/\b(?:buy|sell)\s+now\b/i.test(text))
+        return false;
+    const mentionsTradeSide = /\b(?:buy|sell|long|short)\b/i.test(text);
+    const mentionsInstrument = /\b(?:gold|xau(?:usd)?|silver|xag(?:usd)?)\b/i.test(text);
+    if (!mentionsTradeSide && !mentionsInstrument)
+        return false;
+    const isQuestion = /\?/.test(text)
+        || /\b(?:did you|have you|anyone|guys|manage this|caught this|get in)\b/i.test(text);
+    const softEntryTalk = /\b(?:not a bad|good|nice|solid|decent|bad)\s+entry\b/i.test(text)
+        || /\b(?:our|the|this|that)\s+entry\b/i.test(text)
+        || /\bclose to (?:our\s+)?entry\b/i.test(text)
+        || /\bmanage this\s+(?:buy|sell)\b/i.test(text)
+        || /\b(?:strong|key)\s+(?:support|resistance)\s+zone\b/i.test(text)
+        || /\bfund[ae]mentals?\b/i.test(text)
+        || /\b(?:too\s+)?(?:bearish|bullish)\s+for\b/i.test(text);
+    if (!(isQuestion || softEntryTalk))
+        return false;
+    // Need at least one discussion cue plus trade vocabulary without executable levels.
+    if (isQuestion && softEntryTalk)
+        return true;
+    if (isQuestion && mentionsTradeSide && mentionsInstrument)
+        return true;
+    if (softEntryTalk && (mentionsTradeSide || mentionsInstrument))
+        return true;
+    return false;
+}
 /** Detect lifestyle/commentary messages that mention gold or "buy" but are not trade signals. */
 function looksLikeCasualNonTradeMessage(message) {
     const text = String(message ?? '').replace(/\s+/g, ' ').trim();
@@ -84,6 +127,51 @@ function looksLikeCasualNonTradeMessage(message) {
         return true;
     if (looksLikeTradeRecapCommentary(text))
         return true;
+    if (looksLikeRetrospectiveTradeDiscussion(text))
+        return true;
+    if (looksLikePositionStatusCommentary(text))
+        return true;
+    return false;
+}
+/**
+ * Position updates / conditional tense about trades already in flight
+ * (e.g. "trade we right now in, selling gold" — not a new entry order).
+ */
+function looksLikePositionStatusCommentary(message) {
+    const text = String(message ?? '').replace(/\s+/g, ' ').trim();
+    if (!text)
+        return false;
+    if (hasExecutableTradeStructure(text))
+        return false;
+    if (/\b(?:gold|xau(?:usd)?)\s+(?:buy|sell)\s+now\b/i.test(text))
+        return false;
+    if (/\b(?:buy|sell)\s+(?:gold|xau(?:usd)?)\s+now\b/i.test(text))
+        return false;
+    if (/\b(?:buy|sell)\s+now\b/i.test(text))
+        return false;
+    if (/\btrade\s+we\b.{0,60}\bin\b/i.test(text) && /\b(?:selling|buying)\b/i.test(text)) {
+        return true;
+    }
+    if (/\b(?:we|trade)\s+right\s+now\s+in\b/i.test(text))
+        return true;
+    if (/\bright\s+now\s+in,?\s+(?:selling|buying)\b/i.test(text))
+        return true;
+    if (/\bwould(?:'ve|'ve|\s+have)\s+(?:sold|bought|buy|sell)\b/i.test(text))
+        return true;
+    if (/\bwas\s+gonna\s+go\s+for\b/i.test(text))
+        return true;
+    if (/\bretracement\b/i.test(text) && /\b(?:would|gonna|sold|bought|selling|buying)\b/i.test(text)) {
+        return true;
+    }
+    if (/\blet'?s\s+see\s+if\s+the\s+bears\b/i.test(text))
+        return true;
+    if (/\bnot\s+making\s+it\s+easy\s+for\s+retail\b/i.test(text))
+        return true;
+    if (/\b(?:selling|buying)\s+(?:gold|xau(?:usd)?|silver|xag(?:usd)?|btc(?:usd|usdt)?|bitcoin)\b/i.test(text)
+        && !/\b(?:gold|xau(?:usd)?)\s+(?:buy|sell)\b/i.test(text)
+        && !/\b(?:buy|sell)\s+(?:gold|xau(?:usd)?)\b/i.test(text)) {
+        return true;
+    }
     return false;
 }
 /** Past-tense trade story / lesson posts that mention "took the buy" but carry no executable levels. */

@@ -684,7 +684,7 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
                     symbol: trade.symbol,
                 }));
             }
-            else if (action === 'partial_profit' || action === 'partial_breakeven') {
+            else if (action === 'partial_profit') {
                 const fraction = typeof parsed.partial_close_fraction === 'number' && parsed.partial_close_fraction > 0
                     ? Math.min(0.95, parsed.partial_close_fraction)
                     : 0.5;
@@ -709,7 +709,7 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
                     await ctx.supabase.from('trades').update({ lot_size: remaining }).eq('id', trade.id);
                 }
             }
-            else if (action === 'breakeven') {
+            else if (action === 'breakeven' || action === 'partial_breakeven') {
                 // Tickets were pre-reconciled once from a single OpenedOrders snapshot;
                 // use the pre-assigned ticket (no per-leg broker read here).
                 const excludeTickets = breakevenExcludeByTradeId.get(trade.id) ?? new Set();
@@ -838,17 +838,56 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
                 }
                 if (lastErr)
                     throw lastErr;
-                await ctx.supabase
-                    .from('trades')
-                    .update({
+                let remainingLots = trade.lot_size;
+                let halfClosedLots = 0;
+                if (action === 'partial_breakeven') {
+                    const fraction = typeof parsed.partial_close_fraction === 'number' && parsed.partial_close_fraction > 0
+                        ? Math.min(0.95, parsed.partial_close_fraction)
+                        : 0.5;
+                    const closeLots = +(trade.lot_size * fraction).toFixed(2);
+                    if (closeLots >= 0.01) {
+                        try {
+                            await api.orderClose(uuid, { ticket: effectiveTicket, lots: closeLots });
+                            halfClosedLots = closeLots;
+                            remainingLots = Math.max(0, +(trade.lot_size - closeLots).toFixed(2));
+                        }
+                        catch (halfErr) {
+                            const halfMsg = halfErr instanceof Error ? halfErr.message : String(halfErr);
+                            console.warn(`[tradeExecutor] partial_breakeven half-close failed trade=${trade.id} ticket=${effectiveTicket}: ${halfMsg}`);
+                        }
+                    }
+                }
+                const tradePatch = {
                     sl: beSl,
                     // Mark the leg as at-breakeven (per-leg, entry-relative) so the reconcile
                     // loop preserves THIS leg's own SL and never collapses the basket to one
                     // shared SL. Mirrors auto-breakeven, which the reconciler already preserves.
                     auto_be_applied_at: new Date().toISOString(),
                     ...(ticketReconciledFrom != null ? { metaapi_order_id: String(effectiveTicket) } : {}),
-                })
+                };
+                if (action === 'partial_breakeven') {
+                    if (remainingLots < 0.0001) {
+                        tradePatch.status = 'closed';
+                        tradePatch.closed_at = new Date().toISOString();
+                        tradePatch.lot_size = 0;
+                    }
+                    else if (halfClosedLots > 0) {
+                        tradePatch.lot_size = remainingLots;
+                    }
+                }
+                await ctx.supabase
+                    .from('trades')
+                    .update(tradePatch)
                     .eq('id', trade.id);
+                if (action === 'partial_breakeven'
+                    && remainingLots < 0.0001
+                    && signal.channel_id) {
+                    await (0, channelActiveTradeParams_1.clearChannelActiveTradeParamsWhenFlat)(ctx.supabase, {
+                        userId: signal.user_id,
+                        channelId: signal.channel_id,
+                        symbolHint: trade.symbol,
+                    });
+                }
                 breakevenAppliedTradeIds.add(trade.id);
                 const symKey = trade.symbol;
                 const prev = channelBreakevenSlBySymbol.get(symKey);
@@ -878,13 +917,21 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
                     mgmt_scope: replyScoped ? 'reply_basket' : 'channel',
                     mgmt_parent_signal_id: signal.parent_signal_id,
                     ticket_reconciled_from: ticketReconciledFrom ?? undefined,
+                    ...(action === 'partial_breakeven'
+                        ? {
+                            half_close: true,
+                            partial_close_fraction: typeof parsed.partial_close_fraction === 'number' && parsed.partial_close_fraction > 0
+                                ? parsed.partial_close_fraction
+                                : 0.5,
+                        }
+                        : {}),
                 },
             });
         }
         catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             let benign = (0, orderModifyBenign_1.isBenignOrderModifyError)(msg);
-            if (benign && action === 'breakeven') {
+            if (benign && (action === 'breakeven' || action === 'partial_breakeven')) {
                 let entry = sanitizeLevel(trade.entry_price);
                 if (entry <= 0) {
                     try {
@@ -925,7 +972,7 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
                     benign = false;
                 }
             }
-            if (action === 'breakeven') {
+            if (action === 'breakeven' || action === 'partial_breakeven') {
                 if (benign) {
                     breakevenAppliedTradeIds.add(trade.id);
                 }
@@ -1005,7 +1052,7 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
         }
         console.warn(`[tradeExecutor] breakeven partial — ${failed.length} leg(s) queued for reconcile signal=${signal.id}`);
     };
-    if (action === 'breakeven') {
+    if (action === 'breakeven' || action === 'partial_breakeven') {
         // Pre-reconcile each leg to a distinct ticket from a single OpenedOrders
         // snapshot per broker, so legs can run in parallel without racing on a
         // shared ticket-exclusion map (the old serial-per-session bottleneck).
@@ -1227,7 +1274,7 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
             }
         }
     }
-    if (action === 'breakeven'
+    if ((action === 'breakeven' || action === 'partial_breakeven')
         && signal.channel_id
         && channelBreakevenSlBySymbol.size > 0) {
         const symbols = (0, channelActiveTradeParams_1.symbolsForChannelParamsPersist)({

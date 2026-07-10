@@ -4,6 +4,7 @@ exports.usesPredefinedStops = usesPredefinedStops;
 exports.reverseSignalGateSatisfied = reverseSignalGateSatisfied;
 exports.deriveManualStopsWithClamp = deriveManualStopsWithClamp;
 const pipCalculator_1 = require("../pipCalculator");
+const signalStopUnits_1 = require("../signalStopUnits");
 /** True when manual settings request pip-based SL and/or TP overrides. */
 function usesPredefinedStops(manual) {
     return manual.use_predefined_sl_pips === true || manual.use_predefined_tp_pips === true;
@@ -27,9 +28,9 @@ function reverseSignalGateSatisfied(manual, entryAnchor) {
 function deriveManualStopsWithClamp(args) {
     const { parsed, manual, channelKeywords, resolvedSymbol, ctx, entryAnchor, isBuy } = args;
     const pipQuote = (0, pipCalculator_1.pipCalculator)(resolvedSymbol, ctx.point, ctx.digits, ctx.contractSize ?? null);
-    const pip = pipQuote.pipPrice;
-    const slInPips = channelKeywords?.additional?.sl_in_pips === true;
-    const tpInPips = channelKeywords?.additional?.tp_in_pips === true;
+    const pip = (0, signalStopUnits_1.resolvePipSize)({ symbol: resolvedSymbol, brokerPipPrice: pipQuote.pipPrice });
+    const slInPips = parsed.sl_unit === 'pips' || channelKeywords?.additional?.sl_in_pips === true;
+    const tpInPips = parsed.tp_unit === 'pips' || channelKeywords?.additional?.tp_in_pips === true;
     const usePreSl = manual.use_predefined_sl_pips === true;
     const usePreTp = manual.use_predefined_tp_pips === true;
     let parsedSl = usePreSl ? null : (parsed.sl ?? null);
@@ -37,10 +38,20 @@ function deriveManualStopsWithClamp(args) {
         ? []
         : (parsed.tp ?? []).filter((n) => typeof n === 'number' && Number.isFinite(n));
     if (!usePreSl && slInPips && parsedSl != null && entryAnchor != null) {
-        parsedSl = isBuy ? entryAnchor - parsedSl * pip : entryAnchor + parsedSl * pip;
+        parsedSl = (0, signalStopUnits_1.convertPipOffsetToPrice)({
+            offset: parsedSl,
+            entryAnchor,
+            isBuy,
+            pipSize: pip,
+        });
     }
     if (!usePreTp && tpInPips && parsedTps.length && entryAnchor != null) {
-        parsedTps = parsedTps.map(t => (isBuy ? entryAnchor + t * pip : entryAnchor - t * pip));
+        parsedTps = (0, signalStopUnits_1.convertPipOffsetsToPrices)({
+            offsets: parsedTps,
+            entryAnchor,
+            isBuy,
+            pipSize: pip,
+        });
     }
     let finalSl = parsedSl;
     let finalTps = parsedTps;

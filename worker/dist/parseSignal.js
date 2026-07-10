@@ -13,12 +13,14 @@ const signalManagementIntent_1 = require("./signalManagementIntent");
 const signalPriceFormat_1 = require("./signalPriceFormat");
 const tradableSymbol_1 = require("./tradableSymbol");
 const signalCommentaryGuard_1 = require("./signalCommentaryGuard");
+const signalImperativeEntry_1 = require("./signalImperativeEntry");
 const normalizeTelegramMessageText_1 = require("./normalizeTelegramMessageText");
 const multilingualManagementTerms_1 = require("./multilingualManagementTerms");
 const trainingManagementKeywords_1 = require("./trainingManagementKeywords");
 const multilingualSignalTerms_1 = require("./multilingualSignalTerms");
 const signalEntryNowRequirement_1 = require("./signalEntryNowRequirement");
 const forexBroSignalPatterns_1 = require("./forexBroSignalPatterns");
+const signalStopUnits_1 = require("./signalStopUnits");
 /** Loose hint that a message references a Deriv synthetic index (any alias form). */
 const DERIV_SYNTHETIC_HINT_RE = /\b(?:v(?:ix)?\s*\d{2,3}|vol(?:atility)?\s*\d{2,3}|r_?\d{2,3}|1hz\d{1,3}v|boom\s*\d{3,4}|crash\s*\d{3,4}|step(?:\s*index)?|stprng\d?|jump\s*\d{2,3}|jd\d{2,3}|range\s*break|rdbull|rdbear|bull\s*market|bear\s*market)\b/i;
 exports.DEFAULT_CHANNEL_KEYWORDS = {
@@ -150,6 +152,52 @@ function hasAnyKeyword(text, words) {
         return keywordRegex(w).test(text) || keywordRegex((0, multilingualSignalTerms_1.foldAccents)(w)).test(folded);
     });
 }
+/** Soft prose around "entry" that is discussion, not a priced entry level. */
+function isSoftEntryProse(message) {
+    return (/\b(?:not a bad|good|nice|solid|decent|bad)\s+entry\b/i.test(message)
+        || /\b(?:our|the|this|that)\s+entry\b/i.test(message)
+        || /\bclose to (?:our\s+)?entry\b/i.test(message));
+}
+/**
+ * True when an entry_point keyword is backed by a numeric price/zone nearby,
+ * or the alias itself is an imperative phrase (e.g. "gold buy now") rather than bare "ENTRY".
+ * Bare prose "not a bad entry" must not count as price evidence.
+ */
+function hasEntryPointPriceEvidence(message, entryPointAliases) {
+    if (!entryPointAliases.length)
+        return false;
+    if (isSoftEntryProse(message) && !/\bentry\s*(?:price|level)?\s*[:=\-]?\s*\d/i.test(message)) {
+        return false;
+    }
+    const text = message.replace(/\s+/g, ' ').trim();
+    for (const alias of entryPointAliases) {
+        const a = String(alias ?? '').trim();
+        if (!a)
+            continue;
+        if (!hasAnyKeyword(message, [a]))
+            continue;
+        // Phrase aliases that already encode an imperative entry (not the word "entry" alone).
+        if (!/^\s*entr(?:y|ée|ee)\s*$/i.test(a) && !/\bentry\b/i.test(a)) {
+            return true;
+        }
+        if (/\b(?:buy|sell)\s+now\b/i.test(a) || /\b(?:now|market)\b/i.test(a)) {
+            return true;
+        }
+        // Require a numeric price adjacent to this entry label.
+        const labeled = new RegExp(`${escapeRegExp(a).replace(/\s+/g, '\\s+')}\\s*(?:price|level)?\\s*[:=\\-]?\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'i');
+        if (labeled.test(text))
+            return true;
+        const zone = new RegExp(`${escapeRegExp(a).replace(/\s+/g, '\\s+')}\\s*(?:price|level)?\\s*[:=\\-]?\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\s*(?:\\/|\\band\\b|-|–|to)\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'i');
+        if (zone.test(text))
+            return true;
+    }
+    // Generic "entry 2650" / "entry: 2650-2655" even when alias is just ENTRY.
+    if (/\bentry\s*(?:price|level)?\s*[:=]?\s*\d/i.test(text))
+        return true;
+    if (/\bentry\s+zone\b/i.test(text) && new RegExp(signalPriceFormat_1.SIGNAL_PRICE_NUM).test(text))
+        return true;
+    return false;
+}
 function lexiconActionAliases(lexicon, key) {
     const raw = lexicon?.action_aliases?.[key];
     if (!Array.isArray(raw))
@@ -192,11 +240,24 @@ function isProseShortMatch(text) {
         || /\bin\s+short\b/i.test(text)
         || /\bshort\s+term\b/i.test(text));
 }
+function isGerundOrPastSideProse(message) {
+    return (/\b(?:selling|buying)\s+(?:gold|xau(?:usd)?|silver|xag(?:usd)?|btc(?:usd|usdt)?|bitcoin|eth(?:usd)?)\b/i.test(message)
+        || /\b(?:sold|bought)\s+(?:gold|xau(?:usd)?|silver|xag(?:usd)?)\b/i.test(message)
+        || /\b(?:gold|xau(?:usd)?)\s+(?:sold|bought)\b/i.test(message));
+}
+function isGerundSideKeyword(text, side) {
+    if (side === 'buy') {
+        return /\bbuying\b/i.test(text) && !/\bbuy\s+now\b/i.test(text);
+    }
+    return /\bselling\b/i.test(text) && !/\bsell\s+now\b/i.test(text);
+}
 function parseBuySideFromKeywords(text, words) {
     for (const w of words) {
         if (!w)
             continue;
         const lower = w.toLowerCase().trim();
+        if (lower === 'buy' && isGerundSideKeyword(text, 'buy'))
+            continue;
         if (lower === 'long') {
             if (isProseLongMatch(text))
                 continue;
@@ -214,6 +275,8 @@ function parseSellSideFromKeywords(text, words) {
         if (!w)
             continue;
         const lower = w.toLowerCase().trim();
+        if (lower === 'sell' && isGerundSideKeyword(text, 'sell'))
+            continue;
         if (lower === 'short') {
             if (isProseShortMatch(text))
                 continue;
@@ -235,6 +298,9 @@ function sellAliasesForSideDetection(channelKeywords, lexicon = null) {
 }
 function resolveTradeSideFromMessage(message, channelKeywords, lexicon = null) {
     const text = message.replace(/\s+/g, ' ').trim();
+    if (isGerundOrPastSideProse(text) && !(0, signalImperativeEntry_1.messageHasImperativeEntryPhrase)(text, channelKeywords)) {
+        return null;
+    }
     const goldBuy = /\bgold\s+buy\b|\bbuy\s+gold\b/i.test(text);
     const goldSell = /\bgold\s+sell\b|\bsell\s+gold\b/i.test(text);
     if (goldBuy && !goldSell)
@@ -261,12 +327,16 @@ function buildTpRegex(extraLabels = []) {
 function extractTpLevels(message, extraLabels = []) {
     const text = String(message ?? "");
     const hits = [];
+    let explicitPips = (0, signalStopUnits_1.tpClauseHasExplicitPips)(text);
     const collect = (rx) => {
         for (const m of text.matchAll(rx)) {
             const value = (0, signalPriceFormat_1.parseSignalPriceToken)(m[1]);
             if (value == null)
                 continue;
             hits.push({ index: m.index ?? 0, value });
+            const after = text.slice((m.index ?? 0) + m[0].length, (m.index ?? 0) + m[0].length + 12);
+            if (/^\s*pips?\b/i.test(after) || /^pips?\b/i.test(after))
+                explicitPips = true;
         }
     };
     collect(buildTpRegex(extraLabels));
@@ -279,11 +349,13 @@ function extractTpLevels(message, extraLabels = []) {
     // TP1 4564 (space-separated tier number)
     collect(new RegExp(`\\b(?:tp|target(?:\\s+level)?)\\s*\\d+\\s+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'gi'));
     // TP: 4557 / 4527 (slash-separated tiers on one label — not thousands commas)
-    for (const m of text.matchAll(/\b(?:tp|take\s*profit|target(?:\s+level)?)\s*[:=]?\s*((?:\d+(?:\.\d+)?(?:\s*(?:\/|\band\b|\|)\s*)+)+\d+(?:\.\d+)?)/gi)) {
+    for (const m of text.matchAll(/\b(?:tp|take\s*profit|target(?:\s+level)?)\s*[:=]?\s*((?:\d+(?:\.\d+)?(?:\s*(?:\/|\band\b|\|)\s*)+)+\d+(?:\.\d+)?)(?:\s*pips?\b)?/gi)) {
         const block = m[1] ?? '';
         const base = m.index ?? 0;
         const offset = m[0].indexOf(block);
         const normalized = block.replace(/,/g, '');
+        if (/\bpips?\b/i.test(m[0]))
+            explicitPips = true;
         for (const part of normalized.split(/\s*(?:\/|\band\b|\|)\s*/i)) {
             const value = (0, signalPriceFormat_1.parseSignalPriceToken)(part.trim());
             if (value == null)
@@ -293,7 +365,7 @@ function extractTpLevels(message, extraLabels = []) {
         }
     }
     if (!hits.length)
-        return [];
+        return { values: [], explicitPips: false };
     hits.sort((a, b) => a.index - b.index);
     const seenIndex = new Set();
     const seenValues = new Set();
@@ -307,7 +379,7 @@ function extractTpLevels(message, extraLabels = []) {
         seenValues.add(hit.value);
         values.push(hit.value);
     }
-    return values;
+    return { values, explicitPips };
 }
 function detectOpenTp(message) {
     const t = String(message ?? "");
@@ -379,6 +451,10 @@ function normalizeParsedFromModel(raw, fallbackText) {
     }
     const re_enter = j.re_enter === true || (0, signalPriceInference_1.detectReEnterIntent)(raw_instruction);
     const provider_signal_number = numOrNull(j.provider_signal_number);
+    const tpUnitRaw = typeof j.tp_unit === 'string' ? j.tp_unit.trim().toLowerCase() : '';
+    const slUnitRaw = typeof j.sl_unit === 'string' ? j.sl_unit.trim().toLowerCase() : '';
+    const tp_unit = tpUnitRaw === 'pips' || tpUnitRaw === 'price' ? tpUnitRaw : undefined;
+    const sl_unit = slUnitRaw === 'pips' || slUnitRaw === 'price' ? slUnitRaw : undefined;
     return {
         action,
         symbol,
@@ -387,6 +463,8 @@ function normalizeParsedFromModel(raw, fallbackText) {
         entry_zone_high: numOrNull(j.entry_zone_high),
         sl: numOrNull(j.sl),
         tp,
+        ...(tp_unit ? { tp_unit } : {}),
+        ...(sl_unit ? { sl_unit } : {}),
         lot_size: numOrNull(j.lot_size),
         confidence,
         raw_instruction,
@@ -510,38 +588,41 @@ function parseDeterministicManagement(message, lexicon, channelKeywords) {
         hasAnyKeyword(t, kwPartial);
     const wantsBreakeven = multilingualManagementTerms_1.COMMON_BREAKEVEN_PHRASES.some(p => (0, multilingualSignalTerms_1.messageContainsKeyword)(t, p)) ||
         /\bbreakeven|break\s*even\b/i.test(t) ||
-        /\bmove\s+stop\s+to\s+breakeven\b/i.test(t) ||
+        /\bmove\s+stop\s+to\s+(?:breakeven|break\s*even|entry|be)\b/i.test(t) ||
         /\bmoved?\s+(sl\s+)?to\s+(be|entry|entr(y)?\s?price)|\b(be|bk)\s*now\b/i.test(t) ||
         /\bstop\s*loss\s+to\s+(be|entry|breakeven|break\s*even)\b/i.test(t) ||
-        /\bsl\s+to\s+(be|entry)\b/i.test(t) ||
-        /\bmove\s+.*\b(stop\s*loss|sl)\b.*\b(breakeven|break\s*even|entry|be)\b/i.test(t) ||
+        /\b(?:sl|stop)\s+to\s+(be|entry|breakeven|break\s*even)\b/i.test(t) ||
+        /\bmove\s+.*\b(stop\s*loss|sl|stop)\b.*\b(breakeven|break\s*even|entry|be)\b/i.test(t) ||
         hasAnyKeyword(t, kwBreakeven);
     const wantsCloseWorseEntries = /\bclose\s+worse\s+entr(?:y|ies)\b/i.test(t) ||
         /\bclose\s+worse\b/i.test(t) ||
         hasAnyKeyword(t, kwCloseWorse);
+    const resolvePartialFraction = () => {
+        if (hitCloseHalfKw ||
+            /\b(close\s+half|take\s+half|close\s+50%|take\s+50%|c\s+half|half\s+of\s+(the\s+)?(position|trade))\b/i.test(t) ||
+            /\b(50|half)\s*%?\s*(of\s+)?(the\s+)?(position|trade|lot|profit)\b/i.test(t)) {
+            return 0.5;
+        }
+        if (hitClosePartialKw ||
+            /\b(close\s+partials?|take\s+partials?|close\s+25%|take\s+25%)\b/i.test(t) ||
+            /\b(25|quarter)\s*%?\s*(of\s+)?(the\s+)?(position|trade|lot|profit)\b/i.test(tl)) {
+            return 0.25;
+        }
+        return (0, signalManagementIntent_1.partialCloseFractionFromMessage)(t);
+    };
     if (wantsCloseWorseEntries) {
         action = "close_worse_entries";
         confidence = 0.95;
     }
-    else if (wantsPartialHalf && wantsBreakeven)
+    else if (wantsPartialHalf && wantsBreakeven) {
         action = "partial_breakeven";
+        partial_close_fraction = resolvePartialFraction() ?? 0.5;
+    }
     else if (wantsPartialHalf) {
         action = "partial_profit";
-        if (hitCloseHalfKw ||
-            /\b(close\s+half|take\s+half|close\s+50%|take\s+50%|c\s+half|half\s+of\s+(the\s+)?(position|trade))\b/i.test(t) ||
-            /\b(50|half)\s*%?\s*(of\s+)?(the\s+)?(position|trade|lot|profit)\b/i.test(t)) {
-            partial_close_fraction = 0.5;
-        }
-        else if (hitClosePartialKw ||
-            /\b(close\s+partials?|take\s+partials?|close\s+25%|take\s+25%)\b/i.test(t) ||
-            /\b(25|quarter)\s*%?\s*(of\s+)?(the\s+)?(position|trade|lot|profit)\b/i.test(tl)) {
-            partial_close_fraction = 0.25;
-        }
-        else {
-            const pct = (0, signalManagementIntent_1.partialCloseFractionFromMessage)(t);
-            if (pct != null)
-                partial_close_fraction = pct;
-        }
+        const frac = resolvePartialFraction();
+        if (frac != null)
+            partial_close_fraction = frac;
     }
     else if (wantsBreakeven)
         action = "breakeven";
@@ -578,7 +659,8 @@ function parseDeterministicManagement(message, lexicon, channelKeywords) {
         ...splitKeywordAliases(channelKeywords.update.set_tp, delim),
         ...splitKeywordAliases(channelKeywords.update.adjust_tp, delim),
     ];
-    const tp = extractTpLevels(t, extraTp);
+    const tpExtract = extractTpLevels(t, extraTp);
+    const tp = tpExtract.values;
     return {
         action,
         symbol: sym,
@@ -587,11 +669,14 @@ function parseDeterministicManagement(message, lexicon, channelKeywords) {
         entry_zone_high: null,
         sl,
         tp,
+        ...(tpExtract.explicitPips ? { tp_unit: 'pips' } : {}),
         lot_size: null,
         confidence,
         raw_instruction: message,
         open_tp: detectOpenTp(message),
-        ...(action === "partial_profit" && partial_close_fraction != null ? { partial_close_fraction } : {}),
+        ...((action === "partial_profit" || action === "partial_breakeven") && partial_close_fraction != null
+            ? { partial_close_fraction }
+            : {}),
     };
 }
 /**
@@ -614,9 +699,11 @@ function extractOptionalEntryAnchor(message, channelKeywords) {
         }
     }
     else {
+        // ZN / ZONE / Z: 4105-4113 (common shorthand on gold channels)
+        const znZone = text.match(new RegExp(`\\b(?:zn|zone|z)\\s*[:=]?\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\s*(?:-|–|to)\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'i'));
         const nowZone = text.match(new RegExp(`\\b(?:now|instant|market|mkt)\\s+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\s*(?:-|–|to)\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'i'));
         const reentryZone = text.match(new RegExp(`\\b(?:now\\s+)?(?:re[-\\s]?entry|reenter)\\s+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\s*(?:-|–|to)\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'i'));
-        const zoneMatch = nowZone ?? reentryZone;
+        const zoneMatch = znZone ?? nowZone ?? reentryZone;
         if (zoneMatch?.[1] && zoneMatch?.[2]) {
             const a = (0, signalPriceFormat_1.parseSignalPriceToken)(zoneMatch[1]);
             const b = (0, signalPriceFormat_1.parseSignalPriceToken)(zoneMatch[2]);
@@ -721,14 +808,15 @@ function hasParameterEvidence(message, channelKeywords) {
     const delim = channelKeywords.additional.delimiters;
     if (extractSlFromMessage(message, channelKeywords) != null)
         return true;
-    if (extractTpLevels(message, buildExtraTpLabels(null, channelKeywords)).length > 0)
+    if (extractTpLevels(message, buildExtraTpLabels(null, channelKeywords)).values.length > 0)
         return true;
     if (/\bentry\s*(?:price)?\s*[:=]\s*\d/i.test(text))
         return true;
     if (new RegExp(`@\\s*${signalPriceFormat_1.SIGNAL_PRICE_NUM}`).test(text))
         return true;
-    if (hasAnyKeyword(message, splitKeywordAliases(channelKeywords.signal.entry_point, delim)))
+    if (hasEntryPointPriceEvidence(message, splitKeywordAliases(channelKeywords.signal.entry_point, delim))) {
         return true;
+    }
     const bare = (0, signalManagementIntent_1.bareTradePricesExcludingPips)(message, (0, signalPriceInference_1.extractUnlabeledPrices)(message));
     return bare.length > 0;
 }
@@ -747,9 +835,13 @@ function parseChannelParameterFollowUp(message, lexicon, channelKeywords) {
         return null;
     const extraTp = buildExtraTpLabels(lexicon, channelKeywords);
     const sl = extractSlFromMessage(message, channelKeywords);
-    const tp = extractTpLevels(message, extraTp);
+    const tpExtract = extractTpLevels(message, extraTp);
+    const tp = tpExtract.values;
     const { entry_price, entry_zone_low, entry_zone_high } = extractOptionalEntryAnchor(message, channelKeywords);
     const reEnter = (0, signalPriceInference_1.detectReEnterIntent)(message);
+    const unitFields = {
+        ...(tpExtract.explicitPips ? { tp_unit: 'pips' } : {}),
+    };
     if (reEnter) {
         const side = resolveTradeSideFromMessage(message, channelKeywords, lexicon);
         if (!side)
@@ -762,6 +854,7 @@ function parseChannelParameterFollowUp(message, lexicon, channelKeywords) {
             entry_zone_high,
             sl,
             tp,
+            ...unitFields,
             lot_size: null,
             confidence: 0.91,
             raw_instruction: message,
@@ -777,6 +870,7 @@ function parseChannelParameterFollowUp(message, lexicon, channelKeywords) {
         entry_zone_high,
         sl,
         tp,
+        ...unitFields,
         lot_size: null,
         confidence: 0.9,
         raw_instruction: message,
@@ -786,6 +880,11 @@ function parseChannelParameterFollowUp(message, lexicon, channelKeywords) {
 function applyDirectionalPriceInference(parsed, rawMessage) {
     const action = String(parsed.action ?? '').toLowerCase();
     if (action !== 'buy' && action !== 'sell')
+        return parsed;
+    // Pip-offset ladders must not be reclassified as absolute SL/TP prices.
+    if (parsed.tp_unit === 'pips' || parsed.sl_unit === 'pips')
+        return parsed;
+    if ((0, signalStopUnits_1.tpClauseHasExplicitPips)(rawMessage))
         return parsed;
     const hasSl = typeof parsed.sl === 'number' && Number.isFinite(parsed.sl) && parsed.sl > 0;
     const hasTp = (parsed.tp ?? []).some(t => typeof t === 'number' && Number.isFinite(t) && t > 0);
@@ -874,7 +973,8 @@ function parseSimpleSignal(message, lexicon, channelKeywords) {
         ...splitKeywordAliases(channelKeywords.update.set_tp, delim),
         ...splitKeywordAliases(channelKeywords.update.adjust_tp, delim),
     ];
-    const tp = extractTpLevels(message, extraTp);
+    const tpExtract = extractTpLevels(message, extraTp);
+    const tp = tpExtract.values;
     const { entry_price, entry_zone_low, entry_zone_high } = entryAnchor;
     return {
         action: side,
@@ -884,6 +984,7 @@ function parseSimpleSignal(message, lexicon, channelKeywords) {
         entry_zone_high,
         sl,
         tp,
+        ...(tpExtract.explicitPips ? { tp_unit: 'pips' } : {}),
         lot_size: null,
         confidence: 0.99,
         raw_instruction: message,
@@ -942,8 +1043,10 @@ function parseEntryFromKeywords(message, lexicon, channelKeywords) {
         ...splitKeywordAliases(channelKeywords.update.set_tp, delim),
         ...splitKeywordAliases(channelKeywords.update.adjust_tp, delim),
     ];
-    const tp = extractTpLevels(message, extraTp);
-    const entryPointHit = hasAnyKeyword(message, splitKeywordAliases(channelKeywords.signal.entry_point, delim));
+    const tpExtract = extractTpLevels(message, extraTp);
+    const tp = tpExtract.values;
+    const entryAliases = splitKeywordAliases(channelKeywords.signal.entry_point, delim);
+    const entryPointHit = hasEntryPointPriceEvidence(message, entryAliases);
     const hasPriceEvidence = entryPointHit ||
         (sl != null && Number.isFinite(sl)) ||
         tp.length > 0 ||
@@ -960,6 +1063,7 @@ function parseEntryFromKeywords(message, lexicon, channelKeywords) {
         entry_zone_high,
         sl,
         tp,
+        ...(tpExtract.explicitPips ? { tp_unit: 'pips' } : {}),
         lot_size: null,
         confidence: 0.93,
         raw_instruction: message,
@@ -1063,14 +1167,40 @@ async function loadChannelKeywords(supabase, channelId) {
 var signalManagementIntent_2 = require("./signalManagementIntent");
 Object.defineProperty(exports, "looksLikeChannelManagementUpdate", { enumerable: true, get: function () { return signalManagementIntent_2.looksLikeChannelManagementUpdate; } });
 Object.defineProperty(exports, "looksLikeExplicitFullCloseCommand", { enumerable: true, get: function () { return signalManagementIntent_2.looksLikeExplicitFullCloseCommand; } });
-function enrichParsedKeywordMatch(keywordMatch, rawMessage) {
+function applyStopUnits(parsed, rawMessage, channelKeywords) {
+    const action = String(parsed.action ?? '').toLowerCase();
+    if (action !== 'buy' && action !== 'sell' && action !== 'modify')
+        return parsed;
+    const tps = (parsed.tp ?? []).filter(n => typeof n === 'number' && Number.isFinite(n) && n > 0);
+    const ref = (0, signalStopUnits_1.entryRefFromParsed)(parsed);
+    const tp_unit = (0, signalStopUnits_1.resolveTpUnit)({
+        message: rawMessage,
+        tps,
+        channelTpInPips: channelKeywords?.additional?.tp_in_pips === true,
+        ref,
+        explicitFromExtract: parsed.tp_unit === 'pips',
+    });
+    const sl_unit = (0, signalStopUnits_1.resolveSlUnit)({
+        message: rawMessage,
+        sl: parsed.sl,
+        channelSlInPips: channelKeywords?.additional?.sl_in_pips === true,
+        ref: parsed.entry_price ?? parsed.entry_zone_low ?? parsed.entry_zone_high ?? null,
+    });
+    return {
+        ...parsed,
+        ...(tps.length ? { tp_unit } : {}),
+        ...(parsed.sl != null && Number.isFinite(parsed.sl) ? { sl_unit } : {}),
+    };
+}
+function enrichParsedKeywordMatch(keywordMatch, rawMessage, channelKeywords) {
     const enriched = applyReEnterFlag(applyDirectionalPriceInference(normalizeParsedFromModel(keywordMatch, rawMessage), rawMessage), rawMessage);
     const repaired = applyRawSymbolRepair(enriched, rawMessage);
     const dropped = dropInvalidTradeSymbol(repaired);
-    const providerNum = dropped.provider_signal_number ?? (0, forexBroSignalPatterns_1.extractProviderSignalNumber)(rawMessage);
+    const withUnits = applyStopUnits(dropped, rawMessage, channelKeywords);
+    const providerNum = withUnits.provider_signal_number ?? (0, forexBroSignalPatterns_1.extractProviderSignalNumber)(rawMessage);
     if (providerNum == null)
-        return dropped;
-    return { ...dropped, provider_signal_number: providerNum };
+        return withUnits;
+    return { ...withUnits, provider_signal_number: providerNum };
 }
 /** Deterministic management / SL-TP follow-up parse only (no entry parsers). */
 function parseModificationDeterministic(rawMessage, channelKeywords, lexicon) {
@@ -1109,7 +1239,7 @@ function parseModificationDeterministic(rawMessage, channelKeywords, lexicon) {
             skip_reason: 'No matching management or parameter follow-up pattern',
         };
     }
-    const parsed = enrichParsedKeywordMatch(keywordMatch, message);
+    const parsed = enrichParsedKeywordMatch(keywordMatch, message, channelKeywords);
     const status = parsed.action === 'ignore' ? 'skipped' : 'parsed';
     const skip_reason = parsed.action === 'ignore'
         ? 'No matching management or parameter follow-up pattern'
@@ -1167,7 +1297,7 @@ function parseChannelMessageSync(rawMessage, channelKeywords, lexicon) {
             raw_instruction: displayMessage,
             open_tp: false,
         };
-    const dropped = enrichParsedKeywordMatch(rawParsed, message);
+    const dropped = enrichParsedKeywordMatch(rawParsed, message, channelKeywords);
     if ((0, signalEntryNowRequirement_1.entryMissingSlTpRequiresNow)(dropped, message, channelKeywords)) {
         return {
             parsed: {

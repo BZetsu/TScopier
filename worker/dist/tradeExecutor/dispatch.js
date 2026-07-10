@@ -12,6 +12,7 @@ exports.logPipelineStage = logPipelineStage;
 exports.logDispatchSkipped = logDispatchSkipped;
 exports.logPipelineSummaryBackground = logPipelineSummaryBackground;
 exports.markSignalExecuted = markSignalExecuted;
+exports.aggregateEntryFailureReason = aggregateEntryFailureReason;
 exports.signalLiveDispatchAlreadyHandled = signalLiveDispatchAlreadyHandled;
 exports.signalAlreadyHandled = signalAlreadyHandled;
 exports.signalTooOldForReplay = signalTooOldForReplay;
@@ -454,7 +455,7 @@ async function handleSignal(ctx, row, opts) {
                 (0, subscriptionAccess_1.loadCachedUserIsAdmin)(ctx.supabase, row.user_id),
             ]);
         }
-        if (!isAdmin && (!userSub || !(0, subscriptionAccess_1.isSubscriptionActive)(userSub.status))) {
+        if (!isAdmin && (!userSub || !(0, subscriptionAccess_1.isSubscriptionActive)(userSub.status, userSub.trial_ends_at))) {
             await ctx.logDispatchSkipped(row, 'subscription_inactive');
             return;
         }

@@ -7,6 +7,7 @@ exports.aiParseEntry = aiParseEntry;
 const parseSignal_1 = require("./parseSignal");
 const channelKeywordsCache_1 = require("./channelKeywordsCache");
 const aiParseModification_1 = require("./aiParseModification");
+const signalExecutionEligibility_1 = require("./signalExecutionEligibility");
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY ?? '';
 function parseEnvBool(name, defaultValue = false) {
     const raw = String(process.env[name] ?? (defaultValue ? 'true' : 'false')).trim();
@@ -58,6 +59,8 @@ Rules:
 - Normalize symbols (GOLD→XAUUSD, SILVER→XAGUSD).
 - Never invent prices not present in the message.
 - Commentary or TP-hit announcements without a new entry → action ignore.
+- Position updates about an existing trade ("we are in a sell", "selling gold", "trade we right now in") → action ignore.
+- Never classify conditional tense ("would've sold") or prose gerunds ("selling gold") as new entries.
 - confidence 0-1.`;
 function toParseResult(parsed, status, skip_reason) {
     return { parsed: parsed, status, skip_reason };
@@ -207,6 +210,20 @@ async function aiParseEntry(supabase, args) {
             parsed,
             status: 'skipped',
             skip_reason: 'AI classified as non-entry',
+            confidence,
+            source: 'openai',
+        };
+    }
+    const eligibility = (0, signalExecutionEligibility_1.evaluateParsedSignalExecutionEligibility)(parsed, corrected, keywords);
+    if (!eligibility.eligible) {
+        return {
+            parsed: {
+                ...parsed,
+                action: 'ignore',
+                symbol: null,
+            },
+            status: 'skipped',
+            skip_reason: eligibility.skipReason ?? 'entry_not_execution_eligible',
             confidence,
             source: 'openai',
         };

@@ -9,6 +9,8 @@ const settings_1 = require("../newsTrading/settings");
 const multiTradeMerge_1 = require("../multiTradeMerge");
 const signalPriceInference_1 = require("../signalPriceInference");
 const signalEntryZoneSanity_1 = require("../signalEntryZoneSanity");
+const pipCalculator_1 = require("../pipCalculator");
+const signalStopUnits_1 = require("../signalStopUnits");
 const channelActiveTradeParams_1 = require("../channelActiveTradeParams");
 const tradeComment_1 = require("../tradeComment");
 const helpers_1 = require("./helpers");
@@ -334,6 +336,8 @@ async function prepareEntryExecution(ctx, args) {
             entry_zone_high: rzo?.hi ?? parsed.entry_zone_high,
             sl: parsed.sl,
             tp: parsed.tp,
+            tp_unit: parsed.tp_unit,
+            sl_unit: parsed.sl_unit,
             lot_size: parsed.lot_size,
             open_tp: parsed.open_tp,
             partial_close_fraction: parsed.partial_close_fraction,
@@ -390,14 +394,48 @@ async function prepareEntryExecution(ctx, args) {
         });
     }
     else {
+        const entryAnchor = (0, manualPlanner_1.resolvedParsedEntryPrice)(parsed)
+            ?? (() => {
+                const z = (0, manualPlanner_1.resolvedParsedEntryZone)(parsed);
+                return z != null ? (z.lo + z.hi) / 2 : null;
+            })()
+            ?? (Number.isFinite(strictEntryPrefetch?.bid) && Number.isFinite(strictEntryPrefetch?.ask)
+                ? ((Number(strictEntryPrefetch.bid) + Number(strictEntryPrefetch.ask)) / 2)
+                : null);
+        const isBuy = (0, helpers_1.isBuySideOp)(String(op));
+        const pipQuote = (0, pipCalculator_1.pipCalculator)(symbol, params?.point ?? 0.00001, params?.digits ?? 5, params?.contractSize ?? null);
+        const pip = (0, signalStopUnits_1.resolvePipSize)({ symbol, brokerPipPrice: pipQuote.pipPrice });
+        const tpInPips = parsed.tp_unit === 'pips' || channelKeywords?.additional?.tp_in_pips === true;
+        const slInPips = parsed.sl_unit === 'pips' || channelKeywords?.additional?.sl_in_pips === true;
+        let stoploss = parsed.sl ?? 0;
+        let takeprofit = parsed.tp?.[0] ?? 0;
+        if (entryAnchor != null && entryAnchor > 0) {
+            if (slInPips && parsed.sl != null && Number.isFinite(parsed.sl) && parsed.sl > 0) {
+                stoploss = (0, signalStopUnits_1.convertPipOffsetToPrice)({
+                    offset: parsed.sl,
+                    entryAnchor,
+                    isBuy,
+                    pipSize: pip,
+                }) ?? 0;
+            }
+            if (tpInPips && Array.isArray(parsed.tp) && parsed.tp.length) {
+                const converted = (0, signalStopUnits_1.convertPipOffsetsToPrices)({
+                    offsets: parsed.tp,
+                    entryAnchor,
+                    isBuy,
+                    pipSize: pip,
+                });
+                takeprofit = converted[0] ?? 0;
+            }
+        }
         plan = {
             orders: [{
                     symbol,
                     operation: op,
                     volume: baseLot,
                     price: (0, manualPlanner_1.resolvedParsedEntryPrice)(parsed) ?? 0,
-                    stoploss: parsed.sl ?? 0,
-                    takeprofit: parsed.tp?.[0] ?? 0,
+                    stoploss,
+                    takeprofit,
                     slippage: 20,
                     comment: commentPrefix,
                     expertID: 909090,

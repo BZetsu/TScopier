@@ -269,7 +269,6 @@ export async function aiParseEntry(
         ...parsed,
         action: 'ignore',
         symbol: null,
-        confidence: 0,
       },
       status: 'skipped',
       skip_reason: eligibility.skipReason ?? 'entry_not_execution_eligible',

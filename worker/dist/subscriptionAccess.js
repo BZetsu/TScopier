@@ -21,7 +21,7 @@ async function loadCachedUserSubscription(supabase, userId) {
         return hit.row;
     const { data } = await supabase
         .from('subscriptions')
-        .select('plan,status,extra_accounts')
+        .select('plan,status,extra_accounts,trial_ends_at')
         .eq('user_id', userId)
         .maybeSingle();
     const row = data ?? null;
@@ -70,9 +70,9 @@ function brokerManualSettingsUseAdvancedFeatures(manualSettings) {
 function subscriptionBlocksSignalExecution(sub, manualSettings, isAdmin = false) {
     if (isAdmin)
         return null;
-    if (!(0, planLimits_1.isSubscriptionActive)(sub?.status))
+    if (!(0, planLimits_1.isSubscriptionActive)(sub?.status, sub?.trial_ends_at))
         return 'subscription_inactive';
-    const plan = (0, planLimits_1.effectivePlan)(sub?.plan, sub?.status);
+    const plan = (0, planLimits_1.effectivePlan)(sub?.plan, sub?.status, sub?.trial_ends_at);
     if (plan === 'basic' && brokerManualSettingsUseAdvancedFeatures(manualSettings)) {
         return 'plan_advanced_feature_required';
     }
@@ -85,5 +85,5 @@ async function userMayRunCopierListener(supabase, userId) {
     if (await (0, copierPause_1.loadCachedUserCopierPaused)(supabase, userId))
         return false;
     const sub = await loadCachedUserSubscription(supabase, userId);
-    return (0, planLimits_1.isSubscriptionActive)(sub?.status);
+    return (0, planLimits_1.isSubscriptionActive)(sub?.status, sub?.trial_ends_at);
 }

@@ -7,9 +7,11 @@
  * plus common channel languages (de, ar, pt, it).
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.MULTILINGUAL_DIRECTION_RE = exports.COMMON_SELL_TERMS = exports.COMMON_BUY_TERMS = exports.COMMON_MARKET_NOW_TERMS = exports.SUPPORTED_MARKET_NOW_BY_LOCALE = void 0;
+exports.SELL_NOW_COMPOUND_RE = exports.BUY_NOW_COMPOUND_RE = exports.MULTILINGUAL_DIRECTION_RE = exports.COMMON_SELL_TERMS = exports.COMMON_BUY_TERMS = exports.COMMON_MARKET_NOW_TERMS = exports.SUPPORTED_MARKET_NOW_BY_LOCALE = void 0;
 exports.foldAccents = foldAccents;
 exports.messageContainsKeyword = messageContainsKeyword;
+exports.isMarketNowDenylistedContext = isMarketNowDenylistedContext;
+exports.messageHasDirectionWithImmediateCue = messageHasDirectionWithImmediateCue;
 exports.textHasCommonMarketNowIntent = textHasCommonMarketNowIntent;
 /** Strip accents so IMMÉDIAT matches immediat aliases. */
 function foldAccents(text) {
@@ -38,10 +40,10 @@ exports.COMMON_MARKET_NOW_TERMS = Object.freeze(Array.from(new Set(Object.values
 exports.COMMON_BUY_TERMS = [
     'achat', 'acheter', // fr
     'compra', 'comprar', // es / pt
-    'kupno', 'kupic', 'kupić', // pl
+    'kupno', 'kupic', 'kupić', 'kup', // pl
     'kaufen', // de
     'köp', // sv
-    'kopen', // nl
+    'kopen', 'koop', // nl
     'купить', 'покупка', // ru
     '買い', // ja
     'شراء', // ar
@@ -49,10 +51,10 @@ exports.COMMON_BUY_TERMS = [
 exports.COMMON_SELL_TERMS = [
     'vente', 'vendre', // fr
     'venta', 'vender', // es
-    'sprzedaz', 'sprzedać', // pl
+    'sprzedaz', 'sprzedać', 'sprzedaż', // pl
     'verkaufen', // de
     'sälj', // sv
-    'verkopen', // nl
+    'verkopen', 'verkoop', // nl
     'продать', 'продажа', // ru
     '売り', // ja
     'بيع', // ar
@@ -66,7 +68,7 @@ exports.MULTILINGUAL_DIRECTION_RE = new RegExp('\\b('
     ].map(t => escapeRegExp(t)).join('|')
     + ')\\b', 'iu');
 const JA_MARKET_NOW_RE = /今すぐ|即時|成行|ナウ/u;
-const BUY_NOW_COMPOUND_RE = new RegExp('\\b('
+exports.BUY_NOW_COMPOUND_RE = new RegExp('\\b('
     + [
         'buy', 'long',
         ...exports.COMMON_BUY_TERMS,
@@ -78,7 +80,7 @@ const BUY_NOW_COMPOUND_RE = new RegExp('\\b('
         ...exports.COMMON_MARKET_NOW_TERMS.filter(t => t.length <= 12 && !t.includes(' ')),
     ].map(t => escapeRegExp(foldAccents(t))).join('|')
     + ')\\b', 'iu');
-const SELL_NOW_COMPOUND_RE = new RegExp('\\b('
+exports.SELL_NOW_COMPOUND_RE = new RegExp('\\b('
     + [
         'sell', 'short',
         ...exports.COMMON_SELL_TERMS,
@@ -99,19 +101,49 @@ function messageContainsKeyword(text, phrase) {
     const pattern = new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(foldedPhrase).replace(/\\s+/g, '\\s+')}(?![\\p{L}\\p{N}])`, 'iu');
     return pattern.test(folded);
 }
-/** True when message contains any configured market-now / immediate-entry cue. */
-function textHasCommonMarketNowIntent(message) {
-    const raw = String(message ?? '');
-    const folded = foldAccents(raw);
-    for (const term of exports.COMMON_MARKET_NOW_TERMS) {
-        if (messageContainsKeyword(raw, term))
-            return true;
-    }
-    if (JA_MARKET_NOW_RE.test(raw))
+/** Commentary contexts where "right now" is position talk, not market entry. */
+function isMarketNowDenylistedContext(message) {
+    const text = String(message ?? '').replace(/\s+/g, ' ').trim();
+    if (/\b(?:we|trade)\s+right\s+now\s+in\b/i.test(text))
         return true;
-    if (BUY_NOW_COMPOUND_RE.test(folded))
+    if (/\bright\s+now\s+in,?\s+(?:selling|buying)\b/i.test(text))
         return true;
-    if (SELL_NOW_COMPOUND_RE.test(folded))
+    if (/\btrade\s+we\b.{0,40}\bright\s+now\b/i.test(text))
         return true;
     return false;
+}
+/** True when buy/sell vocabulary co-occurs with immediate-entry cues (incl. foreign, spaced instruments). */
+function messageHasDirectionWithImmediateCue(message) {
+    if (isMarketNowDenylistedContext(message))
+        return false;
+    const folded = foldAccents(message);
+    if (exports.BUY_NOW_COMPOUND_RE.test(folded))
+        return true;
+    if (exports.SELL_NOW_COMPOUND_RE.test(folded))
+        return true;
+    const buyHit = ['buy', 'long', ...exports.COMMON_BUY_TERMS]
+        .some(t => messageContainsKeyword(message, t));
+    const sellHit = ['sell', 'short', ...exports.COMMON_SELL_TERMS]
+        .some(t => messageContainsKeyword(message, t));
+    if (!buyHit && !sellHit)
+        return false;
+    const nowTerms = exports.COMMON_MARKET_NOW_TERMS.filter(t => t.length <= 12 && !t.includes(' '));
+    if (!nowTerms.some(t => messageContainsKeyword(message, t)))
+        return false;
+    return true;
+}
+/** True when message contains buy/sell paired with immediate-entry cues (not bare "now"). */
+function textHasCommonMarketNowIntent(message) {
+    const raw = String(message ?? '');
+    if (isMarketNowDenylistedContext(raw))
+        return false;
+    if (/\b(at\s+market|@\s*market)\b/i.test(raw))
+        return true;
+    if (JA_MARKET_NOW_RE.test(raw))
+        return true;
+    if (/\b(?:gold|xau(?:usd)?)\s+(?:buy|sell)\s+now\b/i.test(raw))
+        return true;
+    if (/\b(?:buy|sell)\s+(?:gold|xau(?:usd)?)\s+now\b/i.test(raw))
+        return true;
+    return messageHasDirectionWithImmediateCue(raw);
 }

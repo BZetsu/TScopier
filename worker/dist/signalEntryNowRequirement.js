@@ -35,12 +35,14 @@ function isNonTradingMarketPhrase(message) {
 /** True when the message declares an immediate / market entry (NOW, MARKET, etc.). */
 function messageHasMarketNowIntent(message, channelKeywords) {
     const raw = String(message ?? '');
+    if ((0, multilingualSignalTerms_1.isMarketNowDenylistedContext)(raw))
+        return false;
     if (/\b(at\s+market|@\s*market)\b/i.test(raw))
         return true;
     if (/\b(?:market\s+order|buy\s+market|sell\s+market|market\s+buy|market\s+sell)\b/i.test(raw)) {
         return true;
     }
-    const nowLike = ['now', 'instant', 'mkt'];
+    const nowLike = ['instant', 'mkt'];
     const delim = channelKeywords?.additional?.delimiters ?? '|';
     const custom = channelKeywords?.signal?.market_order
         ? splitKeywordAliases(channelKeywords.signal.market_order, delim)
