@@ -12,6 +12,10 @@
     "build:docs": "npm --prefix apps/docs run build",
     "lint": "eslint .",
     "preview": "vite preview",
+    "test": "bash scripts/run-frontend-tests.sh",
+    "test:vitest": "vitest run $(grep -rl \"from 'vitest'\" src --include='*.test.ts' | paste -sd ' ' -)",
+    "test:node": "node --import tsx --import ./test/preload.ts --test $(grep -rl \"from 'node:test'\" src --include='*.test.ts' | paste -sd ' ' -)",
+    "test:account-type": "node --import tsx --import ./test/preload.ts --test src/lib/brokerFromServer.test.ts src/lib/brokerHealth.test.ts",
     "test:worker": "npm --prefix worker test",
     "deploy:function": "bash scripts/deploy-edge-function.sh",
     "upload:email-assets": "bash scripts/upload-email-assets.sh"
@@ -40,8 +44,10 @@
     "globals": "^17.5.0",
     "postcss": "^8.5.14",
     "tailwindcss": "^3.4.19",
+    "tsx": "^4.19.0",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.58.2",
-    "vite": "^8.0.10"
+    "vite": "^8.0.10",
+    "vitest": "^3.2.4"
   }
 }

@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest'
+import assert from 'node:assert/strict'
+import { describe, it } from 'node:test'
 import {
   brokerAccountHealthPatchFromMtStatus,
   brokerTerminalHealthLabel,
@@ -36,40 +37,44 @@ function broker(
 
 describe('brokerTerminalHealthPhase', () => {
   it('returns paused when copy trades is off', () => {
-    expect(brokerTerminalHealthPhase(broker({ is_active: false }))).toBe('paused')
+    assert.equal(brokerTerminalHealthPhase(broker({ is_active: false })), 'paused')
   })
 
   it('returns checking while linking', () => {
-    expect(brokerTerminalHealthPhase(broker({ connection_status: 'pending' }))).toBe('checking')
-    expect(brokerTerminalHealthPhase(broker({ fxsocket_status: 'connecting' }))).toBe('checking')
+    assert.equal(brokerTerminalHealthPhase(broker({ connection_status: 'pending' })), 'checking')
+    assert.equal(brokerTerminalHealthPhase(broker({ fxsocket_status: 'connecting' })), 'checking')
   })
 
   it('returns healthy when terminal is connected and trading allowed', () => {
-    expect(
+    assert.equal(
       brokerTerminalHealthPhase(broker({ terminal_connected: true, trade_allowed: true })),
-    ).toBe('healthy')
+      'healthy',
+    )
   })
 
   it('returns unhealthy when trade is not allowed', () => {
-    expect(
+    assert.equal(
       brokerTerminalHealthPhase(broker({ terminal_connected: true, trade_allowed: false })),
-    ).toBe('unhealthy')
+      'unhealthy',
+    )
   })
 
   it('returns checking when trade_allowed unknown', () => {
-    expect(
+    assert.equal(
       brokerTerminalHealthPhase(broker({ terminal_connected: true, trade_allowed: null })),
-    ).toBe('checking')
+      'checking',
+    )
   })
 
   it('returns unhealthy when terminal is disconnected', () => {
-    expect(
+    assert.equal(
       brokerTerminalHealthPhase(broker({ terminal_connected: false, trade_allowed: true })),
-    ).toBe('unhealthy')
+      'unhealthy',
+    )
   })
 
   it('prefers live FxSocket health when available', () => {
-    expect(
+    assert.equal(
       brokerTerminalHealthPhase(
         broker({
           terminal_connected: true,
@@ -77,45 +82,51 @@ describe('brokerTerminalHealthPhase', () => {
           live_terminal_health_phase: 'unhealthy',
         }),
       ),
-    ).toBe('unhealthy')
+      'unhealthy',
+    )
   })
 })
 
 describe('brokerTerminalHealthLabel', () => {
   it('returns null for paused brokers', () => {
-    expect(brokerTerminalHealthLabel(broker({ is_active: false }), labels)).toBeNull()
+    assert.equal(brokerTerminalHealthLabel(broker({ is_active: false }), labels), null)
   })
 
   it('maps phases to labels', () => {
-    expect(
+    assert.equal(
       brokerTerminalHealthLabel(broker({ terminal_connected: true, trade_allowed: true }), labels),
-    ).toBe('Healthy')
-    expect(
+      'Healthy',
+    )
+    assert.equal(
       brokerTerminalHealthLabel(broker({ terminal_connected: false, trade_allowed: false }), labels),
-    ).toBe('Unhealthy')
-    expect(brokerTerminalHealthLabel(broker({}), labels)).toBe('Checking…')
+      'Unhealthy',
+    )
+    assert.equal(brokerTerminalHealthLabel(broker({}), labels), 'Checking…')
   })
 })
 
 describe('brokerAccountHealthPatchFromMtStatus', () => {
   it('parses linked_account_type from status.account.type', () => {
-    expect(
+    assert.equal(
       brokerAccountHealthPatchFromMtStatus({
         status: 'ready',
         account: { type: 'Demo', loggedIn: true },
       }).linked_account_type,
-    ).toBe('Demo')
-    expect(
+      'Demo',
+    )
+    assert.equal(
       brokerAccountHealthPatchFromMtStatus({
         status: 'ready',
         account: { type: 'Real', loggedIn: true },
       }).linked_account_type,
-    ).toBe('Live')
+      'Live',
+    )
   })
 
   it('omits linked_account_type when account type is missing', () => {
-    expect(
+    assert.equal(
       brokerAccountHealthPatchFromMtStatus({ status: 'ready' }).linked_account_type,
-    ).toBeUndefined()
+      undefined,
+    )
   })
 })

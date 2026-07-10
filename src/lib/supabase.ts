@@ -1,8 +1,16 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { RealtimeClient } from '@supabase/realtime-js'
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.trim() ?? ''
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY?.trim() ?? ''
+function readViteEnv(key: string): string {
+  const fromMeta = import.meta.env?.[key]
+  if (typeof fromMeta === 'string' && fromMeta.trim()) return fromMeta.trim()
+  const fromProcess = process.env[key]
+  if (typeof fromProcess === 'string' && fromProcess.trim()) return fromProcess.trim()
+  return ''
+}
+
+const supabaseUrl = readViteEnv('VITE_SUPABASE_URL')
+const supabaseAnonKey = readViteEnv('VITE_SUPABASE_ANON_KEY')
 
 if (!supabaseUrl || !supabaseAnonKey) {
   const missing = [
@@ -24,7 +32,7 @@ function normalizeRealtimeEndpoint(raw: string): string {
 }
 
 function applyOptionalRealtimeEndpoint(client: SupabaseClient, anonKey: string): void {
-  const override = import.meta.env.VITE_SUPABASE_REALTIME_URL?.trim()
+  const override = readViteEnv('VITE_SUPABASE_REALTIME_URL')
   if (!override) return
 
   const endpoint = normalizeRealtimeEndpoint(override)
