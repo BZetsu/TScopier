@@ -15,10 +15,9 @@ export const landingNl: LandingTranslations = {
     menuClose: 'Menu sluiten',
   },
   hero: {
-    headline: 'Kopieer handelssignalen van elk Telegram-kanaal',
-    headlineAccent: '24/7 op autopilot.',
+    headline: 'Het intelligente AI Telegram-signaalkopieerplatform',
     subheadline:
-      'Koppel Telegram en kopieer handelssignalen direct naar je MT4/MT5-accounts in minder dan 2 minuten — geen complexe setup, geen EA en geen VPS nodig.',
+      'TScopier is een alles-in-één Telegram-signaalkopieerplatform dat je Telegram koppelt en handelssignalen direct naar MT4/MT5 kopieert — geen complexe setup, geen EA en geen VPS nodig.',
     primaryCta: 'Start je gratis proefperiode van 10 dagen',
     secondaryCta: 'Inloggen',
     imageAlt:
@@ -103,6 +102,7 @@ export const landingNl: LandingTranslations = {
     },
   },
   whyChoose: {
+    statsCaption: 'Gebruikt door traders van de populairste Telegram-signaalaanbieders',
     stats: [
       { label: 'Traders', value: '30K+' },
       { label: 'Verbonden brokers', value: '25K+' },

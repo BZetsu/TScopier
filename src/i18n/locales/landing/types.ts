@@ -343,7 +343,6 @@ export interface LandingTranslations {
   }
   hero: {
     headline: string
-    headlineAccent: string
     subheadline: string
     primaryCta: string
     secondaryCta: string
@@ -352,6 +351,7 @@ export interface LandingTranslations {
     dashboard: LandingHeroDashboardCopy
   }
   whyChoose: {
+    statsCaption: string
     stats: LandingStatItem[]
     eyebrow: string
     title: string

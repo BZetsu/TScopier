@@ -120,6 +120,9 @@ export function WhyChooseSection() {
 
   return (
     <section className="mx-auto max-w-6xl px-5 py-16 sm:px-8 sm:py-24">
+      <p className="mb-6 text-center text-sm text-neutral-600 dark:text-neutral-400 sm:mb-8 sm:text-base">
+        {l.statsCaption}
+      </p>
       <MarketingStatsBar stats={l.stats} />
 
       <div className="mx-auto max-w-3xl text-center">

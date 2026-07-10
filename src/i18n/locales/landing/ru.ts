@@ -15,10 +15,9 @@ export const landingRu: LandingTranslations = {
     menuClose: 'Закрыть меню',
   },
   hero: {
-    headline: 'Копируйте торговые сигналы из любого канала Telegram',
-    headlineAccent: '24/7 на автопилоте.',
+    headline: 'Интеллектуальная AI-платформа для копирования сигналов Telegram',
     subheadline:
-      'Подключите Telegram и копируйте торговые сигналы напрямую на счета MT4/MT5 менее чем за 2 минуты — без сложных настроек, советников и VPS.',
+      'TScopier — это универсальная платформа для копирования сигналов Telegram, которая подключает Telegram и копирует торговые сигналы напрямую на MT4/MT5 — без сложных настроек, советников и VPS.',
     primaryCta: 'Начните 10-дневный бесплатный пробный период',
     secondaryCta: 'Войти',
     imageAlt:
@@ -103,6 +102,7 @@ export const landingRu: LandingTranslations = {
     },
   },
   whyChoose: {
+    statsCaption: 'Используется трейдерами самых популярных провайдеров сигналов Telegram',
     stats: [
       { label: 'Трейдеры', value: '30K+' },
       { label: 'Подключённые брокеры', value: '25K+' },

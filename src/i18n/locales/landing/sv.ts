@@ -15,10 +15,9 @@ export const landingSv: LandingTranslations = {
     menuClose: 'Stäng menyn',
   },
   hero: {
-    headline: 'Kopiera handelssignaler från valfri Telegram-kanal',
-    headlineAccent: '24/7 på autopilot.',
+    headline: 'Den intelligenta AI-plattformen för Telegram-signalkopiering',
     subheadline:
-      'Anslut Telegram och kopiera handelssignaler direkt till dina MT4/MT5-konton på under 2 minuter — inga komplicerade inställningar, ingen EA och ingen VPS krävs.',
+      'TScopier är en allt-i-ett-plattform för Telegram-signalkopiering som kopplar Telegram och kopierar handelssignaler direkt till MT4/MT5 — inga komplicerade inställningar, ingen EA och ingen VPS krävs.',
     primaryCta: 'Starta din 10-dagars gratis provperiod',
     secondaryCta: 'Logga in',
     imageAlt:
@@ -103,6 +102,7 @@ export const landingSv: LandingTranslations = {
     },
   },
   whyChoose: {
+    statsCaption: 'Används av traders från de mest populära Telegram-signalleverantörerna',
     stats: [
       { label: 'Traders', value: '30K+' },
       { label: 'Anslutna mäklare', value: '25K+' },

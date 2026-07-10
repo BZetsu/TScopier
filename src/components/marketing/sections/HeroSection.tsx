@@ -17,11 +17,8 @@ export function HeroSection() {
             <TrustpilotWidget excellentLabel="Excellent" trustpilotLabel={l.reviews.trustpilotLabel} />
           </div>
 
-          <h1 className="text-4xl font-semibold tracking-tighter sm:text-5xl xl:text-[4.05rem] xl:leading-[1.08]">
-            <span className="block text-neutral-900 dark:text-neutral-50">{l.hero.headline}</span>
-            {l.hero.headlineAccent ? (
-              <span className="mt-1 block text-teal-600 dark:text-teal-400">{l.hero.headlineAccent}</span>
-            ) : null}
+          <h1 className="text-4xl font-medium tracking-tighter text-neutral-900 dark:text-neutral-50 sm:text-5xl xl:text-[4.05rem] xl:leading-[1.08]">
+            {l.hero.headline}
           </h1>
 
           <p className="mt-5 text-base leading-relaxed text-neutral-600 dark:text-neutral-400 sm:text-xl">

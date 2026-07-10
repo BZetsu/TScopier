@@ -15,10 +15,9 @@ export const landingJa: LandingTranslations = {
     menuClose: 'メニューを閉じる',
   },
   hero: {
-    headline: 'あらゆるTelegramチャンネルからトレードシグナルをコピー',
-    headlineAccent: '24時間365日、オートパイロットで。',
+    headline: 'インテリジェントAI Telegramシグナルコピープラットフォーム',
     subheadline:
-      'Telegramを接続し、2分以内にMT4/MT5口座へ直接シグナルをコピー。複雑な設定、EA、VPSは不要です。',
+      'TScopierはオールインワンのTelegramシグナルコピープラットフォームです。Telegramを接続し、トレードシグナルをMT4/MT5に直接コピー。複雑な設定、EA、VPSは不要です。',
     primaryCta: '10日間の無料トライアルを始める',
     secondaryCta: 'ログイン',
     imageAlt: '残高、当日損益、取引結果、口座成長チャートを表示したTScopierダッシュボード',
@@ -102,6 +101,7 @@ export const landingJa: LandingTranslations = {
     },
   },
   whyChoose: {
+    statsCaption: '最も人気のあるTelegramシグナルプロバイダーのトレーダーに利用されています',
     stats: [
       { label: 'トレーダー', value: '30K+' },
       { label: '接続ブローカー', value: '25K+' },
