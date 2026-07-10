@@ -1,1 +1,0 @@
-import{p as e}from"./vendor-W77evrBX.js";import{i as t}from"./createLucideIcon-C6-L5Q-z.js";import{t as n}from"./PlaceholderPage-B45dFg0S.js";var r=e();function i(){let e=t();return(0,r.jsx)(n,{title:e.pages.analysisHub.title,description:e.pages.analysisHub.description})}export{i as AnalysisHubPage};

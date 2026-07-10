@@ -1316,7 +1316,7 @@ export function AccountConfigPage() {
     if (results.some(r => r === 'unsupported')) return
 
     for (const row of results) {
-      if (!row) continue
+      if (!row || row === 'unsupported') continue
       upsertBroker({
         ...row.account,
         ...brokerAccountHealthPatchFromMtStatus(row.status),
@@ -1917,11 +1917,6 @@ export function AccountConfigPage() {
     removeBroker(id)
     setBrokerPendingDelete(null)
     if (configAccount?.id === id) closeConfigureModal()
-    setBrokerAccountTypes(prev => {
-      const next = { ...prev }
-      delete next[id]
-      return next
-    })
 
     try {
       await fxsocketBroker.delete(id)

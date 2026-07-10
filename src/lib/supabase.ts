@@ -1,11 +1,17 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { RealtimeClient } from '@supabase/realtime-js'
 
+function readProcessEnv(key: string): string | undefined {
+  const proc = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process
+  const value = proc?.env?.[key]
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined
+}
+
 function readViteEnv(key: string): string {
   const fromMeta = import.meta.env?.[key]
   if (typeof fromMeta === 'string' && fromMeta.trim()) return fromMeta.trim()
-  const fromProcess = process.env[key]
-  if (typeof fromProcess === 'string' && fromProcess.trim()) return fromProcess.trim()
+  const fromProcess = readProcessEnv(key)
+  if (fromProcess) return fromProcess
   return ''
 }
 
