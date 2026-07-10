@@ -10,6 +10,7 @@ import {
 } from './parseSignal'
 import { getChannelParseContext } from './channelKeywordsCache'
 import { buildAiModificationContext } from './aiParseModification'
+import { evaluateParsedSignalExecutionEligibility } from './signalExecutionEligibility'
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY ?? ''
 
@@ -77,6 +78,8 @@ Rules:
 - Normalize symbols (GOLD→XAUUSD, SILVER→XAGUSD).
 - Never invent prices not present in the message.
 - Commentary or TP-hit announcements without a new entry → action ignore.
+- Position updates about an existing trade ("we are in a sell", "selling gold", "trade we right now in") → action ignore.
+- Never classify conditional tense ("would've sold") or prose gerunds ("selling gold") as new entries.
 - confidence 0-1.`
 
 function toParseResult(
@@ -254,6 +257,22 @@ export async function aiParseEntry(
       parsed,
       status: 'skipped',
       skip_reason: 'AI classified as non-entry',
+      confidence,
+      source: 'openai',
+    }
+  }
+
+  const eligibility = evaluateParsedSignalExecutionEligibility(parsed, corrected, keywords)
+  if (!eligibility.eligible) {
+    return {
+      parsed: {
+        ...parsed,
+        action: 'ignore',
+        symbol: null,
+        confidence: 0,
+      },
+      status: 'skipped',
+      skip_reason: eligibility.skipReason ?? 'entry_not_execution_eligible',
       confidence,
       source: 'openai',
     }

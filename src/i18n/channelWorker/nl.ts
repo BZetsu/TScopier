@@ -178,6 +178,8 @@ export const channelWorkerNl: ChannelWorkerTranslations = {
       'Telegram-listener is niet verbonden — open Copier Engine en verbind Telegram opnieuw',
     explicit_stops_required_when_add_to_existing_off:
       'dit kanaal staat in single-slot-modus (Add to Existing Trades staat uit), dus nieuwe entries moeten TP/SL-parameters bevatten',
+    entry_requires_imperative_or_labeled_stops:
+      'bericht bevatte geen entry-opdracht (bijv. buy now, gold sell now) of gelabelde SL/TP',
   },
   dispatchSkipped: 'Dit signaal is niet gekopieerd ({reason}).',
   errorTicketNotFound: 'Ticket {ticket} niet gevonden',

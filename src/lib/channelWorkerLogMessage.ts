@@ -387,7 +387,6 @@ function applySkippedSignalOverride(
   cw: ChannelWorkerTranslations,
   message: string,
 ): string {
-  if (!message.trim()) return message
   if (!signalWasSkipped(row) || row.status.toLowerCase() !== 'success') return message
 
   const logAction = row.action.toLowerCase()
@@ -403,6 +402,16 @@ function applySkippedSignalOverride(
   const reason = skipReasonForSignal(row, cw)
   const instr = resolveInstrumentSymbol(row)
   const signalAction = signalActionFromLog(row)
+
+  if (!message.trim()) {
+    if (
+      (signalAction === 'buy' || signalAction === 'sell' || signalAction === 'close')
+      && !isMgmtNoOpenSkipReason(row)
+    ) {
+      return interpolate(cw.dispatchSkipped, { reason })
+    }
+    return message
+  }
 
   if (logAction.startsWith('mgmt_') || MANAGEMENT_COPIER_ACTIONS.has(signalAction)) {
     const mgmt = logAction.startsWith('mgmt_') ? logAction.slice(5) : signalAction

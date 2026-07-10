@@ -27,6 +27,7 @@ import {
   sanitizeParsedSymbol,
 } from './tradableSymbol'
 import { looksLikeCasualNonTradeMessage } from './signalCommentaryGuard'
+import { messageHasImperativeEntryPhrase } from './signalImperativeEntry'
 import { normalizeTelegramMessageText, normalizeSignalMessageForParse } from './normalizeTelegramMessageText'
 import {
   COMMON_BREAKEVEN_PHRASES,
@@ -383,10 +384,26 @@ function isProseShortMatch(text: string): boolean {
   )
 }
 
+function isGerundOrPastSideProse(message: string): boolean {
+  return (
+    /\b(?:selling|buying)\s+(?:gold|xau(?:usd)?|silver|xag(?:usd)?|btc(?:usd|usdt)?|bitcoin|eth(?:usd)?)\b/i.test(message)
+    || /\b(?:sold|bought)\s+(?:gold|xau(?:usd)?|silver|xag(?:usd)?)\b/i.test(message)
+    || /\b(?:gold|xau(?:usd)?)\s+(?:sold|bought)\b/i.test(message)
+  )
+}
+
+function isGerundSideKeyword(text: string, side: 'buy' | 'sell'): boolean {
+  if (side === 'buy') {
+    return /\bbuying\b/i.test(text) && !/\bbuy\s+now\b/i.test(text)
+  }
+  return /\bselling\b/i.test(text) && !/\bsell\s+now\b/i.test(text)
+}
+
 function parseBuySideFromKeywords(text: string, words: string[]): boolean {
   for (const w of words) {
     if (!w) continue
     const lower = w.toLowerCase().trim()
+    if (lower === 'buy' && isGerundSideKeyword(text, 'buy')) continue
     if (lower === 'long') {
       if (isProseLongMatch(text)) continue
       if (keywordRegex('long').test(text)) return true
@@ -401,6 +418,7 @@ function parseSellSideFromKeywords(text: string, words: string[]): boolean {
   for (const w of words) {
     if (!w) continue
     const lower = w.toLowerCase().trim()
+    if (lower === 'sell' && isGerundSideKeyword(text, 'sell')) continue
     if (lower === 'short') {
       if (isProseShortMatch(text)) continue
       if (keywordRegex('short').test(text)) return true
@@ -429,6 +447,9 @@ function resolveTradeSideFromMessage(
   lexicon: ChannelLexiconRow | null = null,
 ): 'buy' | 'sell' | null {
   const text = message.replace(/\s+/g, ' ').trim()
+  if (isGerundOrPastSideProse(text) && !messageHasImperativeEntryPhrase(text, channelKeywords)) {
+    return null
+  }
   const goldBuy = /\bgold\s+buy\b|\bbuy\s+gold\b/i.test(text)
   const goldSell = /\bgold\s+sell\b|\bsell\s+gold\b/i.test(text)
   if (goldBuy && !goldSell) return 'buy'

@@ -178,6 +178,8 @@ export const channelWorkerSv: ChannelWorkerTranslations = {
       'Telegram-lyssnaren är inte ansluten — öppna Copier Engine och återanslut Telegram',
     explicit_stops_required_when_add_to_existing_off:
       'den här kanalen är i single-slot-läge (Add to Existing Trades är av), så nya ingångar måste innehålla TP/SL-parametrar',
+    entry_requires_imperative_or_labeled_stops:
+      'meddelandet innehöll ingen entry-fras (t.ex. buy now, gold sell now) eller märkta SL/TP',
   },
   dispatchSkipped: 'Kopierade inte den här signalen ({reason}).',
   errorTicketNotFound: 'Ticket {ticket} hittades inte',

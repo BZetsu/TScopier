@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import {
   COMMENTARY_NOT_SIGNAL_REASON,
   ENTRY_MISSING_STRUCTURE_REASON,
+  ENTRY_REQUIRES_IMPERATIVE_OR_LABELED_STOPS_REASON,
   ENTRY_REQUIRES_NOW_REASON,
   evaluateParsedSignalExecutionEligibility,
 } from './signalExecutionEligibility'
@@ -48,10 +49,33 @@ describe('evaluateParsedSignalExecutionEligibility', () => {
       tp: [],
     }, 'Gold maybe going down')
     assert.equal(eligibility.eligible, false)
-    assert.equal(eligibility.skipReason, ENTRY_REQUIRES_NOW_REASON)
+    assert.equal(eligibility.skipReason, ENTRY_REQUIRES_IMPERATIVE_OR_LABELED_STOPS_REASON)
   })
 
-  it('rejects buy without SL, TP, or NOW', () => {
+  it('rejects GTMO position commentary even when AI infers sell', () => {
+    const msg = `This trade we right now in, selling gold, has a high potential of a very big drop.`
+    const eligibility = evaluateParsedSignalExecutionEligibility({
+      action: 'sell',
+      symbol: 'XAUUSD',
+      sl: null,
+      tp: [],
+    }, msg)
+    assert.equal(eligibility.eligible, false)
+    assert.equal(eligibility.skipReason, COMMENTARY_NOT_SIGNAL_REASON)
+  })
+
+  it('rejects sell without imperative phrase or labeled SL/TP', () => {
+    const eligibility = evaluateParsedSignalExecutionEligibility({
+      action: 'sell',
+      symbol: 'XAUUSD',
+      sl: null,
+      tp: [],
+    }, 'Gold looking bearish, might drop soon')
+    assert.equal(eligibility.eligible, false)
+    assert.equal(eligibility.skipReason, ENTRY_REQUIRES_IMPERATIVE_OR_LABELED_STOPS_REASON)
+  })
+
+  it('rejects buy without SL, TP, imperative, or labeled stops', () => {
     const eligibility = evaluateParsedSignalExecutionEligibility({
       action: 'buy',
       symbol: 'XAUUSD',
@@ -60,7 +84,7 @@ describe('evaluateParsedSignalExecutionEligibility', () => {
       tp: [],
     }, 'BUY XAUUSD 4500')
     assert.equal(eligibility.eligible, false)
-    assert.equal(eligibility.skipReason, ENTRY_REQUIRES_NOW_REASON)
+    assert.equal(eligibility.skipReason, ENTRY_REQUIRES_IMPERATIVE_OR_LABELED_STOPS_REASON)
   })
 
   it('rejects implausible metal tp from commentary percentages', () => {

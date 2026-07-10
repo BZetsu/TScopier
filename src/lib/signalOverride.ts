@@ -109,7 +109,12 @@ export function parseUserOverride(raw: unknown): SignalUserOverride | null {
   const entry = row.entry === null || row.entry === undefined ? undefined : positiveLevel(row.entry)
   const updated_at = typeof row.updated_at === 'string' ? row.updated_at : undefined
   if (sl === undefined && tp === undefined && entry === undefined && !updated_at) return null
-  return { sl, tp, entry, updated_at }
+  return {
+    ...(sl !== undefined ? { sl } : {}),
+    ...(tp !== undefined ? { tp } : {}),
+    ...(entry !== undefined ? { entry } : {}),
+    ...(updated_at ? { updated_at } : {}),
+  }
 }
 
 export function mergeSignalUserOverride<T extends Record<string, unknown>>(

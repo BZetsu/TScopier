@@ -178,6 +178,8 @@ export const channelWorkerJa: ChannelWorkerTranslations = {
       'Telegram listener が未接続です — Copier Engine を開いて Telegram を再接続してください',
     explicit_stops_required_when_add_to_existing_off:
       'このチャネルは single-slot モードです（Add to Existing Trades がオフ）。新規エントリーには TP/SL パラメータが必要です',
+    entry_requires_imperative_or_labeled_stops:
+      'メッセージにエントリー命令（buy now、gold sell now など）またはラベル付き SL/TP がありませんでした',
   },
   dispatchSkipped: 'このシグナルはコピーされませんでした（{reason}）。',
   errorTicketNotFound: 'チケット {ticket} が見つかりません',

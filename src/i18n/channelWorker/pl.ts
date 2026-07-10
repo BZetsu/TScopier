@@ -179,6 +179,8 @@ export const channelWorkerPl: ChannelWorkerTranslations = {
       'nasłuch Telegrama nie jest połączony — otwórz Copier Engine i połącz Telegram ponownie',
     explicit_stops_required_when_add_to_existing_off:
       'ten kanał działa w trybie pojedynczego slotu (Add to Existing Trades jest wyłączone), więc nowe wejścia muszą zawierać parametry TP/SL',
+    entry_requires_imperative_or_labeled_stops:
+      'wiadomość nie zawierała frazy wejścia (np. buy now, gold sell now) ani oznaczonych SL/TP',
   },
   dispatchSkipped: 'Nie skopiowano tego sygnału ({reason}).',
   errorTicketNotFound: 'Nie znaleziono ticketu {ticket}',

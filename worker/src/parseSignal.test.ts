@@ -902,3 +902,28 @@ Market: XPTUSD · BUY
     assert.equal(collapseForexBroBilingualMessage(msg), msg)
   })
 })
+
+describe('prose selling/buying commentary', () => {
+  const lexicon: ChannelLexiconRow | null = null
+
+  const gtmoCommentary = `This push upwards, (retracement) is exactly the one I was gonna go for today morning, and then after this we would've sold.
+
+But gold has played and moved it own way, not making it easy for retail traders, 
+
+This trade we right now in, selling gold, has a high potential of a very big drop. Let's see if the bears can pressure enough to make gold stop going further up.`
+
+  it('skips GTMO position commentary selling gold', () => {
+    const result = parseChannelMessageSync(gtmoCommentary, DEFAULT_CHANNEL_KEYWORDS, lexicon)
+    assert.equal(result.status, 'skipped')
+    assert.equal(result.parsed.action, 'ignore')
+  })
+
+  it('does not parse bare selling gold prose as sell entry', () => {
+    const result = parseChannelMessageSync(
+      'We are selling gold here, expecting a drop',
+      DEFAULT_CHANNEL_KEYWORDS,
+      lexicon,
+    )
+    assert.equal(result.parsed.action, 'ignore')
+  })
+})

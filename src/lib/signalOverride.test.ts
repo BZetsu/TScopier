@@ -17,7 +17,6 @@ test('parseUserOverride normalizes sl/tp', () => {
   assert.deepEqual(parseUserOverride({ sl: 4159, tp: [4150, 0, 4148] }), {
     sl: 4159,
     tp: [4150, 4148],
-    updated_at: undefined,
   })
 })
 

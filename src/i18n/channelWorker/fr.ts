@@ -178,6 +178,8 @@ export const channelWorkerFr: ChannelWorkerTranslations = {
       'écoute Telegram inactive — ouvrez Copier Engine et reconnectez Telegram',
     explicit_stops_required_when_add_to_existing_off:
       'ce canal est en mode position unique (Ajouter aux trades existants désactivé), les nouvelles entrées doivent inclure TP/SL',
+    entry_requires_imperative_or_labeled_stops:
+      'le message n\'incluait pas d\'ordre d\'entrée (ex. buy now, gold sell now) ni de SL/TP étiquetés',
   },
   dispatchSkipped: 'Signal non copié ({reason}).',
   errorTicketNotFound: 'Ticket {ticket} introuvable',

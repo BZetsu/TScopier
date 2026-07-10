@@ -179,6 +179,8 @@ export const channelWorkerRu: ChannelWorkerTranslations = {
       'слушатель Telegram не подключен — откройте Copier Engine и переподключите Telegram',
     explicit_stops_required_when_add_to_existing_off:
       'этот канал работает в режиме одного слота (Add to Existing Trades отключен), поэтому новые входы должны включать параметры TP/SL',
+    entry_requires_imperative_or_labeled_stops:
+      'в сообщении не было фразы входа (например buy now, gold sell now) или помеченных SL/TP',
   },
   dispatchSkipped: 'Этот сигнал не был скопирован ({reason}).',
   errorTicketNotFound: 'Тикет {ticket} не найден',

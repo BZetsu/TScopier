@@ -41,10 +41,10 @@ export const COMMON_MARKET_NOW_TERMS: readonly string[] = Object.freeze(
 export const COMMON_BUY_TERMS = [
   'achat', 'acheter',           // fr
   'compra', 'comprar',          // es / pt
-  'kupno', 'kupic', 'kupić',    // pl
+  'kupno', 'kupic', 'kupić', 'kup', // pl
   'kaufen',                     // de
   'köp',                        // sv
-  'kopen',                      // nl
+  'kopen', 'koop',              // nl
   'купить', 'покупка',          // ru
   '買い',                       // ja
   'شراء',                       // ar
@@ -53,10 +53,10 @@ export const COMMON_BUY_TERMS = [
 export const COMMON_SELL_TERMS = [
   'vente', 'vendre',            // fr
   'venta', 'vender',            // es
-  'sprzedaz', 'sprzedać',       // pl
+  'sprzedaz', 'sprzedać', 'sprzedaż', // pl
   'verkaufen',                  // de
   'sälj',                       // sv
-  'verkopen',                   // nl
+  'verkopen', 'verkoop',        // nl
   'продать', 'продажа',         // ru
   '売り',                       // ja
   'بيع',                        // ar
@@ -76,7 +76,7 @@ export const MULTILINGUAL_DIRECTION_RE = new RegExp(
 
 const JA_MARKET_NOW_RE = /今すぐ|即時|成行|ナウ/u
 
-const BUY_NOW_COMPOUND_RE = new RegExp(
+export const BUY_NOW_COMPOUND_RE = new RegExp(
   '\\b('
   + [
     'buy', 'long',
@@ -92,7 +92,7 @@ const BUY_NOW_COMPOUND_RE = new RegExp(
   'iu',
 )
 
-const SELL_NOW_COMPOUND_RE = new RegExp(
+export const SELL_NOW_COMPOUND_RE = new RegExp(
   '\\b('
   + [
     'sell', 'short',
@@ -120,18 +120,44 @@ export function messageContainsKeyword(text: string, phrase: string): boolean {
   return pattern.test(folded)
 }
 
-/** True when message contains any configured market-now / immediate-entry cue. */
-export function textHasCommonMarketNowIntent(message: string): boolean {
-  const raw = String(message ?? '')
-  const folded = foldAccents(raw)
+/** Commentary contexts where "right now" is position talk, not market entry. */
+export function isMarketNowDenylistedContext(message: string): boolean {
+  const text = String(message ?? '').replace(/\s+/g, ' ').trim()
+  if (/\b(?:we|trade)\s+right\s+now\s+in\b/i.test(text)) return true
+  if (/\bright\s+now\s+in,?\s+(?:selling|buying)\b/i.test(text)) return true
+  if (/\btrade\s+we\b.{0,40}\bright\s+now\b/i.test(text)) return true
+  return false
+}
 
-  for (const term of COMMON_MARKET_NOW_TERMS) {
-    if (messageContainsKeyword(raw, term)) return true
-  }
+/** True when buy/sell vocabulary co-occurs with immediate-entry cues (incl. foreign, spaced instruments). */
+export function messageHasDirectionWithImmediateCue(message: string): boolean {
+  if (isMarketNowDenylistedContext(message)) return false
 
-  if (JA_MARKET_NOW_RE.test(raw)) return true
+  const folded = foldAccents(message)
   if (BUY_NOW_COMPOUND_RE.test(folded)) return true
   if (SELL_NOW_COMPOUND_RE.test(folded)) return true
 
-  return false
+  const buyHit = ['buy', 'long', ...COMMON_BUY_TERMS]
+    .some(t => messageContainsKeyword(message, t))
+  const sellHit = ['sell', 'short', ...COMMON_SELL_TERMS]
+    .some(t => messageContainsKeyword(message, t))
+  if (!buyHit && !sellHit) return false
+
+  const nowTerms = COMMON_MARKET_NOW_TERMS.filter(t => t.length <= 12 && !t.includes(' '))
+  if (!nowTerms.some(t => messageContainsKeyword(message, t))) return false
+
+  return true
+}
+
+/** True when message contains buy/sell paired with immediate-entry cues (not bare "now"). */
+export function textHasCommonMarketNowIntent(message: string): boolean {
+  const raw = String(message ?? '')
+  if (isMarketNowDenylistedContext(raw)) return false
+
+  if (/\b(at\s+market|@\s*market)\b/i.test(raw)) return true
+  if (JA_MARKET_NOW_RE.test(raw)) return true
+  if (/\b(?:gold|xau(?:usd)?)\s+(?:buy|sell)\s+now\b/i.test(raw)) return true
+  if (/\b(?:buy|sell)\s+(?:gold|xau(?:usd)?)\s+now\b/i.test(raw)) return true
+
+  return messageHasDirectionWithImmediateCue(raw)
 }

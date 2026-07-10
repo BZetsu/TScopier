@@ -178,6 +178,53 @@ def looks_like_training_candidate(text: str) -> bool:
     return _has_tradable_instrument_in_text(normalized) and bool(_NUMERIC_PRICE.search(normalized))
 
 
+def _looks_like_position_status_commentary(text: str) -> bool:
+    t = re.sub(r"\s+", " ", (text or "").strip())
+    if not t:
+        return False
+    if re.search(r"\b(buy|sell)\s+now\b", t, re.I):
+        return False
+    if re.search(r"\b(?:gold|xau(?:usd)?)\s+(?:buy|sell)\s+now\b", t, re.I):
+        return False
+
+    if re.search(r"\btrade\s+we\b", t, re.I) and re.search(r"\bin\b", t, re.I) and re.search(
+        r"\b(?:selling|buying)\b", t, re.I
+    ):
+        return True
+    if re.search(r"\b(?:we|trade)\s+right\s+now\s+in\b", t, re.I):
+        return True
+    if re.search(r"\bright\s+now\s+in,?\s+(?:selling|buying)\b", t, re.I):
+        return True
+    if re.search(r"\bwould(?:'ve|'ve|\s+have)\s+(?:sold|bought|buy|sell)\b", t, re.I):
+        return True
+    if re.search(r"\bwas\s+gonna\s+go\s+for\b", t, re.I):
+        return True
+    if re.search(r"\bretracement\b", t, re.I) and re.search(
+        r"\b(?:would|gonna|sold|bought|selling|buying)\b", t, re.I
+    ):
+        return True
+    if re.search(r"\blet'?s\s+see\s+if\s+the\s+bears\b", t, re.I):
+        return True
+    if re.search(r"\bnot\s+making\s+it\s+easy\s+for\s+retail\b", t, re.I):
+        return True
+    if (
+        re.search(
+            r"\b(?:selling|buying)\s+(?:gold|xau(?:usd)?|silver|xag(?:usd)?|btc(?:usd|usdt)?|bitcoin)\b",
+            t,
+            re.I,
+        )
+        and not re.search(r"\b(?:gold|xau(?:usd)?)\s+(?:buy|sell)\b", t, re.I)
+        and not re.search(r"\b(?:buy|sell)\s+(?:gold|xau(?:usd)?)\b", t, re.I)
+    ):
+        return True
+    return False
+
+
+def looks_like_casual_non_trade_message(text: str) -> bool:
+    """Mirror worker looksLikeCasualNonTradeMessage (position/commentary subset)."""
+    return _looks_like_position_status_commentary(text)
+
+
 def looks_like_trading_signal(
     text: str,
     is_reply: bool = False,
@@ -186,6 +233,9 @@ def looks_like_trading_signal(
     """Score-based gate matching TS listener (score >= 2), channel-alias aware."""
     normalized = re.sub(r"\s+", " ", normalize_telegram_message_text(text).strip().lower())
     if not normalized:
+        return False
+
+    if looks_like_casual_non_trade_message(text):
         return False
 
     aliases = [str(a).strip() for a in (channel_aliases or []) if str(a or "").strip()]

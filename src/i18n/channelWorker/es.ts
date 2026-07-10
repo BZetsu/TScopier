@@ -180,6 +180,8 @@ export const channelWorkerEs: ChannelWorkerTranslations = {
       'este canal está en modo de operación única (Agregar a operaciones existentes desactivado), las nuevas entradas deben incluir TP/SL',
     broker_bridge_unavailable:
       'puente del bróker no disponible — active Algo Trading en MT5 y confirme que Trade EA esté listo',
+    entry_requires_imperative_or_labeled_stops:
+      'el mensaje no incluía una frase de entrada (p. ej. buy now, gold sell now) ni SL/TP etiquetados',
   },
   dispatchSkipped: 'No se copió la señal ({reason}).',
   errorTicketNotFound: 'Ticket {ticket} no encontrado',

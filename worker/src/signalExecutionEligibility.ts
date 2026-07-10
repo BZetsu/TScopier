@@ -1,9 +1,9 @@
 import { tradeableFromParsed } from './backtestSignal'
 import { looksLikeCasualNonTradeMessage } from './signalCommentaryGuard'
+import { messageHasImperativeEntryPhrase } from './signalImperativeEntry'
 import {
   ENTRY_REQUIRES_NOW_REASON,
   entryMissingSlTpRequiresNow,
-  messageHasMarketNowIntent,
   messageHasExplicitSlTpLabels,
   parsedHasSlOrTp,
   type MarketNowKeywordFields,
@@ -14,6 +14,8 @@ import { minPlausibleQuotePrice, sanitizeParsedSymbol } from './tradableSymbol'
 export { ENTRY_REQUIRES_NOW_REASON } from './signalEntryNowRequirement'
 export const COMMENTARY_NOT_SIGNAL_REASON = 'commentary_not_trade_signal'
 export const ENTRY_MISSING_STRUCTURE_REASON = 'entry_missing_sl_tp_structure'
+export const ENTRY_REQUIRES_IMPERATIVE_OR_LABELED_STOPS_REASON =
+  'entry_requires_imperative_or_labeled_stops'
 
 export function evaluateParsedSignalExecutionEligibility(
   parsed: {
@@ -48,11 +50,10 @@ export function evaluateParsedSignalExecutionEligibility(
     }
   }
 
-  if (tradeableFromParsed(parsed)) {
-    if (entryMissingSlTpRequiresNow(parsed, raw, channelKeywords)) {
-      return { eligible: false, skipReason: ENTRY_REQUIRES_NOW_REASON }
-    }
-    return { eligible: true }
+  const imperative = messageHasImperativeEntryPhrase(raw, channelKeywords)
+  const labeledStops = messageHasExplicitSlTpLabels(raw) && parsedHasSlOrTp(parsed)
+  if (!imperative && !labeledStops) {
+    return { eligible: false, skipReason: ENTRY_REQUIRES_IMPERATIVE_OR_LABELED_STOPS_REASON }
   }
 
   const symbol = sanitizeParsedSymbol(
@@ -67,16 +68,26 @@ export function evaluateParsedSignalExecutionEligibility(
     }
   }
 
-  if (symbol && parsedHasSlOrTp(parsed)) {
+  if (labeledStops) {
+    if (tradeableFromParsed(parsed)) {
+      if (entryMissingSlTpRequiresNow(parsed, raw, channelKeywords)) {
+        return { eligible: false, skipReason: ENTRY_REQUIRES_NOW_REASON }
+      }
+      return { eligible: true }
+    }
+    if (symbol && parsedHasSlOrTp(parsed)) {
+      return { eligible: false, skipReason: ENTRY_MISSING_STRUCTURE_REASON }
+    }
+  }
+
+  if (imperative) {
+    if (symbol || tradeableFromParsed(parsed)) {
+      if (tradeableFromParsed(parsed) && entryMissingSlTpRequiresNow(parsed, raw, channelKeywords)) {
+        return { eligible: false, skipReason: ENTRY_REQUIRES_NOW_REASON }
+      }
+      return { eligible: true }
+    }
     return { eligible: false, skipReason: ENTRY_MISSING_STRUCTURE_REASON }
-  }
-
-  if (symbol && messageHasMarketNowIntent(raw, channelKeywords)) {
-    return { eligible: true }
-  }
-
-  if (symbol && messageHasExplicitSlTpLabels(raw) && parsedHasSlOrTp(parsed)) {
-    return { eligible: true }
   }
 
   if (symbol && (parsed.action === 'buy' || parsed.action === 'sell')) {

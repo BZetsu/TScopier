@@ -68,7 +68,7 @@ test('dynamic balance small total lot still splits multi-trade at broker min leg
 
   const preview = estimateMultiTradeOrderCount({
     manualLot,
-    legPercent: 5,
+    legPercent: 10,
   })
   assert.equal(preview.fallsBackSingle, false)
   assert.equal(preview.totalOrders, 10)

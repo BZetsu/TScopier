@@ -3,10 +3,12 @@ import assert from 'node:assert/strict'
 import {
   looksLikeCasualNonTradeMessage,
   looksLikeMarketNewsOrCommentary,
+  looksLikePositionStatusCommentary,
   looksLikeProfitResultCommentary,
   looksLikeRetrospectiveTradeDiscussion,
   looksLikeTradeRecapCommentary,
 } from './signalCommentaryGuard'
+import { messageHasImperativeEntryPhrase } from './signalImperativeEntry'
 import {
   entryMissingSlTpRequiresNow,
   messageHasExplicitSlTpLabels,
@@ -122,6 +124,24 @@ describe('looksLikeRetrospectiveTradeDiscussion', () => {
     const signal = 'Gold buy now 4465.2 - 4462\nSL: 4458\nTP: 4467'
     assert.equal(looksLikeRetrospectiveTradeDiscussion(signal), false)
     assert.equal(looksLikeCasualNonTradeMessage(signal), false)
+  })
+})
+
+const GTMO_POSITION_COMMENTARY = `This push upwards, (retracement) is exactly the one I was gonna go for today morning, and then after this we would've sold.
+
+But gold has played and moved it own way, not making it easy for retail traders, 
+
+This trade we right now in, selling gold, has a high potential of a very big drop. Let's see if the bears can pressure enough to make gold stop going further up.`
+
+describe('looksLikePositionStatusCommentary', () => {
+  it('detects GTMO position update selling gold', () => {
+    assert.equal(looksLikePositionStatusCommentary(GTMO_POSITION_COMMENTARY), true)
+    assert.equal(looksLikeCasualNonTradeMessage(GTMO_POSITION_COMMENTARY), true)
+  })
+
+  it('does not flag gold sell now entry', () => {
+    assert.equal(looksLikePositionStatusCommentary('Gold sell now SL 2665 TP 2640'), false)
+    assert.equal(looksLikeCasualNonTradeMessage('Gold sell now'), false)
   })
 })
 

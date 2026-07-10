@@ -66,6 +66,46 @@ export function looksLikeCasualNonTradeMessage(message: string): boolean {
 
   if (looksLikeProfitResultCommentary(text)) return true
   if (looksLikeTradeRecapCommentary(text)) return true
+  if (looksLikePositionStatusCommentary(text)) return true
+
+  return false
+}
+
+/**
+ * Position updates / conditional tense about trades already in flight
+ * (e.g. "trade we right now in, selling gold" — not a new entry order).
+ */
+export function looksLikePositionStatusCommentary(message: string): boolean {
+  const text = String(message ?? '').replace(/\s+/g, ' ').trim()
+  if (!text) return false
+  if (hasExecutableTradeStructure(text)) return false
+
+  if (/\b(?:gold|xau(?:usd)?)\s+(?:buy|sell)\s+now\b/i.test(text)) return false
+  if (/\b(?:buy|sell)\s+(?:gold|xau(?:usd)?)\s+now\b/i.test(text)) return false
+  if (/\b(?:buy|sell)\s+now\b/i.test(text)) return false
+
+  if (/\btrade\s+we\b.{0,60}\bin\b/i.test(text) && /\b(?:selling|buying)\b/i.test(text)) {
+    return true
+  }
+  if (/\b(?:we|trade)\s+right\s+now\s+in\b/i.test(text)) return true
+  if (/\bright\s+now\s+in,?\s+(?:selling|buying)\b/i.test(text)) return true
+
+  if (/\bwould(?:'ve|'ve|\s+have)\s+(?:sold|bought|buy|sell)\b/i.test(text)) return true
+  if (/\bwas\s+gonna\s+go\s+for\b/i.test(text)) return true
+
+  if (/\bretracement\b/i.test(text) && /\b(?:would|gonna|sold|bought|selling|buying)\b/i.test(text)) {
+    return true
+  }
+  if (/\blet'?s\s+see\s+if\s+the\s+bears\b/i.test(text)) return true
+  if (/\bnot\s+making\s+it\s+easy\s+for\s+retail\b/i.test(text)) return true
+
+  if (
+    /\b(?:selling|buying)\s+(?:gold|xau(?:usd)?|silver|xag(?:usd)?|btc(?:usd|usdt)?|bitcoin)\b/i.test(text)
+    && !/\b(?:gold|xau(?:usd)?)\s+(?:buy|sell)\b/i.test(text)
+    && !/\b(?:buy|sell)\s+(?:gold|xau(?:usd)?)\b/i.test(text)
+  ) {
+    return true
+  }
 
   return false
 }

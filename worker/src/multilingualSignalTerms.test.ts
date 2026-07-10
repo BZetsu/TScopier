@@ -41,6 +41,17 @@ describe('textHasCommonMarketNowIntent', () => {
     assert.equal(messageHasMarketNowIntent('Market News Update: Gold Plummets'), false)
   })
 
+  it('does not treat position commentary "right now in" as market intent', () => {
+    const msg = 'This trade we right now in, selling gold, has a high potential of a very big drop.'
+    assert.equal(textHasCommonMarketNowIntent(msg), false)
+    assert.equal(messageHasMarketNowIntent(msg), false)
+  })
+
+  it('still detects buy now compound after tightening', () => {
+    assert.equal(textHasCommonMarketNowIntent('Gold buy now'), true)
+    assert.equal(messageHasMarketNowIntent('Gold buy now'), true)
+  })
+
   it('matches accent variants via foldAccents', () => {
     assert.equal(messageContainsKeyword('ACHAT IMMEDIAT', 'immédiat'), true)
     assert.equal(messageContainsKeyword('ACHAT IMMÉDIAT', 'immediat'), true)

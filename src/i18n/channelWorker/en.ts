@@ -181,6 +181,8 @@ export const channelWorkerEn: ChannelWorkerTranslations = {
     entry_zone_far_from_market: 'entry zone too far from current market price',
     broker_bridge_unavailable:
       'broker bridge unavailable — enable Algo Trading on MT5 and confirm Trade EA ready in Account Configuration',
+    entry_requires_imperative_or_labeled_stops:
+      'message did not include an entry order phrase (e.g. buy now, gold sell now) or labeled SL/TP',
   },
   dispatchSkipped: 'Did not copy this signal ({reason}).',
   errorTicketNotFound: 'Ticket {ticket} not found',

@@ -2,6 +2,7 @@
 import {
   messageContainsKeyword,
   textHasCommonMarketNowIntent,
+  isMarketNowDenylistedContext,
 } from "./multilingualSignalTerms.ts"
 
 export type MarketNowKeywordFields = {
@@ -48,12 +49,13 @@ export function messageHasMarketNowIntent(
   channelKeywords?: MarketNowKeywordFields | null,
 ): boolean {
   const raw = String(message ?? "")
+  if (isMarketNowDenylistedContext(raw)) return false
   if (/\b(at\s+market|@\s*market)\b/i.test(raw)) return true
   if (/\b(?:market\s+order|buy\s+market|sell\s+market|market\s+buy|market\s+sell)\b/i.test(raw)) {
     return true
   }
 
-  const nowLike = ["now", "instant", "mkt"]
+  const nowLike = ["instant", "mkt"]
   const delim = channelKeywords?.additional?.delimiters ?? "|"
   const custom = channelKeywords?.signal?.market_order
     ? splitKeywordAliases(channelKeywords.signal.market_order, delim)
