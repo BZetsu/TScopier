@@ -4,11 +4,13 @@ import type { PreparedEntry } from './entryPrepare'
 import { prepareEntryExecution } from './entryPrepare'
 import { placeStrictSignalEntryPending } from './strictEntryPending'
 import { materializeVirtualPendingLegs } from './virtualPendingMaterialize'
+import { materializeBrokerRangePendingLegs } from './materializeBrokerRangePendingLegs'
 import { finishEntrySend, type EntryArgs } from './entryExecution'
 import {
   logSignalRangeEntryFired,
   markSignalRangeEntryFired,
 } from '../signalRangeEntryHelpers'
+import { runImmediateVirtualPendingCheck } from '../virtualPendingMonitor'
 
 export type { EntryArgs } from './entryPrepare'
 
@@ -28,6 +30,7 @@ async function logMultiRangePlan(
     immediate_orders: capped.length,
     virtual_pending_rows: virtualPendings.length,
     range_trading: manual.range_trading === true,
+    range_layering_type: manual.range_layering_type ?? 'auto',
     range_percent: manual.range_percent ?? null,
     range_step_pips: manual.range_step_pips ?? null,
     range_distance_pips: manual.range_distance_pips ?? null,
@@ -61,6 +64,11 @@ async function logMultiRangePlan(
   } catch { /* best-effort */ }
 }
 
+function useBrokerRangePendingLegs(prep: PreparedEntry): boolean {
+  return prep.manual.range_layering_type === 'pending_order'
+    || prep.plan.rangeLayering?.rangeLayeringType === 'pending_order'
+}
+
 export async function runRangeEntry(
   ctx: TradeExecutorContext,
   args: EntryArgs,
@@ -72,9 +80,16 @@ export async function runRangeEntry(
   await logMultiRangePlan(ctx, prep)
 
   const strictBrokerPlaced = await placeStrictSignalEntryPending(ctx, prep, false)
-  const materializedVirtuals = await materializeVirtualPendingLegs(ctx, prep, strictBrokerPlaced)
+  const brokerPendingMode = useBrokerRangePendingLegs(prep)
+  const materializedPendings = brokerPendingMode
+    ? await materializeBrokerRangePendingLegs(ctx, prep, strictBrokerPlaced)
+    : await materializeVirtualPendingLegs(ctx, prep, strictBrokerPlaced)
 
-  const outcome = await finishEntrySend(prep, strictBrokerPlaced, materializedVirtuals, true)
+  if (!brokerPendingMode && materializedPendings) {
+    void runImmediateVirtualPendingCheck(prep.signal.id, prep.broker.id)
+  }
+
+  const outcome = await finishEntrySend(prep, strictBrokerPlaced, materializedPendings, true)
   if (outcome.openedOrMerged === true && prep.plan.rangeEntryWait) {
     await markSignalRangeEntryFired(ctx.supabase, prep.signal.id, prep.broker.id)
     await logSignalRangeEntryFired(

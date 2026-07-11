@@ -130,6 +130,7 @@ export function normalizeManualSettingsForExecution(
     trade_style: j.trade_style === 'multi' ? 'multi' : 'single',
     range_trading: j.range_trading === true,
     range_layer_till_close: j.range_layer_till_close === true,
+    range_layering_type: j.range_layering_type === 'pending_order' ? 'pending_order' : 'auto',
     use_signal_entry_range: j.use_signal_entry_range === true,
     close_worse_entries: j.close_worse_entries === true,
     close_worse_entries_pips: Math.max(0, readNumber('close_worse_entries_pips', 30)),

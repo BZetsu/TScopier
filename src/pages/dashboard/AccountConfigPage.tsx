@@ -367,6 +367,9 @@ function normalizeManualSettings(
   const rangeStepPips = Math.max(0, readNumber('range_step_pips', DEFAULT_MANUAL_SETTINGS.range_step_pips ?? 3))
   const rangeDistancePips = Math.max(0, readNumber('range_distance_pips', DEFAULT_MANUAL_SETTINGS.range_distance_pips ?? 30))
   const rangeLayerTillClose = (j as Record<string, unknown>).range_layer_till_close === true
+  const rangeLayeringTypeRaw = String((j as Record<string, unknown>).range_layering_type ?? 'auto').toLowerCase()
+  const rangeLayeringType: ManualSettings['range_layering_type'] =
+    rangeLayeringTypeRaw === 'pending_order' ? 'pending_order' : 'auto'
   const useSignalEntryRange = (j as Record<string, unknown>).use_signal_entry_range === true
   const closeWorseEntries = (j as Record<string, unknown>).close_worse_entries === true
   const closeWorseEntriesPips = Math.max(0, readNumber('close_worse_entries_pips', DEFAULT_MANUAL_SETTINGS.close_worse_entries_pips ?? 30))
@@ -436,6 +439,7 @@ function normalizeManualSettings(
     range_step_pips: rangeStepPips,
     range_distance_pips: rangeDistancePips,
     range_layer_till_close: rangeLayerTillClose,
+    range_layering_type: rangeLayeringType,
     use_signal_entry_range: useSignalEntryRange,
     close_worse_entries: closeWorseEntries,
     close_worse_entries_pips: closeWorseEntriesPips,
@@ -2987,6 +2991,26 @@ export function AccountConfigPage() {
                                 </div>
                                 {channelManualSettings.range_trading && (
                                   <>
+                                    <ConfigureSelect
+                                      label={cm.risk.layeringType}
+                                      value={channelManualSettings.range_layering_type ?? 'auto'}
+                                      onChange={e => {
+                                        const v = e.target.value
+                                        setManual({
+                                          range_layering_type: v === 'pending_order' ? 'pending_order' : 'auto',
+                                        })
+                                      }}
+                                      options={[
+                                        { value: 'auto', label: cm.risk.layeringTypeAuto },
+                                        { value: 'pending_order', label: cm.risk.layeringTypePendingOrder },
+                                      ]}
+                                      hint={
+                                        (channelManualSettings.range_layering_type ?? 'auto') === 'pending_order'
+                                          ? cm.risk.layeringTypePendingOrderHint
+                                          : cm.risk.layeringTypeAutoHint
+                                      }
+                                    />
+
                                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                                       <ConfigureInput
                                         label={cm.risk.reservedLot}

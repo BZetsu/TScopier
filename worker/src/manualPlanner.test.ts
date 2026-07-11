@@ -270,6 +270,51 @@ test('planMultiManualOrders: dynamic range trading opens multiple immediates whe
   assert.ok(Math.abs(totalVolume - 1.7) < 1e-6)
 })
 
+test('planMultiManualOrders: passes rangeLayeringType from manual settings', () => {
+  const manual: ManualSettings = {
+    ...baseManual,
+    range_trading: true,
+    range_percent: 50,
+    range_step_pips: 3,
+    range_distance_pips: 30,
+    range_layering_type: 'pending_order',
+    tp_lots: [{ label: 'TP1', lot: 0, percent: 100, enabled: true }],
+  }
+  const plan = planManualOrders({
+    parsed: { ...baseParsed, tp: [1900] },
+    resolvedSymbol: 'XAUUSD',
+    baseOperation: 'Buy',
+    manual,
+    channelKeywords: null,
+    manualLot: 0.5,
+    ctx: baseCtx,
+    commentPrefix: 'TScopier:abc',
+  })
+  assert.equal(plan.rangeLayering?.rangeLayeringType, 'pending_order')
+})
+
+test('planMultiManualOrders: rangeLayeringType defaults to auto', () => {
+  const manual: ManualSettings = {
+    ...baseManual,
+    range_trading: true,
+    range_percent: 50,
+    range_step_pips: 3,
+    range_distance_pips: 30,
+    tp_lots: [{ label: 'TP1', lot: 0, percent: 100, enabled: true }],
+  }
+  const plan = planManualOrders({
+    parsed: { ...baseParsed, tp: [1900] },
+    resolvedSymbol: 'XAUUSD',
+    baseOperation: 'Buy',
+    manual,
+    channelKeywords: null,
+    manualLot: 0.5,
+    ctx: baseCtx,
+    commentPrefix: 'TScopier:abc',
+  })
+  assert.equal(plan.rangeLayering?.rangeLayeringType, 'auto')
+})
+
 test('planMultiManualOrders: stale burst cap of 1 consolidates dynamic range into one order (regression)', () => {
   const manual: ManualSettings = {
     ...baseManual,

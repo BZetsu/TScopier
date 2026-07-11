@@ -182,6 +182,14 @@ export const configureModalFr: ConfigureModalTranslations = {
     layerTillClose: 'Échelonner jusqu’à la clôture',
     layerTillCloseBody:
       'Activé : les ordres en attente du range continuent tant que la position n’est pas entièrement fermée, même si le prix repart après un take-profit ou une fermeture CWE. Désactivé : les ordres en attente sont annulés au premier take-profit ou à la première fermeture, donc aucun ordre plus profond ne s’ouvre en cas de retournement.',
+    layeringType: 'Layering type',
+    layeringTypeAuto: 'Auto Layering',
+    layeringTypeAutoHint:
+      'Fires market orders when price moves against the signal at each ladder step (virtual pendings, faster trigger response).',
+    layeringTypePendingOrder: 'Pending Order',
+    layeringTypePendingOrderHint:
+      'Places Buy Limit / Sell Limit orders on the broker at each ladder step. Some brokers may reject limits that are too close to market — fewer legs may be placed.',
+
     useSignalRange: 'Trader uniquement le range du signal',
     useSignalRangeBody:
       'Activé : le signal doit inclure un prix ou une zone d’entrée analysée (ex. 4505, 4505/4500, @ 4505). Les messages « acheter maintenant » sans prix sont ignorés et affichés en attente de range. Contrairement à « Utiliser le prix d’entrée du signal », aucun ordre en attente n’est placé chez le courtier — le copieur attend virtuellement et ouvre lorsque le prix est n’importe où dans la zone d’entrée du signal, avec une tolérance en pips légèrement au-delà des deux bornes. La profondeur d’échelonnage vient toujours de la zone d’entrée lorsqu’elle est présente.',
@@ -229,6 +237,13 @@ export const configureModalFr: ConfigureModalTranslations = {
       rangePercent: 'Lot réservé (% des jambes)',
       rangeStep: 'Pas (pips)',
       rangeDistance: 'Distance du range (pips)',
+      layeringType: 'Layering type',
+      layeringTypeAuto: 'Auto Layering',
+      layeringTypeAutoHint:
+        'Market orders when price hits each ladder step (virtual pendings).',
+      layeringTypePendingOrder: 'Pending Order',
+      layeringTypePendingOrderHint:
+        'Broker Buy/Sell Limit at each step; some brokers may reject close limits.',
       fixedLot: 'Lot fixe',
       targetRiskPct: 'Risque cible (% du solde)',
       targetRiskHint: 'Optionnel — suggère un lot proche de ce risque par signal (pire cas).',

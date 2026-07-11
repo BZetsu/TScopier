@@ -161,6 +161,14 @@ export const configureModalNl: ConfigureModalTranslations = {
     rangeDistanceFallback: 'De afstand van het bereik dat door uw signaalaanbieder wordt geleverd. Dit bepaalt hoe ver de handel gelaagd is.',
     layerTillClose: 'Laag tot dichtbij',
     layerTillCloseBody: 'Aan: lopende orders in het bereik blijven open totdat de hele transactie is gesloten, zelfs als de prijs zich terugtrekt na een take-profit of close-slechter-inschrijvingen. Uit: openstaande orders worden geannuleerd na de eerste take-profit of wanneer een order wordt gesloten, dus er worden geen diepere orders geopend bij een omkering.',
+    layeringType: 'Layering type',
+    layeringTypeAuto: 'Auto Layering',
+    layeringTypeAutoHint:
+      'Fires market orders when price moves against the signal at each ladder step (virtual pendings, faster trigger response).',
+    layeringTypePendingOrder: 'Pending Order',
+    layeringTypePendingOrderHint:
+      'Places Buy Limit / Sell Limit orders on the broker at each ladder step. Some brokers may reject limits that are too close to market — fewer legs may be placed.',
+
     useSignalRange: 'Alleen signaalrange traden',
     useSignalRangeBody:
       'Indien ingeschakeld moet het signaal een geparseerde instapprijs of -zone bevatten (bijv. 4505, 4505/4500, @ 4505). Kale „koop nu”-berichten zonder prijs worden overgeslagen en getoond als wachten op range. In tegenstelling tot signaal instapprijs wordt geen broker pending geplaatst — de copier wacht virtueel en opent wanneer de live prijs ergens binnen de signaal-invoerzone is, met piptolerantie iets voorbij beide grenzen.',
@@ -203,6 +211,13 @@ export const configureModalNl: ConfigureModalTranslations = {
       rangePercent: 'Gereserveerd lot (% van de poten)',
       rangeStep: 'Stap (pitten)',
       rangeDistance: 'Bereikafstand (pitten)',
+      layeringType: 'Layering type',
+      layeringTypeAuto: 'Auto Layering',
+      layeringTypeAutoHint:
+        'Market orders when price hits each ladder step (virtual pendings).',
+      layeringTypePendingOrder: 'Pending Order',
+      layeringTypePendingOrderHint:
+        'Broker Buy/Sell Limit at each step; some brokers may reject close limits.',
       fixedLot: 'Vaste kavel',
       targetRiskPct: 'Doelrisico (% van saldo)',
       targetRiskHint: 'Optioneel — suggereert een partijgrootte die per signaal in de buurt van dit risico blijft (worst case).',

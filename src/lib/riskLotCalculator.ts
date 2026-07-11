@@ -590,6 +590,7 @@ export interface RiskLotCalculatorFormState {
   rangePercent: number
   rangeStepPips: number
   rangeDistancePips: number
+  rangeLayeringType: 'auto' | 'pending_order'
   fixedLot: number
   tpLots: ManualTpLot[]
   winRatePct: number | null
@@ -633,6 +634,7 @@ export function riskCalcStateFromManualSettings(
     rangePercent: Number(ms.range_percent ?? 50) || 50,
     rangeStepPips: Number(ms.range_step_pips ?? 3) || 3,
     rangeDistancePips: Number(ms.range_distance_pips ?? 30) || 30,
+    rangeLayeringType: ms.range_layering_type === 'pending_order' ? 'pending_order' : 'auto',
     fixedLot: Number(ms.fixed_lot ?? 0.01) || 0.01,
     tpLots: tpLots.length >= levelCount
       ? tpLots
@@ -661,6 +663,7 @@ export function manualSettingsFromRiskCalc(form: RiskLotCalculatorFormState): Pa
     range_percent: form.rangePercent,
     range_step_pips: form.rangeStepPips,
     range_distance_pips: form.rangeDistancePips,
+    range_layering_type: form.rangeLayeringType,
     use_predefined_sl_pips: form.usePredefinedSl,
     predefined_sl_pips: Math.max(1, Math.round(form.slPips)),
     use_predefined_tp_pips: form.usePredefinedTp,

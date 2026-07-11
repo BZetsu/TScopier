@@ -141,7 +141,7 @@ type BrokerConfigCacheEntry = {
 }
 
 const SYMBOL_TTL_MS = 10 * 60_000
-const ACTIVE_MS = monitorActiveIntervalMs('VIRTUAL_PENDING_TICK_MS', 400)
+const ACTIVE_MS = monitorActiveIntervalMs('VIRTUAL_PENDING_TICK_MS', 200)
 const IDLE_MS = monitorIdleIntervalMs('VIRTUAL_PENDING_IDLE_MS', 15_000)
 const STALE_CLAIM_AFTER_MS = 30_000
 
@@ -322,6 +322,18 @@ export class VirtualPendingMonitor {
     return this.loop
   }
 
+  /** Statuses polled by the auto (virtual) layering monitor — excludes `broker_pending`. */
+  static readonly AUTO_LAYER_STATUSES = ['pending'] as const
+
+  /** One-shot trigger pass after virtual pending insert (avoids waiting for next poll tick). */
+  async runImmediateCheck(signalId: string, brokerAccountId: string): Promise<void> {
+    if (this.ticking) {
+      this.loop?.poke()
+      return
+    }
+    await this.tick({ signalId, brokerAccountId })
+  }
+
   private async runTick(): Promise<void> {
     if (this.ticking) return
     this.ticking = true
@@ -332,7 +344,7 @@ export class VirtualPendingMonitor {
     }
   }
 
-  private async tick(): Promise<void> {
+  private async tick(scope?: { signalId: string; brokerAccountId: string }): Promise<void> {
     if (!hasFxsocketConfigured()) return
 
     // Re-open rows whose claim is stale. Anything older than STALE_CLAIM_AFTER_MS
@@ -373,15 +385,20 @@ export class VirtualPendingMonitor {
     }
 
     // Pull the live pending queue.
+    let pendingQuery = this.supabase
+      .from('range_pending_legs')
+      .select('*')
+      .eq('status', 'pending')
+      .not('comment', 'ilike', '%:strictEntry%')
+      .not('comment', 'ilike', '%:strictEntryAgg%')
+    if (scope) {
+      pendingQuery = pendingQuery
+        .eq('signal_id', scope.signalId)
+        .eq('broker_account_id', scope.brokerAccountId)
+    }
     const pendingQ = await applyShardToQuery(
       this.supabase,
-      this.supabase
-        .from('range_pending_legs')
-        .select('*')
-        .eq('status', 'pending')
-        .not('comment', 'ilike', '%:strictEntry%')
-        .not('comment', 'ilike', '%:strictEntryAgg%')
-        .limit(500),
+      pendingQuery.limit(scope ? 100 : 500),
     )
     if (!pendingQ) return
     const { data, error } = await pendingQ
@@ -1422,4 +1439,17 @@ export class VirtualPendingMonitor {
       throw err
     }
   }
+}
+
+let activeVirtualPendingMonitor: VirtualPendingMonitor | null = null
+
+export function registerVirtualPendingMonitor(monitor: VirtualPendingMonitor): void {
+  activeVirtualPendingMonitor = monitor
+}
+
+export async function runImmediateVirtualPendingCheck(
+  signalId: string,
+  brokerAccountId: string,
+): Promise<void> {
+  await activeVirtualPendingMonitor?.runImmediateCheck(signalId, brokerAccountId)
 }

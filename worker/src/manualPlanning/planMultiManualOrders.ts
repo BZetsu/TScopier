@@ -322,14 +322,15 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
     ...(strictEntry ? { strictEntry } : {}),
     ...(manual.range_trading === true && reservedRangeLegs > 0
       ? {
-          rangeLayering: {
-            rangeStepPips: Math.max(0, Number(manual.range_step_pips ?? 0)),
-            rangeDistancePips: Math.max(0, Number(manual.range_distance_pips ?? 0)),
-            effectiveStepPips: split.effectiveStepPips,
-            stepPriceOffset: split.stepPriceOffset,
-            maxStepIdx: split.maxStepIdx,
-            reservedPendingLegs: reservedRangeLegs,
-            activePendingLegs: effectiveRangeLegs,
+            rangeLayering: {
+              rangeStepPips: Math.max(0, Number(manual.range_step_pips ?? 0)),
+              rangeDistancePips: Math.max(0, Number(manual.range_distance_pips ?? 0)),
+              effectiveStepPips: split.effectiveStepPips,
+              stepPriceOffset: split.stepPriceOffset,
+              maxStepIdx: split.maxStepIdx,
+              reservedPendingLegs: reservedRangeLegs,
+              activePendingLegs: effectiveRangeLegs,
+              rangeLayeringType: manual.range_layering_type === 'pending_order' ? 'pending_order' : 'auto',
             ...(manual.use_signal_entry_range === true
               ? {
                   useSignalEntryRange: true,

@@ -161,6 +161,14 @@ export const configureModalRu: ConfigureModalTranslations = {
     rangeDistanceFallback: 'Расстояние диапазона, предоставленного вашим поставщиком сигнала. Это определяет, насколько многоуровневой является торговля.',
     layerTillClose: 'Слой до закрытия',
     layerTillCloseBody: 'Включено: диапазонные отложенные ордера продолжают открываться до тех пор, пока вся сделка не будет закрыта, даже если цена откатывается после фиксации прибыли или закрытия худших входов. Выкл.: отложенные ордера отменяются после первого тейк-профита или при закрытии любого ордера, поэтому при развороте более глубокие ордера не открываются.',
+    layeringType: 'Layering type',
+    layeringTypeAuto: 'Auto Layering',
+    layeringTypeAutoHint:
+      'Fires market orders when price moves against the signal at each ladder step (virtual pendings, faster trigger response).',
+    layeringTypePendingOrder: 'Pending Order',
+    layeringTypePendingOrderHint:
+      'Places Buy Limit / Sell Limit orders on the broker at each ladder step. Some brokers may reject limits that are too close to market — fewer legs may be placed.',
+
     useSignalRange: 'Торговать только диапазоном сигнала',
     useSignalRangeBody:
       'При включении сигнал должен содержать разобранную цену или зону входа (например, 4505, 4505/4500, @ 4505). Сообщения «купить сейчас» без цены пропускаются и показываются как ожидание диапазона. В отличие от цены входа по сигналу, отложенный ордер у брокера не выставляется — копир ждёт виртуально и открывает сделку, когда цена находится в любой точке зоны входа сигнала, с допуском в пипсах чуть за обеими границами.',
@@ -203,6 +211,13 @@ export const configureModalRu: ConfigureModalTranslations = {
       rangePercent: 'Зарезервированный лот (% ветвей)',
       rangeStep: 'Шаг (пипсов)',
       rangeDistance: 'Расстояние дальности (пипсов)',
+      layeringType: 'Layering type',
+      layeringTypeAuto: 'Auto Layering',
+      layeringTypeAutoHint:
+        'Market orders when price hits each ladder step (virtual pendings).',
+      layeringTypePendingOrder: 'Pending Order',
+      layeringTypePendingOrderHint:
+        'Broker Buy/Sell Limit at each step; some brokers may reject close limits.',
       fixedLot: 'Фиксированный лот',
       targetRiskPct: 'Целевой риск (% от баланса)',
       targetRiskHint: 'Необязательно — предполагает размер лота, близкий к этому риску на сигнал (худший случай).',

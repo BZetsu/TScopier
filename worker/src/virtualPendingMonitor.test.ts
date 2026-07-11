@@ -5,6 +5,7 @@ import {
   fillWithinTriggerBand,
   isTriggered,
   shouldLockBasketLayering,
+  VirtualPendingMonitor,
 } from './virtualPendingMonitor'
 
 // Buy ladder = averaging DOWN: trigger fires when bid drops to / below trigger_price.
@@ -187,4 +188,9 @@ test('shouldLockBasketLayering: flat basket (no open trades) does not lock', () 
     ask: 4094.8,
   })
   assert.equal(out.lock, false)
+})
+
+test('VirtualPendingMonitor: auto path excludes broker_pending status', () => {
+  assert.deepEqual(VirtualPendingMonitor.AUTO_LAYER_STATUSES, ['pending'])
+  assert.ok(!VirtualPendingMonitor.AUTO_LAYER_STATUSES.includes('broker_pending' as never))
 })

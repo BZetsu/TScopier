@@ -426,18 +426,19 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
     }
   }
   if (virtualPendings.length > 0 && !anyImmediateOpened && !strictDeferred) {
-    const { error: stripErr } = await ctx.supabase
-      .from('range_pending_legs')
-      .delete()
-      .eq('signal_id', signal.id)
-      .eq('broker_account_id', broker.id)
-    if (stripErr) {
+    const { deleteRangePendingLegsForBasket } = await import('../rangePendingLegDelete')
+    const rowsCancelled = await deleteRangePendingLegsForBasket(
+      ctx.supabase,
+      { signalId: signal.id, brokerAccountId: broker.id },
+      'orphan_no_immediate_fills',
+    )
+    if (rowsCancelled > 0) {
       console.warn(
-        `[tradeExecutor] strip orphan virtual pendings failed signal=${signal.id} broker=${broker.id}: ${stripErr.message}`,
+        `[tradeExecutor] stripped range pendings (zero successful immediates) signal=${signal.id} broker=${broker.id} rows=${rowsCancelled}`,
       )
     } else {
       console.warn(
-        `[tradeExecutor] stripped virtual pendings (zero successful immediates) signal=${signal.id} broker=${broker.id}`,
+        `[tradeExecutor] no range pendings stripped signal=${signal.id} broker=${broker.id}`,
       )
     }
   }

@@ -161,6 +161,14 @@ export const configureModalJa: ConfigureModalTranslations = {
     rangeDistanceFallback: '信号プロバイダーによって提供される範囲の距離。これにより、取引がどこまで階層化されるかが決まります。',
     layerTillClose: '閉じるまで重ねます',
     layerTillCloseBody: 'オン: 利益確定または値下がりエントリー後に価格が反落した場合でも、取引全体が終了するまでレンジ保留注文が開き続けます。オフ: 最初の利益確定後、または注文が終了したときに保留中の注文がキャンセルされるため、反転時にさらに深い注文はオープンされません。',
+    layeringType: 'Layering type',
+    layeringTypeAuto: 'Auto Layering',
+    layeringTypeAutoHint:
+      'Fires market orders when price moves against the signal at each ladder step (virtual pendings, faster trigger response).',
+    layeringTypePendingOrder: 'Pending Order',
+    layeringTypePendingOrderHint:
+      'Places Buy Limit / Sell Limit orders on the broker at each ladder step. Some brokers may reject limits that are too close to market — fewer legs may be placed.',
+
     useSignalRange: 'シグナルレンジのみで取引',
     useSignalRangeBody:
       'オンの場合、シグナルには解析済みのエントリー価格またはゾーン（例: 4505、4505/4500、@ 4505）が必要です。価格のない「今すぐ買い」はスキップされ、レンジ待ちとして表示されます。「シグナルエントリー価格を使用」と異なり、ブローカーに保留注文は出しません — コピアは仮想待機し、ライブ価格がシグナルエントリーゾーン内のどこにあってもエントリーし、pip許容値は両端をわずかに超えて適用されます。',
@@ -203,6 +211,13 @@ export const configureModalJa: ConfigureModalTranslations = {
       rangePercent: '予約済みロット (レッグの%)',
       rangeStep: 'ステップ (ピップス)',
       rangeDistance: '射程距離 (pips)',
+      layeringType: 'Layering type',
+      layeringTypeAuto: 'Auto Layering',
+      layeringTypeAutoHint:
+        'Market orders when price hits each ladder step (virtual pendings).',
+      layeringTypePendingOrder: 'Pending Order',
+      layeringTypePendingOrderHint:
+        'Broker Buy/Sell Limit at each step; some brokers may reject close limits.',
       fixedLot: '固定ロット',
       targetRiskPct: 'ターゲットリスク (残高の%)',
       targetRiskHint: 'オプション — シグナルごとにこのリスクに近いロットサイズを提案します (最悪の場合)。',

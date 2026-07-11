@@ -161,6 +161,14 @@ export const configureModalPl: ConfigureModalTranslations = {
     rangeDistanceFallback: 'Odległość zasięgu zapewnianego przez dostawcę sygnału. To określa, jak daleko handel jest warstwowy.',
     layerTillClose: 'Warstwa aż do zamknięcia',
     layerTillCloseBody: 'On: zlecenia oczekujące na zakres otwierają się aż do zamknięcia całej transakcji, nawet jeśli cena spadnie po realizacji zysku lub zamknięciu gorszych pozycji. Wyłączone: zlecenia oczekujące są anulowane po pierwszym zrealizowaniu zysku lub po zamknięciu dowolnego zlecenia, więc w przypadku odwrócenia nie otwierają się żadne głębsze zlecenia.',
+    layeringType: 'Layering type',
+    layeringTypeAuto: 'Auto Layering',
+    layeringTypeAutoHint:
+      'Fires market orders when price moves against the signal at each ladder step (virtual pendings, faster trigger response).',
+    layeringTypePendingOrder: 'Pending Order',
+    layeringTypePendingOrderHint:
+      'Places Buy Limit / Sell Limit orders on the broker at each ladder step. Some brokers may reject limits that are too close to market — fewer legs may be placed.',
+
     useSignalRange: 'Handluj tylko zakresem sygnału',
     useSignalRangeBody:
       'Gdy włączone, sygnał musi zawierać przeanalizowaną cenę lub strefę wejścia (np. 4505, 4505/4500, @ 4505). Same „kup teraz” bez ceny są pomijane i pokazywane jako oczekiwanie na zakres. W przeciwieństwie do ceny wejścia sygnału nie składa się widocznego zlecenia oczekującego u brokera — kopiarka czeka wirtualnie i otwiera, gdy cena jest w dowolnym miejscu w strefie wejścia sygnału, z tolerancją w pipach nieco poza obiema granicami.',
@@ -203,6 +211,13 @@ export const configureModalPl: ConfigureModalTranslations = {
       rangePercent: 'Działka zarezerwowana (% nóg)',
       rangeStep: 'Krok (pipsy)',
       rangeDistance: 'Odległość zasięgu (pipsy)',
+      layeringType: 'Layering type',
+      layeringTypeAuto: 'Auto Layering',
+      layeringTypeAutoHint:
+        'Market orders when price hits each ladder step (virtual pendings).',
+      layeringTypePendingOrder: 'Pending Order',
+      layeringTypePendingOrderHint:
+        'Broker Buy/Sell Limit at each step; some brokers may reject close limits.',
       fixedLot: 'Naprawiono wiele',
       targetRiskPct: 'Ryzyko docelowe (% salda)',
       targetRiskHint: 'Opcjonalne — sugeruje wielkość partii, która pozostaje w pobliżu tego ryzyka na sygnał (najgorszy przypadek).',

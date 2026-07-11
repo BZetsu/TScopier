@@ -182,6 +182,13 @@ export const configureModalEn: ConfigureModalTranslations = {
     layerTillClose: 'Layer till close',
     layerTillCloseBody:
       'On: range pending orders keep opening until the whole trade is closed, even if price pulls back after a take-profit or close-worse-entries. Off: pending orders are cancelled after the first take-profit or when any order closes, so no deeper orders open on a reversal.',
+    layeringType: 'Layering type',
+    layeringTypeAuto: 'Auto Layering',
+    layeringTypeAutoHint:
+      'Fires market orders when price moves against the signal at each ladder step (virtual pendings, faster trigger response).',
+    layeringTypePendingOrder: 'Pending Order',
+    layeringTypePendingOrderHint:
+      'Places Buy Limit / Sell Limit orders on the broker at each ladder step. Some brokers may reject limits that are too close to market — fewer legs may be placed.',
     useSignalRange: 'Trade Signal Range Only',
     useSignalRangeBody:
       'When on, the signal must include a parsed entry price or zone (e.g. 4505, 4505/4500, or @ 4505). Bare "buy now" messages with no price are skipped and shown as waiting for a price range. Unlike Use Signal Entry Price, no broker pending order is placed — the copier waits virtually and opens when live price is anywhere inside the signal entry zone, with pip tolerance extending slightly beyond both bounds. Layering depth still comes from the signal entry zone when present.',
@@ -229,6 +236,13 @@ export const configureModalEn: ConfigureModalTranslations = {
       rangePercent: 'Reserved lot (% of legs)',
       rangeStep: 'Step (pips)',
       rangeDistance: 'Range distance (pips)',
+      layeringType: 'Layering type',
+      layeringTypeAuto: 'Auto Layering',
+      layeringTypeAutoHint:
+        'Market orders when price hits each ladder step (virtual pendings).',
+      layeringTypePendingOrder: 'Pending Order',
+      layeringTypePendingOrderHint:
+        'Broker Buy/Sell Limit at each step; some brokers may reject close limits.',
       fixedLot: 'Fixed lot',
       targetRiskPct: 'Target risk (% of balance)',
       targetRiskHint: 'Optional — suggests a lot size that stays near this risk per signal (worst case).',

@@ -372,7 +372,25 @@ function RiskLotCalculatorModalInner({
                     />
                   </div>
                   {form.rangeTrading && (
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                    <>
+                      <ConfigureSelect
+                        label={copy.layeringType}
+                        value={form.rangeLayeringType}
+                        onChange={e => {
+                          const v = e.target.value
+                          patchForm({ rangeLayeringType: v === 'pending_order' ? 'pending_order' : 'auto' })
+                        }}
+                        options={[
+                          { value: 'auto', label: copy.layeringTypeAuto },
+                          { value: 'pending_order', label: copy.layeringTypePendingOrder },
+                        ]}
+                        hint={
+                          form.rangeLayeringType === 'pending_order'
+                            ? copy.layeringTypePendingOrderHint
+                            : copy.layeringTypeAutoHint
+                        }
+                      />
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                       <ConfigureInput
                         label={copy.rangePercent}
                         type="number"
@@ -396,6 +414,7 @@ function RiskLotCalculatorModalInner({
                         onChange={e => patchForm({ rangeDistancePips: Math.max(1, Number(e.target.value) || 1) })}
                       />
                     </div>
+                    </>
                   )}
                 </div>
               )}

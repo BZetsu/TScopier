@@ -162,6 +162,11 @@ export interface ConfigureModalTranslations {
     rangeDistanceFallback: string
     layerTillClose: string
     layerTillCloseBody: string
+    layeringType: string
+    layeringTypeAuto: string
+    layeringTypeAutoHint: string
+    layeringTypePendingOrder: string
+    layeringTypePendingOrderHint: string
     useSignalRange: string
     useSignalRangeBody: string
     useSignalRangePipTolerance: string
@@ -201,6 +206,11 @@ export interface ConfigureModalTranslations {
       rangePercent: string
       rangeStep: string
       rangeDistance: string
+      layeringType: string
+      layeringTypeAuto: string
+      layeringTypeAutoHint: string
+      layeringTypePendingOrder: string
+      layeringTypePendingOrderHint: string
       fixedLot: string
       targetRiskPct: string
       targetRiskHint: string

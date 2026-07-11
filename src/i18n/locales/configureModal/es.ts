@@ -182,6 +182,14 @@ export const configureModalEs: ConfigureModalTranslations = {
     layerTillClose: 'Escalonar hasta el cierre',
     layerTillCloseBody:
       'Activado: las órdenes pendientes del rango siguen abriéndose hasta que toda la operación esté cerrada, aunque el precio retroceda tras un take-profit o un cierre CWE. Desactivado: las pendientes se cancelan en el primer take-profit o al cerrar cualquier orden, así que no se abren órdenes más profundas si el precio revierte.',
+    layeringType: 'Layering type',
+    layeringTypeAuto: 'Auto Layering',
+    layeringTypeAutoHint:
+      'Fires market orders when price moves against the signal at each ladder step (virtual pendings, faster trigger response).',
+    layeringTypePendingOrder: 'Pending Order',
+    layeringTypePendingOrderHint:
+      'Places Buy Limit / Sell Limit orders on the broker at each ladder step. Some brokers may reject limits that are too close to market — fewer legs may be placed.',
+
     useSignalRange: 'Operar solo el rango de la señal',
     useSignalRangeBody:
       'Activado: la señal debe incluir un precio o zona de entrada analizada (p. ej. 4505, 4505/4500, @ 4505). Los mensajes «comprar ahora» sin precio se omiten y se muestran en espera de rango. A diferencia de «Usar precio de entrada de la señal», no se coloca una orden pendiente en el broker — el copiador espera virtualmente y abre cuando el precio está en cualquier punto dentro de la zona de entrada de la señal, con tolerancia en pips ligeramente más allá de ambos límites.',
@@ -229,6 +237,13 @@ export const configureModalEs: ConfigureModalTranslations = {
       rangePercent: 'Lote reservado (% de piernas)',
       rangeStep: 'Paso (pips)',
       rangeDistance: 'Distancia del rango (pips)',
+      layeringType: 'Layering type',
+      layeringTypeAuto: 'Auto Layering',
+      layeringTypeAutoHint:
+        'Market orders when price hits each ladder step (virtual pendings).',
+      layeringTypePendingOrder: 'Pending Order',
+      layeringTypePendingOrderHint:
+        'Broker Buy/Sell Limit at each step; some brokers may reject close limits.',
       fixedLot: 'Lote fijo',
       targetRiskPct: 'Riesgo objetivo (% del saldo)',
       targetRiskHint: 'Opcional — sugiere un lote cercano a este riesgo por señal (peor caso).',

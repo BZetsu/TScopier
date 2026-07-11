@@ -161,6 +161,14 @@ export const configureModalSv: ConfigureModalTranslations = {
     rangeDistanceFallback: 'Avståndet för räckvidden som tillhandahålls av din signalleverantör. Detta avgör hur långt handeln är skiktad.',
     layerTillClose: 'Varva tills nära',
     layerTillCloseBody: 'På: intervall väntande order fortsätter att öppna tills hela handeln är stängd, även om priset drar sig tillbaka efter en take-profit eller nära-värre-poster. Av: väntande beställningar avbryts efter den första vinsten eller när någon beställning stänger, så inga djupare beställningar öppnas vid en återföring.',
+    layeringType: 'Layering type',
+    layeringTypeAuto: 'Auto Layering',
+    layeringTypeAutoHint:
+      'Fires market orders when price moves against the signal at each ladder step (virtual pendings, faster trigger response).',
+    layeringTypePendingOrder: 'Pending Order',
+    layeringTypePendingOrderHint:
+      'Places Buy Limit / Sell Limit orders on the broker at each ladder step. Some brokers may reject limits that are too close to market — fewer legs may be placed.',
+
     useSignalRange: 'Endast handla signalrange',
     useSignalRangeBody:
       'När på måste signalen innehålla ett analyserat ingångspris eller -zon (t.ex. 4505, 4505/4500, @ 4505). Rena „köp nu” utan pris hoppas över och visas som väntar på range. Till skillnad från signal ingångspris placeras ingen mäklarpending — copiern väntar virtuellt och öppnar när livepriset är var som helst inom signalens ingångszon, med piptolerans något utanför båda gränserna.',
@@ -203,6 +211,13 @@ export const configureModalSv: ConfigureModalTranslations = {
       rangePercent: 'Reserverat parti (% av benen)',
       rangeStep: 'Steg (pips)',
       rangeDistance: 'Avståndsavstånd (pips)',
+      layeringType: 'Layering type',
+      layeringTypeAuto: 'Auto Layering',
+      layeringTypeAutoHint:
+        'Market orders when price hits each ladder step (virtual pendings).',
+      layeringTypePendingOrder: 'Pending Order',
+      layeringTypePendingOrderHint:
+        'Broker Buy/Sell Limit at each step; some brokers may reject close limits.',
       fixedLot: 'Fast parti',
       targetRiskPct: 'Målrisk (% av saldo)',
       targetRiskHint: 'Valfritt – föreslår en partistorlek som förblir nära denna risk per signal (värsta fall).',

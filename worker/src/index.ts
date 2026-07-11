@@ -5,7 +5,8 @@ import { UserSessionManager } from './sessionManager'
 import { AuthService } from './authService'
 import { startHttpServer, startTradeHttpServer } from './httpServer'
 import { TradeExecutor } from './tradeExecutor'
-import { VirtualPendingMonitor } from './virtualPendingMonitor'
+import { VirtualPendingMonitor, registerVirtualPendingMonitor } from './virtualPendingMonitor'
+import { RangeBrokerPendingMonitor } from './rangeBrokerPendingMonitor'
 import { CweCloseMonitor } from './cweCloseMonitor'
 import { PartialTpMonitor } from './partialTpMonitor'
 import { SignalEntryPendingMonitor } from './signalEntryPendingMonitor'
@@ -64,16 +65,20 @@ function trackMonitor(m: { stop: () => void; getLoopHandle?: () => MonitorLoopHa
 function startTradeMonitors(executor: TradeExecutor | null) {
   if (workerConfig.runsExecutionMonitors) {
     const virtualPendingMonitor = new VirtualPendingMonitor(supabase)
+    const rangeBrokerPendingMonitor = new RangeBrokerPendingMonitor(supabase)
     const cweCloseMonitor = new CweCloseMonitor(supabase)
     const partialTpMonitor = new PartialTpMonitor(supabase)
     const signalEntryPendingMonitor = new SignalEntryPendingMonitor(supabase)
     const openTradeReconcileMonitor = new OpenTradeReconcileMonitor(supabase)
     virtualPendingMonitor.start()
+    registerVirtualPendingMonitor(virtualPendingMonitor)
+    rangeBrokerPendingMonitor.start()
     cweCloseMonitor.start()
     partialTpMonitor.start()
     signalEntryPendingMonitor.start()
     openTradeReconcileMonitor.start()
     trackMonitor(virtualPendingMonitor)
+    trackMonitor(rangeBrokerPendingMonitor)
     trackMonitor(cweCloseMonitor)
     trackMonitor(partialTpMonitor)
     trackMonitor(signalEntryPendingMonitor)
