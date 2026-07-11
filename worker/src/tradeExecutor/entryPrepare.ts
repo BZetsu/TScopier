@@ -105,12 +105,14 @@ export type PreparedEntry = {
   virtualPendings: VirtualPendingLeg[]
   legs: Leg[]
   deferVirtualAnchor: boolean
+  /** Pending Order mode: place broker limits after immediate fills (fill-price anchor). */
+  deferBrokerRangePendingMaterialize: boolean
   strictDeferred: boolean
   op: MtOperation
   channelKeywords: ChannelKeywords | null
   baseLot: number
   anchor: number | null
-  anchorSource: 'signal' | 'quote' | 'unknown'
+  anchorSource: 'signal' | 'quote' | 'fill' | 'unknown'
   isManual: boolean
 }
 
@@ -878,7 +880,13 @@ export async function prepareEntryExecution(
   const deferVirtualAnchor = liveEntryFast
     && legs.length > 0
     && virtualPendings.length > 0
-  const needsAnchor = !deferVirtualAnchor && virtualPendings.length > 0
+  const brokerRangePendingMode = manual.range_layering_type === 'pending_order'
+  const deferBrokerRangePendingMaterialize = brokerRangePendingMode
+    && virtualPendings.length > 0
+    && legs.length > 0
+  const needsAnchor = !deferVirtualAnchor
+    && !deferBrokerRangePendingMaterialize
+    && virtualPendings.length > 0
   let anchor: number | null = plan.anchor?.value ?? plan.strictEntry?.entryPrice ?? null
   let anchorSource: 'signal' | 'quote' | 'unknown' = plan.anchor?.source ?? 'unknown'
   if (needsAnchor && (anchor == null || anchor <= 0)) {
@@ -977,6 +985,7 @@ export async function prepareEntryExecution(
       virtualPendings,
       legs,
       deferVirtualAnchor,
+      deferBrokerRangePendingMaterialize,
       strictDeferred,
       op,
       channelKeywords,

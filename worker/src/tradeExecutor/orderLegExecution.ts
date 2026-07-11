@@ -16,6 +16,8 @@ import { isV2 } from '../engine/executionMode'
 import { getFxClient, toMtPlatform } from '../engine/fxClient'
 import type { FxOpenOrder } from '../engine/fxContract'
 import { SKIP_REASON_ENTRY_NOT_OPENED } from '../manualPlanner'
+import { materializeBrokerRangePendingLegs } from './materializeBrokerRangePendingLegs'
+import type { PreparedEntry } from './entryPrepare'
 
 /** Normalized broker fill shape shared by the v1 client and the v2 fxClient. */
 type NormalizedFill = {
@@ -45,6 +47,10 @@ export type SendImmediateLegsInput = {
   channelDelayMs: number
   channelDelaySkipped: boolean
   deferVirtualAnchor: boolean
+  deferBrokerRangePendingMaterialize: boolean
+  brokerPendingMode: boolean
+  prepAnchor: number | null
+  prepAnchorSource: 'signal' | 'quote' | 'fill' | 'unknown'
   virtualPendings: VirtualPendingLeg[]
   plan: PlannerResult
   materializedVirtuals: boolean
@@ -53,16 +59,17 @@ export type SendImmediateLegsInput = {
   op: MtOperation
   channelKeywords: ChannelKeywords | null
   baseLot: number
-  /** When true, run multi-basket TP sync after immediates. */
   syncMultiLegTps: boolean
+  prep: PreparedEntry
 }
 
 export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<SendOrderOutcome> {
   const {
     ctx, signal, parsed, broker, manual, api, uuid, symbol, requestedSymbol, mapping, params,
     legs, liveEntryFast, pipelineT0, strictEntryPrefetch, channelDelayMs, channelDelaySkipped,
-    deferVirtualAnchor, virtualPendings, plan, materializedVirtuals, strictBrokerPlaced,
-    strictDeferred, op, channelKeywords, baseLot, syncMultiLegTps,
+    deferVirtualAnchor, deferBrokerRangePendingMaterialize, brokerPendingMode,
+    prepAnchor, prepAnchorSource, virtualPendings, plan, materializedVirtuals, strictBrokerPlaced,
+    strictDeferred, op, channelKeywords, baseLot, syncMultiLegTps, prep,
   } = input
 
   if (legs.length === 0) {
@@ -333,7 +340,49 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
   // All immediates fan out in parallel. Virtual pendings are already
   // persisted; the worker monitor + edge sweep will fire them on trigger.
   const sendResults = await Promise.allSettled(sendLegs.map(sendLeg))
-  if (deferVirtualAnchor && virtualPendings.length > 0 && api) {
+
+  let materializedBrokerPendings = materializedVirtuals
+  if (deferBrokerRangePendingMaterialize && brokerPendingMode && virtualPendings.length > 0 && api) {
+    const fillAnchor = filledLegs
+      .map(l => l.entryPrice)
+      .find(px => px != null && Number.isFinite(px) && px > 0) ?? null
+    let anchor = fillAnchor ?? prepAnchor
+    let anchorSource: 'signal' | 'quote' | 'fill' | 'unknown' = fillAnchor != null
+      ? 'fill'
+      : prepAnchorSource
+    if ((anchor == null || anchor <= 0) && strictEntryPrefetch) {
+      const isBuyLeg = !op.toLowerCase().includes('sell')
+      anchor = isBuyLeg ? strictEntryPrefetch.ask : strictEntryPrefetch.bid
+      anchorSource = 'quote'
+    }
+    const runBrokerMaterialize = async () => {
+      if (anchor == null || !Number.isFinite(anchor) || anchor <= 0) {
+        console.warn(
+          `[tradeExecutor] deferred broker range pending: no anchor signal=${signal.id} broker=${broker.id}`,
+        )
+        return false
+      }
+      return materializeBrokerRangePendingLegs(
+        ctx,
+        prep,
+        strictBrokerPlaced,
+        { anchor, anchorSource },
+      )
+    }
+    if (liveEntryFast) {
+      void runBrokerMaterialize().catch(err => {
+        console.error(
+          `[tradeExecutor] deferred broker range pending failed signal=${signal.id} broker=${broker.id}:`,
+          err,
+        )
+      })
+      materializedBrokerPendings = true
+    } else {
+      materializedBrokerPendings = await runBrokerMaterialize()
+    }
+  }
+
+  if (deferVirtualAnchor && virtualPendings.length > 0 && api && !brokerPendingMode) {
     void ctx.deferredVirtualPendingMaterialize({
       signal,
       broker,
@@ -442,7 +491,7 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
       )
     }
   }
-  const openedOrMerged = anyImmediateOpened || materializedVirtuals || strictBrokerPlaced
+  const openedOrMerged = anyImmediateOpened || materializedBrokerPendings || strictBrokerPlaced
   return {
     openedOrMerged,
     channelDelayMs,

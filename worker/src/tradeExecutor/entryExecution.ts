@@ -14,6 +14,7 @@ export async function finishEntrySend(
   strictBrokerPlaced: boolean,
   materializedVirtuals: boolean,
   syncMultiLegTps: boolean,
+  brokerPendingMode = false,
 ): Promise<SendOrderOutcome> {
   return sendImmediateLegs({
     ctx: prep.ctx,
@@ -34,6 +35,10 @@ export async function finishEntrySend(
     channelDelayMs: prep.channelDelayMs,
     channelDelaySkipped: prep.channelDelaySkipped,
     deferVirtualAnchor: prep.deferVirtualAnchor,
+    deferBrokerRangePendingMaterialize: prep.deferBrokerRangePendingMaterialize,
+    brokerPendingMode,
+    prepAnchor: prep.anchor,
+    prepAnchorSource: prep.anchorSource,
     virtualPendings: prep.virtualPendings,
     plan: prep.plan,
     materializedVirtuals,
@@ -43,6 +48,7 @@ export async function finishEntrySend(
     channelKeywords: prep.channelKeywords,
     baseLot: prep.baseLot,
     syncMultiLegTps,
+    prep,
   })
 }
 

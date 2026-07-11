@@ -123,17 +123,20 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
   const immediateLegs = split.immediateLegs
   const reservedRangeLegs = split.pendingLegs
   const effectiveRangeLegs = split.activePendingLegs
+  const maxStepIdx = split.maxStepIdx
   const stepPriceOffset = split.stepPriceOffset
   let rangeFallbackReason = split.fallbackReason
+  const pendingOrderMode = manual.range_layering_type === 'pending_order'
+  const rangeLegCount = pendingOrderMode ? reservedRangeLegs : effectiveRangeLegs
 
-  const totalLegsForTp = immediateLegs + effectiveRangeLegs
+  const totalLegsForTp = immediateLegs + (pendingOrderMode ? reservedRangeLegs : effectiveRangeLegs)
   const immediateTpPrices = buildDistributedPerLegTakeProfits({
     openLegCount: immediateLegs,
     finalTps,
     tpLots: manual.tp_lots,
   })
   const rangeTpPrices = buildDistributedPerLegTakeProfits({
-    openLegCount: effectiveRangeLegs,
+    openLegCount: pendingOrderMode ? reservedRangeLegs : effectiveRangeLegs,
     finalTps,
     tpLots: manual.tp_lots,
   })
@@ -147,7 +150,7 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
     if (finalTps.length === 0) return null
     if (
       manual.range_trading === true
-      && effectiveRangeLegs > 0
+      && rangeLegCount > 0
       && entryAnchor != null
       && entryAnchor > 0
       && stepPriceOffset > 0
@@ -160,22 +163,24 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
           openedAt: `imm${String(i).padStart(4, '0')}`,
         })
       }
-      for (let i = 0; i < effectiveRangeLegs; i++) {
-        const stepIdx = i + 1
+      for (let i = 0; i < rangeLegCount; i++) {
+        const stepIdx = pendingOrderMode && maxStepIdx > 0
+          ? (i % maxStepIdx) + 1
+          : i + 1
         const offset = stepIdx * stepPriceOffset
         projectedLegs.push({
-          id: `rg${stepIdx}`,
+          id: `rg${String(i).padStart(4, '0')}`,
           entryPrice: isBuy ? entryAnchor - offset : entryAnchor + offset,
-          openedAt: `rg${String(stepIdx).padStart(4, '0')}`,
+          openedAt: `rg${String(i).padStart(4, '0')}`,
         })
       }
       const projectedTp = buildEntryQualityTakeProfitMap({
         legs: projectedLegs,
         isBuy,
-        slotLegCount: immediateLegs + effectiveRangeLegs,
+        slotLegCount: immediateLegs + rangeLegCount,
         finalTps,
         tpLots: manual.tp_lots,
-      }).get(`rg${idx + 1}`)
+      }).get(`rg${String(idx).padStart(4, '0')}`)
       if (typeof projectedTp === 'number' && projectedTp > 0) return projectedTp
     }
     const price = rangeTpPrices[idx]
@@ -253,12 +258,14 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
   }
 
   const virtualPendings: VirtualPendingLeg[] = []
-  if (effectiveRangeLegs > 0) {
+  if (rangeLegCount > 0 && (!pendingOrderMode || maxStepIdx > 0)) {
     const pendHours = clampPendingExpiryHours(manual.pending_expiry_hours)
     const expiryHours = pendHours > 0 ? pendHours : undefined
 
-    let stepIdx = 1
-    for (let i = 0; i < effectiveRangeLegs; i++) {
+    for (let i = 0; i < rangeLegCount; i++) {
+      const stepIdx = pendingOrderMode && maxStepIdx > 0
+        ? (i % maxStepIdx) + 1
+        : i + 1
       const tpPrice = tpForRangeIndex(i)
       virtualPendings.push({
         stepIdx,
@@ -268,15 +275,14 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
         stoploss: finalSl,
         takeprofit: tpPrice,
         slippage: slippage ?? 20,
-        comment: appendOrderCommentSuffix(commentPrefix, `:rg${stepIdx}.tp`),
+        comment: appendOrderCommentSuffix(commentPrefix, `:rg${stepIdx}.tp${i + 1}`),
         expertID: expertId,
         expiryHours,
       })
-      stepIdx += 1
     }
   }
 
-  if (effectiveRangeLegs === 0) {
+  if (rangeLegCount === 0 && !pendingOrderMode) {
     const remainderUnits = manualUnits - totalLegs * targetUnits
     if (remainderUnits >= minUnits && orders.length < ABS_MAX_LEGS) {
       const tpPrice = tpForImmediateIndex(Math.max(0, immediateLegs - 1))
@@ -329,7 +335,7 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
               stepPriceOffset: split.stepPriceOffset,
               maxStepIdx: split.maxStepIdx,
               reservedPendingLegs: reservedRangeLegs,
-              activePendingLegs: effectiveRangeLegs,
+              activePendingLegs: pendingOrderMode ? reservedRangeLegs : effectiveRangeLegs,
               rangeLayeringType: manual.range_layering_type === 'pending_order' ? 'pending_order' : 'auto',
             ...(manual.use_signal_entry_range === true
               ? {

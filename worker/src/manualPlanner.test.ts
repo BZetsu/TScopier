@@ -315,6 +315,33 @@ test('planMultiManualOrders: rangeLayeringType defaults to auto', () => {
   assert.equal(plan.rangeLayering?.rangeLayeringType, 'auto')
 })
 
+test('planMultiManualOrders: pending_order round-robin stacks legs across rungs', () => {
+  const manual: ManualSettings = {
+    ...baseManual,
+    range_trading: true,
+    range_percent: 70,
+    range_step_pips: 2,
+    range_distance_pips: 6,
+    range_layering_type: 'pending_order',
+    tp_lots: [{ label: 'TP1', lot: 0, percent: 100, enabled: true }],
+  }
+  const plan = planManualOrders({
+    parsed: { ...baseParsed, tp: [1900], entry_price: 4500 },
+    resolvedSymbol: 'XAUUSD',
+    baseOperation: 'Sell',
+    manual,
+    channelKeywords: null,
+    manualLot: 0.5,
+    ctx: baseCtx,
+    commentPrefix: 'TScopier:abc',
+  })
+  const v = plan.virtualPendings ?? []
+  assert.ok(v.length > 3, `expected more reserved legs than rungs, got ${v.length}`)
+  const stepIdxs = v.map(l => l.stepIdx)
+  assert.ok(stepIdxs.includes(1) && stepIdxs.includes(2) && stepIdxs.includes(3))
+  assert.ok(stepIdxs.filter(s => s === 1).length >= 2, 'round-robin should repeat step 1')
+})
+
 test('planMultiManualOrders: stale burst cap of 1 consolidates dynamic range into one order (regression)', () => {
   const manual: ManualSettings = {
     ...baseManual,

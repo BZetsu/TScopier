@@ -188,7 +188,7 @@ export const configureModalEn: ConfigureModalTranslations = {
       'Fires market orders when price moves against the signal at each ladder step (virtual pendings, faster trigger response).',
     layeringTypePendingOrder: 'Pending Order',
     layeringTypePendingOrderHint:
-      'Places Buy Limit / Sell Limit orders on the broker at each ladder step. Some brokers may reject limits that are too close to market — fewer legs may be placed.',
+      'Places Buy Limit / Sell Limit orders on the broker at each ladder step from your fill price. Some brokers may reject limits that are too close to market — fewer legs may be placed. Multiple orders may share the same limit price.',
     useSignalRange: 'Trade Signal Range Only',
     useSignalRangeBody:
       'When on, the signal must include a parsed entry price or zone (e.g. 4505, 4505/4500, or @ 4505). Bare "buy now" messages with no price are skipped and shown as waiting for a price range. Unlike Use Signal Entry Price, no broker pending order is placed — the copier waits virtually and opens when live price is anywhere inside the signal entry zone, with pip tolerance extending slightly beyond both bounds. Layering depth still comes from the signal entry zone when present.',

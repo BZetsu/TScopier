@@ -34,7 +34,7 @@ export async function cancelBrokerRangeLegAtBroker(
       .from('range_pending_legs')
       .update({ status: 'cancelled', error_message: reason })
       .eq('id', row.id)
-      .eq('status', 'broker_pending')
+      .in('status', ['broker_pending', 'cancelled'])
     return true
   }
   try {
@@ -48,8 +48,31 @@ export async function cancelBrokerRangeLegAtBroker(
   }
   await supabase
     .from('range_pending_legs')
-    .update({ status: 'cancelled', error_message: reason })
+    .update({ status: 'cancelled', error_message: reason, ticket: null })
     .eq('id', row.id)
-    .eq('status', 'broker_pending')
+    .in('status', ['broker_pending', 'cancelled'])
   return true
+}
+
+/** Close broker limits for rows marked cancelled by DB trigger before row cleanup. */
+export async function reconcileBasketEmptyCancelledLegs(
+  supabase: SupabaseClient,
+  apiLookup: (uuid: string) => FxsocketBrokerClient | null,
+): Promise<number> {
+  const { data, error } = await supabase
+    .from('range_pending_legs')
+    .select('id,metaapi_account_id,ticket,signal_id,user_id,broker_account_id')
+    .eq('status', 'cancelled')
+    .eq('error_message', 'basket_empty')
+    .not('ticket', 'is', null)
+    .limit(100)
+  if (error || !data?.length) return 0
+  let closed = 0
+  for (const row of data as RangeBrokerPendingRow[]) {
+    const api = apiLookup(row.metaapi_account_id)
+    if (!api) continue
+    const ok = await cancelBrokerRangeLegAtBroker(supabase, api, row, 'basket_empty')
+    if (ok) closed += 1
+  }
+  return closed
 }

@@ -81,15 +81,27 @@ export async function runRangeEntry(
 
   const strictBrokerPlaced = await placeStrictSignalEntryPending(ctx, prep, false)
   const brokerPendingMode = useBrokerRangePendingLegs(prep)
-  const materializedPendings = brokerPendingMode
-    ? await materializeBrokerRangePendingLegs(ctx, prep, strictBrokerPlaced)
-    : await materializeVirtualPendingLegs(ctx, prep, strictBrokerPlaced)
+  let materializedPendings = false
 
-  if (!brokerPendingMode && materializedPendings) {
-    void runImmediateVirtualPendingCheck(prep.signal.id, prep.broker.id)
+  if (brokerPendingMode) {
+    // 100% reserved (no immediates): place limits from quote/signal anchor now.
+    if (!prep.deferBrokerRangePendingMaterialize) {
+      materializedPendings = await materializeBrokerRangePendingLegs(ctx, prep, strictBrokerPlaced)
+    }
+  } else {
+    materializedPendings = await materializeVirtualPendingLegs(ctx, prep, strictBrokerPlaced)
+    if (materializedPendings) {
+      void runImmediateVirtualPendingCheck(prep.signal.id, prep.broker.id)
+    }
   }
 
-  const outcome = await finishEntrySend(prep, strictBrokerPlaced, materializedPendings, true)
+  const outcome = await finishEntrySend(
+    prep,
+    strictBrokerPlaced,
+    materializedPendings,
+    true,
+    brokerPendingMode,
+  )
   if (outcome.openedOrMerged === true && prep.plan.rangeEntryWait) {
     await markSignalRangeEntryFired(ctx.supabase, prep.signal.id, prep.broker.id)
     await logSignalRangeEntryFired(

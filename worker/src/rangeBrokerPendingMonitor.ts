@@ -25,8 +25,10 @@ import {
 } from './signalEntryPendingHelpers'
 import {
   cancelBrokerRangeLegAtBroker,
+  reconcileBasketEmptyCancelledLegs,
   type RangeBrokerPendingRow,
 } from './rangeBrokerPendingHelpers'
+import { watchRangeLayeringBasketEvents } from './rangeLayerBasketWatch'
 
 const ACTIVE_MS = monitorActiveIntervalMs('RANGE_BROKER_PENDING_TICK_MS', 2_000)
 const IDLE_MS = monitorIdleIntervalMs('RANGE_BROKER_PENDING_IDLE_MS', 15_000)
@@ -294,15 +296,30 @@ export class RangeBrokerPendingMonitor {
     }
     const rows = ((data ?? []) as RangeBrokerPendingRow[])
       .filter(r => !isUserCopierPausedCached(r.user_id))
+
+    const { data: cancelRows } = await this.supabase
+      .from('range_pending_legs')
+      .select('metaapi_account_id')
+      .eq('status', 'cancelled')
+      .eq('error_message', 'basket_empty')
+      .not('ticket', 'is', null)
+      .limit(100)
+
+    const accountIds = [
+      ...rows.map(r => r.metaapi_account_id),
+      ...((cancelRows ?? []) as Array<{ metaapi_account_id: string }>).map(r => r.metaapi_account_id),
+    ]
+    this.platformByUuid = await loadPlatformByFxsocketId(this.supabase, accountIds)
+
+    await reconcileBasketEmptyCancelledLegs(
+      this.supabase,
+      uuid => apiForFxsocketAccount(this.platformByUuid, uuid),
+    )
+
     if (!rows.length) {
       this.missingStreak.clear()
       return
     }
-
-    this.platformByUuid = await loadPlatformByFxsocketId(
-      this.supabase,
-      rows.map(r => r.metaapi_account_id),
-    )
 
     const nowMs = Date.now()
     const expiredRows = rows.filter(r => {
@@ -321,6 +338,34 @@ export class RangeBrokerPendingMonitor {
           .update({ status: 'expired', error_message: 'pending_expiry' })
           .eq('id', row.id)
           .eq('status', 'broker_pending')
+      }
+    }
+
+    const quoteGroups = new Map<string, RangeBrokerPendingRow[]>()
+    for (const r of watchRows) {
+      const k = `${r.metaapi_account_id}|${r.symbol}`
+      const list = quoteGroups.get(k) ?? []
+      list.push(r)
+      quoteGroups.set(k, list)
+    }
+    for (const [key, group] of quoteGroups) {
+      const [uuid, symbol] = key.split('|')
+      if (!uuid || !symbol) continue
+      const api = apiForFxsocketAccount(this.platformByUuid, uuid)
+      if (!api) continue
+      try {
+        const q = await api.quote(uuid, symbol)
+        await watchRangeLayeringBasketEvents(this.supabase, {
+          signalIds: [...new Set(group.map(r => r.signal_id))],
+          brokerIds: [...new Set(group.map(r => r.broker_account_id))],
+          symbol,
+          bid: q.bid,
+          ask: q.ask,
+          logAction: 'range_broker_pending_tp_lock',
+        })
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        console.warn(`[rangeBrokerPendingMonitor] basket watch quote failed ${symbol}: ${msg}`)
       }
     }
 

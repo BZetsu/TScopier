@@ -3,6 +3,11 @@ import type { TradeExecutorContext } from './context'
 import { clampOrderStops, roundLot, triggerPriceFor, virtualPendingTriggerAllowed } from './helpers'
 import type { PreparedEntry } from './entryPrepare'
 
+export type MaterializeBrokerRangeOpts = {
+  anchor?: number
+  anchorSource?: 'signal' | 'quote' | 'fill' | 'unknown'
+}
+
 /**
  * Place broker BuyLimit/SellLimit for each planned range ladder leg and persist
  * rows in `range_pending_legs` with status `broker_pending`.
@@ -11,13 +16,17 @@ export async function materializeBrokerRangePendingLegs(
   ctx: TradeExecutorContext,
   prep: PreparedEntry,
   strictBrokerPlaced: boolean,
+  opts?: MaterializeBrokerRangeOpts,
 ): Promise<boolean> {
   const {
-    signal, broker, api, uuid, symbol, virtualPendings, deferVirtualAnchor, anchor, anchorSource,
+    signal, broker, api, uuid, symbol, virtualPendings,
     params, plan, liveEntryFast, strictDeferred,
   } = prep
 
-  if (!api || virtualPendings.length === 0 || deferVirtualAnchor) return false
+  if (!api || virtualPendings.length === 0) return false
+
+  const anchor = opts?.anchor ?? prep.anchor
+  const anchorSource = opts?.anchorSource ?? prep.anchorSource
 
   if (anchor == null || !Number.isFinite(anchor) || anchor <= 0) {
     console.warn(
