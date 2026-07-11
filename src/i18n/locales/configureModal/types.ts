@@ -94,11 +94,6 @@ export interface ConfigureModalTranslations {
   channelSymbols: {
     title: string
     intro: string
-    prefixLabel: string
-    prefixHint: string
-    suffixLabel: string
-    suffixHint: string
-    example: string
     tradeOnlyLabel: string
     tradeOnlyHint: string
     tradeOnlyPlaceholder: string

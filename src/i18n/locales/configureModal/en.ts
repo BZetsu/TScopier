@@ -93,14 +93,9 @@ export const configureModalEn: ConfigureModalTranslations = {
       'Non-English channel? Run Train channel after linking so the copier learns buy/sell/SL/TP words. If Copier Logs show skipped signals, re-train here.',
   },
   channelSymbols: {
-    title: 'Symbol mapping',
+    title: 'Symbol filters',
     intro:
-      'Match signal symbols to your broker’s instrument names. Add a prefix or suffix if your broker uses different codes (e.g. XAUUSD+). Unmapped symbols still use automatic broker matching.',
-    prefixLabel: 'Symbol prefix',
-    prefixHint: 'Prepended to every signal symbol before placing orders (e.g. # for #XAUUSD).',
-    suffixLabel: 'Symbol suffix',
-    suffixHint: 'Appended to every signal symbol (e.g. + for XAUUSD+). Leave blank if names match the signal.',
-    example: 'Example: XAUUSD with suffix + → orders on XAUUSD+',
+      'Signal symbols are matched to your broker’s instrument names automatically when the account connects (including common prefixes and suffixes such as XAUUSD+ or BTCUSDm). Use the fields below only to allow or block specific symbols from this channel.',
     tradeOnlyLabel: 'Symbols to trade',
     tradeOnlyHint:
       'Leave empty to copy every symbol from this channel. When listed, only signals matching these symbols are copied (comma-separated, e.g. XAUUSD, EURUSD).',

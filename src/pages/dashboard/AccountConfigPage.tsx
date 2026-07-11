@@ -447,8 +447,8 @@ function normalizeManualSettings(
     use_signal_entry_price: (j as Record<string, unknown>).use_signal_entry_price === true,
     signal_entry_pip_tolerance: Math.max(0, readNumber('signal_entry_pip_tolerance', DEFAULT_MANUAL_SETTINGS.signal_entry_pip_tolerance ?? 10)),
     symbol_mapping: Object.fromEntries(Object.entries(map).map(([k, v]) => [String(k).toUpperCase(), String(v).toUpperCase()])),
-    symbol_prefix: String(j.symbol_prefix ?? '').toUpperCase(),
-    symbol_suffix: String(j.symbol_suffix ?? '').toUpperCase(),
+    symbol_prefix: '',
+    symbol_suffix: '',
     symbol_to_trade: (() => {
       const raw = j.symbol_to_trade
       if (raw == null || !String(raw).trim()) return null
@@ -2664,25 +2664,6 @@ export function AccountConfigPage() {
                               <ConfigTitle variant="semibold" info={cm.channelSymbols.intro}>
                                 {cm.channelSymbols.title}
                               </ConfigTitle>
-                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                <ConfigureInput
-                                  label={cm.channelSymbols.prefixLabel}
-                                  hint={cm.channelSymbols.prefixHint}
-                                  placeholder="#"
-                                  value={channelManualSettings.symbol_prefix ?? ''}
-                                  onChange={e => setManual({ symbol_prefix: e.target.value })}
-                                />
-                                <ConfigureInput
-                                  label={cm.channelSymbols.suffixLabel}
-                                  hint={cm.channelSymbols.suffixHint}
-                                  placeholder="+"
-                                  value={channelManualSettings.symbol_suffix ?? ''}
-                                  onChange={e => setManual({ symbol_suffix: e.target.value })}
-                                />
-                              </div>
-                              <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                                {cm.channelSymbols.example}
-                              </p>
                               <ConfigureInput
                                 label={cm.channelSymbols.tradeOnlyLabel}
                                 hint={cm.channelSymbols.tradeOnlyHint}

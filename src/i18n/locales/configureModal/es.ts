@@ -93,14 +93,9 @@ export const configureModalEs: ConfigureModalTranslations = {
       '¿Canal en otro idioma? Ejecuta Entrenar canal tras vincularlo. Si los registros muestran señales omitidas, vuelve a entrenar aquí.',
   },
   channelSymbols: {
-    title: 'Mapeo de símbolos',
+    title: 'Filtros de símbolos',
     intro:
-      'Haz coincidir los símbolos de la señal con los nombres de instrumentos de tu broker. Añade un prefijo o sufijo si los códigos difieren (p. ej. XAUUSD+). Los símbolos sin mapear siguen usando la coincidencia automática del broker.',
-    prefixLabel: 'Prefijo de símbolo',
-    prefixHint: 'Se antepone a cada símbolo de la señal (p. ej. # para #XAUUSD).',
-    suffixLabel: 'Sufijo de símbolo',
-    suffixHint: 'Se añade después de cada símbolo (p. ej. + para XAUUSD+). Déjalo vacío si los nombres coinciden con la señal.',
-    example: 'Ejemplo: XAUUSD con sufijo + → órdenes en XAUUSD+',
+      'Los símbolos de la señal se emparejan automáticamente con los instrumentos de tu broker al conectar la cuenta (incluidos prefijos y sufijos habituales como XAUUSD+ o BTCUSDm). Usa los campos siguientes solo para permitir o bloquear símbolos de este canal.',
     tradeOnlyLabel: 'Símbolos a operar',
     tradeOnlyHint:
       'Déjalo vacío para copiar todos los símbolos del canal. Si indicas una lista, solo se copian esas señales (separadas por comas, p. ej. XAUUSD, EURUSD).',

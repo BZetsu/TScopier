@@ -91,13 +91,9 @@ export const configureModalPl: ConfigureModalTranslations = {
       'Kanał w innym języku? Uruchom trening kanału po połączeniu. Jeśli logi pokazują pominięte sygnały, wytrenuj ponownie tutaj.',
   },
   channelSymbols: {
-    title: 'Mapowanie symboli',
-    intro: 'Dopasuj symbole sygnałów do nazw instrumentów brokera. Dodaj prefiks lub sufiks, jeśli Twój broker używa różnych kodów (np. XAUUSD+). Niezmapowane symbole nadal korzystają z automatycznego dopasowywania brokerów.',
-    prefixLabel: 'Przedrostek symbolu',
-    prefixHint: 'Dodawany do każdego symbolu sygnału przed złożeniem zamówienia (np. # dla #XAUUSD).',
-    suffixLabel: 'Sufiks symbolu',
-    suffixHint: 'Dołączany do każdego symbolu sygnału (np. + dla XAUUSD+). Pozostaw puste, jeśli nazwy pasują do sygnału.',
-    example: 'Przykład: XAUUSD z przyrostkiem + → zlecenia na XAUUSD+',
+    title: 'Filtry symboli',
+    intro:
+      'Symbole sygnałów są automatycznie dopasowywane do instrumentów brokera po połączeniu konta (w tym typowe przedrostki i przyrostki, np. XAUUSD+ lub BTCUSDm). Poniższe pola służą tylko do zezwalania lub blokowania symboli z tego kanału.',
     tradeOnlyLabel: 'Symbole do handlu',
     tradeOnlyHint: 'Pozostaw puste, aby skopiować każdy symbol z tego kanału. Gdy są wymienione, kopiowane są tylko sygnały pasujące do tych symboli (oddzielone przecinkami, np. XAUUSD, EURUSD).',
     tradeOnlyPlaceholder: 'np. XAUUSD, EURUSD',

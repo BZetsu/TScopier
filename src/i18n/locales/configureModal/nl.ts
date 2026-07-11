@@ -91,13 +91,9 @@ export const configureModalNl: ConfigureModalTranslations = {
       'Kanaal in een andere taal? Voer Kanaal trainen uit na koppelen. Bij overgeslagen signalen in de logs, hier opnieuw trainen.',
   },
   channelSymbols: {
-    title: 'Symbolen in kaart brengen',
-    intro: 'Zorg ervoor dat signaalsymbolen overeenkomen met de instrumentnamen van uw makelaar. Voeg een voor- of achtervoegsel toe als uw makelaar andere codes gebruikt (bijvoorbeeld XAUUSD+). Niet-toegewezen symbolen maken nog steeds gebruik van automatische makelaarsmatching.',
-    prefixLabel: 'Symboolvoorvoegsel',
-    prefixHint: 'Wordt toegevoegd aan elk signaalsymbool voordat bestellingen worden geplaatst (bijvoorbeeld # voor #XAUUSD).',
-    suffixLabel: 'Symboolachtervoegsel',
-    suffixHint: 'Toegevoegd aan elk signaalsymbool (bijvoorbeeld + voor XAUUSD+). Laat dit leeg als de namen overeenkomen met het signaal.',
-    example: 'Voorbeeld: XAUUSD met achtervoegsel + → bestellingen op XAUUSD+',
+    title: 'Symboolfilters',
+    intro:
+      'Signaalsymbolen worden automatisch gekoppeld aan de instrumentnamen van uw broker wanneer het account verbindt (inclusief gangbare voor- en achtervoegsels zoals XAUUSD+ of BTCUSDm). Gebruik de velden hieronder alleen om specifieke symbolen van dit kanaal toe te staan of te blokkeren.',
     tradeOnlyLabel: 'Symbolen om te verhandelen',
     tradeOnlyHint: 'Laat dit leeg om elk symbool uit dit kanaal te kopiëren. Indien vermeld, worden alleen signalen die overeenkomen met deze symbolen gekopieerd (door komma\'s gescheiden, bijvoorbeeld XAUUSD, EURUSD).',
     tradeOnlyPlaceholder: 'bijv. XAUUSD, EURUSD',

@@ -91,13 +91,9 @@ export const configureModalSv: ConfigureModalTranslations = {
       'Kanal på annat språk? Kör Träna kanal efter länkning. Om loggar visar hoppade signaler, träna om här.',
   },
   channelSymbols: {
-    title: 'Symbolkartläggning',
-    intro: 'Matcha signalsymboler med din mäklares instrumentnamn. Lägg till ett prefix eller suffix om din mäklare använder andra koder (t.ex. XAUUSD+). Omappade symboler använder fortfarande automatisk mäklarmatchning.',
-    prefixLabel: 'Symbolprefix',
-    prefixHint: 'Läggs till varje signalsymbol innan beställningar (t.ex. # för #XAUUSD).',
-    suffixLabel: 'Symbolsuffix',
-    suffixHint: 'Bifogas till varje signalsymbol (t.ex. + för XAUUSD+). Lämna tomt om namnen matchar signalen.',
-    example: 'Exempel: XAUUSD med suffix + → beställningar på XAUUSD+',
+    title: 'Symbolfilter',
+    intro:
+      'Signalsymboler matchas automatiskt mot din mäklares instrumentnamn när kontot ansluter (inklusive vanliga prefix och suffix som XAUUSD+ eller BTCUSDm). Använd fälten nedan endast för att tillåta eller blockera specifika symboler från den här kanalen.',
     tradeOnlyLabel: 'Symboler att handla med',
     tradeOnlyHint: 'Lämna tomt för att kopiera varje symbol från den här kanalen. När de är listade kopieras endast signaler som matchar dessa symboler (kommaseparerade, t.ex. XAUUSD, EURUSD).',
     tradeOnlyPlaceholder: 't.ex. XAUUSD, EURUSD',

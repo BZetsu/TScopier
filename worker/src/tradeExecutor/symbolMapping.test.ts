@@ -32,6 +32,21 @@ test('resolveBrokerSymbolFromInventory: fuzzy maps XAUUSD to XAUUSD+ when only s
   assert.equal(resolved, 'XAUUSD+')
 })
 
+test('resolveBrokerSymbolFromInventory: fuzzy maps BTCUSD to BTCUSDm', () => {
+  const inv = inventory(['BTCUSDm'])
+  const resolved = resolveBrokerSymbolFromInventory(noopCtx, inv, 'BTCUSD')
+  assert.equal(resolved, 'BTCUSDm')
+})
+
+test('applySymbolMapping: no decoration → userDecorated false', () => {
+  const broker = {
+    manual_settings: { symbol_prefix: '', symbol_suffix: '' },
+  } as unknown as BrokerRow
+  const r = applySymbolMapping('XAUUSD', broker)
+  assert.equal(r.symbol, 'XAUUSD')
+  assert.equal(r.userDecorated, false)
+})
+
 test('resolveBrokerSymbolFromInventory: userDecorated does not downgrade to bare XAUUSD', () => {
   const inv = inventory(['XAUUSD', 'XAUUSD+'])
   const resolved = resolveBrokerSymbolFromInventory(noopCtx, inv, 'XAUUSD+', { userDecorated: true })

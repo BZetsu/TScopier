@@ -15,6 +15,9 @@ import { replayParsedSignalsForBroker } from '../brokerSignalReplay'
 import { applySymbolMapping, brokerSessionUuid, isMtUuid, parseSymbolToTradeList } from './helpers'
 import { isDerivSyntheticSymbol, resolveDerivCanonicalToBrokerSymbol } from '../derivSymbols'
 import {
+  clearLegacySymbolDecorationIfPresent,
+} from './brokerSymbolDecoration'
+import {
   SESSION_PING_MIN_INTERVAL_MS,
   SYMBOL_CACHE_STALE_MS,
   SYMBOL_CACHE_TTL_MS,
@@ -42,6 +45,42 @@ const SYMBOL_KEEPALIVE_CONCURRENCY = Math.max(
   Math.min(8, Number(process.env.SYMBOL_KEEPALIVE_CONCURRENCY ?? 2) || 2),
 )
 const heartbeatFailCounts = new Map<string, number>()
+const symbolInventoryReadyHandled = new Set<string>()
+
+const SYMBOL_AUTO_MATCH_PROBES = ['EURUSD', 'XAUUSD', 'GBPUSD', 'BTCUSD'] as const
+
+function findBrokerBySessionUuid(ctx: TradeExecutorContext, uuid: string): BrokerRow | undefined {
+  for (const broker of ctx.brokersById.values()) {
+    if (brokerSessionUuid(broker) === uuid) return broker
+  }
+  return undefined
+}
+
+async function onBrokerSymbolInventoryReady(
+  ctx: TradeExecutorContext,
+  uuid: string,
+  inventory: SymbolListCacheEntry,
+): Promise<void> {
+  if (symbolInventoryReadyHandled.has(uuid)) return
+  const broker = findBrokerBySessionUuid(ctx, uuid)
+  if (!broker || broker.connection_status !== 'connected') return
+
+  symbolInventoryReadyHandled.add(uuid)
+  await clearLegacySymbolDecorationIfPresent(ctx.supabase, broker)
+
+  const parts: string[] = []
+  for (const probe of SYMBOL_AUTO_MATCH_PROBES) {
+    const resolved = resolveBrokerSymbolFromInventory(ctx, inventory, probe)
+    if (resolved.toUpperCase() !== probe) {
+      parts.push(`${probe}→${resolved}`)
+    }
+  }
+  if (parts.length > 0) {
+    console.log(
+      `[tradeExecutor] symbol auto-match broker=${broker.id} ${parts.join(' ')}`,
+    )
+  }
+}
 
 function activeBrokersForHeartbeat(ctx: TradeExecutorContext): BrokerRow[] {
   return [...ctx.brokersById.values()].filter(b => b.is_active && brokerSessionUuid(b))
@@ -475,6 +514,12 @@ export async function fetchSymbolList(ctx: TradeExecutorContext, uuid: string): 
       if (!list.length) return null
       const entry: SymbolListCacheEntry = { set, list, loadedAt: Date.now() }
       ctx.symbolListCache.set(uuid, entry)
+      void onBrokerSymbolInventoryReady(ctx, uuid, entry).catch(err => {
+        console.warn(
+          `[tradeExecutor] symbol inventory ready hook failed uuid=${uuid}:`,
+          err instanceof Error ? err.message : err,
+        )
+      })
       return entry
     } catch {
       return null
