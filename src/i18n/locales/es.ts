@@ -440,6 +440,8 @@ export const es: Translations = {
         'Aún no pudimos cargar tu cuenta desde el broker. Si acabas de conectar, espera un minuto e inténtalo de nuevo. Si no, verifica que tu login, contraseña y servidor coincidan exactamente con MetaTrader.',
       connectErrorSessionExpired:
         'La sesión de trading expiró en el servidor. Usa Reconectar e introduce tu contraseña MT actual.',
+      connectErrorThrottled:
+        'Demasiadas solicitudes de conexión en poco tiempo. Espera aproximadamente un minuto e inténtalo de nuevo.',
       connectErrorUnknown:
         'La conexión con el broker falló. Comprueba tus datos MT o usa Reconectar si la cuenta ya estaba vinculada.',
       reconnectFailed: 'No se pudo reconectar el broker',

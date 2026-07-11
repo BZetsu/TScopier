@@ -11,7 +11,29 @@ const FXSOCKET_CONNECT_TIMEOUT_MS = 120_000
 /** Bulk CSV uploads queue several FxSocket provisions sequentially. */
 export const FXSOCKET_BULK_CONNECT_TIMEOUT_MS = 300_000
 const FXSOCKET_WAIT_CONNECTED_MS = 180_000
-const FXSOCKET_WAIT_CONNECTED_INTERVAL_MS = 1_000
+const FXSOCKET_WAIT_CONNECTED_INTERVAL_MS = 2_000
+
+/** In-memory auth cache — avoids refreshSession on every edge poll during connect. */
+let cachedAuth: { token: string; expiresAt: number } | null = null
+
+/** Accounts actively polled by waitUntilConnected — skip duplicate background sync. */
+const waitConnectedAccountIds = new Set<string>()
+
+export function isFxsocketApiThrottleError(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase()
+  return /throttl|rate limit|too many requests|expected available in/i.test(msg)
+}
+
+export function parseFxsocketApiThrottleBackoffMs(err: unknown): number {
+  const msg = err instanceof Error ? err.message : String(err)
+  const m = /expected available in (\d+)\s*seconds?/i.exec(msg)
+  if (m) return Math.max(1000, Number(m[1]) * 1000 + 500)
+  return 8000
+}
+
+function isWaitingForConnect(accountId: string): boolean {
+  return waitConnectedAccountIds.has(accountId)
+}
 
 /** Thrown when the edge function has not been deployed with terminal health support yet. */
 export class BrokerHealthCheckUnsupportedError extends Error {
@@ -43,6 +65,11 @@ function fxsocketFetchError(e: unknown, fallback: string): Error {
 
 /** Validate / refresh the Supabase JWT before edge calls (avoids stale-session 401s). */
 export async function ensureFreshAuthSession(): Promise<string> {
+  const nowSec = Math.floor(Date.now() / 1000)
+  if (cachedAuth && cachedAuth.expiresAt - nowSec > 120) {
+    return cachedAuth.token
+  }
+
   const { data: userData, error: userErr } = await supabase.auth.getUser()
   if (userErr || !userData.user) throw new Error('Not signed in')
 
@@ -52,16 +79,28 @@ export async function ensureFreshAuthSession(): Promise<string> {
   if (!token) throw new Error('Not signed in')
 
   const expiresAt = session.expires_at ?? 0
-  const nowSec = Math.floor(Date.now() / 1000)
-  if (expiresAt - nowSec > 120) return token
+  if (expiresAt - nowSec > 120) {
+    cachedAuth = { token, expiresAt }
+    return token
+  }
 
   const { data: refreshed, error: refreshErr } = await supabase.auth.refreshSession()
   if (refreshErr) {
-    if (/throttled/i.test(refreshErr.message) && token) return token
+    if (/throttl/i.test(refreshErr.message) && token) {
+      cachedAuth = { token, expiresAt: Math.max(expiresAt, nowSec + 60) }
+      return token
+    }
+    cachedAuth = { token, expiresAt }
     return token
   }
-  if (!refreshed.session?.access_token) return token
-  return refreshed.session.access_token
+  const nextToken = refreshed.session?.access_token
+  const nextExpires = refreshed.session?.expires_at ?? expiresAt
+  if (!nextToken) {
+    cachedAuth = { token, expiresAt }
+    return token
+  }
+  cachedAuth = { token: nextToken, expiresAt: nextExpires }
+  return nextToken
 }
 
 async function call<T = unknown>(opts: CallOpts<T>): Promise<T> {
@@ -108,6 +147,9 @@ async function call<T = unknown>(opts: CallOpts<T>): Promise<T> {
     const msg = (body && typeof body === 'object' && 'error' in (body as Record<string, unknown>))
       ? String((body as Record<string, unknown>).error)
       : text || `HTTP ${res.status}`
+    if (res.status === 429 || isFxsocketApiThrottleError(msg)) {
+      throw new Error(msg || 'Request was throttled. Please wait a moment and try again.')
+    }
     if (res.status === 504) {
       throw new Error('Trade history timed out loading from your broker. Try Refresh in a moment.')
     }
@@ -267,36 +309,49 @@ export const fxsocketBroker = {
     const started = Date.now()
     let lastError = 'Terminal connection timed out'
 
-    while (Date.now() - started < maxMs) {
-      try {
-        const result = await call({
-          body: { action: 'refresh_summary', account_id: accountId },
-          expect: (b) => {
-            const row = b as { account?: BrokerAccount; summary?: AccountSummary; pending?: boolean }
-            const account = row.account
-            if (!account) throw new Error('Refresh did not return an account')
-            return { account, summary: row.summary, pending: row.pending === true }
-          },
-        })
-        opts?.onProgress?.(result)
-        if (result.account.connection_status === 'connected') return result
-        if (result.account.connection_status === 'error') {
-          throw new Error(result.account.connection_error ?? 'Broker connection failed')
+    waitConnectedAccountIds.add(accountId)
+    try {
+      while (Date.now() - started < maxMs) {
+        try {
+          const result = await call({
+            body: { action: 'refresh_summary', account_id: accountId },
+            expect: (b) => {
+              const row = b as { account?: BrokerAccount; summary?: AccountSummary; pending?: boolean }
+              const account = row.account
+              if (!account) throw new Error('Refresh did not return an account')
+              return { account, summary: row.summary, pending: row.pending === true }
+            },
+          })
+          opts?.onProgress?.(result)
+          if (result.account.connection_status === 'connected') return result
+          if (result.account.connection_status === 'error') {
+            throw new Error(result.account.connection_error ?? 'Broker connection failed')
+          }
+        } catch (e) {
+          lastError = e instanceof Error ? e.message : lastError
+          if (isFxsocketApiThrottleError(lastError)) {
+            await sleep(parseFxsocketApiThrottleBackoffMs(lastError))
+            continue
+          }
+          // Transient terminal startup failures classify as terminal_not_ready —
+          // keep polling until the MT terminal finishes spinning up or maxMs elapses.
+          if (classifyBrokerConnectError(lastError) === 'terminal_not_ready') {
+            await sleep(intervalMs)
+            continue
+          }
+          if (!/timed out|connecting|pending|not ready/i.test(lastError)) throw e
         }
-      } catch (e) {
-        lastError = e instanceof Error ? e.message : lastError
-        // Transient terminal startup failures classify as terminal_not_ready —
-        // keep polling until the MT terminal finishes spinning up or maxMs elapses.
-        if (classifyBrokerConnectError(lastError) === 'terminal_not_ready') {
-          await sleep(intervalMs)
-          continue
-        }
-        if (!/timed out|connecting|pending|not ready/i.test(lastError)) throw e
+        await sleep(intervalMs)
       }
-      await sleep(intervalMs)
-    }
 
-    throw new Error(lastError)
+      throw new Error(lastError)
+    } finally {
+      waitConnectedAccountIds.delete(accountId)
+    }
+  },
+
+  isWaitingForConnect(accountId: string): boolean {
+    return isWaitingForConnect(accountId)
   },
 
   delete(accountId: string): Promise<void> {

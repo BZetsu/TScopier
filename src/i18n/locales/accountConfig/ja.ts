@@ -149,6 +149,8 @@ export const accountConfigJa: AccountConfigBundleTranslations = {
         'ブローカーから口座をまだ読み込めませんでした。接続したばかりの場合は 1 分ほど待ってから再試行してください。それでも失敗する場合は、MT のログイン、パスワード、サーバー名が MetaTrader と完全に一致しているか確認してください。',
       connectErrorSessionExpired:
         '取引サーバー上で取引セッションの有効期限が切れました。再接続を使い、現在の MT パスワードを入力してください。',
+      connectErrorThrottled:
+        '短時間に接続リクエストが多すぎます。約1分待ってから再度お試しください。',
       connectErrorUnknown:
         'ブローカー接続に失敗しました。MT ログイン情報を確認するか、以前リンク済みの口座なら再接続を使用してください。',
       reconnectFailed: 'ブローカーの再接続に失敗しました',

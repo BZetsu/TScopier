@@ -10,7 +10,10 @@ export function PendingBrokerConnectionSync() {
 
   const pendingBrokerKey = useMemo(
     () => brokers
-      .filter(b => b.connection_status === 'pending' || b.fxsocket_status === 'connecting')
+      .filter(b => {
+        if (b.connection_status !== 'pending' && b.fxsocket_status !== 'connecting') return false
+        return !fxsocketBroker.isWaitingForConnect(b.id)
+      })
       .map(b => b.id)
       .sort()
       .join(','),
@@ -35,7 +38,7 @@ export function PendingBrokerConnectionSync() {
     }
 
     void syncPending()
-    const timer = window.setInterval(() => void syncPending(), 2_000)
+    const timer = window.setInterval(() => void syncPending(), 5_000)
     return () => {
       cancelled = true
       window.clearInterval(timer)

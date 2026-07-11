@@ -545,6 +545,7 @@ export interface AccountConfigBrokerListTranslations {
   connectErrorCredentialsRejected: string
   connectErrorTerminalNotReady: string
   connectErrorSessionExpired: string
+  connectErrorThrottled: string
   connectErrorUnknown: string
   reconnectFailed: string
   reconnectPasswordTitle: string

@@ -9,6 +9,7 @@ export type BrokerConnectErrorKind =
   | 'session_expired'
   | 'credentials_rejected'
   | 'terminal_not_ready'
+  | 'rate_limited'
   | 'unknown'
 
 export interface BrokerConnectErrorOptions {
@@ -69,6 +70,7 @@ export function classifyBrokerConnectError(
   const message = String(raw ?? '').trim()
   const combined = `${message} ${opts?.errorCode ?? ''}`.trim()
   if (!message) return 'unknown'
+  if (/throttl|rate limit|too many requests|expected available in/i.test(message)) return 'rate_limited'
   if (INVESTOR.test(combined)) return 'investor_password'
   if (WRONG_PASSWORD.test(combined)) return 'wrong_password'
   if (isMtBridgeGlitchMessage(message)) return 'session_expired'
@@ -121,6 +123,7 @@ export interface BrokerConnectErrorLabels {
   credentialsRejected: string
   terminalNotReady: string
   sessionExpired: string
+  rateLimited: string
   unknown: string
 }
 
@@ -146,6 +149,8 @@ export function brokerConnectErrorText(
       return labels.terminalNotReady
     case 'session_expired':
       return labels.sessionExpired
+    case 'rate_limited':
+      return labels.rateLimited
     case 'unknown':
       return rawMessage?.trim() || labels.unknown
     default:
@@ -200,6 +205,7 @@ export function brokerConnectErrorLabelsFromI18n(bl: {
   connectErrorCredentialsRejected: string
   connectErrorTerminalNotReady: string
   connectErrorSessionExpired: string
+  connectErrorThrottled: string
   connectErrorUnknown: string
 }): BrokerConnectErrorLabels {
   return {
@@ -211,6 +217,7 @@ export function brokerConnectErrorLabelsFromI18n(bl: {
     credentialsRejected: bl.connectErrorCredentialsRejected,
     terminalNotReady: bl.connectErrorTerminalNotReady,
     sessionExpired: bl.connectErrorSessionExpired,
+    rateLimited: bl.connectErrorThrottled,
     unknown: bl.connectErrorUnknown,
   }
 }

@@ -149,6 +149,8 @@ export const accountConfigSv: AccountConfigBundleTranslations = {
         'Vi kunde inte ladda ditt konto från mäklaren ännu. Om du precis anslöt, vänta en minut och försök igen. Annars, verifiera att MT-inloggning, lösenord och server stämmer exakt med MetaTrader.',
       connectErrorSessionExpired:
         'Handelssessionen löpte ut på handelsservern. Använd Återanslut och ange ditt aktuella MT-lösenord.',
+      connectErrorThrottled:
+        'För många anslutningsförsök på kort tid. Vänta ungefär en minut och försök igen.',
       connectErrorUnknown:
         'Mäklaranslutningen misslyckades. Kontrollera dina MT-uppgifter eller använd Återanslut om kontot varit länkat tidigare.',
       reconnectFailed: 'Det gick inte att återansluta mäklaren',

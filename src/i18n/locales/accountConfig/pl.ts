@@ -149,6 +149,8 @@ export const accountConfigPl: AccountConfigBundleTranslations = {
         'Nie udało się jeszcze wczytać konta od brokera. Jeśli właśnie się połączyłeś, odczekaj minutę i spróbuj ponownie. W przeciwnym razie sprawdź, czy login MT, hasło i serwer dokładnie odpowiadają MetaTraderowi.',
       connectErrorSessionExpired:
         'Sesja tradingowa wygasła na serwerze handlowym. Użyj opcji Połącz ponownie i wpisz aktualne hasło MT.',
+      connectErrorThrottled:
+        'Zbyt wiele prób połączenia w krótkim czasie. Poczekaj około minuty i spróbuj ponownie.',
       connectErrorUnknown:
         'Połączenie z brokerem nie powiodło się. Sprawdź dane logowania MT lub użyj opcji Połącz ponownie, jeśli konto było już wcześniej podłączone.',
       reconnectFailed: 'Nie udało się ponownie połączyć brokera',

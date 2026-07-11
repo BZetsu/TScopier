@@ -440,6 +440,8 @@ export const en: Translations = {
     'We could not load your account from the broker yet. If you just connected, wait a minute and try again. Otherwise verify your MT login, password, and server name match MetaTrader exactly.',
   connectErrorSessionExpired:
     'Trading session expired on the trade server. Use Reconnect and enter your current MT password.',
+  connectErrorThrottled:
+    'Too many connection requests in a short time. Please wait about a minute and try again.',
   connectErrorUnknown:
     'Broker connection failed. Check your MT login details or use Reconnect if this account was linked before.',
   reconnectFailed: 'Could not reconnect broker',

@@ -149,6 +149,8 @@ export const accountConfigNl: AccountConfigBundleTranslations = {
         'We konden je account nog niet van de broker laden. Als je net hebt gekoppeld, wacht een minuut en probeer opnieuw. Controleer anders of je MT-login, wachtwoord en server exact overeenkomen met MetaTrader.',
       connectErrorSessionExpired:
         'De handelssessie is verlopen op de tradeserver. Gebruik Opnieuw verbinden en voer je huidige MT-wachtwoord in.',
+      connectErrorThrottled:
+        'Te veel verbindingsverzoeken in korte tijd. Wacht ongeveer een minuut en probeer het opnieuw.',
       connectErrorUnknown:
         'De brokerverbinding is mislukt. Controleer je MT-gegevens of gebruik Opnieuw verbinden als dit account eerder was gekoppeld.',
       reconnectFailed: 'Broker opnieuw verbinden is mislukt',
