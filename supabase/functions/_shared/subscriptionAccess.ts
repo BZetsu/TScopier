@@ -2,6 +2,7 @@ import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 import {
   effectivePlan,
   isSubscriptionActive,
+  BACKTEST_QUOTA_RUN_MODE,
   maxBacktestsPerMonth,
   maxBrokerAccounts,
   maxTelegramChannels,
@@ -140,6 +141,7 @@ export async function assertBacktestMonthlyLimit(
     .from("backtest_runs")
     .select("id", { count: "exact", head: true })
     .eq("user_id", userId)
+    .eq("config->>runMode", BACKTEST_QUOTA_RUN_MODE)
     .gte("created_at", monthStart.toISOString());
   if ((count ?? 0) >= limit) {
     return subscriptionAccessDenied(

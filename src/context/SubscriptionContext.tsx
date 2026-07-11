@@ -14,6 +14,7 @@ import {
   canUseFeature,
   effectivePlan,
   isSubscriptionActive,
+  BACKTEST_QUOTA_RUN_MODE,
   maxBacktestsPerMonth,
   maxBrokerAccounts,
   maxTelegramChannels,
@@ -161,6 +162,7 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
           .from('backtest_runs')
           .select('id', { count: 'exact', head: true })
           .eq('user_id', userId)
+          .eq('config->>runMode', BACKTEST_QUOTA_RUN_MODE)
           .gte('created_at', monthStart),
       ]),
     ])

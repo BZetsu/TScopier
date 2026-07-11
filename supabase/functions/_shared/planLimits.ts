@@ -34,6 +34,9 @@ export const PLAN_LIMITS = {
   },
 } as const;
 
+/** Only TP/SL simulation runs count toward Basic monthly quota (not signal sync). */
+export const BACKTEST_QUOTA_RUN_MODE = "tpsl" as const;
+
 /** True when trial_ends_at is a parseable timestamp strictly before `now`. */
 export function isTrialEnded(
   trialEndsAt: string | Date | null | undefined,
