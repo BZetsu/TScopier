@@ -2,6 +2,11 @@ import { MtOperation, OrderSendArgs } from '../fxsocketClient'
 import type { TradeExecutorContext } from './context'
 import { clampOrderStops, roundLot, triggerPriceFor, virtualPendingTriggerAllowed } from './helpers'
 import type { PreparedEntry } from './entryPrepare'
+import {
+  brokerRangeStepIdxForLeg,
+  resolveBrokerRangeLadderPricing,
+  snapPriceToSymbolGrid,
+} from './brokerRangeLadderPricing'
 
 export type MaterializeBrokerRangeOpts = {
   anchor?: number
@@ -36,9 +41,18 @@ export async function materializeBrokerRangePendingLegs(
   }
 
   const digits = Math.max(0, Math.min(8, Number(params?.digits) || 5))
-  const safe = Math.max(Number(params?.stopsLevel) || 0, Number(params?.freezeLevel) || 0)
-  const zoneHi = safe > 0 ? anchor + (safe + 2) * (params?.point ?? 0) : null
-  const zoneLo = safe > 0 ? anchor - (safe + 2) * (params?.point ?? 0) : null
+  const ladder = resolveBrokerRangeLadderPricing({
+    symbol,
+    rangeLayering: plan.rangeLayering,
+    params,
+  })
+  if (!ladder) {
+    console.warn(
+      `[tradeExecutor] broker range pending: invalid ladder config signal=${signal.id} broker=${broker.id} symbol=${symbol}`,
+    )
+    return false
+  }
+
   const signalRangeBoundary = plan.rangeLayering?.signalRangeBoundary ?? null
   const signalZoneLo = plan.rangeLayering?.signalZoneLo ?? null
   const signalZoneHi = plan.rangeLayering?.signalZoneHi ?? null
@@ -48,17 +62,22 @@ export async function materializeBrokerRangePendingLegs(
   const insertRows: Record<string, unknown>[] = []
   const placedTickets: Array<{ ticket: number; row: Record<string, unknown> }> = []
 
-  const planStepOffset = plan.rangeLayering?.stepPriceOffset ?? 0
-
-  for (const v of virtualPendings) {
-    const stepPriceOffset = v.stepPriceOffset > 0 ? v.stepPriceOffset : planStepOffset
-    const triggerPrice = triggerPriceFor({ ...v, stepPriceOffset }, anchor, digits)
+  for (let i = 0; i < virtualPendings.length; i++) {
+    const v = virtualPendings[i]!
+    const stepIdx = brokerRangeStepIdxForLeg(i, ladder.maxStepIdx)
+    const legForPrice = {
+      ...v,
+      stepIdx,
+      stepPriceOffset: ladder.stepPriceOffset,
+      isBuy: plan.isBuy ?? v.isBuy,
+    }
+    const triggerPrice = triggerPriceFor(legForPrice, anchor, ladder.digits)
     if (!virtualPendingTriggerAllowed({
       triggerPrice,
       signalRangeBoundary,
-      isBuy: v.isBuy,
-      stopsZoneLo: zoneLo,
-      stopsZoneHi: zoneHi,
+      isBuy: legForPrice.isBuy,
+      stopsZoneLo: null,
+      stopsZoneHi: null,
       signalZoneLo,
       signalZoneHi,
       useSignalEntryRange,
@@ -66,8 +85,8 @@ export async function materializeBrokerRangePendingLegs(
       continue
     }
 
-    const pendingOp: MtOperation = v.isBuy ? 'BuyLimit' : 'SellLimit'
-    const limitPx = Number(triggerPrice.toFixed(digits))
+    const pendingOp: MtOperation = legForPrice.isBuy ? 'BuyLimit' : 'SellLimit'
+    const limitPx = snapPriceToSymbolGrid(triggerPrice, ladder.point, ladder.digits)
     const vol = roundLot(v.volume, params)
     const sendArgs: OrderSendArgs = {
       symbol,
@@ -83,7 +102,7 @@ export async function materializeBrokerRangePendingLegs(
     const clamped = clampOrderStops(sendArgs, params)
     if (clamped.adjustments.length > 0) {
       console.warn(
-        `[tradeExecutor] broker range pending stops clamped signal=${signal.id} step=${v.stepIdx}: ${clamped.adjustments.join(', ')}`,
+        `[tradeExecutor] broker range pending stops clamped signal=${signal.id} step=${stepIdx}: ${clamped.adjustments.join(', ')}`,
       )
     }
 
@@ -100,7 +119,7 @@ export async function materializeBrokerRangePendingLegs(
           result = await api.orderSend(uuid, { ...clamped.args, stoploss: 0, takeprofit: 0 })
         } else {
           console.warn(
-            `[tradeExecutor] broker range pending rejected signal=${signal.id} step=${v.stepIdx} op=${pendingOp} price=${limitPx}: ${msg}`,
+            `[tradeExecutor] broker range pending rejected signal=${signal.id} step=${stepIdx} op=${pendingOp} price=${limitPx}: ${msg}`,
           )
           continue
         }
@@ -109,7 +128,7 @@ export async function materializeBrokerRangePendingLegs(
       const ticket = result.ticket
       if (ticket == null || !Number.isFinite(Number(ticket)) || Number(ticket) <= 0) {
         console.warn(
-          `[tradeExecutor] broker range pending missing ticket signal=${signal.id} step=${v.stepIdx}`,
+          `[tradeExecutor] broker range pending missing ticket signal=${signal.id} step=${stepIdx}`,
         )
         continue
       }
@@ -124,7 +143,7 @@ export async function materializeBrokerRangePendingLegs(
         broker_account_id: broker.id,
         metaapi_account_id: uuid,
         symbol,
-        step_idx: v.stepIdx,
+        step_idx: stepIdx,
         is_buy: v.isBuy,
         volume: vol,
         anchor_price: anchor,
@@ -144,7 +163,7 @@ export async function materializeBrokerRangePendingLegs(
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       console.warn(
-        `[tradeExecutor] broker range pending OrderSend failed signal=${signal.id} step=${v.stepIdx}: ${msg}`,
+        `[tradeExecutor] broker range pending OrderSend failed signal=${signal.id} step=${stepIdx}: ${msg}`,
       )
     }
   }
@@ -179,7 +198,7 @@ export async function materializeBrokerRangePendingLegs(
   }
 
   console.log(
-    `[tradeExecutor] broker range pendings inserted=${insertRows.length} signal=${signal.id} broker=${broker.id} symbol=${symbol} anchor=${anchor} (${anchorSource})`,
+    `[tradeExecutor] broker range pendings inserted=${insertRows.length} signal=${signal.id} broker=${broker.id} symbol=${symbol} anchor=${anchor} (${anchorSource}) step_pips=${ladder.stepPips} dist_pips=${ladder.distPips} max_step_idx=${ladder.maxStepIdx} step_offset=${ladder.stepPriceOffset}`,
   )
   try {
     await ctx.supabase.from('trade_execution_logs').insert({
@@ -197,6 +216,7 @@ export async function materializeBrokerRangePendingLegs(
         triggers: insertRows.map(r => r.trigger_price),
         tickets: insertRows.map(r => r.ticket),
         range_layering: plan.rangeLayering ?? null,
+        ladder_pricing: ladder,
         strict_deferred: strictDeferred,
         strict_broker_pending: strictBrokerPlaced,
         layering_type: 'pending_order',
