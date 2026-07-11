@@ -15,7 +15,7 @@ export const landingEn: LandingTranslations = {
     menuClose: 'Close menu',
   },
   hero: {
-    headline: 'The Inteligent AI Telegram Signal Copier Platform',
+    headline: 'The Intelligent AI Telegram Signal Copier Platform',
     subheadline:
       'TScopier is an All-In-One Telegram Signal Copier Platform that connects your Telegram and copy trading signals directly to your MT4/MT5 — no complicated setups, no EA, and no VPS required.',
     primaryCta: 'Start Your 10-Day Free Trial',
