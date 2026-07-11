@@ -24,8 +24,10 @@ export const configureModalSv: ConfigureModalTranslations = {
   applyPresetConfirm: 'Vill du ersätta {channel}s inställningar med förinställningen "{name}"?',
   applyPresetChannelLabel: 'Kanal',
   applyPresetPresetLabel: 'Förinställa',
-  applyPresetWarning: 'Detta kommer att skriva över kanalens nuvarande inställningar. Osparade ändringar kommer att gå förlorade.',
-  applyPresetAction: 'Använd förinställning',
+  applyPresetWarning: 'Inställningarna sparas direkt och används av kopieraren för den här kanalen.',
+  applyPresetAction: 'Tillämpa och spara',
+  closeUnsavedConfirm:
+    'Du har osparade handelsinställningar. Kopieraren använder inte dina ändringar förrän du sparar. Stäng ändå?',
   noPresetsYet: 'Inga förinställningar ännu – använd Spara som förinställning för att skapa en.',
   saveAsPreset: 'Spara som förinställning',
   saveAsPresetTitle: 'Spara som förinställning',

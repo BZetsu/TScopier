@@ -24,8 +24,10 @@ export const configureModalJa: ConfigureModalTranslations = {
   applyPresetConfirm: '{channel} の設定をプリセット「{name}」に置き換えますか?',
   applyPresetChannelLabel: 'チャネル',
   applyPresetPresetLabel: 'プリセット',
-  applyPresetWarning: 'これにより、チャンネルの現在の設定が上書きされます。保存されていない変更は失われます。',
-  applyPresetAction: 'プリセットを適用する',
+  applyPresetWarning: '設定はすぐに保存され、このチャンネルでコピー機が使用します。',
+  applyPresetAction: '適用して保存',
+  closeUnsavedConfirm:
+    '未保存の取引設定があります。保存するまでコピー機は変更を使用しません。それでも閉じますか？',
   noPresetsYet: 'まだプリセットがありません。プリセットとして保存を使用してプリセットを作成します。',
   saveAsPreset: 'プリセットとして保存',
   saveAsPresetTitle: 'プリセットとして保存',

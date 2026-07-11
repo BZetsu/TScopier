@@ -1429,24 +1429,32 @@ export function AccountConfigPage() {
       }
       if (!updated) return
 
-      replaceBroker(updated)
-      setConfigAccount(updated)
+      const { rows, error: configLoadErr } = await fetchBrokerChannelTradingConfigRows(supabase, updated.id)
+      if (configLoadErr) {
+        setError(configLoadErr)
+        return
+      }
+      const merged = mergeBrokerWithChannelTradingConfigRows(updated, rows)
+      replaceBroker(merged)
+      setConfigAccount(merged)
       const linkedIds = filterChannelIdsToActiveOptions(
-        normalizeSignalChannelIds(updated),
+        normalizeSignalChannelIds(merged),
         channelOptions,
       )
-      setConfigDraft(prev => {
-        const channelConfigs = { ...prev.channelConfigs }
-        if (!channelConfigs[channelId]) {
-          channelConfigs[channelId] = defaultChannelConfigDraft(keywordFiltersEnabled)
-        }
-        return {
-          ...prev,
-          channelIds: linkedIds,
-          channelConfigs,
-          selectedChannelId: channelId,
-        }
-      })
+      const rebuilt = buildChannelConfigDraftFromBroker(merged, linkedIds, keywordFiltersEnabled)
+      const nextDraft = {
+        ...rebuilt,
+        selectedChannelId: channelId,
+      }
+      setConfigDraft(nextDraft)
+      setConfigSavedSignature(
+        accountConfigDraftPersistSignature(
+          nextDraft,
+          manualSettingsPlanCtx.plan,
+          manualSettingsPlanCtx.status,
+          keywordFiltersEnabled,
+        ),
+      )
       startBackgroundAiTraining(channelId)
     } finally {
       setChannelConnecting(false)
@@ -1471,7 +1479,26 @@ export function AccountConfigPage() {
     return () => clearInterval(timer)
   }, [configDraft.selectedChannelId, trainingRunningByChannel, trainingSavingByChannel])
 
-  const closeConfigureModal = () => {
+  const closeConfigureModal = (options?: { force?: boolean }) => {
+    if (!options?.force && configAccount) {
+      const draftForSignature = applyPendingConfigureDraftFields(configDraft, fixedLotDraft, symbolsExcludeDraft)
+      const currentSignature = accountConfigDraftPersistSignature(
+        draftForSignature,
+        manualSettingsPlanCtx.plan,
+        manualSettingsPlanCtx.status,
+        keywordFiltersEnabled,
+      )
+      const dirty = currentSignature !== configSavedSignature
+      const selectedId = configDraft.selectedChannelId
+      const needsPersistedSave = Boolean(
+        selectedId
+        && configDraft.channelIds.includes(selectedId)
+        && !storedPerChannelConfigComplete(healChannelTradingConfigsMap(configAccount), selectedId),
+      )
+      if (dirty || needsPersistedSave) {
+        if (!window.confirm(cm.closeUnsavedConfirm)) return
+      }
+    }
     setConfigAccount(null)
     setConfigSavedSignature('')
     setShowPresetNameModal(false)
@@ -1552,16 +1579,29 @@ export function AccountConfigPage() {
     })
   }
 
-  const confirmApplyPreset = () => {
+  const confirmApplyPreset = async () => {
     if (!pendingApplyPreset || !configDraft.selectedChannelId) return
+    const channelId = configDraft.selectedChannelId
+    if (!configDraft.channelConfigs[channelId]) return
+
     const preset = pendingApplyPreset
     const payload = presetToChannelConfigDraft(preset)
-    patchSelectedChannel(() => ({
-      mode: payload.mode,
-      manualSettings: payload.manualSettings,
-      channelFilters: payload.channelFilters,
-    }))
-    setPendingApplyPreset(null)
+    const committedDraft: AccountConfigDraft = {
+      ...configDraft,
+      channelConfigs: {
+        ...configDraft.channelConfigs,
+        [channelId]: {
+          mode: payload.mode,
+          manualSettings: payload.manualSettings,
+          channelFilters: payload.channelFilters,
+        },
+      },
+    }
+    setConfigDraft(committedDraft)
+    const ok = await persistConfigureDraft(committedDraft)
+    if (ok) {
+      setPendingApplyPreset(null)
+    }
   }
 
   const openSavePresetModal = () => {
@@ -1696,19 +1736,9 @@ export function AccountConfigPage() {
     })
   }
 
-  const saveConfigureModal = async () => {
-    if (!configAccount || !user) return
+  const persistConfigureDraft = async (committedDraft: AccountConfigDraft): Promise<boolean> => {
+    if (!configAccount || !user) return false
     setError('')
-    const committedDraft = applyPendingConfigureDraftFields(configDraft, fixedLotDraft, symbolsExcludeDraft)
-    if (committedDraft !== configDraft) {
-      setConfigDraft(committedDraft)
-    }
-    if (fixedLotDraft !== null) {
-      setFixedLotDraft(null)
-    }
-    if (symbolsExcludeDraft !== null) {
-      setSymbolsExcludeDraft(null)
-    }
     const channelIds = filterChannelIdsToActiveOptions(committedDraft.channelIds, channelOptions)
     const previouslyLinkedChannelIds = normalizeSignalChannelIds(configAccount)
     const restrictChannels = channelIds.length > 0
@@ -1719,25 +1749,25 @@ export function AccountConfigPage() {
           ? bl.channelsSaveChannelListNotReady
           : bl.channelsSaveLinkedChannelsInvalid,
       )
-      return
+      return false
     }
 
-      if (channelIds.length === 0) {
+    if (channelIds.length === 0) {
       const proceed = window.confirm(bl.channelsEmptySaveWarning)
-      if (!proceed) return
+      if (!proceed) return false
     }
 
     for (const id of channelIds) {
       const ms = committedDraft.channelConfigs[id]?.manualSettings
       if (!channelManualSettingsComplete(ms)) {
         setError(cm.channelConfigSaveIncomplete)
-        return
+        return false
       }
     }
 
     if (hasBlockedMultiTradeSplit(channelIds, committedDraft.channelConfigs, configAccountTotalBalance)) {
       setError(cm.risk.multiTradeSplitSaveBlocked)
-      return
+      return false
     }
 
     await refreshSubscription()
@@ -1749,7 +1779,7 @@ export function AccountConfigPage() {
     const requestedMulti = hasRequestedMultiTradeStyle(channelIds, committedDraft.channelConfigs)
     if (shouldBlockMultiTradeSave({ requestedMulti, effectivePlan: savePlanCtx.effectivePlan })) {
       setError(`${cm.risk.basicPlanTradeStyleLimit} Subscription upgrade may still be syncing. Please wait a few seconds and save again.`)
-      return
+      return false
     }
 
     setConfigSaving(true)
@@ -1816,7 +1846,7 @@ export function AccountConfigPage() {
     if (tableErr) {
       setConfigSaving(false)
       setError(tableErr)
-      return
+      return false
     }
     const { error: pruneErr } = await deleteBrokerChannelTradingConfigsExcept(
       supabase,
@@ -1826,7 +1856,7 @@ export function AccountConfigPage() {
     if (pruneErr) {
       setConfigSaving(false)
       setError(pruneErr)
-      return
+      return false
     }
     const { data, error: upErr } = await supabase
       .from('broker_accounts')
@@ -1844,7 +1874,10 @@ export function AccountConfigPage() {
       .single()
     setConfigSaving(false)
 
-    if (upErr) { setError(upErr.message); return }
+    if (upErr) {
+      setError(upErr.message)
+      return false
+    }
 
     for (const channelId of channelIds.filter(id => !previouslyLinkedChannelIds.includes(id))) {
       startBackgroundAiTraining(channelId)
@@ -1886,6 +1919,22 @@ export function AccountConfigPage() {
       ),
     )
     setConfigSavedAt(Date.now())
+    return true
+  }
+
+  const saveConfigureModal = async () => {
+    if (!configAccount || !user) return
+    const committedDraft = applyPendingConfigureDraftFields(configDraft, fixedLotDraft, symbolsExcludeDraft)
+    if (committedDraft !== configDraft) {
+      setConfigDraft(committedDraft)
+    }
+    if (fixedLotDraft !== null) {
+      setFixedLotDraft(null)
+    }
+    if (symbolsExcludeDraft !== null) {
+      setSymbolsExcludeDraft(null)
+    }
+    await persistConfigureDraft(committedDraft)
   }
 
   // ── Channel summary helper for cards ───────────────────────────────────
@@ -1916,7 +1965,7 @@ export function AccountConfigPage() {
 
     removeBroker(id)
     setBrokerPendingDelete(null)
-    if (configAccount?.id === id) closeConfigureModal()
+    if (configAccount?.id === id) closeConfigureModal({ force: true })
 
     try {
       await fxsocketBroker.delete(id)
@@ -2384,7 +2433,7 @@ export function AccountConfigPage() {
               </div>
               <button
                 type="button"
-                onClick={closeConfigureModal}
+                onClick={() => closeConfigureModal()}
                 className="shrink-0 min-h-[44px] px-3 py-2 text-sm font-medium text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-300 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800"
               >
                 {cm.close}
@@ -3695,7 +3744,7 @@ export function AccountConfigPage() {
                   <span className="text-xs text-success-600 transition-opacity">{cm.presetSaved}</span>
                 )}
                         </div>
-              <Button variant="ghost" className="w-full sm:w-auto min-h-[44px]" onClick={closeConfigureModal} disabled={configSaving || presetSaving}>{cm.cancel}</Button>
+              <Button variant="ghost" className="w-full sm:w-auto min-h-[44px]" onClick={() => closeConfigureModal()} disabled={configSaving || presetSaving}>{cm.cancel}</Button>
               {selectedChannelLinked ? (
                 <label className="w-full sm:w-auto min-h-[44px] inline-flex items-stretch rounded-lg border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 shadow-sm overflow-hidden has-[:disabled]:opacity-50">
                   <span className="inline-flex items-center px-3 text-sm font-medium text-neutral-700 dark:text-neutral-200 border-r border-neutral-200 dark:border-neutral-700 whitespace-nowrap">
@@ -3816,7 +3865,9 @@ export function AccountConfigPage() {
                     </Button>
                     <Button
                       className="w-full sm:w-auto"
-                      onClick={confirmApplyPreset}
+                      loading={configSaving}
+                      disabled={configSaving || presetSaving}
+                      onClick={() => void confirmApplyPreset()}
                     >
                       {cm.applyPresetAction}
                     </Button>

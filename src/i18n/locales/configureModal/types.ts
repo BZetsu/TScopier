@@ -29,6 +29,7 @@ export interface ConfigureModalTranslations {
   applyPresetPresetLabel: string
   applyPresetWarning: string
   applyPresetAction: string
+  closeUnsavedConfirm: string
   noPresetsYet: string
   saveAsPreset: string
   saveAsPresetTitle: string

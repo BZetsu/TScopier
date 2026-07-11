@@ -24,8 +24,10 @@ export const configureModalEs: ConfigureModalTranslations = {
   applyPresetConfirm: '¿Reemplazar la configuración de {channel} con el preset "{name}"?',
   applyPresetChannelLabel: 'Canal',
   applyPresetPresetLabel: 'Preset',
-  applyPresetWarning: 'Esto sobrescribirá la configuración actual del canal. Se perderán los cambios no guardados.',
-  applyPresetAction: 'Aplicar preset',
+  applyPresetWarning: 'La configuración se guarda al instante y el copiador la usará para este canal.',
+  applyPresetAction: 'Aplicar y guardar',
+  closeUnsavedConfirm:
+    'Tienes ajustes de trading sin guardar. El copiador no usará tus cambios hasta que guardes. ¿Cerrar igualmente?',
   noPresetsYet: 'Aún no hay presets — usa Guardar como preset para crear uno.',
   saveAsPreset: 'Guardar como preset',
   saveAsPresetTitle: 'Guardar como preset',

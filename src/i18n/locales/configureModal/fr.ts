@@ -24,8 +24,10 @@ export const configureModalFr: ConfigureModalTranslations = {
   applyPresetConfirm: 'Remplacer les paramètres de {channel} par le preset « {name} » ?',
   applyPresetChannelLabel: 'Canal',
   applyPresetPresetLabel: 'Preset',
-  applyPresetWarning: 'Cela écrasera les paramètres actuels du canal. Les modifications non enregistrées seront perdues.',
-  applyPresetAction: 'Appliquer le preset',
+  applyPresetWarning: 'Les paramètres sont enregistrés immédiatement et utilisés par le copieur pour ce canal.',
+  applyPresetAction: 'Appliquer et enregistrer',
+  closeUnsavedConfirm:
+    'Vous avez des paramètres de trading non enregistrés. Le copieur ne les utilisera pas tant que vous n’aurez pas enregistré. Fermer quand même ?',
   noPresetsYet: 'Aucun preset — utilisez Enregistrer comme preset pour en créer un.',
   saveAsPreset: 'Enregistrer comme preset',
   saveAsPresetTitle: 'Enregistrer comme preset',

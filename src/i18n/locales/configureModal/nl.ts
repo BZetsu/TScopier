@@ -24,8 +24,10 @@ export const configureModalNl: ConfigureModalTranslations = {
   applyPresetConfirm: 'De instellingen van {channel} vervangen door voorinstelling "{name}"?',
   applyPresetChannelLabel: 'Kanaal',
   applyPresetPresetLabel: 'Voorinstelling',
-  applyPresetWarning: 'Hierdoor worden de huidige instellingen van het kanaal overschreven. Niet-opgeslagen wijzigingen gaan verloren.',
-  applyPresetAction: 'Voorinstelling toepassen',
+  applyPresetWarning: 'Instellingen worden direct opgeslagen en door de copier voor dit kanaal gebruikt.',
+  applyPresetAction: 'Toepassen en opslaan',
+  closeUnsavedConfirm:
+    'Je hebt niet-opgeslagen handelsinstellingen. De copier gebruikt je wijzigingen pas na opslaan. Toch sluiten?',
   noPresetsYet: 'Nog geen voorinstellingen: gebruik Opslaan als voorinstelling om er een te maken.',
   saveAsPreset: 'Opslaan als voorinstelling',
   saveAsPresetTitle: 'Opslaan als voorinstelling',

@@ -24,8 +24,10 @@ export const configureModalPl: ConfigureModalTranslations = {
   applyPresetConfirm: 'Zamienić ustawienia {channel} na ustawienie wstępne „{name}”?',
   applyPresetChannelLabel: 'Kanał',
   applyPresetPresetLabel: 'Wstępnie ustawione',
-  applyPresetWarning: 'Spowoduje to zastąpienie bieżących ustawień kanału. Niezapisane zmiany zostaną utracone.',
-  applyPresetAction: 'Zastosuj ustawienie wstępne',
+  applyPresetWarning: 'Ustawienia są zapisywane od razu i używane przez kopiarkę dla tego kanału.',
+  applyPresetAction: 'Zastosuj i zapisz',
+  closeUnsavedConfirm:
+    'Masz niezapisane ustawienia handlu. Kopiarka nie użyje zmian, dopóki nie zapiszesz. Zamknąć mimo to?',
   noPresetsYet: 'Nie ma jeszcze gotowych ustawień — użyj funkcji Zapisz jako ustawienie wstępne, aby je utworzyć.',
   saveAsPreset: 'Zapisz jako ustawienie wstępne',
   saveAsPresetTitle: 'Zapisz jako ustawienie wstępne',

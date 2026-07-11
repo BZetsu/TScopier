@@ -24,8 +24,10 @@ export const configureModalEn: ConfigureModalTranslations = {
   applyPresetConfirm: 'Replace {channel}’s settings with preset "{name}"?',
   applyPresetChannelLabel: 'Channel',
   applyPresetPresetLabel: 'Preset',
-  applyPresetWarning: 'This will overwrite the channel’s current settings. Unsaved changes will be lost.',
-  applyPresetAction: 'Apply preset',
+  applyPresetWarning: 'Settings are saved immediately and used by the copier for this channel.',
+  applyPresetAction: 'Apply & save',
+  closeUnsavedConfirm:
+    'You have unsaved trading settings. The copier will not use your changes until you save. Close anyway?',
   noPresetsYet: 'No presets yet — use Save as preset to create one.',
   saveAsPreset: 'Save as preset',
   saveAsPresetTitle: 'Save as preset',

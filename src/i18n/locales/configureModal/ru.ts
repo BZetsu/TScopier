@@ -24,8 +24,10 @@ export const configureModalRu: ConfigureModalTranslations = {
   applyPresetConfirm: 'Заменить настройки {channel} на предустановку "{name}"?',
   applyPresetChannelLabel: 'Канал',
   applyPresetPresetLabel: 'Предустановка',
-  applyPresetWarning: 'Это приведет к перезаписи текущих настроек канала. Несохраненные изменения будут потеряны.',
-  applyPresetAction: 'Применить пресет',
+  applyPresetWarning: 'Настройки сохраняются сразу и используются копировщиком для этого канала.',
+  applyPresetAction: 'Применить и сохранить',
+  closeUnsavedConfirm:
+    'У вас есть несохранённые торговые настройки. Копировщик не будет их использовать, пока вы не сохраните. Всё равно закрыть?',
   noPresetsYet: 'Пресетов пока нет — используйте «Сохранить как пресет», чтобы создать его.',
   saveAsPreset: 'Сохранить как предустановку',
   saveAsPresetTitle: 'Сохранить как предустановку',
