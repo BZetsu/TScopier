@@ -373,6 +373,8 @@ function RiskLotCalculatorModalInner({
                   </div>
                   {form.rangeTrading && (
                     <>
+                      {/* Layering type hidden until pending-order path is production-ready */}
+                      {/*
                       <ConfigureSelect
                         label={copy.layeringType}
                         value={form.rangeLayeringType}
@@ -390,6 +392,7 @@ function RiskLotCalculatorModalInner({
                             : copy.layeringTypeAutoHint
                         }
                       />
+                      */}
                       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                       <ConfigureInput
                         label={copy.rangePercent}

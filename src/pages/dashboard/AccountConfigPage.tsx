@@ -2991,6 +2991,8 @@ export function AccountConfigPage() {
                                 </div>
                                 {channelManualSettings.range_trading && (
                                   <>
+                                    {/* Layering type hidden until pending-order path is production-ready */}
+                                    {/*
                                     <ConfigureSelect
                                       label={cm.risk.layeringType}
                                       value={channelManualSettings.range_layering_type ?? 'auto'}
@@ -3010,6 +3012,7 @@ export function AccountConfigPage() {
                                           : cm.risk.layeringTypeAutoHint
                                       }
                                     />
+                                    */}
 
                                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                                       <ConfigureInput
