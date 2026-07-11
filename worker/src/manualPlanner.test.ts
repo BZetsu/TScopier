@@ -96,6 +96,20 @@ test('planRangeSplit: auto-expands step when below broker minimum', () => {
   assert.equal(r.fallbackReason, 'range_trading_step_auto_expanded')
 })
 
+test('planRangeSplit: skipMinStepExpansion keeps user step for pending order ladder', () => {
+  const r = planRangeSplit({
+    ...baseSplit,
+    stepPips: 3,
+    distPips: 30,
+    minStepPriceUnits: 1.02,
+    skipMinStepExpansion: true,
+  })
+  assert.equal(r.effectiveStepPips, 3)
+  assert.equal(r.maxStepIdx, 10)
+  assert.equal(r.stepPriceOffset, 0.03)
+  assert.equal(r.fallbackReason, undefined)
+})
+
 test('planRangeSplit: no signal anchor + no immediates → runtime-only fallback', () => {
   // 100% range = 0 immediates; without a signal anchor the executor must resolve via /Quote.
   // After the May-12 fix, distance no longer caps the pending count, so all 20
@@ -313,6 +327,35 @@ test('planMultiManualOrders: rangeLayeringType defaults to auto', () => {
     commentPrefix: 'TScopier:abc',
   })
   assert.equal(plan.rangeLayering?.rangeLayeringType, 'auto')
+})
+
+test('planMultiManualOrders: pending_order uses step/distance rungs despite broker min stop', () => {
+  const manual: ManualSettings = {
+    ...baseManual,
+    range_trading: true,
+    range_percent: 50,
+    range_step_pips: 3,
+    range_distance_pips: 30,
+    range_layering_type: 'pending_order',
+    tp_lots: [{ label: 'TP1', lot: 0, percent: 100, enabled: true }],
+  }
+  const plan = planManualOrders({
+    parsed: { ...baseParsed, tp: [1900], entry_price: 4500 },
+    resolvedSymbol: 'XAUUSD',
+    baseOperation: 'Sell',
+    manual,
+    channelKeywords: null,
+    manualLot: 0.5,
+    ctx: { ...baseCtx, stopsLevel: 100, freezeLevel: 0, point: 0.01 },
+    commentPrefix: 'TScopier:abc',
+  })
+  assert.equal(plan.rangeLayering?.maxStepIdx, 10)
+  assert.equal(plan.rangeLayering?.effectiveStepPips, 3)
+  const v = plan.virtualPendings ?? []
+  assert.ok(v.length > 0)
+  const triggers = v.map(leg => triggerPriceFor(leg, 4500, 2))
+  const distinct = new Set(triggers)
+  assert.ok(distinct.size >= 3, `expected multiple ladder prices, got ${[...distinct].join(', ')}`)
 })
 
 test('planMultiManualOrders: pending_order round-robin stacks legs across rungs', () => {

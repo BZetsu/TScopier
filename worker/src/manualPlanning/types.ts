@@ -211,6 +211,8 @@ export interface PlanRangeSplitArgs {
   pip: number
   minStepPriceUnits: number
   hasSignalAnchor: boolean
+  /** Pending Order: keep user step/distance; do not expand step for broker SL/TP minimums. */
+  skipMinStepExpansion?: boolean
 }
 
 export interface PlanRangeSplitResult {

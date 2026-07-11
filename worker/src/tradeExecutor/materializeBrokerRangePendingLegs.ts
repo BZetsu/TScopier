@@ -48,8 +48,11 @@ export async function materializeBrokerRangePendingLegs(
   const insertRows: Record<string, unknown>[] = []
   const placedTickets: Array<{ ticket: number; row: Record<string, unknown> }> = []
 
+  const planStepOffset = plan.rangeLayering?.stepPriceOffset ?? 0
+
   for (const v of virtualPendings) {
-    const triggerPrice = triggerPriceFor(v, anchor, digits)
+    const stepPriceOffset = v.stepPriceOffset > 0 ? v.stepPriceOffset : planStepOffset
+    const triggerPrice = triggerPriceFor({ ...v, stepPriceOffset }, anchor, digits)
     if (!virtualPendingTriggerAllowed({
       triggerPrice,
       signalRangeBoundary,

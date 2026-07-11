@@ -108,6 +108,7 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
   // broker pendings on that path, so range layering must stay enabled.
   const baseIsPendingSignal =
     orderBase.operation.includes('Limit') || orderBase.operation.includes('Stop')
+  const pendingOrderMode = manual.range_layering_type === 'pending_order'
   const rangeDistance = resolveRangeDistancePips({ manual, parsed, pip, isBuy })
   const split = planRangeSplit({
     totalLegs,
@@ -119,6 +120,7 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
     pip,
     minStepPriceUnits: minStopDist,
     hasSignalAnchor: entryAnchor != null,
+    skipMinStepExpansion: pendingOrderMode,
   })
   const immediateLegs = split.immediateLegs
   const reservedRangeLegs = split.pendingLegs
@@ -126,7 +128,6 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
   const maxStepIdx = split.maxStepIdx
   const stepPriceOffset = split.stepPriceOffset
   let rangeFallbackReason = split.fallbackReason
-  const pendingOrderMode = manual.range_layering_type === 'pending_order'
   const rangeLegCount = pendingOrderMode ? reservedRangeLegs : effectiveRangeLegs
 
   const totalLegsForTp = immediateLegs + (pendingOrderMode ? reservedRangeLegs : effectiveRangeLegs)
