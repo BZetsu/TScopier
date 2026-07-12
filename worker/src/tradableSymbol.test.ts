@@ -5,6 +5,7 @@ import {
   hasTradableInstrumentInText,
   isTradableInstrumentSymbol,
   minPlausibleQuotePrice,
+  reconcileSymbolWithQuoteLevels,
   sanitizeParsedSymbol,
 } from './tradableSymbol'
 
@@ -73,4 +74,34 @@ test('random 3-letter words are not tradable without Market line', () => {
     assert.equal(isTradableInstrumentSymbol(word), false)
     assert.equal(extractTradableSymbolFromMessage(`Please ${word} the channel`), null)
   }
+})
+
+test('extractTradableSymbolFromMessage prefers AUD-NZD hashtag over VIP footer Gold', () => {
+  const msg = `📉AUD-NZD Free Signal!
+
+⭕Sell!
+—
+#AUDNZD rejection from the horizontal supply area signals bearish continuation.
+------------------
+🟢Stop Loss: 1.2074
+🟢Take Profit: 1.2034
+🟢Entry: 1.2057
+----------------—
+Sell!🔽
+➖➖➖➖➖➖➖➖➖➖
+VIP MEMBERS GET
+Forex, Gold, Oil signals`
+  assert.equal(extractTradableSymbolFromMessage(msg), 'AUDNZD')
+})
+
+test('reconcileSymbolWithQuoteLevels fixes gold misread when prices are forex', () => {
+  const msg = `#AUDNZD sell
+Stop Loss: 1.2074
+Take Profit: 1.2034
+Entry: 1.2057
+Forex, Gold, Oil signals`
+  assert.equal(
+    reconcileSymbolWithQuoteLevels('XAUUSD', msg, { sl: 1.2074, tp: [1.2034], entry: 1.2057 }),
+    'AUDNZD',
+  )
 })

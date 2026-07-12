@@ -9,7 +9,7 @@ import {
   type MarketNowKeywordFields,
 } from './signalEntryNowRequirement'
 import { looksLikeChannelManagementUpdate } from './signalManagementIntent'
-import { minPlausibleQuotePrice, sanitizeParsedSymbol } from './tradableSymbol'
+import { minPlausibleQuotePrice, reconcileSymbolWithQuoteLevels, sanitizeParsedSymbol } from './tradableSymbol'
 
 export { ENTRY_REQUIRES_NOW_REASON } from './signalEntryNowRequirement'
 export const COMMENTARY_NOT_SIGNAL_REASON = 'commentary_not_trade_signal'
@@ -56,9 +56,11 @@ export function evaluateParsedSignalExecutionEligibility(
     return { eligible: false, skipReason: ENTRY_REQUIRES_IMPERATIVE_OR_LABELED_STOPS_REASON }
   }
 
-  const symbol = sanitizeParsedSymbol(
+  const symbol = reconcileSymbolWithQuoteLevels(
     typeof parsed.symbol === 'string' ? parsed.symbol : null,
-  )
+    raw,
+    { sl: parsed.sl, tp: parsed.tp, entry: parsed.entry_price },
+  ) ?? sanitizeParsedSymbol(typeof parsed.symbol === 'string' ? parsed.symbol : null)
   const minQuote = minPlausibleQuotePrice(symbol)
   if (minQuote != null && symbol) {
     const sl = positive(parsed.sl)

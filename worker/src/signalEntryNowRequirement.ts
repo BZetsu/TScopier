@@ -72,7 +72,7 @@ export function messageHasMarketNowIntent(
 /** True when SL/TP appear as labeled parameters in the message (not inferred from prose). */
 export function messageHasExplicitSlTpLabels(message: string): boolean {
   const text = String(message ?? '')
-  if (/\b(?:sl|stop\s*loss)\s*[:=\-]?\s*\d/i.test(text)) return true
+  if (/\b(?:sl|stop\s*loss)\s*[:=@]?\s*\d/i.test(text)) return true
   if (/\b(?:sl|stop\s*loss)\s+to\s+\d/i.test(text)) return true
   if (/\b(?:tp|take\s*profit|target(?:\s+level)?)\s*#?\s*\d+\s*[:=\-]\s*\d/i.test(text)) return true
   // TP1 4340 (numbered tier, space-separated — no colon)

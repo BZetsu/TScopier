@@ -24,7 +24,9 @@ import {
   extractTradableSymbolFromMessage,
   filterPlausibleInstrumentPrices,
   isTradableInstrumentSymbol,
+  reconcileSymbolWithQuoteLevels,
   sanitizeParsedSymbol,
+  signalBodyBeforePromoFooter,
 } from './tradableSymbol'
 import { looksLikeCasualNonTradeMessage } from './signalCommentaryGuard'
 import { messageHasImperativeEntryPhrase } from './signalImperativeEntry'
@@ -494,15 +496,13 @@ function extractTpLevels(message: string, extraLabels: string[] = []): {
     }
   }
 
-  collect(buildTpRegex(extraLabels))
-  // TP #1: 4564 / TP#2: 4,527 (hash-numbered tiers — common in signal channels)
+  // Numbered tiers first — "TP 1 4086" must not capture ordinal 1 via the generic TP regex.
   collect(new RegExp(`\\b(?:tp|take\\s*profit|target(?:\\s+level)?)\\s*#\\s*\\d+\\s*[:=\\-]\\s*(${SIGNAL_PRICE_NUM})`, 'gi'))
-  // TP 1: 4564 (numbered without hash)
   collect(new RegExp(`\\b(?:tp|take\\s*profit|target(?:\\s+level)?)\\s+\\d+\\s*[:=\\-]\\s*(${SIGNAL_PRICE_NUM})`, 'gi'))
-  // TP1: 4564 (numbered without space)
   collect(new RegExp(`\\b(?:tp|target(?:\\s+level)?)\\s*\\d+\\s*[:=\\-]\\s*(${SIGNAL_PRICE_NUM})`, 'gi'))
-  // TP1 4564 (space-separated tier number)
   collect(new RegExp(`\\b(?:tp|target(?:\\s+level)?)\\s*\\d+\\s+(${SIGNAL_PRICE_NUM})`, 'gi'))
+
+  collect(buildTpRegex(extraLabels))
   // TP: 4557 / 4527 (slash-separated tiers on one label — not thousands commas)
   for (const m of text.matchAll(
     /\b(?:tp|take\s*profit|target(?:\s+level)?)\s*[:=]?\s*((?:\d+(?:\.\d+)?(?:\s*(?:\/|\band\b|\|)\s*)+)+\d+(?:\.\d+)?)(?:\s*pips?\b)?/gi,
@@ -657,6 +657,17 @@ const SL_TEXT_LABELS = 'sl|stop\\s*loss|stoploss|risk'
 const TP_TEXT_LABELS = 'tp|take\\s*profit|target'
 const SL_MGMT_VERBS = 'set|move|adjust|bring|change|update|make|modify'
 
+function parseAtPriceExcludingSlTp(text: string): number | null {
+  for (const m of text.matchAll(new RegExp(`@\\s*(${SIGNAL_PRICE_NUM})\\b`, 'gi'))) {
+    const start = m.index ?? 0
+    const before = text.slice(Math.max(0, start - 24), start)
+    if (/\b(?:sl|stop\s*loss|tp|take\s*profit)\s*$/i.test(before)) continue
+    const value = parseSignalPriceToken(m[1] ?? '')
+    if (value != null) return value
+  }
+  return null
+}
+
 function slPriceFromClause(clause: string): number | null {
   const slClauseTo = clause.match(new RegExp(`\\bto\\s*(${SIGNAL_PRICE_NUM})\\b`, 'i'))
   if (slClauseTo?.[1]) return parseSignalPriceToken(slClauseTo[1])
@@ -677,7 +688,7 @@ function looksLikeStopOrTpAdjustCommand(text: string): boolean {
 
 function parseSlFromText(text: string): number | null {
   const slMatchStandard = text.match(
-    new RegExp(`\\b(?:${SL_TEXT_LABELS})\\s*[:=]?\\s*(${SIGNAL_PRICE_NUM})`, 'i'),
+    new RegExp(`\\b(?:${SL_TEXT_LABELS})\\s*[:=@]?\\s*(${SIGNAL_PRICE_NUM})`, 'i'),
   )
   if (slMatchStandard?.[1]) return parseSignalPriceToken(slMatchStandard[1])
   const slMatchTo = text.match(
@@ -943,12 +954,22 @@ function extractOptionalEntryAnchor(
       const entryLabel = text.match(new RegExp(`\\bentry\\s*(?:price|level)?\\s*[:=]\\s*(${SIGNAL_PRICE_NUM})\\b`, 'i'))
       if (entry_price == null && entryLabel?.[1]) entry_price = parseSignalPriceToken(entryLabel[1])
       if (entry_price == null) {
-        const atPx = text.match(new RegExp(`@\\s*(${SIGNAL_PRICE_NUM})\\b`))
-        if (atPx?.[1]) entry_price = parseSignalPriceToken(atPx[1])
+        const atPx = parseAtPriceExcludingSlTp(text)
+        if (atPx != null) entry_price = atPx
       }
       if (entry_price == null) {
         const buySellAt = text.match(new RegExp(`\\b(?:buy|sell)\\s+at\\s+(${SIGNAL_PRICE_NUM})\\b`, 'i'))
         if (buySellAt?.[1]) entry_price = parseSignalPriceToken(buySellAt[1])
+      }
+      if (entry_price == null) {
+        const symbolSidePrice = text.match(
+          new RegExp(`\\b(?:xauusd|xagusd|gold|silver|btcusd|btcusdt|ethusd|ethusdt|eurusd|gbpusd|usdjpy|us30|nas100|[a-z]{6})\\s+(?:buy|sell|long|short)\\s+(${SIGNAL_PRICE_NUM})\\b`, 'i'),
+        )
+        if (symbolSidePrice?.[1]) entry_price = parseSignalPriceToken(symbolSidePrice[1])
+      }
+      if (entry_price == null) {
+        const sidePrice = text.match(new RegExp(`\\b(?:buy|sell|long|short)\\s+(${SIGNAL_PRICE_NUM})\\b`, 'i'))
+        if (sidePrice?.[1]) entry_price = parseSignalPriceToken(sidePrice[1])
       }
       if (entry_price == null) {
         const entryWord = text.match(new RegExp(`\\bentry\\s+(${SIGNAL_PRICE_NUM})\\b`, 'i'))
@@ -1328,13 +1349,26 @@ const MGMT_NON_INSTRUMENT_SYMBOLS = new Set([
   "CLOSE", "CLOSED", "SIGNAL", "SETUP", "ENTRY", "ZONE", "TRADE", "ORDER", "POSITION",
 ])
 
+function applyQuoteLevelSymbolRepair(parsed: ChannelParsedSignal, rawMsg: string): ChannelParsedSignal {
+  const symbol = reconcileSymbolWithQuoteLevels(parsed.symbol, rawMsg, {
+    sl: parsed.sl,
+    tp: parsed.tp,
+    entry: parsed.entry_price,
+  })
+  if (symbol && symbol !== parsed.symbol) {
+    return { ...parsed, symbol }
+  }
+  return parsed
+}
+
 function applyRawSymbolRepair(parsed: ChannelParsedSignal, rawMsg: string): ChannelParsedSignal {
   const extracted = extractTradableSymbolFromMessage(rawMsg)
 
   const cur = parsed.symbol?.toUpperCase().replace(/\s/g, "") ?? ""
   const curMentioned = cur ? new RegExp(`\\b${cur}\\b`, "i").test(rawMsg.replace(/\s+/g, "")) : false
-  const goldHints = /\b(gold|xau|xauusd)\b/i.test(rawMsg)
-  const btcHints = /\b(btc|bitcoin|btcusd|btcusdt)\b/i.test(rawMsg)
+  const signalBody = signalBodyBeforePromoFooter(rawMsg)
+  const goldHints = /\b(gold|xau|xauusd)\b/i.test(signalBody)
+  const btcHints = /\b(btc|bitcoin|btcusd|btcusdt)\b/i.test(signalBody)
   const hasAnySymbolHint = /([A-Z]{3,}\/[A-Z]{3,})|\b([A-Z]{6}|XAUUSD|XAGUSD|BTCUSD|BTCUSDT|ETHUSD|ETHUSDT)\b|(\bgold\b|\bxau\b|\bbtc\b|\bbitcoin\b|\beth\b|\bether)\b/i
     .test(rawMsg) || DERIV_SYNTHETIC_HINT_RE.test(rawMsg)
   const mgmt = new Set([
@@ -1480,7 +1514,8 @@ function enrichParsedKeywordMatch(
     rawMessage,
   )
   const repaired = applyRawSymbolRepair(enriched, rawMessage)
-  const dropped = dropInvalidTradeSymbol(repaired)
+  const quoteRepaired = applyQuoteLevelSymbolRepair(repaired, rawMessage)
+  const dropped = dropInvalidTradeSymbol(quoteRepaired)
   const withUnits = applyStopUnits(dropped, rawMessage, channelKeywords)
   const providerNum = withUnits.provider_signal_number ?? extractProviderSignalNumber(rawMessage)
   if (providerNum == null) return withUnits

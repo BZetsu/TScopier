@@ -5,6 +5,7 @@
  */
 
 import { isDerivSyntheticSymbol, normalizeDerivAlias } from "./derivSymbols.ts"
+import { hasExecutableTradeStructure } from "./signalCommentaryGuard.ts"
 
 const FX_CURRENCY_CODES = new Set([
   "USD", "EUR", "GBP", "JPY", "CHF", "AUD", "NZD", "CAD",
@@ -146,20 +147,123 @@ export function hasTradableInstrumentInText(text: string): boolean {
   return extractTradableSymbolFromMessage(text) != null
 }
 
+/** Strip VIP promos / footers so "Forex, Gold, Oil signals" does not hijack the pair. */
+export function signalBodyBeforePromoFooter(raw: string): string {
+  let cut = raw.length
+  const markers = [
+    /\n➖{3,}/,
+    /\n-{3,}/,
+    /\bVIP SIGNALS PRICES\b/i,
+    /\bJOIN VIP\b/i,
+    /\bSUMMER SALE\b/i,
+    /\bVIP MEMBERS GET\b/i,
+  ]
+  for (const re of markers) {
+    const idx = raw.search(re)
+    if (idx >= 0) cut = Math.min(cut, idx)
+  }
+  return raw.slice(0, cut)
+}
+
+function isPromotionalAssetList(text: string): boolean {
+  return /\b(?:forex|indices?|crypto|commodit(?:y|ies)|oil)\s*,\s*gold\b/i.test(text)
+    || /\bgold\s*,\s*(?:oil|forex|indices?|crypto)\b/i.test(text)
+    || /\bforex,\s*gold,\s*oil\b/i.test(text)
+}
+
+function extractHashtagSymbol(raw: string): string | null {
+  const body = signalBodyBeforePromoFooter(raw)
+  for (const m of body.matchAll(/#([A-Z]{3,12})\b/gi)) {
+    const sym = cleanInstrumentSymbol(m[1] ?? "")
+    if (isTradableInstrumentSymbol(sym)) return sym
+  }
+  return null
+}
+
+function extractHyphenForexPair(raw: string): string | null {
+  const body = signalBodyBeforePromoFooter(raw)
+  const m = body.match(/\b([A-Z]{3})\s*-\s*([A-Z]{3})\b/i)
+  if (!m?.[1] || !m[2]) return null
+  const combined = cleanInstrumentSymbol(m[1] + m[2])
+  return isTradableInstrumentSymbol(combined) ? combined : null
+}
+
+function extractGoldAliasFromText(raw: string): string | null {
+  const body = signalBodyBeforePromoFooter(raw)
+  const u = body.toUpperCase()
+  if (/\b(XAUUSD|XAU\b)\b/.test(u)) return "XAUUSD"
+  if (!/\bGOLD\b/.test(u) || isPromotionalAssetList(body)) return null
+  if (hasExecutableTradeStructure(body)) return "XAUUSD"
+  if (/\b(?:sl|stop\s*loss|tp|take\s*profit|objectif|stop|target|cible)\s*[:=@]?\s*\d/i.test(body)) {
+    return "XAUUSD"
+  }
+  if (
+    /\bGOLD\s+(?:buy|sell|long|short)\b/i.test(body)
+    || /\b(?:buy|sell|long|short)\s+(?:gold|xau)\b/i.test(body)
+    || /\b#GOLD\b/i.test(body)
+    || /\bGOLD\s+(?:signal|setup|trade)\b/i.test(body)
+  ) {
+    return "XAUUSD"
+  }
+  return null
+}
+
+function positiveQuote(v: unknown): number | null {
+  const n = typeof v === "number" ? v : Number(v)
+  return Number.isFinite(n) && n > 0 ? n : null
+}
+
+/** When SL/TP fit a forex cross but symbol was misread as gold, prefer the message pair. */
+export function reconcileSymbolWithQuoteLevels(
+  symbol: string | null | undefined,
+  rawMessage: string,
+  levels: { sl?: unknown; tp?: unknown; entry?: unknown },
+): string | null {
+  const current = sanitizeParsedSymbol(symbol)
+  const prices = [
+    positiveQuote(levels.sl),
+    positiveQuote(levels.entry),
+    ...(Array.isArray(levels.tp) ? levels.tp.map(positiveQuote) : []),
+  ].filter((n): n is number => n != null)
+  if (!prices.length) return current
+
+  const allPlausibleFor = (sym: string | null): boolean => {
+    const min = minPlausibleQuotePrice(sym)
+    if (min == null || !sym) return false
+    return prices.every(p => p >= min)
+  }
+
+  if (current && allPlausibleFor(current)) return current
+
+  const fromMessage = extractTradableSymbolFromMessage(rawMessage)
+  if (fromMessage && fromMessage !== current && allPlausibleFor(fromMessage)) {
+    return fromMessage
+  }
+
+  return current
+}
+
 export function extractTradableSymbolFromMessage(raw: string): string | null {
   if (!raw || typeof raw !== "string") return null
-  const u = raw.toUpperCase().replace(/\s+/g, " ")
+  const body = signalBodyBeforePromoFooter(raw)
+  const u = body.toUpperCase().replace(/\s+/g, " ")
 
-  const marketLine = extractMarketLineSymbol(raw)
+  const marketLine = extractMarketLineSymbol(body)
   if (marketLine) return marketLine
 
-  const slash = raw.match(/\b([A-Z]{3,})\s*\/\s*([A-Z]{3,})\b/i)
+  const hashtag = extractHashtagSymbol(raw)
+  if (hashtag) return hashtag
+
+  const hyphenPair = extractHyphenForexPair(raw)
+  if (hyphenPair) return hyphenPair
+
+  const slash = body.match(/\b([A-Z]{3,})\s*\/\s*([A-Z]{3,})\b/i)
   if (slash) {
     const combined = cleanInstrumentSymbol(slash[1] + slash[2])
     if (isTradableInstrumentSymbol(combined)) return combined
   }
 
-  const onFor = raw.match(
+  const onFor = body.match(
     /\b(?:on|for)\s+([A-Za-z][A-Za-z0-9./]{2,20})\b/i,
   )
   if (onFor?.[1]) {
@@ -178,7 +282,7 @@ export function extractTradableSymbolFromMessage(raw: string): string | null {
   }
 
   const explicit = u.match(
-    /\b(BTCUSDT|BTCEUR|BTCUSD|ETHUSDT|ETHUSD|EURUSD|GBPUSD|USDJPY|AUDUSD|NZDUSD|USDCAD|USDCHF|XAUUSD|XAGUSD|NAS100|SPX500|USTEC|US100|US500|US30|GER40|UK100|DJ30|DJI|DAX40|JP225|JPN225|AUS200|HK50|EU50|FRA40|DE40|CHN50|CN50|SPY|QQQ|IWM|DIA|VOO|IVV|TQQQ|GLD|SLV|AAPL|MSFT|NVDA|TSLA|AMZN|META|GOOGL|GOOG|AMD|NFLX)\b/,
+    /\b(BTCUSDT|BTCEUR|BTCUSD|ETHUSDT|ETHUSD|EURUSD|GBPUSD|USDJPY|AUDUSD|NZDUSD|USDCAD|USDCHF|AUDNZD|EURNZD|GBPNZD|EURGBP|EURJPY|GBPJPY|AUDJPY|XAUUSD|XAGUSD|NAS100|SPX500|USTEC|US100|US500|US30|GER40|UK100|DJ30|DJI|DAX40|JP225|JPN225|AUS200|HK50|EU50|FRA40|DE40|CHN50|CN50|SPY|QQQ|IWM|DIA|VOO|IVV|TQQQ|GLD|SLV|AAPL|MSFT|NVDA|TSLA|AMZN|META|GOOGL|GOOG|AMD|NFLX)\b/,
   )
   if (explicit) {
     const sym = cleanInstrumentSymbol(explicit[1])
@@ -190,10 +294,13 @@ export function extractTradableSymbolFromMessage(raw: string): string | null {
   }
   if (/\bBITCOIN\b|\bBTC\b/.test(u)) return /\bUSDT\b/.test(u) ? "BTCUSDT" : "BTCUSD"
   if (/\bETHER(EUM)?\b|\bETH\b/.test(u)) return /\bUSDT\b/.test(u) ? "ETHUSDT" : "ETHUSD"
-  if (/\b(XAUUSD|XAU\b|GOLD)\b/.test(u)) return "XAUUSD"
+
+  const goldAlias = extractGoldAliasFromText(raw)
+  if (goldAlias) return goldAlias
+
   if (/\bSILVER\b|\bXAG\b|\bXAGUSD\b/.test(u)) return "XAGUSD"
 
-  const deriv = normalizeDerivAlias(raw)
+  const deriv = normalizeDerivAlias(body)
   if (deriv) return deriv
 
   const tokens = u.match(/\b[A-Z][A-Z0-9]{2,11}\b/g) ?? []

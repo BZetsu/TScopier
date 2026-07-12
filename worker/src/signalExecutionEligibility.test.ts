@@ -154,4 +154,43 @@ describe('evaluateParsedSignalExecutionEligibility', () => {
     }, msg)
     assert.equal(eligibility.eligible, true)
   })
+
+  it('accepts AUDNZD sell with labeled stops despite VIP footer Gold mention', () => {
+    const msg = `📉AUD-NZD Free Signal!
+⭕Sell!
+#AUDNZD rejection from the horizontal supply area
+Stop Loss: 1.2074
+Take Profit: 1.2034
+Entry: 1.2057
+VIP MEMBERS GET
+Forex, Gold, Oil signals`
+    const eligibility = evaluateParsedSignalExecutionEligibility({
+      action: 'sell',
+      symbol: 'XAUUSD',
+      sl: 1.2074,
+      tp: [1.2034],
+      entry_price: 1.2057,
+    }, msg)
+    assert.equal(eligibility.eligible, true)
+  })
+
+  it('accepts NEW TRADE IDEA XAUUSD with numbered TP tiers and SL @ label', () => {
+    const msg = `NEW TRADE IDEA
+
+XAUUSD BUY 4082
+
+TP 1 4086
+TP 2 4087
+TP 3 4120
+
+SL @ 4055`
+    const eligibility = evaluateParsedSignalExecutionEligibility({
+      action: 'buy',
+      symbol: 'XAUUSD',
+      sl: 4055,
+      tp: [4086, 4087, 4120],
+      entry_price: 4082,
+    }, msg)
+    assert.equal(eligibility.eligible, true)
+  })
 })

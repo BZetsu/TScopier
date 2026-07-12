@@ -532,6 +532,30 @@ Risk only 1-2% of your balance.`
     assert.deepEqual(result.parsed.tp, [4340, 4345, 4350, 4355, 4360])
   })
 
+  it('parses NEW TRADE IDEA template: SYMBOL BUY price, TP n tiers, SL @ price', () => {
+    const msg = `NEW TRADE IDEA
+
+XAUUSD BUY 4082
+
+TP 1 4086
+TP 2 4087
+TP 3 4120
+
+SL @ 4055
+
+Trade accordingly and only trade with money you can afford to LOSE.
+
+USE DOUBLE LOTSIZE`
+    const result = parseChannelMessageSync(msg, DEFAULT_CHANNEL_KEYWORDS, lexicon)
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.action, 'buy')
+    assert.equal(result.parsed.symbol, 'XAUUSD')
+    assert.equal(result.parsed.entry_price, 4082)
+    assert.equal(result.parsed.sl, 4055)
+    assert.deepEqual(result.parsed.tp, [4086, 4087, 4120])
+    assert.equal(result.parsed.tp_unit, 'price')
+  })
+
   it('parses ENTRY zone slash template without SL line when TP tiers are space-separated', () => {
     const msg = `XAUUSD BUY
 
@@ -696,6 +720,31 @@ The key lesson here: wait for confirmation, execute clean, manage risk.`
     assert.equal(result.status, 'parsed')
     assert.equal(result.parsed.action, 'buy')
     assert.equal(result.parsed.symbol, 'XAUUSD')
+  })
+
+  it('parses AUD-NZD sell with VIP footer Gold promo without misreading XAUUSD', () => {
+    const msg = `📉AUD-NZD Free Signal!
+
+⭕Sell!
+—
+#AUDNZD rejection from the horizontal supply area signals bearish continuation.
+------------------
+🟢Stop Loss: 1.2074
+🟢Take Profit: 1.2034
+🟢Entry: 1.2057
+🟢Time Frame: 5H
+----------------—
+Sell!🔽
+➖➖➖➖➖➖➖➖➖➖
+VIP MEMBERS GET
+Forex, Gold, Oil signals`
+    const result = parseChannelMessageSync(msg, DEFAULT_CHANNEL_KEYWORDS, lexicon)
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.action, 'sell')
+    assert.equal(result.parsed.symbol, 'AUDNZD')
+    assert.equal(result.parsed.sl, 1.2074)
+    assert.deepEqual(result.parsed.tp, [1.2034])
+    assert.equal(result.parsed.entry_price, 1.2057)
   })
 
   it('parses FOREX KING Gold buy with emoji-glued entry zone, SL, and TP tiers', () => {
