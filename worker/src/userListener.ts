@@ -59,7 +59,7 @@ import {
   telegramEditDateSec,
   telegramMessageText,
 } from './signalTelegramReconcile'
-import { evaluateParsedSignalExecutionEligibility } from './signalExecutionEligibility'
+import { evaluateParsedSignalExecutionEligibility, deterministicEntryNeedsAiRepair } from './signalExecutionEligibility'
 import { resolveEntrySignalIdByProviderNumber, findRecentEntrySignalByProviderNumber } from './managementScope'
 import {
   handlePostParseChannelIngest,
@@ -1494,10 +1494,19 @@ export class UserListener {
       // entry on a hallucinated symbol and skipped as entry_requires_now.
       const detManagementParsed =
         det.status === 'parsed' && isManagementAction(parsedAction(det.parsed))
-      if (detEntryParsed || detManagementParsed) {
+      if (detManagementParsed) {
         return { parseResult: det, channelKeywords: keywords }
       }
-      if (!this.isModificationClassMessage(args.rawMessage, args.isReply, keywords, lexicon)) {
+
+      const tryAiEntryParse = async (
+        detFallback: Awaited<ReturnType<typeof parseChannelMessageSync>>,
+      ): Promise<{
+        parseResult: Awaited<ReturnType<typeof parseChannelMessageSync>>
+        aiMeta?: { intent: string; source: string }
+      } | null> => {
+        if (this.isModificationClassMessage(args.rawMessage, args.isReply, keywords, lexicon)) {
+          return null
+        }
         const aiEntry = await aiParseEntry(this.supabase, {
           userId: this.userId,
           channelRowId: args.channelRowId,
@@ -1514,7 +1523,6 @@ export class UserListener {
           return {
             parseResult: aiEntryResultToParseResult(aiEntry),
             aiMeta,
-            channelKeywords: keywords,
           }
         }
         if (isAiEntryParseEnabled()) {
@@ -1524,13 +1532,33 @@ export class UserListener {
           )
           return {
             parseResult: {
-              ...det,
-              skip_reason: aiEntry.skip_reason ?? det.skip_reason,
+              ...detFallback,
+              skip_reason: aiEntry.skip_reason ?? detFallback.skip_reason,
             },
             aiMeta,
-            channelKeywords: keywords,
           }
         }
+        return null
+      }
+
+      if (detEntryParsed) {
+        if (!deterministicEntryNeedsAiRepair(det.parsed, args.rawMessage, keywords)) {
+          return { parseResult: det, channelKeywords: keywords }
+        }
+        console.log(
+          `[userListener] deterministic entry failed eligibility — trying AI repair`
+          + ` user=${this.userId} channelRow=${args.channelRowId}`,
+        )
+        const aiParsed = await tryAiEntryParse(det)
+        if (aiParsed?.parseResult.status === 'parsed') {
+          return { ...aiParsed, channelKeywords: keywords }
+        }
+        return { parseResult: det, channelKeywords: keywords }
+      }
+
+      const aiParsed = await tryAiEntryParse(det)
+      if (aiParsed) {
+        return { ...aiParsed, channelKeywords: keywords }
       }
       return { parseResult: det, channelKeywords: keywords }
     }

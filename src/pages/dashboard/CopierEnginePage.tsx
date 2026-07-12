@@ -535,6 +535,7 @@ export function CopierEnginePage() {
       })
       setConnectMenuChannelId(upserted.id)
       void refreshSubscription()
+      void triggerBackgroundChannelAiTraining(upserted.id, { userId: user!.id })
     }
   }
 

@@ -5,6 +5,7 @@ import {
   ENTRY_MISSING_STRUCTURE_REASON,
   ENTRY_REQUIRES_IMPERATIVE_OR_LABELED_STOPS_REASON,
   ENTRY_REQUIRES_NOW_REASON,
+  deterministicEntryNeedsAiRepair,
   evaluateParsedSignalExecutionEligibility,
 } from './signalExecutionEligibility'
 
@@ -166,12 +167,40 @@ VIP MEMBERS GET
 Forex, Gold, Oil signals`
     const eligibility = evaluateParsedSignalExecutionEligibility({
       action: 'sell',
-      symbol: 'XAUUSD',
+      symbol: 'AUDNZD',
       sl: 1.2074,
       tp: [1.2034],
       entry_price: 1.2057,
     }, msg)
     assert.equal(eligibility.eligible, true)
+  })
+
+  it('deterministicEntryNeedsAiRepair when implausible TP tiers would be skipped', () => {
+    const msg = `XAUUSD BUY 4082
+TP 1 4086
+TP 2 4087
+SL @ 4055`
+    const badParse = {
+      action: 'buy',
+      symbol: 'XAUUSD',
+      sl: null,
+      tp: [1, 2, 3],
+      entry_price: 4055,
+    }
+    assert.equal(
+      deterministicEntryNeedsAiRepair(badParse, msg),
+      true,
+    )
+    assert.equal(
+      deterministicEntryNeedsAiRepair({
+        action: 'buy',
+        symbol: 'XAUUSD',
+        sl: 4055,
+        tp: [4086, 4087, 4120],
+        entry_price: 4082,
+      }, msg),
+      false,
+    )
   })
 
   it('accepts NEW TRADE IDEA XAUUSD with numbered TP tiers and SL @ label', () => {

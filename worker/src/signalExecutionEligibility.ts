@@ -99,6 +99,17 @@ export function evaluateParsedSignalExecutionEligibility(
   return { eligible: false, skipReason: ENTRY_MISSING_STRUCTURE_REASON }
 }
 
+/** True when deterministic parser produced buy/sell but values would be skipped at execution. */
+export function deterministicEntryNeedsAiRepair(
+  parsed: Parameters<typeof evaluateParsedSignalExecutionEligibility>[0],
+  rawMessage?: string | null,
+  channelKeywords?: MarketNowKeywordFields | null,
+): boolean {
+  const action = String(parsed?.action ?? '').toLowerCase()
+  if (action !== 'buy' && action !== 'sell') return false
+  return !evaluateParsedSignalExecutionEligibility(parsed, rawMessage, channelKeywords).eligible
+}
+
 function positive(v: unknown): number | null {
   const n = Number(v)
   return Number.isFinite(n) && n > 0 ? n : null

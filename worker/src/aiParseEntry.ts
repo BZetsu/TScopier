@@ -29,7 +29,7 @@ function parseEnvBool(name: string, defaultValue = false): boolean {
 }
 
 export function isAiEntryParseEnabled(): boolean {
-  return parseEnvBool('AI_ENTRY_PARSE_ENABLED', false)
+  return parseEnvBool('AI_ENTRY_PARSE_ENABLED', true)
 }
 
 function aiEntryParseEnabled(): boolean {
