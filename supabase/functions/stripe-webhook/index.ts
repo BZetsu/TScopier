@@ -9,6 +9,7 @@ import {
 import {
   isSubscriptionActive,
   revokeCopierAccessOnSubscriptionEnd,
+  restoreCopierAccessOnSubscriptionActive,
 } from "../_shared/subscriptionAccess.ts";
 import { DEFAULT_AFFILIATE_COMMISSION_RATE } from "../_shared/affiliate.ts";
 import {
@@ -268,12 +269,15 @@ Deno.serve(async (req: Request) => {
             { expand: ["items.data.price"] },
           );
 
+          const row = subscriptionRowFromStripe(subscriptionForDb, userId, customerId, priceIds);
           await supabase
             .from("subscriptions")
-            .upsert(
-              subscriptionRowFromStripe(subscriptionForDb, userId, customerId, priceIds),
-              { onConflict: "user_id", ignoreDuplicates: false },
-            );
+            .upsert(row, { onConflict: "user_id", ignoreDuplicates: false });
+          if (isSubscriptionActive(row.status, row.trial_ends_at)) {
+            await restoreCopierAccessOnSubscriptionActive(supabase, userId);
+          } else {
+            await revokeCopierAccessOnSubscriptionEnd(supabase, userId);
+          }
         }
         break;
       }
@@ -293,6 +297,8 @@ Deno.serve(async (req: Request) => {
             .upsert(row, { onConflict: "user_id", ignoreDuplicates: false });
           if (!isSubscriptionActive(row.status, row.trial_ends_at)) {
             await revokeCopierAccessOnSubscriptionEnd(supabase, userId);
+          } else {
+            await restoreCopierAccessOnSubscriptionActive(supabase, userId);
           }
         } else if (userId) {
           const mappedStatus = mapStripeSubscriptionStatus(subscription.status);
@@ -312,6 +318,8 @@ Deno.serve(async (req: Request) => {
             .eq("user_id", userId);
           if (!isSubscriptionActive(mappedStatus, trialEndsAt)) {
             await revokeCopierAccessOnSubscriptionEnd(supabase, userId);
+          } else {
+            await restoreCopierAccessOnSubscriptionActive(supabase, userId);
           }
         }
         break;
@@ -371,12 +379,13 @@ Deno.serve(async (req: Request) => {
               ? subscription.customer
               : subscription.customer?.id ?? null;
           if (userId && customerId) {
+            const row = subscriptionRowFromStripe(subscription, userId, customerId, priceIds);
             await supabase
               .from("subscriptions")
-              .upsert(
-                subscriptionRowFromStripe(subscription, userId, customerId, priceIds),
-                { onConflict: "user_id", ignoreDuplicates: false },
-              );
+              .upsert(row, { onConflict: "user_id", ignoreDuplicates: false });
+            if (isSubscriptionActive(row.status, row.trial_ends_at)) {
+              await restoreCopierAccessOnSubscriptionActive(supabase, userId);
+            }
           } else {
             await supabase
               .from("subscriptions")

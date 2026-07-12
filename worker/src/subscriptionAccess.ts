@@ -7,7 +7,6 @@ import {
   type SubscriptionStatus,
 } from './planLimits'
 import { isAdminAccessActive } from './adminAccess'
-import { loadCachedUserCopierPaused } from './copierPause'
 
 export interface UserSubscriptionRow {
   plan: SubscriptionPlan
@@ -104,7 +103,6 @@ export async function userMayRunCopierListener(
   userId: string,
 ): Promise<boolean> {
   if (await loadCachedUserIsAdmin(supabase, userId)) return true
-  if (await loadCachedUserCopierPaused(supabase, userId)) return false
   const sub = await loadCachedUserSubscription(supabase, userId)
   return isSubscriptionActive(sub?.status, sub?.trial_ends_at)
 }

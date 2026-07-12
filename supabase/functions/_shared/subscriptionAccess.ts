@@ -210,3 +210,23 @@ export async function revokeCopierAccessOnSubscriptionEnd(
     )
   }
 }
+
+/** Clear subscription-induced pause when billing is active again. */
+export async function restoreCopierAccessOnSubscriptionActive(
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<void> {
+  if (await loadUserIsAdmin(supabase, userId)) return
+
+  const { error } = await supabase
+    .from("user_profiles")
+    .update({ copier_paused: false })
+    .eq("user_id", userId)
+  if (error) {
+    console.warn(
+      `[subscriptionAccess] copier_paused restore failed for ${userId}: ${error.message}`,
+    )
+    return
+  }
+  console.log(`[subscriptionAccess] restored copier access for ${userId}`)
+}
