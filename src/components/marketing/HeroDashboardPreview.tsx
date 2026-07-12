@@ -13,7 +13,8 @@ import { LanguageSwitcher } from '../auth/LanguageSwitcher'
 import { CopierActiveIndicator } from '../layout/CopierActiveIndicator'
 import { ThemeToggle } from '../ui/ThemeToggle'
 import { TscopierLogo } from '../ui/TscopierLogo'
-import { useT } from '../../context/LocaleContext'
+import { DirectionalIcon } from '../ui/DirectionalIcon'
+import { useLocale, useT } from '../../context/LocaleContext'
 import { useTheme } from '../../context/ThemeContext'
 import { getAppRouteIcon } from '../../lib/appNavIcons'
 import { chartThemeColors } from '../../lib/chartTheme'
@@ -28,8 +29,11 @@ import type {
 const CANVAS_WIDTH = 1280
 const CANVAS_HEIGHT = 820
 
-const COPIER_LOG_GRID =
+const COPIER_LOG_GRID_LTR =
   'grid grid-cols-[5.75rem_minmax(0,1fr)_minmax(4rem,0.85fr)_minmax(4.75rem,auto)_minmax(6.75rem,auto)] gap-x-3 items-center'
+
+const COPIER_LOG_GRID_RTL =
+  'grid grid-cols-[6.5rem_minmax(0,1fr)_minmax(3.5rem,0.85fr)_minmax(4.25rem,auto)_minmax(6rem,auto)] gap-x-2 items-center'
 
 const TRADE_OUTCOME_DAYS = [
   { label: 'Mon', profit: 62, loss: 22 },
@@ -120,9 +124,9 @@ function HeroLiveMoneyValue({
 
 function HeroStatBlock({ stat, label }: { stat: LandingHeroHeadlineStat; label: string }) {
   return (
-    <div className="px-6 py-5">
-      <p className="mb-2 inline-flex items-center gap-1 text-sm text-neutral-500 dark:text-neutral-400">
-        {label}
+    <div className="min-w-0 px-4 py-5 sm:px-6">
+      <p className="mb-2 inline-flex min-w-0 items-center gap-1 text-sm leading-snug text-neutral-500 dark:text-neutral-400 rtl:text-xs">
+        <span className="min-w-0">{label}</span>
         {stat.showHint ? <Info className="h-3.5 w-3.5 shrink-0 opacity-60" aria-hidden /> : null}
       </p>
       {stat.live ? (
@@ -149,7 +153,9 @@ function HeroOverviewStat({
   return (
     <div>
       <div className="mb-1 flex items-center justify-between gap-2">
-        <p className="min-w-0 text-xs text-neutral-500 dark:text-neutral-400">{label}</p>
+        <p className="min-w-0 text-xs leading-snug text-neutral-500 dark:text-neutral-400 rtl:text-[10px]">
+          {label}
+        </p>
         {showAdd ? (
           <span
             className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-teal-200 text-teal-600 dark:border-teal-800 dark:text-teal-400"
@@ -178,16 +184,16 @@ function HeroTradeOutcomeChart() {
           {t.dashboard.tradeOutcomeSubtitle}
         </p>
       </div>
-      <div className="relative flex h-52 gap-2 pl-10 pr-1">
+      <div className="relative flex h-52 gap-2 ps-10 pe-1">
         <div
-          className="absolute inset-0 left-10 grid grid-rows-4 border-b border-l border-neutral-200 pr-1 dark:border-neutral-700"
+          className="absolute inset-0 start-10 grid grid-rows-4 border-b border-s border-neutral-200 pe-1 dark:border-neutral-700"
           aria-hidden
         >
           {[0, 1, 2, 3].map(i => (
             <div key={i} className="border-t border-dashed border-neutral-100 dark:border-neutral-800" />
           ))}
         </div>
-        <div className="absolute left-0 top-0 flex h-[calc(100%-1.25rem)] w-9 flex-col justify-between py-1 text-xs text-neutral-400">
+        <div className="absolute start-0 top-0 flex h-[calc(100%-1.25rem)] w-9 flex-col justify-between py-1 text-xs text-neutral-400">
           {['$900', '$600', '$300', '$0'].map(tick => (
             <span key={tick}>{tick}</span>
           ))}
@@ -265,9 +271,9 @@ function HeroChannelProfitChart() {
             {CHANNEL_PROFIT_ROWS.map(row => (
               <div
                 key={row.label}
-                className="flex min-h-0 flex-1 items-center justify-end pr-1"
+                className="flex min-h-0 flex-1 items-center justify-end pe-1"
               >
-                <span className="block max-w-full truncate text-right text-[9px] leading-none text-neutral-400 dark:text-neutral-500">
+                <span className="block max-w-full truncate text-end text-[9px] leading-none text-neutral-400 dark:text-neutral-500">
                   {row.label}
                 </span>
               </div>
@@ -345,6 +351,8 @@ function copierStatusClass(status: LandingHeroCopierLogRow['status']): string {
 }
 
 export function HeroDashboardPreview() {
+  const { dir } = useLocale()
+  const isRtl = dir === 'rtl'
   const t = useT()
   const l = t.landing
   const d = l.hero.dashboard
@@ -409,24 +417,29 @@ export function HeroDashboardPreview() {
     }
   }
 
+  const copierLogGrid = isRtl ? COPIER_LOG_GRID_RTL : COPIER_LOG_GRID_LTR
+
   return (
     <div
       ref={hostRef}
-      className="hero-dashboard-viewport w-full overflow-hidden"
+      dir="ltr"
+      className="hero-dashboard-viewport relative w-full overflow-hidden"
       role="img"
       aria-label={l.hero.imageAlt}
     >
       <div
-        className="pointer-events-none select-none text-left"
+        className="pointer-events-none absolute top-0 select-none"
         style={{
+          left: isRtl ? undefined : 0,
+          right: isRtl ? 0 : undefined,
           width: CANVAS_WIDTH,
           height: CANVAS_HEIGHT,
           transform: `scale(${scale})`,
-          transformOrigin: 'top left',
+          transformOrigin: isRtl ? 'top right' : 'top left',
         }}
       >
-        <div className="flex h-full w-full overflow-hidden bg-neutral-50 dark:bg-neutral-950">
-          <aside className="flex w-64 shrink-0 flex-col border-r border-neutral-100 bg-white dark:border-neutral-800 dark:bg-neutral-900">
+        <div className="flex h-full w-full overflow-hidden bg-neutral-50 dark:bg-neutral-950" dir={dir}>
+          <aside className="flex w-64 shrink-0 flex-col border-e border-neutral-100 bg-white dark:border-neutral-800 dark:bg-neutral-900 rtl:w-[15.5rem]">
             <div className="flex h-16 shrink-0 items-center border-b border-neutral-100 px-4 dark:border-neutral-800">
               <TscopierLogo className="h-6 w-auto" />
             </div>
@@ -455,7 +468,7 @@ export function HeroDashboardPreview() {
                             item.active && 'text-teal-600 dark:text-teal-400',
                           )}
                         />
-                        <span>{item.label}</span>
+                        <span className="min-w-0 truncate text-sm rtl:text-xs">{item.label}</span>
                       </div>
                       )
                     })}
@@ -466,22 +479,24 @@ export function HeroDashboardPreview() {
           </aside>
 
           <div className="flex min-w-0 flex-1 flex-col">
-            <header className="z-20 flex h-16 shrink-0 items-center gap-4 border-b border-neutral-100 bg-white px-6 dark:border-neutral-800 dark:bg-neutral-900">
-              <PanelLeftClose className="h-5 w-5 text-neutral-400" aria-hidden />
-              <div className="flex h-9 max-w-md flex-1 items-center gap-2 rounded-lg border border-neutral-200 bg-neutral-50 px-3 text-sm text-neutral-400 dark:border-neutral-700 dark:bg-neutral-800/80">
+            <header className="z-20 flex h-16 shrink-0 items-center gap-3 border-b border-neutral-100 bg-white px-4 dark:border-neutral-800 dark:bg-neutral-900 sm:gap-4 sm:px-6">
+              <DirectionalIcon icon={PanelLeftClose} className="h-5 w-5 shrink-0 text-neutral-400" />
+              <div className="flex h-9 min-w-0 max-w-md flex-1 items-center gap-2 rounded-lg border border-neutral-200 bg-neutral-50 px-3 text-sm text-neutral-400 dark:border-neutral-700 dark:bg-neutral-800/80">
                 <Search className="h-4 w-4 shrink-0" aria-hidden />
-                <span className="truncate">{t.globalSearch.placeholder}</span>
-                <span className="ml-auto hidden text-xs text-neutral-400 sm:inline">
+                <span className="min-w-0 truncate rtl:text-xs">{t.globalSearch.placeholder}</span>
+                <span className="ms-auto hidden text-xs text-neutral-400 ltr:sm:inline">
                   {t.globalSearch.shortcut}
                 </span>
               </div>
-              <div className="ml-auto flex items-center gap-2">
+              <div className="ms-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
                 <span
-                  className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium text-neutral-600 dark:text-neutral-300 sm:gap-2 sm:px-2.5 sm:text-sm"
+                  className="flex items-center gap-1 rounded-lg px-1.5 py-1.5 text-xs font-medium text-neutral-600 dark:text-neutral-300 sm:gap-1.5 sm:px-2 sm:text-sm rtl:text-[11px]"
                   aria-hidden
                 >
                   <CopierActiveIndicator />
-                  <span className="whitespace-nowrap">{t.nav.copierPause.statusRunning}</span>
+                  <span className="max-w-[5.5rem] truncate sm:max-w-none sm:whitespace-nowrap">
+                    {t.nav.copierPause.statusRunning}
+                  </span>
                 </span>
                 <LanguageSwitcher />
                 <ThemeToggle />
@@ -492,12 +507,14 @@ export function HeroDashboardPreview() {
                 >
                   <CircleHelp className="h-5 w-5" />
                 </button>
-                <div className="flex items-center gap-2 rounded-lg border border-neutral-200 py-1 pl-1 pr-2 dark:border-neutral-700">
-                  <span className="flex h-8 w-8 items-center justify-center rounded-md bg-teal-600 text-xs font-semibold text-white">
+                <div className="flex items-center gap-1.5 rounded-lg border border-neutral-200 py-1 ps-1 pe-1.5 dark:border-neutral-700 sm:pe-2">
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-teal-600 text-xs font-semibold text-white">
                     TS
                   </span>
-                  <span className="text-sm font-medium text-neutral-800 dark:text-neutral-100">Trader</span>
-                  <ChevronRight className="h-3.5 w-3.5 rotate-90 text-neutral-400" aria-hidden />
+                  <span className="hidden text-sm font-medium text-neutral-800 dark:text-neutral-100 ltr:inline">
+                    Trader
+                  </span>
+                  <DirectionalIcon icon={ChevronRight} className="h-3.5 w-3.5 rotate-90 text-neutral-400" mirrorInRtl={false} />
                 </div>
               </div>
             </header>
@@ -511,7 +528,7 @@ export function HeroDashboardPreview() {
                 </header>
 
                 <div className="rounded-2xl border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900">
-                  <div className="grid grid-cols-4 divide-x divide-neutral-100 dark:divide-neutral-800">
+                  <div className="grid grid-cols-4 divide-x divide-neutral-100 dark:divide-neutral-800 rtl:divide-x-reverse">
                     {d.headlineStats.map(stat => (
                       <HeroStatBlock
                         key={stat.key}
@@ -549,7 +566,7 @@ export function HeroDashboardPreview() {
                       </div>
                       <span className="inline-flex items-center gap-1.5 rounded-lg border border-teal-500 px-3 py-1.5 text-xs font-medium text-teal-600 dark:border-teal-600 dark:text-teal-400">
                         {t.nav.items.channels}
-                        <ChevronRight className="h-3 w-3" aria-hidden />
+                        <DirectionalIcon icon={ChevronRight} className="h-3 w-3" />
                       </span>
                     </div>
                     <div className="divide-y divide-neutral-100 dark:divide-neutral-800">
@@ -573,27 +590,27 @@ export function HeroDashboardPreview() {
                       </div>
                       <span className="inline-flex items-center gap-1.5 rounded-lg border border-teal-500 px-3 py-1.5 text-xs font-medium text-teal-600 dark:border-teal-600 dark:text-teal-400">
                         {t.dashboard.copierLogs}
-                        <ChevronRight className="h-3 w-3" aria-hidden />
+                        <DirectionalIcon icon={ChevronRight} className="h-3 w-3" />
                       </span>
                     </div>
                     <div
                       className={clsx(
-                        COPIER_LOG_GRID,
-                        'border-b border-neutral-100 px-5 py-3 text-xs font-medium uppercase tracking-wide text-neutral-400 dark:border-neutral-800',
+                        copierLogGrid,
+                        'border-b border-neutral-100 px-5 py-3 text-xs font-medium uppercase tracking-wide text-neutral-400 dark:border-neutral-800 rtl:normal-case rtl:tracking-normal',
                       )}
                     >
                       <span>{t.copierLogs.colStatus}</span>
                       <span>{t.copierLogs.colChannel}</span>
                       <span>{t.copierLogs.colSymbol}</span>
                       <span>{t.copierLogs.colType}</span>
-                      <span className="text-right">{t.copierLogs.colTime}</span>
+                      <span className="text-end">{t.copierLogs.colTime}</span>
                     </div>
                     <div className="divide-y divide-neutral-100 dark:divide-neutral-800">
                       {d.copierLogRows.map(row => (
-                        <div key={`${row.channel}-${row.time}`} className={clsx(COPIER_LOG_GRID, 'px-5 py-3')}>
+                        <div key={`${row.channel}-${row.time}`} className={clsx(copierLogGrid, 'px-5 py-3')}>
                           <span
                             className={clsx(
-                              'inline-flex w-fit items-center rounded-md px-2 py-0.5 text-xs font-medium',
+                              'inline-flex w-fit max-w-full items-center rounded-md px-1.5 py-0.5 text-xs font-medium rtl:px-1 rtl:text-[10px]',
                               copierStatusClass(row.status),
                             )}
                           >
@@ -613,7 +630,7 @@ export function HeroDashboardPreview() {
                           >
                             {row.type}
                           </span>
-                          <span className="text-right text-xs text-neutral-400">{row.time}</span>
+                          <span className="text-end text-xs text-neutral-400">{row.time}</span>
                         </div>
                       ))}
                     </div>

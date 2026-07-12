@@ -317,6 +317,10 @@ html.app-viewport-lock #root {
     @apply relative w-full;
   }
 
+  .hero-dashboard-viewport {
+    @apply relative w-full overflow-hidden;
+  }
+
   .hero-product-glow {
     @apply pointer-events-none absolute -inset-6 -z-10 sm:-inset-10;
     background:
