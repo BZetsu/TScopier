@@ -2,6 +2,7 @@ import type { Locale } from '../types'
 import { channelWorkerEn } from './en'
 import { channelWorkerEs } from './es'
 import { channelWorkerFr } from './fr'
+import { channelWorkerAr } from './ar'
 import { channelWorkerJa } from './ja'
 import { channelWorkerNl } from './nl'
 import { channelWorkerPl } from './pl'
@@ -18,6 +19,7 @@ const byLocale: Record<Locale, ChannelWorkerTranslations> = {
   sv: channelWorkerSv,
   nl: channelWorkerNl,
   ja: channelWorkerJa,
+  ar: channelWorkerAr,
 }
 
 export function getChannelWorkerTranslations(locale: Locale): ChannelWorkerTranslations {

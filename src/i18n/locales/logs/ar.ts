@@ -1,0 +1,40 @@
+import type { LogsBundleTranslations } from './types'
+
+export const logsAr: LogsBundleTranslations = {
+  copierLogs: {
+    title: 'سجلات الناسخ',
+    subtitle: 'السجل الكامل للإشارات المستلمة ونتيجة تنفيذها',
+    filterAll: 'الكل',
+    filterExecuted: 'منفّذة',
+    filterSkipped: 'متخطاة',
+    filterFailed: 'فاشلة',
+    filterPending: 'معلقة',
+    colStatus: 'الحالة',
+    colReason: 'السبب',
+    colChannel: 'القناة',
+    colSymbol: 'الرمز',
+    colMessage: 'الرسالة',
+    colType: 'النوع',
+    colTime: 'الوقت',
+    emptyTitle: 'لا سجلات',
+    emptySubtitle: 'ستظهر سجلات الإشارات هنا عندما يبدأ الناسخ باستقبال الرسائل',
+    statusExecuted: 'منفّذة',
+    statusSkipped: 'متخطاة',
+    statusFailed: 'فاشلة',
+    statusPending: 'معلقة',
+    statusParsed: 'محلّلة',
+    retry: 'إعادة المحاولة',
+    retrySuccess: 'أُرسلت إعادة المحاولة — سيحاول الناسخ هذا الإشعار مجددًا.',
+    retryFailedGeneric: 'تعذرت إعادة محاولة هذا الإشعار.',
+    retryFailedDetail: 'فشلت إعادة المحاولة: {reason}',
+    retryReasonNotRetryable: 'لا يمكن إعادة محاولة هذا الإشعار.',
+    retryReasonDispatchRejected: 'لم يقبل الناسخ إعادة المحاولة.',
+    skipReasons: {
+      entry_not_opened: 'لم يفتح الوسيط مركزًا لهذا الإشعار',
+      entry_zone_far_from_market: 'منطقة الدخول بعيدة جدًا عن السعر الحالي',
+      broker_session_not_connected: 'الوسيط غير متصل',
+      broker_bridge_unavailable:
+        'جسر الوسيط غير متاح — فعّل Algo Trading في MT5 وتحقق من جاهزية Trade EA',
+    },
+  },
+}

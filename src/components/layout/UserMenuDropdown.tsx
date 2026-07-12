@@ -12,6 +12,7 @@ import { useUserProfile } from '../../context/UserProfileContext'
 import { useSubscription } from '../../context/SubscriptionContext'
 import { UserAvatar } from './UserAvatar'
 import { getAppRouteIcon } from '../../lib/appNavIcons'
+import { DirectionalIcon } from '../ui/DirectionalIcon'
 
 export interface UserMenuDropdownProps {
   open: boolean
@@ -84,8 +85,8 @@ export function UserMenuDropdown({ open, onClose, onSignOut }: UserMenuDropdownP
       role="menu"
       aria-label={um.menuLabel}
       className={clsx(
-        'absolute right-0 top-full z-50 mt-1 w-64 rounded-xl border border-neutral-200 bg-white py-1 shadow-lg',
-        'before:absolute before:-top-1 before:right-0 before:left-0 before:h-1 before:content-[""]',
+        'absolute end-0 top-full z-50 mt-1 w-64 rounded-xl border border-neutral-200 bg-white py-1 shadow-lg',
+        'before:absolute before:-top-1 before:inset-x-0 before:h-1 before:content-[""]',
         'dark:border-neutral-700 dark:bg-neutral-900',
       )}
     >
@@ -111,7 +112,7 @@ export function UserMenuDropdown({ open, onClose, onSignOut }: UserMenuDropdownP
                 role="menuitem"
                 onClick={() => handleSelect(item)}
                 className={clsx(
-                  'flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-medium transition-colors',
+                  'flex w-full items-center gap-2.5 px-3 py-2.5 text-start text-sm font-medium transition-colors',
                   isDestructive
                     ? 'text-error-600 hover:bg-error-50 dark:text-error-400 dark:hover:bg-error-950/40'
                     : 'text-neutral-800 hover:bg-neutral-50 dark:text-neutral-100 dark:hover:bg-neutral-800/80',
@@ -129,7 +130,7 @@ export function UserMenuDropdown({ open, onClose, onSignOut }: UserMenuDropdownP
                 </span>
                 <span className="min-w-0 flex-1">{item.label}</span>
                 {item.kind === 'link' ? (
-                  <ChevronRight className="h-3.5 w-3.5 shrink-0 text-neutral-400" />
+                  <DirectionalIcon icon={ChevronRight} className="h-3.5 w-3.5 shrink-0 text-neutral-400" />
                 ) : null}
               </button>
             </li>

@@ -35,6 +35,10 @@ html {
   font-variation-settings: "wdth" 100;
 }
 
+html[dir="rtl"] {
+  font-family: "Noto Sans Arabic", "Instrument Sans", system-ui, sans-serif;
+}
+
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;
@@ -649,4 +653,49 @@ html.app-viewport-lock #root {
 @keyframes modalIn {
   from { opacity: 0; transform: scale(0.96) translateY(6px); }
   to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+/* RTL layout overrides for marketing decorative positioning */
+html[dir="rtl"] .marketing-bento-watermark {
+  right: auto;
+  left: -0.25rem;
+}
+
+html[dir="rtl"] .marketing-feature-float--tl {
+  left: auto;
+  right: 0.5rem;
+}
+
+html[dir="rtl"] .marketing-feature-float--tr {
+  right: auto;
+  left: 0.5rem;
+}
+
+html[dir="rtl"] .marketing-feature-float--bl {
+  left: auto;
+  right: 1rem;
+}
+
+html[dir="rtl"] .marketing-feature-float--br {
+  right: auto;
+  left: 0.5rem;
+}
+
+html[dir="rtl"] .marketing-faq-question {
+  text-align: start;
+}
+
+html[dir="rtl"] .marketing-feature-log-row {
+  animation-name: marketing-log-in-rtl;
+}
+
+@keyframes marketing-log-in-rtl {
+  from {
+    opacity: 0;
+    transform: translateX(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }

@@ -76,7 +76,7 @@ export function SearchableSelect({
       {label ? (
         <label className="text-sm font-medium text-neutral-700 dark:text-neutral-300">
           {label}
-          {required ? <span className="text-error-500 ml-0.5">*</span> : null}
+          {required ? <span className="text-error-500 ms-0.5">*</span> : null}
         </label>
       ) : null}
 
@@ -87,7 +87,7 @@ export function SearchableSelect({
         aria-controls={listId}
         onClick={() => setOpen(o => !o)}
         className={clsx(
-          'flex w-full items-center justify-between gap-2 rounded-lg border px-3 py-2 text-sm text-left transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent',
+          'flex w-full items-center justify-between gap-2 rounded-lg border px-3 py-2 text-sm text-start transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent',
           error
             ? 'border-error-500 bg-error-50 dark:bg-error-950/40'
             : 'border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 hover:border-neutral-300 dark:hover:border-neutral-600',
@@ -102,18 +102,18 @@ export function SearchableSelect({
         <div
           id={listId}
           role="listbox"
-          className="absolute left-0 right-0 top-full z-50 mt-1 rounded-lg border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 shadow-lg overflow-hidden"
+          className="absolute inset-x-0 top-full z-50 mt-1 rounded-lg border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 shadow-lg overflow-hidden"
         >
           <div className="p-2 border-b border-neutral-100 dark:border-neutral-800">
             <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-neutral-400" />
+              <Search className="absolute start-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-neutral-400" />
               <input
                 ref={searchRef}
                 type="text"
                 value={query}
                 onChange={e => setQuery(e.target.value)}
                 placeholder={searchPlaceholder}
-                className="w-full rounded-md border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800 py-1.5 pl-8 pr-2 text-base md:text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                className="w-full rounded-md border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800 py-1.5 ps-8 pe-2 text-base md:text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
               />
             </div>
           </div>
@@ -132,7 +132,7 @@ export function SearchableSelect({
                         setOpen(false)
                       }}
                       className={clsx(
-                        'w-full px-3 py-2 text-left text-sm truncate transition-colors',
+                        'w-full px-3 py-2 text-start text-sm truncate transition-colors',
                         active
                           ? 'bg-teal-50 text-teal-800 dark:bg-teal-950/50 dark:text-teal-200'
                           : 'text-neutral-800 dark:text-neutral-100 hover:bg-neutral-50 dark:hover:bg-neutral-800',

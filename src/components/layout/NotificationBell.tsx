@@ -40,7 +40,7 @@ export function NotificationBell({ open, onOpen, onClose }: NotificationBellProp
           <BellOff className="h-5 w-5" />
         )}
         {badge ? (
-          <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-teal-600 px-1 text-[10px] font-bold leading-none text-white">
+          <span className="absolute -end-0.5 -top-0.5 flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-teal-600 px-1 text-[10px] font-bold leading-none text-white">
             {badge}
           </span>
         ) : null}

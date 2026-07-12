@@ -11,6 +11,7 @@ import {
   DEFAULT_LOCALE,
   LOCALE_STORAGE_KEY,
   isLocale,
+  localeDirection,
   type Locale,
 } from '../i18n/types'
 import { LocaleContext } from './localeContextInstance'
@@ -46,6 +47,7 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     document.documentElement.lang = locale
+    document.documentElement.dir = localeDirection(locale)
     let cancelled = false
     void loadTranslations(locale).then(translations => {
       if (!cancelled) setT(translations)
@@ -59,6 +61,7 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
     () => ({
       locale,
       setLocale,
+      dir: localeDirection(locale),
       t,
       auth: t.auth,
     }),

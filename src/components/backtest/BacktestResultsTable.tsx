@@ -56,14 +56,14 @@ export function BacktestResultsTable({ trades }: BacktestResultsTableProps) {
       <table className="w-full text-xs sm:text-sm">
         <thead className="text-neutral-500 bg-neutral-50 dark:bg-neutral-800/60 sticky top-0">
           <tr className="border-b border-neutral-200 dark:border-neutral-700">
-            <th className="text-left font-medium py-2.5 px-3 whitespace-nowrap">Time</th>
-            <th className="text-left font-medium py-2.5 px-2 whitespace-nowrap">Symbol</th>
-            <th className="text-left font-medium py-2.5 px-2 whitespace-nowrap">Side</th>
-            <th className="text-right font-medium py-2.5 px-2 whitespace-nowrap">SL</th>
-            <th className="text-left font-medium py-2.5 px-2 whitespace-nowrap">TP</th>
-            <th className="text-left font-medium py-2.5 px-2 whitespace-nowrap">Result</th>
-            <th className="text-right font-medium py-2.5 px-2 whitespace-nowrap">Pips</th>
-            <th className="text-right font-medium py-2.5 px-3 whitespace-nowrap">Duration</th>
+            <th className="text-start font-medium py-2.5 px-3 whitespace-nowrap">Time</th>
+            <th className="text-start font-medium py-2.5 px-2 whitespace-nowrap">Symbol</th>
+            <th className="text-start font-medium py-2.5 px-2 whitespace-nowrap">Side</th>
+            <th className="text-end font-medium py-2.5 px-2 whitespace-nowrap">SL</th>
+            <th className="text-start font-medium py-2.5 px-2 whitespace-nowrap">TP</th>
+            <th className="text-start font-medium py-2.5 px-2 whitespace-nowrap">Result</th>
+            <th className="text-end font-medium py-2.5 px-2 whitespace-nowrap">Pips</th>
+            <th className="text-end font-medium py-2.5 px-3 whitespace-nowrap">Duration</th>
           </tr>
         </thead>
         <tbody>
@@ -95,7 +95,7 @@ export function BacktestResultsTable({ trades }: BacktestResultsTableProps) {
                 >
                   {isBuy ? 'Buy' : 'Sell'}
                 </td>
-                <td className="py-2.5 px-2 text-right tabular-nums text-neutral-700 dark:text-neutral-300">
+                <td className="py-2.5 px-2 text-end tabular-nums text-neutral-700 dark:text-neutral-300">
                   {trade.sl != null ? formatEntryPrice(trade.sl) : '—'}
                 </td>
                 <td className="py-2.5 px-2 tabular-nums text-neutral-700 dark:text-neutral-300 max-w-[10rem] truncate" title={formatTpLevels(trade.tp_levels)}>
@@ -104,10 +104,10 @@ export function BacktestResultsTable({ trades }: BacktestResultsTableProps) {
                 <td className="py-2.5 px-2 text-neutral-700 dark:text-neutral-300 whitespace-nowrap">
                   {outcomeLabel}
                 </td>
-                <td className={clsx('py-2.5 px-2 text-right tabular-nums font-semibold', pipClass)}>
+                <td className={clsx('py-2.5 px-2 text-end tabular-nums font-semibold', pipClass)}>
                   {formatPipValue(pips)}
                 </td>
-                <td className="py-2.5 px-3 text-right tabular-nums text-neutral-600 dark:text-neutral-400 whitespace-nowrap">
+                <td className="py-2.5 px-3 text-end tabular-nums text-neutral-600 dark:text-neutral-400 whitespace-nowrap">
                   {formatDurationMs(durationMs)}
                 </td>
               </tr>

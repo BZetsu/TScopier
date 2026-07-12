@@ -83,8 +83,8 @@ export function AppShell() {
 
       <aside
         className={clsx(
-          'fixed inset-y-0 left-0 z-50 flex h-full w-64 max-w-[85vw] flex-col overflow-hidden border-r border-neutral-100 bg-white transition-transform duration-200 ease-out dark:border-neutral-800 dark:bg-neutral-900',
-          mobileNavOpen ? 'translate-x-0' : '-translate-x-full',
+          'fixed inset-y-0 left-0 z-50 flex h-full w-64 max-w-[85vw] flex-col overflow-hidden border-e border-neutral-100 bg-white transition-transform duration-200 ease-out dark:border-neutral-800 dark:bg-neutral-900 rtl:left-auto rtl:right-0',
+          mobileNavOpen ? 'translate-x-0' : 'max-lg:-translate-x-full max-lg:rtl:translate-x-full',
           'lg:sticky lg:top-0 lg:z-30 lg:max-w-none lg:translate-x-0',
         )}
       >

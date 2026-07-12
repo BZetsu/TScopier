@@ -10,6 +10,7 @@ import {
   RefreshCw,
 } from 'lucide-react'
 import clsx from 'clsx'
+import { DirectionalIcon } from '../../components/ui/DirectionalIcon'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import { interpolate } from '../../i18n/interpolate'
@@ -410,9 +411,9 @@ export function Backtest() {
             disabled={(isBusy && !historyOpen) || loadingHistoryRun}
           >
             {loadingHistoryRun ? (
-              <Loader2 className="w-4 h-4 animate-spin mr-2" />
+              <Loader2 className="w-4 h-4 animate-spin me-2" />
             ) : (
-              <History className="w-4 h-4 mr-2" />
+              <History className="w-4 h-4 me-2" />
             )}
             {bt.history}
           </Button>
@@ -488,14 +489,14 @@ export function Backtest() {
           <Button className="w-full" onClick={() => void profileSignals()} disabled={!canProfile}>
             {profiling ? (
               <>
-                <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                <Loader2 className="w-4 h-4 animate-spin me-2" />
                 {profileProgress.message || bt.pullingSignals}
               </>
             ) : (
               <>
-                <RefreshCw className="w-4 h-4 mr-2" />
+                <RefreshCw className="w-4 h-4 me-2" />
                 {bt.pullProfileSignals}
-                <ArrowRight className="w-4 h-4 ml-2 opacity-70" />
+                <DirectionalIcon icon={ArrowRight} className="w-4 h-4 ms-2 opacity-70" />
               </>
             )}
           </Button>
@@ -532,7 +533,7 @@ export function Backtest() {
               onClick={() => setStep('configure')}
               className="text-sm text-neutral-500 hover:text-neutral-800 flex items-center gap-1 shrink-0"
             >
-              <ArrowLeft className="w-4 h-4" />
+              <DirectionalIcon icon={ArrowLeft} className="w-4 h-4" />
               {bt.back}
             </button>
           </div>
@@ -567,7 +568,7 @@ export function Backtest() {
                     )}
                   >
                     {symbol}
-                    <span className={clsx('ml-2 tabular-nums text-xs', selectedSymbol === symbol ? 'opacity-90' : 'opacity-60')}>
+                    <span className={clsx('ms-2 tabular-nums text-xs', selectedSymbol === symbol ? 'opacity-90' : 'opacity-60')}>
                       {count}
                     </span>
                   </button>
@@ -580,7 +581,7 @@ export function Backtest() {
             <div className="space-y-3 rounded-xl border border-teal-200 dark:border-teal-900 bg-teal-50/50 dark:bg-teal-950/20 p-4">
               <p className="text-sm text-teal-800 dark:text-teal-200">{bt.resultReady}</p>
               <Button className="w-full" onClick={showResults}>
-                <BarChart3 className="w-4 h-4 mr-2" />
+                <BarChart3 className="w-4 h-4 me-2" />
                 {bt.seeBacktestResult}
               </Button>
             </div>
@@ -601,7 +602,7 @@ export function Backtest() {
             </div>
           ) : (
             <Button className="w-full" onClick={() => void startBacktest()} disabled={!canBacktest}>
-              <Crosshair className="w-4 h-4 mr-2" />
+              <Crosshair className="w-4 h-4 me-2" />
               {bt.runBacktest}{selectedSymbol ? ` · ${selectedSymbol}` : ''}
             </Button>
           )}
@@ -628,7 +629,7 @@ export function Backtest() {
               }}
               className="text-sm text-neutral-500 hover:text-neutral-800 flex items-center gap-1"
             >
-              <ArrowLeft className="w-4 h-4" />
+              <DirectionalIcon icon={ArrowLeft} className="w-4 h-4" />
               {bt.newRun}
             </button>
           </div>

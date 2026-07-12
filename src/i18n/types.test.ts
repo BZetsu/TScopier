@@ -42,6 +42,14 @@ test('filterLocales: matches native name, English exonym, and code', () => {
   const russian = filterLocales('рус')
   assert.equal(russian.length, 1)
   assert.equal(russian[0]?.code, 'ru')
+
+  const arabic = filterLocales('arabic')
+  assert.equal(arabic.length, 1)
+  assert.equal(arabic[0]?.code, 'ar')
+
+  const arabicNative = filterLocales('العربية')
+  assert.equal(arabicNative.length, 1)
+  assert.equal(arabicNative[0]?.code, 'ar')
 })
 
 test('filterLocales: no match returns empty list', () => {

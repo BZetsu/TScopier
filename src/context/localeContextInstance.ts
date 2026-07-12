@@ -5,6 +5,7 @@ import type { Locale } from '../i18n/types'
 export interface LocaleContextValue {
   locale: Locale
   setLocale: (locale: Locale) => void
+  dir: 'rtl' | 'ltr'
   t: Translations
   /** @deprecated Use `t.auth` */
   auth: Translations['auth']

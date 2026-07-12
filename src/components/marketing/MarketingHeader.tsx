@@ -157,7 +157,7 @@ export function MarketingHeader() {
             ))}
           </nav>
 
-          <div className="ml-auto flex items-center gap-0.5 sm:gap-1">
+          <div className="ms-auto flex items-center gap-0.5 sm:gap-1">
             <LanguageSwitcher />
             <ThemeToggle />
             <MarketingAuthCta variant="header" />

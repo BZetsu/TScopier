@@ -2108,13 +2108,13 @@ export function AccountConfigPage() {
                     {bl.accountSearchLabel}
                   </label>
                   <div className="relative mt-1.5">
-                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+                    <Search className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
                     <input
                       type="search"
                       value={brokerSearchQuery}
                       onChange={e => setBrokerSearchQuery(e.target.value)}
                       placeholder={bl.accountSearchPlaceholder}
-                      className="w-full rounded-lg border border-neutral-200 bg-white py-2 pl-9 pr-3 text-sm text-neutral-900 placeholder:text-neutral-400 hover:border-neutral-300 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-50"
+                      className="w-full rounded-lg border border-neutral-200 bg-white py-2 ps-9 pe-3 text-sm text-neutral-900 placeholder:text-neutral-400 hover:border-neutral-300 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-50"
                     />
                   </div>
                 </div>
@@ -2225,7 +2225,7 @@ export function AccountConfigPage() {
                       onClick={e => e.stopPropagation()}
                       onKeyDown={e => e.stopPropagation()}
                     >
-                      <div className="flex items-center gap-2 pr-1 border-r border-neutral-200 dark:border-neutral-700 mr-1">
+                      <div className="flex items-center gap-2 pe-1 border-e border-neutral-200 dark:border-neutral-700 me-1">
                         <span className="text-xs font-medium text-neutral-500 dark:text-neutral-400 hidden sm:inline">
                           {bl.copyTrades}
                         </span>
@@ -2279,27 +2279,27 @@ export function AccountConfigPage() {
                           {formatLinkedAccountTypeLabel(accountType, accountTypeLabelsFromBrokerList(bl))}
                         </span>
                       }
-                      className="border-l border-neutral-100 dark:border-neutral-800 max-lg:border-t-0"
+                      className="border-s border-neutral-100 dark:border-neutral-800 max-lg:border-t-0"
                     />
                     <AccountDetailCell
                       label={bl.detailServer}
                       value={broker.broker_server || '—'}
-                      className="border-l border-neutral-100 dark:border-neutral-800 max-lg:border-t-0"
+                      className="border-s border-neutral-100 dark:border-neutral-800 max-lg:border-t-0"
                     />
                     <AccountDetailCell
                       label={bl.detailSignalChannels}
                       value={channelsLabel}
-                      className="col-span-2 border-t border-neutral-100 dark:border-neutral-800 lg:col-span-1 lg:border-t-0 lg:border-l"
+                      className="col-span-2 border-t border-neutral-100 dark:border-neutral-800 lg:col-span-1 lg:border-t-0 lg:border-s"
                     />
                     <AccountDetailCell
                       label={bl.detailBalance}
                       value={formatBrokerMoney(resolveBrokerTotalBalance(broker), broker.last_currency)}
-                      className="border-t border-l border-neutral-100 dark:border-neutral-800 lg:border-t-0"
+                      className="border-t border-s border-neutral-100 dark:border-neutral-800 lg:border-t-0"
                     />
                     <AccountDetailCell
                       label={bl.detailEquity}
                       value={formatBrokerMoney(broker.last_equity, broker.last_currency)}
-                      className="border-t border-neutral-100 dark:border-neutral-800 lg:border-l lg:border-t-0"
+                      className="border-t border-neutral-100 dark:border-neutral-800 lg:border-s lg:border-t-0"
                     />
                   </div>
                 </Card>
@@ -2446,7 +2446,7 @@ export function AccountConfigPage() {
 
             <div className="flex flex-col sm:flex-row flex-1 min-h-0 min-w-0">
               {/* Channel sidebar */}
-              <nav className="shrink-0 flex sm:flex-col w-full sm:w-56 border-b sm:border-b-0 sm:border-r border-neutral-100 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/50 p-2 sm:p-3 gap-2 sm:gap-1 overflow-x-auto sm:overflow-y-auto overscroll-x-contain">
+              <nav className="shrink-0 flex sm:flex-col w-full sm:w-56 border-b sm:border-b-0 sm:border-e border-neutral-100 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/50 p-2 sm:p-3 gap-2 sm:gap-1 overflow-x-auto sm:overflow-y-auto overscroll-x-contain">
                 <div className="flex items-center justify-between gap-2 px-2 shrink-0 sm:w-full">
                   <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
                     {cm.channelsSidebar}
@@ -2506,7 +2506,7 @@ export function AccountConfigPage() {
                             type="button"
                             onClick={() => selectConfigureChannel(channel.id)}
                       className={clsx(
-                              'flex-1 min-w-0 flex items-center gap-2 text-left px-2 py-2 rounded-lg text-sm transition-colors min-h-[44px] sm:min-h-0',
+                              'flex-1 min-w-0 flex items-center gap-2 text-start px-2 py-2 rounded-lg text-sm transition-colors min-h-[44px] sm:min-h-0',
                               selected
                                 ? 'bg-white dark:bg-neutral-900 text-primary-700 shadow-sm border border-primary-100 dark:border-primary-900/50'
                                 : linked
@@ -3309,7 +3309,7 @@ export function AccountConfigPage() {
                                           type="button"
                                           onClick={() => setManual({ move_sl_to_entry_after_mode: m.id })}
                                           className={clsx(
-                                            'rounded-lg border px-2.5 py-2 text-left text-sm transition-colors',
+                                            'rounded-lg border px-2.5 py-2 text-start text-sm transition-colors',
                                             triggerMode === m.id
                                               ? 'border-primary-500 bg-primary-50 dark:bg-teal-950/50 text-primary-900 dark:text-teal-300'
                                               : 'border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300',
@@ -3399,7 +3399,7 @@ export function AccountConfigPage() {
                                         type="button"
                                         onClick={() => setManual({ move_sl_to_entry_type: 'sl_only' })}
                                         className={clsx(
-                                          'rounded-lg border px-3 py-2.5 text-left text-sm transition-colors',
+                                          'rounded-lg border px-3 py-2.5 text-start text-sm transition-colors',
                                           beType === 'sl_only'
                                             ? 'border-primary-500 bg-primary-50 dark:bg-teal-950/50 text-primary-900 dark:text-teal-300'
                                             : 'border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 hover:border-neutral-300 dark:hover:border-neutral-600',
@@ -3414,7 +3414,7 @@ export function AccountConfigPage() {
                                         type="button"
                                         onClick={() => setManual({ move_sl_to_entry_type: 'sl_and_close_half' })}
                                         className={clsx(
-                                          'rounded-lg border px-3 py-2.5 text-left text-sm transition-colors',
+                                          'rounded-lg border px-3 py-2.5 text-start text-sm transition-colors',
                                           beType === 'sl_and_close_half'
                                             ? 'border-primary-500 bg-primary-50 dark:bg-teal-950/50 text-primary-900 dark:text-teal-300'
                                             : 'border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 hover:border-neutral-300 dark:hover:border-neutral-600',
@@ -3744,7 +3744,7 @@ export function AccountConfigPage() {
                     </div>
 
             <div className="shrink-0 px-4 sm:px-6 py-3 sm:py-4 border-t border-neutral-100 dark:border-neutral-800 flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-2 sm:gap-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:pb-4">
-              <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 sm:mr-auto text-center sm:text-left">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 sm:ms-auto text-center sm:text-start">
                 {configSavedAt != null && (
                   <span className="text-xs text-success-600 transition-opacity">{cm.saved}</span>
                 )}
@@ -3755,7 +3755,7 @@ export function AccountConfigPage() {
               <Button variant="ghost" className="w-full sm:w-auto min-h-[44px]" onClick={() => closeConfigureModal()} disabled={configSaving || presetSaving}>{cm.cancel}</Button>
               {selectedChannelLinked ? (
                 <label className="w-full sm:w-auto min-h-[44px] inline-flex items-stretch rounded-lg border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 shadow-sm overflow-hidden has-[:disabled]:opacity-50">
-                  <span className="inline-flex items-center px-3 text-sm font-medium text-neutral-700 dark:text-neutral-200 border-r border-neutral-200 dark:border-neutral-700 whitespace-nowrap">
+                  <span className="inline-flex items-center px-3 text-sm font-medium text-neutral-700 dark:text-neutral-200 border-e border-neutral-200 dark:border-neutral-700 whitespace-nowrap">
                     {cm.applyPreset}
                   </span>
                   <select
@@ -3790,7 +3790,7 @@ export function AccountConfigPage() {
                   disabled={configSaving || channelConnecting}
                   onClick={openSavePresetModal}
                 >
-                  <Bookmark className="w-4 h-4 mr-1.5" />
+                  <Bookmark className="w-4 h-4 me-1.5" />
                   {cm.saveAsPreset}
                 </Button>
               ) : null}

@@ -1,0 +1,202 @@
+import { configureModalAr } from '../configureModal/ar'
+import { statusModalEn } from './statusModal'
+import type { AccountConfigBundleTranslations } from './types'
+
+export const accountConfigAr: AccountConfigBundleTranslations = {
+  accountConfig: {
+    brokersEmptyTitle: 'لم يُربط أي حساب بعد',
+    brokersEmptySubtitle: 'أضف حساب التداول الخاص بك للبدء',
+    addAccount: {
+      title: 'إضافة حساب تداول',
+      subtitle: 'اختر منصة التداول المفضلة لديك للبدء',
+      footerHint: 'منصات إضافية قريبًا',
+      comingSoonBadge: 'قريبًا',
+      comingSoonPlatform: 'تكامل {platform} سيكون متاحًا قريبًا. اختر MT4 أو MT5 في الوقت الحالي.',
+    },
+    connectForm: {
+      addAccountButton: 'إضافة حساب',
+      title: 'ربط حساب {platform} جديد',
+      accountLabel: 'تسمية الحساب (اختياري)',
+      accountLabelPlaceholder: 'مثل Live {platform}',
+      platformLabel: 'المنصة',
+      platformMt5: 'MetaTrader 5 (MT5)',
+      platformMt4: 'MetaTrader 4 (MT4)',
+      brokerServerLabel: 'خادم الوسيط',
+      brokerServerHint:
+        'الصق اسم الخادم الدقيق من طرفية MetaTrader (ملف → تسجيل الدخول إلى حساب التداول).',
+      brokerServerPlaceholder: 'مثل ICMarketsSC-MT5',
+      brokerCompanySearchPlaceholder: 'البحث بشركة الوسيط أو اسم الخادم',
+      brokerCompanySearchServersHeading: 'الخوادم',
+      brokerCompanySearchCompaniesHeading: 'الوسطاء',
+      brokerCompanySearchEmpty: 'ابحث عن شركة وسيط أو اسم خادم',
+      brokerCompanySearchMinChars: 'أدخل 4 أحرف على الأقل للبحث',
+      brokerCompanySearchNoResults: 'لا تطابقات في دليل الوسطاء لدينا.',
+      brokerCompanySearchUseQuery: 'استخدام «{query}» كاسم خادم',
+      brokerCompanySearchLoading: 'جارٍ البحث عن الوسطاء…',
+      brokerCompanySearchError: 'فشل البحث عن الوسطاء. حاول مرة أخرى أو أدخل الخادم يدويًا.',
+      brokerServerPickerTitle: 'الخادم',
+      brokerServerSelectPrompt: 'ابحث عن شركة وسيطك',
+      brokerServerManualToggle: 'لا تجد وسيطك؟ أدخل الخادم يدويًا',
+      brokerServerManualLabel: 'اسم الخادم',
+      brokerServerManualHint: 'استخدم اسم الخادم الدقيق من طرفية MT.',
+      mtLoginLabel: 'تسجيل دخول MT',
+      mtLoginPlaceholder: 'رقم حساب التداول',
+      passwordLabel: 'كلمة المرور',
+      passwordPlaceholder: 'كلمة مرور حساب التداول',
+      passwordHint: '',
+      rememberPasswordLabel: 'تذكّر كلمة المرور لإعادة الاتصال التلقائي',
+      rememberPasswordHint:
+        'يُشفّر كلمة مرور MT على خوادمنا حتى يتمكن TScopier من استعادة الجلسة دون إعادة السؤال. يمكنك حذفها في أي وقت.',
+      connectButton: 'ربط الحساب',
+      connectingTitle: 'جارٍ ربط الوسيط',
+      connectingStepLinking: 'جارٍ ربط حساب {platform}…',
+      connectingStepTerminal: 'جارٍ تشغيل طرفية {platform} — يستغرق عادة 10–30 ثانية.',
+      connectingStepSlow: 'لا يزال قيد التنفيذ… قد تستغرق الإعداد الأولي عدة دقائق.',
+      validationRequired: 'رقم الحساب وكلمة المرور والخادم مطلوبة',
+      connectFailed: 'تعذّر ربط الحساب',
+      addMoreButton: 'إضافة المزيد',
+      removeRowAria: 'إزالة صف الحساب',
+      connectMultipleButton: 'ربط {count} حسابات',
+      uploadAccountsButton: 'رفع الحسابات',
+      accountRowTitle: 'الحساب {index}',
+    },
+    bulkConnect: {
+      title: 'رفع حسابات MT4/MT5',
+      securityNote:
+        'ملف CSV يحتوي على كلمات مرور التداول. يُعالَج فقط في متصفحك ولا يُرسل أبدًا كملف.',
+      downloadTemplate: 'تنزيل قالب CSV',
+      uploadCsv: 'رفع CSV',
+      uploadHint: 'أسقط ملف CSV هنا أو انقر للتصفح. عمود المنصة (MT4 أو MT5) في كل صف — الافتراضي MT5 إن غاب.',
+      previewTitle: 'معاينة',
+      colLabel: 'التسمية',
+      colPlatform: 'المنصة',
+      colServer: 'الخادم',
+      colLogin: 'تسجيل الدخول',
+      colPassword: 'كلمة المرور',
+      colStatus: 'الحالة',
+      parseErrorLine: 'السطر {line}: {message}',
+      noValidRows: 'لم يُعثر على حسابات صالحة في ملف CSV.',
+      connectCount: 'ربط {count} حسابات',
+      connectingTitle: 'جارٍ ربط الحسابات…',
+      statusQueued: 'في الانتظار',
+      statusLinking: 'جارٍ الربط…',
+      statusLinked: 'مربوط',
+      statusFailed: 'خطأ',
+      statusSkippedDuplicate: 'مكرر',
+      statusSkippedLimit: 'تم بلوغ الحد',
+      statusSkippedInvalid: 'غير صالح',
+      summaryTitle: 'الحسابات المربوطة',
+      summaryBody: '{linked} مربوط، {failed} فشل، {skipped} متخطّى.',
+      summaryFailedTitle: 'حسابات بها أخطاء',
+      dismiss: 'إغلاق',
+      viewBrokers: 'عرض الوسطاء',
+    },
+    brokerList: {
+      statusPaused: 'متوقف',
+      statusConnected: 'متصل',
+      statusConnecting: 'جارٍ الاتصال',
+      statusRecovering: 'إعادة الاتصال',
+      statusError: 'خطأ',
+      statusDisconnected: 'غير متصل',
+      statusHealthy: 'سليم',
+      statusUnhealthy: 'غير سليم',
+      statusHealthChecking: 'جارٍ التحقق…',
+      statusHealthView: 'عرض حالة صحة الوسيط',
+      copyTrades: 'نسخ الصفقات',
+      reconnect: 'إعادة الاتصال',
+      reconnectAll: 'إعادة ربط الكل',
+      configure: 'إعداد',
+      removeAria: 'إزالة {label}',
+      detailLogin: 'تسجيل الدخول',
+      detailAccountType: 'نوع الحساب',
+      accountTypeDemo: 'تجريبي',
+      accountTypeLive: 'حقيقي',
+      accountTypePropFirm: 'شركة prop',
+      detailServer: 'الخادم',
+      detailSignalChannels: 'قنوات الإشارات',
+      detailBalance: 'الرصيد',
+      detailEquity: 'Equity',
+      channelsNoneSelected: 'لم يُحدد شيء',
+      channelsEmptySaveWarning:
+        'لم تُحدد قنوات إشارات — لن ينسخ حساب الوسيط هذا أي إشارات من Telegram. الحفظ على أي حال؟',
+      channelsSaveChannelListNotReady:
+        'قائمة القنوات لا تزال تُحمَّل. انتظر قليلًا وحاول مرة أخرى.',
+      channelsSaveLinkedChannelsInvalid:
+        'تعذّر حفظ القنوات المرتبطة. حدّث الصفحة وحاول مرة أخرى.',
+      channelsSignalChannel: 'قناة الإشارات',
+      channelsAll: 'جميع قنوات الإشارات',
+      relinkOne:
+        'يستخدم هذا الحساب تنسيق ربط قديم. أزله وأعد الربط باستخدام تسجيل دخول MT وكلمة المرور.',
+      relinkMany:
+        '{count} حسابات تستخدم تنسيق ربط قديم. أزل كلًا منها وأعد الربط باستخدام تسجيل دخول MT وكلمة المرور.',
+      reconnectDroppedOne:
+        'انتهت جلسة التداول على خادم التداول. استخدم إعادة الاتصال وأدخل كلمة مرور MT الحالية.',
+      reconnectDroppedMany:
+        '{count} حسابات فقدت الاتصال بالوسيط ومُعلَّمة كغير متصلة. استخدم إعادة الاتصال لكل حساب.',
+      connectErrorWrongPassword:
+        'كلمة مرور حساب MT غير صحيحة. تحقق من كلمة المرور في طرفية MetaTrader ثم حاول مرة أخرى.',
+      connectErrorWrongLogin:
+        'رقم تسجيل دخول MT لا يطابق خادم الوسيط هذا. تحقق من رقم الحساب في MetaTrader.',
+      connectErrorWrongServer:
+        'اسم خادم الوسيط غير صحيح أو لا يطابق هذا التسجيل. تحقق من اسم الخادم الدقيق في MetaTrader.',
+      connectErrorInvestorPassword:
+        'استُخدمت كلمة مرور المستثمر (للقراءة فقط). اربط باستخدام كلمة مرور التداول الرئيسية من MetaTrader.',
+      connectErrorAccountDisabled:
+        'حساب MT هذا معطّل أو محظور لدى الوسيط. تواصل مع الوسيط أو سجّل الدخول عبر MetaTrader أولًا.',
+      connectErrorCredentialsRejected:
+        'تعذّر تسجيل الدخول بهذه بيانات MT. تحقق من رقم الحساب وكلمة مرور التداول واسم الخادم الدقيق من MetaTrader.',
+      connectErrorTerminalNotReady:
+        'لم يُحمَّل الحساب من الوسيط بعد. إن كنت قد اتصلت للتو، انتظر دقيقة وحاول مرة أخرى. وإلا تحقق من تطابق تسجيل دخول MT وكلمة المرور والخادم مع MetaTrader.',
+      connectErrorSessionExpired:
+        'انتهت جلسة التداول على خادم التداول. استخدم إعادة الاتصال وأدخل كلمة مرور MT الحالية.',
+      connectErrorThrottled:
+        'محاولات اتصال كثيرة في وقت قصير. انتظر حوالي دقيقة وحاول مرة أخرى.',
+      connectErrorUnknown:
+        'فشل الاتصال بالوسيط. تحقق من بيانات تسجيل دخول MT أو استخدم إعادة الاتصال إن كان الحساب مربوطًا سابقًا.',
+      reconnectFailed: 'تعذّرت إعادة ربط الوسيط',
+      reconnectPasswordTitle: 'انتهت جلسة الوسيط',
+      reconnectPasswordBody:
+        'انتهت جلسة الوسيط على خادم التداول. أدخل كلمة مرور حساب MT لإعادة الاتصال.',
+      reconnectPasswordLabel: 'كلمة مرور حساب MT',
+      reconnectPasswordHint:
+        'تُرسل فقط إلى خوادم MT. فعّل خيار التذكّر أدناه لحفظها مشفّرة لإعادة الاتصال التلقائي.',
+      reconnectPasswordPlaceholder: 'كلمة مرور حساب التداول',
+      rememberPasswordLabel: 'تذكّر كلمة المرور لإعادة الاتصال التلقائي',
+      rememberPasswordHint:
+        'يخزّن نسخة مشفّرة حتى يتمكن TScopier من إعادة الاتصال دون إعادة السؤال. يمكنك حذفها في إعداد الحساب.',
+      clearStoredCredentials: 'حذف كلمة المرور المحفوظة',
+      storedCredentialsActive: 'إعادة الاتصال التلقائي مفعّل',
+      deleteFailed: 'تعذّر حذف الوسيط',
+      deleteSessionExpired:
+        'انتهت جلسة تسجيل الدخول. حدّث الصفحة وحاول مرة أخرى أو سجّل الخروج ثم الدخول مجددًا.',
+      duplicateMtLogin:
+        'تسجيل دخول MT هذا مرتبط بالفعل بحساب آخر هنا. أزله أولًا أو استخدم إعادة الاتصال — لا يمكن ربط نفس التسجيل مرتين.',
+      platformServerMismatchMt4:
+        'يبدو أن اسم الخادم هذا لـ MT4 لكنك اخترت MT5. قد لا يعمل النسخ وإدارة الصفقات بشكل صحيح. الربط كـ MT4؟',
+      platformServerMismatchMt5:
+        'يبدو أن اسم الخادم هذا لـ MT5 لكنك اخترت MT4. قد لا يعمل النسخ وإدارة الصفقات بشكل صحيح. الربط كـ MT5؟',
+      deleteTitle: 'حذف حساب التداول؟',
+      deleteBody: 'سيُفصل {label} عن الوسيط والناسخ. لا يمكن التراجع عن هذا الإجراء.',
+      deleteConfirm: 'فصل',
+      connectedAccountsHeading: 'الحسابات المتصلة',
+      connectedAccountsUnlimited: 'بلا حد',
+      brokerFilterLabel: 'الوسيط',
+      brokerFilterAll: 'جميع الوسطاء',
+      brokerFilterNoMatch: 'لا حساب يطابق هذا الوسيط.',
+      accountSearchLabel: 'البحث في الحسابات',
+      accountSearchPlaceholder: 'التسمية، تسجيل الدخول، الخادم، الوسيط…',
+      accountSearchNoMatch: 'لا حساب يطابق البحث.',
+    },
+    brokerConnectedSuccess: {
+      title: 'تم ربط الوسيط',
+      titlePending: 'تم ربط الوسيط',
+      body: '{account} متصل وجاهز لنسخ الإشارات.',
+      bodyPending:
+        '{account} مربوط. طرفية MT5 تُشغَّل — يمكنك إعداد القنوات أثناء الاتصال.',
+      addChannel: 'إضافة قناة',
+      configure: 'إعداد',
+    },
+    configureModal: configureModalAr,
+    statusModal: statusModalEn,
+  },
+}

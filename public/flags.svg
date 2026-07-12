@@ -41,4 +41,11 @@
     <rect width="3" height="2" fill="#fff"/>
     <circle cx="1.5" cy="1" r=".55" fill="#BC002D"/>
   </symbol>
+  <symbol id="sa" viewBox="0 0 3 2">
+    <rect width="3" height="2" fill="#006C35"/>
+    <rect x="0.35" y="0.72" width="1.75" height="0.11" fill="#fff" rx="0.02"/>
+    <rect x="0.35" y="0.95" width="1.75" height="0.11" fill="#fff" rx="0.02"/>
+    <rect x="0.35" y="1.18" width="1.75" height="0.11" fill="#fff" rx="0.02"/>
+    <path fill="#fff" d="M2.15 0.55v0.9l0.55-0.45z"/>
+  </symbol>
 </svg>

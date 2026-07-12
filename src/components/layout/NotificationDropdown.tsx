@@ -72,8 +72,8 @@ export function NotificationDropdown({ open, onClose }: NotificationDropdownProp
       role="menu"
       aria-label={nn.title}
       className={clsx(
-        'absolute right-0 top-full z-50 mt-1 w-[min(22rem,calc(100vw-1.5rem))] rounded-xl border border-neutral-200 bg-white shadow-lg',
-        'before:absolute before:-top-1 before:right-0 before:left-0 before:h-1 before:content-[""]',
+        'absolute end-0 top-full z-50 mt-1 w-[min(22rem,calc(100vw-1.5rem))] rounded-xl border border-neutral-200 bg-white shadow-lg',
+        'before:absolute before:-top-1 before:inset-x-0 before:h-1 before:content-[""]',
         'dark:border-neutral-700 dark:bg-neutral-900',
       )}
     >
@@ -127,7 +127,7 @@ export function NotificationDropdown({ open, onClose }: NotificationDropdownProp
                               <p className="text-xs font-semibold uppercase tracking-wide text-neutral-700 dark:text-neutral-200">
                                 {item.title}
                                 {item.symbol ? (
-                                  <span className="ml-1.5 font-mono normal-case tracking-normal text-neutral-500 dark:text-neutral-400">
+                                  <span className="ms-1.5 font-mono normal-case tracking-normal text-neutral-500 dark:text-neutral-400">
                                     {item.symbol}
                                   </span>
                                 ) : null}

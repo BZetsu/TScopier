@@ -44,7 +44,7 @@ type DatePreset = 'all' | 'today' | '7d' | '30d' | 'custom'
 const DESKTOP_TD = 'px-4 py-3.5 align-middle border-b border-neutral-100 dark:border-neutral-800'
 
 const DESKTOP_TH =
-  'px-4 py-3 text-left text-xs font-semibold text-neutral-500 dark:text-neutral-400 uppercase tracking-wide border-b border-neutral-100 dark:border-neutral-800 bg-white dark:bg-neutral-900'
+  'px-4 py-3 text-start text-xs font-semibold text-neutral-500 dark:text-neutral-400 uppercase tracking-wide border-b border-neutral-100 dark:border-neutral-800 bg-white dark:bg-neutral-900'
 
 const OPEN_ROW_BG = 'bg-teal-50 dark:bg-teal-950/40'
 const OPEN_ROW_HOVER = 'group-hover:bg-teal-100 dark:group-hover:bg-teal-900/50'
@@ -531,7 +531,7 @@ export function SignalHistoryPage() {
                 <th className={DESKTOP_TH}>{sh.colChannel}</th>
                 <th className={DESKTOP_TH}>{sh.colSignal}</th>
                 <th className={clsx(DESKTOP_TH, 'text-center')}>{sh.colStatus}</th>
-                <th className={clsx(DESKTOP_TH, 'text-right')}>{sh.colTime}</th>
+                <th className={clsx(DESKTOP_TH, 'text-end')}>{sh.colTime}</th>
               </tr>
             </thead>
             <tbody>

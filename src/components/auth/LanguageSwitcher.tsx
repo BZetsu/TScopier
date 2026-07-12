@@ -117,13 +117,13 @@ export function LanguageSwitcher({ className }: LanguageSwitcherProps) {
       {open ? (
         <div
           className={clsx(
-            'absolute right-0 top-full z-50 mt-1.5 w-[17rem] overflow-hidden rounded-xl border shadow-lg',
+            'absolute end-0 top-full z-50 mt-1.5 w-[17rem] overflow-hidden rounded-xl border shadow-lg',
             'border-neutral-200 bg-white dark:border-neutral-700 dark:bg-neutral-900',
           )}
         >
           <div className="border-b border-neutral-100 p-2 dark:border-neutral-800">
             <div className="relative">
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" aria-hidden />
+              <Search className="pointer-events-none absolute start-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" aria-hidden />
               <input
                 ref={inputRef}
                 type="search"
@@ -140,7 +140,7 @@ export function LanguageSwitcher({ className }: LanguageSwitcherProps) {
                 }}
                 onKeyDown={onInputKeyDown}
                 className={clsx(
-                  'w-full rounded-lg border py-2 pl-8 pr-3 text-sm',
+                  'w-full rounded-lg border py-2 ps-8 pe-3 text-sm',
                   'border-neutral-200 bg-neutral-50 text-neutral-900 placeholder:text-neutral-400',
                   'focus:border-transparent focus:outline-none focus:ring-2 focus:ring-primary-500',
                   'dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100',
@@ -177,7 +177,7 @@ export function LanguageSwitcher({ className }: LanguageSwitcherProps) {
                       onMouseEnter={() => setActiveIndex(idx)}
                       onClick={() => pick(opt.code)}
                       className={clsx(
-                        'flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm transition-colors',
+                        'flex w-full items-center gap-2.5 px-3 py-2 text-start text-sm transition-colors',
                         isActive || isSelected
                           ? 'bg-teal-50 text-teal-800 dark:bg-teal-950/50 dark:text-teal-200'
                           : 'text-neutral-700 hover:bg-neutral-50 dark:text-neutral-200 dark:hover:bg-neutral-800',
@@ -186,7 +186,7 @@ export function LanguageSwitcher({ className }: LanguageSwitcherProps) {
                       <LocaleFlag flagId={opt.flagId} className="h-3.5 w-[1.3125rem]" />
                       <span className="min-w-0 flex-1">
                         <span className="font-medium">{opt.label}</span>
-                        <span className="ml-1.5 text-xs text-neutral-400 dark:text-neutral-500">{opt.short}</span>
+                        <span className="ms-1.5 text-xs text-neutral-400 dark:text-neutral-500">{opt.short}</span>
                       </span>
                       {isSelected ? (
                         <Check className="h-4 w-4 shrink-0 text-teal-600 dark:text-teal-400" aria-hidden />

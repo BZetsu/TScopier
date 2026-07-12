@@ -3,6 +3,7 @@ import { authEn } from './en'
 import type { AuthTranslations } from './types'
 import { authEs } from './es'
 import { authFr } from './fr'
+import { authAr } from './ar'
 import { authJa } from './ja'
 import { authNl } from './nl'
 import { authPl } from './pl'
@@ -18,6 +19,7 @@ const byLocale: Record<Locale, AuthTranslations> = {
   sv: authSv,
   nl: authNl,
   ja: authJa,
+  ar: authAr,
 }
 
 export function getAuthTranslations(locale: Locale): AuthTranslations {

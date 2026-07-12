@@ -1,4 +1,4 @@
-export type Locale = 'en' | 'es' | 'fr' | 'pl' | 'ru' | 'sv' | 'nl' | 'ja'
+export type Locale = 'en' | 'es' | 'fr' | 'pl' | 'ru' | 'sv' | 'nl' | 'ja' | 'ar'
 
 export type LocaleOption = {
   code: Locale
@@ -10,7 +10,7 @@ export type LocaleOption = {
 }
 
 const LOCALE_CODES: readonly Locale[] = [
-  'en', 'es', 'fr', 'pl', 'ru', 'sv', 'nl', 'ja',
+  'en', 'es', 'fr', 'pl', 'ru', 'sv', 'nl', 'ja', 'ar',
 ] as const
 
 export function isLocale(value: string | null | undefined): value is Locale {
@@ -74,7 +74,24 @@ export const LOCALES: LocaleOption[] = [
     flagId: 'jp',
     searchText: 'japanese nihongo japan jap',
   },
+  {
+    code: 'ar',
+    label: 'العربية',
+    short: 'AR',
+    flagId: 'sa',
+    searchText: 'arabic arabic msa saudi arabia middle east',
+  },
 ]
+
+export const RTL_LOCALES: readonly Locale[] = ['ar']
+
+export function isRtlLocale(locale: Locale): boolean {
+  return RTL_LOCALES.includes(locale)
+}
+
+export function localeDirection(locale: Locale): 'rtl' | 'ltr' {
+  return isRtlLocale(locale) ? 'rtl' : 'ltr'
+}
 
 export const DEFAULT_LOCALE: Locale = 'en'
 

@@ -4,6 +4,7 @@ import { ChevronDown, PanelLeftClose, PanelLeftOpen, Menu, X, type LucideIcon } 
 import clsx from 'clsx'
 import { getAppRouteIcon } from '../../lib/appNavIcons'
 import { TscopierLogo } from '../ui/TscopierLogo'
+import { DirectionalIcon } from '../ui/DirectionalIcon'
 import { AppSearchDesktop, AppSearchMobileTrigger, AppSearchProvider } from './AppSearch'
 import { useAuth } from '../../context/AuthContext'
 import { useT } from '../../context/LocaleContext'
@@ -221,13 +222,13 @@ export function AppLayout() {
           />
           {showOpenIndicator && opts.collapsed ? (
             <span
-              className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-teal-500 ring-2 ring-white dark:ring-neutral-900"
+              className="absolute -end-0.5 -top-0.5 h-2 w-2 rounded-full bg-teal-500 ring-2 ring-white dark:ring-neutral-900"
               aria-hidden
             />
           ) : null}
           {showFireIndicator && opts.collapsed && !showOpenIndicator ? (
             <span
-              className="absolute -right-1 -top-1 text-[10px] leading-none"
+              className="absolute -end-1 -top-1 text-[10px] leading-none"
               aria-hidden
             >
               🔥
@@ -237,12 +238,12 @@ export function AppLayout() {
         <span className={clsx(opts.collapsed && 'lg:hidden')}>{label}</span>
         {showOpenIndicator && !opts.collapsed ? (
           <span
-            className="ml-auto h-2 w-2 shrink-0 rounded-full bg-teal-500"
+            className="ms-auto h-2 w-2 shrink-0 rounded-full bg-teal-500"
             aria-hidden
           />
         ) : null}
         {showFireIndicator && !opts.collapsed && !showOpenIndicator ? (
-          <span className="ml-auto shrink-0 text-sm leading-none" aria-hidden>
+          <span className="ms-auto shrink-0 text-sm leading-none" aria-hidden>
             🔥
           </span>
         ) : null}
@@ -289,7 +290,7 @@ export function AppLayout() {
                       openUpgrade('advanced')
                       opts.onNavigate?.()
                     }}
-                    className={clsx(navLinkClass(opts.collapsed, true)({ isActive: false }), 'w-full text-left')}
+                    className={clsx(navLinkClass(opts.collapsed, true)({ isActive: false }), 'w-full text-start')}
                   >
                     {renderNavItemContent(opts, {
                       icon: Icon,
@@ -343,9 +344,9 @@ export function AppLayout() {
 
       <aside
         className={clsx(
-          'fixed inset-y-0 left-0 z-50 flex h-full min-h-0 flex-col overflow-hidden border-r border-neutral-100 dark:border-neutral-800 bg-white dark:bg-neutral-900 transition-transform duration-200 ease-out',
+          'fixed inset-y-0 left-0 z-50 flex h-full min-h-0 flex-col overflow-hidden border-e border-neutral-100 dark:border-neutral-800 bg-white dark:bg-neutral-900 transition-transform duration-200 ease-out rtl:left-auto rtl:right-0',
           'w-64 max-w-[85vw]',
-          mobileNavOpen ? 'translate-x-0' : '-translate-x-full',
+          mobileNavOpen ? 'translate-x-0' : 'max-lg:-translate-x-full max-lg:rtl:translate-x-full',
           'lg:sticky lg:top-0 lg:z-30 lg:max-w-none lg:translate-x-0',
           isSidebarCollapsed ? 'lg:w-20' : 'lg:w-64',
         )}
@@ -428,14 +429,14 @@ export function AppLayout() {
             title={isSidebarCollapsed ? t.nav.expandSidebar : t.nav.collapseSidebar}
             className="hidden lg:block p-1.5 rounded-lg text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
           >
-            {isSidebarCollapsed ? <PanelLeftOpen className="w-5 h-5" /> : <PanelLeftClose className="w-5 h-5" />}
+            {isSidebarCollapsed ? <DirectionalIcon icon={PanelLeftOpen} className="w-5 h-5" /> : <DirectionalIcon icon={PanelLeftClose} className="w-5 h-5" />}
           </button>
 
           <AppSearchDesktop className="flex-1 max-w-md min-w-0" />
 
           <div className="flex-1 min-w-0 lg:hidden" />
 
-          <div className="relative z-40 flex shrink-0 items-center gap-1 sm:gap-2 lg:ml-auto">
+          <div className="relative z-40 flex shrink-0 items-center gap-1 sm:gap-2 lg:ms-auto">
             {hasActiveSubscription && effectivePlan === 'basic' ? (
               <button
                 type="button"
@@ -476,14 +477,14 @@ export function AppLayout() {
                 aria-expanded={userMenuOpen}
                 aria-label={t.nav.userMenu.menuLabel}
                 className={clsx(
-                  'flex items-center gap-2 rounded-lg pl-1 pr-2 min-h-[44px] transition-colors',
+                  'flex items-center gap-2 rounded-lg ps-1 pe-2 min-h-[44px] transition-colors',
                   userMenuOpen
                     ? 'bg-neutral-100 dark:bg-neutral-800'
                     : 'hover:bg-neutral-50 dark:hover:bg-neutral-800/60',
                 )}
               >
               <UserAvatar user={user} profile={profile} email={user?.email} size="sm" />
-              <div className="hidden md:block text-left">
+              <div className="hidden md:block text-start">
                 <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100 leading-tight truncate max-w-[8rem]">
                   {displayName}
                 </p>

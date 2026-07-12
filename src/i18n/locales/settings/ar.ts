@@ -1,0 +1,61 @@
+import type { SettingsBundleTranslations } from './types'
+
+export const settingsAr: SettingsBundleTranslations = {
+  settings: {
+    title: 'الإعدادات',
+    subtitle: 'أدر ملفك الشخصي وتفضيلاتك وأمان الحساب.',
+    loadError: 'تعذر تحميل الإعدادات.',
+    saveError: 'تعذر حفظ التغييرات.',
+    saved: 'تم حفظ التغييرات.',
+    emailHint: 'يُدار البريد الإلكتروني عبر مزود تسجيل الدخول ولا يمكن تغييره هنا.',
+    passwordHint: '8 أحرف على الأقل.',
+    passwordTooShort: 'يجب أن تكون كلمة المرور 8 أحرف على الأقل.',
+    passwordMismatch: 'كلمتا المرور غير متطابقتين.',
+    passwordUpdated: 'تم تحديث كلمة المرور بنجاح.',
+    passwordError: 'تعذر تحديث كلمة المرور.',
+    sections: {
+      personal: 'البيانات الشخصية',
+      general: 'الإعدادات العامة',
+      security: 'الأمان',
+    },
+    personal: {
+      title: 'البيانات الشخصية',
+      description: 'بيانات الاتصال وكيف تظهر في TScopier.',
+    },
+    general: {
+      title: 'الإعدادات العامة',
+      description: 'الإعدادات الافتراضية للأرصدة والتقارير والطوابع الزمنية.',
+    },
+    security: {
+      title: 'الأمان',
+      description: 'حدّث كلمة المرور لتأمين حسابك.',
+      updatePassword: 'تحديث كلمة المرور',
+    },
+    fields: {
+      firstName: 'الاسم الأول',
+      lastName: 'اسم العائلة',
+      username: 'اسم المستخدم',
+      email: 'البريد الإلكتروني',
+      country: 'البلد',
+      city: 'المدينة',
+      mobile: 'رقم الهاتف',
+      address: 'العنوان',
+      baseCurrency: 'العملة الأساسية',
+      timezone: 'المنطقة الزمنية',
+      newPassword: 'كلمة المرور الجديدة',
+      confirmPassword: 'تأكيد كلمة المرور',
+      notificationSound: 'صوت إشعارات الصفقات',
+      notificationSoundDescription: 'شغّل صوتًا عند تنفيذ صفقة أو تعديلها أو إغلاقها.',
+    },
+    placeholders: {
+      address: 'الشارع، رقم المبنى، الرمز البريدي…',
+      selectCountry: 'اختر البلد',
+      selectTimezone: 'اختر المنطقة الزمنية',
+      selectCurrency: 'اختر العملة',
+      searchCountry: 'ابحث عن بلدان…',
+      searchTimezone: 'ابحث عن مناطق زمنية…',
+      searchCurrency: 'ابحث عن عملات…',
+      noMatches: 'لا تطابقات',
+    },
+  },
+}

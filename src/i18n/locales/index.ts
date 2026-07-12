@@ -11,6 +11,7 @@ const localeLoaders: Record<Locale, () => Promise<Translations>> = {
   sv: () => import('./sv').then(m => m.sv),
   nl: () => import('./nl').then(m => m.nl),
   ja: () => import('./ja').then(m => m.ja),
+  ar: () => import('./ar').then(m => m.ar),
 }
 
 const cache = new Map<Locale, Translations>()

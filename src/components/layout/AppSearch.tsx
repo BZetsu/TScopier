@@ -273,11 +273,11 @@ function useAppSearchController(headerEl: HTMLElement | null) {
   }, [activeIndex, showSuggestions])
 
   const inputClassName =
-    'w-full rounded-lg border border-neutral-200 bg-neutral-50 py-2 pl-9 pr-3 text-base md:text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100 lg:pr-14'
+    'w-full rounded-lg border border-neutral-200 bg-neutral-50 py-2 ps-9 pe-3 text-base md:text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100 lg:pe-14'
 
   const renderInput = (opts: { showShortcut: boolean }) => (
     <>
-      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+      <Search className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
       <input
         ref={inputRef}
         type="search"
@@ -301,7 +301,7 @@ function useAppSearchController(headerEl: HTMLElement | null) {
         className={inputClassName}
       />
       {opts.showShortcut ? (
-        <kbd className="pointer-events-none absolute right-2 top-1/2 hidden -translate-y-1/2 rounded border border-neutral-200 bg-white px-1.5 py-0.5 text-[10px] font-medium text-neutral-400 lg:inline dark:border-neutral-600 dark:bg-neutral-900">
+        <kbd className="pointer-events-none absolute end-2 top-1/2 hidden -translate-y-1/2 rounded border border-neutral-200 bg-white px-1.5 py-0.5 text-[10px] font-medium text-neutral-400 lg:inline dark:border-neutral-600 dark:bg-neutral-900">
           {shortcutLabel}
         </kbd>
       ) : null}
@@ -312,8 +312,8 @@ function useAppSearchController(headerEl: HTMLElement | null) {
     if (!showSuggestions) return null
     const positionClass =
       anchor === 'mobile'
-        ? 'fixed left-3 right-3 top-[calc(env(safe-area-inset-top)+3.5rem)] z-[60] sm:top-16'
-        : 'absolute left-0 right-0 top-[calc(100%+6px)] z-50'
+        ? 'fixed inset-x-3 top-[calc(env(safe-area-inset-top)+3.5rem)] z-[60] sm:top-16'
+        : 'absolute inset-x-0 top-[calc(100%+6px)] z-50'
 
     return (
       <div
@@ -354,7 +354,7 @@ function useAppSearchController(headerEl: HTMLElement | null) {
                       onMouseDown={e => e.preventDefault()}
                       onClick={() => selectResult(item)}
                       className={clsx(
-                        'flex w-full items-center gap-3 px-3 py-2.5 text-left text-sm transition-colors',
+                        'flex w-full items-center gap-3 px-3 py-2.5 text-start text-sm transition-colors',
                         isActive
                           ? 'bg-teal-50 text-teal-900 dark:bg-teal-950/50 dark:text-teal-100'
                           : 'text-neutral-800 hover:bg-neutral-50 dark:text-neutral-200 dark:hover:bg-neutral-800/80',
@@ -413,10 +413,10 @@ function useAppSearchController(headerEl: HTMLElement | null) {
       <div
         ref={mobileOverlayRef}
         className={clsx(
-          'absolute inset-y-0 z-50 flex items-center gap-2 border-neutral-100 bg-white px-2 transition-[left,opacity] duration-200 ease-out dark:border-neutral-800 dark:bg-neutral-900',
+          'absolute inset-y-0 z-50 flex items-center gap-2 border-neutral-100 bg-white px-2 transition-[inset-inline-start,opacity] duration-200 ease-out dark:border-neutral-800 dark:bg-neutral-900',
           mobileExpanded
-            ? 'left-12 right-0 border-b opacity-100'
-            : 'pointer-events-none left-full right-0 opacity-0',
+            ? 'start-12 end-0 border-b opacity-100'
+            : 'pointer-events-none start-full end-0 opacity-0',
         )}
         aria-hidden={!mobileExpanded}
       >
