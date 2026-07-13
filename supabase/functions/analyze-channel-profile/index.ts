@@ -7,7 +7,7 @@ import {
   normalizeManagementGroups,
   resolveManagementGroups,
 } from "../_shared/trainingManagementKeywords.ts"
-import { buildChannelExampleRows } from "../_shared/signalIntent/parsedDataToTradeIntent.ts"
+import { buildChannelSignalExamples } from "../_shared/signalIntent/buildChannelExamples.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -644,8 +644,17 @@ async function persistChannelSignalExamples(args: {
   rows: Array<{ raw_message: string; parsed_data: unknown }>
 }): Promise<void> {
   const { supabase, userId, channelId, rows } = args
-  const examples = buildChannelExampleRows(rows, 12)
+  const examples = await buildChannelSignalExamples(rows, {
+    openAiKey: OPENAI_API_KEY || undefined,
+    limit: 12,
+  })
   if (!examples.length) return
+
+  await supabase
+    .from("channel_signal_examples")
+    .delete()
+    .eq("channel_id", channelId)
+    .eq("user_id", userId)
 
   const encoder = new TextEncoder()
   const digest = async (text: string): Promise<string> => {

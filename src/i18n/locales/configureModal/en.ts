@@ -69,7 +69,7 @@ export const configureModalEn: ConfigureModalTranslations = {
     signalExamplesCount: '{count} examples from channel training',
     signalExamplesLoadError: 'Could not load signal examples',
     exampleLabelEntry: 'Entry',
-    exampleLabelUpdate: 'Update',
+    exampleLabelUpdate: 'Trade update',
     exampleLabelIgnore: 'Ignore',
     trainButton: 'Train channel',
     training: 'Training...',

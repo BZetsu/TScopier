@@ -50,6 +50,12 @@ export function formatTradeIntentSummary(intent: Record<string, unknown>): strin
   if (!kind || kind === 'ignore' || kind === 'commentary') return null
 
   const parts: string[] = []
+
+  if (kind === 'modify') parts.push('Modify')
+  else if (kind === 'close') parts.push('Close')
+  else if (kind === 'breakeven') parts.push('Breakeven')
+  else if (kind === 'partial_close') parts.push('Partial close')
+
   const side = typeof intent.side === 'string' ? intent.side : null
   if (side === 'BUY' || side === 'SELL') parts.push(side)
 
