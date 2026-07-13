@@ -2,6 +2,7 @@ import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
 import {
   buildRangeLayerTriggerMap,
+  computeLinearRangeLayerTriggers,
   computeRangeLayerTriggers,
   RANGE_LAYER_CURVE_EXPONENT,
   resolveRangeLayerBoundary,
@@ -105,6 +106,49 @@ test('computeRangeLayerTriggers: buy rungs monotonic downward toward zone low', 
   for (let i = 1; i < triggers.length; i++) {
     assert.ok(triggers[i]! < triggers[i - 1]!)
   }
+})
+
+test('computeLinearRangeLayerTriggers: exactly 2 pip between each auto rung', () => {
+  const triggers = computeLinearRangeLayerTriggers({
+    isBuy: true,
+    rungCount: 15,
+    anchor: 4077.35,
+    boundary: 4077.05,
+    stepPriceOffset: 0.02,
+    digits: 2,
+  })
+  assert.equal(triggers[0], 4077.33)
+  assert.equal(triggers[1], 4077.31)
+  assert.equal(triggers[2], 4077.29)
+  for (let i = 1; i < triggers.length; i++) {
+    assert.ok(Math.abs((triggers[i - 1]! - triggers[i]!) - 0.02) < 1e-9)
+  }
+})
+
+test('buildRangeLayerTriggerMap: auto mode uses linear step not zone curve', () => {
+  const map = buildRangeLayerTriggerMap({
+    virtualPendings: Array.from({ length: 5 }, (_, i) => ({
+      stepIdx: i + 1,
+      stepPriceOffset: 0.02,
+      isBuy: true,
+    })),
+    anchor: 4077.35,
+    digits: 2,
+    pip: 0.01,
+    rangeLayering: {
+      rangeStepPips: 2,
+      rangeDistancePips: 30,
+      effectiveStepPips: 2,
+      stepPriceOffset: 0.02,
+      maxStepIdx: 15,
+      reservedPendingLegs: 15,
+      activePendingLegs: 15,
+      rangeLayeringType: 'auto',
+    },
+  })
+  assert.equal(map.get(1), 4077.33)
+  assert.equal(map.get(2), 4077.31)
+  assert.equal(map.get(3), 4077.29)
 })
 
 test('buildRangeLayerTriggerMap: pending_order shares stepIdx trigger', () => {

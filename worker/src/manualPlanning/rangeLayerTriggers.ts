@@ -134,6 +134,33 @@ export function computeRangeLayerTriggers(args: {
   return out
 }
 
+/** Uniform step spacing: rung N is exactly N × configured step from anchor, capped at boundary. */
+export function computeLinearRangeLayerTriggers(args: {
+  isBuy: boolean
+  rungCount: number
+  anchor: number
+  boundary: number | null
+  stepPriceOffset: number
+  digits: number
+}): number[] {
+  const { isBuy, rungCount, anchor, boundary, stepPriceOffset, digits } = args
+  if (rungCount <= 0 || !Number.isFinite(anchor) || anchor <= 0) return []
+  const offset = Math.max(0, stepPriceOffset)
+  if (offset <= 0) return []
+
+  const out: number[] = []
+  for (let stepIdx = 1; stepIdx <= rungCount; stepIdx++) {
+    const raw = isBuy ? anchor - stepIdx * offset : anchor + stepIdx * offset
+    const trigger = roundPrice(raw, digits)
+    if (boundary != null && Number.isFinite(boundary)) {
+      if (isBuy && trigger < boundary) break
+      if (!isBuy && trigger > boundary) break
+    }
+    out.push(trigger)
+  }
+  return out
+}
+
 export function buildRangeLayerTriggerMap(args: {
   virtualPendings: Array<Pick<VirtualPendingLeg, 'stepIdx' | 'stepPriceOffset' | 'isBuy'>>
   anchor: number
@@ -162,7 +189,10 @@ export function buildRangeLayerTriggerMap(args: {
     pip,
   })
 
-  if (boundary != null && rungCount > 0) {
+  const useZoneCurve = args.rangeLayering?.useSignalEntryRange === true
+    || args.rangeLayering?.rangeLayeringType === 'pending_order'
+
+  if (boundary != null && rungCount > 0 && useZoneCurve) {
     const triggers = computeRangeLayerTriggers({
       isBuy,
       rungCount,
@@ -177,6 +207,22 @@ export function buildRangeLayerTriggerMap(args: {
       if (price != null && Number.isFinite(price)) map.set(stepIdx, price)
     }
     return map
+  }
+
+  if (rungCount > 0 && stepPriceOffset > 0) {
+    const triggers = computeLinearRangeLayerTriggers({
+      isBuy,
+      rungCount,
+      anchor: args.anchor,
+      boundary,
+      stepPriceOffset,
+      digits: args.digits,
+    })
+    for (let stepIdx = 1; stepIdx <= triggers.length; stepIdx++) {
+      const price = triggers[stepIdx - 1]
+      if (price != null && Number.isFinite(price)) map.set(stepIdx, price)
+    }
+    if (map.size > 0) return map
   }
 
   for (const v of args.virtualPendings) {
@@ -215,16 +261,28 @@ export function rangeLayerTriggerForStep(args: {
     ? Math.max(1, args.rangeLayering?.maxStepIdx ?? args.legCount)
     : args.legCount
 
+  const useZoneCurve = args.rangeLayering?.useSignalEntryRange === true
+    || args.rangeLayering?.rangeLayeringType === 'pending_order'
+
   if (boundary != null && rungCount > 0 && args.stepIdx >= 1 && args.stepIdx <= rungCount) {
-    const triggers = computeRangeLayerTriggers({
-      isBuy: args.leg.isBuy,
-      rungCount,
-      anchor: args.anchor,
-      boundary,
-      stepPriceOffset: args.leg.stepPriceOffset,
-      digits: args.digits,
-      pinLastToBoundary: args.rangeLayering?.useSignalEntryRange === true,
-    })
+    const triggers = useZoneCurve
+      ? computeRangeLayerTriggers({
+        isBuy: args.leg.isBuy,
+        rungCount,
+        anchor: args.anchor,
+        boundary,
+        stepPriceOffset: args.leg.stepPriceOffset,
+        digits: args.digits,
+        pinLastToBoundary: args.rangeLayering?.useSignalEntryRange === true,
+      })
+      : computeLinearRangeLayerTriggers({
+        isBuy: args.leg.isBuy,
+        rungCount,
+        anchor: args.anchor,
+        boundary,
+        stepPriceOffset: args.leg.stepPriceOffset,
+        digits: args.digits,
+      })
     const t = triggers[args.stepIdx - 1]
     if (t != null && Number.isFinite(t)) return t
   }
