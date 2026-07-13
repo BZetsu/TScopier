@@ -5,6 +5,7 @@ import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import { useT } from '../../context/LocaleContext'
 import { interpolate } from '../../i18n/interpolate'
+import { en } from '../../i18n/locales/en'
 import { PageHeader } from '../../components/layout/PageHeader'
 import { PageShell } from '../../components/layout/PageShell'
 import { Card } from '../../components/ui/Card'
@@ -18,10 +19,13 @@ import {
 } from '../../lib/copierLogDisplay'
 import { retrySignalApi } from '../../lib/retrySignalApi'
 import {
-  formatCopierSkipReason,
   formatRetrySignalFailureReason,
   isCopierSignalRetryEligible,
 } from '../../lib/retrySignalDisplay'
+import { formatCopierSkipReasonShort } from '../../lib/copierLogDetail'
+import { CopierLogDetailModal } from '../../components/dashboard/CopierLogDetailModal'
+
+const DEFAULT_DETAIL_MODAL = en.copierLogs.detailModal!
 
 type Filter = 'all' | 'executed' | 'skipped' | 'failed' | 'pending'
 
@@ -68,9 +72,9 @@ function useCopierLogDisplay(
   const symbol = symbolForCopierLog(signal, symbolContext, batchSignals)
   const status = statusConfig[signal.status] ?? { variant: 'neutral' as const, label: signal.status }
   const channelName = channelLabel(signal.channel_id, channelDisplayNames)
-  const reason = formatCopierSkipReason(signal.skip_reason, copierLogs)
+  const reason = formatCopierSkipReasonShort(signal.skip_reason, copierLogs)
   const reasonShort = signal.skip_reason
-    ? (reason.length > 42 ? `${reason.slice(0, 42)}…` : reason)
+    ? (reason.length > 48 ? `${reason.slice(0, 48)}…` : reason)
     : '—'
   const messagePreview = signal.raw_message
     ? (signal.raw_message.length > 60 ? `${signal.raw_message.slice(0, 60)}…` : signal.raw_message)
@@ -95,16 +99,18 @@ function CopierLogCard({
   copierLogs,
   isRetrying,
   onRetry,
+  onOpenDetail,
 }: {
   signal: Signal
   channelDisplayNames: Record<string, string>
   symbolContext: CopierSymbolContext
   batchSignals: Signal[]
   statusConfig: Record<string, { variant: StatusVariant; label: string }>
-  labels: { colReason: string }
+  labels: { colReason: string; viewDetails: string }
   copierLogs: ReturnType<typeof useT>['copierLogs']
   isRetrying: boolean
   onRetry?: () => void
+  onOpenDetail: () => void
 }) {
   const { action, symbol, status, channelName, reason, messagePreview, timeLabel } = useCopierLogDisplay(
     signal,
@@ -117,7 +123,19 @@ function CopierLogCard({
   const retryEligible = isCopierSignalRetryEligible(signal)
 
   return (
-    <article className="px-4 py-4 hover:bg-neutral-50 dark:hover:bg-neutral-800/40 transition-colors">
+    <article
+      className="px-4 py-4 hover:bg-neutral-50 dark:hover:bg-neutral-800/40 transition-colors cursor-pointer"
+      onClick={onOpenDetail}
+      onKeyDown={e => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onOpenDetail()
+        }
+      }}
+      role="button"
+      tabIndex={0}
+      aria-label={labels.viewDetails}
+    >
       <div className="flex items-start justify-between gap-3 mb-3">
         <div className="min-w-0">
           <p className="text-base font-semibold text-neutral-900 dark:text-neutral-50 truncate">{symbol}</p>
@@ -145,9 +163,9 @@ function CopierLogCard({
       </p>
 
       {reason !== '—' ? (
-        <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3" title={reason}>
+        <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
           <span className="font-medium text-neutral-600 dark:text-neutral-300">{labels.colReason}: </span>
-          {reason}
+          <span className="underline decoration-dotted underline-offset-2">{reason}</span>
         </p>
       ) : null}
 
@@ -157,7 +175,10 @@ function CopierLogCard({
           variant="secondary"
           size="sm"
           disabled={isRetrying}
-          onClick={onRetry}
+          onClick={e => {
+            e.stopPropagation()
+            onRetry()
+          }}
         >
           {isRetrying ? (
             <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -180,6 +201,8 @@ function CopierLogRow({
   copierLogs,
   isRetrying,
   onRetry,
+  onOpenDetail,
+  viewDetailsLabel,
 }: {
   signal: Signal
   channelDisplayNames: Record<string, string>
@@ -189,6 +212,8 @@ function CopierLogRow({
   copierLogs: ReturnType<typeof useT>['copierLogs']
   isRetrying: boolean
   onRetry?: () => void
+  onOpenDetail: () => void
+  viewDetailsLabel: string
 }) {
   const { action, symbol, status, channelName, reasonShort, messagePreview, timeLabel } = useCopierLogDisplay(
     signal,
@@ -201,9 +226,21 @@ function CopierLogRow({
   const retryEligible = isCopierSignalRetryEligible(signal)
 
   return (
-    <div className="grid grid-cols-[1.5fr_1.2fr_1fr_1.2fr_1fr_1fr_auto_auto] gap-3 min-w-[48rem] px-4 sm:px-5 py-3.5 items-center hover:bg-neutral-50 dark:hover:bg-neutral-800/50 transition-colors">
+    <div
+      className="grid grid-cols-[1.5fr_1.2fr_1fr_1.2fr_1fr_1fr_auto_auto] gap-3 min-w-[48rem] px-4 sm:px-5 py-3.5 items-center hover:bg-neutral-50 dark:hover:bg-neutral-800/50 transition-colors cursor-pointer"
+      onClick={onOpenDetail}
+      onKeyDown={e => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onOpenDetail()
+        }
+      }}
+      role="button"
+      tabIndex={0}
+      aria-label={viewDetailsLabel}
+    >
       <Badge variant={status.variant} size="sm">{status.label}</Badge>
-      <span className="text-xs text-neutral-500 dark:text-neutral-400 truncate" title={formatCopierSkipReason(signal.skip_reason, copierLogs)}>
+      <span className="text-xs text-neutral-600 dark:text-neutral-300 truncate underline decoration-dotted underline-offset-2" title={reasonShort}>
         {reasonShort}
       </span>
       <span className="text-xs text-neutral-600 dark:text-neutral-400 truncate" title={channelName}>
@@ -227,7 +264,10 @@ function CopierLogRow({
             variant="secondary"
             size="sm"
             disabled={isRetrying}
-            onClick={onRetry}
+            onClick={e => {
+              e.stopPropagation()
+              onRetry()
+            }}
             aria-label={copierLogs.retry}
           >
             {isRetrying ? (
@@ -258,6 +298,7 @@ export function CopierLogsPage() {
   const [pageSize, setPageSize] = useState<PageSizeOption>(25)
   const [retryingSignalIds, setRetryingSignalIds] = useState<Set<string>>(() => new Set())
   const [toast, setToast] = useState<string | null>(null)
+  const [detailSignal, setDetailSignal] = useState<Signal | null>(null)
 
   const showToast = useCallback((message: string) => {
     setToast(message)
@@ -357,7 +398,26 @@ export function CopierLogsPage() {
     [t],
   )
 
-  const cardLabels = useMemo(() => ({ colReason: t.copierLogs.colReason }), [t])
+  const cardLabels = useMemo(
+    () => ({
+      colReason: t.copierLogs.colReason,
+      viewDetails: t.copierLogs.detailModal?.viewDetails ?? DEFAULT_DETAIL_MODAL.viewDetails,
+    }),
+    [t],
+  )
+
+  const viewDetailsLabel = t.copierLogs.detailModal?.viewDetails ?? DEFAULT_DETAIL_MODAL.viewDetails
+
+  const detailDisplay = useMemo(() => {
+    if (!detailSignal) return null
+    const status = statusConfig[detailSignal.status] ?? { variant: 'neutral' as const, label: detailSignal.status }
+    return {
+      signal: detailSignal,
+      channelName: channelLabel(detailSignal.channel_id, channelDisplayNames),
+      symbol: symbolForCopierLog(detailSignal, symbolContext, signals),
+      status,
+    }
+  }, [detailSignal, statusConfig, channelDisplayNames, symbolContext, signals])
 
   return (
     <PageShell maxWidth="lg" spacing="none" className="space-y-6">
@@ -441,6 +501,7 @@ export function CopierLogsPage() {
                   onRetry={isCopierSignalRetryEligible(signal)
                     ? () => { void retrySignalEntry(signal.id) }
                     : undefined}
+                  onOpenDetail={() => setDetailSignal(signal)}
                 />
               ))}
             </div>
@@ -469,6 +530,8 @@ export function CopierLogsPage() {
                     onRetry={isCopierSignalRetryEligible(signal)
                       ? () => { void retrySignalEntry(signal.id) }
                       : undefined}
+                    onOpenDetail={() => setDetailSignal(signal)}
+                    viewDetailsLabel={viewDetailsLabel}
                   />
                 ))}
               </div>
@@ -497,6 +560,21 @@ export function CopierLogsPage() {
           />
         ) : null}
       </Card>
+
+      {detailDisplay ? (
+        <CopierLogDetailModal
+          signal={detailDisplay.signal}
+          channelName={detailDisplay.channelName}
+          symbol={detailDisplay.symbol}
+          status={detailDisplay.status}
+          onClose={() => setDetailSignal(null)}
+          retryEligible={isCopierSignalRetryEligible(detailDisplay.signal)}
+          isRetrying={retryingSignalIds.has(detailDisplay.signal.id)}
+          onRetry={isCopierSignalRetryEligible(detailDisplay.signal)
+            ? () => { void retrySignalEntry(detailDisplay.signal.id) }
+            : undefined}
+        />
+      ) : null}
     </PageShell>
   )
 }

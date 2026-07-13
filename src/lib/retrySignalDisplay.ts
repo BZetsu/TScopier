@@ -1,7 +1,7 @@
 import { interpolate } from '../i18n/interpolate'
 import type { CopierLogsTranslations } from '../i18n/locales/types'
 import type { Signal } from '../types/database'
-import { normalizeCopierSkipReasonKey } from './brokerBridgeErrorDisplay'
+import { COPIER_SKIP_REASON_LABELS, resolveCopierSkipReasonKey } from './copierSkipReasonLabels'
 
 const RETRYABLE_SKIP_REASONS = new Set([
   'entry_not_opened',
@@ -22,8 +22,12 @@ export function formatCopierSkipReason(
 ): string {
   const raw = String(reason ?? '').trim()
   if (!raw) return '—'
-  const key = normalizeCopierSkipReasonKey(raw)
-  return copierLogs.skipReasons[key] ?? raw.replace(/_/g, ' ')
+  const key = resolveCopierSkipReasonKey(raw)
+  return (
+    copierLogs.skipReasons[key]
+    ?? COPIER_SKIP_REASON_LABELS[key]
+    ?? raw.replace(/_/g, ' ')
+  )
 }
 
 export function isCopierSignalRetryEligible(signal: Signal): boolean {

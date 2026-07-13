@@ -415,6 +415,28 @@ export interface CopierLogsTranslations {
   retryReasonNotRetryable: string
   retryReasonDispatchRejected: string
   skipReasons: Record<string, string>
+  skipReasonDetails?: Record<string, string>
+  detailModal?: {
+    title: string
+    close: string
+    status: string
+    reason: string
+    whatHappened: string
+    channel: string
+    symbol: string
+    action: string
+    levels: string
+    entry: string
+    stopLoss: string
+    takeProfit: string
+    signalMessage: string
+    technicalCode: string
+    timeline: string
+    loadingTimeline: string
+    noTimeline: string
+    viewDetails: string
+    receivedAt: string
+  }
 }
 
 export interface AccountConfigAddAccountModalTranslations {
