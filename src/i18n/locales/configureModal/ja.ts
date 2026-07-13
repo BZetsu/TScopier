@@ -101,6 +101,7 @@ export const configureModalJa: ConfigureModalTranslations = {
     autoTrainingInProgress: 'トレーニング中... {progress}%',
     autoTrainingDone: 'トレーニングが完了し、保存されました。',
     trainingLearnedFrom: '{count}件のサンプルメッセージからキーワードを学習しました。',
+    trainFailed: 'トレーニングが完了しませんでした。接続を確認して再試行してください。',
     multilingualRetrainHint:
       '他言語のチャンネルですか？リンク後にチャンネル訓練を実行してください。ログでスキップされた場合はここで再訓練してください。',
   },

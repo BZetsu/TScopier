@@ -1275,10 +1275,13 @@ export function AccountConfigPage() {
     return () => clearTimeout(t)
   }, [presetSavedAt])
 
-  const startBackgroundAiTraining = useCallback((channelId: string) => {
-    if (!userId) return
-    void triggerBackgroundChannelAiTraining(channelId, {
+  const startBackgroundAiTraining = useCallback((channelId: string, opts?: { force?: boolean }) => {
+    if (!userId) {
+      return Promise.resolve({ trained: false, error: 'Not signed in' })
+    }
+    return triggerBackgroundChannelAiTraining(channelId, {
       userId,
+      skipIfAlreadyTrained: opts?.force ? false : true,
       progress: {
         onRunningChange: running =>
           setTrainingRunningByChannel(prev => ({ ...prev, [channelId]: running })),
@@ -2760,7 +2763,7 @@ export function AccountConfigPage() {
                               channelId={configDraft.selectedChannelId}
                               labels={cm.aiTraining}
                               trainingActive={activeChannelTrainingRunning || activeChannelTrainingSaving}
-                              onRetrain={() => startBackgroundAiTraining(configDraft.selectedChannelId!)}
+                              onRetrain={() => startBackgroundAiTraining(configDraft.selectedChannelId!, { force: true })}
                             />
                           ) : (
                             <p className="text-sm text-neutral-500 dark:text-neutral-400">{cm.channels.selectChannelFirst}</p>

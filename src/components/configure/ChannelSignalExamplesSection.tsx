@@ -3,6 +3,7 @@ import { RefreshCw, Sparkles } from 'lucide-react'
 import clsx from 'clsx'
 import { Badge } from '../ui/Badge'
 import { Button } from '../ui/Button'
+import { Alert } from '../ui/Alert'
 import { ConfigTitle } from '../ui/InfoTooltip'
 import { interpolate } from '../../i18n/interpolate'
 import {
@@ -17,7 +18,7 @@ type Props = {
   channelId: string
   labels: ConfigureModalTranslations['aiTraining']
   trainingActive: boolean
-  onRetrain?: () => void
+  onRetrain?: () => Promise<{ trained: boolean; error?: string }>
 }
 
 function labelVariant(label: ChannelSignalExampleLabel): 'success' | 'primary' | 'neutral' {
@@ -41,6 +42,7 @@ export function ChannelSignalExamplesSection({
   const [examples, setExamples] = useState<ChannelSignalExampleRow[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
+  const [trainFeedback, setTrainFeedback] = useState<{ variant: 'success' | 'error'; message: string } | null>(null)
   const prevTrainingActive = useRef(trainingActive)
 
   const loadExamples = useCallback(async () => {
@@ -59,6 +61,7 @@ export function ChannelSignalExamplesSection({
 
   useEffect(() => {
     void loadExamples()
+    setTrainFeedback(null)
   }, [loadExamples])
 
   useEffect(() => {
@@ -67,6 +70,28 @@ export function ChannelSignalExamplesSection({
     }
     prevTrainingActive.current = trainingActive
   }, [trainingActive, loadExamples])
+
+  const handleRetrain = useCallback(async () => {
+    if (!onRetrain || trainingActive) return
+    setTrainFeedback(null)
+    try {
+      const result = await onRetrain()
+      if (result.error) {
+        setTrainFeedback({ variant: 'error', message: result.error })
+        return
+      }
+      if (result.trained) {
+        setTrainFeedback({ variant: 'success', message: labels.autoTrainingDone })
+        return
+      }
+      setTrainFeedback({ variant: 'error', message: labels.trainFailed })
+    } catch (err) {
+      setTrainFeedback({
+        variant: 'error',
+        message: err instanceof Error ? err.message : labels.trainFailed,
+      })
+    }
+  }, [labels.autoTrainingDone, labels.trainFailed, onRetrain, trainingActive])
 
   return (
     <section className="space-y-4">
@@ -95,7 +120,7 @@ export function ChannelSignalExamplesSection({
               size="sm"
               disabled={trainingActive}
               loading={trainingActive}
-              onClick={onRetrain}
+              onClick={() => void handleRetrain()}
               className="min-h-[36px]"
             >
               <Sparkles className="h-3.5 w-3.5" aria-hidden />
@@ -104,6 +129,12 @@ export function ChannelSignalExamplesSection({
           ) : null}
         </div>
       </div>
+
+      {trainFeedback ? (
+        <Alert variant={trainFeedback.variant === 'success' ? 'success' : 'error'} className="text-sm">
+          {trainFeedback.message}
+        </Alert>
+      ) : null}
 
       {loadError ? (
         <p className="text-sm text-error-600 dark:text-error-400">{loadError}</p>
@@ -124,7 +155,7 @@ export function ChannelSignalExamplesSection({
               className="mt-4 min-h-[40px]"
               disabled={trainingActive}
               loading={trainingActive}
-              onClick={onRetrain}
+              onClick={() => void handleRetrain()}
             >
               {labels.trainButton}
             </Button>

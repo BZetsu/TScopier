@@ -101,6 +101,7 @@ export const configureModalPl: ConfigureModalTranslations = {
     autoTrainingInProgress: 'Szkolenie w toku... {progress}%',
     autoTrainingDone: 'Trening ukończony i zapisany.',
     trainingLearnedFrom: 'Słowa kluczowe nauczone z {count} przykładowych wiadomości.',
+    trainFailed: 'Trening nie został ukończony. Sprawdź połączenie i spróbuj ponownie.',
     multilingualRetrainHint:
       'Kanał w innym języku? Uruchom trening kanału po połączeniu. Jeśli logi pokazują pominięte sygnały, wytrenuj ponownie tutaj.',
   },

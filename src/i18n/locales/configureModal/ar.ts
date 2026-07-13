@@ -101,6 +101,7 @@ export const configureModalAr: ConfigureModalTranslations = {
     autoTrainingInProgress: 'التدريب قيد التقدم... {progress}%',
     autoTrainingDone: 'اكتمل التدريب وتم حفظه.',
     trainingLearnedFrom: 'كلمات مفتاحية مُتعلَّمة من {count} رسالة نموذجية.',
+    trainFailed: 'لم يكتمل التدريب. تحقق من الاتصال وحاول مرة أخرى.',
     multilingualRetrainHint:
       'قناة بلغة أخرى؟ نفّذ تدريب القناة بعد الربط. إذا أظهرت السجلات إشارات متجاهلة، أعد التدريب هنا.',
   },

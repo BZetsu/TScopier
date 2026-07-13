@@ -101,6 +101,7 @@ export const configureModalSv: ConfigureModalTranslations = {
     autoTrainingInProgress: 'Utbildning pågår... {progress}%',
     autoTrainingDone: 'Träningen genomförd och sparad.',
     trainingLearnedFrom: 'Nyckelord inlärda från {count} exempelmeddelanden.',
+    trainFailed: 'Träningen slutfördes inte. Kontrollera anslutningen och försök igen.',
     multilingualRetrainHint:
       'Kanal på annat språk? Kör Träna kanal efter länkning. Om loggar visar hoppade signaler, träna om här.',
   },

@@ -100,6 +100,7 @@ export interface ConfigureModalTranslations {
     autoTrainingInProgress: string
     autoTrainingDone: string
     trainingLearnedFrom: string
+    trainFailed: string
     multilingualRetrainHint: string
   }
   channelSymbols: {

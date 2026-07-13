@@ -101,6 +101,7 @@ export const configureModalRu: ConfigureModalTranslations = {
     autoTrainingInProgress: 'Идет обучение... {progress}%',
     autoTrainingDone: 'Обучение завершено и сохранено.',
     trainingLearnedFrom: 'Ключевые слова изучены по {count} примерам сообщений.',
+    trainFailed: 'Обучение не завершено. Проверьте подключение и попробуйте снова.',
     multilingualRetrainHint:
       'Канал на другом языке? Запустите обучение канала после подключения. Если в логах пропущенные сигналы — переобучите здесь.',
   },

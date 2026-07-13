@@ -101,6 +101,7 @@ export const configureModalNl: ConfigureModalTranslations = {
     autoTrainingInProgress: 'Training bezig... {progress}%',
     autoTrainingDone: 'Training voltooid en opgeslagen.',
     trainingLearnedFrom: 'Sleutelwoorden geleerd uit {count} voorbeeldberichten.',
+    trainFailed: 'Training niet voltooid. Controleer je verbinding en probeer opnieuw.',
     multilingualRetrainHint:
       'Kanaal in een andere taal? Voer Kanaal trainen uit na koppelen. Bij overgeslagen signalen in de logs, hier opnieuw trainen.',
   },
