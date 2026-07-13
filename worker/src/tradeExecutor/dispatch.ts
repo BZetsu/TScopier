@@ -625,6 +625,7 @@ export async function handleSignal(ctx: TradeExecutorContext,
         if (liveFast && parsed.symbol) {
           void ctx.prewarmBrokersForLiveEntry(brokers, parsed.symbol)
         }
+        const copyLimitSkipReasons: string[] = []
         const pauseResults = await Promise.all(
           brokers.map(async broker => {
             const state = await ctx.fetchCopyLimitState(broker.id, channelId)
@@ -635,6 +636,7 @@ export async function handleSignal(ctx: TradeExecutorContext,
               state,
             )
             if (pause.paused && pause.reason) {
+              copyLimitSkipReasons.push(pause.reason)
               const skipLog = ctx.logDispatchSkipped(row, pause.reason, {
                 broker_id: broker.id,
                 channel_id: channelId,
@@ -648,6 +650,10 @@ export async function handleSignal(ctx: TradeExecutorContext,
           }),
         )
         brokers = pauseResults.filter((b): b is typeof brokers[number] => b != null)
+        if (!brokers.length && copyLimitSkipReasons.length > 0) {
+          // Per-broker skip already logged (e.g. channel_max_risk_hit).
+          return
+        }
       }
       if (!brokers.length) {
         if (configSkipReasons.length > 0 && rawMatchingBrokers.length > 0) {
@@ -658,6 +664,11 @@ export async function handleSignal(ctx: TradeExecutorContext,
           return
         }
         if (rawMatchingBrokers.length > 0) {
+          const staleAfterReactivation = allMatchingBrokers.length > 0
+            && allMatchingBrokers.every(b => !ctx.brokerEligibleForSignal(b, row))
+          if (!staleAfterReactivation) {
+            return
+          }
           // A matching broker exists but it was reactivated AFTER the signal
           // arrived — i.e. the signal piled up while the broker was disabled.
           // Marking as skipped here prevents the 5-min sweep from picking it
