@@ -223,6 +223,27 @@ export function isAdverselyCrossed(
   return prevAsk < triggerPrice && ask >= triggerPrice
 }
 
+/**
+ * True when price is holding at/through a rung after an adverse gap (missed tick-by-tick cross).
+ * Used with outward-entry guards so retracement fills inside the basket stay blocked.
+ */
+export function isOutwardCatchUp(
+  isBuy: boolean,
+  triggerPrice: number,
+  prevBid: number,
+  prevAsk: number,
+  bid: number,
+  ask: number,
+): boolean {
+  if (!Number.isFinite(triggerPrice) || triggerPrice <= 0) return false
+  if (!Number.isFinite(prevBid) || !Number.isFinite(prevAsk)) return false
+  if (!Number.isFinite(bid) || !Number.isFinite(ask)) return false
+  if (isBuy) {
+    return prevBid <= triggerPrice && bid <= triggerPrice && bid <= prevBid
+  }
+  return prevAsk >= triggerPrice && ask >= triggerPrice && ask >= prevAsk
+}
+
 /** Whether a virtual range leg should be persisted (broker stops zone + signal entry zone). */
 export function virtualPendingTriggerAllowed(args: {
   triggerPrice: number

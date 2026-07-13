@@ -19,6 +19,7 @@ import {
 } from './manualPlanner'
 import type { PlannerCloseWorseEntries } from './manualPlanning/types'
 import { triggerPriceFor } from './tradeExecutor/helpers'
+import { buildRangeLayerTriggerMap } from './manualPlanning/rangeLayerTriggers'
 import { pipCalculator } from './pipCalculator'
 import { signalPipPrice } from './signalPip'
 
@@ -1475,8 +1476,62 @@ test('planManualOrders: signal range buy virtual triggers do not go below zone l
   const boundary = plan.rangeLayering?.signalRangeBoundary ?? null
   const virtuals = plan.virtualPendings ?? []
   assert.ok(virtuals.length > 0)
+  const triggerMap = buildRangeLayerTriggerMap({
+    virtualPendings: virtuals,
+    anchor,
+    digits: 2,
+    rangeLayering: plan.rangeLayering ?? null,
+    pip: plan.pip,
+  })
   for (const v of virtuals) {
-    const trigger = triggerPriceFor(v, anchor, 2)
+    const trigger = triggerMap.get(v.stepIdx) ?? triggerPriceFor(v, anchor, 2)
     assert.ok(trigger >= (boundary ?? 0), `step ${v.stepIdx} trigger ${trigger} below ${boundary}`)
+  }
+  const deepest = triggerMap.get(virtuals[virtuals.length - 1]!.stepIdx)
+  assert.equal(deepest, boundary)
+})
+
+test('planManualOrders: sell signal zone virtual triggers cluster toward zone high', () => {
+  const manual: ManualSettings = {
+    ...baseManual,
+    range_percent: 100,
+    range_step_pips: 3,
+    range_distance_pips: 30,
+    use_signal_entry_range: true,
+  }
+  const plan = planManualOrders({
+    parsed: {
+      ...baseParsed,
+      entry_zone_low: 4325,
+      entry_zone_high: 4335,
+    },
+    resolvedSymbol: 'XAUUSD',
+    baseOperation: 'Sell',
+    manual,
+    channelKeywords: null,
+    manualLot: 1.0,
+    ctx: baseCtx,
+    commentPrefix: 'TScopier:abc',
+  })
+  const anchor = 4327
+  const boundary = 4335
+  const virtuals = plan.virtualPendings ?? []
+  assert.ok(virtuals.length >= 2)
+  const triggerMap = buildRangeLayerTriggerMap({
+    virtualPendings: virtuals,
+    anchor,
+    digits: 2,
+    rangeLayering: plan.rangeLayering ?? null,
+    pip: plan.pip,
+  })
+  const first = triggerMap.get(1)!
+  const last = triggerMap.get(virtuals[virtuals.length - 1]!.stepIdx)!
+  assert.ok(first - anchor < last - anchor, 'deepest rung should be further from anchor than first')
+  assert.equal(last, boundary)
+  if (virtuals.length >= 3) {
+    const earlyGap = (triggerMap.get(2) ?? 0) - first
+    const prevStep = virtuals[virtuals.length - 2]!.stepIdx
+    const lateGap = last - (triggerMap.get(prevStep) ?? 0)
+    assert.ok(lateGap >= earlyGap, 'late rung spacing should be at least as wide as early spacing')
   }
 })

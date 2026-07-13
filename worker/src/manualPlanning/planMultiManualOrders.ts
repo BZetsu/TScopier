@@ -12,6 +12,7 @@ import { clampPendingExpiryHours } from './manualSettings'
 import { appendOrderCommentSuffix } from '../tradeComment'
 import type { PlanSingleManualOrdersArgs } from './planSingleManualOrders'
 import { planRangeSplit } from './rangeSplit'
+import { buildRangeLayerTriggerMap, rangeLayerTriggerForStep } from './rangeLayerTriggers'
 import { buildDistributedPerLegTakeProfits, buildEntryQualityTakeProfitMap } from './tpBucketDistribution'
 import { resolveMultiTradeTargetUnits, multiTradeUnitsToLot } from './multiTradeLegUnits'
 import { resolveRangeDistancePips } from './signalEntryRange'
@@ -147,6 +148,28 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
     if (typeof price === 'number' && Number.isFinite(price) && price > 0) return price
     return finalTps[finalTps.length - 1] ?? null
   }
+  const rangeLayeringMeta = manual.range_trading === true && reservedRangeLegs > 0
+    ? {
+        rangeStepPips: Math.max(0, Number(manual.range_step_pips ?? 0)),
+        rangeDistancePips: Math.max(0, Number(manual.range_distance_pips ?? 0)),
+        effectiveStepPips: split.effectiveStepPips,
+        stepPriceOffset: split.stepPriceOffset,
+        maxStepIdx: split.maxStepIdx,
+        reservedPendingLegs: reservedRangeLegs,
+        activePendingLegs: pendingOrderMode ? reservedRangeLegs : effectiveRangeLegs,
+        rangeLayeringType: (pendingOrderMode ? 'pending_order' : 'auto') as 'auto' | 'pending_order',
+        ...(manual.use_signal_entry_range === true
+          ? {
+              useSignalEntryRange: true,
+              signalRangeBoundary: rangeDistance.boundary,
+              signalZoneLo: resolvedParsedEntryZone(parsed)?.lo ?? null,
+              signalZoneHi: resolvedParsedEntryZone(parsed)?.hi ?? null,
+              effectiveDistancePips: rangeDistance.distPips,
+            }
+          : {}),
+      }
+    : null
+
   const tpForRangeIndex = (idx: number): number | null => {
     if (finalTps.length === 0) return null
     if (
@@ -164,14 +187,35 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
           openedAt: `imm${String(i).padStart(4, '0')}`,
         })
       }
+      const rangeTriggerMap = buildRangeLayerTriggerMap({
+        virtualPendings: Array.from({ length: rangeLegCount }, (_, i) => ({
+          stepIdx: pendingOrderMode && maxStepIdx > 0 ? (i % maxStepIdx) + 1 : i + 1,
+          stepPriceOffset,
+          isBuy,
+        })),
+        anchor: entryAnchor,
+        digits: Math.max(0, Math.min(8, Math.floor(ctx.digits ?? 5))),
+        rangeLayering: rangeLayeringMeta,
+        pip,
+      })
       for (let i = 0; i < rangeLegCount; i++) {
         const stepIdx = pendingOrderMode && maxStepIdx > 0
           ? (i % maxStepIdx) + 1
           : i + 1
-        const offset = stepIdx * stepPriceOffset
+        const entryPrice = rangeTriggerMap.get(stepIdx)
+          ?? rangeLayerTriggerForStep({
+            stepIdx,
+            leg: { stepPriceOffset, isBuy },
+            anchor: entryAnchor,
+            digits: Math.max(0, Math.min(8, Math.floor(ctx.digits ?? 5))),
+            legCount: rangeLegCount,
+            rangeLayering: rangeLayeringMeta,
+            pip,
+            triggerMap: rangeTriggerMap,
+          })
         projectedLegs.push({
           id: `rg${String(i).padStart(4, '0')}`,
-          entryPrice: isBuy ? entryAnchor - offset : entryAnchor + offset,
+          entryPrice,
           openedAt: `rg${String(i).padStart(4, '0')}`,
         })
       }
@@ -329,27 +373,9 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
     ...(strictEntry ? { strictEntry } : {}),
     ...(manual.range_trading === true && reservedRangeLegs > 0
       ? {
-            rangeLayering: {
-              rangeStepPips: Math.max(0, Number(manual.range_step_pips ?? 0)),
-              rangeDistancePips: Math.max(0, Number(manual.range_distance_pips ?? 0)),
-              effectiveStepPips: split.effectiveStepPips,
-              stepPriceOffset: split.stepPriceOffset,
-              maxStepIdx: split.maxStepIdx,
-              reservedPendingLegs: reservedRangeLegs,
-              activePendingLegs: pendingOrderMode ? reservedRangeLegs : effectiveRangeLegs,
-              rangeLayeringType: manual.range_layering_type === 'pending_order' ? 'pending_order' : 'auto',
-            ...(manual.use_signal_entry_range === true
-              ? {
-                  useSignalEntryRange: true,
-                  signalRangeBoundary: rangeDistance.boundary,
-                  signalZoneLo: resolvedParsedEntryZone(parsed)?.lo ?? null,
-                  signalZoneHi: resolvedParsedEntryZone(parsed)?.hi ?? null,
-                  effectiveDistancePips: rangeDistance.distPips,
-                }
-              : {}),
-          },
-        }
-      : {}),
+            rangeLayering: rangeLayeringMeta!,
+          }
+        : {}),
     delay_ms,
     ...(rangeFallbackReason ? { fallback_reason: rangeFallbackReason } : {}),
   }

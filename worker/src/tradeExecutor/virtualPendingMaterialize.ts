@@ -1,4 +1,5 @@
 import type { TradeExecutorContext } from './context'
+import { buildRangeLayerTriggerMap } from '../manualPlanning/rangeLayerTriggers'
 import { roundLot, triggerPriceFor, virtualPendingTriggerAllowed } from './helpers'
 import type { PreparedEntry } from './entryPrepare'
 
@@ -30,9 +31,17 @@ export async function materializeVirtualPendingLegs(
       const signalZoneLo = plan.rangeLayering?.signalZoneLo ?? null
       const signalZoneHi = plan.rangeLayering?.signalZoneHi ?? null
       const useSignalEntryRange = plan.rangeLayering?.useSignalEntryRange === true
+      const pip = plan.pip ?? null
+      const triggerMap = buildRangeLayerTriggerMap({
+        virtualPendings,
+        anchor,
+        digits,
+        rangeLayering: plan.rangeLayering ?? null,
+        pip: pip ?? undefined,
+      })
       const nowMs = Date.now()
       for (const v of virtualPendings) {
-        const triggerPrice = triggerPriceFor(v, anchor, digits)
+        const triggerPrice: number = triggerMap.get(v.stepIdx) ?? triggerPriceFor(v, anchor, digits)
         if (!virtualPendingTriggerAllowed({
           triggerPrice,
           signalRangeBoundary,

@@ -7,7 +7,8 @@ import {
   shouldLockBasketLayering,
   VirtualPendingMonitor,
 } from './virtualPendingMonitor'
-import { isAdverselyCrossed } from './tradeExecutor/helpers'
+import { isAdverselyCrossed, isOutwardCatchUp } from './tradeExecutor/helpers'
+import { isBlockedByShallowerStep } from './virtualPendingMonitor'
 
 // Buy ladder = averaging DOWN: trigger fires when bid drops to / below trigger_price.
 test('isTriggered: buy fires when bid <= trigger', () => {
@@ -200,4 +201,21 @@ test('SELL retrace scenario: shallow rungs do not cross on pullback', () => {
   assert.equal(isAdverselyCrossed(false, 4089.5, 4090, 4090.1, 4089.5, 4089.6), false)
   assert.equal(isAdverselyCrossed(false, 4090.2, 4091, 4091.1, 4090.5, 4090.6), false)
   assert.equal(isAdverselyCrossed(false, 4090, 4089.8, 4089.9, 4090, 4090.1), true)
+})
+
+test('SELL catch-up: deeper rung eligible while holding after gap, not on retrace', () => {
+  assert.equal(isOutwardCatchUp(false, 4089.6, 4092, 4092.1, 4092, 4092.1), true)
+  assert.equal(isOutwardCatchUp(false, 4089.6, 4092, 4092.1, 4089.5, 4089.6), false)
+})
+
+test('isBlockedByShallowerStep: blocks deeper rung when shallower still pending', () => {
+  const active = new Map<string, Set<number>>([['sig|broker', new Set([1])]])
+  assert.equal(
+    isBlockedByShallowerStep({ signal_id: 'sig', broker_account_id: 'broker', step_idx: 2 }, active),
+    true,
+  )
+  assert.equal(
+    isBlockedByShallowerStep({ signal_id: 'sig', broker_account_id: 'broker', step_idx: 1 }, active),
+    false,
+  )
 })

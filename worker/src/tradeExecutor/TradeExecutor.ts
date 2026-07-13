@@ -152,6 +152,7 @@ import {
 import { applyPostFillFollowUp, type PostFillTradeLeg } from '../postFillFollowUp'
 import { isBenignOrderModifyError } from '../orderModifyBenign'
 import { invalidateChannelParseCache } from '../channelKeywordsCache'
+import { buildRangeLayerTriggerMap } from '../manualPlanning/rangeLayerTriggers'
 import {
   applySymbolMapping,
   brokerHasLinkedSession,
@@ -1580,10 +1581,17 @@ export class TradeExecutor {
     const signalZoneLo = plan.rangeLayering?.signalZoneLo ?? null
     const signalZoneHi = plan.rangeLayering?.signalZoneHi ?? null
     const useSignalEntryRange = plan.rangeLayering?.useSignalEntryRange === true
+    const triggerMap = buildRangeLayerTriggerMap({
+      virtualPendings,
+      anchor,
+      digits,
+      rangeLayering: plan.rangeLayering ?? null,
+      pip: plan.pip ?? undefined,
+    })
     const nowMs = Date.now()
     const insertRows: Record<string, unknown>[] = []
     for (const v of virtualPendings) {
-      const triggerPrice = triggerPriceFor(v, anchor, digits)
+      const triggerPrice = triggerMap.get(v.stepIdx) ?? triggerPriceFor(v, anchor, digits)
       if (!virtualPendingTriggerAllowed({
         triggerPrice,
         signalRangeBoundary,

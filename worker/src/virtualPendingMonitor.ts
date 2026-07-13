@@ -35,7 +35,7 @@ import {
   setTpTouchedLock,
   shouldBlockVirtualLegFire,
 } from './rangePendingFireGuard'
-import { isAdverselyCrossed } from './tradeExecutor/helpers'
+import { isAdverselyCrossed, isOutwardCatchUp } from './tradeExecutor/helpers'
 import { isMtBridgeGlitchMessage } from './brokerConnectError'
 import {
   deleteRangePendingLegsForBasket,
@@ -487,7 +487,17 @@ export class VirtualPendingMonitor {
             q.bid,
             q.ask,
           )
-        if (crossed) triggeredInGroup.push(leg)
+        const catchUp = prevQuote != null
+          && !crossed
+          && isOutwardCatchUp(
+            leg.is_buy,
+            leg.trigger_price,
+            prevQuote.bid,
+            prevQuote.ask,
+            q.bid,
+            q.ask,
+          )
+        if (crossed || catchUp) triggeredInGroup.push(leg)
       }
       this.lastQuoteByGroup.set(key, { bid: q.bid, ask: q.ask })
 

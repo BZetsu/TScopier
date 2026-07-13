@@ -1,5 +1,6 @@
 import { MtOperation, OrderSendArgs } from '../fxsocketClient'
 import type { TradeExecutorContext } from './context'
+import { buildRangeLayerTriggerMap } from '../manualPlanning/rangeLayerTriggers'
 import { clampOrderStops, roundLot, triggerPriceFor, virtualPendingTriggerAllowed } from './helpers'
 import type { PreparedEntry } from './entryPrepare'
 import {
@@ -62,6 +63,19 @@ export async function materializeBrokerRangePendingLegs(
   const insertRows: Record<string, unknown>[] = []
   const placedTickets: Array<{ ticket: number; row: Record<string, unknown> }> = []
 
+  const pendingLegsForMap = virtualPendings.map((v, i) => ({
+    stepIdx: brokerRangeStepIdxForLeg(i, ladder.maxStepIdx),
+    stepPriceOffset: ladder.stepPriceOffset,
+    isBuy: plan.isBuy ?? v.isBuy,
+  }))
+  const triggerMap = buildRangeLayerTriggerMap({
+    virtualPendings: pendingLegsForMap,
+    anchor,
+    digits: ladder.digits,
+    rangeLayering: plan.rangeLayering ?? null,
+    pip: ladder.pip,
+  })
+
   for (let i = 0; i < virtualPendings.length; i++) {
     const v = virtualPendings[i]!
     const stepIdx = brokerRangeStepIdxForLeg(i, ladder.maxStepIdx)
@@ -71,7 +85,7 @@ export async function materializeBrokerRangePendingLegs(
       stepPriceOffset: ladder.stepPriceOffset,
       isBuy: plan.isBuy ?? v.isBuy,
     }
-    const triggerPrice = triggerPriceFor(legForPrice, anchor, ladder.digits)
+    const triggerPrice = triggerMap.get(stepIdx) ?? triggerPriceFor(legForPrice, anchor, ladder.digits)
     if (!virtualPendingTriggerAllowed({
       triggerPrice,
       signalRangeBoundary,

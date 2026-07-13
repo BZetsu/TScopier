@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
-import { isAdverselyCrossed, triggerPriceFor } from './tradeExecutor/helpers'
+import { isAdverselyCrossed, isOutwardCatchUp, triggerPriceFor } from './tradeExecutor/helpers'
 import type { VirtualPendingLeg } from './manualPlanner'
 
 test('isAdverselyCrossed: sell fires on upward cross through trigger', () => {
@@ -38,13 +38,34 @@ test('triggerPriceFor: sell ladder rungs above fill anchor not parsed entry', ()
     takeprofit: null,
     slippage: 20,
     comment: 'test',
-    expertID: null,
-    expiryHours: null,
-    cweClosePrice: null,
   }
   const fillAnchor = 4089
   const parsedAnchor = 4088
   assert.equal(triggerPriceFor(leg, fillAnchor, 2), 4089.2)
   assert.equal(triggerPriceFor(leg, parsedAnchor, 2), 4088.2)
   assert.ok(triggerPriceFor(leg, fillAnchor, 2) > fillAnchor)
+})
+
+test('isOutwardCatchUp: sell catches up when price holds above rung after gap', () => {
+  assert.equal(isOutwardCatchUp(false, 4089.6, 4092, 4092.1, 4092, 4092.1), true)
+  assert.equal(isOutwardCatchUp(false, 4090, 4092, 4092.1, 4092, 4092.1), true)
+})
+
+test('isOutwardCatchUp: sell does NOT catch up on retrace below rung', () => {
+  assert.equal(isOutwardCatchUp(false, 4089.6, 4092, 4092.1, 4089.5, 4089.6), false)
+  assert.equal(isOutwardCatchUp(false, 4090, 4090.5, 4090.6, 4089.5, 4089.6), false)
+})
+
+test('isOutwardCatchUp: buy catches up when price holds below rung after gap', () => {
+  assert.equal(isOutwardCatchUp(true, 4080, 4077, 4077.1, 4077, 4077.1), true)
+})
+
+test('isOutwardCatchUp: buy does NOT catch up on bounce above rung', () => {
+  assert.equal(isOutwardCatchUp(true, 4080, 4077, 4077.1, 4082, 4082.1), false)
+})
+
+test('fast gap then hold: cross fires first rung, catch-up eligible for deeper rungs', () => {
+  assert.equal(isAdverselyCrossed(false, 4089.2, 4089, 4089.1, 4092, 4092.1), true)
+  assert.equal(isAdverselyCrossed(false, 4089.6, 4092, 4092.1, 4092, 4092.1), false)
+  assert.equal(isOutwardCatchUp(false, 4089.6, 4092, 4092.1, 4092, 4092.1), true)
 })
