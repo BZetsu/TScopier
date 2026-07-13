@@ -961,6 +961,19 @@ export interface CopierEnginePageTranslations {
   tgConnectHowItWorks2: string
   tgConnectHowItWorks3: string
   tgConnectPhoneWarning: string
+  tgConnectMethodTitle: string
+  tgConnectMethodSubtitle: string
+  tgConnectMethodPhone: string
+  tgConnectMethodQr: string
+  tgConnectStepQr: string
+  tgConnectQrTitle: string
+  tgConnectQrSubtitle: string
+  tgConnectQrInstructions: string
+  tgConnectQrWaiting: string
+  tgConnectQrExpired: string
+  tgConnectQrTwoFaSubtitle: string
+  failedStartQr: string
+  noPendingQr: string
   useDifferentNumber: string
   cancelConnect: string
   phoneLabel: string

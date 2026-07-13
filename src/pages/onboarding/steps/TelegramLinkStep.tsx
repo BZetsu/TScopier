@@ -1,14 +1,20 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { useAuth } from '../../../context/AuthContext'
 import { useT } from '../../../context/LocaleContext'
 import { resolveTelegramAuthError } from '../../../lib/telegramAuthError'
+import {
+  callTelegramAuth,
+  resolveTelegramAuthErrorMessage,
+  type QrPollResponse,
+} from '../../../lib/telegramAuthApi'
 import { Card } from '../../../components/ui/Card'
-import { Input } from '../../../components/ui/Input'
 import { Button } from '../../../components/ui/Button'
-import { Alert } from '../../../components/ui/Alert'
-import { ShieldCheck, TriangleAlert as AlertTriangle } from 'lucide-react'
-
-type Stage = 'phone' | 'code' | 'confirm_2fa' | 'done'
+import { ShieldCheck } from 'lucide-react'
+import {
+  TelegramConnectFlow,
+  type TelegramAuthMethod,
+  type TelegramConnectStage,
+} from '../../../components/telegram/TelegramConnectFlow'
 
 interface Props {
   onDone: (sessionId: string) => void
@@ -30,40 +36,105 @@ export function TelegramLinkStep({ onDone }: Props) {
   const { session } = useAuth()
   const t = useT()
   const ce = t.copierEnginePage
-  const [stage, setStage] = useState<Stage>('phone')
+  const [stage, setStage] = useState<TelegramConnectStage | 'confirm_2fa' | 'done'>('method')
+  const [authMethod, setAuthMethod] = useState<TelegramAuthMethod>('phone')
   const [phone, setPhone] = useState('')
   const [code, setCode] = useState('')
   const [password, setPassword] = useState('')
+  const [qrUrl, setQrUrl] = useState('')
+  const [qrWaiting, setQrWaiting] = useState(false)
   const [sessionRowId, setSessionRowId] = useState<string | null>(null)
   const [twoFaConfirmed, setTwoFaConfirmed] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [requiresPassword, setRequiresPassword] = useState(false)
 
-  const authHeaders = {
-    'Authorization': `Bearer ${session?.access_token}`,
-    'Content-Type': 'application/json',
+  const handleLinked = useCallback((sessionId: string) => {
+    setSessionRowId(sessionId)
+    setQrUrl('')
+    setQrWaiting(false)
+    setStage('confirm_2fa')
+  }, [])
+
+  const startQrLogin = async () => {
+    setError('')
+    setLoading(true)
+    setQrWaiting(true)
+    try {
+      const { ok, data } = await callTelegramAuth<{ qr_url?: string }>(
+        EDGE_FN,
+        session?.access_token,
+        'start_qr_login',
+        {},
+      )
+      if (!ok || !data.qr_url) {
+        setError(resolveTelegramAuthErrorMessage(data.error, ce.failedStartQr, ce))
+        return
+      }
+      setQrUrl(data.qr_url)
+    } catch {
+      setError('Network error. Please try again.')
+    } finally {
+      setLoading(false)
+    }
   }
 
-  const sendCode = async (e: React.FormEvent) => {
+  useEffect(() => {
+    if (stage !== 'qr' || !session?.access_token) return
+
+    let cancelled = false
+    const poll = async () => {
+      try {
+        const { data } = await callTelegramAuth<QrPollResponse>(
+          EDGE_FN,
+          session.access_token,
+          'poll_qr_login',
+          {},
+        )
+        if (cancelled) return
+        if (data.qr_url && data.qr_url !== qrUrl) setQrUrl(data.qr_url)
+        if (data.status === 'requires_password' || data.requires_password) {
+          setQrWaiting(false)
+          setStage('twoFa')
+          return
+        }
+        if (data.status === 'success' && data.session_id) {
+          setQrWaiting(false)
+          handleLinked(data.session_id)
+          return
+        }
+        if (data.status === 'error') {
+          setQrWaiting(false)
+          setError(data.error ?? ce.failedStartQr)
+        }
+      } catch {
+        if (!cancelled) setError('Network error. Please try again.')
+      }
+    }
+
+    void poll()
+    const interval = setInterval(() => void poll(), 2000)
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
+  }, [stage, session?.access_token, qrUrl, handleLinked, ce.failedStartQr])
+
+  const sendCode = async (e: FormEvent) => {
     e.preventDefault()
     setError('')
     setLoading(true)
-
     try {
       const normalizedPhone = normalizeTelegramPhoneInput(phone)
-      const res = await fetch(EDGE_FN, {
-        method: 'POST',
-        headers: authHeaders,
-        body: JSON.stringify({ action: 'send_code', phone: normalizedPhone }),
-      })
-      const data = await res.json()
-
-      if (!res.ok || data.error) {
+      const { ok, data } = await callTelegramAuth<Record<string, never>>(
+        EDGE_FN,
+        session?.access_token,
+        'send_code',
+        { phone: normalizedPhone },
+      )
+      if (!ok) {
         setError(resolveTelegramAuthError(data.error, ce.failedSendCode, ce))
         return
       }
-
       setPhone(normalizedPhone)
       setStage('code')
     } catch {
@@ -73,43 +144,57 @@ export function TelegramLinkStep({ onDone }: Props) {
     }
   }
 
-  const verifyCode = async (e: React.FormEvent) => {
+  const verifyCode = async (e: FormEvent) => {
     e.preventDefault()
     setError('')
     setLoading(true)
-
     try {
       const normalizedPhone = normalizeTelegramPhoneInput(phone)
       const normalizedCode = normalizeTelegramCodeInput(code)
-      const res = await fetch(EDGE_FN, {
-        method: 'POST',
-        headers: authHeaders,
-        body: JSON.stringify({
-          action: 'verify_code',
+      const { ok, data } = await callTelegramAuth<{ requires_password?: boolean; session_id?: string }>(
+        EDGE_FN,
+        session?.access_token,
+        'verify_code',
+        {
           phone: normalizedPhone,
           code: normalizedCode,
-          password: requiresPassword ? password : undefined,
-        }),
-      })
-      const data = await res.json()
-
+          password: stage === 'twoFa' ? password : undefined,
+        },
+      )
       if (data.requires_password) {
-        setRequiresPassword(true)
-        setError('Two-step verification is enabled. Enter your Telegram password below.')
-        setLoading(false)
+        setStage('twoFa')
         return
       }
-
-      if (!res.ok || data.error) {
+      if (!ok || data.error) {
         setError(resolveTelegramAuthError(data.error, ce.verificationFailed, ce))
         return
       }
-
-      // Worker persisted the session row; we just hold the id for handoff.
       setPhone(normalizedPhone)
       setCode(normalizedCode)
-      setSessionRowId(data.session_id ?? null)
-      setStage('confirm_2fa')
+      if (data.session_id) handleLinked(data.session_id)
+    } catch {
+      setError('Network error. Please try again.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const verifyQrPassword = async (e: FormEvent) => {
+    e.preventDefault()
+    setError('')
+    setLoading(true)
+    try {
+      const { ok, data } = await callTelegramAuth<{ session_id?: string }>(
+        EDGE_FN,
+        session?.access_token,
+        'verify_qr_password',
+        { password },
+      )
+      if (!ok || data.error) {
+        setError(resolveTelegramAuthErrorMessage(data.error, ce.verificationFailed, ce))
+        return
+      }
+      if (data.session_id) handleLinked(data.session_id)
     } catch {
       setError('Network error. Please try again.')
     } finally {
@@ -118,9 +203,9 @@ export function TelegramLinkStep({ onDone }: Props) {
   }
 
   const finishLink = () => {
-    if (!twoFaConfirmed) return
+    if (!twoFaConfirmed || !sessionRowId) return
     setStage('done')
-    if (sessionRowId) onDone(sessionRowId)
+    onDone(sessionRowId)
   }
 
   if (stage === 'done') {
@@ -185,77 +270,25 @@ export function TelegramLinkStep({ onDone }: Props) {
   }
 
   return (
-    <Card>
-      <div className="mb-5">
-        <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-50">Link your Telegram</h2>
-        <p className="text-sm text-neutral-500 dark:text-neutral-400 mt-1">
-          {stage === 'phone'
-            ? 'Enter your phone number to receive a verification code.'
-            : 'Enter the code Telegram sent you.'}
-        </p>
-      </div>
-
-      <div className="mb-4 px-3 py-2.5 bg-warning-50 border border-warning-200 rounded-lg flex items-start gap-2.5">
-        <AlertTriangle className="w-4 h-4 text-warning-600 flex-shrink-0 mt-0.5" />
-        <p className="text-xs text-warning-700 leading-relaxed">
-          Use a phone number that has been active in the official Telegram app for at least 7 days.
-          Brand-new numbers connected via API are very likely to be banned by Telegram.
-        </p>
-      </div>
-
-      {error && <Alert className="mb-4 py-2.5">{error}</Alert>}
-
-      {stage === 'phone' ? (
-        <form onSubmit={sendCode} className="space-y-4">
-          <Input
-            label="Phone number"
-            type="tel"
-            placeholder="+1 234 567 8900"
-            value={phone}
-            onChange={e => setPhone(e.target.value)}
-            hint="Include country code (e.g. +44 for UK)"
-            required
-            autoFocus
-          />
-          <Button type="submit" loading={loading} className="w-full" size="lg">
-            Send verification code
-          </Button>
-        </form>
-      ) : (
-        <form onSubmit={verifyCode} className="space-y-4">
-          <Input
-            label="Verification code"
-            type="text"
-            placeholder="12345"
-            value={code}
-            onChange={e => setCode(e.target.value)}
-            hint={`Code sent to ${phone}`}
-            required
-            autoFocus
-          />
-          {requiresPassword && (
-            <Input
-              label="Two-step verification password"
-              type="password"
-              placeholder="Your Telegram password"
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              required
-            />
-          )}
-          <Button type="submit" loading={loading} className="w-full" size="lg">
-            Verify and connect
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            className="w-full"
-            onClick={() => { setStage('phone'); setError('') }}
-          >
-            Use a different number
-          </Button>
-        </form>
-      )}
-    </Card>
+    <TelegramConnectFlow
+      stage={stage}
+      onStageChange={setStage}
+      authMethod={authMethod}
+      onAuthMethodChange={setAuthMethod}
+      phone={phone}
+      onPhoneChange={setPhone}
+      code={code}
+      onCodeChange={setCode}
+      password={password}
+      onPasswordChange={setPassword}
+      qrUrl={qrUrl}
+      qrWaiting={qrWaiting}
+      loading={loading}
+      error={error}
+      onSendCode={sendCode}
+      onVerifyCode={verifyCode}
+      onStartQr={startQrLogin}
+      onVerifyQrPassword={verifyQrPassword}
+    />
   )
 }

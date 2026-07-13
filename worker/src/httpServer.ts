@@ -135,6 +135,45 @@ export function startHttpServer(
         }
       }
 
+      if (url === '/auth/start_qr') {
+        if (!body.user_id) {
+          return sendJson(res, 400, { error: 'user_id is required' })
+        }
+        try {
+          const r = await authService.startQrLogin(body.user_id)
+          return sendJson(res, 200, r)
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : 'Failed to start QR login'
+          return sendJson(res, 400, { error: sanitizeClientError(msg) })
+        }
+      }
+
+      if (url === '/auth/qr_status') {
+        if (!body.user_id) {
+          return sendJson(res, 400, { error: 'user_id is required' })
+        }
+        try {
+          const r = await authService.getQrStatus(body.user_id)
+          return sendJson(res, 200, r)
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : 'QR status failed'
+          return sendJson(res, 400, { error: sanitizeClientError(msg) })
+        }
+      }
+
+      if (url === '/auth/verify_qr_password') {
+        if (!body.user_id || !body.password) {
+          return sendJson(res, 400, { error: 'user_id and password are required' })
+        }
+        try {
+          const r = await authService.verifyQrPassword(body.user_id, body.password)
+          return sendJson(res, 200, r)
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : 'QR password verification failed'
+          return sendJson(res, 400, { error: sanitizeClientError(msg) })
+        }
+      }
+
       if (url === '/auth/list_channels') {
         if (!body.user_id) {
           return sendJson(res, 400, { error: 'user_id is required' })

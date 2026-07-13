@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import clsx from 'clsx'
 import { Radio, Trash2, RefreshCw, CircleAlert as AlertCircle, ChevronDown, Plus, X } from 'lucide-react'
@@ -36,7 +36,8 @@ import { PageHeader } from '../../components/layout/PageHeader'
 import { PageShell } from '../../components/layout/PageShell'
 import { Button } from '../../components/ui/Button'
 import { Input } from '../../components/ui/Input'
-import { TelegramConnectFlow, type TelegramConnectStage } from '../../components/telegram/TelegramConnectFlow'
+import { TelegramConnectFlow, type TelegramConnectStage, type TelegramAuthMethod } from '../../components/telegram/TelegramConnectFlow'
+import { callTelegramAuth, resolveTelegramAuthErrorMessage, type QrPollResponse } from '../../lib/telegramAuthApi'
 import {
   getCachedTgChannels,
   invalidateTgChannelsCache,
@@ -128,7 +129,10 @@ export function CopierEnginePage() {
   const [hasTgSession, setHasTgSession] = useState(
     () => initialTgSession ?? Boolean(initialTgCache),
   )
-  const [tgStage, setTgStage] = useState<'idle' | 'phone' | 'code' | 'twoFa' | 'linked'>('idle')
+  const [tgStage, setTgStage] = useState<'idle' | 'method' | 'phone' | 'code' | 'qr' | 'twoFa' | 'linked'>('idle')
+  const [tgAuthMethod, setTgAuthMethod] = useState<TelegramAuthMethod>('phone')
+  const [tgQrUrl, setTgQrUrl] = useState('')
+  const [tgQrWaiting, setTgQrWaiting] = useState(false)
   const [tgPhone, setTgPhone] = useState('')
   const [tgCode, setTgCode] = useState('')
   const [tgPassword, setTgPassword] = useState('')
@@ -289,11 +293,11 @@ export function CopierEnginePage() {
     setTgError('')
     setTgCode('')
     setTgPassword('')
-    setTgStage('phone')
+    setTgStage('method')
   }, [])
 
   const isTgReconnectFlow =
-    tgStage === 'phone' || tgStage === 'code' || tgStage === 'twoFa'
+    tgStage === 'method' || tgStage === 'phone' || tgStage === 'code' || tgStage === 'qr' || tgStage === 'twoFa'
   const showTelegramConnectFlow = !hasTgSession || isTgReconnectFlow
 
   /** Session revoked server-side — show reconnect UI; never wipe configured channels. */
@@ -311,7 +315,7 @@ export function CopierEnginePage() {
       .eq('user_id', user.id)
       .order('created_at', { ascending: false })
     setChannels((channelRows ?? []) as TelegramChannel[])
-    setTgStage('phone')
+    setTgStage('method')
   }, [user, ce.telegramSessionExpired])
 
   const fetchTgChannels = async (opts?: { background?: boolean; force?: boolean }) => {
@@ -539,6 +543,109 @@ export function CopierEnginePage() {
     }
   }
 
+  const handleTelegramLinked = async (data: { channels?: TgChannelListItem[] }) => {
+    setTgQrUrl('')
+    setTgQrWaiting(false)
+    setTgStage('linked')
+    if (Array.isArray(data.channels)) {
+      const list = data.channels as TgChannelListItem[]
+      setTgChannels(list)
+      if (user?.id) setCachedTgChannels(user.id, list)
+      await loadData({ skipTgFetch: true })
+    } else {
+      await loadData()
+    }
+  }
+
+  const startQrLogin = async () => {
+    setTgError('')
+    setTgLoading(true)
+    setTgQrWaiting(true)
+    try {
+      const { ok, data } = await callTelegramAuth<{ qr_url?: string; expires_at?: string }>(
+        EDGE_FN,
+        session?.access_token,
+        'start_qr_login',
+        {},
+      )
+      if (!ok || !data.qr_url) {
+        setTgError(resolveTelegramAuthErrorMessage(data.error, ce.failedStartQr, ce))
+        return
+      }
+      setTgQrUrl(data.qr_url)
+    } catch {
+      setTgError(ce.networkError)
+    } finally {
+      setTgLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (tgStage !== 'qr' || !session?.access_token) return
+
+    let cancelled = false
+    const poll = async () => {
+      try {
+        const { data } = await callTelegramAuth<QrPollResponse>(
+          EDGE_FN,
+          session.access_token,
+          'poll_qr_login',
+          {},
+        )
+        if (cancelled) return
+        if (data.qr_url && data.qr_url !== tgQrUrl) {
+          setTgQrUrl(data.qr_url)
+        }
+        if (data.status === 'requires_password' || data.requires_password) {
+          setTgQrWaiting(false)
+          setTgStage('twoFa')
+          return
+        }
+        if (data.status === 'success' && data.session_id) {
+          setTgQrWaiting(false)
+          await handleTelegramLinked({ channels: data.channels as TgChannelListItem[] | undefined })
+          return
+        }
+        if (data.status === 'error') {
+          setTgQrWaiting(false)
+          setTgError(data.error ?? ce.failedStartQr)
+        }
+      } catch {
+        if (!cancelled) setTgError(ce.networkError)
+      }
+    }
+
+    void poll()
+    const interval = setInterval(() => void poll(), 2000)
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
+  }, [tgStage, session?.access_token, tgQrUrl])
+
+  const verifyQrPassword = async (e: FormEvent) => {
+    e.preventDefault()
+    setTgError('')
+    setTgLoading(true)
+    try {
+      const { ok, data } = await callTelegramAuth<{ session_id?: string; channels?: TgChannelListItem[] }>(
+        EDGE_FN,
+        session?.access_token,
+        'verify_qr_password',
+        { password: tgPassword },
+      )
+      if (!ok || data.error) {
+        setTgError(resolveTelegramAuthErrorMessage(data.error, ce.verificationFailed, ce))
+        return
+      }
+      await handleTelegramLinked({ channels: data.channels })
+    } catch {
+      setTgError(ce.networkError)
+    } finally {
+      setTgLoading(false)
+    }
+  }
+
   const sendCode = async (e: React.FormEvent) => {
     e.preventDefault()
     setTgError('')
@@ -603,15 +710,7 @@ export function CopierEnginePage() {
       }
       setTgPhone(phone)
       setTgCode(code)
-      setTgStage('linked')
-      if (Array.isArray(data.channels)) {
-        const list = data.channels as TgChannelListItem[]
-        setTgChannels(list)
-        if (user?.id) setCachedTgChannels(user.id, list)
-        await loadData({ skipTgFetch: true })
-      } else {
-        await loadData()
-      }
+      await handleTelegramLinked({ channels: data.channels as TgChannelListItem[] | undefined })
     } catch {
       setTgError(ce.networkError)
     } finally {
@@ -630,12 +729,17 @@ export function CopierEnginePage() {
       setTgStage(stage)
     }
     setTgError('')
-    if (stage === 'phone') {
+    if (stage === 'phone' || stage === 'method') {
       setTgCode('')
       setTgPassword('')
+      setTgQrUrl('')
+      setTgQrWaiting(false)
     }
     if (stage === 'code') {
       setTgPassword('')
+    }
+    if (stage !== 'qr') {
+      setTgQrWaiting(false)
     }
   }
 
@@ -691,16 +795,22 @@ export function CopierEnginePage() {
         <TelegramConnectFlow
           stage={tgStage === 'linked' ? 'idle' : tgStage}
           onStageChange={handleTgStageChange}
+          authMethod={tgAuthMethod}
+          onAuthMethodChange={setTgAuthMethod}
           phone={tgPhone}
           onPhoneChange={setTgPhone}
           code={tgCode}
           onCodeChange={setTgCode}
           password={tgPassword}
           onPasswordChange={setTgPassword}
+          qrUrl={tgQrUrl}
+          qrWaiting={tgQrWaiting}
           loading={tgLoading}
           error={tgError}
           onSendCode={sendCode}
           onVerifyCode={verifyCode}
+          onStartQr={startQrLogin}
+          onVerifyQrPassword={verifyQrPassword}
         />
       )}
 

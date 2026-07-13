@@ -38,6 +38,9 @@ const WORKER_INTERNAL_TOKEN = Deno.env.get("WORKER_INTERNAL_TOKEN") ?? ""
 const ROUTES: Record<string, string> = {
   send_code: "/auth/send_code",
   verify_code: "/auth/verify_code",
+  start_qr_login: "/auth/start_qr",
+  poll_qr_login: "/auth/qr_status",
+  verify_qr_password: "/auth/verify_qr_password",
   list_channels: "/auth/list_channels",
   backfill_channel_history: "/auth/backfill_channel_history",
 }

@@ -1,7 +1,8 @@
 export const TELEGRAM_ALREADY_LINKED_ERROR = 'TELEGRAM_ALREADY_LINKED'
 
-type TelegramAuthErrorMessages = {
+export type TelegramAuthErrorMessages = {
   telegramAlreadyLinked: string
+  noPendingQr?: string
 }
 
 export function resolveTelegramAuthError(
@@ -11,6 +12,9 @@ export function resolveTelegramAuthError(
 ): string {
   if (error === TELEGRAM_ALREADY_LINKED_ERROR) {
     return messages.telegramAlreadyLinked
+  }
+  if (error === 'NO_PENDING_QR') {
+    return messages.noPendingQr ?? 'QR login expired. Please start again.'
   }
   if (typeof error === 'string' && error.trim()) {
     return error
