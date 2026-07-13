@@ -362,4 +362,93 @@ describe('shouldBlockVirtualLegFire retrace guard', () => {
     assert.equal(out.block, true)
     assert.equal(out.reason, 'retrace_inside_basket')
   })
+
+  it('allows distance burst when retrace guard would block without burst context', async () => {
+    const supabase = {
+      from: (table: string) => {
+        if (table === 'range_pending_tp_locks') {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({
+                  eq: async () => ({ count: 0, error: null }),
+                }),
+              }),
+            }),
+          }
+        }
+        if (table === 'range_pending_legs') {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({
+                  eq: () => ({
+                    eq: () => ({
+                      eq: async () => ({ count: 0, error: null }),
+                    }),
+                  }),
+                }),
+              }),
+            }),
+          }
+        }
+        if (table === 'trade_execution_logs') {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({
+                  eq: () => ({
+                    eq: () => ({
+                      order: () => ({
+                        limit: () => ({
+                          maybeSingle: async () => ({ data: null, error: null }),
+                        }),
+                      }),
+                    }),
+                  }),
+                }),
+              }),
+            }),
+          }
+        }
+        if (table === 'trades') {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({
+                  eq: async () => ({
+                    data: [{ entry_price: 4077, lot_size: 0.01 }],
+                    error: null,
+                  }),
+                }),
+              }),
+            }),
+          }
+        }
+        return {}
+      },
+    }
+    const out = await shouldBlockVirtualLegFire(
+      supabase as never,
+      {
+        id: 'leg-2',
+        signal_id: 'sig-1',
+        broker_account_id: 'broker-1',
+        symbol: 'XAUUSD',
+        step_idx: 2,
+        trigger_price: 4079.94,
+        is_buy: true,
+      },
+      {
+        isBuy: true,
+        distanceBurst: {
+          anchor: 4080,
+          stepPriceOffset: 0.03,
+          bid: 4079.94,
+          ask: 4079.96,
+        },
+      },
+    )
+    assert.equal(out.block, false)
+  })
 })

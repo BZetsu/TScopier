@@ -29,7 +29,7 @@ describe('decideLadderFires', () => {
     assert.equal(out.length, 2)
   })
 
-  it('distance-scaled burst fires all crossed rungs within budget', () => {
+  it('distance-scaled burst selects by distance without trigger cross', () => {
     const out = decideLadderFires({
       legs,
       bid: 4040,
@@ -41,11 +41,11 @@ describe('decideLadderFires', () => {
       anchor: 4072,
       stepPriceOffset: 10,
     })
-    assert.equal(out.length, 3, '4072-4040=320, budget=32 but only 3 legs exist')
+    assert.equal(out.length, 3, '4072-4040=32, budget=3')
     assert.deepEqual(out.map(l => l.id), ['a', 'b', 'c'])
   })
 
-  it('distance-scaled burst near anchor fires only shallowest crossed', () => {
+  it('distance-scaled burst near anchor fires only step 1', () => {
     const out = decideLadderFires({
       legs,
       bid: 4058.8,

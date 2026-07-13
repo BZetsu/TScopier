@@ -60,7 +60,7 @@ export function rungsFromAdverseDistance(dist: number, stepPriceOffset: number):
 }
 
 /**
- * How many ladder rungs may fire this tick from adverse distance alone.
+ * How many ladder rungs may fire from cumulative adverse distance alone.
  * Returns 0 when step offset is unknown or distance is below one step.
  */
 export function computeLayerFireBudget(args: {
@@ -69,7 +69,7 @@ export function computeLayerFireBudget(args: {
   bid: number
   ask: number
   stepPriceOffset: number
-  /** When true, any triggered leg gets budget >= 1 even if distance < one step. */
+  /** @deprecated Legacy: forces budget 1 when distance < one step. Distance path omits this. */
   anyTriggered?: boolean
 }): number {
   const offset = Math.max(0, args.stepPriceOffset)
@@ -81,15 +81,94 @@ export function computeLayerFireBudget(args: {
   return args.anyTriggered ? 1 : 0
 }
 
-/** Select triggered legs whose step_idx fits the distance budget (shallowest first). */
+/** True when adverse distance from anchor reaches this rung (step N needs dist >= N × step). */
+export function isLegEligibleByDistance(
+  isBuy: boolean,
+  anchor: number,
+  bid: number,
+  ask: number,
+  stepIdx: number,
+  stepPriceOffset: number,
+): boolean {
+  if (!Number.isFinite(stepIdx) || stepIdx < 1) return false
+  const offset = Math.max(0, stepPriceOffset)
+  if (offset <= 0) return false
+  const budget = rungsFromAdverseDistance(
+    adverseDistanceFromAnchor(isBuy, anchor, bid, ask),
+    offset,
+  )
+  return budget >= stepIdx
+}
+
+/** Pending legs whose step_idx fits the distance budget (shallowest first). */
+export function selectPendingLegsForDistanceBurst<T extends LayerBurstLeg>(args: {
+  pendingLegs: T[]
+  budget: number
+  /** Exclude rungs at or below this step (already fired). */
+  highestFiredStepIdx?: number
+}): T[] {
+  const budget = Math.max(0, Math.floor(args.budget))
+  const minStep = Math.max(0, Math.floor(args.highestFiredStepIdx ?? 0))
+  if (budget <= 0 || args.pendingLegs.length === 0) return []
+
+  return args.pendingLegs
+    .filter(leg => leg.step_idx >= 1 && leg.step_idx > minStep && leg.step_idx <= budget)
+    .sort((a, b) => a.step_idx - b.step_idx || a.id.localeCompare(b.id))
+}
+
+/** Steps in (highestFiredStepIdx, budget] — convenience for per-tick new layers. */
+export function newLayersForTick(budget: number, highestFiredStepIdx: number): number[] {
+  const lo = Math.max(0, Math.floor(highestFiredStepIdx))
+  const hi = Math.max(0, Math.floor(budget))
+  if (hi <= lo) return []
+  const out: number[] = []
+  for (let s = lo + 1; s <= hi; s++) out.push(s)
+  return out
+}
+
+/** @deprecated Use selectPendingLegsForDistanceBurst — kept for callers passing pre-filtered triggered legs. */
 export function selectLegsForDistanceBurst<T extends LayerBurstLeg>(args: {
   triggeredLegs: T[]
   budget: number
 }): T[] {
-  const budget = Math.max(0, Math.floor(args.budget))
-  if (budget <= 0 || args.triggeredLegs.length === 0) return []
+  return selectPendingLegsForDistanceBurst({ pendingLegs: args.triggeredLegs, budget: args.budget })
+}
 
-  return args.triggeredLegs
-    .filter(leg => leg.step_idx >= 1 && leg.step_idx <= budget)
-    .sort((a, b) => a.step_idx - b.step_idx || a.id.localeCompare(b.id))
+/** Market fill allowed for distance burst: distance-qualified and not worse than slippage above rung. */
+export function isDistanceBurstFillAllowed(args: {
+  isBuy: boolean
+  anchor: number
+  bid: number
+  ask: number
+  stepIdx: number
+  stepPriceOffset: number
+  triggerPrice: number
+  slippagePoints: number
+  point: number | null
+}): { ok: boolean; reason?: string } {
+  if (!isLegEligibleByDistance(
+    args.isBuy,
+    args.anchor,
+    args.bid,
+    args.ask,
+    args.stepIdx,
+    args.stepPriceOffset,
+  )) {
+    return { ok: false, reason: 'distance_not_eligible' }
+  }
+
+  const { isBuy, triggerPrice, bid, ask, slippagePoints, point } = args
+  if (!Number.isFinite(triggerPrice) || triggerPrice <= 0) {
+    return { ok: false, reason: 'invalid_trigger' }
+  }
+  if (point == null || !(point > 0)) return { ok: true }
+
+  const tol = Math.max(2, Math.max(0, slippagePoints)) * point
+  const fillSide = isBuy ? ask : bid
+  if (isBuy) {
+    if (fillSide > triggerPrice + tol) return { ok: false, reason: 'fill_outside_trigger_band' }
+  } else if (fillSide < triggerPrice - tol) {
+    return { ok: false, reason: 'fill_outside_trigger_band' }
+  }
+  return { ok: true }
 }

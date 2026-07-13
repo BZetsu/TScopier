@@ -3,9 +3,9 @@
  * engine, designed so the over-firing/duplicate-leg class of bug is impossible.
  *
  * Two guarantees:
- *  1. Decision is pure + capped: decideLadderFires() only returns legs whose trigger
- *     the live price has crossed, never exceeds the hard leg cap, respects a TP-touch
- *     freeze, and bounds fires-per-tick. Fully unit-tested.
+ *  1. Decision is pure + capped: decideLadderFires() respects distance budget when
+ *     anchor/step are provided, never exceeds the hard leg cap, respects a TP-touch
+ *     freeze, and bounds fires-per-tick on legacy path. Fully unit-tested.
  *  2. Firing is strictly idempotent: claim (DB pending->claimed) -> fire (protected
  *     at send, deterministic comment) -> record. A leg fires exactly once; an
  *     ambiguous send is resolved by FxClient adopting the actually-opened order
@@ -44,16 +44,7 @@ export function decideLadderFires(args: {
   if (args.frozen) return []
   const capacity = Math.max(0, args.maxLegs - args.openLegCount)
   if (capacity <= 0) return []
-  // Fill side: a buy averages down -> fills at ask; a sell averages up -> fills at bid.
-  const px = args.isBuy ? args.ask : args.bid
-  if (!Number.isFinite(px) || px <= 0) return []
-  const crossed = args.legs.filter(l =>
-    Number.isFinite(l.triggerPrice) && l.triggerPrice > 0
-    && (args.isBuy ? px <= l.triggerPrice : px >= l.triggerPrice))
-  // Shallowest rungs first (closest trigger), so we fill the ladder in order.
-  crossed.sort((a, b) => a.stepIdx - b.stepIdx)
 
-  let limit: number
   const stepOffset = args.stepPriceOffset ?? 0
   const anchor = args.anchor ?? 0
   if (stepOffset > 0 && Number.isFinite(anchor) && anchor > 0) {
@@ -63,14 +54,21 @@ export function decideLadderFires(args: {
       bid: args.bid,
       ask: args.ask,
       stepPriceOffset: stepOffset,
-      anyTriggered: crossed.length > 0,
     })
-    limit = Math.min(capacity, budget)
-  } else {
-    limit = Math.min(capacity, args.maxFiresPerTick ?? 3)
+    if (budget <= 0) return []
+    const sorted = [...args.legs].sort((a, b) => a.stepIdx - b.stepIdx)
+    return sorted.filter(l => l.stepIdx >= 1 && l.stepIdx <= budget).slice(0, capacity)
   }
 
-  return crossed.filter(l => l.stepIdx >= 1 && l.stepIdx <= limit).slice(0, limit)
+  // Legacy: trigger-crossing path with fixed per-tick cap.
+  const px = args.isBuy ? args.ask : args.bid
+  if (!Number.isFinite(px) || px <= 0) return []
+  const crossed = args.legs.filter(l =>
+    Number.isFinite(l.triggerPrice) && l.triggerPrice > 0
+    && (args.isBuy ? px <= l.triggerPrice : px >= l.triggerPrice))
+  crossed.sort((a, b) => a.stepIdx - b.stepIdx)
+  const limit = Math.min(capacity, args.maxFiresPerTick ?? 3)
+  return crossed.slice(0, limit)
 }
 
 export type FireLadderDeps = {
@@ -122,11 +120,8 @@ export async function fireLadderLegs(deps: FireLadderDeps, legs: LadderLeg[]): P
       await deps.onFired(leg.id, result.ticket, result.price, result.volume ?? leg.volume).catch(() => {})
       fired++
     } else if (result.retcodeName === 'AMBIGUOUS') {
-      // Could not confirm; do NOT re-fire and do NOT release (avoid duplicate). Leave
-      // claimed - the reconciler's orphan adoption will reconcile if it did open.
       failed++
     } else {
-      // Definitely not placed -> safe to release for a later tick.
       await deps.release(leg.id).catch(() => {})
       failed++
     }
@@ -134,3 +129,4 @@ export async function fireLadderLegs(deps: FireLadderDeps, legs: LadderLeg[]): P
 
   return { fired, skipped, failed }
 }
+

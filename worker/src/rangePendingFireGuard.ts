@@ -4,6 +4,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { isLegEligibleByDistance } from './layerConcurrentFire'
 
 export type RangeLegBasketScope = {
   signalId: string
@@ -314,6 +315,12 @@ export async function shouldBlockVirtualLegFire(
     layerTillClose?: boolean
     quote?: { bid: number; ask: number }
     isBuy?: boolean
+    distanceBurst?: {
+      anchor: number
+      stepPriceOffset: number
+      bid: number
+      ask: number
+    }
   },
 ): Promise<{ block: boolean; reason?: string }> {
   const tpLockScope: RangePendingTpLockScope = {
@@ -361,7 +368,13 @@ export async function shouldBlockVirtualLegFire(
 
   const isBuy = opts?.isBuy ?? leg.is_buy
   const triggerPrice = leg.trigger_price
-  if (isBuy != null && triggerPrice != null && openTrades.length > 0) {
+  const burst = opts?.distanceBurst
+  const distanceEligible = burst != null
+    && burst.stepPriceOffset > 0
+    && isBuy != null
+    && isLegEligibleByDistance(isBuy, burst.anchor, burst.bid, burst.ask, leg.step_idx, burst.stepPriceOffset)
+
+  if (isBuy != null && triggerPrice != null && openTrades.length > 0 && !distanceEligible) {
     if (!layerTriggerBeyondExistingEntries(isBuy, triggerPrice, openTrades)) {
       return { block: true, reason: 'retrace_inside_basket' }
     }

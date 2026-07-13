@@ -45,7 +45,9 @@ import {
 import { reanchorPendingLegsAfterGapFill } from './gapFillReanchor'
 import {
   computeLayerFireBudget,
-  selectLegsForDistanceBurst,
+  isDistanceBurstFillAllowed,
+  isLegEligibleByDistance,
+  selectPendingLegsForDistanceBurst,
   stepPriceOffsetForBasket,
 } from './layerConcurrentFire'
 
@@ -75,11 +77,11 @@ import {
  *     on `trades` close) so a flat basket cannot spawn new market entries when
  *     price revisits old ladder triggers.
  *
- *   • Ladder discipline: distance from fill anchor sets how many triggered
- *     virtual legs may fire per (signal, broker, symbol) per tick —
- *     budget = floor(adverseDistance / stepOffset), minimum 1 when any rung
- *     is triggered. All eligible rungs fire concurrently (bounded by basket
- *     leg cap and per-leg guards). Strict signal-entry deferrals use broker
+ *   • Ladder discipline: cumulative adverse distance from fill anchor sets how
+ *     many pending virtual legs may fire per (signal, broker, symbol) per tick —
+ *     budget = floor(adverseDistance / stepOffset). All pending rungs with
+ *     step_idx <= budget fire at current market (no tick-by-tick trigger cross).
+ *     Bounded by basket leg cap and per-leg guards. Strict signal-entry deferrals use broker
  *     limit orders (`signal_entry_pending_orders`), not `step_idx = 0` rows
  *     in this table.
  *
@@ -475,112 +477,107 @@ export class VirtualPendingMonitor {
         return
       }
       const tpTouchedBaskets = await this.detectAndLockTpTouchedBaskets(legs, q.bid, q.ask)
-      const prevQuote = this.lastQuoteByGroup.get(key)
       // How far is the nearest trigger? Useful diagnostic when nothing fires.
       let nearestGap = Number.POSITIVE_INFINITY
-      const triggeredInGroup: PendingRow[] = []
       for (const leg of legs) {
         const basketKey = `${leg.signal_id}|${leg.broker_account_id}`
         if (tpTouchedBaskets.has(basketKey)) continue
         const ref = leg.is_buy ? q.bid : q.ask
         const gap = leg.is_buy ? ref - leg.trigger_price : leg.trigger_price - ref
         if (Number.isFinite(gap) && gap < nearestGap) nearestGap = gap
-        const crossed = prevQuote != null
-          && isAdverselyCrossed(
-            leg.is_buy,
-            leg.trigger_price,
-            prevQuote.bid,
-            prevQuote.ask,
-            q.bid,
-            q.ask,
-          )
-        const catchUp = prevQuote != null
-          && !crossed
-          && isOutwardCatchUp(
-            leg.is_buy,
-            leg.trigger_price,
-            prevQuote.bid,
-            prevQuote.ask,
-            q.bid,
-            q.ask,
-          )
-        if (crossed || catchUp) triggeredInGroup.push(leg)
       }
       this.lastQuoteByGroup.set(key, { bid: q.bid, ask: q.ask })
 
+      const pendingByBasket = new Map<string, PendingRow[]>()
+      for (const leg of legs) {
+        const bk = `${leg.signal_id}|${leg.broker_account_id}`
+        if (tpTouchedBaskets.has(bk)) continue
+        const arr = pendingByBasket.get(bk) ?? []
+        arr.push(leg)
+        pendingByBasket.set(bk, arr)
+      }
+
       const cancelledStaleIds = new Set<string>()
       const purgedBaskets = new Set<string>()
-      for (const leg of triggeredInGroup) {
-        const bk = `${leg.signal_id}|${leg.broker_account_id}`
-        if (purgedBaskets.has(bk)) {
-          cancelledStaleIds.add(leg.id)
-          continue
-        }
-        const staleEarly = await this.getStaleLegReason(leg, api, uuid)
-        if (!staleEarly) continue
-        purgedBaskets.add(bk)
-        const deleted = await deleteRangePendingLegsForBasket(
-          this.supabase,
-          { signalId: leg.signal_id, brokerAccountId: leg.broker_account_id },
-          staleEarly,
-        )
-        if (deleted > 0) {
-          for (const l of legs) {
-            if (l.signal_id === leg.signal_id && l.broker_account_id === leg.broker_account_id) {
-              cancelledStaleIds.add(l.id)
-            }
-          }
-          try {
-            await this.supabase.from('trade_execution_logs').insert({
-              user_id: leg.user_id,
-              signal_id: leg.signal_id,
-              broker_account_id: leg.broker_account_id,
-              action: 'virtual_pending_cancelled',
-              status: 'info',
-              request_payload: {
-                reason: staleEarly,
-                phase: 'pre_claim_stale',
-                rows: deleted,
-                basket: bk,
-              } as unknown as Record<string, unknown>,
-            })
-          } catch {
-            /* logging is best-effort */
-          }
-        }
-      }
 
-      const byBasket = new Map<string, PendingRow[]>()
-      for (const leg of triggeredInGroup) {
-        if (cancelledStaleIds.has(leg.id)) continue
-        const bk = `${leg.signal_id}|${leg.broker_account_id}`
-        const arr = byBasket.get(bk) ?? []
-        arr.push(leg)
-        byBasket.set(bk, arr)
-      }
+      const fireJobs: Array<{
+        leg: PendingRow
+        bid: number
+        ask: number
+        distanceBurst: { anchor: number; stepPriceOffset: number }
+      }> = []
 
-      const fireJobs: Array<{ leg: PendingRow; bid: number; ask: number }> = []
-      for (const [, arr] of byBasket) {
-        if (!arr.length) continue
-        const anchor = Number(arr[0]!.anchor_price)
-        const isBuy = arr[0]!.is_buy
-        const stepOffset = stepPriceOffsetForBasket(arr) ?? 0
+      for (const [, basketLegs] of pendingByBasket) {
+        if (!basketLegs.length) continue
+        const anchor = Number(basketLegs[0]!.anchor_price)
+        const isBuy = basketLegs[0]!.is_buy
+        const stepOffset = stepPriceOffsetForBasket(basketLegs) ?? 0
         const budget = computeLayerFireBudget({
           isBuy,
           anchor,
           bid: q.bid,
           ask: q.ask,
           stepPriceOffset: stepOffset,
-          anyTriggered: true,
         })
-        const toFire = selectLegsForDistanceBurst({ triggeredLegs: arr, budget })
+        if (budget <= 0) continue
+
+        const toFire = selectPendingLegsForDistanceBurst({ pendingLegs: basketLegs, budget })
         for (const leg of toFire) {
+          if (cancelledStaleIds.has(leg.id)) continue
+          const bk = `${leg.signal_id}|${leg.broker_account_id}`
+          if (purgedBaskets.has(bk)) {
+            cancelledStaleIds.add(leg.id)
+            continue
+          }
+          const staleEarly = await this.getStaleLegReason(leg, api, uuid)
+          if (staleEarly) {
+            if (!purgedBaskets.has(bk)) {
+              purgedBaskets.add(bk)
+              const deleted = await deleteRangePendingLegsForBasket(
+                this.supabase,
+                { signalId: leg.signal_id, brokerAccountId: leg.broker_account_id },
+                staleEarly,
+              )
+              if (deleted > 0) {
+                for (const l of legs) {
+                  if (l.signal_id === leg.signal_id && l.broker_account_id === leg.broker_account_id) {
+                    cancelledStaleIds.add(l.id)
+                  }
+                }
+                try {
+                  await this.supabase.from('trade_execution_logs').insert({
+                    user_id: leg.user_id,
+                    signal_id: leg.signal_id,
+                    broker_account_id: leg.broker_account_id,
+                    action: 'virtual_pending_cancelled',
+                    status: 'info',
+                    request_payload: {
+                      reason: staleEarly,
+                      phase: 'pre_claim_stale',
+                      rows: deleted,
+                      basket: bk,
+                    } as unknown as Record<string, unknown>,
+                  })
+                } catch {
+                  /* logging is best-effort */
+                }
+              }
+            }
+            continue
+          }
+
           triggeredTotal += 1
-          fireJobs.push({ leg, bid: q.bid, ask: q.ask })
+          fireJobs.push({
+            leg,
+            bid: q.bid,
+            ask: q.ask,
+            distanceBurst: { anchor, stepPriceOffset: stepOffset },
+          })
         }
       }
+
       const fireResults = await Promise.allSettled(
-        fireJobs.map(j => this.fireLeg(j.leg, j.bid, j.ask)),
+        fireJobs.map(j => this.fireLeg(j.leg, j.bid, j.ask, { distanceBurst: j.distanceBurst })),
       )
       for (const r of fireResults) {
         if (r.status === 'fulfilled' && r.value) firedOkTotal += 1
@@ -821,7 +818,12 @@ export class VirtualPendingMonitor {
     throw lastErr instanceof Error ? lastErr : new Error(String(lastErr))
   }
 
-  private async fireLeg(leg: PendingRow, bid: number, ask: number): Promise<boolean> {
+  private async fireLeg(
+    leg: PendingRow,
+    bid: number,
+    ask: number,
+    opts?: { distanceBurst?: { anchor: number; stepPriceOffset: number } },
+  ): Promise<boolean> {
     const api = apiForFxsocketAccount(this.platformByUuid, leg.metaapi_account_id)
     if (!api) return false
 
@@ -830,9 +832,19 @@ export class VirtualPendingMonitor {
     let guardBid = bid
     let guardAsk = ask
 
-    // Monotonicity check: verify price is still triggered at fresh quote.
-    // Prevents firing when price briefly dipped to trigger then bounced back.
-    if (!isTriggered(leg.is_buy, leg.trigger_price, guardBid, guardAsk)) {
+    const burst = opts?.distanceBurst
+    if (burst && burst.stepPriceOffset > 0) {
+      if (!isLegEligibleByDistance(
+        leg.is_buy,
+        burst.anchor,
+        guardBid,
+        guardAsk,
+        leg.step_idx,
+        burst.stepPriceOffset,
+      )) {
+        return false
+      }
+    } else if (!isTriggered(leg.is_buy, leg.trigger_price, guardBid, guardAsk)) {
       return false
     }
 
@@ -845,6 +857,9 @@ export class VirtualPendingMonitor {
       layerTillClose,
       quote: { bid: guardBid, ask: guardAsk },
       isBuy: leg.is_buy,
+      distanceBurst: burst && burst.stepPriceOffset > 0
+        ? { anchor: burst.anchor, stepPriceOffset: burst.stepPriceOffset, bid: guardBid, ask: guardAsk }
+        : undefined,
     })
     if (block.block) {
       if (block.reason === 'basket_in_profit') {
@@ -958,14 +973,26 @@ export class VirtualPendingMonitor {
     // Reuse the tick quote — already validated by monotonicity check above.
     const fireBid = guardBid
     const fireAsk = guardAsk
-    const band = fillWithinTriggerBand({
-      isBuy: leg.is_buy,
-      triggerPrice: leg.trigger_price,
-      bid: fireBid,
-      ask: fireAsk,
-      slippagePoints: leg.slippage ?? 20,
-      point: params?.point ?? null,
-    })
+    const band = burst && burst.stepPriceOffset > 0
+      ? isDistanceBurstFillAllowed({
+        isBuy: leg.is_buy,
+        anchor: burst.anchor,
+        bid: fireBid,
+        ask: fireAsk,
+        stepIdx: leg.step_idx,
+        stepPriceOffset: burst.stepPriceOffset,
+        triggerPrice: leg.trigger_price,
+        slippagePoints: leg.slippage ?? 20,
+        point: params?.point ?? null,
+      })
+      : fillWithinTriggerBand({
+        isBuy: leg.is_buy,
+        triggerPrice: leg.trigger_price,
+        bid: fireBid,
+        ask: fireAsk,
+        slippagePoints: leg.slippage ?? 20,
+        point: params?.point ?? null,
+      })
     if (!band.ok) {
       await this.releaseClaimedLegToPending(leg.id)
       const now = Date.now()
