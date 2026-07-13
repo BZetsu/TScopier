@@ -5,6 +5,7 @@ import {
   looksLikeMarketNewsOrCommentary,
   looksLikePositionStatusCommentary,
   looksLikeProfitResultCommentary,
+  looksLikePastTradeCelebrationCommentary,
   looksLikeRetrospectiveTradeDiscussion,
   looksLikeTradeRecapCommentary,
 } from './signalCommentaryGuard'
@@ -201,5 +202,23 @@ describe('messageHasExplicitSlTpLabels', () => {
     assert.equal(messageHasExplicitSlTpLabels('SL ⛔️4038'), true)
     assert.equal(messageHasExplicitSlTpLabels('TP1 🎯4058'), true)
     assert.equal(messageHasExplicitSlTpLabels('Stop Loss (SL): 4050'), true)
+  })
+})
+
+describe('looksLikePastTradeCelebrationCommentary', () => {
+  it('rejects past-tense gold buy hype without executable structure', () => {
+    const msg = 'I am excited about the Gold buy we took earlier at 4505, such a banger!!!'
+    assert.equal(looksLikePastTradeCelebrationCommentary(msg), true)
+    assert.equal(looksLikeCasualNonTradeMessage(msg), true)
+    assert.equal(looksLikeTradeRecapCommentary(msg), true)
+  })
+
+  it('does not reject imperative new entry signals', () => {
+    const msg = `GOLD BUY NOW
+Entry 4505
+SL 4495
+TP 4520`
+    assert.equal(looksLikePastTradeCelebrationCommentary(msg), false)
+    assert.equal(looksLikeCasualNonTradeMessage(msg), false)
   })
 })

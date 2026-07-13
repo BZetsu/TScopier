@@ -3,7 +3,9 @@ import { coerceTradeIntent } from './coerceTradeIntent.ts'
 import type { TradeIntent, TradeIntentKind } from './tradeIntent.ts'
 import { parsedDataToTradeIntent } from './parsedDataToTradeIntent.ts'
 import {
+  hasExecutableTradeStructure,
   looksLikeCasualNonTradeMessage,
+  looksLikePastTradeCelebrationCommentary,
   looksLikeProfitResultCommentary,
 } from '../signalCommentaryGuard.ts'
 
@@ -61,8 +63,34 @@ function looksLikeTpHitOrStatusCommentary(message: string): boolean {
 function shouldSkipMessageForExamples(raw: string): boolean {
   if (!raw || raw.length < 12) return true
   if (looksLikeCasualNonTradeMessage(raw)) return true
+  if (looksLikePastTradeCelebrationCommentary(raw)) return true
   if (looksLikeTpHitOrStatusCommentary(raw)) return true
   return false
+}
+
+function isValidTrainableExample(
+  raw: string,
+  label: ChannelExampleLabel,
+  intent: TradeIntent,
+): boolean {
+  if (shouldSkipMessageForExamples(raw)) return false
+
+  if (intent.sl != null && intent.sl <= 0) return false
+  if (intent.tp.some(t => t <= 0)) return false
+  if (intent.entry.some(e => e <= 0)) return false
+
+  if (label === 'entry') {
+    if (!hasExecutableTradeStructure(raw)) {
+      const hasOrderLevels =
+        intent.entry.some(e => e > 0)
+        || (intent.sl != null && intent.sl > 0)
+        || intent.tp.some(t => t > 0)
+      if (!hasOrderLevels) return false
+      if (/\b(?:took|earlier|excited|already|banger|we had|celebrating)\b/i.test(raw)) return false
+    }
+  }
+
+  return true
 }
 
 /** Deterministic fallback from worker/edge parsed_data. */
@@ -95,6 +123,7 @@ export function buildChannelExampleRowsFromParsed(
     seen.add(hash)
     const intent = parsedDataToTradeIntent(parsed)
     if (tradeIntentKindToExampleLabel(intent.kind) === 'ignore') continue
+    if (!isValidTrainableExample(raw, label, intent)) continue
 
     out.push({ raw_message: raw, label, intent })
     if (label === 'entry') entryCount += 1
@@ -131,6 +160,12 @@ Label rules:
 - entry: NEW trade to open (buy/sell/long/short in any language — e.g. ACHETER, Venda, بيع, 売り). Include structured entries with prices/zones/SL/TP when present.
 - update: manage an EXISTING trade — modify SL/TP, move stop, breakeven, partial close, close all, close half. NOT a new entry.
 - ignore: commentary, TP-hit announcements, profit brags, news, disclaimers, emoji-only hype, lesson/recap posts, "running +pips" status with no new instruction.
+- ignore: past-tense celebration or recap (e.g. "excited about the Gold buy we took earlier at 4505, such a banger!!!") — mentions an old trade, not a new order.
+
+Negative examples (always label ignore, kind commentary):
+- "I am excited about the Gold buy we took earlier at 4505, such a banger!!!"
+- "TP1 hit +80 pips, great call"
+- "Running +120 pips on gold, who else held?"
 
 Intent rules:
 - Extract trading intent only; never translate literally.
@@ -192,8 +227,9 @@ async function classifyMessageBatch(
     }
     if (label !== 'entry' && label !== 'update') continue
     if (intent.kind === 'commentary' || intent.kind === 'ignore') continue
+    if (!isValidTrainableExample(raw_message, label as ChannelExampleLabel, intent)) continue
 
-    out.push({ raw_message, label, intent })
+    out.push({ raw_message, label: label as ChannelExampleLabel, intent })
   }
   return out
 }

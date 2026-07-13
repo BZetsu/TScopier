@@ -69,7 +69,7 @@ export function formatTradeIntentSummary(intent: Record<string, unknown>): strin
   else if (entry.length >= 2) parts.push(`${entry[0]}-${entry[1]}`)
 
   const sl = typeof intent.sl === 'number' ? intent.sl : Number(intent.sl)
-  if (Number.isFinite(sl)) parts.push(`SL ${sl}`)
+  if (Number.isFinite(sl) && sl > 0) parts.push(`SL ${sl}`)
 
   const tp = numList(intent.tp)
   if (tp.length > 0) parts.push(`TP ${tp.join(', ')}`)
