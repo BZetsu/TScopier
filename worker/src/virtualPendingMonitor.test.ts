@@ -9,6 +9,10 @@ import {
 } from './virtualPendingMonitor'
 import { isAdverselyCrossed, isOutwardCatchUp } from './tradeExecutor/helpers'
 import { isBlockedByShallowerStep } from './virtualPendingMonitor'
+import {
+  computeLayerFireBudget,
+  selectLegsForDistanceBurst,
+} from './layerConcurrentFire'
 
 // Buy ladder = averaging DOWN: trigger fires when bid drops to / below trigger_price.
 test('isTriggered: buy fires when bid <= trigger', () => {
@@ -218,4 +222,67 @@ test('isBlockedByShallowerStep: blocks deeper rung when shallower still pending'
     isBlockedByShallowerStep({ signal_id: 'sig', broker_account_id: 'broker', step_idx: 1 }, active),
     false,
   )
+})
+
+test('distance burst: fast gap selects all triggered rungs within budget', () => {
+  const triggered = [1, 2, 3, 4, 5].map(step_idx => ({
+    id: `leg-${step_idx}`,
+    step_idx,
+    anchor_price: 4077.35,
+    trigger_price: 4077.35 - step_idx * 0.02,
+    is_buy: true,
+  }))
+  const budget = computeLayerFireBudget({
+    isBuy: true,
+    anchor: 4077.35,
+    bid: 4077.25,
+    ask: 4077.27,
+    stepPriceOffset: 0.02,
+    anyTriggered: true,
+  })
+  assert.equal(budget, 5)
+  const selected = selectLegsForDistanceBurst({ triggeredLegs: triggered, budget })
+  assert.equal(selected.length, 5)
+})
+
+test('distance burst: near anchor selects only shallowest triggered rung', () => {
+  const triggered = [1, 2, 3].map(step_idx => ({
+    id: `leg-${step_idx}`,
+    step_idx,
+    anchor_price: 4077.35,
+    trigger_price: 4077.35 - step_idx * 0.02,
+    is_buy: true,
+  }))
+  const budget = computeLayerFireBudget({
+    isBuy: true,
+    anchor: 4077.35,
+    bid: 4077.33,
+    ask: 4077.35,
+    stepPriceOffset: 0.02,
+    anyTriggered: true,
+  })
+  assert.equal(budget, 1)
+  const selected = selectLegsForDistanceBurst({ triggeredLegs: triggered, budget })
+  assert.deepEqual(selected.map(l => l.id), ['leg-1'])
+})
+
+test('distance burst: sell side selects multiple rungs when price gaps up', () => {
+  const triggered = [1, 2, 3].map(step_idx => ({
+    id: `leg-${step_idx}`,
+    step_idx,
+    anchor_price: 4080,
+    trigger_price: 4080 + step_idx * 0.02,
+    is_buy: false,
+  }))
+  const budget = computeLayerFireBudget({
+    isBuy: false,
+    anchor: 4080,
+    bid: 4080.04,
+    ask: 4080.06,
+    stepPriceOffset: 0.02,
+    anyTriggered: true,
+  })
+  assert.equal(budget, 3)
+  const selected = selectLegsForDistanceBurst({ triggeredLegs: triggered, budget })
+  assert.deepEqual(selected.map(l => l.step_idx), [1, 2, 3])
 })

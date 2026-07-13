@@ -24,9 +24,40 @@ describe('decideLadderFires', () => {
     assert.equal(out.length, 1, 'only 1 slot left under the cap')
   })
 
-  it('caps fires per tick', () => {
+  it('caps fires per tick when anchor/step not provided (legacy)', () => {
     const out = decideLadderFires({ legs, bid: 4040, ask: 4040, isBuy: true, openLegCount: 0, maxLegs: 10, frozen: false, maxFiresPerTick: 2 })
     assert.equal(out.length, 2)
+  })
+
+  it('distance-scaled burst fires all crossed rungs within budget', () => {
+    const out = decideLadderFires({
+      legs,
+      bid: 4040,
+      ask: 4040,
+      isBuy: true,
+      openLegCount: 0,
+      maxLegs: 10,
+      frozen: false,
+      anchor: 4072,
+      stepPriceOffset: 10,
+    })
+    assert.equal(out.length, 3, '4072-4040=320, budget=32 but only 3 legs exist')
+    assert.deepEqual(out.map(l => l.id), ['a', 'b', 'c'])
+  })
+
+  it('distance-scaled burst near anchor fires only shallowest crossed', () => {
+    const out = decideLadderFires({
+      legs,
+      bid: 4058.8,
+      ask: 4059,
+      isBuy: true,
+      openLegCount: 0,
+      maxLegs: 10,
+      frozen: false,
+      anchor: 4072,
+      stepPriceOffset: 10,
+    })
+    assert.deepEqual(out.map(l => l.id), ['a'])
   })
 
   it('sell side fires when bid >= trigger', () => {

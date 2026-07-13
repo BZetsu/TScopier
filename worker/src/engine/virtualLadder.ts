@@ -13,6 +13,7 @@
  *     later tick.
  */
 import type { FxClient, MtPlatform } from './fxClient'
+import { computeLayerFireBudget } from '../layerConcurrentFire'
 
 export type LadderLeg = {
   id: string
@@ -33,7 +34,11 @@ export function decideLadderFires(args: {
   maxLegs: number
   /** True once any TP has been touched - stop adding to the basket. */
   frozen: boolean
-  /** Cap fires per tick to avoid bursting the terminal (default 3). */
+  /** Fill anchor for distance-scaled burst (with stepPriceOffset). */
+  anchor?: number
+  /** One configured step in price units (e.g. 0.02 for 2 pips on gold). */
+  stepPriceOffset?: number
+  /** Legacy fixed cap when anchor/step not provided. */
   maxFiresPerTick?: number
 }): LadderLeg[] {
   if (args.frozen) return []
@@ -47,8 +52,25 @@ export function decideLadderFires(args: {
     && (args.isBuy ? px <= l.triggerPrice : px >= l.triggerPrice))
   // Shallowest rungs first (closest trigger), so we fill the ladder in order.
   crossed.sort((a, b) => a.stepIdx - b.stepIdx)
-  const limit = Math.min(capacity, args.maxFiresPerTick ?? 3)
-  return crossed.slice(0, limit)
+
+  let limit: number
+  const stepOffset = args.stepPriceOffset ?? 0
+  const anchor = args.anchor ?? 0
+  if (stepOffset > 0 && Number.isFinite(anchor) && anchor > 0) {
+    const budget = computeLayerFireBudget({
+      isBuy: args.isBuy,
+      anchor,
+      bid: args.bid,
+      ask: args.ask,
+      stepPriceOffset: stepOffset,
+      anyTriggered: crossed.length > 0,
+    })
+    limit = Math.min(capacity, budget)
+  } else {
+    limit = Math.min(capacity, args.maxFiresPerTick ?? 3)
+  }
+
+  return crossed.filter(l => l.stepIdx >= 1 && l.stepIdx <= limit).slice(0, limit)
 }
 
 export type FireLadderDeps = {

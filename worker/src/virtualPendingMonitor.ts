@@ -43,6 +43,11 @@ import {
   reconcilePendingLegBasketsFromBroker,
 } from './rangePendingBasketCleanup'
 import { reanchorPendingLegsAfterGapFill } from './gapFillReanchor'
+import {
+  computeLayerFireBudget,
+  selectLegsForDistanceBurst,
+  stepPriceOffsetForBasket,
+} from './layerConcurrentFire'
 
 /**
  * Worker-side monitor that turns persisted "virtual range pendings" into
@@ -70,12 +75,13 @@ import { reanchorPendingLegsAfterGapFill } from './gapFillReanchor'
  *     on `trades` close) so a flat basket cannot spawn new market entries when
  *     price revisits old ladder triggers.
  *
- *   • Ladder discipline: at most one virtual leg fires per (signal, broker,
- *     symbol) per tick — the shallowest triggered rung with no shallower
- *     `pending`/`claimed` row — so one volatile quote cannot machine-gun every
- *     deeper rung in the same millisecond. Strict signal-entry deferrals use
- *     broker limit orders (`signal_entry_pending_orders`), not `step_idx = 0`
- *     rows in this table.
+ *   • Ladder discipline: distance from fill anchor sets how many triggered
+ *     virtual legs may fire per (signal, broker, symbol) per tick —
+ *     budget = floor(adverseDistance / stepOffset), minimum 1 when any rung
+ *     is triggered. All eligible rungs fire concurrently (bounded by basket
+ *     leg cap and per-leg guards). Strict signal-entry deferrals use broker
+ *     limit orders (`signal_entry_pending_orders`), not `step_idx = 0` rows
+ *     in this table.
  *
  *   • Terminal rows (`expired` TTL, successful `fired`) are **deleted** from
  *     `range_pending_legs` with status `fired` (row retained for ladder history)
@@ -544,13 +550,9 @@ export class VirtualPendingMonitor {
         }
       }
 
-      const signalIds = [...new Set(legs.map(l => l.signal_id))]
-      const activeStepsByBasket = await this.fetchShallowActiveSteps(uuid, symbol, signalIds)
-
       const byBasket = new Map<string, PendingRow[]>()
       for (const leg of triggeredInGroup) {
         if (cancelledStaleIds.has(leg.id)) continue
-        if (isBlockedByShallowerStep(leg, activeStepsByBasket)) continue
         const bk = `${leg.signal_id}|${leg.broker_account_id}`
         const arr = byBasket.get(bk) ?? []
         arr.push(leg)
@@ -559,11 +561,23 @@ export class VirtualPendingMonitor {
 
       const fireJobs: Array<{ leg: PendingRow; bid: number; ask: number }> = []
       for (const [, arr] of byBasket) {
-        arr.sort((a, b) => a.step_idx - b.step_idx || a.id.localeCompare(b.id))
-        const winner = arr[0]
-        if (!winner) continue
-        triggeredTotal += 1
-        fireJobs.push({ leg: winner, bid: q.bid, ask: q.ask })
+        if (!arr.length) continue
+        const anchor = Number(arr[0]!.anchor_price)
+        const isBuy = arr[0]!.is_buy
+        const stepOffset = stepPriceOffsetForBasket(arr) ?? 0
+        const budget = computeLayerFireBudget({
+          isBuy,
+          anchor,
+          bid: q.bid,
+          ask: q.ask,
+          stepPriceOffset: stepOffset,
+          anyTriggered: true,
+        })
+        const toFire = selectLegsForDistanceBurst({ triggeredLegs: arr, budget })
+        for (const leg of toFire) {
+          triggeredTotal += 1
+          fireJobs.push({ leg, bid: q.bid, ask: q.ask })
+        }
       }
       const fireResults = await Promise.allSettled(
         fireJobs.map(j => this.fireLeg(j.leg, j.bid, j.ask)),
