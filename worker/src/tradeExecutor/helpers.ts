@@ -202,6 +202,16 @@ export function triggerPriceFor(leg: VirtualPendingLeg, anchor: number, digits: 
   return Number(px.toFixed(d))
 }
 
+/** Anchor virtual layering below/above the deepest immediate fill from a burst. */
+export function resolveBurstFillAnchor(
+  entryPrices: Array<number | null | undefined>,
+  isBuy: boolean,
+): number | null {
+  const fills = entryPrices.filter((px): px is number => px != null && Number.isFinite(px) && px > 0)
+  if (!fills.length) return null
+  return isBuy ? Math.min(...fills) : Math.max(...fills)
+}
+
 /**
  * True when price crosses a range layer trigger in the adverse direction since the
  * previous quote (buy = downward cross, sell = upward cross). Prevents retracement fills.

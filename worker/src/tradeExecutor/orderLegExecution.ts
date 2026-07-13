@@ -10,7 +10,7 @@ import { stripInvalidStopsForSide } from '../channelActiveTradeParams'
 import { trailingTradeRowSnapshot } from '../trailingStop'
 import { applyPostFillFollowUp, type PostFillTradeLeg } from '../postFillFollowUp'
 import type { TradeExecutorContext } from './context'
-import { clampOrderStops, isBuySideOp, type Leg } from './helpers'
+import { clampOrderStops, isBuySideOp, resolveBurstFillAnchor, type Leg } from './helpers'
 import type { BrokerRow, ParsedSignal, SendOrderOutcome, SignalRow, SymbolCacheEntry, SymbolMappingResult } from './types'
 import { isV2 } from '../engine/executionMode'
 import { getFxClient, toMtPlatform } from '../engine/fxClient'
@@ -343,9 +343,10 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
 
   let materializedBrokerPendings = materializedVirtuals
   if (deferBrokerRangePendingMaterialize && brokerPendingMode && virtualPendings.length > 0 && api) {
-    const fillAnchor = filledLegs
-      .map(l => l.entryPrice)
-      .find(px => px != null && Number.isFinite(px) && px > 0) ?? null
+    const fillAnchor = resolveBurstFillAnchor(
+      filledLegs.map(l => l.entryPrice),
+      plan.isBuy !== false,
+    )
     let anchor = fillAnchor ?? prepAnchor
     let anchorSource: 'signal' | 'quote' | 'fill' | 'unknown' = fillAnchor != null
       ? 'fill'
@@ -383,9 +384,10 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
   }
 
   if (deferVirtualAnchor && virtualPendings.length > 0 && api && !brokerPendingMode) {
-    const fillAnchor = filledLegs
-      .map(l => l.entryPrice)
-      .find(px => px != null && Number.isFinite(px) && px > 0) ?? null
+    const fillAnchor = resolveBurstFillAnchor(
+      filledLegs.map(l => l.entryPrice),
+      plan.isBuy !== false,
+    )
     void ctx.deferredVirtualPendingMaterialize({
       signal,
       broker,

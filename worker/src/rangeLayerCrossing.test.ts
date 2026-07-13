@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
-import { isAdverselyCrossed, isOutwardCatchUp, triggerPriceFor } from './tradeExecutor/helpers'
+import { isAdverselyCrossed, isOutwardCatchUp, resolveBurstFillAnchor, triggerPriceFor } from './tradeExecutor/helpers'
 import type { VirtualPendingLeg } from './manualPlanner'
 
 test('isAdverselyCrossed: sell fires on upward cross through trigger', () => {
@@ -26,6 +26,14 @@ test('isAdverselyCrossed: buy does NOT fire on bounce up through already-passed 
 test('isAdverselyCrossed: rejects invalid prices', () => {
   assert.equal(isAdverselyCrossed(false, 0, 4090, 4090.1, 4090, 4090.1), false)
   assert.equal(isAdverselyCrossed(false, 4090, Number.NaN, 4090.1, 4090, 4090.1), false)
+})
+
+test('resolveBurstFillAnchor: buy uses deepest immediate fill', () => {
+  assert.equal(resolveBurstFillAnchor([4077.409, 4076.893, 4077.1], true), 4076.893)
+})
+
+test('resolveBurstFillAnchor: sell uses highest immediate fill', () => {
+  assert.equal(resolveBurstFillAnchor([4080.1, 4081.5, 4080.8], false), 4081.5)
 })
 
 test('triggerPriceFor: sell ladder rungs above fill anchor not parsed entry', () => {
