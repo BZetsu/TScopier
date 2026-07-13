@@ -119,7 +119,7 @@ async function applyBasketSlTpRefresh(ctx, args) {
             channelParamsForLadder = await (0, channelActiveTradeParams_1.loadChannelActiveTradeParamsForSymbol)(ctx.supabase, signal.user_id, signal.channel_id, symbol);
         }
     }
-    if (anchorUserOverride) {
+    if (anchorUserOverride && !sameSignalRefresh) {
         plannerParsed = (0, signalOverride_1.mergeSignalUserOverride)(plannerParsed, anchorUserOverride, { overlay: true });
     }
     let effectiveParsed = {
@@ -129,33 +129,55 @@ async function applyBasketSlTpRefresh(ctx, args) {
     };
     let effectiveSlIsExplicitMgmt = false;
     if (manual.range_trading === true && anchorSignalId && signal.channel_id) {
-        const resolvedStops = await (0, basketEffectiveStops_1.resolveEffectiveBasketStops)({
-            supabase: ctx.supabase,
-            userId: signal.user_id,
-            channelId: signal.channel_id,
-            anchorSignalId,
-            symbol,
-            basketCreatedAt: anchorCreatedAt,
-            anchorParsed: (0, rangeBasketTpSync_1.toRangeBasketParsedSlice)(effectiveParsed),
-            familyTrades,
-            brokerAccountId: broker.id,
-        });
-        (0, basketEffectiveStops_1.logEffectiveBasketStops)('[tradeExecutor]', anchorSignalId, resolvedStops);
-        if (resolvedStops.stoploss > 0) {
-            effectiveParsed = { ...effectiveParsed, sl: resolvedStops.stoploss };
+        if (sameSignalRefresh) {
+            // Telegram message edit: the re-parsed signal is the authoritative instruction.
+            // resolveEffectiveBasketStops reads stale basket_sl_tp_targets / channel memory
+            // from before the edit and would overwrite fresh SL/TP before leg modifies run.
+            effectiveSlIsExplicitMgmt = true;
+            const seedSl = typeof effectiveParsed.sl === 'number' && effectiveParsed.sl > 0
+                ? effectiveParsed.sl
+                : null;
+            const seedTps = (effectiveParsed.tp ?? []).filter((t) => typeof t === 'number' && Number.isFinite(t) && t > 0);
+            if (seedSl != null || seedTps.length > 0) {
+                await (0, basketTargetStore_1.upsertBasketSlTpTarget)(ctx.supabase, {
+                    userId: signal.user_id,
+                    brokerAccountId: broker.id,
+                    anchorSignalId,
+                    channelId: signal.channel_id,
+                    symbol,
+                    stoploss: seedSl,
+                    tpLevels: seedTps.length ? seedTps : null,
+                    source: 'adjust',
+                    instructionAt: new Date().toISOString(),
+                }).catch(() => { });
+            }
         }
-        if (resolvedStops.tpLevels.length) {
-            effectiveParsed = { ...effectiveParsed, tp: resolvedStops.tpLevels };
+        else {
+            const resolvedStops = await (0, basketEffectiveStops_1.resolveEffectiveBasketStops)({
+                supabase: ctx.supabase,
+                userId: signal.user_id,
+                channelId: signal.channel_id,
+                anchorSignalId,
+                symbol,
+                basketCreatedAt: anchorCreatedAt,
+                anchorParsed: (0, rangeBasketTpSync_1.toRangeBasketParsedSlice)(effectiveParsed),
+                familyTrades,
+                brokerAccountId: broker.id,
+            });
+            (0, basketEffectiveStops_1.logEffectiveBasketStops)('[tradeExecutor]', anchorSignalId, resolvedStops);
+            if (resolvedStops.stoploss > 0) {
+                effectiveParsed = { ...effectiveParsed, sl: resolvedStops.stoploss };
+            }
+            if (resolvedStops.tpLevels.length) {
+                effectiveParsed = { ...effectiveParsed, tp: resolvedStops.tpLevels };
+            }
+            effectiveSlIsExplicitMgmt = resolvedStops.source === 'mgmt_signal';
         }
-        effectiveSlIsExplicitMgmt = resolvedStops.source === 'mgmt_signal';
     }
     if (!effectiveSlIsExplicitMgmt && logAction === 'merge_routed_modify_only') {
         const parsedSl = typeof effectiveParsed.sl === 'number' ? effectiveParsed.sl : 0;
         if (parsedSl > 0)
             effectiveSlIsExplicitMgmt = true;
-    }
-    if (!effectiveSlIsExplicitMgmt && sameSignalRefresh) {
-        effectiveSlIsExplicitMgmt = true;
     }
     if (!(0, manualPlanner_1.parsedHasExplicitEntryAnchor)(plannerParsed)) {
         const ep = Number(newest.entry_price);

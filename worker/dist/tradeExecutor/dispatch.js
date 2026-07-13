@@ -463,11 +463,13 @@ async function handleSignal(ctx, row, opts) {
             const fresh = await (0, signalRevision_1.loadSignalById)(ctx.supabase, row.id);
             if (!fresh?.parsed_data?.action)
                 return;
-            row = (0, signalOverride_1.applyUserOverrideToSignalRow)({
+            // Telegram edit already wrote authoritative parsed_data — do not overlay
+            // stale per-signal user_override SL/TP on top of the revision.
+            row = {
                 ...row,
                 parsed_data: fresh.parsed_data,
                 user_override: fresh.user_override,
-            });
+            };
             const { data: activeWaits } = await ctx.supabase
                 .from('signal_range_entry_waits')
                 .select('id, broker_account_id, metaapi_account_id, symbol')
