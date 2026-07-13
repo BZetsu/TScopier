@@ -645,6 +645,31 @@ test('planManualOrders: range distance caps layering when reserved exceeds floor
   assert.equal(plan.fallback_reason, 'range_trading_distance_capped')
 })
 
+test('planManualOrders: auto layering keeps user step despite huge broker stops floor', () => {
+  const manual: ManualSettings = {
+    ...baseManual,
+    multi_trade_leg_percent: 3,
+    range_percent: 50,
+    range_step_pips: 3,
+    range_distance_pips: 50,
+  }
+  const plan = planManualOrders({
+    parsed: baseParsed,
+    resolvedSymbol: 'XAUUSDm',
+    baseOperation: 'Buy',
+    manual,
+    channelKeywords: null,
+    manualLot: 5.0,
+    ctx: {
+      ...baseCtx,
+      stopsLevel: 100,
+    },
+    commentPrefix: 'TScopier:abc',
+  })
+  assert.ok((plan.virtualPendings?.length ?? 0) > 0)
+  assert.equal(plan.rangeLayering?.effectiveStepPips, 3)
+})
+
 test('planManualOrders: multi + BuyLimit + range uses market immediates but still emits virtual pendings', () => {
   const plan = planManualOrders({
     parsed: { ...baseParsed, entry_price: 1850 },

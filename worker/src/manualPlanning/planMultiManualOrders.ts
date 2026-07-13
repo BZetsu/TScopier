@@ -121,7 +121,9 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
     pip,
     minStepPriceUnits: minStopDist,
     hasSignalAnchor: entryAnchor != null,
-    skipMinStepExpansion: pendingOrderMode,
+    // Auto layers fire as market orders at logical triggers; broker min-stop
+    // spacing applies to SL/TP placement, not virtual rung spacing.
+    skipMinStepExpansion: true,
   })
   const immediateLegs = split.immediateLegs
   const reservedRangeLegs = split.pendingLegs

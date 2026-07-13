@@ -1628,7 +1628,13 @@ export class TradeExecutor {
         cwe_close_price: v.cweClosePrice ?? null,
       })
     }
-    if (insertRows.length === 0) return
+    if (insertRows.length === 0) {
+      console.warn(
+        `[tradeExecutor] deferred virtual: all ${virtualPendings.length} legs filtered`
+        + ` signal=${signal.id} broker=${broker.id} anchor=${anchor} anchor_source=${anchorSource}`,
+      )
+      return
+    }
     const persist = await this.persistRangePendingLegRows(
       insertRows,
       `deferred live signal=${signal.id} broker=${broker.id}`,

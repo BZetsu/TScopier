@@ -42,6 +42,7 @@ import {
   reconcileBasketFlatFromBroker,
   reconcilePendingLegBasketsFromBroker,
 } from './rangePendingBasketCleanup'
+import { reanchorPendingLegsAfterGapFill } from './gapFillReanchor'
 
 /**
  * Worker-side monitor that turns persisted "virtual range pendings" into
@@ -1125,11 +1126,60 @@ export class VirtualPendingMonitor {
             step_idx: leg.step_idx,
             trigger_price: leg.trigger_price,
             ref_price: refPrice,
+            fill_price: entryPx,
           } as unknown as Record<string, unknown>,
           response_payload: { ticket: result.ticket, latency_ms: latencyMs, claimed_by: this.hostId },
         })
       } catch {
         /* logging is best-effort; leg is already `fired` */
+      }
+
+      if (entryPx != null && Number.isFinite(entryPx) && entryPx > 0) {
+        try {
+          const reanchor = await reanchorPendingLegsAfterGapFill({
+            supabase: this.supabase,
+            signalId: leg.signal_id,
+            brokerAccountId: leg.broker_account_id,
+            firedLegId: leg.id,
+            firedStepIdx: leg.step_idx,
+            isBuy: leg.is_buy,
+            triggerPrice: leg.trigger_price,
+            anchorPrice: leg.anchor_price,
+            fillPrice: entryPx,
+            slippagePoints: leg.slippage ?? 20,
+            point: params?.point ?? null,
+            digits: Math.max(0, Math.min(8, Number(params?.digits) || 5)),
+          })
+          if (reanchor.updated > 0) {
+            console.log(
+              `[virtualPendingMonitor] gap-fill reanchor signal=${leg.signal_id}`
+              + ` step=${leg.step_idx} fill=${entryPx} updated=${reanchor.updated}`,
+            )
+            try {
+              await this.supabase.from('trade_execution_logs').insert({
+                user_id: leg.user_id,
+                signal_id: leg.signal_id,
+                broker_account_id: leg.broker_account_id,
+                action: 'virtual_pending_reanchor',
+                status: 'info',
+                request_payload: {
+                  fired_leg_id: leg.id,
+                  fired_step_idx: leg.step_idx,
+                  trigger_price: leg.trigger_price,
+                  fill_price: entryPx,
+                  updated: reanchor.updated,
+                } as unknown as Record<string, unknown>,
+              })
+            } catch {
+              /* best-effort */
+            }
+          }
+        } catch (reanchorErr) {
+          console.warn(
+            `[virtualPendingMonitor] gap-fill reanchor failed leg=${leg.id} signal=${leg.signal_id}:`,
+            reanchorErr,
+          )
+        }
       }
       return true
     } catch (err) {
