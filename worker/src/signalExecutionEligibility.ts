@@ -52,7 +52,8 @@ export function evaluateParsedSignalExecutionEligibility(
 
   const imperative = messageHasImperativeEntryPhrase(raw, channelKeywords)
   const labeledStops = messageHasExplicitSlTpLabels(raw) && parsedHasSlOrTp(parsed)
-  if (!imperative && !labeledStops) {
+  const structuredEntry = parsedStructuredEntryEligible(parsed)
+  if (!imperative && !labeledStops && !structuredEntry) {
     return { eligible: false, skipReason: ENTRY_REQUIRES_IMPERATIVE_OR_LABELED_STOPS_REASON }
   }
 
@@ -70,7 +71,7 @@ export function evaluateParsedSignalExecutionEligibility(
     }
   }
 
-  if (labeledStops) {
+  if (labeledStops || structuredEntry) {
     if (tradeableFromParsed(parsed)) {
       if (entryMissingSlTpRequiresNow(parsed, raw, channelKeywords)) {
         return { eligible: false, skipReason: ENTRY_REQUIRES_NOW_REASON }
@@ -113,4 +114,22 @@ export function deterministicEntryNeedsAiRepair(
 function positive(v: unknown): number | null {
   const n = Number(v)
   return Number.isFinite(n) && n > 0 ? n : null
+}
+
+/** Parser extracted buy/sell + entry anchor + SL or TP — trust without "buy now" or label regex. */
+function parsedHasEntryAnchor(parsed: {
+  entry_price?: unknown
+  entry_zone_low?: unknown
+  entry_zone_high?: unknown
+}): boolean {
+  return positive(parsed.entry_price) != null
+    || positive(parsed.entry_zone_low) != null
+    || positive(parsed.entry_zone_high) != null
+}
+
+function parsedStructuredEntryEligible(
+  parsed: Parameters<typeof evaluateParsedSignalExecutionEligibility>[0],
+): boolean {
+  if (!parsed || !parsedHasSlOrTp(parsed) || !parsedHasEntryAnchor(parsed)) return false
+  return tradeableFromParsed(parsed as Record<string, unknown>) != null
 }

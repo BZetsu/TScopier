@@ -222,4 +222,58 @@ SL @ 4055`
     }, msg)
     assert.equal(eligibility.eligible, true)
   })
+
+  it('accepts FOREX KING emoji-glued SL/TP without buy now', () => {
+    const msg = `Gold（XAUUSD）📊
+BUY 🟢4043-4053
+
+TP1 🎯4058
+TP2 🎯4063
+TP3 🎯4068
+
+SL ⛔️4038`
+    const eligibility = evaluateParsedSignalExecutionEligibility({
+      action: 'buy',
+      symbol: 'XAUUSD',
+      sl: 4038,
+      tp: [4058, 4063, 4068],
+      entry_zone_low: 4043,
+      entry_zone_high: 4053,
+    }, msg)
+    assert.equal(eligibility.eligible, true)
+  })
+
+  it('accepts SIGNAL ALERT verbose Stop Loss (SL) labels', () => {
+    const msg = `🚨 SIGNAL ALERT 🚨
+
+🌐 #XAUUSD
+
+📊 Trade Details:📈#BUY
+
+⚪️ Entry Point: 4058
+🔴 Stop Loss (SL): 4050
+
+🟢 Take Profit 1 (TP1): 4061
+🟢 Take Profit 2 (TP2): 4066
+🟢 Take Profit 3 (TP3): 4074`
+    const eligibility = evaluateParsedSignalExecutionEligibility({
+      action: 'buy',
+      symbol: 'XAUUSD',
+      sl: 4050,
+      tp: [4061, 4066, 4074],
+      entry_price: 4058,
+    }, msg)
+    assert.equal(eligibility.eligible, true)
+  })
+
+  it('still rejects vague commentary without structure', () => {
+    const eligibility = evaluateParsedSignalExecutionEligibility({
+      action: 'sell',
+      symbol: 'XAUUSD',
+      sl: null,
+      tp: [],
+    }, 'Gold looking bearish, might drop soon')
+    assert.equal(eligibility.eligible, false)
+    assert.equal(eligibility.skipReason, ENTRY_REQUIRES_IMPERATIVE_OR_LABELED_STOPS_REASON)
+  })
 })

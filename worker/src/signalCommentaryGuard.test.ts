@@ -196,4 +196,10 @@ describe('messageHasExplicitSlTpLabels', () => {
     assert.equal(messageHasExplicitSlTpLabels('الهدف الأول: 2670'), true)
     assert.equal(messageHasExplicitSlTpLabels('شراء الذهب الآن'), false)
   })
+
+  it('matches emoji-glued FOREX KING SL/TP labels', () => {
+    assert.equal(messageHasExplicitSlTpLabels('SL ⛔️4038'), true)
+    assert.equal(messageHasExplicitSlTpLabels('TP1 🎯4058'), true)
+    assert.equal(messageHasExplicitSlTpLabels('Stop Loss (SL): 4050'), true)
+  })
 })
