@@ -366,9 +366,9 @@ export async function markSignalExecuted(ctx: TradeExecutorContext, signalId: st
     try {
       await ctx.supabase
         .from('signals')
-        .update({ status: 'executed' })
+        .update({ status: 'executed', skip_reason: null })
         .eq('id', signalId)
-        .eq('status', 'parsed')
+        .in('status', ['parsed', 'pending', 'failed'])
     } catch {
       /* best-effort */
     }
@@ -920,14 +920,21 @@ export async function handleSignal(ctx: TradeExecutorContext,
             }
           } else if (isEntryAction(action)) {
             const failReason = entryFailureReason ?? SKIP_REASON_ENTRY_NOT_OPENED
-            try {
-              await ctx.supabase
-                .from('signals')
-                .update({ status: 'failed', skip_reason: failReason })
-                .eq('id', row.id)
-                .eq('status', 'parsed')
-            } catch {
-              // best-effort
+            const alreadyProven = await signalExecutionProven(ctx.supabase, row.id)
+            if (alreadyProven) {
+              await ctx.markSignalExecuted(row.id)
+            } else if (!isMessageRevision) {
+              try {
+                await ctx.supabase
+                  .from('signals')
+                  .update({ status: 'failed', skip_reason: failReason })
+                  .eq('id', row.id)
+                  .eq('status', 'parsed')
+              } catch {
+                // best-effort
+              }
+            } else {
+              await ctx.markSignalExecuted(row.id)
             }
           }
         }

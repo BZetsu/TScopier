@@ -10,6 +10,7 @@ export function isBenignOrderModifyError(message: string): boolean {
   return (
     /already\s+have\s+(this\s+)?parameters/i.test(m)
     || /already\s+have\s+these\s+parameters/i.test(m)
+    || /\bno\s+changes?\b/i.test(m)
     || /no\s+changes?\s+to\s+order/i.test(m)
     || /request\s+has\s+no\s+changes/i.test(m)
     || /same\s+parameters/i.test(m)

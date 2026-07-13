@@ -93,6 +93,35 @@ describe('signalRevision', () => {
     assert.equal(ok, false)
   })
 
+  it('updateSignalAfterRevision preserves executed status on cosmetic edits', async () => {
+    let patch: Record<string, unknown> | null = null
+    const supabase = {
+      from: () => ({
+        update: (p: Record<string, unknown>) => {
+          patch = p
+          return {
+            eq: () => ({
+              select: () => ({
+                maybeSingle: async () => ({ data: { id: 'signal-1' }, error: null }),
+              }),
+            }),
+          }
+        },
+      }),
+    }
+
+    const ok = await updateSignalAfterRevision(supabase as never, {
+      signalId: 'signal-1',
+      rawMessage: 'Gold buy SL 2650',
+      parseResult: parsedPatch,
+      existingStatus: 'executed',
+    })
+    assert.equal(ok, true)
+    assert.equal(patch?.status, undefined)
+    assert.equal(patch?.skip_reason, undefined)
+    assert.equal(patch?.raw_message, 'Gold buy SL 2650')
+  })
+
   it('updateSignalAfterRevision skips edit_date filter when incoming edit_date absent', async () => {
     let usedOr = false
     const supabase = {

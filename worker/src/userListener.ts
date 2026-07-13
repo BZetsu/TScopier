@@ -1289,6 +1289,7 @@ export class UserListener {
       rawMessage,
       parseResult,
       telegramEditDateSeen: args.telegramEditDateSeen,
+      existingStatus: fresh.status,
     })
     if (!updated) {
       if (

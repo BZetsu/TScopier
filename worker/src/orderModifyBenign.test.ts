@@ -10,6 +10,10 @@ describe('isBenignOrderModifyError', () => {
     )
   })
 
+  it('matches MT5 No changes retcode description', () => {
+    assert.equal(isBenignOrderModifyError('No changes'), true)
+  })
+
   it('does not match unrelated errors', () => {
     assert.equal(isBenignOrderModifyError('Symbol not found: BTCUSD'), false)
     assert.equal(isBenignOrderModifyError('Not enough money'), false)
