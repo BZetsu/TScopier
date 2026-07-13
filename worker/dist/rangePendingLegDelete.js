@@ -7,14 +7,41 @@ exports.deleteRangePendingLegsForBasket = deleteRangePendingLegsForBasket;
 exports.purgeRangePendingLegsIfBasketFlat = purgeRangePendingLegsIfBasketFlat;
 exports.purgeRangePendingLegsForBaskets = purgeRangePendingLegsForBaskets;
 const rangePendingFireGuard_1 = require("./rangePendingFireGuard");
-/** Delete all active virtual ladder rows for a basket (any symbol spelling). */
+const fxsocketClient_1 = require("./fxsocketClient");
+const mtApiByAccount_1 = require("./mtApiByAccount");
+const rangeBrokerPendingHelpers_1 = require("./rangeBrokerPendingHelpers");
+async function cancelBrokerPendingLegsForScope(supabase, scope, reason) {
+    if (!(0, fxsocketClient_1.hasFxsocketConfigured)())
+        return 0;
+    const { data, error } = await supabase
+        .from('range_pending_legs')
+        .select('id,signal_id,user_id,broker_account_id,metaapi_account_id,ticket')
+        .eq('signal_id', scope.signalId)
+        .eq('broker_account_id', scope.brokerAccountId)
+        .eq('status', 'broker_pending');
+    if (error || !data?.length)
+        return 0;
+    const platform = await (0, mtApiByAccount_1.loadPlatformByFxsocketId)(supabase, data.map(r => r.metaapi_account_id));
+    let cancelled = 0;
+    for (const row of data) {
+        const api = (0, mtApiByAccount_1.apiForFxsocketAccount)(platform, row.metaapi_account_id);
+        if (!api)
+            continue;
+        const ok = await (0, rangeBrokerPendingHelpers_1.cancelBrokerRangeLegAtBroker)(supabase, api, row, reason);
+        if (ok)
+            cancelled += 1;
+    }
+    return cancelled;
+}
+/** Delete all active virtual / broker ladder rows for a basket (any symbol spelling). */
 async function deleteRangePendingLegsForBasket(supabase, scope, reason) {
+    await cancelBrokerPendingLegsForScope(supabase, scope, reason);
     const { data, error } = await supabase
         .from('range_pending_legs')
         .delete()
         .eq('signal_id', scope.signalId)
         .eq('broker_account_id', scope.brokerAccountId)
-        .in('status', ['pending', 'claimed'])
+        .in('status', ['pending', 'claimed', 'broker_pending'])
         .select('id');
     if (error) {
         console.warn(`[rangePendingLegDelete] delete failed signal=${scope.signalId} broker=${scope.brokerAccountId}: ${error.message}`);

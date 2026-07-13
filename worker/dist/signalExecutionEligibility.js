@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ENTRY_REQUIRES_IMPERATIVE_OR_LABELED_STOPS_REASON = exports.ENTRY_MISSING_STRUCTURE_REASON = exports.COMMENTARY_NOT_SIGNAL_REASON = exports.ENTRY_REQUIRES_NOW_REASON = void 0;
 exports.evaluateParsedSignalExecutionEligibility = evaluateParsedSignalExecutionEligibility;
+exports.deterministicEntryNeedsAiRepair = deterministicEntryNeedsAiRepair;
 const backtestSignal_1 = require("./backtestSignal");
 const signalCommentaryGuard_1 = require("./signalCommentaryGuard");
 const signalImperativeEntry_1 = require("./signalImperativeEntry");
@@ -34,19 +35,24 @@ function evaluateParsedSignalExecutionEligibility(parsed, rawMessage, channelKey
     }
     const imperative = (0, signalImperativeEntry_1.messageHasImperativeEntryPhrase)(raw, channelKeywords);
     const labeledStops = (0, signalEntryNowRequirement_1.messageHasExplicitSlTpLabels)(raw) && (0, signalEntryNowRequirement_1.parsedHasSlOrTp)(parsed);
-    if (!imperative && !labeledStops) {
+    const structuredEntry = parsedStructuredEntryEligible(parsed);
+    if (!imperative && !labeledStops && !structuredEntry) {
         return { eligible: false, skipReason: exports.ENTRY_REQUIRES_IMPERATIVE_OR_LABELED_STOPS_REASON };
     }
-    const symbol = (0, tradableSymbol_1.sanitizeParsedSymbol)(typeof parsed.symbol === 'string' ? parsed.symbol : null);
+    const symbol = (0, tradableSymbol_1.reconcileSymbolWithQuoteLevels)(typeof parsed.symbol === 'string' ? parsed.symbol : null, raw, { sl: parsed.sl, tp: parsed.tp, entry: parsed.entry_price }) ?? (0, tradableSymbol_1.sanitizeParsedSymbol)(typeof parsed.symbol === 'string' ? parsed.symbol : null);
     const minQuote = (0, tradableSymbol_1.minPlausibleQuotePrice)(symbol);
     if (minQuote != null && symbol) {
         const sl = positive(parsed.sl);
         const tps = Array.isArray(parsed.tp) ? parsed.tp.map(positive).filter((n) => n != null) : [];
-        if ((sl != null && sl < minQuote) || tps.some(t => t < minQuote)) {
+        const plausibleTps = (0, tradableSymbol_1.filterPlausibleInstrumentPrices)(symbol, tps);
+        if (sl != null && sl < minQuote) {
+            return { eligible: false, skipReason: exports.COMMENTARY_NOT_SIGNAL_REASON };
+        }
+        if (tps.length > 0 && plausibleTps.length === 0) {
             return { eligible: false, skipReason: exports.COMMENTARY_NOT_SIGNAL_REASON };
         }
     }
-    if (labeledStops) {
+    if (labeledStops || structuredEntry) {
         if ((0, backtestSignal_1.tradeableFromParsed)(parsed)) {
             if ((0, signalEntryNowRequirement_1.entryMissingSlTpRequiresNow)(parsed, raw, channelKeywords)) {
                 return { eligible: false, skipReason: signalEntryNowRequirement_1.ENTRY_REQUIRES_NOW_REASON };
@@ -71,7 +77,25 @@ function evaluateParsedSignalExecutionEligibility(parsed, rawMessage, channelKey
     }
     return { eligible: false, skipReason: exports.ENTRY_MISSING_STRUCTURE_REASON };
 }
+/** True when deterministic parser produced buy/sell but values would be skipped at execution. */
+function deterministicEntryNeedsAiRepair(parsed, rawMessage, channelKeywords) {
+    const action = String(parsed?.action ?? '').toLowerCase();
+    if (action !== 'buy' && action !== 'sell')
+        return false;
+    return !evaluateParsedSignalExecutionEligibility(parsed, rawMessage, channelKeywords).eligible;
+}
 function positive(v) {
     const n = Number(v);
     return Number.isFinite(n) && n > 0 ? n : null;
+}
+/** Parser extracted buy/sell + entry anchor + SL or TP — trust without "buy now" or label regex. */
+function parsedHasEntryAnchor(parsed) {
+    return positive(parsed.entry_price) != null
+        || positive(parsed.entry_zone_low) != null
+        || positive(parsed.entry_zone_high) != null;
+}
+function parsedStructuredEntryEligible(parsed) {
+    if (!parsed || !(0, signalEntryNowRequirement_1.parsedHasSlOrTp)(parsed) || !parsedHasEntryAnchor(parsed))
+        return false;
+    return (0, backtestSignal_1.tradeableFromParsed)(parsed) != null;
 }

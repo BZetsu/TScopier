@@ -2,19 +2,34 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.decideLadderFires = decideLadderFires;
 exports.fireLadderLegs = fireLadderLegs;
+const layerConcurrentFire_1 = require("../layerConcurrentFire");
 function decideLadderFires(args) {
     if (args.frozen)
         return [];
     const capacity = Math.max(0, args.maxLegs - args.openLegCount);
     if (capacity <= 0)
         return [];
-    // Fill side: a buy averages down -> fills at ask; a sell averages up -> fills at bid.
+    const stepOffset = args.stepPriceOffset ?? 0;
+    const anchor = args.anchor ?? 0;
+    if (stepOffset > 0 && Number.isFinite(anchor) && anchor > 0) {
+        const budget = (0, layerConcurrentFire_1.computeLayerFireBudget)({
+            isBuy: args.isBuy,
+            anchor,
+            bid: args.bid,
+            ask: args.ask,
+            stepPriceOffset: stepOffset,
+        });
+        if (budget <= 0)
+            return [];
+        const sorted = [...args.legs].sort((a, b) => a.stepIdx - b.stepIdx);
+        return sorted.filter(l => l.stepIdx >= 1 && l.stepIdx <= budget).slice(0, capacity);
+    }
+    // Legacy: trigger-crossing path with fixed per-tick cap.
     const px = args.isBuy ? args.ask : args.bid;
     if (!Number.isFinite(px) || px <= 0)
         return [];
     const crossed = args.legs.filter(l => Number.isFinite(l.triggerPrice) && l.triggerPrice > 0
         && (args.isBuy ? px <= l.triggerPrice : px >= l.triggerPrice));
-    // Shallowest rungs first (closest trigger), so we fill the ladder in order.
     crossed.sort((a, b) => a.stepIdx - b.stepIdx);
     const limit = Math.min(capacity, args.maxFiresPerTick ?? 3);
     return crossed.slice(0, limit);
@@ -42,12 +57,9 @@ async function fireLadderLegs(deps, legs) {
             fired++;
         }
         else if (result.retcodeName === 'AMBIGUOUS') {
-            // Could not confirm; do NOT re-fire and do NOT release (avoid duplicate). Leave
-            // claimed - the reconciler's orphan adoption will reconcile if it did open.
             failed++;
         }
         else {
-            // Definitely not placed -> safe to release for a later tick.
             await deps.release(leg.id).catch(() => { });
             failed++;
         }

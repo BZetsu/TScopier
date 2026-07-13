@@ -11,11 +11,14 @@ exports.extractMarketLineSymbol = extractMarketLineSymbol;
 exports.cleanInstrumentSymbol = cleanInstrumentSymbol;
 exports.isTradableInstrumentSymbol = isTradableInstrumentSymbol;
 exports.hasTradableInstrumentInText = hasTradableInstrumentInText;
+exports.signalBodyBeforePromoFooter = signalBodyBeforePromoFooter;
+exports.reconcileSymbolWithQuoteLevels = reconcileSymbolWithQuoteLevels;
 exports.extractTradableSymbolFromMessage = extractTradableSymbolFromMessage;
 exports.sanitizeParsedSymbol = sanitizeParsedSymbol;
 exports.minPlausibleQuotePrice = minPlausibleQuotePrice;
 exports.filterPlausibleInstrumentPrices = filterPlausibleInstrumentPrices;
 const derivSymbols_1 = require("./derivSymbols");
+const signalCommentaryGuard_1 = require("./signalCommentaryGuard");
 const FX_CURRENCY_CODES = new Set([
     'USD', 'EUR', 'GBP', 'JPY', 'CHF', 'AUD', 'NZD', 'CAD',
     'SEK', 'NOK', 'DKK', 'ZAR', 'MXN', 'SGD', 'HKD', 'TRY',
@@ -149,20 +152,115 @@ function isTradableInstrumentSymbol(symbol) {
 function hasTradableInstrumentInText(text) {
     return extractTradableSymbolFromMessage(text) != null;
 }
+/** Strip VIP promos / footers so "Forex, Gold, Oil signals" does not hijack the pair. */
+function signalBodyBeforePromoFooter(raw) {
+    let cut = raw.length;
+    const markers = [
+        /\n➖{3,}/,
+        /\n-{3,}/,
+        /\bVIP SIGNALS PRICES\b/i,
+        /\bJOIN VIP\b/i,
+        /\bSUMMER SALE\b/i,
+        /\bVIP MEMBERS GET\b/i,
+    ];
+    for (const re of markers) {
+        const idx = raw.search(re);
+        if (idx >= 0)
+            cut = Math.min(cut, idx);
+    }
+    return raw.slice(0, cut);
+}
+function isPromotionalAssetList(text) {
+    return /\b(?:forex|indices?|crypto|commodit(?:y|ies)|oil)\s*,\s*gold\b/i.test(text)
+        || /\bgold\s*,\s*(?:oil|forex|indices?|crypto)\b/i.test(text)
+        || /\bforex,\s*gold,\s*oil\b/i.test(text);
+}
+function extractHashtagSymbol(raw) {
+    const body = signalBodyBeforePromoFooter(raw);
+    for (const m of body.matchAll(/#([A-Z]{3,12})\b/gi)) {
+        const sym = cleanInstrumentSymbol(m[1] ?? '');
+        if (isTradableInstrumentSymbol(sym))
+            return sym;
+    }
+    return null;
+}
+function extractHyphenForexPair(raw) {
+    const body = signalBodyBeforePromoFooter(raw);
+    const m = body.match(/\b([A-Z]{3})\s*-\s*([A-Z]{3})\b/i);
+    if (!m?.[1] || !m[2])
+        return null;
+    const combined = cleanInstrumentSymbol(m[1] + m[2]);
+    return isTradableInstrumentSymbol(combined) ? combined : null;
+}
+function extractGoldAliasFromText(raw) {
+    const body = signalBodyBeforePromoFooter(raw);
+    const u = body.toUpperCase();
+    if (/\b(XAUUSD|XAU\b)\b/.test(u))
+        return 'XAUUSD';
+    if (!/\bGOLD\b/.test(u) || isPromotionalAssetList(body))
+        return null;
+    if ((0, signalCommentaryGuard_1.hasExecutableTradeStructure)(body))
+        return 'XAUUSD';
+    if (/\b(?:sl|stop\s*loss|tp|take\s*profit|objectif|stop|target|cible)\s*[:=@]?\s*\d/i.test(body)) {
+        return 'XAUUSD';
+    }
+    if (/\bGOLD\s+(?:buy|sell|long|short)\b/i.test(body)
+        || /\b(?:buy|sell|long|short)\s+(?:gold|xau)\b/i.test(body)
+        || /\b#GOLD\b/i.test(body)
+        || /\bGOLD\s+(?:signal|setup|trade)\b/i.test(body)) {
+        return 'XAUUSD';
+    }
+    return null;
+}
+function positiveQuote(v) {
+    const n = typeof v === 'number' ? v : Number(v);
+    return Number.isFinite(n) && n > 0 ? n : null;
+}
+/** When SL/TP fit a forex cross but symbol was misread as gold, prefer the message pair. */
+function reconcileSymbolWithQuoteLevels(symbol, rawMessage, levels) {
+    const current = sanitizeParsedSymbol(symbol);
+    const prices = [
+        positiveQuote(levels.sl),
+        positiveQuote(levels.entry),
+        ...(Array.isArray(levels.tp) ? levels.tp.map(positiveQuote) : []),
+    ].filter((n) => n != null);
+    if (!prices.length)
+        return current;
+    const allPlausibleFor = (sym) => {
+        const min = minPlausibleQuotePrice(sym);
+        if (min == null || !sym)
+            return false;
+        return prices.every(p => p >= min);
+    };
+    if (current && allPlausibleFor(current))
+        return current;
+    const fromMessage = extractTradableSymbolFromMessage(rawMessage);
+    if (fromMessage && fromMessage !== current && allPlausibleFor(fromMessage)) {
+        return fromMessage;
+    }
+    return current;
+}
 function extractTradableSymbolFromMessage(raw) {
     if (!raw || typeof raw !== 'string')
         return null;
-    const u = raw.toUpperCase().replace(/\s+/g, ' ');
-    const marketLine = extractMarketLineSymbol(raw);
+    const body = signalBodyBeforePromoFooter(raw);
+    const u = body.toUpperCase().replace(/\s+/g, ' ');
+    const marketLine = extractMarketLineSymbol(body);
     if (marketLine)
         return marketLine;
-    const slash = raw.match(/\b([A-Z]{3,})\s*\/\s*([A-Z]{3,})\b/i);
+    const hashtag = extractHashtagSymbol(raw);
+    if (hashtag)
+        return hashtag;
+    const hyphenPair = extractHyphenForexPair(raw);
+    if (hyphenPair)
+        return hyphenPair;
+    const slash = body.match(/\b([A-Z]{3,})\s*\/\s*([A-Z]{3,})\b/i);
     if (slash) {
         const combined = cleanInstrumentSymbol(slash[1] + slash[2]);
         if (isTradableInstrumentSymbol(combined))
             return combined;
     }
-    const onFor = raw.match(/\b(?:on|for)\s+([A-Za-z][A-Za-z0-9./]{2,20})\b/i);
+    const onFor = body.match(/\b(?:on|for)\s+([A-Za-z][A-Za-z0-9./]{2,20})\b/i);
     if (onFor?.[1]) {
         const sub = onFor[1].trim();
         const subUp = sub.toUpperCase();
@@ -182,7 +280,7 @@ function extractTradableSymbolFromMessage(raw) {
         if (isTradableInstrumentSymbol(sym))
             return sym;
     }
-    const explicit = u.match(/\b(BTCUSDT|BTCEUR|BTCUSD|ETHUSDT|ETHUSD|EURUSD|GBPUSD|USDJPY|AUDUSD|NZDUSD|USDCAD|USDCHF|XAUUSD|XAGUSD|NAS100|SPX500|USTEC|US100|US500|US30|GER40|UK100|DJ30|DJI|DAX40|JP225|JPN225|AUS200|HK50|EU50|FRA40|DE40|CHN50|CN50|SPY|QQQ|IWM|DIA|VOO|IVV|TQQQ|GLD|SLV|AAPL|MSFT|NVDA|TSLA|AMZN|META|GOOGL|GOOG|AMD|NFLX)\b/);
+    const explicit = u.match(/\b(BTCUSDT|BTCEUR|BTCUSD|ETHUSDT|ETHUSD|EURUSD|GBPUSD|USDJPY|AUDUSD|NZDUSD|USDCAD|USDCHF|AUDNZD|EURNZD|GBPNZD|EURGBP|EURJPY|GBPJPY|AUDJPY|XAUUSD|XAGUSD|NAS100|SPX500|USTEC|US100|US500|US30|GER40|UK100|DJ30|DJI|DAX40|JP225|JPN225|AUS200|HK50|EU50|FRA40|DE40|CHN50|CN50|SPY|QQQ|IWM|DIA|VOO|IVV|TQQQ|GLD|SLV|AAPL|MSFT|NVDA|TSLA|AMZN|META|GOOGL|GOOG|AMD|NFLX)\b/);
     if (explicit) {
         const sym = cleanInstrumentSymbol(explicit[1]);
         if (isTradableInstrumentSymbol(sym))
@@ -194,13 +292,14 @@ function extractTradableSymbolFromMessage(raw) {
         return /\bUSDT\b/.test(u) ? 'BTCUSDT' : 'BTCUSD';
     if (/\bETHER(EUM)?\b|\bETH\b/.test(u))
         return /\bUSDT\b/.test(u) ? 'ETHUSDT' : 'ETHUSD';
-    if (/\b(XAUUSD|XAU\b|GOLD)\b/.test(u))
-        return 'XAUUSD';
+    const goldAlias = extractGoldAliasFromText(raw);
+    if (goldAlias)
+        return goldAlias;
     if (/\bSILVER\b|\bXAG\b|\bXAGUSD\b/.test(u))
         return 'XAGUSD';
     // Deriv synthetics (V75, Vix75, R_75, Boom 1000, Step Index…). Run after the
     // forex/metal/crypto checks so normal pairs are never hijacked.
-    const deriv = (0, derivSymbols_1.normalizeDerivAlias)(raw);
+    const deriv = (0, derivSymbols_1.normalizeDerivAlias)(body);
     if (deriv)
         return deriv;
     const tokens = u.match(/\b[A-Z][A-Z0-9]{2,11}\b/g) ?? [];

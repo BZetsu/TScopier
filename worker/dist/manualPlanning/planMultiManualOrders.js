@@ -4,6 +4,7 @@ exports.planMultiManualOrders = planMultiManualOrders;
 const manualSettings_1 = require("./manualSettings");
 const tradeComment_1 = require("../tradeComment");
 const rangeSplit_1 = require("./rangeSplit");
+const rangeLayerTriggers_1 = require("./rangeLayerTriggers");
 const tpBucketDistribution_1 = require("./tpBucketDistribution");
 const multiTradeLegUnits_1 = require("./multiTradeLegUnits");
 const signalEntryRange_1 = require("./signalEntryRange");
@@ -49,6 +50,7 @@ function planMultiManualOrders(args) {
     // execute immediates as Buy/Sell at price 0 — virtual range legs are not
     // broker pendings on that path, so range layering must stay enabled.
     const baseIsPendingSignal = orderBase.operation.includes('Limit') || orderBase.operation.includes('Stop');
+    const pendingOrderMode = manual.range_layering_type === 'pending_order';
     const rangeDistance = (0, signalEntryRange_1.resolveRangeDistancePips)({ manual, parsed, pip, isBuy });
     const split = (0, rangeSplit_1.planRangeSplit)({
         totalLegs,
@@ -60,20 +62,25 @@ function planMultiManualOrders(args) {
         pip,
         minStepPriceUnits: minStopDist,
         hasSignalAnchor: entryAnchor != null,
+        // Auto layers fire as market orders at logical triggers; broker min-stop
+        // spacing applies to SL/TP placement, not virtual rung spacing.
+        skipMinStepExpansion: true,
     });
     const immediateLegs = split.immediateLegs;
     const reservedRangeLegs = split.pendingLegs;
     const effectiveRangeLegs = split.activePendingLegs;
+    const maxStepIdx = split.maxStepIdx;
     const stepPriceOffset = split.stepPriceOffset;
     let rangeFallbackReason = split.fallbackReason;
-    const totalLegsForTp = immediateLegs + effectiveRangeLegs;
+    const rangeLegCount = pendingOrderMode ? reservedRangeLegs : effectiveRangeLegs;
+    const totalLegsForTp = immediateLegs + (pendingOrderMode ? reservedRangeLegs : effectiveRangeLegs);
     const immediateTpPrices = (0, tpBucketDistribution_1.buildDistributedPerLegTakeProfits)({
         openLegCount: immediateLegs,
         finalTps,
         tpLots: manual.tp_lots,
     });
     const rangeTpPrices = (0, tpBucketDistribution_1.buildDistributedPerLegTakeProfits)({
-        openLegCount: effectiveRangeLegs,
+        openLegCount: pendingOrderMode ? reservedRangeLegs : effectiveRangeLegs,
         finalTps,
         tpLots: manual.tp_lots,
     });
@@ -85,11 +92,32 @@ function planMultiManualOrders(args) {
             return price;
         return finalTps[finalTps.length - 1] ?? null;
     };
+    const rangeLayeringMeta = manual.range_trading === true && reservedRangeLegs > 0
+        ? {
+            rangeStepPips: Math.max(0, Number(manual.range_step_pips ?? 0)),
+            rangeDistancePips: Math.max(0, Number(manual.range_distance_pips ?? 0)),
+            effectiveStepPips: split.effectiveStepPips,
+            stepPriceOffset: split.stepPriceOffset,
+            maxStepIdx: split.maxStepIdx,
+            reservedPendingLegs: reservedRangeLegs,
+            activePendingLegs: pendingOrderMode ? reservedRangeLegs : effectiveRangeLegs,
+            rangeLayeringType: (pendingOrderMode ? 'pending_order' : 'auto'),
+            ...(manual.use_signal_entry_range === true
+                ? {
+                    useSignalEntryRange: true,
+                    signalRangeBoundary: rangeDistance.boundary,
+                    signalZoneLo: (0, parsedEntry_1.resolvedParsedEntryZone)(parsed)?.lo ?? null,
+                    signalZoneHi: (0, parsedEntry_1.resolvedParsedEntryZone)(parsed)?.hi ?? null,
+                    effectiveDistancePips: rangeDistance.distPips,
+                }
+                : {}),
+        }
+        : null;
     const tpForRangeIndex = (idx) => {
         if (finalTps.length === 0)
             return null;
         if (manual.range_trading === true
-            && effectiveRangeLegs > 0
+            && rangeLegCount > 0
             && entryAnchor != null
             && entryAnchor > 0
             && stepPriceOffset > 0) {
@@ -101,22 +129,45 @@ function planMultiManualOrders(args) {
                     openedAt: `imm${String(i).padStart(4, '0')}`,
                 });
             }
-            for (let i = 0; i < effectiveRangeLegs; i++) {
-                const stepIdx = i + 1;
-                const offset = stepIdx * stepPriceOffset;
+            const rangeTriggerMap = (0, rangeLayerTriggers_1.buildRangeLayerTriggerMap)({
+                virtualPendings: Array.from({ length: rangeLegCount }, (_, i) => ({
+                    stepIdx: pendingOrderMode && maxStepIdx > 0 ? (i % maxStepIdx) + 1 : i + 1,
+                    stepPriceOffset,
+                    isBuy,
+                })),
+                anchor: entryAnchor,
+                digits: Math.max(0, Math.min(8, Math.floor(ctx.digits ?? 5))),
+                rangeLayering: rangeLayeringMeta,
+                pip,
+            });
+            for (let i = 0; i < rangeLegCount; i++) {
+                const stepIdx = pendingOrderMode && maxStepIdx > 0
+                    ? (i % maxStepIdx) + 1
+                    : i + 1;
+                const entryPrice = rangeTriggerMap.get(stepIdx)
+                    ?? (0, rangeLayerTriggers_1.rangeLayerTriggerForStep)({
+                        stepIdx,
+                        leg: { stepPriceOffset, isBuy },
+                        anchor: entryAnchor,
+                        digits: Math.max(0, Math.min(8, Math.floor(ctx.digits ?? 5))),
+                        legCount: rangeLegCount,
+                        rangeLayering: rangeLayeringMeta,
+                        pip,
+                        triggerMap: rangeTriggerMap,
+                    });
                 projectedLegs.push({
-                    id: `rg${stepIdx}`,
-                    entryPrice: isBuy ? entryAnchor - offset : entryAnchor + offset,
-                    openedAt: `rg${String(stepIdx).padStart(4, '0')}`,
+                    id: `rg${String(i).padStart(4, '0')}`,
+                    entryPrice,
+                    openedAt: `rg${String(i).padStart(4, '0')}`,
                 });
             }
             const projectedTp = (0, tpBucketDistribution_1.buildEntryQualityTakeProfitMap)({
                 legs: projectedLegs,
                 isBuy,
-                slotLegCount: immediateLegs + effectiveRangeLegs,
+                slotLegCount: immediateLegs + rangeLegCount,
                 finalTps,
                 tpLots: manual.tp_lots,
-            }).get(`rg${idx + 1}`);
+            }).get(`rg${String(idx).padStart(4, '0')}`);
             if (typeof projectedTp === 'number' && projectedTp > 0)
                 return projectedTp;
         }
@@ -194,11 +245,13 @@ function planMultiManualOrders(args) {
         }
     }
     const virtualPendings = [];
-    if (effectiveRangeLegs > 0) {
+    if (rangeLegCount > 0 && (!pendingOrderMode || maxStepIdx > 0)) {
         const pendHours = (0, manualSettings_1.clampPendingExpiryHours)(manual.pending_expiry_hours);
         const expiryHours = pendHours > 0 ? pendHours : undefined;
-        let stepIdx = 1;
-        for (let i = 0; i < effectiveRangeLegs; i++) {
+        for (let i = 0; i < rangeLegCount; i++) {
+            const stepIdx = pendingOrderMode && maxStepIdx > 0
+                ? (i % maxStepIdx) + 1
+                : i + 1;
             const tpPrice = tpForRangeIndex(i);
             virtualPendings.push({
                 stepIdx,
@@ -208,14 +261,13 @@ function planMultiManualOrders(args) {
                 stoploss: finalSl,
                 takeprofit: tpPrice,
                 slippage: slippage ?? 20,
-                comment: (0, tradeComment_1.appendOrderCommentSuffix)(commentPrefix, `:rg${stepIdx}.tp`),
+                comment: (0, tradeComment_1.appendOrderCommentSuffix)(commentPrefix, `:rg${stepIdx}.tp${i + 1}`),
                 expertID: expertId,
                 expiryHours,
             });
-            stepIdx += 1;
         }
     }
-    if (effectiveRangeLegs === 0) {
+    if (rangeLegCount === 0 && !pendingOrderMode) {
         const remainderUnits = manualUnits - totalLegs * targetUnits;
         if (remainderUnits >= minUnits && orders.length < ABS_MAX_LEGS) {
             const tpPrice = tpForImmediateIndex(Math.max(0, immediateLegs - 1))
@@ -259,24 +311,7 @@ function planMultiManualOrders(args) {
         ...(strictEntry ? { strictEntry } : {}),
         ...(manual.range_trading === true && reservedRangeLegs > 0
             ? {
-                rangeLayering: {
-                    rangeStepPips: Math.max(0, Number(manual.range_step_pips ?? 0)),
-                    rangeDistancePips: Math.max(0, Number(manual.range_distance_pips ?? 0)),
-                    effectiveStepPips: split.effectiveStepPips,
-                    stepPriceOffset: split.stepPriceOffset,
-                    maxStepIdx: split.maxStepIdx,
-                    reservedPendingLegs: reservedRangeLegs,
-                    activePendingLegs: effectiveRangeLegs,
-                    ...(manual.use_signal_entry_range === true
-                        ? {
-                            useSignalEntryRange: true,
-                            signalRangeBoundary: rangeDistance.boundary,
-                            signalZoneLo: (0, parsedEntry_1.resolvedParsedEntryZone)(parsed)?.lo ?? null,
-                            signalZoneHi: (0, parsedEntry_1.resolvedParsedEntryZone)(parsed)?.hi ?? null,
-                            effectiveDistancePips: rangeDistance.distPips,
-                        }
-                        : {}),
-                },
+                rangeLayering: rangeLayeringMeta,
             }
             : {}),
         delay_ms,

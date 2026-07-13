@@ -27,12 +27,41 @@ const brokerTerminalHealth_1 = require("../brokerTerminalHealth");
 const brokerSignalReplay_1 = require("../brokerSignalReplay");
 const helpers_1 = require("./helpers");
 const derivSymbols_1 = require("../derivSymbols");
+const brokerSymbolDecoration_1 = require("./brokerSymbolDecoration");
 const types_1 = require("./types");
 const HEARTBEAT_FAILURES_BEFORE_DOWN = Math.max(2, Number(process.env.BROKER_HEARTBEAT_FAILURES_BEFORE_DOWN ?? 4) || 4);
 const HEARTBEAT_CONCURRENCY = Math.max(1, Math.min(8, Number(process.env.BROKER_HEARTBEAT_CONCURRENCY ?? 2) || 2));
 const HEARTBEAT_BATCH_GAP_MS = Math.max(0, Math.min(2000, Number(process.env.BROKER_HEARTBEAT_BATCH_GAP_MS ?? 250) || 250));
 const SYMBOL_KEEPALIVE_CONCURRENCY = Math.max(1, Math.min(8, Number(process.env.SYMBOL_KEEPALIVE_CONCURRENCY ?? 2) || 2));
 const heartbeatFailCounts = new Map();
+const symbolInventoryReadyHandled = new Set();
+const SYMBOL_AUTO_MATCH_PROBES = ['EURUSD', 'XAUUSD', 'GBPUSD', 'BTCUSD'];
+function findBrokerBySessionUuid(ctx, uuid) {
+    for (const broker of ctx.brokersById.values()) {
+        if ((0, helpers_1.brokerSessionUuid)(broker) === uuid)
+            return broker;
+    }
+    return undefined;
+}
+async function onBrokerSymbolInventoryReady(ctx, uuid, inventory) {
+    if (symbolInventoryReadyHandled.has(uuid))
+        return;
+    const broker = findBrokerBySessionUuid(ctx, uuid);
+    if (!broker || broker.connection_status !== 'connected')
+        return;
+    symbolInventoryReadyHandled.add(uuid);
+    await (0, brokerSymbolDecoration_1.clearLegacySymbolDecorationIfPresent)(ctx.supabase, broker);
+    const parts = [];
+    for (const probe of SYMBOL_AUTO_MATCH_PROBES) {
+        const resolved = resolveBrokerSymbolFromInventory(ctx, inventory, probe);
+        if (resolved.toUpperCase() !== probe) {
+            parts.push(`${probe}→${resolved}`);
+        }
+    }
+    if (parts.length > 0) {
+        console.log(`[tradeExecutor] symbol auto-match broker=${broker.id} ${parts.join(' ')}`);
+    }
+}
 function activeBrokersForHeartbeat(ctx) {
     return [...ctx.brokersById.values()].filter(b => b.is_active && (0, helpers_1.brokerSessionUuid)(b));
 }
@@ -456,6 +485,9 @@ async function fetchSymbolList(ctx, uuid) {
             return null;
         const entry = { set, list, loadedAt: Date.now() };
         ctx.symbolListCache.set(uuid, entry);
+        void onBrokerSymbolInventoryReady(ctx, uuid, entry).catch(err => {
+            console.warn(`[tradeExecutor] symbol inventory ready hook failed uuid=${uuid}:`, err instanceof Error ? err.message : err);
+        });
         return entry;
     }
     catch {

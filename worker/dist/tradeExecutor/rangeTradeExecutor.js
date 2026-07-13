@@ -4,8 +4,10 @@ exports.runRangeEntry = runRangeEntry;
 const entryPrepare_1 = require("./entryPrepare");
 const strictEntryPending_1 = require("./strictEntryPending");
 const virtualPendingMaterialize_1 = require("./virtualPendingMaterialize");
+const materializeBrokerRangePendingLegs_1 = require("./materializeBrokerRangePendingLegs");
 const entryExecution_1 = require("./entryExecution");
 const signalRangeEntryHelpers_1 = require("../signalRangeEntryHelpers");
+const virtualPendingMonitor_1 = require("../virtualPendingMonitor");
 /** Log `multi_range_plan` diagnostics for manual multi / range ladder entries. */
 async function logMultiRangePlan(ctx, prep) {
     const { signal, broker, manual, parsed, plan, capped, virtualPendings, baseLot, symbol, liveEntryFast } = prep;
@@ -19,6 +21,7 @@ async function logMultiRangePlan(ctx, prep) {
         immediate_orders: capped.length,
         virtual_pending_rows: virtualPendings.length,
         range_trading: manual.range_trading === true,
+        range_layering_type: manual.range_layering_type ?? 'auto',
         range_percent: manual.range_percent ?? null,
         range_step_pips: manual.range_step_pips ?? null,
         range_distance_pips: manual.range_distance_pips ?? null,
@@ -48,6 +51,10 @@ async function logMultiRangePlan(ctx, prep) {
     }
     catch { /* best-effort */ }
 }
+function useBrokerRangePendingLegs(prep) {
+    return prep.manual.range_layering_type === 'pending_order'
+        || prep.plan.rangeLayering?.rangeLayeringType === 'pending_order';
+}
 async function runRangeEntry(ctx, args) {
     const prepared = await (0, entryPrepare_1.prepareEntryExecution)(ctx, args);
     if (!prepared.ok)
@@ -55,8 +62,21 @@ async function runRangeEntry(ctx, args) {
     const prep = prepared.prep;
     await logMultiRangePlan(ctx, prep);
     const strictBrokerPlaced = await (0, strictEntryPending_1.placeStrictSignalEntryPending)(ctx, prep, false);
-    const materializedVirtuals = await (0, virtualPendingMaterialize_1.materializeVirtualPendingLegs)(ctx, prep, strictBrokerPlaced);
-    const outcome = await (0, entryExecution_1.finishEntrySend)(prep, strictBrokerPlaced, materializedVirtuals, true);
+    const brokerPendingMode = useBrokerRangePendingLegs(prep);
+    let materializedPendings = false;
+    if (brokerPendingMode) {
+        // 100% reserved (no immediates): place limits from quote/signal anchor now.
+        if (!prep.deferBrokerRangePendingMaterialize) {
+            materializedPendings = await (0, materializeBrokerRangePendingLegs_1.materializeBrokerRangePendingLegs)(ctx, prep, strictBrokerPlaced);
+        }
+    }
+    else {
+        materializedPendings = await (0, virtualPendingMaterialize_1.materializeVirtualPendingLegs)(ctx, prep, strictBrokerPlaced);
+        if (materializedPendings) {
+            void (0, virtualPendingMonitor_1.runImmediateVirtualPendingCheck)(prep.signal.id, prep.broker.id);
+        }
+    }
+    const outcome = await (0, entryExecution_1.finishEntrySend)(prep, strictBrokerPlaced, materializedPendings, true, brokerPendingMode);
     if (outcome.openedOrMerged === true && prep.plan.rangeEntryWait) {
         await (0, signalRangeEntryHelpers_1.markSignalRangeEntryFired)(ctx.supabase, prep.signal.id, prep.broker.id);
         await (0, signalRangeEntryHelpers_1.logSignalRangeEntryFired)(ctx.supabase, prep.signal, prep.broker.id, prep.plan.rangeEntryWait, prep.symbol);

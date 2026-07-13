@@ -37,7 +37,7 @@ exports.SUPPORTED_CLOSE_ALL_BY_LOCALE = {
     nl: ['sluit alles', 'alles sluiten', 'sluit alle'],
     ja: ['全決済', 'すべて決済', '全クローズ', '全部決済'],
     de: ['alles schließen', 'schließe alles', 'schliesse alles', 'alles schliessen'],
-    ar: ['أغلق الكل', 'اغلق الكل', 'إغلاق الكل'],
+    ar: ['أغلق الكل', 'اغلق الكل', 'إغلاق الكل', 'أغلق جميع الصفقات', 'اغلق جميع الصفقات'],
     pt: ['fechar tudo', 'feche tudo', 'fechar todas'],
     it: ['chiudi tutto', 'chiudere tutto', 'chiudi tutte'],
 };
@@ -51,7 +51,7 @@ const CLOSE_VERBS = [
     'stäng', 'stang', 'sluit',
     'schließen', 'schliesse', 'schliessen', 'schließe',
     'fechar', 'feche', 'chiudi', 'chiudere',
-    'أغلق', 'اغلق',
+    'أغلق', 'اغلق', 'إغلاق', 'اغلاق',
 ];
 const ALL_EVERYTHING_WORDS = [
     'all', 'everything', 'every thing',
@@ -79,7 +79,7 @@ exports.SUPPORTED_BREAKEVEN_BY_LOCALE = {
     nl: ['break even', 'stop loss naar entry', 'sl naar entry'],
     ja: ['損益分岐', '建値', 'ブレークイーブン'],
     de: ['break even', 'stop loss auf einstieg', 'sl auf einstieg'],
-    ar: ['التعادل', 'وقف الخسارة عند الدخول'],
+    ar: ['التعادل', 'وقف الخسارة عند الدخول', 'وقف عند الدخول', 'نقل وقف الخسارة إلى الدخول'],
     pt: ['break even', 'ponto de equilíbrio', 'sl na entrada'],
     it: ['break even', 'punto di pareggio', 'sl all\'ingresso'],
 };
@@ -108,7 +108,7 @@ exports.SUPPORTED_PARTIAL_CLOSE_BY_LOCALE = {
     nl: ['sluit de helft', 'gedeeltelijk sluiten', 'deels sluiten'],
     ja: ['一部決済', '半分決済'],
     de: ['halb schließen', 'teilweise schließen', 'teil schließen'],
-    ar: ['إغلاق جزئي', 'اغلاق جزئي'],
+    ar: ['إغلاق جزئي', 'اغلاق جزئي', 'إغلاق نصف', 'اغلاق نصف'],
     pt: ['fechar metade', 'fechamento parcial'],
     it: ['chiudi metà', 'chiusura parziale'],
 };
@@ -142,19 +142,22 @@ function textLooksLikeConditionalClose(message) {
     return (/\b(if|si|если)\b/i.test(folded)
         && /\b(close|cerrar|fermer|fermez|закрой|закрыть|exit)\b/i.test(folded));
 }
-const SL_TP_ADJUST_RE = new RegExp('\\b('
-    + [
-        'move stop', 'move sl', 'move risk', 'adjust sl', 'adjust stop loss', 'adjust stoploss',
-        'set sl', 'set stop loss', 'set stoploss', 'set risk', 'update sl', 'change sl',
-        'déplacer le sl', 'deplacer le sl', 'déplacer sl', 'deplacer sl',
-        'mover sl', 'mover stop', 'ajustar sl', 'ajustar stop',
-        'przenieś sl', 'przenies sl', 'przenieś stop', 'przenies stop',
-        'переместить sl', 'переместить стоп', 'установить sl', 'установить стоп',
-        'flytta sl', 'flytta stop', 'verplaats sl', 'sl verplaatsen',
-        'sl anpassen', 'stop loss anpassen',
-        'slを移動', '損切り調整',
-    ].map(t => escapeRegExp((0, multilingualSignalTerms_1.foldAccents)(t))).join('|')
-    + ')\\b', 'iu');
+const COMMON_SL_TP_ADJUST_PHRASES = [
+    'عدّل وقف الخسارة', 'عدل وقف الخسارة', 'انقل وقف الخسارة', 'انقل الوقف',
+    'اضبط وقف الخسارة', 'حرّك وقف الخسارة', 'حرك وقف الخسارة',
+    'عدّل الهدف', 'عدل الهدف', 'انقل الهدف', 'اضبط الهدف',
+];
+const SL_TP_ADJUST_RE = new RegExp(`(?<![\\p{L}\\p{N}])(${[
+    'move stop', 'move sl', 'move risk', 'adjust sl', 'adjust stop loss', 'adjust stoploss',
+    'set sl', 'set stop loss', 'set stoploss', 'set risk', 'update sl', 'change sl',
+    'déplacer le sl', 'deplacer le sl', 'déplacer sl', 'deplacer sl',
+    'mover sl', 'mover stop', 'ajustar sl', 'ajustar stop',
+    'przenieś sl', 'przenies sl', 'przenieś stop', 'przenies stop',
+    'переместить sl', 'переместить стоп', 'установить sl', 'установить стоп',
+    'flytta sl', 'flytta stop', 'verplaats sl', 'sl verplaatsen',
+    'sl anpassen', 'stop loss anpassen',
+    'slを移動', '損切り調整',
+].map(t => escapeRegExp((0, multilingualSignalTerms_1.foldAccents)(t))).join('|')})(?![\\p{L}\\p{N}])`, 'iu');
 /** True for intentional full-close commands in any supported language. */
 function textLooksLikeMultilingualFullClose(message) {
     const raw = String(message ?? '').trim();
@@ -181,6 +184,10 @@ function textLooksLikeMultilingualManagement(message) {
     if (textLooksLikeMultilingualFullClose(raw))
         return true;
     for (const phrase of [...exports.COMMON_BREAKEVEN_PHRASES, ...exports.COMMON_PARTIAL_CLOSE_PHRASES]) {
+        if ((0, multilingualSignalTerms_1.messageContainsKeyword)(raw, phrase))
+            return true;
+    }
+    for (const phrase of COMMON_SL_TP_ADJUST_PHRASES) {
         if ((0, multilingualSignalTerms_1.messageContainsKeyword)(raw, phrase))
             return true;
     }

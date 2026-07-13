@@ -9,6 +9,8 @@ exports.isBlockedByShallowerStep = isBlockedByShallowerStep;
 exports.fillWithinTriggerBand = fillWithinTriggerBand;
 exports.evaluateTpTouch = evaluateTpTouch;
 exports.shouldLockBasketLayering = shouldLockBasketLayering;
+exports.registerVirtualPendingMonitor = registerVirtualPendingMonitor;
+exports.runImmediateVirtualPendingCheck = runImmediateVirtualPendingCheck;
 const node_os_1 = __importDefault(require("node:os"));
 const fxsocketClient_1 = require("./fxsocketClient");
 const mtApiByAccount_1 = require("./mtApiByAccount");
@@ -27,8 +29,10 @@ const copierPause_1 = require("./copierPause");
 const rangePendingFireGuard_1 = require("./rangePendingFireGuard");
 const brokerConnectError_1 = require("./brokerConnectError");
 const rangePendingBasketCleanup_1 = require("./rangePendingBasketCleanup");
+const gapFillReanchor_1 = require("./gapFillReanchor");
+const layerConcurrentFire_1 = require("./layerConcurrentFire");
 const SYMBOL_TTL_MS = 10 * 60000;
-const ACTIVE_MS = (0, monitorIdleGate_1.monitorActiveIntervalMs)('VIRTUAL_PENDING_TICK_MS', 400);
+const ACTIVE_MS = (0, monitorIdleGate_1.monitorActiveIntervalMs)('VIRTUAL_PENDING_TICK_MS', 200);
 const IDLE_MS = (0, monitorIdleGate_1.monitorIdleIntervalMs)('VIRTUAL_PENDING_IDLE_MS', 15000);
 const STALE_CLAIM_AFTER_MS = 30000;
 async function virtualPendingHasWork(supabase, staleCut) {
@@ -143,6 +147,8 @@ class VirtualPendingMonitor {
         this.profitSkipLogAt = new Map();
         /** Throttle trigger-band defer logs — legs re-check every tick. */
         this.bandSkipLogAt = new Map();
+        /** Previous quote per (account, symbol) for adverse crossing detection. */
+        this.lastQuoteByGroup = new Map();
         this.hostId = `worker:${node_os_1.default.hostname()}:${process.pid}`;
     }
     start() {
@@ -170,6 +176,14 @@ class VirtualPendingMonitor {
     getLoopHandle() {
         return this.loop;
     }
+    /** One-shot trigger pass after virtual pending insert (avoids waiting for next poll tick). */
+    async runImmediateCheck(signalId, brokerAccountId) {
+        if (this.ticking) {
+            this.loop?.poke();
+            return;
+        }
+        await this.tick({ signalId, brokerAccountId });
+    }
     async runTick() {
         if (this.ticking)
             return;
@@ -181,7 +195,7 @@ class VirtualPendingMonitor {
             this.ticking = false;
         }
     }
-    async tick() {
+    async tick(scope) {
         if (!(0, fxsocketClient_1.hasFxsocketConfigured)())
             return;
         // Re-open rows whose claim is stale. Anything older than STALE_CLAIM_AFTER_MS
@@ -220,13 +234,18 @@ class VirtualPendingMonitor {
             }
         }
         // Pull the live pending queue.
-        const pendingQ = await (0, monitorIdleGate_1.applyShardToQuery)(this.supabase, this.supabase
+        let pendingQuery = this.supabase
             .from('range_pending_legs')
             .select('*')
             .eq('status', 'pending')
             .not('comment', 'ilike', '%:strictEntry%')
-            .not('comment', 'ilike', '%:strictEntryAgg%')
-            .limit(500));
+            .not('comment', 'ilike', '%:strictEntryAgg%');
+        if (scope) {
+            pendingQuery = pendingQuery
+                .eq('signal_id', scope.signalId)
+                .eq('broker_account_id', scope.brokerAccountId);
+        }
+        const pendingQ = await (0, monitorIdleGate_1.applyShardToQuery)(this.supabase, pendingQuery.limit(scope ? 100 : 500));
         if (!pendingQ)
             return;
         const { data, error } = await pendingQ;
@@ -286,7 +305,6 @@ class VirtualPendingMonitor {
             const tpTouchedBaskets = await this.detectAndLockTpTouchedBaskets(legs, q.bid, q.ask);
             // How far is the nearest trigger? Useful diagnostic when nothing fires.
             let nearestGap = Number.POSITIVE_INFINITY;
-            const triggeredInGroup = [];
             for (const leg of legs) {
                 const basketKey = `${leg.signal_id}|${leg.broker_account_id}`;
                 if (tpTouchedBaskets.has(basketKey))
@@ -295,73 +313,87 @@ class VirtualPendingMonitor {
                 const gap = leg.is_buy ? ref - leg.trigger_price : leg.trigger_price - ref;
                 if (Number.isFinite(gap) && gap < nearestGap)
                     nearestGap = gap;
-                if (isTriggered(leg.is_buy, leg.trigger_price, q.bid, q.ask))
-                    triggeredInGroup.push(leg);
+            }
+            this.lastQuoteByGroup.set(key, { bid: q.bid, ask: q.ask });
+            const pendingByBasket = new Map();
+            for (const leg of legs) {
+                const bk = `${leg.signal_id}|${leg.broker_account_id}`;
+                if (tpTouchedBaskets.has(bk))
+                    continue;
+                const arr = pendingByBasket.get(bk) ?? [];
+                arr.push(leg);
+                pendingByBasket.set(bk, arr);
             }
             const cancelledStaleIds = new Set();
             const purgedBaskets = new Set();
-            for (const leg of triggeredInGroup) {
-                const bk = `${leg.signal_id}|${leg.broker_account_id}`;
-                if (purgedBaskets.has(bk)) {
-                    cancelledStaleIds.add(leg.id);
-                    continue;
-                }
-                const staleEarly = await this.getStaleLegReason(leg, api, uuid);
-                if (!staleEarly)
-                    continue;
-                purgedBaskets.add(bk);
-                const deleted = await (0, rangePendingBasketCleanup_1.deleteRangePendingLegsForBasket)(this.supabase, { signalId: leg.signal_id, brokerAccountId: leg.broker_account_id }, staleEarly);
-                if (deleted > 0) {
-                    for (const l of legs) {
-                        if (l.signal_id === leg.signal_id && l.broker_account_id === leg.broker_account_id) {
-                            cancelledStaleIds.add(l.id);
-                        }
-                    }
-                    try {
-                        await this.supabase.from('trade_execution_logs').insert({
-                            user_id: leg.user_id,
-                            signal_id: leg.signal_id,
-                            broker_account_id: leg.broker_account_id,
-                            action: 'virtual_pending_cancelled',
-                            status: 'info',
-                            request_payload: {
-                                reason: staleEarly,
-                                phase: 'pre_claim_stale',
-                                rows: deleted,
-                                basket: bk,
-                            },
-                        });
-                    }
-                    catch {
-                        /* logging is best-effort */
-                    }
-                }
-            }
-            const signalIds = [...new Set(legs.map(l => l.signal_id))];
-            const activeStepsByBasket = await this.fetchShallowActiveSteps(uuid, symbol, signalIds);
-            const byBasket = new Map();
-            for (const leg of triggeredInGroup) {
-                if (cancelledStaleIds.has(leg.id))
-                    continue;
-                if (!isTriggered(leg.is_buy, leg.trigger_price, q.bid, q.ask))
-                    continue;
-                if (isBlockedByShallowerStep(leg, activeStepsByBasket))
-                    continue;
-                const bk = `${leg.signal_id}|${leg.broker_account_id}`;
-                const arr = byBasket.get(bk) ?? [];
-                arr.push(leg);
-                byBasket.set(bk, arr);
-            }
             const fireJobs = [];
-            for (const [, arr] of byBasket) {
-                arr.sort((a, b) => a.step_idx - b.step_idx || a.id.localeCompare(b.id));
-                const winner = arr[0];
-                if (!winner)
+            for (const [, basketLegs] of pendingByBasket) {
+                if (!basketLegs.length)
                     continue;
-                triggeredTotal += 1;
-                fireJobs.push({ leg: winner, bid: q.bid, ask: q.ask });
+                const anchor = Number(basketLegs[0].anchor_price);
+                const isBuy = basketLegs[0].is_buy;
+                const stepOffset = (0, layerConcurrentFire_1.stepPriceOffsetForBasket)(basketLegs) ?? 0;
+                const budget = (0, layerConcurrentFire_1.computeLayerFireBudget)({
+                    isBuy,
+                    anchor,
+                    bid: q.bid,
+                    ask: q.ask,
+                    stepPriceOffset: stepOffset,
+                });
+                if (budget <= 0)
+                    continue;
+                const toFire = (0, layerConcurrentFire_1.selectPendingLegsForDistanceBurst)({ pendingLegs: basketLegs, budget });
+                for (const leg of toFire) {
+                    if (cancelledStaleIds.has(leg.id))
+                        continue;
+                    const bk = `${leg.signal_id}|${leg.broker_account_id}`;
+                    if (purgedBaskets.has(bk)) {
+                        cancelledStaleIds.add(leg.id);
+                        continue;
+                    }
+                    const staleEarly = await this.getStaleLegReason(leg, api, uuid);
+                    if (staleEarly) {
+                        if (!purgedBaskets.has(bk)) {
+                            purgedBaskets.add(bk);
+                            const deleted = await (0, rangePendingBasketCleanup_1.deleteRangePendingLegsForBasket)(this.supabase, { signalId: leg.signal_id, brokerAccountId: leg.broker_account_id }, staleEarly);
+                            if (deleted > 0) {
+                                for (const l of legs) {
+                                    if (l.signal_id === leg.signal_id && l.broker_account_id === leg.broker_account_id) {
+                                        cancelledStaleIds.add(l.id);
+                                    }
+                                }
+                                try {
+                                    await this.supabase.from('trade_execution_logs').insert({
+                                        user_id: leg.user_id,
+                                        signal_id: leg.signal_id,
+                                        broker_account_id: leg.broker_account_id,
+                                        action: 'virtual_pending_cancelled',
+                                        status: 'info',
+                                        request_payload: {
+                                            reason: staleEarly,
+                                            phase: 'pre_claim_stale',
+                                            rows: deleted,
+                                            basket: bk,
+                                        },
+                                    });
+                                }
+                                catch {
+                                    /* logging is best-effort */
+                                }
+                            }
+                        }
+                        continue;
+                    }
+                    triggeredTotal += 1;
+                    fireJobs.push({
+                        leg,
+                        bid: q.bid,
+                        ask: q.ask,
+                        distanceBurst: { anchor, stepPriceOffset: stepOffset },
+                    });
+                }
             }
-            const fireResults = await Promise.allSettled(fireJobs.map(j => this.fireLeg(j.leg, j.bid, j.ask)));
+            const fireResults = await Promise.allSettled(fireJobs.map(j => this.fireLeg(j.leg, j.bid, j.ask, { distanceBurst: j.distanceBurst })));
             for (const r of fireResults) {
                 if (r.status === 'fulfilled' && r.value)
                     firedOkTotal += 1;
@@ -569,7 +601,7 @@ class VirtualPendingMonitor {
         }
         throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
     }
-    async fireLeg(leg, bid, ask) {
+    async fireLeg(leg, bid, ask, opts) {
         const api = (0, mtApiByAccount_1.apiForFxsocketAccount)(this.platformByUuid, leg.metaapi_account_id);
         if (!api)
             return false;
@@ -577,9 +609,13 @@ class VirtualPendingMonitor {
         // same tick cycle. The monotonicity check below still prevents stale fires.
         let guardBid = bid;
         let guardAsk = ask;
-        // Monotonicity check: verify price is still triggered at fresh quote.
-        // Prevents firing when price briefly dipped to trigger then bounced back.
-        if (!isTriggered(leg.is_buy, leg.trigger_price, guardBid, guardAsk)) {
+        const burst = opts?.distanceBurst;
+        if (burst && burst.stepPriceOffset > 0) {
+            if (!(0, layerConcurrentFire_1.isLegEligibleByDistance)(leg.is_buy, burst.anchor, guardBid, guardAsk, leg.step_idx, burst.stepPriceOffset)) {
+                return false;
+            }
+        }
+        else if (!isTriggered(leg.is_buy, leg.trigger_price, guardBid, guardAsk)) {
             return false;
         }
         const layerTillClose = await (0, rangeLayerTillClose_1.loadRangeLayerTillCloseForSignal)(this.supabase, leg.signal_id, leg.broker_account_id);
@@ -587,6 +623,9 @@ class VirtualPendingMonitor {
             layerTillClose,
             quote: { bid: guardBid, ask: guardAsk },
             isBuy: leg.is_buy,
+            distanceBurst: burst && burst.stepPriceOffset > 0
+                ? { anchor: burst.anchor, stepPriceOffset: burst.stepPriceOffset, bid: guardBid, ask: guardAsk }
+                : undefined,
         });
         if (block.block) {
             if (block.reason === 'basket_in_profit') {
@@ -685,14 +724,26 @@ class VirtualPendingMonitor {
         // Reuse the tick quote — already validated by monotonicity check above.
         const fireBid = guardBid;
         const fireAsk = guardAsk;
-        const band = fillWithinTriggerBand({
-            isBuy: leg.is_buy,
-            triggerPrice: leg.trigger_price,
-            bid: fireBid,
-            ask: fireAsk,
-            slippagePoints: leg.slippage ?? 20,
-            point: params?.point ?? null,
-        });
+        const band = burst && burst.stepPriceOffset > 0
+            ? (0, layerConcurrentFire_1.isDistanceBurstFillAllowed)({
+                isBuy: leg.is_buy,
+                anchor: burst.anchor,
+                bid: fireBid,
+                ask: fireAsk,
+                stepIdx: leg.step_idx,
+                stepPriceOffset: burst.stepPriceOffset,
+                triggerPrice: leg.trigger_price,
+                slippagePoints: leg.slippage ?? 20,
+                point: params?.point ?? null,
+            })
+            : fillWithinTriggerBand({
+                isBuy: leg.is_buy,
+                triggerPrice: leg.trigger_price,
+                bid: fireBid,
+                ask: fireAsk,
+                slippagePoints: leg.slippage ?? 20,
+                point: params?.point ?? null,
+            });
         if (!band.ok) {
             await this.releaseClaimedLegToPending(leg.id);
             const now = Date.now();
@@ -849,12 +900,57 @@ class VirtualPendingMonitor {
                         step_idx: leg.step_idx,
                         trigger_price: leg.trigger_price,
                         ref_price: refPrice,
+                        fill_price: entryPx,
                     },
                     response_payload: { ticket: result.ticket, latency_ms: latencyMs, claimed_by: this.hostId },
                 });
             }
             catch {
                 /* logging is best-effort; leg is already `fired` */
+            }
+            if (entryPx != null && Number.isFinite(entryPx) && entryPx > 0) {
+                try {
+                    const reanchor = await (0, gapFillReanchor_1.reanchorPendingLegsAfterGapFill)({
+                        supabase: this.supabase,
+                        signalId: leg.signal_id,
+                        brokerAccountId: leg.broker_account_id,
+                        firedLegId: leg.id,
+                        firedStepIdx: leg.step_idx,
+                        isBuy: leg.is_buy,
+                        triggerPrice: leg.trigger_price,
+                        anchorPrice: leg.anchor_price,
+                        fillPrice: entryPx,
+                        slippagePoints: leg.slippage ?? 20,
+                        point: params?.point ?? null,
+                        digits: Math.max(0, Math.min(8, Number(params?.digits) || 5)),
+                    });
+                    if (reanchor.updated > 0) {
+                        console.log(`[virtualPendingMonitor] gap-fill reanchor signal=${leg.signal_id}`
+                            + ` step=${leg.step_idx} fill=${entryPx} updated=${reanchor.updated}`);
+                        try {
+                            await this.supabase.from('trade_execution_logs').insert({
+                                user_id: leg.user_id,
+                                signal_id: leg.signal_id,
+                                broker_account_id: leg.broker_account_id,
+                                action: 'virtual_pending_reanchor',
+                                status: 'info',
+                                request_payload: {
+                                    fired_leg_id: leg.id,
+                                    fired_step_idx: leg.step_idx,
+                                    trigger_price: leg.trigger_price,
+                                    fill_price: entryPx,
+                                    updated: reanchor.updated,
+                                },
+                            });
+                        }
+                        catch {
+                            /* best-effort */
+                        }
+                    }
+                }
+                catch (reanchorErr) {
+                    console.warn(`[virtualPendingMonitor] gap-fill reanchor failed leg=${leg.id} signal=${leg.signal_id}:`, reanchorErr);
+                }
             }
             return true;
         }
@@ -1153,3 +1249,12 @@ class VirtualPendingMonitor {
 }
 exports.VirtualPendingMonitor = VirtualPendingMonitor;
 VirtualPendingMonitor.PROFIT_SKIP_LOG_MS = 60000;
+/** Statuses polled by the auto (virtual) layering monitor — excludes `broker_pending`. */
+VirtualPendingMonitor.AUTO_LAYER_STATUSES = ['pending'];
+let activeVirtualPendingMonitor = null;
+function registerVirtualPendingMonitor(monitor) {
+    activeVirtualPendingMonitor = monitor;
+}
+async function runImmediateVirtualPendingCheck(signalId, brokerAccountId) {
+    await activeVirtualPendingMonitor?.runImmediateCheck(signalId, brokerAccountId);
+}

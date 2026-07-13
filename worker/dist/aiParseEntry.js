@@ -15,7 +15,7 @@ function parseEnvBool(name, defaultValue = false) {
     return v === '1' || v === 'true' || v === 'yes';
 }
 function isAiEntryParseEnabled() {
-    return parseEnvBool('AI_ENTRY_PARSE_ENABLED', false);
+    return parseEnvBool('AI_ENTRY_PARSE_ENABLED', true);
 }
 function aiEntryParseEnabled() {
     return isAiEntryParseEnabled();

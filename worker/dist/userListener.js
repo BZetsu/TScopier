@@ -190,6 +190,8 @@ class UserListener {
         this.userProfilesCopierPauseChannel = null;
         /** Serializes message revision apply per channel row + telegram message id. */
         this.revisionChains = new Map();
+        /** In-process dedupe for revision dispatches (edit handler vs settle poll vs HTTP push). */
+        this.revisionDispatchDedup = new Map();
         /** signal_channel_ids where canonical feed is live — skip poll/reconcile in primary mode. */
         this.passiveSignalChannelIds = new Set();
         this.userId = userId;
@@ -1067,7 +1069,7 @@ class UserListener {
         const dispatchRow = (0, signalRevision_1.buildRevisionDispatchRow)(fresh, parseResult, {
             t_ai_parse_done: tRevision,
             t_dispatch_sent: tRevision,
-        });
+        }, args.telegramEditDateSeen);
         dispatchRow.dispatch_source = signalRevision_1.MESSAGE_REVISION_DISPATCH_SOURCE;
         if (fresh.parsed_data?.action) {
             dispatchRow.revision_prior_action = String(fresh.parsed_data.action);
@@ -1088,8 +1090,36 @@ class UserListener {
                 tp: parseResult.parsed.tp ?? [],
             },
         });
-        await this.dispatchRevisionSignal(dispatchRow);
+        if (this.shouldSkipDuplicateRevisionDispatch(fresh.id, args.telegramEditDateSeen)) {
+            void (0, listenerEvents_1.persistListenerEvent)(this.supabase, {
+                userId: this.userId,
+                eventType: 'message_revision_dispatch_deduped',
+                channelRowId: channelRow.id,
+                telegramMessageId: messageId,
+                detail: { signal_id: fresh.id, source, edit_date: args.telegramEditDateSeen ?? null },
+            });
+            return true;
+        }
+        this.dispatchRevisionSignal(dispatchRow);
         return true;
+    }
+    revisionDispatchDedupKey(signalId, editDate) {
+        return `${signalId}|${editDate != null && editDate > 0 ? Math.floor(editDate) : 0}`;
+    }
+    shouldSkipDuplicateRevisionDispatch(signalId, editDate) {
+        const key = this.revisionDispatchDedupKey(signalId, editDate);
+        const now = Date.now();
+        const seenAt = this.revisionDispatchDedup.get(key);
+        if (seenAt != null && now - seenAt < 120000)
+            return true;
+        this.revisionDispatchDedup.set(key, now);
+        if (this.revisionDispatchDedup.size > 500) {
+            for (const [k, at] of this.revisionDispatchDedup) {
+                if (now - at > 120000)
+                    this.revisionDispatchDedup.delete(k);
+            }
+        }
+        return false;
     }
     scheduleEntryMessageSettlePoll(channelRow, messageId) {
         for (const delayMs of entryMessageSettleDelaysMs()) {
@@ -1156,21 +1186,15 @@ class UserListener {
             });
         }
     }
-    async dispatchRevisionSignal(dispatchRow) {
-        if (await (0, copierPause_1.loadCachedUserCopierPaused)(this.supabase, this.userId))
-            return;
-        const dispatchedInProcess = this.onSignalParsed
-            ? this.onSignalParsed(dispatchRow) === true
-            : false;
-        const shouldPush = workerConfig_1.workerConfig.runsListener && (!workerConfig_1.workerConfig.runsTrade || !dispatchedInProcess);
-        if (shouldPush) {
-            const pushed = await (0, tradeSignalPush_1.pushParsedSignalToTradeWorkerAwait)({
-                ...dispatchRow,
-                dispatch_source: signalRevision_1.MESSAGE_REVISION_DISPATCH_SOURCE,
-            }, { source: signalRevision_1.MESSAGE_REVISION_DISPATCH_SOURCE });
-            if (!pushed)
-                (0, workerMetrics_1.incMetric)('dispatch_push_exhausted');
-        }
+    dispatchRevisionSignal(dispatchRow) {
+        void (0, copierPause_1.loadCachedUserCopierPaused)(this.supabase, this.userId).then(paused => {
+            if (paused)
+                return;
+            const dispatchedInProcess = this.onSignalParsed
+                ? this.onSignalParsed(dispatchRow) === true
+                : false;
+            this.routeDispatchToTradeWorker(dispatchRow, dispatchedInProcess);
+        }).catch(() => { });
     }
     isModificationClassMessage(rawMessage, isReply, channelKeywords, lexicon) {
         const message = (0, normalizeTelegramMessageText_1.normalizeSignalMessageForParse)(rawMessage);
@@ -1207,10 +1231,13 @@ class UserListener {
             // otherwise an instruction like "SL to Entry" gets re-guessed as a fresh
             // entry on a hallucinated symbol and skipped as entry_requires_now.
             const detManagementParsed = det.status === 'parsed' && (0, tradeSignalActions_1.isManagementAction)((0, tradeSignalActions_1.parsedAction)(det.parsed));
-            if (detEntryParsed || detManagementParsed) {
+            if (detManagementParsed) {
                 return { parseResult: det, channelKeywords: keywords };
             }
-            if (!this.isModificationClassMessage(args.rawMessage, args.isReply, keywords, lexicon)) {
+            const tryAiEntryParse = async (detFallback) => {
+                if (this.isModificationClassMessage(args.rawMessage, args.isReply, keywords, lexicon)) {
+                    return null;
+                }
                 const aiEntry = await (0, aiParseEntry_1.aiParseEntry)(this.supabase, {
                     userId: this.userId,
                     channelRowId: args.channelRowId,
@@ -1225,7 +1252,6 @@ class UserListener {
                     return {
                         parseResult: (0, aiParseEntry_1.aiEntryResultToParseResult)(aiEntry),
                         aiMeta,
-                        channelKeywords: keywords,
                     };
                 }
                 if ((0, aiParseEntry_1.isAiEntryParseEnabled)()) {
@@ -1233,13 +1259,29 @@ class UserListener {
                         + ` ${aiEntry.skip_reason ?? 'unknown'}`);
                     return {
                         parseResult: {
-                            ...det,
-                            skip_reason: aiEntry.skip_reason ?? det.skip_reason,
+                            ...detFallback,
+                            skip_reason: aiEntry.skip_reason ?? detFallback.skip_reason,
                         },
                         aiMeta,
-                        channelKeywords: keywords,
                     };
                 }
+                return null;
+            };
+            if (detEntryParsed) {
+                if (!(0, signalExecutionEligibility_1.deterministicEntryNeedsAiRepair)(det.parsed, args.rawMessage, keywords)) {
+                    return { parseResult: det, channelKeywords: keywords };
+                }
+                console.log(`[userListener] deterministic entry failed eligibility — trying AI repair`
+                    + ` user=${this.userId} channelRow=${args.channelRowId}`);
+                const aiParsed = await tryAiEntryParse(det);
+                if (aiParsed?.parseResult.status === 'parsed') {
+                    return { ...aiParsed, channelKeywords: keywords };
+                }
+                return { parseResult: det, channelKeywords: keywords };
+            }
+            const aiParsed = await tryAiEntryParse(det);
+            if (aiParsed) {
+                return { ...aiParsed, channelKeywords: keywords };
             }
             return { parseResult: det, channelKeywords: keywords };
         }

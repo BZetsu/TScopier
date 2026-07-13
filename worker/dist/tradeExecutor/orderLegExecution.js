@@ -1,4 +1,37 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.sendImmediateLegs = sendImmediateLegs;
 const fxsocketClient_1 = require("../fxsocketClient");
@@ -11,8 +44,9 @@ const helpers_1 = require("./helpers");
 const executionMode_1 = require("../engine/executionMode");
 const fxClient_1 = require("../engine/fxClient");
 const manualPlanner_1 = require("../manualPlanner");
+const materializeBrokerRangePendingLegs_1 = require("./materializeBrokerRangePendingLegs");
 async function sendImmediateLegs(input) {
-    const { ctx, signal, parsed, broker, manual, api, uuid, symbol, requestedSymbol, mapping, params, legs, liveEntryFast, pipelineT0, strictEntryPrefetch, channelDelayMs, channelDelaySkipped, deferVirtualAnchor, virtualPendings, plan, materializedVirtuals, strictBrokerPlaced, strictDeferred, op, channelKeywords, baseLot, syncMultiLegTps, } = input;
+    const { ctx, signal, parsed, broker, manual, api, uuid, symbol, requestedSymbol, mapping, params, legs, liveEntryFast, pipelineT0, strictEntryPrefetch, channelDelayMs, channelDelaySkipped, deferVirtualAnchor, deferBrokerRangePendingMaterialize, brokerPendingMode, prepAnchor, prepAnchorSource, virtualPendings, plan, materializedVirtuals, strictBrokerPlaced, strictDeferred, op, channelKeywords, baseLot, syncMultiLegTps, prep, } = input;
     if (legs.length === 0) {
         // No immediates — virtual range ladder and/or broker strict-entry pending.
         return (materializedVirtuals || strictBrokerPlaced)
@@ -248,7 +282,37 @@ async function sendImmediateLegs(input) {
     // All immediates fan out in parallel. Virtual pendings are already
     // persisted; the worker monitor + edge sweep will fire them on trigger.
     const sendResults = await Promise.allSettled(sendLegs.map(sendLeg));
-    if (deferVirtualAnchor && virtualPendings.length > 0 && api) {
+    let materializedBrokerPendings = materializedVirtuals;
+    if (deferBrokerRangePendingMaterialize && brokerPendingMode && virtualPendings.length > 0 && api) {
+        const fillAnchor = (0, helpers_1.resolveBurstFillAnchor)(filledLegs.map(l => l.entryPrice), plan.isBuy !== false);
+        let anchor = fillAnchor ?? prepAnchor;
+        let anchorSource = fillAnchor != null
+            ? 'fill'
+            : prepAnchorSource;
+        if ((anchor == null || anchor <= 0) && strictEntryPrefetch) {
+            const isBuyLeg = !op.toLowerCase().includes('sell');
+            anchor = isBuyLeg ? strictEntryPrefetch.ask : strictEntryPrefetch.bid;
+            anchorSource = 'quote';
+        }
+        const runBrokerMaterialize = async () => {
+            if (anchor == null || !Number.isFinite(anchor) || anchor <= 0) {
+                console.warn(`[tradeExecutor] deferred broker range pending: no anchor signal=${signal.id} broker=${broker.id}`);
+                return false;
+            }
+            return (0, materializeBrokerRangePendingLegs_1.materializeBrokerRangePendingLegs)(ctx, prep, strictBrokerPlaced, { anchor, anchorSource });
+        };
+        if (liveEntryFast) {
+            void runBrokerMaterialize().catch(err => {
+                console.error(`[tradeExecutor] deferred broker range pending failed signal=${signal.id} broker=${broker.id}:`, err);
+            });
+            materializedBrokerPendings = true;
+        }
+        else {
+            materializedBrokerPendings = await runBrokerMaterialize();
+        }
+    }
+    if (deferVirtualAnchor && virtualPendings.length > 0 && api && !brokerPendingMode) {
+        const fillAnchor = (0, helpers_1.resolveBurstFillAnchor)(filledLegs.map(l => l.entryPrice), plan.isBuy !== false);
         void ctx.deferredVirtualPendingMaterialize({
             signal,
             broker,
@@ -260,6 +324,7 @@ async function sendImmediateLegs(input) {
             plan,
             params,
             strictEntryPrefetch,
+            fillAnchor,
         }).catch(err => {
             console.error(`[tradeExecutor] deferred virtual pending failed signal=${signal.id} broker=${broker.id}:`, err);
         });
@@ -331,19 +396,16 @@ async function sendImmediateLegs(input) {
         }
     }
     if (virtualPendings.length > 0 && !anyImmediateOpened && !strictDeferred) {
-        const { error: stripErr } = await ctx.supabase
-            .from('range_pending_legs')
-            .delete()
-            .eq('signal_id', signal.id)
-            .eq('broker_account_id', broker.id);
-        if (stripErr) {
-            console.warn(`[tradeExecutor] strip orphan virtual pendings failed signal=${signal.id} broker=${broker.id}: ${stripErr.message}`);
+        const { deleteRangePendingLegsForBasket } = await Promise.resolve().then(() => __importStar(require('../rangePendingLegDelete')));
+        const rowsCancelled = await deleteRangePendingLegsForBasket(ctx.supabase, { signalId: signal.id, brokerAccountId: broker.id }, 'orphan_no_immediate_fills');
+        if (rowsCancelled > 0) {
+            console.warn(`[tradeExecutor] stripped range pendings (zero successful immediates) signal=${signal.id} broker=${broker.id} rows=${rowsCancelled}`);
         }
         else {
-            console.warn(`[tradeExecutor] stripped virtual pendings (zero successful immediates) signal=${signal.id} broker=${broker.id}`);
+            console.warn(`[tradeExecutor] no range pendings stripped signal=${signal.id} broker=${broker.id}`);
         }
     }
-    const openedOrMerged = anyImmediateOpened || materializedVirtuals || strictBrokerPlaced;
+    const openedOrMerged = anyImmediateOpened || materializedBrokerPendings || strictBrokerPlaced;
     return {
         openedOrMerged,
         channelDelayMs,

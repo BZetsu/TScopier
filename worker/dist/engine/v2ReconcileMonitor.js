@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.V2ReconcileMonitor = void 0;
+exports.closestLadderTp = closestLadderTp;
 exports.buildDesiredLegTargets = buildDesiredLegTargets;
 const fxClient_1 = require("./fxClient");
 const reconciler_1 = require("./reconciler");
@@ -19,6 +20,24 @@ function deepestTp(tpLevels, isBuy) {
         return null;
     // Deepest = farthest target: highest for buy, lowest for sell.
     return isBuy ? Math.max(...tpLevels) : Math.min(...tpLevels);
+}
+function tpInLadder(tp, levels) {
+    return levels.some(l => Math.abs(l - tp) < 1e-6);
+}
+/** Map a stale TP to the nearest level on the revised ladder (message-edit self-heal). */
+function closestLadderTp(tp, levels) {
+    if (!levels.length)
+        return null;
+    let best = levels[0];
+    let bestDist = Math.abs(tp - best);
+    for (const l of levels) {
+        const d = Math.abs(tp - l);
+        if (d < bestDist) {
+            best = l;
+            bestDist = d;
+        }
+    }
+    return best;
 }
 /**
  * Pure: compute the per-leg SL/TP the basket SHOULD have right now, given the
@@ -47,6 +66,7 @@ function buildDesiredLegTargets(args) {
         byTicket.set(o.ticket, o);
     const baseSl = args.effectiveSl != null && args.effectiveSl > 0 ? args.effectiveSl : null;
     const explicitBasketInstruction = args.effectiveSource === 'basket_target' || args.effectiveSource === 'mgmt_signal';
+    const explicitAdjustRevision = args.effectiveSource === 'basket_target' && args.basketTargetSource === 'adjust';
     const out = [];
     for (const leg of args.legs) {
         const ticket = legTicket(leg);
@@ -65,7 +85,19 @@ function buildDesiredLegTargets(args) {
         }
         const intendedTp = leg.tp != null && leg.tp > 0 ? leg.tp : null;
         const existingTp = o.takeProfit != null && o.takeProfit > 0 ? o.takeProfit : null;
-        const fillTp = intendedTp ?? existingTp ?? deepestTp(args.effectiveTpLevels, args.isBuy);
+        let fillTp;
+        if (explicitAdjustRevision && args.effectiveTpLevels.length > 0) {
+            const staleTp = intendedTp ?? existingTp;
+            if (staleTp != null && !tpInLadder(staleTp, args.effectiveTpLevels)) {
+                fillTp = closestLadderTp(staleTp, args.effectiveTpLevels);
+            }
+            else {
+                fillTp = intendedTp ?? existingTp ?? deepestTp(args.effectiveTpLevels, args.isBuy);
+            }
+        }
+        else {
+            fillTp = intendedTp ?? existingTp ?? deepestTp(args.effectiveTpLevels, args.isBuy);
+        }
         out.push({ ticket, stoploss: sl, takeProfit: fillTp });
     }
     return out;
@@ -207,6 +239,7 @@ class V2ReconcileMonitor {
             effectiveTpLevels: eff?.tpLevels ?? [],
             isBuy: basket.isBuy,
             effectiveSource: eff?.source,
+            basketTargetSource: eff?.basketTargetSource,
         });
         const trackedTickets = legs.map(legTicket).filter((t) => t != null);
         const actions = (0, reconciler_1.computeReconcileActions)({

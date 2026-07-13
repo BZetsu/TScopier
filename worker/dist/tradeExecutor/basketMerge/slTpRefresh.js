@@ -154,6 +154,9 @@ async function applyBasketSlTpRefresh(ctx, args) {
         if (parsedSl > 0)
             effectiveSlIsExplicitMgmt = true;
     }
+    if (!effectiveSlIsExplicitMgmt && sameSignalRefresh) {
+        effectiveSlIsExplicitMgmt = true;
+    }
     if (!(0, manualPlanner_1.parsedHasExplicitEntryAnchor)(plannerParsed)) {
         const ep = Number(newest.entry_price);
         if (Number.isFinite(ep) && ep > 0)
@@ -283,6 +286,7 @@ async function applyBasketSlTpRefresh(ctx, args) {
             direction: direction,
             activePendingCount,
             maxPendingStepIdx,
+            forceMessageRevisionRefresh: sameSignalRefresh,
             stoplossOverride: effectiveSlIsExplicitMgmt
                 ? (typeof effectiveParsed.sl === 'number' && effectiveParsed.sl > 0 ? effectiveParsed.sl : null)
                 : null,
@@ -355,6 +359,57 @@ async function applyBasketSlTpRefresh(ctx, args) {
         : Math.min(12, Math.max(3, Number(process.env.BASKET_REFRESH_STRAGGLER_ROUNDS ?? 8)));
     for (let round = 0; round < stragglerRounds; round++) {
         if (useV2BasketRefresh) {
+            const revisionRefresh = sameSignalRefresh === true;
+            const distributeSignalTps = (effectiveParsed.tp ?? []).filter((t) => typeof t === 'number' && Number.isFinite(t) && t > 0);
+            if (revisionRefresh) {
+                const modifyPass = await (0, basketSlTpReconcile_1.runBasketLegModifies)({
+                    supabase: ctx.supabase,
+                    api,
+                    uuid,
+                    symbol,
+                    direction,
+                    baseLot,
+                    params: basketParams,
+                    signalId: signal.id,
+                    userId: signal.user_id,
+                    brokerAccountId: broker.id,
+                    familyTrades,
+                    perLegTargets,
+                    signalTps: distributeSignalTps,
+                    tpLots: manual.tp_lots,
+                    nImmCwe,
+                    overrideTp,
+                    strictEntryPrefetch,
+                    openedTickets,
+                    skipAlreadySynced: false,
+                    parallelLegs: true,
+                    orderCommentsEnabled: manual.order_comments_enabled !== false,
+                    explicitChannelTargets: true,
+                });
+                for (const id of modifyPass.modifiedTradeIds)
+                    modifiedTradeIds.add(id);
+                summary = modifyPass.summary;
+                legErrors = modifyPass.legErrors.map(e => ({ error: e.error, leg_index: e.leg_index }));
+                if (anchorSignalId && signal.channel_id) {
+                    const seedSl = typeof effectiveParsed.sl === 'number' && effectiveParsed.sl > 0
+                        ? effectiveParsed.sl
+                        : null;
+                    if (seedSl != null || refreshTpLevels.length > 0) {
+                        await (0, basketTargetStore_1.upsertBasketSlTpTarget)(ctx.supabase, {
+                            userId: signal.user_id,
+                            brokerAccountId: broker.id,
+                            anchorSignalId,
+                            channelId: signal.channel_id,
+                            symbol,
+                            stoploss: seedSl,
+                            tpLevels: refreshTpLevels.length ? refreshTpLevels : null,
+                            source: 'adjust',
+                            instructionAt: new Date().toISOString(),
+                        }).catch(() => { });
+                    }
+                }
+                break;
+            }
             // v2: skip the synchronous straggler leg-modify loop entirely. Channel memory /
             // desired-state was already written above, and the single v2 reconcile loop
             // converges every existing leg to it within its ~2s tick - off the entry hot
@@ -392,7 +447,7 @@ async function applyBasketSlTpRefresh(ctx, args) {
                 && manual.trade_style === 'multi'
                 && refreshTpLevels.length > 0
                 && familyTrades.some(tr => !(Number(tr.tp) > 0))) {
-                const distributedTargets = (0, rangeBasketTpSync_1.preserveOpenLegTakeProfits)(familyTrades, perLegTargets);
+                const distributedTargets = (0, rangeBasketTpSync_1.pickV2MergeDistributeTargets)(familyTrades, perLegTargets, revisionRefresh);
                 const distributeFamily = [...familyTrades];
                 const distributeSignalTps = (effectiveParsed.tp ?? []).filter((t) => typeof t === 'number' && Number.isFinite(t) && t > 0);
                 void (0, basketSlTpReconcile_1.runBasketLegModifies)({

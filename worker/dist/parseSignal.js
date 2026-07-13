@@ -232,6 +232,37 @@ function sellAliasesForChannel(channelKeywords, lexicon = null) {
         return true;
     });
 }
+function slLabelsForChannel(channelKeywords, includeMgmt = true) {
+    const delim = channelKeywords.additional.delimiters;
+    return Array.from(new Set([
+        ...multilingualSignalTerms_1.COMMON_SL_TERMS,
+        ...splitKeywordAliases(channelKeywords.signal.sl, delim),
+        ...(includeMgmt ? [
+            ...splitKeywordAliases(channelKeywords.update.set_sl, delim),
+            ...splitKeywordAliases(channelKeywords.update.adjust_sl, delim),
+        ] : []),
+    ]));
+}
+function tpLabelsForChannel(channelKeywords, lexicon = null, includeMgmt = true) {
+    const delim = channelKeywords.additional.delimiters;
+    return Array.from(new Set([
+        ...multilingualSignalTerms_1.COMMON_TP_TERMS,
+        ...(lexicon?.tp_aliases ?? []),
+        ...(lexicon?.target_aliases ?? []),
+        ...splitKeywordAliases(channelKeywords.signal.tp, delim),
+        ...(includeMgmt ? [
+            ...splitKeywordAliases(channelKeywords.update.set_tp, delim),
+            ...splitKeywordAliases(channelKeywords.update.adjust_tp, delim),
+        ] : []),
+    ]));
+}
+function entryLabelsForChannel(channelKeywords) {
+    const delim = channelKeywords.additional.delimiters;
+    return Array.from(new Set([
+        ...multilingualSignalTerms_1.COMMON_ENTRY_TERMS,
+        ...splitKeywordAliases(channelKeywords.signal.entry_point, delim),
+    ]));
+}
 function isProseLongMatch(text) {
     return /(?:^|\b)(?:too|so|as|how)\s+long(?:\b|$)/i.test(text);
 }
@@ -339,15 +370,15 @@ function extractTpLevels(message, extraLabels = []) {
                 explicitPips = true;
         }
     };
-    collect(buildTpRegex(extraLabels));
-    // TP #1: 4564 / TP#2: 4,527 (hash-numbered tiers — common in signal channels)
+    // Numbered tiers first — "TP 1 4086" must not capture ordinal 1 via the generic TP regex.
     collect(new RegExp(`\\b(?:tp|take\\s*profit|target(?:\\s+level)?)\\s*#\\s*\\d+\\s*[:=\\-]\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'gi'));
-    // TP 1: 4564 (numbered without hash)
     collect(new RegExp(`\\b(?:tp|take\\s*profit|target(?:\\s+level)?)\\s+\\d+\\s*[:=\\-]\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'gi'));
-    // TP1: 4564 (numbered without space)
     collect(new RegExp(`\\b(?:tp|target(?:\\s+level)?)\\s*\\d+\\s*[:=\\-]\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'gi'));
-    // TP1 4564 (space-separated tier number)
     collect(new RegExp(`\\b(?:tp|target(?:\\s+level)?)\\s*\\d+\\s+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'gi'));
+    collect(new RegExp(`\\btp\\s*\\d+\\s*\\.\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'gi'));
+    collect(new RegExp(`\\btp[\\u00B9\\u00B2\\u00B3\\u2070-\\u2079]+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'giu'));
+    collect(new RegExp(`(?:الهدف\\s*(?:الأول|الثاني|الثالث|\\d+)|جني\\s*الأرباح|جني\\s*الارباح)\\s*[:：]?\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'giu'));
+    collect(buildTpRegex(extraLabels));
     // TP: 4557 / 4527 (slash-separated tiers on one label — not thousands commas)
     for (const m of text.matchAll(/\b(?:tp|take\s*profit|target(?:\s+level)?)\s*[:=]?\s*((?:\d+(?:\.\d+)?(?:\s*(?:\/|\band\b|\|)\s*)+)+\d+(?:\.\d+)?)(?:\s*pips?\b)?/gi)) {
         const block = m[1] ?? '';
@@ -481,11 +512,31 @@ function wantsExplicitFullClose(message, kwClose, channelKeywords, lexicon) {
     return hasAnyKeyword(message, kwClose);
 }
 /** Stop-loss labels used in management updates (providers often say "risk" or "stoploss"). */
-const SL_TEXT_LABELS = 'sl|stop\\s*loss|stoploss|risk';
-const TP_TEXT_LABELS = 'tp|take\\s*profit|target';
+const SL_TEXT_LABELS = 'sl|stop\\s*loss|stoploss|risk|وقف\\s*الخسارة|وقف';
+const TP_TEXT_LABELS = 'tp|take\\s*profit|target|الهدف(?:\\s*(?:الأول|الثاني|الثالث|\\d+))?|جني\\s*الأرباح';
 const SL_MGMT_VERBS = 'set|move|adjust|bring|change|update|make|modify';
+function parseAtPriceExcludingSlTp(text) {
+    for (const m of text.matchAll(new RegExp(`@\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'gi'))) {
+        const start = m.index ?? 0;
+        const before = text.slice(Math.max(0, start - 32), start);
+        if (/\b(?:sl|stop\s*loss|stoploss|tp|take\s*profit)\b[_\s./]*$/i.test(before))
+            continue;
+        if (/\bsl\b[_\s]*\/\s*@?\s*$/i.test(before))
+            continue;
+        const value = (0, signalPriceFormat_1.parseSignalPriceToken)(m[1] ?? '');
+        if (value != null)
+            return value;
+    }
+    return null;
+}
+function entryZoneFromRawTokens(rawA, rawB) {
+    const zone = (0, signalPriceInference_1.normalizeEntryZonePair)(rawA, rawB);
+    if (!zone)
+        return null;
+    return { entry_zone_low: zone.low, entry_zone_high: zone.high };
+}
 function slPriceFromClause(clause) {
-    const slClauseTo = clause.match(new RegExp(`\\bto\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'i'));
+    const slClauseTo = clause.match(new RegExp(`(?:\\bto\\b|إلى)\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'iu'));
     if (slClauseTo?.[1])
         return (0, signalPriceFormat_1.parseSignalPriceToken)(slClauseTo[1]);
     const candidates = (0, signalManagementIntent_1.bareTradePricesExcludingPips)(clause, (0, signalPriceInference_1.extractUnlabeledPrices)(clause));
@@ -502,10 +553,16 @@ function looksLikeStopOrTpAdjustCommand(text) {
         || new RegExp(`\\b(?:${SL_TEXT_LABELS}|${TP_TEXT_LABELS})\\s*(?:to|=)\\s*\\d`, 'i').test(t));
 }
 function parseSlFromText(text) {
-    const slMatchStandard = text.match(new RegExp(`\\b(?:${SL_TEXT_LABELS})\\s*[:=]?\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'i'));
+    const slSlashAt = text.match(/(?:^|\s)(?:sl|stop\s*loss|stoploss)[_\s]*\/\s*@\s*(\d+(?:\.\d+)?)/i);
+    if (slSlashAt?.[1])
+        return (0, signalPriceFormat_1.parseSignalPriceToken)(slSlashAt[1]);
+    const slDotLabel = text.match(/\b(?:sl|stop\s*loss)\b\s*\.\s*(\d+(?:\.\d+)?)/i);
+    if (slDotLabel?.[1])
+        return (0, signalPriceFormat_1.parseSignalPriceToken)(slDotLabel[1]);
+    const slMatchStandard = text.match(new RegExp(`\\b(?:${SL_TEXT_LABELS})\\s*[:=@]?\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'i'));
     if (slMatchStandard?.[1])
         return (0, signalPriceFormat_1.parseSignalPriceToken)(slMatchStandard[1]);
-    const slMatchTo = text.match(new RegExp(`\\b(?:${SL_TEXT_LABELS})\\s+to\\s+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'i'));
+    const slMatchTo = text.match(new RegExp(`\\b(?:${SL_TEXT_LABELS})\\s+(?:to|إلى)\\s+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'iu'));
     if (slMatchTo?.[1])
         return (0, signalPriceFormat_1.parseSignalPriceToken)(slMatchTo[1]);
     // "Adjust Risk/SL/Stoploss … (+ pips) … to 4505"
@@ -644,21 +701,11 @@ function parseDeterministicManagement(message, lexicon, channelKeywords) {
     if (action === "close" && looksEntry && /\b(and|&)+\s*(gold|btc)\b/i.test(tl)) {
         confidence = 0.88;
     }
-    const slPriceLabels = [
-        ...splitKeywordAliases(channelKeywords.signal.sl, delim),
-        ...splitKeywordAliases(channelKeywords.update.set_sl, delim),
-        ...splitKeywordAliases(channelKeywords.update.adjust_sl, delim),
-    ];
+    const slPriceLabels = slLabelsForChannel(channelKeywords);
     let sl = parseSlFromText(t);
     if (sl == null)
         sl = extractPriceByLabels(t, slPriceLabels);
-    const extraTp = [
-        ...(lexicon?.tp_aliases ?? []),
-        ...(lexicon?.target_aliases ?? []),
-        ...splitKeywordAliases(channelKeywords.signal.tp, delim),
-        ...splitKeywordAliases(channelKeywords.update.set_tp, delim),
-        ...splitKeywordAliases(channelKeywords.update.adjust_tp, delim),
-    ];
+    const extraTp = tpLabelsForChannel(channelKeywords, lexicon);
     const tpExtract = extractTpLevels(t, extraTp);
     const tp = tpExtract.values;
     return {
@@ -691,86 +738,99 @@ function extractOptionalEntryAnchor(message, channelKeywords) {
     let entry_zone_high = null;
     let entry_price = null;
     if (zone?.[1] && zone?.[2]) {
-        const a = (0, signalPriceFormat_1.parseSignalPriceToken)(zone[1]);
-        const b = (0, signalPriceFormat_1.parseSignalPriceToken)(zone[2]);
-        if (a != null && b != null) {
-            entry_zone_low = Math.min(a, b);
-            entry_zone_high = Math.max(a, b);
+        const normalized = entryZoneFromRawTokens(zone[1], zone[2]);
+        if (normalized) {
+            entry_zone_low = normalized.entry_zone_low;
+            entry_zone_high = normalized.entry_zone_high;
         }
     }
     else {
+        const applyZone = (rawA, rawB) => {
+            const normalized = entryZoneFromRawTokens(rawA, rawB);
+            if (normalized) {
+                entry_zone_low = normalized.entry_zone_low;
+                entry_zone_high = normalized.entry_zone_high;
+            }
+        };
         // ZN / ZONE / Z: 4105-4113 (common shorthand on gold channels)
         const znZone = text.match(new RegExp(`\\b(?:zn|zone|z)\\s*[:=]?\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\s*(?:-|–|to)\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'i'));
         const nowZone = text.match(new RegExp(`\\b(?:now|instant|market|mkt)\\s+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\s*(?:-|–|to)\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'i'));
         const reentryZone = text.match(new RegExp(`\\b(?:now\\s+)?(?:re[-\\s]?entry|reenter)\\s+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\s*(?:-|–|to)\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'i'));
         const zoneMatch = znZone ?? nowZone ?? reentryZone;
+        const symSideColonSlash = text.match(new RegExp(`\\b(?:xauusd|xagusd|gold|silver|btcusd|btcusdt|ethusd|ethusdt|eurusd|gbpusd|usdjpy|us30|nas100|[a-z]{6})\\s+(?:buy|sell|long|short)\\s*:\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\s*(?:\\/|\\band\\b)\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'i'));
+        const symPriceSlash = text.match(new RegExp(`\\b(?:xauusd|xagusd|gold|silver)\\s+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\s*(?:\\/|\\band\\b)\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'i'));
+        const sidePriceSlash = text.match(new RegExp(`\\b(?:buy|sell|long|short)\\s+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\s*(?:\\/|\\band\\b)\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'i'));
+        const slashZone = symSideColonSlash ?? symPriceSlash ?? sidePriceSlash;
+        const entrySlashZone = text.match(new RegExp(`\\bentry\\s*(?:price|level)?\\s*[:=]?\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\s*(?:\\/|\\band\\b|-|–)\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'i'));
+        const arEntryZone = text.match(new RegExp(`(?:منطقة\\s*الدخول|نقطة\\s*الدخول|سعر\\s*الدخول)\\s*[:：]?\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\s*(?:-|–|to|إلى)\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'iu'));
+        const bareZone = (0, signalPriceInference_1.extractBarePriceRangeZone)(message);
         if (zoneMatch?.[1] && zoneMatch?.[2]) {
-            const a = (0, signalPriceFormat_1.parseSignalPriceToken)(zoneMatch[1]);
-            const b = (0, signalPriceFormat_1.parseSignalPriceToken)(zoneMatch[2]);
-            if (a != null && b != null) {
-                entry_zone_low = Math.min(a, b);
-                entry_zone_high = Math.max(a, b);
-            }
+            applyZone(zoneMatch[1], zoneMatch[2]);
         }
-        else {
-            const entrySlashZone = text.match(new RegExp(`\\bentry\\s*(?:price|level)?\\s*[:=]?\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\s*(?:\\/|\\band\\b|-|–)\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'i'));
-            if (entrySlashZone?.[1] && entrySlashZone?.[2]) {
-                const a = (0, signalPriceFormat_1.parseSignalPriceToken)(entrySlashZone[1]);
-                const b = (0, signalPriceFormat_1.parseSignalPriceToken)(entrySlashZone[2]);
-                if (a != null && b != null) {
-                    entry_zone_low = Math.min(a, b);
-                    entry_zone_high = Math.max(a, b);
+        else if (slashZone?.[1] && slashZone?.[2]) {
+            applyZone(slashZone[1], slashZone[2]);
+        }
+        else if (entrySlashZone?.[1] && entrySlashZone?.[2]) {
+            applyZone(entrySlashZone[1], entrySlashZone[2]);
+        }
+        else if (arEntryZone?.[1] && arEntryZone?.[2]) {
+            applyZone(arEntryZone[1], arEntryZone[2]);
+        }
+        else if (bareZone) {
+            entry_zone_low = bareZone.low;
+            entry_zone_high = bareZone.high;
+        }
+        if (entry_zone_low == null) {
+            const entryLevel = text.match(new RegExp(`\\bentry\\s+level\\s*[:=]?\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'i'));
+            if (entryLevel?.[1])
+                entry_price = (0, signalPriceFormat_1.parseSignalPriceToken)(entryLevel[1]);
+            const entryLabel = text.match(new RegExp(`\\bentry\\s*(?:price|level)?\\s*[:=]\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'i'));
+            if (entry_price == null && entryLabel?.[1])
+                entry_price = (0, signalPriceFormat_1.parseSignalPriceToken)(entryLabel[1]);
+            if (entry_price == null) {
+                const atPx = parseAtPriceExcludingSlTp(text);
+                if (atPx != null)
+                    entry_price = atPx;
+            }
+            if (entry_price == null) {
+                const buySellAt = text.match(new RegExp(`\\b(?:buy|sell)\\s+at\\s+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'i'));
+                if (buySellAt?.[1])
+                    entry_price = (0, signalPriceFormat_1.parseSignalPriceToken)(buySellAt[1]);
+            }
+            if (entry_price == null) {
+                const symbolSidePrice = text.match(new RegExp(`\\b(?:xauusd|xagusd|gold|silver|btcusd|btcusdt|ethusd|ethusdt|eurusd|gbpusd|usdjpy|us30|nas100|[a-z]{6})\\s+(?:buy|sell|long|short)\\s+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'i'));
+                if (symbolSidePrice?.[1])
+                    entry_price = (0, signalPriceFormat_1.parseSignalPriceToken)(symbolSidePrice[1]);
+            }
+            if (entry_price == null) {
+                const sidePrice = text.match(new RegExp(`\\b(?:buy|sell|long|short)\\s+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'i'));
+                if (sidePrice?.[1])
+                    entry_price = (0, signalPriceFormat_1.parseSignalPriceToken)(sidePrice[1]);
+            }
+            if (entry_price == null) {
+                const entryWord = text.match(new RegExp(`\\bentry\\s+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'i'));
+                if (entryWord?.[1])
+                    entry_price = (0, signalPriceFormat_1.parseSignalPriceToken)(entryWord[1]);
+            }
+            if (entry_price == null) {
+                const entryLabels = entryLabelsForChannel(channelKeywords);
+                const fromKw = extractPriceByLabels(text, entryLabels);
+                if (fromKw != null && Number.isFinite(fromKw) && fromKw > 0) {
+                    entry_price = fromKw;
                 }
             }
-            else {
-                const bareZone = (0, signalPriceInference_1.extractBarePriceRangeZone)(message);
-                if (bareZone) {
-                    entry_zone_low = bareZone.low;
-                    entry_zone_high = bareZone.high;
-                }
-                if (entry_zone_low == null) {
-                    const entryLevel = text.match(new RegExp(`\\bentry\\s+level\\s*[:=]?\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'i'));
-                    if (entryLevel?.[1])
-                        entry_price = (0, signalPriceFormat_1.parseSignalPriceToken)(entryLevel[1]);
-                    const entryLabel = text.match(new RegExp(`\\bentry\\s*(?:price|level)?\\s*[:=]\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'i'));
-                    if (entry_price == null && entryLabel?.[1])
-                        entry_price = (0, signalPriceFormat_1.parseSignalPriceToken)(entryLabel[1]);
-                    if (entry_price == null) {
-                        const atPx = text.match(new RegExp(`@\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`));
-                        if (atPx?.[1])
-                            entry_price = (0, signalPriceFormat_1.parseSignalPriceToken)(atPx[1]);
-                    }
-                    if (entry_price == null) {
-                        const buySellAt = text.match(new RegExp(`\\b(?:buy|sell)\\s+at\\s+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'i'));
-                        if (buySellAt?.[1])
-                            entry_price = (0, signalPriceFormat_1.parseSignalPriceToken)(buySellAt[1]);
-                    }
-                    if (entry_price == null) {
-                        const entryWord = text.match(new RegExp(`\\bentry\\s+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'i'));
-                        if (entryWord?.[1])
-                            entry_price = (0, signalPriceFormat_1.parseSignalPriceToken)(entryWord[1]);
-                    }
-                    if (entry_price == null) {
-                        const entryLabels = splitKeywordAliases(channelKeywords.signal.entry_point, delim);
-                        const fromKw = extractPriceByLabels(text, entryLabels);
-                        if (fromKw != null && Number.isFinite(fromKw) && fromKw > 0) {
-                            entry_price = fromKw;
-                        }
-                    }
-                    // Common signal shapes that omit "entry" / "@" labels but still carry a single anchor:
-                    //   "BUY XAUUSD NOW 2650", "BUY GOLD 2645.5 MARKET", "SELL BTCUSD 98000 NOW",
-                    //   "BUY XAUUSD 2650" / "SELL GOLD 2645.5" (market word optional — same anchor as with NOW).
-                    if (entry_price == null && entry_zone_low == null) {
-                        const symPriceOptionalMarket = text.match(new RegExp(`\\b(?:xauusd|xagusd|gold|silver|btcusd|btcusdt|ethusd|ethusdt|eurusd|gbpusd|usdjpy|us30|nas100)\\s+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})(?:\\s+(?:now|instant|market|mkt))?\\b`, 'i'));
-                        if (symPriceOptionalMarket?.[1])
-                            entry_price = (0, signalPriceFormat_1.parseSignalPriceToken)(symPriceOptionalMarket[1]);
-                    }
-                    if (entry_price == null && entry_zone_low == null) {
-                        const marketThenPrice = text.match(new RegExp(`\\b(?:now|instant|market|mkt)\\s+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'i'));
-                        if (marketThenPrice?.[1])
-                            entry_price = (0, signalPriceFormat_1.parseSignalPriceToken)(marketThenPrice[1]);
-                    }
-                }
+            // Common signal shapes that omit "entry" / "@" labels but still carry a single anchor:
+            //   "BUY XAUUSD NOW 2650", "BUY GOLD 2645.5 MARKET", "SELL BTCUSD 98000 NOW",
+            //   "BUY XAUUSD 2650" / "SELL GOLD 2645.5" (market word optional — same anchor as with NOW).
+            if (entry_price == null && entry_zone_low == null) {
+                const symPriceOptionalMarket = text.match(new RegExp(`\\b(?:xauusd|xagusd|gold|silver|btcusd|btcusdt|ethusd|ethusdt|eurusd|gbpusd|usdjpy|us30|nas100)\\s+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})(?:\\s+(?:now|instant|market|mkt))?\\b`, 'i'));
+                if (symPriceOptionalMarket?.[1])
+                    entry_price = (0, signalPriceFormat_1.parseSignalPriceToken)(symPriceOptionalMarket[1]);
+            }
+            if (entry_price == null && entry_zone_low == null) {
+                const marketThenPrice = text.match(new RegExp(`\\b(?:now|instant|market|mkt)\\s+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'i'));
+                if (marketThenPrice?.[1])
+                    entry_price = (0, signalPriceFormat_1.parseSignalPriceToken)(marketThenPrice[1]);
             }
         }
     }
@@ -958,22 +1018,15 @@ function parseSimpleSignal(message, lexicon, channelKeywords) {
     if (!instrument)
         return null;
     const hasInstrumentContext = (0, tradableSymbol_1.isTradableInstrumentSymbol)(instrument) ||
-        /\b(gold|xau|xauusd|btc|bitcoin|btcusd|btcusdt|eth|ethereum|silver|eur|gbp)\b/i.test(text) ||
+        /\b(gold|xau|xauusd|btc|bitcoin|btcusd|btcusdt|eth|ethereum|silver|eur|gbp|ذهب)\b/i.test(text) ||
         /\bEUR\/USD|EURUSD|GBPUSD|USDJPY|XAUUSD|BTCUSD|BTCUSDT\b/i.test(message) ||
         /\b(us30|nas100|ger40|uk100|ustec|spx500|spy|qqq|iwm|dia|voo|tqqq|gld|slv)\b/i.test(text) ||
         /\bmarket\s*:\s*[A-Za-z]/i.test(message) ||
         DERIV_SYNTHETIC_HINT_RE.test(text);
     if (!hasInstrumentContext)
         return null;
-    const sl = parseSlFromText(text) ?? extractPriceByLabels(message, splitKeywordAliases(channelKeywords.signal.sl, delim));
-    const extraTp = [
-        ...(lexicon?.tp_aliases ?? []),
-        ...(lexicon?.target_aliases ?? []),
-        ...splitKeywordAliases(channelKeywords.signal.tp, delim),
-        ...splitKeywordAliases(channelKeywords.update.set_tp, delim),
-        ...splitKeywordAliases(channelKeywords.update.adjust_tp, delim),
-    ];
-    const tpExtract = extractTpLevels(message, extraTp);
+    const sl = parseSlFromText(text) ?? extractPriceByLabels(message, slLabelsForChannel(channelKeywords, false));
+    const tpExtract = extractTpLevels(message, tpLabelsForChannel(channelKeywords, lexicon, false));
     const tp = tpExtract.values;
     const { entry_price, entry_zone_low, entry_zone_high } = entryAnchor;
     return {
@@ -1029,23 +1082,13 @@ function parseEntryFromKeywords(message, lexicon, channelKeywords) {
     const instrument = (0, tradableSymbol_1.extractTradableSymbolFromMessage)(message);
     if (!instrument)
         return null;
-    const slPriceLabels = [
-        ...splitKeywordAliases(channelKeywords.signal.sl, delim),
-        ...splitKeywordAliases(channelKeywords.update.set_sl, delim),
-    ];
+    const slPriceLabels = slLabelsForChannel(channelKeywords, false);
     let sl = parseSlFromText(text);
     if (sl == null || !Number.isFinite(sl))
         sl = extractPriceByLabels(text, slPriceLabels);
-    const extraTp = [
-        ...(lexicon?.tp_aliases ?? []),
-        ...(lexicon?.target_aliases ?? []),
-        ...splitKeywordAliases(channelKeywords.signal.tp, delim),
-        ...splitKeywordAliases(channelKeywords.update.set_tp, delim),
-        ...splitKeywordAliases(channelKeywords.update.adjust_tp, delim),
-    ];
-    const tpExtract = extractTpLevels(message, extraTp);
+    const tpExtract = extractTpLevels(message, tpLabelsForChannel(channelKeywords, lexicon, false));
     const tp = tpExtract.values;
-    const entryAliases = splitKeywordAliases(channelKeywords.signal.entry_point, delim);
+    const entryAliases = entryLabelsForChannel(channelKeywords);
     const entryPointHit = hasEntryPointPriceEvidence(message, entryAliases);
     const hasPriceEvidence = entryPointHit ||
         (sl != null && Number.isFinite(sl)) ||
@@ -1074,12 +1117,24 @@ const MGMT_NON_INSTRUMENT_SYMBOLS = new Set([
     "CHANGE", "CHANGED", "UPDATE", "UPDATED", "MODIFY", "MODIFIED", "ADJUST", "MOVE", "MOVED",
     "CLOSE", "CLOSED", "SIGNAL", "SETUP", "ENTRY", "ZONE", "TRADE", "ORDER", "POSITION",
 ]);
+function applyQuoteLevelSymbolRepair(parsed, rawMsg) {
+    const symbol = (0, tradableSymbol_1.reconcileSymbolWithQuoteLevels)(parsed.symbol, rawMsg, {
+        sl: parsed.sl,
+        tp: parsed.tp,
+        entry: parsed.entry_price,
+    });
+    if (symbol && symbol !== parsed.symbol) {
+        return { ...parsed, symbol };
+    }
+    return parsed;
+}
 function applyRawSymbolRepair(parsed, rawMsg) {
     const extracted = (0, tradableSymbol_1.extractTradableSymbolFromMessage)(rawMsg);
     const cur = parsed.symbol?.toUpperCase().replace(/\s/g, "") ?? "";
     const curMentioned = cur ? new RegExp(`\\b${cur}\\b`, "i").test(rawMsg.replace(/\s+/g, "")) : false;
-    const goldHints = /\b(gold|xau|xauusd)\b/i.test(rawMsg);
-    const btcHints = /\b(btc|bitcoin|btcusd|btcusdt)\b/i.test(rawMsg);
+    const signalBody = (0, tradableSymbol_1.signalBodyBeforePromoFooter)(rawMsg);
+    const goldHints = /\b(gold|xau|xauusd)\b/i.test(signalBody);
+    const btcHints = /\b(btc|bitcoin|btcusd|btcusdt)\b/i.test(signalBody);
     const hasAnySymbolHint = /([A-Z]{3,}\/[A-Z]{3,})|\b([A-Z]{6}|XAUUSD|XAGUSD|BTCUSD|BTCUSDT|ETHUSD|ETHUSDT)\b|(\bgold\b|\bxau\b|\bbtc\b|\bbitcoin\b|\beth\b|\bether)\b/i
         .test(rawMsg) || DERIV_SYNTHETIC_HINT_RE.test(rawMsg);
     const mgmt = new Set([
@@ -1195,7 +1250,8 @@ function applyStopUnits(parsed, rawMessage, channelKeywords) {
 function enrichParsedKeywordMatch(keywordMatch, rawMessage, channelKeywords) {
     const enriched = applyReEnterFlag(applyDirectionalPriceInference(normalizeParsedFromModel(keywordMatch, rawMessage), rawMessage), rawMessage);
     const repaired = applyRawSymbolRepair(enriched, rawMessage);
-    const dropped = dropInvalidTradeSymbol(repaired);
+    const quoteRepaired = applyQuoteLevelSymbolRepair(repaired, rawMessage);
+    const dropped = dropInvalidTradeSymbol(quoteRepaired);
     const withUnits = applyStopUnits(dropped, rawMessage, channelKeywords);
     const providerNum = withUnits.provider_signal_number ?? (0, forexBroSignalPatterns_1.extractProviderSignalNumber)(rawMessage);
     if (providerNum == null)

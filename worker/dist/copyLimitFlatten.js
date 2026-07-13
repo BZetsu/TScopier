@@ -88,7 +88,7 @@ async function flattenChannelTradesForCopyLimit(args) {
             .select('signal_id,broker_account_id')
             .in('signal_id', signalIds)
             .eq('broker_account_id', args.brokerAccountId)
-            .in('status', ['pending', 'claimed']);
+            .in('status', ['pending', 'claimed', 'broker_pending']);
         for (const leg of virtualLegs ?? []) {
             const signalId = String(leg.signal_id);
             basketScopes.set(`${signalId}|${args.brokerAccountId}`, {

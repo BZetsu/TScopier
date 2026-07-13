@@ -55,6 +55,7 @@ const channelTradingConfig_2 = require("../channelTradingConfig");
 const copyLimitTypes_1 = require("../copyLimitTypes");
 const pipelineTimestamps_1 = require("../pipelineTimestamps");
 const channelKeywordsCache_1 = require("../channelKeywordsCache");
+const rangeLayerTriggers_1 = require("../manualPlanning/rangeLayerTriggers");
 const helpers_2 = require("./helpers");
 const types_1 = require("./types");
 const brokerSymbolCache = __importStar(require("./brokerSymbolCache"));
@@ -104,6 +105,8 @@ class TradeExecutor {
         this.symbolParamsInflight = new Map();
         /** After OrderSend "Not connected", block re-trading until user reconnects. */
         this.sessionOrderBlocked = new Set();
+        /** Dedupe concurrent message-revision dispatches (in-process + HTTP push). */
+        this.processedRevisionEdits = new Map();
         /**
          * Per-broker "last reactivated" wall time. Set whenever `is_active` flips
          * to true (including the initial load when the broker is already active).
@@ -582,7 +585,9 @@ class TradeExecutor {
         if (!(0, tradeSignalActions_1.signalMatchesExecutorMode)(row.parsed_data, workerConfig_1.workerConfig.tradeExecutorMode)) {
             return false;
         }
-        const source = opts?.source ?? 'dispatch';
+        const source = opts?.source ?? row.dispatch_source ?? 'dispatch';
+        if (this.isDuplicateRevisionDispatch(row, source))
+            return true;
         const receivedAt = Date.now();
         const rowWithTs = {
             ...row,
@@ -640,7 +645,9 @@ class TradeExecutor {
         if (!(0, tradeSignalActions_1.signalMatchesExecutorMode)(row.parsed_data, workerConfig_1.workerConfig.tradeExecutorMode)) {
             return false;
         }
-        const source = opts?.source ?? 'queue';
+        const source = opts?.source ?? row.dispatch_source ?? 'queue';
+        if (this.isDuplicateRevisionDispatch(row, source))
+            return true;
         const isRangeWake = source === signalRangeEntryHelpers_1.SIGNAL_RANGE_WAKE_DISPATCH_SOURCE;
         const receivedAt = Date.now();
         const rowWithTs = {
@@ -685,8 +692,30 @@ class TradeExecutor {
     dispatchParsedSignal(row) {
         return this.acceptDispatchSignal(row, {
             priority: (0, tradeSignalActions_1.dispatchPriorityForAction)((0, tradeSignalActions_1.parsedAction)(row.parsed_data)),
-            source: 'in_process',
+            source: row.dispatch_source ?? 'in_process',
         });
+    }
+    isDuplicateRevisionDispatch(row, source) {
+        const revisionSource = source === signalRevision_1.MESSAGE_REVISION_DISPATCH_SOURCE
+            || row.dispatch_source === signalRevision_1.MESSAGE_REVISION_DISPATCH_SOURCE;
+        if (!revisionSource)
+            return false;
+        const edit = row.telegram_edit_date_seen;
+        if (edit == null || edit <= 0)
+            return false;
+        const key = `${row.id}|${Math.floor(edit)}`;
+        const now = Date.now();
+        const seenAt = this.processedRevisionEdits.get(key);
+        if (seenAt != null && now - seenAt < 120000)
+            return true;
+        this.processedRevisionEdits.set(key, now);
+        if (this.processedRevisionEdits.size > 2000) {
+            for (const [k, at] of this.processedRevisionEdits) {
+                if (now - at > 120000)
+                    this.processedRevisionEdits.delete(k);
+            }
+        }
+        return false;
     }
     shouldUseMgmtFastPath(row, source) {
         return dispatch.shouldUseMgmtFastPath(row, source);
@@ -1113,16 +1142,19 @@ class TradeExecutor {
         return await brokerSymbolCache.resolveBrokerSymbolForLiveEntry(this, uuid, requested, opts);
     }
     async deferredVirtualPendingMaterialize(args) {
-        const { signal, broker, uuid, api, symbol, virtualPendings, parsed, plan, params, strictEntryPrefetch, } = args;
-        let anchor = plan.anchor?.value ?? plan.strictEntry?.entryPrice ?? null;
+        const { signal, broker, uuid, api, symbol, virtualPendings, parsed, plan, params, strictEntryPrefetch, fillAnchor, } = args;
+        let anchor = fillAnchor != null && fillAnchor > 0 ? fillAnchor : null;
+        let anchorSource = anchor != null ? 'fill' : 'unknown';
         const parsedEntry = (0, manualPlanner_1.resolvedParsedEntryPrice)(parsed);
-        if (parsedEntry != null && parsedEntry > 0) {
+        if (anchor == null && parsedEntry != null && parsedEntry > 0) {
             anchor = parsedEntry;
+            anchorSource = 'signal';
         }
-        else {
+        if (anchor == null) {
             try {
                 const q = strictEntryPrefetch ?? await api.quote(uuid, symbol);
                 anchor = plan.isBuy === false ? q.bid : q.ask;
+                anchorSource = 'quote';
             }
             catch (err) {
                 const msg = err instanceof Error ? err.message : String(err);
@@ -1142,10 +1174,17 @@ class TradeExecutor {
         const signalZoneLo = plan.rangeLayering?.signalZoneLo ?? null;
         const signalZoneHi = plan.rangeLayering?.signalZoneHi ?? null;
         const useSignalEntryRange = plan.rangeLayering?.useSignalEntryRange === true;
+        const triggerMap = (0, rangeLayerTriggers_1.buildRangeLayerTriggerMap)({
+            virtualPendings,
+            anchor,
+            digits,
+            rangeLayering: plan.rangeLayering ?? null,
+            pip: plan.pip ?? undefined,
+        });
         const nowMs = Date.now();
         const insertRows = [];
         for (const v of virtualPendings) {
-            const triggerPrice = (0, helpers_2.triggerPriceFor)(v, anchor, digits);
+            const triggerPrice = triggerMap.get(v.stepIdx) ?? (0, helpers_2.triggerPriceFor)(v, anchor, digits);
             if (!(0, helpers_2.virtualPendingTriggerAllowed)({
                 triggerPrice,
                 signalRangeBoundary,
@@ -1182,8 +1221,11 @@ class TradeExecutor {
                 cwe_close_price: v.cweClosePrice ?? null,
             });
         }
-        if (insertRows.length === 0)
+        if (insertRows.length === 0) {
+            console.warn(`[tradeExecutor] deferred virtual: all ${virtualPendings.length} legs filtered`
+                + ` signal=${signal.id} broker=${broker.id} anchor=${anchor} anchor_source=${anchorSource}`);
             return;
+        }
         const persist = await this.persistRangePendingLegRows(insertRows, `deferred live signal=${signal.id} broker=${broker.id}`);
         if (!persist.ok) {
             console.error(`[tradeExecutor] deferred virtual persist failed signal=${signal.id} broker=${broker.id}: ${persist.lastError ?? 'unknown'}`);

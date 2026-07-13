@@ -15,8 +15,10 @@ exports.loadBasketLegCap = loadBasketLegCap;
 exports.loadOpenTradesForBasket = loadOpenTradesForBasket;
 exports.countOpenTradesForBasket = countOpenTradesForBasket;
 exports.basketInProfitAtQuote = basketInProfitAtQuote;
+exports.layerTriggerBeyondExistingEntries = layerTriggerBeyondExistingEntries;
 exports.shouldBlockVirtualLegFire = shouldBlockVirtualLegFire;
 exports.reconcileStaleClaimedLegs = reconcileStaleClaimedLegs;
+const layerConcurrentFire_1 = require("./layerConcurrentFire");
 async function hasTpTouchedLock(supabase, scope) {
     const { count, error } = await supabase
         .from('range_pending_tp_locks')
@@ -203,6 +205,25 @@ function basketInProfitAtQuote(openTrades, isBuy, bid, ask) {
         return bid >= avgEntry;
     return ask <= avgEntry;
 }
+/**
+ * True when a layer trigger sits beyond all existing open entries in the adverse direction
+ * (sell: trigger above max entry, buy: trigger below min entry).
+ */
+function layerTriggerBeyondExistingEntries(isBuy, triggerPrice, openTrades) {
+    if (!openTrades.length)
+        return true;
+    if (!Number.isFinite(triggerPrice) || triggerPrice <= 0)
+        return false;
+    const entries = openTrades
+        .map(t => Number(t.entry_price))
+        .filter(p => Number.isFinite(p) && p > 0);
+    if (!entries.length)
+        return true;
+    if (isBuy) {
+        return triggerPrice < Math.min(...entries);
+    }
+    return triggerPrice > Math.max(...entries);
+}
 /** True if this leg should not fire (already consumed or basket at cap). */
 async function shouldBlockVirtualLegFire(supabase, leg, opts) {
     const tpLockScope = {
@@ -229,7 +250,8 @@ async function shouldBlockVirtualLegFire(supabase, leg, opts) {
         return { block: true, reason: 'step_already_fired' };
     }
     const cap = await loadBasketLegCap(supabase, leg.signal_id, leg.broker_account_id);
-    const needOpenTrades = cap != null || (opts?.quote != null && opts.isBuy != null);
+    const needOutwardGuard = leg.trigger_price != null && (opts?.isBuy != null || leg.is_buy != null);
+    const needOpenTrades = cap != null || (opts?.quote != null && opts.isBuy != null) || needOutwardGuard;
     const openTrades = needOpenTrades
         ? await loadOpenTradesForBasket(supabase, leg.signal_id, leg.broker_account_id)
         : [];
@@ -240,6 +262,18 @@ async function shouldBlockVirtualLegFire(supabase, leg, opts) {
     if (opts?.quote != null && opts.isBuy != null) {
         if (basketInProfitAtQuote(openTrades, opts.isBuy, opts.quote.bid, opts.quote.ask)) {
             return { block: true, reason: 'basket_in_profit' };
+        }
+    }
+    const isBuy = opts?.isBuy ?? leg.is_buy;
+    const triggerPrice = leg.trigger_price;
+    const burst = opts?.distanceBurst;
+    const distanceEligible = burst != null
+        && burst.stepPriceOffset > 0
+        && isBuy != null
+        && (0, layerConcurrentFire_1.isLegEligibleByDistance)(isBuy, burst.anchor, burst.bid, burst.ask, leg.step_idx, burst.stepPriceOffset);
+    if (isBuy != null && triggerPrice != null && openTrades.length > 0 && !distanceEligible) {
+        if (!layerTriggerBeyondExistingEntries(isBuy, triggerPrice, openTrades)) {
+            return { block: true, reason: 'retrace_inside_basket' };
         }
     }
     return { block: false };

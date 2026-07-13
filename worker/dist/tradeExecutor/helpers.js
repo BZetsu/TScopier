@@ -14,6 +14,9 @@ exports.isBuySideOp = isBuySideOp;
 exports.clampOrderStops = clampOrderStops;
 exports.computeCweTp = computeCweTp;
 exports.triggerPriceFor = triggerPriceFor;
+exports.resolveBurstFillAnchor = resolveBurstFillAnchor;
+exports.isAdverselyCrossed = isAdverselyCrossed;
+exports.isOutwardCatchUp = isOutwardCatchUp;
 exports.virtualPendingTriggerAllowed = virtualPendingTriggerAllowed;
 exports.brokerOrderOpenMs = brokerOrderOpenMs;
 const manualPlanner_1 = require("../manualPlanner");
@@ -183,6 +186,45 @@ function triggerPriceFor(leg, anchor, digits) {
     const px = anchor + dir * leg.stepIdx * leg.stepPriceOffset;
     const d = Math.max(0, Math.min(8, Math.floor(digits)));
     return Number(px.toFixed(d));
+}
+/** Anchor virtual layering below/above the deepest immediate fill from a burst. */
+function resolveBurstFillAnchor(entryPrices, isBuy) {
+    const fills = entryPrices.filter((px) => px != null && Number.isFinite(px) && px > 0);
+    if (!fills.length)
+        return null;
+    return isBuy ? Math.min(...fills) : Math.max(...fills);
+}
+/**
+ * True when price crosses a range layer trigger in the adverse direction since the
+ * previous quote (buy = downward cross, sell = upward cross). Prevents retracement fills.
+ */
+function isAdverselyCrossed(isBuy, triggerPrice, prevBid, prevAsk, bid, ask) {
+    if (!Number.isFinite(triggerPrice) || triggerPrice <= 0)
+        return false;
+    if (!Number.isFinite(prevBid) || !Number.isFinite(prevAsk))
+        return false;
+    if (!Number.isFinite(bid) || !Number.isFinite(ask))
+        return false;
+    if (isBuy) {
+        return prevBid > triggerPrice && bid <= triggerPrice;
+    }
+    return prevAsk < triggerPrice && ask >= triggerPrice;
+}
+/**
+ * True when price is holding at/through a rung after an adverse gap (missed tick-by-tick cross).
+ * Used with outward-entry guards so retracement fills inside the basket stay blocked.
+ */
+function isOutwardCatchUp(isBuy, triggerPrice, prevBid, prevAsk, bid, ask) {
+    if (!Number.isFinite(triggerPrice) || triggerPrice <= 0)
+        return false;
+    if (!Number.isFinite(prevBid) || !Number.isFinite(prevAsk))
+        return false;
+    if (!Number.isFinite(bid) || !Number.isFinite(ask))
+        return false;
+    if (isBuy) {
+        return prevBid <= triggerPrice && bid <= triggerPrice && bid <= prevBid;
+    }
+    return prevAsk >= triggerPrice && ask >= triggerPrice && ask >= prevAsk;
 }
 /** Whether a virtual range leg should be persisted (broker stops zone + signal entry zone). */
 function virtualPendingTriggerAllowed(args) {

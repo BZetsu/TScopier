@@ -6,7 +6,7 @@ const entryPrepare_1 = require("./entryPrepare");
 const strictEntryPending_1 = require("./strictEntryPending");
 const virtualPendingMaterialize_1 = require("./virtualPendingMaterialize");
 const orderLegExecution_1 = require("./orderLegExecution");
-async function finishEntrySend(prep, strictBrokerPlaced, materializedVirtuals, syncMultiLegTps) {
+async function finishEntrySend(prep, strictBrokerPlaced, materializedVirtuals, syncMultiLegTps, brokerPendingMode = false) {
     return (0, orderLegExecution_1.sendImmediateLegs)({
         ctx: prep.ctx,
         signal: prep.signal,
@@ -26,6 +26,10 @@ async function finishEntrySend(prep, strictBrokerPlaced, materializedVirtuals, s
         channelDelayMs: prep.channelDelayMs,
         channelDelaySkipped: prep.channelDelaySkipped,
         deferVirtualAnchor: prep.deferVirtualAnchor,
+        deferBrokerRangePendingMaterialize: prep.deferBrokerRangePendingMaterialize,
+        brokerPendingMode,
+        prepAnchor: prep.anchor,
+        prepAnchorSource: prep.anchorSource,
         virtualPendings: prep.virtualPendings,
         plan: prep.plan,
         materializedVirtuals,
@@ -35,6 +39,7 @@ async function finishEntrySend(prep, strictBrokerPlaced, materializedVirtuals, s
         channelKeywords: prep.channelKeywords,
         baseLot: prep.baseLot,
         syncMultiLegTps,
+        prep,
     });
 }
 async function executeEntrySend(ctx, args, entryMode) {

@@ -62,7 +62,7 @@ async function loadSignalById(supabase, signalId) {
             : null;
     return row;
 }
-function buildRevisionDispatchRow(existing, parseResult, pipelineTs) {
+function buildRevisionDispatchRow(existing, parseResult, pipelineTs, telegramEditDateSeen) {
     return {
         id: existing.id,
         user_id: existing.user_id,
@@ -75,6 +75,9 @@ function buildRevisionDispatchRow(existing, parseResult, pipelineTs) {
         reply_to_message_id: existing.reply_to_message_id,
         created_at: existing.created_at,
         pipeline_ts: pipelineTs,
+        telegram_edit_date_seen: telegramEditDateSeen != null && telegramEditDateSeen > 0
+            ? Math.floor(telegramEditDateSeen)
+            : existing.telegram_edit_date_seen,
     };
 }
 async function updateSignalAfterRevision(supabase, args) {

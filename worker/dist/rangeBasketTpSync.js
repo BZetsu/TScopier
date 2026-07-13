@@ -12,6 +12,7 @@ exports.resolveRangeTpRebalanceGate = resolveRangeTpRebalanceGate;
 exports.hasClosedBasketLegs = hasClosedBasketLegs;
 exports.applyOpenLegStopLossToTargets = applyOpenLegStopLossToTargets;
 exports.preserveOpenLegTakeProfits = preserveOpenLegTakeProfits;
+exports.pickV2MergeDistributeTargets = pickV2MergeDistributeTargets;
 exports.deepestFinalTp = deepestFinalTp;
 exports.resolveFiringLegStops = resolveFiringLegStops;
 exports.backfillNakedLegTakeProfits = backfillNakedLegTakeProfits;
@@ -132,7 +133,7 @@ function resolveRangeBasketLegCounts(args) {
     return { immediateLegCount, firedRangeLegCount, phase };
 }
 function buildRangeBasketTpTargets(args) {
-    const { familyTrades, plan, parsed, tpLots, direction, activePendingCount, maxPendingStepIdx, forceLayeringRebalance, channelTpLevels, finalTpsOverride, stoplossOverride, explicitSl, } = args;
+    const { familyTrades, plan, parsed, tpLots, direction, activePendingCount, maxPendingStepIdx, forceLayeringRebalance, forceMessageRevisionRefresh, channelTpLevels, finalTpsOverride, stoplossOverride, explicitSl, } = args;
     if (!familyTrades.length)
         return [];
     const fromPlan = (plan ? (0, multiTradeMerge_1.mergePlanImmediateOrders)(plan) : []).map(o => ({
@@ -167,7 +168,7 @@ function buildRangeBasketTpTargets(args) {
         activePendingCount,
         maxPendingStepIdx,
     });
-    const phase = forceLayeringRebalance ? 'layering_rebalance' : detectedPhase;
+    const phase = (forceLayeringRebalance || forceMessageRevisionRefresh) ? 'layering_rebalance' : detectedPhase;
     const isBuy = direction === 'buy';
     const openLegs = familyTrades.map(tr => ({
         ...toEntryQualityLeg(tr),
@@ -287,6 +288,9 @@ async function loadScopedChannelTpLevels(supabase, args) {
  * (Layer-till-close ON) are still given the deepest TP via the backfill pass.
  */
 function resolveRangeTpRebalanceGate(args) {
+    if (args.forceMessageRevisionRefresh === true) {
+        return { mode: 'redistribute', allowOpenLegTpModify: true, reason: 'message_revision_refresh' };
+    }
     const tpHit = args.hasClosedBasketLegs || args.tpTouched === true;
     if (tpHit) {
         return {
@@ -351,6 +355,12 @@ function preserveOpenLegTakeProfits(familyTrades, perLegTargets) {
         }
         return t;
     });
+}
+/** v2 naked-leg distribute preserves open TPs; message revisions repaint the full ladder. */
+function pickV2MergeDistributeTargets(familyTrades, perLegTargets, sameSignalRefresh) {
+    if (sameSignalRefresh)
+        return perLegTargets;
+    return preserveOpenLegTakeProfits(familyTrades, perLegTargets);
 }
 /** Farthest/final TP for a direction-sorted ladder (buy: max, sell: min). */
 function deepestFinalTp(finalTps, isBuy) {
@@ -539,6 +549,7 @@ async function syncRangeBasketTakeProfits(args) {
         activePendingCount,
         maxPendingStepIdx,
         forceLayeringRebalance: args.forceLayeringRebalance,
+        forceMessageRevisionRefresh: args.forceMessageRevisionRefresh,
         channelTpLevels,
         finalTpsOverride: finalTps,
         stoplossOverride: effective.stoploss > 0 ? effective.stoploss : null,
@@ -559,7 +570,9 @@ async function syncRangeBasketTakeProfits(args) {
         activePendingCount,
         maxPendingStepIdx,
     });
-    const effectivePhase = args.forceLayeringRebalance ? 'layering_rebalance' : phase;
+    const effectivePhase = (args.forceLayeringRebalance || args.forceMessageRevisionRefresh)
+        ? 'layering_rebalance'
+        : phase;
     const hasClosedLegs = await hasClosedBasketLegs(args.supabase, args.brokerAccountId, args.signalId);
     const tpTouched = await (0, rangePendingFireGuard_1.hasTpTouchedLock)(args.supabase, {
         signalId: args.signalId,
@@ -571,6 +584,7 @@ async function syncRangeBasketTakeProfits(args) {
         maxPendingStepIdx,
         phase: effectivePhase,
         forceLayeringRebalance: args.forceLayeringRebalance,
+        forceMessageRevisionRefresh: args.forceMessageRevisionRefresh,
         hasClosedBasketLegs: hasClosedLegs,
         tpTouched,
     });

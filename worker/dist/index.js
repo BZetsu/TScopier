@@ -11,6 +11,7 @@ const authService_1 = require("./authService");
 const httpServer_1 = require("./httpServer");
 const tradeExecutor_1 = require("./tradeExecutor");
 const virtualPendingMonitor_1 = require("./virtualPendingMonitor");
+const rangeBrokerPendingMonitor_1 = require("./rangeBrokerPendingMonitor");
 const cweCloseMonitor_1 = require("./cweCloseMonitor");
 const partialTpMonitor_1 = require("./partialTpMonitor");
 const signalEntryPendingMonitor_1 = require("./signalEntryPendingMonitor");
@@ -59,16 +60,20 @@ function trackMonitor(m) {
 function startTradeMonitors(executor) {
     if (workerConfig_1.workerConfig.runsExecutionMonitors) {
         const virtualPendingMonitor = new virtualPendingMonitor_1.VirtualPendingMonitor(supabase);
+        const rangeBrokerPendingMonitor = new rangeBrokerPendingMonitor_1.RangeBrokerPendingMonitor(supabase);
         const cweCloseMonitor = new cweCloseMonitor_1.CweCloseMonitor(supabase);
         const partialTpMonitor = new partialTpMonitor_1.PartialTpMonitor(supabase);
         const signalEntryPendingMonitor = new signalEntryPendingMonitor_1.SignalEntryPendingMonitor(supabase);
         const openTradeReconcileMonitor = new openTradeReconcileMonitor_1.OpenTradeReconcileMonitor(supabase);
         virtualPendingMonitor.start();
+        (0, virtualPendingMonitor_1.registerVirtualPendingMonitor)(virtualPendingMonitor);
+        rangeBrokerPendingMonitor.start();
         cweCloseMonitor.start();
         partialTpMonitor.start();
         signalEntryPendingMonitor.start();
         openTradeReconcileMonitor.start();
         trackMonitor(virtualPendingMonitor);
+        trackMonitor(rangeBrokerPendingMonitor);
         trackMonitor(cweCloseMonitor);
         trackMonitor(partialTpMonitor);
         trackMonitor(signalEntryPendingMonitor);

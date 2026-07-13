@@ -11,7 +11,6 @@ Object.defineProperty(exports, "effectivePlan", { enumerable: true, get: functio
 Object.defineProperty(exports, "isSubscriptionActive", { enumerable: true, get: function () { return planLimits_1.isSubscriptionActive; } });
 Object.defineProperty(exports, "manualSettingsUseAdvancedFeatures", { enumerable: true, get: function () { return planLimits_1.manualSettingsUseAdvancedFeatures; } });
 const adminAccess_1 = require("./adminAccess");
-const copierPause_1 = require("./copierPause");
 const CACHE_TTL_MS = 60000;
 const cache = new Map();
 const adminCache = new Map();
@@ -82,8 +81,6 @@ function subscriptionBlocksSignalExecution(sub, manualSettings, isAdmin = false)
 async function userMayRunCopierListener(supabase, userId) {
     if (await loadCachedUserIsAdmin(supabase, userId))
         return true;
-    if (await (0, copierPause_1.loadCachedUserCopierPaused)(supabase, userId))
-        return false;
     const sub = await loadCachedUserSubscription(supabase, userId);
     return (0, planLimits_1.isSubscriptionActive)(sub?.status, sub?.trial_ends_at);
 }

@@ -32,7 +32,10 @@ function planRangeSplit(args) {
     }
     let effectiveStepPips = stepPips;
     let fallbackReason;
-    if (minStepPriceUnits > 0 && pip > 0 && stepPips * pip < minStepPriceUnits) {
+    if (!args.skipMinStepExpansion
+        && minStepPriceUnits > 0
+        && pip > 0
+        && stepPips * pip < minStepPriceUnits) {
         effectiveStepPips = Math.max(stepPips, Math.ceil(minStepPriceUnits / pip));
         fallbackReason = 'range_trading_step_auto_expanded';
     }

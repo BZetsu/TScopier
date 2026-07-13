@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.materializeVirtualPendingLegs = materializeVirtualPendingLegs;
+const rangeLayerTriggers_1 = require("../manualPlanning/rangeLayerTriggers");
 const helpers_1 = require("./helpers");
 /**
  * Persist virtual pending ladder rows to `range_pending_legs` for the worker monitor.
@@ -21,9 +22,17 @@ async function materializeVirtualPendingLegs(ctx, prep, strictBrokerPlaced) {
             const signalZoneLo = plan.rangeLayering?.signalZoneLo ?? null;
             const signalZoneHi = plan.rangeLayering?.signalZoneHi ?? null;
             const useSignalEntryRange = plan.rangeLayering?.useSignalEntryRange === true;
+            const pip = plan.pip ?? null;
+            const triggerMap = (0, rangeLayerTriggers_1.buildRangeLayerTriggerMap)({
+                virtualPendings,
+                anchor,
+                digits,
+                rangeLayering: plan.rangeLayering ?? null,
+                pip: pip ?? undefined,
+            });
             const nowMs = Date.now();
             for (const v of virtualPendings) {
-                const triggerPrice = (0, helpers_1.triggerPriceFor)(v, anchor, digits);
+                const triggerPrice = triggerMap.get(v.stepIdx) ?? (0, helpers_1.triggerPriceFor)(v, anchor, digits);
                 if (!(0, helpers_1.virtualPendingTriggerAllowed)({
                     triggerPrice,
                     signalRangeBoundary,

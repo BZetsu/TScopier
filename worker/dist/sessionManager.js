@@ -177,12 +177,23 @@ class UserSessionManager {
             return true;
         return false;
     }
-    /** Stop listener + release lease when subscription lapses or copier is paused. */
+    async listenerStartBlockReason(userId) {
+        if (this.isAuthBlocked(userId))
+            return 'Telegram auth is in progress. Finish linking, then try again.';
+        if (await this.hasActivePendingAuthInDb(userId)) {
+            return 'Telegram auth is in progress. Finish linking, then try again.';
+        }
+        if (!(await (0, subscriptionAccess_1.userMayRunCopierListener)(this.supabase, userId))) {
+            return 'An active subscription is required to connect Telegram.';
+        }
+        return null;
+    }
+    /** Stop listener + release lease when subscription is no longer active. */
     async stopListenerIfCopierInactive(userId) {
         if (await (0, subscriptionAccess_1.userMayRunCopierListener)(this.supabase, userId))
             return;
         if (this.listeners.has(userId)) {
-            console.log(`[sessionManager] stopping listener for ${userId}: subscription inactive or copier paused`);
+            console.log(`[sessionManager] stopping listener for ${userId}: subscription inactive`);
             await this.stopListener(userId);
         }
         else {
@@ -558,7 +569,8 @@ class UserSessionManager {
             throw new Error('Live Telegram listener not available on this worker');
         }
         if (await this.shouldSkipListenerStart(userId)) {
-            throw new Error('Telegram auth is in progress. Finish linking, then try again.');
+            const reason = await this.listenerStartBlockReason(userId);
+            throw new Error(reason ?? 'Telegram listener is unavailable for this account.');
         }
         const { data: sess, error } = await this.supabase
             .from('telegram_sessions')

@@ -182,9 +182,13 @@ async function resolveEffectiveBasketStops(args) {
     // baskets) -> fall back to mgmt-signal scan + channel memory + anchor.
     let basketTargetSl = null;
     let tpFromTarget = false;
+    let basketTargetSource;
+    let basketTargetInstructionAt = null;
     if (args.brokerAccountId) {
         const target = await (0, basketTargetStore_1.loadBasketSlTpTarget)(args.supabase, args.brokerAccountId, args.anchorSignalId);
         if (target) {
+            basketTargetSource = target.source;
+            basketTargetInstructionAt = target.instructionAt;
             const targetAt = target.instructionAt ?? target.updatedAt;
             const autoBeNewerThanTarget = autoBeAt != null
                 && targetAt != null
@@ -266,6 +270,8 @@ async function resolveEffectiveBasketStops(args) {
         source,
         sourceSignalId,
         anchorSl,
+        basketTargetSource,
+        basketTargetInstructionAt,
     };
 }
 function logEffectiveBasketStops(prefix, anchorSignalId, effective) {

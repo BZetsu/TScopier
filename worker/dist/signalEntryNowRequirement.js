@@ -58,21 +58,41 @@ function messageHasMarketNowIntent(message, channelKeywords) {
         return true;
     return false;
 }
+/** Optional emoji / punctuation between a label and its price (e.g. SL ⛔️4038, TP1 🎯4058). */
+const LABEL_TO_PRICE_GAP = String.raw `(?:\s*(?:\([^)]*\)\s*)?[^\d\n]{0,12}?)`;
 /** True when SL/TP appear as labeled parameters in the message (not inferred from prose). */
 function messageHasExplicitSlTpLabels(message) {
     const text = String(message ?? '');
-    if (/\b(?:sl|stop\s*loss)\s*[:=\-]?\s*\d/i.test(text))
+    if (new RegExp(String.raw `\b(?:sl|stop\s*loss)\b${LABEL_TO_PRICE_GAP}[:=@]?\s*\d`, 'iu').test(text))
+        return true;
+    if (/\b(?:sl|stop\s*loss)\b\s*\.\s*\d/i.test(text))
+        return true;
+    if (/(?:^|\s)(?:sl|stop\s*loss|stoploss)[_\s]*\/\s*@\s*\d/i.test(text))
         return true;
     if (/\b(?:sl|stop\s*loss)\s+to\s+\d/i.test(text))
         return true;
+    if (/(?:وقف\s*الخسارة|وقف)\s*[:：=@]?\s*\d/u.test(text))
+        return true;
+    if (/(?:وقف\s*الخسارة|وقف)\s+(?:to|إلى)\s*\d/iu.test(text))
+        return true;
     if (/\b(?:tp|take\s*profit|target(?:\s+level)?)\s*#?\s*\d+\s*[:=\-]\s*\d/i.test(text))
         return true;
+    if (/\btp\s*\d+\s*\.\s*\d/i.test(text))
+        return true;
+    if (/\btp[\u00B9-\u2079]+\d/i.test(text))
+        return true;
     // TP1 4340 (numbered tier, space-separated — no colon)
-    if (/\b(?:tp|take\s*profit|target(?:\s+level)?)\s*#?\s*\d+\s+\d/i.test(text))
+    if (new RegExp(String.raw `\b(?:tp|take\s*profit|target(?:\s+level)?)\s*#?\s*\d+\b${LABEL_TO_PRICE_GAP}\d`, 'iu').test(text))
         return true;
-    if (/\b(?:tp|take\s*profit|target(?:\s+level)?)\s*[:=\-]\s*\d/i.test(text))
+    if (new RegExp(String.raw `\b(?:tp|take\s*profit|target(?:\s+level)?)\b${LABEL_TO_PRICE_GAP}[:=\-]?\s*\d`, 'iu').test(text))
         return true;
-    if (/\btp\s*\d+\s*[:=\-]\s*\d/i.test(text))
+    if (new RegExp(String.raw `\btp\s*\d+\b${LABEL_TO_PRICE_GAP}[:=\-]?\s*\d`, 'iu').test(text))
+        return true;
+    if (/(?:الهدف(?:\s*(?:الأول|الثاني|الثالث|\d+))?|جني\s*الأرباح)\s*[:：=\-]?\s*\d/iu.test(text))
+        return true;
+    if (/stop\s+loss\s*\(\s*sl\s*\)\s*:\s*\d/i.test(text))
+        return true;
+    if (/take\s+profit\s*\d+\s*\(\s*tp\d+\s*\)\s*:\s*\d/i.test(text))
         return true;
     return false;
 }

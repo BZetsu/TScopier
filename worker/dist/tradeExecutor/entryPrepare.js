@@ -679,7 +679,13 @@ async function prepareEntryExecution(ctx, args) {
     const deferVirtualAnchor = liveEntryFast
         && legs.length > 0
         && virtualPendings.length > 0;
-    const needsAnchor = !deferVirtualAnchor && virtualPendings.length > 0;
+    const brokerRangePendingMode = manual.range_layering_type === 'pending_order';
+    const deferBrokerRangePendingMaterialize = brokerRangePendingMode
+        && virtualPendings.length > 0
+        && legs.length > 0;
+    const needsAnchor = !deferVirtualAnchor
+        && !deferBrokerRangePendingMaterialize
+        && virtualPendings.length > 0;
     let anchor = plan.anchor?.value ?? plan.strictEntry?.entryPrice ?? null;
     let anchorSource = plan.anchor?.source ?? 'unknown';
     if (needsAnchor && (anchor == null || anchor <= 0)) {
@@ -775,6 +781,7 @@ async function prepareEntryExecution(ctx, args) {
             virtualPendings,
             legs,
             deferVirtualAnchor,
+            deferBrokerRangePendingMaterialize,
             strictDeferred,
             op,
             channelKeywords,
