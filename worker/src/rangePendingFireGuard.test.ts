@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import {
   basketInProfitAtQuote,
   hasTpTouchedLock,
+  layerTriggerBeyondExistingEntries,
   loadExistingRangeStepIndices,
   shouldBlockVirtualLegFire,
 } from './rangePendingFireGuard'
@@ -252,5 +253,113 @@ describe('shouldBlockVirtualLegFire', () => {
       { layerTillClose: true },
     )
     assert.equal(out.block, false)
+  })
+})
+
+describe('layerTriggerBeyondExistingEntries', () => {
+  it('sell: blocks trigger below max open entry', () => {
+    assert.equal(
+      layerTriggerBeyondExistingEntries(false, 4089.5, [{ entry_price: 4090 }]),
+      false,
+    )
+    assert.equal(
+      layerTriggerBeyondExistingEntries(false, 4090.2, [{ entry_price: 4090 }]),
+      true,
+    )
+  })
+
+  it('buy: blocks trigger above min open entry', () => {
+    assert.equal(
+      layerTriggerBeyondExistingEntries(true, 4082, [{ entry_price: 4080 }]),
+      false,
+    )
+    assert.equal(
+      layerTriggerBeyondExistingEntries(true, 4078, [{ entry_price: 4080 }]),
+      true,
+    )
+  })
+})
+
+describe('shouldBlockVirtualLegFire retrace guard', () => {
+  it('blocks sell layer inside basket when trigger is below max entry', async () => {
+    const supabase = {
+      from: (table: string) => {
+        if (table === 'range_pending_tp_locks') {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({
+                  eq: async () => ({ count: 0, error: null }),
+                }),
+              }),
+            }),
+          }
+        }
+        if (table === 'range_pending_legs') {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({
+                  eq: () => ({
+                    eq: () => ({
+                      eq: async () => ({ count: 0, error: null }),
+                    }),
+                  }),
+                }),
+              }),
+            }),
+          }
+        }
+        if (table === 'trade_execution_logs') {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({
+                  eq: () => ({
+                    eq: () => ({
+                      order: () => ({
+                        limit: () => ({
+                          maybeSingle: async () => ({ data: null, error: null }),
+                        }),
+                      }),
+                    }),
+                  }),
+                }),
+              }),
+            }),
+          }
+        }
+        if (table === 'trades') {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({
+                  eq: async () => ({
+                    data: [{ entry_price: 4090, lot_size: 0.01 }],
+                    error: null,
+                  }),
+                }),
+              }),
+            }),
+          }
+        }
+        return {}
+      },
+    }
+    const out = await shouldBlockVirtualLegFire(
+      supabase as never,
+      {
+        id: 'leg-1',
+        signal_id: 'sig-1',
+        broker_account_id: 'broker-1',
+        symbol: 'XAUUSD',
+        step_idx: 2,
+        trigger_price: 4089.5,
+        is_buy: false,
+      },
+      { isBuy: false },
+    )
+    assert.equal(out.block, true)
+    assert.equal(out.reason, 'retrace_inside_basket')
   })
 })

@@ -202,6 +202,27 @@ export function triggerPriceFor(leg: VirtualPendingLeg, anchor: number, digits: 
   return Number(px.toFixed(d))
 }
 
+/**
+ * True when price crosses a range layer trigger in the adverse direction since the
+ * previous quote (buy = downward cross, sell = upward cross). Prevents retracement fills.
+ */
+export function isAdverselyCrossed(
+  isBuy: boolean,
+  triggerPrice: number,
+  prevBid: number,
+  prevAsk: number,
+  bid: number,
+  ask: number,
+): boolean {
+  if (!Number.isFinite(triggerPrice) || triggerPrice <= 0) return false
+  if (!Number.isFinite(prevBid) || !Number.isFinite(prevAsk)) return false
+  if (!Number.isFinite(bid) || !Number.isFinite(ask)) return false
+  if (isBuy) {
+    return prevBid > triggerPrice && bid <= triggerPrice
+  }
+  return prevAsk < triggerPrice && ask >= triggerPrice
+}
+
 /** Whether a virtual range leg should be persisted (broker stops zone + signal entry zone). */
 export function virtualPendingTriggerAllowed(args: {
   triggerPrice: number

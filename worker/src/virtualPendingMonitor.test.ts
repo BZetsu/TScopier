@@ -7,6 +7,7 @@ import {
   shouldLockBasketLayering,
   VirtualPendingMonitor,
 } from './virtualPendingMonitor'
+import { isAdverselyCrossed } from './tradeExecutor/helpers'
 
 // Buy ladder = averaging DOWN: trigger fires when bid drops to / below trigger_price.
 test('isTriggered: buy fires when bid <= trigger', () => {
@@ -193,4 +194,10 @@ test('shouldLockBasketLayering: flat basket (no open trades) does not lock', () 
 test('VirtualPendingMonitor: auto path excludes broker_pending status', () => {
   assert.deepEqual(VirtualPendingMonitor.AUTO_LAYER_STATUSES, ['pending'])
   assert.ok(!VirtualPendingMonitor.AUTO_LAYER_STATUSES.includes('broker_pending' as never))
+})
+
+test('SELL retrace scenario: shallow rungs do not cross on pullback', () => {
+  assert.equal(isAdverselyCrossed(false, 4089.5, 4090, 4090.1, 4089.5, 4089.6), false)
+  assert.equal(isAdverselyCrossed(false, 4090.2, 4091, 4091.1, 4090.5, 4090.6), false)
+  assert.equal(isAdverselyCrossed(false, 4090, 4089.8, 4089.9, 4090, 4090.1), true)
 })

@@ -1539,18 +1539,24 @@ export class TradeExecutor {
     plan: PlannerResult
     params: SymbolCacheEntry | null
     strictEntryPrefetch: { bid: number; ask: number } | null
+    fillAnchor?: number | null
   }): Promise<void> {
     const {
       signal, broker, uuid, api, symbol, virtualPendings, parsed, plan, params, strictEntryPrefetch,
+      fillAnchor,
     } = args
-    let anchor: number | null = plan.anchor?.value ?? plan.strictEntry?.entryPrice ?? null
+    let anchor: number | null = fillAnchor != null && fillAnchor > 0 ? fillAnchor : null
+    let anchorSource: 'signal' | 'quote' | 'fill' | 'unknown' = anchor != null ? 'fill' : 'unknown'
     const parsedEntry = resolvedParsedEntryPrice(parsed)
-    if (parsedEntry != null && parsedEntry > 0) {
+    if (anchor == null && parsedEntry != null && parsedEntry > 0) {
       anchor = parsedEntry
-    } else {
+      anchorSource = 'signal'
+    }
+    if (anchor == null) {
       try {
         const q = strictEntryPrefetch ?? await api.quote(uuid, symbol)
         anchor = plan.isBuy === false ? q.bid : q.ask
+        anchorSource = 'quote'
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
         console.warn(

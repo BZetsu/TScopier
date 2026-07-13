@@ -174,9 +174,37 @@ export function basketInProfitAtQuote(
   return ask <= avgEntry
 }
 
+/** True when a layer trigger sits beyond all existing open entries in the adverse direction. */
+export function layerTriggerBeyondExistingEntries(
+  isBuy: boolean,
+  triggerPrice: number,
+  openTrades: Array<{ entry_price: number }>,
+): boolean {
+  if (!openTrades.length) return true
+  if (!Number.isFinite(triggerPrice) || triggerPrice <= 0) return false
+
+  const entries = openTrades
+    .map(t => Number(t.entry_price))
+    .filter(p => Number.isFinite(p) && p > 0)
+  if (!entries.length) return true
+
+  if (isBuy) {
+    return triggerPrice < Math.min(...entries)
+  }
+  return triggerPrice > Math.max(...entries)
+}
+
 export async function shouldBlockVirtualLegFire(
   supabase: SupabaseLike,
-  leg: { id: string; signal_id: string; broker_account_id: string; symbol: string; step_idx: number },
+  leg: {
+    id: string
+    signal_id: string
+    broker_account_id: string
+    symbol: string
+    step_idx: number
+    trigger_price?: number
+    is_buy?: boolean
+  },
   opts?: {
     layerTillClose?: boolean
     quote?: { bid: number; ask: number }
@@ -231,7 +259,8 @@ export async function shouldBlockVirtualLegFire(
     cap = Math.max(1, rangeRows + (immCount ?? 0))
   }
 
-  const needOpenTrades = cap != null || (opts?.quote != null && opts.isBuy != null)
+  const needOutwardGuard = leg.trigger_price != null && (opts?.isBuy != null || leg.is_buy != null)
+  const needOpenTrades = cap != null || (opts?.quote != null && opts.isBuy != null) || needOutwardGuard
   const openTrades = needOpenTrades
     ? await loadOpenTradesForBasket(supabase, leg.signal_id, leg.broker_account_id)
     : []
@@ -244,6 +273,14 @@ export async function shouldBlockVirtualLegFire(
   if (opts?.quote != null && opts.isBuy != null) {
     if (basketInProfitAtQuote(openTrades, opts.isBuy, opts.quote.bid, opts.quote.ask)) {
       return { block: true, reason: "basket_in_profit" }
+    }
+  }
+
+  const isBuy = opts?.isBuy ?? leg.is_buy
+  const triggerPrice = leg.trigger_price
+  if (isBuy != null && triggerPrice != null && openTrades.length > 0) {
+    if (!layerTriggerBeyondExistingEntries(isBuy, triggerPrice, openTrades)) {
+      return { block: true, reason: "retrace_inside_basket" }
     }
   }
 

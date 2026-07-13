@@ -383,6 +383,9 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
   }
 
   if (deferVirtualAnchor && virtualPendings.length > 0 && api && !brokerPendingMode) {
+    const fillAnchor = filledLegs
+      .map(l => l.entryPrice)
+      .find(px => px != null && Number.isFinite(px) && px > 0) ?? null
     void ctx.deferredVirtualPendingMaterialize({
       signal,
       broker,
@@ -394,6 +397,7 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
       plan,
       params,
       strictEntryPrefetch,
+      fillAnchor,
     }).catch(err => {
       console.error(
         `[tradeExecutor] deferred virtual pending failed signal=${signal.id} broker=${broker.id}:`,

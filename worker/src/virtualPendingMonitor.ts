@@ -35,6 +35,7 @@ import {
   setTpTouchedLock,
   shouldBlockVirtualLegFire,
 } from './rangePendingFireGuard'
+import { isAdverselyCrossed } from './tradeExecutor/helpers'
 import { isMtBridgeGlitchMessage } from './brokerConnectError'
 import {
   deleteRangePendingLegsForBasket,
@@ -289,6 +290,8 @@ export class VirtualPendingMonitor {
   private profitSkipLogAt = new Map<string, number>()
   /** Throttle trigger-band defer logs — legs re-check every tick. */
   private bandSkipLogAt = new Map<string, number>()
+  /** Previous quote per (account, symbol) for adverse crossing detection. */
+  private lastQuoteByGroup = new Map<string, { bid: number; ask: number }>()
   private static readonly PROFIT_SKIP_LOG_MS = 60_000
 
   constructor(private readonly supabase: SupabaseClient) {
@@ -465,6 +468,7 @@ export class VirtualPendingMonitor {
         return
       }
       const tpTouchedBaskets = await this.detectAndLockTpTouchedBaskets(legs, q.bid, q.ask)
+      const prevQuote = this.lastQuoteByGroup.get(key)
       // How far is the nearest trigger? Useful diagnostic when nothing fires.
       let nearestGap = Number.POSITIVE_INFINITY
       const triggeredInGroup: PendingRow[] = []
@@ -474,8 +478,18 @@ export class VirtualPendingMonitor {
         const ref = leg.is_buy ? q.bid : q.ask
         const gap = leg.is_buy ? ref - leg.trigger_price : leg.trigger_price - ref
         if (Number.isFinite(gap) && gap < nearestGap) nearestGap = gap
-        if (isTriggered(leg.is_buy, leg.trigger_price, q.bid, q.ask)) triggeredInGroup.push(leg)
+        const crossed = prevQuote != null
+          && isAdverselyCrossed(
+            leg.is_buy,
+            leg.trigger_price,
+            prevQuote.bid,
+            prevQuote.ask,
+            q.bid,
+            q.ask,
+          )
+        if (crossed) triggeredInGroup.push(leg)
       }
+      this.lastQuoteByGroup.set(key, { bid: q.bid, ask: q.ask })
 
       const cancelledStaleIds = new Set<string>()
       const purgedBaskets = new Set<string>()
@@ -525,7 +539,6 @@ export class VirtualPendingMonitor {
       const byBasket = new Map<string, PendingRow[]>()
       for (const leg of triggeredInGroup) {
         if (cancelledStaleIds.has(leg.id)) continue
-        if (!isTriggered(leg.is_buy, leg.trigger_price, q.bid, q.ask)) continue
         if (isBlockedByShallowerStep(leg, activeStepsByBasket)) continue
         const bk = `${leg.signal_id}|${leg.broker_account_id}`
         const arr = byBasket.get(bk) ?? []
