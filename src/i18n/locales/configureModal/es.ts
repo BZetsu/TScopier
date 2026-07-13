@@ -52,11 +52,25 @@ export const configureModalEs: ConfigureModalTranslations = {
     stops: 'Objetivos',
     management: 'Gestión',
     filters: 'Filtros',
-    aiTraining: 'Entrenamiento IA',
+    aiTraining: 'Ejemplos de señales',
   },
   aiTraining: {
     title: 'Entrenamiento IA de señales',
     intro: 'Entrena este canal para que el copiador aprenda su lenguaje y estructura exacta de señales. Puedes editar todo antes de guardar.',
+    signalExamplesTitle: 'Ejemplos de señales',
+    signalExamplesIntro:
+      'Los mensajes etiquetados de este canal enseñan al copiador a leer sus señales en cualquier idioma. Los ejemplos se crean automáticamente al entrenar.',
+    signalExamplesHint:
+      'Cada ejemplo empareja un mensaje real del canal con cómo debe interpretarlo el copiador (entrada, actualización o ignorar). Usado para análisis IA — no se envía al bróker.',
+    signalExamplesEmpty: 'Sin ejemplos de señales',
+    signalExamplesEmptyHint:
+      'Entrena este canal para analizar mensajes recientes y crear ejemplos etiquetados.',
+    signalExamplesRefresh: 'Actualizar',
+    signalExamplesCount: '{count} ejemplos del entrenamiento',
+    signalExamplesLoadError: 'No se pudieron cargar los ejemplos',
+    exampleLabelEntry: 'Entrada',
+    exampleLabelUpdate: 'Actualización',
+    exampleLabelIgnore: 'Ignorar',
     trainButton: 'Entrenar canal',
     training: 'Entrenando...',
     saveButton: 'Guardar entrenamiento',

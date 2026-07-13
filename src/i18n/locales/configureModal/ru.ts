@@ -50,11 +50,25 @@ export const configureModalRu: ConfigureModalTranslations = {
     stops: 'Цели',
     management: 'Управление',
     filters: 'Фильтры',
-    aiTraining: 'Обучение искусственному интеллекту'
+    aiTraining: 'Примеры сигналов'
   },
   aiTraining: {
     title: 'Обучение сигналам ИИ',
     intro: 'Обучите этот канал, чтобы копировальный аппарат усвоил его точный язык сигналов и структуру. Вы можете редактировать все перед сохранением.',
+    signalExamplesTitle: 'Примеры сигналов',
+    signalExamplesIntro:
+      'Помеченные сообщения из этого канала учат копировщик читать сигналы на любом языке. Примеры создаются автоматически при обучении.',
+    signalExamplesHint:
+      'Каждый пример связывает реальное сообщение канала с интерпретацией (вход, обновление или игнор). Для ИИ-разбора — не отправляется брокеру.',
+    signalExamplesEmpty: 'Примеров сигналов пока нет',
+    signalExamplesEmptyHint:
+      'Обучите канал, чтобы проанализировать недавние сообщения и создать помеченные примеры.',
+    signalExamplesRefresh: 'Обновить',
+    signalExamplesCount: '{count} примеров из обучения канала',
+    signalExamplesLoadError: 'Не удалось загрузить примеры',
+    exampleLabelEntry: 'Вход',
+    exampleLabelUpdate: 'Обновление',
+    exampleLabelIgnore: 'Игнор',
     trainButton: 'Железнодорожный канал',
     training: 'Обучение...',
     saveButton: 'Сохранить обучение',

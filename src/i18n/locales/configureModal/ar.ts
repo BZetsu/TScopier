@@ -50,11 +50,25 @@ export const configureModalAr: ConfigureModalTranslations = {
     stops: 'الأهداف',
     management: 'الإدارة',
     filters: 'الفلاتر',
-    aiTraining: 'تدريب الذكاء الاصطناعي'
+    aiTraining: 'أمثلة الإشارات'
   },
   aiTraining: {
     title: 'تدريب إشارات الذكاء الاصطناعي',
     intro: 'درّب هذه القناة ليتعلّم الناسخ لغة الإشارة وبنيتها بدقة. يمكنك تعديل كل شيء قبل الحفظ.',
+    signalExamplesTitle: 'أمثلة الإشارات',
+    signalExamplesIntro:
+      'الرسائل المُوسومة من هذه القناة تعلّم الناسخ قراءة إشاراتها بأي لغة. تُنشأ الأمثلة تلقائياً عند التدريب.',
+    signalExamplesHint:
+      'يربط كل مثال رسالة حقيقية من القناة بكيفية تفسيرها (دخول، تحديث أو تجاهل). للتحليل بالذكاء الاصطناعي — لا يُرسل للوسيط.',
+    signalExamplesEmpty: 'لا توجد أمثلة إشارات بعد',
+    signalExamplesEmptyHint:
+      'درّب هذه القناة لتحليل الرسائل الأخيرة وإنشاء أمثلة موسومة.',
+    signalExamplesRefresh: 'تحديث',
+    signalExamplesCount: '{count} أمثلة من تدريب القناة',
+    signalExamplesLoadError: 'تعذّر تحميل الأمثلة',
+    exampleLabelEntry: 'دخول',
+    exampleLabelUpdate: 'تحديث',
+    exampleLabelIgnore: 'تجاهل',
     trainButton: 'تدريب القناة',
     training: 'جارٍ التدريب...',
     saveButton: 'حفظ التدريب',

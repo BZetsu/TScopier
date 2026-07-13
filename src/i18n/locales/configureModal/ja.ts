@@ -50,11 +50,25 @@ export const configureModalJa: ConfigureModalTranslations = {
     stops: 'ターゲット',
     management: '管理',
     filters: 'フィルター',
-    aiTraining: 'AIトレーニング'
+    aiTraining: 'シグナル例'
   },
   aiTraining: {
     title: 'AI信号トレーニング',
     intro: 'このチャネルをトレーニングして、コピー機が正確な信号言語と構造を学習できるようにします。保存する前にすべてを編集できます。',
+    signalExamplesTitle: 'シグナル例',
+    signalExamplesIntro:
+      'このチャネルのラベル付きメッセージが、あらゆる言語のシグナルの読み方をコピー機に教えます。例はトレーニング時に自動作成されます。',
+    signalExamplesHint:
+      '各例は実際のチャネルメッセージと解釈（エントリー、更新、無視）を対応付けます。AI解析用 — ブローカーには送信されません。',
+    signalExamplesEmpty: 'シグナル例がまだありません',
+    signalExamplesEmptyHint:
+      'チャネルをトレーニングして最近のメッセージを分析し、ラベル付き例を作成してください。',
+    signalExamplesRefresh: '更新',
+    signalExamplesCount: 'チャネルトレーニングから {count} 件の例',
+    signalExamplesLoadError: 'シグナル例を読み込めませんでした',
+    exampleLabelEntry: 'エントリー',
+    exampleLabelUpdate: '更新',
+    exampleLabelIgnore: '無視',
     trainButton: 'トレインチャンネル',
     training: 'トレーニング...',
     saveButton: 'トレーニングを保存する',

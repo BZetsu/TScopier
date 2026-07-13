@@ -52,11 +52,25 @@ export const configureModalEn: ConfigureModalTranslations = {
     stops: 'Targets',
     management: 'Management',
     filters: 'Filters',
-    aiTraining: 'AI Training',
+    aiTraining: 'Signal Examples',
   },
   aiTraining: {
     title: 'AI Signal Training',
     intro: 'Train this channel so the copier learns its exact signal language and structure. You can edit everything before saving.',
+    signalExamplesTitle: 'Signal examples',
+    signalExamplesIntro:
+      'Labeled messages from this channel teach the copier how to read its signals in any language. Examples are created automatically when you train the channel.',
+    signalExamplesHint:
+      'Each example pairs a real channel message with how the copier should interpret it (entry, update, or ignore). Used for AI parsing — not shown to your broker.',
+    signalExamplesEmpty: 'No signal examples yet',
+    signalExamplesEmptyHint:
+      'Train this channel to analyze recent messages and build labeled examples for its signal format.',
+    signalExamplesRefresh: 'Refresh',
+    signalExamplesCount: '{count} examples from channel training',
+    signalExamplesLoadError: 'Could not load signal examples',
+    exampleLabelEntry: 'Entry',
+    exampleLabelUpdate: 'Update',
+    exampleLabelIgnore: 'Ignore',
     trainButton: 'Train channel',
     training: 'Training...',
     saveButton: 'Save training',

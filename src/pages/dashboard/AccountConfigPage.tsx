@@ -5,7 +5,7 @@ import {
   Plus, Trash2, Server, Activity, GitBranch, Eye, DollarSign, RefreshCw,
   SlidersHorizontal, Radio, Target, Filter, Wallet, Link2,
   ChevronLeft, ChevronRight, Search, Settings2, Bookmark, Pencil, ScrollText, AlertTriangle,
-  Infinity, Coins, X,
+  Infinity, Coins, X, Sparkles,
 } from 'lucide-react'
 import clsx from 'clsx'
 import { supabase } from '../../lib/supabase'
@@ -23,6 +23,7 @@ import { Alert } from '../../components/ui/Alert'
 import { useAddTradingAccount } from '../../context/AddTradingAccountContext'
 import { RiskLotCalculatorModal } from '../../components/configure/RiskLotCalculatorModal'
 import { CopyLimitsTargetsSection } from '../../components/configure/CopyLimitsTargetsSection'
+import { ChannelSignalExamplesSection } from '../../components/configure/ChannelSignalExamplesSection'
 import { useUserProfile } from '../../context/UserProfileContext'
 import { normalizeCopyLimitState, type CopyLimitState } from '../../lib/copyLimitTypes'
 import { ConfigTitle, ConfigToggleLabel, ConfigureInput, ConfigureSelect, InfoTooltip } from '../../components/ui/InfoTooltip'
@@ -563,7 +564,7 @@ function AccountDetailCell({
   )
 }
 
-type ManualSubTabId = 'symbols' | 'channel_instructions' | 'risk' | 'stops' | 'management' | 'filters'
+type ManualSubTabId = 'symbols' | 'channel_instructions' | 'signal_examples' | 'risk' | 'stops' | 'management' | 'filters'
 
 interface ManualSubTabDef {
   id: ManualSubTabId
@@ -703,6 +704,7 @@ export function AccountConfigPage() {
 
   const manualSubTabs = useMemo<ManualSubTabDef[]>(
     () => [
+      { id: 'signal_examples', label: cm.manualSubTabs.aiTraining, icon: Sparkles },
       { id: 'symbols', label: cm.manualSubTabs.symbols, icon: Coins },
       { id: 'channel_instructions', label: cm.manualSubTabs.channelInstructions, icon: ScrollText },
       { id: 'risk', label: cm.manualSubTabs.risk, icon: Wallet },
@@ -711,6 +713,7 @@ export function AccountConfigPage() {
       { id: 'filters', label: cm.manualSubTabs.filters, icon: Filter },
     ],
     [
+      cm.manualSubTabs.aiTraining,
       cm.manualSubTabs.symbols,
       cm.manualSubTabs.channelInstructions,
       cm.manualSubTabs.risk,
@@ -822,7 +825,7 @@ export function AccountConfigPage() {
     selectedChannelId: null,
     channelConfigs: {},
   })
-  const [activeManualSubTab, setActiveManualSubTab] = useState<ManualSubTabId>('symbols')
+  const [activeManualSubTab, setActiveManualSubTab] = useState<ManualSubTabId>('signal_examples')
   const [trainingRunningByChannel, setTrainingRunningByChannel] = useState<Record<string, boolean>>({})
   const [trainingSavingByChannel, setTrainingSavingByChannel] = useState<Record<string, boolean>>({})
   const [trainingProgressByChannel, setTrainingProgressByChannel] = useState<Record<string, number>>({})
@@ -2746,6 +2749,19 @@ export function AccountConfigPage() {
                                 </div>
                               ) : null}
                             </div>
+                          ) : (
+                            <p className="text-sm text-neutral-500 dark:text-neutral-400">{cm.channels.selectChannelFirst}</p>
+                          )
+                        )}
+
+                        {activeManualSubTab === 'signal_examples' && (
+                          selectedChannelOption && configDraft.selectedChannelId ? (
+                            <ChannelSignalExamplesSection
+                              channelId={configDraft.selectedChannelId}
+                              labels={cm.aiTraining}
+                              trainingActive={activeChannelTrainingRunning || activeChannelTrainingSaving}
+                              onRetrain={() => startBackgroundAiTraining(configDraft.selectedChannelId!)}
+                            />
                           ) : (
                             <p className="text-sm text-neutral-500 dark:text-neutral-400">{cm.channels.selectChannelFirst}</p>
                           )

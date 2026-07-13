@@ -50,11 +50,25 @@ export const configureModalSv: ConfigureModalTranslations = {
     stops: 'Mål',
     management: 'Förvaltning',
     filters: 'Filter',
-    aiTraining: 'AI utbildning'
+    aiTraining: 'Signalexempel'
   },
   aiTraining: {
     title: 'AI-signalträning',
     intro: 'Träna denna kanal så att kopiatorn lär sig sitt exakta signalspråk och struktur. Du kan redigera allt innan du sparar.',
+    signalExamplesTitle: 'Signalexempel',
+    signalExamplesIntro:
+      'Märkta meddelanden från denna kanal lär kopiatorn att läsa signaler på vilket språk som helst. Exempel skapas automatiskt vid träning.',
+    signalExamplesHint:
+      'Varje exempel kopplar ett riktigt kanalmeddelande till tolkning (entry, uppdatering eller ignorera). För AI-tolkning — skickas inte till mäklaren.',
+    signalExamplesEmpty: 'Inga signalexempel ännu',
+    signalExamplesEmptyHint:
+      'Träna kanalen för att analysera senaste meddelanden och skapa märkta exempel.',
+    signalExamplesRefresh: 'Uppdatera',
+    signalExamplesCount: '{count} exempel från kanalträning',
+    signalExamplesLoadError: 'Kunde inte ladda signalexempel',
+    exampleLabelEntry: 'Entry',
+    exampleLabelUpdate: 'Uppdatering',
+    exampleLabelIgnore: 'Ignorera',
     trainButton: 'Tågkanal',
     training: 'Utbildning...',
     saveButton: 'Spara träning',

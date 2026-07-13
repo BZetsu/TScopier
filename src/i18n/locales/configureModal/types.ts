@@ -57,6 +57,17 @@ export interface ConfigureModalTranslations {
   aiTraining: {
     title: string
     intro: string
+    signalExamplesTitle: string
+    signalExamplesIntro: string
+    signalExamplesHint: string
+    signalExamplesEmpty: string
+    signalExamplesEmptyHint: string
+    signalExamplesRefresh: string
+    signalExamplesCount: string
+    signalExamplesLoadError: string
+    exampleLabelEntry: string
+    exampleLabelUpdate: string
+    exampleLabelIgnore: string
     trainButton: string
     training: string
     saveButton: string

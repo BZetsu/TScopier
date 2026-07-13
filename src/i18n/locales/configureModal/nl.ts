@@ -50,11 +50,25 @@ export const configureModalNl: ConfigureModalTranslations = {
     stops: 'Doelstellingen',
     management: 'Beheer',
     filters: 'Filters',
-    aiTraining: 'AI-training'
+    aiTraining: 'Signaalvoorbeelden'
   },
   aiTraining: {
     title: 'AI-signaaltraining',
     intro: 'Train dit kanaal zodat het kopieerapparaat de exacte signaaltaal en structuur leert. U kunt alles bewerken voordat u het opslaat.',
+    signalExamplesTitle: 'Signaalvoorbeelden',
+    signalExamplesIntro:
+      'Gelabelde berichten van dit kanaal leren de copier hoe signalen in elke taal te lezen. Voorbeelden worden automatisch aangemaakt bij training.',
+    signalExamplesHint:
+      'Elk voorbeeld koppelt een echt kanaalbericht aan de interpretatie (entry, update of negeren). Voor AI-parsing — niet naar uw broker.',
+    signalExamplesEmpty: 'Nog geen signaalvoorbeelden',
+    signalExamplesEmptyHint:
+      'Train dit kanaal om recente berichten te analyseren en gelabelde voorbeelden te maken.',
+    signalExamplesRefresh: 'Vernieuwen',
+    signalExamplesCount: '{count} voorbeelden uit kanaaltraining',
+    signalExamplesLoadError: 'Kon signaalvoorbeelden niet laden',
+    exampleLabelEntry: 'Entry',
+    exampleLabelUpdate: 'Update',
+    exampleLabelIgnore: 'Negeren',
     trainButton: 'Trein kanaal',
     training: 'Opleiding...',
     saveButton: 'Opleiding opslaan',

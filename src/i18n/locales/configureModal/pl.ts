@@ -50,11 +50,25 @@ export const configureModalPl: ConfigureModalTranslations = {
     stops: 'Cele',
     management: 'Kierownictwo',
     filters: 'Filtry',
-    aiTraining: 'Szkolenie AI'
+    aiTraining: 'Przykłady sygnałów'
   },
   aiTraining: {
     title: 'Szkolenie z zakresu sygnałów AI',
     intro: 'Trenuj ten kanał, aby kopiarka nauczyła się dokładnego języka i struktury sygnału. Możesz edytować wszystko przed zapisaniem.',
+    signalExamplesTitle: 'Przykłady sygnałów',
+    signalExamplesIntro:
+      'Oznaczone wiadomości z tego kanału uczą kopiarki odczytywania sygnałów w dowolnym języku. Przykłady tworzone są automatycznie podczas treningu.',
+    signalExamplesHint:
+      'Każdy przykład łączy prawdziwą wiadomość z kanału z interpretacją (wejście, aktualizacja lub ignoruj). Do parsowania AI — nie trafia do brokera.',
+    signalExamplesEmpty: 'Brak przykładów sygnałów',
+    signalExamplesEmptyHint:
+      'Wytrenuj kanał, aby przeanalizować ostatnie wiadomości i utworzyć oznaczone przykłady.',
+    signalExamplesRefresh: 'Odśwież',
+    signalExamplesCount: '{count} przykładów z treningu kanału',
+    signalExamplesLoadError: 'Nie udało się załadować przykładów',
+    exampleLabelEntry: 'Wejście',
+    exampleLabelUpdate: 'Aktualizacja',
+    exampleLabelIgnore: 'Ignoruj',
     trainButton: 'Kanał kolejowy',
     training: 'Szkolenie...',
     saveButton: 'Zapisz trening',
