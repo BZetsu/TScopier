@@ -19,6 +19,7 @@ export type ListenerEventType =
   | 'entry_settle_poll_applied'
   | 'teaser_completion_merge_applied'
   | 'signal_reconcile_mismatch'
+  | 'signal_reconcile_parsed_drift'
   | 'signal_reconcile_sweep_error'
   | 'signal_reconcile_checked'
   | 'channel_shadow_mismatch'

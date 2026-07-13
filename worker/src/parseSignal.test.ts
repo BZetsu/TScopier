@@ -59,6 +59,15 @@ describe('parseChannelMessageSync', () => {
     assert.deepEqual(result.parsed.tp, [4066, 4060])
   })
 
+  it('parses sell with decimal TP price (must not treat 4053 as tier index)', () => {
+    const msg = 'Sell Gold 4068.26-4075.88 ( high risk )\n\nSL 4082.22\n\nTP 4053.22'
+    const result = parseChannelMessageSync(msg, DEFAULT_CHANNEL_KEYWORDS, lexicon)
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.action, 'sell')
+    assert.equal(result.parsed.sl, 4082.22)
+    assert.deepEqual(result.parsed.tp, [4053.22])
+  })
+
   it('parses standard market entry (SIGNALS PRO / SIGNALS 2 style)', () => {
     const msg = 'BUY XAUUSD NOW SL 2650 TP 2700 TP 2750'
     const result = parseChannelMessageSync(msg, DEFAULT_CHANNEL_KEYWORDS, lexicon)

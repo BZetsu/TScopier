@@ -55,6 +55,8 @@ import {
   groupSignalsByChannel,
   loadSignalsForReconcile,
   markSignalsReconciled,
+  normalizedSlTpTargets,
+  parsedTargetsDrift,
   snapshotsFromTelegramMessages,
   telegramEditDateSec,
   telegramMessageText,
@@ -2419,7 +2421,40 @@ export class UserListener {
     }
     stats.checked = checkedIds.length
 
-    const mismatches = findSignalsNeedingReconcile(signals, snapshots)
+    const textMismatches = findSignalsNeedingReconcile(signals, snapshots)
+    const textMismatchIds = new Set(textMismatches.map(m => m.signal.id))
+
+    const { keywords, lexicon } = await getChannelParseContext(this.supabase, channelRow.id)
+    const parsedDrift: typeof textMismatches = []
+    for (const signal of signals) {
+      if (textMismatchIds.has(signal.id)) continue
+      const mid = signal.telegram_message_id?.trim()
+      const snap = mid ? snapshots.get(mid) : undefined
+      if (!snap) continue
+      const reparsed = parseChannelMessageSync(snap.text, keywords, lexicon)
+      if (reparsed.status !== 'parsed') continue
+      const freshRecord = {
+        action: reparsed.parsed.action,
+        sl: reparsed.parsed.sl,
+        tp: reparsed.parsed.tp,
+      }
+      if (!parsedTargetsDrift(signal.parsed_data, freshRecord)) continue
+      parsedDrift.push({ signal, rawMessage: snap.text, editDateSec: snap.editDateSec })
+      void persistListenerEvent(this.supabase, {
+        userId: this.userId,
+        eventType: 'signal_reconcile_parsed_drift',
+        channelRowId: channelRow.id,
+        telegramMessageId: signal.telegram_message_id,
+        detail: {
+          source,
+          signal_id: signal.id,
+          stored: normalizedSlTpTargets(signal.parsed_data),
+          fresh: normalizedSlTpTargets(freshRecord),
+        },
+      })
+    }
+
+    const mismatches = [...textMismatches, ...parsedDrift]
     const mismatchIds = new Set(mismatches.map(m => m.signal.id))
     const reconciledIds = checkedIds.filter(id => !mismatchIds.has(id))
     if (reconciledIds.length) {

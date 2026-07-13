@@ -547,7 +547,8 @@ function extractTpLevels(message: string, extraLabels: string[] = []): {
   collect(new RegExp(`\\b(?:tp|target(?:\\s+level)?)\\s*\\d+\\s*[:=\\-]\\s*(${SIGNAL_PRICE_NUM})`, 'gi'))
   collect(new RegExp(`\\b(?:tp|target(?:\\s+level)?)\\s*\\d+\\s+(${SIGNAL_PRICE_NUM})`, 'gi'))
   collect(new RegExp(`\\btp\\s*\\.\\s*(${SIGNAL_PRICE_NUM})`, 'gi'))
-  collect(new RegExp(`\\btp\\s*\\d+\\s*\\.\\s*(${SIGNAL_PRICE_NUM})`, 'gi'))
+  // Tier index only (1–2 digits): "TP1. 4066". Must not match "TP 4053.22" (full decimal price).
+  collect(new RegExp(`\\btp\\s*\\d{1,2}\\s*\\.\\s*(${SIGNAL_PRICE_NUM})`, 'gi'))
   collect(new RegExp(`\\btp[\\u00B9\\u00B2\\u00B3\\u2070-\\u2079]+(${SIGNAL_PRICE_NUM})`, 'giu'))
   collect(new RegExp(`(?:الهدف\\s*(?:الأول|الثاني|الثالث|\\d+)|جني\\s*الأرباح|جني\\s*الارباح)\\s*[:：]?\\s*(${SIGNAL_PRICE_NUM})`, 'giu'))
 

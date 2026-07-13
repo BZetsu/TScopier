@@ -105,6 +105,68 @@ export function shouldReconcileSignal(
   return messageTextChanged(stored.raw_message, fetched.text)
 }
 
+export function normalizedSlTpTargets(
+  parsed: Record<string, unknown> | null | undefined,
+): { sl: number | null; tp: number[] } {
+  const slRaw = parsed?.sl
+  const sl =
+    slRaw != null && Number.isFinite(Number(slRaw)) && Number(slRaw) > 0
+      ? Number(slRaw)
+      : null
+  const tp = Array.isArray(parsed?.tp)
+    ? (parsed!.tp as unknown[])
+        .map(v => Number(v))
+        .filter(n => Number.isFinite(n) && n > 0)
+        .sort((a, b) => a - b)
+    : []
+  return { sl, tp }
+}
+
+/** True when fresh re-parse SL/TP differs from what is stored on the signal row. */
+export function parsedTargetsDrift(
+  stored: Record<string, unknown> | null | undefined,
+  fresh: Record<string, unknown> | null | undefined,
+): boolean {
+  if (!stored || !fresh) return false
+  const action = String(stored.action ?? '').toLowerCase()
+  if (action !== 'buy' && action !== 'sell') return false
+  const a = normalizedSlTpTargets(stored)
+  const b = normalizedSlTpTargets(fresh)
+  if (a.sl !== b.sl) return true
+  if (a.tp.length !== b.tp.length) return true
+  return a.tp.some((v, i) => v !== b.tp[i])
+}
+
+export type ParsedTargetsSnapshot = { sl: number | null; tp: number[] }
+
+/** Reconcile when Telegram text matches but stored SL/TP drift from a fresh parse. */
+export function findSignalsWithParsedDrift(
+  signals: ReconcileSignalRow[],
+  telegramByMessageId: Map<string, TelegramMessageSnapshot>,
+  textMismatchSignalIds: Set<string>,
+  reparse: (rawMessage: string) => ParsedTargetsSnapshot | null,
+): ReconcileCandidate[] {
+  const out: ReconcileCandidate[] = []
+  for (const signal of signals) {
+    if (textMismatchSignalIds.has(signal.id)) continue
+    const mid = signal.telegram_message_id?.trim()
+    if (!mid) continue
+    const snap = telegramByMessageId.get(mid)
+    if (!snap) continue
+    if (shouldReconcileSignal(signal, snap)) continue
+    const fresh = reparse(snap.text)
+    if (!fresh) continue
+    const freshRecord = { action: signal.parsed_data?.action, sl: fresh.sl, tp: fresh.tp }
+    if (!parsedTargetsDrift(signal.parsed_data, freshRecord)) continue
+    out.push({
+      signal,
+      rawMessage: snap.text,
+      editDateSec: snap.editDateSec,
+    })
+  }
+  return out
+}
+
 export function findSignalsNeedingReconcile(
   signals: ReconcileSignalRow[],
   telegramByMessageId: Map<string, TelegramMessageSnapshot>,
