@@ -318,6 +318,8 @@ export class UserListener {
   private userProfilesCopierPauseChannel: ReturnType<SupabaseClient['channel']> | null = null
   /** Serializes message revision apply per channel row + telegram message id. */
   private revisionChains = new Map<string, Promise<boolean>>()
+  /** In-process dedupe for revision dispatches (edit handler vs settle poll vs HTTP push). */
+  private revisionDispatchDedup = new Map<string, number>()
   /** signal_channel_ids where canonical feed is live — skip poll/reconcile in primary mode. */
   private passiveSignalChannelIds = new Set<string>()
 
@@ -1317,7 +1319,7 @@ export class UserListener {
     const dispatchRow = buildRevisionDispatchRow(fresh, parseResult, {
       t_ai_parse_done: tRevision,
       t_dispatch_sent: tRevision,
-    })
+    }, args.telegramEditDateSeen)
     dispatchRow.dispatch_source = MESSAGE_REVISION_DISPATCH_SOURCE
     if (fresh.parsed_data?.action) {
       dispatchRow.revision_prior_action = String(fresh.parsed_data.action)
@@ -1343,8 +1345,37 @@ export class UserListener {
       },
     })
 
-    await this.dispatchRevisionSignal(dispatchRow)
+    if (this.shouldSkipDuplicateRevisionDispatch(fresh.id, args.telegramEditDateSeen)) {
+      void persistListenerEvent(this.supabase, {
+        userId: this.userId,
+        eventType: 'message_revision_dispatch_deduped',
+        channelRowId: channelRow.id,
+        telegramMessageId: messageId,
+        detail: { signal_id: fresh.id, source, edit_date: args.telegramEditDateSeen ?? null },
+      })
+      return true
+    }
+
+    this.dispatchRevisionSignal(dispatchRow)
     return true
+  }
+
+  private revisionDispatchDedupKey(signalId: string, editDate?: number | null): string {
+    return `${signalId}|${editDate != null && editDate > 0 ? Math.floor(editDate) : 0}`
+  }
+
+  private shouldSkipDuplicateRevisionDispatch(signalId: string, editDate?: number | null): boolean {
+    const key = this.revisionDispatchDedupKey(signalId, editDate)
+    const now = Date.now()
+    const seenAt = this.revisionDispatchDedup.get(key)
+    if (seenAt != null && now - seenAt < 120_000) return true
+    this.revisionDispatchDedup.set(key, now)
+    if (this.revisionDispatchDedup.size > 500) {
+      for (const [k, at] of this.revisionDispatchDedup) {
+        if (now - at > 120_000) this.revisionDispatchDedup.delete(k)
+      }
+    }
+    return false
   }
 
   private scheduleEntryMessageSettlePoll(channelRow: ChannelRow, messageId: string) {
@@ -1421,24 +1452,14 @@ export class UserListener {
     }
   }
 
-  private async dispatchRevisionSignal(dispatchRow: SignalRow): Promise<void> {
-    if (await loadCachedUserCopierPaused(this.supabase, this.userId)) return
-
-    const dispatchedInProcess = this.onSignalParsed
-      ? this.onSignalParsed(dispatchRow) === true
-      : false
-    const shouldPush = workerConfig.runsListener && (!workerConfig.runsTrade || !dispatchedInProcess)
-
-    if (shouldPush) {
-      const pushed = await pushParsedSignalToTradeWorkerAwait(
-        {
-          ...dispatchRow,
-          dispatch_source: MESSAGE_REVISION_DISPATCH_SOURCE,
-        },
-        { source: MESSAGE_REVISION_DISPATCH_SOURCE },
-      )
-      if (!pushed) incMetric('dispatch_push_exhausted')
-    }
+  private dispatchRevisionSignal(dispatchRow: SignalRow): void {
+    void loadCachedUserCopierPaused(this.supabase, this.userId).then(paused => {
+      if (paused) return
+      const dispatchedInProcess = this.onSignalParsed
+        ? this.onSignalParsed(dispatchRow) === true
+        : false
+      this.routeDispatchToTradeWorker(dispatchRow, dispatchedInProcess)
+    }).catch(() => {})
   }
 
   private isModificationClassMessage(

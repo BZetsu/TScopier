@@ -248,6 +248,8 @@ export class TradeExecutor {
   symbolParamsInflight = new Map<string, Promise<SymbolCacheEntry | null>>()
   /** After OrderSend "Not connected", block re-trading until user reconnects. */
   sessionOrderBlocked = new Set<string>()
+  /** Dedupe concurrent message-revision dispatches (in-process + HTTP push). */
+  private processedRevisionEdits = new Map<string, number>()
   /**
    * Per-broker "last reactivated" wall time. Set whenever `is_active` flips
    * to true (including the initial load when the broker is already active).
@@ -771,7 +773,8 @@ export class TradeExecutor {
     if (!signalMatchesExecutorMode(row.parsed_data, workerConfig.tradeExecutorMode)) {
       return false
     }
-    const source = opts?.source ?? 'dispatch'
+    const source = opts?.source ?? row.dispatch_source ?? 'dispatch'
+    if (this.isDuplicateRevisionDispatch(row, source)) return true
     const receivedAt = Date.now()
     const rowWithTs: SignalRow = {
       ...row,
@@ -836,7 +839,8 @@ export class TradeExecutor {
     if (!signalMatchesExecutorMode(row.parsed_data, workerConfig.tradeExecutorMode)) {
       return false
     }
-    const source = opts?.source ?? 'queue'
+    const source = opts?.source ?? row.dispatch_source ?? 'queue'
+    if (this.isDuplicateRevisionDispatch(row, source)) return true
     const isRangeWake = source === SIGNAL_RANGE_WAKE_DISPATCH_SOURCE
     const receivedAt = Date.now()
     const rowWithTs: SignalRow = {
@@ -886,8 +890,27 @@ export class TradeExecutor {
   dispatchParsedSignal(row: SignalRow): boolean {
     return this.acceptDispatchSignal(row, {
       priority: dispatchPriorityForAction(parsedAction(row.parsed_data)),
-      source: 'in_process',
+      source: row.dispatch_source ?? 'in_process',
     })
+  }
+
+  private isDuplicateRevisionDispatch(row: SignalRow, source: string): boolean {
+    const revisionSource = source === MESSAGE_REVISION_DISPATCH_SOURCE
+      || row.dispatch_source === MESSAGE_REVISION_DISPATCH_SOURCE
+    if (!revisionSource) return false
+    const edit = row.telegram_edit_date_seen
+    if (edit == null || edit <= 0) return false
+    const key = `${row.id}|${Math.floor(edit)}`
+    const now = Date.now()
+    const seenAt = this.processedRevisionEdits.get(key)
+    if (seenAt != null && now - seenAt < 120_000) return true
+    this.processedRevisionEdits.set(key, now)
+    if (this.processedRevisionEdits.size > 2000) {
+      for (const [k, at] of this.processedRevisionEdits) {
+        if (now - at > 120_000) this.processedRevisionEdits.delete(k)
+      }
+    }
+    return false
   }
 
   shouldUseMgmtFastPath(row: SignalRow, source?: string): boolean {

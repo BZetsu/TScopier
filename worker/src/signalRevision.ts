@@ -93,6 +93,7 @@ export function buildRevisionDispatchRow(
   existing: ExistingSignalRow,
   parseResult: ParseChannelMessageResult,
   pipelineTs?: PipelineTimestamps,
+  telegramEditDateSeen?: number | null,
 ): SignalRow {
   return {
     id: existing.id,
@@ -106,6 +107,10 @@ export function buildRevisionDispatchRow(
     reply_to_message_id: existing.reply_to_message_id,
     created_at: existing.created_at,
     pipeline_ts: pipelineTs,
+    telegram_edit_date_seen:
+      telegramEditDateSeen != null && telegramEditDateSeen > 0
+        ? Math.floor(telegramEditDateSeen)
+        : existing.telegram_edit_date_seen,
   }
 }
 

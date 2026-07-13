@@ -48,6 +48,8 @@ export interface SignalRow {
   wake_broker_account_id?: string
   /** Prior parsed action before a same-message revision (in-memory only). */
   revision_prior_action?: string | null
+  /** Telegram edit timestamp (in-memory dispatch hint; not persisted on signals row). */
+  telegram_edit_date_seen?: number | null
 }
 
 /** In-process priority-queue entry: signal plus the dispatch flags it arrived with. */

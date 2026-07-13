@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildDesiredLegTargets } from './v2ReconcileMonitor'
+import { buildDesiredLegTargets, closestLadderTp } from './v2ReconcileMonitor'
 import type { FxOpenOrder } from './fxContract'
 import type { BasketOpenLeg } from '../basketSlTpReconcile'
 
@@ -140,5 +140,32 @@ describe('buildDesiredLegTargets', () => {
     })
     assert.equal(t.length, 1)
     assert.equal(t[0]!.ticket, 100)
+  })
+
+  it('adjust-source basket target remaps stale leg TP to nearest revised ladder level', () => {
+    const t = buildDesiredLegTargets({
+      legs: [leg({ metaapi_order_id: '100', tp: 4070 })],
+      snapshot: [open(100, { takeProfit: 4070 })],
+      effectiveSl: 4038,
+      effectiveTpLevels: [4063, 4067, 4072],
+      isBuy: true,
+      effectiveSource: 'basket_target',
+      basketTargetSource: 'adjust',
+    })
+    assert.equal(t[0]!.takeProfit, 4072)
+    assert.equal(closestLadderTp(4070, [4063, 4067, 4072]), 4072)
+  })
+
+  it('keeps in-ladder DB TP under adjust-source basket target', () => {
+    const t = buildDesiredLegTargets({
+      legs: [leg({ metaapi_order_id: '100', tp: 4063 })],
+      snapshot: [open(100, { takeProfit: 4063 })],
+      effectiveSl: 4038,
+      effectiveTpLevels: [4063, 4067, 4072],
+      isBuy: true,
+      effectiveSource: 'basket_target',
+      basketTargetSource: 'adjust',
+    })
+    assert.equal(t[0]!.takeProfit, 4063)
   })
 })

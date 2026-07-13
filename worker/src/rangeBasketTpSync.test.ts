@@ -8,6 +8,7 @@ import {
   estimatePlanImmediateLegCount,
   fillZeroTargetsWithDeepest,
   preserveOpenLegTakeProfits,
+  pickV2MergeDistributeTargets,
   applyOpenLegStopLossToTargets,
   resolveFiringLegStops,
   resolveRangeBasketFinalTps,
@@ -244,6 +245,21 @@ test('resolveRangeTpRebalanceGate: redistributes while layering before any TP hi
   assert.equal(gate.allowOpenLegTpModify, true)
 })
 
+test('resolveRangeTpRebalanceGate: message revision bypasses closed legs and tp touch freeze', () => {
+  const gate = resolveRangeTpRebalanceGate({
+    activePendingCount: 0,
+    maxPendingStepIdx: 10,
+    phase: 'layering_rebalance',
+    forceLayeringRebalance: false,
+    forceMessageRevisionRefresh: true,
+    hasClosedBasketLegs: true,
+    tpTouched: true,
+  })
+  assert.equal(gate.mode, 'redistribute')
+  assert.equal(gate.allowOpenLegTpModify, true)
+  assert.equal(gate.reason, 'message_revision_refresh')
+})
+
 test('deepestFinalTp: buy uses max, sell uses min', () => {
   assert.equal(deepestFinalTp([4530, 4510, 4490], true), 4530)
   assert.equal(deepestFinalTp([4530, 4510, 4490], false), 4490)
@@ -460,4 +476,16 @@ test('buildRangeBasketTpTargets: sell rebalance copies breakeven SL from open le
     forceLayeringRebalance: true,
   })
   assert.ok(targets.every(t => t.stoploss === 4164.25))
+})
+
+test('pickV2MergeDistributeTargets: revision repaints, normal distribute preserves', () => {
+  const family = [{ ...openLeg('a', 4070, '2026-01-01T00:00:00Z'), tp: 4070 }]
+  const distributed = [
+    { stoploss: 4038, takeprofit: 4072 },
+    { stoploss: 4038, takeprofit: 4067 },
+  ]
+  const preserved = pickV2MergeDistributeTargets(family, distributed, false)
+  assert.equal(preserved[0]!.takeprofit, 4070)
+  const revised = pickV2MergeDistributeTargets(family, distributed, true)
+  assert.equal(revised[0]!.takeprofit, 4072)
 })

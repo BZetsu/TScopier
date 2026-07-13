@@ -22,6 +22,9 @@ export type EffectiveBasketStops = {
   source: EffectiveStopSource
   sourceSignalId?: string
   anchorSl: number
+  /** Present when the per-basket target store row was loaded. */
+  basketTargetSource?: string
+  basketTargetInstructionAt?: string | null
 }
 
 type ParsedMgmtRow = {
@@ -235,9 +238,13 @@ export async function resolveEffectiveBasketStops(
   // baskets) -> fall back to mgmt-signal scan + channel memory + anchor.
   let basketTargetSl: number | null = null
   let tpFromTarget = false
+  let basketTargetSource: string | undefined
+  let basketTargetInstructionAt: string | null = null
   if (args.brokerAccountId) {
     const target = await loadBasketSlTpTarget(args.supabase, args.brokerAccountId, args.anchorSignalId)
     if (target) {
+      basketTargetSource = target.source
+      basketTargetInstructionAt = target.instructionAt
       const targetAt = target.instructionAt ?? target.updatedAt
       const autoBeNewerThanTarget = autoBeAt != null
         && targetAt != null
@@ -328,6 +335,8 @@ export async function resolveEffectiveBasketStops(
     source,
     sourceSignalId,
     anchorSl,
+    basketTargetSource,
+    basketTargetInstructionAt,
   }
 }
 

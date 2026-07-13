@@ -68,6 +68,8 @@ export type RangeBasketTpSyncArgs = {
   plan?: PlannerResult | null
   /** When set, force phase B (range layer just fired). */
   forceLayeringRebalance?: boolean
+  /** Telegram message edit — full TP redistribution even after TP hits. */
+  forceMessageRevisionRefresh?: boolean
   channelId?: string | null
   basketCreatedAt?: string | null
 }
@@ -198,6 +200,7 @@ export function buildRangeBasketTpTargets(args: {
   activePendingCount: number
   maxPendingStepIdx: number
   forceLayeringRebalance?: boolean
+  forceMessageRevisionRefresh?: boolean
   channelTpLevels?: number[] | null
   finalTpsOverride?: number[] | null
   /** Wins over parsed.sl when set (e.g. post-adjust effective SL). */
@@ -207,7 +210,8 @@ export function buildRangeBasketTpTargets(args: {
 }): PerLegStopTargetLike[] {
   const {
     familyTrades, plan, parsed, tpLots, direction, activePendingCount, maxPendingStepIdx,
-    forceLayeringRebalance, channelTpLevels, finalTpsOverride, stoplossOverride, explicitSl,
+    forceLayeringRebalance, forceMessageRevisionRefresh, channelTpLevels, finalTpsOverride,
+    stoplossOverride, explicitSl,
   } = args
   if (!familyTrades.length) return []
 
@@ -244,7 +248,7 @@ export function buildRangeBasketTpTargets(args: {
     activePendingCount,
     maxPendingStepIdx,
   })
-  const phase = forceLayeringRebalance ? 'layering_rebalance' : detectedPhase
+  const phase = (forceLayeringRebalance || forceMessageRevisionRefresh) ? 'layering_rebalance' : detectedPhase
   const isBuy = direction === 'buy'
 
   const openLegs = familyTrades.map(tr => ({
@@ -429,10 +433,15 @@ export function resolveRangeTpRebalanceGate(args: {
   maxPendingStepIdx: number
   phase: RangeBasketTpPhase
   forceLayeringRebalance?: boolean
+  /** Telegram message edit — authoritative full TP redistribution. */
+  forceMessageRevisionRefresh?: boolean
   hasClosedBasketLegs: boolean
   /** Sticky live-quote TP touch (range_pending_tp_locks). */
   tpTouched?: boolean
 }): RangeTpRebalanceGateResult {
+  if (args.forceMessageRevisionRefresh === true) {
+    return { mode: 'redistribute', allowOpenLegTpModify: true, reason: 'message_revision_refresh' }
+  }
   const tpHit = args.hasClosedBasketLegs || args.tpTouched === true
   if (tpHit) {
     return {
@@ -511,6 +520,16 @@ export function preserveOpenLegTakeProfits(
     }
     return t
   })
+}
+
+/** v2 naked-leg distribute preserves open TPs; message revisions repaint the full ladder. */
+export function pickV2MergeDistributeTargets(
+  familyTrades: BasketOpenLeg[],
+  perLegTargets: PerLegStopTargetLike[],
+  sameSignalRefresh: boolean,
+): PerLegStopTargetLike[] {
+  if (sameSignalRefresh) return perLegTargets
+  return preserveOpenLegTakeProfits(familyTrades, perLegTargets)
 }
 
 /** Farthest/final TP for a direction-sorted ladder (buy: max, sell: min). */
@@ -740,6 +759,7 @@ export async function syncRangeBasketTakeProfits(args: RangeBasketTpSyncArgs): P
     activePendingCount,
     maxPendingStepIdx,
     forceLayeringRebalance: args.forceLayeringRebalance,
+    forceMessageRevisionRefresh: args.forceMessageRevisionRefresh,
     channelTpLevels,
     finalTpsOverride: finalTps,
     stoplossOverride: effective.stoploss > 0 ? effective.stoploss : null,
@@ -760,7 +780,9 @@ export async function syncRangeBasketTakeProfits(args: RangeBasketTpSyncArgs): P
     activePendingCount,
     maxPendingStepIdx,
   })
-  const effectivePhase = args.forceLayeringRebalance ? 'layering_rebalance' : phase
+  const effectivePhase = (args.forceLayeringRebalance || args.forceMessageRevisionRefresh)
+    ? 'layering_rebalance'
+    : phase
 
   const hasClosedLegs = await hasClosedBasketLegs(
     args.supabase,
@@ -777,6 +799,7 @@ export async function syncRangeBasketTakeProfits(args: RangeBasketTpSyncArgs): P
     maxPendingStepIdx,
     phase: effectivePhase,
     forceLayeringRebalance: args.forceLayeringRebalance,
+    forceMessageRevisionRefresh: args.forceMessageRevisionRefresh,
     hasClosedBasketLegs: hasClosedLegs,
     tpTouched,
   })

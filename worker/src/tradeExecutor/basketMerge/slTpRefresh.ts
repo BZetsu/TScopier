@@ -45,7 +45,7 @@ import {
   logEffectiveBasketStops,
   resolveEffectiveBasketStops,
 } from '../../basketEffectiveStops'
-import { buildRangeBasketTpTargets, preserveOpenLegTakeProfits, toRangeBasketParsedSlice } from '../../rangeBasketTpSync'
+import { buildRangeBasketTpTargets, pickV2MergeDistributeTargets, toRangeBasketParsedSlice } from '../../rangeBasketTpSync'
 import { isRangeLayerTillCloseEnabled } from '../../rangeLayerTillClose'
 import {
   patchActiveRangePendingLegStops,
@@ -249,6 +249,9 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
       const parsedSl = typeof effectiveParsed.sl === 'number' ? effectiveParsed.sl : 0
       if (parsedSl > 0) effectiveSlIsExplicitMgmt = true
     }
+    if (!effectiveSlIsExplicitMgmt && sameSignalRefresh) {
+      effectiveSlIsExplicitMgmt = true
+    }
     if (!parsedHasExplicitEntryAnchor(plannerParsed)) {
       const ep = Number(newest.entry_price)
       if (Number.isFinite(ep) && ep > 0) plannerParsed.entry_price = ep
@@ -414,6 +417,7 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
           direction: direction as 'buy' | 'sell',
           activePendingCount,
           maxPendingStepIdx,
+          forceMessageRevisionRefresh: sameSignalRefresh,
           stoplossOverride: effectiveSlIsExplicitMgmt
             ? (typeof effectiveParsed.sl === 'number' && effectiveParsed.sl > 0 ? effectiveParsed.sl : null)
             : null,
@@ -491,6 +495,61 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
 
     for (let round = 0; round < stragglerRounds; round++) {
       if (useV2BasketRefresh) {
+        const revisionRefresh = sameSignalRefresh === true
+        const distributeSignalTps = (effectiveParsed.tp ?? []).filter(
+          (t): t is number => typeof t === 'number' && Number.isFinite(t) && t > 0,
+        )
+
+        if (revisionRefresh) {
+          const modifyPass = await runBasketLegModifies({
+            supabase: ctx.supabase,
+            api,
+            uuid,
+            symbol,
+            direction,
+            baseLot,
+            params: basketParams,
+            signalId: signal.id,
+            userId: signal.user_id,
+            brokerAccountId: broker.id,
+            familyTrades,
+            perLegTargets,
+            signalTps: distributeSignalTps,
+            tpLots: manual.tp_lots,
+            nImmCwe,
+            overrideTp,
+            strictEntryPrefetch,
+            openedTickets,
+            skipAlreadySynced: false,
+            parallelLegs: true,
+            orderCommentsEnabled: manual.order_comments_enabled !== false,
+            explicitChannelTargets: true,
+          })
+          for (const id of modifyPass.modifiedTradeIds) modifiedTradeIds.add(id)
+          summary = modifyPass.summary
+          legErrors = modifyPass.legErrors.map(e => ({ error: e.error, leg_index: e.leg_index }))
+
+          if (anchorSignalId && signal.channel_id) {
+            const seedSl = typeof effectiveParsed.sl === 'number' && effectiveParsed.sl > 0
+              ? effectiveParsed.sl
+              : null
+            if (seedSl != null || refreshTpLevels.length > 0) {
+              await upsertBasketSlTpTarget(ctx.supabase, {
+                userId: signal.user_id,
+                brokerAccountId: broker.id,
+                anchorSignalId,
+                channelId: signal.channel_id,
+                symbol,
+                stoploss: seedSl,
+                tpLevels: refreshTpLevels.length ? refreshTpLevels : null,
+                source: 'adjust',
+                instructionAt: new Date().toISOString(),
+              }).catch(() => {})
+            }
+          }
+          break
+        }
+
         // v2: skip the synchronous straggler leg-modify loop entirely. Channel memory /
         // desired-state was already written above, and the single v2 reconcile loop
         // converges every existing leg to it within its ~2s tick - off the entry hot
@@ -530,7 +589,7 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
           && refreshTpLevels.length > 0
           && familyTrades.some(tr => !(Number(tr.tp) > 0))
         ) {
-          const distributedTargets = preserveOpenLegTakeProfits(familyTrades, perLegTargets)
+          const distributedTargets = pickV2MergeDistributeTargets(familyTrades, perLegTargets, revisionRefresh)
           const distributeFamily = [...familyTrades]
           const distributeSignalTps = (effectiveParsed.tp ?? []).filter(
             (t): t is number => typeof t === 'number' && Number.isFinite(t) && t > 0,
