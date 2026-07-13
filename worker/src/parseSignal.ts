@@ -9,6 +9,7 @@ import {
   entryReferenceFromParsed,
   extractBarePriceRangeZone,
   extractUnlabeledPrices,
+  normalizeEntryZonePair,
   type TradeDirection,
 } from './signalPriceInference'
 import {
@@ -545,6 +546,8 @@ function extractTpLevels(message: string, extraLabels: string[] = []): {
   collect(new RegExp(`\\b(?:tp|take\\s*profit|target(?:\\s+level)?)\\s+\\d+\\s*[:=\\-]\\s*(${SIGNAL_PRICE_NUM})`, 'gi'))
   collect(new RegExp(`\\b(?:tp|target(?:\\s+level)?)\\s*\\d+\\s*[:=\\-]\\s*(${SIGNAL_PRICE_NUM})`, 'gi'))
   collect(new RegExp(`\\b(?:tp|target(?:\\s+level)?)\\s*\\d+\\s+(${SIGNAL_PRICE_NUM})`, 'gi'))
+  collect(new RegExp(`\\btp\\s*\\d+\\s*\\.\\s*(${SIGNAL_PRICE_NUM})`, 'gi'))
+  collect(new RegExp(`\\btp[\\u00B9\\u00B2\\u00B3\\u2070-\\u2079]+(${SIGNAL_PRICE_NUM})`, 'giu'))
   collect(new RegExp(`(?:الهدف\\s*(?:الأول|الثاني|الثالث|\\d+)|جني\\s*الأرباح|جني\\s*الارباح)\\s*[:：]?\\s*(${SIGNAL_PRICE_NUM})`, 'giu'))
 
   collect(buildTpRegex(extraLabels))
@@ -705,12 +708,19 @@ const SL_MGMT_VERBS = 'set|move|adjust|bring|change|update|make|modify'
 function parseAtPriceExcludingSlTp(text: string): number | null {
   for (const m of text.matchAll(new RegExp(`@\\s*(${SIGNAL_PRICE_NUM})\\b`, 'gi'))) {
     const start = m.index ?? 0
-    const before = text.slice(Math.max(0, start - 24), start)
-    if (/\b(?:sl|stop\s*loss|tp|take\s*profit)\s*$/i.test(before)) continue
+    const before = text.slice(Math.max(0, start - 32), start)
+    if (/\b(?:sl|stop\s*loss|stoploss|tp|take\s*profit)\b[_\s./]*$/i.test(before)) continue
+    if (/\bsl\b[_\s]*\/\s*@?\s*$/i.test(before)) continue
     const value = parseSignalPriceToken(m[1] ?? '')
     if (value != null) return value
   }
   return null
+}
+
+function entryZoneFromRawTokens(rawA: string, rawB: string): { entry_zone_low: number; entry_zone_high: number } | null {
+  const zone = normalizeEntryZonePair(rawA, rawB)
+  if (!zone) return null
+  return { entry_zone_low: zone.low, entry_zone_high: zone.high }
 }
 
 function slPriceFromClause(clause: string): number | null {
@@ -732,6 +742,12 @@ function looksLikeStopOrTpAdjustCommand(text: string): boolean {
 }
 
 function parseSlFromText(text: string): number | null {
+  const slSlashAt = text.match(
+    /(?:^|\s)(?:sl|stop\s*loss|stoploss)[_\s]*\/\s*@\s*(\d+(?:\.\d+)?)/i,
+  )
+  if (slSlashAt?.[1]) return parseSignalPriceToken(slSlashAt[1])
+  const slDotLabel = text.match(/\b(?:sl|stop\s*loss)\b\s*\.\s*(\d+(?:\.\d+)?)/i)
+  if (slDotLabel?.[1]) return parseSignalPriceToken(slDotLabel[1])
   const slMatchStandard = text.match(
     new RegExp(`\\b(?:${SL_TEXT_LABELS})\\s*[:=@]?\\s*(${SIGNAL_PRICE_NUM})`, 'i'),
   )
@@ -932,13 +948,20 @@ function extractOptionalEntryAnchor(
   let entry_zone_high: number | null = null
   let entry_price: number | null = null
   if (zone?.[1] && zone?.[2]) {
-    const a = parseSignalPriceToken(zone[1])
-    const b = parseSignalPriceToken(zone[2])
-    if (a != null && b != null) {
-      entry_zone_low = Math.min(a, b)
-      entry_zone_high = Math.max(a, b)
+    const normalized = entryZoneFromRawTokens(zone[1], zone[2])
+    if (normalized) {
+      entry_zone_low = normalized.entry_zone_low
+      entry_zone_high = normalized.entry_zone_high
     }
   } else {
+    const applyZone = (rawA: string, rawB: string) => {
+      const normalized = entryZoneFromRawTokens(rawA, rawB)
+      if (normalized) {
+        entry_zone_low = normalized.entry_zone_low
+        entry_zone_high = normalized.entry_zone_high
+      }
+    }
+
     // ZN / ZONE / Z: 4105-4113 (common shorthand on gold channels)
     const znZone = text.match(
       new RegExp(
@@ -956,48 +979,50 @@ function extractOptionalEntryAnchor(
       ),
     )
     const zoneMatch = znZone ?? nowZone ?? reentryZone
+    const symSideColonSlash = text.match(
+      new RegExp(
+        `\\b(?:xauusd|xagusd|gold|silver|btcusd|btcusdt|ethusd|ethusdt|eurusd|gbpusd|usdjpy|us30|nas100|[a-z]{6})\\s+(?:buy|sell|long|short)\\s*:\\s*(${SIGNAL_PRICE_NUM})\\s*(?:\\/|\\band\\b)\\s*(${SIGNAL_PRICE_NUM})\\b`,
+        'i',
+      ),
+    )
+    const symPriceSlash = text.match(
+      new RegExp(
+        `\\b(?:xauusd|xagusd|gold|silver)\\s+(${SIGNAL_PRICE_NUM})\\s*(?:\\/|\\band\\b)\\s*(${SIGNAL_PRICE_NUM})\\b`,
+        'i',
+      ),
+    )
+    const sidePriceSlash = text.match(
+      new RegExp(`\\b(?:buy|sell|long|short)\\s+(${SIGNAL_PRICE_NUM})\\s*(?:\\/|\\band\\b)\\s*(${SIGNAL_PRICE_NUM})\\b`, 'i'),
+    )
+    const slashZone = symSideColonSlash ?? symPriceSlash ?? sidePriceSlash
+    const entrySlashZone = text.match(
+      new RegExp(
+        `\\bentry\\s*(?:price|level)?\\s*[:=]?\\s*(${SIGNAL_PRICE_NUM})\\s*(?:\\/|\\band\\b|-|–)\\s*(${SIGNAL_PRICE_NUM})\\b`,
+        'i',
+      ),
+    )
+    const arEntryZone = text.match(
+      new RegExp(
+        `(?:منطقة\\s*الدخول|نقطة\\s*الدخول|سعر\\s*الدخول)\\s*[:：]?\\s*(${SIGNAL_PRICE_NUM})\\s*(?:-|–|to|إلى)\\s*(${SIGNAL_PRICE_NUM})`,
+        'iu',
+      ),
+    )
+    const bareZone = extractBarePriceRangeZone(message)
+
     if (zoneMatch?.[1] && zoneMatch?.[2]) {
-      const a = parseSignalPriceToken(zoneMatch[1])
-      const b = parseSignalPriceToken(zoneMatch[2])
-      if (a != null && b != null) {
-        entry_zone_low = Math.min(a, b)
-        entry_zone_high = Math.max(a, b)
-      }
-    } else {
-      const entrySlashZone = text.match(
-        new RegExp(
-          `\\bentry\\s*(?:price|level)?\\s*[:=]?\\s*(${SIGNAL_PRICE_NUM})\\s*(?:\\/|\\band\\b|-|–)\\s*(${SIGNAL_PRICE_NUM})\\b`,
-          'i',
-        ),
-      )
-      if (entrySlashZone?.[1] && entrySlashZone?.[2]) {
-        const a = parseSignalPriceToken(entrySlashZone[1])
-        const b = parseSignalPriceToken(entrySlashZone[2])
-        if (a != null && b != null) {
-          entry_zone_low = Math.min(a, b)
-          entry_zone_high = Math.max(a, b)
-        }
-      } else {
-      const arEntryZone = text.match(
-        new RegExp(
-          `(?:منطقة\\s*الدخول|نقطة\\s*الدخول|سعر\\s*الدخول)\\s*[:：]?\\s*(${SIGNAL_PRICE_NUM})\\s*(?:-|–|to|إلى)\\s*(${SIGNAL_PRICE_NUM})`,
-          'iu',
-        ),
-      )
-      if (arEntryZone?.[1] && arEntryZone?.[2]) {
-        const a = parseSignalPriceToken(arEntryZone[1])
-        const b = parseSignalPriceToken(arEntryZone[2])
-        if (a != null && b != null) {
-          entry_zone_low = Math.min(a, b)
-          entry_zone_high = Math.max(a, b)
-        }
-      } else {
-      const bareZone = extractBarePriceRangeZone(message)
-      if (bareZone) {
-        entry_zone_low = bareZone.low
-        entry_zone_high = bareZone.high
-      }
-      if (entry_zone_low == null) {
+      applyZone(zoneMatch[1], zoneMatch[2])
+    } else if (slashZone?.[1] && slashZone?.[2]) {
+      applyZone(slashZone[1], slashZone[2])
+    } else if (entrySlashZone?.[1] && entrySlashZone?.[2]) {
+      applyZone(entrySlashZone[1], entrySlashZone[2])
+    } else if (arEntryZone?.[1] && arEntryZone?.[2]) {
+      applyZone(arEntryZone[1], arEntryZone[2])
+    } else if (bareZone) {
+      entry_zone_low = bareZone.low
+      entry_zone_high = bareZone.high
+    }
+
+    if (entry_zone_low == null) {
       const entryLevel = text.match(new RegExp(`\\bentry\\s+level\\s*[:=]?\\s*(${SIGNAL_PRICE_NUM})\\b`, 'i'))
       if (entryLevel?.[1]) entry_price = parseSignalPriceToken(entryLevel[1])
       const entryLabel = text.match(new RegExp(`\\bentry\\s*(?:price|level)?\\s*[:=]\\s*(${SIGNAL_PRICE_NUM})\\b`, 'i'))
@@ -1040,13 +1065,10 @@ function extractOptionalEntryAnchor(
         )
         if (symPriceOptionalMarket?.[1]) entry_price = parseSignalPriceToken(symPriceOptionalMarket[1])
       }
-    if (entry_price == null && entry_zone_low == null) {
-      const marketThenPrice = text.match(new RegExp(`\\b(?:now|instant|market|mkt)\\s+(${SIGNAL_PRICE_NUM})\\b`, 'i'))
-      if (marketThenPrice?.[1]) entry_price = parseSignalPriceToken(marketThenPrice[1])
-    }
+      if (entry_price == null && entry_zone_low == null) {
+        const marketThenPrice = text.match(new RegExp(`\\b(?:now|instant|market|mkt)\\s+(${SIGNAL_PRICE_NUM})\\b`, 'i'))
+        if (marketThenPrice?.[1]) entry_price = parseSignalPriceToken(marketThenPrice[1])
       }
-      }
-    }
     }
   }
   return { entry_price, entry_zone_low, entry_zone_high }

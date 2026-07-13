@@ -26,4 +26,16 @@ describe('entryZoneFarFromQuote', () => {
       false,
     )
   })
+
+  it('allows shorthand entry zone near market after parse fix', () => {
+    assert.equal(
+      entryZoneFarFromQuote({
+        parsed: { symbol: 'XAUUSD', entry_zone_low: 4059, entry_zone_high: 4061 },
+        quoteBid: 4060,
+        quoteAsk: 4060.5,
+        direction: 'buy',
+      }),
+      false,
+    )
+  })
 })

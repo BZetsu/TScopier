@@ -215,6 +215,53 @@ export function extractUnlabeledPrices(message: string): number[] {
   return out
 }
 
+function priceTokenIntDigitLen(raw: string): number {
+  const intPart = String(raw).replace(/,/g, '').trim().split('.')[0] ?? ''
+  return intPart.length
+}
+
+/**
+ * Expand channel shorthand entry zones like "4061-59" → 4059–4061 (second token drops leading digits).
+ */
+export function normalizeEntryZonePair(rawA: string, rawB: string): { low: number; high: number } | null {
+  const a = parseSignalPriceToken(rawA)
+  const b = parseSignalPriceToken(rawB)
+  if (a == null || b == null) return null
+
+  let lo = Math.min(a, b)
+  let hi = Math.max(a, b)
+
+  const rawFull = priceTokenIntDigitLen(rawA) >= priceTokenIntDigitLen(rawB) ? rawA : rawB
+  const rawShort = priceTokenIntDigitLen(rawA) < priceTokenIntDigitLen(rawB) ? rawA : rawB
+  const full = parseSignalPriceToken(rawFull)
+  if (full == null) return { low: lo, high: hi }
+
+  const shortInt = String(rawShort).replace(/,/g, '').trim().split('.')[0] ?? ''
+  const fullStr = String(full).replace(/,/g, '')
+  const [intFull, decFull] = fullStr.split('.')
+
+  const span = hi - lo
+  if (span > 20 && full >= 100 && shortInt.length > 0 && shortInt.length < intFull.length) {
+    const prefix = intFull.slice(0, intFull.length - shortInt.length)
+    const expandedInt = prefix + shortInt
+    const expanded = parseSignalPriceToken(decFull ? `${expandedInt}.${decFull}` : expandedInt)
+    if (expanded != null && Math.abs(expanded - full) < 500) {
+      lo = Math.min(full, expanded)
+      hi = Math.max(full, expanded)
+    }
+  }
+
+  return { low: lo, high: hi }
+}
+
+function isPipOrRiskRangeMatch(text: string, start: number, matchLen: number): boolean {
+  const after = text.slice(start + matchLen, start + matchLen + 16)
+  const before = text.slice(Math.max(0, start - 28), start)
+  if (/\bpips?\b/i.test(after)) return true
+  if (/\brisk\b/i.test(before) && /\bpips?\b/i.test(after)) return true
+  return false
+}
+
 /**
  * FX Culture / ICT style bare range on its own line: "4282.0-4287.0", "4282 / 4287".
  * Must appear as a two-price range, not a single labeled SL/TP value.
@@ -223,14 +270,16 @@ export function extractBarePriceRangeZone(message: string): { low: number; high:
   const collapsed = String(message ?? '').replace(/\s+/g, ' ').trim()
   const zoneRx = new RegExp(
     `(?:^|\\s)(${SIGNAL_PRICE_NUM})\\s*(?:-|–)\\s*(${SIGNAL_PRICE_NUM})(?:\\.|\\s|$)`,
-    'i',
+    'gi',
   )
-  const m = collapsed.match(zoneRx)
-  if (!m?.[1] || !m?.[2]) return null
-  const a = parseSignalPriceToken(m[1])
-  const b = parseSignalPriceToken(m[2])
-  if (a == null || b == null) return null
-  return { low: Math.min(a, b), high: Math.max(a, b) }
+  for (const m of collapsed.matchAll(zoneRx)) {
+    const start = m.index ?? 0
+    if (isPipOrRiskRangeMatch(collapsed, start, m[0].length)) continue
+    if (!m[1] || !m[2]) continue
+    const zone = normalizeEntryZonePair(m[1], m[2])
+    if (zone) return zone
+  }
+  return null
 }
 
 export function entryReferenceFromParsed(parsed: {

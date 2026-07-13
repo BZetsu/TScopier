@@ -3,7 +3,9 @@ import { test } from 'node:test'
 import {
   classifyPricesByDirection,
   detectReEnterIntent,
+  extractBarePriceRangeZone,
   extractUnlabeledPrices,
+  normalizeEntryZonePair,
   parsedHasReEnterIntent,
 } from './signalPriceInference'
 
@@ -84,4 +86,15 @@ TP: 4288`
 test('extractUnlabeledPrices skips bare calendar years in news prose', () => {
   const msg = 'Headline CPI highest level since April 2023 in May 2026 report'
   assert.deepEqual(extractUnlabeledPrices(msg), [])
+})
+
+test('normalizeEntryZonePair expands gold shorthand zones', () => {
+  assert.deepEqual(normalizeEntryZonePair('4061', '59'), { low: 4059, high: 4061 })
+  assert.deepEqual(normalizeEntryZonePair('4105', '03'), { low: 4103, high: 4105 })
+  assert.deepEqual(normalizeEntryZonePair('4136', '38'), { low: 4136, high: 4138 })
+})
+
+test('extractBarePriceRangeZone skips pip risk ranges', () => {
+  assert.equal(extractBarePriceRangeZone('SL: 4085 | Risk: 80-110 Pips'), null)
+  assert.deepEqual(extractBarePriceRangeZone('ENTRY 4061-59'), { low: 4059, high: 4061 })
 })

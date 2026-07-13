@@ -4,9 +4,13 @@ export function hasExecutableTradeStructure(message: string): boolean {
   if (!text) return false
   if (/\b(buy|sell)\s+now\b/i.test(text)) return true
   if (/\b(?:sl|tp|stop\s+loss|take\s+profit)\s*[:=\-]/i.test(text)) return true
+  if (/\b(?:sl|stop\s+loss)\b\s*\.\s*\d/i.test(text)) return true
+  if (/(?:^|\s)(?:sl|stop\s*loss|stoploss)[_\s]*\/\s*@\s*\d/i.test(text)) return true
   if (/\b(?:sl|stop\s+loss)\b(?:\s*\([^)]*\))?\s*[^\d]{0,8}\d/i.test(text)) return true
   if (/\btp\s*#?\s*\d+\b\s*[^\d]{0,8}\d/i.test(text)) return true
   if (/\btp\s*#?\s*\d+\s+\d/i.test(text)) return true
+  if (/\btp\s*\d+\s*\.\s*\d/i.test(text)) return true
+  if (/\btp[\u00B9-\u2079]+\d/i.test(text)) return true
   if (/\b(?:entry\s+level|stop\s+loss|target\s+level)\s*[:=]/i.test(text)) return true
   if (/\b(?:buy|sell)\s+(?:at\s+)?@\s*\d/i.test(text)) return true
   if (/\b(?:buy|sell)\s+at\s+\d/i.test(text)) return true

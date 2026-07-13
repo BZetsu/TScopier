@@ -9,7 +9,7 @@ import {
   type MarketNowKeywordFields,
 } from './signalEntryNowRequirement'
 import { looksLikeChannelManagementUpdate } from './signalManagementIntent'
-import { minPlausibleQuotePrice, reconcileSymbolWithQuoteLevels, sanitizeParsedSymbol } from './tradableSymbol'
+import { minPlausibleQuotePrice, reconcileSymbolWithQuoteLevels, sanitizeParsedSymbol, filterPlausibleInstrumentPrices } from './tradableSymbol'
 
 export { ENTRY_REQUIRES_NOW_REASON } from './signalEntryNowRequirement'
 export const COMMENTARY_NOT_SIGNAL_REASON = 'commentary_not_trade_signal'
@@ -66,7 +66,11 @@ export function evaluateParsedSignalExecutionEligibility(
   if (minQuote != null && symbol) {
     const sl = positive(parsed.sl)
     const tps = Array.isArray(parsed.tp) ? parsed.tp.map(positive).filter((n): n is number => n != null) : []
-    if ((sl != null && sl < minQuote) || tps.some(t => t < minQuote)) {
+    const plausibleTps = filterPlausibleInstrumentPrices(symbol, tps)
+    if (sl != null && sl < minQuote) {
+      return { eligible: false, skipReason: COMMENTARY_NOT_SIGNAL_REASON }
+    }
+    if (tps.length > 0 && plausibleTps.length === 0) {
       return { eligible: false, skipReason: COMMENTARY_NOT_SIGNAL_REASON }
     }
   }

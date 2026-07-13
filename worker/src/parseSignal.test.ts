@@ -1001,4 +1001,44 @@ This trade we right now in, selling gold, has a high potential of a very big dro
     assert.equal(result.parsed.action, 'sell')
     assert.equal(result.parsed.symbol, 'XAUUSD')
   })
+
+  it('parses ENTRY shorthand zone 4061-59 as 4059-4061', () => {
+    const msg = `XAUUSD BUY
+
+ENTRY 4061-59
+SL 4044
+TP 4066`
+    const result = parseChannelMessageSync(msg, DEFAULT_CHANNEL_KEYWORDS, lexicon)
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.entry_zone_low, 4059)
+    assert.equal(result.parsed.entry_zone_high, 4061)
+    assert.equal(result.parsed.sl, 4044)
+  })
+
+  it('parses Sl_/@4046 and superscript TP tiers', () => {
+    const msg = `XAUUSD BUY 4057/4054
+
+Sl_/@4046
+
+TP¹4060
+TP²4064`
+    const result = parseChannelMessageSync(msg, DEFAULT_CHANNEL_KEYWORDS, lexicon)
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.sl, 4046)
+    assert.deepEqual(result.parsed.tp, [4060, 4064])
+    assert.equal(result.parsed.entry_zone_low, 4054)
+    assert.equal(result.parsed.entry_zone_high, 4057)
+  })
+
+  it('parses XAUUSD SELL: 4074/4077 without matching Risk pip range', () => {
+    const msg = `XAUUSD SELL: 4074/4077
+SL: 4085 | Risk: 80-110 Pips
+TP1: 4070`
+    const result = parseChannelMessageSync(msg, DEFAULT_CHANNEL_KEYWORDS, lexicon)
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.action, 'sell')
+    assert.equal(result.parsed.entry_zone_low, 4074)
+    assert.equal(result.parsed.entry_zone_high, 4077)
+    assert.equal(result.parsed.sl, 4085)
+  })
 })

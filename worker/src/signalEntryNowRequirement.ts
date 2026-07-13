@@ -76,10 +76,14 @@ const LABEL_TO_PRICE_GAP = String.raw`(?:\s*(?:\([^)]*\)\s*)?[^\d\n]{0,12}?)`
 export function messageHasExplicitSlTpLabels(message: string): boolean {
   const text = String(message ?? '')
   if (new RegExp(String.raw`\b(?:sl|stop\s*loss)\b${LABEL_TO_PRICE_GAP}[:=@]?\s*\d`, 'iu').test(text)) return true
+  if (/\b(?:sl|stop\s*loss)\b\s*\.\s*\d/i.test(text)) return true
+  if (/(?:^|\s)(?:sl|stop\s*loss|stoploss)[_\s]*\/\s*@\s*\d/i.test(text)) return true
   if (/\b(?:sl|stop\s*loss)\s+to\s+\d/i.test(text)) return true
   if (/(?:وقف\s*الخسارة|وقف)\s*[:：=@]?\s*\d/u.test(text)) return true
   if (/(?:وقف\s*الخسارة|وقف)\s+(?:to|إلى)\s*\d/iu.test(text)) return true
   if (/\b(?:tp|take\s*profit|target(?:\s+level)?)\s*#?\s*\d+\s*[:=\-]\s*\d/i.test(text)) return true
+  if (/\btp\s*\d+\s*\.\s*\d/i.test(text)) return true
+  if (/\btp[\u00B9-\u2079]+\d/i.test(text)) return true
   // TP1 4340 (numbered tier, space-separated — no colon)
   if (new RegExp(String.raw`\b(?:tp|take\s*profit|target(?:\s+level)?)\s*#?\s*\d+\b${LABEL_TO_PRICE_GAP}\d`, 'iu').test(text)) return true
   if (new RegExp(String.raw`\b(?:tp|take\s*profit|target(?:\s+level)?)\b${LABEL_TO_PRICE_GAP}[:=\-]?\s*\d`, 'iu').test(text)) return true
