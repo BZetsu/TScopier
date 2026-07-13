@@ -353,7 +353,7 @@ function buildTpRegex(extraLabels = []) {
     const custom = extraLabels.map((x) => escapeRegExp(x.trim())).filter(Boolean);
     // Guard against tier ordinals being mistaken for TP prices in shapes like:
     // "Take Profit 1: 4514.00" (capture 4514, not the ordinal 1).
-    return new RegExp(`\\b(?:${[...base, ...custom].join("|")})(?:\\s*[:=\\-]\\s*|\\s+)(${signalPriceFormat_1.SIGNAL_PRICE_NUM})(?!\\s*[:=\\-]\\s*${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, "gi");
+    return new RegExp(`\\b(?:${[...base, ...custom].join("|")})(?:\\s*[:=\\-]\\s*|\\s+|\\.\\s*)(${signalPriceFormat_1.SIGNAL_PRICE_NUM})(?!\\s*[:=\\-]\\s*${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, "gi");
 }
 function extractTpLevels(message, extraLabels = []) {
     const text = String(message ?? "");
@@ -375,6 +375,7 @@ function extractTpLevels(message, extraLabels = []) {
     collect(new RegExp(`\\b(?:tp|take\\s*profit|target(?:\\s+level)?)\\s+\\d+\\s*[:=\\-]\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'gi'));
     collect(new RegExp(`\\b(?:tp|target(?:\\s+level)?)\\s*\\d+\\s*[:=\\-]\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'gi'));
     collect(new RegExp(`\\b(?:tp|target(?:\\s+level)?)\\s*\\d+\\s+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'gi'));
+    collect(new RegExp(`\\btp\\s*\\.\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'gi'));
     collect(new RegExp(`\\btp\\s*\\d+\\s*\\.\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'gi'));
     collect(new RegExp(`\\btp[\\u00B9\\u00B2\\u00B3\\u2070-\\u2079]+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'giu'));
     collect(new RegExp(`(?:الهدف\\s*(?:الأول|الثاني|الثالث|\\d+)|جني\\s*الأرباح|جني\\s*الارباح)\\s*[:：]?\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'giu'));

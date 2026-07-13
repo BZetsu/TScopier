@@ -104,13 +104,14 @@ function collectLabeledSpans(message: string): LabeledPriceSpan[] {
 
   addMatches(new RegExp(`\\b(?:sl|stop\\s*loss)\\s*[:=]?\\s*(${SIGNAL_PRICE_NUM})`, 'gi'))
   addMatches(new RegExp(`\\b(?:sl|stop\\s*loss)\\s+to\\s+(${SIGNAL_PRICE_NUM})`, 'gi'))
+  addMatches(new RegExp(`\\btp\\s*\\.\\s*(${SIGNAL_PRICE_NUM})`, 'gi'))
   addMatches(new RegExp(`\\b(?:tp|take\\s*profit|target(?:\\s+level)?)\\s*#\\s*\\d+\\s*[:=\\-]\\s*(${SIGNAL_PRICE_NUM})`, 'gi'))
   addMatches(new RegExp(`\\b(?:tp|take\\s*profit|target(?:\\s+level)?)\\s+\\d+\\s*[:=\\-]\\s*(${SIGNAL_PRICE_NUM})`, 'gi'))
   addMatches(new RegExp(`\\b(?:tp|take\\s*profit|target(?:\\s+level)?)\\s*\\d+\\s+(${SIGNAL_PRICE_NUM})`, 'gi'))
   addMatches(new RegExp(`\\b(?:tp|target(?:\\s+level)?)\\s*\\d+\\s*[:=\\-]\\s*(${SIGNAL_PRICE_NUM})`, 'gi'))
   addMatches(
     new RegExp(
-      `\\b(?:tp|take\\s*profit|target(?:\\s+level)?)(?:\\s*[:=\\-]\\s*|\\s+)(${SIGNAL_PRICE_NUM})(?!\\s*[:=\\-]\\s*${SIGNAL_PRICE_NUM})`,
+      `\\b(?:tp|take\\s*profit|target(?:\\s+level)?)(?:\\s*[:=\\-]\\s*|\\s+|\\.\\s*)(${SIGNAL_PRICE_NUM})(?!\\s*[:=\\-]\\s*${SIGNAL_PRICE_NUM})`,
       'gi',
     ),
   )

@@ -50,6 +50,15 @@ describe('parseChannelMessageSync', () => {
     assert.equal(result.parsed.action, 'ignore')
   })
 
+  it('parses sell with TP. dot labels (SIGNALS 2 message 393 style)', () => {
+    const msg = 'Gold sell now \nTP. 4066\nTP. 4060\nSL: 4080'
+    const result = parseChannelMessageSync(msg, DEFAULT_CHANNEL_KEYWORDS, lexicon)
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.action, 'sell')
+    assert.equal(result.parsed.sl, 4080)
+    assert.deepEqual(result.parsed.tp, [4066, 4060])
+  })
+
   it('parses standard market entry (SIGNALS PRO / SIGNALS 2 style)', () => {
     const msg = 'BUY XAUUSD NOW SL 2650 TP 2700 TP 2750'
     const result = parseChannelMessageSync(msg, DEFAULT_CHANNEL_KEYWORDS, lexicon)
