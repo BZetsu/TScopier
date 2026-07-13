@@ -70,7 +70,7 @@ export function messageHasMarketNowIntent(
 }
 
 /** Optional emoji / punctuation between a label and its price (e.g. SL ⛔️4038, TP1 🎯4058). */
-const LABEL_TO_PRICE_GAP = String.raw`(?:\s*(?:\([^)]*\)\s*)?[\s\p{Emoji_Presentation}\p{Extended_Pictographic}!#]*\s*)?`
+const LABEL_TO_PRICE_GAP = String.raw`(?:\s*(?:\([^)]*\)\s*)?[^\d\n]{0,12}?)`
 
 /** True when SL/TP appear as labeled parameters in the message (not inferred from prose). */
 export function messageHasExplicitSlTpLabels(message: string): boolean {
@@ -85,6 +85,8 @@ export function messageHasExplicitSlTpLabels(message: string): boolean {
   if (new RegExp(String.raw`\b(?:tp|take\s*profit|target(?:\s+level)?)\b${LABEL_TO_PRICE_GAP}[:=\-]?\s*\d`, 'iu').test(text)) return true
   if (new RegExp(String.raw`\btp\s*\d+\b${LABEL_TO_PRICE_GAP}[:=\-]?\s*\d`, 'iu').test(text)) return true
   if (/(?:الهدف(?:\s*(?:الأول|الثاني|الثالث|\d+))?|جني\s*الأرباح)\s*[:：=\-]?\s*\d/iu.test(text)) return true
+  if (/stop\s+loss\s*\(\s*sl\s*\)\s*:\s*\d/i.test(text)) return true
+  if (/take\s+profit\s*\d+\s*\(\s*tp\d+\s*\)\s*:\s*\d/i.test(text)) return true
   return false
 }
 
