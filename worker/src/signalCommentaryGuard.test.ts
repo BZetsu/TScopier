@@ -190,4 +190,10 @@ describe('messageHasExplicitSlTpLabels', () => {
     assert.equal(messageHasExplicitSlTpLabels('TP: 4510'), true)
     assert.equal(messageHasExplicitSlTpLabels('made £1110 profit'), false)
   })
+
+  it('matches Arabic SL and TP labels', () => {
+    assert.equal(messageHasExplicitSlTpLabels('وقف الخسارة: 2640'), true)
+    assert.equal(messageHasExplicitSlTpLabels('الهدف الأول: 2670'), true)
+    assert.equal(messageHasExplicitSlTpLabels('شراء الذهب الآن'), false)
+  })
 })

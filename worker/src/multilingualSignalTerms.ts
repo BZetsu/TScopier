@@ -26,7 +26,7 @@ export const SUPPORTED_MARKET_NOW_BY_LOCALE = {
   nl: ['nu', 'onmiddellijk', 'direct', 'aan de markt'],
   ja: ['今すぐ', '即時', '成行', 'ナウ'],
   de: ['jetzt', 'sofort', 'am markt'],
-  ar: ['الآن', 'فوراً', 'فورا'],
+  ar: ['الآن', 'فوراً', 'فورا', 'مباشرة', 'فوري', 'عند السوق', 'أمر سوق', 'امر سوق'],
   /** Often mixed with ES in signal channels */
   pt: ['agora', 'imediato', 'imediata', 'ao mercado'],
   it: ['ora', 'immediato', 'immediata', 'al mercato'],
@@ -48,6 +48,7 @@ export const COMMON_BUY_TERMS = [
   'купить', 'покупка',          // ru
   '買い',                       // ja
   'شراء',                       // ar
+  'طويل',                       // ar long
 ]
 
 export const COMMON_SELL_TERMS = [
@@ -60,19 +61,43 @@ export const COMMON_SELL_TERMS = [
   'продать', 'продажа',         // ru
   '売り',                       // ja
   'بيع',                        // ar
+  'قصير',                       // ar short
 ]
+
+/** Common stop-loss labels merged into parser SL extraction (incl. untrained channels). */
+export const COMMON_SL_TERMS = [
+  'وقف الخسارة', 'وقف',        // ar
+]
+
+/** Common take-profit / target labels merged into parser TP extraction. */
+export const COMMON_TP_TERMS = [
+  'الهدف الأول', 'الهدف الثاني', 'الهدف الثالث', 'الهدف', // ar
+  'جني الأرباح', 'جني الارباح',                             // ar
+]
+
+/** Common entry zone / price labels. */
+export const COMMON_ENTRY_TERMS = [
+  'منطقة الدخول', 'نقطة الدخول', 'سعر الدخول', // ar
+]
+
+const MULTILINGUAL_DIRECTION_TERMS = [
+  'buy', 'sell', 'long', 'short',
+  ...COMMON_BUY_TERMS,
+  ...COMMON_SELL_TERMS,
+] as const
 
 /** Direction words for ingest heuristic when channel is not yet trained. */
 export const MULTILINGUAL_DIRECTION_RE = new RegExp(
-  '\\b('
-  + [
-    'buy', 'sell', 'long', 'short',
-    ...COMMON_BUY_TERMS,
-    ...COMMON_SELL_TERMS,
-  ].map(t => escapeRegExp(t)).join('|')
-  + ')\\b',
+  `(?<![\\p{L}\\p{N}])(${
+    MULTILINGUAL_DIRECTION_TERMS.map(t => escapeRegExp(t)).join('|')
+  })(?![\\p{L}\\p{N}])`,
   'iu',
 )
+
+/** Unicode-safe direction detection (preferred over MULTILINGUAL_DIRECTION_RE for Arabic script). */
+export function textHasMultilingualDirection(message: string): boolean {
+  return MULTILINGUAL_DIRECTION_TERMS.some(t => messageContainsKeyword(message, t))
+}
 
 const JA_MARKET_NOW_RE = /今すぐ|即時|成行|ナウ/u
 
@@ -158,6 +183,9 @@ export function textHasCommonMarketNowIntent(message: string): boolean {
   if (JA_MARKET_NOW_RE.test(raw)) return true
   if (/\b(?:gold|xau(?:usd)?)\s+(?:buy|sell)\s+now\b/i.test(raw)) return true
   if (/\b(?:buy|sell)\s+(?:gold|xau(?:usd)?)\s+now\b/i.test(raw)) return true
+  if (/(?:ذهب|xau(?:usd)?)/iu.test(raw) && textHasMultilingualDirection(raw)) {
+    if (COMMON_MARKET_NOW_TERMS.some(t => messageContainsKeyword(raw, t))) return true
+  }
 
   return messageHasDirectionWithImmediateCue(raw)
 }

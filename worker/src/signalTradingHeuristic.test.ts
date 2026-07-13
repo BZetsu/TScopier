@@ -60,4 +60,17 @@ describe('signalTradingHeuristic', () => {
     const msg = 'Good morning traders, enjoy your weekend!'
     assert.equal(looksLikeTradingSignal(msg, false, null), false)
   })
+
+  it('passes Arabic entry with common buy/sl/tp labels', () => {
+    const msg = `XAUUSD
+شراء
+منطقة الدخول: 2650 - 2655
+وقف الخسارة: 2640
+الهدف الأول: 2670`
+    assert.equal(looksLikeTradingSignal(msg, false, null), true)
+  })
+
+  it('passes Arabic market-now sell without channel keywords', () => {
+    assert.equal(looksLikeTradingSignal('بيع الذهب الآن', false, null), true)
+  })
 })

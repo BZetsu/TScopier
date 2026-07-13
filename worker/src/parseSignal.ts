@@ -38,8 +38,11 @@ import {
 import { resolveManagementGroups } from './trainingManagementKeywords'
 import {
   COMMON_BUY_TERMS,
+  COMMON_ENTRY_TERMS,
   COMMON_MARKET_NOW_TERMS,
   COMMON_SELL_TERMS,
+  COMMON_SL_TERMS,
+  COMMON_TP_TERMS,
   foldAccents,
   messageContainsKeyword,
 } from './multilingualSignalTerms'
@@ -374,6 +377,47 @@ function sellAliasesForChannel(
   })
 }
 
+function slLabelsForChannel(
+  channelKeywords: ChannelKeywords,
+  includeMgmt = true,
+): string[] {
+  const delim = channelKeywords.additional.delimiters
+  return Array.from(new Set([
+    ...COMMON_SL_TERMS,
+    ...splitKeywordAliases(channelKeywords.signal.sl, delim),
+    ...(includeMgmt ? [
+      ...splitKeywordAliases(channelKeywords.update.set_sl, delim),
+      ...splitKeywordAliases(channelKeywords.update.adjust_sl, delim),
+    ] : []),
+  ]))
+}
+
+function tpLabelsForChannel(
+  channelKeywords: ChannelKeywords,
+  lexicon: ChannelLexiconRow | null = null,
+  includeMgmt = true,
+): string[] {
+  const delim = channelKeywords.additional.delimiters
+  return Array.from(new Set([
+    ...COMMON_TP_TERMS,
+    ...(lexicon?.tp_aliases ?? []),
+    ...(lexicon?.target_aliases ?? []),
+    ...splitKeywordAliases(channelKeywords.signal.tp, delim),
+    ...(includeMgmt ? [
+      ...splitKeywordAliases(channelKeywords.update.set_tp, delim),
+      ...splitKeywordAliases(channelKeywords.update.adjust_tp, delim),
+    ] : []),
+  ]))
+}
+
+function entryLabelsForChannel(channelKeywords: ChannelKeywords): string[] {
+  const delim = channelKeywords.additional.delimiters
+  return Array.from(new Set([
+    ...COMMON_ENTRY_TERMS,
+    ...splitKeywordAliases(channelKeywords.signal.entry_point, delim),
+  ]))
+}
+
 function isProseLongMatch(text: string): boolean {
   return /(?:^|\b)(?:too|so|as|how)\s+long(?:\b|$)/i.test(text)
 }
@@ -501,6 +545,7 @@ function extractTpLevels(message: string, extraLabels: string[] = []): {
   collect(new RegExp(`\\b(?:tp|take\\s*profit|target(?:\\s+level)?)\\s+\\d+\\s*[:=\\-]\\s*(${SIGNAL_PRICE_NUM})`, 'gi'))
   collect(new RegExp(`\\b(?:tp|target(?:\\s+level)?)\\s*\\d+\\s*[:=\\-]\\s*(${SIGNAL_PRICE_NUM})`, 'gi'))
   collect(new RegExp(`\\b(?:tp|target(?:\\s+level)?)\\s*\\d+\\s+(${SIGNAL_PRICE_NUM})`, 'gi'))
+  collect(new RegExp(`(?:الهدف\\s*(?:الأول|الثاني|الثالث|\\d+)|جني\\s*الأرباح|جني\\s*الارباح)\\s*[:：]?\\s*(${SIGNAL_PRICE_NUM})`, 'giu'))
 
   collect(buildTpRegex(extraLabels))
   // TP: 4557 / 4527 (slash-separated tiers on one label — not thousands commas)
@@ -653,8 +698,8 @@ function wantsExplicitFullClose(
 }
 
 /** Stop-loss labels used in management updates (providers often say "risk" or "stoploss"). */
-const SL_TEXT_LABELS = 'sl|stop\\s*loss|stoploss|risk'
-const TP_TEXT_LABELS = 'tp|take\\s*profit|target'
+const SL_TEXT_LABELS = 'sl|stop\\s*loss|stoploss|risk|وقف\\s*الخسارة|وقف'
+const TP_TEXT_LABELS = 'tp|take\\s*profit|target|الهدف(?:\\s*(?:الأول|الثاني|الثالث|\\d+))?|جني\\s*الأرباح'
 const SL_MGMT_VERBS = 'set|move|adjust|bring|change|update|make|modify'
 
 function parseAtPriceExcludingSlTp(text: string): number | null {
@@ -669,7 +714,7 @@ function parseAtPriceExcludingSlTp(text: string): number | null {
 }
 
 function slPriceFromClause(clause: string): number | null {
-  const slClauseTo = clause.match(new RegExp(`\\bto\\s*(${SIGNAL_PRICE_NUM})\\b`, 'i'))
+  const slClauseTo = clause.match(new RegExp(`(?:\\bto\\b|إلى)\\s*(${SIGNAL_PRICE_NUM})`, 'iu'))
   if (slClauseTo?.[1]) return parseSignalPriceToken(slClauseTo[1])
   const candidates = bareTradePricesExcludingPips(clause, extractUnlabeledPrices(clause))
   const tail = candidates.length > 0 ? candidates[candidates.length - 1] : null
@@ -692,7 +737,7 @@ function parseSlFromText(text: string): number | null {
   )
   if (slMatchStandard?.[1]) return parseSignalPriceToken(slMatchStandard[1])
   const slMatchTo = text.match(
-    new RegExp(`\\b(?:${SL_TEXT_LABELS})\\s+to\\s+(${SIGNAL_PRICE_NUM})`, 'i'),
+    new RegExp(`\\b(?:${SL_TEXT_LABELS})\\s+(?:to|إلى)\\s+(${SIGNAL_PRICE_NUM})`, 'iu'),
   )
   if (slMatchTo?.[1]) return parseSignalPriceToken(slMatchTo[1])
   // "Adjust Risk/SL/Stoploss … (+ pips) … to 4505"
@@ -844,20 +889,10 @@ function parseDeterministicManagement(
     confidence = 0.88
   }
 
-  const slPriceLabels = [
-    ...splitKeywordAliases(channelKeywords.signal.sl, delim),
-    ...splitKeywordAliases(channelKeywords.update.set_sl, delim),
-    ...splitKeywordAliases(channelKeywords.update.adjust_sl, delim),
-  ]
+  const slPriceLabels = slLabelsForChannel(channelKeywords)
   let sl: number | null = parseSlFromText(t)
   if (sl == null) sl = extractPriceByLabels(t, slPriceLabels)
-  const extraTp = [
-    ...(lexicon?.tp_aliases ?? []),
-    ...(lexicon?.target_aliases ?? []),
-    ...splitKeywordAliases(channelKeywords.signal.tp, delim),
-    ...splitKeywordAliases(channelKeywords.update.set_tp, delim),
-    ...splitKeywordAliases(channelKeywords.update.adjust_tp, delim),
-  ]
+  const extraTp = tpLabelsForChannel(channelKeywords, lexicon)
   const tpExtract = extractTpLevels(t, extraTp)
   const tp = tpExtract.values
 
@@ -943,6 +978,20 @@ function extractOptionalEntryAnchor(
           entry_zone_high = Math.max(a, b)
         }
       } else {
+      const arEntryZone = text.match(
+        new RegExp(
+          `(?:منطقة\\s*الدخول|نقطة\\s*الدخول|سعر\\s*الدخول)\\s*[:：]?\\s*(${SIGNAL_PRICE_NUM})\\s*(?:-|–|to|إلى)\\s*(${SIGNAL_PRICE_NUM})`,
+          'iu',
+        ),
+      )
+      if (arEntryZone?.[1] && arEntryZone?.[2]) {
+        const a = parseSignalPriceToken(arEntryZone[1])
+        const b = parseSignalPriceToken(arEntryZone[2])
+        if (a != null && b != null) {
+          entry_zone_low = Math.min(a, b)
+          entry_zone_high = Math.max(a, b)
+        }
+      } else {
       const bareZone = extractBarePriceRangeZone(message)
       if (bareZone) {
         entry_zone_low = bareZone.low
@@ -976,7 +1025,7 @@ function extractOptionalEntryAnchor(
         if (entryWord?.[1]) entry_price = parseSignalPriceToken(entryWord[1])
       }
       if (entry_price == null) {
-        const entryLabels = splitKeywordAliases(channelKeywords.signal.entry_point, delim)
+        const entryLabels = entryLabelsForChannel(channelKeywords)
         const fromKw = extractPriceByLabels(text, entryLabels)
         if (fromKw != null && Number.isFinite(fromKw) && fromKw > 0) {
           entry_price = fromKw
@@ -997,6 +1046,7 @@ function extractOptionalEntryAnchor(
     }
       }
       }
+    }
     }
   }
   return { entry_price, entry_zone_low, entry_zone_high }
@@ -1219,7 +1269,7 @@ function parseSimpleSignal(
 
   const hasInstrumentContext =
     isTradableInstrumentSymbol(instrument) ||
-    /\b(gold|xau|xauusd|btc|bitcoin|btcusd|btcusdt|eth|ethereum|silver|eur|gbp)\b/i.test(text) ||
+    /\b(gold|xau|xauusd|btc|bitcoin|btcusd|btcusdt|eth|ethereum|silver|eur|gbp|ذهب)\b/i.test(text) ||
     /\bEUR\/USD|EURUSD|GBPUSD|USDJPY|XAUUSD|BTCUSD|BTCUSDT\b/i.test(message) ||
     /\b(us30|nas100|ger40|uk100|ustec|spx500|spy|qqq|iwm|dia|voo|tqqq|gld|slv)\b/i.test(text) ||
     /\bmarket\s*:\s*[A-Za-z]/i.test(message) ||
@@ -1227,15 +1277,8 @@ function parseSimpleSignal(
 
   if (!hasInstrumentContext) return null
 
-  const sl = parseSlFromText(text) ?? extractPriceByLabels(message, splitKeywordAliases(channelKeywords.signal.sl, delim))
-  const extraTp = [
-    ...(lexicon?.tp_aliases ?? []),
-    ...(lexicon?.target_aliases ?? []),
-    ...splitKeywordAliases(channelKeywords.signal.tp, delim),
-    ...splitKeywordAliases(channelKeywords.update.set_tp, delim),
-    ...splitKeywordAliases(channelKeywords.update.adjust_tp, delim),
-  ]
-  const tpExtract = extractTpLevels(message, extraTp)
+  const sl = parseSlFromText(text) ?? extractPriceByLabels(message, slLabelsForChannel(channelKeywords, false))
+  const tpExtract = extractTpLevels(message, tpLabelsForChannel(channelKeywords, lexicon, false))
   const tp = tpExtract.values
 
   const { entry_price, entry_zone_low, entry_zone_high } = entryAnchor
@@ -1295,24 +1338,14 @@ function parseEntryFromKeywords(
   const instrument = extractTradableSymbolFromMessage(message)
   if (!instrument) return null
 
-  const slPriceLabels = [
-    ...splitKeywordAliases(channelKeywords.signal.sl, delim),
-    ...splitKeywordAliases(channelKeywords.update.set_sl, delim),
-  ]
+  const slPriceLabels = slLabelsForChannel(channelKeywords, false)
   let sl: number | null = parseSlFromText(text)
   if (sl == null || !Number.isFinite(sl)) sl = extractPriceByLabels(text, slPriceLabels)
 
-  const extraTp = [
-    ...(lexicon?.tp_aliases ?? []),
-    ...(lexicon?.target_aliases ?? []),
-    ...splitKeywordAliases(channelKeywords.signal.tp, delim),
-    ...splitKeywordAliases(channelKeywords.update.set_tp, delim),
-    ...splitKeywordAliases(channelKeywords.update.adjust_tp, delim),
-  ]
-  const tpExtract = extractTpLevels(message, extraTp)
+  const tpExtract = extractTpLevels(message, tpLabelsForChannel(channelKeywords, lexicon, false))
   const tp = tpExtract.values
 
-  const entryAliases = splitKeywordAliases(channelKeywords.signal.entry_point, delim)
+  const entryAliases = entryLabelsForChannel(channelKeywords)
   const entryPointHit = hasEntryPointPriceEvidence(message, entryAliases)
   const hasPriceEvidence =
     entryPointHit ||

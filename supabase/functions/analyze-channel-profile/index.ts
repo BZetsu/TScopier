@@ -259,19 +259,23 @@ function defaultTrainingSchemaFromRows(rows: Array<{ raw_message: string }>): Si
     "entry", "@", "at", "price", "now", "entrada", "entree", "wejście", "вход",
     "maintenant", "immédiat", "immediat", "ahora", "inmediato", "teraz", "natychmiast",
     "jetzt", "sofort", "nu", "omedelbart", "onmiddellijk", "сейчас", "немедленно",
-    "今すぐ", "即時", "成行", "الآن",
+    "今すぐ", "即時", "成行", "الآن", "فوراً", "فورا", "مباشرة",
+    "منطقة الدخول", "نقطة الدخول", "سعر الدخول",
   ])
   const sl = new Set<string>([
     "sl", "stop loss", "stoploss", "stop", "стоп", "stopa", "stopp", "損切り",
+    "وقف الخسارة", "وقف",
   ])
   const tp = new Set<string>([
     "tp", "take profit", "target", "objetivo", "objectif", "cel", "цель", "mål", "doel",
+    "الهدف", "الهدف الأول", "الهدف الثاني", "الهدف الثالث", "جني الأرباح",
   ])
-  const tpTier = new Set<string>(["tp1", "tp2", "tp3", "objetivo 1", "target 1"])
+  const tpTier = new Set<string>(["tp1", "tp2", "tp3", "objetivo 1", "target 1", "الهدف الأول", "الهدف الثاني", "الهدف الثالث"])
   const management = new Set<string>([
     "breakeven", "break even", "partial", "close", "cerrar", "fermer", "fermez",
     "zamknij", "закрыть", "stäng", "sluit", "chiudi", "fechar",
     "fermez tout", "fermer tout", "cerrar todo", "zamknij wszystko",
+    "أغلق الكل", "اغلق الكل", "التعادل", "إغلاق جزئي",
   ])
   const languageHints = new Set<string>()
   const sampleSignalExamples: string[] = []
@@ -292,6 +296,7 @@ function defaultTrainingSchemaFromRows(rows: Array<{ raw_message: string }>): Si
     if (/[\u0600-\u06ff]/.test(msg)) languageHints.add("arabic")
     if (sampleSignalExamples.length < 6 && (
       /\b(buy|sell|long|short|tp|sl|entry|comprar|venta|acheter|vendre|kupić|sprzedać|купить|продать)\b/i.test(msg)
+      || /(?:شراء|بيع|وقف|الهدف)/u.test(msg)
       || /\b\d{1,5}(?:\.\d{1,5})\b/.test(msg)
     )) {
       sampleSignalExamples.push(msg.slice(0, 200))
@@ -325,6 +330,7 @@ function defaultTrainingSchemaFromRows(rows: Array<{ raw_message: string }>): Si
     market_order_cues: [
       "now", "maintenant", "immédiat", "immediat", "ahora", "inmediato", "teraz", "natychmiast",
       "jetzt", "nu", "omedelbart", "onmiddellijk", "сейчас", "немедленно", "今すぐ", "即時", "成行",
+      "الآن", "فوراً", "فورا", "مباشرة", "عند السوق",
     ],
     signal_order_pattern,
     signal_requires_price: null,

@@ -4,6 +4,7 @@ import {
   SUPPORTED_MARKET_NOW_BY_LOCALE,
   messageContainsKeyword,
   textHasCommonMarketNowIntent,
+  textHasMultilingualDirection,
 } from './multilingualSignalTerms'
 import { messageHasMarketNowIntent } from './signalEntryNowRequirement'
 
@@ -61,5 +62,15 @@ describe('textHasCommonMarketNowIntent', () => {
     for (const locale of ['en', 'es', 'fr', 'pl', 'ru', 'sv', 'nl', 'ja'] as const) {
       assert.ok(SUPPORTED_MARKET_NOW_BY_LOCALE[locale]?.length, locale)
     }
+  })
+
+  it('detects Arabic direction words with Unicode boundaries', () => {
+    assert.equal(textHasMultilingualDirection('📊 شراء XAUUSD'), true)
+    assert.equal(textHasMultilingualDirection('بيع الذهب'), true)
+    assert.equal(textHasMultilingualDirection('Good morning'), false)
+  })
+
+  it('detects Arabic market-now with مباشرة', () => {
+    assert.equal(textHasCommonMarketNowIntent('شراء الذهب مباشرة'), true)
   })
 })

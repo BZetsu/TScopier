@@ -20,7 +20,7 @@ export const SUPPORTED_MARKET_NOW_BY_LOCALE = {
   nl: ['nu', 'onmiddellijk', 'direct', 'aan de markt'],
   ja: ['今すぐ', '即時', '成行', 'ナウ'],
   de: ['jetzt', 'sofort', 'am markt'],
-  ar: ['الآن', 'فوراً', 'فورا'],
+  ar: ['الآن', 'فوراً', 'فورا', 'مباشرة', 'فوري', 'عند السوق', 'أمر سوق', 'امر سوق'],
   pt: ['agora', 'imediato', 'imediata', 'ao mercado'],
   it: ['ora', 'immediato', 'immediata', 'al mercato'],
 } as const
@@ -39,6 +39,7 @@ export const COMMON_BUY_TERMS = [
   'купить', 'покупка',
   '買い',
   'شراء',
+  'طويل',
 ]
 
 export const COMMON_SELL_TERMS = [
@@ -51,7 +52,38 @@ export const COMMON_SELL_TERMS = [
   'продать', 'продажа',
   '売り',
   'بيع',
+  'قصير',
 ]
+
+export const COMMON_SL_TERMS = [
+  'وقف الخسارة', 'وقف',
+]
+
+export const COMMON_TP_TERMS = [
+  'الهدف الأول', 'الهدف الثاني', 'الهدف الثالث', 'الهدف',
+  'جني الأرباح', 'جني الارباح',
+]
+
+export const COMMON_ENTRY_TERMS = [
+  'منطقة الدخول', 'نقطة الدخول', 'سعر الدخول',
+]
+
+const MULTILINGUAL_DIRECTION_TERMS = [
+  'buy', 'sell', 'long', 'short',
+  ...COMMON_BUY_TERMS,
+  ...COMMON_SELL_TERMS,
+] as const
+
+export const MULTILINGUAL_DIRECTION_RE = new RegExp(
+  `(?<![\\p{L}\\p{N}])(${
+    MULTILINGUAL_DIRECTION_TERMS.map(t => escapeRegExp(t)).join('|')
+  })(?![\\p{L}\\p{N}])`,
+  'iu',
+)
+
+export function textHasMultilingualDirection(message: string): boolean {
+  return MULTILINGUAL_DIRECTION_TERMS.some(t => messageContainsKeyword(message, t))
+}
 
 const JA_MARKET_NOW_RE = /今すぐ|即時|成行|ナウ/u
 
@@ -125,6 +157,9 @@ export function textHasCommonMarketNowIntent(message: string): boolean {
   if (JA_MARKET_NOW_RE.test(raw)) return true
   if (/\b(?:gold|xau(?:usd)?)\s+(?:buy|sell)\s+now\b/i.test(raw)) return true
   if (/\b(?:buy|sell)\s+(?:gold|xau(?:usd)?)\s+now\b/i.test(raw)) return true
+  if (/(?:ذهب|xau(?:usd)?)/iu.test(raw) && textHasMultilingualDirection(raw)) {
+    if (COMMON_MARKET_NOW_TERMS.some(t => messageContainsKeyword(raw, t))) return true
+  }
 
   return messageHasDirectionWithImmediateCue(raw)
 }

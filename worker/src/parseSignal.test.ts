@@ -975,4 +975,30 @@ This trade we right now in, selling gold, has a high potential of a very big dro
     )
     assert.equal(result.parsed.action, 'ignore')
   })
+
+  it('parses Arabic-only gold buy with entry zone, SL, and TP tiers via common terms', () => {
+    const msg = `📊 XAUUSD
+شراء 🟢
+منطقة الدخول: 2650 - 2655
+وقف الخسارة: 2640
+الهدف الأول: 2670
+الهدف الثاني: 2680
+الهدف الثالث: 2690`
+    const result = parseChannelMessageSync(msg, DEFAULT_CHANNEL_KEYWORDS, lexicon)
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.action, 'buy')
+    assert.equal(result.parsed.symbol, 'XAUUSD')
+    assert.equal(result.parsed.entry_zone_low, 2650)
+    assert.equal(result.parsed.entry_zone_high, 2655)
+    assert.equal(result.parsed.sl, 2640)
+    assert.deepEqual(result.parsed.tp, [2670, 2680, 2690])
+  })
+
+  it('parses Arabic sell now market entry', () => {
+    const msg = 'بيع XAUUSD الآن'
+    const result = parseChannelMessageSync(msg, DEFAULT_CHANNEL_KEYWORDS, lexicon)
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.action, 'sell')
+    assert.equal(result.parsed.symbol, 'XAUUSD')
+  })
 })

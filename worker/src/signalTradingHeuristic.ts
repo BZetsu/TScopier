@@ -8,7 +8,7 @@ import {
   looksLikeChannelManagementUpdate,
   looksLikeExplicitFullCloseCommand,
 } from './signalManagementIntent'
-import { MULTILINGUAL_DIRECTION_RE, textHasCommonMarketNowIntent } from './multilingualSignalTerms'
+import { MULTILINGUAL_DIRECTION_RE, textHasCommonMarketNowIntent, textHasMultilingualDirection } from './multilingualSignalTerms'
 import { hasTradableInstrumentInText } from './tradableSymbol'
 import { normalizeTelegramMessageText } from './normalizeTelegramMessageText'
 
@@ -88,6 +88,9 @@ const ENGLISH_TRADE_STRUCTURE =
 const ENGLISH_REPLY_MGMT =
   /\b(move|set|update|adjust|tp|sl|breakeven|be|close)\b/
 
+const ARABIC_TRADE_STRUCTURE =
+  /(?:منطقة\s*الدخول|نقطة\s*الدخول|وقف\s*الخسارة|الهدف|جني\s*الأرباح)/u
+
 function hasNumericPriceContext(normalized: string): boolean {
   return /\b\d{1,5}(?:\.\d{1,5})?\b/.test(normalized)
 }
@@ -124,6 +127,7 @@ export function looksLikeTradingSignal(
 
   const hasDirectionOrAction =
     ENGLISH_DIRECTION.test(normalized)
+    || textHasMultilingualDirection(text)
     || MULTILINGUAL_DIRECTION_RE.test(text)
     || looksLikeExplicitFullCloseCommand(normalized, { channelKeywords: ctx?.keywords ?? null, lexicon: ctx?.lexicon ?? null })
     || hasChannelKeyword
@@ -131,10 +135,12 @@ export function looksLikeTradingSignal(
   const hasPriceContext =
     hasNumericPriceContext(normalized)
     || ENGLISH_PRICE_CTX.test(normalized)
+    || ARABIC_TRADE_STRUCTURE.test(text)
     || textHasCommonMarketNowIntent(text)
 
   const hasTradeStructure =
     ENGLISH_TRADE_STRUCTURE.test(normalized)
+    || ARABIC_TRADE_STRUCTURE.test(text)
     || (channelAliases.length > 0 && hasChannelKeyword)
 
   if (isReply && (ENGLISH_REPLY_MGMT.test(normalized) || hasChannelKeyword)) {
