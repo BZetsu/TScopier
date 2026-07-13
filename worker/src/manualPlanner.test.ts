@@ -1526,6 +1526,8 @@ test('planManualOrders: sell signal zone virtual triggers cluster toward zone hi
   })
   const first = triggerMap.get(1)!
   const last = triggerMap.get(virtuals[virtuals.length - 1]!.stepIdx)!
+  const stepOffset = virtuals[0]!.stepPriceOffset
+  assert.equal(first, anchor + stepOffset, 'first rung must be exactly one configured step from fill')
   assert.ok(first - anchor < last - anchor, 'deepest rung should be further from anchor than first')
   assert.equal(last, boundary)
   if (virtuals.length >= 3) {

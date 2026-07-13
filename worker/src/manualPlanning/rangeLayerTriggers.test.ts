@@ -21,6 +21,44 @@ test('resolveRangeLayerBoundary: manual distance when no boundary', () => {
   )
 })
 
+test('computeRangeLayerTriggers: first rung is always one configured step from anchor (sell)', () => {
+  const triggers = computeRangeLayerTriggers({
+    isBuy: false,
+    rungCount: 10,
+    anchor: 4327,
+    boundary: 4335,
+    stepPriceOffset: 0.03,
+    digits: 2,
+    pinLastToBoundary: true,
+  })
+  assert.equal(triggers[0], 4327.03)
+})
+
+test('computeRangeLayerTriggers: first rung is one step even when zone span is wide', () => {
+  const triggers = computeRangeLayerTriggers({
+    isBuy: false,
+    rungCount: 5,
+    anchor: 2650,
+    boundary: 2653,
+    stepPriceOffset: 0.3,
+    digits: 2,
+    pinLastToBoundary: false,
+  })
+  assert.equal(triggers[0], 2650.3)
+})
+
+test('computeRangeLayerTriggers: buy first rung one step below anchor', () => {
+  const triggers = computeRangeLayerTriggers({
+    isBuy: true,
+    rungCount: 5,
+    anchor: 2650,
+    boundary: 2647,
+    stepPriceOffset: 0.3,
+    digits: 2,
+  })
+  assert.equal(triggers[0], 2649.7)
+})
+
 test('computeRangeLayerTriggers: sell rungs monotonic upward toward boundary', () => {
   const triggers = computeRangeLayerTriggers({
     isBuy: false,

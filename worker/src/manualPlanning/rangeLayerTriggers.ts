@@ -47,6 +47,7 @@ function resolveLayerPip(
 
 /**
  * Non-linear ladder rungs from anchor toward boundary.
+ * Rung 1 is always one configured step from the fill anchor; rungs 2..N curve toward the boundary.
  * Index 0 = stepIdx 1 (shallowest), last index = deepest (zone edge when pinned).
  */
 export function computeRangeLayerTriggers(args: {
@@ -77,16 +78,32 @@ export function computeRangeLayerTriggers(args: {
   if (!Number.isFinite(span) || span <= 0) return []
 
   const minSep = Math.max(0, stepPriceOffset)
+  const firstRung = isBuy
+    ? anchor - minSep
+    : anchor + minSep
+  const lastRung = pinLastToBoundary
+    ? boundary
+    : (isBuy ? anchor - span : anchor + span)
+
   const out: number[] = []
   let prev = anchor
 
   for (let stepIdx = 1; stepIdx <= rungCount; stepIdx++) {
     let trigger: number
-    if (pinLastToBoundary && stepIdx === rungCount) {
-      trigger = boundary
+    if (rungCount === 1) {
+      trigger = pinLastToBoundary && Math.abs(lastRung - firstRung) >= minSep
+        ? lastRung
+        : firstRung
+    } else if (stepIdx === 1) {
+      trigger = firstRung
+    } else if (stepIdx === rungCount) {
+      trigger = lastRung
     } else {
-      const frac = Math.pow(stepIdx / rungCount, exponent)
-      trigger = isBuy ? anchor - span * frac : anchor + span * frac
+      const t = (stepIdx - 1) / (rungCount - 1)
+      const frac = Math.pow(t, exponent)
+      trigger = isBuy
+        ? firstRung - (firstRung - lastRung) * frac
+        : firstRung + (lastRung - firstRung) * frac
     }
     trigger = roundPrice(trigger, digits)
 
