@@ -2758,9 +2758,10 @@ export function AccountConfigPage() {
                         )}
 
                         {activeManualSubTab === 'signal_examples' && (
-                          selectedChannelOption && configDraft.selectedChannelId ? (
+                          selectedChannelOption && configDraft.selectedChannelId && userId ? (
                             <ChannelSignalExamplesSection
                               channelId={configDraft.selectedChannelId}
+                              userId={userId}
                               labels={cm.aiTraining}
                               trainingActive={activeChannelTrainingRunning || activeChannelTrainingSaving}
                               onRetrain={() => startBackgroundAiTraining(configDraft.selectedChannelId!, { force: true })}

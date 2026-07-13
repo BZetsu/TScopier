@@ -234,6 +234,155 @@ async function classifyMessageBatch(
   return out
 }
 
+export type ClassifySingleMessageResult =
+  | { ok: true; label: ChannelExampleLabel; intent: TradeIntent; rejected_reason: null }
+  | { ok: false; label: ChannelExampleLabel; intent: TradeIntent; rejected_reason: string }
+
+/** Classify one pasted message for the custom-example training modal. */
+export async function classifySingleMessage(
+  rawMessage: string,
+  opts: {
+    openAiKey: string
+    labelHint?: ChannelExampleLabel | null
+  },
+): Promise<ClassifySingleMessageResult> {
+  const raw = String(rawMessage ?? '').trim()
+  const emptyIntent: TradeIntent = {
+    kind: 'ignore',
+    side: null,
+    symbol: null,
+    entry: [],
+    sl: null,
+    tp: [],
+    sl_unit: 'price',
+    tp_unit: 'price',
+    flags: {},
+    confidence: 0,
+  }
+
+  if (!raw || raw.length < 8) {
+    return { ok: false, label: 'ignore', intent: emptyIntent, rejected_reason: 'empty_message' }
+  }
+
+  if (shouldSkipMessageForExamples(raw)) {
+    return {
+      ok: false,
+      label: 'ignore',
+      intent: { ...emptyIntent, kind: 'commentary' },
+      rejected_reason: 'commentary_not_trade_signal',
+    }
+  }
+
+  const classified = await classifyMessageBatch([raw], opts.openAiKey)
+  let example = classified[0] ?? null
+
+  if (!example) {
+    // Soft fallback: try AI response without trainable filter, then fail.
+    const soft = await classifyMessageBatchSoft([raw], opts.openAiKey)
+    if (!soft) {
+      return {
+        ok: false,
+        label: 'ignore',
+        intent: emptyIntent,
+        rejected_reason: 'parse_failed',
+      }
+    }
+    if (soft.label === 'ignore' || soft.intent.kind === 'commentary' || soft.intent.kind === 'ignore') {
+      return {
+        ok: false,
+        label: 'ignore',
+        intent: soft.intent,
+        rejected_reason: 'commentary_not_trade_signal',
+      }
+    }
+    if (!isValidTrainableExample(raw, soft.label, soft.intent)) {
+      return {
+        ok: false,
+        label: soft.label,
+        intent: soft.intent,
+        rejected_reason: 'commentary_not_trade_signal',
+      }
+    }
+    example = soft
+  }
+
+  let label = example.label
+  let intent = example.intent
+  const hint = opts.labelHint
+  if (hint === 'entry' || hint === 'update') {
+    label = hint
+    if (hint === 'entry' && intent.kind !== 'entry') {
+      intent = {
+        ...intent,
+        kind: 'entry',
+        side: intent.side ?? (intent.kind === 'entry' ? null : intent.side),
+        flags: { ...intent.flags, re_enter: true },
+      }
+    }
+    if (hint === 'update' && intent.kind === 'entry') {
+      intent = { ...intent, kind: 'modify', flags: { ...intent.flags, re_enter: undefined } }
+    }
+  }
+
+  if (!isValidTrainableExample(raw, label, intent)) {
+    return {
+      ok: false,
+      label,
+      intent,
+      rejected_reason: 'commentary_not_trade_signal',
+    }
+  }
+
+  return { ok: true, label, intent, rejected_reason: null }
+}
+
+/** Soft classify without skipping invalid examples (inspect AI raw judgment). */
+async function classifyMessageBatchSoft(
+  messages: string[],
+  apiKey: string,
+): Promise<LabeledChannelExample | null> {
+  const indexed = messages.map((raw_message, message_index) => ({ message_index, raw_message }))
+  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'gpt-4o-mini',
+      temperature: 0,
+      max_tokens: 1200,
+      response_format: { type: 'json_object' },
+      messages: [
+        { role: 'system', content: EXAMPLE_CLASSIFY_PROMPT },
+        { role: 'user', content: JSON.stringify({ messages: indexed }) },
+      ],
+    }),
+  })
+  if (!res.ok) return null
+  const data = await res.json()
+  const content = data?.choices?.[0]?.message?.content ?? ''
+  let parsed: { examples?: unknown[] } = {}
+  try {
+    parsed = JSON.parse(content)
+  } catch {
+    return null
+  }
+  const item = parsed.examples?.[0]
+  if (!item || typeof item !== 'object') return null
+  const row = item as Record<string, unknown>
+  const intent = coerceTradeIntent(row.intent ?? row)
+  let label = String(row.label ?? '').toLowerCase()
+  if (label !== 'entry' && label !== 'update' && label !== 'ignore') {
+    label = tradeIntentKindToExampleLabel(intent.kind)
+  }
+  return {
+    raw_message: messages[0]!.trim(),
+    label: (label === 'update' || label === 'ignore' ? label : 'entry') as ChannelExampleLabel,
+    intent,
+  }
+}
+
 function balanceExamples(examples: LabeledChannelExample[], limit: number): LabeledChannelExample[] {
   const seen = new Set<string>()
   const entries: LabeledChannelExample[] = []

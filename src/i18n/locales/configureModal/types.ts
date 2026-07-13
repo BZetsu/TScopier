@@ -73,6 +73,44 @@ export interface ConfigureModalTranslations {
     saveButton: string
     loadingExisting: string
     trainHint: string
+    addCustomExample: string
+    customExampleTitle: string
+    customExampleEditTitle: string
+    pasteSignalPlaceholder: string
+    analyzeExample: string
+    analyzingExample: string
+    saveExample: string
+    signalTypeLabel: string
+    signalTypeAuto: string
+    signalTypeEntry: string
+    signalTypeUpdate: string
+    updateKindLabel: string
+    updateKindModify: string
+    updateKindClose: string
+    updateKindBreakeven: string
+    updateKindPartial: string
+    sideLabel: string
+    sideBuy: string
+    sideSell: string
+    sideNone: string
+    fieldSymbol: string
+    fieldEntry: string
+    fieldEntryZoneLow: string
+    fieldEntryZoneHigh: string
+    fieldSl: string
+    fieldTp: string
+    addTp: string
+    exampleRejectedCommentary: string
+    exampleRejectedEmpty: string
+    exampleRejectedMissingSide: string
+    exampleRejectedMissingPrices: string
+    exampleRejectedGeneric: string
+    exampleSaved: string
+    deleteExample: string
+    editExample: string
+    manualBadge: string
+    deleteExampleConfirm: string
+    cancel: string
     entryCues: string
     buyCues: string
     sellCues: string

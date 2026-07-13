@@ -5,6 +5,7 @@ exports.looksLikeMarketNewsOrCommentary = looksLikeMarketNewsOrCommentary;
 exports.looksLikeRetrospectiveTradeDiscussion = looksLikeRetrospectiveTradeDiscussion;
 exports.looksLikeCasualNonTradeMessage = looksLikeCasualNonTradeMessage;
 exports.looksLikePositionStatusCommentary = looksLikePositionStatusCommentary;
+exports.looksLikePastTradeCelebrationCommentary = looksLikePastTradeCelebrationCommentary;
 exports.looksLikeTradeRecapCommentary = looksLikeTradeRecapCommentary;
 exports.looksLikeProfitResultCommentary = looksLikeProfitResultCommentary;
 exports.isPercentagePriceAt = isPercentagePriceAt;
@@ -137,6 +138,8 @@ function looksLikeCasualNonTradeMessage(message) {
     }
     if (looksLikeProfitResultCommentary(text))
         return true;
+    if (looksLikePastTradeCelebrationCommentary(text))
+        return true;
     if (looksLikeTradeRecapCommentary(text))
         return true;
     if (looksLikeRetrospectiveTradeDiscussion(text))
@@ -186,6 +189,38 @@ function looksLikePositionStatusCommentary(message) {
     }
     return false;
 }
+/** Hype or celebration about a trade already taken — not a new executable signal. */
+function looksLikePastTradeCelebrationCommentary(message) {
+    const text = String(message ?? '').replace(/\s+/g, ' ').trim();
+    if (!text)
+        return false;
+    if (hasExecutableTradeStructure(text))
+        return false;
+    const mentionsSide = /\b(?:buy|sell|long|short)\b/i.test(text);
+    const mentionsInstrument = /\b(?:gold|xau(?:usd)?|silver|xag(?:usd)?)\b/i.test(text);
+    const pastTense = /\b(?:took|taken|we took|got in|entered)\b/i.test(text)
+        || /\b(?:earlier|already|before|yesterday|this morning|last night)\b/i.test(text);
+    if (mentionsSide && pastTense) {
+        if (/\b(?:buy|sell|long|short)\s+we\s+took\b/i.test(text))
+            return true;
+        if (/\bwe\s+took\s+(?:the\s+)?(?:a\s+)?(?:buy|sell|long|short)\b/i.test(text))
+            return true;
+        if (/\b(?:gold|xau(?:usd)?)\s+(?:buy|sell)\s+we\s+took\b/i.test(text))
+            return true;
+        if (/\b(?:buy|sell)\b/i.test(text) && /\btook\s+earlier\b/i.test(text))
+            return true;
+        if (/\btook\b/i.test(text) && (mentionsSide || mentionsInstrument))
+            return true;
+    }
+    if (/\b(?:excited|pumped|thrilled|what a|such a|so happy|loving this)\b/i.test(text)
+        && (mentionsSide || mentionsInstrument)) {
+        return true;
+    }
+    if (/\b(?:banger|monster|crushed it|killing it|what a trade|absolute\s+banger)\b/i.test(text)) {
+        return true;
+    }
+    return false;
+}
 /** Past-tense trade story / lesson posts that mention "took the buy" but carry no executable levels. */
 function looksLikeTradeRecapCommentary(message) {
     const text = String(message ?? '').replace(/\s+/g, ' ').trim();
@@ -193,6 +228,8 @@ function looksLikeTradeRecapCommentary(message) {
         return false;
     if (hasExecutableTradeStructure(text))
         return false;
+    if (looksLikePastTradeCelebrationCommentary(text))
+        return true;
     if (/\b(?:after the|following the)\s+(?:fomc|fed|nfp|cpi|news)\b/i.test(text)
         && /\b(?:waited|took|entered|position)\b/i.test(text)) {
         return true;

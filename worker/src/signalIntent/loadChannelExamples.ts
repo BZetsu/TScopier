@@ -12,6 +12,7 @@ export async function loadChannelSignalExamples(
   channelRowId: string,
   limit = 12,
 ): Promise<ChannelSignalExample[]> {
+  // Manual examples use sort_order 0–99; auto examples start at 100.
   const { data, error } = await supabase
     .from('channel_signal_examples')
     .select('raw_message,label,intent')
@@ -48,6 +49,7 @@ export type StoredChannelExampleInput = {
   label: 'entry' | 'update' | 'ignore'
   intent: TradeIntent
   sortOrder?: number
+  source?: 'auto' | 'manual'
 }
 
 export async function upsertChannelSignalExample(
@@ -61,6 +63,7 @@ export async function upsertChannelSignalExample(
     raw_message_hash: messageHash(input.rawMessage),
     label: input.label,
     intent: input.intent as unknown as Record<string, unknown>,
+    source: input.source ?? 'manual',
     sort_order: input.sortOrder ?? 0,
     updated_at: new Date().toISOString(),
   }, { onConflict: 'channel_id,raw_message_hash' })

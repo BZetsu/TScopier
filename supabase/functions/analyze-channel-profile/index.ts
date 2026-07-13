@@ -7,7 +7,10 @@ import {
   normalizeManagementGroups,
   resolveManagementGroups,
 } from "../_shared/trainingManagementKeywords.ts"
-import { buildChannelSignalExamples } from "../_shared/signalIntent/buildChannelExamples.ts"
+import {
+  buildChannelSignalExamples,
+  classifySingleMessage,
+} from "../_shared/signalIntent/buildChannelExamples.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -650,11 +653,13 @@ async function persistChannelSignalExamples(args: {
   })
   if (!examples.length) return
 
+  // Preserve user-taught examples across auto-retrain.
   await supabase
     .from("channel_signal_examples")
     .delete()
     .eq("channel_id", channelId)
     .eq("user_id", userId)
+    .eq("source", "auto")
 
   const encoder = new TextEncoder()
   const digest = async (text: string): Promise<string> => {
@@ -662,7 +667,8 @@ async function persistChannelSignalExamples(args: {
     return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("").slice(0, 32)
   }
 
-  let sortOrder = 0
+  // Manual examples reserve sort_order 0–99; auto examples start at 100.
+  let sortOrder = 100
   for (const ex of examples) {
     const raw_message_hash = await digest(ex.raw_message)
     await supabase.from("channel_signal_examples").upsert({
@@ -672,6 +678,7 @@ async function persistChannelSignalExamples(args: {
       raw_message_hash,
       label: ex.label,
       intent: ex.intent,
+      source: "auto",
       sort_order: sortOrder++,
       updated_at: new Date().toISOString(),
     }, { onConflict: "channel_id,raw_message_hash" })
@@ -790,6 +797,31 @@ Deno.serve(async (req: Request) => {
       .eq("user_id", userId)
       .maybeSingle()
     if (!channel) return Response.json({ error: "Channel not found" }, { status: 404, headers: corsHeaders })
+
+    if (action === "parse_signal_example") {
+      const rawMessage = String(body?.raw_message ?? "").trim()
+      if (!rawMessage) {
+        return Response.json({ error: "raw_message required" }, { status: 400, headers: corsHeaders })
+      }
+      if (!OPENAI_API_KEY) {
+        return Response.json({
+          ok: false,
+          label: "ignore",
+          intent: {
+            kind: "ignore", side: null, symbol: null, entry: [], sl: null, tp: [],
+            sl_unit: "price", tp_unit: "price", flags: {}, confidence: 0,
+          },
+          rejected_reason: "openai_unavailable",
+        }, { headers: corsHeaders })
+      }
+      const hintRaw = String(body?.label_hint ?? "").toLowerCase()
+      const labelHint = hintRaw === "entry" || hintRaw === "update" ? hintRaw : null
+      const result = await classifySingleMessage(rawMessage, {
+        openAiKey: OPENAI_API_KEY,
+        labelHint,
+      })
+      return Response.json(result, { headers: corsHeaders })
+    }
 
     const since = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000).toISOString()
     const { data: signals } = await supabase
