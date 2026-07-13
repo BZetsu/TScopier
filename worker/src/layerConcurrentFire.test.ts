@@ -3,10 +3,13 @@ import { test } from 'node:test'
 import {
   adverseDistanceFromAnchor,
   computeLayerFireBudget,
+  highestFiredStepIdxForBasket,
   isDistanceBurstFillAllowed,
+  isLayerTriggered,
   isLegEligibleByDistance,
   newLayersForTick,
   selectLegsForDistanceBurst,
+  selectLegsForLayerTick,
   selectPendingLegsForDistanceBurst,
   stepPriceOffsetForBasket,
 } from './layerConcurrentFire'
@@ -151,4 +154,96 @@ test('selectLegsForDistanceBurst: sell symmetry', () => {
   }))
   const selected = selectLegsForDistanceBurst({ triggeredLegs: legs, budget: 2 })
   assert.deepEqual(selected.map(l => l.step_idx), [1, 2])
+})
+
+test('isLayerTriggered: matches buy/sell trigger semantics', () => {
+  assert.equal(isLayerTriggered(true, 1840, 1839.5, 1839.6), true)
+  assert.equal(isLayerTriggered(true, 1840, 1840.1, 1840.2), false)
+  assert.equal(isLayerTriggered(false, 1860, 1859.9, 1860), true)
+})
+
+test('highestFiredStepIdxForBasket: returns max fired step', () => {
+  assert.equal(highestFiredStepIdxForBasket([1, 3, 2]), 3)
+  assert.equal(highestFiredStepIdxForBasket([]), 0)
+})
+
+test('selectLegsForLayerTick: slow drift only fires crossed triggers', () => {
+  const pending = [1, 2, 3, 4, 5, 6].map(step_idx => ({
+    id: `leg-${step_idx}`,
+    step_idx,
+    anchor_price: 4080,
+    trigger_price: 4080 - step_idx * 0.03,
+    is_buy: true,
+  }))
+  const selected = selectLegsForLayerTick({
+    pendingLegs: pending,
+    isBuy: true,
+    anchor: 4080,
+    bid: 4079.94,
+    ask: 4079.96,
+    stepPriceOffset: 0.03,
+    highestFiredStepIdx: 0,
+  })
+  assert.deepEqual(selected.map(l => l.step_idx), [1, 2])
+})
+
+test('selectLegsForLayerTick: high budget but only shallow trigger crossed', () => {
+  const pending = [1, 2, 3, 4, 5, 6].map(step_idx => ({
+    id: `leg-${step_idx}`,
+    step_idx,
+    anchor_price: 4080,
+    trigger_price: 4080 - step_idx * 0.03,
+    is_buy: true,
+  }))
+  const selected = selectLegsForLayerTick({
+    pendingLegs: pending,
+    isBuy: true,
+    anchor: 4080,
+    bid: 4079.97,
+    ask: 4079.99,
+    stepPriceOffset: 0.03,
+    highestFiredStepIdx: 0,
+  })
+  assert.deepEqual(selected.map(l => l.step_idx), [1])
+})
+
+test('selectLegsForLayerTick: catch-up burst capped at 3', () => {
+  const pending = [1, 2, 3, 4, 5, 6].map(step_idx => ({
+    id: `leg-${step_idx}`,
+    step_idx,
+    anchor_price: 4080,
+    trigger_price: 4080 - step_idx * 0.03,
+    is_buy: true,
+  }))
+  const selected = selectLegsForLayerTick({
+    pendingLegs: pending,
+    isBuy: true,
+    anchor: 4080,
+    bid: 4079.82,
+    ask: 4079.84,
+    stepPriceOffset: 0.03,
+    highestFiredStepIdx: 0,
+    maxFiresPerTick: 3,
+  })
+  assert.deepEqual(selected.map(l => l.step_idx), [1, 2, 3])
+})
+
+test('selectLegsForLayerTick: excludes already-fired steps', () => {
+  const pending = [4, 5, 6].map(step_idx => ({
+    id: `leg-${step_idx}`,
+    step_idx,
+    anchor_price: 4080,
+    trigger_price: 4080 - step_idx * 0.03,
+    is_buy: true,
+  }))
+  const selected = selectLegsForLayerTick({
+    pendingLegs: pending,
+    isBuy: true,
+    anchor: 4080,
+    bid: 4079.82,
+    ask: 4079.84,
+    stepPriceOffset: 0.03,
+    highestFiredStepIdx: 3,
+  })
+  assert.deepEqual(selected.map(l => l.step_idx), [4, 5, 6])
 })

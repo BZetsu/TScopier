@@ -1,15 +1,20 @@
 "use strict";
 /** Distance-scaled concurrent virtual layer firing (pure helpers). */
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.DEFAULT_MAX_LAYER_FIRES_PER_TICK = void 0;
 exports.adverseDistanceFromAnchor = adverseDistanceFromAnchor;
 exports.stepPriceOffsetForBasket = stepPriceOffsetForBasket;
 exports.rungsFromAdverseDistance = rungsFromAdverseDistance;
 exports.computeLayerFireBudget = computeLayerFireBudget;
 exports.isLegEligibleByDistance = isLegEligibleByDistance;
+exports.isLayerTriggered = isLayerTriggered;
+exports.highestFiredStepIdxForBasket = highestFiredStepIdxForBasket;
+exports.selectLegsForLayerTick = selectLegsForLayerTick;
 exports.selectPendingLegsForDistanceBurst = selectPendingLegsForDistanceBurst;
 exports.newLayersForTick = newLayersForTick;
 exports.selectLegsForDistanceBurst = selectLegsForDistanceBurst;
 exports.isDistanceBurstFillAllowed = isDistanceBurstFillAllowed;
+exports.DEFAULT_MAX_LAYER_FIRES_PER_TICK = 3;
 /** Adverse move from fill anchor in price units (0 when price has not moved adversely). */
 function adverseDistanceFromAnchor(isBuy, anchor, bid, ask) {
     if (!Number.isFinite(anchor) || anchor <= 0)
@@ -82,6 +87,54 @@ function isLegEligibleByDistance(isBuy, anchor, bid, ask, stepIdx, stepPriceOffs
         return false;
     const budget = rungsFromAdverseDistance(adverseDistanceFromAnchor(isBuy, anchor, bid, ask), offset);
     return budget >= stepIdx;
+}
+/** Buy ladder fires when bid <= trigger; sell when ask >= trigger. */
+function isLayerTriggered(isBuy, triggerPrice, bid, ask) {
+    if (!Number.isFinite(triggerPrice) || triggerPrice <= 0)
+        return false;
+    if (!Number.isFinite(bid) || !Number.isFinite(ask))
+        return false;
+    return isBuy ? bid <= triggerPrice : ask >= triggerPrice;
+}
+/** Max step_idx already fired for a basket (0 when none). */
+function highestFiredStepIdxForBasket(firedStepIndices) {
+    let max = 0;
+    for (const raw of firedStepIndices) {
+        const s = Math.floor(Number(raw));
+        if (Number.isFinite(s) && s > max)
+            max = s;
+    }
+    return max;
+}
+/**
+ * Select pending legs to fire this tick: trigger cross + distance ceiling,
+ * shallowest first, capped per tick (catch-up burst when multiple triggers crossed).
+ */
+function selectLegsForLayerTick(args) {
+    const stepOffset = Math.max(0, args.stepPriceOffset);
+    const maxFires = Math.max(1, Math.floor(args.maxFiresPerTick ?? exports.DEFAULT_MAX_LAYER_FIRES_PER_TICK));
+    const minStep = Math.max(0, Math.floor(args.highestFiredStepIdx ?? 0));
+    if (!args.pendingLegs.length || stepOffset <= 0)
+        return [];
+    const budget = computeLayerFireBudget({
+        isBuy: args.isBuy,
+        anchor: args.anchor,
+        bid: args.bid,
+        ask: args.ask,
+        stepPriceOffset: stepOffset,
+    });
+    if (budget <= 0)
+        return [];
+    return args.pendingLegs
+        .filter(leg => {
+        if (leg.step_idx <= minStep || leg.step_idx > budget)
+            return false;
+        if (!isLayerTriggered(args.isBuy, leg.trigger_price, args.bid, args.ask))
+            return false;
+        return isLegEligibleByDistance(args.isBuy, args.anchor, args.bid, args.ask, leg.step_idx, stepOffset);
+    })
+        .sort((a, b) => a.step_idx - b.step_idx || a.id.localeCompare(b.id))
+        .slice(0, maxFires);
 }
 /** Pending legs whose step_idx fits the distance budget (shallowest first). */
 function selectPendingLegsForDistanceBurst(args) {

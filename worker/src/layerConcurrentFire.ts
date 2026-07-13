@@ -1,5 +1,7 @@
 /** Distance-scaled concurrent virtual layer firing (pure helpers). */
 
+export const DEFAULT_MAX_LAYER_FIRES_PER_TICK = 3
+
 export type LayerBurstLeg = {
   id: string
   step_idx: number
@@ -98,6 +100,68 @@ export function isLegEligibleByDistance(
     offset,
   )
   return budget >= stepIdx
+}
+
+/** Buy ladder fires when bid <= trigger; sell when ask >= trigger. */
+export function isLayerTriggered(isBuy: boolean, triggerPrice: number, bid: number, ask: number): boolean {
+  if (!Number.isFinite(triggerPrice) || triggerPrice <= 0) return false
+  if (!Number.isFinite(bid) || !Number.isFinite(ask)) return false
+  return isBuy ? bid <= triggerPrice : ask >= triggerPrice
+}
+
+/** Max step_idx already fired for a basket (0 when none). */
+export function highestFiredStepIdxForBasket(firedStepIndices: Iterable<number>): number {
+  let max = 0
+  for (const raw of firedStepIndices) {
+    const s = Math.floor(Number(raw))
+    if (Number.isFinite(s) && s > max) max = s
+  }
+  return max
+}
+
+/**
+ * Select pending legs to fire this tick: trigger cross + distance ceiling,
+ * shallowest first, capped per tick (catch-up burst when multiple triggers crossed).
+ */
+export function selectLegsForLayerTick<T extends LayerBurstLeg>(args: {
+  pendingLegs: T[]
+  isBuy: boolean
+  anchor: number
+  bid: number
+  ask: number
+  stepPriceOffset: number
+  highestFiredStepIdx?: number
+  maxFiresPerTick?: number
+}): T[] {
+  const stepOffset = Math.max(0, args.stepPriceOffset)
+  const maxFires = Math.max(1, Math.floor(args.maxFiresPerTick ?? DEFAULT_MAX_LAYER_FIRES_PER_TICK))
+  const minStep = Math.max(0, Math.floor(args.highestFiredStepIdx ?? 0))
+  if (!args.pendingLegs.length || stepOffset <= 0) return []
+
+  const budget = computeLayerFireBudget({
+    isBuy: args.isBuy,
+    anchor: args.anchor,
+    bid: args.bid,
+    ask: args.ask,
+    stepPriceOffset: stepOffset,
+  })
+  if (budget <= 0) return []
+
+  return args.pendingLegs
+    .filter(leg => {
+      if (leg.step_idx <= minStep || leg.step_idx > budget) return false
+      if (!isLayerTriggered(args.isBuy, leg.trigger_price, args.bid, args.ask)) return false
+      return isLegEligibleByDistance(
+        args.isBuy,
+        args.anchor,
+        args.bid,
+        args.ask,
+        leg.step_idx,
+        stepOffset,
+      )
+    })
+    .sort((a, b) => a.step_idx - b.step_idx || a.id.localeCompare(b.id))
+    .slice(0, maxFires)
 }
 
 /** Pending legs whose step_idx fits the distance budget (shallowest first). */

@@ -29,7 +29,7 @@ describe('decideLadderFires', () => {
     assert.equal(out.length, 2)
   })
 
-  it('distance-scaled burst selects by distance without trigger cross', () => {
+  it('distance-scaled path requires trigger cross and caps per tick', () => {
     const out = decideLadderFires({
       legs,
       bid: 4040,
@@ -40,9 +40,25 @@ describe('decideLadderFires', () => {
       frozen: false,
       anchor: 4072,
       stepPriceOffset: 10,
+      maxFiresPerTick: 3,
     })
-    assert.equal(out.length, 3, '4072-4040=32, budget=3')
+    assert.equal(out.length, 3, '4072-4040=32, budget=3, all triggers crossed')
     assert.deepEqual(out.map(l => l.id), ['a', 'b', 'c'])
+  })
+
+  it('distance-scaled path does not fire when budget allows but triggers not crossed', () => {
+    const out = decideLadderFires({
+      legs,
+      bid: 4068,
+      ask: 4068,
+      isBuy: true,
+      openLegCount: 0,
+      maxLegs: 10,
+      frozen: false,
+      anchor: 4072,
+      stepPriceOffset: 10,
+    })
+    assert.equal(out.length, 0, 'budget=0 below one step; no burst without trigger cross')
   })
 
   it('distance-scaled burst near anchor fires only step 1', () => {

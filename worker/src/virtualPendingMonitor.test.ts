@@ -13,6 +13,7 @@ import {
   computeLayerFireBudget,
   isLegEligibleByDistance,
   newLayersForTick,
+  selectLegsForLayerTick,
   selectPendingLegsForDistanceBurst,
 } from './layerConcurrentFire'
 
@@ -226,7 +227,48 @@ test('isBlockedByShallowerStep: blocks deeper rung when shallower still pending'
   )
 })
 
-test('distance burst: 3-pip step at -6 pips selects steps 1-2 from all pending', () => {
+test('layer tick: slow market high budget fires only crossed triggers', () => {
+  const pending = [1, 2, 3, 4, 5, 6].map(step_idx => ({
+    id: `leg-${step_idx}`,
+    step_idx,
+    anchor_price: 4080,
+    trigger_price: 4080 - step_idx * 0.03,
+    is_buy: true,
+  }))
+  const selected = selectLegsForLayerTick({
+    pendingLegs: pending,
+    isBuy: true,
+    anchor: 4080,
+    bid: 4079.97,
+    ask: 4079.99,
+    stepPriceOffset: 0.03,
+    highestFiredStepIdx: 0,
+  })
+  assert.deepEqual(selected.map(l => l.step_idx), [1])
+})
+
+test('layer tick: catch-up burst capped at 3 when multiple triggers crossed', () => {
+  const pending = [1, 2, 3, 4, 5, 6].map(step_idx => ({
+    id: `leg-${step_idx}`,
+    step_idx,
+    anchor_price: 4080,
+    trigger_price: 4080 - step_idx * 0.03,
+    is_buy: true,
+  }))
+  const selected = selectLegsForLayerTick({
+    pendingLegs: pending,
+    isBuy: true,
+    anchor: 4080,
+    bid: 4079.82,
+    ask: 4079.84,
+    stepPriceOffset: 0.03,
+    highestFiredStepIdx: 0,
+    maxFiresPerTick: 3,
+  })
+  assert.deepEqual(selected.map(l => l.step_idx), [1, 2, 3])
+})
+
+test('legacy distance burst: 3-pip step at -6 pips selects steps 1-2 from all pending', () => {
   const pending = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(step_idx => ({
     id: `leg-${step_idx}`,
     step_idx,
@@ -287,7 +329,7 @@ test('distance burst: -18 pips selects steps 4-6 when 1-3 already fired', () => 
   assert.deepEqual(selected.map(l => l.step_idx), [4, 5, 6])
 })
 
-test('distance burst: eligibility does not require trigger cross (prevQuote null)', () => {
+test('legacy distance burst: eligibility does not require trigger cross', () => {
   assert.equal(isLegEligibleByDistance(true, 4080, 4079.94, 4079.96, 2, 0.03), true)
   assert.equal(isLegEligibleByDistance(true, 4080, 4079.97, 4079.99, 2, 0.03), false)
 })

@@ -13,7 +13,10 @@
  *     later tick.
  */
 import type { FxClient, MtPlatform } from './fxClient'
-import { computeLayerFireBudget } from '../layerConcurrentFire'
+import {
+  DEFAULT_MAX_LAYER_FIRES_PER_TICK,
+  selectLegsForLayerTick,
+} from '../layerConcurrentFire'
 
 export type LadderLeg = {
   id: string
@@ -48,16 +51,24 @@ export function decideLadderFires(args: {
   const stepOffset = args.stepPriceOffset ?? 0
   const anchor = args.anchor ?? 0
   if (stepOffset > 0 && Number.isFinite(anchor) && anchor > 0) {
-    const budget = computeLayerFireBudget({
+    const pendingAsBurst = args.legs.map(l => ({
+      id: l.id,
+      step_idx: l.stepIdx,
+      anchor_price: anchor,
+      trigger_price: l.triggerPrice,
+      is_buy: args.isBuy,
+    }))
+    const selected = selectLegsForLayerTick({
+      pendingLegs: pendingAsBurst,
       isBuy: args.isBuy,
       anchor,
       bid: args.bid,
       ask: args.ask,
       stepPriceOffset: stepOffset,
+      maxFiresPerTick: args.maxFiresPerTick ?? DEFAULT_MAX_LAYER_FIRES_PER_TICK,
     })
-    if (budget <= 0) return []
-    const sorted = [...args.legs].sort((a, b) => a.stepIdx - b.stepIdx)
-    return sorted.filter(l => l.stepIdx >= 1 && l.stepIdx <= budget).slice(0, capacity)
+    const ids = new Set(selected.map(l => l.id))
+    return args.legs.filter(l => ids.has(l.id)).slice(0, capacity)
   }
 
   // Legacy: trigger-crossing path with fixed per-tick cap.
