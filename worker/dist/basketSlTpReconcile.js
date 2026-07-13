@@ -465,6 +465,22 @@ async function runBasketLegModifies(args) {
             const safe = await (0, orderModifySafe_1.modifyLegSlTpWithFallback)(api, uuid, ticket, modSl, modTp, { deepestTp });
             if (!safe.ok || (modSl > 0 && !safe.slApplied)) {
                 const failMsg = safe.error ?? 'OrderModify failed';
+                if ((0, orderModifyBenign_1.isBenignOrderModifyError)(failMsg)) {
+                    await logLegModify({
+                        userId,
+                        signalId,
+                        brokerAccountId,
+                        status: 'skipped',
+                        tradeId: tr.id,
+                        ticket,
+                        legIndex: i + 1,
+                        brokerSymbol: tr.symbol,
+                        targetSl: modSl,
+                        targetTp: modTp,
+                        skipReason: 'already_synced_on_broker',
+                    });
+                    return { ...noopOutcome(), modifiedId: tr.id, attempted: 1, modified: 1 };
+                }
                 const legErr = {
                     trade_id: tr.id,
                     ticket,

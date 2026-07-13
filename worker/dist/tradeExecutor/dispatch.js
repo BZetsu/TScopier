@@ -321,9 +321,9 @@ async function markSignalExecuted(ctx, signalId) {
     try {
         await ctx.supabase
             .from('signals')
-            .update({ status: 'executed' })
+            .update({ status: 'executed', skip_reason: null })
             .eq('id', signalId)
-            .eq('status', 'parsed');
+            .in('status', ['parsed', 'pending', 'failed']);
     }
     catch {
         /* best-effort */
@@ -544,10 +544,12 @@ async function handleSignal(ctx, row, opts) {
             if (liveFast && parsed.symbol) {
                 void ctx.prewarmBrokersForLiveEntry(brokers, parsed.symbol);
             }
+            const copyLimitSkipReasons = [];
             const pauseResults = await Promise.all(brokers.map(async (broker) => {
                 const state = await ctx.fetchCopyLimitState(broker.id, channelId);
                 const pause = (0, copyLimitDispatch_1.evaluateChannelCopyLimitPauseForBroker)(broker, channelId, profileTz, state);
                 if (pause.paused && pause.reason) {
+                    copyLimitSkipReasons.push(pause.reason);
                     const skipLog = ctx.logDispatchSkipped(row, pause.reason, {
                         broker_id: broker.id,
                         channel_id: channelId,
@@ -562,6 +564,10 @@ async function handleSignal(ctx, row, opts) {
                 return broker;
             }));
             brokers = pauseResults.filter((b) => b != null);
+            if (!brokers.length && copyLimitSkipReasons.length > 0) {
+                // Per-broker skip already logged (e.g. channel_max_risk_hit).
+                return;
+            }
         }
         if (!brokers.length) {
             if (configSkipReasons.length > 0 && rawMatchingBrokers.length > 0) {
@@ -572,6 +578,11 @@ async function handleSignal(ctx, row, opts) {
                 return;
             }
             if (rawMatchingBrokers.length > 0) {
+                const staleAfterReactivation = allMatchingBrokers.length > 0
+                    && allMatchingBrokers.every(b => !ctx.brokerEligibleForSignal(b, row));
+                if (!staleAfterReactivation) {
+                    return;
+                }
                 // A matching broker exists but it was reactivated AFTER the signal
                 // arrived — i.e. the signal piled up while the broker was disabled.
                 // Marking as skipped here prevents the 5-min sweep from picking it
@@ -806,15 +817,24 @@ async function handleSignal(ctx, row, opts) {
                 }
                 else if ((0, tradeSignalActions_1.isEntryAction)(action)) {
                     const failReason = entryFailureReason ?? manualPlanner_1.SKIP_REASON_ENTRY_NOT_OPENED;
-                    try {
-                        await ctx.supabase
-                            .from('signals')
-                            .update({ status: 'failed', skip_reason: failReason })
-                            .eq('id', row.id)
-                            .eq('status', 'parsed');
+                    const alreadyProven = await (0, signalExecutionProven_1.signalExecutionProven)(ctx.supabase, row.id);
+                    if (alreadyProven) {
+                        await ctx.markSignalExecuted(row.id);
                     }
-                    catch {
-                        // best-effort
+                    else if (!isMessageRevision) {
+                        try {
+                            await ctx.supabase
+                                .from('signals')
+                                .update({ status: 'failed', skip_reason: failReason })
+                                .eq('id', row.id)
+                                .eq('status', 'parsed');
+                        }
+                        catch {
+                            // best-effort
+                        }
+                    }
+                    else {
+                        await ctx.markSignalExecuted(row.id);
                     }
                 }
             }

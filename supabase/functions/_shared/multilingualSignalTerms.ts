@@ -1,5 +1,6 @@
 /**
  * Shared market-now / multilingual signal terms (keep in sync with worker/src/multilingualSignalTerms.ts).
+ * FROZEN for new locales: use universal SignalIntent parser + channel_signal_examples instead.
  */
 
 export function foldAccents(text: string): string {

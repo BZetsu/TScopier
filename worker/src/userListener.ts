@@ -62,6 +62,9 @@ import {
   telegramMessageText,
 } from './signalTelegramReconcile'
 import { evaluateParsedSignalExecutionEligibility, deterministicEntryNeedsAiRepair } from './signalExecutionEligibility'
+import { getUniversalParseMode } from './signalIntent/parseConfig'
+import { routeSignalParse } from './signalIntent/parseRouting'
+import { parseUniversalSignal } from './signalIntent/universalSignalParser'
 import { resolveEntrySignalIdByProviderNumber, findRecentEntrySignalByProviderNumber } from './managementScope'
 import {
   handlePostParseChannelIngest,
@@ -1216,16 +1219,40 @@ export class UserListener {
     if (!storedMessageDiffersFromTelegram(existing.raw_message, rawMessage)) return false
 
     let aiResult: Awaited<ReturnType<typeof aiParseModification>>
+    let parseResult: Awaited<ReturnType<typeof parseChannelMessageSync>>
     try {
-      aiResult = await aiParseModification(this.supabase, {
-        userId: this.userId,
-        channelRowId: channelRow.id,
-        rawMessage,
-        revision: {
-          prior_raw_message: existing.raw_message,
-          prior_parsed_data: (existing.parsed_data ?? null) as Record<string, unknown> | null,
-        },
-      })
+      if (getUniversalParseMode() !== 'off') {
+        const universal = await parseUniversalSignal(this.supabase, {
+          userId: this.userId,
+          channelRowId: channelRow.id,
+          rawMessage,
+          revision: {
+            prior_raw_message: existing.raw_message,
+            prior_parsed_data: (existing.parsed_data ?? null) as Record<string, unknown> | null,
+          },
+        })
+        parseResult = universal.parseResult
+        aiResult = {
+          parsed: universal.parseResult.parsed as Awaited<ReturnType<typeof aiParseModification>>['parsed'],
+          status: universal.parseResult.status === 'parsed' ? 'parsed' : 'skipped',
+          skip_reason: universal.parseResult.skip_reason,
+          intent: universal.intent.kind === 'commentary' ? 'commentary' : universal.intent.kind === 'ignore' ? 'ignore' : 'modify',
+          typo_corrected: false,
+          confidence: universal.intent.confidence,
+          source: universal.source === 'openai' ? 'openai' : 'deterministic',
+        }
+      } else {
+        aiResult = await aiParseModification(this.supabase, {
+          userId: this.userId,
+          channelRowId: channelRow.id,
+          rawMessage,
+          revision: {
+            prior_raw_message: existing.raw_message,
+            prior_parsed_data: (existing.parsed_data ?? null) as Record<string, unknown> | null,
+          },
+        })
+        parseResult = aiResultToParseResult(aiResult)
+      }
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err)
       console.error(
@@ -1242,8 +1269,7 @@ export class UserListener {
       return false
     }
 
-    const parseResult = aiResultToParseResult(aiResult)
-    if (parseResult.status !== 'parsed') {
+    if (parseResult!.status !== 'parsed') {
       void persistListenerEvent(this.supabase, {
         userId: this.userId,
         eventType: 'ai_modification_skipped',
@@ -1487,6 +1513,40 @@ export class UserListener {
     channelKeywords: Awaited<ReturnType<typeof getChannelParseContext>>['keywords']
   }> {
     const { keywords, lexicon } = await getChannelParseContext(this.supabase, args.channelRowId)
+
+    if (listenerInlineParseEnabled() && getUniversalParseMode() !== 'off') {
+      const isModificationClass = this.isModificationClassMessage(
+        args.rawMessage,
+        args.isReply,
+        keywords,
+        lexicon,
+      )
+      const routed = await routeSignalParse({
+        supabase: this.supabase,
+        userId: this.userId,
+        channelRowId: args.channelRowId,
+        signalId: args.signalId,
+        rawMessage: args.rawMessage,
+        isReply: args.isReply,
+        parentSignalId: args.parentSignalId,
+        isModificationClass,
+        keywords,
+        lexicon,
+      })
+      if (routed.parseResult.status === 'parsed' && routed.aiMeta?.source === 'openai') {
+        console.log(
+          `[userListener] universal parse user=${this.userId} channelRow=${args.channelRowId}`
+          + ` intent=${routed.aiMeta.intent} action=${routed.parseResult.parsed.action}`
+          + ` symbol=${routed.parseResult.parsed.symbol ?? 'null'}`,
+        )
+      }
+      return {
+        parseResult: routed.parseResult,
+        aiMeta: routed.aiMeta,
+        channelKeywords: keywords,
+      }
+    }
+
     if (this.isModificationClassMessage(args.rawMessage, args.isReply, keywords, lexicon)) {
       if (listenerInlineParseEnabled()) {
         const detMod = parseModificationDeterministic(args.rawMessage, keywords, lexicon)

@@ -81,13 +81,16 @@ function buildRevisionDispatchRow(existing, parseResult, pipelineTs, telegramEdi
     };
 }
 async function updateSignalAfterRevision(supabase, args) {
+    const keepExecutionStatus = args.existingStatus === 'executed' || args.existingStatus === 'skipped';
     const patch = {
         raw_message: args.rawMessage,
         parsed_data: args.parseResult.parsed,
-        status: 'parsed',
-        skip_reason: null,
         telegram_reconciled_at: new Date().toISOString(),
     };
+    if (!keepExecutionStatus) {
+        patch.status = 'parsed';
+        patch.skip_reason = null;
+    }
     if (args.telegramEditDateSeen != null && args.telegramEditDateSeen > 0) {
         patch.telegram_edit_date_seen = Math.floor(args.telegramEditDateSeen);
     }

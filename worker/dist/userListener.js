@@ -26,6 +26,9 @@ const aiParseModification_1 = require("./aiParseModification");
 const aiParseEntry_1 = require("./aiParseEntry");
 const signalTelegramReconcile_1 = require("./signalTelegramReconcile");
 const signalExecutionEligibility_1 = require("./signalExecutionEligibility");
+const parseConfig_1 = require("./signalIntent/parseConfig");
+const parseRouting_1 = require("./signalIntent/parseRouting");
+const universalSignalParser_1 = require("./signalIntent/universalSignalParser");
 const managementScope_1 = require("./managementScope");
 const channelListenerIntegration_1 = require("./channelListenerIntegration");
 const channelListenerConfig_1 = require("./channelListenerConfig");
@@ -971,16 +974,41 @@ class UserListener {
         if (!(0, signalRevision_1.storedMessageDiffersFromTelegram)(existing.raw_message, rawMessage))
             return false;
         let aiResult;
+        let parseResult;
         try {
-            aiResult = await (0, aiParseModification_1.aiParseModification)(this.supabase, {
-                userId: this.userId,
-                channelRowId: channelRow.id,
-                rawMessage,
-                revision: {
-                    prior_raw_message: existing.raw_message,
-                    prior_parsed_data: (existing.parsed_data ?? null),
-                },
-            });
+            if ((0, parseConfig_1.getUniversalParseMode)() !== 'off') {
+                const universal = await (0, universalSignalParser_1.parseUniversalSignal)(this.supabase, {
+                    userId: this.userId,
+                    channelRowId: channelRow.id,
+                    rawMessage,
+                    revision: {
+                        prior_raw_message: existing.raw_message,
+                        prior_parsed_data: (existing.parsed_data ?? null),
+                    },
+                });
+                parseResult = universal.parseResult;
+                aiResult = {
+                    parsed: universal.parseResult.parsed,
+                    status: universal.parseResult.status === 'parsed' ? 'parsed' : 'skipped',
+                    skip_reason: universal.parseResult.skip_reason,
+                    intent: universal.intent.kind === 'commentary' ? 'commentary' : universal.intent.kind === 'ignore' ? 'ignore' : 'modify',
+                    typo_corrected: false,
+                    confidence: universal.intent.confidence,
+                    source: universal.source === 'openai' ? 'openai' : 'deterministic',
+                };
+            }
+            else {
+                aiResult = await (0, aiParseModification_1.aiParseModification)(this.supabase, {
+                    userId: this.userId,
+                    channelRowId: channelRow.id,
+                    rawMessage,
+                    revision: {
+                        prior_raw_message: existing.raw_message,
+                        prior_parsed_data: (existing.parsed_data ?? null),
+                    },
+                });
+                parseResult = (0, aiParseModification_1.aiResultToParseResult)(aiResult);
+            }
         }
         catch (err) {
             const errMsg = err instanceof Error ? err.message : String(err);
@@ -994,7 +1022,6 @@ class UserListener {
             });
             return false;
         }
-        const parseResult = (0, aiParseModification_1.aiResultToParseResult)(aiResult);
         if (parseResult.status !== 'parsed') {
             void (0, listenerEvents_1.persistListenerEvent)(this.supabase, {
                 userId: this.userId,
@@ -1041,6 +1068,7 @@ class UserListener {
             rawMessage,
             parseResult,
             telegramEditDateSeen: args.telegramEditDateSeen,
+            existingStatus: fresh.status,
         });
         if (!updated) {
             if (args.telegramEditDateSeen != null
@@ -1202,6 +1230,31 @@ class UserListener {
     }
     async parseSignalForListener(args) {
         const { keywords, lexicon } = await (0, channelKeywordsCache_1.getChannelParseContext)(this.supabase, args.channelRowId);
+        if (listenerInlineParseEnabled() && (0, parseConfig_1.getUniversalParseMode)() !== 'off') {
+            const isModificationClass = this.isModificationClassMessage(args.rawMessage, args.isReply, keywords, lexicon);
+            const routed = await (0, parseRouting_1.routeSignalParse)({
+                supabase: this.supabase,
+                userId: this.userId,
+                channelRowId: args.channelRowId,
+                signalId: args.signalId,
+                rawMessage: args.rawMessage,
+                isReply: args.isReply,
+                parentSignalId: args.parentSignalId,
+                isModificationClass,
+                keywords,
+                lexicon,
+            });
+            if (routed.parseResult.status === 'parsed' && routed.aiMeta?.source === 'openai') {
+                console.log(`[userListener] universal parse user=${this.userId} channelRow=${args.channelRowId}`
+                    + ` intent=${routed.aiMeta.intent} action=${routed.parseResult.parsed.action}`
+                    + ` symbol=${routed.parseResult.parsed.symbol ?? 'null'}`);
+            }
+            return {
+                parseResult: routed.parseResult,
+                aiMeta: routed.aiMeta,
+                channelKeywords: keywords,
+            };
+        }
         if (this.isModificationClassMessage(args.rawMessage, args.isReply, keywords, lexicon)) {
             if (listenerInlineParseEnabled()) {
                 const detMod = (0, parseSignal_1.parseModificationDeterministic)(args.rawMessage, keywords, lexicon);
@@ -1988,7 +2041,42 @@ class UserListener {
             editDateBySignalId.set(signal.id, snap.editDateSec);
         }
         stats.checked = checkedIds.length;
-        const mismatches = (0, signalTelegramReconcile_1.findSignalsNeedingReconcile)(signals, snapshots);
+        const textMismatches = (0, signalTelegramReconcile_1.findSignalsNeedingReconcile)(signals, snapshots);
+        const textMismatchIds = new Set(textMismatches.map(m => m.signal.id));
+        const { keywords, lexicon } = await (0, channelKeywordsCache_1.getChannelParseContext)(this.supabase, channelRow.id);
+        const parsedDrift = [];
+        for (const signal of signals) {
+            if (textMismatchIds.has(signal.id))
+                continue;
+            const mid = signal.telegram_message_id?.trim();
+            const snap = mid ? snapshots.get(mid) : undefined;
+            if (!snap)
+                continue;
+            const reparsed = (0, parseSignal_1.parseChannelMessageSync)(snap.text, keywords, lexicon);
+            if (reparsed.status !== 'parsed')
+                continue;
+            const freshRecord = {
+                action: reparsed.parsed.action,
+                sl: reparsed.parsed.sl,
+                tp: reparsed.parsed.tp,
+            };
+            if (!(0, signalTelegramReconcile_1.parsedTargetsDrift)(signal.parsed_data, freshRecord))
+                continue;
+            parsedDrift.push({ signal, rawMessage: snap.text, editDateSec: snap.editDateSec });
+            void (0, listenerEvents_1.persistListenerEvent)(this.supabase, {
+                userId: this.userId,
+                eventType: 'signal_reconcile_parsed_drift',
+                channelRowId: channelRow.id,
+                telegramMessageId: signal.telegram_message_id,
+                detail: {
+                    source,
+                    signal_id: signal.id,
+                    stored: (0, signalTelegramReconcile_1.normalizedSlTpTargets)(signal.parsed_data),
+                    fresh: (0, signalTelegramReconcile_1.normalizedSlTpTargets)(freshRecord),
+                },
+            });
+        }
+        const mismatches = [...textMismatches, ...parsedDrift];
         const mismatchIds = new Set(mismatches.map(m => m.signal.id));
         const reconciledIds = checkedIds.filter(id => !mismatchIds.has(id));
         if (reconciledIds.length) {

@@ -117,9 +117,10 @@ describe('signalRevision', () => {
       existingStatus: 'executed',
     })
     assert.equal(ok, true)
-    assert.equal(patch?.status, undefined)
-    assert.equal(patch?.skip_reason, undefined)
-    assert.equal(patch?.raw_message, 'Gold buy SL 2650')
+    const appliedPatch = patch as Record<string, unknown> | null
+    assert.equal(appliedPatch?.status, undefined)
+    assert.equal(appliedPatch?.skip_reason, undefined)
+    assert.equal(appliedPatch?.raw_message, 'Gold buy SL 2650')
   })
 
   it('updateSignalAfterRevision skips edit_date filter when incoming edit_date absent', async () => {

@@ -1,5 +1,6 @@
 /**
  * OpenAI-powered parse for modification / management Telegram messages.
+ * @deprecated Prefer universalSignalParser (signalIntent/) when UNIVERSAL_PARSE_MODE != off.
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js'

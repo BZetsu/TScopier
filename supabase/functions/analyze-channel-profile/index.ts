@@ -7,6 +7,7 @@ import {
   normalizeManagementGroups,
   resolveManagementGroups,
 } from "../_shared/trainingManagementKeywords.ts"
+import { buildChannelExampleRows } from "../_shared/signalIntent/parsedDataToTradeIntent.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -636,13 +637,46 @@ Rules:
   }
 }
 
+async function persistChannelSignalExamples(args: {
+  supabase: ReturnType<typeof createClient>
+  userId: string
+  channelId: string
+  rows: Array<{ raw_message: string; parsed_data: unknown }>
+}): Promise<void> {
+  const { supabase, userId, channelId, rows } = args
+  const examples = buildChannelExampleRows(rows, 12)
+  if (!examples.length) return
+
+  const encoder = new TextEncoder()
+  const digest = async (text: string): Promise<string> => {
+    const hash = await crypto.subtle.digest("SHA-256", encoder.encode(text.trim()))
+    return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("").slice(0, 32)
+  }
+
+  let sortOrder = 0
+  for (const ex of examples) {
+    const raw_message_hash = await digest(ex.raw_message)
+    await supabase.from("channel_signal_examples").upsert({
+      user_id: userId,
+      channel_id: channelId,
+      raw_message: ex.raw_message,
+      raw_message_hash,
+      label: ex.label,
+      intent: ex.intent,
+      sort_order: sortOrder++,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "channel_id,raw_message_hash" })
+  }
+}
+
 async function persistTrainingSchema(args: {
   supabase: ReturnType<typeof createClient>
   userId: string
   channelId: string
   training: SignalTrainingSchema
+  sampleRows?: Array<{ raw_message: string; parsed_data: unknown }>
 }): Promise<void> {
-  const { supabase, userId, channelId, training } = args
+  const { supabase, userId, channelId, training, sampleRows = [] } = args
   const { data: channelRes } = await supabase
     .from("telegram_channels")
     .select("channel_keywords")
@@ -711,6 +745,10 @@ async function persistTrainingSchema(args: {
       unknown_tokens: training.language_hints,
       updated_at: new Date().toISOString(),
     }, { onConflict: "channel_id" })
+
+  if (sampleRows.length) {
+    await persistChannelSignalExamples({ supabase, userId, channelId, rows: sampleRows })
+  }
 }
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 200, headers: corsHeaders })
@@ -826,7 +864,7 @@ Deno.serve(async (req: Request) => {
 
     if (action === "save_training") {
       const schema = normalizeTrainingSchema(body?.training_schema)
-      await persistTrainingSchema({ supabase, userId, channelId, training: schema })
+      await persistTrainingSchema({ supabase, userId, channelId, training: schema, sampleRows: mergedRows })
       await supabase
         .from("channel_signal_profiles")
         .update({
@@ -846,7 +884,7 @@ Deno.serve(async (req: Request) => {
       ? (await aiExtractTrainingSchema(mergedRows) ?? defaultTrainingSchemaFromRows(mergedRows))
       : null
     if (trainingSchema) {
-      await persistTrainingSchema({ supabase, userId, channelId, training: trainingSchema })
+      await persistTrainingSchema({ supabase, userId, channelId, training: trainingSchema, sampleRows: mergedRows })
       await supabase
         .from("channel_signal_profiles")
         .update({

@@ -4,6 +4,7 @@ exports.looksLikeExplicitFullCloseCommand = exports.looksLikeChannelManagementUp
 exports.normalizeChannelKeywords = normalizeChannelKeywords;
 exports.loadChannelLexicon = loadChannelLexicon;
 exports.loadChannelKeywords = loadChannelKeywords;
+exports.enrichParsedKeywordMatch = enrichParsedKeywordMatch;
 exports.parseModificationDeterministic = parseModificationDeterministic;
 exports.normalizeAiParsedOutput = normalizeAiParsedOutput;
 exports.parseChannelMessageSync = parseChannelMessageSync;
@@ -376,7 +377,8 @@ function extractTpLevels(message, extraLabels = []) {
     collect(new RegExp(`\\b(?:tp|target(?:\\s+level)?)\\s*\\d+\\s*[:=\\-]\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'gi'));
     collect(new RegExp(`\\b(?:tp|target(?:\\s+level)?)\\s*\\d+\\s+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'gi'));
     collect(new RegExp(`\\btp\\s*\\.\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'gi'));
-    collect(new RegExp(`\\btp\\s*\\d+\\s*\\.\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'gi'));
+    // Tier index only (1–2 digits): "TP1. 4066". Must not match "TP 4053.22" (full decimal price).
+    collect(new RegExp(`\\btp\\s*\\d{1,2}\\s*\\.\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'gi'));
     collect(new RegExp(`\\btp[\\u00B9\\u00B2\\u00B3\\u2070-\\u2079]+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'giu'));
     collect(new RegExp(`(?:الهدف\\s*(?:الأول|الثاني|الثالث|\\d+)|جني\\s*الأرباح|جني\\s*الارباح)\\s*[:：]?\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'giu'));
     collect(buildTpRegex(extraLabels));

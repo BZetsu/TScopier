@@ -1,6 +1,7 @@
 "use strict";
 /**
  * OpenAI-powered parse for modification / management Telegram messages.
+ * @deprecated Prefer universalSignalParser (signalIntent/) when UNIVERSAL_PARSE_MODE != off.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.coerceMgmtSlTpFollowUpAction = coerceMgmtSlTpFollowUpAction;

@@ -1,5 +1,6 @@
 /**
  * OpenAI-powered parse for entry Telegram signals when deterministic keywords miss.
+ * @deprecated Prefer universalSignalParser (signalIntent/) when UNIVERSAL_PARSE_MODE != off.
  */
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { ParsedSignal } from './manualPlanning/types'

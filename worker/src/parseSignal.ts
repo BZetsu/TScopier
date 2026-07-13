@@ -1558,7 +1558,7 @@ function applyStopUnits(
   }
 }
 
-function enrichParsedKeywordMatch(
+export function enrichParsedKeywordMatch(
   keywordMatch: ChannelParsedSignal,
   rawMessage: string,
   channelKeywords?: ChannelKeywords | null,

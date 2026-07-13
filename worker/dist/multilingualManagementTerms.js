@@ -7,6 +7,8 @@ exports.textLooksLikeMultilingualManagement = textLooksLikeMultilingualManagemen
 /**
  * Multilingual trade-management instructions (close all, partial, breakeven, SL/TP adjust).
  * Keep in sync with supabase/functions/_shared/multilingualManagementTerms.ts
+ *
+ * FROZEN for new locales: use universalSignalParser + channel_signal_examples instead.
  */
 const multilingualSignalTerms_1 = require("./multilingualSignalTerms");
 function escapeRegExp(s) {

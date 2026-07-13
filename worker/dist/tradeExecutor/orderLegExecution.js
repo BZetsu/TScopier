@@ -38,6 +38,7 @@ const fxsocketClient_1 = require("../fxsocketClient");
 const brokerConnectError_1 = require("../brokerConnectError");
 const autoManagement_1 = require("../autoManagement");
 const channelActiveTradeParams_1 = require("../channelActiveTradeParams");
+const orderModifySafe_1 = require("../orderModifySafe");
 const trailingStop_1 = require("../trailingStop");
 const postFillFollowUp_1 = require("../postFillFollowUp");
 const helpers_1 = require("./helpers");
@@ -83,7 +84,7 @@ async function sendImmediateLegs(input) {
         let args = leg.args;
         const isBuyLeg = (0, helpers_1.isBuySideOp)(String(args.operation));
         const isMarket = args.operation === 'Buy' || args.operation === 'Sell';
-        if (!liveEntryFast && isMarket && (!args.price || args.price <= 0) && api) {
+        if (isMarket && (!args.price || args.price <= 0) && (strictEntryPrefetch || api)) {
             try {
                 const q = strictEntryPrefetch ?? await api.quote(uuid, symbol);
                 args = { ...args, price: isBuyLeg ? q.ask : q.bid };
@@ -112,140 +113,165 @@ async function sendImmediateLegs(input) {
             console.warn(`[tradeExecutor] stops clamped signal=${signal.id} broker=${broker.id} symbol=${args.symbol} op=${args.operation}: ${clamped.adjustments.join(', ')}`);
         }
         args = clamped.args;
+        const plannedSl = Number(args.stoploss) || 0;
+        const plannedTp = Number(args.takeprofit) || 0;
         const t0 = Date.now();
         if (liveEntryFast && signal.pipeline_ts && signal.pipeline_ts.t_first_broker_send == null) {
             signal.pipeline_ts.t_first_broker_send = t0;
         }
-        try {
-            let result;
-            if (useV2) {
-                const r = await (0, fxClient_1.getFxClient)().orderSend(uuid, v2Platform, {
-                    symbol: args.symbol,
-                    operation: args.operation,
-                    volume: args.volume,
-                    price: Number(args.price) > 0 ? Number(args.price) : undefined,
-                    stopLoss: Number(args.stoploss) > 0 ? Number(args.stoploss) : undefined,
-                    takeProfit: Number(args.takeprofit) > 0 ? Number(args.takeprofit) : undefined,
-                    comment: args.comment,
-                    slippage: args.slippage,
-                    expertId: args.expertID,
-                }, { anchorSignalId: signal.id, legIndex: leg.idx, preSnapshot: v2Snapshot });
-                if (!r.ok || !r.ticket)
-                    throw new Error(r.message || `v2 order_send rejected (${r.retcodeName})`);
-                result = {
-                    ticket: r.ticket,
-                    openPrice: r.price,
-                    stopLoss: Number(args.stoploss) > 0 ? Number(args.stoploss) : null,
-                    takeProfit: Number(args.takeprofit) > 0 ? Number(args.takeprofit) : null,
-                    lots: r.volume ?? args.volume,
-                };
-            }
-            else {
-                const raw = await api.orderSend(uuid, args);
-                result = {
-                    ticket: raw.ticket,
-                    openPrice: raw.openPrice ?? null,
-                    stopLoss: raw.stopLoss ?? null,
-                    takeProfit: raw.takeProfit ?? null,
-                    lots: raw.lots ?? null,
-                };
-            }
-            const latencyMs = Date.now() - t0;
-            if (liveEntryFast && signal.pipeline_ts) {
-                signal.pipeline_ts.t_last_broker_send = Date.now();
-            }
-            console.log(`[tradeExecutor] OrderSend ok signal=${signal.id} broker=${broker.id} ticket=${result.ticket} leg=${leg.idx + 1}/${totalCount} price=${args.price ?? 0} ${latencyMs}ms v2=${useV2}`);
-            const isBuy = !args.operation.toLowerCase().includes('sell');
-            const entryPx = result.openPrice ?? args.price ?? null;
-            const openSl = result.stopLoss ?? args.stoploss ?? null;
-            const trailCols = (0, trailingStop_1.trailingTradeRowSnapshot)(manual, entryPx, openSl);
-            const autoBeCols = (0, autoManagement_1.autoManagementTradeSnapshot)(manual, entryPx, openSl);
-            const tradeRowPayload = {
-                user_id: signal.user_id,
-                signal_id: signal.id,
-                telegram_channel_id: signal.channel_id,
-                broker_account_id: broker.id,
-                metaapi_order_id: result.ticket != null ? String(result.ticket) : null,
-                symbol: args.symbol,
-                direction: isBuy ? 'buy' : 'sell',
-                entry_price: entryPx,
-                sl: openSl,
-                tp: result.takeProfit ?? args.takeprofit ?? null,
-                lot_size: result.lots ?? args.volume,
-                status: args.operation.includes('Limit') || args.operation.includes('Stop') ? 'pending' : 'open',
-                opened_at: new Date().toISOString(),
-                cwe_close_price: leg.cweClosePrice ?? null,
-                ...trailCols,
-                ...autoBeCols,
-            };
-            const filledLeg = {
-                tradeRowId: null,
-                ticket: result.ticket,
-                symbol: args.symbol,
-                direction: isBuy ? 'buy' : 'sell',
-                entryPrice: entryPx,
-                openSl: openSl != null ? Number(openSl) : null,
-                openTp: (result.takeProfit ?? args.takeprofit) != null
-                    ? Number(result.takeProfit ?? args.takeprofit)
-                    : null,
-            };
-            const persistPostFillDb = async (tradeRowId) => {
-                if (tradeRowId && leg.partialTps && leg.partialTps.length > 0) {
-                    const partialRows = leg.partialTps.map(p => ({
-                        trade_id: tradeRowId,
-                        signal_id: signal.id,
-                        user_id: signal.user_id,
-                        broker_account_id: broker.id,
-                        metaapi_account_id: uuid,
-                        symbol: args.symbol,
-                        is_buy: isBuy,
-                        tp_idx: p.tpIdx,
-                        trigger_price: p.triggerPrice,
-                        close_lots: p.closeLots,
-                        status: 'pending',
-                    }));
-                    const { error: partialErr } = await ctx.supabase
-                        .from('partial_tp_legs')
-                        .insert(partialRows);
-                    if (partialErr) {
-                        console.error(`[tradeExecutor] partial_tp_legs INSERT failed signal=${signal.id} broker=${broker.id} trade=${tradeRowId}: ${partialErr.message}`);
-                    }
+        let sendArgs = args;
+        let stopsFallback = false;
+        let result = null;
+        let lastAttemptError = '';
+        for (let attempt = 0; attempt < 2; attempt++) {
+            try {
+                if (useV2) {
+                    const r = await (0, fxClient_1.getFxClient)().orderSend(uuid, v2Platform, {
+                        symbol: sendArgs.symbol,
+                        operation: sendArgs.operation,
+                        volume: sendArgs.volume,
+                        price: Number(sendArgs.price) > 0 ? Number(sendArgs.price) : undefined,
+                        stopLoss: Number(sendArgs.stoploss) > 0 ? Number(sendArgs.stoploss) : undefined,
+                        takeProfit: Number(sendArgs.takeprofit) > 0 ? Number(sendArgs.takeprofit) : undefined,
+                        comment: sendArgs.comment,
+                        slippage: sendArgs.slippage,
+                        expertId: sendArgs.expertID,
+                    }, { anchorSignalId: signal.id, legIndex: leg.idx, preSnapshot: v2Snapshot });
+                    if (!r.ok || !r.ticket)
+                        throw new Error(r.message || `v2 order_send rejected (${r.retcodeName})`);
+                    result = {
+                        ticket: r.ticket,
+                        openPrice: r.price,
+                        stopLoss: Number(sendArgs.stoploss) > 0 ? Number(sendArgs.stoploss) : null,
+                        takeProfit: Number(sendArgs.takeprofit) > 0 ? Number(sendArgs.takeprofit) : null,
+                        lots: r.volume ?? sendArgs.volume,
+                    };
                 }
+                else {
+                    const raw = await api.orderSend(uuid, sendArgs);
+                    result = {
+                        ticket: raw.ticket,
+                        openPrice: raw.openPrice ?? null,
+                        stopLoss: raw.stopLoss ?? null,
+                        takeProfit: raw.takeProfit ?? null,
+                        lots: raw.lots ?? null,
+                    };
+                }
+                break;
+            }
+            catch (err) {
+                lastAttemptError = err instanceof Error ? err.message : String(err);
+                const hasStops = (Number(sendArgs.stoploss) || 0) > 0 || (Number(sendArgs.takeprofit) || 0) > 0;
+                if (attempt === 0 && (0, orderModifySafe_1.isInvalidStopsError)(lastAttemptError) && hasStops) {
+                    console.warn(`[tradeExecutor] retry without stops signal=${signal.id} broker=${broker.id} leg=${leg.idx + 1}/${totalCount}`
+                        + ` reason="${lastAttemptError}" (sl=${sendArgs.stoploss} tp=${sendArgs.takeprofit})`);
+                    sendArgs = { ...sendArgs, stoploss: 0, takeprofit: 0 };
+                    stopsFallback = true;
+                    continue;
+                }
+                lastSendError = lastAttemptError;
+                if ((0, fxsocketClient_1.isBrokerDisconnectedMessage)(lastAttemptError) && !(0, brokerConnectError_1.isMtBridgeGlitchMessage)(lastAttemptError)) {
+                    await ctx.markBrokerSessionDown(broker, uuid, lastAttemptError);
+                }
+                console.error(`[tradeExecutor] OrderSend failed signal=${signal.id} broker=${broker.id} leg=${leg.idx + 1}/${totalCount} op=${sendArgs.operation} price=${sendArgs.price ?? 0}:`, lastAttemptError);
                 await ctx.supabase.from('trade_execution_logs').insert({
                     user_id: signal.user_id,
                     signal_id: signal.id,
                     broker_account_id: broker.id,
                     action: 'order_send',
-                    status: 'success',
-                    request_payload: { ...args, ...orderLogContext },
-                    response_payload: {
-                        ticket: result.ticket,
-                        latency_ms: latencyMs,
-                        pipeline_ms: pipelineT0 != null ? Date.now() - pipelineT0 : undefined,
-                        leg: leg.idx + 1,
-                        total: totalCount,
-                    },
+                    status: 'failed',
+                    request_payload: { ...sendArgs, ...orderLogContext },
+                    error_message: lastAttemptError,
                 });
-            };
-            if (liveEntryFast) {
-                filledLegs.push(filledLeg);
-                void (async () => {
-                    const tradeInsert = await ctx.supabase
-                        .from('trades')
-                        .insert(tradeRowPayload)
-                        .select('id')
-                        .maybeSingle();
-                    if (tradeInsert.error) {
-                        console.error(`[tradeExecutor] trades INSERT failed signal=${signal.id} broker=${broker.id} ticket=${result.ticket}: ${tradeInsert.error.message}`);
-                    }
-                    const tradeRowId = tradeInsert.data?.id ?? null;
-                    filledLeg.tradeRowId = tradeRowId;
-                    await persistPostFillDb(tradeRowId);
-                })().catch(err => {
-                    console.error(`[tradeExecutor] post-fill persist failed signal=${signal.id} broker=${broker.id} ticket=${result.ticket}:`, err instanceof Error ? err.message : String(err));
-                });
+                return false;
             }
-            else {
+        }
+        if (!result)
+            return false;
+        const latencyMs = Date.now() - t0;
+        if (liveEntryFast && signal.pipeline_ts) {
+            signal.pipeline_ts.t_last_broker_send = Date.now();
+        }
+        console.log(`[tradeExecutor] OrderSend ok signal=${signal.id} broker=${broker.id} ticket=${result.ticket} leg=${leg.idx + 1}/${totalCount}`
+            + ` price=${sendArgs.price ?? 0} ${latencyMs}ms v2=${useV2}${stopsFallback ? ' stops_fallback' : ''}`);
+        const isBuy = !sendArgs.operation.toLowerCase().includes('sell');
+        const entryPx = result.openPrice ?? sendArgs.price ?? null;
+        const openSl = stopsFallback ? (plannedSl > 0 ? plannedSl : null) : (result.stopLoss ?? sendArgs.stoploss ?? null);
+        const openTp = stopsFallback ? (plannedTp > 0 ? plannedTp : null) : (result.takeProfit ?? sendArgs.takeprofit ?? null);
+        const trailCols = (0, trailingStop_1.trailingTradeRowSnapshot)(manual, entryPx, openSl);
+        const autoBeCols = (0, autoManagement_1.autoManagementTradeSnapshot)(manual, entryPx, openSl);
+        const tradeRowPayload = {
+            user_id: signal.user_id,
+            signal_id: signal.id,
+            telegram_channel_id: signal.channel_id,
+            broker_account_id: broker.id,
+            metaapi_order_id: result.ticket != null ? String(result.ticket) : null,
+            symbol: sendArgs.symbol,
+            direction: isBuy ? 'buy' : 'sell',
+            entry_price: entryPx,
+            sl: openSl,
+            tp: openTp,
+            lot_size: result.lots ?? sendArgs.volume,
+            status: sendArgs.operation.includes('Limit') || sendArgs.operation.includes('Stop') ? 'pending' : 'open',
+            opened_at: new Date().toISOString(),
+            cwe_close_price: leg.cweClosePrice ?? null,
+            ...trailCols,
+            ...autoBeCols,
+        };
+        const filledLeg = {
+            tradeRowId: null,
+            ticket: result.ticket,
+            symbol: sendArgs.symbol,
+            direction: isBuy ? 'buy' : 'sell',
+            entryPrice: entryPx,
+            openSl: openSl != null ? Number(openSl) : null,
+            openTp: openTp != null ? Number(openTp) : null,
+        };
+        const persistPostFillDb = async (tradeRowId) => {
+            if (tradeRowId && leg.partialTps && leg.partialTps.length > 0) {
+                const partialRows = leg.partialTps.map(p => ({
+                    trade_id: tradeRowId,
+                    signal_id: signal.id,
+                    user_id: signal.user_id,
+                    broker_account_id: broker.id,
+                    metaapi_account_id: uuid,
+                    symbol: sendArgs.symbol,
+                    is_buy: isBuy,
+                    tp_idx: p.tpIdx,
+                    trigger_price: p.triggerPrice,
+                    close_lots: p.closeLots,
+                    status: 'pending',
+                }));
+                const { error: partialErr } = await ctx.supabase
+                    .from('partial_tp_legs')
+                    .insert(partialRows);
+                if (partialErr) {
+                    console.error(`[tradeExecutor] partial_tp_legs INSERT failed signal=${signal.id} broker=${broker.id} trade=${tradeRowId}: ${partialErr.message}`);
+                }
+            }
+            await ctx.supabase.from('trade_execution_logs').insert({
+                user_id: signal.user_id,
+                signal_id: signal.id,
+                broker_account_id: broker.id,
+                action: 'order_send',
+                status: 'success',
+                request_payload: {
+                    ...sendArgs,
+                    ...orderLogContext,
+                    ...(stopsFallback ? { stops_fallback: true } : {}),
+                },
+                response_payload: {
+                    ticket: result.ticket,
+                    latency_ms: latencyMs,
+                    pipeline_ms: pipelineT0 != null ? Date.now() - pipelineT0 : undefined,
+                    leg: leg.idx + 1,
+                    total: totalCount,
+                },
+            });
+        };
+        if (liveEntryFast) {
+            filledLegs.push(filledLeg);
+            void (async () => {
                 const tradeInsert = await ctx.supabase
                     .from('trades')
                     .insert(tradeRowPayload)
@@ -254,30 +280,27 @@ async function sendImmediateLegs(input) {
                 if (tradeInsert.error) {
                     console.error(`[tradeExecutor] trades INSERT failed signal=${signal.id} broker=${broker.id} ticket=${result.ticket}: ${tradeInsert.error.message}`);
                 }
-                filledLeg.tradeRowId = tradeInsert.data?.id ?? null;
-                filledLegs.push(filledLeg);
-                await persistPostFillDb(filledLeg.tradeRowId);
-            }
-            return true;
-        }
-        catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            lastSendError = msg;
-            if ((0, fxsocketClient_1.isBrokerDisconnectedMessage)(msg) && !(0, brokerConnectError_1.isMtBridgeGlitchMessage)(msg)) {
-                await ctx.markBrokerSessionDown(broker, uuid, msg);
-            }
-            console.error(`[tradeExecutor] OrderSend failed signal=${signal.id} broker=${broker.id} leg=${leg.idx + 1}/${totalCount} op=${args.operation} price=${args.price ?? 0}:`, msg);
-            await ctx.supabase.from('trade_execution_logs').insert({
-                user_id: signal.user_id,
-                signal_id: signal.id,
-                broker_account_id: broker.id,
-                action: 'order_send',
-                status: 'failed',
-                request_payload: { ...args, ...orderLogContext },
-                error_message: msg,
+                const tradeRowId = tradeInsert.data?.id ?? null;
+                filledLeg.tradeRowId = tradeRowId;
+                await persistPostFillDb(tradeRowId);
+            })().catch(err => {
+                console.error(`[tradeExecutor] post-fill persist failed signal=${signal.id} broker=${broker.id} ticket=${result.ticket}:`, err instanceof Error ? err.message : String(err));
             });
-            return false;
         }
+        else {
+            const tradeInsert = await ctx.supabase
+                .from('trades')
+                .insert(tradeRowPayload)
+                .select('id')
+                .maybeSingle();
+            if (tradeInsert.error) {
+                console.error(`[tradeExecutor] trades INSERT failed signal=${signal.id} broker=${broker.id} ticket=${result.ticket}: ${tradeInsert.error.message}`);
+            }
+            filledLeg.tradeRowId = tradeInsert.data?.id ?? null;
+            filledLegs.push(filledLeg);
+            await persistPostFillDb(filledLeg.tradeRowId);
+        }
+        return true;
     };
     // All immediates fan out in parallel. Virtual pendings are already
     // persisted; the worker monitor + edge sweep will fire them on trigger.

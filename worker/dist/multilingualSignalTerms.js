@@ -3,6 +3,9 @@
  * Common non-English trading terms merged into parser + ingest heuristics.
  * Per-channel AI training can override/extend via channel_keywords.
  *
+ * FROZEN for new locales: prefer Universal Signal Understanding (worker/src/signalIntent/)
+ * and channel_signal_examples few-shot training instead of expanding this list.
+ *
  * Locales align with src/i18n/types.ts (en, es, fr, pl, ru, sv, nl, ja)
  * plus common channel languages (de, ar, pt, it).
  */
