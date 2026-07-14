@@ -47,4 +47,22 @@ Risk only 1-2% of your balance.`
     assert.match(normalized, /TP1 4127/)
     assert.match(normalized, /SL 4104/)
   })
+
+  it('inserts space when emoji is glued directly between side/SL and price', () => {
+    const raw = `Gold（XAUUSD）📊\nSELL🛑4027-4037\n\nTP1 🎯4022\nTP2 🎯4017\nTP3 🎯4012\n\nSL⛔️4042`
+    const normalized = normalizeSignalMessageForParse(raw)
+    assert.match(normalized, /SELL 4027-4037/)
+    assert.match(normalized, /SL 4042/)
+    assert.doesNotMatch(normalized, /SELL\d/)
+    assert.doesNotMatch(normalized, /SL\d/)
+
+    const result = parseChannelMessageSync(raw, DEFAULT_CHANNEL_KEYWORDS, null)
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.action, 'sell')
+    assert.equal(result.parsed.symbol, 'XAUUSD')
+    assert.equal(result.parsed.entry_zone_low, 4027)
+    assert.equal(result.parsed.entry_zone_high, 4037)
+    assert.equal(result.parsed.sl, 4042)
+    assert.deepEqual(result.parsed.tp, [4022, 4017, 4012])
+  })
 })
