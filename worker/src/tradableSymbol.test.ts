@@ -105,3 +105,15 @@ Forex, Gold, Oil signals`
     'AUDNZD',
   )
 })
+
+test('XAUUSD/GOLD slash header resolves to XAUUSD', () => {
+  const msg = `XAUUSD/GOLD
+
+• Signal: Buy
+• Entry: 4077
+• Take Profit: 4087
+• Stop Loss: 4067`
+  assert.equal(extractTradableSymbolFromMessage(msg), 'XAUUSD')
+  assert.equal(sanitizeParsedSymbol('XAUUSDGOLD'), 'XAUUSD')
+  assert.equal(extractTradableSymbolFromMessage('GOLD/XAUUSD sell'), 'XAUUSD')
+})

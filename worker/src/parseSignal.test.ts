@@ -1048,6 +1048,43 @@ TP²4064`
     assert.equal(result.parsed.entry_zone_high, 4057)
   })
 
+  it('parses bullet Signal: Buy with XAUUSD/GOLD header', () => {
+    const msg = `XAUUSD/GOLD
+
+• Signal: Buy
+• Entry: 4077
+• Take Profit: 4087
+• Stop Loss: 4067`
+    const result = parseChannelMessageSync(msg, DEFAULT_CHANNEL_KEYWORDS, lexicon)
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.symbol, 'XAUUSD')
+    assert.equal(result.parsed.action, 'buy')
+    assert.equal(result.parsed.entry_price, 4077)
+    assert.equal(result.parsed.sl, 4067)
+    assert.deepEqual(result.parsed.tp, [4087])
+  })
+
+  it('parses XAUUSD SELL entry range with Sl_/@ and six superscript TPs', () => {
+    const msg = `XAUUSD SELL 4030/4033
+
+Sl_/@4043
+
+TP¹4027
+TP²4024
+TP³4020
+TP⁴4017
+TP⁵4014
+TP⁶4005`
+    const result = parseChannelMessageSync(msg, DEFAULT_CHANNEL_KEYWORDS, lexicon)
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.symbol, 'XAUUSD')
+    assert.equal(result.parsed.action, 'sell')
+    assert.equal(result.parsed.entry_zone_low, 4030)
+    assert.equal(result.parsed.entry_zone_high, 4033)
+    assert.equal(result.parsed.sl, 4043)
+    assert.deepEqual(result.parsed.tp, [4027, 4024, 4020, 4017, 4014, 4005])
+  })
+
   it('parses XAUUSD SELL: 4074/4077 without matching Risk pip range', () => {
     const msg = `XAUUSD SELL: 4074/4077
 SL: 4085 | Risk: 80-110 Pips
