@@ -15,10 +15,10 @@ export const landingJa: LandingTranslations = {
     menuClose: 'メニューを閉じる',
   },
   hero: {
-    headline: 'インテリジェントAI Telegramシグナルコピープラットフォーム',
+    headline: 'インテリジェントなAI Telegramシグナルコピープラットフォーム',
     subheadline:
       'TScopierはオールインワンのTelegramシグナルコピープラットフォームです。Telegramを接続し、トレードシグナルをMT4/MT5に直接コピー。複雑な設定、EA、VPSは不要です。',
-    primaryCta: '10日間の無料トライアルを始める',
+    primaryCta: '無料ではじめる',
     secondaryCta: 'ログイン',
     imageAlt: '残高、当日損益、取引結果、口座成長チャートを表示したTScopierダッシュボード',
     previewUrl: 'app.tscopier.ai/dashboard',

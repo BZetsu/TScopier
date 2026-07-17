@@ -15,10 +15,10 @@ export const landingAr: LandingTranslations = {
     menuClose: 'إغلاق القائمة',
   },
   hero: {
-    headline: 'منصة ذكاء اصطناعي لنسخ إشارات Telegram',
+    headline: 'منصة ذكية واحدة بالذكاء الاصطناعي لنسخ إشارات Telegram',
     subheadline:
       'TScopier منصة شاملة لنسخ إشارات Telegram تربط Telegram وتنسخ إشارات التداول مباشرة إلى MT4/MT5 — بلا إعدادات معقدة، بلا EA، وبلا VPS.',
-    primaryCta: 'ابدأ تجربة مجانية 10 أيام',
+    primaryCta: 'ابدأ مجانًا',
     secondaryCta: 'تسجيل الدخول',
     imageAlt:
       'لوحة تحكم TScopier تعرض الرصيد والربح اليومي ونتائج التداول ومخططات نمو الحساب',
