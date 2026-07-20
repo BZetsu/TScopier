@@ -69,6 +69,11 @@ import {
 import { estimateMultiTradeOrderCount, formatMultiTradeTotalOpenTradesPreview } from '../../lib/estimateMultiTradeOrders'
 import { computeMinMultiTradeLegPercent, resolveMultiTradePerLegLot } from '../../lib/multiTradeLegUnits'
 import { formatPreviewLotSize, resolvePreviewManualLot } from '../../lib/manualLotSizing'
+import {
+  draftNumberError,
+  parseDraftNumber,
+  type DraftNumberRules,
+} from '../../lib/draftNumberField'
 import { pipCalculator, pipValueForLots, type PipQuote } from '../../lib/pipCalculator'
 import { classifySymbol } from '../../lib/pipMath'
 import { signalPipPrice } from '../../lib/signalPip'
@@ -231,29 +236,79 @@ function clonePredefinedTpPips(list: number[] | undefined): number[] {
   return src.map(n => (Number.isFinite(Number(n)) ? Number(n) : 0))
 }
 
+type RiskNumberDraftKey =
+  | 'fixed_lot'
+  | 'dynamic_balance_percent'
+  | 'signal_entry_pip_tolerance'
+  | 'multi_trade_leg_percent'
+  | 'range_percent'
+  | 'range_step_pips'
+  | 'range_distance_pips'
+
+type RiskNumberDrafts = Partial<Record<RiskNumberDraftKey, string>>
+
 function numberFieldDisplay(
   stored: number | undefined,
-  draft: string | null,
+  draft: string | undefined,
   fallback: number,
 ): string {
-  if (draft !== null) return draft
+  if (draft !== undefined) return draft
   const value = stored ?? fallback
   return Number.isFinite(value) ? String(value) : ''
 }
 
 function commitPositiveNumber(raw: string, fallback: number): number {
-  const trimmed = raw.trim()
-  if (trimmed === '') return fallback
-  const n = Number(trimmed)
-  if (!Number.isFinite(n) || n <= 0) return fallback
-  return n
+  const parsed = parseDraftNumber(raw, { positive: true })
+  return parsed ?? fallback
+}
+
+function riskNumberRules(
+  key: RiskNumberDraftKey,
+  minLegPercent: number,
+): DraftNumberRules {
+  switch (key) {
+    case 'fixed_lot':
+      return { positive: true, min: 0.01 }
+    case 'dynamic_balance_percent':
+      return { min: 0.1 }
+    case 'signal_entry_pip_tolerance':
+      return { min: 0 }
+    case 'multi_trade_leg_percent':
+      return { min: minLegPercent, max: 100 }
+    case 'range_percent':
+      return { min: 0, max: 100 }
+    case 'range_step_pips':
+    case 'range_distance_pips':
+      return { min: 1 }
+  }
+}
+
+function riskDraftManualPatch(
+  drafts: RiskNumberDrafts,
+  minLegPercent: number,
+): { patch: Partial<ManualSettings>; hasInvalid: boolean } {
+  const patch: Partial<ManualSettings> = {}
+  let hasInvalid = false
+  for (const key of Object.keys(drafts) as RiskNumberDraftKey[]) {
+    if (!Object.prototype.hasOwnProperty.call(drafts, key)) continue
+    const raw = drafts[key]
+    if (raw === undefined) continue
+    const parsed = parseDraftNumber(raw, riskNumberRules(key, minLegPercent))
+    if (parsed == null) {
+      hasInvalid = true
+      continue
+    }
+    ;(patch as Record<string, number>)[key] = parsed
+  }
+  return { patch, hasInvalid }
 }
 
 /** Commit in-progress number inputs (e.g. fixed lot) before save or dirty checks. */
 function applyPendingConfigureDraftFields(
   draft: AccountConfigDraft,
-  fixedLotDraft: string | null,
+  riskNumberDrafts: RiskNumberDrafts,
   symbolsExcludeDraft: string | null = null,
+  minLegPercent = 1,
 ): AccountConfigDraft {
   const id = draft.selectedChannelId
   if (!id || !draft.channelConfigs[id]) return draft
@@ -261,15 +316,10 @@ function applyPendingConfigureDraftFields(
   let entry = draft.channelConfigs[id]
   let changed = false
 
-  if (fixedLotDraft !== null) {
-    const fixedLot = commitPositiveNumber(
-      fixedLotDraft,
-      entry.manualSettings.fixed_lot ?? DEFAULT_MANUAL_SETTINGS.fixed_lot ?? 0.01,
-    )
-    if (fixedLot !== entry.manualSettings.fixed_lot) {
-      entry = { ...entry, manualSettings: { ...entry.manualSettings, fixed_lot: fixedLot } }
-      changed = true
-    }
+  const { patch } = riskDraftManualPatch(riskNumberDrafts, minLegPercent)
+  if (Object.keys(patch).length > 0) {
+    entry = { ...entry, manualSettings: { ...entry.manualSettings, ...patch } }
+    changed = true
   }
 
   if (symbolsExcludeDraft !== null) {
@@ -859,7 +909,7 @@ export function AccountConfigPage() {
   const [brokerFilter, setBrokerFilter] = useState('all')
   const [brokerSearchQuery, setBrokerSearchQuery] = useState('')
   const [brokerPage, setBrokerPage] = useState(1)
-  const [fixedLotDraft, setFixedLotDraft] = useState<string | null>(null)
+  const [riskNumberDrafts, setRiskNumberDrafts] = useState<RiskNumberDrafts>({})
   const [symbolsExcludeDraft, setSymbolsExcludeDraft] = useState<string | null>(null)
   const [riskCalcOpen, setRiskCalcOpen] = useState(false)
   const brokerHealthSyncKey = useMemo(
@@ -934,7 +984,7 @@ export function AccountConfigPage() {
   }, [configDraft.selectedChannelId, configDraft.channelConfigs])
 
   useEffect(() => {
-    setFixedLotDraft(null)
+    setRiskNumberDrafts({})
     setSymbolsExcludeDraft(null)
   }, [configDraft.selectedChannelId])
 
@@ -957,9 +1007,103 @@ export function AccountConfigPage() {
   const keywordFiltersEnabled = canUsePlanFeature('channel_keyword_filters')
   const multiTradeStyleEnabled = canUsePlanFeature('multi_trade_style')
 
+  const previewManualLot = useMemo(() => {
+    const ms = channelManualSettings
+    const fixedDraft = riskNumberDrafts.fixed_lot
+    const fixedLot = fixedDraft !== undefined && ms.risk_mode !== 'dynamic_balance_percent'
+      ? commitPositiveNumber(fixedDraft, ms.fixed_lot ?? DEFAULT_MANUAL_SETTINGS.fixed_lot ?? 0.01)
+      : ms.fixed_lot
+    const { patch } = riskDraftManualPatch(riskNumberDrafts, 0)
+    return resolvePreviewManualLot({
+      manualSettings: { ...ms, ...patch, fixed_lot: fixedLot },
+      accountBalance: configAccountTotalBalance,
+    })
+  }, [
+    channelManualSettings,
+    riskNumberDrafts,
+    configAccountTotalBalance,
+  ])
+
+  const multiTradeMinLegPercent = useMemo(
+    () => computeMinMultiTradeLegPercent(previewManualLot),
+    [previewManualLot],
+  )
+
+  const setRiskNumberDraft = useCallback((key: RiskNumberDraftKey, raw: string) => {
+    setRiskNumberDrafts(prev => ({ ...prev, [key]: raw }))
+  }, [])
+
+  const riskNumberFieldError = useCallback((key: RiskNumberDraftKey): string | undefined => {
+    if (!Object.prototype.hasOwnProperty.call(riskNumberDrafts, key)) return undefined
+    const raw = riskNumberDrafts[key] ?? ''
+    return draftNumberError(
+      raw,
+      riskNumberRules(key, multiTradeMinLegPercent),
+      cm.risk.fieldErrors,
+      interpolate,
+    ) ?? undefined
+  }, [riskNumberDrafts, multiTradeMinLegPercent, cm.risk.fieldErrors])
+
+  const commitRiskNumberField = useCallback((key: RiskNumberDraftKey) => {
+    if (!Object.prototype.hasOwnProperty.call(riskNumberDrafts, key)) return
+    const raw = riskNumberDrafts[key] ?? ''
+    const rules = riskNumberRules(key, multiTradeMinLegPercent)
+    const parsed = parseDraftNumber(raw, rules)
+    if (parsed == null) return
+    setConfigDraft(prev => {
+      const id = prev.selectedChannelId
+      if (!id || !prev.channelConfigs[id]) return prev
+      const entry = prev.channelConfigs[id]!
+      return {
+        ...prev,
+        channelConfigs: {
+          ...prev.channelConfigs,
+          [id]: {
+            ...entry,
+            manualSettings: { ...entry.manualSettings, [key]: parsed },
+          },
+        },
+      }
+    })
+    setRiskNumberDrafts(prev => {
+      if (!Object.prototype.hasOwnProperty.call(prev, key)) return prev
+      const next = { ...prev }
+      delete next[key]
+      return next
+    })
+  }, [riskNumberDrafts, multiTradeMinLegPercent])
+
+  const riskNumberFieldProps = useCallback((
+    key: RiskNumberDraftKey,
+    stored: number | undefined,
+    fallback: number,
+  ) => ({
+    type: 'text' as const,
+    inputMode: 'decimal' as const,
+    value: numberFieldDisplay(stored, riskNumberDrafts[key], fallback),
+    error: riskNumberFieldError(key),
+    onChange: (e: { target: { value: string } }) => setRiskNumberDraft(key, e.target.value),
+    onBlur: () => commitRiskNumberField(key),
+    onKeyDown: (e: { key: string; preventDefault: () => void; target: EventTarget }) => {
+      if (e.key !== 'Enter') return
+      e.preventDefault()
+      ;(e.target as HTMLInputElement).blur()
+    },
+  }), [
+    riskNumberDrafts,
+    riskNumberFieldError,
+    setRiskNumberDraft,
+    commitRiskNumberField,
+  ])
+
   const configureModalDirty = useMemo(() => {
     if (!configAccount) return false
-    const draftForSignature = applyPendingConfigureDraftFields(configDraft, fixedLotDraft, symbolsExcludeDraft)
+    const draftForSignature = applyPendingConfigureDraftFields(
+      configDraft,
+      riskNumberDrafts,
+      symbolsExcludeDraft,
+      multiTradeMinLegPercent,
+    )
     const current = accountConfigDraftPersistSignature(
       draftForSignature,
       manualSettingsPlanCtx.plan,
@@ -970,8 +1114,9 @@ export function AccountConfigPage() {
   }, [
     configAccount,
     configDraft,
-    fixedLotDraft,
+    riskNumberDrafts,
     symbolsExcludeDraft,
+    multiTradeMinLegPercent,
     configSavedSignature,
     manualSettingsPlanCtx.plan,
     manualSettingsPlanCtx.status,
@@ -988,13 +1133,18 @@ export function AccountConfigPage() {
   const canSaveConfigureModal = configureModalDirty || selectedChannelNeedsPersistedSave
 
   const multiTradeSplitSaveBlocked = useMemo(() => {
-    const draftForCheck = applyPendingConfigureDraftFields(configDraft, fixedLotDraft, symbolsExcludeDraft)
+    const draftForCheck = applyPendingConfigureDraftFields(
+      configDraft,
+      riskNumberDrafts,
+      symbolsExcludeDraft,
+      multiTradeMinLegPercent,
+    )
     return hasBlockedMultiTradeSplit(
       draftForCheck.channelIds,
       draftForCheck.channelConfigs,
       configAccountTotalBalance,
     )
-  }, [configDraft, fixedLotDraft, configAccountTotalBalance])
+  }, [configDraft, riskNumberDrafts, symbolsExcludeDraft, multiTradeMinLegPercent, configAccountTotalBalance])
 
   const selectedChannelEditedFromDefault = useMemo(() => {
     const id = configDraft.selectedChannelId
@@ -1045,26 +1195,6 @@ export function AccountConfigPage() {
     cm.risk.dynamicBalanceLotSizeHint,
     cm.risk.dynamicBalanceLotSizeFallback,
   ])
-
-  const previewManualLot = useMemo(() => {
-    const ms = channelManualSettings
-    const fixedLot = fixedLotDraft !== null && ms.risk_mode !== 'dynamic_balance_percent'
-      ? commitPositiveNumber(fixedLotDraft, ms.fixed_lot ?? DEFAULT_MANUAL_SETTINGS.fixed_lot ?? 0.01)
-      : ms.fixed_lot
-    return resolvePreviewManualLot({
-      manualSettings: { ...ms, fixed_lot: fixedLot },
-      accountBalance: configAccountTotalBalance,
-    })
-  }, [
-    channelManualSettings,
-    fixedLotDraft,
-    configAccountTotalBalance,
-  ])
-
-  const multiTradeMinLegPercent = useMemo(
-    () => computeMinMultiTradeLegPercent(previewManualLot),
-    [previewManualLot],
-  )
 
   const multiTradePreview = useMemo(() => {
     const ms = channelManualSettings
@@ -1491,7 +1621,12 @@ export function AccountConfigPage() {
 
   const closeConfigureModal = (options?: { force?: boolean }) => {
     if (!options?.force && configAccount) {
-      const draftForSignature = applyPendingConfigureDraftFields(configDraft, fixedLotDraft, symbolsExcludeDraft)
+      const draftForSignature = applyPendingConfigureDraftFields(
+        configDraft,
+        riskNumberDrafts,
+        symbolsExcludeDraft,
+        multiTradeMinLegPercent,
+      )
       const currentSignature = accountConfigDraftPersistSignature(
         draftForSignature,
         manualSettingsPlanCtx.plan,
@@ -1934,12 +2069,26 @@ export function AccountConfigPage() {
 
   const saveConfigureModal = async () => {
     if (!configAccount || !user) return
-    const committedDraft = applyPendingConfigureDraftFields(configDraft, fixedLotDraft, symbolsExcludeDraft)
+    const { hasInvalid } = riskDraftManualPatch(riskNumberDrafts, multiTradeMinLegPercent)
+    if (hasInvalid || Object.keys(riskNumberDrafts).some(key => {
+      const raw = riskNumberDrafts[key as RiskNumberDraftKey]
+      if (raw === undefined) return false
+      return parseDraftNumber(raw, riskNumberRules(key as RiskNumberDraftKey, multiTradeMinLegPercent)) == null
+    })) {
+      setError(cm.risk.fieldErrors.fixBeforeSave)
+      return
+    }
+    const committedDraft = applyPendingConfigureDraftFields(
+      configDraft,
+      riskNumberDrafts,
+      symbolsExcludeDraft,
+      multiTradeMinLegPercent,
+    )
     if (committedDraft !== configDraft) {
       setConfigDraft(committedDraft)
     }
-    if (fixedLotDraft !== null) {
-      setFixedLotDraft(null)
+    if (Object.keys(riskNumberDrafts).length > 0) {
+      setRiskNumberDrafts({})
     }
     if (symbolsExcludeDraft !== null) {
       setSymbolsExcludeDraft(null)
@@ -2341,7 +2490,7 @@ export function AccountConfigPage() {
         onClose={() => setRiskCalcOpen(false)}
         onApply={patch => {
           setManual(patch)
-          setFixedLotDraft(null)
+          setRiskNumberDrafts({})
         }}
         manualSettings={channelManualSettings}
         initialBalance={configAccountTotalBalance}
@@ -2349,6 +2498,7 @@ export function AccountConfigPage() {
         pipQuote={livePipQuote}
         symbol={resolvedSingleSymbol}
         copy={cm.risk.lotCalculator}
+        fieldErrors={cm.risk.fieldErrors}
         cancelLabel={cm.cancel}
       />
 
@@ -2824,11 +2974,11 @@ export function AccountConfigPage() {
                                 <>
                                   <ConfigureInput
                                     label={cm.risk.dynamicBalance}
-                                    type="number"
-                                    min={0.1}
-                                    step={0.1}
-                                    value={String(channelManualSettings.dynamic_balance_percent ?? 1)}
-                                    onChange={e => setManual({ dynamic_balance_percent: Number(e.target.value) })}
+                                    {...riskNumberFieldProps(
+                                      'dynamic_balance_percent',
+                                      channelManualSettings.dynamic_balance_percent,
+                                      1,
+                                    )}
                                   />
                                   <div>
                                     <ConfigTitle className="mb-1" info={dynamicBalanceLotPreview?.hint}>
@@ -2847,33 +2997,11 @@ export function AccountConfigPage() {
                               ) : (
                                 <ConfigureInput
                                   label={cm.risk.fixedLot}
-                                  type="text"
-                                  inputMode="decimal"
-                                  value={numberFieldDisplay(
+                                  {...riskNumberFieldProps(
+                                    'fixed_lot',
                                     channelManualSettings.fixed_lot,
-                                    fixedLotDraft,
                                     DEFAULT_MANUAL_SETTINGS.fixed_lot ?? 0.01,
                                   )}
-                                  onChange={e => setFixedLotDraft(e.target.value)}
-                                  onBlur={() => {
-                                    const raw = fixedLotDraft ?? numberFieldDisplay(
-                                      channelManualSettings.fixed_lot,
-                                      null,
-                                      DEFAULT_MANUAL_SETTINGS.fixed_lot ?? 0.01,
-                                    )
-                                    setFixedLotDraft(null)
-                                    setManual({
-                                      fixed_lot: commitPositiveNumber(
-                                        raw,
-                                        DEFAULT_MANUAL_SETTINGS.fixed_lot ?? 0.01,
-                                      ),
-                                    })
-                                  }}
-                                  onKeyDown={e => {
-                                    if (e.key !== 'Enter') return
-                                    e.preventDefault()
-                                    ;(e.target as HTMLInputElement).blur()
-                                  }}
                                 />
                               )}
                             </div>
@@ -2909,12 +3037,12 @@ export function AccountConfigPage() {
                                     <div className="border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/80 px-3 py-3 space-y-2">
                                       <ConfigureInput
                                         label={cm.risk.pipToleranceLegacy}
-                                        type="number"
-                                        min={0}
-                                        step={1}
                                         hint={cm.risk.pipToleranceHint}
-                                        value={String(channelManualSettings.signal_entry_pip_tolerance ?? 10)}
-                                        onChange={e => setManual({ signal_entry_pip_tolerance: Math.max(0, Number(e.target.value) || 0) })}
+                                        {...riskNumberFieldProps(
+                                          'signal_entry_pip_tolerance',
+                                          channelManualSettings.signal_entry_pip_tolerance,
+                                          10,
+                                        )}
                                       />
                                     </div>
                                   )}
@@ -2937,18 +3065,11 @@ export function AccountConfigPage() {
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                   <ConfigureInput
                                     label={cm.risk.perLegSize}
-                                    type="number"
-                                    min={multiTradeMinLegPercent}
-                                    max={100}
-                                    step={0.5}
-                                    value={String(channelManualSettings.multi_trade_leg_percent ?? 5)}
-                                    onChange={e => {
-                                      const raw = Number(e.target.value)
-                                      const next = Number.isFinite(raw)
-                                        ? Math.max(multiTradeMinLegPercent, Math.min(100, raw))
-                                        : multiTradeMinLegPercent
-                                      setManual({ multi_trade_leg_percent: next })
-                                    }}
+                                    {...riskNumberFieldProps(
+                                      'multi_trade_leg_percent',
+                                      channelManualSettings.multi_trade_leg_percent,
+                                      5,
+                                    )}
                                   />
                                   <div>
                                     <ConfigTitle className="mb-1" info={multiTradePreviewTooltip}>{cm.risk.totalOpenTrades}</ConfigTitle>
@@ -2971,12 +3092,12 @@ export function AccountConfigPage() {
                                   <div className="border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/80 px-3 py-3 space-y-2">
                                     <ConfigureInput
                                       label={cm.risk.useSignalRangePipTolerance}
-                                      type="number"
-                                      min={0}
-                                      step={1}
                                       hint={cm.risk.useSignalRangePipToleranceHint}
-                                      value={String(channelManualSettings.signal_entry_pip_tolerance ?? 10)}
-                                      onChange={e => setManual({ signal_entry_pip_tolerance: Math.max(0, Number(e.target.value) || 0) })}
+                                      {...riskNumberFieldProps(
+                                        'signal_entry_pip_tolerance',
+                                        channelManualSettings.signal_entry_pip_tolerance,
+                                        10,
+                                      )}
                                     />
                                   </div>
                                 )}
@@ -3018,38 +3139,37 @@ export function AccountConfigPage() {
                                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                                       <ConfigureInput
                                         label={cm.risk.reservedLot}
-                                        type="number"
-                                        min={0}
-                                        max={100}
-                                        step={1}
                                         placeholder="50"
                                         hint={cm.risk.reservedLotHint}
-                                        value={String(channelManualSettings.range_percent ?? 50)}
-                                        onChange={e => setManual({ range_percent: Math.max(0, Math.min(100, Number(e.target.value) || 0)) })}
+                                        {...riskNumberFieldProps(
+                                          'range_percent',
+                                          channelManualSettings.range_percent,
+                                          50,
+                                        )}
                                       />
                                       <ConfigureInput
                                         label={cm.risk.stepPips}
-                                        type="number"
-                                        min={1}
-                                        step={1}
                                         placeholder="10"
                                         hint={
                                           formatPipHint(Number(channelManualSettings.range_step_pips ?? DEFAULT_MANUAL_SETTINGS.range_step_pips) || 0)
                                           ?? cm.risk.stepPipsFallback
                                         }
-                                        value={String(channelManualSettings.range_step_pips ?? DEFAULT_MANUAL_SETTINGS.range_step_pips)}
-                                        onChange={e => setManual({ range_step_pips: Math.max(1, Number(e.target.value) || 1) })}
+                                        {...riskNumberFieldProps(
+                                          'range_step_pips',
+                                          channelManualSettings.range_step_pips,
+                                          DEFAULT_MANUAL_SETTINGS.range_step_pips ?? 3,
+                                        )}
                                       />
                                       <ConfigureInput
                                         label={cm.risk.rangeDistance}
-                                        type="number"
-                                        min={1}
-                                        step={1}
                                         placeholder="100"
                                         disabled={channelManualSettings.use_signal_entry_range === true}
                                         hint={rangeDistanceFieldHint}
-                                        value={String(channelManualSettings.range_distance_pips ?? DEFAULT_MANUAL_SETTINGS.range_distance_pips)}
-                                        onChange={e => setManual({ range_distance_pips: Math.max(1, Number(e.target.value) || 1) })}
+                                        {...riskNumberFieldProps(
+                                          'range_distance_pips',
+                                          channelManualSettings.range_distance_pips,
+                                          DEFAULT_MANUAL_SETTINGS.range_distance_pips ?? 30,
+                                        )}
                                       />
                                     </div>
 

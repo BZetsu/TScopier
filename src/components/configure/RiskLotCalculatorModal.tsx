@@ -18,8 +18,43 @@ import {
   roundLots2,
   type RiskLotCalculatorFormState,
 } from '../../lib/riskLotCalculator'
+import { draftNumberError, parseDraftNumber, type DraftNumberRules } from '../../lib/draftNumberField'
 import { computeMinMultiTradeLegPercent } from '../../lib/multiTradeLegUnits'
 import type { ManualSettings } from '../../types/database'
+
+type CalcDraftKey =
+  | 'accountBalance'
+  | 'fixedLot'
+  | 'targetRiskPct'
+  | 'legPercent'
+  | 'rangePercent'
+  | 'rangeStepPips'
+  | 'rangeDistancePips'
+  | 'slPips'
+  | 'winRatePct'
+
+type FieldErrors = ConfigureModalTranslations['risk']['fieldErrors']
+
+function calcDraftRules(key: CalcDraftKey, minLegPercent: number): DraftNumberRules {
+  switch (key) {
+    case 'accountBalance':
+      return { min: 0 }
+    case 'fixedLot':
+      return { positive: true, min: 0.01 }
+    case 'targetRiskPct':
+      return { required: false, min: 0, max: 100 }
+    case 'legPercent':
+      return { min: minLegPercent, max: 100 }
+    case 'rangePercent':
+      return { min: 0, max: 100 }
+    case 'rangeStepPips':
+    case 'rangeDistancePips':
+    case 'slPips':
+      return { min: 1 }
+    case 'winRatePct':
+      return { required: false, min: 1, max: 99 }
+  }
+}
 
 function sumEnabledTpPercents(rows: { enabled?: boolean; percent?: number }[]): number {
   return rows.reduce(
@@ -65,6 +100,7 @@ export interface RiskLotCalculatorModalProps {
   pipQuote: PipQuote | null
   symbol: string
   copy: ConfigureModalTranslations['risk']['lotCalculator']
+  fieldErrors: FieldErrors
   cancelLabel: string
 }
 
@@ -78,11 +114,13 @@ function RiskLotCalculatorModalInner({
   pipQuote: externalPipQuote,
   symbol: initialSymbol,
   copy,
+  fieldErrors,
   cancelLabel,
 }: RiskLotCalculatorModalProps) {
   const overlayRef = useRef<HTMLDivElement>(null)
   const scrollLockRef = useRef<string | null>(null)
   const [advancedOpen, setAdvancedOpen] = useState(false)
+  const [drafts, setDrafts] = useState<Partial<Record<CalcDraftKey, string>>>({})
 
   const [form, setForm] = useState<RiskLotCalculatorFormState>(() =>
     riskCalcStateFromManualSettings(manualSettings, initialBalance),
@@ -91,6 +129,7 @@ function RiskLotCalculatorModalInner({
   useEffect(() => {
     if (!open) return
     setForm(riskCalcStateFromManualSettings(manualSettings, initialBalance))
+    setDrafts({})
     setAdvancedOpen(false)
   }, [open, manualSettings, initialBalance])
 
@@ -129,6 +168,68 @@ function RiskLotCalculatorModalInner({
     [form.fixedLot],
   )
 
+  const patchForm = (patch: Partial<RiskLotCalculatorFormState>) => {
+    setForm(prev => ({ ...prev, ...patch }))
+  }
+
+  const draftDisplay = (key: CalcDraftKey, stored: number | null | undefined): string => {
+    if (Object.prototype.hasOwnProperty.call(drafts, key)) return drafts[key] ?? ''
+    if (stored == null || !Number.isFinite(stored)) return ''
+    return String(stored)
+  }
+
+  const draftError = (key: CalcDraftKey): string | undefined => {
+    if (!Object.prototype.hasOwnProperty.call(drafts, key)) return undefined
+    return draftNumberError(
+      drafts[key] ?? '',
+      calcDraftRules(key, minLegPercent),
+      fieldErrors,
+      interpolate,
+    ) ?? undefined
+  }
+
+  const setDraft = (key: CalcDraftKey, raw: string) => {
+    setDrafts(prev => ({ ...prev, [key]: raw }))
+  }
+
+  const commitDraft = (key: CalcDraftKey) => {
+    if (!Object.prototype.hasOwnProperty.call(drafts, key)) return
+    const raw = drafts[key] ?? ''
+    const rules = calcDraftRules(key, minLegPercent)
+    if (rules.required === false && raw.trim() === '') {
+      if (key === 'targetRiskPct') patchForm({ targetRiskPct: null })
+      if (key === 'winRatePct') patchForm({ winRatePct: null })
+      setDrafts(prev => {
+        const next = { ...prev }
+        delete next[key]
+        return next
+      })
+      return
+    }
+    const parsed = parseDraftNumber(raw, rules)
+    if (parsed == null) return
+    patchForm({ [key]: parsed } as Partial<RiskLotCalculatorFormState>)
+    setDrafts(prev => {
+      const next = { ...prev }
+      delete next[key]
+      return next
+    })
+  }
+
+  const numberField = (key: CalcDraftKey, stored: number | null | undefined) => ({
+    type: 'text' as const,
+    inputMode: 'decimal' as const,
+    value: draftDisplay(key, stored),
+    error: draftError(key),
+    onChange: (e: { target: { value: string } }) => setDraft(key, e.target.value),
+    onBlur: () => commitDraft(key),
+    onKeyDown: (e: { key: string; preventDefault: () => void; target: EventTarget }) => {
+      if (e.key !== 'Enter') return
+      e.preventDefault()
+      ;(e.target as HTMLInputElement).blur()
+    },
+  })
+
   const result = useMemo(
     () =>
       computeRiskLotCalculator(
@@ -155,12 +256,17 @@ function RiskLotCalculatorModalInner({
   const fmtMoney = (n: number) =>
     formatMoneyWithCode(n, quote.quoteCurrency ?? currency ?? undefined, { nullAsDash: false })
 
-  const patchForm = (patch: Partial<RiskLotCalculatorFormState>) => {
-    setForm(prev => ({ ...prev, ...patch }))
-  }
-
   const setTpPipAt = (idx: number, raw: string) => {
-    const n = Math.max(1, Number(raw) || 0)
+    if (raw.trim() === '') {
+      setForm(prev => {
+        const tpPips = [...prev.tpPips]
+        tpPips[idx] = Number.NaN
+        return { ...prev, tpPips }
+      })
+      return
+    }
+    const n = Number(raw)
+    if (!Number.isFinite(n)) return
     setForm(prev => {
       const tpPips = [...prev.tpPips]
       tpPips[idx] = n
@@ -197,7 +303,15 @@ function RiskLotCalculatorModalInner({
   }
 
   const setTpLotPercent = (idx: number, raw: string) => {
-    const n = Math.max(0, Math.min(100, Number(raw) || 0))
+    if (raw.trim() === '') {
+      setForm(prev => {
+        const tpLots = prev.tpLots.map((r, i) => (i === idx ? { ...r, percent: Number.NaN } : r))
+        return { ...prev, tpLots }
+      })
+      return
+    }
+    const n = Number(raw)
+    if (!Number.isFinite(n)) return
     setForm(prev => {
       const tpLots = prev.tpLots.map((r, i) => (i === idx ? { ...r, percent: n } : r))
       return { ...prev, tpLots }
@@ -217,7 +331,27 @@ function RiskLotCalculatorModalInner({
   )
 
   const handleApply = () => {
-    onApply(manualSettingsFromRiskCalc(form))
+    for (const key of Object.keys(drafts) as CalcDraftKey[]) {
+      const raw = drafts[key]
+      if (raw === undefined) continue
+      const rules = calcDraftRules(key, minLegPercent)
+      if (rules.required === false && raw.trim() === '') continue
+      if (parseDraftNumber(raw, rules) == null) return
+    }
+    const next = { ...form }
+    for (const key of Object.keys(drafts) as CalcDraftKey[]) {
+      const raw = drafts[key]
+      if (raw === undefined) continue
+      const rules = calcDraftRules(key, minLegPercent)
+      if (rules.required === false && raw.trim() === '') {
+        if (key === 'targetRiskPct') next.targetRiskPct = null
+        if (key === 'winRatePct') next.winRatePct = null
+        continue
+      }
+      const parsed = parseDraftNumber(raw, rules)
+      if (parsed != null) (next as Record<string, unknown>)[key] = parsed
+    }
+    onApply(manualSettingsFromRiskCalc(next))
     onClose()
   }
 
@@ -275,11 +409,7 @@ function RiskLotCalculatorModalInner({
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <ConfigureInput
                   label={copy.accountBalance}
-                  type="number"
-                  min={0}
-                  step={1}
-                  value={String(form.accountBalance)}
-                  onChange={e => patchForm({ accountBalance: Math.max(0, Number(e.target.value) || 0) })}
+                  {...numberField('accountBalance', form.accountBalance)}
                 />
                 <ConfigureInput
                   label={copy.symbol}
@@ -293,26 +423,12 @@ function RiskLotCalculatorModalInner({
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <ConfigureInput
                   label={copy.fixedLot}
-                  type="number"
-                  min={0.01}
-                  step={0.01}
-                  value={String(form.fixedLot)}
-                  onChange={e => patchForm({ fixedLot: Math.max(0.01, Number(e.target.value) || 0.01) })}
+                  {...numberField('fixedLot', form.fixedLot)}
                 />
                 <ConfigureInput
                   label={copy.targetRiskPct}
-                  type="number"
-                  min={0}
-                  max={100}
-                  step={0.1}
                   hint={copy.targetRiskHint}
-                  value={form.targetRiskPct != null ? String(form.targetRiskPct) : ''}
-                  onChange={e => {
-                    const raw = e.target.value
-                    patchForm({
-                      targetRiskPct: raw === '' ? null : Math.max(0, Number(raw) || 0),
-                    })
-                  }}
+                  {...numberField('targetRiskPct', form.targetRiskPct)}
                 />
               </div>
 
@@ -351,18 +467,7 @@ function RiskLotCalculatorModalInner({
                 <div className="space-y-3 rounded-lg border border-neutral-200 p-3 dark:border-neutral-800">
                   <ConfigureInput
                     label={copy.perLegSize}
-                    type="number"
-                    min={minLegPercent}
-                    max={100}
-                    step={0.5}
-                    value={String(form.legPercent)}
-                    onChange={e => {
-                      const raw = Number(e.target.value)
-                      const next = Number.isFinite(raw)
-                        ? Math.max(minLegPercent, Math.min(100, raw))
-                        : minLegPercent
-                      patchForm({ legPercent: next })
-                    }}
+                    {...numberField('legPercent', form.legPercent)}
                   />
                   <div className="flex items-center justify-between gap-3">
                     <span className="text-sm text-neutral-800 dark:text-neutral-100">{copy.rangeLayering}</span>
@@ -396,25 +501,15 @@ function RiskLotCalculatorModalInner({
                       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                       <ConfigureInput
                         label={copy.rangePercent}
-                        type="number"
-                        min={0}
-                        max={100}
-                        value={String(form.rangePercent)}
-                        onChange={e => patchForm({ rangePercent: Number(e.target.value) || 0 })}
+                        {...numberField('rangePercent', form.rangePercent)}
                       />
                       <ConfigureInput
                         label={copy.rangeStep}
-                        type="number"
-                        min={1}
-                        value={String(form.rangeStepPips)}
-                        onChange={e => patchForm({ rangeStepPips: Math.max(1, Number(e.target.value) || 1) })}
+                        {...numberField('rangeStepPips', form.rangeStepPips)}
                       />
                       <ConfigureInput
                         label={copy.rangeDistance}
-                        type="number"
-                        min={1}
-                        value={String(form.rangeDistancePips)}
-                        onChange={e => patchForm({ rangeDistancePips: Math.max(1, Number(e.target.value) || 1) })}
+                        {...numberField('rangeDistancePips', form.rangeDistancePips)}
                       />
                     </div>
                     </>
@@ -438,11 +533,7 @@ function RiskLotCalculatorModalInner({
                   </label>
                 </div>
                 <ConfigureInput
-                  type="number"
-                  min={1}
-                  step={1}
-                  value={String(form.slPips)}
-                  onChange={e => patchForm({ slPips: Math.max(1, Number(e.target.value) || 1) })}
+                  {...numberField('slPips', form.slPips)}
                 />
               </div>
 
@@ -489,22 +580,35 @@ function RiskLotCalculatorModalInner({
                       <div className="col-span-5 sm:col-span-3">
                         <ConfigureInput
                           label={copy.tpPipsCol}
-                          type="number"
-                          min={1}
-                          step={1}
-                          value={String(pips)}
+                          type="text"
+                          inputMode="decimal"
+                          value={Number.isFinite(pips) ? String(pips) : ''}
+                          error={
+                            !Number.isFinite(pips) || pips < 1
+                              ? interpolate(fieldErrors.min, { min: '1' })
+                              : undefined
+                          }
                           onChange={e => setTpPipAt(idx, e.target.value)}
                         />
                       </div>
                       <div className="col-span-5 sm:col-span-3">
                         <ConfigureInput
                           label={copy.tpPercentCol}
-                          type="number"
-                          min={0}
-                          max={100}
-                          step={1}
+                          type="text"
+                          inputMode="decimal"
                           disabled={row.enabled === false}
-                          value={String(row.percent ?? 0)}
+                          value={Number.isFinite(row.percent) ? String(row.percent ?? 0) : ''}
+                          error={
+                            row.enabled === false
+                              ? undefined
+                              : !Number.isFinite(row.percent)
+                                ? fieldErrors.required
+                                : (row.percent ?? 0) < 0
+                                  ? interpolate(fieldErrors.min, { min: '0' })
+                                  : (row.percent ?? 0) > 100
+                                    ? interpolate(fieldErrors.max, { max: '100' })
+                                    : undefined
+                          }
                           onChange={e => setTpLotPercent(idx, e.target.value)}
                         />
                       </div>
@@ -563,18 +667,8 @@ function RiskLotCalculatorModalInner({
                   <div className="border-t border-neutral-200 px-3 py-3 dark:border-neutral-800">
                     <ConfigureInput
                       label={copy.winRate}
-                      type="number"
-                      min={1}
-                      max={99}
-                      step={1}
                       hint={copy.winRateHint}
-                      value={form.winRatePct != null ? String(form.winRatePct) : ''}
-                      onChange={e => {
-                        const raw = e.target.value
-                        patchForm({
-                          winRatePct: raw === '' ? null : Math.max(1, Math.min(99, Number(raw) || 0)),
-                        })
-                      }}
+                      {...numberField('winRatePct', form.winRatePct)}
                     />
                   </div>
                 )}

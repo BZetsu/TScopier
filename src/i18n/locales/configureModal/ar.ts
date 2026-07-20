@@ -233,6 +233,14 @@ export const configureModalAr: ConfigureModalTranslations = {
     closeWorsePipsFallback: 'المسافة من السعر الحالي (تعليمة) أو مرساة + X نقطة (تلقائي).',
     basicPlanTradeStyleLimit: 'يُسمح فقط بوضع الصفقة الواحدة. إعدادات Multi-Trade و Range Layering متاحة في الخطة المتقدمة.',
     openLotCalculator: 'حساب المخاطر/حجم اللوت',
+    fieldErrors: {
+      required: 'أدخل قيمة',
+      invalid: 'أدخل رقمًا صالحًا',
+      min: 'يجب أن يكون على الأقل {min}',
+      max: 'يجب ألا يزيد عن {max}',
+      positive: 'يجب أن يكون أكبر من 0',
+      fixBeforeSave: 'صحّح حقول المخاطر المميزة قبل الحفظ.',
+    },
     lotCalculator: {
       title: 'حاسبة المخاطر وحجم اللوت',
       intro: 'قدّر ما تخاطر به لكل إشارة وما قد تربحه عند TP. عدّل المدخلات لتناسب حسابك، ثم طبّق على هذه القناة.',

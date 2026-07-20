@@ -233,6 +233,14 @@ export const configureModalPl: ConfigureModalTranslations = {
     closeWorsePipsFallback: 'Odległość od aktualnej ceny (instrukcja) lub kotwicy + X pipsów (automatycznie).',
     basicPlanTradeStyleLimit: 'Dozwolony jest tylko tryb pojedynczego handlu. Ustawienia Multi-Trade i Range Layering są dostępne w planie zaawansowanym.',
     openLotCalculator: 'Oblicz ryzyko/wielkość partii',
+    fieldErrors: {
+      required: 'Wprowadź wartość',
+      invalid: 'Wprowadź prawidłową liczbę',
+      min: 'Musi wynosić co najmniej {min}',
+      max: 'Może wynosić co najwyżej {max}',
+      positive: 'Musi być większe niż 0',
+      fixBeforeSave: 'Popraw podświetlone pola Ryzyka przed zapisaniem.',
+    },
     lotCalculator: {
       title: 'Kalkulator ryzyka i wielkości partii',
       intro: 'Oszacuj, ile ryzykujesz na sygnał i co możesz zarobić na poziomie take-profit. Dostosuj dane wejściowe, aby ryzyko pasowało do Twojego konta, a następnie zastosuj się do tego kanału.',

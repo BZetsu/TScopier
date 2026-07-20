@@ -224,6 +224,14 @@ export interface ConfigureModalTranslations {
     closeWorsePipsFallback: string
     basicPlanTradeStyleLimit: string
     openLotCalculator: string
+    fieldErrors: {
+      required: string
+      invalid: string
+      min: string
+      max: string
+      positive: string
+      fixBeforeSave: string
+    }
     lotCalculator: {
       title: string
       intro: string

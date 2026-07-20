@@ -256,6 +256,14 @@ export const configureModalFr: ConfigureModalTranslations = {
     basicPlanTradeStyleLimit:
       'Seul le mode Single Trade est autorisé. Multi-Trade et Range Layering sont disponibles avec le plan Advanced.',
     openLotCalculator: 'Calculer risque / taille de lot',
+    fieldErrors: {
+      required: 'Saisissez une valeur',
+      invalid: 'Saisissez un nombre valide',
+      min: 'Doit être au moins {min}',
+      max: 'Doit être au plus {max}',
+      positive: 'Doit être supérieur à 0',
+      fixBeforeSave: 'Corrigez les champs Risque en surbrillance avant d’enregistrer.',
+    },
     lotCalculator: {
       title: 'Calculateur risque et taille de lot',
       intro:

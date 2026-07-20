@@ -233,6 +233,14 @@ export const configureModalNl: ConfigureModalTranslations = {
     closeWorsePipsFallback: 'Afstand vanaf live prijs (instructie) of anker + X pips (automatisch).',
     basicPlanTradeStyleLimit: 'Alleen de enkele handelsmodus is toegestaan. Instellingen voor Multi-Trade en Range Layering zijn beschikbaar in het Advanced-abonnement.',
     openLotCalculator: 'Bereken het risico/lotgrootte',
+    fieldErrors: {
+      required: 'Voer een waarde in',
+      invalid: 'Voer een geldig getal in',
+      min: 'Moet minstens {min} zijn',
+      max: 'Mag hoogstens {max} zijn',
+      positive: 'Moet groter zijn dan 0',
+      fixBeforeSave: 'Corrigeer de gemarkeerde risicovelden voordat u opslaat.',
+    },
     lotCalculator: {
       title: 'Berekening van risico\'s en lotgrootte',
       intro: 'Schat hoeveel u riskeert per signaal en wat u zou kunnen verdienen op uw take-profitniveau. Pas de input aan totdat het risico bij uw account past en solliciteer vervolgens op dit kanaal.',

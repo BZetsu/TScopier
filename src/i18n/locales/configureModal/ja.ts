@@ -233,6 +233,14 @@ export const configureModalJa: ConfigureModalTranslations = {
     closeWorsePipsFallback: 'ライブ価格 (指示) またはアンカー + X ピップス (自動) からの距離。',
     basicPlanTradeStyleLimit: 'シングル取引モードのみが許可されます。マルチトレードおよびレンジレイヤリング設定は、アドバンストプランで利用できます。',
     openLotCalculator: 'リスク/ロットサイズを計算',
+    fieldErrors: {
+      required: '値を入力してください',
+      invalid: '有効な数値を入力してください',
+      min: '{min} 以上にしてください',
+      max: '{max} 以下にしてください',
+      positive: '0より大きい値にしてください',
+      fixBeforeSave: '保存する前に、ハイライトされたリスク項目を修正してください。',
+    },
     lotCalculator: {
       title: 'リスクとロットサイズの計算ツール',
       intro: 'シグナルごとにどれくらいのリスクを負うのか、テイクプロフィットレベルでどれくらいの利益が得られるのかを見積もります。リスクがアカウントに適合するまで入力を調整してから、このチャネルに適用します。',

@@ -233,6 +233,14 @@ export const configureModalSv: ConfigureModalTranslations = {
     closeWorsePipsFallback: 'Avstånd från livepris (instruktion) eller ankare + X pips (auto).',
     basicPlanTradeStyleLimit: 'Endast enstaka handelsläge tillåtet. Multi-Trade och Range Layering-inställningar är tillgängliga på den avancerade planen.',
     openLotCalculator: 'Beräkna risk / partistorlek',
+    fieldErrors: {
+      required: 'Ange ett värde',
+      invalid: 'Ange ett giltigt tal',
+      min: 'Måste vara minst {min}',
+      max: 'Får vara högst {max}',
+      positive: 'Måste vara större än 0',
+      fixBeforeSave: 'Åtgärda de markerade riskfälten innan du sparar.',
+    },
     lotCalculator: {
       title: 'Risk- och partistorlekskalkylator',
       intro: 'Uppskatta hur mycket du riskerar per signal och vad du kan tjäna på dina take-profit-nivåer. Justera inmatningar tills risken passar ditt konto och ansök sedan till den här kanalen.',
