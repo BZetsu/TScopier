@@ -3,6 +3,7 @@ import clsx from 'clsx'
 const TRUSTPILOT_GREEN = '#00b67a'
 const TRUSTPILOT_GRAY = '#dcdce6'
 
+/** Official Trustpilot star silhouette (white star on brand green square). */
 const STAR_PATH =
   'M12 2l2.9 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l7.1-1.01L12 2z'
 
@@ -10,9 +11,15 @@ function trustpilotStarFills(rating: number): number[] {
   return Array.from({ length: 5 }, (_, index) => Math.min(1, Math.max(0, rating - index)))
 }
 
-function TrustpilotBox({ fill }: { fill: number }) {
+function TrustpilotBox({
+  fill,
+  sizeClass,
+}: {
+  fill: number
+  sizeClass: string
+}) {
   return (
-    <div className="relative h-[18px] w-[18px] shrink-0 overflow-hidden sm:h-5 sm:w-5">
+    <div className={clsx('relative shrink-0 overflow-hidden', sizeClass)}>
       <div className="absolute inset-0" style={{ backgroundColor: TRUSTPILOT_GRAY }} />
       {fill > 0 ? (
         <div
@@ -58,7 +65,7 @@ export function TrustpilotWidget({
         aria-label={`${rating} out of 5 stars on Trustpilot`}
       >
         {fills.map((fill, index) => (
-          <TrustpilotBox key={index} fill={fill} />
+          <TrustpilotBox key={index} fill={fill} sizeClass="h-[18px] w-[18px] sm:h-5 sm:w-5" />
         ))}
       </div>
       <div className="flex items-center gap-1.5 text-sm font-medium text-neutral-900 dark:text-neutral-50">
@@ -74,23 +81,21 @@ export function TrustpilotWidget({
 interface TrustpilotStarsProps {
   className?: string
   size?: 'sm' | 'md'
+  /** 0–5; supports partial stars (e.g. 4.8). Defaults to 5. */
+  rating?: number
 }
 
-export function TrustpilotStars({ className, size = 'md' }: TrustpilotStarsProps) {
-  const starClass = size === 'sm' ? 'h-4 w-4' : 'h-5 w-5'
+export function TrustpilotStars({ className, size = 'md', rating = 5 }: TrustpilotStarsProps) {
+  const sizeClass = size === 'sm' ? 'h-4 w-4' : 'h-5 w-5'
+  const fills = trustpilotStarFills(rating)
   return (
     <div
-      className={clsx('flex items-center justify-center gap-0.5', className)}
+      className={clsx('flex items-center justify-center gap-[3px]', className)}
       role="img"
-      aria-label="5 out of 5 stars"
+      aria-label={`${rating} out of 5 stars on Trustpilot`}
     >
-      {Array.from({ length: 5 }).map((_, i) => (
-        <svg key={i} viewBox="0 0 24 24" className={clsx(starClass, 'text-emerald-500')} aria-hidden>
-          <path
-            fill="currentColor"
-            d="M12 2l2.9 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l7.1-1.01L12 2z"
-          />
-        </svg>
+      {fills.map((fill, index) => (
+        <TrustpilotBox key={index} fill={fill} sizeClass={sizeClass} />
       ))}
     </div>
   )
@@ -99,11 +104,8 @@ export function TrustpilotStars({ className, size = 'md' }: TrustpilotStarsProps
 export function TrustpilotBadge({ label }: { label: string }) {
   return (
     <div className="flex items-center justify-center gap-1.5 text-sm font-semibold text-neutral-700 dark:text-neutral-200">
-      <svg viewBox="0 0 24 24" className="h-4 w-4 text-emerald-500" aria-hidden>
-        <path
-          fill="currentColor"
-          d="M12 2l2.9 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l7.1-1.01L12 2z"
-        />
+      <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0" style={{ color: TRUSTPILOT_GREEN }} aria-hidden>
+        <path fill="currentColor" d={STAR_PATH} />
       </svg>
       <span>{label}</span>
     </div>

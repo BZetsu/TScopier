@@ -75,6 +75,7 @@ export const chromeRu: AppChromeTranslations = {
       profileSettings: 'Профиль и настройки',
       subscriptionBilling: 'Подписка и биллинг',
       affiliateProgram: 'Партнерская программа',
+      rateUs: 'Оцените нас',
       signOut: 'Выйти',
     },
     helpMenu: {

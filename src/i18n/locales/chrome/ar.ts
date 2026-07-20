@@ -74,6 +74,7 @@ export const chromeAr: AppChromeTranslations = {
       profileSettings: 'الملف الشخصي والإعدادات',
       subscriptionBilling: 'الاشتراك والفوترة',
       affiliateProgram: 'برنامج الإحالة',
+      rateUs: 'قيّمنا',
       signOut: 'تسجيل الخروج',
     },
     helpMenu: {

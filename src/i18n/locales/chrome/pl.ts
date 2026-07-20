@@ -75,6 +75,7 @@ export const chromePl: AppChromeTranslations = {
       profileSettings: 'Profil i ustawienia',
       subscriptionBilling: 'Subskrypcja i rozliczenia',
       affiliateProgram: 'Program partnerski',
+      rateUs: 'Oceń nas',
       signOut: 'Wyloguj się',
     },
     helpMenu: {

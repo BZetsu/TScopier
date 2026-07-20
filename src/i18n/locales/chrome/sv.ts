@@ -74,6 +74,7 @@ export const chromeSv: AppChromeTranslations = {
       profileSettings: 'Profil och inställningar',
       subscriptionBilling: 'Prenumeration och fakturering',
       affiliateProgram: 'Affiliateprogram',
+      rateUs: 'Betygsätt oss',
       signOut: 'Logga ut',
     },
     helpMenu: {

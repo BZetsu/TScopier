@@ -74,6 +74,7 @@ export const chromeJa: AppChromeTranslations = {
       profileSettings: 'プロフィールと設定',
       subscriptionBilling: 'サブスクリプションと請求',
       affiliateProgram: 'アフィリエイトプログラム',
+      rateUs: '評価する',
       signOut: 'サインアウト',
     },
     helpMenu: {

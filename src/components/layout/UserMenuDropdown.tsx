@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import {
   LogOut,
   ChevronRight,
+  Star,
   type LucideIcon,
 } from 'lucide-react'
 import clsx from 'clsx'
@@ -13,6 +14,8 @@ import { useSubscription } from '../../context/SubscriptionContext'
 import { UserAvatar } from './UserAvatar'
 import { getAppRouteIcon } from '../../lib/appNavIcons'
 import { DirectionalIcon } from '../ui/DirectionalIcon'
+
+const TRUSTPILOT_REVIEW_URL = 'https://www.trustpilot.com/review/tscopier.ai'
 
 export interface UserMenuDropdownProps {
   open: boolean
@@ -27,6 +30,13 @@ type MenuItem =
       label: string
       icon: LucideIcon
       path: string
+    }
+  | {
+      id: string
+      kind: 'external'
+      label: string
+      icon: LucideIcon
+      href: string
     }
   | {
       id: string
@@ -60,12 +70,18 @@ export function UserMenuDropdown({ open, onClose, onSignOut }: UserMenuDropdownP
     { id: 'profile', kind: 'link', label: um.profileSettings, icon: getAppRouteIcon('/settings'), path: '/settings' },
     { id: 'billing', kind: 'link', label: um.subscriptionBilling, icon: getAppRouteIcon('/billing'), path: '/billing' },
     { id: 'affiliate', kind: 'link', label: um.affiliateProgram, icon: getAppRouteIcon('/affiliate-program'), path: '/affiliate-program' },
+    { id: 'rate-us', kind: 'external', label: um.rateUs, icon: Star, href: TRUSTPILOT_REVIEW_URL },
     { id: 'signout', kind: 'action', label: um.signOut, icon: LogOut, destructive: true },
   ]
 
   const handleSelect = (item: MenuItem) => {
     if (item.kind === 'link') {
       navigate(item.path)
+      onClose()
+      return
+    }
+    if (item.kind === 'external') {
+      window.open(item.href, '_blank', 'noopener,noreferrer')
       onClose()
       return
     }
@@ -129,7 +145,7 @@ export function UserMenuDropdown({ open, onClose, onSignOut }: UserMenuDropdownP
                   <Icon className="h-4 w-4" />
                 </span>
                 <span className="min-w-0 flex-1">{item.label}</span>
-                {item.kind === 'link' ? (
+                {item.kind === 'link' || item.kind === 'external' ? (
                   <DirectionalIcon icon={ChevronRight} className="h-3.5 w-3.5 shrink-0 text-neutral-400" />
                 ) : null}
               </button>

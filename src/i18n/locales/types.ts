@@ -96,6 +96,7 @@ export interface NavTranslations {
     profileSettings: string
     subscriptionBilling: string
     affiliateProgram: string
+    rateUs: string
     signOut: string
   }
 }

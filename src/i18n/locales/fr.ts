@@ -93,6 +93,7 @@ export const fr: Translations = {
       profileSettings: 'Profil et paramètres',
       subscriptionBilling: 'Abonnement et facturation',
       affiliateProgram: 'Programme d\'affiliation',
+      rateUs: 'Nous noter',
       signOut: 'Déconnexion',
     },
     helpMenu: {

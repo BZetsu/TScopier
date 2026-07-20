@@ -74,6 +74,7 @@ export const chromeNl: AppChromeTranslations = {
       profileSettings: 'Profiel en instellingen',
       subscriptionBilling: 'Abonnement en facturatie',
       affiliateProgram: 'Affiliateprogramma',
+      rateUs: 'Beoordeel ons',
       signOut: 'Afmelden',
     },
     helpMenu: {
