@@ -224,6 +224,8 @@ export interface ConfigureModalTranslations {
     closeWorsePipsFallback: string
     basicPlanTradeStyleLimit: string
     openLotCalculator: string
+    /** Shown when effective leg size is broker min (0.01) and channel half/partial closes are allowed. */
+    minLotPartialCloseWarning: string
     fieldErrors: {
       required: string
       invalid: string

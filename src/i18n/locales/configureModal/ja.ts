@@ -233,6 +233,8 @@ export const configureModalJa: ConfigureModalTranslations = {
     closeWorsePipsFallback: 'ライブ価格 (指示) またはアンカー + X ピップス (自動) からの距離。',
     basicPlanTradeStyleLimit: 'シングル取引モードのみが許可されます。マルチトレードおよびレンジレイヤリング設定は、アドバンストプランで利用できます。',
     openLotCalculator: 'リスク/ロットサイズを計算',
+    minLotPartialCloseWarning:
+      '1トレードあたりのロットは 0.01（ブローカー最小）です。「半分クローズ」「部分クローズ」「部分利確」などのチャンネル指示では、それ以上小さくできないため、コピーはトレード全体をクローズします。ロットを増やすか、このチャンネルの Close half / partial を Ignore にしてください。',
     fieldErrors: {
       required: '値を入力してください',
       invalid: '有効な数値を入力してください',

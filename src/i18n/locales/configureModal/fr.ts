@@ -256,6 +256,8 @@ export const configureModalFr: ConfigureModalTranslations = {
     basicPlanTradeStyleLimit:
       'Seul le mode Single Trade est autorisé. Multi-Trade et Range Layering sont disponibles avec le plan Advanced.',
     openLotCalculator: 'Calculer risque / taille de lot',
+    minLotPartialCloseWarning:
+      'Votre lot par trade est 0,01 (minimum du courtier). Les instructions du canal du type « fermer la moitié », « fermeture partielle » ou « prendre des profits partiels » ne peuvent pas laisser une position plus petite — le copieur fermera tout le trade. Augmentez le lot, ou mettez Close half / partial sur Ignore pour ce canal.',
     fieldErrors: {
       required: 'Saisissez une valeur',
       invalid: 'Saisissez un nombre valide',

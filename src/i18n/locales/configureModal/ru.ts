@@ -233,6 +233,8 @@ export const configureModalRu: ConfigureModalTranslations = {
     closeWorsePipsFallback: 'Расстояние от реальной цены (инструкция) или якоря + X пунктов (авто).',
     basicPlanTradeStyleLimit: 'Разрешен только режим одиночной торговли. Настройки Multi-Trade и Range Layering доступны в расширенном плане.',
     openLotCalculator: 'Рассчитать риск/размер лота',
+    minLotPartialCloseWarning:
+      'Лот на сделку — 0.01 (минимум брокера). Инструкции канала вроде «закрыть половину», «частичное закрытие» или «забрать частичную прибыль» не могут оставить меньший объём — копировщик закроет всю сделку. Увеличьте лот или поставьте Close half / partial в Ignore для этого канала.',
     fieldErrors: {
       required: 'Введите значение',
       invalid: 'Введите допустимое число',

@@ -1234,6 +1234,32 @@ export function AccountConfigPage() {
     cm.risk.previewLotsXTradesLayered,
   ])
 
+  /** Broker min lot cannot be partially closed — half/partial channel instructions close the full trade. */
+  const showMinLotPartialCloseWarning = useMemo(() => {
+    if (!configDraft.selectedChannelId) return false
+    const filters = normalizeChannelFilters(
+      configDraft.channelConfigs[configDraft.selectedChannelId]?.channelFilters
+        ?? defaultChannelFiltersForPlan(keywordFiltersEnabled),
+    )
+    if (filters.close_half !== 'allow') return false
+
+    const tradeStyle = channelManualSettings.trade_style ?? 'single'
+    let effectiveLot = previewManualLot
+    if (tradeStyle === 'multi') {
+      const legPct = Number(channelManualSettings.multi_trade_leg_percent ?? 5) || 5
+      const perLeg = resolveMultiTradePerLegLot({ manualLot: previewManualLot, legPercent: legPct })
+      if (perLeg != null) effectiveLot = perLeg
+    }
+    return Number.isFinite(effectiveLot) && +(effectiveLot).toFixed(2) <= 0.01
+  }, [
+    configDraft.selectedChannelId,
+    configDraft.channelConfigs,
+    keywordFiltersEnabled,
+    channelManualSettings.trade_style,
+    channelManualSettings.multi_trade_leg_percent,
+    previewManualLot,
+  ])
+
   const multiTradePreviewTooltip = useMemo(() => {
     const ms = channelManualSettings
     let text = cm.risk.previewFooter
@@ -2893,6 +2919,9 @@ export function AccountConfigPage() {
                                   onChange={(key, value) => setChannelFilter(configDraft.selectedChannelId!, key, value)}
                                   onReset={() => resetChannelFilters(configDraft.selectedChannelId!)}
                                 />
+                                {showMinLotPartialCloseWarning ? (
+                                  <Alert variant="warning">{cm.risk.minLotPartialCloseWarning}</Alert>
+                                ) : null}
                               </section>
                               {!keywordFiltersEnabled ? (
                                 <div className="absolute inset-0 z-10 flex items-center justify-center p-4">
@@ -3005,6 +3034,10 @@ export function AccountConfigPage() {
                                 />
                               )}
                             </div>
+
+                            {showMinLotPartialCloseWarning ? (
+                              <Alert variant="warning">{cm.risk.minLotPartialCloseWarning}</Alert>
+                            ) : null}
 
                             {channelManualSettings.trade_style !== 'multi' && (
                               <div className="space-y-4">

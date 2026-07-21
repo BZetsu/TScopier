@@ -233,6 +233,8 @@ export const configureModalSv: ConfigureModalTranslations = {
     closeWorsePipsFallback: 'Avstånd från livepris (instruktion) eller ankare + X pips (auto).',
     basicPlanTradeStyleLimit: 'Endast enstaka handelsläge tillåtet. Multi-Trade och Range Layering-inställningar är tillgängliga på den avancerade planen.',
     openLotCalculator: 'Beräkna risk / partistorlek',
+    minLotPartialCloseWarning:
+      'Din lotstorlek per trade är 0,01 (mäklarens minimum). Kanalinstruktioner som "stäng hälften", "stäng delvis" eller "ta partiell vinst" kan inte lämna en mindre position — kopieraren stänger hela traden. Öka lotstorleken, eller sätt Close half / partial till Ignore för den här kanalen.',
     fieldErrors: {
       required: 'Ange ett värde',
       invalid: 'Ange ett giltigt tal',

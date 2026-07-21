@@ -233,6 +233,8 @@ export const configureModalAr: ConfigureModalTranslations = {
     closeWorsePipsFallback: 'المسافة من السعر الحالي (تعليمة) أو مرساة + X نقطة (تلقائي).',
     basicPlanTradeStyleLimit: 'يُسمح فقط بوضع الصفقة الواحدة. إعدادات Multi-Trade و Range Layering متاحة في الخطة المتقدمة.',
     openLotCalculator: 'حساب المخاطر/حجم اللوت',
+    minLotPartialCloseWarning:
+      'حجم اللوت لكل صفقة هو 0.01 (الحد الأدنى للوسيط). تعليمات القناة مثل «أغلق النصف» أو «أغلق جزئياً» أو «خذ أرباحاً جزئية» لا يمكن أن تترك مركزاً أصغر — سيقوم الناسخ بإغلاق الصفقة بالكامل. زد حجم اللوت، أو عيّن Close half / partial على Ignore لهذه القناة.',
     fieldErrors: {
       required: 'أدخل قيمة',
       invalid: 'أدخل رقمًا صالحًا',

@@ -233,6 +233,8 @@ export const configureModalPl: ConfigureModalTranslations = {
     closeWorsePipsFallback: 'Odległość od aktualnej ceny (instrukcja) lub kotwicy + X pipsów (automatycznie).',
     basicPlanTradeStyleLimit: 'Dozwolony jest tylko tryb pojedynczego handlu. Ustawienia Multi-Trade i Range Layering są dostępne w planie zaawansowanym.',
     openLotCalculator: 'Oblicz ryzyko/wielkość partii',
+    minLotPartialCloseWarning:
+      'Twój lot na transakcję to 0,01 (minimum brokera). Instrukcje kanału jak „zamknij połowę”, „zamknięcie częściowe” lub „weź częściowy zysk” nie mogą zostawić mniejszej pozycji — kopiarka zamknie całą transakcję. Zwiększ lot albo ustaw Close half / partial na Ignore dla tego kanału.',
     fieldErrors: {
       required: 'Wprowadź wartość',
       invalid: 'Wprowadź prawidłową liczbę',

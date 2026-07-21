@@ -233,6 +233,8 @@ export const configureModalNl: ConfigureModalTranslations = {
     closeWorsePipsFallback: 'Afstand vanaf live prijs (instructie) of anker + X pips (automatisch).',
     basicPlanTradeStyleLimit: 'Alleen de enkele handelsmodus is toegestaan. Instellingen voor Multi-Trade en Range Layering zijn beschikbaar in het Advanced-abonnement.',
     openLotCalculator: 'Bereken het risico/lotgrootte',
+    minLotPartialCloseWarning:
+      'Je lotgrootte per trade is 0,01 (broker-minimum). Kanaalinstructies zoals “sluit de helft”, “sluit gedeeltelijk” of “neem gedeeltelijke winst” kunnen geen kleinere positie achterlaten — de kopieerder sluit de hele trade. Verhoog de lotgrootte, of zet Close half / partial op Ignore voor dit kanaal.',
     fieldErrors: {
       required: 'Voer een waarde in',
       invalid: 'Voer een geldig getal in',
