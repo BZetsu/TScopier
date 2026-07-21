@@ -36,9 +36,15 @@ function normalizeTelegramMessageText(raw) {
 /**
  * Remove decorative emoji glued to SL/TP/entry labels (e.g. BUY 🟢4110, TP1 🎯4127, SL ⛔️4104).
  * Parsers match word boundaries and digits; emoji between label and price breaks those regexes.
+ *
+ * Replace with a space (not empty) so glued forms like `SELL🛑4027` / `SL⛔️4042` become
+ * `SELL 4027` / `SL 4042` instead of `SELL4027` / `SL4042`, which would fail `\bsell\b`.
  */
 function stripSignalDecorativeEmojis(text) {
-    return String(text ?? '').replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE00}-\u{FE0F}\u{200D}\u{20E3}\u{1F1E6}-\u{1F1FF}]/gu, '');
+    return String(text ?? '')
+        .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE00}-\u{FE0F}\u{200D}\u{20E3}\u{1F1E6}-\u{1F1FF}]+/gu, ' ')
+        // Collapse horizontal whitespace from emoji→space replacement; keep newlines.
+        .replace(/[^\S\n]+/g, ' ');
 }
 /** Telegram format strip + casual management typo collapse for parsers. */
 function normalizeSignalMessageForParse(raw) {

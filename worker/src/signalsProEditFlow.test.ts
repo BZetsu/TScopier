@@ -7,7 +7,7 @@ import {
   mergeParsedWithChannelParams,
 } from './channelActiveTradeParams'
 import { shouldRouteAsBasketParameterRefresh } from './multiTradeMerge'
-import { entryDispatchLooksSettleable } from './signalRevision'
+import { entryDispatchLooksSettleable, revisionCompletesSettleableEntry } from './signalRevision'
 import { messageRevisionBypassesMergeLinking } from './signalMergeLink'
 import { signalLooksLikeTeaserBasket } from './signalTelegramReconcile'
 
@@ -38,6 +38,8 @@ describe('SIGNALS PRO edit flow', () => {
     assert.equal(full.parsed.sl, 4190)
     assert.deepEqual(full.parsed.tp, [4210, 4220, 4225, 4240])
     assert.equal(shouldPreferParsedStopsOnEntry(full.parsed), true)
+    const teaser = parseChannelMessageSync(SIGNALS_PRO_TEASER, DEFAULT_CHANNEL_KEYWORDS, null)
+    assert.equal(revisionCompletesSettleableEntry(teaser.parsed, full.parsed), true)
   })
 
   it('full buy-now message does not route as parameter refresh but has explicit stops', () => {

@@ -2,6 +2,8 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   isIncomingRevisionStale,
+  isOpenAiRateLimitMessage,
+  revisionCompletesSettleableEntry,
   updateSignalAfterRevision,
 } from './signalRevision'
 
@@ -31,6 +33,57 @@ describe('signalRevision', () => {
     assert.equal(isIncomingRevisionStale(100, 100), false)
     assert.equal(isIncomingRevisionStale(null, 100), false)
     assert.equal(isIncomingRevisionStale(100, null), false)
+  })
+
+  it('detects teaser completion revisions deterministically', () => {
+    assert.equal(
+      revisionCompletesSettleableEntry(
+        {
+          action: 'buy',
+          sl: null,
+          tp: [],
+          entry_price: null,
+          entry_zone_low: null,
+          entry_zone_high: null,
+        },
+        {
+          action: 'buy',
+          sl: 2650,
+          tp: [2670, 2680],
+          entry_price: null,
+          entry_zone_low: 2660,
+          entry_zone_high: 2655,
+        },
+      ),
+      true,
+    )
+    assert.equal(
+      revisionCompletesSettleableEntry(
+        {
+          action: 'buy',
+          sl: null,
+          tp: [],
+          entry_price: null,
+          entry_zone_low: null,
+          entry_zone_high: null,
+        },
+        {
+          action: 'buy',
+          sl: null,
+          tp: [],
+          entry_price: null,
+          entry_zone_low: null,
+          entry_zone_high: null,
+        },
+      ),
+      false,
+    )
+  })
+
+  it('detects OpenAI quota and rate limit errors', () => {
+    assert.equal(isOpenAiRateLimitMessage('OpenAI HTTP 429: quota exceeded'), true)
+    assert.equal(isOpenAiRateLimitMessage('insufficient_quota'), true)
+    assert.equal(isOpenAiRateLimitMessage('plain timeout'), false)
   })
 
   it('updateSignalAfterRevision applies conditional edit_date filter', async () => {

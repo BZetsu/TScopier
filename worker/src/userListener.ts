@@ -40,7 +40,9 @@ import {
   buildRevisionDispatchRow,
   entryDispatchLooksSettleable,
   isIncomingRevisionStale,
+  isOpenAiRateLimitMessage,
   loadSignalByTelegramMessage,
+  revisionCompletesSettleableEntry,
   storedMessageDiffersFromTelegram,
   updateSignalAfterRevision,
 } from './signalRevision'
@@ -126,6 +128,10 @@ const REPLY_CHAIN_SWEEP_MS = 60_000
 const ENTRY_MESSAGE_SETTLE_MS = Math.max(
   3_000,
   Math.min(30_000, Number(process.env.ENTRY_MESSAGE_SETTLE_MS ?? 10_000)),
+)
+const REVISION_AI_RETRY_COOLDOWN_MS = Math.max(
+  30_000,
+  Math.min(60 * 60_000, Number(process.env.REVISION_AI_RETRY_COOLDOWN_MS ?? 10 * 60_000)),
 )
 
 function entryMessageSettleDelaysMs(): number[] {
@@ -325,6 +331,8 @@ export class UserListener {
   private revisionChains = new Map<string, Promise<boolean>>()
   /** In-process dedupe for revision dispatches (edit handler vs settle poll vs HTTP push). */
   private revisionDispatchDedup = new Map<string, number>()
+  /** Per-signal cooldown after OpenAI 429s so reconcile cannot hammer the API. */
+  private revisionAiCooldowns = new Map<string, number>()
   /** signal_channel_ids where canonical feed is live — skip poll/reconcile in primary mode. */
   private passiveSignalChannelIds = new Set<string>()
 
@@ -1218,58 +1226,100 @@ export class UserListener {
     }
     if (!storedMessageDiffersFromTelegram(existing.raw_message, rawMessage)) return false
 
+    const deterministicRevision = await this.tryDeterministicRevisionCompletion({
+      channelRowId: channelRow.id,
+      rawMessage,
+      existingParsed: (existing.parsed_data ?? null) as Record<string, unknown> | null,
+    })
+
     let aiResult: Awaited<ReturnType<typeof aiParseModification>>
     let parseResult: Awaited<ReturnType<typeof parseChannelMessageSync>>
-    try {
-      if (getUniversalParseMode() !== 'off') {
-        const universal = await parseUniversalSignal(this.supabase, {
-          userId: this.userId,
-          channelRowId: channelRow.id,
-          rawMessage,
-          revision: {
-            prior_raw_message: existing.raw_message,
-            prior_parsed_data: (existing.parsed_data ?? null) as Record<string, unknown> | null,
-          },
-        })
-        parseResult = universal.parseResult
-        aiResult = {
-          parsed: universal.parseResult.parsed as Awaited<ReturnType<typeof aiParseModification>>['parsed'],
-          status: universal.parseResult.status === 'parsed' ? 'parsed' : 'skipped',
-          skip_reason: universal.parseResult.skip_reason,
-          intent: universal.intent.kind === 'commentary' ? 'commentary' : universal.intent.kind === 'ignore' ? 'ignore' : 'modify',
-          typo_corrected: false,
-          confidence: universal.intent.confidence,
-          source: universal.source === 'openai' ? 'openai' : 'deterministic',
-        }
-      } else {
-        aiResult = await aiParseModification(this.supabase, {
-          userId: this.userId,
-          channelRowId: channelRow.id,
-          rawMessage,
-          revision: {
-            prior_raw_message: existing.raw_message,
-            prior_parsed_data: (existing.parsed_data ?? null) as Record<string, unknown> | null,
-          },
-        })
-        parseResult = aiResultToParseResult(aiResult)
+    if (deterministicRevision) {
+      parseResult = deterministicRevision
+      aiResult = {
+        parsed: deterministicRevision.parsed as Awaited<ReturnType<typeof aiParseModification>>['parsed'],
+        status: 'parsed',
+        skip_reason: null,
+        intent: 'parameter_refresh',
+        typo_corrected: false,
+        confidence: typeof deterministicRevision.parsed.confidence === 'number'
+          ? deterministicRevision.parsed.confidence
+          : 1,
+        source: 'deterministic',
       }
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err)
-      console.error(
-        `[userListener] message revision AI parse failed user=${this.userId} signalId=${existing.id}:`,
-        errMsg,
-      )
-      void persistListenerEvent(this.supabase, {
-        userId: this.userId,
-        eventType: 'ai_modification_failed',
-        channelRowId: channelRow.id,
-        telegramMessageId: messageId,
-        detail: { error: errMsg.slice(0, 300), signal_id: existing.id, source, revision: true },
-      })
-      return false
+    } else {
+      const cooldownRemainingMs = this.getRevisionAiCooldownRemainingMs(existing.id)
+      if (cooldownRemainingMs > 0) {
+        void persistListenerEvent(this.supabase, {
+          userId: this.userId,
+          eventType: 'ai_modification_skipped',
+          channelRowId: channelRow.id,
+          telegramMessageId: messageId,
+          detail: {
+            signal_id: existing.id,
+            source,
+            revision: true,
+            skip_reason: `OpenAI revision parse cooling down after rate limit (${cooldownRemainingMs}ms remaining)`,
+            intent: 'ignore',
+          },
+        })
+        return false
+      }
+      try {
+        if (getUniversalParseMode() !== 'off') {
+          const universal = await parseUniversalSignal(this.supabase, {
+            userId: this.userId,
+            channelRowId: channelRow.id,
+            rawMessage,
+            revision: {
+              prior_raw_message: existing.raw_message,
+              prior_parsed_data: (existing.parsed_data ?? null) as Record<string, unknown> | null,
+            },
+          })
+          parseResult = universal.parseResult
+          aiResult = {
+            parsed: universal.parseResult.parsed as Awaited<ReturnType<typeof aiParseModification>>['parsed'],
+            status: universal.parseResult.status === 'parsed' ? 'parsed' : 'skipped',
+            skip_reason: universal.parseResult.skip_reason,
+            intent: universal.intent.kind === 'commentary' ? 'commentary' : universal.intent.kind === 'ignore' ? 'ignore' : 'modify',
+            typo_corrected: false,
+            confidence: universal.intent.confidence,
+            source: universal.source === 'openai' ? 'openai' : 'deterministic',
+          }
+        } else {
+          aiResult = await aiParseModification(this.supabase, {
+            userId: this.userId,
+            channelRowId: channelRow.id,
+            rawMessage,
+            revision: {
+              prior_raw_message: existing.raw_message,
+              prior_parsed_data: (existing.parsed_data ?? null) as Record<string, unknown> | null,
+            },
+          })
+          parseResult = aiResultToParseResult(aiResult)
+        }
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err)
+        if (isOpenAiRateLimitMessage(errMsg)) this.setRevisionAiCooldown(existing.id)
+        console.error(
+          `[userListener] message revision AI parse failed user=${this.userId} signalId=${existing.id}:`,
+          errMsg,
+        )
+        void persistListenerEvent(this.supabase, {
+          userId: this.userId,
+          eventType: 'ai_modification_failed',
+          channelRowId: channelRow.id,
+          telegramMessageId: messageId,
+          detail: { error: errMsg.slice(0, 300), signal_id: existing.id, source, revision: true },
+        })
+        return false
+      }
     }
 
     if (parseResult!.status !== 'parsed') {
+      if (isOpenAiRateLimitMessage(parseResult.skip_reason)) {
+        this.setRevisionAiCooldown(existing.id)
+      }
       void persistListenerEvent(this.supabase, {
         userId: this.userId,
         eventType: 'ai_modification_skipped',
@@ -1285,6 +1335,7 @@ export class UserListener {
       })
       return false
     }
+    this.revisionAiCooldowns.delete(existing.id)
 
     const fresh = await loadSignalByTelegramMessage(this.supabase, {
       userId: this.userId,
@@ -1405,6 +1456,41 @@ export class UserListener {
       }
     }
     return false
+  }
+
+  private pruneRevisionAiCooldowns(now = Date.now()): void {
+    if (this.revisionAiCooldowns.size <= 500) return
+    for (const [signalId, until] of this.revisionAiCooldowns) {
+      if (until <= now) this.revisionAiCooldowns.delete(signalId)
+    }
+  }
+
+  private getRevisionAiCooldownRemainingMs(signalId: string, now = Date.now()): number {
+    const until = this.revisionAiCooldowns.get(signalId) ?? 0
+    if (until <= now) {
+      if (until > 0) this.revisionAiCooldowns.delete(signalId)
+      return 0
+    }
+    return until - now
+  }
+
+  private setRevisionAiCooldown(signalId: string, now = Date.now()): number {
+    const until = now + REVISION_AI_RETRY_COOLDOWN_MS
+    this.revisionAiCooldowns.set(signalId, until)
+    this.pruneRevisionAiCooldowns(now)
+    return until
+  }
+
+  private async tryDeterministicRevisionCompletion(args: {
+    channelRowId: string
+    rawMessage: string
+    existingParsed: Record<string, unknown> | null | undefined
+  }): Promise<Awaited<ReturnType<typeof parseChannelMessageSync>> | null> {
+    const { keywords, lexicon } = await getChannelParseContext(this.supabase, args.channelRowId)
+    const det = parseChannelMessageSync(args.rawMessage, keywords, lexicon)
+    if (det.status !== 'parsed') return null
+    if (!revisionCompletesSettleableEntry(args.existingParsed, det.parsed)) return null
+    return det
   }
 
   private scheduleEntryMessageSettlePoll(channelRow: ChannelRow, messageId: string) {

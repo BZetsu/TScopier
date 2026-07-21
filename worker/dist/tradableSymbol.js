@@ -12,6 +12,7 @@ exports.cleanInstrumentSymbol = cleanInstrumentSymbol;
 exports.isTradableInstrumentSymbol = isTradableInstrumentSymbol;
 exports.hasTradableInstrumentInText = hasTradableInstrumentInText;
 exports.signalBodyBeforePromoFooter = signalBodyBeforePromoFooter;
+exports.resolveSlashInstrumentPair = resolveSlashInstrumentPair;
 exports.reconcileSymbolWithQuoteLevels = reconcileSymbolWithQuoteLevels;
 exports.extractTradableSymbolFromMessage = extractTradableSymbolFromMessage;
 exports.sanitizeParsedSymbol = sanitizeParsedSymbol;
@@ -184,6 +185,44 @@ function extractHashtagSymbol(raw) {
     }
     return null;
 }
+const SLASH_INSTRUMENT_ALIASES = {
+    GOLD: 'XAUUSD',
+    XAU: 'XAUUSD',
+    SILVER: 'XAGUSD',
+    XAG: 'XAGUSD',
+    BITCOIN: 'BTCUSD',
+    BTC: 'BTCUSD',
+    ETHEREUM: 'ETHUSD',
+    ETH: 'ETHUSD',
+};
+function slashSideToSymbol(part) {
+    const upper = String(part ?? '').toUpperCase().trim();
+    if (!upper)
+        return null;
+    if (SLASH_INSTRUMENT_ALIASES[upper])
+        return SLASH_INSTRUMENT_ALIASES[upper];
+    const cleaned = cleanInstrumentSymbol(part);
+    if (isTradableInstrumentSymbol(cleaned))
+        return cleaned;
+    return null;
+}
+/** Resolve "EUR/USD", "XAUUSD/GOLD", "GOLD/XAUUSD" without producing XAUUSDGOLD. */
+function resolveSlashInstrumentPair(leftRaw, rightRaw) {
+    const left = slashSideToSymbol(leftRaw);
+    const right = slashSideToSymbol(rightRaw);
+    if (left && right) {
+        if (left === right)
+            return left;
+    }
+    if (left && SLASH_INSTRUMENT_ALIASES[String(rightRaw).toUpperCase().trim()] === left)
+        return left;
+    if (right && SLASH_INSTRUMENT_ALIASES[String(leftRaw).toUpperCase().trim()] === right)
+        return right;
+    const combined = cleanInstrumentSymbol(leftRaw + rightRaw);
+    if (isTradableInstrumentSymbol(combined))
+        return combined;
+    return left ?? right;
+}
 function extractHyphenForexPair(raw) {
     const body = signalBodyBeforePromoFooter(raw);
     const m = body.match(/\b([A-Z]{3})\s*-\s*([A-Z]{3})\b/i);
@@ -255,10 +294,10 @@ function extractTradableSymbolFromMessage(raw) {
     if (hyphenPair)
         return hyphenPair;
     const slash = body.match(/\b([A-Z]{3,})\s*\/\s*([A-Z]{3,})\b/i);
-    if (slash) {
-        const combined = cleanInstrumentSymbol(slash[1] + slash[2]);
-        if (isTradableInstrumentSymbol(combined))
-            return combined;
+    if (slash?.[1] && slash[2]) {
+        const resolved = resolveSlashInstrumentPair(slash[1], slash[2]);
+        if (resolved)
+            return resolved;
     }
     const onFor = body.match(/\b(?:on|for)\s+([A-Za-z][A-Za-z0-9./]{2,20})\b/i);
     if (onFor?.[1]) {
@@ -271,10 +310,10 @@ function extractTradableSymbolFromMessage(raw) {
         if (/\b(BITCOIN|BTC)\b/.test(subUp))
             return /\bUSDT\b/i.test(sub) ? 'BTCUSDT' : 'BTCUSD';
         const slashOn = sub.match(/^([A-Za-z]{3,})\s*\/\s*([A-Za-z]{3,})$/i);
-        if (slashOn) {
-            const combined = cleanInstrumentSymbol(slashOn[1] + slashOn[2]);
-            if (isTradableInstrumentSymbol(combined))
-                return combined;
+        if (slashOn?.[1] && slashOn[2]) {
+            const resolved = resolveSlashInstrumentPair(slashOn[1], slashOn[2]);
+            if (resolved)
+                return resolved;
         }
         const sym = cleanInstrumentSymbol(sub.replace(/\s+/g, ''));
         if (isTradableInstrumentSymbol(sym))
@@ -318,6 +357,10 @@ function sanitizeParsedSymbol(symbol) {
     if (symbol == null || !String(symbol).trim())
         return null;
     const cleaned = cleanInstrumentSymbol(String(symbol).trim());
+    if (cleaned === 'XAUUSDGOLD' || cleaned === 'GOLDXAUUSD')
+        return 'XAUUSD';
+    if (cleaned === 'XAGUSDSILVER' || cleaned === 'SILVERXAGUSD')
+        return 'XAGUSD';
     if (isTradableInstrumentSymbol(cleaned))
         return cleaned;
     // Accept a Deriv alias that slipped through un-normalized (e.g. "V75").

@@ -190,3 +190,45 @@ export function entryDispatchLooksSettleable(parsed: {
   if (parsed?.entry_zone_high != null && Number(parsed.entry_zone_high) > 0) return false
   return true
 }
+
+export function parsedHasExplicitStopsOrTargets(parsed: {
+  sl?: unknown
+  tp?: unknown
+} | null | undefined): boolean {
+  if (parsed?.sl != null && Number(parsed.sl) > 0) return true
+  const tps = Array.isArray(parsed?.tp) ? parsed.tp : []
+  return tps.some(t => Number(t) > 0)
+}
+
+/** Bare entry was edited into a fully-parameterized entry on the same Telegram message. */
+export function revisionCompletesSettleableEntry(
+  priorParsed: {
+    action?: unknown
+    sl?: unknown
+    tp?: unknown
+    entry_price?: unknown
+    entry_zone_low?: unknown
+    entry_zone_high?: unknown
+  } | null | undefined,
+  revisedParsed: {
+    action?: unknown
+    sl?: unknown
+    tp?: unknown
+    entry_price?: unknown
+    entry_zone_low?: unknown
+    entry_zone_high?: unknown
+  } | null | undefined,
+): boolean {
+  return entryDispatchLooksSettleable(priorParsed)
+    && !entryDispatchLooksSettleable(revisedParsed)
+    && parsedHasExplicitStopsOrTargets(revisedParsed)
+}
+
+export function isOpenAiRateLimitMessage(message: string | null | undefined): boolean {
+  const text = String(message ?? '').toLowerCase()
+  return text.includes('openai http 429')
+    || text.includes('rate limit')
+    || text.includes('current quota')
+    || text.includes('insufficient_quota')
+    || text.includes('too many requests')
+}

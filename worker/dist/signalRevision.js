@@ -14,6 +14,9 @@ exports.normalizedTradeAction = normalizedTradeAction;
 exports.revisionDirectionFlippedFromActions = revisionDirectionFlippedFromActions;
 exports.storedMessageDiffersFromTelegram = storedMessageDiffersFromTelegram;
 exports.entryDispatchLooksSettleable = entryDispatchLooksSettleable;
+exports.parsedHasExplicitStopsOrTargets = parsedHasExplicitStopsOrTargets;
+exports.revisionCompletesSettleableEntry = revisionCompletesSettleableEntry;
+exports.isOpenAiRateLimitMessage = isOpenAiRateLimitMessage;
 exports.MESSAGE_REVISION_DISPATCH_SOURCE = 'message_revision';
 function messageTextChanged(stored, fetched) {
     return stored.trim() !== fetched.trim();
@@ -138,4 +141,24 @@ function entryDispatchLooksSettleable(parsed) {
     if (parsed?.entry_zone_high != null && Number(parsed.entry_zone_high) > 0)
         return false;
     return true;
+}
+function parsedHasExplicitStopsOrTargets(parsed) {
+    if (parsed?.sl != null && Number(parsed.sl) > 0)
+        return true;
+    const tps = Array.isArray(parsed?.tp) ? parsed.tp : [];
+    return tps.some(t => Number(t) > 0);
+}
+/** Bare entry was edited into a fully-parameterized entry on the same Telegram message. */
+function revisionCompletesSettleableEntry(priorParsed, revisedParsed) {
+    return entryDispatchLooksSettleable(priorParsed)
+        && !entryDispatchLooksSettleable(revisedParsed)
+        && parsedHasExplicitStopsOrTargets(revisedParsed);
+}
+function isOpenAiRateLimitMessage(message) {
+    const text = String(message ?? '').toLowerCase();
+    return text.includes('openai http 429')
+        || text.includes('rate limit')
+        || text.includes('current quota')
+        || text.includes('insufficient_quota')
+        || text.includes('too many requests');
 }
