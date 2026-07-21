@@ -31,6 +31,12 @@ import {
 import { reconcileGhostBasketLegs, loadMergeSignalForLinking, resolveBasketMergeLinkContext } from './helpers'
 import { applyBasketSlTpRefresh } from './slTpRefresh'
 
+export function revisionRefreshWithoutOpenBasketOutcome(sameSignalRefresh: boolean): MergeOutcome {
+  return sameSignalRefresh
+    ? { handled: true, success: false }
+    : { handled: false }
+}
+
 export async function tryParameterFollowUpMergeModifyOnly(ctx: TradeExecutorContext, args: {
     signal: SignalRow
     parsed: ParsedSignal
@@ -123,7 +129,7 @@ export async function tryParameterFollowUpMergeModifyOnly(ctx: TradeExecutorCont
           channel_id: signal.channel_id,
         } as unknown as Record<string, unknown>,
       }).then(() => undefined, () => undefined)
-      return { handled: false }
+      return revisionRefreshWithoutOpenBasketOutcome(sameSignalRefresh)
     }
 
     const openLegDeadline = Date.now() + 3_000
@@ -215,7 +221,7 @@ export async function tryParameterFollowUpMergeModifyOnly(ctx: TradeExecutorCont
       || symbolsCompatibleForBasket(symbol, tr.symbol),
     )
     if (!anchorFamily.length) {
-      return { handled: false }
+      return revisionRefreshWithoutOpenBasketOutcome(sameSignalRefresh)
     }
 
     console.log(

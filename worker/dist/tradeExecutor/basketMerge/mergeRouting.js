@@ -1,5 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.revisionRefreshWithoutOpenBasketOutcome = revisionRefreshWithoutOpenBasketOutcome;
 exports.tryParameterFollowUpMergeModifyOnly = tryParameterFollowUpMergeModifyOnly;
 exports.tryMergeSignalIntoExistingOpenTrade = tryMergeSignalIntoExistingOpenTrade;
 exports.tryTeaserCompletionMerge = tryTeaserCompletionMerge;
@@ -15,6 +16,11 @@ const signalRevision_1 = require("../../signalRevision");
 const signalPriceInference_1 = require("../../signalPriceInference");
 const helpers_1 = require("./helpers");
 const slTpRefresh_1 = require("./slTpRefresh");
+function revisionRefreshWithoutOpenBasketOutcome(sameSignalRefresh) {
+    return sameSignalRefresh
+        ? { handled: true, success: false }
+        : { handled: false };
+}
 async function tryParameterFollowUpMergeModifyOnly(ctx, args) {
     const { signal, parsed, broker, channelKeywords, baseLot, params, symbol, uuid, strictEntryPrefetch, commentPrefix, } = args;
     if (!(0, fxsocketClient_1.hasFxsocketConfigured)())
@@ -88,7 +94,7 @@ async function tryParameterFollowUpMergeModifyOnly(ctx, args) {
                 channel_id: signal.channel_id,
             },
         }).then(() => undefined, () => undefined);
-        return { handled: false };
+        return revisionRefreshWithoutOpenBasketOutcome(sameSignalRefresh);
     }
     const openLegDeadline = Date.now() + 3000;
     while (Date.now() < openLegDeadline) {
@@ -174,7 +180,7 @@ async function tryParameterFollowUpMergeModifyOnly(ctx, args) {
     const anchorFamily = (anchorFamilyRows ?? []).filter(tr => (0, basketModFollowUp_1.symbolsCompatibleForBasket)(parsed.symbol ?? symbol, tr.symbol)
         || (0, basketModFollowUp_1.symbolsCompatibleForBasket)(symbol, tr.symbol));
     if (!anchorFamily.length) {
-        return { handled: false };
+        return revisionRefreshWithoutOpenBasketOutcome(sameSignalRefresh);
     }
     console.log(`[tradeExecutor] merge_anchor_selected signal=${signal.id} broker=${broker.id}`
         + ` anchor=${anchor.anchorSignalId} symbol=${symbol} direction=${direction}`);
