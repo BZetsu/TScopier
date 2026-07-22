@@ -55,5 +55,27 @@ export function stripSignalDecorativeEmojis(text: string): string {
 
 /** Telegram format strip + casual management typo collapse for parsers. */
 export function normalizeSignalMessageForParse(raw: string): string {
-  return collapseCasualSignalTypos(stripSignalDecorativeEmojis(normalizeTelegramMessageText(raw)))
+  return collapseCasualSignalTypos(
+    stripLegalTradeDisclaimer(
+      stripSignalDecorativeEmojis(normalizeTelegramMessageText(raw)),
+    ),
+  )
+}
+
+/**
+ * Channels often append legal footers that contain "buy or sell" / "investment advice".
+ * Those tokens poison BUY/SELL side detection — strip from the first disclaimer cue to EOF
+ * when trade content already appears above.
+ */
+export function stripLegalTradeDisclaimer(text: string): string {
+  const raw = String(text ?? '')
+  if (!raw.trim()) return raw
+  const startRe =
+    /(?:^|\n)\s*(?:for\s+educational|for\s+informational|disclaimer\b|risk\s+(?:warning|disclosure)|this\s+(?:content\s+)?is\s+(?:not|for)\s+(?:investment|financial)|no\s+investment\s+advice|not\s+(?:financial|investment)\s+advice|no\s+solicitation\s+to\s+buy|leveraged\s+products?\s+carry|any\s+action\s+is\s+taken\s+at\s+your\s+own)/i
+  const m = startRe.exec(raw)
+  if (!m || m.index == null) return raw
+  const before = raw.slice(0, m.index).trimEnd()
+  // Keep the message if stripping would remove almost everything (disclaimer-only post).
+  if (before.replace(/\s+/g, ' ').trim().length < 12) return raw
+  return before
 }

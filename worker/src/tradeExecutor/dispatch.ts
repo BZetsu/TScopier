@@ -368,7 +368,8 @@ export async function markSignalExecuted(ctx: TradeExecutorContext, signalId: st
         .from('signals')
         .update({ status: 'executed', skip_reason: null })
         .eq('id', signalId)
-        .in('status', ['parsed', 'pending', 'failed'])
+        // Include skipped: revision can trade after an initial skip while leaving status stuck.
+        .in('status', ['parsed', 'pending', 'failed', 'skipped'])
     } catch {
       /* best-effort */
     }

@@ -502,10 +502,26 @@ function resolveTradeSideFromMessage(
   if (goldBuy && !goldSell) return 'buy'
   if (goldSell && !goldBuy) return 'sell'
 
+  // Prefer explicit instrument+side lines over legal "buy or sell" boilerplate.
+  const instrumentSide = text.match(
+    /\b(?:sell|short)\s+(?:xauusd|xagusd|gold|btcusd|eurusd|[a-z]{6})\b|\b(?:xauusd|xagusd|gold|btcusd|eurusd|[a-z]{6})\s+(?:sell|short)\b/i,
+  )
+  const instrumentBuy = text.match(
+    /\b(?:buy|long)\s+(?:xauusd|xagusd|gold|btcusd|eurusd|[a-z]{6})\b|\b(?:xauusd|xagusd|gold|btcusd|eurusd|[a-z]{6})\s+(?:buy|long)\b/i,
+  )
+  if (instrumentSide && !instrumentBuy) return 'sell'
+  if (instrumentBuy && !instrumentSide) return 'buy'
+
+  const sideText = text
+    .replace(/\b(?:to\s+)?buy\s+or\s+sell\b/gi, ' ')
+    .replace(/\b(?:to\s+)?buy\s+and\s+sell\b/gi, ' ')
+    .replace(/\bbuying\s+or\s+selling\b/gi, ' ')
+    .replace(/\bsolicitation\s+to\s+buy\b/gi, ' ')
+
   const buyAliases = buyAliasesForChannel(channelKeywords, lexicon)
   const sellAliases = sellAliasesForSideDetection(channelKeywords, lexicon)
-  const isBuy = parseBuySideFromKeywords(message, buyAliases)
-  const isSell = parseSellSideFromKeywords(message, sellAliases)
+  const isBuy = parseBuySideFromKeywords(sideText, buyAliases)
+  const isSell = parseSellSideFromKeywords(sideText, sellAliases)
   if (isBuy && !isSell) return 'buy'
   if (isSell && !isBuy) return 'sell'
   return null

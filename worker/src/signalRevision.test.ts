@@ -176,6 +176,42 @@ describe('signalRevision', () => {
     assert.equal(appliedPatch?.raw_message, 'Gold buy SL 2650')
   })
 
+  it('updateSignalAfterRevision upgrades skipped to parsed when revision finds a trade', async () => {
+    let patch: Record<string, unknown> | null = null
+    const supabase = {
+      from: () => ({
+        update: (p: Record<string, unknown>) => {
+          patch = p
+          return {
+            eq: () => ({
+              select: () => ({
+                maybeSingle: async () => ({ data: { id: 'signal-1' }, error: null }),
+              }),
+            }),
+          }
+        },
+      }),
+    }
+
+    const ok = await updateSignalAfterRevision(supabase as never, {
+      signalId: 'signal-1',
+      rawMessage: 'SELL XAUUSD 4115-4125\nSL 4130\nTP1 4112',
+      parseResult: {
+        ...parsedPatch,
+        parsed: {
+          ...parsedPatch.parsed,
+          action: 'sell',
+          raw_instruction: 'SELL XAUUSD 4115-4125\nSL 4130\nTP1 4112',
+        },
+      },
+      existingStatus: 'skipped',
+    })
+    assert.equal(ok, true)
+    const appliedPatch = patch as Record<string, unknown> | null
+    assert.equal(appliedPatch?.status, 'parsed')
+    assert.equal(appliedPatch?.skip_reason, null)
+  })
+
   it('updateSignalAfterRevision skips edit_date filter when incoming edit_date absent', async () => {
     let usedOr = false
     const supabase = {

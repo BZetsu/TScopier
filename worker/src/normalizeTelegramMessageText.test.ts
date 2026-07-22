@@ -65,4 +65,22 @@ Risk only 1-2% of your balance.`
     assert.equal(result.parsed.sl, 4042)
     assert.deepEqual(result.parsed.tp, [4022, 4017, 4012])
   })
+
+  it('strips legal disclaimer footers that contain buy or sell', () => {
+    const raw = `TRADE IDEA
+SELL XAUUSD 4115–4125
+TP1: 4112
+SL: 4130
+
+For educational and informational purposes only – no investment advice and no solicitation to buy or sell. Leveraged products carry a high risk of loss.`
+    const normalized = normalizeSignalMessageForParse(raw)
+    assert.match(normalized, /SELL XAUUSD/)
+    assert.doesNotMatch(normalized, /solicitation to buy or sell/i)
+    assert.doesNotMatch(normalized, /educational and informational/i)
+
+    const result = parseChannelMessageSync(raw, DEFAULT_CHANNEL_KEYWORDS, null)
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.action, 'sell')
+    assert.equal(result.parsed.symbol, 'XAUUSD')
+  })
 })
