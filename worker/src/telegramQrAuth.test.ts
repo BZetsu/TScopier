@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildQrStatusFromPending, formatQrLoginUrl } from './telegramQrAuth'
+import { buildQrStatusFromPending, formatQrLoginUrl, qrStatusFromActiveSession } from './telegramQrAuth'
 
 describe('formatQrLoginUrl', () => {
   it('builds tg:// login URL with base64url token', () => {
@@ -55,5 +55,24 @@ describe('buildQrStatusFromPending', () => {
     const status = buildQrStatusFromPending({ status: 'error', error: 'expired' })
     assert.equal(status.status, 'error')
     assert.equal(status.error, 'expired')
+  })
+
+  it('keeps waiting while success is marked but result is not ready yet', () => {
+    const status = buildQrStatusFromPending({
+      status: 'success',
+      latestQrUrl: qrUrl,
+      expiresAt,
+    })
+    assert.equal(status.status, 'waiting')
+    assert.equal(status.qr_url, qrUrl)
+  })
+})
+
+describe('qrStatusFromActiveSession', () => {
+  it('returns success for an already-linked session', () => {
+    const status = qrStatusFromActiveSession('sess-linked', [{ id: 'ch1' }])
+    assert.equal(status.status, 'success')
+    assert.equal(status.session_id, 'sess-linked')
+    assert.deepEqual(status.channels, [{ id: 'ch1' }])
   })
 })

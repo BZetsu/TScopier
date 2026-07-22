@@ -10,7 +10,7 @@ import {
   normalizeTelegramPhoneNumber,
   upsertTelegramAccountClaim,
 } from './telegramAccountClaims'
-import { buildQrStatusFromPending, formatQrLoginUrl, type QrStatusResponse } from './telegramQrAuth'
+import { buildQrStatusFromPending, formatQrLoginUrl, qrStatusFromActiveSession, type QrStatusResponse } from './telegramQrAuth'
 
 type PhonePending = {
   method: 'phone'
@@ -346,8 +346,12 @@ export class AuthService {
       const me = await client.getMe()
       const phone = me.phone ? normalizePhoneNumber(`+${me.phone}`) : pending.phone ?? ''
       pending.phone = phone
+      // Mark success only after finalizeAuth returns. finalizeAuth clears the Map
+      // entry — re-attach so the next poll can observe success without racing.
+      const result = await this.finalizeAuth(client, userId, phone || `tg:${me.id}`)
       pending.status = 'success'
-      pending.result = await this.finalizeAuth(client, userId, phone || `tg:${me.id}`)
+      pending.result = result
+      this.pending.set(userId, pending)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       pending.status = 'error'
@@ -551,6 +555,16 @@ export class AuthService {
   async getQrStatus(userId: string): Promise<QrStatusResponse> {
     const pending = await this.getOrRestoreQrPending(userId)
     if (!pending) {
+      // finalizeAuth clears pending before the UI poll observes success — recover from session.
+      const { data: sess } = await this.supabase
+        .from('telegram_sessions')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('is_active', true)
+        .maybeSingle()
+      if (sess?.id) {
+        return qrStatusFromActiveSession(String(sess.id))
+      }
       throw new Error('NO_PENDING_QR')
     }
 

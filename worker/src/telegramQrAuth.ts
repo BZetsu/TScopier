@@ -24,6 +24,15 @@ export type QrPendingSnapshot = {
   result?: { session_id: string; channels?: unknown[] }
 }
 
+/** When QR pending was cleared after a successful link, polls should still complete. */
+export function qrStatusFromActiveSession(sessionId: string, channels?: unknown[]): QrStatusResponse {
+  return {
+    status: 'success',
+    session_id: sessionId,
+    channels: channels ?? [],
+  }
+}
+
 function formatExpiresAt(expiresAt?: number): string | undefined {
   return expiresAt && expiresAt > 0 ? new Date(expiresAt).toISOString() : undefined
 }
@@ -35,6 +44,14 @@ export function buildQrStatusFromPending(pending: QrPendingSnapshot): QrStatusRe
       status: 'success',
       session_id: pending.result.session_id,
       channels: pending.result.channels ?? [],
+    }
+  }
+  // Success was marked but finalizeAuth is still writing session/channels — keep polling.
+  if (pending.status === 'success') {
+    return {
+      status: 'waiting',
+      qr_url: pending.latestQrUrl,
+      expires_at: formatExpiresAt(pending.expiresAt),
     }
   }
   if (pending.status === 'error') {

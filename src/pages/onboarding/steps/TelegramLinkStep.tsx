@@ -84,7 +84,7 @@ export function TelegramLinkStep({ onDone }: Props) {
     let cancelled = false
     const poll = async () => {
       try {
-        const { data } = await callTelegramAuth<QrPollResponse>(
+        const { ok, data } = await callTelegramAuth<QrPollResponse>(
           EDGE_FN,
           session.access_token,
           'poll_qr_login',
@@ -102,9 +102,9 @@ export function TelegramLinkStep({ onDone }: Props) {
           handleLinked(data.session_id)
           return
         }
-        if (data.status === 'error') {
+        if (data.status === 'error' || (!ok && data.error)) {
           setQrWaiting(false)
-          setError(data.error ?? ce.failedStartQr)
+          setError(resolveTelegramAuthErrorMessage(data.error, ce.failedStartQr, ce))
         }
       } catch {
         if (!cancelled) setError('Network error. Please try again.')
@@ -117,7 +117,7 @@ export function TelegramLinkStep({ onDone }: Props) {
       cancelled = true
       clearInterval(interval)
     }
-  }, [stage, session?.access_token, qrUrl, handleLinked, ce.failedStartQr])
+  }, [stage, session?.access_token, qrUrl, handleLinked, ce.failedStartQr, ce])
 
   const sendCode = async (e: FormEvent) => {
     e.preventDefault()

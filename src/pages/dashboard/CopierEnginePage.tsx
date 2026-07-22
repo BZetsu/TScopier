@@ -586,7 +586,7 @@ export function CopierEnginePage() {
     let cancelled = false
     const poll = async () => {
       try {
-        const { data } = await callTelegramAuth<QrPollResponse>(
+        const { ok, data } = await callTelegramAuth<QrPollResponse>(
           EDGE_FN,
           session.access_token,
           'poll_qr_login',
@@ -606,9 +606,24 @@ export function CopierEnginePage() {
           await handleTelegramLinked({ channels: data.channels as TgChannelListItem[] | undefined })
           return
         }
-        if (data.status === 'error') {
+        if (data.status === 'error' || (!ok && data.error)) {
+          // QR may have completed and cleared pending — recover if session exists.
+          if (data.error === 'NO_PENDING_QR' && user?.id) {
+            const { data: sess } = await supabase
+              .from('telegram_sessions')
+              .select('user_id')
+              .eq('user_id', user.id)
+              .eq('is_active', true)
+              .maybeSingle()
+            if (cancelled) return
+            if (sess) {
+              setTgQrWaiting(false)
+              await handleTelegramLinked({})
+              return
+            }
+          }
           setTgQrWaiting(false)
-          setTgError(data.error ?? ce.failedStartQr)
+          setTgError(resolveTelegramAuthErrorMessage(data.error, ce.failedStartQr, ce))
         }
       } catch {
         if (!cancelled) setTgError(ce.networkError)
@@ -621,7 +636,7 @@ export function CopierEnginePage() {
       cancelled = true
       clearInterval(interval)
     }
-  }, [tgStage, session?.access_token, tgQrUrl])
+  }, [tgStage, session?.access_token, tgQrUrl, user?.id, ce.failedStartQr, ce.networkError])
 
   const verifyQrPassword = async (e: FormEvent) => {
     e.preventDefault()
