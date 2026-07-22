@@ -6,15 +6,20 @@ const Password_1 = require("telegram/Password");
 const telegramClient_1 = require("./telegramClient");
 const telegramAccountClaims_1 = require("./telegramAccountClaims");
 const telegramQrAuth_1 = require("./telegramQrAuth");
+const telegramAuthRecovery_1 = require("./telegramAuthRecovery");
 /**
  * Maximum age of a pending auth (between send_code and verify_code)
  * before we drop the in-memory client. Telegram codes expire in a few minutes;
  * DB-backed recovery lasts slightly longer for cross-replica / slow UX.
  */
 const PENDING_TTL_MS = 10 * 60 * 1000;
+/** Extra in-memory window once Telegram asked for 2FA (user is typing the password). */
+const PENDING_PASSWORD_TTL_MS = 20 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 60 * 1000;
 /** DB row outlives Telegram code validity slightly so retries still recover across replicas. */
 const PENDING_DB_TTL_MS = 12 * 60 * 1000;
+/** Longer DB TTL while waiting for Two-Step Verification password. */
+const PENDING_DB_PASSWORD_TTL_MS = 20 * 60 * 1000;
 const QR_FIRST_TOKEN_WAIT_MS = 15000;
 const QR_PASSWORD_WAIT_MS = 120000;
 function sleep(ms) {
@@ -29,6 +34,17 @@ function phonesMatch(a, b) {
 function normalizeVerificationCode(raw) {
     return String(raw ?? '').replace(/\D/g, '');
 }
+/** Map Telegram SentCode type to a simple delivery channel for the UI. */
+function sentCodeDelivery(result) {
+    const className = String(result.type?.className ?? '');
+    if (/App/i.test(className))
+        return 'app';
+    if (/Sms/i.test(className))
+        return 'sms';
+    if (/Call|Flash/i.test(className))
+        return 'call';
+    return 'other';
+}
 /**
  * Owns the MTProto connection during the send_code -> verify_code window.
  * The same TelegramClient is kept alive across both calls so we never re-auth
@@ -41,8 +57,10 @@ class AuthService {
         this.supabase = supabase;
         this.sessionManager = sessionManager;
         this.pending = new Map();
+        /** True from auth start until pending Map entry is ready — blocks listener restart. */
+        this.authInFlight = new Set();
         this.qrPasswordResolvers = new Map();
-        this.sessionManager.setAuthGuard(userId => this.pending.has(userId));
+        this.sessionManager.setAuthGuard(userId => this.pending.has(userId) || this.authInFlight.has(userId));
         this.cleanupTimer = setInterval(() => this.cleanup(), CLEANUP_INTERVAL_MS);
         if (typeof this.cleanupTimer.unref === 'function')
             this.cleanupTimer.unref();
@@ -53,12 +71,20 @@ class AuthService {
             p.client.disconnect().catch(() => { });
         }
         this.pending.clear();
+        this.authInFlight.clear();
         this.qrPasswordResolvers.clear();
+    }
+    pendingTtlMs(p) {
+        if (p.method === 'phone' && p.awaitingPassword)
+            return PENDING_PASSWORD_TTL_MS;
+        if (p.method === 'qr' && p.status === 'requires_password')
+            return PENDING_PASSWORD_TTL_MS;
+        return PENDING_TTL_MS;
     }
     cleanup() {
         const now = Date.now();
         for (const [userId, p] of this.pending) {
-            if (now - p.createdAt > PENDING_TTL_MS) {
+            if (now - p.createdAt > this.pendingTtlMs(p)) {
                 p.client.disconnect().catch(() => { });
                 this.pending.delete(userId);
                 this.qrPasswordResolvers.delete(userId);
@@ -100,7 +126,10 @@ class AuthService {
             .maybeSingle();
         if (error || !row)
             return null;
-        if (row.auth_method === 'qr')
+        // Only restore real phone auth rows — never QR or ephemeral MTProto holds.
+        if (row.auth_method && row.auth_method !== 'phone')
+            return null;
+        if (!row.phone_code_hash)
             return null;
         if (new Date(row.expires_at) < new Date()) {
             await this.clearPendingRow(userId);
@@ -111,9 +140,15 @@ class AuthService {
             return null;
         }
         const awaitingPassword = Boolean(row.awaiting_password);
-        const savedSession = awaitingPassword && typeof row.auth_session_string === 'string' && row.auth_session_string.trim()
+        const savedSession = typeof row.auth_session_string === 'string' && row.auth_session_string.trim()
             ? row.auth_session_string.trim()
             : '';
+        // 2FA resume requires the persisted MTProto session from SignIn; without it the
+        // user must request a new code.
+        if (awaitingPassword && !savedSession) {
+            console.warn(`[authService] awaiting password but missing auth_session_string for ${userId}`);
+            return null;
+        }
         const client = (0, telegramClient_1.buildClient)(savedSession);
         await client.connect();
         return {
@@ -158,17 +193,26 @@ class AuthService {
         }
         return pending;
     }
-    async persistAwaitingPassword(userId, client) {
+    async persistAwaitingPassword(userId, client, pending) {
         const authSessionString = client.session.save();
-        const { error } = await this.supabase
-            .from('telegram_auth_pending')
-            .update({
+        const expiresAt = new Date(Date.now() + PENDING_DB_PASSWORD_TTL_MS).toISOString();
+        // Upsert: a plain UPDATE matches 0 rows if cleanup deleted the send_code row mid-flight.
+        const { error } = await this.supabase.from('telegram_auth_pending').upsert({
+            user_id: userId,
+            auth_method: 'phone',
+            phone: pending?.phone ?? null,
+            phone_code_hash: pending?.phoneCodeHash ?? null,
+            expires_at: expiresAt,
             awaiting_password: true,
             auth_session_string: authSessionString,
-        })
-            .eq('user_id', userId);
+        }, { onConflict: 'user_id' });
         if (error) {
             console.warn(`[authService] persistAwaitingPassword failed for ${userId}:`, error.message);
+        }
+        if (pending) {
+            pending.awaitingPassword = true;
+            // Refresh in-memory age so cleanup does not expire mid-password entry.
+            pending.createdAt = Date.now();
         }
     }
     async persistQrPendingRow(userId, client, pending) {
@@ -285,8 +329,12 @@ class AuthService {
             const me = await client.getMe();
             const phone = me.phone ? normalizePhoneNumber(`+${me.phone}`) : pending.phone ?? '';
             pending.phone = phone;
+            // Mark success only after finalizeAuth returns. finalizeAuth clears the Map
+            // entry — re-attach so the next poll can observe success without racing.
+            const result = await this.finalizeAuth(client, userId, phone || `tg:${me.id}`);
             pending.status = 'success';
-            pending.result = await this.finalizeAuth(client, userId, phone || `tg:${me.id}`);
+            pending.result = result;
+            this.pending.set(userId, pending);
         }
         catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
@@ -318,48 +366,80 @@ class AuthService {
             throw new Error('Use full phone with country code, e.g. +44...');
         }
         await (0, telegramAccountClaims_1.assertTelegramAccountAvailable)(this.supabase, userId, { phone: normalizedPhone });
-        await this.sessionManager.pauseForAuth(userId);
-        await this.disconnectPending(userId);
-        await this.clearPendingRow(userId);
-        const client = (0, telegramClient_1.buildClient)('');
-        await client.connect();
+        this.authInFlight.add(userId);
         try {
-            const result = await (0, telegramClient_1.tgInvoke)(client, new tl_1.Api.auth.SendCode({
-                phoneNumber: normalizedPhone,
-                apiId: telegramClient_1.API_ID,
-                apiHash: telegramClient_1.API_HASH,
-                settings: new tl_1.Api.CodeSettings({
-                    allowFlashcall: false,
-                    currentNumber: true,
-                    allowAppHash: true,
-                }),
-            }));
-            this.pending.set(userId, {
-                method: 'phone',
-                client,
-                phone: normalizedPhone,
-                phoneCodeHash: result.phoneCodeHash,
-                createdAt: Date.now(),
-            });
-            const expiresAt = new Date(Date.now() + PENDING_DB_TTL_MS).toISOString();
-            const { error: dbErr } = await this.supabase.from('telegram_auth_pending').upsert({
+            await this.disconnectPending(userId);
+            // Upsert placeholder first so there is never an empty-pending window that
+            // lets onAuthPendingCleared / syncSessions restart the old live session
+            // (which would swallow the in-app login code).
+            const placeholderExpires = new Date(Date.now() + PENDING_DB_TTL_MS).toISOString();
+            const { error: holdErr } = await this.supabase.from('telegram_auth_pending').upsert({
                 user_id: userId,
                 auth_method: 'phone',
                 phone: normalizedPhone,
-                phone_code_hash: result.phoneCodeHash,
-                expires_at: expiresAt,
+                phone_code_hash: null,
+                expires_at: placeholderExpires,
+                awaiting_password: false,
+                auth_session_string: null,
+                qr_expires_at: null,
             }, { onConflict: 'user_id' });
-            if (dbErr) {
-                console.error('[authService] telegram_auth_pending upsert:', dbErr.message);
+            if (holdErr) {
+                console.error('[authService] auth hold upsert failed:', holdErr.message);
+                throw new Error('Could not start Telegram login. Try again in a minute.');
             }
-            return { phone_code_hash: result.phoneCodeHash };
-        }
-        catch (err) {
+            await this.sessionManager.prepareForAuth(userId);
+            const client = (0, telegramClient_1.buildClient)('');
+            await client.connect();
             try {
-                await client.disconnect();
+                const result = await (0, telegramClient_1.tgInvoke)(client, new tl_1.Api.auth.SendCode({
+                    phoneNumber: normalizedPhone,
+                    apiId: telegramClient_1.API_ID,
+                    apiHash: telegramClient_1.API_HASH,
+                    settings: new tl_1.Api.CodeSettings({
+                        allowFlashcall: false,
+                        currentNumber: true,
+                        allowAppHash: true,
+                    }),
+                }));
+                const authSessionString = client.session.save();
+                this.pending.set(userId, {
+                    method: 'phone',
+                    client,
+                    phone: normalizedPhone,
+                    phoneCodeHash: result.phoneCodeHash,
+                    createdAt: Date.now(),
+                });
+                const expiresAt = new Date(Date.now() + PENDING_DB_TTL_MS).toISOString();
+                const { error: dbErr } = await this.supabase.from('telegram_auth_pending').upsert({
+                    user_id: userId,
+                    auth_method: 'phone',
+                    phone: normalizedPhone,
+                    phone_code_hash: result.phoneCodeHash,
+                    expires_at: expiresAt,
+                    awaiting_password: false,
+                    auth_session_string: authSessionString,
+                    qr_expires_at: null,
+                }, { onConflict: 'user_id' });
+                if (dbErr) {
+                    console.error('[authService] telegram_auth_pending upsert:', dbErr.message);
+                }
+                return {
+                    phone_code_hash: result.phoneCodeHash,
+                    delivery: sentCodeDelivery(result),
+                };
             }
-            catch { /* ignore */ }
-            throw err;
+            catch (err) {
+                try {
+                    await client.disconnect();
+                }
+                catch { /* ignore */ }
+                this.pending.delete(userId);
+                await this.clearPendingRow(userId);
+                throw err;
+            }
+        }
+        finally {
+            this.authInFlight.delete(userId);
         }
     }
     async verifyCode(userId, phone, code, password) {
@@ -381,7 +461,9 @@ class AuthService {
             }
         }
         if (!pending) {
-            throw new Error('No pending auth flow. Call send_code first.');
+            const err = new Error((0, telegramAuthRecovery_1.noPendingPhoneAuthMessage)());
+            err.name = telegramAuthRecovery_1.NO_PENDING_PHONE_AUTH_ERROR;
+            throw err;
         }
         const { client, phone: pendingPhone, phoneCodeHash } = pending;
         try {
@@ -403,8 +485,7 @@ class AuthService {
                     const msg = signInErr instanceof Error ? signInErr.message : String(signInErr);
                     if (!msg.includes('SESSION_PASSWORD_NEEDED'))
                         throw signInErr;
-                    pending.awaitingPassword = true;
-                    await this.persistAwaitingPassword(userId, client);
+                    await this.persistAwaitingPassword(userId, client, pending);
                     await this.completePasswordStep(client, password.trim());
                 }
             }
@@ -419,8 +500,7 @@ class AuthService {
                 catch (err) {
                     const msg = err instanceof Error ? err.message : String(err);
                     if (msg.includes('SESSION_PASSWORD_NEEDED')) {
-                        pending.awaitingPassword = true;
-                        await this.persistAwaitingPassword(userId, client);
+                        await this.persistAwaitingPassword(userId, client, pending);
                         return { requires_password: true };
                     }
                     throw err;
@@ -428,6 +508,13 @@ class AuthService {
             }
         }
         catch (err) {
+            // Wrong 2FA / transient errors: keep pending so the user can retry without send_code.
+            if ((0, telegramAuthRecovery_1.isRecoverableTelegramAuthError)(err) && !(0, telegramAuthRecovery_1.isPhoneCodeFatalAuthError)(err)) {
+                if (pending.awaitingPassword) {
+                    await this.persistAwaitingPassword(userId, client, pending).catch(() => { });
+                }
+                throw err;
+            }
             try {
                 await client.disconnect();
             }
@@ -439,7 +526,6 @@ class AuthService {
         return this.finalizeAuth(client, userId, pendingPhone);
     }
     async startQrLogin(userId) {
-        await this.sessionManager.pauseForAuth(userId);
         const existing = this.pending.get(userId);
         if (existing?.method === 'qr' && existing.status === 'waiting' && existing.latestQrUrl) {
             return {
@@ -447,44 +533,76 @@ class AuthService {
                 expires_at: new Date(existing.expiresAt).toISOString(),
             };
         }
-        await this.disconnectPending(userId);
-        await this.clearPendingRow(userId);
-        const client = (0, telegramClient_1.buildClient)('');
-        await client.connect();
-        const pending = {
-            method: 'qr',
-            client,
-            latestQrUrl: '',
-            expiresAt: 0,
-            status: 'waiting',
-            createdAt: Date.now(),
-        };
-        this.pending.set(userId, pending);
-        void this.runQrLoginBackground(userId, pending);
-        const deadline = Date.now() + QR_FIRST_TOKEN_WAIT_MS;
-        while (!pending.latestQrUrl && Date.now() < deadline) {
-            await sleep(100);
-            if (pending.status === 'error') {
-                throw new Error(pending.error ?? 'Failed to generate QR code');
+        this.authInFlight.add(userId);
+        try {
+            await this.disconnectPending(userId);
+            const placeholderExpires = new Date(Date.now() + PENDING_DB_TTL_MS).toISOString();
+            const { error: holdErr } = await this.supabase.from('telegram_auth_pending').upsert({
+                user_id: userId,
+                auth_method: 'qr',
+                phone: null,
+                phone_code_hash: null,
+                expires_at: placeholderExpires,
+                awaiting_password: false,
+                auth_session_string: null,
+                qr_expires_at: null,
+            }, { onConflict: 'user_id' });
+            if (holdErr) {
+                console.error('[authService] QR auth hold upsert failed:', holdErr.message);
+                throw new Error('Could not start Telegram QR login. Try again in a minute.');
             }
-        }
-        if (!pending.latestQrUrl) {
-            try {
-                await client.disconnect();
+            await this.sessionManager.prepareForAuth(userId);
+            const client = (0, telegramClient_1.buildClient)('');
+            await client.connect();
+            const pending = {
+                method: 'qr',
+                client,
+                latestQrUrl: '',
+                expiresAt: 0,
+                status: 'waiting',
+                createdAt: Date.now(),
+            };
+            this.pending.set(userId, pending);
+            void this.runQrLoginBackground(userId, pending);
+            const deadline = Date.now() + QR_FIRST_TOKEN_WAIT_MS;
+            while (!pending.latestQrUrl && Date.now() < deadline) {
+                await sleep(100);
+                if (pending.status === 'error') {
+                    throw new Error(pending.error ?? 'Failed to generate QR code');
+                }
             }
-            catch { /* ignore */ }
-            this.pending.delete(userId);
-            throw new Error('Failed to generate QR code');
+            if (!pending.latestQrUrl) {
+                try {
+                    await client.disconnect();
+                }
+                catch { /* ignore */ }
+                this.pending.delete(userId);
+                await this.clearPendingRow(userId);
+                throw new Error('Failed to generate QR code');
+            }
+            await this.persistQrPendingRow(userId, client, pending);
+            return {
+                qr_url: pending.latestQrUrl,
+                expires_at: new Date(pending.expiresAt).toISOString(),
+            };
         }
-        await this.persistQrPendingRow(userId, client, pending);
-        return {
-            qr_url: pending.latestQrUrl,
-            expires_at: new Date(pending.expiresAt).toISOString(),
-        };
+        finally {
+            this.authInFlight.delete(userId);
+        }
     }
     async getQrStatus(userId) {
         const pending = await this.getOrRestoreQrPending(userId);
         if (!pending) {
+            // finalizeAuth clears pending before the UI poll observes success — recover from session.
+            const { data: sess } = await this.supabase
+                .from('telegram_sessions')
+                .select('id')
+                .eq('user_id', userId)
+                .eq('is_active', true)
+                .maybeSingle();
+            if (sess?.id) {
+                return (0, telegramQrAuth_1.qrStatusFromActiveSession)(String(sess.id));
+            }
             throw new Error('NO_PENDING_QR');
         }
         return (0, telegramQrAuth_1.buildQrStatusFromPending)({
