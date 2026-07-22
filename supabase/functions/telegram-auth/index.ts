@@ -42,6 +42,7 @@ const ROUTES: Record<string, string> = {
   poll_qr_login: "/auth/qr_status",
   verify_qr_password: "/auth/verify_qr_password",
   list_channels: "/auth/list_channels",
+  reconnect_telegram: "/auth/reconnect_telegram",
   backfill_channel_history: "/auth/backfill_channel_history",
 }
 

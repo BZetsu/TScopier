@@ -718,16 +718,72 @@ export class UserSessionManager {
 
   async listChannels(userId: string, opts?: { skipColdDelay?: boolean }): Promise<ChannelInfo[]> {
     const local = this.listeners.get(userId)
-    if (local?.isTelegramConnected()) {
+    if (local) {
+      if (!local.isTelegramConnected()) {
+        await local.ensureTelegramConnected('list_channels')
+      }
       return local.listChannels(opts)
     }
     const listener = await this.ensureListener(userId)
     return listener.listChannels(opts)
   }
 
+  /**
+   * User-initiated recovery: stop + restart the live listener with the saved session
+   * (does not require phone/QR). Used by Copier Engine "Reconnect Telegram".
+   */
+  async reconnectTelegramSession(userId: string): Promise<{ channels: ChannelInfo[] }> {
+    if (!workerConfig.runsListener) {
+      throw new Error('Live Telegram listener not available on this worker')
+    }
+
+    // Stale ephemeral holds block startListener; clear them on explicit reconnect.
+    await this.supabase
+      .from('telegram_auth_pending')
+      .delete()
+      .eq('user_id', userId)
+      .eq('auth_method', 'mtproto_hold')
+
+    if (await this.hasActivePendingAuthInDb(userId)) {
+      throw new Error('Telegram auth is in progress. Finish linking, then try again.')
+    }
+
+    const { data: sess, error } = await this.supabase
+      .from('telegram_sessions')
+      .select('session_string, is_active')
+      .eq('user_id', userId)
+      .maybeSingle()
+
+    if (error) throw new Error(`Failed to load session: ${error.message}`)
+    if (!sess?.session_string) {
+      throw new TelegramSessionInvalidError('No Telegram session for this user')
+    }
+    if (!sess.is_active) throw new Error('Telegram session is paused')
+
+    if (this.listeners.has(userId)) {
+      console.log(`[sessionManager] user reconnect: stopping listener for ${userId}`)
+      await this.stopListener(userId)
+      await new Promise(r => setTimeout(r, authKeyReleaseDelayMs()))
+    }
+
+    await this.startListener(userId, sess.session_string)
+    const listener = this.listeners.get(userId)
+    if (!listener) throw new Error('Failed to start listener for user')
+    if (!listener.isTelegramConnected()) {
+      await listener.ensureTelegramConnected('user_reconnect')
+    }
+    const channels = await listener.listChannels({ skipColdDelay: true })
+    return { channels }
+  }
+
   private async ensureListener(userId: string): Promise<UserListener> {
     const existing = this.listeners.get(userId)
-    if (existing) return existing
+    if (existing) {
+      if (!existing.isTelegramConnected()) {
+        await existing.ensureTelegramConnected('ensure_listener')
+      }
+      return existing
+    }
 
     if (!workerConfig.runsListener) {
       throw new Error('Live Telegram listener not available on this worker')

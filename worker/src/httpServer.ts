@@ -192,6 +192,18 @@ export function startHttpServer(
         }
       }
 
+      if (url === '/auth/reconnect_telegram') {
+        if (!body.user_id) {
+          return sendJson(res, 400, { error: 'user_id is required' })
+        }
+        try {
+          const result = await sessionManager.reconnectTelegramSession(body.user_id)
+          return sendJson(res, 200, result)
+        } catch (err: unknown) {
+          return handleTelegramRpcError(res, body.user_id, sessionManager, err, 'Failed to reconnect Telegram')
+        }
+      }
+
       if (url === '/auth/backfill_channel_history') {
         if (!body.user_id || !body.channel_row_id) {
           return sendJson(res, 400, { error: 'user_id and channel_row_id are required' })

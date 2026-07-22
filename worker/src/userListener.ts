@@ -469,6 +469,17 @@ export class UserListener {
     void this.requestReconnect(reason)
   }
 
+  /** Await recovery until MTProto is up, or throw a client-safe busy error. */
+  async ensureTelegramConnected(reason = 'ensure'): Promise<void> {
+    if (this.isConnected) return
+    await this.requestReconnect(reason)
+    if (!this.isConnected) {
+      throw new Error(
+        'Telegram connection is temporarily busy (another copy is still closing). Wait 30 seconds, press Refresh, or use Reconnect Telegram if it persists.',
+      )
+    }
+  }
+
   getStatus(): ListenerStatus {
     return {
       user_id: this.userId,
@@ -723,6 +734,10 @@ export class UserListener {
    * result briefly so onboarding UI re-renders don't re-hit Telegram.
    */
   async listChannels(opts?: { skipColdDelay?: boolean }): Promise<ChannelInfo[]> {
+    if (!this.isConnected) {
+      await this.ensureTelegramConnected('list_channels')
+    }
+
     if (!opts?.skipColdDelay && !this.startedWithLiveClient) {
       const elapsed = Date.now() - this.startedAt
       if (elapsed >= 0 && elapsed < COLD_FANOUT_DELAY_MS) {

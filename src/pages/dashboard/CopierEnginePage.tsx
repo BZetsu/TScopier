@@ -287,19 +287,6 @@ export function CopierEnginePage() {
     setTgStage(nextStage)
   }, [user])
 
-  /** Open phone → code flow without removing configured channels. */
-  const reconnectTelegram = useCallback(() => {
-    setError('')
-    setTgError('')
-    setTgCode('')
-    setTgPassword('')
-    setTgStage('method')
-  }, [])
-
-  const isTgReconnectFlow =
-    tgStage === 'method' || tgStage === 'phone' || tgStage === 'code' || tgStage === 'qr' || tgStage === 'twoFa'
-  const showTelegramConnectFlow = !hasTgSession || isTgReconnectFlow
-
   /** Session revoked server-side — show reconnect UI; never wipe configured channels. */
   const handleTelegramSessionInvalid = useCallback(async () => {
     if (!user?.id) return
@@ -317,6 +304,58 @@ export function CopierEnginePage() {
     setChannels((channelRows ?? []) as TelegramChannel[])
     setTgStage('method')
   }, [user, ce.telegramSessionExpired])
+
+  /** Soft-reconnect live listener with the saved session; fall back to re-link UI only if session is gone. */
+  const reconnectTelegram = useCallback(async () => {
+    setError('')
+    setTgError('')
+    setTgCode('')
+    setTgPassword('')
+    if (!hasTgSession) {
+      setTgStage('method')
+      return
+    }
+    setLoadingTg(true)
+    try {
+      const { ok, status, data } = await callTelegramAuth<{
+        channels?: TgChannelListItem[]
+        code?: string
+      }>(EDGE_FN, session?.access_token, 'reconnect_telegram', {})
+      if (data.code === 'TELEGRAM_SESSION_INVALID' || status === 401) {
+        await handleTelegramSessionInvalid()
+        return
+      }
+      if (!ok || data.error) {
+        const errText = typeof data.error === 'string' ? data.error : ''
+        const isBusy = /temporarily busy|AUTH_KEY_DUPLICATED|still closing|reconnecting/i.test(errText)
+        setError(isBusy ? ce.telegramConnectionBusy : (errText || ce.failedLoadTgChannels))
+        return
+      }
+      const list = (data.channels ?? []) as TgChannelListItem[]
+      setTgChannels(list)
+      if (user?.id) setCachedTgChannels(user.id, list)
+      setError('')
+      void refreshListenerLease()
+    } catch {
+      setError(ce.networkError)
+    } finally {
+      setLoadingTg(false)
+    }
+  }, [
+    hasTgSession,
+    session?.access_token,
+    EDGE_FN,
+    handleTelegramSessionInvalid,
+    ce.telegramConnectionBusy,
+    ce.failedLoadTgChannels,
+    ce.networkError,
+    user?.id,
+    refreshListenerLease,
+  ])
+
+  const isTgReconnectFlow =
+    tgStage === 'method' || tgStage === 'phone' || tgStage === 'code' || tgStage === 'qr' || tgStage === 'twoFa'
+  const showTelegramConnectFlow = !hasTgSession || isTgReconnectFlow
 
   const fetchTgChannels = async (opts?: { background?: boolean; force?: boolean }) => {
     if (!opts?.force && user?.id) {

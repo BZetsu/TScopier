@@ -7,6 +7,7 @@ export type TelegramAuthAction =
   | 'poll_qr_login'
   | 'verify_qr_password'
   | 'list_channels'
+  | 'reconnect_telegram'
 
 export type QrPollStatus = 'waiting' | 'requires_password' | 'success' | 'error'
 
