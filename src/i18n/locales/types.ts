@@ -997,6 +997,7 @@ export interface CopierEnginePageTranslations {
   tgConnectQrTwoFaSubtitle: string
   failedStartQr: string
   noPendingQr: string
+  noPendingPhoneAuth: string
   useDifferentNumber: string
   cancelConnect: string
   phoneLabel: string

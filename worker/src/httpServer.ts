@@ -68,6 +68,12 @@ function sanitizeClientError(msg: string): string {
   if (isAuthKeyDuplicated(cleaned)) {
     return 'Telegram connection is temporarily busy (another copy is still closing). Wait 30 seconds, press Refresh, or use Reconnect Telegram if it persists.'
   }
+  if (/PASSWORD_HASH_INVALID/i.test(cleaned)) {
+    return 'Incorrect Two-Step Verification password. Please try again.'
+  }
+  if (/No pending auth flow/i.test(cleaned)) {
+    return 'Login session expired. Go back and request a new verification code.'
+  }
   return cleaned
 }
 

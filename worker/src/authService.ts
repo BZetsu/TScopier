@@ -11,6 +11,12 @@ import {
   upsertTelegramAccountClaim,
 } from './telegramAccountClaims'
 import { buildQrStatusFromPending, formatQrLoginUrl, qrStatusFromActiveSession, type QrStatusResponse } from './telegramQrAuth'
+import {
+  isPhoneCodeFatalAuthError,
+  isRecoverableTelegramAuthError,
+  NO_PENDING_PHONE_AUTH_ERROR,
+  noPendingPhoneAuthMessage,
+} from './telegramAuthRecovery'
 
 type PhonePending = {
   method: 'phone'
@@ -46,9 +52,13 @@ type VerifyResult = VerifySuccess | { requires_password: true }
  * DB-backed recovery lasts slightly longer for cross-replica / slow UX.
  */
 const PENDING_TTL_MS = 10 * 60 * 1000
+/** Extra in-memory window once Telegram asked for 2FA (user is typing the password). */
+const PENDING_PASSWORD_TTL_MS = 20 * 60 * 1000
 const CLEANUP_INTERVAL_MS = 60 * 1000
 /** DB row outlives Telegram code validity slightly so retries still recover across replicas. */
 const PENDING_DB_TTL_MS = 12 * 60 * 1000
+/** Longer DB TTL while waiting for Two-Step Verification password. */
+const PENDING_DB_PASSWORD_TTL_MS = 20 * 60 * 1000
 const QR_FIRST_TOKEN_WAIT_MS = 15_000
 const QR_PASSWORD_WAIT_MS = 120_000
 
@@ -98,10 +108,16 @@ export class AuthService {
     this.qrPasswordResolvers.clear()
   }
 
+  private pendingTtlMs(p: PendingEntry): number {
+    if (p.method === 'phone' && p.awaitingPassword) return PENDING_PASSWORD_TTL_MS
+    if (p.method === 'qr' && p.status === 'requires_password') return PENDING_PASSWORD_TTL_MS
+    return PENDING_TTL_MS
+  }
+
   private cleanup() {
     const now = Date.now()
     for (const [userId, p] of this.pending) {
-      if (now - p.createdAt > PENDING_TTL_MS) {
+      if (now - p.createdAt > this.pendingTtlMs(p)) {
         p.client.disconnect().catch(() => {})
         this.pending.delete(userId)
         this.qrPasswordResolvers.delete(userId)
@@ -154,9 +170,16 @@ export class AuthService {
 
     const awaitingPassword = Boolean(row.awaiting_password)
     const savedSession =
-      awaitingPassword && typeof row.auth_session_string === 'string' && row.auth_session_string.trim()
+      typeof row.auth_session_string === 'string' && row.auth_session_string.trim()
         ? row.auth_session_string.trim()
         : ''
+
+    // 2FA resume requires the persisted MTProto session from SignIn; without it the
+    // user must request a new code.
+    if (awaitingPassword && !savedSession) {
+      console.warn(`[authService] awaiting password but missing auth_session_string for ${userId}`)
+      return null
+    }
 
     const client = buildClient(savedSession)
     await client.connect()
@@ -206,17 +229,33 @@ export class AuthService {
     return pending
   }
 
-  private async persistAwaitingPassword(userId: string, client: TelegramClient): Promise<void> {
+  private async persistAwaitingPassword(
+    userId: string,
+    client: TelegramClient,
+    pending?: PhonePending,
+  ): Promise<void> {
     const authSessionString = (client.session.save() as unknown) as string
-    const { error } = await this.supabase
-      .from('telegram_auth_pending')
-      .update({
+    const expiresAt = new Date(Date.now() + PENDING_DB_PASSWORD_TTL_MS).toISOString()
+    // Upsert: a plain UPDATE matches 0 rows if cleanup deleted the send_code row mid-flight.
+    const { error } = await this.supabase.from('telegram_auth_pending').upsert(
+      {
+        user_id: userId,
+        auth_method: 'phone',
+        phone: pending?.phone ?? null,
+        phone_code_hash: pending?.phoneCodeHash ?? null,
+        expires_at: expiresAt,
         awaiting_password: true,
         auth_session_string: authSessionString,
-      })
-      .eq('user_id', userId)
+      },
+      { onConflict: 'user_id' },
+    )
     if (error) {
       console.warn(`[authService] persistAwaitingPassword failed for ${userId}:`, error.message)
+    }
+    if (pending) {
+      pending.awaitingPassword = true
+      // Refresh in-memory age so cleanup does not expire mid-password entry.
+      pending.createdAt = Date.now()
     }
   }
 
@@ -452,7 +491,9 @@ export class AuthService {
       }
     }
     if (!pending) {
-      throw new Error('No pending auth flow. Call send_code first.')
+      const err = new Error(noPendingPhoneAuthMessage())
+      err.name = NO_PENDING_PHONE_AUTH_ERROR
+      throw err
     }
 
     const { client, phone: pendingPhone, phoneCodeHash } = pending
@@ -473,8 +514,7 @@ export class AuthService {
         } catch (signInErr: unknown) {
           const msg = signInErr instanceof Error ? signInErr.message : String(signInErr)
           if (!msg.includes('SESSION_PASSWORD_NEEDED')) throw signInErr
-          pending.awaitingPassword = true
-          await this.persistAwaitingPassword(userId, client)
+          await this.persistAwaitingPassword(userId, client, pending)
           await this.completePasswordStep(client, password.trim())
         }
       } else {
@@ -487,14 +527,20 @@ export class AuthService {
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err)
           if (msg.includes('SESSION_PASSWORD_NEEDED')) {
-            pending.awaitingPassword = true
-            await this.persistAwaitingPassword(userId, client)
+            await this.persistAwaitingPassword(userId, client, pending)
             return { requires_password: true }
           }
           throw err
         }
       }
     } catch (err) {
+      // Wrong 2FA / transient errors: keep pending so the user can retry without send_code.
+      if (isRecoverableTelegramAuthError(err) && !isPhoneCodeFatalAuthError(err)) {
+        if (pending.awaitingPassword) {
+          await this.persistAwaitingPassword(userId, client, pending).catch(() => {})
+        }
+        throw err
+      }
       try { await client.disconnect() } catch { /* ignore */ }
       this.pending.delete(userId)
       await this.clearPendingRow(userId)

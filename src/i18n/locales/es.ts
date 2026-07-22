@@ -871,6 +871,7 @@ export const es: Translations = {
     tgConnectQrTwoFaSubtitle: 'Tu cuenta tiene 2FA activada. Introduce tu contraseña en la nube de Telegram para terminar.',
     failedStartQr: 'No se pudo iniciar el inicio de sesión QR',
     noPendingQr: 'El inicio de sesión QR caducó. Vuelve a empezar.',
+    noPendingPhoneAuth: 'Login session expired. Go back and request a new verification code.',
     useDifferentNumber: 'Usar otro número',
     cancelConnect: 'Cancelar',
     phoneLabel: 'Número de teléfono',

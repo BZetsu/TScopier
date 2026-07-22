@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { useAuth } from '../../../context/AuthContext'
 import { useT } from '../../../context/LocaleContext'
-import { resolveTelegramAuthError } from '../../../lib/telegramAuthError'
+import { resolveTelegramAuthError, isNoPendingPhoneAuthError } from '../../../lib/telegramAuthError'
 import {
   callTelegramAuth,
   resolveTelegramAuthErrorMessage,
@@ -167,6 +167,10 @@ export function TelegramLinkStep({ onDone }: Props) {
       }
       if (!ok || data.error) {
         setError(resolveTelegramAuthError(data.error, ce.verificationFailed, ce))
+        if (isNoPendingPhoneAuthError(data.error)) {
+          setPassword('')
+          setStage('phone')
+        }
         return
       }
       setPhone(normalizedPhone)

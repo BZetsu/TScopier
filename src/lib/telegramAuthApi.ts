@@ -24,6 +24,7 @@ export type TelegramAuthErrorMessages = {
   telegramAlreadyLinked: string
   failedStartQr?: string
   noPendingQr?: string
+  noPendingPhoneAuth?: string
 }
 
 export async function callTelegramAuth<T>(

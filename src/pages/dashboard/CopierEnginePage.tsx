@@ -44,7 +44,7 @@ import {
   setCachedTgChannels,
   type TgChannelListItem,
 } from '../../lib/telegramChannelsCache'
-import { resolveTelegramAuthError } from '../../lib/telegramAuthError'
+import { resolveTelegramAuthError, isNoPendingPhoneAuthError } from '../../lib/telegramAuthError'
 import {
   getCachedTgSession,
   invalidateTgSessionCache,
@@ -721,6 +721,10 @@ export function CopierEnginePage() {
       if (!res.ok || data.error) {
         const msg = resolveTelegramAuthError(data.error, ce.verificationFailed, ce)
         setTgError(msg)
+        if (isNoPendingPhoneAuthError(data.error)) {
+          setTgPassword('')
+          setTgStage('phone')
+        }
         return
       }
       setTgPhone(phone)

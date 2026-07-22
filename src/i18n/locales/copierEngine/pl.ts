@@ -38,6 +38,7 @@ export const copierEnginePl: CopierEngineBundleTranslations = {
     tgConnectQrTwoFaSubtitle: 'Your account has 2FA enabled. Enter your Telegram cloud password to finish linking.',
     failedStartQr: 'Failed to start QR login',
     noPendingQr: 'QR login expired. Please start again.',
+    noPendingPhoneAuth: 'Login session expired. Go back and request a new verification code.',
     useDifferentNumber: 'Użyj innego numeru',
     cancelConnect: 'Anuluj',
     phoneLabel: 'Numer telefonu',
