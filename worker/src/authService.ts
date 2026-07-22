@@ -554,6 +554,10 @@ export class AuthService {
 
     const { client, phone: pendingPhone, phoneCodeHash } = pending
 
+    if (!client.connected) {
+      try { await client.connect() } catch { /* will fail at tgInvoke */ }
+    }
+
     try {
       if (pending.awaitingPassword) {
         if (!password?.trim()) {

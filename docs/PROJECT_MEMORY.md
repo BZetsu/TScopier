@@ -22,13 +22,17 @@
   - **Telegram credentials:** User created own Telegram API app (ID: 30670916, Hash: 469129b31e84d3b21d319d18abebf9d7).
   - **Docs created/updated:** PROJECT_MEMORY.md, AGENTS.md, docs/staging-environment.md, docs/cloudflare-setup.md.
 - **Files:** `src/lib/site.ts`, `AGENTS.md`, `docs/staging-environment.md`, `docs/cloudflare-setup.md`, `docs/PROJECT_MEMORY.md`, `.env`
-- **Active state:** Listener worker running, frontend deployed at `legendary-valkyrie-4da363.netlify.app` (works with app mode), Telegram auth flow ready to test.
-- **Blockers:**
-  1. Nameservers still on Netlify DNS — domain registered at **Hostinger**. Go to Hostinger → Domains → tscopier.ai → DNS/Nameservers → replace with Cloudflare's (`agustin.ns.cloudflare.com`, `stevie.ns.cloudflare.com`)
-  2. staging.tscopier.ai can't be connected to staging site (cross-team restriction)
-  3. Trade worker not set up (needs FXSOCKET_API_KEY)
-  4. Backtest worker not set up
-- **Next steps:** 1) Resolve nameserver/team access issue so staging.tscopier.ai works. 2) Test Telegram auth flow. 3) Set up trade worker + FxSocket key. 4) Set up backtest worker.
+- **Active state:**
+  - ✅ Cloudflare nameservers live (`agustin.ns.cloudflare.com`, `stevie.ns.cloudflare.com`)
+  - ✅ staging.tscopier.ai resolves to `vermillion-cannoli-69a895.netlify.app` (Tartarix team Netlify site)
+  - ✅ Staging site serves the app (code fix verified: `staging.tscopier.ai` in `isAppHost()`)
+  - ✅ Railway listener running (role listener, shard 0/1, health OK)
+  - ✅ telegram-auth edge function deployed, WORKER_URL + WORKER_INTERNAL_TOKEN set as Supabase secrets
+  - ❌ Trade worker not set up (needs FXSOCKET_API_KEY)
+  - ❌ Backtest worker not set up
+- **New staging site URL:** `https://staging.tscopier.ai/` (also: `https://vermillion-cannoli-69a895.netlify.app/`)
+- **Railway listener:** `https://tscopier-worker-staging.up.railway.app`
+- **Next steps:** 1) Test Telegram auth flow. 2) Set up trade worker + FxSocket key. 3) Set up backtest worker.
 
 ### 2026-07-22 — Updated git workflow: feature branches off dev, annotated step-by-step docs
 

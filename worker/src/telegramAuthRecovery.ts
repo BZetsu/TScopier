@@ -27,6 +27,7 @@ export function isRecoverableTelegramAuthError(err: unknown): boolean {
     || m.includes('econnreset')
     || m.includes('socket')
     || m.includes('temporarily unavailable')
+    || m.includes('cannot send requests while disconnected')
   ) {
     return true
   }
