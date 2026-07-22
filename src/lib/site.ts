@@ -67,7 +67,7 @@ export function isAppHost(hostname = window.location.hostname): boolean {
   if (override) return override === 'app'
 
   if (hostname === 'app.tscopier.ai') return true
-  if (hostname === 'stage.tscopier.ai') return true
+  if (hostname === 'staging.tscopier.ai') return true
   if (isMarketingHost(hostname)) return false
   if (isLocalDevHost(hostname)) return true
   if (hostname.startsWith('app.')) return true
