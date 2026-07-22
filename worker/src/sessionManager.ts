@@ -22,6 +22,7 @@ import { ChannelReconcileMonitor } from './channelReconcileMonitor'
 import { isChannelFeedLiveForSubscriber } from './channelFeedGate'
 import { channelListenerPrimaryMode } from './channelListenerConfig'
 import { userMayRunCopierListener } from './subscriptionAccess'
+import { authKeyDupReconnectDelaysMs } from './authKeyDuplicatedRecovery'
 
 /**
  * Race a promise against a timeout so a single wedged network call cannot
@@ -386,6 +387,22 @@ export class UserSessionManager {
       })
   }
 
+  /**
+   * Stop the live listener and wait until the session lease is gone before opening
+   * a fresh MTProto client for phone/QR auth (avoids AUTH_KEY_DUPLICATED and
+   * headless sessions eating login codes).
+   */
+  async prepareForAuth(userId: string): Promise<void> {
+    if (workerConfig.runsListener) {
+      await this.withConnectionLock(userId, async () => {
+        await this.disconnectListener(userId)
+      })
+    }
+    await this.waitForListenerLeaseReleased(userId)
+    const delay = authKeyReleaseDelayMs()
+    if (delay > 0) await new Promise(r => setTimeout(r, delay))
+  }
+
   /** Stop the live listener before send_code so the auth key slot is free on this host. */
   async pauseForAuth(userId: string, opts?: { releaseDelay?: boolean }): Promise<void> {
     if (!workerConfig.runsListener) return
@@ -492,7 +509,8 @@ export class UserSessionManager {
   }
 
   private async onAuthPendingCleared(userId: string): Promise<void> {
-    // Debounce: send_code clears pending before inserting the new row.
+    // Debounce brief DELETE→upsert races (verify finalize, cancel). Auth start now
+    // upserts in place so send_code no longer clears into an empty window.
     await new Promise(r => setTimeout(r, 2500))
     if (this.listeners.has(userId) || this.isAuthBlocked(userId)) return
     if (await this.hasActivePendingAuthInDb(userId)) return
@@ -731,6 +749,8 @@ export class UserSessionManager {
   /**
    * User-initiated recovery: stop + restart the live listener with the saved session
    * (does not require phone/QR). Used by Copier Engine "Reconnect Telegram".
+   * On persistent failure, invalidates the session so the UI opens a fresh link flow
+   * (same outcome as Disconnect-then-reconnect).
    */
   async reconnectTelegramSession(userId: string): Promise<{ channels: ChannelInfo[] }> {
     if (!workerConfig.runsListener) {
@@ -760,20 +780,71 @@ export class UserSessionManager {
     }
     if (!sess.is_active) throw new Error('Telegram session is paused')
 
-    if (this.listeners.has(userId)) {
-      console.log(`[sessionManager] user reconnect: stopping listener for ${userId}`)
-      await this.stopListener(userId)
-      await new Promise(r => setTimeout(r, authKeyReleaseDelayMs()))
+    const sessionString = sess.session_string
+    const delays = authKeyDupReconnectDelaysMs(authKeyReleaseDelayMs(), 8_000)
+    let lastErr: unknown
+
+    for (let attempt = 0; attempt < delays.length; attempt++) {
+      const delay = delays[attempt] ?? authKeyReleaseDelayMs()
+      try {
+        if (this.listeners.has(userId)) {
+          console.log(
+            `[sessionManager] user reconnect: stopping listener for ${userId}`
+            + ` (attempt ${attempt + 1}/${delays.length})`,
+          )
+          await this.stopListener(userId)
+        } else {
+          await releaseSessionLease(this.supabase, userId)
+        }
+
+        await this.waitForListenerLeaseReleased(userId)
+        if (delay > 0) await new Promise(r => setTimeout(r, delay))
+
+        await this.startListener(userId, sessionString)
+        const listener = this.listeners.get(userId)
+        if (!listener) throw new Error('Failed to start listener for user')
+        if (!listener.isTelegramConnected()) {
+          await listener.ensureTelegramConnected('user_reconnect')
+        }
+        const channels = await listener.listChannels({ skipColdDelay: true })
+        return { channels }
+      } catch (err) {
+        lastErr = err
+        if (err instanceof TelegramSessionInvalidError) throw err
+        console.warn(
+          `[sessionManager] user reconnect attempt ${attempt + 1} failed for ${userId}:`,
+          err instanceof Error ? err.message : err,
+        )
+      }
     }
 
-    await this.startListener(userId, sess.session_string)
-    const listener = this.listeners.get(userId)
-    if (!listener) throw new Error('Failed to start listener for user')
-    if (!listener.isTelegramConnected()) {
-      await listener.ensureTelegramConnected('user_reconnect')
+    console.error(
+      `[sessionManager] user reconnect exhausted for ${userId}`
+      + ' — invalidating session so UI can re-link',
+      lastErr instanceof Error ? lastErr.message : lastErr,
+    )
+    await this.invalidateTelegramSession(userId)
+    throw new TelegramSessionInvalidError(
+      'Could not reconnect Telegram. Please link your account again.',
+    )
+  }
+
+  /**
+   * User Disconnect: drop pending auth, stop listener immediately, delete session row.
+   * Configured telegram_channels are kept.
+   */
+  async disconnectTelegramSession(userId: string): Promise<{ ok: true }> {
+    await this.supabase.from('telegram_auth_pending').delete().eq('user_id', userId)
+    if (this.listeners.has(userId)) {
+      await this.stopListener(userId)
+    } else {
+      await releaseSessionLease(this.supabase, userId)
     }
-    const channels = await listener.listChannels({ skipColdDelay: true })
-    return { channels }
+    const { error } = await this.supabase.from('telegram_sessions').delete().eq('user_id', userId)
+    if (error) {
+      console.warn(`[sessionManager] disconnectTelegramSession delete failed for ${userId}:`, error.message)
+    }
+    return { ok: true }
   }
 
   private async ensureListener(userId: string): Promise<UserListener> {

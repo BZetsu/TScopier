@@ -74,6 +74,10 @@ function sanitizeClientError(msg: string): string {
   if (/No pending auth flow/i.test(cleaned)) {
     return 'Login session expired. Go back and request a new verification code.'
   }
+  const flood = cleaned.match(/FLOOD_WAIT_(\d+)/i) || cleaned.match(/wait (\d+) seconds/i)
+  if (flood) {
+    return `Telegram rate limit: wait ${flood[1]} seconds, then try again.`
+  }
   return cleaned
 }
 
@@ -201,6 +205,18 @@ export function startHttpServer(
           return sendJson(res, 200, result)
         } catch (err: unknown) {
           return handleTelegramRpcError(res, body.user_id, sessionManager, err, 'Failed to reconnect Telegram')
+        }
+      }
+
+      if (url === '/auth/disconnect_telegram') {
+        if (!body.user_id) {
+          return sendJson(res, 400, { error: 'user_id is required' })
+        }
+        try {
+          const result = await sessionManager.disconnectTelegramSession(body.user_id)
+          return sendJson(res, 200, result)
+        } catch (err: unknown) {
+          return handleTelegramRpcError(res, body.user_id, sessionManager, err, 'Failed to disconnect Telegram')
         }
       }
 

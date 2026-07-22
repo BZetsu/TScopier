@@ -75,17 +75,30 @@ export function rethrowIfSessionInvalid(err: unknown): never {
   throw err
 }
 
-export async function tgInvoke<T>(client: TelegramClient, req: unknown): Promise<T> {
+export async function tgInvoke<T>(
+  client: TelegramClient,
+  req: unknown,
+  depth = 0,
+): Promise<T> {
+  const maxFloodRetries = Math.max(0, Math.min(5, Number(process.env.TELEGRAM_FLOOD_MAX_RETRIES ?? 2)))
+  const maxFloodWaitSec = Math.max(
+    5,
+    Math.min(300, Number(process.env.TELEGRAM_FLOOD_MAX_WAIT_SEC ?? 90)),
+  )
   try {
     return (await client.invoke(req as never)) as T
   } catch (e: unknown) {
     const m = e instanceof Error ? e.message : String(e)
     const flood = m.match(/FLOOD_WAIT_(\d+)/)
     if (flood) {
-      const waitSec = parseInt(flood[1], 10) + 2
-      console.warn(`[telegram] FLOOD_WAIT_${flood[1]} — sleeping ${waitSec}s before retry`)
-      await new Promise(r => setTimeout(r, waitSec * 1000))
-      return tgInvoke<T>(client, req)
+      const waitSec = parseInt(flood[1], 10)
+      if (waitSec > maxFloodWaitSec || depth >= maxFloodRetries) {
+        throw new Error(`Telegram rate limit: wait ${waitSec} seconds, then try again.`)
+      }
+      const sleepSec = waitSec + 2
+      console.warn(`[telegram] FLOOD_WAIT_${flood[1]} — sleeping ${sleepSec}s before retry`)
+      await new Promise(r => setTimeout(r, sleepSec * 1000))
+      return tgInvoke<T>(client, req, depth + 1)
     }
     throw e
   }
