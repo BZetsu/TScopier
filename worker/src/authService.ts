@@ -485,6 +485,8 @@ export class AuthService {
           }),
         )
 
+        const authSessionString = (client.session.save() as unknown) as string
+
         this.pending.set(userId, {
           method: 'phone',
           client,
@@ -502,7 +504,7 @@ export class AuthService {
             phone_code_hash: result.phoneCodeHash,
             expires_at: expiresAt,
             awaiting_password: false,
-            auth_session_string: null,
+            auth_session_string: authSessionString,
             qr_expires_at: null,
           },
           { onConflict: 'user_id' },
