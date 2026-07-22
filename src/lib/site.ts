@@ -68,6 +68,7 @@ export function isAppHost(hostname = window.location.hostname): boolean {
 
   if (hostname === 'app.tscopier.ai') return true
   if (hostname === 'staging.tscopier.ai') return true
+  if (hostname === 'legendary-valkyrie-4da363.netlify.app') return true
   if (isMarketingHost(hostname)) return false
   if (isLocalDevHost(hostname)) return true
   if (hostname.startsWith('app.')) return true
