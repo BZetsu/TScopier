@@ -158,7 +158,8 @@ export class AuthService {
       .maybeSingle()
 
     if (error || !row) return null
-    if (row.auth_method === 'qr') return null
+    // Only restore real phone auth rows — never QR or ephemeral MTProto holds.
+    if (row.auth_method && row.auth_method !== 'phone') return null
     if (new Date(row.expires_at) < new Date()) {
       await this.clearPendingRow(userId)
       return null

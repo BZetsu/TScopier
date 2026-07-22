@@ -7,6 +7,7 @@ import {
   acquireSessionLease,
   countFreshListenerLeasesForUsers,
   ensureSessionLeaseFresh,
+  isLeaseRowLive,
   listActiveLeases,
   releaseSessionLease,
 } from './sessionLease'
@@ -284,6 +285,11 @@ export class UserSessionManager {
           await this.stopListenerIfCopierInactive(userId)
           return
         }
+        // Realtime can lag; also stop when auth / mtproto_hold appears in DB.
+        if (await this.hasActivePendingAuthInDb(userId)) {
+          await this.stopListenerForPendingAuth(userId)
+          return
+        }
         if (!listener.isTelegramConnected()) {
           // Dead Map entries used to skip renew forever (UI "Copier engine offline").
           // Kick reconnect so AUTH_KEY_DUPLICATED / failed reconnect can recover.
@@ -393,10 +399,96 @@ export class UserSessionManager {
 
   private async stopListenerForPendingAuth(userId: string): Promise<void> {
     if (!this.listeners.has(userId)) return
-    console.log(`[sessionManager] stopping listener for ${userId} — telegram auth in progress`)
+    console.log(`[sessionManager] stopping listener for ${userId} — telegram auth / mtproto hold`)
     await this.withConnectionLock(userId, async () => {
       await this.disconnectListener(userId)
     })
+  }
+
+  /**
+   * Ask the listener shard to release this user's MTProto slot (via telegram_auth_pending
+   * Realtime + lease renew guard), then wait until the session lease is gone.
+   */
+  private async acquireMtprotoHold(userId: string): Promise<boolean> {
+    const { data: existing } = await this.supabase
+      .from('telegram_auth_pending')
+      .select('auth_method, expires_at')
+      .eq('user_id', userId)
+      .maybeSingle()
+
+    if (
+      existing
+      && existing.auth_method
+      && existing.auth_method !== 'mtproto_hold'
+      && new Date(existing.expires_at).getTime() > Date.now()
+    ) {
+      throw new Error('Telegram auth is in progress. Finish linking, then retry.')
+    }
+
+    const holdMs = Math.max(
+      5 * 60_000,
+      Math.min(2 * 60 * 60_000, Number(process.env.MTPROTO_HOLD_TTL_MS ?? 45 * 60_000)),
+    )
+    const expiresAt = new Date(Date.now() + holdMs).toISOString()
+    const { error } = await this.supabase.from('telegram_auth_pending').upsert(
+      {
+        user_id: userId,
+        auth_method: 'mtproto_hold',
+        phone: null,
+        phone_code_hash: null,
+        expires_at: expiresAt,
+        awaiting_password: false,
+        auth_session_string: null,
+        qr_expires_at: null,
+      },
+      { onConflict: 'user_id' },
+    )
+    if (error) {
+      console.error(`[sessionManager] mtproto_hold upsert failed for ${userId}:`, error.message)
+      throw new Error('Could not pause live Telegram for this task. Try again in a minute.')
+    }
+    console.log(`[sessionManager] acquired mtproto_hold for ${userId}`)
+    return true
+  }
+
+  private async releaseMtprotoHold(userId: string): Promise<void> {
+    const { error } = await this.supabase
+      .from('telegram_auth_pending')
+      .delete()
+      .eq('user_id', userId)
+      .eq('auth_method', 'mtproto_hold')
+    if (error) {
+      console.warn(`[sessionManager] mtproto_hold release failed for ${userId}:`, error.message)
+      return
+    }
+    console.log(`[sessionManager] released mtproto_hold for ${userId}`)
+  }
+
+  /** Poll until the listener shard has dropped its session lease (or timeout). */
+  private async waitForListenerLeaseReleased(userId: string): Promise<void> {
+    const timeoutMs = Math.max(
+      10_000,
+      Math.min(120_000, Number(process.env.MTPROTO_HOLD_WAIT_MS ?? 45_000)),
+    )
+    const started = Date.now()
+    while (Date.now() - started < timeoutMs) {
+      const { data } = await this.supabase
+        .from('worker_session_leases')
+        .select('expires_at, role')
+        .eq('user_id', userId)
+        .maybeSingle()
+      if (!isLeaseRowLive(data)) {
+        console.log(
+          `[sessionManager] listener lease released for ${userId}`
+          + ` after ${Date.now() - started}ms`,
+        )
+        return
+      }
+      await new Promise(r => setTimeout(r, 500))
+    }
+    throw new Error(
+      'Telegram is still connected on the live worker. Wait a minute and retry, or use Reconnect Telegram.',
+    )
   }
 
   private async onAuthPendingCleared(userId: string): Promise<void> {
@@ -737,15 +829,18 @@ export class UserSessionManager {
   }
 
   /**
-   * Runs fn while the live listener is stopped (if any) so backtest can use the sole MTProto slot.
+   * Runs fn while the live listener is stopped so ephemeral Telegram can use the sole
+   * MTProto slot — including across dedicated backtest vs listener workers.
    */
   private async withEphemeralTelegram<T>(userId: string, fn: () => Promise<T>): Promise<T> {
-    const pauseLive = workerConfig.runsListener
+    const pauseLiveLocal = workerConfig.runsListener
       && (workerConfig.role === 'all' || process.env.BACKTEST_PAUSE_LIVE_LISTENER !== 'false')
 
     let sessionString: string | null = null
     let hadLiveListener = false
-    if (pauseLive) {
+    let crossServiceHold = false
+
+    if (pauseLiveLocal) {
       sessionString = (await this.supabase
         .from('telegram_sessions')
         .select('session_string')
@@ -753,19 +848,27 @@ export class UserSessionManager {
         .maybeSingle()).data?.session_string ?? null
       hadLiveListener = this.listeners.has(userId)
       if (hadLiveListener) {
-        console.log(`[sessionManager] pausing live listener for backtest user=${userId}`)
+        console.log(`[sessionManager] pausing live listener for ephemeral Telegram user=${userId}`)
         await this.stopListener(userId)
       }
       if (sessionString) {
         await new Promise(r => setTimeout(r, authKeyReleaseDelayMs()))
       }
+    } else {
+      // Dedicated backtest worker: pause remote listener via DB hold.
+      crossServiceHold = await this.acquireMtprotoHold(userId)
+      await this.waitForListenerLeaseReleased(userId)
+      await new Promise(r => setTimeout(r, authKeyReleaseDelayMs()))
     }
 
     try {
       return await fn()
     } finally {
-      if (pauseLive && sessionString && hadLiveListener) {
+      if (pauseLiveLocal && sessionString && hadLiveListener) {
         await this.restartListenerAfterBacktest(userId, sessionString)
+      }
+      if (crossServiceHold) {
+        await this.releaseMtprotoHold(userId)
       }
     }
   }

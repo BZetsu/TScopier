@@ -97,7 +97,7 @@ WORKER_ROLE=backtest
 ```
 
 - Point Supabase Edge `BACKTEST_WORKER_URL` at this service (falls back to `WORKER_URL`).
-- Ephemeral Telegram client per sync; never shares the listener connection.
+- Ephemeral Telegram client per sync; acquires an `mtproto_hold` so the listener shard releases the auth key first (never two concurrent connections).
 
 ### Monolith (default)
 
