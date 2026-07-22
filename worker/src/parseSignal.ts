@@ -999,7 +999,7 @@ function extractOptionalEntryAnchor(
     const zoneMatch = znZone ?? nowZone ?? reentryZone
     const symSideColonSlash = text.match(
       new RegExp(
-        `\\b(?:xauusd|xagusd|gold|silver|btcusd|btcusdt|ethusd|ethusdt|eurusd|gbpusd|usdjpy|us30|nas100|[a-z]{6})\\s+(?:buy|sell|long|short)\\s*:\\s*(${SIGNAL_PRICE_NUM})\\s*(?:\\/|\\band\\b)\\s*(${SIGNAL_PRICE_NUM})\\b`,
+        `\\b(?:xauusd|xagusd|gold|silver|btcusd|btcusdt|ethusd|ethusdt|eurusd|gbpusd|usdjpy|us30|nas100|[a-z]{6})\\s+(?:buy|sell|long|short)\\s*:?\\s*(${SIGNAL_PRICE_NUM})\\s*(?:\\/|\\band\\b)\\s*(${SIGNAL_PRICE_NUM})\\b`,
         'i',
       ),
     )

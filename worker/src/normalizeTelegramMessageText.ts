@@ -53,11 +53,23 @@ export function stripSignalDecorativeEmojis(text: string): string {
     .replace(/[^\S\n]+/g, ' ')
 }
 
+/**
+ * Channels often glue instrument and side with an underscore (`XAUUSD_BUY 4143/4144`).
+ * Underscore is a word character, so `\bXAUUSD\b` / `\bbuy\b` never match — expand to spaces.
+ */
+export function expandSymbolSideUnderscore(text: string): string {
+  return String(text ?? '')
+    .replace(/\b([A-Za-z][A-Za-z0-9]{1,14})_(BUY|SELL|LONG|SHORT)\b/gi, '$1 $2')
+    .replace(/\b(BUY|SELL|LONG|SHORT)_([A-Za-z][A-Za-z0-9]{1,14})\b/gi, '$1 $2')
+}
+
 /** Telegram format strip + casual management typo collapse for parsers. */
 export function normalizeSignalMessageForParse(raw: string): string {
   return collapseCasualSignalTypos(
-    stripLegalTradeDisclaimer(
-      stripSignalDecorativeEmojis(normalizeTelegramMessageText(raw)),
+    expandSymbolSideUnderscore(
+      stripLegalTradeDisclaimer(
+        stripSignalDecorativeEmojis(normalizeTelegramMessageText(raw)),
+      ),
     ),
   )
 }

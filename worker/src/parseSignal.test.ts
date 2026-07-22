@@ -1096,4 +1096,24 @@ TP1: 4070`
     assert.equal(result.parsed.entry_zone_high, 4077)
     assert.equal(result.parsed.sl, 4085)
   })
+
+  it('parses XAUUSD_BUY entry zone with underscore-glued side', () => {
+    const msg = 'XAUUSD_BUY 4143/4144'
+    const result = parseChannelMessageSync(msg, DEFAULT_CHANNEL_KEYWORDS, lexicon)
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.action, 'buy')
+    assert.equal(result.parsed.symbol, 'XAUUSD')
+    assert.equal(result.parsed.entry_zone_low, 4143)
+    assert.equal(result.parsed.entry_zone_high, 4144)
+  })
+
+  it('parses SELL_XAUUSD entry zone with underscore-glued side prefix', () => {
+    const msg = 'SELL_XAUUSD 4143/4144'
+    const result = parseChannelMessageSync(msg, DEFAULT_CHANNEL_KEYWORDS, lexicon)
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.action, 'sell')
+    assert.equal(result.parsed.symbol, 'XAUUSD')
+    assert.equal(result.parsed.entry_zone_low, 4143)
+    assert.equal(result.parsed.entry_zone_high, 4144)
+  })
 })
