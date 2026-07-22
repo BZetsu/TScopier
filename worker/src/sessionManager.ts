@@ -284,7 +284,12 @@ export class UserSessionManager {
           await this.stopListenerIfCopierInactive(userId)
           return
         }
-        if (!listener.isTelegramConnected()) return
+        if (!listener.isTelegramConnected()) {
+          // Dead Map entries used to skip renew forever (UI "Copier engine offline").
+          // Kick reconnect so AUTH_KEY_DUPLICATED / failed reconnect can recover.
+          listener.requestReconnectIfDisconnected('lease_renew_disconnected')
+          return
+        }
 
         try {
           const result = await withTimeout(
