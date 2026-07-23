@@ -1,11 +1,20 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.formatQrLoginUrl = formatQrLoginUrl;
+exports.qrStatusFromActiveSession = qrStatusFromActiveSession;
 exports.buildQrStatusFromPending = buildQrStatusFromPending;
 /** Build the tg:// URL encoded in Telegram QR login codes (GramJS/Telegram desktop). */
 function formatQrLoginUrl(token) {
     const buf = Buffer.isBuffer(token) ? token : Buffer.from(token);
     return `tg://login?token=${buf.toString('base64url')}`;
+}
+/** When QR pending was cleared after a successful link, polls should still complete. */
+function qrStatusFromActiveSession(sessionId, channels) {
+    return {
+        status: 'success',
+        session_id: sessionId,
+        channels: channels ?? [],
+    };
 }
 function formatExpiresAt(expiresAt) {
     return expiresAt && expiresAt > 0 ? new Date(expiresAt).toISOString() : undefined;
@@ -17,6 +26,14 @@ function buildQrStatusFromPending(pending) {
             status: 'success',
             session_id: pending.result.session_id,
             channels: pending.result.channels ?? [],
+        };
+    }
+    // Success was marked but finalizeAuth is still writing session/channels — keep polling.
+    if (pending.status === 'success') {
+        return {
+            status: 'waiting',
+            qr_url: pending.latestQrUrl,
+            expires_at: formatExpiresAt(pending.expiresAt),
         };
     }
     if (pending.status === 'error') {

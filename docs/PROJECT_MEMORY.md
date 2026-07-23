@@ -2,12 +2,19 @@
 
 ## Changelog
 
-### 2026-07-23 — Fixed Telegram "Login session expired" on verify_code after worker restart
+### 2026-07-23 — Fixed Telegram auth: session persistence, GramJS timeout recovery, error code propagation
 
-- **Context:** Telegram auth flow failed with "Login session expired" after entering verification code. Root cause: when the Railway worker restarts between `send_code` and `verify_code`, the in-memory MTProto session is lost. DB recovery built a fresh client, but Telegram's `auth.signIn` rejected the old `phoneCodeHash` because `auth.sendCode` was never called on that fresh connection ("No pending auth flow").
-- **Fix:** Save the MTProto `StringSession` during `sendCode` and persist it to `telegram_auth_pending.auth_session_string`. `restorePhonePendingFromDatabase` already uses `buildClient(savedSession)` — now `savedSession` contains the actual session for non-2FA cases too, enabling cross-replica/restart recovery of the `sendCode → signIn` binding.
-- **Files:** `worker/src/authService.ts`
-- **Follow-up:** User should retry Telegram auth flow on staging. If it still fails, check Railway logs for MTProto errors.
+- **Context:** Three auth bugs found during staging testing:
+  1. Railway worker restart between `send_code` and `verify_code` lost MTProto session → "Login session expired"
+  2. GramJS `_updateLoop` entered a TIMEOUT death spiral after a connection drop mid-auth, making the client unusable for 30+ minutes
+  3. Error responses only had a human-readable `error` field — no stable `code` for the frontend to detect specific error types
+- **Changes:**
+  - **Session persistence:** Save GramJS `StringSession` during `sendCode` into `telegram_auth_pending.auth_session_string` so worker restarts don't break `sendCode` → `signIn` binding
+  - **GramJS timeout recovery:** Reconnect disconnected client before `tgInvoke` in `verifyCode`; classify "cannot send requests while disconnected" as recoverable
+  - **Error code propagation:** New `clientErrorPayload()` sends `error`, `message`, and stable `code` (e.g. `NO_PENDING_PHONE_AUTH`) in error responses; edge function sanitizes `message` field too
+  - **Realtime migration:** Enable `telegram_auth_pending` in supabase realtime publication
+- **Files:** `worker/src/authService.ts`, `worker/src/telegramAuthRecovery.ts`, `worker/src/httpServer.ts`, `worker/src/httpServer.authErrors.test.ts`, `supabase/functions/telegram-auth/index.ts`, `supabase/migrations/20260722150000_telegram_auth_pending_realtime.sql`, `docs/PROJECT_MEMORY.md`
+- **Follow-up:** Retry Telegram auth flow on staging after deploy.
 
 ### 2026-07-22 — Full staging environment setup: Cloudflare DNS, Netlify staging site, Railway listener, Supabase edge functions, Telegram auth
 

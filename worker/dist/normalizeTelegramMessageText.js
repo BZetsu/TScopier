@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.normalizeTelegramMessageText = normalizeTelegramMessageText;
 exports.stripSignalDecorativeEmojis = stripSignalDecorativeEmojis;
 exports.normalizeSignalMessageForParse = normalizeSignalMessageForParse;
+exports.stripLegalTradeDisclaimer = stripLegalTradeDisclaimer;
 /**
  * Strip Telegram / Markdown / HTML formatting so signal parsers see plain trade text.
  * Channels often post signals in italic (_text_ or <i>text</i>), which breaks word-boundary regexes.
@@ -48,5 +49,24 @@ function stripSignalDecorativeEmojis(text) {
 }
 /** Telegram format strip + casual management typo collapse for parsers. */
 function normalizeSignalMessageForParse(raw) {
-    return (0, collapseCasualSignalTypos_1.collapseCasualSignalTypos)(stripSignalDecorativeEmojis(normalizeTelegramMessageText(raw)));
+    return (0, collapseCasualSignalTypos_1.collapseCasualSignalTypos)(stripLegalTradeDisclaimer(stripSignalDecorativeEmojis(normalizeTelegramMessageText(raw))));
+}
+/**
+ * Channels often append legal footers that contain "buy or sell" / "investment advice".
+ * Those tokens poison BUY/SELL side detection — strip from the first disclaimer cue to EOF
+ * when trade content already appears above.
+ */
+function stripLegalTradeDisclaimer(text) {
+    const raw = String(text ?? '');
+    if (!raw.trim())
+        return raw;
+    const startRe = /(?:^|\n)\s*(?:for\s+educational|for\s+informational|disclaimer\b|risk\s+(?:warning|disclosure)|this\s+(?:content\s+)?is\s+(?:not|for)\s+(?:investment|financial)|no\s+investment\s+advice|not\s+(?:financial|investment)\s+advice|no\s+solicitation\s+to\s+buy|leveraged\s+products?\s+carry|any\s+action\s+is\s+taken\s+at\s+your\s+own)/i;
+    const m = startRe.exec(raw);
+    if (!m || m.index == null)
+        return raw;
+    const before = raw.slice(0, m.index).trimEnd();
+    // Keep the message if stripping would remove almost everything (disclaimer-only post).
+    if (before.replace(/\s+/g, ' ').trim().length < 12)
+        return raw;
+    return before;
 }

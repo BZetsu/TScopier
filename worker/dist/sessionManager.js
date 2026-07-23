@@ -48,6 +48,7 @@ const channelReconcileMonitor_1 = require("./channelReconcileMonitor");
 const channelFeedGate_1 = require("./channelFeedGate");
 const channelListenerConfig_1 = require("./channelListenerConfig");
 const subscriptionAccess_1 = require("./subscriptionAccess");
+const authKeyDuplicatedRecovery_1 = require("./authKeyDuplicatedRecovery");
 /**
  * Race a promise against a timeout so a single wedged network call cannot
  * stall a whole loop forever. Does not cancel the underlying work (the
@@ -267,8 +268,17 @@ class UserSessionManager {
                     await this.stopListenerIfCopierInactive(userId);
                     return;
                 }
-                if (!listener.isTelegramConnected())
+                // Realtime can lag; also stop when auth / mtproto_hold appears in DB.
+                if (await this.hasActivePendingAuthInDb(userId)) {
+                    await this.stopListenerForPendingAuth(userId);
                     return;
+                }
+                if (!listener.isTelegramConnected()) {
+                    // Dead Map entries used to skip renew forever (UI "Copier engine offline").
+                    // Kick reconnect so AUTH_KEY_DUPLICATED / failed reconnect can recover.
+                    listener.requestReconnectIfDisconnected('lease_renew_disconnected');
+                    return;
+                }
                 try {
                     const result = await withTimeout((0, sessionLease_1.ensureSessionLeaseFresh)(this.supabase, userId), perUserTimeoutMs, `lease renew ${userId}`);
                     if (!result.ok) {
@@ -343,6 +353,22 @@ class UserSessionManager {
             }
         });
     }
+    /**
+     * Stop the live listener and wait until the session lease is gone before opening
+     * a fresh MTProto client for phone/QR auth (avoids AUTH_KEY_DUPLICATED and
+     * headless sessions eating login codes).
+     */
+    async prepareForAuth(userId) {
+        if (workerConfig_1.workerConfig.runsListener) {
+            await this.withConnectionLock(userId, async () => {
+                await this.disconnectListener(userId);
+            });
+        }
+        await this.waitForListenerLeaseReleased(userId);
+        const delay = authKeyReleaseDelayMs();
+        if (delay > 0)
+            await new Promise(r => setTimeout(r, delay));
+    }
     /** Stop the live listener before send_code so the auth key slot is free on this host. */
     async pauseForAuth(userId, opts) {
         if (!workerConfig_1.workerConfig.runsListener)
@@ -359,13 +385,80 @@ class UserSessionManager {
     async stopListenerForPendingAuth(userId) {
         if (!this.listeners.has(userId))
             return;
-        console.log(`[sessionManager] stopping listener for ${userId} — telegram auth in progress`);
+        console.log(`[sessionManager] stopping listener for ${userId} — telegram auth / mtproto hold`);
         await this.withConnectionLock(userId, async () => {
             await this.disconnectListener(userId);
         });
     }
+    /**
+     * Ask the listener shard to release this user's MTProto slot (via telegram_auth_pending
+     * Realtime + lease renew guard), then wait until the session lease is gone.
+     */
+    async acquireMtprotoHold(userId) {
+        const { data: existing } = await this.supabase
+            .from('telegram_auth_pending')
+            .select('auth_method, expires_at')
+            .eq('user_id', userId)
+            .maybeSingle();
+        if (existing
+            && existing.auth_method
+            && existing.auth_method !== 'mtproto_hold'
+            && new Date(existing.expires_at).getTime() > Date.now()) {
+            throw new Error('Telegram auth is in progress. Finish linking, then retry.');
+        }
+        const holdMs = Math.max(5 * 60000, Math.min(2 * 60 * 60000, Number(process.env.MTPROTO_HOLD_TTL_MS ?? 45 * 60000)));
+        const expiresAt = new Date(Date.now() + holdMs).toISOString();
+        const { error } = await this.supabase.from('telegram_auth_pending').upsert({
+            user_id: userId,
+            auth_method: 'mtproto_hold',
+            phone: null,
+            phone_code_hash: null,
+            expires_at: expiresAt,
+            awaiting_password: false,
+            auth_session_string: null,
+            qr_expires_at: null,
+        }, { onConflict: 'user_id' });
+        if (error) {
+            console.error(`[sessionManager] mtproto_hold upsert failed for ${userId}:`, error.message);
+            throw new Error('Could not pause live Telegram for this task. Try again in a minute.');
+        }
+        console.log(`[sessionManager] acquired mtproto_hold for ${userId}`);
+        return true;
+    }
+    async releaseMtprotoHold(userId) {
+        const { error } = await this.supabase
+            .from('telegram_auth_pending')
+            .delete()
+            .eq('user_id', userId)
+            .eq('auth_method', 'mtproto_hold');
+        if (error) {
+            console.warn(`[sessionManager] mtproto_hold release failed for ${userId}:`, error.message);
+            return;
+        }
+        console.log(`[sessionManager] released mtproto_hold for ${userId}`);
+    }
+    /** Poll until the listener shard has dropped its session lease (or timeout). */
+    async waitForListenerLeaseReleased(userId) {
+        const timeoutMs = Math.max(10000, Math.min(120000, Number(process.env.MTPROTO_HOLD_WAIT_MS ?? 45000)));
+        const started = Date.now();
+        while (Date.now() - started < timeoutMs) {
+            const { data } = await this.supabase
+                .from('worker_session_leases')
+                .select('expires_at, role')
+                .eq('user_id', userId)
+                .maybeSingle();
+            if (!(0, sessionLease_1.isLeaseRowLive)(data)) {
+                console.log(`[sessionManager] listener lease released for ${userId}`
+                    + ` after ${Date.now() - started}ms`);
+                return;
+            }
+            await new Promise(r => setTimeout(r, 500));
+        }
+        throw new Error('Telegram is still connected on the live worker. Wait a minute and retry, or use Reconnect Telegram.');
+    }
     async onAuthPendingCleared(userId) {
-        // Debounce: send_code clears pending before inserting the new row.
+        // Debounce brief DELETE→upsert races (verify finalize, cancel). Auth start now
+        // upserts in place so send_code no longer clears into an empty window.
         await new Promise(r => setTimeout(r, 2500));
         if (this.listeners.has(userId) || this.isAuthBlocked(userId))
             return;
@@ -555,16 +648,111 @@ class UserSessionManager {
     }
     async listChannels(userId, opts) {
         const local = this.listeners.get(userId);
-        if (local?.isTelegramConnected()) {
+        if (local) {
+            if (!local.isTelegramConnected()) {
+                await local.ensureTelegramConnected('list_channels');
+            }
             return local.listChannels(opts);
         }
         const listener = await this.ensureListener(userId);
         return listener.listChannels(opts);
     }
+    /**
+     * User-initiated recovery: stop + restart the live listener with the saved session
+     * (does not require phone/QR). Used by Copier Engine "Reconnect Telegram".
+     * On persistent failure, invalidates the session so the UI opens a fresh link flow
+     * (same outcome as Disconnect-then-reconnect).
+     */
+    async reconnectTelegramSession(userId) {
+        if (!workerConfig_1.workerConfig.runsListener) {
+            throw new Error('Live Telegram listener not available on this worker');
+        }
+        // Stale ephemeral holds block startListener; clear them on explicit reconnect.
+        await this.supabase
+            .from('telegram_auth_pending')
+            .delete()
+            .eq('user_id', userId)
+            .eq('auth_method', 'mtproto_hold');
+        if (await this.hasActivePendingAuthInDb(userId)) {
+            throw new Error('Telegram auth is in progress. Finish linking, then try again.');
+        }
+        const { data: sess, error } = await this.supabase
+            .from('telegram_sessions')
+            .select('session_string, is_active')
+            .eq('user_id', userId)
+            .maybeSingle();
+        if (error)
+            throw new Error(`Failed to load session: ${error.message}`);
+        if (!sess?.session_string) {
+            throw new telegramClient_1.TelegramSessionInvalidError('No Telegram session for this user');
+        }
+        if (!sess.is_active)
+            throw new Error('Telegram session is paused');
+        const sessionString = sess.session_string;
+        const delays = (0, authKeyDuplicatedRecovery_1.authKeyDupReconnectDelaysMs)(authKeyReleaseDelayMs(), 8000);
+        let lastErr;
+        for (let attempt = 0; attempt < delays.length; attempt++) {
+            const delay = delays[attempt] ?? authKeyReleaseDelayMs();
+            try {
+                if (this.listeners.has(userId)) {
+                    console.log(`[sessionManager] user reconnect: stopping listener for ${userId}`
+                        + ` (attempt ${attempt + 1}/${delays.length})`);
+                    await this.stopListener(userId);
+                }
+                else {
+                    await (0, sessionLease_1.releaseSessionLease)(this.supabase, userId);
+                }
+                await this.waitForListenerLeaseReleased(userId);
+                if (delay > 0)
+                    await new Promise(r => setTimeout(r, delay));
+                await this.startListener(userId, sessionString);
+                const listener = this.listeners.get(userId);
+                if (!listener)
+                    throw new Error('Failed to start listener for user');
+                if (!listener.isTelegramConnected()) {
+                    await listener.ensureTelegramConnected('user_reconnect');
+                }
+                const channels = await listener.listChannels({ skipColdDelay: true });
+                return { channels };
+            }
+            catch (err) {
+                lastErr = err;
+                if (err instanceof telegramClient_1.TelegramSessionInvalidError)
+                    throw err;
+                console.warn(`[sessionManager] user reconnect attempt ${attempt + 1} failed for ${userId}:`, err instanceof Error ? err.message : err);
+            }
+        }
+        console.error(`[sessionManager] user reconnect exhausted for ${userId}`
+            + ' — invalidating session so UI can re-link', lastErr instanceof Error ? lastErr.message : lastErr);
+        await this.invalidateTelegramSession(userId);
+        throw new telegramClient_1.TelegramSessionInvalidError('Could not reconnect Telegram. Please link your account again.');
+    }
+    /**
+     * User Disconnect: drop pending auth, stop listener immediately, delete session row.
+     * Configured telegram_channels are kept.
+     */
+    async disconnectTelegramSession(userId) {
+        await this.supabase.from('telegram_auth_pending').delete().eq('user_id', userId);
+        if (this.listeners.has(userId)) {
+            await this.stopListener(userId);
+        }
+        else {
+            await (0, sessionLease_1.releaseSessionLease)(this.supabase, userId);
+        }
+        const { error } = await this.supabase.from('telegram_sessions').delete().eq('user_id', userId);
+        if (error) {
+            console.warn(`[sessionManager] disconnectTelegramSession delete failed for ${userId}:`, error.message);
+        }
+        return { ok: true };
+    }
     async ensureListener(userId) {
         const existing = this.listeners.get(userId);
-        if (existing)
+        if (existing) {
+            if (!existing.isTelegramConnected()) {
+                await existing.ensureTelegramConnected('ensure_listener');
+            }
             return existing;
+        }
         if (!workerConfig_1.workerConfig.runsListener) {
             throw new Error('Live Telegram listener not available on this worker');
         }
@@ -627,14 +815,16 @@ class UserSessionManager {
         return this.withEphemeralTelegram(userId, () => (0, backtestSync_1.runEphemeralBacktestSync)(this.supabase, userId, channelRowId, fromIso, toIso, runId));
     }
     /**
-     * Runs fn while the live listener is stopped (if any) so backtest can use the sole MTProto slot.
+     * Runs fn while the live listener is stopped so ephemeral Telegram can use the sole
+     * MTProto slot — including across dedicated backtest vs listener workers.
      */
     async withEphemeralTelegram(userId, fn) {
-        const pauseLive = workerConfig_1.workerConfig.runsListener
+        const pauseLiveLocal = workerConfig_1.workerConfig.runsListener
             && (workerConfig_1.workerConfig.role === 'all' || process.env.BACKTEST_PAUSE_LIVE_LISTENER !== 'false');
         let sessionString = null;
         let hadLiveListener = false;
-        if (pauseLive) {
+        let crossServiceHold = false;
+        if (pauseLiveLocal) {
             sessionString = (await this.supabase
                 .from('telegram_sessions')
                 .select('session_string')
@@ -642,19 +832,28 @@ class UserSessionManager {
                 .maybeSingle()).data?.session_string ?? null;
             hadLiveListener = this.listeners.has(userId);
             if (hadLiveListener) {
-                console.log(`[sessionManager] pausing live listener for backtest user=${userId}`);
+                console.log(`[sessionManager] pausing live listener for ephemeral Telegram user=${userId}`);
                 await this.stopListener(userId);
             }
             if (sessionString) {
                 await new Promise(r => setTimeout(r, authKeyReleaseDelayMs()));
             }
         }
+        else {
+            // Dedicated backtest worker: pause remote listener via DB hold.
+            crossServiceHold = await this.acquireMtprotoHold(userId);
+            await this.waitForListenerLeaseReleased(userId);
+            await new Promise(r => setTimeout(r, authKeyReleaseDelayMs()));
+        }
         try {
             return await fn();
         }
         finally {
-            if (pauseLive && sessionString && hadLiveListener) {
+            if (pauseLiveLocal && sessionString && hadLiveListener) {
                 await this.restartListenerAfterBacktest(userId, sessionString);
+            }
+            if (crossServiceHold) {
+                await this.releaseMtprotoHold(userId);
             }
         }
     }
