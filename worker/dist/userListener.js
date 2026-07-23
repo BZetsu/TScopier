@@ -7,6 +7,7 @@ const events_1 = require("telegram/events");
 const EditedMessage_1 = require("telegram/events/EditedMessage");
 const tl_1 = require("telegram/tl");
 const telegramClient_1 = require("./telegramClient");
+const authKeyDuplicatedRecovery_1 = require("./authKeyDuplicatedRecovery");
 const backtestSignal_1 = require("./backtestSignal");
 const signalQueuePublisher_1 = require("./queue/signalQueuePublisher");
 const signalQueueConfig_1 = require("./queue/signalQueueConfig");
@@ -188,6 +189,12 @@ class UserListener {
         this.lastSuccessfulPollAt = 0;
         this.lastReconnectAt = 0;
         this.consecutiveProbeFailures = 0;
+        /** Serializes forceReconnect so poll/watchdog/warmup cannot stack competing connects. */
+        this.reconnectInFlight = null;
+        /** Rate-limit AUTH_KEY_DUPLICATED poll_error rows (safety+fast poll can fire every few seconds). */
+        this.lastAuthKeyDupPollErrorAt = 0;
+        this.lastAuthKeyDupLogAt = 0;
+        this.deferredAuthKeyDupRetryTimer = null;
         this.onSignalParsed = null;
         /** Recent live message ids — avoids a Supabase round-trip on hot-path dedup. */
         this.liveMessageDedup = new Map();
@@ -260,6 +267,10 @@ class UserListener {
     }
     async stop() {
         try {
+            if (this.deferredAuthKeyDupRetryTimer) {
+                clearTimeout(this.deferredAuthKeyDupRetryTimer);
+                this.deferredAuthKeyDupRetryTimer = null;
+            }
             if (this.userProfilesCopierPauseChannel) {
                 await this.supabase.removeChannel(this.userProfilesCopierPauseChannel);
                 this.userProfilesCopierPauseChannel = null;
@@ -297,6 +308,24 @@ class UserListener {
     /** True while MTProto is up after connect/reconnect (false during disconnect/reconnect). */
     isTelegramConnected() {
         return this.isConnected;
+    }
+    /**
+     * Kick recovery when the listener is in the Map but MTProto is down (lease renew
+     * skips disconnected users — without this they stay offline until process restart).
+     */
+    requestReconnectIfDisconnected(reason = 'disconnected_recovery') {
+        if (this.isConnected)
+            return;
+        void this.requestReconnect(reason);
+    }
+    /** Await recovery until MTProto is up, or throw a client-safe busy error. */
+    async ensureTelegramConnected(reason = 'ensure') {
+        if (this.isConnected)
+            return;
+        await this.requestReconnect(reason);
+        if (!this.isConnected) {
+            throw new Error('Telegram connection is temporarily busy (another copy is still closing). Wait 30 seconds, press Refresh, or use Reconnect Telegram if it persists.');
+        }
     }
     getStatus() {
         return {
@@ -522,6 +551,9 @@ class UserListener {
      * result briefly so onboarding UI re-renders don't re-hit Telegram.
      */
     async listChannels(opts) {
+        if (!this.isConnected) {
+            await this.ensureTelegramConnected('list_channels');
+        }
         if (!opts?.skipColdDelay && !this.startedWithLiveClient) {
             const elapsed = Date.now() - this.startedAt;
             if (elapsed >= 0 && elapsed < COLD_FANOUT_DELAY_MS) {
@@ -2313,6 +2345,8 @@ class UserListener {
     }
     /** Resolve + join every monitored channel so live NewMessage fires for all of them. */
     async warmAllMonitoredChannelEntities() {
+        if (!this.isConnected)
+            return;
         const { data: rows } = await this.supabase
             .from('telegram_channels')
             .select('id, channel_id, channel_username')
@@ -2420,6 +2454,12 @@ class UserListener {
             peer = await this.resolveChannelPeer(row);
         }
         catch (err) {
+            if ((0, telegramClient_1.isAuthKeyDuplicated)(err)) {
+                this.noteAuthKeyDuplicated('poll_peer_resolve', row.id, {
+                    error: (err instanceof Error ? err.message : String(err)).slice(0, 300),
+                });
+                return;
+            }
             const msg = err instanceof Error ? err.message : String(err);
             console.warn(`[userListener] poll peer resolve failed user=${this.userId} channel=${row.id}:`, msg);
             (0, workerMetrics_1.incMetric)('poll_peer_resolve_failed');
@@ -2442,6 +2482,13 @@ class UserListener {
             }));
         }
         catch (err) {
+            if ((0, telegramClient_1.isAuthKeyDuplicated)(err)) {
+                this.noteAuthKeyDuplicated('poll_getMessages', row.id, {
+                    error: (err instanceof Error ? err.message : String(err)).slice(0, 300),
+                    min_id: minId,
+                });
+                return;
+            }
             const msg = err instanceof Error ? err.message : String(err);
             console.warn(`[userListener] poll getMessages failed user=${this.userId} channel=${row.id}:`, msg);
             (0, workerMetrics_1.incMetric)('poll_get_messages_failed');
@@ -2849,49 +2896,109 @@ class UserListener {
             this.lastEventAt = this.lastEventAt || Date.now();
         }
         catch (err) {
+            if ((0, telegramClient_1.isAuthKeyDuplicated)(err)) {
+                this.noteAuthKeyDuplicated('watchdog_probe');
+                return;
+            }
             this.consecutiveProbeFailures++;
             console.warn(`[watchdog] probe failed (${this.consecutiveProbeFailures}/${WATCHDOG_FAILURE_THRESHOLD}) for ${this.userId}:`, err instanceof Error ? err.message : String(err));
             if (this.consecutiveProbeFailures >= WATCHDOG_FAILURE_THRESHOLD) {
-                await this.forceReconnect();
+                await this.requestReconnect('watchdog');
             }
         }
     }
-    async forceReconnect() {
-        console.log(`[userListener] force reconnect for ${this.userId}`);
+    noteAuthKeyDuplicated(source, channelRowId, detail) {
+        this.isConnected = false;
+        const now = Date.now();
+        if ((0, authKeyDuplicatedRecovery_1.shouldEmitAuthKeyDupEvent)(this.lastAuthKeyDupLogAt, now, 30000)) {
+            this.lastAuthKeyDupLogAt = now;
+            (0, workerMetrics_1.incMetric)('auth_key_duplicated');
+            console.warn(`[userListener] AUTH_KEY_DUPLICATED (${source}) for ${this.userId}`
+                + ' — marking disconnected and reconnecting');
+        }
+        if (channelRowId
+            && (0, authKeyDuplicatedRecovery_1.shouldEmitAuthKeyDupEvent)(this.lastAuthKeyDupPollErrorAt, now, 60000)) {
+            this.lastAuthKeyDupPollErrorAt = now;
+            void (0, listenerEvents_1.persistListenerEvent)(this.supabase, {
+                userId: this.userId,
+                eventType: 'poll_error',
+                channelRowId,
+                detail: detail ?? { error: 'AUTH_KEY_DUPLICATED', source },
+            });
+        }
+        // Avoid awaiting/nesting the in-flight reconnect (e.g. warmEntityCache during forceReconnect).
+        if (this.reconnectInFlight)
+            return;
+        void this.requestReconnect(`auth_key_duplicated:${source}`);
+    }
+    requestReconnect(reason) {
+        if (this.reconnectInFlight)
+            return this.reconnectInFlight;
+        this.reconnectInFlight = this.forceReconnect(reason).finally(() => {
+            this.reconnectInFlight = null;
+        });
+        return this.reconnectInFlight;
+    }
+    scheduleDeferredAuthKeyDupRetry() {
+        if (this.deferredAuthKeyDupRetryTimer)
+            return;
+        const delayMs = (0, authKeyDuplicatedRecovery_1.authKeyDupDeferredRetryMs)();
+        console.warn(`[userListener] AUTH_KEY_DUPLICATED recovery exhausted for ${this.userId}`
+            + ` — scheduling another reconnect in ${delayMs}ms`);
+        this.deferredAuthKeyDupRetryTimer = setTimeout(() => {
+            this.deferredAuthKeyDupRetryTimer = null;
+            if (this.isConnected)
+                return;
+            void this.requestReconnect('auth_key_duplicated_deferred');
+        }, delayMs);
+        this.deferredAuthKeyDupRetryTimer.unref?.();
+    }
+    async forceReconnect(reason = 'force') {
+        console.log(`[userListener] force reconnect for ${this.userId} reason=${reason}`);
+        if (this.deferredAuthKeyDupRetryTimer) {
+            clearTimeout(this.deferredAuthKeyDupRetryTimer);
+            this.deferredAuthKeyDupRetryTimer = null;
+        }
         this.clearDialogsCache();
         this.lastReconnectAt = Date.now();
         this.consecutiveProbeFailures = 0;
         this.isConnected = false;
-        const cooldown = reconnectCooldownMs();
         try {
             await this.client.disconnect();
         }
         catch { /* ignore */ }
-        await new Promise(r => setTimeout(r, cooldown));
-        try {
-            await this.client.connect();
-            this.isConnected = true;
-        }
-        catch (err) {
-            console.error(`[userListener] reconnect failed for ${this.userId}:`, err);
-            if (!(0, telegramClient_1.isAuthKeyDuplicated)(err))
-                return;
-            (0, workerMetrics_1.incMetric)('auth_key_duplicated');
-            console.warn(`[userListener] AUTH_KEY_DUPLICATED for ${this.userId} — waiting 15s then one retry`
-                + ' (overlapping worker instance or session still closing on Telegram)');
-            try {
-                await this.client.disconnect();
-            }
-            catch { /* ignore */ }
-            await new Promise(r => setTimeout(r, 15000));
+        const delays = (0, authKeyDuplicatedRecovery_1.authKeyDupReconnectDelaysMs)(reconnectCooldownMs(), AUTH_KEY_DUP_RECONNECT_DELAY_MS);
+        let lastErr;
+        for (let attempt = 0; attempt < delays.length; attempt++) {
+            await new Promise(r => setTimeout(r, delays[attempt]));
             try {
                 await this.client.connect();
                 this.isConnected = true;
+                lastErr = undefined;
+                break;
             }
-            catch (err2) {
-                console.error(`[userListener] reconnect retry failed for ${this.userId}:`, err2);
-                return;
+            catch (err) {
+                lastErr = err;
+                console.error(`[userListener] reconnect attempt ${attempt + 1}/${delays.length} failed for ${this.userId}:`, err instanceof Error ? err.message : String(err));
+                if ((0, telegramClient_1.isAuthKeyUnregistered)(err))
+                    return;
+                if (!(0, telegramClient_1.isAuthKeyDuplicated)(err)) {
+                    // Transient network errors: keep trying remaining delays.
+                    continue;
+                }
+                (0, workerMetrics_1.incMetric)('auth_key_duplicated');
+                console.warn(`[userListener] AUTH_KEY_DUPLICATED reconnect attempt ${attempt + 1}/${delays.length}`
+                    + ` for ${this.userId}`);
+                try {
+                    await this.client.disconnect();
+                }
+                catch { /* ignore */ }
             }
+        }
+        if (!this.isConnected) {
+            console.error(`[userListener] reconnect failed for ${this.userId}:`, lastErr instanceof Error ? lastErr.message : String(lastErr ?? 'unknown'));
+            this.scheduleDeferredAuthKeyDupRetry();
+            return;
         }
         // Rebind handler — the previous one was attached to the disconnected
         // session and may not survive the reconnect cleanly.
@@ -2900,6 +3007,10 @@ class UserListener {
         // Warm entity cache BEFORE registering the handler so gramjs can
         // deliver NewMessage events for all monitored channels.
         await this.warmEntityCache();
+        if (!this.isConnected) {
+            this.scheduleDeferredAuthKeyDupRetry();
+            return;
+        }
         await this.refreshChannelSubscription();
         // Run a lightweight catch-up for very recent messages (last 60s) that
         // may have arrived during the reconnect window. Full history replay is
@@ -2912,6 +3023,8 @@ class UserListener {
         if (this.safetyPollTimer)
             return;
         this.safetyPollTimer = setInterval(() => {
+            if (!this.isConnected)
+                return;
             this.refreshChannelSubscription().catch(err => console.error(`[userListener] safety poll error for ${this.userId}:`, err));
             this.warmAllMonitoredChannelEntities().catch(err => console.error(`[userListener] entity warm (poll tick) error for ${this.userId}:`, err));
             this.pollMonitoredChannelsForMessages().catch(err => console.error(`[userListener] channel poll error for ${this.userId}:`, err));
@@ -2983,8 +3096,10 @@ class UserListener {
             await this.warmAllMonitoredChannelEntities();
         }
         catch (err) {
-            if ((0, telegramClient_1.isAuthKeyDuplicated)(err))
+            if ((0, telegramClient_1.isAuthKeyDuplicated)(err)) {
+                this.noteAuthKeyDuplicated('warm_entity_cache');
                 return;
+            }
             if ((0, telegramClient_1.isAuthKeyUnregistered)(err))
                 (0, telegramClient_1.rethrowIfSessionInvalid)(err);
             console.warn(`[userListener] entity warmup getDialogs failed for ${this.userId}:`, err instanceof Error ? err.message : String(err));

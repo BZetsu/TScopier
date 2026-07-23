@@ -84,15 +84,23 @@ function buildRevisionDispatchRow(existing, parseResult, pipelineTs, telegramEdi
     };
 }
 async function updateSignalAfterRevision(supabase, args) {
-    const keepExecutionStatus = args.existingStatus === 'executed' || args.existingStatus === 'skipped';
+    const keepExecutionStatus = args.existingStatus === 'executed';
     const patch = {
         raw_message: args.rawMessage,
         parsed_data: args.parseResult.parsed,
         telegram_reconciled_at: new Date().toISOString(),
     };
+    // Upgrade skipped → parsed when a revision finds a real trade (do not leave UI stuck on Skipped).
+    // Keep executed as-is so cosmetic edits cannot downgrade an already-filled signal.
     if (!keepExecutionStatus) {
-        patch.status = 'parsed';
-        patch.skip_reason = null;
+        if (args.parseResult.status === 'parsed') {
+            patch.status = 'parsed';
+            patch.skip_reason = null;
+        }
+        else if (args.existingStatus !== 'skipped') {
+            patch.status = args.parseResult.status;
+            patch.skip_reason = args.parseResult.skip_reason;
+        }
     }
     if (args.telegramEditDateSeen != null && args.telegramEditDateSeen > 0) {
         patch.telegram_edit_date_seen = Math.floor(args.telegramEditDateSeen);
