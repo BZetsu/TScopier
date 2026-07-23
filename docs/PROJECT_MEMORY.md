@@ -2,6 +2,13 @@
 
 ## Changelog
 
+### 2026-07-23 — Fixed _updateLoop TIMEOUT death spiral for connected user listeners
+
+- **Context:** Connected user listeners logging `Error: TIMEOUT` every 9-30 seconds from GramJS's `_updateLoop` ping loop, never recovering. Caused by `autoReconnect: false` setting — `client._sender.reconnect()` silently no-ops when `_userConnected` is false, so the loop repeats forever.
+- **Changes:** Registered `client.onError` handler in `UserListener` constructor that catches TIMEOUT errors and calls `requestReconnect('update_loop_timeout')`, forcing a proper disconnect + reconnect cycle that actually tears down and rebuilds the connection.
+- **Files:** `worker/src/userListener.ts:359`
+- **Follow-up:** Converge on dev branch tomorrow with any of Emmanuel's fixes, then promote to staging.
+
 ### 2026-07-23 — Fixed Telegram auth: session persistence, GramJS timeout recovery, error code propagation
 
 - **Context:** Three auth bugs found during staging testing:
