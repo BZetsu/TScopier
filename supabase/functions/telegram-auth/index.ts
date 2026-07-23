@@ -107,6 +107,9 @@ Deno.serve(async (req: Request) => {
       if (typeof rec.error === "string") {
         rec.error = String(rec.error).replace(/\s*\(caused by[\s\S]*$/i, "").trim()
       }
+      if (typeof rec.message === "string") {
+        rec.message = String(rec.message).replace(/\s*\(caused by[\s\S]*$/i, "").trim()
+      }
     }
     return new Response(JSON.stringify(payload), {
       status: workerRes.status,

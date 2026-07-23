@@ -1,9 +1,11 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.clientErrorPayload = clientErrorPayload;
 exports.startHttpServer = startHttpServer;
 exports.startTradeHttpServer = startTradeHttpServer;
 const http_1 = require("http");
 const telegramClient_1 = require("./telegramClient");
+const telegramAuthRecovery_1 = require("./telegramAuthRecovery");
 const workerConfig_1 = require("./workerConfig");
 const queueHealth_1 = require("./queue/queueHealth");
 const parseSignal_1 = require("./parseSignal");
@@ -22,8 +24,7 @@ async function handleTelegramRpcError(res, userId, sessionManager, err, fallback
         await sessionManager.invalidateTelegramSession(userId);
         return sendSessionInvalid(res);
     }
-    const msg = err instanceof Error ? err.message : fallbackMessage;
-    return sendJson(res, 400, { error: sanitizeClientError(msg) });
+    return sendJson(res, 400, clientErrorPayload(err, fallbackMessage));
 }
 function sendSessionInvalid(res) {
     sendJson(res, 401, {
@@ -39,7 +40,27 @@ function sanitizeClientError(msg) {
     if ((0, telegramClient_1.isAuthKeyDuplicated)(cleaned)) {
         return 'Telegram connection is temporarily busy (another copy is still closing). Wait 30 seconds, press Refresh, or use Reconnect Telegram if it persists.';
     }
+    if (/PASSWORD_HASH_INVALID/i.test(cleaned)) {
+        return 'Incorrect Two-Step Verification password. Please try again.';
+    }
+    if (/No pending auth flow/i.test(cleaned)) {
+        return 'Login session expired. Go back and request a new verification code.';
+    }
+    const flood = cleaned.match(/FLOOD_WAIT_(\d+)/i) || cleaned.match(/wait (\d+) seconds/i);
+    if (flood) {
+        return `Telegram rate limit: wait ${flood[1]} seconds, then try again.`;
+    }
     return cleaned;
+}
+function clientErrorPayload(err, fallbackMessage) {
+    const msg = err instanceof Error ? err.message : fallbackMessage;
+    const message = sanitizeClientError(msg);
+    const code = err instanceof Error && err.name === telegramAuthRecovery_1.NO_PENDING_PHONE_AUTH_ERROR
+        ? telegramAuthRecovery_1.NO_PENDING_PHONE_AUTH_ERROR
+        : undefined;
+    return code
+        ? { error: message, message, code }
+        : { error: message, message };
 }
 /**
  * Authenticated HTTP API consumed only by the supabase telegram-auth
@@ -74,8 +95,7 @@ function startHttpServer(authService, sessionManager) {
                     return sendJson(res, 200, r);
                 }
                 catch (err) {
-                    const msg = err instanceof Error ? err.message : 'Failed to send code';
-                    return sendJson(res, 400, { error: sanitizeClientError(msg) });
+                    return sendJson(res, 400, clientErrorPayload(err, 'Failed to send code'));
                 }
             }
             if (url === '/auth/verify_code') {
@@ -92,8 +112,7 @@ function startHttpServer(authService, sessionManager) {
                     return sendJson(res, 200, r);
                 }
                 catch (err) {
-                    const msg = err instanceof Error ? err.message : 'Verification failed';
-                    return sendJson(res, 400, { error: sanitizeClientError(msg) });
+                    return sendJson(res, 400, clientErrorPayload(err, 'Verification failed'));
                 }
             }
             if (url === '/auth/start_qr') {
@@ -105,8 +124,7 @@ function startHttpServer(authService, sessionManager) {
                     return sendJson(res, 200, r);
                 }
                 catch (err) {
-                    const msg = err instanceof Error ? err.message : 'Failed to start QR login';
-                    return sendJson(res, 400, { error: sanitizeClientError(msg) });
+                    return sendJson(res, 400, clientErrorPayload(err, 'Failed to start QR login'));
                 }
             }
             if (url === '/auth/qr_status') {
@@ -118,8 +136,7 @@ function startHttpServer(authService, sessionManager) {
                     return sendJson(res, 200, r);
                 }
                 catch (err) {
-                    const msg = err instanceof Error ? err.message : 'QR status failed';
-                    return sendJson(res, 400, { error: sanitizeClientError(msg) });
+                    return sendJson(res, 400, clientErrorPayload(err, 'QR status failed'));
                 }
             }
             if (url === '/auth/verify_qr_password') {
@@ -131,8 +148,7 @@ function startHttpServer(authService, sessionManager) {
                     return sendJson(res, 200, r);
                 }
                 catch (err) {
-                    const msg = err instanceof Error ? err.message : 'QR password verification failed';
-                    return sendJson(res, 400, { error: sanitizeClientError(msg) });
+                    return sendJson(res, 400, clientErrorPayload(err, 'QR password verification failed'));
                 }
             }
             if (url === '/auth/list_channels') {
@@ -145,6 +161,30 @@ function startHttpServer(authService, sessionManager) {
                 }
                 catch (err) {
                     return handleTelegramRpcError(res, body.user_id, sessionManager, err, 'Failed to list channels');
+                }
+            }
+            if (url === '/auth/reconnect_telegram') {
+                if (!body.user_id) {
+                    return sendJson(res, 400, { error: 'user_id is required' });
+                }
+                try {
+                    const result = await sessionManager.reconnectTelegramSession(body.user_id);
+                    return sendJson(res, 200, result);
+                }
+                catch (err) {
+                    return handleTelegramRpcError(res, body.user_id, sessionManager, err, 'Failed to reconnect Telegram');
+                }
+            }
+            if (url === '/auth/disconnect_telegram') {
+                if (!body.user_id) {
+                    return sendJson(res, 400, { error: 'user_id is required' });
+                }
+                try {
+                    const result = await sessionManager.disconnectTelegramSession(body.user_id);
+                    return sendJson(res, 200, result);
+                }
+                catch (err) {
+                    return handleTelegramRpcError(res, body.user_id, sessionManager, err, 'Failed to disconnect Telegram');
                 }
             }
             if (url === '/auth/backfill_channel_history') {
@@ -209,7 +249,7 @@ function startHttpServer(authService, sessionManager) {
         catch (err) {
             const msg = err instanceof Error ? err.message : 'Internal error';
             console.error('[httpServer] error:', msg);
-            return sendJson(res, 500, { error: sanitizeClientError(msg) });
+            return sendJson(res, 500, clientErrorPayload(err, 'Internal error'));
         }
     });
     server.listen(PORT, () => {

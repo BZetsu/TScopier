@@ -5,6 +5,7 @@ import {
   TelegramSessionInvalidError,
   TELEGRAM_SESSION_INVALID_CODE,
 } from './telegramClient'
+import { NO_PENDING_PHONE_AUTH_ERROR } from './telegramAuthRecovery'
 import type { SignalRow, TradeExecutor } from './tradeExecutor'
 import { UserSessionManager } from './sessionManager'
 import { userBelongsToShard } from './workerConfig'
@@ -49,8 +50,7 @@ async function handleTelegramRpcError(
     await sessionManager.invalidateTelegramSession(userId)
     return sendSessionInvalid(res)
   }
-  const msg = err instanceof Error ? err.message : fallbackMessage
-  return sendJson(res, 400, { error: sanitizeClientError(msg) })
+  return sendJson(res, 400, clientErrorPayload(err, fallbackMessage))
 }
 
 function sendSessionInvalid(res: ServerResponse) {
@@ -79,6 +79,21 @@ function sanitizeClientError(msg: string): string {
     return `Telegram rate limit: wait ${flood[1]} seconds, then try again.`
   }
   return cleaned
+}
+
+export function clientErrorPayload(err: unknown, fallbackMessage: string): {
+  error: string
+  message: string
+  code?: string
+} {
+  const msg = err instanceof Error ? err.message : fallbackMessage
+  const message = sanitizeClientError(msg)
+  const code = err instanceof Error && err.name === NO_PENDING_PHONE_AUTH_ERROR
+    ? NO_PENDING_PHONE_AUTH_ERROR
+    : undefined
+  return code
+    ? { error: message, message, code }
+    : { error: message, message }
 }
 
 /**
@@ -122,8 +137,7 @@ export function startHttpServer(
           const r = await authService.sendCode(body.user_id, body.phone)
           return sendJson(res, 200, r)
         } catch (err: unknown) {
-          const msg = err instanceof Error ? err.message : 'Failed to send code'
-          return sendJson(res, 400, { error: sanitizeClientError(msg) })
+          return sendJson(res, 400, clientErrorPayload(err, 'Failed to send code'))
         }
       }
 
@@ -140,8 +154,7 @@ export function startHttpServer(
           }
           return sendJson(res, 200, r)
         } catch (err: unknown) {
-          const msg = err instanceof Error ? err.message : 'Verification failed'
-          return sendJson(res, 400, { error: sanitizeClientError(msg) })
+          return sendJson(res, 400, clientErrorPayload(err, 'Verification failed'))
         }
       }
 
@@ -153,8 +166,7 @@ export function startHttpServer(
           const r = await authService.startQrLogin(body.user_id)
           return sendJson(res, 200, r)
         } catch (err: unknown) {
-          const msg = err instanceof Error ? err.message : 'Failed to start QR login'
-          return sendJson(res, 400, { error: sanitizeClientError(msg) })
+          return sendJson(res, 400, clientErrorPayload(err, 'Failed to start QR login'))
         }
       }
 
@@ -166,8 +178,7 @@ export function startHttpServer(
           const r = await authService.getQrStatus(body.user_id)
           return sendJson(res, 200, r)
         } catch (err: unknown) {
-          const msg = err instanceof Error ? err.message : 'QR status failed'
-          return sendJson(res, 400, { error: sanitizeClientError(msg) })
+          return sendJson(res, 400, clientErrorPayload(err, 'QR status failed'))
         }
       }
 
@@ -179,8 +190,7 @@ export function startHttpServer(
           const r = await authService.verifyQrPassword(body.user_id, body.password)
           return sendJson(res, 200, r)
         } catch (err: unknown) {
-          const msg = err instanceof Error ? err.message : 'QR password verification failed'
-          return sendJson(res, 400, { error: sanitizeClientError(msg) })
+          return sendJson(res, 400, clientErrorPayload(err, 'QR password verification failed'))
         }
       }
 
@@ -300,7 +310,7 @@ export function startHttpServer(
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Internal error'
       console.error('[httpServer] error:', msg)
-      return sendJson(res, 500, { error: sanitizeClientError(msg) })
+      return sendJson(res, 500, clientErrorPayload(err, 'Internal error'))
     }
   })
 
