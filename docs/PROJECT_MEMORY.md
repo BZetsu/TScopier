@@ -2,6 +2,13 @@
 
 ## Changelog
 
+### 2026-07-24 — Fixed QR login AUTH_KEY_UNREGISTERED death spiral
+
+- **Context:** User `4d2c9a06` attempted QR login, but the Telegram auth key was already unregistered. `onError` handler in `runQrLoginBackground` returned `false` (meaning "not fatal, keep trying"), so GramJS looped `account.GetPassword` → `AUTH_KEY_UNREGISTERED` → `onError` forever, spamming logs every ~200ms.
+- **Changes:** Added `isAuthKeyUnregistered` check in the `onError` callback that throws instead of returning `false`, breaking the retry loop. The outer `catch` handler then properly cleans up pending state, disconnects the client, and marks the QR login as errored.
+- **Files:** `worker/src/authService.ts:396`
+- **Follow-up:** Push to staging once verified on dev.
+
 ### 2026-07-23 — Fixed _updateLoop TIMEOUT death spiral for connected user listeners
 
 - **Context:** Connected user listeners logging `Error: TIMEOUT` every 9-30 seconds from GramJS's `_updateLoop` ping loop, never recovering. Caused by `autoReconnect: false` setting — `client._sender.reconnect()` silently no-ops when `_userConnected` is false, so the loop repeats forever.
