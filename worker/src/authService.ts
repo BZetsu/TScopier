@@ -2,7 +2,7 @@ import { SupabaseClient } from '@supabase/supabase-js'
 import { TelegramClient } from 'telegram'
 import { Api } from 'telegram/tl'
 import { computeCheck } from 'telegram/Password'
-import { buildClient, tgInvoke, API_ID, API_HASH } from './telegramClient'
+import { buildClient, isAuthKeyUnregistered, tgInvoke, API_ID, API_HASH } from './telegramClient'
 import { UserSessionManager } from './sessionManager'
 import type { ChannelInfo } from './userListener'
 import {
@@ -392,6 +392,9 @@ export class AuthService {
             })
           },
           onError: async (err: Error) => {
+            if (isAuthKeyUnregistered(err)) {
+              throw new Error('AUTH_KEY_UNREGISTERED')
+            }
             console.warn(`[authService] QR login onError user=${userId}:`, err.message)
             return false
           },
