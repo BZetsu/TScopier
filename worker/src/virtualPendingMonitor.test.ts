@@ -2,8 +2,10 @@ import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
 import {
   evaluateTpTouch,
+  FireLegResult,
   fillWithinTriggerBand,
   isTriggered,
+  layerLatencyPayload,
   shouldLockBasketLayering,
   VirtualPendingMonitor,
 } from './virtualPendingMonitor'
@@ -16,6 +18,267 @@ import {
   selectLegsForLayerTick,
   selectPendingLegsForDistanceBurst,
 } from './layerConcurrentFire'
+
+type TestLeg = {
+  id: string
+  signal_id: string
+  user_id: string
+  broker_account_id: string
+  metaapi_account_id: string
+  symbol: string
+  step_idx: number
+  is_buy: boolean
+  volume: number
+  anchor_price: number
+  trigger_price: number
+  stoploss: number | null
+  takeprofit: number | null
+  slippage: number
+  comment: string | null
+  expert_id: number | null
+  expires_at: string | null
+  status: string
+  cwe_close_price: number | null
+}
+
+type FireLegHarness = {
+  operations: string[]
+  brokerSends: number
+  supabase: FakeSupabase
+  monitor: VirtualPendingMonitor
+  fireLeg: (leg: TestLeg, bid: number, ask: number) => Promise<FireLegResult>
+  recordFireLegResult: (
+    result: FireLegResult,
+    leg: Pick<TestLeg, 'signal_id' | 'broker_account_id' | 'step_idx'>,
+    active: Map<string, Set<number>>,
+    fired: Map<string, Set<number>>,
+  ) => FireLegResult['outcome']
+}
+
+type FakeSupabaseOptions = {
+  operations: string[]
+  claimedRow?: { id: string } | null
+}
+
+class FakeSupabase {
+  readonly operations: string[]
+  claimedRow: { id: string } | null
+  releaseFilters: Array<{ id?: unknown; status?: unknown }> = []
+
+  constructor(opts: FakeSupabaseOptions) {
+    this.operations = opts.operations
+    this.claimedRow = opts.claimedRow === undefined ? { id: 'leg-1' } : opts.claimedRow
+  }
+
+  from(table: string): FakeQuery {
+    return new FakeQuery(this, table)
+  }
+}
+
+class FakeQuery implements PromiseLike<{ data: unknown; error: null; count?: number | null }> {
+  private op: 'select' | 'update' | 'insert' | 'delete' | null = null
+  private selected = ''
+  private payload: Record<string, unknown> | null = null
+  private filters = new Map<string, unknown>()
+
+  constructor(
+    private readonly db: FakeSupabase,
+    private readonly table: string,
+  ) {}
+
+  select(columns = ''): this {
+    this.op = this.op ?? 'select'
+    this.selected = columns
+    return this
+  }
+
+  update(payload: Record<string, unknown>): this {
+    this.op = 'update'
+    this.payload = payload
+    return this
+  }
+
+  insert(payload: Record<string, unknown> | Record<string, unknown>[]): this {
+    this.op = 'insert'
+    this.payload = Array.isArray(payload) ? { rows: payload } : payload
+    return this
+  }
+
+  delete(): this {
+    this.op = 'delete'
+    return this
+  }
+
+  eq(key: string, value: unknown): this {
+    this.filters.set(key, value)
+    return this
+  }
+
+  in(): this {
+    return this
+  }
+
+  not(): this {
+    return this
+  }
+
+  order(): this {
+    return this
+  }
+
+  limit(): this {
+    return this
+  }
+
+  maybeSingle(): Promise<{ data: unknown; error: null; count?: number | null }> {
+    return Promise.resolve(this.resolve())
+  }
+
+  then<TResult1 = { data: unknown; error: null; count?: number | null }, TResult2 = never>(
+    onfulfilled?: ((value: { data: unknown; error: null; count?: number | null }) => TResult1 | PromiseLike<TResult1>) | null,
+    onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
+  ): PromiseLike<TResult1 | TResult2> {
+    return Promise.resolve(this.resolve()).then(onfulfilled, onrejected)
+  }
+
+  private resolve(): { data: unknown; error: null; count?: number | null } {
+    if (this.table === 'range_pending_legs' && this.op === 'update' && this.payload?.status === 'claimed') {
+      this.db.operations.push('claim')
+      return { data: this.db.claimedRow, error: null }
+    }
+    if (this.table === 'range_pending_legs' && this.op === 'update' && this.payload?.status === 'pending') {
+      this.db.operations.push('release')
+      this.db.releaseFilters.push({
+        id: this.filters.get('id'),
+        status: this.filters.get('status'),
+      })
+      return { data: null, error: null }
+    }
+    if (this.table === 'range_pending_legs' && this.op === 'delete') {
+      this.db.operations.push('cleanup')
+      return { data: [{ id: 'leg-1' }], error: null }
+    }
+    if (this.table === 'range_pending_legs' && this.selected === 'stoploss,takeprofit,cwe_close_price') {
+      this.db.operations.push('sltp-refresh')
+      return { data: { stoploss: 99, takeprofit: 105, cwe_close_price: null }, error: null }
+    }
+    if (this.table === 'signals' && this.selected === 'channel_id') {
+      this.db.operations.push('layer-till-close')
+      return { data: { channel_id: null }, error: null }
+    }
+    if (this.table === 'signals') {
+      this.db.operations.push('signal-stop-refresh')
+      return { data: { channel_id: null, created_at: null, parsed_data: {} }, error: null }
+    }
+    if (this.table === 'broker_accounts') {
+      this.db.operations.push('broker-settings')
+      return { data: { manual_settings: {}, channel_trading_configs: null }, error: null }
+    }
+    if (this.table === 'range_pending_tp_locks') {
+      this.db.operations.push('tp-lock-check')
+      return { data: null, count: 0, error: null }
+    }
+    if (this.table === 'trade_execution_logs' && this.op === 'select') {
+      this.db.operations.push('cap-check')
+      return { data: null, count: 0, error: null }
+    }
+    if (this.table === 'trades' && this.op === 'select') {
+      this.db.operations.push('open-trades-check')
+      return { data: [], error: null }
+    }
+    if (this.table === 'trades' && this.op === 'insert') {
+      this.db.operations.push('trade-insert')
+      return { data: { id: 'trade-1' }, error: null }
+    }
+    if (this.table === 'trade_execution_logs' && this.op === 'insert') {
+      this.db.operations.push('execution-log')
+      return { data: null, error: null }
+    }
+    return { data: null, count: 0, error: null }
+  }
+}
+
+function makeTestLeg(overrides: Partial<TestLeg> = {}): TestLeg {
+  return {
+    id: 'leg-1',
+    signal_id: 'signal-1',
+    user_id: 'user-1',
+    broker_account_id: 'broker-1',
+    metaapi_account_id: 'session-1',
+    symbol: 'XAUUSD',
+    step_idx: 1,
+    is_buy: true,
+    volume: 0.01,
+    anchor_price: 101,
+    trigger_price: 100,
+    stoploss: 99,
+    takeprofit: 105,
+    slippage: 20,
+    comment: null,
+    expert_id: null,
+    expires_at: null,
+    status: 'pending',
+    cwe_close_price: null,
+    ...overrides,
+  }
+}
+
+function makeFireLegHarness(opts: {
+  claimedRow?: { id: string } | null
+  staleReason?: string | null
+  symbolPoint?: number | null
+} = {}): FireLegHarness {
+  process.env.FXSOCKET_API_KEY = process.env.FXSOCKET_API_KEY || 'test-key'
+  const operations: string[] = []
+  let brokerSends = 0
+  const supabase = new FakeSupabase({ operations, claimedRow: opts.claimedRow })
+  const monitor = new VirtualPendingMonitor(supabase as never)
+  const m = monitor as unknown as {
+    getSymbolParams: () => Promise<{ digits: number; point: number | null; minLot: number; lotStep: number; contractSize: null; stopsLevel: number; freezeLevel: number; loadedAt: number }>
+    getStaleLegReason: () => Promise<string | null>
+    sendWithStopsFallback: () => Promise<{ openPrice: number; lots: number }>
+    markLegFiredWithRetry: () => Promise<void>
+    loadManualSettingsForLeg: () => Promise<Record<string, unknown>>
+    fireLeg: FireLegHarness['fireLeg']
+    recordFireLegResult: FireLegHarness['recordFireLegResult']
+  }
+  m.getSymbolParams = async () => {
+    operations.push('symbol-params')
+    return {
+      digits: 2,
+      point: opts.symbolPoint === undefined ? 0.01 : opts.symbolPoint,
+      minLot: 0.01,
+      lotStep: 0.01,
+      contractSize: null,
+      stopsLevel: 0,
+      freezeLevel: 0,
+      loadedAt: Date.now(),
+    }
+  }
+  m.getStaleLegReason = async () => {
+    operations.push('stale-check')
+    return opts.staleReason ?? null
+  }
+  m.sendWithStopsFallback = async () => {
+    operations.push('broker-send')
+    brokerSends += 1
+    return { openPrice: 100, lots: 0.01 }
+  }
+  m.markLegFiredWithRetry = async () => {
+    operations.push('mark-fired')
+  }
+  m.loadManualSettingsForLeg = async () => ({})
+  return {
+    operations,
+    get brokerSends() {
+      return brokerSends
+    },
+    supabase,
+    monitor,
+    fireLeg: m.fireLeg.bind(monitor),
+    recordFireLegResult: m.recordFireLegResult.bind(monitor),
+  }
+}
 
 // Buy ladder = averaging DOWN: trigger fires when bid drops to / below trigger_price.
 test('isTriggered: buy fires when bid <= trigger', () => {
@@ -106,6 +369,109 @@ test('fillWithinTriggerBand: without symbol point only re-checks the trigger', (
     fillWithinTriggerBand({ isBuy: true, triggerPrice: 4109.63, bid: 4111.00, ask: 4111.20, slippagePoints: 20, point: null }).ok,
     false,
   )
+})
+
+test('layerLatencyPayload: calculates critical path durations', () => {
+  const out = layerLatencyPayload({
+    market_tick_received_at: 1000,
+    layer_lookup_started_at: 900,
+    layer_lookup_completed_at: 950,
+    layer_cross_detected_at: 1015,
+    layer_claim_started_at: 1020,
+    layer_claim_acquired_at: 1032,
+    broker_request_started_at: 1100,
+    broker_response_received_at: 1230,
+    pending_leg_updated_at: 1240,
+    layer_reconciled_at: 1300,
+  }, { leg_id: 'leg-1' })
+
+  assert.equal(out.leg_id, 'leg-1')
+  assert.equal(out.tick_to_cross_detection_ms, 15)
+  assert.equal(out.layer_lookup_ms, 50)
+  assert.equal(out.claim_ms, 12)
+  assert.equal(out.cross_to_broker_request_ms, 85)
+  assert.equal(out.broker_response_ms, 130)
+  assert.equal(out.complete_layer_execution_ms, 300)
+})
+
+test('VirtualPendingMonitor.fireLeg: claim occurs before stale basket safety checks', async () => {
+  const h = makeFireLegHarness()
+  const result = await h.fireLeg(makeTestLeg(), 99.9, 100.05)
+
+  assert.equal(result.outcome, 'fired')
+  assert.ok(h.operations.includes('claim'))
+  assert.ok(h.operations.includes('stale-check'))
+  assert.ok(h.operations.indexOf('claim') < h.operations.indexOf('stale-check'))
+  assert.ok(h.operations.indexOf('sltp-refresh') < h.operations.indexOf('stale-check'))
+})
+
+test('VirtualPendingMonitor.fireLeg: losing claimant short-circuits before safety and broker work', async () => {
+  const h = makeFireLegHarness({ claimedRow: null })
+  const result = await h.fireLeg(makeTestLeg(), 99.9, 100.05)
+  const active = new Map<string, Set<number>>([['signal-1|broker-1', new Set([1])]])
+  const fired = new Map<string, Set<number>>()
+  const outcome = h.recordFireLegResult(result, makeTestLeg(), active, fired)
+
+  assert.equal(result.outcome, 'not_claimed')
+  assert.equal(outcome, 'not_claimed')
+  assert.ok(h.operations.includes('claim'))
+  assert.equal(h.operations.includes('stale-check'), false)
+  assert.equal(h.operations.includes('sltp-refresh'), false)
+  assert.equal(h.operations.includes('broker-send'), false)
+  assert.equal(h.brokerSends, 0)
+  assert.deepEqual([...active.get('signal-1|broker-1') ?? []], [1])
+  assert.equal(fired.has('signal-1|broker-1'), false)
+})
+
+test('VirtualPendingMonitor.fireLeg: slipped price releases claimed leg without broker dispatch', async () => {
+  const h = makeFireLegHarness()
+  const result = await h.fireLeg(makeTestLeg(), 99.9, 100.5)
+  const active = new Map<string, Set<number>>([['signal-1|broker-1', new Set([1])]])
+  const fired = new Map<string, Set<number>>()
+  h.recordFireLegResult(result, makeTestLeg(), active, fired)
+
+  assert.deepEqual(result, { outcome: 'skipped', reason: 'fill_outside_trigger_band' })
+  assert.ok(h.operations.indexOf('claim') < h.operations.indexOf('release'))
+  assert.deepEqual(h.supabase.releaseFilters, [{ id: 'leg-1', status: 'claimed' }])
+  assert.equal(h.operations.includes('broker-send'), false)
+  assert.equal(h.brokerSends, 0)
+  assert.deepEqual([...active.get('signal-1|broker-1') ?? []], [1])
+  assert.equal(fired.has('signal-1|broker-1'), false)
+})
+
+test('VirtualPendingMonitor.fireLeg: successful claimant runs safety checks after claim and dispatches once', async () => {
+  const h = makeFireLegHarness()
+  const leg = makeTestLeg()
+  const result = await h.fireLeg(leg, 99.9, 100.05)
+  const active = new Map<string, Set<number>>([['signal-1|broker-1', new Set([1])]])
+  const fired = new Map<string, Set<number>>()
+  const outcome = h.recordFireLegResult(result, leg, active, fired)
+
+  assert.equal(result.outcome, 'fired')
+  assert.equal(outcome, 'fired')
+  assert.ok(h.operations.indexOf('claim') < h.operations.indexOf('stale-check'))
+  assert.ok(h.operations.indexOf('stale-check') < h.operations.indexOf('broker-send'))
+  assert.equal(h.brokerSends, 1)
+  assert.deepEqual([...active.get('signal-1|broker-1') ?? []], [])
+  assert.deepEqual([...fired.get('signal-1|broker-1') ?? []], [1])
+})
+
+test('VirtualPendingMonitor.fireLeg: stale basket cleanup is skipped, not fired', async () => {
+  const h = makeFireLegHarness({ staleReason: 'basket_flat' })
+  const leg = makeTestLeg()
+  const result = await h.fireLeg(leg, 99.9, 100.05)
+  const active = new Map<string, Set<number>>([['signal-1|broker-1', new Set([1])]])
+  const fired = new Map<string, Set<number>>()
+  const outcome = h.recordFireLegResult(result, leg, active, fired)
+
+  assert.deepEqual(result, { outcome: 'skipped', reason: 'basket_flat' })
+  assert.equal(outcome, 'skipped')
+  assert.ok(h.operations.indexOf('claim') < h.operations.indexOf('stale-check'))
+  assert.ok(h.operations.indexOf('stale-check') < h.operations.indexOf('cleanup'))
+  assert.equal(h.operations.includes('broker-send'), false)
+  assert.equal(h.brokerSends, 0)
+  assert.deepEqual([...active.get('signal-1|broker-1') ?? []], [1])
+  assert.equal(fired.has('signal-1|broker-1'), false)
 })
 
 test('evaluateTpTouch: buy basket locks at nearest TP touch', () => {
