@@ -6,8 +6,15 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
+### Added
+
+- Added production-safe correlation and structured observability events across Telegram receipt, parsing, queue handoff, execution claiming, broker dispatch, and completion.
+- Added cumulative histogram-compatible worker metrics for pipeline stage durations and event throughput.
+- Added safe duration and redaction helpers for execution-pipeline observability.
+
 ### Performance
 
+- Added latency measurements for Telegram receipt, parsing, signal persistence, queue wait, execution planning, durable claims, broker readiness, broker requests, broker confirmation, and reconciliation-compatible summaries.
 - Reduced virtual range-layer execution latency by removing duplicated stale-basket reconciliation from the pre-claim execution path.
 - Moved the durable pending-leg claim earlier so only the winning worker performs safety checks and broker dispatch.
 - Added an early trigger-band and slippage check before expensive database safety operations.
@@ -22,6 +29,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Tests
 
+- Added execution-pipeline observability tests for correlation propagation, safe duration handling, redaction, duplicate-prevention events, ambiguous-execution events, and metric/logging failure isolation.
 - Added behavioral tests proving durable claims occur before stale-basket checks.
 - Added tests confirming losing claimants perform no broker or safety work.
 - Added tests for slipped-entry claim release.

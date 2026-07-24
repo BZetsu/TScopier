@@ -71,6 +71,7 @@ import {
   expireWait,
 } from '../signalRangeEntryService'
 import { releaseSignalBrokerDispatchClaim } from './signalBrokerDispatchClaim'
+import { setPipelineTimestamp } from '../pipelineTimestamps'
 
 export type EntryArgs = {
   signal: SignalRow
@@ -246,6 +247,9 @@ export async function prepareEntryExecution(
       || signalEntryRangeStrictEnabled(manual)
     )
 
+  if (signal.pipeline_ts) {
+    setPipelineTimestamp(signal.pipeline_ts, 'broker_resolution_started_at', Date.now())
+  }
   const stampOnResolve = liveEntryFast && !!signal.pipeline_ts
   const sessionPromise = ctx.ensureBrokerSessionLiveFast(api, uuid, broker).then(r => {
     if (stampOnResolve && signal.pipeline_ts && signal.pipeline_ts.t_session_resolved == null) {
@@ -277,7 +281,9 @@ export async function prepareEntryExecution(
     signal.pipeline_ts.t_params_resolved = Date.now()
   }
   if (liveEntryFast && signal.pipeline_ts && signal.pipeline_ts.t_send_caches_resolved == null) {
-    signal.pipeline_ts.t_send_caches_resolved = Date.now()
+    setPipelineTimestamp(signal.pipeline_ts, 'broker_ready_at', Date.now())
+  } else if (!liveEntryFast && signal.pipeline_ts) {
+    setPipelineTimestamp(signal.pipeline_ts, 'broker_ready_at', Date.now())
   }
   if (!sessionOk) {
     await ctx.logSendSkipped(signal, broker, 'broker_session_not_connected', {

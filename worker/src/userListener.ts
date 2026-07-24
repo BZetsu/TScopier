@@ -35,7 +35,12 @@ import { parseChannelMessageSync, parseModificationDeterministic, parseRawChanne
 import { looksLikeTradingSignal, looksLikeTrainingCandidate } from './signalTradingHeuristic'
 import { looksLikeChannelManagementUpdate } from './signalManagementIntent'
 import { normalizeSignalMessageForParse } from './normalizeTelegramMessageText'
-import type { PipelineTimestamps } from './pipelineTimestamps'
+import {
+  buildPipelineCorrelation,
+  emitPipelineEvent,
+  setPipelineTimestamp,
+  type PipelineTimestamps,
+} from './pipelineTimestamps'
 import { incMetric } from './workerMetrics'
 import { workerConfig } from './workerConfig'
 import { isManagementAction, parsedAction } from './tradeSignalActions'
@@ -1956,15 +1961,31 @@ export class UserListener {
     }
 
     const signalId = randomUUID()
-    const pipelineTs: PipelineTimestamps = {
-      t_telegram_event: messageEpochSec > 0 ? messageEpochSec * 1000 : undefined,
-      t_listener_received: tListenerReceived,
+    const pipelineTs: PipelineTimestamps = {}
+    if (messageEpochSec > 0) {
+      setPipelineTimestamp(pipelineTs, 'telegram_source_message_at', messageEpochSec * 1000)
     }
+    setPipelineTimestamp(pipelineTs, 'telegram_message_received_at', tListenerReceived)
+    setPipelineTimestamp(pipelineTs, 'message_normalized_at', Date.now())
+    const correlation = buildPipelineCorrelation({
+      userId: this.userId,
+      signalId,
+      telegramMessageId: messageId,
+      channelId: channelRow.id,
+      dispatchSource: opts?.source ?? 'live',
+    })
+    emitPipelineEvent({
+      event: 'signal_received',
+      correlation,
+      timestamps: pipelineTs,
+      path: opts?.source ?? 'live',
+    })
 
     let parseResult: Awaited<ReturnType<typeof parseChannelMessageSync>>
     let aiMeta: { intent: string; source: string } | undefined
     let channelKeywords: Awaited<ReturnType<typeof getChannelParseContext>>['keywords'] | undefined
     try {
+      setPipelineTimestamp(pipelineTs, 'parse_started_at', Date.now())
       const parsed = await this.parseSignalForListener({
         channelRowId: channelRow.id,
         rawMessage,
@@ -1976,7 +1997,16 @@ export class UserListener {
       aiMeta = parsed.aiMeta
       channelKeywords = parsed.channelKeywords
     } catch (err) {
+      setPipelineTimestamp(pipelineTs, 'parse_completed_at', Date.now())
       const errMsg = err instanceof Error ? err.message : String(err)
+      emitPipelineEvent({
+        event: 'signal_parse_failed',
+        correlation,
+        timestamps: pipelineTs,
+        outcome: 'failed',
+        error_code: errMsg.slice(0, 120),
+        path: opts?.source ?? 'live',
+      })
       console.error(`[userListener] parse failed user=${this.userId} signalId=${signalId}:`, errMsg)
       void this.persistSignalBackground({
         signalId,
@@ -2003,11 +2033,23 @@ export class UserListener {
           status: 'error',
           skip_reason: errMsg,
         },
+        pipelineTs,
       })
       return false
     }
-    pipelineTs.t_parse_done = Date.now()
+    setPipelineTimestamp(pipelineTs, 'parse_completed_at', Date.now())
     if (aiMeta) pipelineTs.t_ai_parse_done = pipelineTs.t_parse_done
+    emitPipelineEvent({
+      event: 'signal_parse_completed',
+      correlation,
+      timestamps: pipelineTs,
+      outcome: parseResult.status,
+      path: opts?.source ?? 'live',
+      extra: {
+        parser: aiMeta?.source ?? 'inline',
+        parse_intent: aiMeta?.intent ?? null,
+      },
+    })
 
     if (!parentSignalId && parseResult.status === 'parsed') {
       const providerNum = (parseResult.parsed as { provider_signal_number?: number | null }).provider_signal_number
@@ -2130,6 +2172,7 @@ export class UserListener {
         replyToMessageId,
         isReply,
         parseResult: effectiveParseResult,
+        pipelineTs,
       })
       return true
     }
@@ -2197,6 +2240,7 @@ export class UserListener {
       replyToMessageId,
       isReply,
       parseResult: effectiveParseResult,
+      pipelineTs,
     })
 
     return true
@@ -2386,6 +2430,7 @@ export class UserListener {
     replyToMessageId: string | null
     isReply: boolean
     parseResult: Awaited<ReturnType<typeof parseChannelMessageSync>>
+    pipelineTs?: PipelineTimestamps
   }): void {
     const {
       signalId,
@@ -2396,8 +2441,10 @@ export class UserListener {
       replyToMessageId,
       isReply,
       parseResult,
+      pipelineTs,
     } = args
     void (async () => {
+      if (pipelineTs) setPipelineTimestamp(pipelineTs, 'signal_persist_started_at', Date.now())
       const rowPatch: Record<string, unknown> = {
         id: signalId,
         user_id: this.userId,
@@ -2411,6 +2458,7 @@ export class UserListener {
         is_modification: isReply,
         parent_signal_id: parentSignalId,
         reply_to_message_id: replyToMessageId,
+        ...(pipelineTs ? { pipeline_ts: pipelineTs } : {}),
       }
       const { error: insertErr } = await this.supabase.from('signals').upsert(
         rowPatch,
@@ -2419,6 +2467,20 @@ export class UserListener {
       if (insertErr) {
         console.error(`[userListener] signal upsert failed signalId=${signalId}:`, insertErr.message)
         return
+      }
+      if (pipelineTs) {
+        setPipelineTimestamp(pipelineTs, 'signal_persist_completed_at', Date.now())
+        emitPipelineEvent({
+          event: 'signal_persisted',
+          correlation: buildPipelineCorrelation({
+            userId: this.userId,
+            signalId,
+            telegramMessageId: messageId,
+            channelId: channelRow.id,
+          }),
+          timestamps: pipelineTs,
+          outcome: parseResult.status,
+        })
       }
       await this.bumpLastSeen(channelRow.id, messageId)
       let resolvedParent = parentSignalId

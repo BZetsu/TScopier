@@ -1,5 +1,6 @@
 import {
   isBrokerDisconnectedMessage,
+  isOrderOpTimedOutMessage,
   FxsocketBrokerClient,
   MtOperation,
 } from '../fxsocketClient'
@@ -19,6 +20,11 @@ import type { FxOpenOrder } from '../engine/fxContract'
 import { SKIP_REASON_ENTRY_NOT_OPENED } from '../manualPlanner'
 import { materializeBrokerRangePendingLegs } from './materializeBrokerRangePendingLegs'
 import type { PreparedEntry } from './entryPrepare'
+import {
+  buildPipelineCorrelation,
+  emitPipelineEvent,
+  setPipelineTimestamp,
+} from '../pipelineTimestamps'
 
 /** Normalized broker fill shape shared by the v1 client and the v2 fxClient. */
 type NormalizedFill = {
@@ -148,22 +154,45 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
       )
     }
     args = clamped.args
+    let sendArgs = args
     const plannedSl = Number(args.stoploss) || 0
     const plannedTp = Number(args.takeprofit) || 0
     const t0 = Date.now()
     if (liveEntryFast && signal.pipeline_ts && signal.pipeline_ts.t_first_broker_send == null) {
-      signal.pipeline_ts.t_first_broker_send = t0
+      setPipelineTimestamp(signal.pipeline_ts, 'broker_request_started_at', t0)
+    } else if (signal.pipeline_ts && signal.pipeline_ts.broker_request_started_at == null) {
+      setPipelineTimestamp(signal.pipeline_ts, 'broker_request_started_at', t0)
     }
 
-    let sendArgs = args
     let stopsFallback = false
     let result: NormalizedFill | null = null
-    let lastAttemptError = ''
+    let lastAttemptError: string
+    let correlation = buildPipelineCorrelation({
+      userId: signal.user_id,
+      signalId: signal.id,
+      channelId: signal.channel_id,
+      telegramMessageId: signal.telegram_message_id,
+      brokerAccountId: broker.id,
+      executionAttemptId: `${signal.id}:${broker.id}:${leg.idx}:1`,
+      brokerRequestId: `${signal.id}:${broker.id}:${leg.idx}`,
+      dispatchSource: signal.dispatch_source,
+    })
 
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
+        const attemptNo = attempt + 1
+        correlation = buildPipelineCorrelation({
+          userId: signal.user_id,
+          signalId: signal.id,
+          channelId: signal.channel_id,
+          telegramMessageId: signal.telegram_message_id,
+          brokerAccountId: broker.id,
+          executionAttemptId: `${signal.id}:${broker.id}:${leg.idx}:${attemptNo}`,
+          brokerRequestId: `${signal.id}:${broker.id}:${leg.idx}`,
+          dispatchSource: signal.dispatch_source,
+        })
         if (useV2) {
-          const r = await getFxClient().orderSend(
+          const sendPromise = getFxClient().orderSend(
             uuid,
             v2Platform,
             {
@@ -179,6 +208,21 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
             },
             { anchorSignalId: signal.id, legIndex: leg.idx, preSnapshot: v2Snapshot },
           )
+          emitPipelineEvent({
+            event: 'broker_request_started',
+            correlation,
+            timestamps: signal.pipeline_ts,
+            outcome: 'started',
+            path: 'fxsocket_v2',
+            extra: {
+              symbol: sendArgs.symbol,
+              operation: sendArgs.operation,
+              leg: leg.idx + 1,
+              total: totalCount,
+              attempt: attemptNo,
+            },
+          }, { deferLog: true })
+          const r = await sendPromise
           if (!r.ok || !r.ticket) throw new Error(r.message || `v2 order_send rejected (${r.retcodeName})`)
           result = {
             ticket: r.ticket,
@@ -188,7 +232,22 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
             lots: r.volume ?? sendArgs.volume,
           }
         } else {
-          const raw = await api.orderSend(uuid, sendArgs)
+          const sendPromise = api.orderSend(uuid, sendArgs)
+          emitPipelineEvent({
+            event: 'broker_request_started',
+            correlation,
+            timestamps: signal.pipeline_ts,
+            outcome: 'started',
+            path: 'fxsocket_v1',
+            extra: {
+              symbol: sendArgs.symbol,
+              operation: sendArgs.operation,
+              leg: leg.idx + 1,
+              total: totalCount,
+              attempt: attemptNo,
+            },
+          }, { deferLog: true })
+          const raw = await sendPromise
           result = {
             ticket: raw.ticket,
             openPrice: raw.openPrice ?? null,
@@ -199,6 +258,7 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
         }
         break
       } catch (err) {
+        setPipelineTimestamp(signal.pipeline_ts ?? (signal.pipeline_ts = {}), 'broker_response_received_at', Date.now())
         lastAttemptError = err instanceof Error ? err.message : String(err)
         const hasStops = (Number(sendArgs.stoploss) || 0) > 0 || (Number(sendArgs.takeprofit) || 0) > 0
         if (attempt === 0 && isInvalidStopsError(lastAttemptError) && hasStops) {
@@ -227,6 +287,20 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
           request_payload: { ...sendArgs, ...orderLogContext } as unknown as Record<string, unknown>,
           error_message: lastAttemptError,
         })
+        emitPipelineEvent({
+          event: isOrderOpTimedOutMessage(lastAttemptError) ? 'execution_ambiguous' : 'broker_request_failed',
+          correlation,
+          timestamps: signal.pipeline_ts,
+          outcome: 'failed',
+          path: useV2 ? 'fxsocket_v2' : 'fxsocket_v1',
+          error_code: lastAttemptError.slice(0, 120),
+          extra: {
+            symbol: sendArgs.symbol,
+            operation: sendArgs.operation,
+            leg: leg.idx + 1,
+            total: totalCount,
+          },
+        })
         return false
       }
     }
@@ -235,8 +309,28 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
 
     const latencyMs = Date.now() - t0
     if (liveEntryFast && signal.pipeline_ts) {
-      signal.pipeline_ts.t_last_broker_send = Date.now()
+      setPipelineTimestamp(signal.pipeline_ts, 'broker_response_received_at', Date.now())
+      setPipelineTimestamp(signal.pipeline_ts, 'broker_execution_confirmed_at', Date.now())
+    } else if (signal.pipeline_ts) {
+      setPipelineTimestamp(signal.pipeline_ts, 'broker_response_received_at', Date.now())
+      setPipelineTimestamp(signal.pipeline_ts, 'broker_execution_confirmed_at', Date.now())
     }
+    emitPipelineEvent({
+      event: 'broker_request_succeeded',
+      correlation,
+      timestamps: signal.pipeline_ts,
+      outcome: 'success',
+      path: useV2 ? 'fxsocket_v2' : 'fxsocket_v1',
+      extra: {
+        broker_ticket: result.ticket,
+        symbol: sendArgs.symbol,
+        operation: sendArgs.operation,
+        leg: leg.idx + 1,
+        total: totalCount,
+        latency_ms: latencyMs,
+        stops_fallback: stopsFallback || undefined,
+      },
+    })
     console.log(
       `[tradeExecutor] OrderSend ok signal=${signal.id} broker=${broker.id} ticket=${result.ticket} leg=${leg.idx + 1}/${totalCount}`
       + ` price=${sendArgs.price ?? 0} ${latencyMs}ms v2=${useV2}${stopsFallback ? ' stops_fallback' : ''}`,
@@ -341,6 +435,9 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
         const tradeRowId = (tradeInsert.data as { id?: string } | null)?.id ?? null
         filledLeg.tradeRowId = tradeRowId
         await persistPostFillDb(tradeRowId)
+        if (signal.pipeline_ts) {
+          setPipelineTimestamp(signal.pipeline_ts, 'execution_state_persisted_at', Date.now())
+        }
       })().catch(err => {
         console.error(
           `[tradeExecutor] post-fill persist failed signal=${signal.id} broker=${broker.id} ticket=${result.ticket}:`,
@@ -361,6 +458,9 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
       filledLeg.tradeRowId = (tradeInsert.data as { id?: string } | null)?.id ?? null
       filledLegs.push(filledLeg)
       await persistPostFillDb(filledLeg.tradeRowId)
+      if (signal.pipeline_ts) {
+        setPipelineTimestamp(signal.pipeline_ts, 'execution_state_persisted_at', Date.now())
+      }
     }
     return true
   }

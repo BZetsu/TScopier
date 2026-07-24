@@ -4,14 +4,18 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { dispatchPriorityForAction, parsedAction } from '../tradeSignalActions'
-import type { PipelineTimestamps } from '../pipelineTimestamps'
+import {
+  buildPipelineCorrelation,
+  emitPipelineEvent,
+  setPipelineTimestamp,
+  type PipelineTimestamps,
+} from '../pipelineTimestamps'
 import type { TradeSignalPushPayload } from '../tradeSignalPush'
 import { xadd } from './redisStreamsClient'
 import {
   buildIdempotencyKey,
   queueLaneForParsed,
   shouldEnqueueForUser,
-  signalQueueConfig,
   streamKeyForLane,
   tradeShardForUser,
   type SignalQueueLane,
@@ -137,13 +141,37 @@ export async function enqueueParsedSignal(
 
   const shardId = tradeShardForUser(row.user_id)
   const streamKey = streamKeyForLane(lane, shardId)
-  const job = buildJob(row, lane)
   const startedAt = Date.now()
+  row.pipeline_ts = setPipelineTimestamp(row.pipeline_ts ?? {}, 'queue_publish_started_at', startedAt)
+  const job = buildJob(row, lane)
+  const correlation = buildPipelineCorrelation({
+    userId: row.user_id,
+    signalId: row.id,
+    channelId: row.channel_id,
+    queueMessageId: job.idempotency_key,
+    dispatchSource: 'redis_stream',
+  })
 
   try {
     const messageId = await xadd(streamKey, serializeJob(job))
+    setPipelineTimestamp(row.pipeline_ts, 'queue_published_at', Date.now())
     incMetric('queue_enqueue_ok')
     const enqueueMs = Date.now() - startedAt
+    emitPipelineEvent({
+      event: 'queue_published',
+      correlation: {
+        ...correlation,
+        queue_message_id: messageId,
+      },
+      timestamps: row.pipeline_ts,
+      outcome: 'success',
+      path: lane,
+      extra: {
+        stream_key: streamKey,
+        shard_id: shardId,
+        priority: job.priority,
+      },
+    })
     void logQueueExecution(supabase, {
       user_id: row.user_id,
       signal_id: row.id,
@@ -164,6 +192,18 @@ export async function enqueueParsedSignal(
   } catch (err) {
     incMetric('queue_enqueue_failed')
     const msg = err instanceof Error ? err.message : String(err)
+    emitPipelineEvent({
+      event: 'queue_published',
+      correlation,
+      timestamps: row.pipeline_ts,
+      outcome: 'failed',
+      path: lane,
+      error_code: msg.slice(0, 120),
+      extra: {
+        stream_key: streamKey,
+        shard_id: shardId,
+      },
+    })
     void logQueueExecution(supabase, {
       user_id: row.user_id,
       signal_id: row.id,
