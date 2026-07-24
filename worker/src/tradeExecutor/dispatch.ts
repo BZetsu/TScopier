@@ -24,7 +24,13 @@ import {
 import { shouldRouteAsBasketParameterRefresh, parsedHasSlOrTp } from '../multiTradeMerge'
 import type { ParsedSignal } from '../manualPlanner'
 import { SKIP_REASON_SIGNAL_ENTRY_REQUIRED, SKIP_REASON_SIGNAL_ENTRY_RANGE_REQUIRED, SKIP_REASON_SIGNAL_ENTRY_RANGE_EXPIRED, SKIP_REASON_ENTRY_NOT_OPENED } from '../manualPlanner'
-import { parsePipelineTimestamps, pipelineSummaryPayload } from '../pipelineTimestamps'
+import {
+  buildPipelineCorrelation,
+  emitPipelineEvent,
+  parsePipelineTimestamps,
+  pipelineSummaryPayload,
+  setPipelineTimestamp,
+} from '../pipelineTimestamps'
 import { signalExecutionProven } from '../signalExecutionProven'
 import { resolveChannelLabelForComment, sanitizeChannelCommentSlug } from '../tradeComment'
 import { isMtUuid, operationFor, brokerHasLinkedSession, brokerSessionUuid } from './helpers'
@@ -438,7 +444,23 @@ export async function handleSignal(ctx: TradeExecutorContext,
         revisionInflightWaitMs(row, opts?.dispatchSource),
       )
     }
-    if (!ctx.claimSignalExecution(row.id)) return
+    if (!ctx.claimSignalExecution(row.id)) {
+      emitPipelineEvent({
+        event: 'execution_duplicate_prevented',
+        correlation: buildPipelineCorrelation({
+          userId: row.user_id,
+          signalId: row.id,
+          channelId: row.channel_id,
+          telegramMessageId: row.telegram_message_id,
+          brokerAccountId: opts?.wakeBrokerAccountId ?? row.wake_broker_account_id,
+          dispatchSource: opts?.dispatchSource,
+        }),
+        timestamps: row.pipeline_ts,
+        outcome: 'inflight',
+        path: opts?.dispatchSource ?? 'executor',
+      })
+      return
+    }
 
     if (await loadCachedUserCopierPaused(ctx.supabase, row.user_id)) {
       ctx.inflight.delete(row.id)
@@ -457,6 +479,7 @@ export async function handleSignal(ctx: TradeExecutorContext,
     }
 
     const handleStartMs = Date.now()
+    setPipelineTimestamp(row.pipeline_ts ?? (row.pipeline_ts = {}), 'execution_planning_started_at', handleStartMs)
     const isRangeWake = opts?.dispatchSource === SIGNAL_RANGE_WAKE_DISPATCH_SOURCE
     const liveFast = isRangeWake
       || (opts?.liveDispatch === true && opts?.lightIdempotency === true)
@@ -795,6 +818,7 @@ export async function handleSignal(ctx: TradeExecutorContext,
           sameSignalRefresh: isMessageRevision,
         })),
       )
+      setPipelineTimestamp(row.pipeline_ts ?? (row.pipeline_ts = {}), 'execution_planning_completed_at', Date.now())
       if (liveFast && row.pipeline_ts) {
         row.pipeline_ts.t_order_send_done = Date.now()
       }
@@ -1005,6 +1029,21 @@ export async function handleSignal(ctx: TradeExecutorContext,
           ...pipelineOutcome,
         })
       }
+      emitPipelineEvent({
+        event: pipelineOutcome.any_opened === true ? 'execution_completed' : 'execution_skipped',
+        correlation: buildPipelineCorrelation({
+          userId: row.user_id,
+          signalId: row.id,
+          channelId: row.channel_id,
+          telegramMessageId: row.telegram_message_id,
+          brokerAccountId: opts?.wakeBrokerAccountId ?? row.wake_broker_account_id,
+          dispatchSource: opts?.dispatchSource,
+        }),
+        timestamps: row.pipeline_ts,
+        outcome: pipelineOutcome.any_opened === true ? 'success' : 'skipped',
+        path: liveFast ? 'live_fast' : liveMgmtFast ? 'management_fast' : 'queued',
+        extra: summaryExtra,
+      })
       ctx.inflight.delete(row.id)
       ctx.queuedIds.delete(row.id)
     }
