@@ -361,7 +361,7 @@ export class UserListener {
     this.userId = userId
     this.supabase = supabase
     this.client = adoptedClient ?? buildClient(sessionString)
-    this.client.onError = (err: Error) => {
+    this.client.onError = async (err: Error) => {
       if (err?.message?.includes('TIMEOUT') && this.isConnected) {
         console.warn(`[userListener] _updateLoop TIMEOUT for ${this.userId} — requesting reconnect`)
         this.requestReconnect('update_loop_timeout')
