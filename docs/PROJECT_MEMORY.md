@@ -2,6 +2,30 @@
 
 ## Changelog
 
+### 2026-07-24 — Fixed _updateLoop TIMEOUT handler: missing `await` broke reconnect
+
+- **Context:** The `onError` TIMEOUT handler pushed to staging (commit 0218a215) called `this.requestReconnect()` without `await`. The `_updateLoop` would continue pinging on the dead connection while `forceReconnect` ran in the background. The `this.isConnected` guard then made things worse — after the first TIMEOUT, `forceReconnect` set `isConnected = false`, and all subsequent TIMEOUTs were silently skipped. The loop kept spinning forever on TIMEOUTs.
+- **Changes:** Added `await` before `this.requestReconnect()` so the old `_updateLoop` blocks until the reconnect completes. Removed `this.isConnected` guard — `reconnectInFlight` dedup already prevents concurrent reconnects.
+- **Files:** `worker/src/userListener.ts:364`
+- **Follow-up:** Pushed directly to `upstream/dev` and `upstream/staging` (both at `b3a8f38a`). Staging logs verified: no TIMEOUT errors after deploy.
+
+### 2026-07-24 — Promoted QR login AUTH_KEY_UNREGISTERED fix to staging
+
+- **Context:** The fix was previously committed to `upstream/dev` only. `upstream/staging` was behind `dev` and missing this fix.
+- **Changes:** Pushed to `upstream/staging` along with the TIMEOUT handler fix. Both branches now identical at `b3a8f38a`.
+
+### 2026-07-24 — Added pipeline_ts column to signals table on staging Supabase
+
+- **Context:** Staging logs showed `Could not find the 'pipeline_ts' column of 'signals' in the schema cache`. The column existed on `channel_signals` (canonical) but not on `signals` (per-user projection). The listener code writes `pipeline_ts` on signal upsert.
+- **Changes:** Created and applied migration `20260724120000_signals_pipeline_ts.sql` on staging project `axdcledcyhyvzrnfkwat`. Column `pipeline_ts jsonb` added to `signals` table.
+- **Files:** `supabase/migrations/20260724120000_signals_pipeline_ts.sql`
+- **Follow-up:** Ensure this migration is included in future PRs to avoid reapplying.
+
+### 2026-07-24 — Identified missing TRADE_WORKER_URL on staging listener
+
+- **Context:** Staging logs show `[tradeSignalPush] no trade worker URL for action=sell user=ed0ab337... — set TRADE_WORKER_URL / TRADE_MGMT_WORKER_URL on listener`. Listener cannot forward signals to trade worker.
+- **Fix:** Set Railway secrets on listener service: `TRADE_WORKER_URL=https://tscopier-staging.up.railway.app` and `TRADE_MGMT_WORKER_URL=https://tscopier-staging.up.railway.app`.
+
 ### 2026-07-24 — Fixed QR login AUTH_KEY_UNREGISTERED death spiral
 
 - **Context:** User `4d2c9a06` attempted QR login, but the Telegram auth key was already unregistered. `onError` handler in `runQrLoginBackground` returned `false` (meaning "not fatal, keep trying"), so GramJS looped `account.GetPassword` → `AUTH_KEY_UNREGISTERED` → `onError` forever, spamming logs every ~200ms.
