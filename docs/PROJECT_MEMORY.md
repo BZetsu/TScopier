@@ -2,6 +2,17 @@
 
 ## Changelog
 
+### 2026-07-27 — Section 6 scale validation: prod data copied to staging, listener restart triggered
+
+- **Context:** Set up 59 synthetic sessions + 170 channels on staging by copying production data safely (no session strings, all PII blanked). Deleted 34 orphaned synthetic users from earlier failed script runs. Ready to monitor.
+- **Changes:**
+  - Created `scripts/section6-scale-test.js` — idempotent script that exports production sessions/channels/profiles, creates staging auth users (detects existing by email), upserts data, removes orphans
+  - Ran script: 59 sessions, 170 channels, 59 profiles inserted into staging. 34 orphan profiles deleted.
+  - Fixed `worker/Dockerfile` — `COPY scripts ./scripts` before `npm ci` in both build and runtime stages (postinstall patch script was missing, causing Railway build failure)
+- **Files:** `scripts/section6-scale-test.js`, `worker/Dockerfile`, `docs/weekly-plan-2026-07-27.md`, `docs/weekly-plan-2026-07-27.pdf`
+- **Verification:** 62 sessions (3 real + 59 synthetic), 62 profiles, 174 channels on staging. 0 orphans. All 3 real staging users intact.
+- **Follow-up:** Monitor staging for 4h (6.3), then production rollout (6.4).
+
 ### 2026-07-27 — Completed remaining fix items 2.4, 3.2, + patch script security
 
 - **Context:** After Emma's PRs #47 and #48, items 2.4 and 3.2 were still PARTIAL. Completed them plus hardened the patch script.
