@@ -11,6 +11,7 @@ import {
   buildClient,
   isAuthKeyDuplicated,
   isAuthKeyUnregistered,
+  isMalformedRpcResult,
   rethrowIfSessionInvalid,
   TelegramSessionInvalidError,
   tgInvoke,
@@ -188,6 +189,20 @@ function reconnectCooldownMs(): number {
   return Math.max(500, Math.min(120_000, Number(process.env.TELEGRAM_RECONNECT_COOLDOWN_MS ?? 3500)))
 }
 
+function malformedRpcResultMaxRecoveries(): number {
+  return Math.max(
+    1,
+    Math.min(100, Math.floor(Number(process.env.TELEGRAM_MALFORMED_RPC_MAX_RECOVERIES ?? 10))),
+  )
+}
+
+function malformedRpcResultRecoveryWindowMs(): number {
+  return Math.max(
+    60_000,
+    Math.min(60 * 60_000, Number(process.env.TELEGRAM_MALFORMED_RPC_RECOVERY_WINDOW_MS ?? 10 * 60_000)),
+  )
+}
+
 function startConnectJitterMaxMs(): number {
   return Math.max(0, Math.min(30_000, Number(process.env.TELEGRAM_START_JITTER_MAX_MS ?? 2000)))
 }
@@ -339,6 +354,8 @@ export class UserListener {
   private lastSavedSession: string
   private clientGeneration = 0
   private stopping = false
+  private malformedRpcRecoveryCount = 0
+  private lastMalformedRpcRecoveryAt = 0
   private onSignalParsed: ((row: SignalRow) => boolean) | null = null
   /** Recent live message ids — avoids a Supabase round-trip on hot-path dedup. */
   private liveMessageDedup = new Map<string, number>()
@@ -363,6 +380,10 @@ export class UserListener {
     this.supabase = supabase
     this.client = adoptedClient ?? buildClient(sessionString)
     this.client.onError = async (err: Error) => {
+      if (isMalformedRpcResult(err)) {
+        await this.noteMalformedRpcResult(err)
+        return
+      }
       if (err?.message?.includes('TIMEOUT')) {
         console.warn(`[userListener] _updateLoop TIMEOUT for ${this.userId} — requesting reconnect`)
         await this.requestReconnect('update_loop_timeout')
@@ -3562,6 +3583,38 @@ export class UserListener {
       this.reconnectInFlight = null
     })
     return this.reconnectInFlight
+  }
+
+  private async noteMalformedRpcResult(err: unknown): Promise<void> {
+    const now = Date.now()
+    if (now - this.lastMalformedRpcRecoveryAt > malformedRpcResultRecoveryWindowMs()) {
+      this.malformedRpcRecoveryCount = 0
+    }
+    this.lastMalformedRpcRecoveryAt = now
+    this.malformedRpcRecoveryCount += 1
+    this.isConnected = false
+    this.connectionTrace('malformed_rpc_result_detected', {
+      attempt: this.malformedRpcRecoveryCount,
+      max: malformedRpcResultMaxRecoveries(),
+      error: err,
+    })
+    if (this.malformedRpcRecoveryCount > malformedRpcResultMaxRecoveries()) {
+      console.error(
+        `[userListener] malformed Telegram RPC result recovery exhausted for ${this.userId}`
+        + ` (${this.malformedRpcRecoveryCount}/${malformedRpcResultMaxRecoveries()}) — invalidating session`,
+      )
+      this.connectionTrace('recovery_invalidated', {
+        source: 'malformed_rpc_result',
+        attempts: this.malformedRpcRecoveryCount,
+      })
+      setImmediate(() => this.onAuthKeyDuplicatedRecoveryExhausted?.(this.userId, 'malformed_rpc_result'))
+      return
+    }
+    console.warn(
+      `[userListener] malformed Telegram RPC result for ${this.userId}`
+      + ` (${this.malformedRpcRecoveryCount}/${malformedRpcResultMaxRecoveries()}) — reconnecting`,
+    )
+    await this.requestReconnect('malformed_rpc_result')
   }
 
   private async forceReconnect(reason = 'force') {

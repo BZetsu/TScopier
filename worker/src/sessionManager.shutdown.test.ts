@@ -90,10 +90,15 @@ describe('UserSessionManager shutdown', () => {
 describe('UserListener AUTH_KEY_DUPLICATED lifecycle', () => {
   function makeListener(connect: () => Promise<void>, exhausted?: (userId: string, reason: string) => void) {
     const supabase = makeSupabase()
+    const events: string[] = []
     const client = {
       connected: true,
-      connect,
-      disconnect: async () => {},
+      onError: undefined as undefined | ((err: Error) => Promise<void>),
+      connect: async () => {
+        events.push('connect')
+        await connect()
+      },
+      disconnect: async () => { events.push('disconnect') },
       session: { save: () => 'changed-session' },
     }
     const listener = new UserListener('user-a', 'saved-session', supabase as never, client as never, exhausted)
@@ -111,7 +116,7 @@ describe('UserListener AUTH_KEY_DUPLICATED lifecycle', () => {
     anyListener.refreshChannelSubscription = async () => {}
     anyListener.runReplyChainSweep = async () => {}
     anyListener.runRecentCatchUp = async () => {}
-    return { listener, anyListener }
+    return { listener, anyListener, client, events }
   }
 
   it('repeated force reconnect calls cannot create overlapping clients', async () => {
@@ -200,6 +205,89 @@ describe('UserListener AUTH_KEY_DUPLICATED lifecycle', () => {
       else process.env.TELEGRAM_RECONNECT_COOLDOWN_MS = prevCooldown
       if (prevMax == null) delete process.env.TELEGRAM_AUTH_DUP_MAX_RECOVERY_ATTEMPTS
       else process.env.TELEGRAM_AUTH_DUP_MAX_RECOVERY_ATTEMPTS = prevMax
+    }
+  })
+
+  it('malformed RPC result triggers reconnect after closing the current client', async () => {
+    const prevCooldown = process.env.TELEGRAM_RECONNECT_COOLDOWN_MS
+    const prevMax = process.env.TELEGRAM_MALFORMED_RPC_MAX_RECOVERIES
+    process.env.TELEGRAM_RECONNECT_COOLDOWN_MS = '500'
+    process.env.TELEGRAM_MALFORMED_RPC_MAX_RECOVERIES = '10'
+    try {
+      let connectCalls = 0
+      const { listener, anyListener, client, events } = makeListener(async () => { connectCalls += 1 })
+
+      await client.onError?.(Object.assign(new Error('GRAMJS_MALFORMED_RPC_RESULT: invalid RPC result body'), {
+        code: 'GRAMJS_MALFORMED_RPC_RESULT',
+      }))
+
+      assert.equal(connectCalls, 1)
+      assert.deepEqual(events.slice(0, 2), ['disconnect', 'connect'])
+      assert.equal(listener.isTelegramConnected(), true)
+      await anyListener.stop()
+    } finally {
+      if (prevCooldown == null) delete process.env.TELEGRAM_RECONNECT_COOLDOWN_MS
+      else process.env.TELEGRAM_RECONNECT_COOLDOWN_MS = prevCooldown
+      if (prevMax == null) delete process.env.TELEGRAM_MALFORMED_RPC_MAX_RECOVERIES
+      else process.env.TELEGRAM_MALFORMED_RPC_MAX_RECOVERIES = prevMax
+    }
+  })
+
+  it('concurrent malformed RPC errors do not create duplicate Telegram clients', async () => {
+    const prevCooldown = process.env.TELEGRAM_RECONNECT_COOLDOWN_MS
+    const prevMax = process.env.TELEGRAM_MALFORMED_RPC_MAX_RECOVERIES
+    process.env.TELEGRAM_RECONNECT_COOLDOWN_MS = '500'
+    process.env.TELEGRAM_MALFORMED_RPC_MAX_RECOVERIES = '10'
+    try {
+      let connectCalls = 0
+      const { anyListener, client } = makeListener(async () => {
+        connectCalls += 1
+        await delay(20)
+      })
+      const err = Object.assign(new Error('GRAMJS_MALFORMED_RPC_RESULT: invalid RPC result body'), {
+        code: 'GRAMJS_MALFORMED_RPC_RESULT',
+      })
+
+      await Promise.all([client.onError?.(err), client.onError?.(err)])
+
+      assert.equal(connectCalls, 1)
+      await anyListener.stop()
+    } finally {
+      if (prevCooldown == null) delete process.env.TELEGRAM_RECONNECT_COOLDOWN_MS
+      else process.env.TELEGRAM_RECONNECT_COOLDOWN_MS = prevCooldown
+      if (prevMax == null) delete process.env.TELEGRAM_MALFORMED_RPC_MAX_RECOVERIES
+      else process.env.TELEGRAM_MALFORMED_RPC_MAX_RECOVERIES = prevMax
+    }
+  })
+
+  it('repeated malformed RPC responses use bounded recovery', async () => {
+    const prevCooldown = process.env.TELEGRAM_RECONNECT_COOLDOWN_MS
+    const prevMax = process.env.TELEGRAM_MALFORMED_RPC_MAX_RECOVERIES
+    process.env.TELEGRAM_RECONNECT_COOLDOWN_MS = '500'
+    process.env.TELEGRAM_MALFORMED_RPC_MAX_RECOVERIES = '1'
+    const exhausted: Array<{ userId: string; reason: string }> = []
+    try {
+      let connectCalls = 0
+      const { listener, client } = makeListener(
+        async () => { connectCalls += 1 },
+        (userId, reason) => exhausted.push({ userId, reason }),
+      )
+      const err = Object.assign(new Error('GRAMJS_MALFORMED_RPC_RESULT: invalid RPC result body'), {
+        code: 'GRAMJS_MALFORMED_RPC_RESULT',
+      })
+
+      await client.onError?.(err)
+      await client.onError?.(err)
+      await delay(10)
+
+      assert.equal(connectCalls, 1)
+      assert.equal(listener.isTelegramConnected(), false)
+      assert.deepEqual(exhausted, [{ userId: 'user-a', reason: 'malformed_rpc_result' }])
+    } finally {
+      if (prevCooldown == null) delete process.env.TELEGRAM_RECONNECT_COOLDOWN_MS
+      else process.env.TELEGRAM_RECONNECT_COOLDOWN_MS = prevCooldown
+      if (prevMax == null) delete process.env.TELEGRAM_MALFORMED_RPC_MAX_RECOVERIES
+      else process.env.TELEGRAM_MALFORMED_RPC_MAX_RECOVERIES = prevMax
     }
   })
 })
