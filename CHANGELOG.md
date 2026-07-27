@@ -16,6 +16,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 ### Fixed
 
 - Increased Railway Telegram shutdown drain behavior to wait about 30 seconds, await all listener/auth disconnects, release owned session leases, and prevent reconnects from starting during shutdown.
+- Patched GramJS RPC result handling to reject malformed or empty Telegram response bodies before BinaryReader decoding and trigger bounded listener reconnect recovery.
 
 ### Performance
 
