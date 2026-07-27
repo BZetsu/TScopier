@@ -27,6 +27,7 @@ import {
   type DesiredLegTarget,
 } from './reconciler'
 import { type BasketOpenLeg, closeStaleOpenTrades, loadOpenBasketLegs } from '../basketSlTpReconcile'
+import { stripInvalidStopsForSide } from '../channelActiveTradeParams'
 import { resolveEffectiveBasketStops, type EffectiveStopSource } from '../basketEffectiveStops'
 import { brokerSessionUuid } from '../tradeExecutor/helpers'
 import { hasFxsocketConfigured } from '../fxsocketClient'
@@ -137,6 +138,33 @@ export function buildDesiredLegTargets(args: {
     out.push({ ticket, stoploss: sl, takeProfit: fillTp })
   }
   return out
+}
+
+function filterDirectionallyValidModifies(
+  modifies: { ticket: number; stoploss: number | null; takeProfit: number | null }[],
+  snapshot: FxOpenOrder[],
+  isBuy: boolean,
+): typeof modifies {
+  const byTicket = new Map<number, FxOpenOrder>()
+  for (const o of snapshot) byTicket.set(o.ticket, o)
+  return modifies.filter(m => {
+    const o = byTicket.get(m.ticket)
+    if (!o) return false
+    const ref = o.openPrice ?? 0
+    if (!Number.isFinite(ref) || ref <= 0) return true
+    const wantSl = m.stoploss != null && m.stoploss > 0 ? m.stoploss : 0
+    const wantTp = m.takeProfit != null && m.takeProfit > 0 ? m.takeProfit : 0
+    if (wantSl === 0 && wantTp === 0) return false
+    const stripped = stripInvalidStopsForSide({
+      stoploss: wantSl,
+      takeprofit: wantTp,
+      referencePrice: ref,
+      isBuy,
+    })
+    if (m.stoploss != null && m.stoploss > 0 && stripped.stoploss === 0) return false
+    if (m.takeProfit != null && m.takeProfit > 0 && stripped.takeprofit === 0) return false
+    return true
+  })
 }
 
 type BasketKey = { brokerAccountId: string; anchorSignalId: string; symbol: string; isBuy: boolean }
@@ -285,6 +313,7 @@ export class V2ReconcileMonitor {
       openOrders: snapshot,
       trackedTickets,
     })
+    actions.modifies = filterDirectionallyValidModifies(actions.modifies, snapshot, basket.isBuy)
     // Orphan adoption is log-only on the first management-first run.
     const orphanCount = actions.adopt.length
     actions.adopt = []

@@ -6,6 +6,7 @@ exports.buildDesiredLegTargets = buildDesiredLegTargets;
 const fxClient_1 = require("./fxClient");
 const reconciler_1 = require("./reconciler");
 const basketSlTpReconcile_1 = require("../basketSlTpReconcile");
+const channelActiveTradeParams_1 = require("../channelActiveTradeParams");
 const basketEffectiveStops_1 = require("../basketEffectiveStops");
 const helpers_1 = require("../tradeExecutor/helpers");
 const fxsocketClient_1 = require("../fxsocketClient");
@@ -101,6 +102,34 @@ function buildDesiredLegTargets(args) {
         out.push({ ticket, stoploss: sl, takeProfit: fillTp });
     }
     return out;
+}
+function filterDirectionallyValidModifies(modifies, snapshot, isBuy) {
+    const byTicket = new Map();
+    for (const o of snapshot)
+        byTicket.set(o.ticket, o);
+    return modifies.filter(m => {
+        const o = byTicket.get(m.ticket);
+        if (!o)
+            return false;
+        const ref = o.openPrice ?? 0;
+        if (!Number.isFinite(ref) || ref <= 0)
+            return true;
+        const wantSl = m.stoploss != null && m.stoploss > 0 ? m.stoploss : 0;
+        const wantTp = m.takeProfit != null && m.takeProfit > 0 ? m.takeProfit : 0;
+        if (wantSl === 0 && wantTp === 0)
+            return false;
+        const stripped = (0, channelActiveTradeParams_1.stripInvalidStopsForSide)({
+            stoploss: wantSl,
+            takeprofit: wantTp,
+            referencePrice: ref,
+            isBuy,
+        });
+        if (m.stoploss != null && m.stoploss > 0 && stripped.stoploss === 0)
+            return false;
+        if (m.takeProfit != null && m.takeProfit > 0 && stripped.takeprofit === 0)
+            return false;
+        return true;
+    });
 }
 /** The single management-first reconcile loop for v2 brokers. */
 class V2ReconcileMonitor {
@@ -247,6 +276,7 @@ class V2ReconcileMonitor {
             openOrders: snapshot,
             trackedTickets,
         });
+        actions.modifies = filterDirectionallyValidModifies(actions.modifies, snapshot, basket.isBuy);
         // Orphan adoption is log-only on the first management-first run.
         const orphanCount = actions.adopt.length;
         actions.adopt = [];

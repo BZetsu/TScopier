@@ -60,6 +60,12 @@ async function seedV2EntryDesiredState(ctx, row, parsed, brokers) {
     for (const b of brokers) {
         if (!(0, executionMode_1.isV2)({ brokerAccountId: b.id, userId: row.user_id }))
             continue;
+        const isBuy = String(parsed.action ?? '').toLowerCase() === 'buy';
+        const refPrice = (v) => {
+            const n = typeof v === 'number' ? v : Number(v ?? 0);
+            return Number.isFinite(n) && n > 0 ? n : null;
+        };
+        const ref = refPrice(parsed.entry_price) ?? refPrice(parsed.entry_zone_low) ?? refPrice(parsed.entry_zone_high);
         await (0, basketTargetStore_1.upsertBasketSlTpTarget)(ctx.supabase, {
             userId: row.user_id,
             brokerAccountId: b.id,
@@ -70,6 +76,8 @@ async function seedV2EntryDesiredState(ctx, row, parsed, brokers) {
             tpLevels: tps.length ? tps : null,
             source: 'entry',
             instructionAt: row.created_at,
+            isBuy,
+            referencePrice: ref,
         }).catch(() => { });
     }
 }
