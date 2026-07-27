@@ -1,7 +1,10 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  authKeyDupMaxRecoveryAttempts,
+  authKeyDupReconnectDelayMs,
   authKeyDupReconnectDelaysMs,
+  redactTelegramConnectionLog,
   shouldEmitAuthKeyDupEvent,
 } from './authKeyDuplicatedRecovery'
 
@@ -20,14 +23,66 @@ describe('shouldEmitAuthKeyDupEvent', () => {
 })
 
 describe('authKeyDupReconnectDelaysMs', () => {
-  it('starts with cooldown then auth-dup delay then longer waits', () => {
-    assert.deepEqual(authKeyDupReconnectDelaysMs(3500, 10_000), [3500, 10_000, 15_000, 30_000])
+  it('uses the cooldown once, then the named auth-dup delay', () => {
+    assert.deepEqual(authKeyDupReconnectDelaysMs(3500, 30_000, 4), [3500, 30_000, 30_000, 30_000])
   })
 
   it('clamps extreme inputs', () => {
-    const delays = authKeyDupReconnectDelaysMs(1, 1)
+    const delays = authKeyDupReconnectDelaysMs(1, 1, 4)
     assert.equal(delays[0], 500)
     assert.equal(delays[1], 2000)
     assert.equal(delays.length, 4)
+  })
+
+  it('bounds retries to the configured maximum', () => {
+    assert.equal(authKeyDupReconnectDelaysMs(3500, 30_000, 10).length, 10)
+  })
+})
+
+describe('authKeyDupReconnectDelayMs', () => {
+  it('defaults to about 30 seconds instead of the old 8 second path', () => {
+    const prev = process.env.TELEGRAM_AUTH_DUP_RECONNECT_DELAY_MS
+    delete process.env.TELEGRAM_AUTH_DUP_RECONNECT_DELAY_MS
+    try {
+      assert.equal(authKeyDupReconnectDelayMs(), 30_000)
+    } finally {
+      if (prev == null) delete process.env.TELEGRAM_AUTH_DUP_RECONNECT_DELAY_MS
+      else process.env.TELEGRAM_AUTH_DUP_RECONNECT_DELAY_MS = prev
+    }
+  })
+
+  it('reads the named environment override', () => {
+    const prev = process.env.TELEGRAM_AUTH_DUP_RECONNECT_DELAY_MS
+    process.env.TELEGRAM_AUTH_DUP_RECONNECT_DELAY_MS = '45000'
+    try {
+      assert.equal(authKeyDupReconnectDelayMs(), 45_000)
+    } finally {
+      if (prev == null) delete process.env.TELEGRAM_AUTH_DUP_RECONNECT_DELAY_MS
+      else process.env.TELEGRAM_AUTH_DUP_RECONNECT_DELAY_MS = prev
+    }
+  })
+})
+
+describe('authKeyDupMaxRecoveryAttempts', () => {
+  it('defaults to 10 cycles', () => {
+    const prev = process.env.TELEGRAM_AUTH_DUP_MAX_RECOVERY_ATTEMPTS
+    delete process.env.TELEGRAM_AUTH_DUP_MAX_RECOVERY_ATTEMPTS
+    try {
+      assert.equal(authKeyDupMaxRecoveryAttempts(), 10)
+    } finally {
+      if (prev == null) delete process.env.TELEGRAM_AUTH_DUP_MAX_RECOVERY_ATTEMPTS
+      else process.env.TELEGRAM_AUTH_DUP_MAX_RECOVERY_ATTEMPTS = prev
+    }
+  })
+})
+
+describe('redactTelegramConnectionLog', () => {
+  it('removes likely auth/session strings and phone-like numbers', () => {
+    const msg = redactTelegramConnectionLog(
+      'AUTH_KEY_DUPLICATED session=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=ABCDEFGHIJKLMNOPQRSTUVWXYZ phone=12345678901',
+    )
+    assert.equal(msg.includes('ABCDEFGHIJKLMNOPQRSTUVWXYZ'), false)
+    assert.equal(msg.includes('12345678901'), false)
+    assert.match(msg, /\[redacted\]/)
   })
 })

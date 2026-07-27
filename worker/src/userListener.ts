@@ -16,8 +16,10 @@ import {
   tgInvoke,
 } from './telegramClient'
 import {
-  authKeyDupDeferredRetryMs,
+  authKeyDupMaxRecoveryAttempts,
+  authKeyDupReconnectDelayMs,
   authKeyDupReconnectDelaysMs,
+  redactTelegramConnectionLog,
   shouldEmitAuthKeyDupEvent,
 } from './authKeyDuplicatedRecovery'
 import { tradeableFromParsed } from './backtestSignal'
@@ -27,7 +29,6 @@ import { signalQueueConfig } from './queue/signalQueueConfig'
 import {
   pushParsedSignalToTradeWorker,
   pushParsedSignalToTradeWorkerAccept,
-  pushParsedSignalToTradeWorkerAwait,
 } from './tradeSignalPush'
 import { persistListenerEvent } from './listenerEvents'
 import { getChannelParseContext, invalidateChannelParseCache } from './channelKeywordsCache'
@@ -187,10 +188,6 @@ function reconnectCooldownMs(): number {
   return Math.max(500, Math.min(120_000, Number(process.env.TELEGRAM_RECONNECT_COOLDOWN_MS ?? 3500)))
 }
 
-const AUTH_KEY_DUP_RECONNECT_DELAY_MS = Math.max(
-  2_000, Math.min(30_000, Number(process.env.TELEGRAM_AUTH_DUP_RECONNECT_DELAY_MS ?? 10_000)),
-)
-
 function startConnectJitterMaxMs(): number {
   return Math.max(0, Math.min(30_000, Number(process.env.TELEGRAM_START_JITTER_MAX_MS ?? 2000)))
 }
@@ -215,6 +212,8 @@ export interface ListenerStatus {
 export interface StartOptions {
   alreadyConnected?: boolean
 }
+
+export type AuthKeyDuplicatedExhaustedHandler = (userId: string, reason: string) => void
 
 interface ChannelRow {
   id: string
@@ -337,8 +336,9 @@ export class UserListener {
   /** Rate-limit AUTH_KEY_DUPLICATED poll_error rows (safety+fast poll can fire every few seconds). */
   private lastAuthKeyDupPollErrorAt = 0
   private lastAuthKeyDupLogAt = 0
-  private deferredAuthKeyDupRetryTimer: NodeJS.Timeout | null = null
   private lastSavedSession: string
+  private clientGeneration = 0
+  private stopping = false
   private onSignalParsed: ((row: SignalRow) => boolean) | null = null
   /** Recent live message ids — avoids a Supabase round-trip on hot-path dedup. */
   private liveMessageDedup = new Map<string, number>()
@@ -357,6 +357,7 @@ export class UserListener {
     sessionString: string,
     supabase: SupabaseClient,
     adoptedClient?: TelegramClient,
+    private onAuthKeyDuplicatedRecoveryExhausted?: AuthKeyDuplicatedExhaustedHandler,
   ) {
     this.userId = userId
     this.supabase = supabase
@@ -375,6 +376,16 @@ export class UserListener {
     this.onSignalParsed = handler
   }
 
+  private connectionTrace(event: string, detail?: Record<string, unknown>): void {
+    const suffix = detail
+      ? ` ${Object.entries(detail).map(([k, v]) => `${k}=${redactTelegramConnectionLog(v)}`).join(' ')}`
+      : ''
+    console.log(
+      `[telegram-conn] event=${event} worker=${workerConfig.instanceId}`
+      + ` user=${this.userId} generation=${this.clientGeneration}${suffix}`,
+    )
+  }
+
   // ── lifecycle ─────────────────────────────────────────────────────────
 
   async start(opts: StartOptions = {}) {
@@ -385,17 +396,25 @@ export class UserListener {
         if (jitter > 0) await new Promise(r => setTimeout(r, jitter))
       }
       try {
+        this.clientGeneration += 1
+        this.connectionTrace('connect_start', { source: 'initial' })
         await this.client.connect()
       } catch (err) {
         if (isAuthKeyUnregistered(err)) throw new TelegramSessionInvalidError()
         if (isAuthKeyDuplicated(err)) {
+          this.connectionTrace('auth_key_duplicated_detected', { source: 'initial' })
+          const authDupDelayMs = authKeyDupReconnectDelayMs()
           console.warn(
             `[userListener] AUTH_KEY_DUPLICATED on initial connect for ${this.userId}`
-            + ` — old session still releasing; waiting ${AUTH_KEY_DUP_RECONNECT_DELAY_MS}ms then retrying`,
+            + ` — old session still releasing; waiting ${authDupDelayMs}ms then retrying`,
           )
           incMetric('auth_key_duplicated')
+          this.connectionTrace('disconnect_start', { source: 'initial_auth_dup' })
           try { await this.client.disconnect() } catch { /* ignore */ }
-          await new Promise(r => setTimeout(r, AUTH_KEY_DUP_RECONNECT_DELAY_MS))
+          this.connectionTrace('disconnect_complete', { source: 'initial_auth_dup' })
+          await new Promise(r => setTimeout(r, authDupDelayMs))
+          this.clientGeneration += 1
+          this.connectionTrace('connect_start', { source: 'initial_auth_dup_retry', attempt: 2 })
           await this.client.connect()
         } else {
           throw err
@@ -426,11 +445,8 @@ export class UserListener {
   }
 
   async stop() {
+    this.stopping = true
     try {
-      if (this.deferredAuthKeyDupRetryTimer) {
-        clearTimeout(this.deferredAuthKeyDupRetryTimer)
-        this.deferredAuthKeyDupRetryTimer = null
-      }
       if (this.userProfilesCopierPauseChannel) {
         await this.supabase.removeChannel(this.userProfilesCopierPauseChannel)
         this.userProfilesCopierPauseChannel = null
@@ -443,10 +459,16 @@ export class UserListener {
       this.stopTimer('signalReconcileSweepTimer')
       this.stopTimer('entityWarmupTimer')
       this.removeCurrentHandler()
+      if (this.reconnectInFlight) {
+        await this.reconnectInFlight.catch(() => {})
+      }
       await this.persistSessionIfChanged()
+      this.connectionTrace('disconnect_start', { source: 'stop' })
       await this.client.disconnect()
-    } catch {
-      // ignore disconnect errors
+      this.connectionTrace('disconnect_complete', { source: 'stop' })
+    } catch (err) {
+      this.connectionTrace('disconnect_failed', { source: 'stop', error: err })
+      throw err
     } finally {
       this.isConnected = false
       this.clearDialogsCache()
@@ -476,6 +498,7 @@ export class UserListener {
    * skips disconnected users — without this they stay offline until process restart).
    */
   requestReconnectIfDisconnected(reason = 'disconnected_recovery'): void {
+    if (this.stopping) return
     if (this.isConnected) return
     void this.requestReconnect(reason)
   }
@@ -797,29 +820,40 @@ export class UserListener {
       + ' — disconnecting, waiting for old session to release, then reconnecting',
     )
     incMetric('auth_key_duplicated')
-    const delays = [
-      AUTH_KEY_DUP_RECONNECT_DELAY_MS,
-      15_000,
-      15_000,
-    ]
+    this.connectionTrace('auth_key_duplicated_detected', { source: 'getDialogs' })
+    const delays = authKeyDupReconnectDelaysMs(
+      reconnectCooldownMs(),
+      authKeyDupReconnectDelayMs(),
+      authKeyDupMaxRecoveryAttempts(),
+    )
     let lastErr: unknown
     for (let attempt = 0; attempt < delays.length; attempt++) {
       this.isConnected = false
+      this.connectionTrace('disconnect_start', { source: `getDialogs:retry_${attempt + 1}` })
       try { await this.client.disconnect() } catch { /* ignore */ }
+      this.connectionTrace('disconnect_complete', { source: `getDialogs:retry_${attempt + 1}` })
       await new Promise(r => setTimeout(r, delays[attempt]))
+      if (this.stopping) break
       try {
+        this.clientGeneration += 1
+        this.connectionTrace('connect_start', { source: 'getDialogs', attempt: attempt + 1 })
         await this.client.connect()
         this.isConnected = true
-        return await this.fetchAllDialogs()
+        const dialogs = await this.fetchAllDialogs()
+        this.connectionTrace('recovery_complete', { source: 'getDialogs', attempt: attempt + 1 })
+        return dialogs
       } catch (err) {
         lastErr = err
         if (!isAuthKeyDuplicated(err)) rethrowIfSessionInvalid(err)
+        this.connectionTrace('auth_key_duplicated_retry', { source: 'getDialogs', attempt: attempt + 1 })
         console.warn(
           `[userListener] AUTH_KEY_DUPLICATED reconnect attempt ${attempt + 1}/${delays.length}`
           + ` for ${this.userId}`,
         )
       }
     }
+    this.connectionTrace('recovery_invalidated', { source: 'getDialogs', attempts: delays.length })
+    setImmediate(() => this.onAuthKeyDuplicatedRecoveryExhausted?.(this.userId, 'getDialogs'))
     throw lastErr
   }
 
@@ -3202,7 +3236,6 @@ export class UserListener {
       return await this.client.getInputEntity(key)
     } catch (err) {
       rethrowIfSessionInvalid(err)
-      throw new Error('Failed to resolve Telegram channel entity')
     }
   }
 
@@ -3412,7 +3445,6 @@ export class UserListener {
         })()
         if (msgEpochSec && msgEpochSec < sinceEpochSec) {
           // We've reached older-than-lookback history.
-          offsetId = Number(batch[batch.length - 1].id)
           break
         }
         collected.push(m)
@@ -3500,6 +3532,7 @@ export class UserListener {
     if (shouldEmitAuthKeyDupEvent(this.lastAuthKeyDupLogAt, now, 30_000)) {
       this.lastAuthKeyDupLogAt = now
       incMetric('auth_key_duplicated')
+      this.connectionTrace('auth_key_duplicated_detected', { source })
       console.warn(
         `[userListener] AUTH_KEY_DUPLICATED (${source}) for ${this.userId}`
         + ' — marking disconnected and reconnecting',
@@ -3518,11 +3551,12 @@ export class UserListener {
       })
     }
     // Avoid awaiting/nesting the in-flight reconnect (e.g. warmEntityCache during forceReconnect).
-    if (this.reconnectInFlight) return
+    if (this.reconnectInFlight || this.stopping) return
     void this.requestReconnect(`auth_key_duplicated:${source}`)
   }
 
   private requestReconnect(reason: string): Promise<void> {
+    if (this.stopping) return Promise.resolve()
     if (this.reconnectInFlight) return this.reconnectInFlight
     this.reconnectInFlight = this.forceReconnect(reason).finally(() => {
       this.reconnectInFlight = null
@@ -3530,47 +3564,39 @@ export class UserListener {
     return this.reconnectInFlight
   }
 
-  private scheduleDeferredAuthKeyDupRetry(): void {
-    if (this.deferredAuthKeyDupRetryTimer) return
-    const delayMs = authKeyDupDeferredRetryMs()
-    console.warn(
-      `[userListener] AUTH_KEY_DUPLICATED recovery exhausted for ${this.userId}`
-      + ` — scheduling another reconnect in ${delayMs}ms`,
-    )
-    this.deferredAuthKeyDupRetryTimer = setTimeout(() => {
-      this.deferredAuthKeyDupRetryTimer = null
-      if (this.isConnected) return
-      void this.requestReconnect('auth_key_duplicated_deferred')
-    }, delayMs)
-    this.deferredAuthKeyDupRetryTimer.unref?.()
-  }
-
   private async forceReconnect(reason = 'force') {
     console.log(`[userListener] force reconnect for ${this.userId} reason=${reason}`)
-    if (this.deferredAuthKeyDupRetryTimer) {
-      clearTimeout(this.deferredAuthKeyDupRetryTimer)
-      this.deferredAuthKeyDupRetryTimer = null
-    }
     this.clearDialogsCache()
     this.lastReconnectAt = Date.now()
     this.consecutiveProbeFailures = 0
     this.isConnected = false
+    this.connectionTrace('disconnect_start', { source: reason })
     try { await this.client.disconnect() } catch { /* ignore */ }
+    this.connectionTrace('disconnect_complete', { source: reason })
+    if (this.stopping) return
 
-    const delays = authKeyDupReconnectDelaysMs(reconnectCooldownMs(), AUTH_KEY_DUP_RECONNECT_DELAY_MS)
+    const delays = authKeyDupReconnectDelaysMs(
+      reconnectCooldownMs(),
+      authKeyDupReconnectDelayMs(),
+      authKeyDupMaxRecoveryAttempts(),
+    )
     let lastErr: unknown
     for (let attempt = 0; attempt < delays.length; attempt++) {
       await new Promise(r => setTimeout(r, delays[attempt]))
+      if (this.stopping) return
       try {
+        this.clientGeneration += 1
+        this.connectionTrace('connect_start', { source: reason, attempt: attempt + 1 })
         await this.client.connect()
         this.isConnected = true
         lastErr = undefined
+        this.connectionTrace('recovery_complete', { source: reason, attempt: attempt + 1 })
         break
       } catch (err) {
         lastErr = err
         console.error(
           `[userListener] reconnect attempt ${attempt + 1}/${delays.length} failed for ${this.userId}:`,
-          err instanceof Error ? err.message : String(err),
+          redactTelegramConnectionLog(err),
         )
         if (isAuthKeyUnregistered(err)) return
         if (!isAuthKeyDuplicated(err)) {
@@ -3578,20 +3604,24 @@ export class UserListener {
           continue
         }
         incMetric('auth_key_duplicated')
+        this.connectionTrace('auth_key_duplicated_retry', { source: reason, attempt: attempt + 1 })
         console.warn(
           `[userListener] AUTH_KEY_DUPLICATED reconnect attempt ${attempt + 1}/${delays.length}`
           + ` for ${this.userId}`,
         )
+        this.connectionTrace('disconnect_start', { source: `${reason}:retry_${attempt + 1}` })
         try { await this.client.disconnect() } catch { /* ignore */ }
+        this.connectionTrace('disconnect_complete', { source: `${reason}:retry_${attempt + 1}` })
       }
     }
 
     if (!this.isConnected) {
       console.error(
         `[userListener] reconnect failed for ${this.userId}:`,
-        lastErr instanceof Error ? lastErr.message : String(lastErr ?? 'unknown'),
+        redactTelegramConnectionLog(lastErr ?? 'unknown'),
       )
-      this.scheduleDeferredAuthKeyDupRetry()
+      this.connectionTrace('recovery_invalidated', { source: reason, attempts: delays.length })
+      setImmediate(() => this.onAuthKeyDuplicatedRecoveryExhausted?.(this.userId, reason))
       return
     }
 
@@ -3603,7 +3633,6 @@ export class UserListener {
     // deliver NewMessage events for all monitored channels.
     await this.warmEntityCache()
     if (!this.isConnected) {
-      this.scheduleDeferredAuthKeyDupRetry()
       return
     }
     await this.refreshChannelSubscription()
