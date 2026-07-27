@@ -17,6 +17,10 @@ export function buildClient(sessionString: string = ''): TelegramClient {
   if (!API_ID || !API_HASH) {
     throw new Error('TELEGRAM_API_ID / TELEGRAM_API_HASH must be set in env')
   }
+  const fp = sessionString.length > 8
+    ? `${sessionString.slice(0, 4)}...${sessionString.slice(-4)}`
+    : 'empty'
+  console.log(`[telegram-conn] event=build_client session_fingerprint=${fp} api_id=${API_ID}`)
   return new TelegramClient(
     new StringSession(sessionString),
     API_ID,

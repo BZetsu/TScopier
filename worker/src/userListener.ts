@@ -384,7 +384,16 @@ export class UserListener {
         await this.noteMalformedRpcResult(err)
         return
       }
-      if (err?.message?.includes('TIMEOUT')) {
+      const msg = err?.message ?? ''
+      if (msg.includes('readUInt32LE') || msg.includes('Cannot read properties of undefined')) {
+        console.warn(
+          `[userListener] raw GramJS BinaryReader crash for ${this.userId}`
+          + ` — treating as malformed RPC result`,
+        )
+        await this.noteMalformedRpcResult(err)
+        return
+      }
+      if (msg.includes('TIMEOUT')) {
         console.warn(`[userListener] _updateLoop TIMEOUT for ${this.userId} — requesting reconnect`)
         await this.requestReconnect('update_loop_timeout')
       }

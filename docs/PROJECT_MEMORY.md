@@ -2,6 +2,57 @@
 
 ## Changelog
 
+### 2026-07-27 — Completed remaining fix items 2.4, 3.2, + patch script security
+
+- **Context:** After Emma's PRs #47 and #48, items 2.4 and 3.2 were still PARTIAL. Completed them plus hardened the patch script.
+- **Changes:**
+  - **2.4:** Added `[telegram-conn]` connect-trace log in `telegramClient.ts:buildClient()` with redacted session fingerprint (`worker/src/telegramClient.ts`)
+  - **3.2:** Added `readUInt32LE` / `Cannot read properties of undefined` raw error string fallbacks in `onError` handler, routing to `noteMalformedRpcResult` (`worker/src/userListener.ts`)
+  - **Patch script security:** Added version assertion (checks telegram package version matches 2.26.22), post-application content verification (verifies markers exist after patching), and enhanced `--check` mode (`worker/scripts/apply-node-module-patches.cjs`)
+- **Files:** `worker/src/telegramClient.ts`, `worker/src/userListener.ts`, `worker/scripts/apply-node-module-patches.cjs`, `docs/weekly-plan-2026-07-27.md`
+- **Verification:** All 6 existing patch tests pass. Patch script runs clean with `--check` and without. Post-patch verification confirms markers present.
+- **Follow-up:** Ready to promote dev → staging and start Section 4 (CHANNEL_INVALID).
+
+### 2026-07-27 — Verified all claims in weekly plan, regenerated PDF, fixed 3 doc inaccuracies
+
+- **Context:** Ran comprehensive claim verification across all 6 sections of `docs/weekly-plan-2026-07-27.md` using 5 explore subagents. Found and fixed 3 inaccuracies. Regenerated the PDF with proper wkhtmltopdf CSS (tighter margins, no squished content, proper line spacing, table page-break handling).
+- **Verification results:**
+  - **Section 1 (merge staging):** ALL CONFIRMED — 16 commits ahead, 9 specific hashes on staging, migration file exists, auth fixes on both branches via different hashes
+  - **Section 2 (AUTH_KEY_DUPLICATED):** ALL CONFIRMED — SIGTERM handler at 258, AUTH_KEY_DUP_RECONNECT_DELAY_MS at 190-192, hardcoded 8_000 at sessionManager.ts:784, orphaned lease path in startListener, infinite forceReconnect loop at userListener.ts:3548-3617. Also discovered: drain timeout capped at 10_000ms via Math.min(10_000, ...) — item 2.1 must also remove/increase this cap. releaseAllLeases() does not exist (needs creation).
+  - **Section 3 (BinaryReader crash):** BinaryReader guard gap CONFIRMED at lines 545 and 568. _recvLoop error handler PARTIALLY REFUTED — log is at line 451 (not 441), RPCError handled without logging, outer catch (line 375) returns instead of continuing.
+  - **Section 4 (CHANNEL_INVALID):** ALL CONFIRMED — resolveChannelPeer at 3175 has no CHANNEL_INVALID handling, ensureJoinedPublicChannel at 2896 suppresses USER_ALREADY_PARTICIPANT/CHANNELS_TOO_MUCH/INVITE_HASH_EMPTY but not CHANNEL_INVALID, zero CHANNEL_INVALID references across entire codebase.
+  - **Section 5 (Realtime reconnect):** subscribeToChannelChanges guard at 336 CONFIRMED. subscribeToAuthPendingChanges guard variable name REFUTED — uses `this.authPendingChannel` not `this.channelChannel` (line 364). CLOSED/CHANNEL_ERROR only log warnings, no reference clearing — CONFIRMED.
+  - **Sections 1 & 6 (commits, migrations):** ALL CONFIRMED — all 16 commits on staging, migration file present.
+- **Doc fixes applied:**
+  1. Section 2: Added caveat about `Math.min(10_000, ...)` cap on drain timeout
+  2. Section 3: Fixed _recvLoop catch line from 441 to 451, added detail about two catch blocks
+  3. Section 5: Fixed guard variable name from `this.channelChannel` to `this.authPendingChannel`, added correct line 364
+- **PDF regeneration:** Created custom CSS with @page { margin: 5mm 6mm }, body line-height 1.6, font-size 9pt, table row page-break-inside:avoid, thead table-header-group. Overrode pandoc default `max-width: 36em` which was causing squished content. 4 pages, clean rendering.
+- **Files:** `docs/weekly-plan-2026-07-27.md`, `docs/weekly-plan-2026-07-27.pdf`
+- **Follow-up:** Ready for implementation — each section's fix items are independently actionable.
+
+### 2026-07-27 — Production log analysis: found 3 gaps in weekly plan, added items 2.5, 2.6, and BinaryReader line fix
+
+- **Context:** Reviewed fresh production log stream from the user. Identified 3 patterns not fully covered in the existing plan:
+  1. **Lease cleanup race on startup (2.5):** The `disconnectAll()` in shutdown only releases leases for listeners in the in-memory map. Sessions mid-connect or errored leave orphaned leases that block the new worker for up to 41s.
+  2. **Stale "auth in progress" state (2.6):** Once a session exhausts AUTH_KEY_DUPLICATED retries, it falls into `auth_pending` state and gets skipped every `syncSessions()` cycle forever. The user sees "linking Telegram" in the UI but never recovers.
+  3. **BinaryReader line number (Section 3):** The crash is at `MTProtoSender.js:546` (the `!state` branch), not `:568` (the `state` branch). Both branches lack a guard, but the active path is 546.
+- **Changes:**
+  - Added items 2.5 and 2.6 to `docs/weekly-plan-2026-07-27.md`
+  - Fixed BinaryReader line reference in Section 3 from `:568` to `:546`
+- **Files:** `docs/weekly-plan-2026-07-27.md`
+- **Follow-up:** Start implementing Section 1 (merge staging → production). Then proceed through Sections 2-6 in order.
+
+### 2026-07-27 — Documented weekly plan: production vs staging gap analysis + 6-section fix checklist
+
+- **Context:** Analyzed production logs (53 sessions, build channel-scoped-listener-1) vs staging logs (3 sessions). Mapped every production error to root cause and staging fix status. Documented what's on staging that production needs, plus the 5 remaining unfixed production issues.
+- **Changes:**
+  - Created `docs/weekly-plan-2026-07-27.md` — comprehensive checklist with 6 sections, each containing: plain English fix description, technical detail, plain English explanation, user impact, expected outcome, and actionable checklist items
+  - Key finding: Only TIMEOUT handler fix (`b3a8f38a`) and QR login fix (`ef01e883`) are ready to merge from staging. AUTH_KEY_DUPLICATED, BinaryReader crash, CHANNEL_INVALID, and Realtime subscription reconnect gap all need new code.
+  - Last production merge was PR #43 (`01a2d913`) — auth-fixes-to-main on Jul 23.
+- **Files:** `docs/weekly-plan-2026-07-27.md`
+- **Follow-up:** Week 1 implementation — start with Section 1 (merge staging) then proceed through remaining sections.
+
 ### 2026-07-24 — Fixed _updateLoop TIMEOUT handler: missing `await` broke reconnect
 
 - **Context:** The `onError` TIMEOUT handler pushed to staging (commit 0218a215) called `this.requestReconnect()` without `await`. The `_updateLoop` would continue pinging on the dead connection while `forceReconnect` ran in the background. The `this.isConnected` guard then made things worse — after the first TIMEOUT, `forceReconnect` set `isConnected = false`, and all subsequent TIMEOUTs were silently skipped. The loop kept spinning forever on TIMEOUTs.

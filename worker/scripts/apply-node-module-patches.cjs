@@ -3,6 +3,9 @@ const path = require('node:path')
 
 const root = path.resolve(__dirname, '..')
 const senderPath = path.join(root, 'node_modules', 'telegram', 'network', 'MTProtoSender.js')
+const telegramPkgPath = path.join(root, 'node_modules', 'telegram', 'package.json')
+
+const EXPECTED_TELEGRAM_VERSION = '2.26.22'
 
 const helperAnchor = 'var MsgsAck = tl_1.Api.MsgsAck;\n'
 const helperPatch = `var MsgsAck = tl_1.Api.MsgsAck;
@@ -50,12 +53,42 @@ const newUnmatched = '                const body = rpcResultBodyOrThrow(result, 
 const oldMatched = '                const reader = new extensions_1.BinaryReader(result.body);\n                const read = state.request.readResult(reader);\n'
 const newMatched = '                const body = rpcResultBodyOrThrow(result, state, this._log);\n                const reader = new extensions_1.BinaryReader(body);\n                const read = state.request.readResult(reader);\n'
 
+const postCheckMarkers = [
+  'rpcResultBodyOrThrow(result, state, this._log)',
+  'MALFORMED_RPC_RESULT_ERROR',
+]
+
 function fail(message) {
   console.error(`[patch-node-modules] ${message}`)
   process.exit(1)
 }
 
+function checkTelegramVersion() {
+  if (!fs.existsSync(telegramPkgPath)) {
+    fail(`Missing ${telegramPkgPath}; run npm install in worker first.`)
+  }
+  const pkg = JSON.parse(fs.readFileSync(telegramPkgPath, 'utf8'))
+  const version = pkg.version
+  if (version !== EXPECTED_TELEGRAM_VERSION) {
+    console.warn(
+      `[patch-node-modules] WARNING: telegram package version ${version}`
+      + ` does not match expected ${EXPECTED_TELEGRAM_VERSION}`
+      + ` — patch may need updating`,
+    )
+  }
+}
+
+function verifyPatched(source) {
+  for (const marker of postCheckMarkers) {
+    if (!source.includes(marker)) {
+      fail(`Post-patch verification failed: marker "${marker}" not found after patching`)
+    }
+  }
+}
+
 function applyPatch({ checkOnly = false } = {}) {
+  checkTelegramVersion()
+
   if (!fs.existsSync(senderPath)) {
     fail(`Missing ${senderPath}; run npm install in worker first.`)
   }
@@ -66,6 +99,7 @@ function applyPatch({ checkOnly = false } = {}) {
 
   if (alreadyPatched) {
     console.log('[patch-node-modules] telegram MTProtoSender malformed RPC body guard already applied')
+    verifyPatched(source)
     return
   }
   if (checkOnly) {
@@ -80,6 +114,8 @@ function applyPatch({ checkOnly = false } = {}) {
   source = source.replace(helperAnchor, helperPatch)
   source = source.replace(oldMatched, newMatched)
   source = source.replace(oldUnmatched, newUnmatched)
+
+  verifyPatched(source)
 
   fs.writeFileSync(senderPath, source)
   console.log('[patch-node-modules] applied telegram MTProtoSender malformed RPC body guard')
