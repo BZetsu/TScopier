@@ -4,6 +4,7 @@ FROM node:20-alpine AS build
 WORKDIR /app
 
 COPY package.json package-lock.json* ./
+COPY scripts ./scripts
 RUN npm ci --no-audit --no-fund
 
 COPY tsconfig.json ./
@@ -20,6 +21,7 @@ WORKDIR /app
 RUN apk add --no-cache wget
 
 COPY package.json package-lock.json* ./
+COPY scripts ./scripts
 RUN npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
 
 COPY --from=build /app/dist ./dist
