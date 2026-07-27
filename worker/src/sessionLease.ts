@@ -155,6 +155,21 @@ export async function releaseSessionLease(supabase: SupabaseClient, userId: stri
     .eq('worker_id', workerId)
 }
 
+export async function releaseOwnedSessionLeases(
+  supabase: SupabaseClient,
+  userIds?: string[],
+): Promise<void> {
+  const workerId = listenerWorkerId()
+  let q = supabase
+    .from('worker_session_leases')
+    .delete()
+    .eq('worker_id', workerId)
+  if (userIds && userIds.length > 0) {
+    q = q.in('user_id', [...new Set(userIds)])
+  }
+  await q
+}
+
 /** Trade workers: true when a listener shard holds a fresh lease (Telegram path is live). */
 export async function isTelegramListenerLiveForUser(
   supabase: SupabaseClient,
@@ -220,6 +235,17 @@ export async function listActiveLeases(
   const { data } = await supabase
     .from('worker_session_leases')
     .select('*')
+    .gt('expires_at', new Date().toISOString())
+  return (data ?? []) as SessionLeaseRow[]
+}
+
+export async function listOwnedActiveLeases(
+  supabase: SupabaseClient,
+): Promise<SessionLeaseRow[]> {
+  const { data } = await supabase
+    .from('worker_session_leases')
+    .select('*')
+    .eq('worker_id', listenerWorkerId())
     .gt('expires_at', new Date().toISOString())
   return (data ?? []) as SessionLeaseRow[]
 }

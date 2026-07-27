@@ -11,6 +11,11 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - Added production-safe correlation and structured observability events across Telegram receipt, parsing, queue handoff, execution claiming, broker dispatch, and completion.
 - Added cumulative histogram-compatible worker metrics for pipeline stage durations and event throughput.
 - Added safe duration and redaction helpers for execution-pipeline observability.
+- Added bounded, redacted Telegram connection tracing and AUTH_KEY_DUPLICATED recovery invalidation so users are prompted to reconnect after repeated duplicate-auth failures.
+
+### Fixed
+
+- Increased Railway Telegram shutdown drain behavior to wait about 30 seconds, await all listener/auth disconnects, release owned session leases, and prevent reconnects from starting during shutdown.
 
 ### Performance
 
