@@ -54,7 +54,7 @@ import {
   isIncomingRevisionStale,
   isOpenAiRateLimitMessage,
   loadSignalByTelegramMessage,
-  revisionCompletesSettleableEntry,
+  revisionHasDeterministicActionableParse,
   storedMessageDiffersFromTelegram,
   updateSignalAfterRevision,
 } from './signalRevision'
@@ -1390,15 +1390,50 @@ export class UserListener {
               prior_parsed_data: (existing.parsed_data ?? null) as Record<string, unknown> | null,
             },
           })
-          parseResult = universal.parseResult
-          aiResult = {
-            parsed: universal.parseResult.parsed as Awaited<ReturnType<typeof aiParseModification>>['parsed'],
-            status: universal.parseResult.status === 'parsed' ? 'parsed' : 'skipped',
-            skip_reason: universal.parseResult.skip_reason,
-            intent: universal.intent.kind === 'commentary' ? 'commentary' : universal.intent.kind === 'ignore' ? 'ignore' : 'modify',
-            typo_corrected: false,
-            confidence: universal.intent.confidence,
-            source: universal.source === 'openai' ? 'openai' : 'deterministic',
+          if (universal.parseResult.status === 'parsed' && universal.parseResult.parsed.action !== 'ignore') {
+            parseResult = universal.parseResult
+            aiResult = {
+              parsed: universal.parseResult.parsed as Awaited<ReturnType<typeof aiParseModification>>['parsed'],
+              status: 'parsed',
+              skip_reason: null,
+              intent: universal.intent.kind === 'commentary' ? 'commentary' : universal.intent.kind === 'ignore' ? 'ignore' : 'modify',
+              typo_corrected: false,
+              confidence: universal.intent.confidence,
+              source: universal.source === 'openai' ? 'openai' : 'deterministic',
+            }
+          } else {
+            // Universal/OpenAI unavailable or non-actionable — fall back to full
+            // deterministic entry/mgmt parse so SL/TP ladder edits still apply.
+            const detFallback = await this.tryDeterministicRevisionCompletion({
+              channelRowId: channelRow.id,
+              rawMessage,
+              existingParsed: (existing.parsed_data ?? null) as Record<string, unknown> | null,
+            })
+            if (detFallback) {
+              parseResult = detFallback
+              aiResult = {
+                parsed: detFallback.parsed as Awaited<ReturnType<typeof aiParseModification>>['parsed'],
+                status: 'parsed',
+                skip_reason: null,
+                intent: 'parameter_refresh',
+                typo_corrected: false,
+                confidence: typeof detFallback.parsed.confidence === 'number'
+                  ? detFallback.parsed.confidence
+                  : 1,
+                source: 'deterministic',
+              }
+            } else {
+              parseResult = universal.parseResult
+              aiResult = {
+                parsed: universal.parseResult.parsed as Awaited<ReturnType<typeof aiParseModification>>['parsed'],
+                status: universal.parseResult.status === 'parsed' ? 'parsed' : 'skipped',
+                skip_reason: universal.parseResult.skip_reason,
+                intent: universal.intent.kind === 'commentary' ? 'commentary' : universal.intent.kind === 'ignore' ? 'ignore' : 'modify',
+                typo_corrected: false,
+                confidence: universal.intent.confidence,
+                source: universal.source === 'openai' ? 'openai' : 'deterministic',
+              }
+            }
           }
         } else {
           aiResult = await aiParseModification(this.supabase, {
@@ -1602,8 +1637,8 @@ export class UserListener {
   }): Promise<Awaited<ReturnType<typeof parseChannelMessageSync>> | null> {
     const { keywords, lexicon } = await getChannelParseContext(this.supabase, args.channelRowId)
     const det = parseChannelMessageSync(args.rawMessage, keywords, lexicon)
-    if (det.status !== 'parsed') return null
-    if (!revisionCompletesSettleableEntry(args.existingParsed, det.parsed)) return null
+    if (det.status !== 'parsed' || det.parsed.action === 'ignore') return null
+    if (!revisionHasDeterministicActionableParse(args.existingParsed, det.parsed)) return null
     return det
   }
 

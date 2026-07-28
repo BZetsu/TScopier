@@ -7,7 +7,7 @@ import {
   mergeParsedWithChannelParams,
 } from './channelActiveTradeParams'
 import { shouldRouteAsBasketParameterRefresh } from './multiTradeMerge'
-import { entryDispatchLooksSettleable, revisionCompletesSettleableEntry } from './signalRevision'
+import { entryDispatchLooksSettleable, revisionCompletesSettleableEntry, revisionHasDeterministicActionableParse } from './signalRevision'
 import { messageRevisionBypassesMergeLinking } from './signalMergeLink'
 import { signalLooksLikeTeaserBasket } from './signalTelegramReconcile'
 
@@ -40,6 +40,28 @@ describe('SIGNALS PRO edit flow', () => {
     assert.equal(shouldPreferParsedStopsOnEntry(full.parsed), true)
     const teaser = parseChannelMessageSync(SIGNALS_PRO_TEASER, DEFAULT_CHANNEL_KEYWORDS, null)
     assert.equal(revisionCompletesSettleableEntry(teaser.parsed, full.parsed), true)
+  })
+
+  it('edited SL/TP ladder on complete entry is deterministic without AI', () => {
+    const prior = parseChannelMessageSync(
+      'Gold sell now\nTP: 4046/4043/4042\nSL: 4055',
+      DEFAULT_CHANNEL_KEYWORDS,
+      null,
+    )
+    const edited = parseChannelMessageSync(
+      'Gold sell now\nTP: 4046/4043/4040\nSL: 4052',
+      DEFAULT_CHANNEL_KEYWORDS,
+      null,
+    )
+    assert.equal(prior.status, 'parsed')
+    assert.equal(edited.status, 'parsed')
+    assert.equal(edited.parsed.sl, 4052)
+    assert.deepEqual(edited.parsed.tp, [4046, 4043, 4040])
+    assert.equal(revisionCompletesSettleableEntry(prior.parsed, edited.parsed), false)
+    assert.equal(
+      revisionHasDeterministicActionableParse(prior.parsed, edited.parsed),
+      true,
+    )
   })
 
   it('full buy-now message does not route as parameter refresh but has explicit stops', () => {

@@ -33,6 +33,7 @@ const signalQueueConfig_1 = require("./queue/signalQueueConfig");
 const queueHealth_1 = require("./queue/queueHealth");
 const monitorWorkWake_1 = require("./monitorWorkWake");
 const tradeLogRetention_1 = require("./tradeLogRetention");
+const workerShutdown_1 = require("./workerShutdown");
 if (!globalThis.WebSocket) {
     globalThis.WebSocket = ws_1.default;
 }
@@ -214,7 +215,7 @@ async function main() {
     const shutdown = async (signal) => {
         console.log(`[worker] ${signal} received, shutting down...`);
         httpServer?.close();
-        authService?.shutdown();
+        await authService?.shutdown();
         stopWorkWake?.();
         stopLogRetention?.();
         (0, queueHealth_1.setQueueMetricsProvider)(null);
@@ -225,7 +226,9 @@ async function main() {
         if (workerConfig_1.workerConfig.runsListener) {
             await sessionManager.disconnectAll();
         }
-        await new Promise(r => setTimeout(r, Math.min(10000, Number(process.env.TELEGRAM_SHUTDOWN_DRAIN_MS ?? 8000))));
+        const drainMs = (0, workerShutdown_1.telegramShutdownDrainMs)();
+        console.log(`[worker] Telegram shutdown drain ${drainMs}ms before exit`);
+        await new Promise(r => setTimeout(r, drainMs));
         process.exit(0);
     };
     process.on('SIGTERM', () => { shutdown('SIGTERM').catch(() => process.exit(1)); });
