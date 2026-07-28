@@ -24,6 +24,9 @@ export type ListenerEventType =
   | 'signal_reconcile_checked'
   | 'channel_shadow_mismatch'
   | 'channel_reconcile_mismatch'
+  | 'channel_invalid_detected'
+  | 'channel_auto_disabled'
+  | 'channel_reactivated'
 
 export async function persistListenerEvent(
   supabase: SupabaseClient,

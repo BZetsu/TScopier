@@ -17,6 +17,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 - Increased Railway Telegram shutdown drain behavior to wait about 30 seconds, await all listener/auth disconnects, release owned session leases, and prevent reconnects from starting during shutdown.
 - Patched GramJS RPC result handling to reject malformed or empty Telegram response bodies before BinaryReader decoding and trigger bounded listener reconnect recovery.
+- Auto-disables Telegram channel subscriptions after repeated confirmed `CHANNEL_INVALID`/stale-username failures, records a safe reconnect-required event, and keeps healthy channel polling moving.
 
 ### Performance
 
