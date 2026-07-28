@@ -888,6 +888,17 @@ export class VirtualPendingMonitor {
       return { outcome: 'skipped', reason: 'not_triggered' }
     }
 
+    // Flat/stale BEFORE claim — never OrderSend (or claim) when the basket is gone.
+    const staleBeforeClaim = await this.getStaleLegReason(leg, api, leg.metaapi_account_id)
+    if (staleBeforeClaim) {
+      await deleteRangePendingLegsForBasket(
+        this.supabase,
+        { signalId: leg.signal_id, brokerAccountId: leg.broker_account_id },
+        staleBeforeClaim,
+      )
+      return { outcome: 'skipped', reason: staleBeforeClaim }
+    }
+
     timestamps.layer_claim_started_at = Date.now()
     const { data: claimed, error: claimErr } = await this.supabase
       .from('range_pending_legs')
@@ -1037,6 +1048,7 @@ export class VirtualPendingMonitor {
       // best-effort — fire with stops from pending leg row
     }
 
+    // Re-check after claim — basket may have flattened while we held the claim.
     const staleReason = await this.getStaleLegReason(leg, api, leg.metaapi_account_id)
     if (staleReason) {
       await deleteRangePendingLegsForBasket(

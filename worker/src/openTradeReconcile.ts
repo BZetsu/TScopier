@@ -6,9 +6,11 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FxsocketBrokerClient } from './fxsocketClient'
 import { closeStaleOpenTrades, fetchOpenBrokerTicketsStrict } from './basketSlTpReconcile'
+import { purgeRangePendingLegsForBaskets, type BasketScope } from './rangePendingLegDelete'
 
 export type OpenTradeReconcileRow = {
   id: string
+  signal_id?: string | null
   broker_account_id: string | null
   metaapi_order_id: string | null
 }
@@ -25,6 +27,19 @@ export function findGhostOpenTradeIds(
     if (!brokerTickets.has(ticket)) ghostIds.push(trade.id)
   }
   return ghostIds
+}
+
+function basketScopesForGhosts(openTrades: OpenTradeReconcileRow[], ghostIds: string[]): BasketScope[] {
+  const ghostSet = new Set(ghostIds)
+  const scopes = new Map<string, BasketScope>()
+  for (const trade of openTrades) {
+    if (!ghostSet.has(trade.id)) continue
+    const signalId = trade.signal_id
+    const brokerAccountId = trade.broker_account_id
+    if (!signalId || !brokerAccountId) continue
+    scopes.set(`${signalId}|${brokerAccountId}`, { signalId, brokerAccountId })
+  }
+  return [...scopes.values()]
 }
 
 export async function reconcileOpenTradesForBroker(
@@ -46,5 +61,12 @@ export async function reconcileOpenTradesForBroker(
   }
   const ghostIds = findGhostOpenTradeIds(openTrades, brokerTickets)
   if (!ghostIds.length) return 0
-  return closeStaleOpenTrades(supabase, ghostIds)
+  const closed = await closeStaleOpenTrades(supabase, ghostIds)
+  if (closed > 0) {
+    const scopes = basketScopesForGhosts(openTrades, ghostIds)
+    if (scopes.length) {
+      await purgeRangePendingLegsForBaskets(supabase, scopes, 'basket_flat_reconcile')
+    }
+  }
+  return closed
 }

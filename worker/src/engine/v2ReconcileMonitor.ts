@@ -31,6 +31,7 @@ import { stripInvalidStopsForSide } from '../channelActiveTradeParams'
 import { resolveEffectiveBasketStops, type EffectiveStopSource } from '../basketEffectiveStops'
 import { brokerSessionUuid } from '../tradeExecutor/helpers'
 import { hasFxsocketConfigured } from '../fxsocketClient'
+import { purgeRangePendingLegsForBaskets } from '../rangePendingLegDelete'
 import { isV2 } from './executionMode'
 
 const TICK_MS = Math.min(60_000, Math.max(1_000, Number(process.env.V2_RECONCILE_TICK_MS ?? 4_000)))
@@ -346,6 +347,14 @@ export class V2ReconcileMonitor {
       },
       actions,
     )
+
+    if (result.closed > 0) {
+      await purgeRangePendingLegsForBaskets(
+        this.supabase,
+        [{ signalId: basket.anchorSignalId, brokerAccountId: basket.brokerAccountId }],
+        'basket_flat_reconcile',
+      )
+    }
 
     if (result.modified > 0 || result.closed > 0 || result.modifyFailed > 0 || orphanCount > 0) {
       await this.logTick(basket, session.userId, { ...result, legs: legs.length, orphanCount })

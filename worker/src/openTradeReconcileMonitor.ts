@@ -69,7 +69,7 @@ export class OpenTradeReconcileMonitor {
       this.supabase,
       this.supabase
         .from('trades')
-        .select('id,broker_account_id,metaapi_order_id')
+        .select('id,signal_id,broker_account_id,metaapi_order_id')
         .eq('status', 'open')
         .not('broker_account_id', 'is', null)
         .limit(BATCH_LIMIT),
