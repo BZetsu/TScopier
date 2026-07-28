@@ -90,6 +90,7 @@ import {
 } from './channelListenerIntegration'
 import { channelListenerShadowMode } from './channelListenerConfig'
 import { inheritChannelHistory } from './channelRegistry'
+import { ensureSignalRow } from './ensureSignalRow'
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? ''
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? ''
@@ -2552,13 +2553,39 @@ export class UserListener {
 
     this.liveMessageDedup.set(dedupKey, Date.now())
 
+    // Persist BEFORE dispatch so trades / order_send logs / range_pending_legs
+    // can satisfy signal_id FKs (avoids ghost MT fills with empty Activities).
+    setPipelineTimestamp(pipelineTs, 'signal_persist_started_at', Date.now())
+    const ensured = await ensureSignalRow(this.supabase, {
+      id: signalId,
+      user_id: this.userId,
+      channel_id: channelRow.id,
+      raw_message: rawMessage,
+      status: effectiveParseResult.status,
+      parsed_data: effectiveParseResult.parsed as unknown as Record<string, unknown>,
+      skip_reason: effectiveParseResult.skip_reason,
+      telegram_message_id: messageId,
+      reply_to_message_id: replyToMessageId,
+      parent_signal_id: parentSignalId,
+      is_modification: isReply,
+      pipeline_ts: pipelineTs as Record<string, unknown>,
+    })
+    if (!ensured.ok) {
+      console.error(
+        `[userListener] ensureSignalRow before dispatch failed signalId=${signalId}: ${ensured.error ?? 'unknown'}`,
+      )
+    } else {
+      setPipelineTimestamp(pipelineTs, 'signal_persist_completed_at', Date.now())
+    }
+
     const dispatchedInProcess = this.onSignalParsed ? this.onSignalParsed(dispatchRow) === true : false
-    this.routeDispatchToTradeWorker(dispatchRow, dispatchedInProcess)
+    this.routeDispatchToTradeWorker(dispatchRow, dispatchedInProcess, { persistBeforeDispatch: true })
 
     if (entryDispatchLooksSettleable(effectiveParseResult.parsed)) {
       this.scheduleEntryMessageSettlePoll(channelRow, messageId)
     }
 
+    // Finish last_seen / parent relink without blocking the trade path again.
     void this.persistSignalBackground({
       signalId,
       channelRow,
@@ -2569,13 +2596,18 @@ export class UserListener {
       isReply,
       parseResult: effectiveParseResult,
       pipelineTs,
+      skipUpsert: ensured.ok,
     })
 
     return true
   }
 
   /** Fire-and-forget handoff to trade worker (in-process, queue, or HTTP push). */
-  private routeDispatchToTradeWorker(dispatchRow: SignalRow, dispatchedInProcess: boolean): void {
+  private routeDispatchToTradeWorker(
+    dispatchRow: SignalRow,
+    dispatchedInProcess: boolean,
+    opts?: { persistBeforeDispatch?: boolean },
+  ): void {
     const shouldPush = workerConfig.runsListener && (!workerConfig.runsTrade || !dispatchedInProcess)
     if (!shouldPush) return
 
@@ -2611,7 +2643,7 @@ export class UserListener {
           mgmt_push_accept_only: isManagementAction(parsedAction(dispatchRow.parsed_data)),
           runs_trade: workerConfig.runsTrade,
           runs_listener: workerConfig.runsListener,
-          persist_before_dispatch: false,
+          persist_before_dispatch: opts?.persistBeforeDispatch === true,
         },
       })
     })
@@ -2759,6 +2791,8 @@ export class UserListener {
     isReply: boolean
     parseResult: Awaited<ReturnType<typeof parseChannelMessageSync>>
     pipelineTs?: PipelineTimestamps
+    /** When true, row was already ensured before dispatch — only bump last_seen / relink. */
+    skipUpsert?: boolean
   }): void {
     const {
       signalId,
@@ -2770,45 +2804,43 @@ export class UserListener {
       isReply,
       parseResult,
       pipelineTs,
+      skipUpsert,
     } = args
     void (async () => {
-      if (pipelineTs) setPipelineTimestamp(pipelineTs, 'signal_persist_started_at', Date.now())
-      const rowPatch: Record<string, unknown> = {
-        id: signalId,
-        user_id: this.userId,
-        channel_id: channelRow.id,
-        raw_message: rawMessage,
-        raw_image_url: null,
-        status: parseResult.status,
-        parsed_data: parseResult.parsed,
-        skip_reason: parseResult.skip_reason,
-        telegram_message_id: messageId,
-        is_modification: isReply,
-        parent_signal_id: parentSignalId,
-        reply_to_message_id: replyToMessageId,
-        ...(pipelineTs ? { pipeline_ts: pipelineTs } : {}),
-      }
-      const { error: insertErr } = await this.supabase.from('signals').upsert(
-        rowPatch,
-        { onConflict: 'user_id,channel_id,telegram_message_id', ignoreDuplicates: true },
-      )
-      if (insertErr) {
-        console.error(`[userListener] signal upsert failed signalId=${signalId}:`, insertErr.message)
-        return
-      }
-      if (pipelineTs) {
-        setPipelineTimestamp(pipelineTs, 'signal_persist_completed_at', Date.now())
-        emitPipelineEvent({
-          event: 'signal_persisted',
-          correlation: buildPipelineCorrelation({
-            userId: this.userId,
-            signalId,
-            telegramMessageId: messageId,
-            channelId: channelRow.id,
-          }),
-          timestamps: pipelineTs,
-          outcome: parseResult.status,
+      if (!skipUpsert) {
+        if (pipelineTs) setPipelineTimestamp(pipelineTs, 'signal_persist_started_at', Date.now())
+        const ensured = await ensureSignalRow(this.supabase, {
+          id: signalId,
+          user_id: this.userId,
+          channel_id: channelRow.id,
+          raw_message: rawMessage,
+          status: parseResult.status,
+          parsed_data: parseResult.parsed as unknown as Record<string, unknown>,
+          skip_reason: parseResult.skip_reason,
+          telegram_message_id: messageId,
+          reply_to_message_id: replyToMessageId,
+          parent_signal_id: parentSignalId,
+          is_modification: isReply,
+          pipeline_ts: pipelineTs as Record<string, unknown> | undefined,
         })
+        if (!ensured.ok) {
+          console.error(`[userListener] signal upsert failed signalId=${signalId}:`, ensured.error)
+          return
+        }
+        if (pipelineTs) {
+          setPipelineTimestamp(pipelineTs, 'signal_persist_completed_at', Date.now())
+          emitPipelineEvent({
+            event: 'signal_persisted',
+            correlation: buildPipelineCorrelation({
+              userId: this.userId,
+              signalId,
+              telegramMessageId: messageId,
+              channelId: channelRow.id,
+            }),
+            timestamps: pipelineTs,
+            outcome: parseResult.status,
+          })
+        }
       }
       await this.bumpLastSeen(channelRow.id, messageId)
       let resolvedParent = parentSignalId

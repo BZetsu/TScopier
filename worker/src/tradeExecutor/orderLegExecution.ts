@@ -25,6 +25,7 @@ import {
   emitPipelineEvent,
   setPipelineTimestamp,
 } from '../pipelineTimestamps'
+import { ensureSignalRow, isSignalFkViolation } from '../ensureSignalRow'
 
 /** Normalized broker fill shape shared by the v1 client and the v2 fxClient. */
 type NormalizedFill = {
@@ -398,7 +399,7 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
           )
         }
       }
-      await ctx.supabase.from('trade_execution_logs').insert({
+      const logRow = {
         user_id: signal.user_id,
         signal_id: signal.id,
         broker_account_id: broker.id,
@@ -416,23 +417,89 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
           leg: leg.idx + 1,
           total: totalCount,
         },
+      }
+      const { error: logErr } = await ctx.supabase.from('trade_execution_logs').insert(logRow)
+      if (logErr) {
+        console.error(
+          `[tradeExecutor] order_send log INSERT failed signal=${signal.id} broker=${broker.id} ticket=${result.ticket}: ${logErr.message}`,
+        )
+        if (isSignalFkViolation(logErr.message)) {
+          const ensured = await ensureSignalRow(ctx.supabase, {
+            id: signal.id,
+            user_id: signal.user_id,
+            channel_id: signal.channel_id,
+            status: signal.status || 'parsed',
+            parsed_data: (signal.parsed_data ?? null) as Record<string, unknown> | null,
+            telegram_message_id: signal.telegram_message_id ?? null,
+            reply_to_message_id: signal.reply_to_message_id ?? null,
+            parent_signal_id: signal.parent_signal_id,
+            is_modification: signal.is_modification,
+            raw_message: '',
+          })
+          if (ensured.ok) {
+            const { error: retryLogErr } = await ctx.supabase.from('trade_execution_logs').insert(logRow)
+            if (retryLogErr) {
+              console.error(
+                `[tradeExecutor] order_send log retry failed signal=${signal.id} ticket=${result.ticket}: ${retryLogErr.message}`,
+              )
+            }
+          }
+        }
+      }
+    }
+
+    const insertTradeRowWithFkRetry = async (): Promise<string | null> => {
+      const first = await ctx.supabase
+        .from('trades')
+        .insert(tradeRowPayload)
+        .select('id')
+        .maybeSingle()
+      if (!first.error) {
+        return (first.data as { id?: string } | null)?.id ?? null
+      }
+      console.error(
+        `[tradeExecutor] trades INSERT failed signal=${signal.id} broker=${broker.id} ticket=${result.ticket}: ${first.error.message}`,
+      )
+      if (!isSignalFkViolation(first.error.message)) return null
+      const ensured = await ensureSignalRow(ctx.supabase, {
+        id: signal.id,
+        user_id: signal.user_id,
+        channel_id: signal.channel_id,
+        status: signal.status || 'parsed',
+        parsed_data: (signal.parsed_data ?? null) as Record<string, unknown> | null,
+        telegram_message_id: signal.telegram_message_id ?? null,
+        reply_to_message_id: signal.reply_to_message_id ?? null,
+        parent_signal_id: signal.parent_signal_id,
+        is_modification: signal.is_modification,
+        raw_message: '',
       })
+      if (!ensured.ok) {
+        console.error(
+          `[tradeExecutor] ensureSignalRow after trades FK fail signal=${signal.id}: ${ensured.error ?? 'unknown'}`,
+        )
+        return null
+      }
+      const retry = await ctx.supabase
+        .from('trades')
+        .insert(tradeRowPayload)
+        .select('id')
+        .maybeSingle()
+      if (retry.error) {
+        console.error(
+          `[tradeExecutor] trades INSERT retry failed signal=${signal.id} broker=${broker.id} ticket=${result.ticket}: ${retry.error.message}`,
+        )
+        return null
+      }
+      console.warn(
+        `[tradeExecutor] trades INSERT recovered after ensureSignalRow signal=${signal.id} ticket=${result.ticket}`,
+      )
+      return (retry.data as { id?: string } | null)?.id ?? null
     }
 
     if (liveEntryFast) {
       filledLegs.push(filledLeg)
       void (async () => {
-        const tradeInsert = await ctx.supabase
-          .from('trades')
-          .insert(tradeRowPayload)
-          .select('id')
-          .maybeSingle()
-        if (tradeInsert.error) {
-          console.error(
-            `[tradeExecutor] trades INSERT failed signal=${signal.id} broker=${broker.id} ticket=${result.ticket}: ${tradeInsert.error.message}`,
-          )
-        }
-        const tradeRowId = (tradeInsert.data as { id?: string } | null)?.id ?? null
+        const tradeRowId = await insertTradeRowWithFkRetry()
         filledLeg.tradeRowId = tradeRowId
         await persistPostFillDb(tradeRowId)
         if (signal.pipeline_ts) {
@@ -445,17 +512,7 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
         )
       })
     } else {
-      const tradeInsert = await ctx.supabase
-        .from('trades')
-        .insert(tradeRowPayload)
-        .select('id')
-        .maybeSingle()
-      if (tradeInsert.error) {
-        console.error(
-          `[tradeExecutor] trades INSERT failed signal=${signal.id} broker=${broker.id} ticket=${result.ticket}: ${tradeInsert.error.message}`,
-        )
-      }
-      filledLeg.tradeRowId = (tradeInsert.data as { id?: string } | null)?.id ?? null
+      filledLeg.tradeRowId = await insertTradeRowWithFkRetry()
       filledLegs.push(filledLeg)
       await persistPostFillDb(filledLeg.tradeRowId)
       if (signal.pipeline_ts) {
