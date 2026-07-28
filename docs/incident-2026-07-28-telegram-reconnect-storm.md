@@ -1,8 +1,8 @@
 # Incident Report: Telegram Listener Reconnect Storm
 
 **Date:** 2026-07-28
-**Duration:** ~37.5 minutes (13:45–14:23 UTC)
-**Severity:** Critical — all users' Telegram listeners disconnected, most stayed dead
+**Duration:** ~37.5 minutes (13:45-14:23 UTC)
+**Severity:** Critical  --  all users' Telegram listeners disconnected, most stayed dead
 **Root cause commit:** `af12737d`
 **Fixed by:** Rollback to `01a2d913` + 11 hardening fixes (see section 4)
 
@@ -13,15 +13,15 @@
 | Time (UTC) | Event |
 |---|---|
 | 13:45:29 | New deployment starts (commit `af12737d` on production listener) |
-| 13:45:30 | Old process killed — all 23+ Telegram sessions disconnect simultaneously |
+| 13:45:30 | Old process killed  --  all 23+ Telegram sessions disconnect simultaneously |
 | 13:45:33 | First sessions begin reconnecting |
 | 13:45:52 | First flood-wait rate-limit from Telegram's DC |
 | ~13:46 | First AUTH_KEY_DUPLICATED events (4 sessions) |
 | ~13:46 | First malformed RPC results (4 sessions) |
-| ~13:47–14:20 | Continuous reconnect cycle: connect -> flood-wait -> disconnect -> reconnect |
-| ~13:47–14:20 | 15 _updateLoop TIMEOUTs across 15 users |
-| ~13:47–14:20 | 42 ensureSignalRow schema failures (separate issue) |
-| ~14:20–14:23 | Sessions that exhausted all 10 retries go permanently dead |
+| ~13:47-14:20 | Continuous reconnect cycle: connect -> flood-wait -> disconnect -> reconnect |
+| ~13:47-14:20 | 15 _updateLoop TIMEOUTs across 15 users |
+| ~13:47-14:20 | 42 ensureSignalRow schema failures (separate issue) |
+| ~14:20-14:23 | Sessions that exhausted all 10 retries go permanently dead |
 | ~14:23 | Rollback initiated (deploy `01a2d913`) |
 
 ---
@@ -30,7 +30,7 @@
 
 ### 2.1 Trigger
 
-A routine deployment restarted the Railway listener worker. All 23+ Telegram MTProto sessions were disconnected at once. This is normal — every deployment causes this.
+A routine deployment restarted the Railway listener worker. All 23+ Telegram MTProto sessions were disconnected at once. This is normal  --  every deployment causes this.
 
 ### 2.2 The Reconnect Storm
 
@@ -42,7 +42,7 @@ However, the code deployed with `af12737d` had changed reconnect behaviour in 4 
 |---|---|---|---|
 | Max reconnect attempts | **4** | **10** | Full cycle takes 273s instead of 56s |
 | Delay pattern | Escalating: `[cooldown, retry, 15s, 30s]` | **Flat** 30s for every attempt | No fast-path for early recovery |
-| Deferred retry after exhaustion | **60s deferred retry** re-enters the cycle | **None** — session dead forever | Sessions hit 10/10 and never recover |
+| Deferred retry after exhaustion | **60s deferred retry** re-enters the cycle | **None**  --  session dead forever | Sessions hit 10/10 and never recover |
 | Malformed RPC result action | Silently ignored (GramJS internal transient) | Triggers `requestReconnect` | GramJS noise starts a new 10-attempt cycle |
 
 ### 2.3 Flood-Wait Noise
@@ -53,10 +53,10 @@ However, the code deployed with `af12737d` had changed reconnect behaviour in 4 
 
 - **23 unique user sessions** attempted to connect
 - **4 sessions** hit AUTH_KEY_DUPLICATED (Telegram rejected the old session still held by the previous process)
-- **4 sessions** hit malformed RPC results (`body type=undefined` — GramJS internal transient)
-- **15 sessions** hit `_updateLoop TIMEOUT` — the polling loop timing out because reconnects took too long
+- **4 sessions** hit malformed RPC results (`body type=undefined`  --  GramJS internal transient)
+- **15 sessions** hit `_updateLoop TIMEOUT`  --  the polling loop timing out because reconnects took too long
 - **Multiple sessions** exhausted all 10 attempts -> no deferred retry -> permanently disconnected
-- **`renewAllLeases` skipped 43 times** — flood-wait blocked session lease renewal
+- **`renewAllLeases` skipped 43 times**  --  flood-wait blocked session lease renewal
 
 ### 2.5 Schema Issue (Unrelated)
 
@@ -79,13 +79,13 @@ af12737d AUTH_KEY_DUP_RECONNECT_DELAY_MS is now consistently configurable throug
 
 1. `authKeyDupMaxRecoveryAttempts()` default: **4 -> 10**
 2. `authKeyDupReconnectDelaysMs()`: removed escalating delays, replaced with **flat 30s** for every attempt
-3. `authKeyDupDeferredRetryMs()`: **removed entirely** — no function, no deferred retry after exhaustion
-4. `noteMalformedRpcResult()`: added `requestReconnect()` call — GramJS transient errors now trigger the full reconnect cycle
+3. `authKeyDupDeferredRetryMs()`: **removed entirely**  --  no function, no deferred retry after exhaustion
+4. `noteMalformedRpcResult()`: added `requestReconnect()` call  --  GramJS transient errors now trigger the full reconnect cycle
 
 ### 3.2 Safe Baseline (Rollback Target)
 
 ```
-01a2d913 PR #43 — feat/auth-fixes-to-main (Jul 23)
+01a2d913 PR #43  --  feat/auth-fixes-to-main (Jul 23)
 ```
 
 ### 3.3 Related Commits (Pre-existing Fixes Already on Staging)
@@ -103,32 +103,32 @@ These were already deployed but did not prevent the storm because none of them a
 
 ## 4. Fixes Applied
 
-### 4.1 Fix 1-2: authKeyDuplicatedRecovery.ts — Restore sane defaults
+### 4.1 Fix 1-2: authKeyDuplicatedRecovery.ts  --  Restore sane defaults
 
 - **maxAttempts:** 10 -> **4** (configurable via `TELEGRAM_AUTH_DUP_MAX_RECOVERY_ATTEMPTS`)
-- **Delays:** flat 30s -> **escalating `[cooldown, retry, 15s, 30s]`** — fast recovery when possible, backoff when needed
-- **Deferred retry:** restored — **60s** after exhaustion, re-enters the reconnect cycle (`TELEGRAM_AUTH_DUP_DEFERRED_RETRY_MS`)
+- **Delays:** flat 30s -> **escalating `[cooldown, retry, 15s, 30s]`**  --  fast recovery when possible, backoff when needed
+- **Deferred retry:** restored  --  **60s** after exhaustion, re-enters the reconnect cycle (`TELEGRAM_AUTH_DUP_DEFERRED_RETRY_MS`)
 
-### 4.2 Fix 3: userListener.ts — Malformed RPC no longer triggers reconnect
+### 4.2 Fix 3: userListener.ts  --  Malformed RPC no longer triggers reconnect
 
 `noteMalformedRpcResult()` no longer calls `requestReconnect()`. GramJS transient malformed results are silently logged and ignored.
 
-### 4.3 Fix 4-6: userListener.ts — Reconnect dedup + cycle guard
+### 4.3 Fix 4-6: userListener.ts  --  Reconnect dedup + cycle guard
 
 - **cycleId:** 8-char UUID generated per `requestReconnect()` call, logged in all reconnect messages
 - **Cooldown gate:** subsequent reconnect requests within the same cycle are dropped
 - **Deferred retry:** `scheduleDeferredRetry()` schedules a fresh reconnect attempt after `authKeyDupDeferredRetryMs()` ms
 
-### 4.4 Fix 7: authKeyDuplicatedRecovery.test.ts — Updated for new defaults
+### 4.4 Fix 7: authKeyDuplicatedRecovery.test.ts  --  Updated for new defaults
 
 All test expectations updated: maxAttempts 10 -> 4, new delay array structure, deferred retry function tested.
 
-### 4.5 Fix 8: authService.ts — Structured auth logging
+### 4.5 Fix 8: authService.ts  --  Structured auth logging
 
 - `logAuthEvent()`: structured log with `correlationId`, timing per step, error categorization
 - `authCorrelationId()`: stable ID per auth flow for traceability
 
-### 4.6 Fix 9-10: gramjsLogSuppress.ts (NEW) — Flood-wait noise suppression
+### 4.6 Fix 9-10: gramjsLogSuppress.ts (NEW)  --  Flood-wait noise suppression
 
 - Monkey-patches `console.log` at import time
 - Suppresses lines matching `Sleeping for Xs on flood wait`
@@ -136,7 +136,7 @@ All test expectations updated: maxAttempts 10 -> 4, new delay array structure, d
 - Emits one consolidated line: `aggregated_flood_wait count=42 window=60s`
 - **Result:** 83% log noise eliminated
 
-### 4.7 Fix 11: userListener.ts — Listener heartbeat
+### 4.7 Fix 11: userListener.ts  --  Listener heartbeat
 
 - `startHeartbeat()` fires `[telegram-conn] event=listener_healthy` every 60s
 - Includes `{uptimeMs, connected, lastEventAgeMs, pendingMessages}` telemetry
