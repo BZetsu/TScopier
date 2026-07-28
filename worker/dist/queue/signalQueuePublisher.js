@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.parseQueueJobFields = parseQueueJobFields;
 exports.enqueueParsedSignal = enqueueParsedSignal;
 const tradeSignalActions_1 = require("../tradeSignalActions");
+const pipelineTimestamps_1 = require("../pipelineTimestamps");
 const redisStreamsClient_1 = require("./redisStreamsClient");
 const signalQueueConfig_1 = require("./signalQueueConfig");
 const signalQueueRetry_1 = require("./signalQueueRetry");
@@ -97,12 +98,36 @@ async function enqueueParsedSignal(supabase, row) {
     }
     const shardId = (0, signalQueueConfig_1.tradeShardForUser)(row.user_id);
     const streamKey = (0, signalQueueConfig_1.streamKeyForLane)(lane, shardId);
-    const job = buildJob(row, lane);
     const startedAt = Date.now();
+    row.pipeline_ts = (0, pipelineTimestamps_1.setPipelineTimestamp)(row.pipeline_ts ?? {}, 'queue_publish_started_at', startedAt);
+    const job = buildJob(row, lane);
+    const correlation = (0, pipelineTimestamps_1.buildPipelineCorrelation)({
+        userId: row.user_id,
+        signalId: row.id,
+        channelId: row.channel_id,
+        queueMessageId: job.idempotency_key,
+        dispatchSource: 'redis_stream',
+    });
     try {
         const messageId = await (0, redisStreamsClient_1.xadd)(streamKey, serializeJob(job));
+        (0, pipelineTimestamps_1.setPipelineTimestamp)(row.pipeline_ts, 'queue_published_at', Date.now());
         (0, workerMetrics_1.incMetric)('queue_enqueue_ok');
         const enqueueMs = Date.now() - startedAt;
+        (0, pipelineTimestamps_1.emitPipelineEvent)({
+            event: 'queue_published',
+            correlation: {
+                ...correlation,
+                queue_message_id: messageId,
+            },
+            timestamps: row.pipeline_ts,
+            outcome: 'success',
+            path: lane,
+            extra: {
+                stream_key: streamKey,
+                shard_id: shardId,
+                priority: job.priority,
+            },
+        });
         void (0, signalQueueRetry_1.logQueueExecution)(supabase, {
             user_id: row.user_id,
             signal_id: row.id,
@@ -124,6 +149,18 @@ async function enqueueParsedSignal(supabase, row) {
     catch (err) {
         (0, workerMetrics_1.incMetric)('queue_enqueue_failed');
         const msg = err instanceof Error ? err.message : String(err);
+        (0, pipelineTimestamps_1.emitPipelineEvent)({
+            event: 'queue_published',
+            correlation,
+            timestamps: row.pipeline_ts,
+            outcome: 'failed',
+            path: lane,
+            error_code: msg.slice(0, 120),
+            extra: {
+                stream_key: streamKey,
+                shard_id: shardId,
+            },
+        });
         void (0, signalQueueRetry_1.logQueueExecution)(supabase, {
             user_id: row.user_id,
             signal_id: row.id,

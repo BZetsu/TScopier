@@ -4,6 +4,7 @@ import {
   isIncomingRevisionStale,
   isOpenAiRateLimitMessage,
   revisionCompletesSettleableEntry,
+  revisionHasDeterministicActionableParse,
   updateSignalAfterRevision,
 } from './signalRevision'
 
@@ -74,6 +75,39 @@ describe('signalRevision', () => {
           entry_price: null,
           entry_zone_low: null,
           entry_zone_high: null,
+        },
+      ),
+      false,
+    )
+  })
+
+  it('detects SL/TP ladder edits on already-complete entries without AI', () => {
+    assert.equal(
+      revisionHasDeterministicActionableParse(
+        {
+          action: 'sell',
+          sl: 4055,
+          tp: [4046, 4043, 4042],
+        },
+        {
+          action: 'sell',
+          sl: 4052,
+          tp: [4046, 4043, 4040],
+        },
+      ),
+      true,
+    )
+    assert.equal(
+      revisionHasDeterministicActionableParse(
+        {
+          action: 'sell',
+          sl: 4055,
+          tp: [4046, 4043, 4042],
+        },
+        {
+          action: 'sell',
+          sl: null,
+          tp: [],
         },
       ),
       false,

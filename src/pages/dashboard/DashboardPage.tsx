@@ -115,6 +115,8 @@ import { lossTextClass, pnlSignTextClass } from '../../lib/pnlDisplay'
 import { formatMoneyWithCode } from '../../lib/currency'
 import { interpolate } from '../../i18n/interpolate'
 import { TelegramConnectBanner } from '../../components/dashboard/TelegramConnectBanner'
+import { ListenerLeaseOfflineBanner } from '../../components/dashboard/ListenerLeaseOfflineBanner'
+import { CopierStatusCard } from '../../components/dashboard/CopierStatusCard'
 import {
   sortLinkedAccounts,
   type LinkedAccountSortKey,
@@ -2132,6 +2134,7 @@ export function DashboardPage() {
         <>
       <PageHeader title={t.dashboard.title} />
       <TelegramConnectBanner className="mb-6" />
+      <ListenerLeaseOfflineBanner className="mb-6" />
 
       {/* Stats bar */}
       <div className="bg-white dark:bg-neutral-900 rounded-2xl border border-neutral-200 dark:border-neutral-800 mb-6">
@@ -2231,6 +2234,9 @@ export function DashboardPage() {
             value={String(stats.tradesCopiedToday)}
             // sub={t.dashboard.executedFromSignals}
           />
+        </div>
+        <div className="border-t border-neutral-100 dark:border-neutral-800">
+          <CopierStatusCard accounts={linkedAccounts} embedded />
         </div>
       </div>
 

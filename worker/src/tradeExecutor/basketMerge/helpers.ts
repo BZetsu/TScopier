@@ -8,6 +8,7 @@ import {
 } from '../../basketSlTpReconcile'
 import { loadExistingRangeStepIndices } from '../../rangePendingFireGuard'
 import { isPostgresDuplicateKeyError } from '../../rangePendingLegPersist'
+import { ensureSignalRow, isSignalFkViolation } from '../../ensureSignalRow'
 import { computeBasketMergeLinkContext, type BasketMergeLinkContext } from '../../signalMergeLink'
 import { symbolsCompatibleForBasket } from '../../basketModFollowUp'
 import { type TradeExecutorContext } from '../context'
@@ -303,6 +304,26 @@ export async function persistRangePendingLegRows(ctx: TradeExecutorContext,
       onConflict: 'signal_id,broker_account_id,symbol,step_idx',
       ignoreDuplicates: true,
     })
+    if (error && isSignalFkViolation(error.message) && signalId) {
+      const userId = String(first.user_id ?? '')
+      if (userId) {
+        const ensured = await ensureSignalRow(ctx.supabase, {
+          id: signalId,
+          user_id: userId,
+          status: 'parsed',
+          raw_message: '',
+        })
+        if (ensured.ok) {
+          console.warn(
+            `[tradeExecutor] range_pending_legs FK recovered via ensureSignalRow (${context}) signal=${signalId}`,
+          )
+          ;({ error } = await ctx.supabase.from('range_pending_legs').upsert(rows, {
+            onConflict: 'signal_id,broker_account_id,symbol,step_idx',
+            ignoreDuplicates: true,
+          }))
+        }
+      }
+    }
     if (!error) return { ok: true }
     const msg0 = error.message ?? String(error)
     console.warn(
@@ -316,6 +337,22 @@ export async function persistRangePendingLegRows(ctx: TradeExecutorContext,
       const m = e.message ?? String(e)
       lastError = m
       if (isPostgresDuplicateKeyError(e)) continue
+      if (isSignalFkViolation(m) && signalId) {
+        const userId = String(row.user_id ?? first.user_id ?? '')
+        if (userId) {
+          const ensured = await ensureSignalRow(ctx.supabase, {
+            id: signalId,
+            user_id: userId,
+            status: 'parsed',
+            raw_message: '',
+          })
+          if (ensured.ok) {
+            const { error: retryE } = await ctx.supabase.from('range_pending_legs').insert([row])
+            if (!retryE || isPostgresDuplicateKeyError(retryE)) continue
+            lastError = retryE.message ?? String(retryE)
+          }
+        }
+      }
       anyHardFailure = true
       console.warn(
         `[tradeExecutor] range_pending_legs insert failed (${context}) step=${String(row.step_idx)}: ${m}`,

@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.loadBasketSlTpTarget = loadBasketSlTpTarget;
 exports.findStaleBasketKeys = findStaleBasketKeys;
 exports.upsertBasketSlTpTarget = upsertBasketSlTpTarget;
+const basketTargetStops_1 = require("./basketTargetStops");
 function positiveLevel(v) {
     const n = typeof v === 'number' ? v : Number(v ?? 0);
     return Number.isFinite(n) && n > 0 ? n : null;
@@ -65,8 +66,21 @@ async function findStaleBasketKeys(supabase, basketKeys, instructionAt) {
  * side that is not supplied keeps its prior value (breakeven keeps the TP ladder).
  */
 async function upsertBasketSlTpTarget(supabase, args) {
-    const sl = positiveLevel(args.stoploss);
-    const tps = args.tpLevels != null ? normalizeTpLevels(args.tpLevels) : null;
+    let sl = positiveLevel(args.stoploss);
+    let tps = args.tpLevels != null ? normalizeTpLevels(args.tpLevels) : null;
+    if (args.isBuy != null && (sl != null || (tps != null && tps.length > 0))) {
+        const sanitized = (0, basketTargetStops_1.sanitizeBasketTargetStops)({
+            isBuy: args.isBuy,
+            referencePrice: args.referencePrice ?? null,
+            stoploss: sl,
+            tpLevels: tps ?? [],
+        });
+        if (sanitized.rejected.length > 0) {
+            console.warn(`[basketTargetStore] sanitized invalid stops broker=${args.brokerAccountId} anchor=${args.anchorSignalId}: ${sanitized.rejected.join('; ')}`);
+        }
+        sl = sanitized.stoploss;
+        tps = sanitized.tpLevels.length > 0 ? sanitized.tpLevels : null;
+    }
     if (sl == null && (tps == null || tps.length === 0))
         return;
     const { error } = await supabase.rpc('upsert_basket_sl_tp_target', {

@@ -83,4 +83,17 @@ For educational and informational purposes only – no investment advice and no 
     assert.equal(result.parsed.action, 'sell')
     assert.equal(result.parsed.symbol, 'XAUUSD')
   })
+
+  it('expands SYMBOL_SIDE underscore glue before parse', () => {
+    const raw = 'XAUUSD_BUY 4143/4144'
+    const normalized = normalizeSignalMessageForParse(raw)
+    assert.equal(normalized, 'XAUUSD BUY 4143/4144')
+
+    const result = parseChannelMessageSync(raw, DEFAULT_CHANNEL_KEYWORDS, null)
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.action, 'buy')
+    assert.equal(result.parsed.symbol, 'XAUUSD')
+    assert.equal(result.parsed.entry_zone_low, 4143)
+    assert.equal(result.parsed.entry_zone_high, 4144)
+  })
 })

@@ -2,7 +2,7 @@
 
 Follow these steps **in order** the next time you connect a Telegram account.
 This runbook is the operational counterpart to the architectural changes
-already shipped in this folder.
+already shipped in this foldr.
 
 ---
 

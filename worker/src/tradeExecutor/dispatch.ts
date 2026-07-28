@@ -33,6 +33,7 @@ import {
 } from '../pipelineTimestamps'
 import { signalExecutionProven } from '../signalExecutionProven'
 import { resolveChannelLabelForComment, sanitizeChannelCommentSlug } from '../tradeComment'
+import { ensureSignalRow } from '../ensureSignalRow'
 import { isMtUuid, operationFor, brokerHasLinkedSession, brokerSessionUuid } from './helpers'
 import {
   EXECUTOR_MAX_CONCURRENT_SIGNALS,
@@ -79,6 +80,12 @@ async function seedV2EntryDesiredState(
   if (sl == null && tps.length === 0) return
   for (const b of brokers) {
     if (!isV2({ brokerAccountId: b.id, userId: row.user_id })) continue
+    const isBuy = String(parsed.action ?? '').toLowerCase() === 'buy'
+    const refPrice = (v: unknown): number | null => {
+      const n = typeof v === 'number' ? v : Number(v ?? 0)
+      return Number.isFinite(n) && n > 0 ? n : null
+    }
+    const ref = refPrice(parsed.entry_price) ?? refPrice(parsed.entry_zone_low) ?? refPrice(parsed.entry_zone_high)
     await upsertBasketSlTpTarget(ctx.supabase, {
       userId: row.user_id,
       brokerAccountId: b.id,
@@ -89,6 +96,8 @@ async function seedV2EntryDesiredState(
       tpLevels: tps.length ? tps : null,
       source: 'entry',
       instructionAt: row.created_at,
+      isBuy,
+      referencePrice: ref,
     }).catch(() => {})
   }
 }
@@ -442,6 +451,25 @@ export async function handleSignal(ctx: TradeExecutorContext,
         ctx,
         row.id,
         revisionInflightWaitMs(row, opts?.dispatchSource),
+      )
+    }
+    // Defense in depth: guarantee signals row exists before OrderSend / post-fill FKs.
+    const ensured = await ensureSignalRow(ctx.supabase, {
+      id: row.id,
+      user_id: row.user_id,
+      channel_id: row.channel_id,
+      status: row.status || 'parsed',
+      parsed_data: (row.parsed_data ?? null) as Record<string, unknown> | null,
+      telegram_message_id: row.telegram_message_id ?? null,
+      reply_to_message_id: row.reply_to_message_id ?? null,
+      parent_signal_id: row.parent_signal_id,
+      is_modification: row.is_modification,
+      pipeline_ts: row.pipeline_ts as Record<string, unknown> | undefined,
+      raw_message: '',
+    })
+    if (!ensured.ok) {
+      console.error(
+        `[tradeExecutor] ensureSignalRow before handle failed signal=${row.id}: ${ensured.error ?? 'unknown'}`,
       )
     }
     if (!ctx.claimSignalExecution(row.id)) {

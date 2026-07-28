@@ -16,6 +16,7 @@ exports.storedMessageDiffersFromTelegram = storedMessageDiffersFromTelegram;
 exports.entryDispatchLooksSettleable = entryDispatchLooksSettleable;
 exports.parsedHasExplicitStopsOrTargets = parsedHasExplicitStopsOrTargets;
 exports.revisionCompletesSettleableEntry = revisionCompletesSettleableEntry;
+exports.revisionHasDeterministicActionableParse = revisionHasDeterministicActionableParse;
 exports.isOpenAiRateLimitMessage = isOpenAiRateLimitMessage;
 exports.MESSAGE_REVISION_DISPATCH_SOURCE = 'message_revision';
 function messageTextChanged(stored, fetched) {
@@ -161,6 +162,30 @@ function revisionCompletesSettleableEntry(priorParsed, revisedParsed) {
     return entryDispatchLooksSettleable(priorParsed)
         && !entryDispatchLooksSettleable(revisedParsed)
         && parsedHasExplicitStopsOrTargets(revisedParsed);
+}
+/**
+ * True when a deterministic re-parse of an edited Telegram message is actionable
+ * without AI: teaser→full completion, SL/TP ladder edits on an already-complete
+ * entry, or an explicit modify with stops.
+ */
+function revisionHasDeterministicActionableParse(priorParsed, revisedParsed) {
+    if (!revisedParsed)
+        return false;
+    if (revisionCompletesSettleableEntry(priorParsed, revisedParsed))
+        return true;
+    const action = String(revisedParsed.action ?? '').toLowerCase();
+    if (!parsedHasExplicitStopsOrTargets(revisedParsed))
+        return false;
+    if (action === 'modify')
+        return true;
+    if (action !== 'buy' && action !== 'sell')
+        return false;
+    // Same-direction (or first-time) entry edit that carries explicit SL/TP — e.g.
+    // "Gold sell now / TP … / SL …" edited from one ladder to another.
+    const priorAction = normalizedTradeAction(priorParsed?.action);
+    if (priorAction == null || priorAction === action)
+        return true;
+    return false;
 }
 function isOpenAiRateLimitMessage(message) {
     const text = String(message ?? '').toLowerCase();

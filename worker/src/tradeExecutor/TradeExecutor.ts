@@ -80,7 +80,11 @@ import {
 import { signalPipPrice } from '../signalPip'
 import { trailingTradeRowSnapshot } from '../trailingStop'
 import { isPostgresDuplicateKeyError } from '../rangePendingLegPersist'
-import { cancelSignalEntryRowAtBroker, type SignalEntryPendingRow } from '../signalEntryPendingHelpers'
+import {
+  cancelSignalEntryRowAtBroker,
+  isPendingEntryRow,
+  type SignalEntryPendingRow,
+} from '../signalEntryPendingHelpers'
 import { isTscopierComment } from '../tscopierComment'
 import {
   computeBasketMergeLinkContext,
@@ -1271,19 +1275,29 @@ export class TradeExecutor {
       for (const raw of orders ?? []) {
         if (!raw || typeof raw !== 'object') continue
         const o = raw as Record<string, unknown>
-        const operation = String(o.operation ?? o.Operation ?? o.type ?? o.Type ?? '')
         const comment = String(o.comment ?? o.Comment ?? '')
         const ticket = Number(o.ticket ?? o.Ticket ?? o.orderId ?? o.OrderID ?? 0)
-        if (!operation.includes('Limit') && !operation.includes('Stop')) continue
+        // Only resting pendings — never market positions (string "Sell" / numeric 1).
+        if (!isPendingEntryRow(o)) continue
         if (!isTscopierComment(comment)) continue
         if (!Number.isFinite(ticket) || ticket <= 0) continue
         const openMs = brokerOrderOpenMs(o)
         if (openMs == null || openMs > cutoff) continue
+        const operation = String(o.operation ?? o.Operation ?? o.type ?? o.Type ?? '')
         try {
           await api.orderClose(uuid, { ticket })
           console.log(
             `[tradeExecutor] TTL sweep closed ticket=${ticket} broker=${broker.id} op=${operation} ttl_hours=${ttlH}`,
           )
+          try {
+            await this.supabase.from('trade_execution_logs').insert({
+              user_id: broker.user_id,
+              broker_account_id: broker.id,
+              action: 'pending_ttl_sweep_close',
+              status: 'success',
+              request_payload: { ticket, operation, ttl_hours: ttlH } as unknown as Record<string, unknown>,
+            })
+          } catch { /* best-effort */ }
         } catch (err) {
           console.warn(`[tradeExecutor] TTL sweep close failed ticket=${ticket} broker=${broker.id}: ${(err as Error).message}`)
         }
@@ -1575,16 +1589,25 @@ export class TradeExecutor {
       for (const raw of orders ?? []) {
         if (!raw || typeof raw !== 'object') continue
         const o = raw as Record<string, unknown>
-        const operation = String(o.operation ?? o.Operation ?? o.type ?? o.Type ?? '')
         const comment = String(o.comment ?? o.Comment ?? '')
         const ticket = Number(o.ticket ?? o.Ticket ?? o.orderId ?? o.OrderID ?? 0)
-        if (!operation.includes('Limit') && !operation.includes('Stop')) continue
+        if (!isPendingEntryRow(o)) continue
         if (!isTscopierComment(comment)) continue
         if (!Number.isFinite(ticket) || ticket <= 0) continue
+        const operation = String(o.operation ?? o.Operation ?? o.type ?? o.Type ?? '')
         try {
           await api.orderClose(uuid, { ticket })
           totalClosed += 1
           console.log(`[tradeExecutor] legacy cleanup closed ticket=${ticket} broker=${broker.id} op=${operation}`)
+          try {
+            await this.supabase.from('trade_execution_logs').insert({
+              user_id: broker.user_id,
+              broker_account_id: broker.id,
+              action: 'legacy_pending_cleanup_close',
+              status: 'success',
+              request_payload: { ticket, operation } as unknown as Record<string, unknown>,
+            })
+          } catch { /* best-effort */ }
         } catch (err) {
           totalFailed += 1
           console.warn(`[tradeExecutor] legacy cleanup close failed ticket=${ticket} broker=${broker.id}: ${(err as Error).message}`)

@@ -294,13 +294,16 @@ export function evaluateTpTouch(args: {
 
 /**
  * Decide whether a basket's layering must be locked when "layer till close"
- * is OFF. Two independent triggers:
+ * is OFF. Independent triggers:
  *  1. live quote touches an open trade's TP (catches the touch in real time)
  *  2. the basket is PARTIALLY closed — some trades closed while others remain
  *     open. A broker-side TP fill closes its trades within seconds, so by the
  *     time the monitor scans, the touched TP rows are no longer 'open' and
  *     trigger (1) can never fire. A partial close is sticky evidence that a
  *     TP/CWE/partial close happened and survives that race.
+ *  3. the basket is FULLY flat (openCount=0, closedCount>0) — mass closes can
+ *     go 17→0 in one burst and never look "partial"; without this, virtual
+ *     ladder rows keep firing and re-open Gold after the basket was closed.
  */
 export function shouldLockBasketLayering(args: {
   direction: string
@@ -311,12 +314,17 @@ export function shouldLockBasketLayering(args: {
   ask: number
 }): {
   lock: boolean
-  reason: 'tp_touched' | 'basket_partially_closed' | null
+  reason: 'tp_touched' | 'basket_partially_closed' | 'basket_fully_closed' | null
   triggerPrice: number | null
   triggerSide: 'bid' | 'ask' | null
 } {
   const { direction, openTps, openCount, closedCount, bid, ask } = args
-  if (openCount <= 0) return { lock: false, reason: null, triggerPrice: null, triggerSide: null }
+  if (openCount <= 0) {
+    if (closedCount > 0) {
+      return { lock: true, reason: 'basket_fully_closed', triggerPrice: null, triggerSide: null }
+    }
+    return { lock: false, reason: null, triggerPrice: null, triggerSide: null }
+  }
 
   const touch = evaluateTpTouch({ direction, tps: openTps, bid, ask })
   if (touch.touched) {
@@ -683,11 +691,12 @@ export class VirtualPendingMonitor {
         signalId,
         brokerAccountId,
       )
-      if (layerTillClose) {
+      if (layerTillClose && decision.reason !== 'basket_fully_closed') {
         // Layer-till-close ON: keep layering (legs must keep firing, so do NOT
         // add to `touched`), but still record a sticky TP-touch marker so the
         // TP-distribution freeze engages — new legs get the deepest TP and
         // existing legs are never repainted after a TP is hit.
+        // Fully flat baskets still fall through to stop/purge below.
         await setTpTouchedLock(this.supabase, {
           signalId,
           brokerAccountId,
@@ -879,6 +888,17 @@ export class VirtualPendingMonitor {
       return { outcome: 'skipped', reason: 'not_triggered' }
     }
 
+    // Flat/stale BEFORE claim — never OrderSend (or claim) when the basket is gone.
+    const staleBeforeClaim = await this.getStaleLegReason(leg, api, leg.metaapi_account_id)
+    if (staleBeforeClaim) {
+      await deleteRangePendingLegsForBasket(
+        this.supabase,
+        { signalId: leg.signal_id, brokerAccountId: leg.broker_account_id },
+        staleBeforeClaim,
+      )
+      return { outcome: 'skipped', reason: staleBeforeClaim }
+    }
+
     timestamps.layer_claim_started_at = Date.now()
     const { data: claimed, error: claimErr } = await this.supabase
       .from('range_pending_legs')
@@ -1028,6 +1048,7 @@ export class VirtualPendingMonitor {
       // best-effort — fire with stops from pending leg row
     }
 
+    // Re-check after claim — basket may have flattened while we held the claim.
     const staleReason = await this.getStaleLegReason(leg, api, leg.metaapi_account_id)
     if (staleReason) {
       await deleteRangePendingLegsForBasket(

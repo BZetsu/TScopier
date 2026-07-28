@@ -8,6 +8,7 @@ import {
   normalizeFxsocketMtStatus,
   type FxsocketMtStatus,
 } from './fxsocketMtStatus'
+import { auditOrderClose } from './orderCloseAudit'
 
 export type { FxsocketMtStatus }
 export {
@@ -1189,7 +1190,28 @@ export class FxsocketBrokerClient {
 
       const raw = await this.post<unknown>(`${await this.accountBase(id)}/OrderClose`, payload, 90_000)
       assertNoApiError(raw)
-      return normalizeOrderResponse(raw)
+      const result = normalizeOrderResponse(raw)
+      auditOrderClose({
+        source: 'fxsocket',
+        accountId: id,
+        ticket: args.ticket,
+        volume: args.lots,
+        slippage: args.slippage ?? 20,
+        ok: true,
+        message: result.state ?? null,
+      })
+      return result
+    } catch (err) {
+      auditOrderClose({
+        source: 'fxsocket',
+        accountId: id,
+        ticket: args.ticket,
+        volume: args.lots,
+        slippage: args.slippage ?? 20,
+        ok: false,
+        message: err instanceof Error ? err.message : String(err),
+      })
+      throw err
     } finally {
       release()
     }

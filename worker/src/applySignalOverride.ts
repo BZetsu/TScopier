@@ -469,6 +469,9 @@ export async function applySignalOverride(
       const anchorSignalId = legs[0]?.signal_id
       const sym = legs[0]?.symbol ?? symbolHint
       if (!anchorSignalId || !sym) continue
+      const legDir = String(legs[0]?.direction ?? '').toLowerCase()
+      const isBuy = legDir.startsWith('buy')
+      const ref = num(legs[0]?.entry_price)
       try {
         await upsertBasketSlTpTarget(supabase, {
           userId: args.userId,
@@ -480,6 +483,8 @@ export async function applySignalOverride(
           tpLevels: targetTps,
           source: 'adjust',
           instructionAt,
+          isBuy,
+          referencePrice: ref,
         })
       } catch (e) {
         errors.push(`basket_target broker=${brokerId}: ${e instanceof Error ? e.message : String(e)}`)

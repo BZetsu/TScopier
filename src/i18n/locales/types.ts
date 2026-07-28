@@ -266,6 +266,22 @@ export interface DashboardTranslations {
   healthStable: string
   healthDegraded: string
   healthOffline: string
+  copierStatus: {
+    title: string
+    allBrokerConnections: string
+    healthy: string
+    issues: string
+    none: string
+    copierEngine: string
+    live: string
+    offline: string
+    checking: string
+    telegramListener: string
+    online: string
+    brokerErrors: string
+    allChecksPassed: string
+    checksFailed: string
+  }
   tradeOutcomeTitle: string
   tradeOutcomeSubtitle: string
   tradeOutcomeEmpty: string

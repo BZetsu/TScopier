@@ -211,6 +211,31 @@ describe('channelActiveTradeParams', () => {
     assert.equal(out.stripped.length, 1)
   })
 
+  test('stripInvalidStopsForSide strips near-market sell SL that would auto-trigger', () => {
+    const out = stripInvalidStopsForSide({
+      stoploss: 4042.6,
+      takeprofit: 4000,
+      referencePrice: 4042.5,
+      isBuy: false,
+    })
+    assert.equal(out.stoploss, 0)
+    assert.equal(out.takeprofit, 4000)
+    assert.ok(out.stripped.some(s => s.includes('too_close')))
+  })
+
+  test('stripInvalidStopsForSide keeps healthy sell SL with explicit minDistance', () => {
+    const out = stripInvalidStopsForSide({
+      stoploss: 4055,
+      takeprofit: 4030,
+      referencePrice: 4042.5,
+      isBuy: false,
+      minDistance: 1,
+    })
+    assert.equal(out.stoploss, 4055)
+    assert.equal(out.takeprofit, 4030)
+    assert.equal(out.stripped.length, 0)
+  })
+
   test('shouldSeedChannelParamsFromEntrySignal blocks overwrite when basket is active', () => {
     assert.equal(shouldSeedChannelParamsFromEntrySignal(true), false)
     assert.equal(shouldSeedChannelParamsFromEntrySignal(false), true)

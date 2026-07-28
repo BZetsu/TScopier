@@ -28,6 +28,7 @@ import {
   ORDER_NOT_PLACED_RETCODES,
   TSCOPIER_MAGIC,
 } from './fxContract'
+import { auditOrderClose } from '../orderCloseAudit'
 
 export type MtPlatform = 'MT4' | 'MT5'
 
@@ -352,17 +353,53 @@ export class FxClient {
       const result = classifyOrderResponse(raw)
       // Already closed = idempotent success.
       if (!result.ok && result.retcode === MT5_RETCODE.POSITION_CLOSED) {
+        auditOrderClose({
+          source: 'fx_v2',
+          accountId,
+          ticket: req.ticket,
+          volume: req.volume,
+          slippage: req.slippage ?? 20,
+          ok: true,
+          message: 'already closed',
+        })
         return { ...result, ok: true, message: 'already closed' }
       }
+      auditOrderClose({
+        source: 'fx_v2',
+        accountId,
+        ticket: req.ticket,
+        volume: req.volume,
+        slippage: req.slippage ?? 20,
+        ok: result.ok,
+        message: result.message ?? result.retcodeName,
+      })
       return result
     } catch (err) {
       if (err instanceof FxHttpError && err.ambiguous) {
         // Verify: if the ticket is gone from OpenedOrders, the close succeeded.
         const still = await this.openedOrders(accountId, platform).catch(() => null)
         if (still && !still.some(o => o.ticket === req.ticket)) {
+          auditOrderClose({
+            source: 'fx_v2',
+            accountId,
+            ticket: req.ticket,
+            volume: req.volume,
+            slippage: req.slippage ?? 20,
+            ok: true,
+            message: 'close confirmed via snapshot',
+          })
           return { ok: true, partial: false, retcode: 10009, retcodeName: 'DONE', message: 'close confirmed via snapshot', ticket: req.ticket, order: req.ticket, deal: null, volume: null, price: null, bid: null, ask: null, comment: null, raw: null }
         }
       }
+      auditOrderClose({
+        source: 'fx_v2',
+        accountId,
+        ticket: req.ticket,
+        volume: req.volume,
+        slippage: req.slippage ?? 20,
+        ok: false,
+        message: err instanceof Error ? err.message : String(err),
+      })
       return failResult(err, false)
     } finally {
       release()

@@ -563,8 +563,10 @@ function extractTpLevels(message: string, extraLabels: string[] = []): {
   collect(new RegExp(`\\b(?:tp|target(?:\\s+level)?)\\s*\\d+\\s*[:=\\-]\\s*(${SIGNAL_PRICE_NUM})`, 'gi'))
   collect(new RegExp(`\\b(?:tp|target(?:\\s+level)?)\\s*\\d+\\s+(${SIGNAL_PRICE_NUM})`, 'gi'))
   collect(new RegExp(`\\btp\\s*\\.\\s*(${SIGNAL_PRICE_NUM})`, 'gi'))
+  collect(new RegExp(`\\b(?:tp|take\\s*profit)\\b[.\\s]+(${SIGNAL_PRICE_NUM})`, 'gi'))
   // Tier index only (1–2 digits): "TP1. 4066". Must not match "TP 4053.22" (full decimal price).
   collect(new RegExp(`\\btp\\s*\\d{1,2}\\s*\\.\\s*(${SIGNAL_PRICE_NUM})`, 'gi'))
+  collect(new RegExp(`\\btp\\s*\\d{1,2}[.\\s]+(${SIGNAL_PRICE_NUM})`, 'gi'))
   collect(new RegExp(`\\btp[\\u00B9\\u00B2\\u00B3\\u2070-\\u2079]+(${SIGNAL_PRICE_NUM})`, 'giu'))
   collect(new RegExp(`(?:الهدف\\s*(?:الأول|الثاني|الثالث|\\d+)|جني\\s*الأرباح|جني\\s*الارباح)\\s*[:：]?\\s*(${SIGNAL_PRICE_NUM})`, 'giu'))
 
@@ -764,6 +766,10 @@ function parseSlFromText(text: string): number | null {
     /(?:^|\s)(?:sl|stop\s*loss|stoploss)[_\s]*\/\s*@\s*(\d+(?:\.\d+)?)/i,
   )
   if (slSlashAt?.[1]) return parseSignalPriceToken(slSlashAt[1])
+  const slDotLeader = text.match(
+    new RegExp(`\\b(?:${SL_TEXT_LABELS})\\b[.\\s]+(${SIGNAL_PRICE_NUM})`, 'i'),
+  )
+  if (slDotLeader?.[1]) return parseSignalPriceToken(slDotLeader[1])
   const slDotLabel = text.match(/\b(?:sl|stop\s*loss)\b\s*\.\s*(\d+(?:\.\d+)?)/i)
   if (slDotLabel?.[1]) return parseSignalPriceToken(slDotLabel[1])
   const slMatchStandard = text.match(
@@ -999,7 +1005,7 @@ function extractOptionalEntryAnchor(
     const zoneMatch = znZone ?? nowZone ?? reentryZone
     const symSideColonSlash = text.match(
       new RegExp(
-        `\\b(?:xauusd|xagusd|gold|silver|btcusd|btcusdt|ethusd|ethusdt|eurusd|gbpusd|usdjpy|us30|nas100|[a-z]{6})\\s+(?:buy|sell|long|short)\\s*:\\s*(${SIGNAL_PRICE_NUM})\\s*(?:\\/|\\band\\b)\\s*(${SIGNAL_PRICE_NUM})\\b`,
+        `\\b(?:xauusd|xagusd|gold|silver|btcusd|btcusdt|ethusd|ethusdt|eurusd|gbpusd|usdjpy|us30|nas100|[a-z]{6})\\s+(?:buy|sell|long|short)\\s*:?\\s*(${SIGNAL_PRICE_NUM})\\s*(?:\\/|\\band\\b)\\s*(${SIGNAL_PRICE_NUM})\\b`,
         'i',
       ),
     )
@@ -1062,6 +1068,10 @@ function extractOptionalEntryAnchor(
       if (entry_price == null) {
         const sidePrice = text.match(new RegExp(`\\b(?:buy|sell|long|short)\\s+(${SIGNAL_PRICE_NUM})\\b`, 'i'))
         if (sidePrice?.[1]) entry_price = parseSignalPriceToken(sidePrice[1])
+        if (entry_price == null) {
+          const sideDotLeader = text.match(new RegExp(`\\b(?:buy|sell|long|short)\\b[.\\s]+(${SIGNAL_PRICE_NUM})`, 'i'))
+          if (sideDotLeader?.[1]) entry_price = parseSignalPriceToken(sideDotLeader[1])
+        }
       }
       if (entry_price == null) {
         const entryWord = text.match(new RegExp(`\\bentry\\s+(${SIGNAL_PRICE_NUM})\\b`, 'i'))
