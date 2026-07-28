@@ -9,7 +9,7 @@ export type ListenerLeaseSnapshot = {
 
 function isListenerLeaseRole(role: string | null | undefined): boolean {
   const r = String(role ?? '')
-  return r === 'listener' || r === 'all'
+  return r === 'listener' || r === 'all' || r === 'channel_listener'
 }
 
 export function listenerLeaseStatusFromRow(

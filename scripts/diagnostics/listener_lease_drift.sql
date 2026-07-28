@@ -21,7 +21,7 @@ WHERE s.is_active = true
   AND (
     l.expires_at IS NULL
     OR l.expires_at <= now()
-    OR l.role NOT IN ('listener', 'all')
+    OR l.role NOT IN ('listener', 'all', 'channel_listener')
   )
 ORDER BY l.expires_at NULLS FIRST;
 

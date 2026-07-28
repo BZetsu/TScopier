@@ -3,6 +3,7 @@ import clsx from 'clsx'
 import { AlertCircle, RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useAuth } from '../../context/AuthContext'
+import { useSubscription } from '../../context/SubscriptionContext'
 import { useT } from '../../context/LocaleContext'
 import {
   fetchListenerLeaseStatus,
@@ -31,6 +32,7 @@ export function ListenerLeaseOfflineBanner({
   onRefresh,
 }: ListenerLeaseOfflineBannerProps) {
   const { user } = useAuth()
+  const { hasActiveSubscription } = useSubscription()
   const t = useT()
   const ce = t.copierEnginePage
   const [hasTgSession, setHasTgSession] = useState(() => {
@@ -121,6 +123,7 @@ export function ListenerLeaseOfflineBanner({
   const show =
     Boolean(user?.id)
     && hasTgSession
+    && hasActiveSubscription
     && (listenerLease.status === 'expired' || listenerLease.status === 'missing')
 
   if (!show) return null

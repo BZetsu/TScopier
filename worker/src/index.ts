@@ -228,10 +228,15 @@ async function main() {
       void sessionManager.syncSessions()
     }, 30_000)
 
-    if (workerConfig.role === 'listener' || workerConfig.role === 'all') {
+    if (workerConfig.runsListener) {
       setInterval(() => {
         void sessionManager.renewAllLeases()
       }, Math.max(10_000, Number(process.env.WORKER_LEASE_RENEW_INTERVAL_MS ?? 20_000)))
+
+      // Kick renewal soon after boot so a restarted listener pod refreshes leases before TTL (~45s).
+      setTimeout(() => {
+        void sessionManager.renewAllLeases()
+      }, 8_000)
     }
 
     void sessionManager.loadAll().catch(err =>

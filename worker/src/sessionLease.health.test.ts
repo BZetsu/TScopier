@@ -10,6 +10,7 @@ describe('sessionLease health helpers', () => {
     const future = new Date(Date.now() + 60_000).toISOString()
     assert.equal(isLeaseRowLive({ expires_at: future, role: 'listener' }), true)
     assert.equal(isLeaseRowLive({ expires_at: future, role: 'all' }), true)
+    assert.equal(isLeaseRowLive({ expires_at: future, role: 'channel_listener' }), true)
   })
 
   it('isLeaseRowLive rejects expired or wrong role', () => {

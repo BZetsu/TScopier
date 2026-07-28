@@ -189,7 +189,7 @@ export function isLeaseRowLive(
 ): boolean {
   if (!row) return false
   const role = String(row.role ?? '')
-  if (role !== 'listener' && role !== 'all') return false
+  if (role !== 'listener' && role !== 'all' && role !== 'channel_listener') return false
   return new Date(row.expires_at).getTime() > nowMs
 }
 

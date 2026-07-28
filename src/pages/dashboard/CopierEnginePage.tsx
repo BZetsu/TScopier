@@ -808,6 +808,7 @@ export function CopierEnginePage() {
 
   const showListenerLeaseWarning =
     hasTgSession
+    && hasActiveSubscription
     && !isTgReconnectFlow
     && (listenerLease.status === 'expired' || listenerLease.status === 'missing')
 
