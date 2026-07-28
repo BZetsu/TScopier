@@ -230,6 +230,42 @@ export function revisionCompletesSettleableEntry(
     && parsedHasExplicitStopsOrTargets(revisedParsed)
 }
 
+/**
+ * True when a deterministic re-parse of an edited Telegram message is actionable
+ * without AI: teaser→full completion, SL/TP ladder edits on an already-complete
+ * entry, or an explicit modify with stops.
+ */
+export function revisionHasDeterministicActionableParse(
+  priorParsed: {
+    action?: unknown
+    sl?: unknown
+    tp?: unknown
+    entry_price?: unknown
+    entry_zone_low?: unknown
+    entry_zone_high?: unknown
+  } | null | undefined,
+  revisedParsed: {
+    action?: unknown
+    sl?: unknown
+    tp?: unknown
+    entry_price?: unknown
+    entry_zone_low?: unknown
+    entry_zone_high?: unknown
+  } | null | undefined,
+): boolean {
+  if (!revisedParsed) return false
+  if (revisionCompletesSettleableEntry(priorParsed, revisedParsed)) return true
+  const action = String(revisedParsed.action ?? '').toLowerCase()
+  if (!parsedHasExplicitStopsOrTargets(revisedParsed)) return false
+  if (action === 'modify') return true
+  if (action !== 'buy' && action !== 'sell') return false
+  // Same-direction (or first-time) entry edit that carries explicit SL/TP — e.g.
+  // "Gold sell now / TP … / SL …" edited from one ladder to another.
+  const priorAction = normalizedTradeAction(priorParsed?.action)
+  if (priorAction == null || priorAction === action) return true
+  return false
+}
+
 export function isOpenAiRateLimitMessage(message: string | null | undefined): boolean {
   const text = String(message ?? '').toLowerCase()
   return text.includes('openai http 429')

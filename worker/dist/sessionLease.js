@@ -4,10 +4,12 @@ exports.acquireSessionLease = acquireSessionLease;
 exports.ensureSessionLeaseFresh = ensureSessionLeaseFresh;
 exports.renewSessionLease = renewSessionLease;
 exports.releaseSessionLease = releaseSessionLease;
+exports.releaseOwnedSessionLeases = releaseOwnedSessionLeases;
 exports.isTelegramListenerLiveForUser = isTelegramListenerLiveForUser;
 exports.isLeaseRowLive = isLeaseRowLive;
 exports.countFreshListenerLeasesForUsers = countFreshListenerLeasesForUsers;
 exports.listActiveLeases = listActiveLeases;
+exports.listOwnedActiveLeases = listOwnedActiveLeases;
 const workerConfig_1 = require("./workerConfig");
 const LEASE_TTL_MS = Math.max(15000, Math.min(120000, Number(process.env.WORKER_SESSION_LEASE_TTL_MS ?? 45000)));
 const LEASE_GATE_CACHE_MS = Math.max(2000, Math.min(60000, Number(process.env.WORKER_LEASE_GATE_CACHE_MS ?? 8000)));
@@ -119,6 +121,17 @@ async function releaseSessionLease(supabase, userId) {
         .eq('user_id', userId)
         .eq('worker_id', workerId);
 }
+async function releaseOwnedSessionLeases(supabase, userIds) {
+    const workerId = (0, workerConfig_1.listenerWorkerId)();
+    let q = supabase
+        .from('worker_session_leases')
+        .delete()
+        .eq('worker_id', workerId);
+    if (userIds && userIds.length > 0) {
+        q = q.in('user_id', [...new Set(userIds)]);
+    }
+    await q;
+}
 /** Trade workers: true when a listener shard holds a fresh lease (Telegram path is live). */
 async function isTelegramListenerLiveForUser(supabase, userId) {
     const cached = cachedListenerLive(userId);
@@ -166,6 +179,14 @@ async function listActiveLeases(supabase) {
     const { data } = await supabase
         .from('worker_session_leases')
         .select('*')
+        .gt('expires_at', new Date().toISOString());
+    return (data ?? []);
+}
+async function listOwnedActiveLeases(supabase) {
+    const { data } = await supabase
+        .from('worker_session_leases')
+        .select('*')
+        .eq('worker_id', (0, workerConfig_1.listenerWorkerId)())
         .gt('expires_at', new Date().toISOString());
     return (data ?? []);
 }

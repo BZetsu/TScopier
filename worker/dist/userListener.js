@@ -18,6 +18,7 @@ const parseSignal_1 = require("./parseSignal");
 const signalTradingHeuristic_1 = require("./signalTradingHeuristic");
 const signalManagementIntent_1 = require("./signalManagementIntent");
 const normalizeTelegramMessageText_1 = require("./normalizeTelegramMessageText");
+const pipelineTimestamps_1 = require("./pipelineTimestamps");
 const workerMetrics_1 = require("./workerMetrics");
 const workerConfig_1 = require("./workerConfig");
 const tradeSignalActions_1 = require("./tradeSignalActions");
@@ -106,7 +107,12 @@ function livePriorityPauseMs() {
 function reconnectCooldownMs() {
     return Math.max(500, Math.min(120000, Number(process.env.TELEGRAM_RECONNECT_COOLDOWN_MS ?? 3500)));
 }
-const AUTH_KEY_DUP_RECONNECT_DELAY_MS = Math.max(2000, Math.min(30000, Number(process.env.TELEGRAM_AUTH_DUP_RECONNECT_DELAY_MS ?? 10000)));
+function malformedRpcResultMaxRecoveries() {
+    return Math.max(1, Math.min(100, Math.floor(Number(process.env.TELEGRAM_MALFORMED_RPC_MAX_RECOVERIES ?? 10))));
+}
+function malformedRpcResultRecoveryWindowMs() {
+    return Math.max(60000, Math.min(60 * 60000, Number(process.env.TELEGRAM_MALFORMED_RPC_RECOVERY_WINDOW_MS ?? 10 * 60000)));
+}
 function startConnectJitterMaxMs() {
     return Math.max(0, Math.min(30000, Number(process.env.TELEGRAM_START_JITTER_MAX_MS ?? 2000)));
 }
@@ -157,7 +163,8 @@ function toChannelIdVariants(raw) {
     return [...out];
 }
 class UserListener {
-    constructor(userId, sessionString, supabase, adoptedClient) {
+    constructor(userId, sessionString, supabase, adoptedClient, onAuthKeyDuplicatedRecoveryExhausted) {
+        this.onAuthKeyDuplicatedRecoveryExhausted = onAuthKeyDuplicatedRecoveryExhausted;
         this.monitoredChannels = new Set();
         this.currentHandler = null;
         this.currentEventBuilder = null;
@@ -194,7 +201,10 @@ class UserListener {
         /** Rate-limit AUTH_KEY_DUPLICATED poll_error rows (safety+fast poll can fire every few seconds). */
         this.lastAuthKeyDupPollErrorAt = 0;
         this.lastAuthKeyDupLogAt = 0;
-        this.deferredAuthKeyDupRetryTimer = null;
+        this.clientGeneration = 0;
+        this.stopping = false;
+        this.malformedRpcRecoveryCount = 0;
+        this.lastMalformedRpcRecoveryAt = 0;
         this.onSignalParsed = null;
         /** Recent live message ids — avoids a Supabase round-trip on hot-path dedup. */
         this.liveMessageDedup = new Map();
@@ -210,11 +220,35 @@ class UserListener {
         this.userId = userId;
         this.supabase = supabase;
         this.client = adoptedClient ?? (0, telegramClient_1.buildClient)(sessionString);
+        this.client.onError = async (err) => {
+            if ((0, telegramClient_1.isMalformedRpcResult)(err)) {
+                await this.noteMalformedRpcResult(err);
+                return;
+            }
+            const msg = err?.message ?? '';
+            if (msg.includes('readUInt32LE') || msg.includes('Cannot read properties of undefined')) {
+                console.warn(`[userListener] raw GramJS BinaryReader crash for ${this.userId}`
+                    + ` — treating as malformed RPC result`);
+                await this.noteMalformedRpcResult(err);
+                return;
+            }
+            if (msg.includes('TIMEOUT')) {
+                console.warn(`[userListener] _updateLoop TIMEOUT for ${this.userId} — requesting reconnect`);
+                await this.requestReconnect('update_loop_timeout');
+            }
+        };
         this.lastSavedSession = sessionString;
     }
     /** Immediate trade dispatch after parse (avoids waiting on Supabase Realtime). */
     setOnSignalParsed(handler) {
         this.onSignalParsed = handler;
+    }
+    connectionTrace(event, detail) {
+        const suffix = detail
+            ? ` ${Object.entries(detail).map(([k, v]) => `${k}=${(0, authKeyDuplicatedRecovery_1.redactTelegramConnectionLog)(v)}`).join(' ')}`
+            : '';
+        console.log(`[telegram-conn] event=${event} worker=${workerConfig_1.workerConfig.instanceId}`
+            + ` user=${this.userId} generation=${this.clientGeneration}${suffix}`);
     }
     // ── lifecycle ─────────────────────────────────────────────────────────
     async start(opts = {}) {
@@ -226,20 +260,28 @@ class UserListener {
                     await new Promise(r => setTimeout(r, jitter));
             }
             try {
+                this.clientGeneration += 1;
+                this.connectionTrace('connect_start', { source: 'initial' });
                 await this.client.connect();
             }
             catch (err) {
                 if ((0, telegramClient_1.isAuthKeyUnregistered)(err))
                     throw new telegramClient_1.TelegramSessionInvalidError();
                 if ((0, telegramClient_1.isAuthKeyDuplicated)(err)) {
+                    this.connectionTrace('auth_key_duplicated_detected', { source: 'initial' });
+                    const authDupDelayMs = (0, authKeyDuplicatedRecovery_1.authKeyDupReconnectDelayMs)();
                     console.warn(`[userListener] AUTH_KEY_DUPLICATED on initial connect for ${this.userId}`
-                        + ` — old session still releasing; waiting ${AUTH_KEY_DUP_RECONNECT_DELAY_MS}ms then retrying`);
+                        + ` — old session still releasing; waiting ${authDupDelayMs}ms then retrying`);
                     (0, workerMetrics_1.incMetric)('auth_key_duplicated');
+                    this.connectionTrace('disconnect_start', { source: 'initial_auth_dup' });
                     try {
                         await this.client.disconnect();
                     }
                     catch { /* ignore */ }
-                    await new Promise(r => setTimeout(r, AUTH_KEY_DUP_RECONNECT_DELAY_MS));
+                    this.connectionTrace('disconnect_complete', { source: 'initial_auth_dup' });
+                    await new Promise(r => setTimeout(r, authDupDelayMs));
+                    this.clientGeneration += 1;
+                    this.connectionTrace('connect_start', { source: 'initial_auth_dup_retry', attempt: 2 });
                     await this.client.connect();
                 }
                 else {
@@ -266,11 +308,8 @@ class UserListener {
         this.subscribeCopierPauseState();
     }
     async stop() {
+        this.stopping = true;
         try {
-            if (this.deferredAuthKeyDupRetryTimer) {
-                clearTimeout(this.deferredAuthKeyDupRetryTimer);
-                this.deferredAuthKeyDupRetryTimer = null;
-            }
             if (this.userProfilesCopierPauseChannel) {
                 await this.supabase.removeChannel(this.userProfilesCopierPauseChannel);
                 this.userProfilesCopierPauseChannel = null;
@@ -283,11 +322,17 @@ class UserListener {
             this.stopTimer('signalReconcileSweepTimer');
             this.stopTimer('entityWarmupTimer');
             this.removeCurrentHandler();
+            if (this.reconnectInFlight) {
+                await this.reconnectInFlight.catch(() => { });
+            }
             await this.persistSessionIfChanged();
+            this.connectionTrace('disconnect_start', { source: 'stop' });
             await this.client.disconnect();
+            this.connectionTrace('disconnect_complete', { source: 'stop' });
         }
-        catch {
-            // ignore disconnect errors
+        catch (err) {
+            this.connectionTrace('disconnect_failed', { source: 'stop', error: err });
+            throw err;
         }
         finally {
             this.isConnected = false;
@@ -314,6 +359,8 @@ class UserListener {
      * skips disconnected users — without this they stay offline until process restart).
      */
     requestReconnectIfDisconnected(reason = 'disconnected_recovery') {
+        if (this.stopping)
+            return;
         if (this.isConnected)
             return;
         void this.requestReconnect(reason);
@@ -599,32 +646,40 @@ class UserListener {
         console.warn(`[userListener] AUTH_KEY_DUPLICATED on getDialogs for ${this.userId}`
             + ' — disconnecting, waiting for old session to release, then reconnecting');
         (0, workerMetrics_1.incMetric)('auth_key_duplicated');
-        const delays = [
-            AUTH_KEY_DUP_RECONNECT_DELAY_MS,
-            15000,
-            15000,
-        ];
+        this.connectionTrace('auth_key_duplicated_detected', { source: 'getDialogs' });
+        const delays = (0, authKeyDuplicatedRecovery_1.authKeyDupReconnectDelaysMs)(reconnectCooldownMs(), (0, authKeyDuplicatedRecovery_1.authKeyDupReconnectDelayMs)(), (0, authKeyDuplicatedRecovery_1.authKeyDupMaxRecoveryAttempts)());
         let lastErr;
         for (let attempt = 0; attempt < delays.length; attempt++) {
             this.isConnected = false;
+            this.connectionTrace('disconnect_start', { source: `getDialogs:retry_${attempt + 1}` });
             try {
                 await this.client.disconnect();
             }
             catch { /* ignore */ }
+            this.connectionTrace('disconnect_complete', { source: `getDialogs:retry_${attempt + 1}` });
             await new Promise(r => setTimeout(r, delays[attempt]));
+            if (this.stopping)
+                break;
             try {
+                this.clientGeneration += 1;
+                this.connectionTrace('connect_start', { source: 'getDialogs', attempt: attempt + 1 });
                 await this.client.connect();
                 this.isConnected = true;
-                return await this.fetchAllDialogs();
+                const dialogs = await this.fetchAllDialogs();
+                this.connectionTrace('recovery_complete', { source: 'getDialogs', attempt: attempt + 1 });
+                return dialogs;
             }
             catch (err) {
                 lastErr = err;
                 if (!(0, telegramClient_1.isAuthKeyDuplicated)(err))
                     (0, telegramClient_1.rethrowIfSessionInvalid)(err);
+                this.connectionTrace('auth_key_duplicated_retry', { source: 'getDialogs', attempt: attempt + 1 });
                 console.warn(`[userListener] AUTH_KEY_DUPLICATED reconnect attempt ${attempt + 1}/${delays.length}`
                     + ` for ${this.userId}`);
             }
         }
+        this.connectionTrace('recovery_invalidated', { source: 'getDialogs', attempts: delays.length });
+        setImmediate(() => this.onAuthKeyDuplicatedRecoveryExhausted?.(this.userId, 'getDialogs'));
         throw lastErr;
     }
     /**
@@ -1058,16 +1113,53 @@ class UserListener {
                             prior_parsed_data: (existing.parsed_data ?? null),
                         },
                     });
-                    parseResult = universal.parseResult;
-                    aiResult = {
-                        parsed: universal.parseResult.parsed,
-                        status: universal.parseResult.status === 'parsed' ? 'parsed' : 'skipped',
-                        skip_reason: universal.parseResult.skip_reason,
-                        intent: universal.intent.kind === 'commentary' ? 'commentary' : universal.intent.kind === 'ignore' ? 'ignore' : 'modify',
-                        typo_corrected: false,
-                        confidence: universal.intent.confidence,
-                        source: universal.source === 'openai' ? 'openai' : 'deterministic',
-                    };
+                    if (universal.parseResult.status === 'parsed' && universal.parseResult.parsed.action !== 'ignore') {
+                        parseResult = universal.parseResult;
+                        aiResult = {
+                            parsed: universal.parseResult.parsed,
+                            status: 'parsed',
+                            skip_reason: null,
+                            intent: universal.intent.kind === 'commentary' ? 'commentary' : universal.intent.kind === 'ignore' ? 'ignore' : 'modify',
+                            typo_corrected: false,
+                            confidence: universal.intent.confidence,
+                            source: universal.source === 'openai' ? 'openai' : 'deterministic',
+                        };
+                    }
+                    else {
+                        // Universal/OpenAI unavailable or non-actionable — fall back to full
+                        // deterministic entry/mgmt parse so SL/TP ladder edits still apply.
+                        const detFallback = await this.tryDeterministicRevisionCompletion({
+                            channelRowId: channelRow.id,
+                            rawMessage,
+                            existingParsed: (existing.parsed_data ?? null),
+                        });
+                        if (detFallback) {
+                            parseResult = detFallback;
+                            aiResult = {
+                                parsed: detFallback.parsed,
+                                status: 'parsed',
+                                skip_reason: null,
+                                intent: 'parameter_refresh',
+                                typo_corrected: false,
+                                confidence: typeof detFallback.parsed.confidence === 'number'
+                                    ? detFallback.parsed.confidence
+                                    : 1,
+                                source: 'deterministic',
+                            };
+                        }
+                        else {
+                            parseResult = universal.parseResult;
+                            aiResult = {
+                                parsed: universal.parseResult.parsed,
+                                status: universal.parseResult.status === 'parsed' ? 'parsed' : 'skipped',
+                                skip_reason: universal.parseResult.skip_reason,
+                                intent: universal.intent.kind === 'commentary' ? 'commentary' : universal.intent.kind === 'ignore' ? 'ignore' : 'modify',
+                                typo_corrected: false,
+                                confidence: universal.intent.confidence,
+                                source: universal.source === 'openai' ? 'openai' : 'deterministic',
+                            };
+                        }
+                    }
                 }
                 else {
                     aiResult = await (0, aiParseModification_1.aiParseModification)(this.supabase, {
@@ -1254,9 +1346,9 @@ class UserListener {
     async tryDeterministicRevisionCompletion(args) {
         const { keywords, lexicon } = await (0, channelKeywordsCache_1.getChannelParseContext)(this.supabase, args.channelRowId);
         const det = (0, parseSignal_1.parseChannelMessageSync)(args.rawMessage, keywords, lexicon);
-        if (det.status !== 'parsed')
+        if (det.status !== 'parsed' || det.parsed.action === 'ignore')
             return null;
-        if (!(0, signalRevision_1.revisionCompletesSettleableEntry)(args.existingParsed, det.parsed))
+        if (!(0, signalRevision_1.revisionHasDeterministicActionableParse)(args.existingParsed, det.parsed))
             return null;
         return det;
     }
@@ -1606,14 +1698,30 @@ class UserListener {
             return false;
         }
         const signalId = (0, node_crypto_1.randomUUID)();
-        const pipelineTs = {
-            t_telegram_event: messageEpochSec > 0 ? messageEpochSec * 1000 : undefined,
-            t_listener_received: tListenerReceived,
-        };
+        const pipelineTs = {};
+        if (messageEpochSec > 0) {
+            (0, pipelineTimestamps_1.setPipelineTimestamp)(pipelineTs, 'telegram_source_message_at', messageEpochSec * 1000);
+        }
+        (0, pipelineTimestamps_1.setPipelineTimestamp)(pipelineTs, 'telegram_message_received_at', tListenerReceived);
+        (0, pipelineTimestamps_1.setPipelineTimestamp)(pipelineTs, 'message_normalized_at', Date.now());
+        const correlation = (0, pipelineTimestamps_1.buildPipelineCorrelation)({
+            userId: this.userId,
+            signalId,
+            telegramMessageId: messageId,
+            channelId: channelRow.id,
+            dispatchSource: opts?.source ?? 'live',
+        });
+        (0, pipelineTimestamps_1.emitPipelineEvent)({
+            event: 'signal_received',
+            correlation,
+            timestamps: pipelineTs,
+            path: opts?.source ?? 'live',
+        });
         let parseResult;
         let aiMeta;
         let channelKeywords;
         try {
+            (0, pipelineTimestamps_1.setPipelineTimestamp)(pipelineTs, 'parse_started_at', Date.now());
             const parsed = await this.parseSignalForListener({
                 channelRowId: channelRow.id,
                 rawMessage,
@@ -1626,7 +1734,16 @@ class UserListener {
             channelKeywords = parsed.channelKeywords;
         }
         catch (err) {
+            (0, pipelineTimestamps_1.setPipelineTimestamp)(pipelineTs, 'parse_completed_at', Date.now());
             const errMsg = err instanceof Error ? err.message : String(err);
+            (0, pipelineTimestamps_1.emitPipelineEvent)({
+                event: 'signal_parse_failed',
+                correlation,
+                timestamps: pipelineTs,
+                outcome: 'failed',
+                error_code: errMsg.slice(0, 120),
+                path: opts?.source ?? 'live',
+            });
             console.error(`[userListener] parse failed user=${this.userId} signalId=${signalId}:`, errMsg);
             void this.persistSignalBackground({
                 signalId,
@@ -1653,12 +1770,24 @@ class UserListener {
                     status: 'error',
                     skip_reason: errMsg,
                 },
+                pipelineTs,
             });
             return false;
         }
-        pipelineTs.t_parse_done = Date.now();
+        (0, pipelineTimestamps_1.setPipelineTimestamp)(pipelineTs, 'parse_completed_at', Date.now());
         if (aiMeta)
             pipelineTs.t_ai_parse_done = pipelineTs.t_parse_done;
+        (0, pipelineTimestamps_1.emitPipelineEvent)({
+            event: 'signal_parse_completed',
+            correlation,
+            timestamps: pipelineTs,
+            outcome: parseResult.status,
+            path: opts?.source ?? 'live',
+            extra: {
+                parser: aiMeta?.source ?? 'inline',
+                parse_intent: aiMeta?.intent ?? null,
+            },
+        });
         if (!parentSignalId && parseResult.status === 'parsed') {
             const providerNum = parseResult.parsed.provider_signal_number;
             if (typeof providerNum === 'number' && Number.isFinite(providerNum) && providerNum > 0) {
@@ -1771,6 +1900,7 @@ class UserListener {
                 replyToMessageId,
                 isReply,
                 parseResult: effectiveParseResult,
+                pipelineTs,
             });
             return true;
         }
@@ -1830,6 +1960,7 @@ class UserListener {
             replyToMessageId,
             isReply,
             parseResult: effectiveParseResult,
+            pipelineTs,
         });
         return true;
     }
@@ -1966,8 +2097,10 @@ class UserListener {
         });
     }
     persistSignalBackground(args) {
-        const { signalId, channelRow, rawMessage, messageId, parentSignalId, replyToMessageId, isReply, parseResult, } = args;
+        const { signalId, channelRow, rawMessage, messageId, parentSignalId, replyToMessageId, isReply, parseResult, pipelineTs, } = args;
         void (async () => {
+            if (pipelineTs)
+                (0, pipelineTimestamps_1.setPipelineTimestamp)(pipelineTs, 'signal_persist_started_at', Date.now());
             const rowPatch = {
                 id: signalId,
                 user_id: this.userId,
@@ -1981,11 +2114,26 @@ class UserListener {
                 is_modification: isReply,
                 parent_signal_id: parentSignalId,
                 reply_to_message_id: replyToMessageId,
+                ...(pipelineTs ? { pipeline_ts: pipelineTs } : {}),
             };
             const { error: insertErr } = await this.supabase.from('signals').upsert(rowPatch, { onConflict: 'user_id,channel_id,telegram_message_id', ignoreDuplicates: true });
             if (insertErr) {
                 console.error(`[userListener] signal upsert failed signalId=${signalId}:`, insertErr.message);
                 return;
+            }
+            if (pipelineTs) {
+                (0, pipelineTimestamps_1.setPipelineTimestamp)(pipelineTs, 'signal_persist_completed_at', Date.now());
+                (0, pipelineTimestamps_1.emitPipelineEvent)({
+                    event: 'signal_persisted',
+                    correlation: (0, pipelineTimestamps_1.buildPipelineCorrelation)({
+                        userId: this.userId,
+                        signalId,
+                        telegramMessageId: messageId,
+                        channelId: channelRow.id,
+                    }),
+                    timestamps: pipelineTs,
+                    outcome: parseResult.status,
+                });
             }
             await this.bumpLastSeen(channelRow.id, messageId);
             let resolvedParent = parentSignalId;
@@ -2638,7 +2786,6 @@ class UserListener {
         }
         catch (err) {
             (0, telegramClient_1.rethrowIfSessionInvalid)(err);
-            throw new Error('Failed to resolve Telegram channel entity');
         }
     }
     async catchUpChannel(row) {
@@ -2831,7 +2978,6 @@ class UserListener {
                 })();
                 if (msgEpochSec && msgEpochSec < sinceEpochSec) {
                     // We've reached older-than-lookback history.
-                    offsetId = Number(batch[batch.length - 1].id);
                     break;
                 }
                 collected.push(m);
@@ -2913,6 +3059,7 @@ class UserListener {
         if ((0, authKeyDuplicatedRecovery_1.shouldEmitAuthKeyDupEvent)(this.lastAuthKeyDupLogAt, now, 30000)) {
             this.lastAuthKeyDupLogAt = now;
             (0, workerMetrics_1.incMetric)('auth_key_duplicated');
+            this.connectionTrace('auth_key_duplicated_detected', { source });
             console.warn(`[userListener] AUTH_KEY_DUPLICATED (${source}) for ${this.userId}`
                 + ' — marking disconnected and reconnecting');
         }
@@ -2927,11 +3074,13 @@ class UserListener {
             });
         }
         // Avoid awaiting/nesting the in-flight reconnect (e.g. warmEntityCache during forceReconnect).
-        if (this.reconnectInFlight)
+        if (this.reconnectInFlight || this.stopping)
             return;
         void this.requestReconnect(`auth_key_duplicated:${source}`);
     }
     requestReconnect(reason) {
+        if (this.stopping)
+            return Promise.resolve();
         if (this.reconnectInFlight)
             return this.reconnectInFlight;
         this.reconnectInFlight = this.forceReconnect(reason).finally(() => {
@@ -2939,47 +3088,65 @@ class UserListener {
         });
         return this.reconnectInFlight;
     }
-    scheduleDeferredAuthKeyDupRetry() {
-        if (this.deferredAuthKeyDupRetryTimer)
+    async noteMalformedRpcResult(err) {
+        const now = Date.now();
+        if (now - this.lastMalformedRpcRecoveryAt > malformedRpcResultRecoveryWindowMs()) {
+            this.malformedRpcRecoveryCount = 0;
+        }
+        this.lastMalformedRpcRecoveryAt = now;
+        this.malformedRpcRecoveryCount += 1;
+        this.isConnected = false;
+        this.connectionTrace('malformed_rpc_result_detected', {
+            attempt: this.malformedRpcRecoveryCount,
+            max: malformedRpcResultMaxRecoveries(),
+            error: err,
+        });
+        if (this.malformedRpcRecoveryCount > malformedRpcResultMaxRecoveries()) {
+            console.error(`[userListener] malformed Telegram RPC result recovery exhausted for ${this.userId}`
+                + ` (${this.malformedRpcRecoveryCount}/${malformedRpcResultMaxRecoveries()}) — invalidating session`);
+            this.connectionTrace('recovery_invalidated', {
+                source: 'malformed_rpc_result',
+                attempts: this.malformedRpcRecoveryCount,
+            });
+            setImmediate(() => this.onAuthKeyDuplicatedRecoveryExhausted?.(this.userId, 'malformed_rpc_result'));
             return;
-        const delayMs = (0, authKeyDuplicatedRecovery_1.authKeyDupDeferredRetryMs)();
-        console.warn(`[userListener] AUTH_KEY_DUPLICATED recovery exhausted for ${this.userId}`
-            + ` — scheduling another reconnect in ${delayMs}ms`);
-        this.deferredAuthKeyDupRetryTimer = setTimeout(() => {
-            this.deferredAuthKeyDupRetryTimer = null;
-            if (this.isConnected)
-                return;
-            void this.requestReconnect('auth_key_duplicated_deferred');
-        }, delayMs);
-        this.deferredAuthKeyDupRetryTimer.unref?.();
+        }
+        console.warn(`[userListener] malformed Telegram RPC result for ${this.userId}`
+            + ` (${this.malformedRpcRecoveryCount}/${malformedRpcResultMaxRecoveries()}) — reconnecting`);
+        await this.requestReconnect('malformed_rpc_result');
     }
     async forceReconnect(reason = 'force') {
         console.log(`[userListener] force reconnect for ${this.userId} reason=${reason}`);
-        if (this.deferredAuthKeyDupRetryTimer) {
-            clearTimeout(this.deferredAuthKeyDupRetryTimer);
-            this.deferredAuthKeyDupRetryTimer = null;
-        }
         this.clearDialogsCache();
         this.lastReconnectAt = Date.now();
         this.consecutiveProbeFailures = 0;
         this.isConnected = false;
+        this.connectionTrace('disconnect_start', { source: reason });
         try {
             await this.client.disconnect();
         }
         catch { /* ignore */ }
-        const delays = (0, authKeyDuplicatedRecovery_1.authKeyDupReconnectDelaysMs)(reconnectCooldownMs(), AUTH_KEY_DUP_RECONNECT_DELAY_MS);
+        this.connectionTrace('disconnect_complete', { source: reason });
+        if (this.stopping)
+            return;
+        const delays = (0, authKeyDuplicatedRecovery_1.authKeyDupReconnectDelaysMs)(reconnectCooldownMs(), (0, authKeyDuplicatedRecovery_1.authKeyDupReconnectDelayMs)(), (0, authKeyDuplicatedRecovery_1.authKeyDupMaxRecoveryAttempts)());
         let lastErr;
         for (let attempt = 0; attempt < delays.length; attempt++) {
             await new Promise(r => setTimeout(r, delays[attempt]));
+            if (this.stopping)
+                return;
             try {
+                this.clientGeneration += 1;
+                this.connectionTrace('connect_start', { source: reason, attempt: attempt + 1 });
                 await this.client.connect();
                 this.isConnected = true;
                 lastErr = undefined;
+                this.connectionTrace('recovery_complete', { source: reason, attempt: attempt + 1 });
                 break;
             }
             catch (err) {
                 lastErr = err;
-                console.error(`[userListener] reconnect attempt ${attempt + 1}/${delays.length} failed for ${this.userId}:`, err instanceof Error ? err.message : String(err));
+                console.error(`[userListener] reconnect attempt ${attempt + 1}/${delays.length} failed for ${this.userId}:`, (0, authKeyDuplicatedRecovery_1.redactTelegramConnectionLog)(err));
                 if ((0, telegramClient_1.isAuthKeyUnregistered)(err))
                     return;
                 if (!(0, telegramClient_1.isAuthKeyDuplicated)(err)) {
@@ -2987,17 +3154,21 @@ class UserListener {
                     continue;
                 }
                 (0, workerMetrics_1.incMetric)('auth_key_duplicated');
+                this.connectionTrace('auth_key_duplicated_retry', { source: reason, attempt: attempt + 1 });
                 console.warn(`[userListener] AUTH_KEY_DUPLICATED reconnect attempt ${attempt + 1}/${delays.length}`
                     + ` for ${this.userId}`);
+                this.connectionTrace('disconnect_start', { source: `${reason}:retry_${attempt + 1}` });
                 try {
                     await this.client.disconnect();
                 }
                 catch { /* ignore */ }
+                this.connectionTrace('disconnect_complete', { source: `${reason}:retry_${attempt + 1}` });
             }
         }
         if (!this.isConnected) {
-            console.error(`[userListener] reconnect failed for ${this.userId}:`, lastErr instanceof Error ? lastErr.message : String(lastErr ?? 'unknown'));
-            this.scheduleDeferredAuthKeyDupRetry();
+            console.error(`[userListener] reconnect failed for ${this.userId}:`, (0, authKeyDuplicatedRecovery_1.redactTelegramConnectionLog)(lastErr ?? 'unknown'));
+            this.connectionTrace('recovery_invalidated', { source: reason, attempts: delays.length });
+            setImmediate(() => this.onAuthKeyDuplicatedRecoveryExhausted?.(this.userId, reason));
             return;
         }
         // Rebind handler — the previous one was attached to the disconnected
@@ -3008,7 +3179,6 @@ class UserListener {
         // deliver NewMessage events for all monitored channels.
         await this.warmEntityCache();
         if (!this.isConnected) {
-            this.scheduleDeferredAuthKeyDupRetry();
             return;
         }
         await this.refreshChannelSubscription();

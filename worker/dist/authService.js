@@ -65,11 +65,17 @@ class AuthService {
         if (typeof this.cleanupTimer.unref === 'function')
             this.cleanupTimer.unref();
     }
-    shutdown() {
+    async shutdown() {
         clearInterval(this.cleanupTimer);
-        for (const [, p] of this.pending) {
-            p.client.disconnect().catch(() => { });
-        }
+        const disconnects = [...this.pending.entries()].map(async ([userId, p]) => {
+            try {
+                await p.client.disconnect();
+            }
+            catch (err) {
+                console.warn(`[authService] pending auth disconnect failed for user ${userId}:`, err instanceof Error ? err.message : err);
+            }
+        });
+        await Promise.allSettled(disconnects);
         this.pending.clear();
         this.authInFlight.clear();
         this.qrPasswordResolvers.clear();
@@ -322,6 +328,9 @@ class AuthService {
                     });
                 },
                 onError: async (err) => {
+                    if ((0, telegramClient_1.isAuthKeyUnregistered)(err)) {
+                        throw new Error('AUTH_KEY_UNREGISTERED');
+                    }
                     console.warn(`[authService] QR login onError user=${userId}:`, err.message);
                     return false;
                 },

@@ -589,13 +589,25 @@ class TradeExecutor {
         if (this.isDuplicateRevisionDispatch(row, source))
             return true;
         const receivedAt = Date.now();
+        const pipeline_ts = (0, pipelineTimestamps_1.setPipelineTimestamp)((0, pipelineTimestamps_1.parsePipelineTimestamps)(row.pipeline_ts) ?? {}, 'queue_consumed_at', receivedAt);
         const rowWithTs = {
             ...row,
-            pipeline_ts: {
-                ...((0, pipelineTimestamps_1.parsePipelineTimestamps)(row.pipeline_ts) ?? {}),
-                t_dispatch_received: receivedAt,
-            },
+            pipeline_ts,
         };
+        (0, pipelineTimestamps_1.emitPipelineEvent)({
+            event: 'execution_input_received',
+            correlation: (0, pipelineTimestamps_1.buildPipelineCorrelation)({
+                userId: row.user_id,
+                signalId: row.id,
+                channelId: row.channel_id,
+                telegramMessageId: row.telegram_message_id,
+                dispatchSource: source,
+            }),
+            timestamps: pipeline_ts,
+            outcome: 'accepted',
+            path: source,
+            extra: { priority: opts?.priority ?? null },
+        });
         // Start broker caches warming the instant we accept dispatch — even before
         // we know which brokers will actually trade this signal. With SWR caches
         // this is sub-ms for warm symbols and starts the broker round-trip
@@ -650,13 +662,26 @@ class TradeExecutor {
             return true;
         const isRangeWake = source === signalRangeEntryHelpers_1.SIGNAL_RANGE_WAKE_DISPATCH_SOURCE;
         const receivedAt = Date.now();
+        const pipeline_ts = (0, pipelineTimestamps_1.setPipelineTimestamp)((0, pipelineTimestamps_1.parsePipelineTimestamps)(row.pipeline_ts) ?? {}, 'queue_consumed_at', receivedAt);
         const rowWithTs = {
             ...row,
-            pipeline_ts: {
-                ...((0, pipelineTimestamps_1.parsePipelineTimestamps)(row.pipeline_ts) ?? {}),
-                t_dispatch_received: receivedAt,
-            },
+            pipeline_ts,
         };
+        (0, pipelineTimestamps_1.emitPipelineEvent)({
+            event: 'execution_input_received',
+            correlation: (0, pipelineTimestamps_1.buildPipelineCorrelation)({
+                userId: row.user_id,
+                signalId: row.id,
+                channelId: row.channel_id,
+                telegramMessageId: row.telegram_message_id,
+                dispatchSource: source,
+                brokerAccountId: opts?.wakeBrokerAccountId ?? row.wake_broker_account_id,
+            }),
+            timestamps: pipeline_ts,
+            outcome: 'accepted',
+            path: source,
+            extra: { priority: opts?.priority ?? null },
+        });
         this.prewarmForDispatch(rowWithTs);
         const entryFast = isRangeWake || this.shouldUseEntryFastPath(rowWithTs);
         const mgmtFast = dispatch.shouldUseMgmtFastPath(rowWithTs, source);
@@ -1008,6 +1033,21 @@ class TradeExecutor {
                 const materialized = await (0, helpers_1.manualDispatchAlreadyMaterialized)(this, signal.id, effectiveBroker.id);
                 console.warn(`[tradeExecutor] skip duplicate in-flight sendOrder signal=${signal.id} broker=${effectiveBroker.id}`
                     + ` materialized=${materialized}`);
+                (0, pipelineTimestamps_1.emitPipelineEvent)({
+                    event: 'execution_duplicate_prevented',
+                    correlation: (0, pipelineTimestamps_1.buildPipelineCorrelation)({
+                        userId: signal.user_id,
+                        signalId: signal.id,
+                        channelId: signal.channel_id,
+                        telegramMessageId: signal.telegram_message_id,
+                        brokerAccountId: effectiveBroker.id,
+                        dispatchSource: signal.dispatch_source,
+                    }),
+                    timestamps: signal.pipeline_ts,
+                    outcome: 'inflight',
+                    path: liveFast ? 'live_fast' : 'queued',
+                    extra: { materialized },
+                });
                 return { openedOrMerged: materialized };
             }
         }
@@ -1017,13 +1057,44 @@ class TradeExecutor {
                 if (isRangeWake) {
                     await (0, signalBrokerDispatchClaim_1.releaseSignalBrokerDispatchClaim)(this.supabase, signal.id, effectiveBroker.id);
                 }
+                (0, pipelineTimestamps_1.setPipelineTimestamp)(signal.pipeline_ts ?? (signal.pipeline_ts = {}), 'execution_claim_started_at', Date.now());
                 const claimed = await (0, signalBrokerDispatchClaim_1.claimSignalBrokerDispatch)(this.supabase, signal.id, effectiveBroker.id);
                 if (!claimed) {
                     const materialized = await (0, helpers_1.manualDispatchAlreadyMaterialized)(this, signal.id, effectiveBroker.id);
                     console.warn(`[tradeExecutor] skip duplicate dispatch claim signal=${signal.id} broker=${effectiveBroker.id}`
                         + ` materialized=${materialized}`);
+                    (0, pipelineTimestamps_1.emitPipelineEvent)({
+                        event: 'execution_claim_lost',
+                        correlation: (0, pipelineTimestamps_1.buildPipelineCorrelation)({
+                            userId: signal.user_id,
+                            signalId: signal.id,
+                            channelId: signal.channel_id,
+                            telegramMessageId: signal.telegram_message_id,
+                            brokerAccountId: effectiveBroker.id,
+                            dispatchSource: signal.dispatch_source,
+                        }),
+                        timestamps: signal.pipeline_ts,
+                        outcome: 'lost',
+                        path: liveFast ? 'live_fast' : 'queued',
+                        extra: { materialized },
+                    });
                     return { openedOrMerged: materialized };
                 }
+                (0, pipelineTimestamps_1.setPipelineTimestamp)(signal.pipeline_ts, 'execution_claim_acquired_at', Date.now());
+                (0, pipelineTimestamps_1.emitPipelineEvent)({
+                    event: 'execution_claimed',
+                    correlation: (0, pipelineTimestamps_1.buildPipelineCorrelation)({
+                        userId: signal.user_id,
+                        signalId: signal.id,
+                        channelId: signal.channel_id,
+                        telegramMessageId: signal.telegram_message_id,
+                        brokerAccountId: effectiveBroker.id,
+                        dispatchSource: signal.dispatch_source,
+                    }),
+                    timestamps: signal.pipeline_ts,
+                    outcome: 'claimed',
+                    path: liveFast ? 'live_fast' : 'queued',
+                });
             }
             const ms = resolved.manual_settings;
             console.log(`[tradeExecutor] sendOrder signal=${signal.id} broker=${effectiveBroker.id}`

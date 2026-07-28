@@ -103,6 +103,7 @@ class UserSessionManager {
         this.renewLeasesInFlight = false;
         this.channelListenerManager = null;
         this.channelReconcileMonitor = null;
+        this.shuttingDown = false;
         this.supabase = supabase;
         this.channelListenerManager = new channelListenerManager_1.ChannelListenerManager(supabase);
         this.channelReconcileMonitor = new channelReconcileMonitor_1.ChannelReconcileMonitor(supabase, async (readerUserId, signalChannelId, telegramChatId) => {
@@ -211,6 +212,8 @@ class UserSessionManager {
         }
     }
     async loadAll() {
+        if (this.shuttingDown)
+            return;
         if (!workerConfig_1.workerConfig.runsListener)
             return;
         if (!gramjsListenerEnabled()) {
@@ -248,6 +251,8 @@ class UserSessionManager {
         this.subscribeToAuthPendingChanges();
     }
     async renewAllLeases() {
+        if (this.shuttingDown)
+            return;
         // A previous cycle is still running (a wedged Supabase call). Skip rather
         // than stacking overlapping runs that each re-hang and leak sockets — that
         // race froze every lease but the first listener, taking the engine offline.
@@ -359,6 +364,9 @@ class UserSessionManager {
      * headless sessions eating login codes).
      */
     async prepareForAuth(userId) {
+        if (this.shuttingDown) {
+            throw new Error('Telegram worker is shutting down');
+        }
         if (workerConfig_1.workerConfig.runsListener) {
             await this.withConnectionLock(userId, async () => {
                 await this.disconnectListener(userId);
@@ -371,6 +379,8 @@ class UserSessionManager {
     }
     /** Stop the live listener before send_code so the auth key slot is free on this host. */
     async pauseForAuth(userId, opts) {
+        if (this.shuttingDown)
+            return;
         if (!workerConfig_1.workerConfig.runsListener)
             return;
         await this.withConnectionLock(userId, async () => {
@@ -588,6 +598,9 @@ class UserSessionManager {
         };
     }
     async adoptClient(userId, client, sessionString) {
+        if (this.shuttingDown) {
+            throw new Error('Telegram worker is shutting down');
+        }
         if (!workerConfig_1.workerConfig.runsListener) {
             throw new Error('Telegram listener not enabled on this worker (WORKER_ROLE)');
         }
@@ -599,7 +612,7 @@ class UserSessionManager {
                 if (!lease.ok) {
                     throw new Error(`Cannot adopt Telegram client: ${lease.reason}`);
                 }
-                const listener = new userListener_1.UserListener(userId, sessionString, this.supabase, client);
+                const listener = new userListener_1.UserListener(userId, sessionString, this.supabase, client, (id, reason) => this.onAuthKeyDuplicatedRecoveryExhausted(id, reason));
                 if (this.tradeExecutor) {
                     listener.setOnSignalParsed(row => listenerInProcessDispatch(this.tradeExecutor, row));
                 }
@@ -664,6 +677,9 @@ class UserSessionManager {
      * (same outcome as Disconnect-then-reconnect).
      */
     async reconnectTelegramSession(userId) {
+        if (this.shuttingDown) {
+            throw new Error('Telegram worker is shutting down');
+        }
         if (!workerConfig_1.workerConfig.runsListener) {
             throw new Error('Live Telegram listener not available on this worker');
         }
@@ -689,7 +705,7 @@ class UserSessionManager {
         if (!sess.is_active)
             throw new Error('Telegram session is paused');
         const sessionString = sess.session_string;
-        const delays = (0, authKeyDuplicatedRecovery_1.authKeyDupReconnectDelaysMs)(authKeyReleaseDelayMs(), 8000);
+        const delays = (0, authKeyDuplicatedRecovery_1.authKeyDupReconnectDelaysMs)(authKeyReleaseDelayMs(), (0, authKeyDuplicatedRecovery_1.authKeyDupReconnectDelayMs)());
         let lastErr;
         for (let attempt = 0; attempt < delays.length; attempt++) {
             const delay = delays[attempt] ?? authKeyReleaseDelayMs();
@@ -746,6 +762,9 @@ class UserSessionManager {
         return { ok: true };
     }
     async ensureListener(userId) {
+        if (this.shuttingDown) {
+            throw new Error('Telegram worker is shutting down');
+        }
         const existing = this.listeners.get(userId);
         if (existing) {
             if (!existing.isTelegramConnected()) {
@@ -819,6 +838,9 @@ class UserSessionManager {
      * MTProto slot — including across dedicated backtest vs listener workers.
      */
     async withEphemeralTelegram(userId, fn) {
+        if (this.shuttingDown) {
+            throw new Error('Telegram worker is shutting down');
+        }
         const pauseLiveLocal = workerConfig_1.workerConfig.runsListener
             && (workerConfig_1.workerConfig.role === 'all' || process.env.BACKTEST_PAUSE_LIVE_LISTENER !== 'false');
         let sessionString = null;
@@ -881,6 +903,8 @@ class UserSessionManager {
             + ' — open Copier Engine and use Reconnect Telegram');
     }
     async startListener(userId, sessionString) {
+        if (this.shuttingDown)
+            return;
         if (this.listeners.has(userId))
             return;
         if (!(0, workerConfig_1.userBelongsToShard)(userId))
@@ -890,6 +914,8 @@ class UserSessionManager {
             return;
         }
         await this.withConnectionLock(userId, async () => {
+            if (this.shuttingDown)
+                return;
             if (this.listeners.has(userId))
                 return;
             if (await this.shouldSkipListenerStart(userId))
@@ -899,7 +925,7 @@ class UserSessionManager {
                 console.warn(`[sessionManager] skip listener for ${userId}: ${lease.reason}`);
                 return;
             }
-            const listener = new userListener_1.UserListener(userId, sessionString, this.supabase);
+            const listener = new userListener_1.UserListener(userId, sessionString, this.supabase, undefined, (id, reason) => this.onAuthKeyDuplicatedRecoveryExhausted(id, reason));
             if (this.tradeExecutor) {
                 listener.setOnSignalParsed(row => listenerInProcessDispatch(this.tradeExecutor, row));
             }
@@ -967,6 +993,7 @@ class UserSessionManager {
         return { users, stats: totals };
     }
     async disconnectAll() {
+        this.shuttingDown = true;
         if (this.channelChannel) {
             try {
                 await this.supabase.removeChannel(this.channelChannel);
@@ -981,12 +1008,44 @@ class UserSessionManager {
             catch { /* noop */ }
             this.authPendingChannel = null;
         }
-        for (const [userId, listener] of this.listeners) {
-            await listener.stop();
-            await (0, sessionLease_1.releaseSessionLease)(this.supabase, userId);
-            console.log(`[sessionManager] Disconnected ${userId}`);
+        this.stopChannelListenerServices();
+        const entries = Array.from(this.listeners.entries());
+        const stopResults = await Promise.allSettled(entries.map(async ([userId, listener]) => {
+            try {
+                await listener.stop();
+                console.log(`[sessionManager] Disconnected ${userId}`);
+            }
+            finally {
+                try {
+                    await (0, sessionLease_1.releaseSessionLease)(this.supabase, userId);
+                }
+                catch (err) {
+                    console.error(`[sessionManager] lease release failed during shutdown user=${userId}:`, err instanceof Error ? err.message : err);
+                }
+            }
+        }));
+        for (let i = 0; i < stopResults.length; i++) {
+            const result = stopResults[i];
+            if (result.status === 'rejected') {
+                const userId = entries[i]?.[0] ?? 'unknown';
+                console.error(`[sessionManager] listener disconnect failed during shutdown user=${userId}:`, result.reason instanceof Error ? result.reason.message : result.reason);
+            }
         }
+        await (0, sessionLease_1.releaseOwnedSessionLeases)(this.supabase);
         this.listeners.clear();
+        const unresolvedLeases = await (0, sessionLease_1.listOwnedActiveLeases)(this.supabase).catch(err => {
+            console.error('[sessionManager] failed to check unresolved leases after shutdown:', err instanceof Error ? err.message : err);
+            return [];
+        });
+        if (unresolvedLeases.length > 0) {
+            console.error(`[sessionManager] unresolved owned leases after shutdown count=${unresolvedLeases.length}`
+                + ` users=${unresolvedLeases.map(l => l.user_id).join(',')}`);
+        }
+    }
+    onAuthKeyDuplicatedRecoveryExhausted(userId, reason) {
+        console.error(`[sessionManager] AUTH_KEY_DUPLICATED recovery exhausted user=${userId}`
+            + ` reason=${reason} — invalidating session so UI can re-link`);
+        void this.invalidateTelegramSession(userId).catch(err => console.error(`[sessionManager] AUTH_KEY_DUPLICATED invalidation failed user=${userId}:`, err instanceof Error ? err.message : err));
     }
 }
 exports.UserSessionManager = UserSessionManager;
