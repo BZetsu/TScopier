@@ -85,7 +85,9 @@ export async function watchRangeLayeringBasketEvents(
       signalId,
       brokerAccountId,
     )
-    if (layerTillClose) {
+    // Layer-till-close ON keeps layering after TP/partial close, but a fully
+    // flat basket must still purge remaining ladder rows (no refire).
+    if (layerTillClose && decision.reason !== 'basket_fully_closed') {
       await setTpTouchedLock(supabase, {
         signalId,
         brokerAccountId,

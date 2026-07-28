@@ -16,6 +16,19 @@ test('shouldLockBasketLayering: partial close locks layering stop', () => {
   assert.equal(out.reason, 'basket_partially_closed')
 })
 
+test('shouldLockBasketLayering: fully flat basket locks to stop post-close refire', () => {
+  const out = shouldLockBasketLayering({
+    direction: 'sell',
+    openTps: [],
+    openCount: 0,
+    closedCount: 17,
+    bid: 4042,
+    ask: 4042.2,
+  })
+  assert.equal(out.lock, true)
+  assert.equal(out.reason, 'basket_fully_closed')
+})
+
 test('watchRangeLayeringBasketEvents: no trades returns empty touched set', async () => {
   const supabase = {
     from() {

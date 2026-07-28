@@ -553,7 +553,7 @@ test('shouldLockBasketLayering: fully open basket with no touch stays unlocked',
   assert.equal(out.reason, null)
 })
 
-test('shouldLockBasketLayering: flat basket (no open trades) does not lock', () => {
+test('shouldLockBasketLayering: flat basket with closed legs locks to stop refire', () => {
   const out = shouldLockBasketLayering({
     direction: 'sell',
     openTps: [],
@@ -562,7 +562,21 @@ test('shouldLockBasketLayering: flat basket (no open trades) does not lock', () 
     bid: 4094.5,
     ask: 4094.8,
   })
+  assert.equal(out.lock, true)
+  assert.equal(out.reason, 'basket_fully_closed')
+})
+
+test('shouldLockBasketLayering: empty basket with no history stays unlocked', () => {
+  const out = shouldLockBasketLayering({
+    direction: 'sell',
+    openTps: [],
+    openCount: 0,
+    closedCount: 0,
+    bid: 4094.5,
+    ask: 4094.8,
+  })
   assert.equal(out.lock, false)
+  assert.equal(out.reason, null)
 })
 
 test('VirtualPendingMonitor: auto path excludes broker_pending status', () => {
