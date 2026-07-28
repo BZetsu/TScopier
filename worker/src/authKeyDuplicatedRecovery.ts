@@ -20,17 +20,34 @@ export function shouldEmitAuthKeyDupEvent(
  */
 export function authKeyDupReconnectDelaysMs(
   initialCooldownMs: number,
-  authDupDelayMs: number,
+  authDupDelayMs = authKeyDupReconnectDelayMs(),
+  maxAttempts = authKeyDupMaxRecoveryAttempts(),
 ): number[] {
   const first = Math.max(500, Math.min(120_000, initialCooldownMs))
-  const second = Math.max(2_000, Math.min(60_000, authDupDelayMs))
-  return [first, second, 15_000, 30_000]
+  const retry = Math.max(2_000, Math.min(120_000, authDupDelayMs))
+  const attempts = Math.max(1, Math.min(100, Math.floor(maxAttempts)))
+  return Array.from({ length: attempts }, (_, i) => (i === 0 ? first : retry))
 }
 
-/** Schedule another reconnect attempt after forceReconnect exhausts retries. */
-export function authKeyDupDeferredRetryMs(): number {
+/** Delay between AUTH_KEY_DUPLICATED recovery connect attempts. */
+export function authKeyDupReconnectDelayMs(): number {
   return Math.max(
-    15_000,
-    Math.min(300_000, Number(process.env.TELEGRAM_AUTH_DUP_DEFERRED_RETRY_MS ?? 60_000)),
+    2_000,
+    Math.min(120_000, Number(process.env.TELEGRAM_AUTH_DUP_RECONNECT_DELAY_MS ?? 30_000)),
   )
+}
+
+/** Maximum connect cycles before requiring the user to re-link Telegram. */
+export function authKeyDupMaxRecoveryAttempts(): number {
+  return Math.max(
+    1,
+    Math.min(100, Math.floor(Number(process.env.TELEGRAM_AUTH_DUP_MAX_RECOVERY_ATTEMPTS ?? 10))),
+  )
+}
+
+export function redactTelegramConnectionLog(value: unknown): string {
+  const raw = value instanceof Error ? value.message : String(value ?? '')
+  return raw
+    .replace(/[A-Za-z0-9+/=]{80,}/g, '[redacted]')
+    .replace(/\b\d{8,15}\b/g, '[redacted]')
 }

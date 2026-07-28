@@ -30,6 +30,7 @@ import type { MonitorLoopHandle } from './monitorIdleGate'
 import { subscribeMonitorWorkWake } from './monitorWorkWake'
 import { startTradeLogRetention } from './tradeLogRetention'
 import type { Server } from 'http'
+import { telegramShutdownDrainMs } from './workerShutdown'
 
 if (!globalThis.WebSocket) {
   globalThis.WebSocket = WebSocket as unknown as typeof globalThis.WebSocket
@@ -241,7 +242,7 @@ async function main() {
   const shutdown = async (signal: string) => {
     console.log(`[worker] ${signal} received, shutting down...`)
     httpServer?.close()
-    authService?.shutdown()
+    await authService?.shutdown()
     stopWorkWake?.()
     stopLogRetention?.()
     setQueueMetricsProvider(null)
@@ -251,7 +252,9 @@ async function main() {
     if (workerConfig.runsListener) {
       await sessionManager.disconnectAll()
     }
-    await new Promise(r => setTimeout(r, Math.min(10_000, Number(process.env.TELEGRAM_SHUTDOWN_DRAIN_MS ?? 8000))))
+    const drainMs = telegramShutdownDrainMs()
+    console.log(`[worker] Telegram shutdown drain ${drainMs}ms before exit`)
+    await new Promise(r => setTimeout(r, drainMs))
     process.exit(0)
   }
 

@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.SignalQueueConsumerManager = exports.SignalQueueConsumer = void 0;
 const workerConfig_1 = require("../workerConfig");
 const workerMetrics_1 = require("../workerMetrics");
+const pipelineTimestamps_1 = require("../pipelineTimestamps");
 const redisStreamsClient_1 = require("./redisStreamsClient");
 const signalQueueConfig_1 = require("./signalQueueConfig");
 const signalQueueIdempotency_1 = require("./signalQueueIdempotency");
@@ -134,7 +135,28 @@ class SignalQueueConsumer {
             return;
         }
         const attempts = (0, signalQueueRetry_1.parseAttemptCount)(msg.fields);
-        const enqueueToStartMs = Date.now() - job.enqueued_at;
+        const receivedAt = Date.now();
+        job.pipeline_ts = (0, pipelineTimestamps_1.setPipelineTimestamp)(job.pipeline_ts ?? {}, 'queue_consumed_at', receivedAt);
+        const enqueueToStartMs = Math.max(0, receivedAt - job.enqueued_at);
+        const correlation = (0, pipelineTimestamps_1.buildPipelineCorrelation)({
+            userId: job.user_id,
+            signalId: job.signal_id,
+            channelId: job.channel_id,
+            queueMessageId: msg.id,
+            dispatchSource: 'queue',
+        });
+        (0, pipelineTimestamps_1.emitPipelineEvent)({
+            event: 'queue_consumed',
+            correlation,
+            timestamps: job.pipeline_ts,
+            outcome: 'started',
+            path: job.lane,
+            extra: {
+                shard_id: job.shard_id,
+                attempts,
+                reclaimed: opts?.reclaimed === true,
+            },
+        });
         const claimed = await (0, signalQueueIdempotency_1.claimQueueIdempotency)(this.supabase, job.idempotency_key, {
             signal_id: job.signal_id,
             user_id: job.user_id,
@@ -142,17 +164,24 @@ class SignalQueueConsumer {
         });
         if (!claimed) {
             (0, workerMetrics_1.incMetric)('queue_duplicate_skip');
+            (0, pipelineTimestamps_1.emitPipelineEvent)({
+                event: 'execution_duplicate_prevented',
+                correlation,
+                timestamps: job.pipeline_ts,
+                outcome: 'duplicate',
+                path: job.lane,
+                extra: {
+                    idempotency_key: job.idempotency_key,
+                    attempts,
+                },
+            });
             await (0, redisStreamsClient_1.xack)(streamKey, group, msg.id);
             this.lastAckAt = Date.now();
             return;
         }
-        const receivedAt = Date.now();
         const signalRow = {
             ...job.signal,
-            pipeline_ts: {
-                ...(job.pipeline_ts ?? {}),
-                t_dispatch_received: receivedAt,
-            },
+            pipeline_ts: job.pipeline_ts,
         };
         void (0, signalQueueRetry_1.logQueueExecution)(this.supabase, {
             user_id: job.user_id,

@@ -46,6 +46,7 @@ const executionMode_1 = require("../engine/executionMode");
 const fxClient_1 = require("../engine/fxClient");
 const manualPlanner_1 = require("../manualPlanner");
 const materializeBrokerRangePendingLegs_1 = require("./materializeBrokerRangePendingLegs");
+const pipelineTimestamps_1 = require("../pipelineTimestamps");
 async function sendImmediateLegs(input) {
     const { ctx, signal, parsed, broker, manual, api, uuid, symbol, requestedSymbol, mapping, params, legs, liveEntryFast, pipelineT0, strictEntryPrefetch, channelDelayMs, channelDelaySkipped, deferVirtualAnchor, deferBrokerRangePendingMaterialize, brokerPendingMode, prepAnchor, prepAnchorSource, virtualPendings, plan, materializedVirtuals, strictBrokerPlaced, strictDeferred, op, channelKeywords, baseLot, syncMultiLegTps, prep, } = input;
     if (legs.length === 0) {
@@ -113,20 +114,44 @@ async function sendImmediateLegs(input) {
             console.warn(`[tradeExecutor] stops clamped signal=${signal.id} broker=${broker.id} symbol=${args.symbol} op=${args.operation}: ${clamped.adjustments.join(', ')}`);
         }
         args = clamped.args;
+        let sendArgs = args;
         const plannedSl = Number(args.stoploss) || 0;
         const plannedTp = Number(args.takeprofit) || 0;
         const t0 = Date.now();
         if (liveEntryFast && signal.pipeline_ts && signal.pipeline_ts.t_first_broker_send == null) {
-            signal.pipeline_ts.t_first_broker_send = t0;
+            (0, pipelineTimestamps_1.setPipelineTimestamp)(signal.pipeline_ts, 'broker_request_started_at', t0);
         }
-        let sendArgs = args;
+        else if (signal.pipeline_ts && signal.pipeline_ts.broker_request_started_at == null) {
+            (0, pipelineTimestamps_1.setPipelineTimestamp)(signal.pipeline_ts, 'broker_request_started_at', t0);
+        }
         let stopsFallback = false;
         let result = null;
-        let lastAttemptError = '';
+        let lastAttemptError;
+        let correlation = (0, pipelineTimestamps_1.buildPipelineCorrelation)({
+            userId: signal.user_id,
+            signalId: signal.id,
+            channelId: signal.channel_id,
+            telegramMessageId: signal.telegram_message_id,
+            brokerAccountId: broker.id,
+            executionAttemptId: `${signal.id}:${broker.id}:${leg.idx}:1`,
+            brokerRequestId: `${signal.id}:${broker.id}:${leg.idx}`,
+            dispatchSource: signal.dispatch_source,
+        });
         for (let attempt = 0; attempt < 2; attempt++) {
             try {
+                const attemptNo = attempt + 1;
+                correlation = (0, pipelineTimestamps_1.buildPipelineCorrelation)({
+                    userId: signal.user_id,
+                    signalId: signal.id,
+                    channelId: signal.channel_id,
+                    telegramMessageId: signal.telegram_message_id,
+                    brokerAccountId: broker.id,
+                    executionAttemptId: `${signal.id}:${broker.id}:${leg.idx}:${attemptNo}`,
+                    brokerRequestId: `${signal.id}:${broker.id}:${leg.idx}`,
+                    dispatchSource: signal.dispatch_source,
+                });
                 if (useV2) {
-                    const r = await (0, fxClient_1.getFxClient)().orderSend(uuid, v2Platform, {
+                    const sendPromise = (0, fxClient_1.getFxClient)().orderSend(uuid, v2Platform, {
                         symbol: sendArgs.symbol,
                         operation: sendArgs.operation,
                         volume: sendArgs.volume,
@@ -137,6 +162,21 @@ async function sendImmediateLegs(input) {
                         slippage: sendArgs.slippage,
                         expertId: sendArgs.expertID,
                     }, { anchorSignalId: signal.id, legIndex: leg.idx, preSnapshot: v2Snapshot });
+                    (0, pipelineTimestamps_1.emitPipelineEvent)({
+                        event: 'broker_request_started',
+                        correlation,
+                        timestamps: signal.pipeline_ts,
+                        outcome: 'started',
+                        path: 'fxsocket_v2',
+                        extra: {
+                            symbol: sendArgs.symbol,
+                            operation: sendArgs.operation,
+                            leg: leg.idx + 1,
+                            total: totalCount,
+                            attempt: attemptNo,
+                        },
+                    }, { deferLog: true });
+                    const r = await sendPromise;
                     if (!r.ok || !r.ticket)
                         throw new Error(r.message || `v2 order_send rejected (${r.retcodeName})`);
                     result = {
@@ -148,7 +188,22 @@ async function sendImmediateLegs(input) {
                     };
                 }
                 else {
-                    const raw = await api.orderSend(uuid, sendArgs);
+                    const sendPromise = api.orderSend(uuid, sendArgs);
+                    (0, pipelineTimestamps_1.emitPipelineEvent)({
+                        event: 'broker_request_started',
+                        correlation,
+                        timestamps: signal.pipeline_ts,
+                        outcome: 'started',
+                        path: 'fxsocket_v1',
+                        extra: {
+                            symbol: sendArgs.symbol,
+                            operation: sendArgs.operation,
+                            leg: leg.idx + 1,
+                            total: totalCount,
+                            attempt: attemptNo,
+                        },
+                    }, { deferLog: true });
+                    const raw = await sendPromise;
                     result = {
                         ticket: raw.ticket,
                         openPrice: raw.openPrice ?? null,
@@ -160,6 +215,7 @@ async function sendImmediateLegs(input) {
                 break;
             }
             catch (err) {
+                (0, pipelineTimestamps_1.setPipelineTimestamp)(signal.pipeline_ts ?? (signal.pipeline_ts = {}), 'broker_response_received_at', Date.now());
                 lastAttemptError = err instanceof Error ? err.message : String(err);
                 const hasStops = (Number(sendArgs.stoploss) || 0) > 0 || (Number(sendArgs.takeprofit) || 0) > 0;
                 if (attempt === 0 && (0, orderModifySafe_1.isInvalidStopsError)(lastAttemptError) && hasStops) {
@@ -183,6 +239,20 @@ async function sendImmediateLegs(input) {
                     request_payload: { ...sendArgs, ...orderLogContext },
                     error_message: lastAttemptError,
                 });
+                (0, pipelineTimestamps_1.emitPipelineEvent)({
+                    event: (0, fxsocketClient_1.isOrderOpTimedOutMessage)(lastAttemptError) ? 'execution_ambiguous' : 'broker_request_failed',
+                    correlation,
+                    timestamps: signal.pipeline_ts,
+                    outcome: 'failed',
+                    path: useV2 ? 'fxsocket_v2' : 'fxsocket_v1',
+                    error_code: lastAttemptError.slice(0, 120),
+                    extra: {
+                        symbol: sendArgs.symbol,
+                        operation: sendArgs.operation,
+                        leg: leg.idx + 1,
+                        total: totalCount,
+                    },
+                });
                 return false;
             }
         }
@@ -190,8 +260,29 @@ async function sendImmediateLegs(input) {
             return false;
         const latencyMs = Date.now() - t0;
         if (liveEntryFast && signal.pipeline_ts) {
-            signal.pipeline_ts.t_last_broker_send = Date.now();
+            (0, pipelineTimestamps_1.setPipelineTimestamp)(signal.pipeline_ts, 'broker_response_received_at', Date.now());
+            (0, pipelineTimestamps_1.setPipelineTimestamp)(signal.pipeline_ts, 'broker_execution_confirmed_at', Date.now());
         }
+        else if (signal.pipeline_ts) {
+            (0, pipelineTimestamps_1.setPipelineTimestamp)(signal.pipeline_ts, 'broker_response_received_at', Date.now());
+            (0, pipelineTimestamps_1.setPipelineTimestamp)(signal.pipeline_ts, 'broker_execution_confirmed_at', Date.now());
+        }
+        (0, pipelineTimestamps_1.emitPipelineEvent)({
+            event: 'broker_request_succeeded',
+            correlation,
+            timestamps: signal.pipeline_ts,
+            outcome: 'success',
+            path: useV2 ? 'fxsocket_v2' : 'fxsocket_v1',
+            extra: {
+                broker_ticket: result.ticket,
+                symbol: sendArgs.symbol,
+                operation: sendArgs.operation,
+                leg: leg.idx + 1,
+                total: totalCount,
+                latency_ms: latencyMs,
+                stops_fallback: stopsFallback || undefined,
+            },
+        });
         console.log(`[tradeExecutor] OrderSend ok signal=${signal.id} broker=${broker.id} ticket=${result.ticket} leg=${leg.idx + 1}/${totalCount}`
             + ` price=${sendArgs.price ?? 0} ${latencyMs}ms v2=${useV2}${stopsFallback ? ' stops_fallback' : ''}`);
         const isBuy = !sendArgs.operation.toLowerCase().includes('sell');
@@ -283,6 +374,9 @@ async function sendImmediateLegs(input) {
                 const tradeRowId = tradeInsert.data?.id ?? null;
                 filledLeg.tradeRowId = tradeRowId;
                 await persistPostFillDb(tradeRowId);
+                if (signal.pipeline_ts) {
+                    (0, pipelineTimestamps_1.setPipelineTimestamp)(signal.pipeline_ts, 'execution_state_persisted_at', Date.now());
+                }
             })().catch(err => {
                 console.error(`[tradeExecutor] post-fill persist failed signal=${signal.id} broker=${broker.id} ticket=${result.ticket}:`, err instanceof Error ? err.message : String(err));
             });
@@ -299,6 +393,9 @@ async function sendImmediateLegs(input) {
             filledLeg.tradeRowId = tradeInsert.data?.id ?? null;
             filledLegs.push(filledLeg);
             await persistPostFillDb(filledLeg.tradeRowId);
+            if (signal.pipeline_ts) {
+                (0, pipelineTimestamps_1.setPipelineTimestamp)(signal.pipeline_ts, 'execution_state_persisted_at', Date.now());
+            }
         }
         return true;
     };

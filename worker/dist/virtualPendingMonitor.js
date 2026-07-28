@@ -4,6 +4,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.VirtualPendingMonitor = void 0;
+exports.layerLatencyPayload = layerLatencyPayload;
 exports.isTriggered = isTriggered;
 exports.isBlockedByShallowerStep = isBlockedByShallowerStep;
 exports.fillWithinTriggerBand = fillWithinTriggerBand;
@@ -31,10 +32,31 @@ const brokerConnectError_1 = require("./brokerConnectError");
 const rangePendingBasketCleanup_1 = require("./rangePendingBasketCleanup");
 const gapFillReanchor_1 = require("./gapFillReanchor");
 const layerConcurrentFire_1 = require("./layerConcurrentFire");
+const workerMetrics_1 = require("./workerMetrics");
 const SYMBOL_TTL_MS = 10 * 60000;
 const ACTIVE_MS = (0, monitorIdleGate_1.monitorActiveIntervalMs)('VIRTUAL_PENDING_TICK_MS', 200);
 const IDLE_MS = (0, monitorIdleGate_1.monitorIdleIntervalMs)('VIRTUAL_PENDING_IDLE_MS', 15000);
 const STALE_CLAIM_AFTER_MS = 30000;
+function layerLatencyPayload(ts, extra) {
+    const duration = (end, start) => end != null && start != null ? Math.max(0, end - start) : null;
+    return {
+        ...extra,
+        tick_to_cross_detection_ms: duration(ts.layer_cross_detected_at, ts.market_tick_received_at),
+        layer_lookup_ms: duration(ts.layer_lookup_completed_at, ts.layer_lookup_started_at),
+        claim_ms: duration(ts.layer_claim_acquired_at, ts.layer_claim_started_at),
+        cross_to_broker_request_ms: duration(ts.broker_request_started_at, ts.layer_cross_detected_at),
+        broker_response_ms: duration(ts.broker_response_received_at, ts.broker_request_started_at),
+        complete_layer_execution_ms: duration(ts.layer_reconciled_at ?? ts.pending_leg_updated_at, ts.market_tick_received_at),
+        timestamps: ts,
+    };
+}
+function logLayerLatency(event, payload) {
+    console.log(JSON.stringify({
+        event,
+        component: 'virtualPendingMonitor',
+        ...payload,
+    }));
+}
 async function virtualPendingHasWork(supabase, staleCut) {
     const pending = await (0, monitorIdleGate_1.hasWorkOnShard)(supabase, 'range_pending_legs', q => q
         .eq('status', 'pending')
@@ -234,6 +256,7 @@ class VirtualPendingMonitor {
             }
         }
         // Pull the live pending queue.
+        const layerLookupStartedAt = Date.now();
         let pendingQuery = this.supabase
             .from('range_pending_legs')
             .select('*')
@@ -249,6 +272,7 @@ class VirtualPendingMonitor {
         if (!pendingQ)
             return;
         const { data, error } = await pendingQ;
+        const layerLookupCompletedAt = Date.now();
         if (error) {
             console.error('[virtualPendingMonitor] select failed:', error.message);
             return;
@@ -302,6 +326,7 @@ class VirtualPendingMonitor {
                 console.warn(`[virtualPendingMonitor] /Quote failed for ${symbol} (account=${uuid}): ${msg}`);
                 return;
             }
+            const marketTickReceivedAt = Date.now();
             const tpTouchedBaskets = await this.detectAndLockTpTouchedBaskets(legs, q.bid, q.ask);
             // How far is the nearest trigger? Useful diagnostic when nothing fires.
             let nearestGap = Number.POSITIVE_INFINITY;
@@ -324,8 +349,6 @@ class VirtualPendingMonitor {
                 arr.push(leg);
                 pendingByBasket.set(bk, arr);
             }
-            const cancelledStaleIds = new Set();
-            const purgedBaskets = new Set();
             const signalIds = [...new Set(legs.map(l => l.signal_id))];
             const activeStepsByBasket = await this.fetchShallowActiveSteps(uuid, symbol, signalIds);
             const firedStepsByBasket = await this.loadFiredStepIndicesByBasket(uuid, symbol, signalIds);
@@ -351,61 +374,24 @@ class VirtualPendingMonitor {
                     maxFiresPerTick: layerConcurrentFire_1.DEFAULT_MAX_LAYER_FIRES_PER_TICK,
                 });
                 for (const leg of toFire) {
-                    if (cancelledStaleIds.has(leg.id))
-                        continue;
                     if (isBlockedByShallowerStep(leg, activeStepsByBasket))
                         continue;
-                    const legBk = `${leg.signal_id}|${leg.broker_account_id}`;
-                    if (purgedBaskets.has(legBk)) {
-                        cancelledStaleIds.add(leg.id);
-                        continue;
-                    }
-                    const staleEarly = await this.getStaleLegReason(leg, api, uuid);
-                    if (staleEarly) {
-                        if (!purgedBaskets.has(legBk)) {
-                            purgedBaskets.add(legBk);
-                            const deleted = await (0, rangePendingBasketCleanup_1.deleteRangePendingLegsForBasket)(this.supabase, { signalId: leg.signal_id, brokerAccountId: leg.broker_account_id }, staleEarly);
-                            if (deleted > 0) {
-                                for (const l of legs) {
-                                    if (l.signal_id === leg.signal_id && l.broker_account_id === leg.broker_account_id) {
-                                        cancelledStaleIds.add(l.id);
-                                    }
-                                }
-                                try {
-                                    await this.supabase.from('trade_execution_logs').insert({
-                                        user_id: leg.user_id,
-                                        signal_id: leg.signal_id,
-                                        broker_account_id: leg.broker_account_id,
-                                        action: 'virtual_pending_cancelled',
-                                        status: 'info',
-                                        request_payload: {
-                                            reason: staleEarly,
-                                            phase: 'pre_claim_stale',
-                                            rows: deleted,
-                                            basket: legBk,
-                                        },
-                                    });
-                                }
-                                catch {
-                                    /* logging is best-effort */
-                                }
-                            }
-                        }
-                        continue;
-                    }
                     triggeredTotal += 1;
-                    const fired = await this.fireLeg(leg, q.bid, q.ask, {
+                    const layerCrossDetectedAt = Date.now();
+                    const result = await this.fireLeg(leg, q.bid, q.ask, {
                         distanceBurst: { anchor, stepPriceOffset: stepOffset },
+                        timestamps: {
+                            market_tick_received_at: marketTickReceivedAt,
+                            layer_lookup_started_at: layerLookupStartedAt,
+                            layer_lookup_completed_at: layerLookupCompletedAt,
+                            layer_cross_detected_at: layerCrossDetectedAt,
+                        },
                     });
-                    if (fired) {
+                    const outcome = this.recordFireLegResult(result, leg, activeStepsByBasket, firedStepsByBasket);
+                    if (outcome === 'fired') {
                         firedOkTotal += 1;
-                        const activeSteps = activeStepsByBasket.get(legBk);
-                        activeSteps?.delete(leg.step_idx);
-                        const firedSteps = firedStepsByBasket.get(legBk) ?? new Set();
-                        firedSteps.add(leg.step_idx);
-                        firedStepsByBasket.set(legBk, firedSteps);
                     }
-                    else {
+                    else if (outcome === 'failed') {
                         firedErrTotal += 1;
                     }
                 }
@@ -542,6 +528,17 @@ class VirtualPendingMonitor {
             console.warn(`[virtualPendingMonitor] release claim failed leg=${legId}: ${error.message}`);
         }
     }
+    recordFireLegResult(result, leg, activeStepsByBasket, firedStepsByBasket) {
+        if (result.outcome !== 'fired')
+            return result.outcome;
+        const legBk = `${leg.signal_id}|${leg.broker_account_id}`;
+        const activeSteps = activeStepsByBasket.get(legBk);
+        activeSteps?.delete(leg.step_idx);
+        const firedSteps = firedStepsByBasket.get(legBk) ?? new Set();
+        firedSteps.add(leg.step_idx);
+        firedStepsByBasket.set(legBk, firedSteps);
+        return result.outcome;
+    }
     /**
      * Enqueue a basket reconcile job for a freshly-filled range leg's basket.
      * Used when the post-fill SL/TP follow-up or TP rebalance fails, so the new
@@ -614,19 +611,71 @@ class VirtualPendingMonitor {
     async fireLeg(leg, bid, ask, opts) {
         const api = (0, mtApiByAccount_1.apiForFxsocketAccount)(this.platformByUuid, leg.metaapi_account_id);
         if (!api)
-            return false;
+            return { outcome: 'skipped', reason: 'api_unavailable' };
+        const timestamps = { ...(opts?.timestamps ?? {}) };
         // Use the tick-level quote directly — it was fetched moments ago in this
         // same tick cycle. The monotonicity check below still prevents stale fires.
-        let guardBid = bid;
-        let guardAsk = ask;
+        const guardBid = bid;
+        const guardAsk = ask;
         const burst = opts?.distanceBurst;
         if (burst && burst.stepPriceOffset > 0) {
             if (!(0, layerConcurrentFire_1.isLegEligibleByDistance)(leg.is_buy, burst.anchor, guardBid, guardAsk, leg.step_idx, burst.stepPriceOffset)) {
-                return false;
+                return { outcome: 'skipped', reason: 'distance_not_eligible' };
             }
         }
         else if (!isTriggered(leg.is_buy, leg.trigger_price, guardBid, guardAsk)) {
-            return false;
+            return { outcome: 'skipped', reason: 'not_triggered' };
+        }
+        timestamps.layer_claim_started_at = Date.now();
+        const { data: claimed, error: claimErr } = await this.supabase
+            .from('range_pending_legs')
+            .update({ status: 'claimed', claimed_at: new Date().toISOString(), claimed_by: this.hostId })
+            .eq('id', leg.id)
+            .eq('status', 'pending')
+            .select('id')
+            .maybeSingle();
+        if (claimErr) {
+            console.warn(`[virtualPendingMonitor] CAS claim error leg=${leg.id}: ${claimErr.message}`);
+            (0, workerMetrics_1.incMetric)('range_layer_claim_error');
+            return { outcome: 'failed', reason: 'claim_error' };
+        }
+        if (!claimed) {
+            (0, workerMetrics_1.incMetric)('range_layer_claim_lost');
+            return { outcome: 'not_claimed', reason: 'claim_lost' };
+        }
+        timestamps.layer_claim_acquired_at = Date.now();
+        (0, workerMetrics_1.incMetric)('range_layer_claim_acquired');
+        const earlyParams = await this.getSymbolParams(leg.metaapi_account_id, leg.symbol);
+        const earlyFireBid = guardBid;
+        const earlyFireAsk = guardAsk;
+        const earlyBand = fillWithinTriggerBand({
+            isBuy: leg.is_buy,
+            triggerPrice: leg.trigger_price,
+            bid: earlyFireBid,
+            ask: earlyFireAsk,
+            slippagePoints: leg.slippage ?? 20,
+            point: earlyParams?.point ?? null,
+        });
+        if (!earlyBand.ok) {
+            await this.releaseClaimedLegToPending(leg.id);
+            (0, workerMetrics_1.incMetric)('range_layer_slippage_deferred');
+            const now = Date.now();
+            const last = this.bandSkipLogAt.get(leg.id) ?? 0;
+            if (now - last >= VirtualPendingMonitor.PROFIT_SKIP_LOG_MS) {
+                this.bandSkipLogAt.set(leg.id, now);
+                logLayerLatency('range_layer_execution_deferred', layerLatencyPayload(timestamps, {
+                    leg_id: leg.id,
+                    signal_id: leg.signal_id,
+                    broker_account_id: leg.broker_account_id,
+                    symbol: leg.symbol,
+                    step_idx: leg.step_idx,
+                    reason: earlyBand.reason,
+                    trigger_price: leg.trigger_price,
+                    bid: earlyFireBid,
+                    ask: earlyFireAsk,
+                }));
+            }
+            return { outcome: 'skipped', reason: earlyBand.reason ?? 'trigger_band_rejected' };
         }
         const layerTillClose = await (0, rangeLayerTillClose_1.loadRangeLayerTillCloseForSignal)(this.supabase, leg.signal_id, leg.broker_account_id);
         const block = await (0, rangePendingFireGuard_1.shouldBlockVirtualLegFire)(this.supabase, leg, {
@@ -650,23 +699,9 @@ class VirtualPendingMonitor {
             else if (block.reason) {
                 console.log(`[virtualPendingMonitor] skip fire leg=${leg.id} signal=${leg.signal_id} step=${leg.step_idx}: ${block.reason}`);
             }
-            return false;
+            await this.releaseClaimedLegToPending(leg.id);
+            return { outcome: 'skipped', reason: block.reason ?? 'safety_blocked' };
         }
-        // CAS claim. If another monitor (worker peer or edge fn) beat us, .maybeSingle()
-        // returns no row and we walk away.
-        const { data: claimed, error: claimErr } = await this.supabase
-            .from('range_pending_legs')
-            .update({ status: 'claimed', claimed_at: new Date().toISOString(), claimed_by: this.hostId })
-            .eq('id', leg.id)
-            .eq('status', 'pending')
-            .select('id')
-            .maybeSingle();
-        if (claimErr) {
-            console.warn(`[virtualPendingMonitor] CAS claim error leg=${leg.id}: ${claimErr.message}`);
-            return false;
-        }
-        if (!claimed)
-            return false;
         // SL/TP may have been refreshed after this tick's queue SELECT (mgmt / basket refresh).
         try {
             const { data: freshRow } = await this.supabase
@@ -728,7 +763,7 @@ class VirtualPendingMonitor {
         const staleReason = await this.getStaleLegReason(leg, api, leg.metaapi_account_id);
         if (staleReason) {
             await (0, rangePendingBasketCleanup_1.deleteRangePendingLegsForBasket)(this.supabase, { signalId: leg.signal_id, brokerAccountId: leg.broker_account_id }, staleReason);
-            return true;
+            return { outcome: 'skipped', reason: staleReason };
         }
         const params = await this.getSymbolParams(leg.metaapi_account_id, leg.symbol);
         // Reuse the tick quote — already validated by monotonicity check above.
@@ -760,7 +795,7 @@ class VirtualPendingMonitor {
                 console.log(`[virtualPendingMonitor] defer fire leg=${leg.id} signal=${leg.signal_id} step=${leg.step_idx}: `
                     + `${band.reason} trigger=${leg.trigger_price} bid=${fireBid} ask=${fireAsk}`);
             }
-            return false;
+            return { outcome: 'skipped', reason: band.reason ?? 'trigger_band_rejected' };
         }
         // Build a MARKET order. We DO NOT send `price` for Buy/Sell — the broker
         // fills at the current bid/ask. Stops were precomputed at planning time
@@ -782,6 +817,7 @@ class VirtualPendingMonitor {
             comment: leg.comment ?? '',
             expertID: leg.expert_id ?? 909090,
         };
+        timestamps.layer_execution_planned_at = Date.now();
         // Last-second SL/TP clamp using the fire-time quote as the reference.
         const refPrice = leg.is_buy ? fireAsk : fireBid;
         if (params) {
@@ -805,10 +841,13 @@ class VirtualPendingMonitor {
         }
         const t0 = Date.now();
         try {
+            timestamps.broker_request_started_at = t0;
             const result = await this.sendWithStopsFallback(leg, args);
+            timestamps.broker_response_received_at = Date.now();
             // Mark fired immediately after OrderSend so a slow trades insert / log write
             // cannot leave the row `claimed` and get reset to `pending` (30s stale reclaim).
             await this.markLegFiredWithRetry(leg.id, result.ticket ?? null);
+            timestamps.pending_leg_updated_at = Date.now();
             const latencyMs = Date.now() - t0;
             console.log(`[virtualPendingMonitor] virtual leg fired signal=${leg.signal_id} stepIdx=${leg.step_idx} trigger=${leg.trigger_price} ref=${refPrice} ticket=${result.ticket} latency=${latencyMs}ms`);
             const entryPx = result.openPrice ?? refPrice ?? null;
@@ -959,9 +998,20 @@ class VirtualPendingMonitor {
                     console.warn(`[virtualPendingMonitor] gap-fill reanchor failed leg=${leg.id} signal=${leg.signal_id}:`, reanchorErr);
                 }
             }
-            return true;
+            timestamps.layer_reconciled_at = Date.now();
+            (0, workerMetrics_1.incMetric)('range_layer_execution_success');
+            logLayerLatency('range_layer_execution_latency', layerLatencyPayload(timestamps, {
+                leg_id: leg.id,
+                signal_id: leg.signal_id,
+                broker_account_id: leg.broker_account_id,
+                symbol: leg.symbol,
+                step_idx: leg.step_idx,
+                ticket: result.ticket ?? null,
+            }));
+            return { outcome: 'fired' };
         }
         catch (err) {
+            timestamps.broker_response_received_at = timestamps.broker_response_received_at ?? Date.now();
             const msg = err instanceof Error ? err.message : String(err);
             console.error(`[virtualPendingMonitor] fire failed leg=${leg.id} signal=${leg.signal_id} stepIdx=${leg.step_idx}: ${msg}`);
             if ((0, brokerConnectError_1.isMtBridgeGlitchMessage)(msg) || (0, fxsocketClient_1.isTransientMtApiError)(err)) {
@@ -974,13 +1024,15 @@ class VirtualPendingMonitor {
                     error_message: null,
                 })
                     .eq('id', leg.id);
+                (0, workerMetrics_1.incMetric)('range_layer_execution_retry_released');
                 console.warn(`[virtualPendingMonitor] transient fire error leg=${leg.id} — released back to pending for retry: ${msg}`);
-                return false;
+                return { outcome: 'failed', reason: 'transient_broker_error' };
             }
             await this.supabase
                 .from('range_pending_legs')
                 .update({ status: 'failed', error_message: msg, fired_at: new Date().toISOString() })
                 .eq('id', leg.id);
+            timestamps.pending_leg_updated_at = Date.now();
             await this.supabase.from('trade_execution_logs').insert({
                 user_id: leg.user_id,
                 signal_id: leg.signal_id,
@@ -990,7 +1042,16 @@ class VirtualPendingMonitor {
                 request_payload: { leg_id: leg.id, step_idx: leg.step_idx, claimed_by: this.hostId },
                 error_message: msg,
             });
-            return false;
+            (0, workerMetrics_1.incMetric)('range_layer_execution_failed');
+            logLayerLatency('range_layer_execution_failed', layerLatencyPayload(timestamps, {
+                leg_id: leg.id,
+                signal_id: leg.signal_id,
+                broker_account_id: leg.broker_account_id,
+                symbol: leg.symbol,
+                step_idx: leg.step_idx,
+                error: msg,
+            }));
+            return { outcome: 'failed', reason: msg };
         }
     }
     /**

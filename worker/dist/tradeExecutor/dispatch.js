@@ -380,8 +380,23 @@ async function handleSignal(ctx, row, opts) {
     if (isMessageRevisionEarly) {
         await waitForSignalInflightClear(ctx, row.id, revisionInflightWaitMs(row, opts?.dispatchSource));
     }
-    if (!ctx.claimSignalExecution(row.id))
+    if (!ctx.claimSignalExecution(row.id)) {
+        (0, pipelineTimestamps_1.emitPipelineEvent)({
+            event: 'execution_duplicate_prevented',
+            correlation: (0, pipelineTimestamps_1.buildPipelineCorrelation)({
+                userId: row.user_id,
+                signalId: row.id,
+                channelId: row.channel_id,
+                telegramMessageId: row.telegram_message_id,
+                brokerAccountId: opts?.wakeBrokerAccountId ?? row.wake_broker_account_id,
+                dispatchSource: opts?.dispatchSource,
+            }),
+            timestamps: row.pipeline_ts,
+            outcome: 'inflight',
+            path: opts?.dispatchSource ?? 'executor',
+        });
         return;
+    }
     if (await (0, copierPause_1.loadCachedUserCopierPaused)(ctx.supabase, row.user_id)) {
         ctx.inflight.delete(row.id);
         ctx.queuedIds.delete(row.id);
@@ -397,6 +412,7 @@ async function handleSignal(ctx, row, opts) {
         return;
     }
     const handleStartMs = Date.now();
+    (0, pipelineTimestamps_1.setPipelineTimestamp)(row.pipeline_ts ?? (row.pipeline_ts = {}), 'execution_planning_started_at', handleStartMs);
     const isRangeWake = opts?.dispatchSource === signalRangeEntryHelpers_1.SIGNAL_RANGE_WAKE_DISPATCH_SOURCE;
     const liveFast = isRangeWake
         || (opts?.liveDispatch === true && opts?.lightIdempotency === true);
@@ -690,6 +706,7 @@ async function handleSignal(ctx, row, opts) {
             commentSlug,
             sameSignalRefresh: isMessageRevision,
         })));
+        (0, pipelineTimestamps_1.setPipelineTimestamp)(row.pipeline_ts ?? (row.pipeline_ts = {}), 'execution_planning_completed_at', Date.now());
         if (liveFast && row.pipeline_ts) {
             row.pipeline_ts.t_order_send_done = Date.now();
         }
@@ -920,6 +937,21 @@ async function handleSignal(ctx, row, opts) {
                 ...pipelineOutcome,
             });
         }
+        (0, pipelineTimestamps_1.emitPipelineEvent)({
+            event: pipelineOutcome.any_opened === true ? 'execution_completed' : 'execution_skipped',
+            correlation: (0, pipelineTimestamps_1.buildPipelineCorrelation)({
+                userId: row.user_id,
+                signalId: row.id,
+                channelId: row.channel_id,
+                telegramMessageId: row.telegram_message_id,
+                brokerAccountId: opts?.wakeBrokerAccountId ?? row.wake_broker_account_id,
+                dispatchSource: opts?.dispatchSource,
+            }),
+            timestamps: row.pipeline_ts,
+            outcome: pipelineOutcome.any_opened === true ? 'success' : 'skipped',
+            path: liveFast ? 'live_fast' : liveMgmtFast ? 'management_fast' : 'queued',
+            extra: summaryExtra,
+        });
         ctx.inflight.delete(row.id);
         ctx.queuedIds.delete(row.id);
     }

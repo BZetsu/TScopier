@@ -1,0 +1,14 @@
+Patch target: worker/node_modules/telegram/network/MTProtoSender.js
+Package: telegram@2.26.22
+Applied by: worker/scripts/apply-node-module-patches.cjs via worker package postinstall
+
+Purpose:
+- Guard MTProtoSender._handleRPCResult before constructing BinaryReader(result.body).
+- Reject undefined, null, empty, or non-Buffer RPC result bodies with
+  GRAMJS_MALFORMED_RPC_RESULT.
+- Preserve valid RPC result decoding and existing RPCError handling.
+- Emit only safe metadata: req_msg_id, pending state, body type, and body length.
+
+The executable patch is intentionally applied by the Node script rather than
+editing node_modules by hand, so it can run after a clean npm install without
+adding another patching dependency.

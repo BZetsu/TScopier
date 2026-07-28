@@ -17,6 +17,10 @@ export function buildClient(sessionString: string = ''): TelegramClient {
   if (!API_ID || !API_HASH) {
     throw new Error('TELEGRAM_API_ID / TELEGRAM_API_HASH must be set in env')
   }
+  const fp = sessionString.length > 8
+    ? `${sessionString.slice(0, 4)}...${sessionString.slice(-4)}`
+    : 'empty'
+  console.log(`[telegram-conn] event=build_client session_fingerprint=${fp} api_id=${API_ID}`)
   return new TelegramClient(
     new StringSession(sessionString),
     API_ID,
@@ -68,6 +72,16 @@ export function isAuthKeyDuplicated(err: unknown): boolean {
   return m.includes('AUTH_KEY_DUPLICATED')
 }
 
+export const TELEGRAM_MALFORMED_RPC_RESULT_CODE = 'GRAMJS_MALFORMED_RPC_RESULT' as const
+
+export function isMalformedRpcResult(err: unknown): boolean {
+  const e = err as { code?: unknown; message?: unknown } | null | undefined
+  const code = String(e?.code ?? '')
+  const message = String(e?.message ?? (err instanceof Error ? err.message : err ?? ''))
+  return code === TELEGRAM_MALFORMED_RPC_RESULT_CODE
+    || message.includes(TELEGRAM_MALFORMED_RPC_RESULT_CODE)
+}
+
 export function rethrowIfSessionInvalid(err: unknown): never {
   if (isAuthKeyUnregistered(err)) {
     throw new TelegramSessionInvalidError()
@@ -93,7 +107,9 @@ export async function tgInvoke<T>(
     if (flood) {
       const waitSec = parseInt(flood[1], 10)
       if (waitSec > maxFloodWaitSec || depth >= maxFloodRetries) {
-        throw new Error(`Telegram rate limit: wait ${waitSec} seconds, then try again.`)
+        const err = new Error(`Telegram rate limit: wait ${waitSec} seconds, then try again.`)
+        ;(err as Error & { cause?: unknown }).cause = e
+        throw err
       }
       const sleepSec = waitSec + 2
       console.warn(`[telegram] FLOOD_WAIT_${flood[1]} — sleeping ${sleepSec}s before retry`)

@@ -1,9 +1,10 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.TelegramSessionInvalidError = exports.TELEGRAM_SESSION_INVALID_CODE = exports.API_HASH = exports.API_ID = void 0;
+exports.TELEGRAM_MALFORMED_RPC_RESULT_CODE = exports.TelegramSessionInvalidError = exports.TELEGRAM_SESSION_INVALID_CODE = exports.API_HASH = exports.API_ID = void 0;
 exports.buildClient = buildClient;
 exports.isAuthKeyUnregistered = isAuthKeyUnregistered;
 exports.isAuthKeyDuplicated = isAuthKeyDuplicated;
+exports.isMalformedRpcResult = isMalformedRpcResult;
 exports.rethrowIfSessionInvalid = rethrowIfSessionInvalid;
 exports.tgInvoke = tgInvoke;
 const telegram_1 = require("telegram");
@@ -23,6 +24,10 @@ function buildClient(sessionString = '') {
     if (!exports.API_ID || !exports.API_HASH) {
         throw new Error('TELEGRAM_API_ID / TELEGRAM_API_HASH must be set in env');
     }
+    const fp = sessionString.length > 8
+        ? `${sessionString.slice(0, 4)}...${sessionString.slice(-4)}`
+        : 'empty';
+    console.log(`[telegram-conn] event=build_client session_fingerprint=${fp} api_id=${exports.API_ID}`);
     return new telegram_1.TelegramClient(new sessions_1.StringSession(sessionString), exports.API_ID, exports.API_HASH, {
         connectionRetries: 5,
         retryDelay: 4000,
@@ -64,6 +69,14 @@ function isAuthKeyDuplicated(err) {
     const m = err instanceof Error ? err.message : String(err);
     return m.includes('AUTH_KEY_DUPLICATED');
 }
+exports.TELEGRAM_MALFORMED_RPC_RESULT_CODE = 'GRAMJS_MALFORMED_RPC_RESULT';
+function isMalformedRpcResult(err) {
+    const e = err;
+    const code = String(e?.code ?? '');
+    const message = String(e?.message ?? (err instanceof Error ? err.message : err ?? ''));
+    return code === exports.TELEGRAM_MALFORMED_RPC_RESULT_CODE
+        || message.includes(exports.TELEGRAM_MALFORMED_RPC_RESULT_CODE);
+}
 function rethrowIfSessionInvalid(err) {
     if (isAuthKeyUnregistered(err)) {
         throw new TelegramSessionInvalidError();
@@ -82,7 +95,9 @@ async function tgInvoke(client, req, depth = 0) {
         if (flood) {
             const waitSec = parseInt(flood[1], 10);
             if (waitSec > maxFloodWaitSec || depth >= maxFloodRetries) {
-                throw new Error(`Telegram rate limit: wait ${waitSec} seconds, then try again.`);
+                const err = new Error(`Telegram rate limit: wait ${waitSec} seconds, then try again.`);
+                err.cause = e;
+                throw err;
             }
             const sleepSec = waitSec + 2;
             console.warn(`[telegram] FLOOD_WAIT_${flood[1]} — sleeping ${sleepSec}s before retry`);

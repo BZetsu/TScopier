@@ -17,6 +17,7 @@ const helpers_1 = require("./helpers");
 const signalRangeEntryHelpers_1 = require("../signalRangeEntryHelpers");
 const signalRangeEntryService_1 = require("../signalRangeEntryService");
 const signalBrokerDispatchClaim_1 = require("./signalBrokerDispatchClaim");
+const pipelineTimestamps_1 = require("../pipelineTimestamps");
 /** Fill missing symbol for re-enter posts that omit instrument name. */
 async function resolveReEnterSymbolFromChannel(ctx, signal, broker, parsed) {
     if (!(0, signalPriceInference_1.parsedHasReEnterIntent)(parsed))
@@ -120,6 +121,9 @@ async function prepareEntryExecution(ctx, args) {
     const needsQuotePrefetch = isManual
         && (((0, manualPlanner_1.signalEntryPriceStrictEnabled)(manual) && (0, manualPlanner_1.parsedHasExplicitEntryAnchor)(parsed))
             || (0, manualPlanner_1.signalEntryRangeStrictEnabled)(manual));
+    if (signal.pipeline_ts) {
+        (0, pipelineTimestamps_1.setPipelineTimestamp)(signal.pipeline_ts, 'broker_resolution_started_at', Date.now());
+    }
     const stampOnResolve = liveEntryFast && !!signal.pipeline_ts;
     const sessionPromise = ctx.ensureBrokerSessionLiveFast(api, uuid, broker).then(r => {
         if (stampOnResolve && signal.pipeline_ts && signal.pipeline_ts.t_session_resolved == null) {
@@ -150,7 +154,10 @@ async function prepareEntryExecution(ctx, args) {
         signal.pipeline_ts.t_params_resolved = Date.now();
     }
     if (liveEntryFast && signal.pipeline_ts && signal.pipeline_ts.t_send_caches_resolved == null) {
-        signal.pipeline_ts.t_send_caches_resolved = Date.now();
+        (0, pipelineTimestamps_1.setPipelineTimestamp)(signal.pipeline_ts, 'broker_ready_at', Date.now());
+    }
+    else if (!liveEntryFast && signal.pipeline_ts) {
+        (0, pipelineTimestamps_1.setPipelineTimestamp)(signal.pipeline_ts, 'broker_ready_at', Date.now());
     }
     if (!sessionOk) {
         await ctx.logSendSkipped(signal, broker, 'broker_session_not_connected', {

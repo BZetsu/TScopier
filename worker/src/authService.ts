@@ -2,7 +2,7 @@ import { SupabaseClient } from '@supabase/supabase-js'
 import { TelegramClient } from 'telegram'
 import { Api } from 'telegram/tl'
 import { computeCheck } from 'telegram/Password'
-import { buildClient, tgInvoke, API_ID, API_HASH } from './telegramClient'
+import { buildClient, isAuthKeyUnregistered, tgInvoke, API_ID, API_HASH } from './telegramClient'
 import { UserSessionManager } from './sessionManager'
 import type { ChannelInfo } from './userListener'
 import {
@@ -112,11 +112,19 @@ export class AuthService {
     if (typeof this.cleanupTimer.unref === 'function') this.cleanupTimer.unref()
   }
 
-  shutdown() {
+  async shutdown(): Promise<void> {
     clearInterval(this.cleanupTimer)
-    for (const [, p] of this.pending) {
-      p.client.disconnect().catch(() => {})
-    }
+    const disconnects = [...this.pending.entries()].map(async ([userId, p]) => {
+      try {
+        await p.client.disconnect()
+      } catch (err) {
+        console.warn(
+          `[authService] pending auth disconnect failed for user ${userId}:`,
+          err instanceof Error ? err.message : err,
+        )
+      }
+    })
+    await Promise.allSettled(disconnects)
     this.pending.clear()
     this.authInFlight.clear()
     this.qrPasswordResolvers.clear()
@@ -392,6 +400,9 @@ export class AuthService {
             })
           },
           onError: async (err: Error) => {
+            if (isAuthKeyUnregistered(err)) {
+              throw new Error('AUTH_KEY_UNREGISTERED')
+            }
             console.warn(`[authService] QR login onError user=${userId}:`, err.message)
             return false
           },
