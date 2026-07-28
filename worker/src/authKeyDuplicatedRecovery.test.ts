@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  authKeyDupDeferredRetryMs,
   authKeyDupMaxRecoveryAttempts,
   authKeyDupReconnectDelayMs,
   authKeyDupReconnectDelaysMs,
@@ -24,7 +25,7 @@ describe('shouldEmitAuthKeyDupEvent', () => {
 
 describe('authKeyDupReconnectDelaysMs', () => {
   it('uses the cooldown once, then the named auth-dup delay', () => {
-    assert.deepEqual(authKeyDupReconnectDelaysMs(3500, 30_000, 4), [3500, 30_000, 30_000, 30_000])
+    assert.deepEqual(authKeyDupReconnectDelaysMs(3500, 30_000, 4), [3500, 30_000, 15_000, 30_000])
   })
 
   it('clamps extreme inputs', () => {
@@ -64,14 +65,38 @@ describe('authKeyDupReconnectDelayMs', () => {
 })
 
 describe('authKeyDupMaxRecoveryAttempts', () => {
-  it('defaults to 10 cycles', () => {
+  it('defaults to 4 cycles (down from 10 which caused death spiral)', () => {
     const prev = process.env.TELEGRAM_AUTH_DUP_MAX_RECOVERY_ATTEMPTS
     delete process.env.TELEGRAM_AUTH_DUP_MAX_RECOVERY_ATTEMPTS
     try {
-      assert.equal(authKeyDupMaxRecoveryAttempts(), 10)
+      assert.equal(authKeyDupMaxRecoveryAttempts(), 4)
     } finally {
       if (prev == null) delete process.env.TELEGRAM_AUTH_DUP_MAX_RECOVERY_ATTEMPTS
       else process.env.TELEGRAM_AUTH_DUP_MAX_RECOVERY_ATTEMPTS = prev
+    }
+  })
+})
+
+describe('authKeyDupDeferredRetryMs', () => {
+  it('defaults to about 60 seconds', () => {
+    const prev = process.env.TELEGRAM_AUTH_DUP_DEFERRED_RETRY_MS
+    delete process.env.TELEGRAM_AUTH_DUP_DEFERRED_RETRY_MS
+    try {
+      assert.equal(authKeyDupDeferredRetryMs(), 60_000)
+    } finally {
+      if (prev == null) delete process.env.TELEGRAM_AUTH_DUP_DEFERRED_RETRY_MS
+      else process.env.TELEGRAM_AUTH_DUP_DEFERRED_RETRY_MS = prev
+    }
+  })
+
+  it('reads the named environment override', () => {
+    const prev = process.env.TELEGRAM_AUTH_DUP_DEFERRED_RETRY_MS
+    process.env.TELEGRAM_AUTH_DUP_DEFERRED_RETRY_MS = '120000'
+    try {
+      assert.equal(authKeyDupDeferredRetryMs(), 120_000)
+    } finally {
+      if (prev == null) delete process.env.TELEGRAM_AUTH_DUP_DEFERRED_RETRY_MS
+      else process.env.TELEGRAM_AUTH_DUP_DEFERRED_RETRY_MS = prev
     }
   })
 })

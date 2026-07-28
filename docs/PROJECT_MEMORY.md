@@ -2,6 +2,69 @@
 
 ## Changelog
 
+### 2026-07-28 — GramJS _updateLoop reconnect storm causes session invalidation (NOT AUTH_KEY_UNREGISTERED) — fixed by monkeypatching _sender.reconnect
+
+- **Context:** After rollback + 11 hardening fixes, user's session kept getting invalidated. Two deaths:
+  - **First death (AUTH_KEY_UNREGISTERED):** Telegram revoked the auth key during the `af12737d` storm. Session properly invalidated.
+  - **Second death (GramJS storm):** After re-linking, the new session worked briefly but then GramJS's `_updateLoop` (`telegram/client/updates.js:212`) started an infinite reconnect storm. This caused `BinaryReader.readUInt32LE` crashes (malformed RPC results), which triggered `noteMalformedRpcResult` exhaustion, which incorrectly called `onAuthKeyDuplicatedRecoveryExhausted` — invalidating a perfectly valid session.
+- **Root cause of second death:** GramJS's `_updateLoop` has its own independent reconnect trigger that bypasses `autoReconnect: false`. When the PingDelayDisconnect ping fails, `updates.js:212` calls `client._sender.reconnect()` directly — MTProtoSender's `reconnect()` method at line 808 has NO check against `autoReconnect`. This creates an infinite loop: ping fails → reconnect → `_handleReconnect` → new `_updateLoop` → ping fails → reconnect → ...
+- **Fix:** Monkeypatched `client._sender.reconnect` in `telegramClient.ts:buildClient` to respect `autoReconnect`. After `client.connect()`, wraps `_sender.reconnect` to be a no-op when `autoReconnect: false`. Our `forceReconnect` handles reconnection properly via explicit `client.connect()` calls.
+- **Files:** `worker/src/telegramClient.ts` (buildClient — reconnect monkeypatch)
+- **Reverted:** AUTH_KEY_UNREGISTERED invalidation changes in watchdog/poll/forceReconnect (they were targeting wrong problem)
+- **Verification:** `npm run build` passes, all worker tests pass.
+
+### 2026-07-28 — Telegram reconnect storm fixes (11 fixes) — ALL TESTS PASS
+
+- **Context:** Deployment `af12737d` caused all users' Telegram listeners to enter a death spiral of disconnect/reconnect. Root cause: 10 flat-30s reconnect attempts (273s cycle) replaced the original 4 escalating + deferred retry (56s). GramJS internal crashes also triggered reconnects. 83% of log noise was GramJS flood-wait suppression messages.
+- **11 fixes applied on `feat/fix-telegram-reconnect-storm`:**
+  - **Fix 1-2:** `authKeyDuplicatedRecovery.ts` — max attempts 10→4, delays `[first, retry, 15s, 30s]`, deferred retry restored
+  - **Fix 3:** `userListener.ts:noteMalformedRpcResult` — no longer triggers `requestReconnect`
+  - **Fix 4-6:** `userListener.ts:requestReconnect` — cycleId (8-char UUID), cooldown gate, deferred retry
+  - **Fix 7:** `authKeyDuplicatedRecovery.test.ts` — expectations updated for new defaults
+  - **Fix 8:** `authService.ts` — `logAuthEvent()` with correlationId, timing per step, error categorization
+  - **Fix 9-10:** `gramjsLogSuppress.ts` (NEW) — monkey-patches `console.log` to suppress `Sleeping for Xs on flood wait`, aggregates per 60s window
+  - **Fix 11:** `userListener.ts:startHeartbeat()` — fires `listener_healthy` trace every 60s
+- **Files:** `worker/src/authKeyDuplicatedRecovery.ts`, `worker/src/authKeyDuplicatedRecovery.test.ts`, `worker/src/userListener.ts`, `worker/src/authService.ts`, `worker/src/gramjsLogSuppress.ts` (NEW), `worker/src/index.ts`
+- **Verification:** 18/18 tests pass (`authKeyDuplicatedRecovery` + `gramjsMalformedRpcResultPatch`). `npm run build` passes clean.
+- **Follow-up:** Push to `origin/feat/fix-telegram-reconnect-storm`, open PR to upstream/dev.
+
+### 2026-07-28 — Staging test checklist + Marti's 8 commits merged + Section 5 promoted
+
+- **Context:** Created comprehensive staging test checklist (`docs/staging-test-checklist.md`) covering all 6 sections plus Martins' 8 commits. Pushed all changes (Section 5 + Martins commits + existing fixes) to both upstream/dev and upstream/staging at `964152e3`. dev and staging are now identical.
+- **Martins' 8 commits analyzed:**
+  - `186c8d1c` ensureSignalRow — MEDIUM risk (signal FK persistence)
+  - `5dd36c5b` SL/TP validation — MEDIUM risk (near-market stop stripping)
+  - `6274eb78` order close audit — LOW risk (observability)
+  - `03d21caf` basket layering — HIGH risk (flat-basket purge behavior change)
+  - `5ed2571c` reconciliation — HIGH risk (pre-claim stale check ordering)
+  - `15c1e04d` test fixes — LOW risk (test-only)
+  - `cf31c7e8` ListenerLeaseOfflineBanner — LOW risk (frontend UI)
+  - `70de046f` CopierStatusCard + purge cron — HIGH risk (5-min cleanup cron)
+- **Files:** `docs/staging-test-checklist.md`, `docs/weekly-plan-2026-07-27.md`, `docs/PROJECT_MEMORY.md`
+- **Follow-up:** Run through staging test checklist before production rollout.
+
+### 2026-07-28 — Section 5: Realtime subscription reconnect gap fix
+
+- **Context:** Implemented Section 5 of the weekly plan — Supabase Realtime WebSocket drops every 20-40 min but the reference is never cleared, so the guard (`if (this.channelChannel) return`) prevents re-subscription forever.
+- **Changes:**
+  - **5.1:** Both `subscribeToChannelChanges()` and `subscribeToAuthPendingChanges()` now null the channel reference on `CLOSED`/`CHANNEL_ERROR` and schedule a re-subscribe via `setTimeout(..., 5000)`
+  - **5.2:** Added `startRealtimeHealthCheck()` / `stopRealtimeHealthCheck()` — 60s interval that checks if subscription references are non-null; if missing, re-subscribes. Started in `loadAll()`, stopped in `stopChannelListenerServices()` and `disconnectAll()`
+- **Files:** `worker/src/sessionManager.ts`
+- **Verification:** All 19 tests pass (10 channelInvalidAutoDisable, 2 sessionManager shutdown, 7 AUTH_KEY_DUPLICATED lifecycle)
+- **Follow-up:** PR to upstream/dev, then promote to staging
+
+### 2026-07-28 — PR #49 review: CHANNEL_INVALID auto-disable (Section 4) — ALL PASS
+
+- **Context:** Reviewed PR #49 (commit `991bf6d2`, merged at `a6ed746a`) against Section 4 of the weekly plan. All 10 tests pass, all 4 checklist items covered.
+- **Verification results:**
+  - **4.1:** `ChannelInvalidFailureState` interface (line 276) + `channelInvalidFailures` Map (line 403) — DONE ✅
+  - **4.2:** Increment on CHANNEL_INVALID in all callers: `pollChannelNewMessages` (3308, 3343), `warmChannelEntity` (3470), `catchUpChannel` (3524), `ensureJoinedPublicChannel` (3202) — DONE ✅
+  - **4.3:** Threshold (default 5) triggers DB `is_active=false` update (596-599), log (618-631), `removeChannelFromMonitoring` (581), `channel_auto_disabled` event (625) — DONE ✅
+  - **4.4:** `isConfirmedChannelInvalidError` includes `USERNAME_NOT_OCCUPIED`/`USERNAME_INVALID` (352-357), handled in `ensureJoinedPublicChannel` at line 3202 — DONE ✅
+- **Test results:** `UserListener channel invalid auto-disable` — all 10/10 tests passing
+- **Files:** `worker/src/userListener.ts`, `worker/src/channelInvalidAutoDisable.test.ts`, `docs/weekly-plan-2026-07-27.md`
+- **Follow-up:** Promote PR #49 from upstream/dev to upstream/staging. Update weekly plan PDF.
+
 ### 2026-07-27 — Section 6 scale validation: prod data copied to staging, listener restart triggered
 
 - **Context:** Set up 59 synthetic sessions + 170 channels on staging by copying production data safely (no session strings, all PII blanked). Deleted 34 orphaned synthetic users from earlier failed script runs. Ready to monitor.
@@ -15,7 +78,7 @@
 
 ### 2026-07-27 — Completed remaining fix items 2.4, 3.2, + patch script security
 
-- **Context:** After Emma's PRs #47 and #48, items 2.4 and 3.2 were still PARTIAL. Completed them plus hardened the patch script.
+- **Context:** After PRs #47 and #48, items 2.4 and 3.2 were still PARTIAL. Completed them plus hardened the patch script.
 - **Changes:**
   - **2.4:** Added `[telegram-conn]` connect-trace log in `telegramClient.ts:buildClient()` with redacted session fingerprint (`worker/src/telegramClient.ts`)
   - **3.2:** Added `readUInt32LE` / `Cannot read properties of undefined` raw error string fallbacks in `onError` handler, routing to `noteMalformedRpcResult` (`worker/src/userListener.ts`)
@@ -100,7 +163,7 @@
 - **Context:** Connected user listeners logging `Error: TIMEOUT` every 9-30 seconds from GramJS's `_updateLoop` ping loop, never recovering. Caused by `autoReconnect: false` setting — `client._sender.reconnect()` silently no-ops when `_userConnected` is false, so the loop repeats forever.
 - **Changes:** Registered `client.onError` handler in `UserListener` constructor that catches TIMEOUT errors and calls `requestReconnect('update_loop_timeout')`, forcing a proper disconnect + reconnect cycle that actually tears down and rebuilds the connection.
 - **Files:** `worker/src/userListener.ts:359`
-- **Follow-up:** Converge on dev branch tomorrow with any of Emmanuel's fixes, then promote to staging.
+- **Follow-up:** Converge on dev branch tomorrow with any fixes, then promote to staging.
 
 ### 2026-07-23 — Fixed Telegram auth: session persistence, GramJS timeout recovery, error code propagation
 

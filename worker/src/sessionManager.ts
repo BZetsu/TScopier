@@ -74,6 +74,7 @@ export class UserSessionManager {
   private supabase: SupabaseClient
   private channelChannel: RealtimeChannel | null = null
   private authPendingChannel: RealtimeChannel | null = null
+  private realtimeHealthTimer: NodeJS.Timeout | null = null
   private tradeExecutor: TradeExecutor | null = null
   /** Serializes start/stop/adopt for one user — prevents AUTH_KEY_DUPLICATED races. */
   private userConnectionLocks = new Map<string, Promise<void>>()
@@ -121,6 +122,7 @@ export class UserSessionManager {
   }
 
   stopChannelListenerServices(): void {
+    this.stopRealtimeHealthCheck()
     this.channelListenerManager?.stop()
     this.channelReconcileMonitor?.stop()
   }
@@ -257,6 +259,7 @@ export class UserSessionManager {
 
     this.subscribeToChannelChanges()
     this.subscribeToAuthPendingChanges()
+    this.startRealtimeHealthCheck()
   }
 
   async renewAllLeases(): Promise<void> {
@@ -360,7 +363,9 @@ export class UserSessionManager {
         if (status === 'SUBSCRIBED') {
           console.log('[sessionManager] Realtime telegram_channels subscription active')
         } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
-          console.warn(`[sessionManager] Realtime subscription status: ${status}`)
+          console.warn(`[sessionManager] Realtime telegram_channels subscription ${status} — retrying in 5s`)
+          this.channelChannel = null
+          setTimeout(() => this.subscribeToChannelChanges(), 5000)
         }
       })
   }
@@ -387,9 +392,32 @@ export class UserSessionManager {
         if (status === 'SUBSCRIBED') {
           console.log('[sessionManager] Realtime telegram_auth_pending subscription active')
         } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
-          console.warn(`[sessionManager] telegram_auth_pending subscription status: ${status}`)
+          console.warn(`[sessionManager] Realtime telegram_auth_pending subscription ${status} — retrying in 5s`)
+          this.authPendingChannel = null
+          setTimeout(() => this.subscribeToAuthPendingChanges(), 5000)
         }
       })
+  }
+
+  private startRealtimeHealthCheck(): void {
+    this.stopRealtimeHealthCheck()
+    this.realtimeHealthTimer = setInterval(() => {
+      if (!this.channelChannel) {
+        console.warn('[sessionManager] Health check: telegram_channels subscription missing — re-subscribing')
+        this.subscribeToChannelChanges()
+      }
+      if (!this.authPendingChannel) {
+        console.warn('[sessionManager] Health check: telegram_auth_pending subscription missing — re-subscribing')
+        this.subscribeToAuthPendingChanges()
+      }
+    }, 60_000)
+  }
+
+  private stopRealtimeHealthCheck(): void {
+    if (this.realtimeHealthTimer) {
+      clearInterval(this.realtimeHealthTimer)
+      this.realtimeHealthTimer = null
+    }
   }
 
   /**
