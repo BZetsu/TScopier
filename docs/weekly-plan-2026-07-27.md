@@ -157,9 +157,9 @@ Result: deleted/renamed channels retry every safety poll (10s) and fast poll (3s
 
 **Expected outcome:** After 5 consecutive failures, the channel is auto-disabled. The UI shows "channel disconnected" so the user can fix it. Worker stops wasting resources.
 
-- [ ] **4.1** Track consecutive CHANNEL_INVALID per channel in memory
-- [ ] **4.2** After 5 failures, auto-deactivate in DB
-- [ ] **4.3** Same for stale usernames
+- [x] **4.1** Track consecutive CHANNEL_INVALID per channel in memory — DONE (PR #49, ChannelInvalidFailureState Map in userListener.ts:403)
+- [x] **4.2** After 5 failures, auto-deactivate in DB — DONE (PR #49, disableInvalidChannel at userListener.ts:575, DB update + remove from monitoring + auto_disabled event)
+- [x] **4.3** Same for stale usernames — DONE (PR #49, isConfirmedChannelInvalidError includes USERNAME_NOT_OCCUPIED/USERNAME_INVALID, handled in ensureJoinedPublicChannel)
 
 ---
 
@@ -186,8 +186,8 @@ Staging logs show `CHANNEL_ERROR` every 20-40 min  --  the subscription dies sil
 
 **Expected outcome:** Subscriptions auto-recover within 5 seconds. Channel changes and auth events propagate instantly.
 
-- [ ] **5.1** On CLOSED/CHANNEL_ERROR callback, clear guard and retry after 5s
-- [ ] **5.2** Add 60s health-check timer for subscriptions
+- [x] **5.1** On CLOSED/CHANNEL_ERROR callback, clear guard and retry after 5s — DONE (sessionManager.ts:365-368 and 394-397)
+- [x] **5.2** Add 60s health-check timer for subscriptions — DONE (sessionManager.ts:402-421, started at line 261, stopped in stopChannelListenerServices/disconnectAll)
 
 ---
 

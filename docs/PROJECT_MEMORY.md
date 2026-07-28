@@ -2,6 +2,28 @@
 
 ## Changelog
 
+### 2026-07-28 — Section 5: Realtime subscription reconnect gap fix
+
+- **Context:** Implemented Section 5 of the weekly plan — Supabase Realtime WebSocket drops every 20-40 min but the reference is never cleared, so the guard (`if (this.channelChannel) return`) prevents re-subscription forever.
+- **Changes:**
+  - **5.1:** Both `subscribeToChannelChanges()` and `subscribeToAuthPendingChanges()` now null the channel reference on `CLOSED`/`CHANNEL_ERROR` and schedule a re-subscribe via `setTimeout(..., 5000)`
+  - **5.2:** Added `startRealtimeHealthCheck()` / `stopRealtimeHealthCheck()` — 60s interval that checks if subscription references are non-null; if missing, re-subscribes. Started in `loadAll()`, stopped in `stopChannelListenerServices()` and `disconnectAll()`
+- **Files:** `worker/src/sessionManager.ts`
+- **Verification:** All 19 tests pass (10 channelInvalidAutoDisable, 2 sessionManager shutdown, 7 AUTH_KEY_DUPLICATED lifecycle)
+- **Follow-up:** PR to upstream/dev, then promote to staging
+
+### 2026-07-28 — Emma's PR #49 review: CHANNEL_INVALID auto-disable (Section 4) — ALL PASS
+
+- **Context:** Reviewed Emma's PR #49 (commit `991bf6d2`, merged at `a6ed746a`) against Section 4 of the weekly plan. All 10 tests pass, all 4 checklist items covered.
+- **Verification results:**
+  - **4.1:** `ChannelInvalidFailureState` interface (line 276) + `channelInvalidFailures` Map (line 403) — DONE ✅
+  - **4.2:** Increment on CHANNEL_INVALID in all callers: `pollChannelNewMessages` (3308, 3343), `warmChannelEntity` (3470), `catchUpChannel` (3524), `ensureJoinedPublicChannel` (3202) — DONE ✅
+  - **4.3:** Threshold (default 5) triggers DB `is_active=false` update (596-599), log (618-631), `removeChannelFromMonitoring` (581), `channel_auto_disabled` event (625) — DONE ✅
+  - **4.4:** `isConfirmedChannelInvalidError` includes `USERNAME_NOT_OCCUPIED`/`USERNAME_INVALID` (352-357), handled in `ensureJoinedPublicChannel` at line 3202 — DONE ✅
+- **Test results:** `UserListener channel invalid auto-disable` — all 10/10 tests passing
+- **Files:** `worker/src/userListener.ts`, `worker/src/channelInvalidAutoDisable.test.ts`, `docs/weekly-plan-2026-07-27.md`
+- **Follow-up:** Promote PR #49 from upstream/dev to upstream/staging. Update weekly plan PDF.
+
 ### 2026-07-27 — Section 6 scale validation: prod data copied to staging, listener restart triggered
 
 - **Context:** Set up 59 synthetic sessions + 170 channels on staging by copying production data safely (no session strings, all PII blanked). Deleted 34 orphaned synthetic users from earlier failed script runs. Ready to monitor.
