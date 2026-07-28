@@ -118,6 +118,16 @@ const SAFETY_POLL_INTERVAL_MS = Math.max(
   5_000,
   Math.min(60_000, Number(process.env.TELEGRAM_SAFETY_POLL_MS ?? 10_000)),
 )
+const CHANNEL_POLL_CONCURRENCY = Math.max(
+  1,
+  Math.min(8, Number(process.env.TELEGRAM_CHANNEL_POLL_CONCURRENCY ?? 4)),
+)
+const CHANNEL_INVALID_DISABLE_THRESHOLD = Math.max(
+  1,
+  Math.min(20, Number(process.env.TELEGRAM_CHANNEL_INVALID_DISABLE_THRESHOLD ?? 5)),
+)
+const CHANNEL_UNAVAILABLE_USER_MESSAGE =
+  'Channel unavailable or access was removed. Reconnect or update the channel.'
 /**
  * Fast poll for channels Telegram is NOT pushing live updates for (last_live_at
  * stale/null). Telegram silently stops pushing updates for broadcast channels it
@@ -263,6 +273,16 @@ interface ChatIdentity {
   chatUsername: string
 }
 
+interface ChannelInvalidFailureState {
+  consecutiveCount: number
+  firstFailureAt: number
+  lastFailureAt: number
+  lastSuccessfulPollAt: number
+  channelRowId: string
+  channelId: string
+  channelUsername: string
+}
+
 /** Telegram / gramjs: extract numeric reply target message id when present. */
 function extractReplyToMsgId(replyTo: unknown): string | null {
   if (replyTo == null || typeof replyTo !== 'object') return null
@@ -311,6 +331,32 @@ function toChannelIdVariants(raw: string): string[] {
   return [...out]
 }
 
+function safeChannelIdentifier(row: ChannelRow): Record<string, string> {
+  return {
+    channel_row_id: row.id,
+    channel_id: String(row.channel_id ?? '').trim(),
+    channel_username: normalizeChannelUsername(row.channel_username),
+  }
+}
+
+function safeTelegramErrorMessage(err: unknown): string {
+  return (err instanceof Error ? err.message : String(err ?? '')).slice(0, 300)
+}
+
+function normalizedTelegramErrorCode(err: unknown): string {
+  const raw = safeTelegramErrorMessage(err).toUpperCase()
+  const match = raw.match(/[A-Z][A-Z0-9_]{2,}/)
+  return match?.[0] ?? raw
+}
+
+function isConfirmedChannelInvalidError(err: unknown): boolean {
+  const code = normalizedTelegramErrorCode(err)
+  return code.includes('CHANNEL_INVALID')
+    || code.includes('USERNAME_INVALID')
+    || code.includes('USERNAME_NOT_OCCUPIED')
+    || code.includes('CHANNEL_PRIVATE')
+}
+
 export class UserListener {
   private client: TelegramClient
   private userId: string
@@ -354,6 +400,8 @@ export class UserListener {
   private lastSavedSession: string
   private clientGeneration = 0
   private stopping = false
+  private channelInvalidFailures = new Map<string, ChannelInvalidFailureState>()
+  private autoDisabledChannelRows = new Set<string>()
   private malformedRpcRecoveryCount = 0
   private lastMalformedRpcRecoveryAt = 0
   private onSignalParsed: ((row: SignalRow) => boolean) | null = null
@@ -413,6 +461,173 @@ export class UserListener {
     console.log(
       `[telegram-conn] event=${event} worker=${workerConfig.instanceId}`
       + ` user=${this.userId} generation=${this.clientGeneration}${suffix}`,
+    )
+  }
+
+  private isChannelLocallyDisabled(row: ChannelRow): boolean {
+    return this.autoDisabledChannelRows.has(row.id)
+  }
+
+  private removeChannelFromMonitoring(row: ChannelRow): void {
+    this.autoDisabledChannelRows.add(row.id)
+    this.fastPollRows = this.fastPollRows.filter(r => r.id !== row.id)
+    if (row.channel_id && isNumericTelegramChatId(String(row.channel_id))) {
+      for (const v of toChannelIdVariants(String(row.channel_id))) this.monitoredChannels.delete(v)
+    }
+    if (isValidTelegramUsername(row.channel_username)) {
+      this.monitoredChannels.delete(normalizeChannelUsername(row.channel_username))
+    }
+  }
+
+  private resetChannelInvalidFailure(row: ChannelRow, source: string): boolean {
+    const previous = this.channelInvalidFailures.get(row.id)
+    const wasLocallyDisabled = this.autoDisabledChannelRows.delete(row.id)
+    if (!previous && !wasLocallyDisabled) return false
+
+    this.channelInvalidFailures.delete(row.id)
+    const detail = {
+      source,
+      ...safeChannelIdentifier(row),
+      previous_count: previous?.consecutiveCount ?? 0,
+      last_successful_poll_at: previous?.lastSuccessfulPollAt
+        ? new Date(previous.lastSuccessfulPollAt).toISOString()
+        : null,
+    }
+    console.log(
+      `[userListener] channel_reactivated user=${this.userId}`
+      + ` channel=${row.id} source=${source} previousCount=${detail.previous_count}`,
+    )
+    void persistListenerEvent(this.supabase, {
+      userId: this.userId,
+      eventType: 'channel_reactivated',
+      channelRowId: row.id,
+      detail,
+    })
+    return true
+  }
+
+  private resetChannelInvalidFailuresForActiveRows(rows: ChannelRow[], source: string): boolean {
+    let changed = false
+    for (const row of rows) {
+      if (this.channelInvalidFailures.has(row.id) || this.autoDisabledChannelRows.has(row.id)) {
+        changed = this.resetChannelInvalidFailure(row, source) || changed
+      }
+    }
+    return changed
+  }
+
+  private noteChannelPollSuccess(row: ChannelRow, source: string): void {
+    const now = Date.now()
+    const state = this.channelInvalidFailures.get(row.id)
+    if (state) state.lastSuccessfulPollAt = now
+    this.resetChannelInvalidFailure(row, source)
+  }
+
+  private async noteChannelInvalid(
+    row: ChannelRow,
+    source: string,
+    err: unknown,
+  ): Promise<void> {
+    const now = Date.now()
+    const previous = this.channelInvalidFailures.get(row.id)
+    const state: ChannelInvalidFailureState = {
+      consecutiveCount: (previous?.consecutiveCount ?? 0) + 1,
+      firstFailureAt: previous?.firstFailureAt ?? now,
+      lastFailureAt: now,
+      lastSuccessfulPollAt: previous?.lastSuccessfulPollAt ?? 0,
+      channelRowId: row.id,
+      channelId: String(row.channel_id ?? '').trim(),
+      channelUsername: normalizeChannelUsername(row.channel_username),
+    }
+    this.channelInvalidFailures.set(row.id, state)
+    const errorCode = normalizedTelegramErrorCode(err)
+    const detail = {
+      source,
+      error_code: errorCode,
+      consecutive_count: state.consecutiveCount,
+      threshold: CHANNEL_INVALID_DISABLE_THRESHOLD,
+      first_failure_at: new Date(state.firstFailureAt).toISOString(),
+      last_failure_at: new Date(state.lastFailureAt).toISOString(),
+      last_successful_poll_at: state.lastSuccessfulPollAt
+        ? new Date(state.lastSuccessfulPollAt).toISOString()
+        : null,
+      ...safeChannelIdentifier(row),
+    }
+
+    console.warn(
+      `[userListener] channel_invalid_detected user=${this.userId}`
+      + ` channel=${row.id} count=${state.consecutiveCount}/${CHANNEL_INVALID_DISABLE_THRESHOLD}`
+      + ` source=${source} code=${errorCode}`,
+    )
+    incMetric('channel_invalid_detected')
+    void persistListenerEvent(this.supabase, {
+      userId: this.userId,
+      eventType: 'channel_invalid_detected',
+      channelRowId: row.id,
+      detail,
+    })
+
+    if (state.consecutiveCount >= CHANNEL_INVALID_DISABLE_THRESHOLD) {
+      await this.disableInvalidChannel(row, state, source, errorCode)
+    }
+  }
+
+  private async disableInvalidChannel(
+    row: ChannelRow,
+    state: ChannelInvalidFailureState,
+    source: string,
+    errorCode: string,
+  ): Promise<void> {
+    this.removeChannelFromMonitoring(row)
+    const detail = {
+      source,
+      error_code: errorCode,
+      consecutive_count: state.consecutiveCount,
+      threshold: CHANNEL_INVALID_DISABLE_THRESHOLD,
+      first_failure_at: new Date(state.firstFailureAt).toISOString(),
+      last_failure_at: new Date(state.lastFailureAt).toISOString(),
+      last_successful_poll_at: state.lastSuccessfulPollAt
+        ? new Date(state.lastSuccessfulPollAt).toISOString()
+        : null,
+      message: CHANNEL_UNAVAILABLE_USER_MESSAGE,
+      ...safeChannelIdentifier(row),
+    }
+
+    const { error } = await this.supabase
+      .from('telegram_channels')
+      .update({ is_active: false, updated_at: new Date().toISOString() })
+      .eq('id', row.id)
+      .eq('user_id', this.userId)
+
+    if (error) {
+      console.error(
+        `[userListener] channel_auto_disabled db_update_failed user=${this.userId}`
+        + ` channel=${row.id} count=${state.consecutiveCount}:`,
+        error.message,
+      )
+      incMetric('channel_auto_disable_update_failed')
+      void persistListenerEvent(this.supabase, {
+        userId: this.userId,
+        eventType: 'channel_auto_disabled',
+        channelRowId: row.id,
+        detail: { ...detail, persisted: false, db_error: error.message.slice(0, 300) },
+      })
+      return
+    }
+
+    console.warn(
+      `[userListener] channel_auto_disabled user=${this.userId}`
+      + ` channel=${row.id} count=${state.consecutiveCount} code=${errorCode}`,
+    )
+    incMetric('channel_auto_disabled')
+    void persistListenerEvent(this.supabase, {
+      userId: this.userId,
+      eventType: 'channel_auto_disabled',
+      channelRowId: row.id,
+      detail: { ...detail, persisted: true },
+    })
+    await this.refreshChannelSubscription().catch(err =>
+      console.warn(`[userListener] refresh after channel auto-disable failed channel=${row.id}:`, err),
     )
   }
 
@@ -597,21 +812,25 @@ export class UserListener {
       const id = (row as { id?: string }).id
       if (id) invalidateChannelParseCache(id)
     }
-    const previous = new Set(this.monitoredChannels)
-    await this.refreshChannelSubscription()
-
-    await this.refreshChannelListenerState()
-
     const { data: rows } = await this.supabase
       .from('telegram_channels')
       .select('id, channel_id, channel_username, signal_channel_id, last_seen_message_id, last_seen_at, last_live_at')
       .eq('user_id', this.userId)
       .eq('is_active', true)
+    const changed = this.resetChannelInvalidFailuresForActiveRows((rows ?? []) as ChannelRow[], 'channel_config_changed')
+    const activeRows = ((rows ?? []) as ChannelRow[]).filter(row => !this.isChannelLocallyDisabled(row))
+
+    const previous = new Set(this.monitoredChannels)
+    await this.refreshChannelSubscription()
+
+    if (changed) await this.refreshChannelSubscription()
+
+    await this.refreshChannelListenerState()
 
     const added = [...this.monitoredChannels].filter(c => !previous.has(c))
 
     const lookup = new Map<string, ChannelRow>()
-    for (const row of (rows ?? []) as ChannelRow[]) {
+    for (const row of activeRows) {
       if (row.channel_id && isNumericTelegramChatId(String(row.channel_id))) {
         for (const v of toChannelIdVariants(String(row.channel_id))) {
           lookup.set(v, row)
@@ -639,7 +858,7 @@ export class UserListener {
     }
 
     // Keep entity cache hot for every active channel (not only newly added keys).
-    for (const row of (rows ?? []) as ChannelRow[]) {
+    for (const row of activeRows) {
       await this.warmChannelEntity(row).catch(() => { /* logged inside */ })
       await this.ensureJoinedPublicChannel(row).catch(err =>
         console.warn(`[userListener] join channel failed ${row.id}:`, err),
@@ -649,23 +868,25 @@ export class UserListener {
     // Poll channels with no recent activity (missed live events or stale entity).
     const pollStaleMs = 5 * 60_000
     const now = Date.now()
-    for (const row of (rows ?? []) as ChannelRow[]) {
+    const staleRows = activeRows.filter(row => {
       const lastLive = row.last_live_at ? new Date(row.last_live_at).getTime() : 0
       const lastSeen = row.last_seen_at ? new Date(row.last_seen_at).getTime() : 0
       const lastActivity = Math.max(lastLive, lastSeen)
-      if (lastActivity > 0 && now - lastActivity < pollStaleMs) continue
+      return lastActivity <= 0 || now - lastActivity >= pollStaleMs
+    })
+    await this.mapWithConcurrency(staleRows, CHANNEL_POLL_CONCURRENCY, async row => {
       await this.pollChannelNewMessages(row).catch(err =>
         console.warn(`[userListener] poll (stale) failed for ${row.id}:`, err),
       )
-    }
+    })
 
     // Never heard from Telegram at all.
-    for (const row of (rows ?? []) as ChannelRow[]) {
-      if (row.last_seen_at) continue
+    const neverHeardRows = activeRows.filter(row => !row.last_seen_at)
+    await this.mapWithConcurrency(neverHeardRows, CHANNEL_POLL_CONCURRENCY, async row => {
       await this.pollChannelNewMessages(row).catch(err =>
         console.warn(`[userListener] poll (never-heard) failed for ${row.id}:`, err),
       )
-    }
+    })
   }
 
   /**
@@ -744,12 +965,14 @@ export class UserListener {
   private async loadChannels(): Promise<Set<string>> {
     const { data } = await this.supabase
       .from('telegram_channels')
-      .select('channel_id, channel_username')
+      .select('id, channel_id, channel_username')
       .eq('user_id', this.userId)
       .eq('is_active', true)
 
     const next = new Set<string>()
     for (const ch of data ?? []) {
+      const rowId = (ch as { id?: string }).id
+      if (rowId && this.autoDisabledChannelRows.has(rowId)) continue
       if (ch.channel_id && isNumericTelegramChatId(String(ch.channel_id))) {
         for (const v of toChannelIdVariants(String(ch.channel_id))) next.add(v)
       }
@@ -2947,7 +3170,7 @@ export class UserListener {
       .eq('user_id', this.userId)
       .eq('is_active', true)
 
-    for (const row of (rows ?? []) as ChannelRow[]) {
+    for (const row of ((rows ?? []) as ChannelRow[]).filter(r => !this.isChannelLocallyDisabled(r))) {
       await this.ensureJoinedPublicChannel(row).catch(() => { /* optional */ })
       await this.warmChannelEntity(row).catch(() => { /* logged inside */ })
     }
@@ -2958,11 +3181,13 @@ export class UserListener {
    * external signal providers the user has not opened in Telegram yet.
    */
   private async ensureJoinedPublicChannel(row: ChannelRow): Promise<void> {
+    if (this.isChannelLocallyDisabled(row)) return
     const username = normalizeChannelUsername(row.channel_username)
     if (!username) return
     try {
       const entity = await this.client.getInputEntity(username)
       await tgInvoke(this.client, new Api.channels.JoinChannel({ channel: entity }))
+      this.resetChannelInvalidFailure(row, 'ensure_joined_public_channel')
       incMetric('channel_join_ok')
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -2970,7 +3195,12 @@ export class UserListener {
         msg.includes('USER_ALREADY_PARTICIPANT')
         || msg.includes('CHANNELS_TOO_MUCH')
         || msg.includes('INVITE_HASH_EMPTY')
+        || msg.includes('INVITE_HASH_EXPIRED')
       ) {
+        return
+      }
+      if (isConfirmedChannelInvalidError(err)) {
+        await this.noteChannelInvalid(row, 'ensure_joined_public_channel', err)
         return
       }
       console.warn(
@@ -3044,11 +3274,12 @@ export class UserListener {
       .eq('user_id', this.userId)
       .eq('is_active', true)
 
-    for (const row of (rows ?? []) as ChannelRow[]) {
+    const activeRows = ((rows ?? []) as ChannelRow[]).filter(row => !this.isChannelLocallyDisabled(row))
+    await this.mapWithConcurrency(activeRows, CHANNEL_POLL_CONCURRENCY, async row => {
       await this.pollChannelNewMessages(row).catch(err =>
         console.warn(`[userListener] poll failed channel=${row.id}:`, err),
       )
-    }
+    })
   }
 
   /**
@@ -3056,6 +3287,7 @@ export class UserListener {
    * (common when the linked account broadcasts to its own channel).
    */
   private async pollChannelNewMessages(row: ChannelRow): Promise<void> {
+    if (this.isChannelLocallyDisabled(row)) return
     const signalChannelId = row.signal_channel_id
       ?? await resolveSignalChannelIdForRow(this.supabase, row)
     if (isChannelRowPassive(signalChannelId, this.passiveSignalChannelIds)) {
@@ -3073,6 +3305,10 @@ export class UserListener {
         })
         return
       }
+      if (isConfirmedChannelInvalidError(err)) {
+        await this.noteChannelInvalid(row, 'poll_peer_resolve', err)
+        return
+      }
       const msg = err instanceof Error ? err.message : String(err)
       console.warn(
         `[userListener] poll peer resolve failed user=${this.userId} channel=${row.id}:`,
@@ -3087,7 +3323,6 @@ export class UserListener {
       })
       return
     }
-
     let minId = Number(row.last_seen_message_id ?? 0)
     if (!Number.isFinite(minId) || minId < 0) minId = 0
 
@@ -3103,6 +3338,10 @@ export class UserListener {
           error: (err instanceof Error ? err.message : String(err)).slice(0, 300),
           min_id: minId,
         })
+        return
+      }
+      if (isConfirmedChannelInvalidError(err)) {
+        await this.noteChannelInvalid(row, 'poll_getMessages', err)
         return
       }
       const msg = err instanceof Error ? err.message : String(err)
@@ -3121,6 +3360,7 @@ export class UserListener {
     }
 
     this.lastSuccessfulPollAt = Date.now()
+    this.noteChannelPollSuccess(row, 'poll_getMessages')
 
     if (!batch.length) {
       await this.runSignalTelegramReconcile('reconcile_poll_hook', row)
@@ -3222,9 +3462,15 @@ export class UserListener {
   }
 
   private async warmChannelEntity(row: ChannelRow): Promise<void> {
+    if (this.isChannelLocallyDisabled(row)) return
     try {
       await this.resolveChannelPeer(row)
+      this.resetChannelInvalidFailure(row, 'warm_channel_entity')
     } catch (err) {
+      if (isConfirmedChannelInvalidError(err)) {
+        await this.noteChannelInvalid(row, 'warm_channel_entity', err)
+        return
+      }
       const msg = err instanceof Error ? err.message : String(err)
       console.warn(`[userListener] warmChannelEntity failed channel=${row.id}:`, msg)
       void persistListenerEvent(this.supabase, {
@@ -3270,13 +3516,19 @@ export class UserListener {
   }
 
   private async catchUpChannel(row: ChannelRow): Promise<void> {
+    if (this.isChannelLocallyDisabled(row)) return
     let peer: unknown
     try {
       peer = await this.resolveChannelPeer(row)
     } catch (err) {
+      if (isConfirmedChannelInvalidError(err)) {
+        await this.noteChannelInvalid(row, 'catchup_peer_resolve', err)
+        return
+      }
       console.warn(`[userListener] resolveChannelPeer miss for channel ${row.id}; skipping catch-up this round`, err)
       return
     }
+    this.resetChannelInvalidFailure(row, 'catchup_peer_resolve')
 
     if (await loadCachedUserCopierPaused(this.supabase, this.userId)) {
       await this.advanceChannelLastSeenToLatest(row, peer)
@@ -3756,22 +4008,25 @@ export class UserListener {
       if (now - this.fastPollRowsAt > SAFETY_POLL_INTERVAL_MS) {
         const { data } = await this.supabase
           .from('telegram_channels')
-          .select('id, channel_id, channel_username, last_seen_message_id, last_seen_at, last_live_at')
+          .select('id, channel_id, channel_username, signal_channel_id, last_seen_message_id, last_seen_at, last_live_at')
           .eq('user_id', this.userId)
           .eq('is_active', true)
-        this.fastPollRows = (data ?? []) as ChannelRow[]
+        this.fastPollRows = ((data ?? []) as ChannelRow[]).filter(row => !this.isChannelLocallyDisabled(row))
         this.fastPollRowsAt = now
       }
 
-      for (const row of this.fastPollRows) {
+      const staleRows = this.fastPollRows.filter(row => {
+        if (this.isChannelLocallyDisabled(row)) return false
         const liveDb = row.last_live_at ? new Date(row.last_live_at).getTime() : 0
         const liveMem = this.lastLiveByRow.get(row.id) ?? 0
         const lastLive = Math.max(liveDb, liveMem)
-        if (lastLive > 0 && now - lastLive < FAST_POLL_LIVE_STALE_MS) continue
+        return lastLive <= 0 || now - lastLive >= FAST_POLL_LIVE_STALE_MS
+      })
+      await this.mapWithConcurrency(staleRows, CHANNEL_POLL_CONCURRENCY, async row => {
         await this.pollChannelNewMessages(row).catch(err =>
           console.warn(`[userListener] fast poll failed channel=${row.id}:`, err),
         )
-      }
+      })
     } finally {
       this.fastPollInFlight = false
     }
