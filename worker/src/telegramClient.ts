@@ -21,7 +21,7 @@ export function buildClient(sessionString: string = ''): TelegramClient {
     ? `${sessionString.slice(0, 4)}...${sessionString.slice(-4)}`
     : 'empty'
   console.log(`[telegram-conn] event=build_client session_fingerprint=${fp} api_id=${API_ID}`)
-  return new TelegramClient(
+  const client = new TelegramClient(
     new StringSession(sessionString),
     API_ID,
     API_HASH,
@@ -42,6 +42,22 @@ export function buildClient(sessionString: string = ''): TelegramClient {
       floodSleepThreshold: 60,
     }
   )
+
+  const origConnect = client.connect.bind(client)
+  client.connect = (async () => {
+    const result = await origConnect()
+    const sender = (client as unknown as { _sender?: { reconnect: () => void } })._sender
+    if (sender?.reconnect) {
+      const origReconnect = sender.reconnect.bind(sender)
+      sender.reconnect = () => {
+        if (!(client as unknown as { _autoReconnect?: boolean })._autoReconnect) return
+        origReconnect()
+      }
+    }
+    return result
+  }) as typeof client.connect
+
+  return client
 }
 
 /**

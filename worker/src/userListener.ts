@@ -17,6 +17,7 @@ import {
   tgInvoke,
 } from './telegramClient'
 import {
+  authKeyDupDeferredRetryMs,
   authKeyDupMaxRecoveryAttempts,
   authKeyDupReconnectDelayMs,
   authKeyDupReconnectDelaysMs,
@@ -218,6 +219,11 @@ function startConnectJitterMaxMs(): number {
   return Math.max(0, Math.min(30_000, Number(process.env.TELEGRAM_START_JITTER_MAX_MS ?? 2000)))
 }
 
+const HEARTBEAT_INTERVAL_MS = Math.max(
+  10_000,
+  Math.min(300_000, Number(process.env.TELEGRAM_HEARTBEAT_INTERVAL_MS ?? 60_000)),
+)
+
 export interface ChannelInfo {
   id: string
   title: string
@@ -385,6 +391,7 @@ export class UserListener {
   private signalReconcileSweepTimer: NodeJS.Timeout | null = null
   private signalReconcileInFlight = false
   private entityWarmupTimer: NodeJS.Timeout | null = null
+  private heartbeatTimer: NodeJS.Timeout | null = null
   private catchUpInFlight = false
   private catchUpParseActive = 0
   private lastLiveMessageAt = 0
@@ -392,6 +399,8 @@ export class UserListener {
   private lastEventAt = 0
   private lastSuccessfulPollAt = 0
   private lastReconnectAt = 0
+  private lastReconnectEndedAt = 0
+  private deferredRetryTimer: NodeJS.Timeout | null = null
   private consecutiveProbeFailures = 0
   /** Serializes forceReconnect so poll/watchdog/warmup cannot stack competing connects. */
   private reconnectInFlight: Promise<void> | null = null
@@ -442,9 +451,9 @@ export class UserListener {
         await this.noteMalformedRpcResult(err)
         return
       }
-      if (msg.includes('TIMEOUT')) {
+      if (msg.includes('TIMEOUT') && this.isConnected) {
         console.warn(`[userListener] _updateLoop TIMEOUT for ${this.userId} — requesting reconnect`)
-        await this.requestReconnect('update_loop_timeout')
+        this.requestReconnect('update_loop_timeout')
       }
     }
     this.lastSavedSession = sessionString
@@ -687,6 +696,7 @@ export class UserListener {
     this.startReplyChainSweep()
     this.startSignalReconcileSweep()
     this.startEntityWarmup()
+    this.startHeartbeat()
     this.subscribeCopierPauseState()
   }
 
@@ -704,7 +714,12 @@ export class UserListener {
       this.stopTimer('replyChainSweepTimer')
       this.stopTimer('signalReconcileSweepTimer')
       this.stopTimer('entityWarmupTimer')
+      this.stopTimer('heartbeatTimer')
       this.removeCurrentHandler()
+      if (this.deferredRetryTimer) {
+        clearTimeout(this.deferredRetryTimer)
+        this.deferredRetryTimer = null
+      }
       if (this.reconnectInFlight) {
         await this.reconnectInFlight.catch(() => {})
       }
@@ -726,7 +741,7 @@ export class UserListener {
     this.dialogsCacheAt = 0
   }
 
-  private stopTimer(field: 'watchdogTimer' | 'safetyPollTimer' | 'fastPollTimer' | 'sessionPersistTimer' | 'replyChainSweepTimer' | 'signalReconcileSweepTimer' | 'entityWarmupTimer') {
+  private stopTimer(field: 'watchdogTimer' | 'safetyPollTimer' | 'fastPollTimer' | 'sessionPersistTimer' | 'replyChainSweepTimer' | 'signalReconcileSweepTimer' | 'entityWarmupTimer' | 'heartbeatTimer') {
     const t = this[field]
     if (t) {
       clearInterval(t)
@@ -1069,12 +1084,13 @@ export class UserListener {
   }
 
   private async reconnectAndRetryDialogs(): Promise<Awaited<ReturnType<TelegramClient['getDialogs']>>> {
+    const cycleId = crypto.randomUUID().slice(0, 8)
     console.warn(
       `[userListener] AUTH_KEY_DUPLICATED on getDialogs for ${this.userId}`
       + ' — disconnecting, waiting for old session to release, then reconnecting',
     )
     incMetric('auth_key_duplicated')
-    this.connectionTrace('auth_key_duplicated_detected', { source: 'getDialogs' })
+    this.connectionTrace('auth_key_duplicated_detected', { source: 'getDialogs', cycleId })
     const delays = authKeyDupReconnectDelaysMs(
       reconnectCooldownMs(),
       authKeyDupReconnectDelayMs(),
@@ -1083,30 +1099,30 @@ export class UserListener {
     let lastErr: unknown
     for (let attempt = 0; attempt < delays.length; attempt++) {
       this.isConnected = false
-      this.connectionTrace('disconnect_start', { source: `getDialogs:retry_${attempt + 1}` })
+      this.connectionTrace('disconnect_start', { source: `getDialogs:retry_${attempt + 1}`, cycleId })
       try { await this.client.disconnect() } catch { /* ignore */ }
-      this.connectionTrace('disconnect_complete', { source: `getDialogs:retry_${attempt + 1}` })
+      this.connectionTrace('disconnect_complete', { source: `getDialogs:retry_${attempt + 1}`, cycleId })
       await new Promise(r => setTimeout(r, delays[attempt]))
       if (this.stopping) break
       try {
         this.clientGeneration += 1
-        this.connectionTrace('connect_start', { source: 'getDialogs', attempt: attempt + 1 })
+        this.connectionTrace('connect_start', { source: 'getDialogs', cycleId, attempt: attempt + 1 })
         await this.client.connect()
         this.isConnected = true
         const dialogs = await this.fetchAllDialogs()
-        this.connectionTrace('recovery_complete', { source: 'getDialogs', attempt: attempt + 1 })
+        this.connectionTrace('recovery_complete', { source: 'getDialogs', cycleId, attempt: attempt + 1 })
         return dialogs
       } catch (err) {
         lastErr = err
         if (!isAuthKeyDuplicated(err)) rethrowIfSessionInvalid(err)
-        this.connectionTrace('auth_key_duplicated_retry', { source: 'getDialogs', attempt: attempt + 1 })
+        this.connectionTrace('auth_key_duplicated_retry', { source: 'getDialogs', cycleId, attempt: attempt + 1 })
         console.warn(
           `[userListener] AUTH_KEY_DUPLICATED reconnect attempt ${attempt + 1}/${delays.length}`
-          + ` for ${this.userId}`,
+          + ` for ${this.userId} cycle=${cycleId}`,
         )
       }
     }
-    this.connectionTrace('recovery_invalidated', { source: 'getDialogs', attempts: delays.length })
+    this.connectionTrace('recovery_invalidated', { source: 'getDialogs', cycleId, attempts: delays.length })
     setImmediate(() => this.onAuthKeyDuplicatedRecoveryExhausted?.(this.userId, 'getDialogs'))
     throw lastErr
   }
@@ -3907,7 +3923,21 @@ export class UserListener {
   private requestReconnect(reason: string): Promise<void> {
     if (this.stopping) return Promise.resolve()
     if (this.reconnectInFlight) return this.reconnectInFlight
-    this.reconnectInFlight = this.forceReconnect(reason).finally(() => {
+
+    const cycleId = crypto.randomUUID().slice(0, 8)
+    // Enforce a minimum cooldown between reconnect cycles to prevent cascading loops.
+    const cooldown = reconnectCooldownMs()
+    const elapsed = Date.now() - this.lastReconnectEndedAt
+    const delay = elapsed < cooldown ? cooldown - elapsed : 0
+
+    this.reconnectInFlight = (async () => {
+      if (delay > 0) {
+        console.log(`[userListener] reconnect cooldown ${delay}ms for ${this.userId} cycle=${cycleId}`)
+        await new Promise(r => setTimeout(r, delay))
+      }
+      await this.forceReconnect(reason, cycleId)
+    })().finally(() => {
+      this.lastReconnectEndedAt = Date.now()
       this.reconnectInFlight = null
     })
     return this.reconnectInFlight
@@ -3920,7 +3950,6 @@ export class UserListener {
     }
     this.lastMalformedRpcRecoveryAt = now
     this.malformedRpcRecoveryCount += 1
-    this.isConnected = false
     this.connectionTrace('malformed_rpc_result_detected', {
       attempt: this.malformedRpcRecoveryCount,
       max: malformedRpcResultMaxRecoveries(),
@@ -3940,20 +3969,35 @@ export class UserListener {
     }
     console.warn(
       `[userListener] malformed Telegram RPC result for ${this.userId}`
-      + ` (${this.malformedRpcRecoveryCount}/${malformedRpcResultMaxRecoveries()}) — reconnecting`,
+      + ` (${this.malformedRpcRecoveryCount}/${malformedRpcResultMaxRecoveries()})`
+      + ' — GramJS internal error, not reconnecting',
     )
-    await this.requestReconnect('malformed_rpc_result')
   }
 
-  private async forceReconnect(reason = 'force') {
-    console.log(`[userListener] force reconnect for ${this.userId} reason=${reason}`)
+  private scheduleDeferredRetry(cycleId: string): void {
+    if (this.deferredRetryTimer) return
+    const delayMs = authKeyDupDeferredRetryMs()
+    console.warn(
+      `[userListener] reconnect exhausted for ${this.userId} cycle=${cycleId}`
+      + ` — deferred retry in ${delayMs}ms`,
+    )
+    this.deferredRetryTimer = setTimeout(() => {
+      this.deferredRetryTimer = null
+      if (this.isConnected || this.stopping) return
+      void this.requestReconnect('deferred_retry')
+    }, delayMs)
+    this.deferredRetryTimer.unref?.()
+  }
+
+  private async forceReconnect(reason = 'force', cycleId = 'none') {
+    console.log(`[userListener] force reconnect for ${this.userId} reason=${reason} cycle=${cycleId}`)
     this.clearDialogsCache()
     this.lastReconnectAt = Date.now()
     this.consecutiveProbeFailures = 0
     this.isConnected = false
-    this.connectionTrace('disconnect_start', { source: reason })
+    this.connectionTrace('disconnect_start', { source: reason, cycleId })
     try { await this.client.disconnect() } catch { /* ignore */ }
-    this.connectionTrace('disconnect_complete', { source: reason })
+    this.connectionTrace('disconnect_complete', { source: reason, cycleId })
     if (this.stopping) return
 
     const delays = authKeyDupReconnectDelaysMs(
@@ -3967,16 +4011,16 @@ export class UserListener {
       if (this.stopping) return
       try {
         this.clientGeneration += 1
-        this.connectionTrace('connect_start', { source: reason, attempt: attempt + 1 })
+        this.connectionTrace('connect_start', { source: reason, cycleId, attempt: attempt + 1 })
         await this.client.connect()
         this.isConnected = true
         lastErr = undefined
-        this.connectionTrace('recovery_complete', { source: reason, attempt: attempt + 1 })
+        this.connectionTrace('recovery_complete', { source: reason, cycleId, attempt: attempt + 1 })
         break
       } catch (err) {
         lastErr = err
         console.error(
-          `[userListener] reconnect attempt ${attempt + 1}/${delays.length} failed for ${this.userId}:`,
+          `[userListener] reconnect attempt ${attempt + 1}/${delays.length} failed for ${this.userId}: cycle=${cycleId}`,
           redactTelegramConnectionLog(err),
         )
         if (isAuthKeyUnregistered(err)) return
@@ -3985,24 +4029,24 @@ export class UserListener {
           continue
         }
         incMetric('auth_key_duplicated')
-        this.connectionTrace('auth_key_duplicated_retry', { source: reason, attempt: attempt + 1 })
+        this.connectionTrace('auth_key_duplicated_retry', { source: reason, cycleId, attempt: attempt + 1 })
         console.warn(
           `[userListener] AUTH_KEY_DUPLICATED reconnect attempt ${attempt + 1}/${delays.length}`
-          + ` for ${this.userId}`,
+          + ` for ${this.userId} cycle=${cycleId}`,
         )
-        this.connectionTrace('disconnect_start', { source: `${reason}:retry_${attempt + 1}` })
+        this.connectionTrace('disconnect_start', { source: `${reason}:retry_${attempt + 1}`, cycleId })
         try { await this.client.disconnect() } catch { /* ignore */ }
-        this.connectionTrace('disconnect_complete', { source: `${reason}:retry_${attempt + 1}` })
+        this.connectionTrace('disconnect_complete', { source: `${reason}:retry_${attempt + 1}`, cycleId })
       }
     }
 
     if (!this.isConnected) {
       console.error(
-        `[userListener] reconnect failed for ${this.userId}:`,
+        `[userListener] reconnect failed for ${this.userId} cycle=${cycleId}:`,
         redactTelegramConnectionLog(lastErr ?? 'unknown'),
       )
-      this.connectionTrace('recovery_invalidated', { source: reason, attempts: delays.length })
-      setImmediate(() => this.onAuthKeyDuplicatedRecoveryExhausted?.(this.userId, reason))
+      this.connectionTrace('recovery_invalidated', { source: reason, cycleId, attempts: delays.length })
+      this.scheduleDeferredRetry(cycleId)
       return
     }
 
@@ -4097,6 +4141,22 @@ export class UserListener {
     } finally {
       this.fastPollInFlight = false
     }
+  }
+
+  // ── heartbeat ─────────────────────────────────────────────────────────
+
+  private startHeartbeat() {
+    if (this.heartbeatTimer) return
+    this.heartbeatTimer = setInterval(() => {
+      const uptime = Date.now() - this.startedAt
+      const lastEventAge = Date.now() - this.lastEventAt
+      this.connectionTrace('listener_healthy', {
+        uptimeMs: uptime,
+        connected: this.isConnected,
+        lastEventAgeMs: lastEventAge,
+      })
+    }, HEARTBEAT_INTERVAL_MS)
+    this.heartbeatTimer.unref?.()
   }
 
   // ── entity cache warmup ────────────────────────────────────────────────
