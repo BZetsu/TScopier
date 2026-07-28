@@ -394,18 +394,19 @@ test('layerLatencyPayload: calculates critical path durations', () => {
   assert.equal(out.complete_layer_execution_ms, 300)
 })
 
-test('VirtualPendingMonitor.fireLeg: claim occurs before stale basket safety checks', async () => {
+test('VirtualPendingMonitor.fireLeg: stale basket safety check runs before claim', async () => {
   const h = makeFireLegHarness()
   const result = await h.fireLeg(makeTestLeg(), 99.9, 100.05)
 
   assert.equal(result.outcome, 'fired')
   assert.ok(h.operations.includes('claim'))
   assert.ok(h.operations.includes('stale-check'))
-  assert.ok(h.operations.indexOf('claim') < h.operations.indexOf('stale-check'))
-  assert.ok(h.operations.indexOf('sltp-refresh') < h.operations.indexOf('stale-check'))
+  assert.ok(h.operations.indexOf('stale-check') < h.operations.indexOf('claim'))
+  assert.ok(h.operations.lastIndexOf('stale-check') > h.operations.indexOf('claim'))
+  assert.ok(h.operations.indexOf('sltp-refresh') < h.operations.lastIndexOf('stale-check'))
 })
 
-test('VirtualPendingMonitor.fireLeg: losing claimant short-circuits before safety and broker work', async () => {
+test('VirtualPendingMonitor.fireLeg: losing claimant short-circuits before broker work', async () => {
   const h = makeFireLegHarness({ claimedRow: null })
   const result = await h.fireLeg(makeTestLeg(), 99.9, 100.05)
   const active = new Map<string, Set<number>>([['signal-1|broker-1', new Set([1])]])
@@ -414,8 +415,9 @@ test('VirtualPendingMonitor.fireLeg: losing claimant short-circuits before safet
 
   assert.equal(result.outcome, 'not_claimed')
   assert.equal(outcome, 'not_claimed')
+  assert.ok(h.operations.includes('stale-check'))
   assert.ok(h.operations.includes('claim'))
-  assert.equal(h.operations.includes('stale-check'), false)
+  assert.ok(h.operations.indexOf('stale-check') < h.operations.indexOf('claim'))
   assert.equal(h.operations.includes('sltp-refresh'), false)
   assert.equal(h.operations.includes('broker-send'), false)
   assert.equal(h.brokerSends, 0)
@@ -439,7 +441,7 @@ test('VirtualPendingMonitor.fireLeg: slipped price releases claimed leg without 
   assert.equal(fired.has('signal-1|broker-1'), false)
 })
 
-test('VirtualPendingMonitor.fireLeg: successful claimant runs safety checks after claim and dispatches once', async () => {
+test('VirtualPendingMonitor.fireLeg: successful claimant re-checks flatness after claim and dispatches once', async () => {
   const h = makeFireLegHarness()
   const leg = makeTestLeg()
   const result = await h.fireLeg(leg, 99.9, 100.05)
@@ -449,8 +451,9 @@ test('VirtualPendingMonitor.fireLeg: successful claimant runs safety checks afte
 
   assert.equal(result.outcome, 'fired')
   assert.equal(outcome, 'fired')
-  assert.ok(h.operations.indexOf('claim') < h.operations.indexOf('stale-check'))
-  assert.ok(h.operations.indexOf('stale-check') < h.operations.indexOf('broker-send'))
+  assert.ok(h.operations.indexOf('stale-check') < h.operations.indexOf('claim'))
+  assert.ok(h.operations.lastIndexOf('stale-check') > h.operations.indexOf('claim'))
+  assert.ok(h.operations.lastIndexOf('stale-check') < h.operations.indexOf('broker-send'))
   assert.equal(h.brokerSends, 1)
   assert.deepEqual([...active.get('signal-1|broker-1') ?? []], [])
   assert.deepEqual([...fired.get('signal-1|broker-1') ?? []], [1])
@@ -466,7 +469,8 @@ test('VirtualPendingMonitor.fireLeg: stale basket cleanup is skipped, not fired'
 
   assert.deepEqual(result, { outcome: 'skipped', reason: 'basket_flat' })
   assert.equal(outcome, 'skipped')
-  assert.ok(h.operations.indexOf('claim') < h.operations.indexOf('stale-check'))
+  assert.ok(h.operations.includes('stale-check'))
+  assert.equal(h.operations.includes('claim'), false)
   assert.ok(h.operations.indexOf('stale-check') < h.operations.indexOf('cleanup'))
   assert.equal(h.operations.includes('broker-send'), false)
   assert.equal(h.brokerSends, 0)
