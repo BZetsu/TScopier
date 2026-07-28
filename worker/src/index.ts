@@ -31,6 +31,7 @@ import { subscribeMonitorWorkWake } from './monitorWorkWake'
 import { startTradeLogRetention } from './tradeLogRetention'
 import type { Server } from 'http'
 import { telegramShutdownDrainMs } from './workerShutdown'
+import { registerOrderCloseAuditSupabase } from './orderCloseAudit'
 
 if (!globalThis.WebSocket) {
   globalThis.WebSocket = WebSocket as unknown as typeof globalThis.WebSocket
@@ -40,6 +41,7 @@ const supabase = createClient(
   process.env.SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!,
 )
+registerOrderCloseAuditSupabase(supabase)
 
 const sessionManager = new UserSessionManager(supabase)
 let httpServer: Server | null = null
