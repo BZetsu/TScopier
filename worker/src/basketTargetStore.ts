@@ -8,6 +8,7 @@
  * timestamp-free rule — no scanning the signals table and no recency heuristics.
  */
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { sanitizeBasketTargetStops } from './basketTargetStops'
 
 export type BasketTargetSource = 'entry' | 'adjust' | 'breakeven' | 'auto_breakeven'
 
@@ -106,10 +107,28 @@ export async function upsertBasketSlTpTarget(
     source: BasketTargetSource
     /** The instruction's own timestamp (signal created_at). Defaults to now(). */
     instructionAt?: string | null
+    /** When set, rejects directionally invalid SL/TP before persisting. */
+    isBuy?: boolean
+    referencePrice?: number | null
   },
 ): Promise<void> {
-  const sl = positiveLevel(args.stoploss)
-  const tps = args.tpLevels != null ? normalizeTpLevels(args.tpLevels) : null
+  let sl = positiveLevel(args.stoploss)
+  let tps = args.tpLevels != null ? normalizeTpLevels(args.tpLevels) : null
+  if (args.isBuy != null && (sl != null || (tps != null && tps.length > 0))) {
+    const sanitized = sanitizeBasketTargetStops({
+      isBuy: args.isBuy,
+      referencePrice: args.referencePrice ?? null,
+      stoploss: sl,
+      tpLevels: tps ?? [],
+    })
+    if (sanitized.rejected.length > 0) {
+      console.warn(
+        `[basketTargetStore] sanitized invalid stops broker=${args.brokerAccountId} anchor=${args.anchorSignalId}: ${sanitized.rejected.join('; ')}`,
+      )
+    }
+    sl = sanitized.stoploss
+    tps = sanitized.tpLevels.length > 0 ? sanitized.tpLevels : null
+  }
   if (sl == null && (tps == null || tps.length === 0)) return
 
   const { error } = await supabase.rpc('upsert_basket_sl_tp_target', {

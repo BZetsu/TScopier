@@ -389,8 +389,10 @@ function extractTpLevels(message, extraLabels = []) {
     collect(new RegExp(`\\b(?:tp|target(?:\\s+level)?)\\s*\\d+\\s*[:=\\-]\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'gi'));
     collect(new RegExp(`\\b(?:tp|target(?:\\s+level)?)\\s*\\d+\\s+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'gi'));
     collect(new RegExp(`\\btp\\s*\\.\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'gi'));
+    collect(new RegExp(`\\b(?:tp|take\\s*profit)\\b[.\\s]+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'gi'));
     // Tier index only (1–2 digits): "TP1. 4066". Must not match "TP 4053.22" (full decimal price).
     collect(new RegExp(`\\btp\\s*\\d{1,2}\\s*\\.\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'gi'));
+    collect(new RegExp(`\\btp\\s*\\d{1,2}[.\\s]+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'gi'));
     collect(new RegExp(`\\btp[\\u00B9\\u00B2\\u00B3\\u2070-\\u2079]+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'giu'));
     collect(new RegExp(`(?:الهدف\\s*(?:الأول|الثاني|الثالث|\\d+)|جني\\s*الأرباح|جني\\s*الارباح)\\s*[:：]?\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'giu'));
     collect(buildTpRegex(extraLabels));
@@ -571,6 +573,9 @@ function parseSlFromText(text) {
     const slSlashAt = text.match(/(?:^|\s)(?:sl|stop\s*loss|stoploss)[_\s]*\/\s*@\s*(\d+(?:\.\d+)?)/i);
     if (slSlashAt?.[1])
         return (0, signalPriceFormat_1.parseSignalPriceToken)(slSlashAt[1]);
+    const slDotLeader = text.match(new RegExp(`\\b(?:${SL_TEXT_LABELS})\\b[.\\s]+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'i'));
+    if (slDotLeader?.[1])
+        return (0, signalPriceFormat_1.parseSignalPriceToken)(slDotLeader[1]);
     const slDotLabel = text.match(/\b(?:sl|stop\s*loss)\b\s*\.\s*(\d+(?:\.\d+)?)/i);
     if (slDotLabel?.[1])
         return (0, signalPriceFormat_1.parseSignalPriceToken)(slDotLabel[1]);
@@ -772,7 +777,7 @@ function extractOptionalEntryAnchor(message, channelKeywords) {
         const nowZone = text.match(new RegExp(`\\b(?:now|instant|market|mkt)\\s+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\s*(?:-|–|to)\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'i'));
         const reentryZone = text.match(new RegExp(`\\b(?:now\\s+)?(?:re[-\\s]?entry|reenter)\\s+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\s*(?:-|–|to)\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'i'));
         const zoneMatch = znZone ?? nowZone ?? reentryZone;
-        const symSideColonSlash = text.match(new RegExp(`\\b(?:xauusd|xagusd|gold|silver|btcusd|btcusdt|ethusd|ethusdt|eurusd|gbpusd|usdjpy|us30|nas100|[a-z]{6})\\s+(?:buy|sell|long|short)\\s*:\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\s*(?:\\/|\\band\\b)\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'i'));
+        const symSideColonSlash = text.match(new RegExp(`\\b(?:xauusd|xagusd|gold|silver|btcusd|btcusdt|ethusd|ethusdt|eurusd|gbpusd|usdjpy|us30|nas100|[a-z]{6})\\s+(?:buy|sell|long|short)\\s*:?\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\s*(?:\\/|\\band\\b)\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'i'));
         const symPriceSlash = text.match(new RegExp(`\\b(?:xauusd|xagusd|gold|silver)\\s+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\s*(?:\\/|\\band\\b)\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'i'));
         const sidePriceSlash = text.match(new RegExp(`\\b(?:buy|sell|long|short)\\s+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\s*(?:\\/|\\band\\b)\\s*(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'i'));
         const slashZone = symSideColonSlash ?? symPriceSlash ?? sidePriceSlash;
@@ -821,6 +826,11 @@ function extractOptionalEntryAnchor(message, channelKeywords) {
                 const sidePrice = text.match(new RegExp(`\\b(?:buy|sell|long|short)\\s+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'i'));
                 if (sidePrice?.[1])
                     entry_price = (0, signalPriceFormat_1.parseSignalPriceToken)(sidePrice[1]);
+                if (entry_price == null) {
+                    const sideDotLeader = text.match(new RegExp(`\\b(?:buy|sell|long|short)\\b[.\\s]+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})`, 'i'));
+                    if (sideDotLeader?.[1])
+                        entry_price = (0, signalPriceFormat_1.parseSignalPriceToken)(sideDotLeader[1]);
+                }
             }
             if (entry_price == null) {
                 const entryWord = text.match(new RegExp(`\\bentry\\s+(${signalPriceFormat_1.SIGNAL_PRICE_NUM})\\b`, 'i'));

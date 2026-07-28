@@ -310,6 +310,10 @@ class UserListener {
     async stop() {
         this.stopping = true;
         try {
+            if (this.deferredAuthKeyDupRetryTimer) {
+                clearTimeout(this.deferredAuthKeyDupRetryTimer);
+                this.deferredAuthKeyDupRetryTimer = null;
+            }
             if (this.userProfilesCopierPauseChannel) {
                 await this.supabase.removeChannel(this.userProfilesCopierPauseChannel);
                 this.userProfilesCopierPauseChannel = null;

@@ -382,6 +382,9 @@ async function applySignalOverride(supabase, args) {
             const sym = legs[0]?.symbol ?? symbolHint;
             if (!anchorSignalId || !sym)
                 continue;
+            const legDir = String(legs[0]?.direction ?? '').toLowerCase();
+            const isBuy = legDir.startsWith('buy');
+            const ref = num(legs[0]?.entry_price);
             try {
                 await (0, basketTargetStore_1.upsertBasketSlTpTarget)(supabase, {
                     userId: args.userId,
@@ -393,6 +396,8 @@ async function applySignalOverride(supabase, args) {
                     tpLevels: targetTps,
                     source: 'adjust',
                     instructionAt,
+                    isBuy,
+                    referencePrice: ref,
                 });
             }
             catch (e) {

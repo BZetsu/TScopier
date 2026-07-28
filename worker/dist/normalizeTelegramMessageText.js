@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.normalizeTelegramMessageText = normalizeTelegramMessageText;
 exports.stripSignalDecorativeEmojis = stripSignalDecorativeEmojis;
+exports.expandSymbolSideUnderscore = expandSymbolSideUnderscore;
 exports.normalizeSignalMessageForParse = normalizeSignalMessageForParse;
 exports.stripLegalTradeDisclaimer = stripLegalTradeDisclaimer;
 /**
@@ -46,6 +47,15 @@ function stripSignalDecorativeEmojis(text) {
         .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE00}-\u{FE0F}\u{200D}\u{20E3}\u{1F1E6}-\u{1F1FF}]+/gu, ' ')
         // Collapse horizontal whitespace from emoji→space replacement; keep newlines.
         .replace(/[^\S\n]+/g, ' ');
+}
+/**
+ * Channels often glue instrument and side with an underscore (`XAUUSD_BUY 4143/4144`).
+ * Underscore is a word character, so `\bXAUUSD\b` / `\bbuy\b` never match — expand to spaces.
+ */
+function expandSymbolSideUnderscore(text) {
+    return String(text ?? '')
+        .replace(/\b([A-Za-z][A-Za-z0-9]{1,14})_(BUY|SELL|LONG|SHORT)\b/gi, '$1 $2')
+        .replace(/\b(BUY|SELL|LONG|SHORT)_([A-Za-z][A-Za-z0-9]{1,14})\b/gi, '$1 $2');
 }
 /** Telegram format strip + casual management typo collapse for parsers. */
 function normalizeSignalMessageForParse(raw) {
