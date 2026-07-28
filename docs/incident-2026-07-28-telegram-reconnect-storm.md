@@ -105,15 +105,21 @@ These were already deployed but did not prevent the storm because none of them a
 
 ### 4.1 Fix 1-2: authKeyDuplicatedRecovery.ts  --  Restore sane defaults
 
+**Plain English:** When Telegram says "this session is already connected elsewhere," the listener needs to wait and retry. The broken code tried 10 times with 30-second pauses (4.5 minutes total) and then gave up forever. Now it tries 4 times with shorter pauses that get longer (first retry fast, then 15s, then 30s). If all 4 fail, it waits 60 seconds and tries again instead of dying forever.
+
 - **maxAttempts:** 10 -> **4** (configurable via `TELEGRAM_AUTH_DUP_MAX_RECOVERY_ATTEMPTS`)
 - **Delays:** flat 30s -> **escalating `[cooldown, retry, 15s, 30s]`**  --  fast recovery when possible, backoff when needed
 - **Deferred retry:** restored  --  **60s** after exhaustion, re-enters the reconnect cycle (`TELEGRAM_AUTH_DUP_DEFERRED_RETRY_MS`)
 
 ### 4.2 Fix 3: userListener.ts  --  Malformed RPC no longer triggers reconnect
 
+**Plain English:** Sometimes GramJS (the library we use to talk to Telegram) sends back garbled data. This is a transient glitch, not a real problem. The broken code treated every garbled response as a reason to disconnect and restart the full reconnect cycle. Now we just log it and move on.
+
 `noteMalformedRpcResult()` no longer calls `requestReconnect()`. GramJS transient malformed results are silently logged and ignored.
 
 ### 4.3 Fix 4-6: userListener.ts  --  Reconnect dedup + cycle guard
+
+**Plain English:** During the storm, multiple errors would fire at once, each telling the listener "reconnect now!" -- so it would try to reconnect over itself, making everything worse. Now each reconnect gets a unique ID, and if a reconnect is already in progress, subsequent requests are ignored. If the reconnect fully fails, it waits 60 seconds before trying again.
 
 - **cycleId:** 8-char UUID generated per `requestReconnect()` call, logged in all reconnect messages
 - **Cooldown gate:** subsequent reconnect requests within the same cycle are dropped
@@ -121,14 +127,20 @@ These were already deployed but did not prevent the storm because none of them a
 
 ### 4.4 Fix 7: authKeyDuplicatedRecovery.test.ts  --  Updated for new defaults
 
+**Plain English:** The automated tests that check reconnect behaviour were still expecting the old broken values (10 attempts, flat delays). Updated them to match the new safe defaults.
+
 All test expectations updated: maxAttempts 10 -> 4, new delay array structure, deferred retry function tested.
 
 ### 4.5 Fix 8: authService.ts  --  Structured auth logging
+
+**Plain English:** When someone connects their Telegram account, the logs now include a unique ID for that flow, timestamps for each step, and a clear label for what went wrong. This makes it much faster to debug auth issues in the future.
 
 - `logAuthEvent()`: structured log with `correlationId`, timing per step, error categorization
 - `authCorrelationId()`: stable ID per auth flow for traceability
 
 ### 4.6 Fix 9-10: gramjsLogSuppress.ts (NEW)  --  Flood-wait noise suppression
+
+**Plain English:** Telegram rate-limits the listener by saying "slow down, wait X seconds." GramJS printed this message every single time, flooding our logs with 10,036 identical lines (83% of the entire log) and burying real errors. Now these messages are suppressed and only a single summary line is printed every 60 seconds saying "flood-wait happened 42 times this minute."
 
 - Monkey-patches `console.log` at import time
 - Suppresses lines matching `Sleeping for Xs on flood wait`
@@ -137,6 +149,8 @@ All test expectations updated: maxAttempts 10 -> 4, new delay array structure, d
 - **Result:** 83% log noise eliminated
 
 ### 4.7 Fix 11: userListener.ts  --  Listener heartbeat
+
+**Plain English:** Before this fix, there was no way to tell if a listener was alive and working except by watching for errors. Now every listener prints a short health message every 60 seconds saying "I am alive, connected for X seconds, last event happened Y seconds ago." If the heartbeat stops, we know something is wrong immediately.
 
 - `startHeartbeat()` fires `[telegram-conn] event=listener_healthy` every 60s
 - Includes `{uptimeMs, connected, lastEventAgeMs, pendingMessages}` telemetry
