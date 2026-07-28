@@ -1,4 +1,7 @@
 import 'dotenv/config'
+// Must be loaded before any TelegramClient runtime code — patches console.log
+// to suppress GramJS flood-wait INFO noise (83% of log volume).
+import './gramjsLogSuppress'
 import { createClient } from '@supabase/supabase-js'
 import WebSocket from 'ws'
 import { UserSessionManager } from './sessionManager'

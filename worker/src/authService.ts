@@ -87,6 +87,21 @@ function sentCodeDelivery(result: Api.auth.SentCode): 'app' | 'sms' | 'call' | '
   return 'other'
 }
 
+function logAuthEvent(event: string, extra?: Record<string, unknown>): void {
+  const parts = [`[authService] event=${event}`]
+  if (extra) {
+    for (const [k, v] of Object.entries(extra)) {
+      const val = typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v ?? '')
+      parts.push(`${k}=${val}`)
+    }
+  }
+  console.log(parts.join(' '))
+}
+
+function authCorrelationId(): string {
+  return crypto.randomUUID().slice(0, 8)
+}
+
 /**
  * Owns the MTProto connection during the send_code -> verify_code window.
  * The same TelegramClient is kept alive across both calls so we never re-auth
@@ -108,7 +123,17 @@ export class AuthService {
     this.sessionManager.setAuthGuard(
       userId => this.pending.has(userId) || this.authInFlight.has(userId),
     )
-    this.cleanupTimer = setInterval(() => this.cleanup(), CLEANUP_INTERVAL_MS)
+    this.cleanupTimer = setInterval(() => {
+      this.cleanup()
+      if (this.pending.size > 0) {
+        const oldestAge = Math.max(0, ...Array.from(this.pending.values()).map(p => Date.now() - p.createdAt))
+        logAuthEvent('auth_heartbeat', {
+          pendingCount: this.pending.size,
+          inFlightCount: this.authInFlight.size,
+          oldestPendingAgeMs: oldestAge,
+        })
+      }
+    }, CLEANUP_INTERVAL_MS)
     if (typeof this.cleanupTimer.unref === 'function') this.cleanupTimer.unref()
   }
 
@@ -155,12 +180,14 @@ export class AuthService {
       })
   }
 
-  private async clearPendingRow(userId: string) {
+  private async clearPendingRow(userId: string, source = 'unspecified') {
+    console.log(`[authService] clearPendingRow user=${userId} source=${source}`)
     await this.supabase.from('telegram_auth_pending').delete().eq('user_id', userId)
   }
 
-  private async disconnectPending(userId: string) {
+  private async disconnectPending(userId: string, source = 'unspecified') {
     const existing = this.pending.get(userId)
+    console.log(`[authService] disconnectPending user=${userId} source=${source} has_pending=${!!existing}`)
     if (existing) {
       try { await existing.client.disconnect() } catch { /* ignore */ }
       this.pending.delete(userId)
@@ -314,11 +341,15 @@ export class AuthService {
     client: TelegramClient,
     userId: string,
     phone: string,
+    correlationId?: string,
   ): Promise<VerifySuccess> {
     const sessionString = (client.session.save() as unknown) as string
+    logAuthEvent('finalize_auth_start', { userId, phone, correlationId })
+    const tStart = Date.now()
 
     const me = await client.getMe()
     const telegramUserId = me.id?.toString?.() ?? String(me.id)
+    logAuthEvent('finalize_auth_got_user', { userId, telegramUserId, correlationId })
     await assertTelegramAccountAvailable(this.supabase, userId, {
       phone,
       telegramUserId,
@@ -337,9 +368,10 @@ export class AuthService {
       .single()
 
     if (dbErr || !row) {
+      logAuthEvent('finalize_auth_db_failed', { userId, correlationId, error: dbErr?.message ?? 'no row returned', timeMs: Date.now() - tStart })
+      console.error(`[authService] finalizeAuth db_upsert_failed user=${userId}: ${dbErr?.message ?? 'no row returned'}`)
       try { await client.disconnect() } catch { /* ignore */ }
-      this.pending.delete(userId)
-      await this.clearPendingRow(userId)
+      await this.clearPendingRow(userId, 'finalizeAuth_db_fail')
       throw new Error(dbErr?.message ?? 'Failed to persist Telegram session')
     }
 
@@ -348,25 +380,31 @@ export class AuthService {
         phone,
         telegramUserId,
       })
+      logAuthEvent('finalize_auth_claim_ok', { userId, telegramUserId, correlationId })
     } catch (claimErr) {
+      logAuthEvent('finalize_auth_claim_failed', { userId, correlationId, error: claimErr instanceof Error ? claimErr.message : String(claimErr) })
+      console.error(`[authService] finalizeAuth claim_failed user=${userId}:`, claimErr instanceof Error ? claimErr.message : claimErr)
       await this.supabase.from('telegram_sessions').delete().eq('user_id', userId)
       try { await client.disconnect() } catch { /* ignore */ }
-      this.pending.delete(userId)
-      await this.clearPendingRow(userId)
+      await this.clearPendingRow(userId, 'finalizeAuth_claim_fail')
       throw claimErr
     }
 
     this.pending.delete(userId)
-    await this.clearPendingRow(userId)
+    await this.clearPendingRow(userId, 'finalizeAuth_success')
     let channels: ChannelInfo[] | undefined
     try {
+      logAuthEvent('finalize_auth_adopting', { userId, correlationId })
       await this.sessionManager.adoptClient(userId, client, sessionString)
       try {
         channels = await this.sessionManager.listChannelsForAdoptedUser(userId, { skipColdDelay: true })
+        logAuthEvent('finalize_auth_channels_ok', { userId, channelCount: channels?.length ?? 0, correlationId })
       } catch (listErr) {
+        logAuthEvent('finalize_auth_channels_failed', { userId, correlationId, error: listErr instanceof Error ? listErr.message : String(listErr) })
         console.warn(`[authService] listChannels after auth failed for ${userId}:`, listErr)
       }
     } catch (err) {
+      logAuthEvent('finalize_auth_adopt_failed', { userId, correlationId, error: err instanceof Error ? err.message : String(err) })
       console.error(`[authService] adoptClient failed for ${userId}:`, err)
       try {
         await client.disconnect()
@@ -375,11 +413,13 @@ export class AuthService {
       }
     }
 
+    logAuthEvent('finalize_auth_complete', { userId, sessionId: row.id, totalTimeMs: Date.now() - tStart, correlationId })
     return { ok: true, session_id: row.id as string, channels }
   }
 
-  private async runQrLoginBackground(userId: string, pending: QrPending): Promise<void> {
+  private async runQrLoginBackground(userId: string, pending: QrPending, correlationId = authCorrelationId()): Promise<void> {
     const { client } = pending
+    logAuthEvent('qr_login_bg_start', { userId, correlationId })
     try {
       await client.signInUserWithQrCode(
         { apiId: API_ID, apiHash: API_HASH },
@@ -389,9 +429,11 @@ export class AuthService {
               Buffer.isBuffer(token) ? token : Buffer.from(token as Uint8Array),
             )
             pending.expiresAt = expires * 1000
+            console.log(`[authService] QR token received user=${userId} expires_at=${pending.expiresAt}`)
             await this.persistQrPendingRow(userId, client, pending)
           },
           password: async (hint?: string) => {
+            console.log(`[authService] QR requires password user=${userId} hint=${hint ?? 'none'}`)
             pending.status = 'requires_password'
             pending.passwordHint = hint
             await this.persistAwaitingPassword(userId, client)
@@ -400,31 +442,35 @@ export class AuthService {
             })
           },
           onError: async (err: Error) => {
+            console.warn(`[authService] QR login onError user=${userId}:`, err.message)
             if (isAuthKeyUnregistered(err)) {
               throw new Error('AUTH_KEY_UNREGISTERED')
             }
-            console.warn(`[authService] QR login onError user=${userId}:`, err.message)
             return false
           },
         },
       )
 
+      console.log(`[authService] QR signIn completed user=${userId} — calling finalizeAuth`)
       const me = await client.getMe()
       const phone = me.phone ? normalizePhoneNumber(`+${me.phone}`) : pending.phone ?? ''
       pending.phone = phone
       // Mark success only after finalizeAuth returns. finalizeAuth clears the Map
       // entry — re-attach so the next poll can observe success without racing.
-      const result = await this.finalizeAuth(client, userId, phone || `tg:${me.id}`)
+      const result = await this.finalizeAuth(client, userId, phone || `tg:${me.id}`, correlationId)
       pending.status = 'success'
       pending.result = result
       this.pending.set(userId, pending)
+      logAuthEvent('qr_login_succeeded', { userId, correlationId })
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       pending.status = 'error'
       pending.error = msg
-      console.error(`[authService] QR login failed user=${userId}:`, msg)
+      console.error(`[authService] QR login failed user=${userId} error=${msg}`)
       try { await client.disconnect() } catch { /* ignore */ }
-      this.pending.delete(userId)
+      // Keep pending entry with error status so getQrStatus poll can surface
+      // the specific error (e.g. TELEGRAM_ALREADY_LINKED) to the frontend.
+      // Cleanup happens on next auth attempt or periodic cleanup.
       await this.clearPendingRow(userId)
     }
   }
@@ -444,15 +490,20 @@ export class AuthService {
     userId: string,
     phone: string,
   ): Promise<{ phone_code_hash: string; delivery: 'app' | 'sms' | 'call' | 'other' }> {
+    const correlationId = authCorrelationId()
     const normalizedPhone = normalizePhoneNumber(phone)
+    logAuthEvent('send_code_start', { userId, rawPhone: phone, normalizedPhone, correlationId })
     if (!normalizedPhone || !normalizedPhone.startsWith('+')) {
+      logAuthEvent('send_code_invalid_phone', { userId, phone, correlationId })
+      console.warn(`[authService] send_code invalid phone format user=${userId} phone=${phone}`)
       throw new Error('Use full phone with country code, e.g. +44...')
     }
     await assertTelegramAccountAvailable(this.supabase, userId, { phone: normalizedPhone })
 
     this.authInFlight.add(userId)
+    const tStart = Date.now()
     try {
-      await this.disconnectPending(userId)
+      await this.disconnectPending(userId, 'send_code')
 
       // Upsert placeholder first so there is never an empty-pending window that
       // lets onAuthPendingCleared / syncSessions restart the old live session
@@ -472,6 +523,7 @@ export class AuthService {
         { onConflict: 'user_id' },
       )
       if (holdErr) {
+        logAuthEvent('send_code_hold_failed', { userId, correlationId, error: holdErr.message })
         console.error('[authService] auth hold upsert failed:', holdErr.message)
         throw new Error('Could not start Telegram login. Try again in a minute.')
       }
@@ -479,9 +531,13 @@ export class AuthService {
       await this.sessionManager.prepareForAuth(userId)
 
       const client = buildClient('')
+      logAuthEvent('send_code_connecting', { userId, correlationId })
       await client.connect()
+      logAuthEvent('send_code_connected', { userId, correlationId, connectTimeMs: Date.now() - tStart })
 
       try {
+        const tApi = Date.now()
+        logAuthEvent('send_code_calling_api', { userId, normalizedPhone, correlationId })
         const result = await tgInvoke<Api.auth.SentCode>(
           client,
           new Api.auth.SendCode({
@@ -495,6 +551,10 @@ export class AuthService {
             }),
           }),
         )
+        logAuthEvent('send_code_api_ok', {
+          userId, correlationId, apiTimeMs: Date.now() - tApi,
+          delivery: sentCodeDelivery(result), hash: result.phoneCodeHash,
+        })
 
         const authSessionString = (client.session.save() as unknown) as string
 
@@ -521,14 +581,19 @@ export class AuthService {
           { onConflict: 'user_id' },
         )
         if (dbErr) {
+          logAuthEvent('send_code_db_upsert_warn', { userId, correlationId, error: dbErr.message })
           console.error('[authService] telegram_auth_pending upsert:', dbErr.message)
         }
 
+        logAuthEvent('send_code_complete', { userId, correlationId, totalTimeMs: Date.now() - tStart })
         return {
           phone_code_hash: result.phoneCodeHash,
           delivery: sentCodeDelivery(result),
         }
       } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err)
+        logAuthEvent('send_code_api_failed', { userId, correlationId, error: errMsg, totalTimeMs: Date.now() - tStart })
+        console.warn(`[authService] send_code Telegram API failed user=${userId}:`, errMsg)
         try { await client.disconnect() } catch { /* ignore */ }
         this.pending.delete(userId)
         await this.clearPendingRow(userId)
@@ -540,11 +605,15 @@ export class AuthService {
   }
 
   async verifyCode(userId: string, phone: string, code: string, password?: string): Promise<VerifyResult> {
+    const correlationId = authCorrelationId()
     const normalizedPhone = normalizePhoneNumber(phone)
     const normalizedCode = normalizeVerificationCode(code)
+    logAuthEvent('verify_code_start', { userId, correlationId, hasCode: !!normalizedCode, hasPassword: !!password })
     if (!normalizedCode) {
+      logAuthEvent('verify_code_missing', { userId, correlationId })
       throw new Error('Verification code is required')
     }
+    const tStart = Date.now()
     await this.sessionManager.pauseForAuth(userId, { releaseDelay: false })
 
     let pending: PhonePending | undefined
@@ -553,11 +622,14 @@ export class AuthService {
     if (!pending) {
       const restored = await this.restorePhonePendingFromDatabase(userId, normalizedPhone)
       if (restored) {
+        logAuthEvent('verify_code_restored_db', { userId, correlationId })
         pending = restored
         this.pending.set(userId, restored)
       }
     }
     if (!pending) {
+      logAuthEvent('verify_code_no_pending', { userId, correlationId })
+      console.warn(`[authService] verifyCode no pending user=${userId}`)
       const err = new Error(noPendingPhoneAuthMessage())
       err.name = NO_PENDING_PHONE_AUTH_ERROR
       throw err
@@ -566,17 +638,22 @@ export class AuthService {
     const { client, phone: pendingPhone, phoneCodeHash } = pending
 
     if (!client.connected) {
+      logAuthEvent('verify_code_reconnect_client', { userId, correlationId })
       try { await client.connect() } catch { /* will fail at tgInvoke */ }
     }
 
     try {
       if (pending.awaitingPassword) {
+        logAuthEvent('verify_code_password_step', { userId, correlationId })
         if (!password?.trim()) {
           throw new Error('Two-step verification password is required')
         }
+        const tPwd = Date.now()
         await this.completePasswordStep(client, password.trim())
+        logAuthEvent('verify_code_password_ok', { userId, correlationId, pwdTimeMs: Date.now() - tPwd })
       } else if (password?.trim()) {
         try {
+          logAuthEvent('verify_code_signin_with_password', { userId, correlationId })
           await tgInvoke(client, new Api.auth.SignIn({
             phoneNumber: pendingPhone,
             phoneCodeHash,
@@ -584,23 +661,32 @@ export class AuthService {
           }))
         } catch (signInErr: unknown) {
           const msg = signInErr instanceof Error ? signInErr.message : String(signInErr)
+          logAuthEvent('verify_code_signin_result', { userId, correlationId, error: msg })
           if (!msg.includes('SESSION_PASSWORD_NEEDED')) throw signInErr
           await this.persistAwaitingPassword(userId, client, pending)
+          const tPwd = Date.now()
           await this.completePasswordStep(client, password.trim())
+          logAuthEvent('verify_code_password_completed', { userId, correlationId, pwdTimeMs: Date.now() - tPwd })
         }
       } else {
         try {
+          logAuthEvent('verify_code_signin', { userId, correlationId })
+          const tSign = Date.now()
           await tgInvoke(client, new Api.auth.SignIn({
             phoneNumber: pendingPhone,
             phoneCodeHash,
             phoneCode: normalizedCode,
           }))
+          logAuthEvent('verify_code_signin_ok', { userId, correlationId, signTimeMs: Date.now() - tSign })
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err)
           if (msg.includes('SESSION_PASSWORD_NEEDED')) {
+            logAuthEvent('verify_code_needs_2fa', { userId, correlationId })
             await this.persistAwaitingPassword(userId, client, pending)
             return { requires_password: true }
           }
+          const errCat = isRecoverableTelegramAuthError(err) ? 'recoverable' : 'fatal'
+          logAuthEvent('verify_code_signin_error', { userId, correlationId, error: msg, category: errCat })
           throw err
         }
       }
@@ -618,12 +704,15 @@ export class AuthService {
       throw err
     }
 
-    return this.finalizeAuth(client, userId, pendingPhone)
+    return this.finalizeAuth(client, userId, pendingPhone, correlationId)
   }
 
   async startQrLogin(userId: string): Promise<{ qr_url: string; expires_at: string }> {
+    const correlationId = authCorrelationId()
+    logAuthEvent('qr_login_start', { userId, correlationId })
     const existing = this.pending.get(userId)
     if (existing?.method === 'qr' && existing.status === 'waiting' && existing.latestQrUrl) {
+      logAuthEvent('qr_login_reuse', { userId, correlationId })
       return {
         qr_url: existing.latestQrUrl,
         expires_at: new Date(existing.expiresAt).toISOString(),
@@ -631,8 +720,9 @@ export class AuthService {
     }
 
     this.authInFlight.add(userId)
+    const tStart = Date.now()
     try {
-      await this.disconnectPending(userId)
+      await this.disconnectPending(userId, 'start_qr_login')
 
       const placeholderExpires = new Date(Date.now() + PENDING_DB_TTL_MS).toISOString()
       const { error: holdErr } = await this.supabase.from('telegram_auth_pending').upsert(
@@ -649,6 +739,7 @@ export class AuthService {
         { onConflict: 'user_id' },
       )
       if (holdErr) {
+        logAuthEvent('qr_login_hold_failed', { userId, correlationId, error: holdErr.message })
         console.error('[authService] QR auth hold upsert failed:', holdErr.message)
         throw new Error('Could not start Telegram QR login. Try again in a minute.')
       }
@@ -656,7 +747,9 @@ export class AuthService {
       await this.sessionManager.prepareForAuth(userId)
 
       const client = buildClient('')
+      logAuthEvent('qr_login_connecting', { userId, correlationId })
       await client.connect()
+      logAuthEvent('qr_login_connected', { userId, correlationId, connectTimeMs: Date.now() - tStart })
 
       const pending: QrPending = {
         method: 'qr',
@@ -667,22 +760,27 @@ export class AuthService {
         createdAt: Date.now(),
       }
       this.pending.set(userId, pending)
-      void this.runQrLoginBackground(userId, pending)
+      void this.runQrLoginBackground(userId, pending, correlationId)
 
       const deadline = Date.now() + QR_FIRST_TOKEN_WAIT_MS
       while (!pending.latestQrUrl && Date.now() < deadline) {
         await sleep(100)
         if (pending.status === 'error') {
+          logAuthEvent('qr_login_token_error', { userId, correlationId, error: pending.error })
+          console.warn(`[authService] startQrLogin QR error during token wait user=${userId}: ${pending.error}`)
           throw new Error(pending.error ?? 'Failed to generate QR code')
         }
       }
       if (!pending.latestQrUrl) {
+        logAuthEvent('qr_login_token_timeout', { userId, correlationId, waitMs: QR_FIRST_TOKEN_WAIT_MS })
+        console.warn(`[authService] startQrLogin no QR token within ${QR_FIRST_TOKEN_WAIT_MS}ms user=${userId}`)
         try { await client.disconnect() } catch { /* ignore */ }
         this.pending.delete(userId)
         await this.clearPendingRow(userId)
         throw new Error('Failed to generate QR code')
       }
 
+      logAuthEvent('qr_login_token_ready', { userId, correlationId, expiresAt: new Date(pending.expiresAt).toISOString(), totalTimeMs: Date.now() - tStart })
       await this.persistQrPendingRow(userId, client, pending)
       return {
         qr_url: pending.latestQrUrl,
@@ -704,42 +802,53 @@ export class AuthService {
         .eq('is_active', true)
         .maybeSingle()
       if (sess?.id) {
+        logAuthEvent('qr_status_active_session', { userId, sessionId: sess.id })
         return qrStatusFromActiveSession(String(sess.id))
       }
+      logAuthEvent('qr_status_no_pending', { userId })
       throw new Error('NO_PENDING_QR')
     }
 
-    return buildQrStatusFromPending({
+    const status = buildQrStatusFromPending({
       status: pending.status,
       latestQrUrl: pending.latestQrUrl,
       expiresAt: pending.expiresAt,
       error: pending.error,
       result: pending.result,
     })
+    logAuthEvent('qr_status', { userId, status: pending.status, error: pending.error ?? 'none', hasResult: !!pending.result })
+    return status
   }
 
   async verifyQrPassword(userId: string, password: string): Promise<VerifyResult> {
+    const correlationId = authCorrelationId()
+    logAuthEvent('qr_password_start', { userId, correlationId })
     const pending = await this.getOrRestoreQrPending(userId)
     if (!pending) {
+      logAuthEvent('qr_password_no_pending', { userId, correlationId })
       throw new Error('NO_PENDING_QR')
     }
     if (pending.status !== 'requires_password') {
+      logAuthEvent('qr_password_wrong_status', { userId, correlationId, status: pending.status })
       throw new Error('QR not awaiting password')
     }
     if (!password?.trim()) {
       throw new Error('Two-step verification password is required')
     }
 
+    const tStart = Date.now()
     const resolver = this.qrPasswordResolvers.get(userId)
     if (resolver) {
+      logAuthEvent('qr_password_resolver', { userId, correlationId })
       resolver.resolve(password.trim())
       this.qrPasswordResolvers.delete(userId)
     } else {
+      logAuthEvent('qr_password_direct', { userId, correlationId })
       await this.completePasswordStep(pending.client, password.trim())
       const me = await pending.client.getMe()
       const phone = me.phone ? normalizePhoneNumber(`+${me.phone}`) : pending.phone ?? ''
       pending.status = 'success'
-      pending.result = await this.finalizeAuth(pending.client, userId, phone || `tg:${me.id}`)
+      pending.result = await this.finalizeAuth(pending.client, userId, phone || `tg:${me.id}`, correlationId)
       return pending.result
     }
 
@@ -747,6 +856,7 @@ export class AuthService {
     while (Date.now() < deadline) {
       const current = this.pending.get(userId)
       if (current?.method === 'qr' && current.status === 'success' && current.result) {
+        logAuthEvent('qr_password_success', { userId, correlationId, waitMs: Date.now() - tStart })
         return current.result
       }
       if (current?.method === 'qr' && current.status === 'error') {

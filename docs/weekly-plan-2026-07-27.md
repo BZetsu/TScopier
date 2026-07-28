@@ -2,7 +2,7 @@
 
 ## Production vs Staging  --  Gap Analysis
 
-> **UPDATE 2026-07-28:** All 6 sections now on `upstream/staging` at commit `964152e3`. Section 4 (CHANNEL_INVALID auto-disable) DONE via Emma's PR #49. Section 5 (Realtime reconnect) DONE via our commit. Martins' fixes (8 commits: basket management, trade reconciliation, ensureSignalRow, order close audit, SL/TP validation, dashboard i18n) backported from prod. Staging now contains everything dev has — ready for comprehensive testing. See test checklist below.
+> **UPDATE 2026-07-28:** All 6 sections now on `upstream/staging` at commit `964152e3`. Section 4 (CHANNEL_INVALID auto-disable) DONE via PR #49. Section 5 (Realtime reconnect) DONE via our commit. Martins' fixes (8 commits: basket management, trade reconciliation, ensureSignalRow, order close audit, SL/TP validation, dashboard i18n) backported from prod. Staging now contains everything dev has — ready for comprehensive testing. See test checklist below.
 
 **Last production merge:** PR #52 (`13877d82`, staging → main) on Jul 28. Staging now contains all fixes (Sections 2-6) plus Martins' 8 commits backported from production. dev and staging are identical at `964152e3`.
 

@@ -15,8 +15,8 @@ export function shouldEmitAuthKeyDupEvent(
 
 /**
  * Backoff delays (ms) before each connect attempt during AUTH_KEY_DUPLICATED recovery.
- * First delay is the normal reconnect cooldown; later delays give Telegram time to
- * release the prior connection after deploy overlap / double connect.
+ * First delay is the normal reconnect cooldown; later delays escalate so Telegram gets
+ * time to release the prior connection. Default: [cooldown, retry, 15s, 30s, 30s, 30s, ...]
  */
 export function authKeyDupReconnectDelaysMs(
   initialCooldownMs: number,
@@ -26,7 +26,11 @@ export function authKeyDupReconnectDelaysMs(
   const first = Math.max(500, Math.min(120_000, initialCooldownMs))
   const retry = Math.max(2_000, Math.min(120_000, authDupDelayMs))
   const attempts = Math.max(1, Math.min(100, Math.floor(maxAttempts)))
-  return Array.from({ length: attempts }, (_, i) => (i === 0 ? first : retry))
+  const slots = [retry, 15_000, 30_000]
+  return Array.from({ length: attempts }, (_, i) => {
+    if (i === 0) return first
+    return slots[i - 1] ?? 30_000
+  })
 }
 
 /** Delay between AUTH_KEY_DUPLICATED recovery connect attempts. */
@@ -41,7 +45,15 @@ export function authKeyDupReconnectDelayMs(): number {
 export function authKeyDupMaxRecoveryAttempts(): number {
   return Math.max(
     1,
-    Math.min(100, Math.floor(Number(process.env.TELEGRAM_AUTH_DUP_MAX_RECOVERY_ATTEMPTS ?? 10))),
+    Math.min(100, Math.floor(Number(process.env.TELEGRAM_AUTH_DUP_MAX_RECOVERY_ATTEMPTS ?? 4))),
+  )
+}
+
+/** Schedule another reconnect attempt after forceReconnect exhausts retries. */
+export function authKeyDupDeferredRetryMs(): number {
+  return Math.max(
+    15_000,
+    Math.min(300_000, Number(process.env.TELEGRAM_AUTH_DUP_DEFERRED_RETRY_MS ?? 60_000)),
   )
 }
 
