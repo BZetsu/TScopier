@@ -2,6 +2,21 @@
 
 ## Changelog
 
+### 2026-07-28 — Staging test checklist + Marti's 8 commits merged + Section 5 promoted
+
+- **Context:** Created comprehensive staging test checklist (`docs/staging-test-checklist.md`) covering all 6 sections plus Martins' 8 commits. Pushed all changes (Section 5 + Martins commits + existing fixes) to both upstream/dev and upstream/staging at `964152e3`. dev and staging are now identical.
+- **Martins' 8 commits analyzed:**
+  - `186c8d1c` ensureSignalRow — MEDIUM risk (signal FK persistence)
+  - `5dd36c5b` SL/TP validation — MEDIUM risk (near-market stop stripping)
+  - `6274eb78` order close audit — LOW risk (observability)
+  - `03d21caf` basket layering — HIGH risk (flat-basket purge behavior change)
+  - `5ed2571c` reconciliation — HIGH risk (pre-claim stale check ordering)
+  - `15c1e04d` test fixes — LOW risk (test-only)
+  - `cf31c7e8` ListenerLeaseOfflineBanner — LOW risk (frontend UI)
+  - `70de046f` CopierStatusCard + purge cron — HIGH risk (5-min cleanup cron)
+- **Files:** `docs/staging-test-checklist.md`, `docs/weekly-plan-2026-07-27.md`, `docs/PROJECT_MEMORY.md`
+- **Follow-up:** Run through staging test checklist before production rollout.
+
 ### 2026-07-28 — Section 5: Realtime subscription reconnect gap fix
 
 - **Context:** Implemented Section 5 of the weekly plan — Supabase Realtime WebSocket drops every 20-40 min but the reference is never cleared, so the guard (`if (this.channelChannel) return`) prevents re-subscription forever.

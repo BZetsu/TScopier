@@ -2,9 +2,11 @@
 
 ## Production vs Staging  --  Gap Analysis
 
-> **UPDATE 2026-07-27:** Sections 1-3 now on `upstream/staging`. Section 2 (AUTH_KEY_DUPLICATED) DONE via Emma's PR #47. Section 3 (BinaryReader crash) DONE via PR #48 + raw error fallback. Section 6 (scale validation) DONE — 59 synthetic sessions + 170 channels copied from production into staging, all PII blanked, session strings excluded. Railway listener restart triggered. Sections 4-5 untouched. See full review below.
+> **UPDATE 2026-07-28:** All 6 sections now on `upstream/staging` at commit `964152e3`. Section 4 (CHANNEL_INVALID auto-disable) DONE via Emma's PR #49. Section 5 (Realtime reconnect) DONE via our commit. Martins' fixes (8 commits: basket management, trade reconciliation, ensureSignalRow, order close audit, SL/TP validation, dashboard i18n) backported from prod. Staging now contains everything dev has — ready for comprehensive testing. See test checklist below.
 
-**Last production merge:** PR #43 (`01a2d913`) on Jul 23. Staging is now **23 commits** ahead of main (up from 5 before today's promotion):
+**Last production merge:** PR #52 (`13877d82`, staging → main) on Jul 28. Staging now contains all fixes (Sections 2-6) plus Martins' 8 commits backported from production. dev and staging are identical at `964152e3`.
+
+> **Staging test checklist at:** `docs/staging-test-checklist.md`
 
 | Commits | What | Impact on Production |
 |---|---|---|
@@ -245,5 +247,5 @@ For the 3 real staging Telegram sessions, we keep them connected and monitor AUT
 
 - [x] **6.1** Export production channel configs and user profiles (exclude session strings) — DONE
 - [x] **6.2** Insert into staging with 50 blank session records — DONE (59 synthetic sessions, 170 channels remapped, all PII blanked)
-- [ ] **6.3** Monitor staging listener for 4 hours (restarted via push, verify 62 sessions load without crash)
-- [ ] **6.4** If staging passes, full production rollout (merge staging  ->  main, deploy, monitor)
+- [ ] **6.3** Monitor staging listener for 4 hours — PENDING (see `docs/staging-test-checklist.md` #6)
+- [ ] **6.4** Full production rollout — PENDING (blocked on 6.3)
