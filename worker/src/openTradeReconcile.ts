@@ -35,6 +35,15 @@ export async function reconcileOpenTradesForBroker(
 ): Promise<number> {
   if (!openTrades.length) return 0
   const brokerTickets = await fetchOpenBrokerTicketsStrict(api, metaapiAccountId)
+  // SAFETY: an empty (but successful) OpenedOrders snapshot usually means the
+  // FxSocket session is disconnected — never mass-mark every open row closed.
+  if (brokerTickets.size === 0 && openTrades.length > 0) {
+    console.warn(
+      `[openTradeReconcile] empty OpenedOrders with ${openTrades.length} tracked open trade(s)`
+      + ` account=${metaapiAccountId} — deferring ghost close (suspected disconnect)`,
+    )
+    return 0
+  }
   const ghostIds = findGhostOpenTradeIds(openTrades, brokerTickets)
   if (!ghostIds.length) return 0
   return closeStaleOpenTrades(supabase, ghostIds)

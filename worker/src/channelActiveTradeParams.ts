@@ -524,32 +524,46 @@ export function mergeParsedWithChannelParams(
   return next
 }
 
-/** Drop SL/TP on the wrong side of the fill reference (broker rejects as invalid stops). */
+/**
+ * Drop SL/TP on the wrong side of the fill reference (broker rejects as invalid stops),
+ * and drop levels so close to market they would fill immediately (stale channel memory /
+ * mis-applied Adjust SL is a common source of "trades closed with no Telegram close").
+ */
 export function stripInvalidStopsForSide(args: {
   stoploss: number
   takeprofit: number
   referencePrice: number
   isBuy: boolean
+  /**
+   * Minimum |level − reference| required to keep a stop. Defaults to a small absolute
+   * floor so near-touch SL/TP from stale DB memory cannot auto-close a fresh fill.
+   */
+  minDistance?: number
 }): { stoploss: number; takeprofit: number; stripped: string[] } {
   const { referencePrice, isBuy } = args
   const ref = referencePrice
   if (!Number.isFinite(ref) || ref <= 0) {
     return { stoploss: args.stoploss, takeprofit: args.takeprofit, stripped: [] }
   }
+  const minDistance = Number.isFinite(args.minDistance) && (args.minDistance as number) > 0
+    ? (args.minDistance as number)
+    : Math.max(ref * 1e-4, 0.5)
   let stoploss = args.stoploss
   let takeprofit = args.takeprofit
   const stripped: string[] = []
   if (stoploss > 0) {
-    const bad = isBuy ? stoploss >= ref : stoploss <= ref
-    if (bad) {
-      stripped.push(`sl ${stoploss}`)
+    const badSide = isBuy ? stoploss >= ref : stoploss <= ref
+    const tooClose = Math.abs(stoploss - ref) < minDistance
+    if (badSide || tooClose) {
+      stripped.push(`sl ${stoploss}${tooClose && !badSide ? ' (too_close)' : ''}`)
       stoploss = 0
     }
   }
   if (takeprofit > 0) {
-    const bad = isBuy ? takeprofit <= ref : takeprofit >= ref
-    if (bad) {
-      stripped.push(`tp ${takeprofit}`)
+    const badSide = isBuy ? takeprofit <= ref : takeprofit >= ref
+    const tooClose = Math.abs(takeprofit - ref) < minDistance
+    if (badSide || tooClose) {
+      stripped.push(`tp ${takeprofit}${tooClose && !badSide ? ' (too_close)' : ''}`)
       takeprofit = 0
     }
   }
