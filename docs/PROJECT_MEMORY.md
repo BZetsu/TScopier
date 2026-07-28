@@ -2,6 +2,17 @@
 
 ## Changelog
 
+### 2026-07-28 — GramJS _updateLoop reconnect storm causes session invalidation (NOT AUTH_KEY_UNREGISTERED) — fixed by monkeypatching _sender.reconnect
+
+- **Context:** After rollback + 11 hardening fixes, user's session kept getting invalidated. Two deaths:
+  - **First death (AUTH_KEY_UNREGISTERED):** Telegram revoked the auth key during the `af12737d` storm. Session properly invalidated.
+  - **Second death (GramJS storm):** After re-linking, the new session worked briefly but then GramJS's `_updateLoop` (`telegram/client/updates.js:212`) started an infinite reconnect storm. This caused `BinaryReader.readUInt32LE` crashes (malformed RPC results), which triggered `noteMalformedRpcResult` exhaustion, which incorrectly called `onAuthKeyDuplicatedRecoveryExhausted` — invalidating a perfectly valid session.
+- **Root cause of second death:** GramJS's `_updateLoop` has its own independent reconnect trigger that bypasses `autoReconnect: false`. When the PingDelayDisconnect ping fails, `updates.js:212` calls `client._sender.reconnect()` directly — MTProtoSender's `reconnect()` method at line 808 has NO check against `autoReconnect`. This creates an infinite loop: ping fails → reconnect → `_handleReconnect` → new `_updateLoop` → ping fails → reconnect → ...
+- **Fix:** Monkeypatched `client._sender.reconnect` in `telegramClient.ts:buildClient` to respect `autoReconnect`. After `client.connect()`, wraps `_sender.reconnect` to be a no-op when `autoReconnect: false`. Our `forceReconnect` handles reconnection properly via explicit `client.connect()` calls.
+- **Files:** `worker/src/telegramClient.ts` (buildClient — reconnect monkeypatch)
+- **Reverted:** AUTH_KEY_UNREGISTERED invalidation changes in watchdog/poll/forceReconnect (they were targeting wrong problem)
+- **Verification:** `npm run build` passes, all worker tests pass.
+
 ### 2026-07-28 — Telegram reconnect storm fixes (11 fixes) — ALL TESTS PASS
 
 - **Context:** Deployment `af12737d` caused all users' Telegram listeners to enter a death spiral of disconnect/reconnect. Root cause: 10 flat-30s reconnect attempts (273s cycle) replaced the original 4 escalating + deferred retry (56s). GramJS internal crashes also triggered reconnects. 83% of log noise was GramJS flood-wait suppression messages.
