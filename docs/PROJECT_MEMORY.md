@@ -39,10 +39,13 @@
 - **Updated later same day:**
   - Click-to-expand rows showing Channel ID, first seen, subscribers, last activity date
   - Search bar filtering by channel name or username
-  - Sort tabs: Most subscribers, Recently active, Newest first
+  - Sort tabs: Most subscribers, Most signals, Recently active, Newest first
   - Status display now uses 3 tiers: Live (<1h), Active Xm ago (<24h), Last active X ago
   - Shows "X subscribers" text label instead of bare number
   - Fixed "No recent activity" appearing when data was fresh (was only checking 1h window; now shows relative time for older entries too)
+  - Expanded details now show channel name with copy button, username with copy, Channel ID with copy, signal count from channel_signals
+  - Batch query counts signals per channel from channel_signals table for performance metric
+  - CopyButton component with checkmark feedback on each copyable field
 - **Files:** `src/pages/dashboard/PopularChannelsPage.tsx` (NEW), `src/App.tsx`, `src/components/layout/AppLayout.tsx`, `src/lib/appNavIcons.ts`, `src/lib/subscriptionNavAccess.ts`, `src/i18n/locales/types.ts`, `src/i18n/locales/en.ts`
 - **Verification:** `tsc -b --noEmit` + `vite build` pass clean
 - **Follow-up:** None
