@@ -191,6 +191,9 @@ export const configureModalFr: ConfigureModalTranslations = {
     singleTpTargetTp1: 'TP1',
     singleTpTargetTp2: 'TP2',
     singleTpTargetTp3: 'TP3',
+    singleTpLotBreakdownTitle: 'Lot breakdown',
+    singleTpLotBreakdownSlice: '{lot} lots closes @ {tp}',
+    singleTpLotBreakdownJoin: ', ',
     signalEntryTitle: 'Exécution de l’entrée du signal',
     signalEntryBody:
       'Utiliser le prix d’entrée du signal s’applique uniquement en mode Position unique. Si activé, le signal doit inclure une entrée explicite analysée (prix, zone, @ prix ou libellés comme « Prix d’entrée : »). Après tout délai du canal, le worker compare la cotation en direct à cette entrée : en achat, exécution au marché seulement si l’ask est au ou en dessous de l’entrée ; sinon, placement d’un buy limit à l’entrée. En vente, l’inverse. Le take profit du courtier vise le dernier TP analysé lorsque plusieurs objectifs existent, avec fermetures partielles optionnelles selon votre échelle de TP. Le copieur suit chaque ordre en attente à entrée stricte pour synchroniser les exécutions avec votre liste ; les ordres en attente sont annulés lorsque le panier est à plat. Les messages « acheter maintenant » sans entrée sont ignorés.',

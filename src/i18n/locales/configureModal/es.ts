@@ -191,6 +191,9 @@ export const configureModalEs: ConfigureModalTranslations = {
     singleTpTargetTp1: 'TP1',
     singleTpTargetTp2: 'TP2',
     singleTpTargetTp3: 'TP3',
+    singleTpLotBreakdownTitle: 'Lot breakdown',
+    singleTpLotBreakdownSlice: '{lot} lots closes @ {tp}',
+    singleTpLotBreakdownJoin: ', ',
     signalEntryTitle: 'Ejecución de entrada de señal',
     signalEntryBody:
       'Usar precio de entrada de la señal solo aplica en modo Operación única. Si está activo, la señal debe incluir una entrada explícita parseada (precio, zona, @ precio o etiquetas como «Precio de entrada:»). Tras cualquier retraso del canal, el worker compara la cotización en vivo con esa entrada: en compras ejecuta a mercado solo si el ask está en o por debajo de la entrada; si no, coloca un buy limit en la entrada. En ventas es lo inverso. El take profit del broker apunta al último TP parseado cuando hay varios objetivos, con cierres parciales opcionales según su escalera de TP. El copiador rastrea cada pendiente de entrada estricta para sincronizar los fills con su lista de operaciones; los pendientes se cancelan cuando la cesta queda plana. Los mensajes «comprar ahora» sin entrada se omiten.',
