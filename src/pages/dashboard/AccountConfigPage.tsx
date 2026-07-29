@@ -121,6 +121,7 @@ import {
   getBrokerDisplayLabel,
 } from '../../lib/brokerChannelLink'
 import { DEFAULT_MANUAL_SETTINGS, DEFAULT_MANUAL_TP_LOTS } from '../../lib/defaultManualSettings'
+import { computeSingleTpLotBreakdown } from '../../lib/singleTpLotBreakdown'
 import { marketingUrl } from '../../lib/site'
 import {
   choosePersistedSelectedChannelId,
@@ -1258,6 +1259,30 @@ export function AccountConfigPage() {
     channelManualSettings.trade_style,
     channelManualSettings.multi_trade_leg_percent,
     previewManualLot,
+  ])
+
+  const singleTpLotBreakdownText = useMemo(() => {
+    if ((channelManualSettings.trade_style ?? 'single') === 'multi') return null
+    const slices = computeSingleTpLotBreakdown({
+      manualLot: previewManualLot,
+      singleTpTarget: channelManualSettings.single_tp_target ?? 'farthest',
+      tpLots: channelManualSettings.tp_lots ?? DEFAULT_MANUAL_TP_LOTS,
+    })
+    if (!slices.length) return null
+    const join = cm.risk.singleTpLotBreakdownJoin
+    return slices
+      .map(s => interpolate(cm.risk.singleTpLotBreakdownSlice, {
+        lot: String(Number(s.lots.toFixed(2))),
+        tp: s.tpLabel,
+      }))
+      .join(join)
+  }, [
+    channelManualSettings.trade_style,
+    channelManualSettings.single_tp_target,
+    channelManualSettings.tp_lots,
+    previewManualLot,
+    cm.risk.singleTpLotBreakdownJoin,
+    cm.risk.singleTpLotBreakdownSlice,
   ])
 
   const multiTradePreviewTooltip = useMemo(() => {
@@ -3056,6 +3081,16 @@ export function AccountConfigPage() {
                                   { value: 'tp3', label: cm.risk.singleTpTargetTp3 },
                                 ]}
                               />
+                              {singleTpLotBreakdownText ? (
+                                <div className="rounded-md border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900/60 px-3 py-2.5 space-y-1">
+                                  <p className="text-xs font-medium text-neutral-700 dark:text-neutral-200">
+                                    {cm.risk.singleTpLotBreakdownTitle}
+                                  </p>
+                                  <p className="text-xs text-neutral-600 dark:text-neutral-400 leading-relaxed">
+                                    {singleTpLotBreakdownText}
+                                  </p>
+                                </div>
+                              ) : null}
                               <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-3 space-y-3">
                                 <ConfigTitle info={cm.risk.signalEntryBody}>{cm.risk.signalEntryTitle}</ConfigTitle>
                                 <div className="rounded-md border border-neutral-200 dark:border-neutral-800 overflow-hidden">
