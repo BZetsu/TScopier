@@ -1,16 +1,16 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useT } from '../../context/LocaleContext'
 import { PageHeader } from '../../components/layout/PageHeader'
 import { PageShell } from '../../components/layout/PageShell'
 import { Card } from '../../components/ui/Card'
-import { Radio, Flame, ChevronDown, ChevronUp, Search } from 'lucide-react'
+import { Radio, Flame, ChevronDown, ChevronUp, Search, Copy, Check } from 'lucide-react'
 import type { SignalChannel } from '../../types/database'
 
 const ONE_HOUR_MS = 60 * 60 * 1000
 const TWENTY_FOUR_HOURS_MS = 24 * ONE_HOUR_MS
 
-type SortKey = 'subscribers' | 'recent' | 'newest'
+type SortKey = 'subscribers' | 'signals' | 'recent' | 'newest'
 
 function formatSubscribers(count: number): string {
   if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`
@@ -38,6 +38,34 @@ function channelStatus(lastLiveAt: string | null): { label: string; live: boolea
   return { label: `Last active ${formatRelativeTime(lastLiveAt)}`, live: false }
 }
 
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+  const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+
+  const handleCopy = useCallback(() => {
+    clearTimeout(timerRef.current)
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true)
+      timerRef.current = setTimeout(() => setCopied(false), 1500)
+    })
+  }, [text])
+
+  useEffect(() => {
+    return () => clearTimeout(timerRef.current)
+  }, [])
+
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      className="p-1 rounded text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 dark:hover:bg-neutral-700 transition-colors"
+      title="Copy"
+    >
+      {copied ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
+    </button>
+  )
+}
+
 export function PopularChannelsPage() {
   const t = useT()
   const p = t.popularChannelsPage
@@ -46,6 +74,10 @@ export function PopularChannelsPage() {
   const [search, setSearch] = useState('')
   const [sort, setSort] = useState<SortKey>('subscribers')
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [signalCounts, setSignalCounts] = useState<Map<string, number>>(new Map())
+  const channelsRef = useRef(channels)
+
+  channelsRef.current = channels
 
   useEffect(() => {
     loadChannels()
@@ -57,7 +89,24 @@ export function PopularChannelsPage() {
       .select('*')
       .gt('subscriber_count', 0)
       .order('subscriber_count', { ascending: false })
-    setChannels(data ?? [])
+    const list = data ?? []
+    setChannels(list)
+
+    const ids = list.map(c => c.id)
+    if (ids.length > 0) {
+      const { data: signalRows } = await supabase
+        .from('channel_signals')
+        .select('signal_channel_id')
+        .in('signal_channel_id', ids)
+
+      const counts = new Map<string, number>()
+      for (const row of signalRows ?? []) {
+        const id = row.signal_channel_id
+        counts.set(id, (counts.get(id) ?? 0) + 1)
+      }
+      setSignalCounts(counts)
+    }
+
     setLoading(false)
   }
 
@@ -75,6 +124,9 @@ export function PopularChannelsPage() {
       case 'subscribers':
         result.sort((a, b) => b.subscriber_count - a.subscriber_count)
         break
+      case 'signals':
+        result.sort((a, b) => (signalCounts.get(b.id) ?? 0) - (signalCounts.get(a.id) ?? 0))
+        break
       case 'recent':
         result.sort((a, b) => {
           const aTime = a.last_live_at ? new Date(a.last_live_at).getTime() : 0
@@ -87,10 +139,11 @@ export function PopularChannelsPage() {
         break
     }
     return result
-  }, [channels, search, sort])
+  }, [channels, search, sort, signalCounts])
 
   const sortOptions: { key: SortKey; label: string }[] = [
     { key: 'subscribers', label: 'Most subscribers' },
+    { key: 'signals', label: 'Most signals' },
     { key: 'recent', label: 'Recently active' },
     { key: 'newest', label: 'Newest first' },
   ]
@@ -154,6 +207,7 @@ export function PopularChannelsPage() {
           {filteredAndSorted.map((ch, idx) => {
             const status = channelStatus(ch.last_live_at)
             const expanded = expandedId === ch.id
+            const signalCount = signalCounts.get(ch.id) ?? 0
             return (
               <div key={ch.id}>
                 <button
@@ -197,24 +251,48 @@ export function PopularChannelsPage() {
                 </button>
 
                 {expanded && (
-                  <div className="px-4 pb-4 pt-2 bg-neutral-50 dark:bg-neutral-800/30 border-t border-neutral-100 dark:border-neutral-800">
-                    <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div className="px-4 pb-4 pt-3 bg-neutral-50 dark:bg-neutral-800/30 border-t border-neutral-100 dark:border-neutral-800">
+                    <div className="flex items-center gap-2 mb-3">
+                      <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">
+                        {ch.display_name}
+                      </p>
+                      <CopyButton text={ch.display_name} />
+                    </div>
+                    <div className="grid grid-cols-2 gap-y-3 gap-x-6 text-sm">
+                      <div>
+                        <span className="text-xs text-neutral-400">Username</span>
+                        <div className="flex items-center gap-1">
+                          <p className="text-sm text-neutral-700 dark:text-neutral-300 font-mono truncate">
+                            @{ch.channel_username}
+                          </p>
+                          <CopyButton text={`@${ch.channel_username}`} />
+                        </div>
+                      </div>
                       <div>
                         <span className="text-xs text-neutral-400">Channel ID</span>
-                        <p className="text-sm text-neutral-700 dark:text-neutral-300 font-mono truncate">
-                          {ch.telegram_chat_id}
+                        <div className="flex items-center gap-1">
+                          <p className="text-sm text-neutral-700 dark:text-neutral-300 font-mono truncate">
+                            {ch.telegram_chat_id}
+                          </p>
+                          <CopyButton text={ch.telegram_chat_id} />
+                        </div>
+                      </div>
+                      <div>
+                        <span className="text-xs text-neutral-400">Subscribers</span>
+                        <p className="text-sm text-neutral-700 dark:text-neutral-300">
+                          {ch.subscriber_count.toLocaleString()}
+                        </p>
+                      </div>
+                      <div>
+                        <span className="text-xs text-neutral-400">Signals generated</span>
+                        <p className="text-sm text-neutral-700 dark:text-neutral-300">
+                          {signalCount.toLocaleString()}
                         </p>
                       </div>
                       <div>
                         <span className="text-xs text-neutral-400">First seen</span>
                         <p className="text-sm text-neutral-700 dark:text-neutral-300">
                           {new Date(ch.first_seen_at).toLocaleDateString()}
-                        </p>
-                      </div>
-                      <div>
-                        <span className="text-xs text-neutral-400">Subscribers</span>
-                        <p className="text-sm text-neutral-700 dark:text-neutral-300">
-                          {ch.subscriber_count.toLocaleString()}
                         </p>
                       </div>
                       <div>
