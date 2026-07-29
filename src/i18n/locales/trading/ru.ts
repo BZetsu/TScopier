@@ -64,4 +64,10 @@ export const tradingRu: TradingPagesBundleTranslations = {
     pipToleranceOverride: 'Переопределение допуска по пипсам',
     useBrokerDefault: 'Использовать настройки брокера по умолчанию',
   },
+  popularChannelsPage: {
+    title: 'Popular Channels',
+    subtitle: 'Signal channels ranked by subscriber count across all TSCopier users',
+    emptyTitle: 'No channels yet',
+    emptySubtitle: 'Channels will appear here as users subscribe to them',
+  },
 }

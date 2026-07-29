@@ -18,6 +18,7 @@ export const chromeSv: AppChromeTranslations = {
       trades: 'Affärer',
       management: 'Aktiviteter',
       channels: 'Kanaler',
+      popularChannels: 'Populära kanaler',
       backtest: 'Backtest',
       copierLogs: 'Kopieringsloggar',
       signalHistory: 'Hantera signaler',

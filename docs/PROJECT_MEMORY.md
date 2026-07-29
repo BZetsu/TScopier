@@ -2,6 +2,18 @@
 
 ## Changelog
 
+### 2026-07-29 — Added popularChannelsPage translations to all locale files
+
+- **Context:** `popularChannelsPage` section was added to `en.ts` and `types.ts` but missing from other locale files that define `channelsPage`.
+- **Changes:**
+  - Added `popularChannelsPage` with Spanish translations to `es.ts`
+  - Added `popularChannelsPage` with French translations to `fr.ts`
+  - Added `popularChannelsPage` (English fallback) to `trading/ar.ts`, `trading/pl.ts`, `trading/ru.ts`, `trading/nl.ts`, `trading/ja.ts`, `trading/sv.ts`
+  - Added `'popularChannelsPage'` to the `Pick` in `trading/types.ts` to resolve TS2353
+- **Files:** `src/i18n/locales/es.ts`, `src/i18n/locales/fr.ts`, `src/i18n/locales/trading/ar.ts`, `src/i18n/locales/trading/pl.ts`, `src/i18n/locales/trading/ru.ts`, `src/i18n/locales/trading/nl.ts`, `src/i18n/locales/trading/ja.ts`, `src/i18n/locales/trading/sv.ts`, `src/i18n/locales/trading/types.ts`
+- **Verification:** `npm run build` passes clean
+- **Follow-up:** None
+
 ### 2026-07-29 — Added recentlyFailed cooldown to syncSessions + fixed stale tests
 
 - **Context:** User `6b0410f1` stuck in AUTH_KEY_DUPLICATED retry storm — `syncSessions` retried every 30s forever with no cooldown.

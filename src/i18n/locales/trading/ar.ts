@@ -64,4 +64,10 @@ export const tradingAr: TradingPagesBundleTranslations = {
     pipToleranceOverride: 'تجاوز تسامح النقاط',
     useBrokerDefault: 'استخدم إعدادات الوسيط الافتراضية',
   },
+  popularChannelsPage: {
+    title: 'Popular Channels',
+    subtitle: 'Signal channels ranked by subscriber count across all TSCopier users',
+    emptyTitle: 'No channels yet',
+    emptySubtitle: 'Channels will appear here as users subscribe to them',
+  },
 }

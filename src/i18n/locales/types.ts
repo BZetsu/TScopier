@@ -33,6 +33,7 @@ export interface NavTranslations {
     trades: string
     management: string
     channels: string
+    popularChannels: string
     backtest: string
     copierLogs: string
     signalHistory: string
@@ -1094,6 +1095,13 @@ export interface CopierEnginePageTranslations {
   additionalKeywords: CopierEngineAdditionalKeywordTranslations
 }
 
+export interface PopularChannelsPageTranslations {
+  title: string
+  subtitle: string
+  emptyTitle: string
+  emptySubtitle: string
+}
+
 export interface ChannelsPageTranslations {
   title: string
   subtitle: string
@@ -1438,6 +1446,7 @@ export interface Translations {
   signalHistoryPage: SignalHistoryPageTranslations
   trades: TradesTranslations
   channelsPage: ChannelsPageTranslations
+  popularChannelsPage: PopularChannelsPageTranslations
   copierEnginePage: CopierEnginePageTranslations
   backtest: BacktestTranslations
   marketNews: MarketNewsTranslations

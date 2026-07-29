@@ -18,6 +18,7 @@ export const chromeAr: AppChromeTranslations = {
       trades: 'الصفقات',
       management: 'النشاط',
       channels: 'القنوات',
+      popularChannels: 'القنوات الشائعة',
       backtest: 'الاختبار التاريخي',
       copierLogs: 'سجلات الناسخ',
       signalHistory: 'إدارة الإشارات',

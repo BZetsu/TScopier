@@ -18,6 +18,7 @@ export const chromeJa: AppChromeTranslations = {
       trades: '取引',
       management: 'アクティビティ',
       channels: 'チャンネル',
+      popularChannels: '人気チャンネル',
       backtest: 'バックテスト',
       copierLogs: 'コピーログ',
       signalHistory: 'シグナル管理',

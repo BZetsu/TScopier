@@ -118,6 +118,7 @@ export function AppLayout() {
         label: t.nav.sections.signals,
         items: [
           { to: '/channels', label: t.nav.items.channels },
+          { to: '/popular-channels', label: t.nav.items.popularChannels },
           { to: '/backtest', label: t.nav.items.backtest },
           { to: '/activities', label: t.nav.items.management },
           { to: '/copier-logs', label: t.nav.items.copierLogs },

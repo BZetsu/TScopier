@@ -64,4 +64,10 @@ export const tradingSv: TradingPagesBundleTranslations = {
     pipToleranceOverride: 'Överstyrning av pip-tolerans',
     useBrokerDefault: 'Använd mäklarens standardvärde',
   },
+  popularChannelsPage: {
+    title: 'Popular Channels',
+    subtitle: 'Signal channels ranked by subscriber count across all TSCopier users',
+    emptyTitle: 'No channels yet',
+    emptySubtitle: 'Channels will appear here as users subscribe to them',
+  },
 }

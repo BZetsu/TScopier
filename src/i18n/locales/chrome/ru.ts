@@ -18,6 +18,7 @@ export const chromeRu: AppChromeTranslations = {
       trades: 'Сделки',
       management: 'Активности',
       channels: 'Каналы',
+      popularChannels: 'Популярные каналы',
       backtest: 'Бэктест',
       copierLogs: 'Логи копирования',
       signalHistory: 'Управление сигналами',

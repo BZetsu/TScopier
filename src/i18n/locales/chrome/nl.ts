@@ -18,6 +18,7 @@ export const chromeNl: AppChromeTranslations = {
       trades: 'Trades',
       management: 'Activiteiten',
       channels: 'Kanalen',
+      popularChannels: 'Populaire kanalen',
       backtest: 'Backtest',
       copierLogs: 'Copierlogs',
       signalHistory: 'Signalen beheren',

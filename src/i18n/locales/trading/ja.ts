@@ -64,4 +64,10 @@ export const tradingJa: TradingPagesBundleTranslations = {
     pipToleranceOverride: 'pip許容値の上書き',
     useBrokerDefault: 'ブローカーの既定値を使用',
   },
+  popularChannelsPage: {
+    title: 'Popular Channels',
+    subtitle: 'Signal channels ranked by subscriber count across all TSCopier users',
+    emptyTitle: 'No channels yet',
+    emptySubtitle: 'Channels will appear here as users subscribe to them',
+  },
 }

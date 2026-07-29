@@ -37,6 +37,7 @@ export const fr: Translations = {
       trades: 'Trades',
       management: 'Activités',
       channels: 'Canaux',
+      popularChannels: 'Chaînes populaires',
       backtest: 'Backtest',
       copierLogs: 'Journaux',
       signalHistory: 'Gérer les signaux',
@@ -849,6 +850,12 @@ export const fr: Translations = {
     lotSizeOverride: 'Taille de lot personnalisée',
     pipToleranceOverride: 'Tolérance de pips personnalisée',
     useBrokerDefault: 'Utiliser la valeur du broker',
+  },
+  popularChannelsPage: {
+    title: 'Chaînes populaires',
+    subtitle: 'Chaînes de signaux classées par nombre d\'abonnés sur TSCopier',
+    emptyTitle: 'Aucune chaîne pour le moment',
+    emptySubtitle: 'Les chaînes apparaîtront ici lorsque des utilisateurs s\'y abonneront',
   },
   copierEnginePage: {
     connectTelegram: 'Connecter Telegram',
