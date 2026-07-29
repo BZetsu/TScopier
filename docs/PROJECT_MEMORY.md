@@ -2,6 +2,44 @@
 
 ## Changelog
 
+### 2026-07-29 — Added recentlyFailed cooldown to syncSessions + fixed stale tests
+
+- **Context:** User `6b0410f1` stuck in AUTH_KEY_DUPLICATED retry storm — `syncSessions` retried every 30s forever with no cooldown.
+- **Changes:**
+  - Added `recentlyFailed: Map<string, number>` field to `UserSessionManager` — tracks `userId → timestamp` of last start failure
+  - In `syncSessions()`: checks `recentlyFailed` before calling `startListener` — if user failed within cooldown window (env `TELEGRAM_RETRY_COOLDOWN_MS`, default 5min, range 30s-1h), skips them
+  - On success (in `startListener`): clears the failure entry so any successful start resets the cooldown
+  - Fixed 4 stale tests in `sessionManager.shutdown.test.ts` that expected malformed RPC results to trigger reconnect — the hotfix (Fix 3) changed this to count-only, no reconnect
+- **Files:** `worker/src/sessionManager.ts` (lines 89-90, 593-612, 1143), `worker/src/sessionManager.shutdown.test.ts` (4 updated tests)
+- **Verification:** `tsc` build clean, all 9/9 tests pass
+- **Follow-up:** Push to upstream/dev and promote to staging/production
+
+### 2026-07-29 — Popular Channels discovery page added
+
+- **Context:** New informational page under the SIGNALS section that lists all `signal_channels` ranked by `subscriber_count` descending. Purely a discovery directory — users cannot add channels from this page (they must join on Telegram first).
+- **Change:**
+  - Created `src/pages/dashboard/PopularChannelsPage.tsx` — queries `signal_channels` ordered by subscriber count, renders a Card with rank (#1, #2...), display name, @username, live/offline indicator (based on `last_live_at` within 1h), and subscriber count badge. Loading skeleton + empty state included.
+  - Added route `/popular-channels` in `App.tsx` with lazy loading
+  - Added nav item `Popular Channels` with `Flame` icon to SIGNALS section in `AppLayout.tsx` (between Channels and Backtest)
+  - Added `/popular-channels` to subscription-free access set in `subscriptionNavAccess.ts`
+  - Added i18n: `popularChannels` key to `NavTranslations.items` in `types.ts` and `en.ts`
+  - Added `Flame` import and icon mapping in `appNavIcons.ts`
+- **Files:** `src/pages/dashboard/PopularChannelsPage.tsx` (NEW), `src/App.tsx`, `src/components/layout/AppLayout.tsx`, `src/lib/appNavIcons.ts`, `src/lib/subscriptionNavAccess.ts`, `src/i18n/locales/types.ts`, `src/i18n/locales/en.ts`
+- **Verification:** `npm run lint` + `npm run build` to validate
+- **Follow-up:** None
+
+### 2026-07-28 — Hotfix deployed to production (reconnect storm), 3 remaining issues identified
+
+- **Context:** Hotfix PR #53 (reconnect storm: 11 hardening fixes + realtime health check + reconnect monkeypatch + signals_pipeline_ts migration) was cherry-picked from staging into `upstream/main` via `origin/hotfix/reconnect-storm`. Merged at `e7df374c`. Production deployment confirmed working: flood-wait aggregated (`count=18 window=60s`), malformed RPC counted but NOT triggering reconnects, 9+ listeners connected with heartbeats.
+- **Production log findings:**
+  1. **"Copier engine offline" on production** — Driven by `worker_session_leases` table. `renewAllLeases` runs every 20s with per-user 8s timeout, concurrency 6, lease TTL 45s. Need to verify leases are being written properly on production.
+  2. **User `6b0410f1` stuck in AUTH_KEY_DUPLICATED retry loop** — `syncSessions` runs every 30s, sees user not in `this.listeners`, tries `startListener` → AUTH_KEY_DUPLICATED → fails. Repeats forever. No recentlyFailed cooldown. Old Telegram session still alive elsewhere.
+  3. **FxSocket terminal pod provisioning failure on production** — Broker `2c8a5239`: `Terminal pod not ready within 10 minutes`. Broker `58358b99`: `heartbeat keepSessionAlive failed`. Staging (4 brokers, 3 users) works fine with same API key. Production has 100 brokers, 42 users — likely FxSocket infrastructure issue at scale.
+  4. **Stale callback risk** in `sessionManager.ts:startRealtimeHealthCheck` — interval checks `if (!this.channelChannel)` but callback could fire after reference is already reassigned.
+- **Files:** `worker/src/index.ts` (lease + sync intervals), `worker/src/sessionManager.ts` (renewAllLeases, syncSessions), `worker/src/sessionLease.ts` (acquireSessionLease), `worker/src/fxsocketClient.ts` (checkConnect / keepSessionAlive)
+- **Verification:** Production logs confirm fix running (build=channel-scoped-listener-1). `[fxsocketClient] flood-wait_occurred count=18 window=60s`. No reconnect storms.
+- **Follow-up:** 1) Fix recentlyFailed cooldown in syncSessions. 2) Fix stale callback guard. 3) Investigate lease renewal on production (log `renewAllLeases` results). 4) FxSocket terminal pod issue — contact FxSocket support if persists.
+
 ### 2026-07-28 — GramJS _updateLoop reconnect storm causes session invalidation (NOT AUTH_KEY_UNREGISTERED) — fixed by monkeypatching _sender.reconnect
 
 - **Context:** After rollback + 11 hardening fixes, user's session kept getting invalidated. Two deaths:
