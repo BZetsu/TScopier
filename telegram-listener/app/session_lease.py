@@ -82,14 +82,10 @@ def _acquire_legacy(supabase: Client, cfg: Config, user_id: str, rpc_err: str) -
 
 
 def renew_session_lease(supabase: Client, cfg: Config, user_id: str) -> None:
-    worker_id = listener_worker_id(cfg)
-    supabase.table("worker_session_leases").update(
-        {
-            "worker_id": worker_id,
-            "expires_at": _expires_at_iso(cfg),
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-        }
-    ).eq("user_id", user_id).eq("worker_id", worker_id).execute()
+    """Extend TTL via acquire RPC (same as Node ensureSessionLeaseFresh)."""
+    ok, reason = acquire_session_lease(supabase, cfg, user_id)
+    if not ok:
+        print(f"[session_lease] renew failed user={user_id}: {reason}")
 
 
 def release_session_lease(supabase: Client, cfg: Config, user_id: str) -> None:

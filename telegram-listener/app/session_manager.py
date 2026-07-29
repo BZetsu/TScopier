@@ -83,10 +83,8 @@ class SessionManager:
                 await self.stop_listener(uid)
 
     async def renew_all_leases(self) -> None:
-        stale_ms = self.cfg.health_stale_ms
         for uid, listener in self.listeners.items():
-            if not listener.is_healthy(stale_ms):
-                print(f"[session_manager] skip lease renew stale user={uid}")
+            if not listener.is_connected:
                 continue
             renew_session_lease(self.supabase, self.cfg, uid)
 

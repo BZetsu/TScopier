@@ -2,6 +2,7 @@ import clsx from 'clsx'
 import { Activity, ChevronDown } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../../context/AuthContext'
+import { useSubscription } from '../../context/SubscriptionContext'
 import { useT } from '../../context/LocaleContext'
 import { isBrokerSessionHealthy } from '../../lib/brokerReconnect'
 import { isFxsocketLinkedBroker } from '../../lib/brokerLink'
@@ -74,6 +75,7 @@ export function CopierStatusCard({
   defaultExpanded?: boolean
 }) {
   const { user } = useAuth()
+  const { hasActiveSubscription } = useSubscription()
   const t = useT()
   const cs = t.dashboard.copierStatus
   const ce = t.copierEnginePage
@@ -161,8 +163,9 @@ export function CopierStatusCard({
     }
   }, [accounts, cs.healthy, cs.issues, cs.none])
 
-  const engine =
-    listenerLease.status === 'live'
+  const engine = !hasActiveSubscription
+    ? { label: t.pricing.billing.noActiveSubscription, tone: 'muted' as Tone }
+    : listenerLease.status === 'live'
       ? { label: cs.live, tone: 'ok' as Tone }
       : listenerLease.status === 'unknown'
         ? { label: cs.checking, tone: 'muted' as Tone }
@@ -173,17 +176,28 @@ export function CopierStatusCard({
     : { label: cs.offline, tone: 'bad' as Tone }
 
   const hasIssues =
-    brokerConnectionsTone === 'bad' ||
-    engine.tone === 'bad' ||
-    telegram.tone === 'bad' ||
-    brokerErrorCount > 0
-  const isChecking = !hasIssues && engine.tone === 'muted'
-  const collapsedSummaryTone: Tone = hasIssues ? 'bad' : isChecking ? 'muted' : 'ok'
+    hasActiveSubscription &&
+    (brokerConnectionsTone === 'bad' ||
+      engine.tone === 'bad' ||
+      telegram.tone === 'bad' ||
+      brokerErrorCount > 0)
+  const isChecking =
+    hasActiveSubscription &&
+    !hasIssues &&
+    (engine.tone === 'muted' || listenerLease.status === 'unknown')
+  const collapsedSummaryTone: Tone = !hasActiveSubscription
+    ? 'muted'
+    : hasIssues
+      ? 'bad'
+      : isChecking
+        ? 'muted'
+        : 'ok'
 
-  const collapsedSummary =
-    collapsedSummaryTone === 'bad'
+  const collapsedSummary = !hasActiveSubscription
+    ? t.pricing.billing.noActiveSubscription
+    : collapsedSummaryTone === 'bad'
       ? cs.checksFailed
-      : collapsedSummaryTone === 'muted'
+      : isChecking
         ? cs.checking
         : cs.allChecksPassed
 

@@ -5,6 +5,7 @@ export type TradeIntentKind =
   | 'close'
   | 'breakeven'
   | 'partial_close'
+  | 'cancel_pending'
   | 'ignore'
   | 'commentary'
 

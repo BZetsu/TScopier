@@ -67,7 +67,7 @@ export type UniversalParseContext = {
 const UNIVERSAL_SYSTEM_PROMPT = `You extract trading intent from Telegram channel messages in ANY language.
 Return strict JSON only matching this schema:
 {
-  "kind": "entry" | "modify" | "close" | "breakeven" | "partial_close" | "ignore" | "commentary",
+  "kind": "entry" | "modify" | "close" | "breakeven" | "partial_close" | "cancel_pending" | "ignore" | "commentary",
   "side": "BUY" | "SELL" | null,
   "symbol": string | null,
   "entry": number[],
@@ -91,6 +91,7 @@ Rules:
 - New trade entries: kind entry, side BUY or SELL, entry as [price] or zone [low, high].
 - SL/TP updates on open trades: kind modify (keep side from parent/recent context when omitted).
 - Full close: kind close. Move SL to entry: kind breakeven. Partial close: kind partial_close.
+- Cancel/delete buy/sell limit or pending, or "trade invalid" / "setup invalid": kind cancel_pending (not a full market close).
 - TP-hit announcements, status updates, "TP2 reached", ATUALIZAÇÃO without new entry → kind commentary or ignore.
 - Conditional tense, retrospective discussion, macro news → kind commentary.
 - confidence 0-1.`

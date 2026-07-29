@@ -56,6 +56,7 @@ export function intentActionLabel(intent: TradeIntent): string {
   if (intent.kind === 'close') return 'close'
   if (intent.kind === 'breakeven') return 'breakeven'
   if (intent.kind === 'partial_close') return 'partial_profit'
+  if (intent.kind === 'cancel_pending') return 'delete_pendings'
   return 'ignore'
 }
 

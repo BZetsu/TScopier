@@ -515,6 +515,7 @@ function isManagementAction(action: string): boolean {
     "partial_profit",
     "partial_breakeven",
     "modify",
+    "delete_pendings",
   ]).has(String(action ?? "").toLowerCase())
 }
 
@@ -523,8 +524,10 @@ function normalizeParsedFromModel(raw: unknown, fallbackText: string): ParsedSig
   let action = String(j.action ?? "ignore").trim().toLowerCase()
   if (action === "long") action = "buy"
   if (action === "short") action = "sell"
+  if (action === "cancel_pending" || action === "cancel_pendings") action = "delete_pendings"
   const allowed = new Set([
-    "buy", "sell", "close", "close_worse_entries", "breakeven", "partial_profit", "partial_breakeven", "modify", "ignore",
+    "buy", "sell", "close", "close_worse_entries", "breakeven", "partial_profit", "partial_breakeven",
+    "modify", "delete_pendings", "ignore",
   ])
   if (!allowed.has(action)) action = "ignore"
 
@@ -630,8 +633,6 @@ function parseDeterministicManagement(
     ...splitKeywordAliases(channelKeywords.update.set_tp4, delim),
     ...splitKeywordAliases(channelKeywords.update.set_tp5, delim),
     ...splitKeywordAliases(channelKeywords.additional.remove_sl, delim),
-    ...splitKeywordAliases(channelKeywords.update.delete, delim),
-    ...splitKeywordAliases(channelKeywords.additional.delete_all, delim),
   ]
 
   const hitCloseHalfKw = hasAnyKeyword(t, kwCloseHalf)
@@ -663,7 +664,18 @@ function parseDeterministicManagement(
     /\bclose\s+worse\b/i.test(t) ||
     hasAnyKeyword(t, kwCloseWorse)
 
-  if (wantsCloseWorseEntries) action = "close_worse_entries"
+  const wantsDeletePendings =
+    /\b(?:delete|cancel|remove)\s+(?:(?:buy|sell)\s+)?(?:limit|pending|order)s?\b/i.test(t)
+    || /\b(?:cancel|delete)\s+(?:limit|pending)\b/i.test(t)
+    || /\b(?:trade|setup)\s+invalid\b/i.test(t)
+    || /\binvalid\s+(?:trade|setup)\b/i.test(t)
+    || hasAnyKeyword(t, [
+      ...splitKeywordAliases(channelKeywords.update.delete, delim),
+      ...splitKeywordAliases(channelKeywords.additional.delete_all, delim),
+    ])
+
+  if (wantsDeletePendings) action = "delete_pendings"
+  else if (wantsCloseWorseEntries) action = "close_worse_entries"
   else if (wantsPartialHalf && wantsBreakeven) action = "partial_breakeven"
   else if (wantsPartialHalf) {
     action = "partial_profit"

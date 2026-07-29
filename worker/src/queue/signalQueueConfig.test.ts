@@ -25,6 +25,7 @@ test('queueLaneForParsed routes entry vs mgmt', () => {
   assert.equal(queueLaneForParsed({ action: 'buy' }), 'entry')
   assert.equal(queueLaneForParsed({ action: 'close' }), 'mgmt')
   assert.equal(queueLaneForParsed({ action: 'modify' }), 'mgmt')
+  assert.equal(queueLaneForParsed({ action: 'delete_pendings' }), 'mgmt')
   assert.equal(queueLaneForParsed({ action: 'ignore' }), null)
 })
 
