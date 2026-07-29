@@ -1,14 +1,16 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useT } from '../../context/LocaleContext'
 import { PageHeader } from '../../components/layout/PageHeader'
 import { PageShell } from '../../components/layout/PageShell'
 import { Card } from '../../components/ui/Card'
-import { Badge } from '../../components/ui/Badge'
-import { Radio, Flame } from 'lucide-react'
+import { Radio, Flame, ChevronDown, ChevronUp, Search } from 'lucide-react'
 import type { SignalChannel } from '../../types/database'
 
 const ONE_HOUR_MS = 60 * 60 * 1000
+const TWENTY_FOUR_HOURS_MS = 24 * ONE_HOUR_MS
+
+type SortKey = 'subscribers' | 'recent' | 'newest'
 
 function formatSubscribers(count: number): string {
   if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`
@@ -16,9 +18,24 @@ function formatSubscribers(count: number): string {
   return count.toLocaleString()
 }
 
-function isLive(lastLiveAt: string | null): boolean {
-  if (!lastLiveAt) return false
-  return Date.now() - new Date(lastLiveAt).getTime() < ONE_HOUR_MS
+function formatRelativeTime(dateStr: string): string {
+  const diff = Date.now() - new Date(dateStr).getTime()
+  const minutes = Math.floor(diff / 60_000)
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  if (days < 30) return `${days}d ago`
+  return new Date(dateStr).toLocaleDateString()
+}
+
+function channelStatus(lastLiveAt: string | null): { label: string; live: boolean } {
+  if (!lastLiveAt) return { label: 'No activity recorded', live: false }
+  const age = Date.now() - new Date(lastLiveAt).getTime()
+  if (age < ONE_HOUR_MS) return { label: 'Live', live: true }
+  if (age < TWENTY_FOUR_HOURS_MS) return { label: `Active ${formatRelativeTime(lastLiveAt)}`, live: false }
+  return { label: `Last active ${formatRelativeTime(lastLiveAt)}`, live: false }
 }
 
 export function PopularChannelsPage() {
@@ -26,6 +43,9 @@ export function PopularChannelsPage() {
   const p = t.popularChannelsPage
   const [channels, setChannels] = useState<SignalChannel[]>([])
   const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
+  const [sort, setSort] = useState<SortKey>('subscribers')
+  const [expandedId, setExpandedId] = useState<string | null>(null)
 
   useEffect(() => {
     loadChannels()
@@ -41,12 +61,72 @@ export function PopularChannelsPage() {
     setLoading(false)
   }
 
+  const filteredAndSorted = useMemo(() => {
+    const q = search.toLowerCase().trim()
+    let result = q
+      ? channels.filter(
+          ch =>
+            ch.display_name.toLowerCase().includes(q) ||
+            ch.channel_username?.toLowerCase().includes(q),
+        )
+      : [...channels]
+
+    switch (sort) {
+      case 'subscribers':
+        result.sort((a, b) => b.subscriber_count - a.subscriber_count)
+        break
+      case 'recent':
+        result.sort((a, b) => {
+          const aTime = a.last_live_at ? new Date(a.last_live_at).getTime() : 0
+          const bTime = b.last_live_at ? new Date(b.last_live_at).getTime() : 0
+          return bTime - aTime
+        })
+        break
+      case 'newest':
+        result.sort((a, b) => new Date(b.first_seen_at).getTime() - new Date(a.first_seen_at).getTime())
+        break
+    }
+    return result
+  }, [channels, search, sort])
+
+  const sortOptions: { key: SortKey; label: string }[] = [
+    { key: 'subscribers', label: 'Most subscribers' },
+    { key: 'recent', label: 'Recently active' },
+    { key: 'newest', label: 'Newest first' },
+  ]
+
   return (
     <PageShell maxWidth="lg" spacing="none" className="space-y-6">
-      <PageHeader
-        title={p.title}
-        subtitle={p.subtitle}
-      />
+      <PageHeader title={p.title} subtitle={p.subtitle} />
+
+      <div className="flex items-center gap-3">
+        <div className="relative flex-1 max-w-xs">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-400 pointer-events-none" />
+          <input
+            type="text"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search channels..."
+            className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+          />
+        </div>
+        <div className="flex items-center gap-1">
+          {sortOptions.map(opt => (
+            <button
+              key={opt.key}
+              type="button"
+              onClick={() => setSort(opt.key)}
+              className={`text-xs font-medium px-2.5 py-1.5 rounded-lg transition-colors ${
+                sort === opt.key
+                  ? 'bg-teal-50 text-teal-700 dark:bg-teal-950/50 dark:text-teal-400'
+                  : 'text-neutral-500 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800'
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </div>
 
       {loading ? (
         <div className="space-y-2">
@@ -57,57 +137,97 @@ export function PopularChannelsPage() {
             />
           ))}
         </div>
-      ) : channels.length === 0 ? (
+      ) : filteredAndSorted.length === 0 ? (
         <Card>
           <div className="text-center py-10">
             <Flame className="w-10 h-10 mx-auto mb-3 text-neutral-200" />
             <p className="text-sm font-medium text-neutral-500 dark:text-neutral-400">
-              {p.emptyTitle}
+              {search ? 'No channels match your search' : p.emptyTitle}
             </p>
             <p className="text-xs text-neutral-400 mt-1">
-              {p.emptySubtitle}
+              {search ? 'Try a different name or username' : p.emptySubtitle}
             </p>
           </div>
         </Card>
       ) : (
         <Card padding="none" className="divide-y divide-neutral-100 dark:divide-neutral-800">
-          {channels.map((ch, idx) => {
-            const live = isLive(ch.last_live_at)
+          {filteredAndSorted.map((ch, idx) => {
+            const status = channelStatus(ch.last_live_at)
+            const expanded = expandedId === ch.id
             return (
-              <div
-                key={ch.id}
-                className="flex items-center gap-3 px-4 py-3"
-              >
-                <span className="w-6 text-xs font-semibold text-neutral-300 dark:text-neutral-600 text-center shrink-0">
-                  #{idx + 1}
-                </span>
-                <div className="w-9 h-9 bg-primary-50 rounded-lg flex items-center justify-center shrink-0">
-                  <Radio className="w-4 h-4 text-primary-600" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-neutral-900 dark:text-neutral-50 truncate">
-                    {ch.display_name}
-                  </p>
-                  <div className="flex items-center gap-2 mt-0.5">
-                    {ch.channel_username && (
-                      <p className="text-xs text-neutral-400">@{ch.channel_username}</p>
-                    )}
-                    <span className="text-neutral-300 dark:text-neutral-600">·</span>
-                    <div className="flex items-center gap-1">
-                      <span
-                        className={`w-1.5 h-1.5 rounded-full ${
-                          live ? 'bg-green-500' : 'bg-neutral-300 dark:bg-neutral-600'
-                        }`}
-                      />
-                      <span className="text-xs text-neutral-400">
-                        {live ? 'Live' : 'No recent activity'}
-                      </span>
+              <div key={ch.id}>
+                <button
+                  type="button"
+                  onClick={() => setExpandedId(expanded ? null : ch.id)}
+                  className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-neutral-50 dark:hover:bg-neutral-800/50 transition-colors"
+                >
+                  <span className="w-6 text-xs font-semibold text-neutral-300 dark:text-neutral-600 text-center shrink-0">
+                    #{idx + 1}
+                  </span>
+                  <div className="w-9 h-9 bg-primary-50 rounded-lg flex items-center justify-center shrink-0">
+                    <Radio className="w-4 h-4 text-primary-600" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-neutral-900 dark:text-neutral-50 truncate">
+                      {ch.display_name}
+                    </p>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      {ch.channel_username && (
+                        <p className="text-xs text-neutral-400">@{ch.channel_username}</p>
+                      )}
+                      <span className="text-neutral-300 dark:text-neutral-600">·</span>
+                      <div className="flex items-center gap-1">
+                        <span
+                          className={`w-1.5 h-1.5 rounded-full ${
+                            status.live ? 'bg-green-500' : 'bg-neutral-300 dark:bg-neutral-600'
+                          }`}
+                        />
+                        <span className="text-xs text-neutral-400">{status.label}</span>
+                      </div>
                     </div>
                   </div>
-                </div>
-                <Badge variant="neutral" size="sm">
-                  {formatSubscribers(ch.subscriber_count)}
-                </Badge>
+                  <span className="text-xs text-neutral-500 dark:text-neutral-400 font-medium shrink-0">
+                    {formatSubscribers(ch.subscriber_count)} subscribers
+                  </span>
+                  {expanded ? (
+                    <ChevronUp className="w-4 h-4 text-neutral-400 shrink-0" />
+                  ) : (
+                    <ChevronDown className="w-4 h-4 text-neutral-400 shrink-0" />
+                  )}
+                </button>
+
+                {expanded && (
+                  <div className="px-4 pb-4 pt-2 bg-neutral-50 dark:bg-neutral-800/30 border-t border-neutral-100 dark:border-neutral-800">
+                    <div className="grid grid-cols-2 gap-3 text-sm">
+                      <div>
+                        <span className="text-xs text-neutral-400">Channel ID</span>
+                        <p className="text-sm text-neutral-700 dark:text-neutral-300 font-mono truncate">
+                          {ch.telegram_chat_id}
+                        </p>
+                      </div>
+                      <div>
+                        <span className="text-xs text-neutral-400">First seen</span>
+                        <p className="text-sm text-neutral-700 dark:text-neutral-300">
+                          {new Date(ch.first_seen_at).toLocaleDateString()}
+                        </p>
+                      </div>
+                      <div>
+                        <span className="text-xs text-neutral-400">Subscribers</span>
+                        <p className="text-sm text-neutral-700 dark:text-neutral-300">
+                          {ch.subscriber_count.toLocaleString()}
+                        </p>
+                      </div>
+                      <div>
+                        <span className="text-xs text-neutral-400">Last activity</span>
+                        <p className="text-sm text-neutral-700 dark:text-neutral-300">
+                          {ch.last_live_at
+                            ? new Date(ch.last_live_at).toLocaleString()
+                            : '—'}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             )
           })}

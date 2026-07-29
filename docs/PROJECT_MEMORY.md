@@ -30,14 +30,21 @@
 
 - **Context:** New informational page under the SIGNALS section that lists all `signal_channels` ranked by `subscriber_count` descending. Purely a discovery directory — users cannot add channels from this page (they must join on Telegram first).
 - **Change:**
-  - Created `src/pages/dashboard/PopularChannelsPage.tsx` — queries `signal_channels` ordered by subscriber count, renders a Card with rank (#1, #2...), display name, @username, live/offline indicator (based on `last_live_at` within 1h), and subscriber count badge. Loading skeleton + empty state included.
+  - Created `src/pages/dashboard/PopularChannelsPage.tsx` — queries `signal_channels` ordered by subscriber count, renders a Card with rank (#1, #2...), display name, @username, live/offline indicator, and subscriber count
   - Added route `/popular-channels` in `App.tsx` with lazy loading
-  - Added nav item `Popular Channels` with `Flame` icon to SIGNALS section in `AppLayout.tsx` (between Channels and Backtest)
+  - Added nav item `Popular Channels` with `Flame` icon to SIGNALS section in `AppLayout.tsx`
   - Added `/popular-channels` to subscription-free access set in `subscriptionNavAccess.ts`
-  - Added i18n: `popularChannels` key to `NavTranslations.items` in `types.ts` and `en.ts`
+  - Added i18n: `popularChannels` key to `NavTranslations.items` in `types.ts` and all locales
   - Added `Flame` import and icon mapping in `appNavIcons.ts`
+- **Updated later same day:**
+  - Click-to-expand rows showing Channel ID, first seen, subscribers, last activity date
+  - Search bar filtering by channel name or username
+  - Sort tabs: Most subscribers, Recently active, Newest first
+  - Status display now uses 3 tiers: Live (<1h), Active Xm ago (<24h), Last active X ago
+  - Shows "X subscribers" text label instead of bare number
+  - Fixed "No recent activity" appearing when data was fresh (was only checking 1h window; now shows relative time for older entries too)
 - **Files:** `src/pages/dashboard/PopularChannelsPage.tsx` (NEW), `src/App.tsx`, `src/components/layout/AppLayout.tsx`, `src/lib/appNavIcons.ts`, `src/lib/subscriptionNavAccess.ts`, `src/i18n/locales/types.ts`, `src/i18n/locales/en.ts`
-- **Verification:** `npm run lint` + `npm run build` to validate
+- **Verification:** `tsc -b --noEmit` + `vite build` pass clean
 - **Follow-up:** None
 
 ### 2026-07-28 — Hotfix deployed to production (reconnect storm), 3 remaining issues identified
