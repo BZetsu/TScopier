@@ -86,6 +86,8 @@ export class UserSessionManager {
   private channelListenerManager: ChannelListenerManager | null = null
   private channelReconcileMonitor: ChannelReconcileMonitor | null = null
   private shuttingDown = false
+  /** Tracks start failures with timestamps so syncSessions doesn't retry in a tight loop. */
+  private recentlyFailed = new Map<string, number>()
 
   constructor(supabase: SupabaseClient) {
     this.supabase = supabase
@@ -300,10 +302,16 @@ export class UserSessionManager {
           return
         }
         if (!listener.isTelegramConnected()) {
-          // Dead Map entries used to skip renew forever (UI "Copier engine offline").
-          // Kick reconnect so AUTH_KEY_DUPLICATED / failed reconnect can recover.
+          // Don't skip lease renewal — the lease keeps the session visible to the
+          // frontend ("Copier is active") while the reconnect is in-flight. If we
+          // return here the lease expires within seconds and every user sees
+          // "session expired" / "copier engine offline" during any transient
+          // disconnect (e.g. _updateLoop TIMEOUT → flood wait → reconnect).
+          console.log(
+            `[sessionManager] listener disconnected but renewing lease anyway`
+            + ` user=${userId} — kicking reconnect in background`,
+          )
           listener.requestReconnectIfDisconnected('lease_renew_disconnected')
-          return
         }
 
         try {
@@ -582,13 +590,24 @@ export class UserSessionManager {
       }
     }
 
+    const cooldownMs = Math.max(
+      30_000,
+      Math.min(3_600_000, Number(process.env.TELEGRAM_RETRY_COOLDOWN_MS ?? 300_000)),
+    )
+    const now = Date.now()
+
     for (const session of activeOnShard) {
-      if (this.listeners.has(session.user_id)) continue
-      if (await this.shouldSkipListenerStart(session.user_id)) continue
+      const userId = session.user_id
+      if (this.listeners.has(userId)) continue
+      if (await this.shouldSkipListenerStart(userId)) continue
+      const failedAt = this.recentlyFailed.get(userId)
+      if (failedAt && now - failedAt < cooldownMs) continue
       try {
-        await this.startListener(session.user_id, session.session_string)
+        await this.startListener(userId, session.session_string)
+        this.recentlyFailed.delete(userId)
       } catch (err) {
-        console.error(`[sessionManager] Failed to start listener for ${session.user_id}:`, err)
+        this.recentlyFailed.set(userId, Date.now())
+        console.error(`[sessionManager] Failed to start listener for ${userId}:`, err)
       }
     }
   }
@@ -1121,6 +1140,7 @@ export class UserSessionManager {
         throw err
       }
       this.listeners.set(userId, listener)
+      this.recentlyFailed.delete(userId)
       console.log(`[sessionManager] Started listener for user ${userId}`)
     })
   }
