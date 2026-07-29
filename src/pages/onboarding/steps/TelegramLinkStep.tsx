@@ -7,6 +7,7 @@ import {
   resolveTelegramAuthErrorMessage,
   type QrPollResponse,
 } from '../../../lib/telegramAuthApi'
+import { supabase } from '../../../lib/supabase'
 import { Card } from '../../../components/ui/Card'
 import { Button } from '../../../components/ui/Button'
 import { ShieldCheck } from 'lucide-react'
@@ -52,10 +53,11 @@ export function TelegramLinkStep({ onDone }: Props) {
     setSessionRowId(sessionId)
     setQrUrl('')
     setQrWaiting(false)
+    setError('')
     setStage('confirm_2fa')
   }, [])
 
-  const startQrLogin = async () => {
+  const startQrLogin = useCallback(async () => {
     setError('')
     setLoading(true)
     setQrWaiting(true)
@@ -67,19 +69,21 @@ export function TelegramLinkStep({ onDone }: Props) {
         {},
       )
       if (!ok || !data.qr_url) {
+        setQrWaiting(false)
         setError(resolveTelegramAuthErrorMessage(data.error, ce.failedStartQr, ce))
         return
       }
       setQrUrl(data.qr_url)
     } catch {
+      setQrWaiting(false)
       setError('Network error. Please try again.')
     } finally {
       setLoading(false)
     }
-  }
+  }, [session?.access_token, ce])
 
   useEffect(() => {
-    if (stage !== 'qr' || !session?.access_token) return
+    if (stage !== 'qr' || !session?.access_token || !qrUrl) return
 
     let cancelled = false
     const poll = async () => {
@@ -94,6 +98,7 @@ export function TelegramLinkStep({ onDone }: Props) {
         if (data.qr_url && data.qr_url !== qrUrl) setQrUrl(data.qr_url)
         if (data.status === 'requires_password' || data.requires_password) {
           setQrWaiting(false)
+          setError('')
           setStage('twoFa')
           return
         }
@@ -102,7 +107,22 @@ export function TelegramLinkStep({ onDone }: Props) {
           handleLinked(data.session_id)
           return
         }
+        if (data.status === 'waiting') return
         if (data.status === 'error' || (!ok && data.error)) {
+          if (data.error === 'NO_PENDING_QR' && session.user?.id) {
+            const { data: sess } = await supabase
+              .from('telegram_sessions')
+              .select('id')
+              .eq('user_id', session.user.id)
+              .eq('is_active', true)
+              .maybeSingle()
+            if (cancelled) return
+            if (sess?.id) {
+              setQrWaiting(false)
+              handleLinked(String(sess.id))
+              return
+            }
+          }
           setQrWaiting(false)
           setError(resolveTelegramAuthErrorMessage(data.error, ce.failedStartQr, ce))
         }
@@ -117,7 +137,8 @@ export function TelegramLinkStep({ onDone }: Props) {
       cancelled = true
       clearInterval(interval)
     }
-  }, [stage, session?.access_token, qrUrl, handleLinked, ce.failedStartQr, ce])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- poll while QR URL is present
+  }, [stage, session?.access_token, Boolean(qrUrl), handleLinked, ce.failedStartQr, ce])
 
   const sendCode = async (e: FormEvent) => {
     e.preventDefault()
@@ -195,10 +216,32 @@ export function TelegramLinkStep({ onDone }: Props) {
         { password },
       )
       if (!ok || data.error) {
+        if (data.error === 'NO_PENDING_QR' && session?.user?.id) {
+          const { data: sess } = await supabase
+            .from('telegram_sessions')
+            .select('id')
+            .eq('user_id', session.user.id)
+            .eq('is_active', true)
+            .maybeSingle()
+          if (sess?.id) {
+            handleLinked(String(sess.id))
+            return
+          }
+        }
         setError(resolveTelegramAuthErrorMessage(data.error, ce.verificationFailed, ce))
         return
       }
-      if (data.session_id) handleLinked(data.session_id)
+      if (data.session_id) {
+        handleLinked(data.session_id)
+      } else if (session?.user?.id) {
+        const { data: sess } = await supabase
+          .from('telegram_sessions')
+          .select('id')
+          .eq('user_id', session.user.id)
+          .eq('is_active', true)
+          .maybeSingle()
+        if (sess?.id) handleLinked(String(sess.id))
+      }
     } catch {
       setError('Network error. Please try again.')
     } finally {

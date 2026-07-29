@@ -16,6 +16,7 @@ export function isManagementAction(action: string): boolean {
     || a === 'partial_profit'
     || a === 'partial_breakeven'
     || a === 'modify'
+    || a === 'delete_pendings'
 }
 
 export function isEntryAction(action: string): boolean {

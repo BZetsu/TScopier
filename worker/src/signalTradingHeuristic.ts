@@ -86,7 +86,7 @@ const ENGLISH_PRICE_CTX =
 const ENGLISH_TRADE_STRUCTURE =
   /\b(tp\s*\d*|sl|entry|signal|setup)\b/
 const ENGLISH_REPLY_MGMT =
-  /\b(move|set|update|adjust|tp|sl|breakeven|be|close)\b/
+  /\b(move|set|update|adjust|tp|sl|breakeven|be|close|delete|cancel|invalid|pending|limit)\b/
 
 const ARABIC_TRADE_STRUCTURE =
   /(?:منطقة\s*الدخول|نقطة\s*الدخول|وقف\s*الخسارة|الهدف|جني\s*الأرباح)/u

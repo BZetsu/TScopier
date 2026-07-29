@@ -180,6 +180,9 @@ export interface ConfigureModalTranslations {
     singleTpTargetTp1: string
     singleTpTargetTp2: string
     singleTpTargetTp3: string
+    singleTpLotBreakdownTitle: string
+    singleTpLotBreakdownSlice: string
+    singleTpLotBreakdownJoin: string
     signalEntryTitle: string
     signalEntryBody: string
     useSignalEntryPrice: string

@@ -27,6 +27,7 @@ export type AiModificationIntent =
   | 'breakeven'
   | 'partial_profit'
   | 'parameter_refresh'
+  | 'delete_pendings'
   | 'ignore'
   | 'commentary'
 
@@ -127,6 +128,7 @@ function mapActionToIntent(action: string): AiModificationIntent {
   if (a === 'close' || a === 'close_worse_entries') return 'close'
   if (a === 'breakeven' || a === 'partial_breakeven') return 'breakeven'
   if (a === 'partial_profit') return 'partial_profit'
+  if (a === 'delete_pendings') return 'delete_pendings'
   if (a === 'buy' || a === 'sell') return 'parameter_refresh'
   if (a === 'ignore') return 'ignore'
   return 'commentary'
@@ -204,8 +206,8 @@ async function loadRecentChannelSignals(
 const AI_SYSTEM_PROMPT = `You interpret Telegram trading-channel modification/management messages for a trade copier.
 Return strict JSON only with keys:
 {
-  "intent": "modify" | "close" | "breakeven" | "partial_profit" | "parameter_refresh" | "ignore" | "commentary",
-  "action": "buy" | "sell" | "modify" | "close" | "close_worse_entries" | "breakeven" | "partial_profit" | "partial_breakeven" | "ignore",
+  "intent": "modify" | "close" | "breakeven" | "partial_profit" | "parameter_refresh" | "delete_pendings" | "ignore" | "commentary",
+  "action": "buy" | "sell" | "modify" | "close" | "close_worse_entries" | "breakeven" | "partial_profit" | "partial_breakeven" | "delete_pendings" | "ignore",
   "symbol": string | null,
   "entry_price": number | null,
   "entry_zone_low": number | null,
@@ -223,6 +225,7 @@ Rules:
 - Use parent_signal and recent_signals to infer symbol/direction when the reply omits them.
 - Correct obvious typos in labels/prices (mov sl, 265O) but never invent prices not implied by the message.
 - parameter_refresh: same trade SL/TP update — use buy/sell matching parent direction with sl/tp only (no new entry).
+- delete_pendings: cancel/delete a buy/sell limit or pending order, or "trade invalid" / "setup invalid" — reply-scoped cancel only (not a full close of open market positions).
 - commentary/TP-hit announcements without actionable instruction → action ignore, intent commentary.
 - Conditional/advisory closes (e.g. "if you are happy, close now") are commentary, not executable close.
 - re_enter true only when message clearly opens a new trade.
@@ -289,7 +292,7 @@ function buildAiResult(
       },
       corrected,
     ) as ParsedSignal,
-    (['modify', 'close', 'breakeven', 'partial_profit', 'parameter_refresh', 'ignore', 'commentary'] as const)
+    (['modify', 'close', 'breakeven', 'partial_profit', 'parameter_refresh', 'delete_pendings', 'ignore', 'commentary'] as const)
       .includes(intentHint as AiModificationIntent)
       ? intentHint as AiModificationIntent
       : mapActionToIntent(String(raw.action ?? '')),
@@ -297,7 +300,7 @@ function buildAiResult(
 
   const intentRaw = String(raw.intent ?? mapActionToIntent(parsed.action))
   const intent = (
-    ['modify', 'close', 'breakeven', 'partial_profit', 'parameter_refresh', 'ignore', 'commentary'] as const
+    ['modify', 'close', 'breakeven', 'partial_profit', 'parameter_refresh', 'delete_pendings', 'ignore', 'commentary'] as const
   ).includes(intentRaw as AiModificationIntent)
     ? intentRaw as AiModificationIntent
     : mapActionToIntent(parsed.action)

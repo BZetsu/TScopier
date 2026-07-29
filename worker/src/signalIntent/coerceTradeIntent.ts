@@ -1,7 +1,7 @@
 import type { TradeIntent, TradeIntentKind, TradeIntentPriceUnit, TradeIntentSide } from './tradeIntent'
 
 const KINDS: ReadonlySet<string> = new Set([
-  'entry', 'modify', 'close', 'breakeven', 'partial_close', 'ignore', 'commentary',
+  'entry', 'modify', 'close', 'breakeven', 'partial_close', 'cancel_pending', 'ignore', 'commentary',
 ])
 
 function numOrNull(v: unknown): number | null {
@@ -23,6 +23,7 @@ function sideFromRaw(v: unknown): TradeIntentSide | null {
 
 function kindFromRaw(v: unknown): TradeIntentKind {
   const k = String(v ?? '').trim().toLowerCase()
+  if (k === 'delete_pendings' || k === 'cancel_pendings') return 'cancel_pending'
   if (KINDS.has(k)) return k as TradeIntentKind
   return 'ignore'
 }
