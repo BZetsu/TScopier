@@ -248,7 +248,7 @@ export function CopierEnginePage() {
     setHasTgSession(hasSession)
     if (user?.id) setCachedTgSession(user.id, hasSession)
     setTgStage(prev =>
-      prev === 'phone' || prev === 'code' || prev === 'twoFa'
+      prev === 'phone' || prev === 'code' || prev === 'twoFa' || prev === 'qr' || prev === 'method'
         ? prev
         : hasSession
           ? 'linked'
@@ -590,6 +590,9 @@ export function CopierEnginePage() {
   const handleTelegramLinked = async (data: { channels?: TgChannelListItem[] }) => {
     setTgQrUrl('')
     setTgQrWaiting(false)
+    setTgError('')
+    setHasTgSession(true)
+    if (user?.id) setCachedTgSession(user.id, true)
     setTgStage('linked')
     if (Array.isArray(data.channels)) {
       const list = data.channels as TgChannelListItem[]
@@ -601,7 +604,7 @@ export function CopierEnginePage() {
     }
   }
 
-  const startQrLogin = async () => {
+  const startQrLogin = useCallback(async () => {
     setTgError('')
     setTgLoading(true)
     setTgQrWaiting(true)
@@ -613,19 +616,23 @@ export function CopierEnginePage() {
         {},
       )
       if (!ok || !data.qr_url) {
+        setTgQrWaiting(false)
         setTgError(resolveTelegramAuthErrorMessage(data.error, ce.failedStartQr, ce))
         return
       }
       setTgQrUrl(data.qr_url)
     } catch {
+      setTgQrWaiting(false)
       setTgError(ce.networkError)
     } finally {
       setTgLoading(false)
     }
-  }
+  }, [session?.access_token, ce])
 
   useEffect(() => {
-    if (tgStage !== 'qr' || !session?.access_token) return
+    // Only poll after start_qr_login returned a URL — earlier polls race prepareForAuth
+    // and surface a false "QR login expired".
+    if (tgStage !== 'qr' || !session?.access_token || !tgQrUrl) return
 
     let cancelled = false
     const poll = async () => {
@@ -642,6 +649,7 @@ export function CopierEnginePage() {
         }
         if (data.status === 'requires_password' || data.requires_password) {
           setTgQrWaiting(false)
+          setTgError('')
           setTgStage('twoFa')
           return
         }
@@ -650,6 +658,7 @@ export function CopierEnginePage() {
           await handleTelegramLinked({ channels: data.channels as TgChannelListItem[] | undefined })
           return
         }
+        if (data.status === 'waiting') return
         if (data.status === 'error' || (!ok && data.error)) {
           // QR may have completed and cleared pending — recover if session exists.
           if (data.error === 'NO_PENDING_QR' && user?.id) {
@@ -680,7 +689,10 @@ export function CopierEnginePage() {
       cancelled = true
       clearInterval(interval)
     }
-  }, [tgStage, session?.access_token, tgQrUrl, user?.id, ce.failedStartQr, ce.networkError])
+    // Intentionally omit tgQrUrl from deps besides presence — URL token refreshes
+    // update state inside poll without resetting the interval.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- poll only while QR stage has a URL
+  }, [tgStage, session?.access_token, Boolean(tgQrUrl), user?.id, ce.failedStartQr, ce.networkError])
 
   const verifyQrPassword = async (e: FormEvent) => {
     e.preventDefault()
@@ -694,6 +706,18 @@ export function CopierEnginePage() {
         { password: tgPassword },
       )
       if (!ok || data.error) {
+        if (data.error === 'NO_PENDING_QR' && user?.id) {
+          const { data: sess } = await supabase
+            .from('telegram_sessions')
+            .select('user_id')
+            .eq('user_id', user.id)
+            .eq('is_active', true)
+            .maybeSingle()
+          if (sess) {
+            await handleTelegramLinked({})
+            return
+          }
+        }
         setTgError(resolveTelegramAuthErrorMessage(data.error, ce.verificationFailed, ce))
         return
       }
