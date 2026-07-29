@@ -2,10 +2,27 @@ import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
 import {
   looksLikeChannelManagementUpdate,
+  looksLikeDeletePendingsCommand,
   looksLikeExplicitFullCloseCommand,
   partialCloseFractionFromMessage,
 } from './signalManagementIntent'
 import { normalizeSignalMessageForParse } from './normalizeTelegramMessageText'
+
+test('looksLikeDeletePendingsCommand: delete/cancel limit and trade invalid', () => {
+  assert.equal(looksLikeDeletePendingsCommand('Delete sell limit'), true)
+  assert.equal(looksLikeDeletePendingsCommand('Delete buy limit'), true)
+  assert.equal(looksLikeDeletePendingsCommand('cancel limit'), true)
+  assert.equal(looksLikeDeletePendingsCommand('delete pending'), true)
+  assert.equal(looksLikeDeletePendingsCommand('Trade invalid'), true)
+  assert.equal(looksLikeDeletePendingsCommand('invalid setup'), true)
+  assert.equal(looksLikeDeletePendingsCommand('Close all now'), false)
+  assert.equal(looksLikeDeletePendingsCommand('Gold buy now'), false)
+})
+
+test('looksLikeChannelManagementUpdate: delete pendings cues', () => {
+  assert.equal(looksLikeChannelManagementUpdate('Delete sell limit'), true)
+  assert.equal(looksLikeChannelManagementUpdate('Trade invalid'), true)
+})
 
 test('looksLikeExplicitFullCloseCommand: accepts two-word close phrases', () => {
   assert.equal(looksLikeExplicitFullCloseCommand('Close all now'), true)

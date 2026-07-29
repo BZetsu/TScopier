@@ -18,6 +18,14 @@ describe('tradeSignalActions', () => {
     assert.equal(signalMatchesExecutorMode({ action: 'buy' }, 'mgmt'), false)
     assert.equal(signalMatchesExecutorMode({ action: 'close' }, 'mgmt'), true)
     assert.equal(signalMatchesExecutorMode({ action: 'close' }, 'entry'), false)
+    assert.equal(signalMatchesExecutorMode({ action: 'delete_pendings' }, 'mgmt'), true)
+    assert.equal(signalMatchesExecutorMode({ action: 'delete_pendings' }, 'entry'), false)
+  })
+
+  test('isManagementAction includes delete_pendings', () => {
+    assert.equal(isManagementAction('delete_pendings'), true)
+    assert.equal(isManagementAction('modify'), true)
+    assert.equal(isManagementAction('buy'), false)
   })
 
   test('dispatchPriorityForAction', () => {

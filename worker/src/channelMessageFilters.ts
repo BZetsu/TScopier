@@ -75,6 +75,8 @@ export function filterKeysForManagementAction(
       return ['close_full', 'close_all']
     case 'close_worse_entries':
       return ['close_worse_entries']
+    case 'delete_pendings':
+      return ['delete_pendings']
     case 'partial_profit':
       return ['close_half', 'close_tp_levels']
     case 'partial_breakeven':

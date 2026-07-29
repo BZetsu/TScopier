@@ -36,6 +36,30 @@ describe('parseChannelMessageSync', () => {
     assert.equal(result.parsed.action, 'close')
   })
 
+  it('parses Delete sell limit as delete_pendings', () => {
+    const result = parseChannelMessageSync('Delete sell limit', DEFAULT_CHANNEL_KEYWORDS, lexicon)
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.action, 'delete_pendings')
+  })
+
+  it('parses Trade invalid as delete_pendings', () => {
+    const result = parseChannelMessageSync('Trade invalid', DEFAULT_CHANNEL_KEYWORDS, lexicon)
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.action, 'delete_pendings')
+  })
+
+  it('parses cancel limit as delete_pendings', () => {
+    const result = parseChannelMessageSync('cancel limit', DEFAULT_CHANNEL_KEYWORDS, lexicon)
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.action, 'delete_pendings')
+  })
+
+  it('parses bare DELETE keyword as delete_pendings (not modify)', () => {
+    const result = parseChannelMessageSync('DELETE', DEFAULT_CHANNEL_KEYWORDS, lexicon)
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.action, 'delete_pendings')
+  })
+
   it('skips conditional close suggestion (if happy close now)', () => {
     const msg = 'If you are happy, close now'
     const result = parseChannelMessageSync(msg, DEFAULT_CHANNEL_KEYWORDS, lexicon)

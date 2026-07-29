@@ -55,3 +55,13 @@ test('isChannelSlTpUpdateBlocked respects parsed SL/TP fields', () => {
 test('filterKeysForManagementAction: close maps to full-close categories', () => {
   assert.deepEqual(filterKeysForManagementAction('close'), ['close_full', 'close_all'])
 })
+
+test('filterKeysForManagementAction: delete_pendings is its own category', () => {
+  assert.deepEqual(filterKeysForManagementAction('delete_pendings'), ['delete_pendings'])
+})
+
+test('delete_pendings blocked only when delete_pendings is ignore', () => {
+  const filters = { ch1: normalizeChannelFilters({ delete_pendings: 'ignore' }) }
+  assert.equal(isChannelManagementBlocked(filters, 'ch1', 'delete_pendings'), true)
+  assert.equal(isChannelManagementBlocked(filters, 'ch1', 'close'), false)
+})
