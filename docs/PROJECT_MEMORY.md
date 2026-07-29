@@ -2,6 +2,18 @@
 
 ## Changelog
 
+### 2026-07-29 — Fixed channelTradingConfig healing loop: persisted healed configs to DB
+
+- **Context:** `healChannelTradingConfigsMap()` created default per-channel trading settings in memory for channels missing config, but never wrote them to the database. Every signal dispatch re-detected the missing config, re-healed, and logged the warning. For channel `daa27d5a-e17e-4025-904e-8da28a4e30f4` this repeated every ~60s forever.
+- **Root cause:** The function was a pure in-memory computation — it produced healed configs, returned them for execution, then discarded them. The `broker_accounts.channel_trading_configs` JSONB column and `broker_channel_trading_configs` table were never updated, so every call re-read stale DB data.
+- **Changes:**
+  - Added `persistHealedChannelConfigs()` in `channelTradingConfig.ts` — compares original vs healed configs, upserts newly healed channels to `broker_channel_trading_configs` table
+  - Wired into `TradeExecutor.ts:loadBrokers()` (bulk startup path) and `TradeExecutor.ts:applyBrokerCacheRow()` (all real-time paths) — captures original configs before normalization, persists after
+  - Added `SupabaseClient` import to `channelTradingConfig.ts`
+- **Files:** `worker/src/channelTradingConfig.ts`, `worker/src/tradeExecutor/TradeExecutor.ts`
+- **Verification:** `tsc` build clean, all 13 `channelTradingConfig` tests pass
+- **Follow-up:** After deploy, the "healed missing per-channel config" warning should fire once per channel and then stop permanently
+
 ### 2026-07-29 — Added popularChannelsPage translations to all locale files
 
 - **Context:** `popularChannelsPage` section was added to `en.ts` and `types.ts` but missing from other locale files that define `channelsPage`.

@@ -30,7 +30,7 @@ import {
 } from '../manualPlanner'
 import { normalizeManualSettingsForExecution } from '../manualPlanning/normalizeManualSettings'
 import { resolveBrokerTotalBalance } from '../effectiveBrokerBalance'
-import { normalizeChannelTradingConfigsMap, withChannelTradingConfig, channelConfigReadyForExecution, resolveChannelTradingConfig, healChannelTradingConfigsMap } from '../channelTradingConfig'
+import { normalizeChannelTradingConfigsMap, withChannelTradingConfig, channelConfigReadyForExecution, resolveChannelTradingConfig, healChannelTradingConfigsMap, persistHealedChannelConfigs } from '../channelTradingConfig'
 import {
   applyBrokerChannelTradingConfigRow,
   fetchBrokerChannelTradingConfigRows,
@@ -455,6 +455,12 @@ export class TradeExecutor {
           }
         : row
       const normalized = this.normalizeBrokerRow(mergedRow)
+      void persistHealedChannelConfigs(
+        this.supabase,
+        row.id,
+        mergedRow.channel_trading_configs,
+        normalized.channel_trading_configs as Record<string, unknown>,
+      )
       this.brokersById.set(row.id, normalized)
       if (normalized.is_active) {
         const arr = this.brokersByUser.get(row.user_id) ?? []
@@ -524,7 +530,14 @@ export class TradeExecutor {
   }
 
   private applyBrokerCacheRow(row: BrokerRow) {
+    const preNormalizedConfigs = row.channel_trading_configs
     const normalized = this.normalizeBrokerRow(row)
+    void persistHealedChannelConfigs(
+      this.supabase,
+      row.id,
+      preNormalizedConfigs,
+      normalized.channel_trading_configs as Record<string, unknown>,
+    )
     const sessionId = brokerSessionUuid(normalized)
     if (sessionId) getFxsocketClient()?.seedPlatformCache(sessionId, mtPlatformFrom(normalized.platform))
     const previous = this.brokersById.get(row.id)
