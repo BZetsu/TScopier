@@ -33,6 +33,8 @@ function mapKindToAction(intent: TradeIntent): string {
       return 'breakeven'
     case 'partial_close':
       return 'partial_profit'
+    case 'cancel_pending':
+      return 'delete_pendings'
     default:
       return 'ignore'
   }
