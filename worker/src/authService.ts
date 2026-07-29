@@ -805,6 +805,25 @@ export class AuthService {
         logAuthEvent('qr_status_active_session', { userId, sessionId: sess.id })
         return qrStatusFromActiveSession(String(sess.id))
       }
+      // startQrLogin upserts a placeholder before the in-memory pending exists; polls
+      // during prepareForAuth / connect must not surface "QR login expired".
+      if (this.authInFlight.has(userId)) {
+        logAuthEvent('qr_status_starting', { userId })
+        return { status: 'waiting' }
+      }
+      const { data: row } = await this.supabase
+        .from('telegram_auth_pending')
+        .select('auth_method, expires_at')
+        .eq('user_id', userId)
+        .maybeSingle()
+      if (
+        row?.auth_method === 'qr'
+        && row.expires_at
+        && new Date(row.expires_at).getTime() > Date.now()
+      ) {
+        logAuthEvent('qr_status_placeholder', { userId })
+        return { status: 'waiting' }
+      }
       logAuthEvent('qr_status_no_pending', { userId })
       throw new Error('NO_PENDING_QR')
     }
@@ -862,10 +881,51 @@ export class AuthService {
       if (current?.method === 'qr' && current.status === 'error') {
         throw new Error(current.error ?? 'QR login failed')
       }
-      if (current?.method !== 'qr' || current.status !== 'requires_password') {
-        break
+      // finalizeAuth temporarily removes the Map entry — keep waiting (and fall back to
+      // an active session) instead of treating that gap as a timeout/failure.
+      if (!current || current.method !== 'qr') {
+        const { data: sess } = await this.supabase
+          .from('telegram_sessions')
+          .select('id')
+          .eq('user_id', userId)
+          .eq('is_active', true)
+          .maybeSingle()
+        if (sess?.id) {
+          logAuthEvent('qr_password_success_via_session', {
+            userId,
+            correlationId,
+            sessionId: sess.id,
+            waitMs: Date.now() - tStart,
+          })
+          return { ok: true, session_id: String(sess.id) }
+        }
+        await sleep(200)
+        continue
+      }
+      if (
+        current.status === 'requires_password'
+        || current.status === 'waiting'
+        || current.status === 'success'
+      ) {
+        await sleep(200)
+        continue
       }
       await sleep(200)
+    }
+
+    const { data: sess } = await this.supabase
+      .from('telegram_sessions')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('is_active', true)
+      .maybeSingle()
+    if (sess?.id) {
+      logAuthEvent('qr_password_success_via_session_after_wait', {
+        userId,
+        correlationId,
+        sessionId: sess.id,
+      })
+      return { ok: true, session_id: String(sess.id) }
     }
     throw new Error('QR login timed out')
   }

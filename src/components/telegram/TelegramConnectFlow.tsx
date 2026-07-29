@@ -90,10 +90,10 @@ export function TelegramConnectFlow({
   const howItWorks = [ce.tgConnectHowItWorks1, ce.tgConnectHowItWorks2, ce.tgConnectHowItWorks3]
 
   useEffect(() => {
-    if (stage === 'qr' && !qrUrl && !loading) {
+    if (stage === 'qr' && !qrUrl && !loading && !error) {
       onStartQr()
     }
-  }, [stage, qrUrl, loading, onStartQr])
+  }, [stage, qrUrl, loading, error, onStartQr])
 
   const title =
     stage === 'method'
