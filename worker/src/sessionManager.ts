@@ -14,7 +14,7 @@ import {
   releaseSessionLease,
 } from './sessionLease'
 import { getMetricsSnapshot } from './workerMetrics'
-import { userBelongsToShard, workerConfig } from './workerConfig'
+import { leaseRoleLabel, userBelongsToShard, workerConfig } from './workerConfig'
 import { parallelMap } from './parallelPool'
 import type { TradeExecutor } from './tradeExecutor'
 import type { SignalRow } from './tradeExecutor/types'
@@ -25,6 +25,7 @@ import { isChannelFeedLiveForSubscriber } from './channelFeedGate'
 import { channelListenerPrimaryMode } from './channelListenerConfig'
 import { userMayRunCopierListener } from './subscriptionAccess'
 import { authKeyDupReconnectDelayMs, authKeyDupReconnectDelaysMs } from './authKeyDuplicatedRecovery'
+import { captureWorkerError, captureWorkerWarning } from './observability/sentry'
 
 /**
  * Race a promise against a timeout so a single wedged network call cannot
@@ -1228,6 +1229,16 @@ export class UserSessionManager {
               `[sessionManager] lease release failed during shutdown user=${userId}:`,
               err instanceof Error ? err.message : err,
             )
+            captureWorkerWarning(err instanceof Error ? err : new Error(String(err)), {
+              subsystem: 'worker',
+              operation: 'lease_release_failed',
+              errorCode: 'LEASE_RELEASE_FAILED',
+              fingerprint: ['worker', 'LEASE_RELEASE_FAILED', leaseRoleLabel()],
+              context: {
+                user_id: userId,
+                stage: 'shutdown',
+              },
+            })
           }
         }
       }),
@@ -1241,6 +1252,16 @@ export class UserSessionManager {
           `[sessionManager] listener disconnect failed during shutdown user=${userId}:`,
           result.reason instanceof Error ? result.reason.message : result.reason,
         )
+        captureWorkerError(result.reason instanceof Error ? result.reason : new Error(String(result.reason)), {
+          subsystem: 'worker',
+          operation: 'listener_disconnect_failed',
+          errorCode: 'LISTENER_DISCONNECT_FAILED',
+          fingerprint: ['worker', 'LISTENER_DISCONNECT_FAILED', leaseRoleLabel()],
+          context: {
+            user_id: userId,
+            stage: 'shutdown',
+          },
+        })
       }
     }
 
@@ -1258,6 +1279,18 @@ export class UserSessionManager {
         `[sessionManager] unresolved owned leases after shutdown count=${unresolvedLeases.length}`
         + ` users=${unresolvedLeases.map(l => l.user_id).join(',')}`,
       )
+      captureWorkerError(new Error('Unresolved owned listener leases after shutdown'), {
+        subsystem: 'worker',
+        operation: 'unresolved_listener_leases',
+        errorCode: 'UNRESOLVED_LISTENER_LEASES',
+        fingerprint: ['worker', 'UNRESOLVED_LISTENER_LEASES', leaseRoleLabel()],
+        context: {
+          stage: 'shutdown',
+          extra: {
+            unresolved_count: unresolvedLeases.length,
+          },
+        },
+      })
     }
   }
 
@@ -1266,6 +1299,17 @@ export class UserSessionManager {
       `[sessionManager] AUTH_KEY_DUPLICATED recovery exhausted user=${userId}`
       + ` reason=${reason} — invalidating session so UI can re-link`,
     )
+    captureWorkerError(new Error('AUTH_KEY_DUPLICATED recovery exhausted'), {
+      subsystem: 'telegram',
+      operation: 'auth_key_duplicated_exhausted',
+      errorCode: 'AUTH_KEY_DUPLICATED',
+      fingerprint: ['telegram', 'AUTH_KEY_DUPLICATED', 'exhausted'],
+      context: {
+        user_id: userId,
+        stage: 'auth_key_duplicated_recovery',
+        extra: { reason },
+      },
+    })
     void this.invalidateTelegramSession(userId).catch(err =>
       console.error(
         `[sessionManager] AUTH_KEY_DUPLICATED invalidation failed user=${userId}:`,

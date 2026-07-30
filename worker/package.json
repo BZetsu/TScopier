@@ -20,6 +20,7 @@
     "rebalance-open-baskets:dev": "ts-node -r dotenv/config src/diagnostics/rebalanceOpenBaskets.ts"
   },
   "dependencies": {
+    "@sentry/node": "^10.69.0",
     "@supabase/supabase-js": "^2.45.0",
     "@types/ws": "^8.18.1",
     "big-integer": "^1.6.52",
