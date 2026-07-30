@@ -2,6 +2,16 @@
 
 ## Changelog
 
+### 2026-07-29 — Added [httpServer] debug logging for Telegram auth + pushed all commits to dev/staging
+
+- **Context:** Uncommitted debug logging for Telegram auth endpoints (`send_code`, `verify_code`, `start_qr`, `qr_status`, `verify_qr_password`) was left from the July 23-24 auth debugging sessions. Added and committed after verifying no sensitive data is logged (phone numbers redacted, no passwords or secrets).
+- **Changes:**
+  - Added `console.log`/`console.warn` with `[httpServer]` prefix before and after each auth handler call, logging user_id and action outcome
+  - Redacted phone number from `send_code` log line
+- **Files:** `worker/src/httpServer.ts`
+- **Verification:** Reviewed full diff — no secrets exposed
+- **Follow-up:** None
+
 ### 2026-07-29 — Fixed channelTradingConfig healing loop: persisted healed configs to DB
 
 - **Context:** `healChannelTradingConfigsMap()` created default per-channel trading settings in memory for channels missing config, but never wrote them to the database. Every signal dispatch re-detected the missing config, re-healed, and logged the warning. For channel `daa27d5a-e17e-4025-904e-8da28a4e30f4` this repeated every ~60s forever.
