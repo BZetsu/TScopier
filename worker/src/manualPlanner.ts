@@ -8,6 +8,8 @@
 export type {
   ParsedSignal,
   ManualSettings,
+  LayeringMode,
+  LayeringPlanSnapshot,
   ChannelKeywords,
   PlannerContext,
   VirtualPendingLeg,
@@ -42,6 +44,25 @@ export { reverseSignalGateSatisfied } from './manualPlanning/manualStops'
 export { planSinglePartialTps } from './manualPlanning/partialTpSchedule'
 
 export { planRangeSplit } from './manualPlanning/rangeSplit'
+
+export {
+  DEFAULT_LAYERING_MODE,
+  DEFAULT_STATIC_LAYER_COUNT,
+  DEFAULT_DYNAMIC_STEP_PIPS,
+  DEFAULT_DYNAMIC_MAX_LAYERS,
+  MIN_LAYER_COUNT,
+  MAX_LAYER_COUNT,
+  resolveLayeringMode,
+  isLegacyLayeringMode,
+  isStaticLayeringMode,
+  isDynamicLayeringMode,
+  layeringModesExecutionEnabled,
+  normalizeLayeringModeSettings,
+  assertLayeringModeExecutionSupported,
+  parseLayeringPlanSnapshot,
+  serializeLayeringPlanSnapshot,
+  changeLayeringPlanMode,
+} from './manualPlanning/layeringModes'
 
 export { computeCwOverrideTp } from './manualPlanning/cwOverride'
 

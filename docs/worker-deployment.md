@@ -391,6 +391,44 @@ Look for `parse_ms` &gt; 100 (inline parse should stay &lt;30ms), `order_send_ms
 
 The worker monitor (`virtualPendingMonitor`, 1.5s) is the primary firer; **`range-pending-sweep`** (Supabase cron, ~60s) only picks up rows the worker missed for 45s+.
 
+### Layering modes foundation
+
+Manual settings now distinguish two independent concepts:
+
+| Setting | Meaning |
+|---------|---------|
+| `layering_mode` | Product algorithm: `legacy`, `static`, or `dynamic`. |
+| `range_layering_type` | Execution mechanism: virtual market fire (`auto`) or broker-native pending order (`pending_order`). |
+
+Phase A is foundation only. `layering_mode=legacy` preserves the current
+production behavior exactly: range percent reserves split legs, `range_step_pips`
+sets rung spacing, and `range_distance_pips` caps depth. Missing or invalid mode
+values normalize to `legacy`, so existing accounts and old pending baskets remain
+on their original behavior.
+
+Future `static` behavior will use a fixed total layer count, including the first
+entry. Future `dynamic` behavior will use the actual first broker fill as the
+anchor, a preferred pip step, and a maximum total layer count. Those calculators
+and execution writes are not implemented in Phase A.
+
+`range_pending_legs.layer_plan_id` and `range_pending_legs.layer_plan_metadata`
+are nullable plan-foundation fields for future immutable plans. Null values mean
+legacy. Future static/dynamic rows should store a complete snapshot so restart
+recovery does not depend on current account settings.
+
+This future integration flag is present for rollout planning, but Phase A still
+rejects `static`/`dynamic` execution because the calculators and immutable plan
+creation are not implemented yet:
+
+```env
+LAYERING_MODES_EXECUTION_ENABLED=false
+```
+
+Legacy range execution continues normally. Static/dynamic settings may round-trip
+through settings storage, but worker planning rejects range execution for those
+modes instead of silently falling through to legacy semantics. The warning only
+contains the normalized mode, not raw signal, account, or broker data.
+
 Guards (worker + edge sweep):
 
 - Do not fire a `step_idx` that already has a **`fired`** row for the same `(signal_id, broker_account_id, symbol)`.

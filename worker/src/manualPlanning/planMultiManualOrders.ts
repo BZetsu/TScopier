@@ -13,6 +13,7 @@ import { appendOrderCommentSuffix } from '../tradeComment'
 import type { PlanSingleManualOrdersArgs } from './planSingleManualOrders'
 import { planRangeSplit } from './rangeSplit'
 import { buildRangeLayerTriggerMap, rangeLayerTriggerForStep } from './rangeLayerTriggers'
+import { assertLayeringModeExecutionSupported, resolveLayeringMode } from './layeringModes'
 import { buildDistributedPerLegTakeProfits, buildEntryQualityTakeProfitMap } from './tpBucketDistribution'
 import { resolveMultiTradeTargetUnits, multiTradeUnitsToLot } from './multiTradeLegUnits'
 import { resolveRangeDistancePips } from './signalEntryRange'
@@ -110,6 +111,13 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
   const baseIsPendingSignal =
     orderBase.operation.includes('Limit') || orderBase.operation.includes('Stop')
   const pendingOrderMode = manual.range_layering_type === 'pending_order'
+  if (manual.range_trading === true) {
+    const support = assertLayeringModeExecutionSupported(manual)
+    if (!support.ok) {
+      console.warn(`[manualPlanner] unsupported layering mode blocked mode=${resolveLayeringMode(manual)}`)
+      return { orders: [], skip_reason: support.reason, delay_ms }
+    }
+  }
   const rangeDistance = resolveRangeDistancePips({ manual, parsed, pip, isBuy })
   const split = planRangeSplit({
     totalLegs,
@@ -130,10 +138,9 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
   const effectiveRangeLegs = split.activePendingLegs
   const maxStepIdx = split.maxStepIdx
   const stepPriceOffset = split.stepPriceOffset
-  let rangeFallbackReason = split.fallbackReason
+  const rangeFallbackReason = split.fallbackReason
   const rangeLegCount = pendingOrderMode ? reservedRangeLegs : effectiveRangeLegs
 
-  const totalLegsForTp = immediateLegs + (pendingOrderMode ? reservedRangeLegs : effectiveRangeLegs)
   const immediateTpPrices = buildDistributedPerLegTakeProfits({
     openLegCount: immediateLegs,
     finalTps,

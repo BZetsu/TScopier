@@ -121,6 +121,7 @@ import {
   getBrokerDisplayLabel,
 } from '../../lib/brokerChannelLink'
 import { DEFAULT_MANUAL_SETTINGS, DEFAULT_MANUAL_TP_LOTS } from '../../lib/defaultManualSettings'
+import { normalizeLayeringModeSettings } from '../../lib/layeringModes'
 import { computeSingleTpLotBreakdown } from '../../lib/singleTpLotBreakdown'
 import { marketingUrl } from '../../lib/site'
 import {
@@ -423,6 +424,10 @@ function normalizeManualSettings(
   const rangeLayeringType: ManualSettings['range_layering_type'] =
     rangeLayeringTypeRaw === 'pending_order' ? 'pending_order' : 'auto'
   const useSignalEntryRange = (j as Record<string, unknown>).use_signal_entry_range === true
+  const layeringModeSettings = normalizeLayeringModeSettings({
+    ...(j as Record<string, unknown>),
+    range_step_pips: rangeStepPips,
+  })
   const closeWorseEntries = (j as Record<string, unknown>).close_worse_entries === true
   const closeWorseEntriesPips = Math.max(0, readNumber('close_worse_entries_pips', DEFAULT_MANUAL_SETTINGS.close_worse_entries_pips ?? 30))
   const singleTpTargetRaw = String((j as Record<string, unknown>).single_tp_target ?? 'farthest').toLowerCase()
@@ -491,6 +496,7 @@ function normalizeManualSettings(
     range_step_pips: rangeStepPips,
     range_distance_pips: rangeDistancePips,
     range_layer_till_close: rangeLayerTillClose,
+    ...layeringModeSettings,
     range_layering_type: rangeLayeringType,
     use_signal_entry_range: useSignalEntryRange,
     close_worse_entries: closeWorseEntries,

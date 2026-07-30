@@ -1,4 +1,5 @@
 import { computeMultiTradeOrderCount } from './computeMultiTradeOrderCount'
+import { normalizeLayeringModeSettings } from './layeringModes'
 import { resolveManualLotForSettings } from './resolveManualLot'
 import type { ManualSettings, ManualTpLot } from './types'
 
@@ -102,6 +103,10 @@ export function normalizeManualSettingsForExecution(
   const rangePercent = Math.max(0, Math.min(100, readNumber('range_percent', 50)))
   const rangeStepPips = Math.max(0, readNumber('range_step_pips', 3))
   const rangeDistancePips = Math.max(0, readNumber('range_distance_pips', 30))
+  const layeringModeSettings = normalizeLayeringModeSettings({
+    ...j,
+    range_step_pips: rangeStepPips,
+  })
 
   const predefinedTpPips = Array.isArray(j.predefined_tp_pips)
     ? j.predefined_tp_pips.map(Number).filter(Number.isFinite)
@@ -123,6 +128,7 @@ export function normalizeManualSettingsForExecution(
     range_percent: rangePercent,
     range_step_pips: rangeStepPips,
     range_distance_pips: rangeDistancePips,
+    ...layeringModeSettings,
     tp_lots: tpFinal,
     single_tp_target: singleTpTarget,
     predefined_tp_pips: predefinedTpPips,
