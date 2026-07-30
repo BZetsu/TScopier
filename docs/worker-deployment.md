@@ -416,6 +416,17 @@ are nullable plan-foundation fields for future immutable plans. Null values mean
 legacy. Future static/dynamic rows should store a complete snapshot so restart
 recovery does not depend on current account settings.
 
+Phase A deployment order: either the code or the migration can be deployed first
+because the runtime does not explicitly query or write `layer_plan_id` or
+`layer_plan_metadata` yet. The migration is additive and nullable, requires no
+backfill, and old rows continue to resolve as legacy. Rolling back Phase A code
+does not require removing the nullable columns.
+
+Phase C execution integration will require this migration to be applied before
+Static/Dynamic execution is enabled. Keep `LAYERING_MODES_EXECUTION_ENABLED=false`
+until the required schema, calculators, immutable plan writes, and execution
+guards are deployed together.
+
 This future integration flag is present for rollout planning, but Phase A still
 rejects `static`/`dynamic` execution because the calculators and immutable plan
 creation are not implemented yet:

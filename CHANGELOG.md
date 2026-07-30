@@ -19,6 +19,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 ### Fixed
 
 - Preserved existing range-layering execution as explicit `legacy` behavior so existing accounts, pending baskets, and signals are not silently converted to future Static or Dynamic semantics.
+- Tightened Phase A layer-plan snapshot parsing so impossible persisted Static/Dynamic metadata fails closed instead of being silently repaired.
 - Removed hardcoded load/scale-test credentials from scripts and environment examples. The previously committed staging Supabase service-role key must still be rotated because Git history retains it.
 - Enforced load-test broker simulator mode with a no-send broker adapter, stricter worker health capability preflight, normalized production URL rejection, confined load-test artifacts, dry-run cleanup by default, exact-run cleanup markers, and aggregate-only Section 6 synthetic setup.
 - Increased Railway Telegram shutdown drain behavior to wait about 30 seconds, await all listener/auth disconnects, release owned session leases, and prevent reconnects from starting during shutdown.
