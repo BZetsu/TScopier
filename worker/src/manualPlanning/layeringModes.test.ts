@@ -12,6 +12,52 @@ import {
 } from './layeringModes'
 import { planManualOrders } from '../manualPlanner'
 
+const CREATED_AT = '2026-07-30T00:00:00.000Z'
+const LOCKED_AT = '2026-07-30T00:01:00.000Z'
+
+function validStaticSnapshot(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    mode: 'static',
+    planId: 'plan_static_001',
+    signalId: 'sig',
+    brokerAccountId: 'broker',
+    symbol: 'XAUUSD',
+    side: 'buy',
+    originalRangeLow: 3340,
+    originalRangeHigh: 3360,
+    anchorPrice: 3340,
+    anchorSource: 'signal',
+    configuredStaticLayerCount: 5,
+    plannedLayerCount: 5,
+    plannedTotalLot: 0.1,
+    createdAt: CREATED_AT,
+    lockedAt: null,
+    ...overrides,
+  }
+}
+
+function validDynamicSnapshot(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    mode: 'dynamic',
+    planId: 'plan_dynamic_001',
+    signalId: 'sig',
+    brokerAccountId: 'broker',
+    symbol: 'XAUUSD',
+    side: 'sell',
+    originalRangeLow: 3340,
+    originalRangeHigh: 3360,
+    anchorPrice: 3350,
+    anchorSource: 'fill',
+    configuredDynamicStepPips: 5,
+    configuredDynamicMaxLayers: 8,
+    plannedLayerCount: 6,
+    plannedTotalLot: 0.13,
+    createdAt: CREATED_AT,
+    lockedAt: null,
+    ...overrides,
+  }
+}
+
 test('layering mode helpers resolve expected modes', () => {
   assert.equal(isLegacyLayeringMode({}), true)
   assert.equal(isLegacyLayeringMode({ layering_mode: 'legacy' }), true)
@@ -108,72 +154,140 @@ test('planner blocks static/dynamic range execution when feature gate is off', (
 
 test('legacy row without plan metadata deserializes as legacy', () => {
   const plan = parseLayeringPlanSnapshot(null)
+  assert.ok(plan)
   assert.equal(plan.mode, 'legacy')
   assert.equal(plan.planId, 'legacy')
   assert.equal(plan.lockedAt, null)
 })
 
-test('static snapshot requires static count', () => {
-  assert.throws(() => parseLayeringPlanSnapshot({ mode: 'static', planId: 'p1' }), /static layer count/)
+test('valid legacy snapshot parses when explicitly persisted', () => {
   const plan = parseLayeringPlanSnapshot({
-    mode: 'static',
-    planId: 'p1',
-    configuredStaticLayerCount: 5,
-    plannedLayerCount: 5,
+    mode: 'legacy',
+    planId: 'legacy_001',
+    anchorSource: 'unknown',
+    createdAt: CREATED_AT,
+    lockedAt: null,
   })
+  assert.ok(plan)
+  assert.equal(plan.mode, 'legacy')
+})
+
+test('valid static snapshot parses with strict immutable fields', () => {
+  const plan = parseLayeringPlanSnapshot(validStaticSnapshot())
+  assert.ok(plan)
   assert.equal(plan.mode, 'static')
   assert.equal(plan.configuredStaticLayerCount, 5)
 })
 
-test('dynamic snapshot requires step and max count', () => {
-  assert.throws(() => parseLayeringPlanSnapshot({ mode: 'dynamic', planId: 'p1' }), /dynamic layering/)
-  const plan = parseLayeringPlanSnapshot({
-    mode: 'dynamic',
-    planId: 'p1',
-    configuredDynamicStepPips: 3,
-    configuredDynamicMaxLayers: 5,
-    plannedLayerCount: 4,
-  })
+test('valid dynamic snapshot parses with strict immutable fields', () => {
+  const plan = parseLayeringPlanSnapshot(validDynamicSnapshot())
+  assert.ok(plan)
   assert.equal(plan.mode, 'dynamic')
-  assert.equal(plan.configuredDynamicStepPips, 3)
+  assert.equal(plan.configuredDynamicStepPips, 5)
 })
 
 test('locked plan cannot change mode', () => {
-  const plan = parseLayeringPlanSnapshot({
-    mode: 'static',
-    planId: 'p1',
-    configuredStaticLayerCount: 5,
-    lockedAt: '2026-07-30T00:00:00.000Z',
-  })
+  const plan = parseLayeringPlanSnapshot(validStaticSnapshot({ lockedAt: LOCKED_AT }))
+  assert.ok(plan)
   assert.throws(() => changeLayeringPlanMode(plan, 'dynamic'), /cannot change/)
 })
 
 test('snapshot round-trip preserves independent configuration values', () => {
-  const plan = parseLayeringPlanSnapshot({
-    planId: 'plan-123',
-    mode: 'dynamic',
-    signalId: 'sig',
-    brokerAccountId: 'broker',
-    symbol: 'XAUUSD',
-    side: 'sell',
-    originalRangeLow: 3340,
-    originalRangeHigh: 3360,
-    anchorPrice: 3350,
-    anchorSource: 'fill',
-    configuredDynamicStepPips: 5,
-    configuredDynamicMaxLayers: 8,
-    plannedLayerCount: 6,
-    plannedTotalLot: 0.13,
-    createdAt: '2026-07-30T00:00:00.000Z',
-    lockedAt: null,
-  })
+  const plan = parseLayeringPlanSnapshot(validDynamicSnapshot())
+  assert.ok(plan)
   const roundTrip = parseLayeringPlanSnapshot(serializeLayeringPlanSnapshot(plan))
   assert.deepEqual(roundTrip, plan)
 })
 
-test('invalid anchor source and planned count fail safely', () => {
-  assert.equal(parseLayeringPlanSnapshot({ anchorSource: 'account' }).anchorSource, 'unknown')
-  assert.throws(() => parseLayeringPlanSnapshot({ plannedLayerCount: 99 }), /invalid planned/)
+test('snapshot anchor sources are exact and invalid values are rejected', () => {
+  assert.equal(parseLayeringPlanSnapshot(validStaticSnapshot({ anchorSource: 'account' })), null)
+  const plan = parseLayeringPlanSnapshot({
+    mode: 'legacy',
+    planId: 'legacy_002',
+    anchorSource: 'unknown',
+    createdAt: CREATED_AT,
+    lockedAt: null,
+  })
+  assert.ok(plan)
+  assert.equal(plan.anchorSource, 'unknown')
+})
+
+test('planned layer count must be an integer within bounds', () => {
+  assert.equal(parseLayeringPlanSnapshot(validStaticSnapshot({ plannedLayerCount: 1.5 })), null)
+  assert.equal(parseLayeringPlanSnapshot(validStaticSnapshot({ plannedLayerCount: 0 })), null)
+  assert.equal(parseLayeringPlanSnapshot(validStaticSnapshot({ plannedLayerCount: 21 })), null)
+})
+
+test('static count must be an integer within bounds', () => {
+  assert.equal(parseLayeringPlanSnapshot(validStaticSnapshot({ configuredStaticLayerCount: 1.5 })), null)
+  assert.equal(parseLayeringPlanSnapshot(validStaticSnapshot({ configuredStaticLayerCount: 0 })), null)
+  assert.equal(parseLayeringPlanSnapshot(validStaticSnapshot({ configuredStaticLayerCount: 21 })), null)
+})
+
+test('dynamic step must be a positive finite JSON number', () => {
+  assert.equal(parseLayeringPlanSnapshot(validDynamicSnapshot({ configuredDynamicStepPips: 0 })), null)
+  assert.equal(parseLayeringPlanSnapshot(validDynamicSnapshot({ configuredDynamicStepPips: -1 })), null)
+  assert.equal(parseLayeringPlanSnapshot(validDynamicSnapshot({ configuredDynamicStepPips: Number.NaN })), null)
+  assert.equal(parseLayeringPlanSnapshot(validDynamicSnapshot({ configuredDynamicStepPips: Number.POSITIVE_INFINITY })), null)
+  assert.equal(parseLayeringPlanSnapshot(validDynamicSnapshot({ configuredDynamicStepPips: '5' })), null)
+})
+
+test('dynamic max layers must be an integer within bounds', () => {
+  assert.equal(parseLayeringPlanSnapshot(validDynamicSnapshot({ configuredDynamicMaxLayers: 2.5 })), null)
+  assert.equal(parseLayeringPlanSnapshot(validDynamicSnapshot({ configuredDynamicMaxLayers: 0 })), null)
+  assert.equal(parseLayeringPlanSnapshot(validDynamicSnapshot({ configuredDynamicMaxLayers: 21 })), null)
+})
+
+test('planned total lot must be a non-negative finite JSON number', () => {
+  assert.equal(parseLayeringPlanSnapshot(validStaticSnapshot({ plannedTotalLot: -0.01 })), null)
+  assert.equal(parseLayeringPlanSnapshot(validStaticSnapshot({ plannedTotalLot: Number.NaN })), null)
+  assert.equal(parseLayeringPlanSnapshot(validStaticSnapshot({ plannedTotalLot: Number.POSITIVE_INFINITY })), null)
+  assert.equal(parseLayeringPlanSnapshot(validStaticSnapshot({ plannedTotalLot: '0.1' })), null)
+  assert.ok(parseLayeringPlanSnapshot(validStaticSnapshot({ plannedTotalLot: 0 })))
+})
+
+test('plan id format is bounded and path-safe', () => {
+  assert.equal(parseLayeringPlanSnapshot(validStaticSnapshot({ planId: 'bad id' })), null)
+  assert.equal(parseLayeringPlanSnapshot(validStaticSnapshot({ planId: 'short' })), null)
+  assert.equal(parseLayeringPlanSnapshot(validStaticSnapshot({ planId: 'x'.repeat(129) })), null)
+  assert.equal(parseLayeringPlanSnapshot(validStaticSnapshot({ planId: ' plan_static_001' })), null)
+  assert.equal(parseLayeringPlanSnapshot(validStaticSnapshot({ planId: 'plan/static/001' })), null)
+  assert.ok(parseLayeringPlanSnapshot(validStaticSnapshot({ planId: 'plan-static_001' })))
+})
+
+test('timestamps and lock order are strict', () => {
+  assert.equal(parseLayeringPlanSnapshot(validStaticSnapshot({ createdAt: 'today' })), null)
+  assert.equal(parseLayeringPlanSnapshot(validStaticSnapshot({ lockedAt: 'later' })), null)
+  assert.equal(parseLayeringPlanSnapshot(validStaticSnapshot({
+    createdAt: LOCKED_AT,
+    lockedAt: CREATED_AT,
+  })), null)
+})
+
+test('malformed non-null metadata does not become legacy', () => {
+  assert.equal(parseLayeringPlanSnapshot({ anchorSource: 'unknown', createdAt: CREATED_AT }), null)
+  assert.equal(parseLayeringPlanSnapshot({ mode: 'bogus', anchorSource: 'unknown', createdAt: CREATED_AT }), null)
+})
+
+test('parser never throws on arbitrary input', () => {
+  const throwing = new Proxy({}, {
+    get() {
+      throw new Error('boom')
+    },
+  })
+  const values: unknown[] = [
+    undefined,
+    1,
+    'text',
+    [],
+    throwing,
+    validStaticSnapshot({ originalRangeLow: Number.NaN }),
+    validStaticSnapshot({ originalRangeLow: 3360, originalRangeHigh: 3340 }),
+    validDynamicSnapshot({ anchorPrice: null }),
+  ]
+  for (const value of values) {
+    assert.doesNotThrow(() => parseLayeringPlanSnapshot(value))
+  }
 })
 
 test('migration is additive and leaves old rows nullable legacy', () => {
