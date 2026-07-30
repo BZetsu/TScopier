@@ -9,6 +9,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 ### Added
 
 - Added fail-closed load-harness safety guards, deterministic synthetic signal generation, worker safety preflight, emergency stop support, cleanup helpers, and JSON run reporting.
+- Added disabled-by-default, worker-only Sentry monitoring with all SDK default integrations disabled, defensive redaction, role/shard tags, bounded shutdown flushing, and targeted sanitized-helper capture for final Telegram, queue, broker, persistence, range-layer, reconciliation, and lifecycle failures.
 - Added production-safe correlation and structured observability events across Telegram receipt, parsing, queue handoff, execution claiming, broker dispatch, and completion.
 - Added cumulative histogram-compatible worker metrics for pipeline stage durations and event throughput.
 - Added safe duration and redaction helpers for execution-pipeline observability.

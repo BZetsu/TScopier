@@ -50,6 +50,7 @@ import {
   stepPriceOffsetForBasket,
 } from './layerConcurrentFire'
 import { incMetric } from './workerMetrics'
+import { captureWorkerError, captureWorkerWarning } from './observability/sentry'
 
 /**
  * Worker-side monitor that turns persisted "virtual range pendings" into
@@ -834,6 +835,20 @@ export class VirtualPendingMonitor {
         `[virtualPendingMonitor] enqueue reconcile failed leg=${leg.id}:`
         + ` ${err instanceof Error ? err.message : String(err)}`,
       )
+      captureWorkerWarning(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: 'range',
+        operation: 'basket_reconcile_enqueue_failed',
+        errorCode: 'BASKET_RECONCILE_ENQUEUE_FAILED',
+        fingerprint: ['range', 'BASKET_RECONCILE_ENQUEUE_FAILED', 'range_fill_follow_up'],
+        context: {
+          user_id: leg.user_id,
+          signal_id: leg.signal_id,
+          broker_account_id: leg.broker_account_id,
+          pending_leg_id: leg.id,
+          basket_id: `${leg.signal_id}:${leg.broker_account_id}`,
+          stage: 'range_reconcile_enqueue',
+        },
+      })
     }
   }
 
@@ -1185,6 +1200,25 @@ export class VirtualPendingMonitor {
         // Surface it as an orphan so ops/reconcile can reconcile it from the
         // broker (reconcile-by-anchor cannot see a leg missing from `trades`).
         console.warn(`[virtualPendingMonitor] trades insert failed leg=${leg.id}: ${insErr.message}`)
+        captureWorkerError(insErr, {
+          subsystem: 'range',
+          operation: 'range_broker_success_trade_persist_failed',
+          errorCode: 'BROKER_SUCCESS_DB_FAILURE',
+          fingerprint: ['range', 'BROKER_SUCCESS_DB_FAILURE', 'range_leg_trade_insert'],
+          context: {
+            user_id: leg.user_id,
+            signal_id: leg.signal_id,
+            broker_account_id: leg.broker_account_id,
+            pending_leg_id: leg.id,
+            basket_id: `${leg.signal_id}:${leg.broker_account_id}`,
+            stage: 'range_post_broker_success_persistence',
+            extra: {
+              symbol: leg.symbol,
+              step_idx: leg.step_idx,
+              broker_ticket_present: result.ticket != null,
+            },
+          },
+        })
         try {
           await this.supabase.from('trade_execution_logs').insert({
             user_id: leg.user_id,
@@ -1360,6 +1394,21 @@ export class VirtualPendingMonitor {
         status: 'failed',
         request_payload: { leg_id: leg.id, step_idx: leg.step_idx, claimed_by: this.hostId } as unknown as Record<string, unknown>,
         error_message: msg,
+      })
+      captureWorkerError(err instanceof Error ? err : new Error(msg), {
+        subsystem: 'range',
+        operation: 'range_leg_fire_failed',
+        errorCode: 'RANGE_LEG_FIRE_FAILED',
+        fingerprint: ['range', 'RANGE_LEG_FIRE_FAILED', 'final'],
+        context: {
+          user_id: leg.user_id,
+          signal_id: leg.signal_id,
+          broker_account_id: leg.broker_account_id,
+          pending_leg_id: leg.id,
+          basket_id: `${leg.signal_id}:${leg.broker_account_id}`,
+          stage: 'range_leg_fire',
+          extra: { symbol: leg.symbol, step_idx: leg.step_idx },
+        },
       })
       incMetric('range_layer_execution_failed')
       logLayerLatency('range_layer_execution_failed', layerLatencyPayload(timestamps, {

@@ -7,6 +7,7 @@ import { dispatchPriorityForAction, isManagementAction, parsedAction } from './t
 import type { PipelineTimestamps } from './pipelineTimestamps'
 import { deployedTradeShardCount, redisQueueConfigured, signalQueueConfig } from './queue/signalQueueConfig'
 import { shardForUserId } from './workerConfig'
+import { captureWorkerWarning } from './observability/sentry'
 
 export type TradeSignalPushPayload = {
   id: string
@@ -99,6 +100,26 @@ function logPushFailed(
   reason: string,
   attempt: number,
 ): void {
+  captureWorkerWarning('trade worker dispatch push failed after retries', {
+    subsystem: 'queue',
+    operation: 'trade_worker_push_failed',
+    errorCode: 'TRADE_WORKER_PUSH_FAILED',
+    fingerprint: ['queue', 'TRADE_WORKER_PUSH_FAILED', action],
+    context: {
+      user_id: row.user_id,
+      signal_id: row.id,
+      channel_id: row.channel_id,
+      dispatch_source: row.dispatch_source ?? 'listener_push',
+      retry_attempt: attempt,
+    },
+    extra: {
+      action,
+      attempt,
+      max_attempts: PUSH_MAX_ATTEMPTS,
+      reason,
+      target: baseUrl,
+    },
+  })
   console.warn(
     JSON.stringify({
       event: 'push_failed',
