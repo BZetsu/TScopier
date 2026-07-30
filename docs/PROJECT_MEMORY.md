@@ -2,6 +2,18 @@
 
 ## Changelog
 
+### 2026-07-30 — Added search button + sort dropdown to PopularChannelsPage; fixed lint issues
+
+- **Context:** Search icon was decorative (`pointer-events-none`) and didn't trigger search. Sort filters were inline buttons that didn't work well on mobile. Three pre-existing lint errors blocked clean CI.
+- **Changes:**
+  - Search icon is now a clickable button — triggers filter on click or Enter key
+  - Added clear (X) button when search is active
+  - Replaced inline sort filter buttons with a styled Select dropdown
+  - Fixed 3 pre-existing lint errors: removed dead `channelsRef`, reordered `loadChannels` before `useEffect`, changed `let` to `const`
+- **Files:** `src/pages/dashboard/PopularChannelsPage.tsx`
+- **Verification:** Lint clean, all 265 tests pass
+- **Follow-up:** None
+
 ### 2026-07-30 — Fixed "No activity recorded" for channels with signals but null last_live_at
 
 - **Context:** `PopularChannelsPage` showed "No activity recorded" for channels where `signal_channels.last_live_at` was null, even though the channels had generated signals (visible in `channel_signals` table) and had executed trades. The `channelStatus()` function only checked `last_live_at` — if null, it immediately returned "No activity recorded" with no fallback.
