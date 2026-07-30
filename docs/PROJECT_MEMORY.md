@@ -2,6 +2,18 @@
 
 ## Changelog
 
+### 2026-07-30 — Fixed PopularChannelsPage search (controlled input + live filtering) and sort filter icon
+
+- **Context:** Search input used `defaultValue` (uncontrolled) so filtering only triggered on Enter/click — users expected live filtering as they typed. Sort dropdown had no visual indicator it was a filter, looked like a plain button.
+- **Changes:**
+  - Made search input controlled: `value={searchQuery}` + `onChange` for real-time filtering
+  - Removed unnecessary `inputRef` and search button click handler
+  - Added `ListFilter` icon inside the sort dropdown with left padding
+  - Added `ChevronDown` arrow on right of sort dropdown for visual affordance
+- **Files:** `src/pages/dashboard/PopularChannelsPage.tsx`
+- **Verification:** `tsc -b && vite build` clean
+- **Follow-up:** None
+
 ### 2026-07-30 — Added search text highlighting in PopularChannelsPage results
 
 - **Context:** When searching channels, matched text in `display_name` and `channel_username` wasn't highlighted, making it hard to see why a result matched.

@@ -4,8 +4,7 @@ import { useT } from '../../context/LocaleContext'
 import { PageHeader } from '../../components/layout/PageHeader'
 import { PageShell } from '../../components/layout/PageShell'
 import { Card } from '../../components/ui/Card'
-import { Select } from '../../components/ui/Select'
-import { Radio, Flame, ChevronDown, ChevronUp, Search, X, Copy, Check } from 'lucide-react'
+import { Radio, Flame, ChevronDown, ChevronUp, Search, X, Copy, Check, ListFilter } from 'lucide-react'
 import type { SignalChannel } from '../../types/database'
 
 const ONE_HOUR_MS = 60 * 60 * 1000
@@ -90,7 +89,6 @@ export function PopularChannelsPage() {
   const p = t.popularChannelsPage
   const [channels, setChannels] = useState<SignalChannel[]>([])
   const [loading, setLoading] = useState(true)
-  const inputRef = useRef<HTMLInputElement>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [sort, setSort] = useState<SortKey>('subscribers')
   const [expandedId, setExpandedId] = useState<string | null>(null)
@@ -183,42 +181,36 @@ export function PopularChannelsPage() {
 
       <div className="flex items-center gap-3">
         <div className="relative flex-1 max-w-xs">
-          <button
-            type="button"
-            onClick={() => setSearchQuery(inputRef.current?.value ?? '')}
-            className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 transition-colors"
-          >
-            <Search className="w-4 h-4" />
-          </button>
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-400 pointer-events-none" />
           <input
-            ref={inputRef}
             type="text"
-            defaultValue={searchQuery}
-            onKeyDown={e => {
-              if (e.key === 'Enter') setSearchQuery(inputRef.current?.value ?? '')
-            }}
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
             placeholder="Search channels..."
             className="w-full pl-9 pr-8 py-2 text-sm rounded-lg border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
           />
           {searchQuery && (
             <button
               type="button"
-              onClick={() => {
-                if (inputRef.current) inputRef.current.value = ''
-                setSearchQuery('')
-              }}
+              onClick={() => setSearchQuery('')}
               className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 transition-colors"
             >
               <X className="w-4 h-4" />
             </button>
           )}
         </div>
-        <div className="w-44">
-          <Select
+        <div className="relative w-44">
+          <ListFilter className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-400 pointer-events-none" />
+          <select
             value={sort}
             onChange={e => setSort(e.target.value as SortKey)}
-            options={sortOptions.map(o => ({ value: o.key, label: o.label }))}
-          />
+            className="w-full pl-9 pr-8 py-2 text-sm rounded-lg border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 appearance-none focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent hover:border-neutral-300 dark:hover:border-neutral-600 transition-colors"
+          >
+            {sortOptions.map(o => (
+              <option key={o.key} value={o.key}>{o.label}</option>
+            ))}
+          </select>
+          <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-400 pointer-events-none" />
         </div>
       </div>
 
