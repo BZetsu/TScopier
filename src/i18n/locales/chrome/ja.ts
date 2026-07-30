@@ -5,6 +5,7 @@ export const chromeJa: AppChromeTranslations = {
     sections: {
       general: '全般',
       signals: 'シグナル',
+      discover: '発見',
       tradingTools: '取引ツール',
       feedback: 'フィードバック',
       growth: '成長・収益化',

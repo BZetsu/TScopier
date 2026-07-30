@@ -5,6 +5,7 @@ export const chromeSv: AppChromeTranslations = {
     sections: {
       general: 'ALLMÄNT',
       signals: 'SIGNALER',
+      discover: 'UPPTÄCK',
       tradingTools: 'HANDELSVERKTYG',
       feedback: 'FEEDBACK',
       growth: 'TILLVÄXT OCH INTÄKTER',

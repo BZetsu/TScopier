@@ -118,12 +118,17 @@ export function AppLayout() {
         label: t.nav.sections.signals,
         items: [
           { to: '/channels', label: t.nav.items.channels },
-          { to: '/popular-channels', label: t.nav.items.popularChannels },
           { to: '/backtest', label: t.nav.items.backtest },
           { to: '/activities', label: t.nav.items.management },
           { to: '/copier-logs', label: t.nav.items.copierLogs },
           { to: '/manage-signals', label: t.nav.items.signalHistory },
           { to: '/performance', label: t.nav.items.performance },
+        ],
+      },
+      {
+        label: t.nav.sections.discover,
+        items: [
+          { to: '/popular-channels', label: t.nav.items.popularChannels },
         ],
       },
       {

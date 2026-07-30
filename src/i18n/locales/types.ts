@@ -20,6 +20,7 @@ export interface NavTranslations {
   sections: {
     general: string
     signals: string
+    discover: string
     tradingTools: string
     feedback: string
     growth: string

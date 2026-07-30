@@ -5,6 +5,7 @@ export const chromeRu: AppChromeTranslations = {
     sections: {
       general: 'ОБЩЕЕ',
       signals: 'СИГНАЛЫ',
+      discover: 'ОТКРЫТЬ',
       tradingTools: 'ТОРГОВЫЕ ИНСТРУМЕНТЫ',
       feedback: 'ОБРАТНАЯ СВЯЗЬ',
       growth: 'РОСТ И МОНЕТИЗАЦИЯ',

@@ -24,6 +24,7 @@ export const en: Translations = {
     sections: {
       general: 'GENERAL',
       signals: 'SIGNALS',
+      discover: 'DISCOVER',
       tradingTools: 'TRADING TOOLS',
       feedback: 'FEEDBACK',
       growth: 'GROWTH & MONETIZATION',

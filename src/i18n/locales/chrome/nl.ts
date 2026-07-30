@@ -5,6 +5,7 @@ export const chromeNl: AppChromeTranslations = {
     sections: {
       general: 'ALGEMEEN',
       signals: 'SIGNALEN',
+      discover: 'ONTDEK',
       tradingTools: 'HANDELSTOOLS',
       feedback: 'FEEDBACK',
       growth: 'GROEI & MONETISATIE',
