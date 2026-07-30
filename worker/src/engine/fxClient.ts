@@ -29,6 +29,7 @@ import {
   TSCOPIER_MAGIC,
 } from './fxContract'
 import { auditOrderClose } from '../orderCloseAudit'
+import { isBrokerSimulatorEnforced } from '../brokerExecutionMode'
 
 export type MtPlatform = 'MT4' | 'MT5'
 
@@ -123,8 +124,18 @@ let sharedClient: FxClient | null = null
 
 /** Process-wide FxClient (one per-terminal gate, one transport). */
 export function getFxClient(): FxClient {
-  if (!sharedClient) sharedClient = new FxClient()
+  if (!sharedClient) {
+    sharedClient = isBrokerSimulatorEnforced()
+      ? new FxClient({ apiKey: 'simulator-no-live-key', transport: simulatorTransport })
+      : new FxClient()
+  }
   return sharedClient
+}
+
+export function resetFxClientForTests(): void {
+  sharedClient = null
+  simOrders.clear()
+  simTicket = 990000
 }
 
 /** Map a broker_accounts.platform value to the bridge segment. */
@@ -434,4 +445,81 @@ function normSym(s: string): string {
 
 function sleep(ms: number): Promise<void> {
   return new Promise(r => setTimeout(r, ms))
+}
+
+let simTicket = 990000
+const simOrders = new Map<string, FxOpenOrder[]>()
+
+const simulatorTransport: FxTransport = async req => {
+  const url = new URL(req.url)
+  const parts = url.pathname.split('/').filter(Boolean)
+  const accountId = parts[1] ?? 'sim-account'
+  const endpoint = parts[2] ?? ''
+  const body = req.body ? JSON.parse(req.body) as Record<string, unknown> : {}
+  if (endpoint === 'OpenedOrders') {
+    return { status: 200, body: simOrders.get(accountId) ?? [] }
+  }
+  if (endpoint === 'getQuote') {
+    const symbol = url.searchParams.get('symbol') ?? 'XAUUSD'
+    return { status: 200, body: symbol.toUpperCase() === 'XAUUSD' ? { bid: 2400, ask: 2400.2 } : { bid: 1.1, ask: 1.1002 } }
+  }
+  if (endpoint === 'OrderSend') {
+    const ticket = simTicket++
+    const symbol = String(body.symbol ?? 'XAUUSD')
+    const operation = String(body.operation ?? 'Buy')
+    const volume = Number(body.volume ?? 0.01)
+    const price = Number(body.price ?? (/sell/i.test(operation) ? 2400 : 2400.2))
+    const order: FxOpenOrder = {
+      ticket,
+      symbol,
+      operation,
+      isBuy: /buy/i.test(operation),
+      volume,
+      openPrice: price,
+      stopLoss: Number(body.stopLoss ?? 0) || null,
+      takeProfit: Number(body.takeProfit ?? 0) || null,
+      comment: String(body.comment ?? 'load_test_simulated'),
+      magic: Number(body.expertId ?? TSCOPIER_MAGIC),
+      isPending: /limit|stop/i.test(operation),
+    }
+    const list = simOrders.get(accountId) ?? []
+    list.push(order)
+    simOrders.set(accountId, list)
+    return {
+      status: 200,
+      body: {
+        success: true,
+        retcode: MT5_RETCODE.DONE,
+        order: ticket,
+        deal: ticket,
+        volume,
+        price,
+        comment: order.comment,
+        retcodeDescription: 'simulated load-test order',
+      },
+    }
+  }
+  if (endpoint === 'OrderModify') {
+    const ticket = Number(body.ticket)
+    const list = simOrders.get(accountId) ?? []
+    const order = list.find(o => o.ticket === ticket)
+    if (order) {
+      order.stopLoss = Number(body.stopLoss ?? order.stopLoss ?? 0) || null
+      order.takeProfit = Number(body.takeProfit ?? order.takeProfit ?? 0) || null
+    }
+    return {
+      status: 200,
+      body: { success: true, retcode: MT5_RETCODE.DONE, order: ticket, retcodeDescription: 'simulated modify' },
+    }
+  }
+  if (endpoint === 'OrderClose') {
+    const ticket = Number(body.ticket)
+    const list = simOrders.get(accountId) ?? []
+    simOrders.set(accountId, list.filter(o => o.ticket !== ticket))
+    return {
+      status: 200,
+      body: { success: true, retcode: MT5_RETCODE.DONE, order: ticket, retcodeDescription: 'simulated close' },
+    }
+  }
+  return { status: 404, body: { message: `simulator endpoint not implemented: ${endpoint}` } }
 }

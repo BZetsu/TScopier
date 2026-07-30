@@ -6,6 +6,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { TradeExecutor, SignalRow } from '../tradeExecutor'
 import { workerConfig } from '../workerConfig'
 import { incMetric } from '../workerMetrics'
+import { addWorkerBreadcrumb, captureWorkerWarning } from '../observability/sentry'
 import {
   buildPipelineCorrelation,
   emitPipelineEvent,
@@ -55,6 +56,8 @@ export class SignalQueueConsumer {
   private lastReadAt: number | null = null
   private lastAckAt: number | null = null
   private lastError: string | null = null
+  private readErrorStreak = 0
+  private reclaimErrorStreak = 0
 
   constructor(
     private readonly supabase: SupabaseClient,
@@ -137,6 +140,7 @@ export class SignalQueueConsumer {
           blockMs,
         )
         this.lastReadAt = Date.now()
+        this.readErrorStreak = 0
         if (messages.length === 0) continue
         await mapConcurrent(
           messages,
@@ -145,8 +149,23 @@ export class SignalQueueConsumer {
         )
       } catch (err) {
         this.lastError = err instanceof Error ? err.message : String(err)
+        this.readErrorStreak += 1
         incMetric('queue_consumer_read_errors')
         console.warn(`[signalQueue] read error lane=${this.lane}: ${this.lastError}`)
+        if (this.readErrorStreak === 3 || this.readErrorStreak % 10 === 0) {
+          captureWorkerWarning(err instanceof Error ? err : new Error(this.lastError), {
+            subsystem: 'queue',
+            operation: 'consumer_read_repeated_failure',
+            errorCode: 'QUEUE_READ_FAILURE',
+            fingerprint: ['queue', 'QUEUE_READ_FAILURE', this.lane],
+            context: {
+              stage: 'queue_read',
+              dispatch_source: 'queue',
+              retry_attempt: this.readErrorStreak,
+              extra: { lane: this.lane, stream_key: streamKey },
+            },
+          })
+        }
         await sleep(Math.min(5_000, blockMs))
       }
     }
@@ -172,6 +191,7 @@ export class SignalQueueConsumer {
           cfg.readCount,
         )
         this.reclaimCursor = nextStart
+        this.reclaimErrorStreak = 0
         if (messages.length === 0) continue
         incMetric('queue_reclaimed', messages.length)
         await mapConcurrent(
@@ -181,8 +201,23 @@ export class SignalQueueConsumer {
         )
       } catch (err) {
         this.lastError = err instanceof Error ? err.message : String(err)
+        this.reclaimErrorStreak += 1
         incMetric('queue_consumer_reclaim_errors')
         console.warn(`[signalQueue] reclaim error lane=${this.lane}: ${this.lastError}`)
+        if (this.reclaimErrorStreak === 3 || this.reclaimErrorStreak % 10 === 0) {
+          captureWorkerWarning(err instanceof Error ? err : new Error(this.lastError), {
+            subsystem: 'queue',
+            operation: 'consumer_reclaim_repeated_failure',
+            errorCode: 'QUEUE_RECLAIM_FAILURE',
+            fingerprint: ['queue', 'QUEUE_RECLAIM_FAILURE', this.lane],
+            context: {
+              stage: 'queue_reclaim',
+              dispatch_source: 'queue',
+              retry_attempt: this.reclaimErrorStreak,
+              extra: { lane: this.lane, stream_key: streamKey },
+            },
+          })
+        }
       }
     }
   }
@@ -196,6 +231,17 @@ export class SignalQueueConsumer {
     const job = parseQueueJobFields(msg.fields)
     if (!job) {
       incMetric('queue_malformed')
+      captureWorkerWarning('Malformed signal queue payload acknowledged', {
+        subsystem: 'queue',
+        operation: 'malformed_payload',
+        errorCode: 'QUEUE_MALFORMED_PAYLOAD',
+        fingerprint: ['queue', 'QUEUE_MALFORMED_PAYLOAD', this.lane],
+        context: {
+          stage: 'queue_parse',
+          queue_message_id: msg.id,
+          extra: { lane: this.lane, stream_key: streamKey },
+        },
+      })
       await xack(streamKey, group, msg.id)
       return
     }
@@ -229,8 +275,14 @@ export class SignalQueueConsumer {
       user_id: job.user_id,
       lane: job.lane,
     })
-    if (!claimed) {
-      incMetric('queue_duplicate_skip')
+      if (!claimed) {
+        incMetric('queue_duplicate_skip')
+      addWorkerBreadcrumb({
+        category: 'queue',
+        message: 'duplicate queue message skipped',
+        level: 'info',
+        data: { lane: job.lane, attempts },
+      })
       emitPipelineEvent({
         event: 'execution_duplicate_prevented',
         correlation,
@@ -297,6 +349,21 @@ export class SignalQueueConsumer {
 
       if (!shouldRetryAfterFailure(attempts)) {
         incMetric('queue_dlq')
+        captureWorkerWarning(new Error(reason), {
+          subsystem: 'queue',
+          operation: 'dead_letter',
+          errorCode: 'QUEUE_DEAD_LETTER',
+          fingerprint: ['queue', 'QUEUE_DEAD_LETTER', job.lane],
+          context: {
+            user_id: job.user_id,
+            signal_id: job.signal_id,
+            queue_message_id: msg.id,
+            dispatch_source: 'queue',
+            stage: 'queue_dead_letter',
+            retry_attempt: attempts,
+            extra: { lane: job.lane, shard_id: job.shard_id },
+          },
+        })
         await persistDeadLetter(this.supabase, {
           stream_key: streamKey,
           message_id: msg.id,

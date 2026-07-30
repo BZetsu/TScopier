@@ -1,306 +1,294 @@
-// section6-scale-test.js
-// Idempotent — safe to re-run. Detects existing auth users and updates in place.
-//
-// Usage: SUPABASE_SERVICE_ROLE_KEY=<prod_key> node scripts/section6-scale-test.js
-//
-// What it does:
-// 1. Read-only export from production (telegram_sessions, telegram_channels, user_profiles)
-// 2. Anonymize PII, generate synthetic staging users
-// 3. Create auth users in staging (or detect existing ones by email)
-// 4. Upsert user_profiles, telegram_sessions (blank session_string), telegram_channels
-// 5. Summary
-//
-// Safety: NEVER exports session_string or phone_number from production.
-//          PII in user_profiles is blanked before reaching staging.
+#!/usr/bin/env node
+/**
+ * Section 6 database/session-manager scale setup.
+ *
+ * This creates blank synthetic Telegram session rows in an isolated target
+ * Supabase project. Blank sessions exercise database/session-manager scale and
+ * invalid-session handling only; they do not simulate real Telegram connectivity.
+ */
 
-const PROD_URL = 'https://sso.tscopier.ai'
-const STAGING_URL = 'https://axdcledcyhyvzrnfkwat.supabase.co'
+import { createHash, randomUUID } from 'node:crypto'
+import { writeFile } from 'node:fs/promises'
+import { resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import {
+  safeRunIdFragment,
+  makeSeededRng,
+  readLimitedText,
+  sanitizeError,
+  safeArtifactPath,
+  syntheticTimestamp,
+  validateSection6Config,
+} from './load/load-safety.mjs'
+import {
+  authHeaders,
+  cleanupSection6Run,
+  fetchJson,
+} from './load/load-cleanup.mjs'
 
-function env(key) {
-  const v = process.env[key]
-  if (!v) throw new Error(`Missing required env: ${key}`)
-  return v
+function deterministicUuid(parts) {
+  const hex = createHash('sha256').update(parts.join(':')).digest('hex').slice(0, 32)
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`
 }
 
-async function fetchJson(url, opts) {
-  const res = await fetch(url, {
-    ...opts,
-    headers: {
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
-      'apikey': opts.headers?.['apikey'] || '',
-      ...opts.headers,
-    },
-  })
-  const text = await res.text().catch(() => '')
-  if (!res.ok) {
-    throw new Error(`HTTP ${res.status} from ${url.split('?')[0]}: ${text.slice(0, 200)}`)
-  }
-  if (!text) return null
-  return JSON.parse(text)
+function apiBase(url) {
+  return String(url).replace(/\/$/, '')
 }
 
-// ── Step 1: Export from production (read-only) ──
-
-async function exportProduction(prodKey) {
-  console.log('[1/5] Exporting production data...')
-  const h = { apikey: prodKey, Authorization: `Bearer ${prodKey}` }
-
-  const sessions = await fetchJson(
-    `${PROD_URL}/rest/v1/telegram_sessions?select=id,user_id,is_active&is_active=eq.true`,
-    { headers: h },
-  )
-  console.log(`  → ${sessions.length} active sessions`)
-
-  const userIds = [...new Set(sessions.map(s => s.user_id))]
-  console.log(`  → ${userIds.length} unique users`)
-
-  const channels = await fetchJson(
-    `${PROD_URL}/rest/v1/telegram_channels?is_active=eq.true&select=*`,
-    { headers: h },
-  )
-  console.log(`  → ${channels.length} active channels`)
-
-  const profiles = await fetchJson(
-    `${PROD_URL}/rest/v1/user_profiles?select=*`,
-    { headers: h },
-  )
-  const profileMap = new Map(profiles.map(p => [p.user_id, p]))
-  console.log(`  → ${profiles.length} user profiles`)
-
-  return { sessions, channels, profileMap, userIds }
-}
-
-// ── Step 2: Build staging user list (before we know actual auth IDs) ──
-
-function buildStagingUsers(prodUserIds, profileMap) {
-  console.log('[2/5] Building staging user list...')
-  const desired = [] // { desiredId, email, profile, prodUserId }
-  const prodToDesired = new Map() // prod user_id → desiredId
-
-  for (const prodId of prodUserIds) {
-    const desiredId = crypto.randomUUID()
-    prodToDesired.set(prodId, desiredId)
-    desired.push({
-      desiredId,
-      email: `staging-user-${desiredId.slice(0, 8)}@tscopier-scale-test.local`,
-      profile: profileMap.get(prodId) || null,
-      prodUserId: prodId,
-    })
-  }
-  return { desired, prodToDesired }
-}
-
-// ── Step 3: Resolve auth users — fetch existing, create missing ──
-
-async function resolveAuthUsers(stagingKey, desired) {
-  console.log('[3/5] Resolving auth users...')
-
-  // Fetch existing synthetic users
-  const existing = await fetchJson(
-    `${STAGING_URL}/auth/v1/admin/users`,
-    { headers: { apikey: stagingKey, Authorization: `Bearer ${stagingKey}` } },
-  )
-  const usersList = (existing?.users || [])
-  const emailToId = new Map()
-  for (const u of usersList) {
-    if (u.email && u.email.includes('staging-user-')) {
-      emailToId.set(u.email, u.id)
-    }
-  }
-  console.log(`  → ${emailToId.size} existing synthetic users found`)
-
-  // Create missing users in batches
-  const emailToActualId = new Map(emailToId)
-  const toCreate = desired.filter(u => !emailToActualId.has(u.email))
-  console.log(`  → ${toCreate.length} new users to create`)
-
-  const batchSize = 10
-  for (let i = 0; i < toCreate.length; i += batchSize) {
-    const batch = toCreate.slice(i, i + batchSize)
-    const results = await Promise.allSettled(
-      batch.map(u =>
-        fetchJson(`${STAGING_URL}/auth/v1/admin/users`, {
-          method: 'POST',
-          headers: { apikey: stagingKey, Authorization: `Bearer ${stagingKey}` },
-          body: JSON.stringify({
-            id: u.desiredId,
-            email: u.email,
-            password: crypto.randomUUID() + 'Aa1!',
-            email_confirm: true,
-            user_metadata: { synthetic: true },
-          }),
-        }).then(() => u.desiredId)
-      ),
-    )
-    for (let j = 0; j < results.length; j++) {
-      const r = results[j]
-      if (r.status === 'fulfilled') {
-        emailToActualId.set(batch[j].email, r.value)
-      } else {
-        console.warn(`  ⚠ Failed to create ${batch[j].email}: ${r.reason?.message || r.reason}`)
+function parseChannelTypeDistribution(raw) {
+  const entries = String(raw ?? 'broadcast:1')
+    .split(',')
+    .map(part => part.trim())
+    .filter(Boolean)
+    .map(part => {
+      const [name, weightRaw] = part.split(':')
+      const weight = Number(weightRaw ?? 1)
+      return {
+        name: String(name ?? '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '') || 'broadcast',
+        weight: Number.isFinite(weight) && weight > 0 ? weight : 1,
       }
-    }
-    console.log(`  → ${emailToActualId.size} total users resolved`)
-  }
-
-  // Build final mapping: prod user_id → actual staging auth user_id
-  const prodToStaging = new Map()
-  for (const u of desired) {
-    const actualId = emailToActualId.get(u.email)
-    if (actualId) {
-      prodToStaging.set(u.prodUserId, actualId)
-    }
-  }
-  return { prodToStaging, emailToActualId }
+    })
+  return entries.length ? entries : [{ name: 'broadcast', weight: 1 }]
 }
 
-// ── Step 4: Build insert payloads using actual auth user IDs ──
-
-function buildPayloads(prodData, prodToStaging, profileMap) {
-  console.log('[4/5] Building insert payloads...')
-
-  const stagingProfiles = []
-  const stagingSessions = []
-  const stagingChannels = []
-
-  for (const s of prodData.sessions) {
-    const stagingUserId = prodToStaging.get(s.user_id)
-    if (!stagingUserId) continue
-    stagingSessions.push({
-      id: crypto.randomUUID(),
-      user_id: stagingUserId,
-      session_string: '',
-      phone_number: '',
-      is_active: true,
-      created_at: s.created_at,
-      updated_at: s.updated_at,
-    })
+function pickWeighted(rng, entries) {
+  const total = entries.reduce((sum, item) => sum + item.weight, 0)
+  let cursor = rng() * total
+  for (const item of entries) {
+    cursor -= item.weight
+    if (cursor <= 0) return item.name
   }
+  return entries[entries.length - 1].name
+}
 
-  for (const ch of prodData.channels) {
-    const stagingUserId = prodToStaging.get(ch.user_id)
-    if (!stagingUserId) continue
-    stagingChannels.push({
-      id: crypto.randomUUID(),
-      user_id: stagingUserId,
-      channel_id: ch.channel_id || '',
-      channel_username: ch.channel_username || '',
-      display_name: ch.display_name || '',
-      is_active: true,
-      lot_size_override: ch.lot_size_override || null,
-      pip_tolerance_override: ch.pip_tolerance_override || null,
-      channel_keywords: ch.channel_keywords || {},
-      last_seen_message_id: null,
-      last_seen_at: null,
-      last_live_at: ch.last_live_at || null,
-      signal_channel_id: null,
-      created_at: ch.created_at,
-      updated_at: ch.updated_at,
+function buildSyntheticUsers(config) {
+  const fragment = safeRunIdFragment(config.runId)
+  return Array.from({ length: config.userCount }, (_, index) => ({
+    userId: deterministicUuid(['loadtest-user', config.runId, String(index)]),
+    email: `loadtest-${fragment}-${String(index).padStart(4, '0')}@tscopier-scale-test.local`,
+    username: `loadtest_${fragment}_${String(index).padStart(4, '0')}`,
+  }))
+}
+
+async function resolveAuthUsers(config, targetKey, users) {
+  console.log('[2/5] Creating deterministic synthetic auth users...')
+  const base = apiBase(config.targetUrl)
+  const h = authHeaders(targetKey)
+  let created = 0
+  for (const user of users) {
+    const password = `${randomUUID()}Aa1!`
+    const res = await fetch(`${base}/auth/v1/admin/users`, {
+      method: 'POST',
+      headers: h,
+      body: JSON.stringify({
+        id: user.userId,
+        email: user.email,
+        password,
+        email_confirm: true,
+        user_metadata: {
+          synthetic: true,
+          load_test: true,
+          load_run_id: config.runId,
+        },
+      }),
     })
+    if (res.ok) {
+      created += 1
+      continue
+    }
+    const text = await readLimitedText(res).catch(() => '')
+    if (!text.toLowerCase().includes('already') && res.status !== 422) {
+      throw new Error(`Failed to create synthetic auth user ${user.email}: HTTP ${res.status}`)
+    }
   }
+  console.log(`  auth users created=${created} existing=${users.length - created}`)
+}
 
-  for (const [prodId, stagingUserId] of prodToStaging) {
-    const p = profileMap.get(prodId)
-    stagingProfiles.push({
-      user_id: stagingUserId,
-      display_name: `User ${stagingUserId.slice(0, 8)}`,
+function buildPayloads(config, syntheticUsers) {
+  console.log('[3/5] Building tagged synthetic rows...')
+  const rng = makeSeededRng(config.seed)
+  const channelTypes = parseChannelTypeDistribution(config.channelTypeDistribution)
+  const profiles = []
+  const sessions = []
+  const channels = []
+
+  for (const [userIndex, user] of syntheticUsers.entries()) {
+    profiles.push({
+      user_id: user.userId,
+      display_name: `Load Test ${safeRunIdFragment(config.runId)} ${user.username.slice(-4)}`,
       first_name: '',
       last_name: '',
-      username: `user-${stagingUserId.slice(0, 8)}`,
+      username: user.username,
       country: '',
       city: '',
       mobile_number: '',
       address: '',
-      base_currency: p?.base_currency || 'USD',
-      timezone: p?.timezone || 'UTC',
+      base_currency: 'USD',
+      timezone: 'UTC',
       is_admin: false,
-      subscription_status: p?.subscription_status || null,
+      subscription_status: 'load_test',
       admin_until: null,
-      onboarding_completed_at: p?.onboarding_completed_at || null,
+      onboarding_completed_at: syntheticTimestamp(0),
       referred_by_user_id: null,
-      email_verified_at: p?.email_verified_at || null,
-      copier_paused: p?.copier_paused ?? false,
-      notification_sound_enabled: p?.notification_sound_enabled ?? true,
-      created_at: p?.created_at || new Date().toISOString(),
-      updated_at: p?.updated_at || new Date().toISOString(),
+      email_verified_at: syntheticTimestamp(0),
+      copier_paused: false,
+      notification_sound_enabled: true,
+      created_at: syntheticTimestamp(0),
+      updated_at: syntheticTimestamp(0),
     })
+
+    const active = rng() <= config.activeSessionRatio
+    sessions.push({
+      id: deterministicUuid(['loadtest-session', config.runId, user.userId]),
+      user_id: user.userId,
+      session_string: '',
+      phone_number: '',
+      is_active: active,
+      created_at: syntheticTimestamp(userIndex),
+      updated_at: syntheticTimestamp(userIndex),
+    })
+
+    const span = config.channelsPerUserMax - config.channelsPerUserMin + 1
+    const channelCount = config.channelsPerUserMin + Math.floor(rng() * span)
+    for (let j = 0; j < channelCount; j += 1) {
+      const index = channels.length
+      const channelType = pickWeighted(rng, channelTypes)
+      channels.push({
+        id: deterministicUuid(['loadtest-channel', config.runId, user.userId, String(j)]),
+        user_id: user.userId,
+        channel_id: `loadtest_${safeRunIdFragment(config.runId)}_${String(index).padStart(4, '0')}`,
+        channel_username: '',
+        display_name: `Load Test ${config.runId} ${channelType} Channel ${index + 1}`,
+        is_active: true,
+        lot_size_override: null,
+        pip_tolerance_override: null,
+        channel_keywords: {
+          load_test: true,
+          load_run_id: config.runId,
+          synthetic: true,
+          channel_type: channelType,
+        },
+        last_seen_message_id: null,
+        last_seen_at: null,
+        last_live_at: null,
+        signal_channel_id: null,
+        created_at: syntheticTimestamp(index),
+        updated_at: syntheticTimestamp(index),
+      })
+    }
   }
 
-  console.log(`  → ${stagingProfiles.length} profiles, ${stagingSessions.length} sessions, ${stagingChannels.length} channels`)
-  return { stagingProfiles, stagingSessions, stagingChannels }
+  return { profiles, sessions, channels }
 }
 
-// ── Step 5: Upsert into staging ──
-
-async function insertBatches(stagingKey, table, rows) {
-  if (rows.length === 0) return
+async function insertBatches(config, targetKey, table, rows) {
+  if (!rows.length) return 0
+  const base = apiBase(config.targetUrl)
   const batchSize = 50
+  let inserted = 0
   for (let i = 0; i < rows.length; i += batchSize) {
     const batch = rows.slice(i, i + batchSize)
-    await fetchJson(`${STAGING_URL}/rest/v1/${table}`, {
+    await fetchJson(`${base}/rest/v1/${table}`, {
       method: 'POST',
-      headers: {
-        apikey: stagingKey,
-        Authorization: `Bearer ${stagingKey}`,
-        Prefer: 'resolution=merge-duplicates',
-      },
+      headers: authHeaders(targetKey, { Prefer: 'resolution=merge-duplicates' }),
       body: JSON.stringify(batch),
     })
-    process.stdout.write('.')
+    inserted += batch.length
   }
-  console.log(' done')
+  return inserted
 }
 
-async function insertToStaging(stagingKey, payloads) {
-  console.log('[5/5] Inserting into staging...')
-  console.log('  user_profiles...')
-  await insertBatches(stagingKey, 'user_profiles', payloads.stagingProfiles)
-  console.log('  telegram_sessions...')
-  await insertBatches(stagingKey, 'telegram_sessions', payloads.stagingSessions)
-  console.log('  telegram_channels...')
-  await insertBatches(stagingKey, 'telegram_channels', payloads.stagingChannels)
+async function writeManifest(config, syntheticUsers, payloads) {
+  const reportFile = await safeArtifactPath(process.env.LOAD_REPORT_FILE, `section6-${config.runId}.json`, {
+    allowOverwrite: process.env.LOAD_REPORT_OVERWRITE === 'true',
+  })
+  const manifest = {
+    run_id: config.runId,
+    seed: config.seed,
+    target_ref: config.targetRef,
+    users: syntheticUsers.map(u => ({ user_id: u.userId, email: u.email, username: u.username })),
+    row_counts: {
+      user_profiles: payloads.profiles.length,
+      telegram_sessions: payloads.sessions.length,
+      telegram_channels: payloads.channels.length,
+    },
+    note: 'Blank session_string rows test database/session-manager scale only, not real Telegram connectivity.',
+  }
+  await writeFile(reportFile, `${JSON.stringify(manifest, null, 2)}\n`)
+  return reportFile
 }
 
-function printSummary(prodData, prodToStaging, payloads) {
-  console.log('')
-  console.log('=== Summary ===')
-  console.log(`  Production users mirrored: ${prodToStaging.size}/${prodData.userIds.length}`)
-  console.log(`  Profiles inserted/updated: ${payloads.stagingProfiles.length}`)
-  console.log(`  Sessions (blank string): ${payloads.stagingSessions.length}`)
-  console.log(`  Channels remapped: ${payloads.stagingChannels.length}`)
-  console.log('')
-  console.log('Next: Restart staging Railway listener (6.3) and monitor for 4h (6.4).')
+async function insertToTarget(config, targetKey, payloads) {
+  console.log('[4/5] Inserting tagged synthetic rows into target...')
+  const userProfiles = await insertBatches(config, targetKey, 'user_profiles', payloads.profiles)
+  const telegramSessions = await insertBatches(config, targetKey, 'telegram_sessions', payloads.sessions)
+  const telegramChannels = await insertBatches(config, targetKey, 'telegram_channels', payloads.channels)
+  return { user_profiles: userProfiles, telegram_sessions: telegramSessions, telegram_channels: telegramChannels }
 }
-
-// ── Main ──
 
 async function main() {
-  const prodKey = env('SUPABASE_SERVICE_ROLE_KEY')
-  const stagingKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF4ZGNsZWRjeWh5dnpybmZrd2F0Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4NDgwMDI3MywiZXhwIjoyMTAwMzc2MjczfQ.-aT3FeWepkotrJS_dEyLyNWHfJNKuWBtTpSjhsIZf24'
+  const config = validateSection6Config(process.env)
+  const targetKey = String(process.env.TARGET_SUPABASE_SERVICE_ROLE_KEY ?? '').trim()
 
-  console.log('=== TScopier Section 6 Scale Test Setup ===')
-  console.log('')
+  console.log('=== TScopier Section 6 isolated scale setup ===')
+  console.log(`run_id=${config.runId} seed=${config.seed} target_ref=${config.targetRef}`)
+  console.log(`synthetic shape users=${config.userCount} channels_per_user=${config.channelsPerUserMin}-${config.channelsPerUserMax}`)
+  console.log('Blank Telegram sessions test DB/session-manager scale only; they do not test real Telegram connectivity.')
 
-  const prodData = await exportProduction(prodKey)
-  if (prodData.userIds.length === 0) {
-    console.log('No active sessions found — nothing to copy.')
+  if (config.cleanupOnly) {
+    const cleanup = await cleanupSection6Run({
+      supabaseUrl: apiBase(config.targetUrl),
+      serviceRoleKey: targetKey,
+      runId: config.runId,
+      confirmDelete: process.argv.includes('--confirm-delete'),
+    })
+    console.log(JSON.stringify({ run_id: config.runId, cleanup }, null, 2))
     return
   }
 
-  const { desired, prodToDesired } = buildStagingUsers(prodData.userIds, prodData.profileMap)
-  const { prodToStaging } = await resolveAuthUsers(stagingKey, desired)
-  if (prodToStaging.size === 0) {
-    console.log('No staging users resolved — aborting.')
-    return
+  let payloads = null
+  let syntheticUsers = []
+  try {
+    console.log('[1/5] Generating synthetic production-shaped aggregate data...')
+    syntheticUsers = buildSyntheticUsers(config)
+    await resolveAuthUsers(config, targetKey, syntheticUsers)
+    payloads = buildPayloads(config, syntheticUsers)
+    const inserted = await insertToTarget(config, targetKey, payloads)
+    const manifest = await writeManifest(config, syntheticUsers, payloads)
+    console.log('[5/5] Summary')
+    console.log(JSON.stringify({
+      run_id: config.runId,
+      seed: config.seed,
+      inserted,
+      manifest,
+      cleanup: config.cleanupPolicy,
+    }, null, 2))
+  } catch (err) {
+    console.error(`Fatal: ${sanitizeError(err)}`)
+    if (syntheticUsers.length > 0 && config.cleanupPolicy === 'auto') {
+      console.error('Attempting automatic cleanup for tagged synthetic rows...')
+      const cleanup = await cleanupSection6Run({
+        supabaseUrl: apiBase(config.targetUrl),
+        serviceRoleKey: targetKey,
+        runId: config.runId,
+        confirmDelete: process.argv.includes('--confirm-delete'),
+        createdUsers: syntheticUsers,
+      })
+      console.error(JSON.stringify({ run_id: config.runId, cleanup }, null, 2))
+    }
+    process.exit(1)
   }
-
-  const payloads = buildPayloads(prodData, prodToStaging, prodData.profileMap)
-  await insertToStaging(stagingKey, payloads)
-  printSummary(prodData, prodToStaging, payloads)
 }
 
-main().catch(err => {
-  console.error('Fatal:', err)
-  process.exit(1)
-})
+if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
+  main().catch(err => {
+    console.error(`Fatal: ${sanitizeError(err)}`)
+    process.exit(1)
+  })
+}
+
+export {
+  buildPayloads,
+  buildSyntheticUsers,
+  deterministicUuid,
+}

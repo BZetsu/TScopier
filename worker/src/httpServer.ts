@@ -16,6 +16,7 @@ import { applySignalOverride } from './applySignalOverride'
 import { forceCloseSignalTrades } from './forceCloseSignalTrades'
 import { retryTradeActivity } from './retryActivity'
 import { retrySignal } from './retrySignal'
+import { getBrokerExecutionCapability } from './brokerExecutionMode'
 
 const INTERNAL_TOKEN = process.env.WORKER_INTERNAL_TOKEN ?? ''
 const PORT = parseInt(process.env.WORKER_PORT ?? '8080', 10)
@@ -335,9 +336,11 @@ export function startTradeHttpServer(
       if (url === '/health' && (req.method === 'GET' || req.method === 'POST')) {
         const payload = await sessionManager.getHealthPayload()
         const queue = await getQueueHealthMetrics()
+        const brokerCapability = getBrokerExecutionCapability()
         return sendJson(res, payload.ok ? 200 : 503, {
           ...payload,
           queue,
+          ...brokerCapability,
         })
       }
 

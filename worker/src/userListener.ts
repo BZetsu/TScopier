@@ -44,6 +44,7 @@ import {
   setPipelineTimestamp,
   type PipelineTimestamps,
 } from './pipelineTimestamps'
+import { addWorkerBreadcrumb, captureWorkerError, captureWorkerWarning } from './observability/sentry'
 import { incMetric } from './workerMetrics'
 import { workerConfig } from './workerConfig'
 import { isManagementAction, parsedAction } from './tradeSignalActions'
@@ -453,6 +454,12 @@ export class UserListener {
       }
       if (msg.includes('TIMEOUT') && this.isConnected) {
         console.warn(`[userListener] _updateLoop TIMEOUT for ${this.userId} — requesting reconnect`)
+        addWorkerBreadcrumb({
+          category: 'telegram',
+          message: 'update loop timeout; reconnect requested',
+          level: 'warning',
+          data: { reason: 'update_loop_timeout' },
+        })
         this.requestReconnect('update_loop_timeout')
       }
     }
@@ -615,6 +622,19 @@ export class UserListener {
         + ` channel=${row.id} count=${state.consecutiveCount}:`,
         error.message,
       )
+      captureWorkerError(error, {
+        subsystem: 'telegram',
+        operation: 'channel_auto_disable_persist_failed',
+        errorCode: 'CHANNEL_AUTO_DISABLE_PERSIST_FAILED',
+        fingerprint: ['telegram', 'CHANNEL_AUTO_DISABLE_PERSIST_FAILED', errorCode],
+        context: {
+          user_id: this.userId,
+          channel_id: row.id,
+          stage: 'channel_auto_disable',
+          retry_attempt: state.consecutiveCount,
+          extra: { source, error_code: errorCode },
+        },
+      })
       incMetric('channel_auto_disable_update_failed')
       void persistListenerEvent(this.supabase, {
         userId: this.userId,
@@ -629,6 +649,19 @@ export class UserListener {
       `[userListener] channel_auto_disabled user=${this.userId}`
       + ` channel=${row.id} count=${state.consecutiveCount} code=${errorCode}`,
     )
+    captureWorkerWarning('Telegram channel auto-disabled after repeated invalid-channel failures', {
+      subsystem: 'telegram',
+      operation: 'channel_auto_disabled',
+      errorCode: errorCode || 'CHANNEL_INVALID',
+      fingerprint: ['telegram', errorCode || 'CHANNEL_INVALID', 'channel_auto_disabled'],
+      context: {
+        user_id: this.userId,
+        channel_id: row.id,
+        stage: 'channel_auto_disabled',
+        retry_attempt: state.consecutiveCount,
+        extra: { source, threshold: CHANNEL_INVALID_DISABLE_THRESHOLD },
+      },
+    })
     incMetric('channel_auto_disabled')
     void persistListenerEvent(this.supabase, {
       userId: this.userId,
@@ -3960,6 +3993,18 @@ export class UserListener {
         `[userListener] malformed Telegram RPC result recovery exhausted for ${this.userId}`
         + ` (${this.malformedRpcRecoveryCount}/${malformedRpcResultMaxRecoveries()}) — invalidating session`,
       )
+      captureWorkerError(err instanceof Error ? err : new Error(String(err ?? 'malformed rpc result')), {
+        subsystem: 'telegram',
+        operation: 'malformed_rpc_recovery_exhausted',
+        errorCode: 'GRAMJS_MALFORMED_RPC_RESULT',
+        fingerprint: ['telegram', 'GRAMJS_MALFORMED_RPC_RESULT', 'exhausted'],
+        context: {
+          user_id: this.userId,
+          stage: 'malformed_rpc_recovery',
+          retry_attempt: this.malformedRpcRecoveryCount,
+          extra: { max_recoveries: malformedRpcResultMaxRecoveries() },
+        },
+      })
       this.connectionTrace('recovery_invalidated', {
         source: 'malformed_rpc_result',
         attempts: this.malformedRpcRecoveryCount,
@@ -4045,6 +4090,17 @@ export class UserListener {
         `[userListener] reconnect failed for ${this.userId} cycle=${cycleId}:`,
         redactTelegramConnectionLog(lastErr ?? 'unknown'),
       )
+      captureWorkerWarning(lastErr instanceof Error ? lastErr : new Error(String(lastErr ?? 'reconnect failed')), {
+        subsystem: 'telegram',
+        operation: 'reconnect_exhausted_deferred',
+        errorCode: 'TELEGRAM_RECONNECT_EXHAUSTED',
+        fingerprint: ['telegram', 'TELEGRAM_RECONNECT_EXHAUSTED', reason],
+        context: {
+          user_id: this.userId,
+          stage: 'reconnect',
+          extra: { reason, cycle_id: cycleId, attempts: delays.length },
+        },
+      })
       this.connectionTrace('recovery_invalidated', { source: reason, cycleId, attempts: delays.length })
       this.scheduleDeferredRetry(cycleId)
       return

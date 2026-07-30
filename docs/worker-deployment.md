@@ -129,6 +129,66 @@ On deploy, old and new containers may briefly share an auth key. Mitigations:
 
 Use external uptime checks on listener `/health` with `ok === true` for production paging.
 
+## Sentry worker monitoring
+
+The Node worker can emit sanitized Sentry events for final/exhausted failures:
+worker crashes, startup failures, shutdown timeouts, Telegram recovery exhaustion,
+channel auto-disable, queue dead letters, ambiguous broker sends, broker-success
+database persistence failures, and reconciliation failures. It is intentionally
+worker-only; frontend/backoffice, Supabase Edge Functions, and the Python
+Telethon listener should be added in separate PRs with runtime-specific policies.
+
+Sentry is disabled unless both are true:
+
+```env
+SENTRY_ENABLED=true
+SENTRY_DSN=<your-worker-sentry-dsn>
+```
+
+Recommended staging setup:
+
+```env
+SENTRY_ENABLED=true
+SENTRY_ENVIRONMENT=staging
+SENTRY_TRACES_SAMPLE_RATE=0
+```
+
+Recommended production setup:
+
+```env
+SENTRY_ENABLED=true
+SENTRY_ENVIRONMENT=production
+SENTRY_TRACES_SAMPLE_RATE=0
+```
+
+`SENTRY_RELEASE` may be set explicitly. If omitted, the worker uses Railway commit
+or deployment identifiers when present, falling back to `WORKER_BUILD_TAG`.
+
+Sensitive data policy: Sentry events must not contain Telegram session strings,
+Telegram auth keys, Telegram API hashes, phone numbers, full emails, broker
+credentials, FxSocket keys, Supabase service-role keys, Redis tokens, OpenAI
+keys, authorization headers, cookies, JWTs, private keys, full Telegram message
+text, full broker responses, account balances/equity, or arbitrary request
+bodies. The worker redacts nested objects, arrays, Error messages/stacks/causes,
+breadcrumbs, URL credentials, and sensitive query parameters before sending.
+
+Performance policy: the worker never flushes Sentry inside Telegram message
+handling, queue processing, `OrderSend`, `OrderModify`, virtual layer firing, or
+broker quote/price tick paths. Capture helpers are fire-and-forget and catch their
+own failures. Shutdown performs only a bounded final flush before exit.
+
+SDK safety policy: all Sentry default integrations are disabled in this worker
+PR. Events and breadcrumbs are created only through the worker's sanitized helper
+functions. Automatic HTTP/fetch instrumentation, outbound trace propagation,
+console capture, request/body capture, local-variable capture, SDK process
+handlers, and automatic tracing are disabled. `SENTRY_TRACES_SAMPLE_RATE` is
+reserved for a future reviewed tracing PR and does not enable automatic outbound
+instrumentation here.
+
+Load-test behavior: `LOAD_TEST_MODE=true` disables Sentry by default even when a
+DSN is present. Only isolated test Sentry environments should opt in with
+`SENTRY_LOAD_TEST_ENABLED=true`.
+
 **SQL drift check:** `scripts/diagnostics/listener_lease_drift.sql` — active `telegram_sessions` without a fresh lease.
 
 **Lease timing:** keep `WORKER_LEASE_RENEW_INTERVAL_MS` (default 20s) well below `WORKER_SESSION_LEASE_TTL_MS` (default 45s). Do not gate lease renewal on channel message activity (`WORKER_HEALTH_STALE_MS` is for ingest staleness only).
