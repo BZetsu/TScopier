@@ -2,6 +2,27 @@
 
 ## Changelog
 
+### 2026-07-30 — Added search text highlighting in PopularChannelsPage results
+
+- **Context:** When searching channels, matched text in `display_name` and `channel_username` wasn't highlighted, making it hard to see why a result matched.
+- **Changes:**
+  - Added `highlightText()` helper that splits text by the query and wraps matches in a `<mark>` element with yellow background
+  - Applied highlighting to `display_name` and `channel_username` in both collapsed rows and expanded detail view
+- **Files:** `src/pages/dashboard/PopularChannelsPage.tsx`
+- **Verification:** Lint clean, all 265 tests pass
+- **Follow-up:** None
+
+### 2026-07-30 — Added Discover section to sidebar, moved Popular Channels into it
+
+- **Context:** Popular Channels was under SIGNALS in the sidebar. User requested a new DISCOVER section between SIGNALS and TRADING TOOLS with Popular Channels moved there.
+- **Changes:**
+  - Added `discover` to `NavTranslations.sections` type in `types.ts`
+  - Added `discover` translation in all 9 locale files (en, es, fr, chrome/ar, chrome/pl, chrome/ru, chrome/nl, chrome/ja, chrome/sv)
+  - Moved Popular Channels from SIGNALS section to new DISCOVER section in `AppLayout.tsx`
+- **Files:** `src/i18n/locales/types.ts`, `src/components/layout/AppLayout.tsx`, `src/i18n/locales/en.ts`, `src/i18n/locales/es.ts`, `src/i18n/locales/fr.ts`, `src/i18n/locales/chrome/ar.ts`, `src/i18n/locales/chrome/pl.ts`, `src/i18n/locales/chrome/ru.ts`, `src/i18n/locales/chrome/nl.ts`, `src/i18n/locales/chrome/ja.ts`, `src/i18n/locales/chrome/sv.ts`
+- **Verification:** `tsc -b && vite build` clean
+- **Follow-up:** None
+
 ### 2026-07-30 — Added search button + sort dropdown to PopularChannelsPage; fixed lint issues
 
 - **Context:** Search icon was decorative (`pointer-events-none`) and didn't trigger search. Sort filters were inline buttons that didn't work well on mobile. Three pre-existing lint errors blocked clean CI.
