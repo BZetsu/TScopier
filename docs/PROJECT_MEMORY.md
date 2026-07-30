@@ -2,6 +2,18 @@
 
 ## Changelog
 
+### 2026-07-30 — Fixed "No activity recorded" for channels with signals but null last_live_at
+
+- **Context:** `PopularChannelsPage` showed "No activity recorded" for channels where `signal_channels.last_live_at` was null, even though the channels had generated signals (visible in `channel_signals` table) and had executed trades. The `channelStatus()` function only checked `last_live_at` — if null, it immediately returned "No activity recorded" with no fallback.
+- **Changes:**
+  - Modified the `channel_signals` query in `loadChannels()` to also fetch `created_at` (with descending sort), computing the latest signal timestamp per channel into a new `lastSignalAt` map
+  - Updated `channelStatus()` to accept an optional `lastSignalAt` parameter — uses it as fallback when `last_live_at` is null
+  - Updated "Recently active" sort to fall back to latest signal timestamp when `last_live_at` is null
+  - Updated expanded view's "Last activity" row to show latest signal timestamp with "(by signal)" suffix when `last_live_at` is null
+- **Files:** `src/pages/dashboard/PopularChannelsPage.tsx`
+- **Verification:** Lint clean, all 265 tests pass
+- **Follow-up:** Consider backfilling `last_live_at` on `signal_channels` from `channel_signals.created_at` in a DB migration for consistency
+
 ### 2026-07-29 — Added [httpServer] debug logging for Telegram auth + pushed all commits to dev/staging
 
 - **Context:** Uncommitted debug logging for Telegram auth endpoints (`send_code`, `verify_code`, `start_qr`, `qr_status`, `verify_qr_password`) was left from the July 23-24 auth debugging sessions. Added and committed after verifying no sensitive data is logged (phone numbers redacted, no passwords or secrets).

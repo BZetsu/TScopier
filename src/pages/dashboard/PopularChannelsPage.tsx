@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useT } from '../../context/LocaleContext'
 import { PageHeader } from '../../components/layout/PageHeader'
@@ -30,12 +30,13 @@ function formatRelativeTime(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString()
 }
 
-function channelStatus(lastLiveAt: string | null): { label: string; live: boolean } {
-  if (!lastLiveAt) return { label: 'No activity recorded', live: false }
-  const age = Date.now() - new Date(lastLiveAt).getTime()
+function channelStatus(lastLiveAt: string | null, lastSignalAt: string | null): { label: string; live: boolean } {
+  const ts = lastLiveAt ?? lastSignalAt
+  if (!ts) return { label: 'No activity recorded', live: false }
+  const age = Date.now() - new Date(ts).getTime()
   if (age < ONE_HOUR_MS) return { label: 'Live', live: true }
-  if (age < TWENTY_FOUR_HOURS_MS) return { label: `Active ${formatRelativeTime(lastLiveAt)}`, live: false }
-  return { label: `Last active ${formatRelativeTime(lastLiveAt)}`, live: false }
+  if (age < TWENTY_FOUR_HOURS_MS) return { label: `Active ${formatRelativeTime(ts)}`, live: false }
+  return { label: `Last active ${formatRelativeTime(ts)}`, live: false }
 }
 
 function CopyButton({ text }: { text: string }) {
@@ -75,13 +76,7 @@ export function PopularChannelsPage() {
   const [sort, setSort] = useState<SortKey>('subscribers')
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [signalCounts, setSignalCounts] = useState<Map<string, number>>(new Map())
-  const channelsRef = useRef(channels)
-
-  channelsRef.current = channels
-
-  useEffect(() => {
-    loadChannels()
-  }, [])
+  const [lastSignalAt, setLastSignalAt] = useState<Map<string, string>>(new Map())
 
   const loadChannels = async () => {
     const { data } = await supabase
@@ -96,23 +91,34 @@ export function PopularChannelsPage() {
     if (ids.length > 0) {
       const { data: signalRows } = await supabase
         .from('channel_signals')
-        .select('signal_channel_id')
+        .select('signal_channel_id, created_at')
         .in('signal_channel_id', ids)
+        .order('created_at', { ascending: false })
 
       const counts = new Map<string, number>()
+      const lastAt = new Map<string, string>()
       for (const row of signalRows ?? []) {
         const id = row.signal_channel_id
         counts.set(id, (counts.get(id) ?? 0) + 1)
+        if (!lastAt.has(id)) {
+          lastAt.set(id, row.created_at)
+        }
       }
       setSignalCounts(counts)
+      setLastSignalAt(lastAt)
     }
 
     setLoading(false)
   }
 
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void loadChannels()
+  }, [])
+
   const filteredAndSorted = useMemo(() => {
     const q = search.toLowerCase().trim()
-    let result = q
+    const result = q
       ? channels.filter(
           ch =>
             ch.display_name.toLowerCase().includes(q) ||
@@ -129,8 +135,12 @@ export function PopularChannelsPage() {
         break
       case 'recent':
         result.sort((a, b) => {
-          const aTime = a.last_live_at ? new Date(a.last_live_at).getTime() : 0
-          const bTime = b.last_live_at ? new Date(b.last_live_at).getTime() : 0
+          const aTime = a.last_live_at
+            ? new Date(a.last_live_at).getTime()
+            : (lastSignalAt.get(a.id) ? new Date(lastSignalAt.get(a.id)!).getTime() : 0)
+          const bTime = b.last_live_at
+            ? new Date(b.last_live_at).getTime()
+            : (lastSignalAt.get(b.id) ? new Date(lastSignalAt.get(b.id)!).getTime() : 0)
           return bTime - aTime
         })
         break
@@ -139,7 +149,7 @@ export function PopularChannelsPage() {
         break
     }
     return result
-  }, [channels, search, sort, signalCounts])
+  }, [channels, search, sort, signalCounts, lastSignalAt])
 
   const sortOptions: { key: SortKey; label: string }[] = [
     { key: 'subscribers', label: 'Most subscribers' },
@@ -205,7 +215,7 @@ export function PopularChannelsPage() {
       ) : (
         <Card padding="none" className="divide-y divide-neutral-100 dark:divide-neutral-800">
           {filteredAndSorted.map((ch, idx) => {
-            const status = channelStatus(ch.last_live_at)
+            const status = channelStatus(ch.last_live_at, lastSignalAt.get(ch.id) ?? null)
             const expanded = expandedId === ch.id
             const signalCount = signalCounts.get(ch.id) ?? 0
             return (
@@ -300,7 +310,9 @@ export function PopularChannelsPage() {
                         <p className="text-sm text-neutral-700 dark:text-neutral-300">
                           {ch.last_live_at
                             ? new Date(ch.last_live_at).toLocaleString()
-                            : '—'}
+                            : lastSignalAt.get(ch.id)
+                              ? `${new Date(lastSignalAt.get(ch.id)!).toLocaleString()} (by signal)`
+                              : '—'}
                         </p>
                       </div>
                     </div>
