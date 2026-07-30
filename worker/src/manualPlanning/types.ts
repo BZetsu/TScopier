@@ -28,6 +28,10 @@ export interface ManualTpLot {
   enabled: boolean
 }
 
+export type LayeringMode = 'legacy' | 'static' | 'dynamic'
+export type LayerPlanAnchorSource = 'signal' | 'quote' | 'fill' | 'unknown'
+export type LayerPlanSide = 'buy' | 'sell'
+
 export interface ManualSettings {
   symbol_mapping?: Record<string, string>
   symbol_prefix?: string
@@ -52,6 +56,19 @@ export interface ManualSettings {
   range_step_pips?: number
   range_distance_pips?: number
   range_layer_till_close?: boolean
+  /**
+   * Product layering algorithm. `legacy` preserves the existing production
+   * range-percent/step/distance behavior. Static/dynamic execution is gated
+   * until the future calculators are integrated.
+   */
+  layering_mode?: LayeringMode
+  /** Static V1 foundation: fixed total layer count, including first/immediate entry. */
+  static_layer_count?: number
+  /** Dynamic V1 foundation: preferred spacing in pips. */
+  dynamic_step_pips?: number
+  /** Dynamic V1 foundation: maximum total layer count, including first fill. */
+  dynamic_max_layers?: number
+  /** Range layering execution mechanism, independent of `layering_mode`. */
   range_layering_type?: 'auto' | 'pending_order'
   /** When true with range_trading, cap layering depth from parsed entry zone instead of range_distance_pips. */
   use_signal_entry_range?: boolean
@@ -199,6 +216,26 @@ export interface PlannerResult {
   skip_reason?: string
   fallback_reason?: string
   delay_ms: number
+}
+
+export interface LayeringPlanSnapshot {
+  planId: string
+  mode: LayeringMode
+  signalId: string
+  brokerAccountId: string
+  symbol: string
+  side: LayerPlanSide
+  originalRangeLow: number | null
+  originalRangeHigh: number | null
+  anchorPrice: number | null
+  anchorSource: LayerPlanAnchorSource
+  configuredStaticLayerCount: number | null
+  configuredDynamicStepPips: number | null
+  configuredDynamicMaxLayers: number | null
+  plannedLayerCount: number | null
+  plannedTotalLot: number | null
+  createdAt: string
+  lockedAt: string | null
 }
 
 export interface PlanRangeSplitArgs {

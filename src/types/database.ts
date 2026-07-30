@@ -297,6 +297,17 @@ export interface ManualSettings {
   range_distance_pips?: number
   /** When true, virtual range pendings stay active until the whole basket is flat (not after first TP/CWE close). */
   range_layer_till_close?: boolean
+  /**
+   * Product layering algorithm. `legacy` preserves existing range-percent/step/distance behavior.
+   * Static/dynamic are foundation-only until worker execution integration is enabled.
+   */
+  layering_mode?: 'legacy' | 'static' | 'dynamic'
+  /** Static V1 foundation: fixed total layer count, including first/immediate entry. */
+  static_layer_count?: number
+  /** Dynamic V1 foundation: preferred step spacing in pips. */
+  dynamic_step_pips?: number
+  /** Dynamic V1 foundation: maximum total layer count, including first fill. */
+  dynamic_max_layers?: number
   /** Range layering execution: virtual market fire (auto) vs broker BuyLimit/SellLimit (pending_order). Default auto. */
   range_layering_type?: 'auto' | 'pending_order'
   /** When true with multi trade, gate entry on parsed price/zone ± pip tolerance (virtual wait, no broker pending). Independent of range_trading layering. */

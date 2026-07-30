@@ -8,6 +8,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Added
 
+- Added Phase A foundation for range-layering modes: `legacy`, `static`, and `dynamic` manual-settings fields, backward-compatible legacy defaults, immutable layer-plan metadata persistence, and a disabled-by-default execution feature gate.
 - Added fail-closed load-harness safety guards, deterministic synthetic signal generation, worker safety preflight, emergency stop support, cleanup helpers, and JSON run reporting.
 - Added disabled-by-default, worker-only Sentry monitoring with all SDK default integrations disabled, defensive redaction, role/shard tags, bounded shutdown flushing, and targeted sanitized-helper capture for final Telegram, queue, broker, persistence, range-layer, reconciliation, and lifecycle failures.
 - Added production-safe correlation and structured observability events across Telegram receipt, parsing, queue handoff, execution claiming, broker dispatch, and completion.
@@ -17,6 +18,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- Preserved existing range-layering execution as explicit `legacy` behavior so existing accounts, pending baskets, and signals are not silently converted to future Static or Dynamic semantics.
 - Removed hardcoded load/scale-test credentials from scripts and environment examples. The previously committed staging Supabase service-role key must still be rotated because Git history retains it.
 - Enforced load-test broker simulator mode with a no-send broker adapter, stricter worker health capability preflight, normalized production URL rejection, confined load-test artifacts, dry-run cleanup by default, exact-run cleanup markers, and aggregate-only Section 6 synthetic setup.
 - Increased Railway Telegram shutdown drain behavior to wait about 30 seconds, await all listener/auth disconnects, release owned session leases, and prevent reconnects from starting during shutdown.
