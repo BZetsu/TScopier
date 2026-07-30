@@ -3,7 +3,7 @@
 # Usage:
 #   LISTENER_URL=https://listener.up.railway.app \
 #   TRADE_URL=https://trade.up.railway.app \
-#   WORKER_INTERNAL_TOKEN=secret \
+#   WORKER_INTERNAL_TOKEN=from-env-only \
 #   ./scripts/diagnostics/phase0_triage.sh
 
 set -euo pipefail

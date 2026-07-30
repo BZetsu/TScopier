@@ -35,6 +35,7 @@ import { startTradeLogRetention } from './tradeLogRetention'
 import type { Server } from 'http'
 import { telegramShutdownDrainMs } from './workerShutdown'
 import { registerOrderCloseAuditSupabase } from './orderCloseAudit'
+import { initializeBrokerExecutionCapability } from './brokerExecutionMode'
 
 if (!globalThis.WebSocket) {
   globalThis.WebSocket = WebSocket as unknown as typeof globalThis.WebSocket
@@ -129,6 +130,8 @@ function startTradeMonitors(executor: TradeExecutor | null) {
 }
 
 async function main() {
+  initializeBrokerExecutionCapability()
+
   if (workerConfig.runsListener) {
     const shardErr = validateListenerTradeShardConfig()
     if (shardErr) {

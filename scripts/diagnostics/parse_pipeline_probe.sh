@@ -2,7 +2,7 @@
 # Parse pipeline probe — verify Telethon → trade worker /internal/parse-signal bridge.
 # Usage:
 #   TRADE_WORKER_URL=https://trade.up.railway.app \
-#   WORKER_INTERNAL_TOKEN=secret \
+#   WORKER_INTERNAL_TOKEN=from-env-only \
 #   CHANNEL_ROW_ID=uuid USER_ID=uuid \
 #   MESSAGE='BUY XAUUSD NOW SL 2650 TP 2700' \
 #   ./scripts/diagnostics/parse_pipeline_probe.sh
