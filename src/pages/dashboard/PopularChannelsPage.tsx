@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useT } from '../../context/LocaleContext'
 import { PageHeader } from '../../components/layout/PageHeader'
 import { PageShell } from '../../components/layout/PageShell'
 import { Card } from '../../components/ui/Card'
-import { Radio, Flame, ChevronDown, ChevronUp, Search, Copy, Check } from 'lucide-react'
+import { Select } from '../../components/ui/Select'
+import { Radio, Flame, ChevronDown, ChevronUp, Search, X, Copy, Check } from 'lucide-react'
 import type { SignalChannel } from '../../types/database'
 
 const ONE_HOUR_MS = 60 * 60 * 1000
@@ -72,7 +73,8 @@ export function PopularChannelsPage() {
   const p = t.popularChannelsPage
   const [channels, setChannels] = useState<SignalChannel[]>([])
   const [loading, setLoading] = useState(true)
-  const [search, setSearch] = useState('')
+  const inputRef = useRef<HTMLInputElement>(null)
+  const [searchQuery, setSearchQuery] = useState('')
   const [sort, setSort] = useState<SortKey>('subscribers')
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [signalCounts, setSignalCounts] = useState<Map<string, number>>(new Map())
@@ -117,7 +119,7 @@ export function PopularChannelsPage() {
   }, [])
 
   const filteredAndSorted = useMemo(() => {
-    const q = search.toLowerCase().trim()
+    const q = searchQuery.toLowerCase().trim()
     const result = q
       ? channels.filter(
           ch =>
@@ -149,7 +151,7 @@ export function PopularChannelsPage() {
         break
     }
     return result
-  }, [channels, search, sort, signalCounts, lastSignalAt])
+  }, [channels, searchQuery, sort, signalCounts, lastSignalAt])
 
   const sortOptions: { key: SortKey; label: string }[] = [
     { key: 'subscribers', label: 'Most subscribers' },
@@ -164,30 +166,42 @@ export function PopularChannelsPage() {
 
       <div className="flex items-center gap-3">
         <div className="relative flex-1 max-w-xs">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-400 pointer-events-none" />
+          <button
+            type="button"
+            onClick={() => setSearchQuery(inputRef.current?.value ?? '')}
+            className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 transition-colors"
+          >
+            <Search className="w-4 h-4" />
+          </button>
           <input
+            ref={inputRef}
             type="text"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
+            defaultValue={searchQuery}
+            onKeyDown={e => {
+              if (e.key === 'Enter') setSearchQuery(inputRef.current?.value ?? '')
+            }}
             placeholder="Search channels..."
-            className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+            className="w-full pl-9 pr-8 py-2 text-sm rounded-lg border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
           />
-        </div>
-        <div className="flex items-center gap-1">
-          {sortOptions.map(opt => (
+          {searchQuery && (
             <button
-              key={opt.key}
               type="button"
-              onClick={() => setSort(opt.key)}
-              className={`text-xs font-medium px-2.5 py-1.5 rounded-lg transition-colors ${
-                sort === opt.key
-                  ? 'bg-teal-50 text-teal-700 dark:bg-teal-950/50 dark:text-teal-400'
-                  : 'text-neutral-500 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800'
-              }`}
+              onClick={() => {
+                if (inputRef.current) inputRef.current.value = ''
+                setSearchQuery('')
+              }}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 transition-colors"
             >
-              {opt.label}
+              <X className="w-4 h-4" />
             </button>
-          ))}
+          )}
+        </div>
+        <div className="w-44">
+          <Select
+            value={sort}
+            onChange={e => setSort(e.target.value as SortKey)}
+            options={sortOptions.map(o => ({ value: o.key, label: o.label }))}
+          />
         </div>
       </div>
 
@@ -205,10 +219,10 @@ export function PopularChannelsPage() {
           <div className="text-center py-10">
             <Flame className="w-10 h-10 mx-auto mb-3 text-neutral-200" />
             <p className="text-sm font-medium text-neutral-500 dark:text-neutral-400">
-              {search ? 'No channels match your search' : p.emptyTitle}
+              {searchQuery ? 'No channels match your search' : p.emptyTitle}
             </p>
             <p className="text-xs text-neutral-400 mt-1">
-              {search ? 'Try a different name or username' : p.emptySubtitle}
+              {searchQuery ? 'Try a different name or username' : p.emptySubtitle}
             </p>
           </div>
         </Card>
