@@ -31,6 +31,23 @@ function formatRelativeTime(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString()
 }
 
+function highlightText(text: string, query: string): React.ReactNode {
+  if (!query) return text
+  const lower = text.toLowerCase()
+  const q = query.toLowerCase()
+  const idx = lower.indexOf(q)
+  if (idx === -1) return text
+  return (
+    <>
+      {text.slice(0, idx)}
+      <mark className="bg-yellow-200 dark:bg-yellow-700/60 text-inherit rounded-sm px-0.5">
+        {text.slice(idx, idx + q.length)}
+      </mark>
+      {text.slice(idx + q.length)}
+    </>
+  )
+}
+
 function channelStatus(lastLiveAt: string | null, lastSignalAt: string | null): { label: string; live: boolean } {
   const ts = lastLiveAt ?? lastSignalAt
   if (!ts) return { label: 'No activity recorded', live: false }
@@ -247,11 +264,11 @@ export function PopularChannelsPage() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-neutral-900 dark:text-neutral-50 truncate">
-                      {ch.display_name}
+                      {highlightText(ch.display_name, searchQuery)}
                     </p>
                     <div className="flex items-center gap-2 mt-0.5">
                       {ch.channel_username && (
-                        <p className="text-xs text-neutral-400">@{ch.channel_username}</p>
+                        <p className="text-xs text-neutral-400">@{highlightText(ch.channel_username, searchQuery)}</p>
                       )}
                       <span className="text-neutral-300 dark:text-neutral-600">·</span>
                       <div className="flex items-center gap-1">
@@ -278,7 +295,7 @@ export function PopularChannelsPage() {
                   <div className="px-4 pb-4 pt-3 bg-neutral-50 dark:bg-neutral-800/30 border-t border-neutral-100 dark:border-neutral-800">
                     <div className="flex items-center gap-2 mb-3">
                       <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">
-                        {ch.display_name}
+                        {highlightText(ch.display_name, searchQuery)}
                       </p>
                       <CopyButton text={ch.display_name} />
                     </div>
@@ -287,7 +304,7 @@ export function PopularChannelsPage() {
                         <span className="text-xs text-neutral-400">Username</span>
                         <div className="flex items-center gap-1">
                           <p className="text-sm text-neutral-700 dark:text-neutral-300 font-mono truncate">
-                            @{ch.channel_username}
+                            @{highlightText(ch.channel_username ?? '', searchQuery)}
                           </p>
                           <CopyButton text={`@${ch.channel_username}`} />
                         </div>
