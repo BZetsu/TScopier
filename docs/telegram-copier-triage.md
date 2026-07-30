@@ -76,7 +76,7 @@ When channels show **Listening** but no trades:
 
 ```bash
 TRADE_WORKER_URL=https://YOUR-TRADE.up.railway.app \
-WORKER_INTERNAL_TOKEN=secret \
+WORKER_INTERNAL_TOKEN=from-env-only \
 USER_ID=your-user-uuid \
 CHANNEL_ROW_IDS=uuid1,uuid2 \
 MESSAGE='BUY XAUUSD NOW SL 2650 TP 2700' \

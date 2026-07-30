@@ -1,5 +1,8 @@
 -- Pipeline latency percentiles (P50/P99) for copy speed monitoring.
 -- Run in Supabase SQL Editor after deploy; use for shard health and alerting.
+-- Load-test note: run this only against an isolated, allowlisted staging/test
+-- Supabase project. Do not paste or run diagnostics against production as part
+-- of synthetic load validation.
 
 select
   date_trunc('minute', created_at) as minute,
