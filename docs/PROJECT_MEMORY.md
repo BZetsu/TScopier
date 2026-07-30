@@ -2,6 +2,18 @@
 
 ## Changelog
 
+### 2026-07-30 — Added DB trigger to update signal_channels.last_live_at on all signal inserts
+
+- **Context:** `signal_channels.last_live_at` was only updated by the canonical ingest pipeline (elected reader). The Python listener and legacy TS listener write directly to the per-user `signals` table, so `last_live_at` stayed null for those channels. `channel_signals` was also empty. The PopularChannelsPage showed "No activity recorded" despite active trades.
+- **Root cause:** No mechanism existed to propagate per-user signal creation back to the global `signal_channels.last_live_at`.
+- **Changes:**
+  - Added `bump_signal_channel_last_live()` trigger function
+  - Added `trg_bump_signal_channel_last_live` trigger on `signals` (AFTER INSERT)
+  - On each signal insert, joins through `telegram_channels.signal_channel_id` and updates `signal_channels.last_live_at` if the new `created_at` is more recent
+- **Files:** `supabase/migrations/20260730120000_signal_channels_last_live_trigger.sql`
+- **Verification:** Lint clean, all 265 tests pass
+- **Follow-up:** After deploying the migration, existing channels will show activity once their next signal arrives. No backfill needed.
+
 ### 2026-07-30 — Fixed PopularChannelsPage search (controlled input + live filtering) and sort filter icon
 
 - **Context:** Search input used `defaultValue` (uncontrolled) so filtering only triggered on Enter/click — users expected live filtering as they typed. Sort dropdown had no visual indicator it was a filter, looked like a plain button.
@@ -56,8 +68,8 @@
   - Updated "Recently active" sort to fall back to latest signal timestamp when `last_live_at` is null
   - Updated expanded view's "Last activity" row to show latest signal timestamp with "(by signal)" suffix when `last_live_at` is null
 - **Files:** `src/pages/dashboard/PopularChannelsPage.tsx`
-- **Verification:** Lint clean, all 265 tests pass
-- **Follow-up:** Consider backfilling `last_live_at` on `signal_channels` from `channel_signals.created_at` in a DB migration for consistency
+- **Verification:** Insufficient — `channel_signals` was also empty for Python listener paths; required the DB trigger below to fix globally
+- **Follow-up:** Superseded by the `bump_signal_channel_last_live` trigger migration
 
 ### 2026-07-29 — Added [httpServer] debug logging for Telegram auth + pushed all commits to dev/staging
 
