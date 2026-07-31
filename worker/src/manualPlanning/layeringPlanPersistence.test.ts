@@ -3,9 +3,11 @@ import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import {
   areLayeringPlansSemanticallyEqual,
+  activateLayeringPlanWithLegs,
   buildLayeringPlanSnapshot,
   computeLayeringPlanFingerprint,
   generateLayerPlanId,
+  materializeExecutableLayerPlanLegRows,
   materializeLayerPlanLegRows,
   parsePersistedLayeringPlan,
   persistLayeringPlan,
@@ -186,6 +188,8 @@ test('semantic fingerprints ignore lifecycle timestamps but detect immutable con
 class MockSupabase {
   rows = new Map<string, unknown>()
   failInsert = false
+  rpcOutcome = 'activated'
+  rpcArgs: Record<string, unknown> | null = null
 
   from(table: string) {
     assert.equal(table, 'layering_plans')
@@ -205,7 +209,15 @@ class MockSupabase {
         rows.set(id, row)
         return { error: null }
       },
+      async update(row: Record<string, unknown>) { assert.ok(row); return this },
     }
+  }
+
+  async rpc(name: string, args: Record<string, unknown>) {
+    assert.equal(name, 'activate_layering_plan')
+    assert.equal(args.p_layer_plan_id, validSnapshot().planId)
+    this.rpcArgs = args
+    return { data: this.rpcOutcome, error: null }
   }
 }
 
@@ -255,6 +267,7 @@ test('persistLayeringPlan detects same ID with different immutable metadata', as
     mode: snapshot.mode,
     status: 'prepared',
     layer_plan_metadata: { ...snapshot, lots: [0.03, 0.02, 0.02, 0.02, 0.01] },
+    semantic_fingerprint: computeLayeringPlanFingerprint({ ...snapshot, lots: [0.03, 0.02, 0.02, 0.02, 0.01] }),
     created_at: snapshot.createdAt,
     locked_at: snapshot.lockedAt,
   })
@@ -281,6 +294,51 @@ test('materializeLayerPlanLegRows uses funded prices only and stays non-executab
   assert.equal(rows.rows.every(r => r.status === 'planned'), true)
 })
 
+test('materializeExecutableLayerPlanLegRows uses funded prices and can exclude first layer', () => {
+  const snapshot = validSnapshot()
+  const rows = materializeExecutableLayerPlanLegRows({
+    snapshot,
+    userId: '33333333-3333-4333-8333-333333333333',
+    metaapiAccountId: 'mt-1',
+    stoploss: 3300,
+    takeprofit: 3400,
+    slippage: 20,
+    comment: 'TScopier:test',
+    expertId: 909090,
+    status: 'pending',
+    skipFirstLayer: true,
+  })
+  assert.equal(rows.ok, true)
+  assert.equal(rows.rows.length, snapshot.fundedPrices!.length - 1)
+  assert.deepEqual(rows.rows.map(r => r.trigger_price), snapshot.fundedPrices!.slice(1))
+  assert.deepEqual(rows.rows.map(r => r.volume), snapshot.lots!.slice(1))
+  assert.equal(rows.rows.every(r => r.status === 'pending'), true)
+  assert.equal(rows.rows.every(r => r.layer_plan_id === snapshot.planId), true)
+})
+
+test('activateLayeringPlanWithLegs calls worker RPC with semantic fingerprint', async () => {
+  const snapshot = validSnapshot()
+  const db = new MockSupabase()
+  const result = await activateLayeringPlanWithLegs(db as never, snapshot, {
+    executionMechanism: 'auto',
+    excludeFirstLayer: true,
+    legContext: {
+      user_id: '33333333-3333-4333-8333-333333333333',
+      signal_id: snapshot.signalId,
+      broker_account_id: snapshot.brokerAccountId,
+      metaapi_account_id: 'mt-1',
+      stoploss: null,
+      takeprofit: null,
+      slippage: 20,
+      comment: null,
+    },
+  })
+  assert.deepEqual(result, { ok: true, outcome: 'activated' })
+  assert.equal(db.rpcArgs?.p_execution_mechanism, 'auto')
+  assert.equal(db.rpcArgs?.p_exclude_first_layer, true)
+  assert.equal(Object.prototype.hasOwnProperty.call(db.rpcArgs, 'p_legs'), false)
+})
+
 test('recoverLayeringPlan validates leg rows without calculator or settings lookup', () => {
   const snapshot = validSnapshot()
   const rows = materializeLayerPlanLegRows(snapshot)
@@ -293,10 +351,12 @@ test('recoverLayeringPlan validates leg rows without calculator or settings look
     mode: snapshot.mode,
     status: 'prepared' as const,
     layer_plan_metadata: snapshot,
+    semantic_fingerprint: computeLayeringPlanFingerprint(snapshot),
     created_at: snapshot.createdAt,
     locked_at: snapshot.lockedAt!,
   }
   assert.equal(recoverLayeringPlan({ planRow, legRows: rows.rows }).ok, true)
+  assert.equal(recoverLayeringPlan({ planRow: { ...planRow, status: 'activating' }, legRows: rows.rows }).ok, true)
   assert.equal(recoverLayeringPlan({ planRow: { ...planRow, status: 'active' }, legRows: rows.rows }).ok, true)
   assert.deepEqual(recoverLayeringPlan({ planRow: { ...planRow, status: 'completed' } }), { ok: false, reason: 'terminal_plan' })
   assert.deepEqual(recoverLayeringPlan({ planRow: { ...planRow, status: 'cancelled' } }), { ok: false, reason: 'terminal_plan' })
@@ -328,16 +388,51 @@ test('recoverLayeringPlan validates leg rows without calculator or settings look
   })
 })
 
-test('Phase C migration creates non-executable prepared plan table only', () => {
+test('layering plan migration uses worker-only table access and atomic activation RPC', () => {
   const sql = readFileSync('../supabase/migrations/20260731120000_layering_plans.sql', 'utf8')
   assert.match(sql, /create table if not exists public\.layering_plans/i)
   assert.match(sql, /status text not null default 'prepared'/i)
-  assert.match(sql, /check \(status in \('prepared', 'active', 'completed', 'cancelled', 'invalid'\)\)/i)
+  for (const status of ['prepared', 'activating', 'active', 'entries_complete', 'cancelling', 'cancellation_pending', 'cancellation_manual_review', 'completed', 'cancelled', 'invalid']) {
+    assert.match(sql, new RegExp(`'${status}'`, 'i'))
+  }
+  assert.match(sql, /semantic_fingerprint text not null/i)
+  assert.match(sql, /first_execution_trade_id uuid/i)
+  assert.match(sql, /first_execution_order_id text/i)
+  assert.match(sql, /first_execution_status text/i)
+  assert.match(sql, /first_execution_fill_price numeric/i)
+  assert.match(sql, /first_execution_filled_lot numeric/i)
+  assert.match(sql, /first_execution_confirmed_at timestamptz/i)
+  assert.match(sql, /create or replace function public\.activate_layering_plan/i)
+  assert.match(sql, /for update/i)
+  assert.match(sql, /p_leg_context->>'first_execution_order_id'/i)
+  assert.match(sql, /p_leg_context->>'first_execution_status'/i)
+  assert.match(sql, /nullif\(p_leg_context->>'first_execution_fill_price', ''\)::numeric/i)
+  assert.match(sql, /nullif\(p_leg_context->>'first_execution_filled_lot', ''\)::numeric/i)
+  assert.match(sql, /insert into public\.range_pending_legs/i)
+  assert.match(sql, /from jsonb_array_elements_text\(v_funded\) with ordinality/i)
+  assert.match(sql, /v_lots->>\(prices\.ord - 1\)/i)
+  assert.match(sql, /where prices\.ord >= v_start_idx/i)
+  assert.doesNotMatch(sql, /p_legs/i)
+  assert.match(sql, /add column if not exists broker_client_reference text/i)
+  assert.match(sql, /add column if not exists broker_pending_type text/i)
+  assert.match(sql, /add column if not exists native_submission_status text/i)
+  assert.match(sql, /submission_claimed_at timestamptz/i)
+  assert.match(sql, /add column if not exists reconciliation_claimed_at timestamptz/i)
+  assert.match(sql, /add column if not exists reconciliation_claimed_by text/i)
+  assert.match(sql, /add column if not exists cancellation_status text/i)
+  assert.match(sql, /add column if not exists cancellation_requested_at timestamptz/i)
+  assert.match(sql, /add column if not exists cancellation_confirmed_at timestamptz/i)
+  assert.match(sql, /create unique index if not exists range_pending_legs_broker_client_ref_idx/i)
+  assert.match(sql, /broker_pending_reason/i)
+  assert.match(sql, /drop function if exists public\.activate_layering_plan\(text, text, jsonb\)/i)
+  assert.match(sql, /revoke all on function public\.activate_layering_plan\(text, text, text, boolean, jsonb\) from public, anon, authenticated/i)
+  assert.match(sql, /grant execute on function public\.activate_layering_plan\(text, text, text, boolean, jsonb\) to service_role/i)
+  assert.match(sql, /prevent_client_layering_settings_bypass/i)
   assert.match(sql, /alter table public\.layering_plans enable row level security/i)
   assert.match(sql, /revoke all on table public\.layering_plans from anon, authenticated/i)
   assert.match(sql, /grant select, insert, update, delete on table public\.layering_plans to service_role/i)
   assert.doesNotMatch(sql, /to authenticated/i)
   assert.doesNotMatch(sql, /to anon/i)
   assert.doesNotMatch(sql, /using\s*\(\s*true\s*\)|with check\s*\(\s*true\s*\)/i)
-  assert.doesNotMatch(sql, /insert into public\.range_pending_legs|update public\.range_pending_legs|delete from public\.range_pending_legs/i)
+  assert.doesNotMatch(sql, /delete from public\.range_pending_legs/i)
 })

@@ -309,7 +309,7 @@ export interface ManualSettings {
   range_layer_till_close?: boolean
   /**
    * Product layering algorithm. `legacy` preserves existing range-percent/step/distance behavior.
-   * Static/dynamic are foundation-only until worker execution integration is enabled.
+   * Static/dynamic require server-side rollout gates and account allowlisting before execution.
    */
   layering_mode?: 'legacy' | 'static' | 'dynamic'
   /** Static V1 foundation: fixed total layer count, including first/immediate entry. */
@@ -629,8 +629,15 @@ export interface LayeringPlanRow {
   broker_account_id: string
   basket_key: string
   mode: 'static' | 'dynamic'
-  status: 'prepared' | 'active' | 'completed' | 'cancelled' | 'invalid'
+  status: 'prepared' | 'activating' | 'active' | 'entries_complete' | 'completed' | 'cancelling' | 'cancellation_pending' | 'cancellation_manual_review' | 'cancelled' | 'invalid'
   layer_plan_metadata: Json
+  semantic_fingerprint: string
+  first_execution_trade_id: string | null
+  first_execution_order_id: string | null
+  first_execution_status: string | null
+  first_execution_fill_price: number | null
+  first_execution_filled_lot: number | null
+  first_execution_confirmed_at: string | null
   created_at: string
   updated_at: string
   locked_at: string
@@ -645,6 +652,12 @@ export interface LayeringPlanUpdate {
   activated_at?: string | null
   cancelled_at?: string | null
   completed_at?: string | null
+  first_execution_trade_id?: string | null
+  first_execution_order_id?: string | null
+  first_execution_status?: string | null
+  first_execution_fill_price?: number | null
+  first_execution_filled_lot?: number | null
+  first_execution_confirmed_at?: string | null
 }
 
 export interface RangePendingLegRow {
@@ -674,6 +687,23 @@ export interface RangePendingLegRow {
   cwe_close_price?: number | null
   layer_plan_id: string | null
   layer_plan_metadata: Json | null
+  broker_client_reference?: string | null
+  broker_pending_type?: string | null
+  native_submission_status?: string | null
+  submission_claimed_at?: string | null
+  submission_claimed_by?: string | null
+  submission_attempt?: number
+  submitted_at?: string | null
+  confirmed_at?: string | null
+  last_reconciled_at?: string | null
+  broker_pending_reason?: string | null
+  reconciliation_reason?: string | null
+  reconciliation_claimed_at?: string | null
+  reconciliation_claimed_by?: string | null
+  cancellation_status?: string | null
+  cancellation_requested_at?: string | null
+  cancellation_confirmed_at?: string | null
+  cancellation_reason?: string | null
   created_at: string
   updated_at: string
 }

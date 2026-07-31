@@ -4,6 +4,7 @@ import type {
   LayerPlanAnchorSource,
   ManualSettings,
 } from './types'
+import { resolveLayeringModeRolloutDecision } from './layeringModeRollout'
 
 export const LAYERING_MODES = ['legacy', 'static', 'dynamic'] as const
 export const DEFAULT_LAYERING_MODE: LayeringMode = 'legacy'
@@ -182,8 +183,14 @@ export function isDynamicLayeringMode(settings: Pick<ManualSettings, 'layering_m
 }
 
 export function layeringModesExecutionEnabled(): boolean {
-  const raw = String(process.env.LAYERING_MODES_EXECUTION_ENABLED ?? 'false').trim().toLowerCase()
-  return raw === 'true' || raw === '1' || raw === 'yes'
+  return resolveLayeringModeRolloutDecision({
+    mode: 'static',
+    brokerAccountId: '__capability_probe__',
+  }).prepareAllowed
+    || resolveLayeringModeRolloutDecision({
+      mode: 'dynamic',
+      brokerAccountId: '__capability_probe__',
+    }).prepareAllowed
 }
 
 export function normalizeLayeringModeSettings(raw: Record<string, unknown>): Pick<
@@ -202,8 +209,9 @@ export function normalizeLayeringModeSettings(raw: Record<string, unknown>): Pic
 export function assertLayeringModeExecutionSupported(settings: ManualSettings): { ok: true } | { ok: false; reason: string } {
   const mode = resolveLayeringMode(settings)
   if (mode === 'legacy') return { ok: true }
-  const suffix = layeringModesExecutionEnabled() ? 'not_implemented' : 'execution_disabled'
-  return { ok: false, reason: `layering_mode_${mode}_${suffix}` }
+  const decision = resolveLayeringModeRolloutDecision({ mode })
+  if (decision.prepareAllowed) return { ok: true }
+  return { ok: false, reason: `layering_mode_${mode}_${decision.reason}` }
 }
 
 export function parseLayeringPlanSnapshot(raw: unknown): LayeringPlanSnapshot | null {

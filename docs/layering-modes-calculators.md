@@ -1,9 +1,11 @@
 # Layering Modes Calculators
 
-Phase B adds pure calculator modules for future Static and Dynamic range-layering
-execution. These helpers are not integrated into the planner, executor,
-Supabase persistence, queues, Telegram parsing, broker dispatch, or frontend UI.
-Legacy range-layering behavior remains the only production execution path.
+Phase B added pure calculator modules for Static and Dynamic range-layering
+plans. The calculator functions remain side-effect free: they do not access
+Supabase, queues, Telegram, broker clients, environment variables, time, random
+IDs, or filesystem/network state. Runtime integration consumes their outputs
+only after rollout gates allow preparation, and executable rows are materialized
+only from immutable persisted `fundedPrices`/`lots`.
 
 ## Static Layering
 
@@ -81,12 +83,18 @@ phase. Phase C persists immutable non-executable plan records first; candidate
 prices remain diagnostic only. Reason codes are deduplicated while preserving
 insertion order.
 
-## Phase C
+## Runtime Integration
 
-Phase C persists immutable plan snapshots in `layering_plans` and keeps them in
-`prepared` state. It does not write active `range_pending_legs` rows, wire the
-calculators into the planner/executor, or enable Static/Dynamic broker execution.
+The final integration uses these calculators to build versioned
+`LayeringPlanSnapshot` metadata. Static can prepare from the original signal
+range before the first immediate order. Dynamic is two-stage: the first broker
+fill is sent through the existing immediate path, then the actual fill price and
+actual fill lot are used to calculate remaining funded layers. The first layer is
+not materialized a second time as a pending leg.
+
+Static/Dynamic still require server-side rollout flags, kill switch off, and an
+allowlisted broker account. Broker-native pending orders for Static/Dynamic use
+the immutable funded prices/lots plus deterministic per-leg references for
+supported FxSocket MT4/MT5 accounts; unsupported adapters fail closed and never
+fall back to virtual execution or Legacy behavior.
 See [`layering-plan-persistence.md`](layering-plan-persistence.md).
-
-Do not claim these modes are available to users until the planner, activation,
-materialization, restart recovery, and broker execution integration are complete.

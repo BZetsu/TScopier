@@ -51,6 +51,9 @@ import {
 } from './layerConcurrentFire'
 import { incMetric } from './workerMetrics'
 import { captureWorkerError, captureWorkerWarning } from './observability/sentry'
+import { parsePersistedLayeringPlan } from './manualPlanning/layeringPlanPersistence'
+import { resolveLayeringModeRolloutDecision } from './manualPlanning/layeringModeRollout'
+import { convergeLayeringPlanAfterLegTerminal } from './layeringPlanLifecycle'
 
 /**
  * Worker-side monitor that turns persisted "virtual range pendings" into
@@ -118,6 +121,8 @@ interface PendingRow {
    * `cweCloseMonitor` will close the position when the live quote crosses.
    */
   cwe_close_price: number | null
+  layer_plan_id?: string | null
+  layer_plan_metadata?: unknown | null
 }
 
 interface BasketOpenTpRow {
@@ -434,9 +439,12 @@ export class VirtualPendingMonitor {
       .eq('status', 'pending')
       .not('expires_at', 'is', null)
       .lt('expires_at', nowIso)
-      .select('id,signal_id,user_id,broker_account_id,metaapi_account_id,symbol,is_buy,step_idx')
+      .select('id,signal_id,user_id,broker_account_id,metaapi_account_id,symbol,is_buy,step_idx,layer_plan_id')
     if (expired && expired.length) {
       for (const r of expired as PendingRow[]) {
+        if (r.layer_plan_id) {
+          await convergeLayeringPlanAfterLegTerminal(this.supabase, r.layer_plan_id)
+        }
         if (isUserCopierPausedCached(r.user_id)) continue
         try {
           await this.supabase.from('trade_execution_logs').insert({
@@ -869,6 +877,42 @@ export class VirtualPendingMonitor {
     throw lastErr instanceof Error ? lastErr : new Error(String(lastErr))
   }
 
+  private async validateLayeringModePendingLeg(
+    leg: PendingRow,
+  ): Promise<{ ok: true } | { ok: false; reason: string }> {
+    const planId = typeof leg.layer_plan_id === 'string' && leg.layer_plan_id.trim()
+      ? leg.layer_plan_id.trim()
+      : null
+    if (!planId) return { ok: true }
+    const { data, error } = await this.supabase
+      .from('layering_plans')
+      .select('status,layer_plan_metadata')
+      .eq('layer_plan_id', planId)
+      .maybeSingle()
+    if (error || !data) return { ok: false, reason: 'layering_plan_not_found' }
+    const status = String((data as { status?: unknown }).status ?? '')
+    if (status !== 'active') return { ok: false, reason: `layering_plan_${status || 'unknown'}` }
+    const parsed = parsePersistedLayeringPlan((data as { layer_plan_metadata?: unknown }).layer_plan_metadata)
+    if (!parsed.ok) return { ok: false, reason: `layering_plan_${parsed.reason}` }
+    const snapshot = parsed.snapshot
+    if (
+      snapshot.planId !== planId
+      || snapshot.signalId !== leg.signal_id
+      || snapshot.brokerAccountId !== leg.broker_account_id
+      || snapshot.symbol !== leg.symbol
+      || (snapshot.side === 'buy') !== leg.is_buy
+      || snapshot.fundedPrices == null
+      || snapshot.lots == null
+    ) return { ok: false, reason: 'layering_plan_identity_mismatch' }
+    const idx = leg.step_idx - 1
+    if (idx < 0 || idx >= snapshot.fundedPrices.length) return { ok: false, reason: 'layering_plan_leg_index_mismatch' }
+    if (snapshot.fundedPrices[idx] !== leg.trigger_price) return { ok: false, reason: 'layering_plan_price_mismatch' }
+    if (snapshot.lots[idx] !== leg.volume) return { ok: false, reason: 'layering_plan_lot_mismatch' }
+    const decision = resolveLayeringModeRolloutDecision({ mode: snapshot.mode, brokerAccountId: leg.broker_account_id })
+    if (!decision.executionAllowed) return { ok: false, reason: `layering_execution_${decision.reason}` }
+    return { ok: true }
+  }
+
   private async fireLeg(
     leg: PendingRow,
     bid: number,
@@ -881,6 +925,8 @@ export class VirtualPendingMonitor {
     const api = apiForFxsocketAccount(this.platformByUuid, leg.metaapi_account_id)
     if (!api) return { outcome: 'skipped', reason: 'api_unavailable' }
     const timestamps: LayerExecutionTimestamps = { ...(opts?.timestamps ?? {}) }
+    const planGuard = await this.validateLayeringModePendingLeg(leg)
+    if (!planGuard.ok) return { outcome: 'skipped', reason: planGuard.reason }
 
     // Use the tick-level quote directly — it was fetched moments ago in this
     // same tick cycle. The monotonicity check below still prevents stale fires.
@@ -933,6 +979,12 @@ export class VirtualPendingMonitor {
     }
     timestamps.layer_claim_acquired_at = Date.now()
     incMetric('range_layer_claim_acquired')
+
+    const preSendPlanGuard = await this.validateLayeringModePendingLeg(leg)
+    if (!preSendPlanGuard.ok) {
+      await this.releaseClaimedLegToPending(leg.id)
+      return { outcome: 'skipped', reason: preSendPlanGuard.reason }
+    }
 
     const earlyParams = await this.getSymbolParams(leg.metaapi_account_id, leg.symbol)
     const earlyFireBid = guardBid
@@ -1167,6 +1219,9 @@ export class VirtualPendingMonitor {
       // cannot leave the row `claimed` and get reset to `pending` (30s stale reclaim).
       await this.markLegFiredWithRetry(leg.id, result.ticket ?? null)
       timestamps.pending_leg_updated_at = Date.now()
+      if (leg.layer_plan_id) {
+        await convergeLayeringPlanAfterLegTerminal(this.supabase, leg.layer_plan_id)
+      }
       const latencyMs = Date.now() - t0
       console.log(
         `[virtualPendingMonitor] virtual leg fired signal=${leg.signal_id} stepIdx=${leg.step_idx} trigger=${leg.trigger_price} ref=${refPrice} ticket=${result.ticket} latency=${latencyMs}ms`,
@@ -1301,7 +1356,7 @@ export class VirtualPendingMonitor {
         /* logging is best-effort; leg is already `fired` */
       }
 
-      if (entryPx != null && Number.isFinite(entryPx) && entryPx > 0) {
+      if (!leg.layer_plan_id && entryPx != null && Number.isFinite(entryPx) && entryPx > 0) {
         try {
           const reanchor = await reanchorPendingLegsAfterGapFill({
             supabase: this.supabase,
@@ -1385,6 +1440,9 @@ export class VirtualPendingMonitor {
         .from('range_pending_legs')
         .update({ status: 'failed', error_message: msg, fired_at: new Date().toISOString() })
         .eq('id', leg.id)
+      if (leg.layer_plan_id) {
+        await convergeLayeringPlanAfterLegTerminal(this.supabase, leg.layer_plan_id)
+      }
       timestamps.pending_leg_updated_at = Date.now()
       await this.supabase.from('trade_execution_logs').insert({
         user_id: leg.user_id,

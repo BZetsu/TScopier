@@ -10,7 +10,17 @@ import {
 import type { CalculatedLayerPlanSuccess, LayerPlanReason } from './layeringModeCalculators'
 import type { LayeringMode, LayeringPlanSnapshot, LayerPlanAnchorSource, LayerPlanSide } from './types'
 
-export type LayerPlanPersistenceStatus = 'prepared' | 'active' | 'completed' | 'cancelled' | 'invalid'
+export type LayerPlanPersistenceStatus =
+  | 'prepared'
+  | 'activating'
+  | 'active'
+  | 'entries_complete'
+  | 'completed'
+  | 'cancelling'
+  | 'cancellation_pending'
+  | 'cancellation_manual_review'
+  | 'cancelled'
+  | 'invalid'
 
 export interface LayerPlanIdentity {
   readonly signalId: string
@@ -43,6 +53,11 @@ export type LayerPlanPersistenceReason =
   | 'invalid_snapshot'
   | 'created'
   | 'already_exists_matching'
+  | 'activation_claimed'
+  | 'activated'
+  | 'already_activating'
+  | 'already_active'
+  | 'fingerprint_conflict'
   | 'conflict'
   | 'not_found'
   | 'malformed_metadata'
@@ -57,6 +72,7 @@ export type LayerPlanPersistenceReason =
   | 'unknown_status'
   | 'malformed_existing_plan'
   | 'persistence_failed'
+  | 'activation_failed'
 
 export type PersistLayeringPlanResult =
   | { readonly ok: true; readonly outcome: 'created' | 'already_exists_matching'; readonly snapshot: LayeringPlanSnapshot }
@@ -79,6 +95,59 @@ export interface ProposedLayerPlanLegRow {
   readonly status: 'planned'
 }
 
+export interface ExecutableLayerPlanLegRow extends Omit<ProposedLayerPlanLegRow, 'status'> {
+  readonly user_id: string
+  readonly metaapi_account_id: string
+  readonly anchor_price: number
+  readonly stoploss: number | null
+  readonly takeprofit: number | null
+  readonly slippage: number
+  readonly comment: string | null
+  readonly expert_id: number | null
+  readonly expires_at: string | null
+  readonly ticket?: string | null
+  readonly cwe_close_price?: number | null
+  readonly broker_client_reference?: string | null
+  readonly broker_pending_type?: string | null
+  readonly native_submission_status?: string | null
+  readonly submission_claimed_at?: string | null
+  readonly submission_claimed_by?: string | null
+  readonly submission_attempt?: number | null
+  readonly submitted_at?: string | null
+  readonly confirmed_at?: string | null
+  readonly last_reconciled_at?: string | null
+  readonly broker_pending_reason?: string | null
+  readonly reconciliation_reason?: string | null
+  readonly status: 'pending' | 'broker_pending'
+}
+
+export interface ActivateLayeringPlanContext {
+  readonly user_id: string
+  readonly signal_id: string
+  readonly broker_account_id: string
+  readonly metaapi_account_id: string
+  readonly stoploss: number | null
+  readonly takeprofit: number | null
+  readonly slippage: number
+  readonly comment: string | null
+  readonly expert_id?: number | null
+  readonly expires_at?: string | null
+  readonly cwe_close_price?: number | null
+  readonly broker_pending_type?: string | null
+  readonly first_execution_trade_id?: string | null
+  readonly first_execution_order_id?: string | null
+  readonly first_execution_status?: string | null
+  readonly first_execution_fill_price?: number | null
+  readonly first_execution_filled_lot?: number | null
+  readonly first_execution_confirmed_at?: string | null
+}
+
+interface ActivateLayeringPlanArgs {
+  readonly executionMechanism: 'auto' | 'pending_order'
+  readonly excludeFirstLayer: boolean
+  readonly legContext: ActivateLayeringPlanContext
+}
+
 export interface PersistedLayerPlanRow {
   readonly layer_plan_id: string
   readonly signal_id: string
@@ -87,6 +156,7 @@ export interface PersistedLayerPlanRow {
   readonly mode: 'static' | 'dynamic'
   readonly status: LayerPlanPersistenceStatus
   readonly layer_plan_metadata: unknown
+  readonly semantic_fingerprint?: string | null
   readonly created_at: string
   readonly locked_at: string
 }
@@ -265,13 +335,16 @@ export function parsePersistedLayeringPlan(raw: unknown): RecoverLayeringPlanRes
 }
 
 function normalizeStatus(value: unknown): LayerPlanPersistenceStatus | null {
-  return value === 'prepared' || value === 'active' || value === 'completed' || value === 'cancelled' || value === 'invalid'
+  return value === 'prepared' || value === 'activating' || value === 'active'
+    || value === 'entries_complete' || value === 'completed'
+    || value === 'cancelling' || value === 'cancellation_pending' || value === 'cancellation_manual_review'
+    || value === 'cancelled' || value === 'invalid'
     ? value
     : null
 }
 
 function checkPlanRowStatus(status: LayerPlanPersistenceStatus): LayerPlanPersistenceReason | null {
-  if (status === 'prepared' || status === 'active') return null
+  if (status === 'prepared' || status === 'activating' || status === 'active') return null
   if (status === 'invalid') return 'invalid_plan'
   return 'terminal_plan'
 }
@@ -294,6 +367,9 @@ function parsePersistedLayeringPlanRow(row: unknown): RecoverLayeringPlanResult 
     || data.mode !== snapshot.mode
   ) return { ok: false, reason: 'identity_mismatch' }
   if (data.created_at !== snapshot.createdAt || data.locked_at !== snapshot.lockedAt) {
+    return { ok: false, reason: 'identity_mismatch' }
+  }
+  if (data.semantic_fingerprint != null && data.semantic_fingerprint !== computeLayeringPlanFingerprint(snapshot)) {
     return { ok: false, reason: 'identity_mismatch' }
   }
   return parsed
@@ -322,7 +398,7 @@ export async function loadLayeringPlan(
   if (!isValidLayerPlanId(planId)) return { ok: false, reason: 'invalid_plan_id' }
   const { data, error } = await supabase
     .from('layering_plans')
-    .select('layer_plan_id,signal_id,broker_account_id,basket_key,mode,status,layer_plan_metadata,created_at,locked_at')
+    .select('layer_plan_id,signal_id,broker_account_id,basket_key,mode,status,layer_plan_metadata,semantic_fingerprint,created_at,locked_at')
     .eq('layer_plan_id', planId)
     .maybeSingle()
   if (error) return { ok: false, reason: 'persistence_failed' }
@@ -338,6 +414,8 @@ export async function persistLayeringPlan(
   if (!parsed.ok) return { ok: false, reason: parsed.reason }
   const metadata = snapshotMetadata(parsed.snapshot)
   if (metadata == null) return { ok: false, reason: 'invalid_snapshot' }
+  const fingerprint = computeLayeringPlanFingerprint(parsed.snapshot)
+  if (fingerprint == null) return { ok: false, reason: 'invalid_snapshot' }
 
   const { error } = await supabase.from('layering_plans').insert({
     layer_plan_id: parsed.snapshot.planId,
@@ -347,6 +425,7 @@ export async function persistLayeringPlan(
     mode: parsed.snapshot.mode,
     status: 'prepared',
     layer_plan_metadata: metadata,
+    semantic_fingerprint: fingerprint,
     created_at: parsed.snapshot.createdAt,
     locked_at: parsed.snapshot.lockedAt,
   })
@@ -357,6 +436,91 @@ export async function persistLayeringPlan(
   return snapshotsMatch(afterDuplicate.snapshot, parsed.snapshot)
     ? { ok: true, outcome: 'already_exists_matching', snapshot: afterDuplicate.snapshot }
     : { ok: false, reason: 'conflict' }
+}
+
+export async function claimLayeringPlanActivation(
+  supabase: SupabaseClient,
+  snapshot: LayeringPlanSnapshot,
+): Promise<{ readonly ok: true; readonly outcome: 'activation_claimed' | 'already_active' } | { readonly ok: false; readonly reason: LayerPlanPersistenceReason }> {
+  const parsed = parsePersistedLayeringPlan(snapshot)
+  if (!parsed.ok) return { ok: false, reason: parsed.reason }
+  const fingerprint = computeLayeringPlanFingerprint(parsed.snapshot)
+  if (fingerprint == null) return { ok: false, reason: 'invalid_snapshot' }
+  const { data, error } = await supabase
+    .from('layering_plans')
+    .update({ status: 'activating', updated_at: new Date().toISOString(), activated_at: new Date().toISOString() })
+    .eq('layer_plan_id', parsed.snapshot.planId)
+    .eq('status', 'prepared')
+    .eq('semantic_fingerprint', fingerprint)
+    .select('layer_plan_id')
+    .maybeSingle()
+  if (!error && data) return { ok: true, outcome: 'activation_claimed' }
+  const existing = await loadLayeringPlan(supabase, parsed.snapshot.planId)
+  if (!existing.ok) return { ok: false, reason: existing.reason }
+  if (!snapshotsMatch(existing.snapshot, parsed.snapshot)) return { ok: false, reason: 'fingerprint_conflict' }
+  const row = await supabase
+    .from('layering_plans')
+    .select('status')
+    .eq('layer_plan_id', parsed.snapshot.planId)
+    .maybeSingle()
+  const status = normalizeStatus((row.data as { status?: unknown } | null)?.status)
+  if (status === 'active') return { ok: true, outcome: 'already_active' }
+  if (status === 'activating') return { ok: false, reason: 'already_activating' }
+  if (status === 'entries_complete' || status === 'completed' || status === 'cancelling' || status === 'cancellation_pending' || status === 'cancellation_manual_review' || status === 'cancelled') return { ok: false, reason: 'terminal_plan' }
+  if (status === 'invalid') return { ok: false, reason: 'invalid_plan' }
+  return { ok: false, reason: 'activation_failed' }
+}
+
+export async function activateLayeringPlanWithLegs(
+  supabase: SupabaseClient,
+  snapshot: LayeringPlanSnapshot,
+  args: ActivateLayeringPlanArgs | readonly ExecutableLayerPlanLegRow[],
+): Promise<{ readonly ok: true; readonly outcome: 'activated' | 'already_active' } | { readonly ok: false; readonly reason: LayerPlanPersistenceReason }> {
+  const parsed = parsePersistedLayeringPlan(snapshot)
+  if (!parsed.ok) return { ok: false, reason: parsed.reason }
+  const fingerprint = computeLayeringPlanFingerprint(parsed.snapshot)
+  if (fingerprint == null) return { ok: false, reason: 'invalid_snapshot' }
+  const legacyRows = Array.isArray(args) ? args : null
+  const activationArgs = args as ActivateLayeringPlanArgs
+  const firstLegacy = legacyRows?.[0]
+  const legContext: ActivateLayeringPlanContext = legacyRows
+    ? {
+        user_id: firstLegacy?.user_id ?? '',
+        signal_id: parsed.snapshot.signalId,
+        broker_account_id: parsed.snapshot.brokerAccountId,
+        metaapi_account_id: firstLegacy?.metaapi_account_id ?? '',
+        stoploss: firstLegacy?.stoploss ?? null,
+        takeprofit: firstLegacy?.takeprofit ?? null,
+        slippage: firstLegacy?.slippage ?? 20,
+        comment: firstLegacy?.comment ?? null,
+        expert_id: firstLegacy?.expert_id ?? null,
+        expires_at: firstLegacy?.expires_at ?? null,
+        cwe_close_price: firstLegacy?.cwe_close_price ?? null,
+        broker_pending_type: firstLegacy?.broker_pending_type ?? null,
+      }
+    : activationArgs.legContext
+  const executionMechanism = legacyRows
+    ? (firstLegacy?.status === 'broker_pending' ? 'pending_order' : 'auto')
+    : activationArgs.executionMechanism
+  const excludeFirstLayer = legacyRows ? firstLegacy?.step_idx === 2 : activationArgs.excludeFirstLayer
+  const { data, error } = await supabase.rpc('activate_layering_plan', {
+    p_layer_plan_id: parsed.snapshot.planId,
+    p_semantic_fingerprint: fingerprint,
+    p_execution_mechanism: executionMechanism,
+    p_exclude_first_layer: excludeFirstLayer,
+    p_leg_context: legContext,
+  })
+  if (error) return { ok: false, reason: 'activation_failed' }
+  const outcome = typeof data === 'string'
+    ? data
+    : (data && typeof data === 'object' ? String((data as { outcome?: unknown }).outcome ?? '') : '')
+  if (outcome === 'activated') return { ok: true, outcome: 'activated' }
+  if (outcome === 'already_active') return { ok: true, outcome: 'already_active' }
+  if (outcome === 'already_activating') return { ok: false, reason: 'already_activating' }
+  if (outcome === 'fingerprint_conflict') return { ok: false, reason: 'fingerprint_conflict' }
+  if (outcome === 'terminal_plan') return { ok: false, reason: 'terminal_plan' }
+  if (outcome === 'not_found') return { ok: false, reason: 'not_found' }
+  return { ok: false, reason: 'activation_failed' }
 }
 
 export function materializeLayerPlanLegRows(snapshot: LayeringPlanSnapshot): { ok: true; rows: readonly ProposedLayerPlanLegRow[] } | { ok: false; reason: LayerPlanPersistenceReason } {
@@ -378,6 +542,57 @@ export function materializeLayerPlanLegRows(snapshot: LayeringPlanSnapshot): { o
     volume: parsed.snapshot.lots![idx]!,
     status: 'planned' as const,
   }))
+  return { ok: true, rows: Object.freeze(rows) }
+}
+
+export function materializeExecutableLayerPlanLegRows(args: {
+  readonly snapshot: LayeringPlanSnapshot
+  readonly userId: string
+  readonly metaapiAccountId: string
+  readonly stoploss: number | null
+  readonly takeprofit: number | null
+  readonly slippage: number
+  readonly comment: string | null
+  readonly expertId?: number | null
+  readonly expiresAt?: string | null
+  readonly cweClosePrice?: number | null
+  readonly status: 'pending' | 'broker_pending'
+  readonly skipFirstLayer?: boolean
+}): { ok: true; rows: readonly ExecutableLayerPlanLegRow[] } | { ok: false; reason: LayerPlanPersistenceReason } {
+  const parsed = parsePersistedLayeringPlan(args.snapshot)
+  if (!parsed.ok) return { ok: false, reason: parsed.reason }
+  const metadata = snapshotMetadata(parsed.snapshot)
+  if (metadata == null || parsed.snapshot.fundedPrices == null || parsed.snapshot.lots == null) {
+    return { ok: false, reason: 'invalid_snapshot' }
+  }
+  const start = args.skipFirstLayer ? 1 : 0
+  const anchor = parsed.snapshot.executableAnchorPrice ?? parsed.snapshot.fundedPrices[0] ?? parsed.snapshot.anchorPrice
+  if (anchor == null || !Number.isFinite(anchor) || anchor <= 0) return { ok: false, reason: 'invalid_snapshot' }
+  const rows = parsed.snapshot.fundedPrices.slice(start).map((price, offset) => {
+    const idx = start + offset
+    return {
+      layer_plan_id: parsed.snapshot.planId,
+      layer_plan_metadata: metadata,
+      signal_id: parsed.snapshot.signalId,
+      user_id: args.userId,
+      broker_account_id: parsed.snapshot.brokerAccountId,
+      metaapi_account_id: args.metaapiAccountId,
+      symbol: parsed.snapshot.symbol,
+      step_idx: idx + 1,
+      is_buy: parsed.snapshot.side === 'buy',
+      volume: parsed.snapshot.lots![idx]!,
+      anchor_price: anchor,
+      trigger_price: price,
+      stoploss: args.stoploss,
+      takeprofit: args.cweClosePrice != null ? null : args.takeprofit,
+      slippage: args.slippage,
+      comment: args.comment,
+      expert_id: args.expertId ?? null,
+      expires_at: args.expiresAt ?? null,
+      status: args.status,
+      cwe_close_price: args.cweClosePrice ?? null,
+    }
+  })
   return { ok: true, rows: Object.freeze(rows) }
 }
 
