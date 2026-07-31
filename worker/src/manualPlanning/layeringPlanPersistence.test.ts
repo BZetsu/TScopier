@@ -412,6 +412,8 @@ test('layering plan migration uses worker-only table access and atomic activatio
   assert.match(sql, /from jsonb_array_elements_text\(v_funded\) with ordinality/i)
   assert.match(sql, /v_lots->>\(prices\.ord - 1\)/i)
   assert.match(sql, /where prices\.ord >= v_start_idx/i)
+  assert.match(sql, /v_calculator_version <> 'layering-v1'/i)
+  assert.doesNotMatch(sql, /v_calculator_version is null/i)
   assert.doesNotMatch(sql, /p_legs/i)
   assert.match(sql, /add column if not exists broker_client_reference text/i)
   assert.match(sql, /add column if not exists broker_pending_type text/i)

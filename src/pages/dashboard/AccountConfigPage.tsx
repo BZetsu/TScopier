@@ -2167,7 +2167,7 @@ export function AccountConfigPage() {
           ) as ManualSettings,
           { accountBalance: configAccountTotalBalance },
         )
-      : (configAccount.manual_settings ?? {})
+      : normalizeManualSettings(configAccount.manual_settings ?? {}, { accountBalance: configAccountTotalBalance })
     if (!channelIds.length && normalizedFallbackManual) {
       const { error: layeringSaveError } = await updateLayeringSettings({
         broker_account_id: configAccount.id,
