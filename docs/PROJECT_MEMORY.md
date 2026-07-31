@@ -2,6 +2,16 @@
 
 ## Changelog
 
+### 2026-07-31 — Fixed staging Netlify build: layering fallback type error in AccountConfigPage
+
+- **Context:** Staging frontend deploy (`BZetsu/TScopier:staging` → Netlify) failed with 7 TS errors in `src/pages/dashboard/AccountConfigPage.tsx` after pulling Emma's layering-modes commits (PRs #63–#65, `8be5388e`) from upstream staging. The build is `tsc -b && vite build`, so `tsc` blocked the deploy.
+- **Root cause:** The ternary `normalizedFallbackManual` had two branches: `normalizeManualSettings(...) as ManualSettings` and `(configAccount.manual_settings ?? {})`. `configAccount.manual_settings` is typed `Json | null` (`src/types/database.ts`), so the fallback branch widened the union to `ManualSettings | Json`, and `.layering_mode` / `.range_layering_type` / `.static_layer_count` / `.dynamic_step_pips` / `.dynamic_max_layers` were not accessible on the `string` member of the union.
+- **Changes:**
+  - **`src/pages/dashboard/AccountConfigPage.tsx`:** Cast the fallback branch to `ManualSettings`: `: (configAccount.manual_settings ?? {}) as ManualSettings`. Pure type-level fix — zero runtime behavior change (all accessed fields already fall back via `===` checks and `?? DEFAULT_MANUAL_SETTINGS.*`).
+- **Verification:** `npx tsc -b` clean on the staging checkout.
+- **Deploy:** Commit `7ce4baea` pushed to `origin/staging` → Netlify rebuild triggered.
+- **Follow-up:** `upstream/staging` still contains the broken commit `8be5388e` without the fix — needs the same commit (or a PR) to keep forks in sync. Also worth cherry-picking the fix to `dev`/`main` later via the normal hotfix flow.
+
 ### 2026-07-31 — Added "Manage" button to trade detail modal (deep-link into Manage Signals edit modal)
 
 - **Context:** On the Trades page (`/account-trades`), clicking a trade opens `TradeDetailModal`. User wanted a "Manage" button in the modal header that jumps to the manage signals page (`/manage-signals`) and opens the exact `EditSignalOverrideModal` for that trade's linked signal.
