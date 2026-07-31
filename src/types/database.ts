@@ -58,6 +58,16 @@ export interface Database {
         Insert: Omit<Trade, 'id' | 'created_at'>
         Update: Partial<Omit<Trade, 'id' | 'created_at'>>
       }
+      layering_plans: {
+        Row: LayeringPlanRow
+        Insert: Omit<LayeringPlanRow, 'created_at' | 'updated_at'> & { created_at?: string; updated_at?: string }
+        Update: LayeringPlanUpdate
+      }
+      range_pending_legs: {
+        Row: RangePendingLegRow
+        Insert: Omit<RangePendingLegRow, 'id' | 'created_at' | 'updated_at'>
+        Update: Partial<Omit<RangePendingLegRow, 'id' | 'created_at'>>
+      }
       user_profiles: {
         Row: UserProfileRow
         Insert: Omit<UserProfileRow, 'created_at' | 'updated_at'> & { created_at?: string; updated_at?: string }
@@ -611,6 +621,61 @@ export interface Trade {
   closed_at: string | null
   profit: number | null
   created_at: string
+}
+
+export interface LayeringPlanRow {
+  layer_plan_id: string
+  signal_id: string
+  broker_account_id: string
+  basket_key: string
+  mode: 'static' | 'dynamic'
+  status: 'prepared' | 'active' | 'completed' | 'cancelled' | 'invalid'
+  layer_plan_metadata: Json
+  created_at: string
+  updated_at: string
+  locked_at: string
+  activated_at: string | null
+  cancelled_at: string | null
+  completed_at: string | null
+}
+
+export interface LayeringPlanUpdate {
+  status?: LayeringPlanRow['status']
+  updated_at?: string
+  activated_at?: string | null
+  cancelled_at?: string | null
+  completed_at?: string | null
+}
+
+export interface RangePendingLegRow {
+  id: string
+  signal_id: string
+  user_id: string
+  broker_account_id: string
+  metaapi_account_id: string
+  symbol: string
+  step_idx: number
+  is_buy: boolean
+  volume: number
+  anchor_price: number
+  trigger_price: number
+  stoploss: number | null
+  takeprofit: number | null
+  slippage: number
+  comment: string | null
+  expert_id: number | null
+  expires_at: string | null
+  status: string
+  ticket: string | null
+  claimed_at: string | null
+  claimed_by: string | null
+  fired_at: string | null
+  error_message: string | null
+  cwe_close_price?: number | null
+  layer_plan_id: string | null
+  layer_plan_metadata: Json | null
+  created_at: string
+  updated_at: string
 }
 
 export interface MtServer {

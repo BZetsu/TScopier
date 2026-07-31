@@ -440,6 +440,22 @@ through settings storage, but worker planning rejects range execution for those
 modes instead of silently falling through to legacy semantics. The warning only
 contains the normalized mode, not raw signal, account, or broker data.
 
+Phase C adds `layering_plans` for immutable, non-executable prepared Static and
+Dynamic plan snapshots. The Phase C migration is additive and may be deployed
+before or after the Phase C code because no runtime path activates those plans or
+materializes executable `range_pending_legs`. Prepared plans are inert until a
+future Phase D explicitly activates/materializes funded prices. Keep
+`LAYERING_MODES_EXECUTION_ENABLED=false`; enabling it in Phase C still does not
+make Static/Dynamic execution operational.
+
+`layering_plans` is worker/service-role only: RLS is enabled, `anon` and
+`authenticated` table privileges are revoked, and no frontend/client policy reads
+plan metadata. Persistence compares a semantic fingerprint that excludes
+lifecycle timestamps, so retry-after-timeout can return the original prepared
+plan without overwriting immutable metadata. Recovery is status-aware:
+`prepared` and read-only `active` rows can be parsed, while `completed`,
+`cancelled`, `invalid`, and unknown statuses fail closed for Phase C.
+
 Guards (worker + edge sweep):
 
 - Do not fire a `step_idx` that already has a **`fired`** row for the same `(signal_id, broker_account_id, symbol)`.
