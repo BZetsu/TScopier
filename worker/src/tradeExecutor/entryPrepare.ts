@@ -1,13 +1,11 @@
 import {
   hasFxsocketConfigured,
-  isBrokerDisconnectedMessage,
   MT_SESSION_EXPIRED_HINT,
   FxsocketBrokerClient,
   MtOperation,
   OrderSendArgs,
 } from '../fxsocketClient'
 import {
-  clampPendingExpiryHours,
   parsedHasExplicitEntryAnchor,
   planManualOrders,
   resolvedParsedEntryPrice,
@@ -17,7 +15,6 @@ import {
   SKIP_REASON_SIGNAL_ENTRY_REQUIRED,
   SKIP_REASON_SIGNAL_ENTRY_RANGE_REQUIRED,
   strictSignalEntryQuoteAllowsImmediate,
-  lastPositiveParsedTpPrice,
   type ChannelKeywords,
   type ManualSettings,
   type ParsedSignal as PlannerParsedSignal,
@@ -72,6 +69,7 @@ import {
 } from '../signalRangeEntryService'
 import { releaseSignalBrokerDispatchClaim } from './signalBrokerDispatchClaim'
 import { setPipelineTimestamp } from '../pipelineTimestamps'
+import type { LayeringModeRuntime } from './layeringModeIntegration'
 
 export type EntryArgs = {
   signal: SignalRow
@@ -115,6 +113,7 @@ export type PreparedEntry = {
   anchor: number | null
   anchorSource: 'signal' | 'quote' | 'fill' | 'unknown'
   isManual: boolean
+  layeringRuntime?: LayeringModeRuntime
 }
 
 export type PrepareEntryResult =
@@ -355,7 +354,7 @@ export async function prepareEntryExecution(
   // Basket SL/TP refresh — always before OrderSend (not deferred to post-fill).
   // Skip when Use signal range is on: zone+market-now+SL/TP must open via range entry wait,
   // not merge into a prior teaser that may never have opened.
-  let basketRefreshSucceeded = false
+  const basketRefreshSucceeded = false
   const sameSignalRefresh = sendOpts?.sameSignalRefresh === true
   const rangeEntryStrict = signalEntryRangeStrictEnabled(manual)
   if (isManual && !rangeEntryStrict && (shouldRouteAsBasketParameterRefresh(parsed) || sameSignalRefresh)) {
@@ -382,7 +381,6 @@ export async function prepareEntryExecution(
       }
     }
     if (paramOutcome.handled && paramOutcome.success) {
-      basketRefreshSucceeded = true
       return { ok: false, outcome: { openedOrMerged: true } }
     }
     // handled + !success: anchor had no open legs — fall through to range entry / OrderSend.
@@ -474,7 +472,6 @@ export async function prepareEntryExecution(
   // Build the order list. In AI mode we keep the original single-order shape;
   // manual mode delegates to the planner so filters / multi-TP / pip-derived
   // SL & TP / pending expiry / reverse all apply consistently.
-  let mergedChannelParams = false
   let entryChannelParams: ChannelActiveTradeParams | null = null
   let channelParamsRefreshedFromSignal = false
   let plan: PlannerResult
@@ -507,7 +504,6 @@ export async function prepareEntryExecution(
           signalId: signal.id,
         })
         plannerParsed = resolved.plannerParsed
-        mergedChannelParams = resolved.mergedChannelParams
         entryChannelParams = resolved.channelParams
         channelParamsRefreshedFromSignal = parsedSignalHasExplicitStops(plannerParsed)
       } else if (parsedSignalHasExplicitStops(plannerParsed)) {
@@ -520,11 +516,16 @@ export async function prepareEntryExecution(
         channelParamsRefreshedFromSignal = entryChannelParams != null
       }
     }
+    const planningManual = isManual
+      && manual.range_trading === true
+      && (manual.layering_mode === 'static' || manual.layering_mode === 'dynamic')
+      ? { ...manual, layering_mode: 'legacy' as const }
+      : manual
     plan = planManualOrders({
       parsed: plannerParsed,
       resolvedSymbol: symbol,
       baseOperation: op,
-      manual,
+      manual: planningManual,
       channelKeywords,
       manualLot: baseLot,
       ctx: {

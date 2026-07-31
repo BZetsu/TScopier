@@ -440,6 +440,33 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
           })
         }
       }
+      if (prep.layeringRuntime?.onImmediateFill) {
+        try {
+          await prep.layeringRuntime.onImmediateFill({
+            entryPrice: entryPx,
+            lot: result.lots ?? sendArgs.volume,
+            tradeRowId,
+            ticket: result.ticket ?? null,
+          })
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err)
+          await ctx.supabase.from('trade_execution_logs').insert({
+            user_id: signal.user_id,
+            signal_id: signal.id,
+            broker_account_id: broker.id,
+            action: 'layering_first_fill_activation',
+            status: 'reconciliation_required',
+            request_payload: {
+              broker_ticket_present: result.ticket != null,
+              trade_row_id_present: tradeRowId != null,
+              symbol: sendArgs.symbol,
+              operation: sendArgs.operation,
+            } as unknown as Record<string, unknown>,
+            error_message: message,
+          })
+          throw err
+        }
+      }
       const logRow = {
         user_id: signal.user_id,
         signal_id: signal.id,
@@ -571,7 +598,14 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
       return (retry.data as { id?: string } | null)?.id ?? null
     }
 
-    if (liveEntryFast) {
+    if (liveEntryFast && prep.layeringRuntime?.onImmediateFill) {
+      filledLeg.tradeRowId = await insertTradeRowWithFkRetry()
+      filledLegs.push(filledLeg)
+      await persistPostFillDb(filledLeg.tradeRowId)
+      if (signal.pipeline_ts) {
+        setPipelineTimestamp(signal.pipeline_ts, 'execution_state_persisted_at', Date.now())
+      }
+    } else if (liveEntryFast) {
       filledLegs.push(filledLeg)
       void (async () => {
         const tradeRowId = await insertTradeRowWithFkRetry()
@@ -722,6 +756,12 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
   const anyImmediateOpened = sendResults.some(
     r => r.status === 'fulfilled' && r.value === true,
   )
+  const rejectedSendReason = sendResults
+    .find((r): r is PromiseRejectedResult => r.status === 'rejected')
+    ?.reason
+  if (rejectedSendReason != null) {
+    lastSendError = rejectedSendReason instanceof Error ? rejectedSendReason.message : String(rejectedSendReason)
+  }
   const parsedTpCount = (parsed.tp ?? []).filter(
     (t): t is number => typeof t === 'number' && Number.isFinite(t) && t > 0,
   ).length

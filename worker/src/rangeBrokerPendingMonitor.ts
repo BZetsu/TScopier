@@ -29,6 +29,10 @@ import {
   type RangeBrokerPendingRow,
 } from './rangeBrokerPendingHelpers'
 import { watchRangeLayeringBasketEvents } from './rangeLayerBasketWatch'
+import { parsePersistedLayeringPlan } from './manualPlanning/layeringPlanPersistence'
+import { resolveLayeringModeRolloutDecision } from './manualPlanning/layeringModeRollout'
+import { convergeLayeringPlanAfterLegTerminal, recoverCancellingLayeringPlans } from './layeringPlanLifecycle'
+import { recoverNativeLayeringSubmissions } from './tradeExecutor/layeringModeBrokerPendingRecovery'
 
 const ACTIVE_MS = monitorActiveIntervalMs('RANGE_BROKER_PENDING_TICK_MS', 2_000)
 const IDLE_MS = monitorIdleIntervalMs('RANGE_BROKER_PENDING_IDLE_MS', 15_000)
@@ -156,6 +160,9 @@ async function markBrokerRangeLegFilled(
     : (leg.ticket ?? null)
 
   await markRangeLegFired(supabase, leg.id, ticketForTrade)
+  if (leg.layer_plan_id) {
+    await convergeLayeringPlanAfterLegTerminal(supabase, leg.layer_plan_id)
+  }
 
   const { data: insTrade, error: insErr } = await supabase.from('trades').insert({
     user_id: leg.user_id,
@@ -253,6 +260,7 @@ export class RangeBrokerPendingMonitor {
       hasWork: sb => hasWorkOnShard(sb, 'range_pending_legs', q => q.eq('status', 'broker_pending')),
       tick: () => this.runTick(),
     })
+    void this.runTick()
     console.log(`[rangeBrokerPendingMonitor] started active=${ACTIVE_MS}ms idle=${IDLE_MS}ms`)
   }
 
@@ -283,7 +291,7 @@ export class RangeBrokerPendingMonitor {
       this.supabase
         .from('range_pending_legs')
         .select(
-          'id,signal_id,user_id,broker_account_id,metaapi_account_id,symbol,step_idx,is_buy,volume,trigger_price,stoploss,takeprofit,slippage,comment,expert_id,ticket,expires_at,cwe_close_price',
+          'id,signal_id,user_id,broker_account_id,metaapi_account_id,symbol,step_idx,is_buy,volume,trigger_price,stoploss,takeprofit,slippage,comment,expert_id,ticket,expires_at,cwe_close_price,layer_plan_id,layer_plan_metadata,broker_client_reference,broker_pending_type,native_submission_status,submitted_at,confirmed_at,last_reconciled_at,broker_pending_reason',
         )
         .eq('status', 'broker_pending')
         .limit(200),
@@ -294,8 +302,12 @@ export class RangeBrokerPendingMonitor {
       console.error('[rangeBrokerPendingMonitor] select failed:', error.message)
       return
     }
-    const rows = ((data ?? []) as RangeBrokerPendingRow[])
+    const candidateRows = ((data ?? []) as RangeBrokerPendingRow[])
       .filter(r => !isUserCopierPausedCached(r.user_id))
+    const rows: RangeBrokerPendingRow[] = []
+    for (const row of candidateRows) {
+      if (await this.layeringModeBrokerPendingAllowed(row)) rows.push(row)
+    }
 
     const { data: cancelRows } = await this.supabase
       .from('range_pending_legs')
@@ -310,6 +322,14 @@ export class RangeBrokerPendingMonitor {
       ...((cancelRows ?? []) as Array<{ metaapi_account_id: string }>).map(r => r.metaapi_account_id),
     ]
     this.platformByUuid = await loadPlatformByFxsocketId(this.supabase, accountIds)
+
+    await recoverNativeLayeringSubmissions({
+      supabase: this.supabase,
+      apiLookup: uuid => apiForFxsocketAccount(this.platformByUuid, uuid),
+    })
+    await recoverCancellingLayeringPlans(this.supabase, {
+      apiLookup: uuid => apiForFxsocketAccount(this.platformByUuid, uuid),
+    })
 
     await reconcileBasketEmptyCancelledLegs(
       this.supabase,
@@ -338,6 +358,9 @@ export class RangeBrokerPendingMonitor {
           .update({ status: 'expired', error_message: 'pending_expiry' })
           .eq('id', row.id)
           .eq('status', 'broker_pending')
+      }
+      if (row.layer_plan_id) {
+        await convergeLayeringPlanAfterLegTerminal(this.supabase, row.layer_plan_id)
       }
     }
 
@@ -379,7 +402,7 @@ export class RangeBrokerPendingMonitor {
     for (const [uuid, group] of byAccount) {
       const api = apiForFxsocketAccount(this.platformByUuid, uuid)
       if (!api) continue
-      let opened: unknown[] = []
+      let opened: unknown[]
       try {
         opened = await api.openedOrders(uuid)
       } catch (err) {
@@ -451,8 +474,39 @@ export class RangeBrokerPendingMonitor {
             .update({ status: 'cancelled', error_message: 'broker_missing' })
             .eq('id', row.id)
             .eq('status', 'broker_pending')
+          if (row.layer_plan_id) {
+            await convergeLayeringPlanAfterLegTerminal(this.supabase, row.layer_plan_id)
+          }
         }
       }
     }
+  }
+
+  private async layeringModeBrokerPendingAllowed(row: RangeBrokerPendingRow): Promise<boolean> {
+    if (!row.layer_plan_id) return true
+    const { data, error } = await this.supabase
+      .from('layering_plans')
+      .select('status,layer_plan_metadata')
+      .eq('layer_plan_id', row.layer_plan_id)
+      .maybeSingle()
+    if (error || !data || String((data as { status?: unknown }).status ?? '') !== 'active') return false
+    const parsed = parsePersistedLayeringPlan((data as { layer_plan_metadata?: unknown }).layer_plan_metadata)
+    if (!parsed.ok) return false
+    const snapshot = parsed.snapshot
+    if (
+      snapshot.planId !== row.layer_plan_id
+      || snapshot.signalId !== row.signal_id
+      || snapshot.brokerAccountId !== row.broker_account_id
+      || snapshot.symbol !== row.symbol
+      || (snapshot.side === 'buy') !== row.is_buy
+      || snapshot.fundedPrices == null
+      || snapshot.lots == null
+    ) return false
+    const idx = row.step_idx - 1
+    if (idx < 0 || snapshot.fundedPrices[idx] !== row.trigger_price || snapshot.lots[idx] !== row.volume) return false
+    return resolveLayeringModeRolloutDecision({
+      mode: snapshot.mode,
+      brokerAccountId: row.broker_account_id,
+    }).executionAllowed
   }
 }

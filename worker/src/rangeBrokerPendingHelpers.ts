@@ -20,6 +20,22 @@ export type RangeBrokerPendingRow = {
   ticket: string | null
   expires_at: string | null
   cwe_close_price?: number | null
+  layer_plan_id?: string | null
+  layer_plan_metadata?: unknown | null
+  broker_client_reference?: string | null
+  broker_pending_type?: string | null
+  submitted_at?: string | null
+  confirmed_at?: string | null
+  last_reconciled_at?: string | null
+  broker_pending_reason?: string | null
+  native_submission_status?: string | null
+  reconciliation_reason?: string | null
+  reconciliation_claimed_at?: string | null
+  reconciliation_claimed_by?: string | null
+  cancellation_status?: string | null
+  cancellation_requested_at?: string | null
+  cancellation_confirmed_at?: string | null
+  cancellation_reason?: string | null
 }
 
 export async function cancelBrokerRangeLegAtBroker(

@@ -87,46 +87,74 @@ test('layering mode helpers resolve expected modes', () => {
 })
 
 test('feature gate allows legacy and rejects static/dynamic by default', () => {
-  const prior = process.env.LAYERING_MODES_EXECUTION_ENABLED
+  const priorEnabled = process.env.LAYERING_MODES_EXECUTION_ENABLED
+  const priorKill = process.env.LAYERING_MODES_KILL_SWITCH
   delete process.env.LAYERING_MODES_EXECUTION_ENABLED
+  delete process.env.LAYERING_MODES_KILL_SWITCH
   try {
     assert.deepEqual(assertLayeringModeExecutionSupported({ layering_mode: 'legacy' }), { ok: true })
     assert.deepEqual(assertLayeringModeExecutionSupported({ layering_mode: 'static' }), {
       ok: false,
-      reason: 'layering_mode_static_execution_disabled',
+      reason: 'layering_mode_static_global_disabled',
     })
     assert.deepEqual(assertLayeringModeExecutionSupported({ layering_mode: 'dynamic' }), {
       ok: false,
-      reason: 'layering_mode_dynamic_execution_disabled',
+      reason: 'layering_mode_dynamic_global_disabled',
     })
   } finally {
-    if (prior == null) delete process.env.LAYERING_MODES_EXECUTION_ENABLED
-    else process.env.LAYERING_MODES_EXECUTION_ENABLED = prior
+    if (priorEnabled == null) delete process.env.LAYERING_MODES_EXECUTION_ENABLED
+    else process.env.LAYERING_MODES_EXECUTION_ENABLED = priorEnabled
+    if (priorKill == null) delete process.env.LAYERING_MODES_KILL_SWITCH
+    else process.env.LAYERING_MODES_KILL_SWITCH = priorKill
   }
 })
 
-test('feature gate flag is reserved until static/dynamic execution exists', () => {
-  const prior = process.env.LAYERING_MODES_EXECUTION_ENABLED
+test('feature gate requires kill switch, mode flag, allowlist, and prepare-only controls', () => {
+  const priorEnabled = process.env.LAYERING_MODES_EXECUTION_ENABLED
+  const priorStatic = process.env.LAYERING_STATIC_EXECUTION_ENABLED
+  const priorAllowlist = process.env.LAYERING_MODES_ACCOUNT_ALLOWLIST
+  const priorKill = process.env.LAYERING_MODES_KILL_SWITCH
+  const priorPrepare = process.env.LAYERING_MODES_PREPARE_ONLY
   process.env.LAYERING_MODES_EXECUTION_ENABLED = 'true'
+  delete process.env.LAYERING_STATIC_EXECUTION_ENABLED
+  delete process.env.LAYERING_MODES_ACCOUNT_ALLOWLIST
+  delete process.env.LAYERING_MODES_KILL_SWITCH
+  delete process.env.LAYERING_MODES_PREPARE_ONLY
   try {
     assert.deepEqual(assertLayeringModeExecutionSupported({ layering_mode: 'legacy' }), { ok: true })
     assert.deepEqual(assertLayeringModeExecutionSupported({ layering_mode: 'static' }), {
       ok: false,
-      reason: 'layering_mode_static_not_implemented',
+      reason: 'layering_mode_static_kill_switch_active',
     })
-    assert.deepEqual(assertLayeringModeExecutionSupported({ layering_mode: 'dynamic' }), {
+    process.env.LAYERING_MODES_KILL_SWITCH = 'false'
+    assert.deepEqual(assertLayeringModeExecutionSupported({ layering_mode: 'static' }), {
       ok: false,
-      reason: 'layering_mode_dynamic_not_implemented',
+      reason: 'layering_mode_static_mode_disabled',
+    })
+    process.env.LAYERING_STATIC_EXECUTION_ENABLED = 'true'
+    assert.deepEqual(assertLayeringModeExecutionSupported({ layering_mode: 'static' }), {
+      ok: false,
+      reason: 'layering_mode_static_account_not_allowlisted',
     })
   } finally {
-    if (prior == null) delete process.env.LAYERING_MODES_EXECUTION_ENABLED
-    else process.env.LAYERING_MODES_EXECUTION_ENABLED = prior
+    if (priorEnabled == null) delete process.env.LAYERING_MODES_EXECUTION_ENABLED
+    else process.env.LAYERING_MODES_EXECUTION_ENABLED = priorEnabled
+    if (priorStatic == null) delete process.env.LAYERING_STATIC_EXECUTION_ENABLED
+    else process.env.LAYERING_STATIC_EXECUTION_ENABLED = priorStatic
+    if (priorAllowlist == null) delete process.env.LAYERING_MODES_ACCOUNT_ALLOWLIST
+    else process.env.LAYERING_MODES_ACCOUNT_ALLOWLIST = priorAllowlist
+    if (priorKill == null) delete process.env.LAYERING_MODES_KILL_SWITCH
+    else process.env.LAYERING_MODES_KILL_SWITCH = priorKill
+    if (priorPrepare == null) delete process.env.LAYERING_MODES_PREPARE_ONLY
+    else process.env.LAYERING_MODES_PREPARE_ONLY = priorPrepare
   }
 })
 
 test('planner blocks static/dynamic range execution when feature gate is off', () => {
-  const prior = process.env.LAYERING_MODES_EXECUTION_ENABLED
+  const priorEnabled = process.env.LAYERING_MODES_EXECUTION_ENABLED
+  const priorKill = process.env.LAYERING_MODES_KILL_SWITCH
   delete process.env.LAYERING_MODES_EXECUTION_ENABLED
+  delete process.env.LAYERING_MODES_KILL_SWITCH
   try {
     const plan = planManualOrders({
       parsed: {
@@ -165,10 +193,12 @@ test('planner blocks static/dynamic range execution when feature gate is off', (
       commentPrefix: 'test',
     })
     assert.equal(plan.orders.length, 0)
-    assert.equal(plan.skip_reason, 'layering_mode_static_execution_disabled')
+    assert.equal(plan.skip_reason, 'layering_mode_static_global_disabled')
   } finally {
-    if (prior == null) delete process.env.LAYERING_MODES_EXECUTION_ENABLED
-    else process.env.LAYERING_MODES_EXECUTION_ENABLED = prior
+    if (priorEnabled == null) delete process.env.LAYERING_MODES_EXECUTION_ENABLED
+    else process.env.LAYERING_MODES_EXECUTION_ENABLED = priorEnabled
+    if (priorKill == null) delete process.env.LAYERING_MODES_KILL_SWITCH
+    else process.env.LAYERING_MODES_KILL_SWITCH = priorKill
   }
 })
 
