@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   ArrowDownRight,
   ArrowUpRight,
@@ -31,6 +32,7 @@ interface TradeDetailModalProps {
 export function TradeDetailModal({ trade, userId, onClose }: TradeDetailModalProps) {
   const t = useT()
   const tr = t.trades
+  const navigate = useNavigate()
   const panelRef = useRef<HTMLDivElement>(null)
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState('')
@@ -86,6 +88,14 @@ export function TradeDetailModal({ trade, userId, onClose }: TradeDetailModalPro
   }, [trade, onClose])
 
   const display = useMemo(() => (trade ? getTradeDisplayMeta(trade) : null), [trade])
+
+  const linkedSignalId = context?.signal?.id
+
+  const handleManage = () => {
+    if (!linkedSignalId) return
+    onClose()
+    navigate(`/manage-signals?edit=${linkedSignalId}`)
+  }
 
   const instructionLines = useMemo(() => {
     if (!context?.signal) return []
@@ -144,14 +154,24 @@ export function TradeDetailModal({ trade, userId, onClose }: TradeDetailModalPro
             </h2>
             <p className="text-xs text-neutral-400 tabular-nums">#{trade.ticket}</p>
           </div>
-          <button
-            type="button"
-            className="p-2 rounded-lg text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
-            aria-label={tr.close}
-            onClick={onClose}
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              disabled={!linkedSignalId}
+              onClick={handleManage}
+              className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-neutral-200 dark:border-neutral-700 text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 disabled:opacity-40 disabled:pointer-events-none transition-colors"
+            >
+              {tr.manage}
+            </button>
+            <button
+              type="button"
+              className="p-2 rounded-lg text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
+              aria-label={tr.close}
+              onClick={onClose}
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         <div className="p-5 space-y-5">

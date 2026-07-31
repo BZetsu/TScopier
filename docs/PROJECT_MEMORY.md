@@ -2,6 +2,36 @@
 
 ## Changelog
 
+### 2026-07-31 — Added "Manage" button to trade detail modal (deep-link into Manage Signals edit modal)
+
+- **Context:** On the Trades page (`/account-trades`), clicking a trade opens `TradeDetailModal`. User wanted a "Manage" button in the modal header that jumps to the manage signals page (`/manage-signals`) and opens the exact `EditSignalOverrideModal` for that trade's linked signal.
+- **Changes:**
+  - **`src/components/trades/TradeDetailModal.tsx`:** Added "Manage" button in the sticky header, before the X close button. Uses `useNavigate`; on click closes the modal and navigates to `/manage-signals?edit=<signalId>`. Disabled until the linked signal context resolves (`context?.signal?.id`).
+  - **`src/pages/dashboard/SignalHistoryPage.tsx`:** Reads `?edit=` search param. Once data is loaded, resolves the signal (direct entry signal, or via `resolveManagementAnchorEntryId` for management signals), verifies open status, then calls `handleSelectSignal` → opens `EditSignalOverrideModal`. Only fires once per param value (`handledEditSignalIdRef`). Closing the modal strips the `edit` param (`setSearchParams({}, { replace: true })`) so refresh doesn't re-open it.
+  - **i18n:** Added `trades.manage` key to `types.ts` + all 9 locales (en/es/fr inline, ar/pl/ru/nl/ja/sv in `locales/trading/`).
+- **Design decisions:** Modal only auto-opens for OPEN signals (matches page interaction model — closed rows aren't clickable). If the signal isn't in the last 500 loaded signals, user just lands on the page. No URL params were previously used on this page, so no conflicts with existing state.
+- **Files:** `src/components/trades/TradeDetailModal.tsx`, `src/pages/dashboard/SignalHistoryPage.tsx`, `src/i18n/locales/types.ts`, `src/i18n/locales/{en,es,fr}.ts`, `src/i18n/locales/trading/{ar,pl,ru,nl,ja,sv}.ts`
+- **Verification:** `tsc -b` clean, `vite build` clean, all 265 tests pass, lint — 0 new errors (5 pre-existing errors in these files, all on untouched lines, confirmed by stash-compare).
+- **Follow-up:** None.
+
+### 2026-07-31 — Merged upstream/main (prod) into feat/remaining-weekly-plan-items
+
+- **Context:** User requested pulling the latest push from prod before continuing feature work. Current branch had diverged; merge had 2 conflicts (`worker/.env.example`, `worker/src/sessionManager.ts`).
+- **What prod brought in (commit `f04282e2` "feat: enhance session management with new listener timeout and healing logic"):**
+  - **Disconnected-listener healing:** New `disconnectedRenewTicks` Map counter in `UserSessionManager`. If a listener stays disconnected for N renew ticks (`LISTENER_DISCONNECT_HEAL_TICKS`, default 3 ≈ 60s), it hard-resets via `stopListener()` so `syncSessions` can restart cleanly. Prevents "No lease forever" / UI "Copier engine offline" from a wedged reconnect-only path.
+  - **Start timeouts:** `listener.start()`, `syncSessions startListener`, and listener startup wrapped in `withTimeout` (60s default, `LISTENER_START_TIMEOUT_MS`).
+  - **Start failure handling:** explicit `listener.stop()` + direct `telegram_sessions`/`telegram_auth_pending` deletes (avoids deadlock with `invalidateTelegramSession` under connection lock).
+  - **userListener.ts:** `warmEntityCache()` no longer awaited on start (fire-and-forget + `startEntityWarmup`), because hung `getDialogs` blocked `startListener` and left users with No lease.
+  - **`.env.example`:** 3 new knobs — `LISTENER_START_TIMEOUT_MS`, `LISTENER_DISCONNECT_HEAL_TICKS`, `TELEGRAM_RECONNECT_COOLDOWN_MS`.
+- **Conflict resolution decisions:**
+  - `.env.example`: kept BOTH Sentry config (feature branch) and listener knobs (prod).
+  - `sessionManager.ts` disconnected branch: kept prod's hard-reset healing logic + retained feature branch's `console.log` renew message.
+  - `syncSessions`: kept BOTH `recentlyFailed` cooldown (feature branch) AND prod's `withTimeout`.
+  - startListener success path: kept both `recentlyFailed.delete` and `disconnectedRenewTicks.delete`.
+- **Files:** `worker/.env.example`, `worker/src/sessionManager.ts`, `worker/src/userListener.ts`
+- **Verification:** conflict markers removed, `npx tsc -p worker/tsconfig.json --noEmit` clean (installed `@sentry/node` in worker/ to satisfy the feature branch's Sentry import).
+- **Follow-up:** stash@{0} still holds pre-merge build artifacts (dist/, worker/dist/) — left untouched. Commit `282a57a9`.
+
 ### 2026-07-30 — Added DB trigger to update signal_channels.last_live_at on all signal inserts
 
 - **Context:** `signal_channels.last_live_at` was only updated by the canonical ingest pipeline (elected reader). The Python listener and legacy TS listener write directly to the per-user `signals` table, so `last_live_at` stayed null for those channels. `channel_signals` was also empty. The PopularChannelsPage showed "No activity recorded" despite active trades.

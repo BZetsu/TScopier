@@ -15,6 +15,7 @@ export const tradingAr: TradingPagesBundleTranslations = {
     emptySubtitleClosed: 'لا أوامر مغلقة مؤخرًا في جلسة MT هذه.',
     modalTitle: 'تفاصيل الصفقة',
     close: 'إغلاق',
+    manage: 'إدارة',
     tradeSummary: 'الصفقة',
     signalChannel: 'قناة الإشارات',
     telegramMessage: 'رسالة Telegram',

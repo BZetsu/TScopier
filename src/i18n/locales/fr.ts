@@ -803,6 +803,7 @@ export const fr: Translations = {
     emptySubtitleClosed: 'Aucun ordre clôturé récent dans cette session MT.',
     modalTitle: 'Détails du trade',
     close: 'Fermer',
+    manage: 'Gérer',
     tradeSummary: 'Trade',
     signalChannel: 'Canal de signaux',
     telegramMessage: 'Message Telegram',

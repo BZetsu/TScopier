@@ -15,6 +15,7 @@ export const tradingNl: TradingPagesBundleTranslations = {
     emptySubtitleClosed: 'Geen recent gesloten orders in deze MT-sessie.',
     modalTitle: 'Transactiedetails',
     close: 'Sluiten',
+    manage: 'Beheren',
     tradeSummary: 'Transactie',
     signalChannel: 'Signaalkanaal',
     telegramMessage: 'Telegram-bericht',

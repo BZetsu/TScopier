@@ -849,6 +849,7 @@ export const en: Translations = {
     emptySubtitleClosed: 'No recent closed orders in this MT session.',
     modalTitle: 'Trade details',
     close: 'Close',
+    manage: 'Manage',
     tradeSummary: 'Trade',
     signalChannel: 'Signal channel',
     telegramMessage: 'Telegram message',

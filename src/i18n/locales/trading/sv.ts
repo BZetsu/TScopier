@@ -15,6 +15,7 @@ export const tradingSv: TradingPagesBundleTranslations = {
     emptySubtitleClosed: 'Inga nyligen stängda ordrar i den här MT-sessionen.',
     modalTitle: 'Affärsdetaljer',
     close: 'Stäng',
+    manage: 'Hantera',
     tradeSummary: 'Affär',
     signalChannel: 'Signalkanal',
     telegramMessage: 'Telegram-meddelande',

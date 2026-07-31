@@ -15,6 +15,7 @@ export const tradingPl: TradingPagesBundleTranslations = {
     emptySubtitleClosed: 'Brak ostatnio zamkniętych zleceń w tej sesji MT.',
     modalTitle: 'Szczegóły transakcji',
     close: 'Zamknij',
+    manage: 'Zarządzaj',
     tradeSummary: 'Transakcja',
     signalChannel: 'Kanał sygnałów',
     telegramMessage: 'Wiadomość Telegram',
