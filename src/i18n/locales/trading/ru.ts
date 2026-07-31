@@ -15,6 +15,7 @@ export const tradingRu: TradingPagesBundleTranslations = {
     emptySubtitleClosed: 'Нет недавно закрытых ордеров в этой MT-сессии.',
     modalTitle: 'Детали сделки',
     close: 'Закрыть',
+    manage: 'Управлять',
     tradeSummary: 'Сделка',
     signalChannel: 'Канал сигналов',
     telegramMessage: 'Сообщение Telegram',

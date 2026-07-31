@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import clsx from 'clsx'
 import { Pencil } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
@@ -31,6 +32,7 @@ import {
   effectiveDisplayParsedData,
   enrichSignalDisplayContext,
   isEditableEntrySignal,
+  resolveManagementAnchorEntryId,
   resolveSignalOpenStatus,
   type SignalBatchRow,
   type SignalDisplayContext,
@@ -161,6 +163,9 @@ export function SignalHistoryPage() {
   const t = useT()
   const sh = t.signalHistoryPage
   const { user } = useAuth()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const pendingEditSignalId = searchParams.get('edit')
+  const handledEditSignalIdRef = useRef<string | null>(null)
   const [signals, setSignals] = useState<Signal[]>([])
   const [channels, setChannels] = useState<TelegramChannel[]>([])
   const [openSignalIds, setOpenSignalIds] = useState<Set<string>>(() => new Set())
@@ -322,7 +327,10 @@ export function SignalHistoryPage() {
 
   const closeEditModal = useCallback(() => {
     setEditSession(null)
-  }, [])
+    if (searchParams.get('edit')) {
+      setSearchParams({}, { replace: true })
+    }
+  }, [searchParams, setSearchParams])
 
   const handleSaved = useCallback(async (
     signalId: string,
@@ -419,6 +427,41 @@ export function SignalHistoryPage() {
 
   const listLoading = loading || !symbolLookupReady
   const showEmpty = !listLoading && signalDisplayRows.length === 0
+
+  useEffect(() => {
+    if (!pendingEditSignalId) return
+    if (handledEditSignalIdRef.current === pendingEditSignalId) return
+    if (listLoading || editModalOpenRef.current) return
+
+    handledEditSignalIdRef.current = pendingEditSignalId
+
+    let row = allConsolidatedSignals.find(r => r.signal.id === pendingEditSignalId)
+    if (!row) {
+      const target = tradeSignals.find(s => s.id === pendingEditSignalId)
+      if (target) {
+        const anchorId = resolveManagementAnchorEntryId(
+          target as SignalBatchRow,
+          tradeSignals as SignalBatchRow[],
+          displayContext,
+        )
+        if (anchorId) row = allConsolidatedSignals.find(r => r.signal.id === anchorId)
+      }
+    }
+    if (!row) return
+
+    const openStatus = resolveSignalOpenStatus(row.signal, openSignalIds, openStatusContext)
+    if (openStatus !== 'open') return
+    handleSelectSignal(row.signal, row.absorbedEntryUpdates, displayContext)
+  }, [
+    pendingEditSignalId,
+    listLoading,
+    allConsolidatedSignals,
+    tradeSignals,
+    displayContext,
+    openSignalIds,
+    openStatusContext,
+    handleSelectSignal,
+  ])
 
   const presetLabels: Record<DatePreset, string> = {
     all: sh.presetAll,

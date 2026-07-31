@@ -713,8 +713,12 @@ export class UserListener {
     this.startedAt = Date.now()
     this.lastEventAt = Date.now()
 
-    // Warm gramjs entity cache so NewMessage events fire for all channels.
-    await this.warmEntityCache()
+    // Do not await getDialogs warmup here — flood-wait / hung dialogs blocked
+    // startListener, held the connection lock, and left users with No lease.
+    // Periodic startEntityWarmup + initial fire-and-forget cover the same work.
+    void this.warmEntityCache().catch(err =>
+      console.warn(`[userListener] initial entity warmup failed for ${this.userId}:`, err),
+    )
     await this.refreshChannelSubscription()
     await this.refreshChannelListenerState()
     this.scheduleCatchUpOnStart()

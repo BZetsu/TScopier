@@ -15,6 +15,7 @@ export const tradingJa: TradingPagesBundleTranslations = {
     emptySubtitleClosed: 'このMTセッションで最近決済された注文はありません。',
     modalTitle: '取引詳細',
     close: '閉じる',
+    manage: '管理',
     tradeSummary: '取引',
     signalChannel: 'シグナルチャンネル',
     telegramMessage: 'Telegramメッセージ',

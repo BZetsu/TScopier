@@ -689,6 +689,7 @@ export interface TradesTranslations {
   emptySubtitleClosed: string
   modalTitle: string
   close: string
+  manage: string
   tradeSummary: string
   signalChannel: string
   telegramMessage: string
