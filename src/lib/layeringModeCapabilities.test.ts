@@ -52,6 +52,44 @@ test('normalizes server capability response without exposing env-derived interna
   assert.deepEqual(caps.layeringModes.static.reasons, ['prepare_only'])
 })
 
+test('keeps Static and Dynamic selectable when configuration is allowed but execution is disabled', () => {
+  const caps = normalizeLayeringModeCapabilities({
+    layeringModes: {
+      legacy: { available: true },
+      static: {
+        available: true,
+        configurable: true,
+        preparationAvailable: true,
+        executionAvailable: false,
+        reasons: ['global_disabled', 'prepare_only'],
+        executionMechanisms: {
+          auto: { configurable: true, executable: false },
+          pending_order: { configurable: true, executable: false },
+        },
+      },
+      dynamic: {
+        available: true,
+        configurable: true,
+        preparationAvailable: true,
+        executionAvailable: false,
+        reasons: ['global_disabled', 'prepare_only'],
+        executionMechanisms: {
+          auto: { configurable: true, executable: false },
+          pending_order: { configurable: false, executable: false },
+        },
+      },
+    },
+    rollout: { prepareOnly: true },
+  })
+
+  assert.equal(layeringModeIsSelectable(caps, 'static'), true)
+  assert.equal(layeringModeIsSelectable(caps, 'dynamic'), true)
+  assert.equal(layeringMechanismIsSelectable(caps, 'static', 'auto'), true)
+  assert.equal(layeringMechanismIsExecutable(caps, 'static', 'auto'), false)
+  assert.equal(layeringMechanismIsSelectable(caps, 'dynamic', 'auto'), true)
+  assert.equal(layeringMechanismIsExecutable(caps, 'dynamic', 'auto'), false)
+})
+
 test('malformed capability response remains Legacy-only', () => {
   const caps = normalizeLayeringModeCapabilities({ layeringModes: { static: { available: 'true' } } })
   assert.equal(layeringModeIsSelectable(caps, 'legacy'), true)

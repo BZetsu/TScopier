@@ -74,52 +74,86 @@ function db(planStatus: string, legs: Row[], planPatch: Row = {}) {
   }
 }
 
-test('all virtual legs terminal marks entries complete idempotently', async () => {
-  const supabase = db('active', [
-    { id: '1', layer_plan_id: 'plan-1', status: 'fired' },
-    { id: '2', layer_plan_id: 'plan-1', status: 'cancelled' },
-  ])
-  assert.equal(await convergeLayeringPlanAfterLegTerminal(supabase as never, 'plan-1'), 'entries_complete')
-  assert.equal(supabase.plans[0]!.status, 'entries_complete')
-  assert.equal(await convergeLayeringPlanAfterLegTerminal(supabase as never, 'plan-1'), 'entries_complete')
+test('first execution only completes one-layer plan idempotently', async () => {
+  const supabase = db('active', [], {
+    layer_plan_metadata: { fundedPrices: [100], lots: [0.01] },
+  })
+  assert.equal(await convergeLayeringPlanAfterLegTerminal(supabase as never, 'plan-1'), 'completed')
+  assert.equal(supabase.plans[0]!.status, 'completed')
+  assert.equal(await convergeLayeringPlanAfterLegTerminal(supabase as never, 'plan-1'), 'completed')
 })
 
-test('pending legs terminal but first execution missing does not complete', async () => {
+test('pending legs only cannot complete without first execution linkage', async () => {
   const supabase = db('active', [
-    { id: '1', layer_plan_id: 'plan-1', status: 'fired' },
+    { id: '1', layer_plan_id: 'plan-1', step_idx: 2, status: 'fired' },
   ], { first_execution_order_id: null })
   assert.equal(await convergeLayeringPlanAfterLegTerminal(supabase as never, 'plan-1'), 'not_ready')
   assert.equal(supabase.plans[0]!.status, 'active')
 })
 
+test('mixed virtual and native terminal legs complete when first execution is confirmed', async () => {
+  const supabase = db('active', [
+    { id: '1', layer_plan_id: 'plan-1', step_idx: 2, status: 'fired' },
+    { id: '2', layer_plan_id: 'plan-1', step_idx: 3, status: 'filled', native_submission_status: 'confirmed' },
+  ], {
+    layer_plan_metadata: { fundedPrices: [100, 99, 98], lots: [0.01, 0.02, 0.03] },
+  })
+  assert.equal(await convergeLayeringPlanAfterLegTerminal(supabase as never, 'plan-1'), 'completed')
+  assert.equal(supabase.plans[0]!.status, 'completed')
+})
+
+test('cancelled funded legs count as terminal completion', async () => {
+  const supabase = db('active', [
+    { id: '1', layer_plan_id: 'plan-1', step_idx: 2, status: 'cancelled' },
+  ])
+  assert.equal(await convergeLayeringPlanAfterLegTerminal(supabase as never, 'plan-1'), 'completed')
+})
+
 test('first execution unconfirmed does not complete', async () => {
   const supabase = db('active', [
-    { id: '1', layer_plan_id: 'plan-1', status: 'fired' },
+    { id: '1', layer_plan_id: 'plan-1', step_idx: 2, status: 'fired' },
   ], { first_execution_status: 'pending' })
   assert.equal(await convergeLayeringPlanAfterLegTerminal(supabase as never, 'plan-1'), 'not_ready')
 })
 
-test('one-layer plan still requires confirmed first execution', async () => {
-  const supabase = db('active', [], {
-    layer_plan_metadata: { fundedPrices: [100], lots: [0.01] },
-  })
-  assert.equal(await convergeLayeringPlanAfterLegTerminal(supabase as never, 'plan-1'), 'entries_complete')
-  const missing = db('active', [], {
-    layer_plan_metadata: { fundedPrices: [100], lots: [0.01] },
-    first_execution_status: null,
-  })
-  assert.equal(await convergeLayeringPlanAfterLegTerminal(missing as never, 'plan-1'), 'not_ready')
+test('partial first fill does not complete', async () => {
+  const supabase = db('active', [
+    { id: '1', layer_plan_id: 'plan-1', step_idx: 2, status: 'fired' },
+  ], { first_execution_filled_lot: 0.005 })
+  assert.equal(await convergeLayeringPlanAfterLegTerminal(supabase as never, 'plan-1'), 'not_ready')
+  assert.equal(supabase.plans[0]!.status, 'active')
 })
 
 test('native open or ambiguous orders prevent completion', async () => {
   const supabase = db('active', [
-    { id: '1', layer_plan_id: 'plan-1', status: 'fired', native_submission_status: 'confirmed' },
-    { id: '2', layer_plan_id: 'plan-1', status: 'broker_pending', native_submission_status: 'confirmed' },
+    { id: '1', layer_plan_id: 'plan-1', step_idx: 2, status: 'broker_pending', native_submission_status: 'confirmed' },
   ])
   assert.equal(await convergeLayeringPlanAfterLegTerminal(supabase as never, 'plan-1'), 'not_ready')
-  supabase.legs[1]!.status = 'failed'
-  supabase.legs[1]!.native_submission_status = 'reconciliation_required'
+  supabase.legs[0]!.status = 'failed'
+  supabase.legs[0]!.native_submission_status = 'reconciliation_required'
   assert.equal(await convergeLayeringPlanAfterLegTerminal(supabase as never, 'plan-1'), 'not_ready')
+})
+
+test('missing or duplicate funded legs cannot complete', async () => {
+  const missing = db('active', [], {
+    layer_plan_metadata: { fundedPrices: [100, 99], lots: [0.01, 0.02] },
+  })
+  assert.equal(await convergeLayeringPlanAfterLegTerminal(missing as never, 'plan-1'), 'not_ready')
+  const duplicate = db('active', [
+    { id: '1', layer_plan_id: 'plan-1', step_idx: 2, status: 'fired' },
+    { id: '2', layer_plan_id: 'plan-1', step_idx: 2, status: 'cancelled' },
+  ], {
+    layer_plan_metadata: { fundedPrices: [100, 99, 98], lots: [0.01, 0.02, 0.03] },
+  })
+  assert.equal(await convergeLayeringPlanAfterLegTerminal(duplicate as never, 'plan-1'), 'not_ready')
+})
+
+test('restart convergence completes active plan with all intended executions terminal', async () => {
+  const supabase = db('active', [
+    { id: '1', layer_plan_id: 'plan-1', step_idx: 2, status: 'filled', native_submission_status: 'confirmed' },
+  ])
+  assert.equal(await convergeLayeringPlanAfterLegTerminal(supabase as never, 'plan-1'), 'completed')
+  assert.equal(await convergeLayeringPlanAfterLegTerminal(supabase as never, 'plan-1'), 'completed')
 })
 
 test('cancellation stops future claims and preserves terminal history', async () => {

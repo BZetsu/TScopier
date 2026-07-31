@@ -102,6 +102,33 @@ function firstExecutionConfirmed(plan: Record<string, unknown>): boolean {
   )
 }
 
+function expectedRemainingStepIndexes(plan: Record<string, unknown>): Set<number> | null {
+  const metadata = plan.layer_plan_metadata
+  if (!metadata || typeof metadata !== 'object') return null
+  const snap = metadata as { fundedPrices?: unknown; lots?: unknown }
+  const prices = Array.isArray(snap.fundedPrices) ? snap.fundedPrices : []
+  const lots = Array.isArray(snap.lots) ? snap.lots : []
+  if (prices.length === 0 || prices.length !== lots.length) return null
+  return new Set(prices.slice(1).map((_, idx) => idx + 2))
+}
+
+function allIntendedRemainingLegsTerminal(
+  plan: Record<string, unknown>,
+  legs: Array<{ status?: unknown; native_submission_status?: unknown; step_idx?: unknown }>,
+): boolean {
+  const expected = expectedRemainingStepIndexes(plan)
+  if (!expected) return false
+  if (legs.length !== expected.size) return false
+  const seen = new Set<number>()
+  for (const leg of legs) {
+    const stepIdx = Number(leg.step_idx)
+    if (!Number.isInteger(stepIdx) || !expected.has(stepIdx) || seen.has(stepIdx)) return false
+    if (!terminalLeg(leg)) return false
+    seen.add(stepIdx)
+  }
+  return seen.size === expected.size
+}
+
 export async function convergeLayeringPlanAfterLegTerminal(
   supabase: SupabaseClient,
   planId: string | null | undefined,
@@ -116,30 +143,32 @@ export async function convergeLayeringPlanAfterLegTerminal(
   if (!plan) return 'not_found'
   const status = String((plan as { status?: unknown }).status ?? '')
   if (status === 'completed') return 'completed'
-  if (status === 'entries_complete') return 'entries_complete'
   if (status === 'cancelled') return 'cancelled'
   if (status === 'invalid') return 'invalid'
-  if (status !== 'active') return 'not_ready'
+  if (status !== 'active' && status !== 'entries_complete') return 'not_ready'
   if (!firstExecutionConfirmed(plan as Record<string, unknown>)) return 'not_ready'
 
   const { data: legs, error: legsError } = await supabase
     .from('range_pending_legs')
-    .select('id,status,native_submission_status')
+    .select('id,step_idx,status,native_submission_status')
     .eq('layer_plan_id', planId)
   if (legsError) return 'failed'
-  if ((legs ?? []).length > 0 && !(legs as Array<{ status?: unknown; native_submission_status?: unknown }>).every(terminalLeg)) {
+  if (!allIntendedRemainingLegsTerminal(
+    plan as Record<string, unknown>,
+    (legs ?? []) as Array<{ status?: unknown; native_submission_status?: unknown; step_idx?: unknown }>,
+  )) {
     return 'not_ready'
   }
 
   const { data: updated, error: updateError } = await supabase
     .from('layering_plans')
-    .update({ status: 'entries_complete', updated_at: new Date().toISOString() })
+    .update({ status: 'completed', completed_at: new Date().toISOString(), updated_at: new Date().toISOString() })
     .eq('layer_plan_id', planId)
-    .eq('status', 'active')
+    .in('status', ['active', 'entries_complete'])
     .select('layer_plan_id')
     .maybeSingle()
   if (updateError) return 'failed'
-  return updated ? 'entries_complete' : 'not_ready'
+  return updated ? 'completed' : 'not_ready'
 }
 
 export async function markLayeringPlanInvalid(

@@ -21,6 +21,7 @@ test('authoritative layering settings endpoint validates enums, limits, rollout,
   assert.match(source, /integerInRange\(body\.dynamic_max_layers, 1, 20\)/)
   assert.match(source, /configurationAllowed/)
   assert.match(source, /LAYERING_MODES_ACCOUNT_ALLOWLIST/)
+  assert.doesNotMatch(source, /return args\.advancedAllowed && globalEnabled && !killSwitch && modeEnabled && listed/)
   assert.match(source, /mechanism === "pending_order" && !pendingCapability\.supported/)
   assert.match(source, /platform !== "mt4" && platform !== "mt5"/)
 })
