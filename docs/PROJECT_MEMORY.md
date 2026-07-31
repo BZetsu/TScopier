@@ -2,6 +2,28 @@
 
 ## Changelog
 
+### 2026-07-31 — Fixed layering-modes allowlist bug: empty allowlist now means unrestricted
+
+- **Context:** Static/dynamic layering modes remained deactivated in the AccountConfigPage UI on staging even after the `LAYERING_*` flags were enabled. The layering-modes implementation (static/dynamic modes, plan persistence, calculators, edge functions) was built by Emma — he designed the flag system with an allowlist escape hatch documented as "Leave empty = no allowlist restriction", but the enforcement was inverted.
+- **Root cause:** Both `supabase/functions/layering-mode-capabilities/index.ts` and `supabase/functions/update-layering-settings/index.ts` computed `listed = allowlist().has(accountId)`. With `LAYERING_MODES_ACCOUNT_ALLOWLIST` unset (empty set), `has()` returned `false` for every account, so `configurable` was always `false` → static/dynamic stayed greyed out for everyone. The documented intent (empty list = everyone allowed) required the opposite behavior.
+- **Changes:**
+  - **`supabase/functions/layering-mode-capabilities/index.ts`:** `const allowlistSet = allowlist(); const listed = allowlistSet.size === 0 || allowlistSet.has(args.accountId)`.
+  - **`supabase/functions/update-layering-settings/index.ts`:** Same fix inside `configurationAllowed()`.
+- **Verification:** Both functions type-check and deployed successfully to staging Supabase (`axdcledcyhyvzrnfkwat`).
+- **Deploy:** Commit `a5737c1c` pushed to `origin/staging`; both edge functions re-deployed to the staging project via `supabase functions deploy --project-ref axdcledcyhyvzrnfkwat --use-api`.
+- **Remaining (blocked on admin):** The `LAYERING_*` secrets could NOT be set via CLI (PAM: token lacks privileges — reads allowed, writes denied). They must be added via the staging Dashboard (Edge Functions → Secrets): `LAYERING_MODES_EXECUTION_ENABLED=true`, `LAYERING_STATIC_EXECUTION_ENABLED=true`, `LAYERING_DYNAMIC_EXECUTION_ENABLED=true`, `LAYERING_MODES_PREPARE_ONLY=false`, `LAYERING_MODES_KILL_SWITCH=false`. Also note: the gate additionally requires the user to be admin or on the Advanced plan, and the broker to have a linked + connected `fxsocket_account_id`.
+- **Follow-up:** `upstream/staging` does not yet contain this fix (nor the TS fix `7ce4baea`) — needs syncing.
+
+### 2026-07-31 — Fixed staging Netlify build: layering fallback type error in AccountConfigPage
+
+- **Context:** Staging frontend deploy (`BZetsu/TScopier:staging` → Netlify) failed with 7 TS errors in `src/pages/dashboard/AccountConfigPage.tsx` after pulling Emma's layering-modes commits (PRs #63–#65, `8be5388e`) from upstream staging. The build is `tsc -b && vite build`, so `tsc` blocked the deploy.
+- **Root cause:** The ternary `normalizedFallbackManual` had two branches: `normalizeManualSettings(...) as ManualSettings` and `(configAccount.manual_settings ?? {})`. `configAccount.manual_settings` is typed `Json | null` (`src/types/database.ts`), so the fallback branch widened the union to `ManualSettings | Json`, and `.layering_mode` / `.range_layering_type` / `.static_layer_count` / `.dynamic_step_pips` / `.dynamic_max_layers` were not accessible on the `string` member of the union.
+- **Changes:**
+  - **`src/pages/dashboard/AccountConfigPage.tsx`:** Cast the fallback branch to `ManualSettings`: `: (configAccount.manual_settings ?? {}) as ManualSettings`. Pure type-level fix — zero runtime behavior change (all accessed fields already fall back via `===` checks and `?? DEFAULT_MANUAL_SETTINGS.*`).
+- **Verification:** `npx tsc -b` clean on the staging checkout.
+- **Deploy:** Commit `7ce4baea` pushed to `origin/staging` → Netlify rebuild triggered.
+- **Follow-up:** `upstream/staging` still contains the broken commit `8be5388e` without the fix — needs the same commit (or a PR) to keep forks in sync. Also worth cherry-picking the fix to `dev`/`main` later via the normal hotfix flow.
+
 ### 2026-07-31 — Added "Manage" button to trade detail modal (deep-link into Manage Signals edit modal)
 
 - **Context:** On the Trades page (`/account-trades`), clicking a trade opens `TradeDetailModal`. User wanted a "Manage" button in the modal header that jumps to the manage signals page (`/manage-signals`) and opens the exact `EditSignalOverrideModal` for that trade's linked signal.

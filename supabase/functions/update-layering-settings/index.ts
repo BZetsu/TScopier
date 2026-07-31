@@ -83,7 +83,8 @@ function configurationAllowed(args: {
   const modeEnabled = args.mode === "static"
     ? flag("LAYERING_STATIC_EXECUTION_ENABLED", false)
     : flag("LAYERING_DYNAMIC_EXECUTION_ENABLED", false)
-  const listed = allowlist().has(args.accountId)
+  const allowlistSet = allowlist()
+  const listed = allowlistSet.size === 0 || allowlistSet.has(args.accountId)
   return args.advancedAllowed && !killSwitch && modeEnabled && listed
 }
 
