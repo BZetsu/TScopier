@@ -3977,6 +3977,15 @@ export class UserListener {
       this.lastReconnectEndedAt = Date.now()
       this.reconnectInFlight = null
     })
+    // Attach a rejection handler so a failing reconnect cycle can never
+    // become an unhandled rejection and kill the whole worker — the
+    // original promise is still returned to awaiters unchanged.
+    this.reconnectInFlight.catch(err => {
+      console.error(
+        `[userListener] reconnect cycle failed for ${this.userId} reason=${reason} cycle=${cycleId}:`,
+        redactTelegramConnectionLog(err),
+      )
+    })
     return this.reconnectInFlight
   }
 
@@ -4116,7 +4125,25 @@ export class UserListener {
     this.monitoredChannels.clear()
     // Warm entity cache BEFORE registering the handler so gramjs can
     // deliver NewMessage events for all monitored channels.
-    await this.warmEntityCache()
+    try {
+      await this.warmEntityCache()
+    } catch (err) {
+      if (isAuthKeyUnregistered(err) || isAuthKeyDuplicated(err)) {
+        // Session died again between connect() and warmup (e.g. the auth key
+        // is invalidated/duplicated by a peer replica). Never let this escape
+        // forceReconnect — treat it like the exhausted-recovery path instead
+        // of crashing the whole worker with an unhandled rejection.
+        console.error(
+          `[userListener] session invalid during reconnect warmup for ${this.userId} cycle=${cycleId}:`,
+          redactTelegramConnectionLog(err),
+        )
+        this.isConnected = false
+        this.connectionTrace('recovery_invalidated', { source: reason, cycleId, stage: 'warmup' })
+        this.scheduleDeferredRetry(cycleId)
+        return
+      }
+      throw err
+    }
     if (!this.isConnected) {
       return
     }
