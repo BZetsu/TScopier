@@ -219,23 +219,40 @@ export interface PlannerResult {
 }
 
 export interface LayeringPlanSnapshot {
+  schemaVersion: number
+  calculatorVersion: string
   planId: string
   mode: LayeringMode
   signalId: string
   brokerAccountId: string
+  basketKey: string | null
   symbol: string
   side: LayerPlanSide
   originalRangeLow: number | null
   originalRangeHigh: number | null
+  /** Raw anchor from the signal/quote/fill before executable precision normalization. */
   anchorPrice: number | null
+  /** Precision-normalized executable anchor, when one exists. */
+  executableAnchorPrice: number | null
   anchorSource: LayerPlanAnchorSource
   configuredStaticLayerCount: number | null
   configuredDynamicStepPips: number | null
   configuredDynamicMaxLayers: number | null
+  requestedLayerCount: number | null
   plannedLayerCount: number | null
   plannedTotalLot: number | null
+  allocatedTotalLot: number | null
+  unallocatedLot: number | null
+  fundedPrices: readonly number[] | null
+  lots: readonly number[] | null
+  reasons: readonly string[]
   createdAt: string
   lockedAt: string | null
+}
+
+export interface RangePendingLegPlanColumns {
+  layer_plan_id: string | null
+  layer_plan_metadata: unknown | null
 }
 
 export interface PlanRangeSplitArgs {

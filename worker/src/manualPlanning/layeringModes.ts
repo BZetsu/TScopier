@@ -4,6 +4,7 @@ import type {
   LayerPlanAnchorSource,
   ManualSettings,
 } from './types'
+import { resolveLayeringModeRolloutDecision } from './layeringModeRollout'
 
 export const LAYERING_MODES = ['legacy', 'static', 'dynamic'] as const
 export const DEFAULT_LAYERING_MODE: LayeringMode = 'legacy'
@@ -12,11 +13,14 @@ export const MAX_LAYER_COUNT = 20
 export const DEFAULT_STATIC_LAYER_COUNT = 5
 export const DEFAULT_DYNAMIC_MAX_LAYERS = 5
 export const DEFAULT_DYNAMIC_STEP_PIPS = 3
+export const LAYERING_PLAN_SCHEMA_VERSION = 1
+export const LAYERING_PLAN_CALCULATOR_VERSION = 'layering-v1'
 
 const ANCHOR_SOURCES = new Set<LayerPlanAnchorSource>(['signal', 'quote', 'fill', 'unknown'])
 export const MIN_LAYER_PLAN_ID_LENGTH = 8
 export const MAX_LAYER_PLAN_ID_LENGTH = 128
 const LAYER_PLAN_ID_RE = /^[A-Za-z0-9_-]+$/
+const MAX_LAYER_PLAN_DECIMAL_PLACES = 12
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value != null
@@ -63,6 +67,90 @@ function strictPositiveNumber(value: unknown): number | null {
   return n != null && n > 0 ? n : null
 }
 
+function strictString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value : null
+}
+
+function strictNumberArray(value: unknown): readonly number[] | null {
+  if (!Array.isArray(value)) return null
+  const out: number[] = []
+  for (const item of value) {
+    const n = strictFiniteNumber(item)
+    if (n == null) return null
+    out.push(n)
+  }
+  return Object.freeze(out)
+}
+
+function strictPositiveNumberArray(value: unknown): readonly number[] | null {
+  const arr = strictNumberArray(value)
+  if (arr == null || arr.some(v => v <= 0)) return null
+  return arr
+}
+
+function uniqueNumbers(values: readonly number[]): boolean {
+  return new Set(values.map(v => String(v))).size === values.length
+}
+
+function pricesOrdered(side: 'buy' | 'sell', prices: readonly number[]): boolean {
+  for (let idx = 1; idx < prices.length; idx++) {
+    if (side === 'buy' && prices[idx]! >= prices[idx - 1]!) return false
+    if (side === 'sell' && prices[idx]! <= prices[idx - 1]!) return false
+  }
+  return true
+}
+
+function decimalPlaces(value: number): number {
+  if (!Number.isFinite(value)) return Number.POSITIVE_INFINITY
+  const text = value.toString().toLowerCase()
+  const [mantissa, expText] = text.split('e')
+  const exponent = expText == null ? 0 : Number(expText)
+  const decimals = (mantissa?.split('.')[1]?.length ?? 0) - exponent
+  return Math.max(0, decimals)
+}
+
+function decimalScalePlaces(values: readonly number[]): number | null {
+  const places = Math.max(...values.map(decimalPlaces))
+  if (!Number.isFinite(places) || places > MAX_LAYER_PLAN_DECIMAL_PLACES) return null
+  return places
+}
+
+function toDecimalUnits(value: number, places: number): number | null {
+  if (!Number.isFinite(value)) return null
+  const text = value.toFixed(places)
+  if (!/^-?\d+(?:\.\d+)?$/.test(text)) return null
+  const negative = text.startsWith('-')
+  const unsigned = negative ? text.slice(1) : text
+  const [whole, fraction = ''] = unsigned.split('.')
+  const padded = fraction.padEnd(places, '0')
+  const unitsText = `${whole}${padded}`.replace(/^0+(?=\d)/, '')
+  const units = Number(unitsText || '0')
+  if (!Number.isSafeInteger(units)) return null
+  return negative ? -units : units
+}
+
+function validatePlanLotTotals(
+  plannedTotalLot: number | null,
+  allocatedTotalLot: number | null,
+  unallocatedLot: number | null,
+  lots: readonly number[] | null,
+): boolean {
+  if (plannedTotalLot == null || allocatedTotalLot == null || unallocatedLot == null || lots == null) return true
+  const values = [plannedTotalLot, allocatedTotalLot, unallocatedLot, ...lots]
+  const places = decimalScalePlaces(values)
+  if (places == null) return false
+  const plannedUnits = toDecimalUnits(plannedTotalLot, places)
+  const allocatedUnits = toDecimalUnits(allocatedTotalLot, places)
+  const unallocatedUnits = toDecimalUnits(unallocatedLot, places)
+  const lotUnits = lots.map(lot => toDecimalUnits(lot, places))
+  if (plannedUnits == null || allocatedUnits == null || unallocatedUnits == null || lotUnits.some(v => v == null)) return false
+  const lotSumUnits = (lotUnits as number[]).reduce((sum, units) => sum + units, 0)
+  return allocatedUnits === lotSumUnits
+    && allocatedUnits <= plannedUnits
+    && unallocatedUnits === plannedUnits - allocatedUnits
+    && unallocatedUnits >= 0
+}
+
 export function isValidLayerPlanId(value: unknown): value is string {
   if (typeof value !== 'string') return false
   if (value.trim() !== value) return false
@@ -95,8 +183,14 @@ export function isDynamicLayeringMode(settings: Pick<ManualSettings, 'layering_m
 }
 
 export function layeringModesExecutionEnabled(): boolean {
-  const raw = String(process.env.LAYERING_MODES_EXECUTION_ENABLED ?? 'false').trim().toLowerCase()
-  return raw === 'true' || raw === '1' || raw === 'yes'
+  return resolveLayeringModeRolloutDecision({
+    mode: 'static',
+    brokerAccountId: '__capability_probe__',
+  }).prepareAllowed
+    || resolveLayeringModeRolloutDecision({
+      mode: 'dynamic',
+      brokerAccountId: '__capability_probe__',
+    }).prepareAllowed
 }
 
 export function normalizeLayeringModeSettings(raw: Record<string, unknown>): Pick<
@@ -115,29 +209,40 @@ export function normalizeLayeringModeSettings(raw: Record<string, unknown>): Pic
 export function assertLayeringModeExecutionSupported(settings: ManualSettings): { ok: true } | { ok: false; reason: string } {
   const mode = resolveLayeringMode(settings)
   if (mode === 'legacy') return { ok: true }
-  const suffix = layeringModesExecutionEnabled() ? 'not_implemented' : 'execution_disabled'
-  return { ok: false, reason: `layering_mode_${mode}_${suffix}` }
+  const decision = resolveLayeringModeRolloutDecision({ mode })
+  if (decision.prepareAllowed) return { ok: true }
+  return { ok: false, reason: `layering_mode_${mode}_${decision.reason}` }
 }
 
 export function parseLayeringPlanSnapshot(raw: unknown): LayeringPlanSnapshot | null {
   try {
     if (raw == null) {
       return {
+        schemaVersion: 0,
+        calculatorVersion: 'legacy',
         planId: 'legacy',
         mode: 'legacy',
         signalId: '',
         brokerAccountId: '',
+        basketKey: null,
         symbol: '',
         side: 'buy',
         originalRangeLow: null,
         originalRangeHigh: null,
         anchorPrice: null,
+        executableAnchorPrice: null,
         anchorSource: 'unknown',
         configuredStaticLayerCount: null,
         configuredDynamicStepPips: null,
         configuredDynamicMaxLayers: null,
+        requestedLayerCount: null,
         plannedLayerCount: null,
         plannedTotalLot: null,
+        allocatedTotalLot: null,
+        unallocatedLot: null,
+        fundedPrices: null,
+        lots: null,
+        reasons: Object.freeze([]),
         createdAt: new Date(0).toISOString(),
         lockedAt: null,
       }
@@ -147,6 +252,23 @@ export function parseLayeringPlanSnapshot(raw: unknown): LayeringPlanSnapshot | 
     const rawMode = row.mode
     if (rawMode !== 'static' && rawMode !== 'dynamic' && rawMode !== 'legacy') return null
     const mode: LayeringMode = rawMode
+    const rawSide = row.side == null && mode === 'legacy' ? 'buy' : row.side
+    if (rawSide !== 'buy' && rawSide !== 'sell') return null
+    const side = rawSide
+    const schemaVersion = row.schemaVersion == null && mode === 'legacy'
+      ? 0
+      : strictFiniteNumber(row.schemaVersion)
+    if (schemaVersion == null || !Number.isInteger(schemaVersion)) return null
+    if (mode === 'legacy') {
+      if (schemaVersion !== 0 && schemaVersion !== LAYERING_PLAN_SCHEMA_VERSION) return null
+    } else if (schemaVersion !== LAYERING_PLAN_SCHEMA_VERSION) {
+      return null
+    }
+    const calculatorVersion = row.calculatorVersion == null && mode === 'legacy'
+      ? 'legacy'
+      : strictString(row.calculatorVersion)
+    if (calculatorVersion == null) return null
+    if (mode !== 'legacy' && calculatorVersion !== LAYERING_PLAN_CALCULATOR_VERSION) return null
     const anchorSource = ANCHOR_SOURCES.has(row.anchorSource as LayerPlanAnchorSource)
       ? row.anchorSource as LayerPlanAnchorSource
       : null
@@ -155,8 +277,15 @@ export function parseLayeringPlanSnapshot(raw: unknown): LayeringPlanSnapshot | 
     if (planId == null && mode !== 'legacy') return null
     const plannedLayerCount = row.plannedLayerCount == null ? null : strictLayerCount(row.plannedLayerCount)
     if (row.plannedLayerCount != null && plannedLayerCount == null) return null
+    const requestedLayerCount = row.requestedLayerCount == null ? null : strictLayerCount(row.requestedLayerCount)
+    if (row.requestedLayerCount != null && requestedLayerCount == null) return null
     const plannedTotalLot = row.plannedTotalLot == null ? null : strictNonNegativeNumber(row.plannedTotalLot)
     if (row.plannedTotalLot != null && plannedTotalLot == null) return null
+    const allocatedTotalLot = row.allocatedTotalLot == null ? null : strictNonNegativeNumber(row.allocatedTotalLot)
+    if (row.allocatedTotalLot != null && allocatedTotalLot == null) return null
+    const unallocatedLot = row.unallocatedLot == null ? null : strictNonNegativeNumber(row.unallocatedLot)
+    if (row.unallocatedLot != null && unallocatedLot == null) return null
+    if (allocatedTotalLot != null && plannedTotalLot != null && allocatedTotalLot > plannedTotalLot) return null
     const configuredStaticLayerCount = row.configuredStaticLayerCount == null ? null : strictLayerCount(row.configuredStaticLayerCount)
     if (row.configuredStaticLayerCount != null && configuredStaticLayerCount == null) return null
     const configuredDynamicStepPips = row.configuredDynamicStepPips == null ? null : strictPositiveNumber(row.configuredDynamicStepPips)
@@ -178,13 +307,48 @@ export function parseLayeringPlanSnapshot(raw: unknown): LayeringPlanSnapshot | 
     ) return null
     const anchorPrice = row.anchorPrice == null ? null : strictFiniteNumber(row.anchorPrice)
     if (row.anchorPrice != null && anchorPrice == null) return null
+    const executableAnchorPrice = row.executableAnchorPrice == null ? null : strictFiniteNumber(row.executableAnchorPrice)
+    if (row.executableAnchorPrice != null && executableAnchorPrice == null) return null
+    const fundedPrices = row.fundedPrices == null ? null : strictNumberArray(row.fundedPrices)
+    if (row.fundedPrices != null && fundedPrices == null) return null
+    const lots = row.lots == null ? null : strictPositiveNumberArray(row.lots)
+    if (row.lots != null && lots == null) return null
+    const reasons = row.reasons == null
+      ? Object.freeze([] as string[])
+      : Array.isArray(row.reasons) && row.reasons.every(r => typeof r === 'string' && r.length <= 128)
+        ? Object.freeze([...new Set(row.reasons as string[])])
+        : null
+    if (reasons == null) return null
+    if (fundedPrices != null) {
+      if (!uniqueNumbers(fundedPrices)) return null
+      if (originalRangeLow != null && originalRangeHigh != null && fundedPrices.some(p => p < originalRangeLow || p > originalRangeHigh)) return null
+      if (!pricesOrdered(side, fundedPrices)) return null
+    }
+    if ((fundedPrices == null) !== (lots == null)) return null
+    if (fundedPrices != null && lots != null && fundedPrices.length !== lots.length) return null
+    if (plannedLayerCount != null && fundedPrices != null && plannedLayerCount !== fundedPrices.length) return null
+    if (!validatePlanLotTotals(plannedTotalLot, allocatedTotalLot, unallocatedLot, lots)) return null
+    if (mode === 'static' && requestedLayerCount != null && configuredStaticLayerCount != null && requestedLayerCount !== configuredStaticLayerCount) {
+      return null
+    }
+    if (mode === 'dynamic' && plannedLayerCount != null && configuredDynamicMaxLayers != null && plannedLayerCount > configuredDynamicMaxLayers) {
+      return null
+    }
+    if (mode === 'dynamic' && executableAnchorPrice != null && fundedPrices != null && fundedPrices[0] !== executableAnchorPrice) {
+      return null
+    }
     if (
       mode !== 'legacy'
       && (planId == null
         || originalRangeLow == null
         || originalRangeHigh == null
+        || requestedLayerCount == null
         || plannedLayerCount == null
         || plannedTotalLot == null
+        || allocatedTotalLot == null
+        || unallocatedLot == null
+        || fundedPrices == null
+        || lots == null
         || (mode === 'dynamic' && anchorPrice == null))
     ) return null
     const createdAt = strictTimestamp(row.createdAt)
@@ -192,21 +356,31 @@ export function parseLayeringPlanSnapshot(raw: unknown): LayeringPlanSnapshot | 
     if (createdAt == null || (row.lockedAt != null && lockedAt == null)) return null
     if (lockedAt != null && Date.parse(lockedAt) < Date.parse(createdAt)) return null
     return {
+      schemaVersion,
+      calculatorVersion,
       planId: planId ?? 'legacy',
       mode,
       signalId: typeof row.signalId === 'string' ? row.signalId : '',
       brokerAccountId: typeof row.brokerAccountId === 'string' ? row.brokerAccountId : '',
+      basketKey: row.basketKey == null ? null : (typeof row.basketKey === 'string' ? row.basketKey : ''),
       symbol: typeof row.symbol === 'string' ? row.symbol : '',
-      side: row.side === 'sell' ? 'sell' : 'buy',
+      side,
       originalRangeLow,
       originalRangeHigh,
       anchorPrice,
+      executableAnchorPrice,
       anchorSource,
       configuredStaticLayerCount,
       configuredDynamicStepPips,
       configuredDynamicMaxLayers,
+      requestedLayerCount,
       plannedLayerCount,
       plannedTotalLot,
+      allocatedTotalLot,
+      unallocatedLot,
+      fundedPrices,
+      lots,
+      reasons,
       createdAt,
       lockedAt,
     }

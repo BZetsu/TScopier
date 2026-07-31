@@ -440,6 +440,142 @@ through settings storage, but worker planning rejects range execution for those
 modes instead of silently falling through to legacy semantics. The warning only
 contains the normalized mode, not raw signal, account, or broker data.
 
+Phase C adds `layering_plans` for immutable, non-executable prepared Static and
+Dynamic plan snapshots. The Phase C migration is additive and may be deployed
+before or after the Phase C code because no runtime path activates those plans or
+materializes executable `range_pending_legs`. Prepared plans are inert until a
+future Phase D explicitly activates/materializes funded prices. Keep
+`LAYERING_MODES_EXECUTION_ENABLED=false`; enabling it in Phase C still does not
+make Static/Dynamic execution operational.
+
+`layering_plans` is worker/service-role only: RLS is enabled, `anon` and
+`authenticated` table privileges are revoked, and no frontend/client policy reads
+plan metadata. Persistence compares a semantic fingerprint that excludes
+lifecycle timestamps, so retry-after-timeout can return the original prepared
+plan without overwriting immutable metadata. Recovery is status-aware:
+`prepared` and read-only `active` rows can be parsed, while `completed`,
+`cancelled`, `invalid`, and unknown statuses fail closed for Phase C.
+
+### Static/Dynamic layering final rollout
+
+The final integration adds guarded Static/Dynamic preparation, CAS activation,
+and virtual pending materialization from immutable `fundedPrices`/`lots`.
+Existing accounts remain `layering_mode=legacy` unless explicitly changed.
+Legacy execution, `range_layering_type`, Telegram parsing, queues, and broker
+send paths remain unchanged for Legacy rows.
+
+Static/Dynamic are disabled by default and require all gates:
+
+```env
+LAYERING_MODES_EXECUTION_ENABLED=true
+LAYERING_STATIC_EXECUTION_ENABLED=true
+LAYERING_DYNAMIC_EXECUTION_ENABLED=true
+LAYERING_MODES_ACCOUNT_ALLOWLIST=<broker-account-id>
+LAYERING_MODES_PREPARE_ONLY=false
+LAYERING_MODES_KILL_SWITCH=false
+```
+
+Default-safe values:
+
+```env
+LAYERING_MODES_EXECUTION_ENABLED=false
+LAYERING_STATIC_EXECUTION_ENABLED=false
+LAYERING_DYNAMIC_EXECUTION_ENABLED=false
+LAYERING_MODES_ACCOUNT_ALLOWLIST=
+LAYERING_MODES_PREPARE_ONLY=true
+LAYERING_MODES_KILL_SWITCH=true
+```
+
+Empty allowlist enables no Static/Dynamic accounts. Wildcards are not supported.
+The kill switch blocks activation and pre-send execution for Static/Dynamic but
+does not change Legacy behavior.
+
+Rollout sequence:
+
+1. Apply the nullable `range_pending_legs` plan-column migration.
+2. Apply the `layering_plans`/`activate_layering_plan` migration.
+3. Deploy worker/frontend code with all Static/Dynamic gates disabled.
+4. Verify Legacy copier behavior.
+5. Enable prepare-only for one staging account; confirm prepared plans and no
+   active pending legs.
+6. Disable prepare-only only for one staging account; verify activation, restart
+   recovery, duplicate-worker races, kill switch, cancellation, and native
+   pending-order reconciliation where supported.
+7. Verify the account settings capability response and selector show
+   Static/Dynamic only for the allowlisted staging account.
+8. Expand the allowlist gradually.
+
+Rollback: set `LAYERING_MODES_KILL_SWITCH=true`, disable mode flags, or clear
+the allowlist. Preserve `layering_plans` and historical `range_pending_legs` for
+audit and reconciliation.
+
+Static/Dynamic broker-native `range_layering_type='pending_order'` is supported
+for FxSocket MT4/MT5 accounts that pass rollout, allowlist, connection,
+capability, price-distance, and lot validation. The worker places only immutable
+funded plan levels after the first/immediate layer and stores deterministic
+broker references on `range_pending_legs`. Unsupported adapters fail closed;
+Legacy broker-pending behavior remains unchanged.
+
+Native pending sends require durable pre-send state. The activation RPC creates
+one inert row per remaining funded leg. Each broker send then CAS-claims exactly
+one row to `submission_claimed`, persists the deterministic client reference and
+attempt metadata, rechecks rollout/kill switch/plan fingerprint immediately
+before `OrderSend`, and only then calls FxSocket. Ambiguous outcomes and DB
+confirmation failures move to `reconciliation_required`. Ambiguous states are
+not sendable: a matching broker reference is adopted, a conflict invalidates the
+plan, and lookup misses/outages remain reconciliation/manual-review until an
+operator performs an explicit audited recovery.
+
+Worker startup and the broker-pending monitor recover native submission states
+(`submission_claimed`, `submission_ambiguous`, `reconciliation_required`, and
+unconfirmed submitted rows) by deterministic reference only. Recovery does not
+rerun calculators, use current settings, reanchor from quotes, or fall back to
+virtual/Legacy execution. Recovery ownership is leased with
+`reconciliation_claimed_at` / `reconciliation_claimed_by`;
+`LAYERING_NATIVE_RECOVERY_LEASE_TIMEOUT_MS` defaults to 300000ms so a crashed
+recovery worker cannot permanently strand a row. Lookup outages release the
+lease for later startup passes while remaining non-sendable. Broker-authoritative
+lookup misses move to `manual_review` and require operator review rather than
+automatic resend.
+
+Cancellation moves Static/Dynamic plans to `cancelling`, blocks new virtual and
+native claims, locally cancels unsent virtual legs, and reconciles native broker
+state before any audited FxSocket cancellation call. Pending broker orders get
+one cancel request; filled orders are preserved; already-cancelled/rejected
+orders are adopted. Broker cancel timeouts remain `cancellation_pending` and
+restart recovery continues by reconciliation without duplicate cancel requests.
+Missing cancel capability or missing tickets become `cancellation_manual_review`.
+Plans reach `entries_complete` only after the first immediate execution linkage
+is confirmed and all remaining entry legs are terminal. The `completed` status is
+reserved for product-level basket/trade terminal semantics.
+
+Static/Dynamic first-fill activation is part of the immediate-fill lifecycle. The
+live-fast path must await plan persistence and activation before reporting
+success for layering entries; only unrelated non-layering follow-up work may run
+in the background.
+
+Deploy order for this integration:
+
+1. Apply the `layering_plans` migration, including the new RPC signature,
+   native submission columns, and direct-update guard triggers.
+2. Deploy `layering-mode-capabilities` and `update-layering-settings` Edge
+   Functions.
+3. Deploy frontend and worker with all Static/Dynamic flags disabled.
+4. Enable prepare-only for one allowlisted staging account, then enable virtual
+   execution, then native pending on one supported FxSocket MT4/MT5 staging
+   account.
+
+Do not advertise generic broker-native support. Any broker path without
+FxSocket MT4/MT5 placement, reference reconciliation, and cancellation support
+must return `broker_pending_unsupported`.
+
+The frontend must use the server-authoritative `layering-mode-capabilities`
+function before showing Static/Dynamic controls. With the default flags above,
+the response makes Static/Dynamic unavailable and Legacy remains selected for
+existing accounts.
+
+Staging checklist: [`docs/layering-modes-staging-runbook.md`](layering-modes-staging-runbook.md).
+
 Guards (worker + edge sweep):
 
 - Do not fire a `step_idx` that already has a **`fired`** row for the same `(signal_id, broker_account_id, symbol)`.

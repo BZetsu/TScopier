@@ -1,9 +1,11 @@
 # Layering Modes Calculators
 
-Phase B adds pure calculator modules for future Static and Dynamic range-layering
-execution. These helpers are not integrated into the planner, executor,
-Supabase persistence, queues, Telegram parsing, broker dispatch, or frontend UI.
-Legacy range-layering behavior remains the only production execution path.
+Phase B added pure calculator modules for Static and Dynamic range-layering
+plans. The calculator functions remain side-effect free: they do not access
+Supabase, queues, Telegram, broker clients, environment variables, time, random
+IDs, or filesystem/network state. Runtime integration consumes their outputs
+only after rollout gates allow preparation, and executable rows are materialized
+only from immutable persisted `fundedPrices`/`lots`.
 
 ## Static Layering
 
@@ -76,13 +78,23 @@ the final unique broker-valid layer count. Combined plan results distinguish:
 - `unfundedPrices` / `unfundedIndexes`: candidates removed because the intended
   total lot could not safely fund them.
 
-Only `fundedPrices` may be persisted as executable pending legs in Phase C.
-Reason codes are deduplicated while preserving insertion order.
+Only `fundedPrices` may become executable pending legs in a future execution
+phase. Phase C persists immutable non-executable plan records first; candidate
+prices remain diagnostic only. Reason codes are deduplicated while preserving
+insertion order.
 
-## Phase C
+## Runtime Integration
 
-Phase C should persist immutable plan snapshots and wire these calculators into
-the guarded Static/Dynamic execution path. The migration from Phase A must be
-applied before enabling Static/Dynamic execution. Do not claim these modes are
-available to users until the planner, persistence, restart recovery, and
-execution integration are complete.
+The final integration uses these calculators to build versioned
+`LayeringPlanSnapshot` metadata. Static can prepare from the original signal
+range before the first immediate order. Dynamic is two-stage: the first broker
+fill is sent through the existing immediate path, then the actual fill price and
+actual fill lot are used to calculate remaining funded layers. The first layer is
+not materialized a second time as a pending leg.
+
+Static/Dynamic still require server-side rollout flags, kill switch off, and an
+allowlisted broker account. Broker-native pending orders for Static/Dynamic use
+the immutable funded prices/lots plus deterministic per-leg references for
+supported FxSocket MT4/MT5 accounts; unsupported adapters fail closed and never
+fall back to virtual execution or Legacy behavior.
+See [`layering-plan-persistence.md`](layering-plan-persistence.md).
