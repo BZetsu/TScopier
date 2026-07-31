@@ -2,6 +2,18 @@
 
 ## Changelog
 
+### 2026-07-31 — Fixed layering-modes allowlist bug: empty allowlist now means unrestricted
+
+- **Context:** Static/dynamic layering modes remained deactivated in the AccountConfigPage UI on staging even after the `LAYERING_*` flags were enabled. The layering-modes implementation (static/dynamic modes, plan persistence, calculators, edge functions) was built by Emma — he designed the flag system with an allowlist escape hatch documented as "Leave empty = no allowlist restriction", but the enforcement was inverted.
+- **Root cause:** Both `supabase/functions/layering-mode-capabilities/index.ts` and `supabase/functions/update-layering-settings/index.ts` computed `listed = allowlist().has(accountId)`. With `LAYERING_MODES_ACCOUNT_ALLOWLIST` unset (empty set), `has()` returned `false` for every account, so `configurable` was always `false` → static/dynamic stayed greyed out for everyone. The documented intent (empty list = everyone allowed) required the opposite behavior.
+- **Changes:**
+  - **`supabase/functions/layering-mode-capabilities/index.ts`:** `const allowlistSet = allowlist(); const listed = allowlistSet.size === 0 || allowlistSet.has(args.accountId)`.
+  - **`supabase/functions/update-layering-settings/index.ts`:** Same fix inside `configurationAllowed()`.
+- **Verification:** Both functions type-check and deployed successfully to staging Supabase (`axdcledcyhyvzrnfkwat`).
+- **Deploy:** Commit `a5737c1c` pushed to `origin/staging`; both edge functions re-deployed to the staging project via `supabase functions deploy --project-ref axdcledcyhyvzrnfkwat --use-api`.
+- **Remaining (blocked on admin):** The `LAYERING_*` secrets could NOT be set via CLI (PAM: token lacks privileges — reads allowed, writes denied). They must be added via the staging Dashboard (Edge Functions → Secrets): `LAYERING_MODES_EXECUTION_ENABLED=true`, `LAYERING_STATIC_EXECUTION_ENABLED=true`, `LAYERING_DYNAMIC_EXECUTION_ENABLED=true`, `LAYERING_MODES_PREPARE_ONLY=false`, `LAYERING_MODES_KILL_SWITCH=false`. Also note: the gate additionally requires the user to be admin or on the Advanced plan, and the broker to have a linked + connected `fxsocket_account_id`.
+- **Follow-up:** `upstream/staging` does not yet contain this fix (nor the TS fix `7ce4baea`) — needs syncing.
+
 ### 2026-07-31 — Fixed staging Netlify build: layering fallback type error in AccountConfigPage
 
 - **Context:** Staging frontend deploy (`BZetsu/TScopier:staging` → Netlify) failed with 7 TS errors in `src/pages/dashboard/AccountConfigPage.tsx` after pulling Emma's layering-modes commits (PRs #63–#65, `8be5388e`) from upstream staging. The build is `tsc -b && vite build`, so `tsc` blocked the deploy.
