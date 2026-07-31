@@ -70,6 +70,21 @@ function authKeyReleaseDelayMs(): number {
   return Math.max(500, Math.min(120_000, Number(process.env.TELEGRAM_RECONNECT_COOLDOWN_MS ?? 3500)))
 }
 
+function listenerStartTimeoutMs(): number {
+  return Math.max(
+    15_000,
+    Math.min(180_000, Number(process.env.LISTENER_START_TIMEOUT_MS ?? 60_000)),
+  )
+}
+
+/** Consecutive renew ticks with MTProto down before hard-resetting the Map entry. */
+function disconnectedRenewHealTicks(): number {
+  return Math.max(
+    2,
+    Math.min(20, Number(process.env.LISTENER_DISCONNECT_HEAL_TICKS ?? 3)),
+  )
+}
+
 export class UserSessionManager {
   private listeners = new Map<string, UserListener>()
   private supabase: SupabaseClient
@@ -84,6 +99,8 @@ export class UserSessionManager {
   private authGuard: ((userId: string) => boolean) | null = null
   /** Guards renewAllLeases so slow cycles cannot stack up and exhaust sockets. */
   private renewLeasesInFlight = false
+  /** Renew ticks spent disconnected; cleared when connected again. */
+  private disconnectedRenewTicks = new Map<string, number>()
   private channelListenerManager: ChannelListenerManager | null = null
   private channelReconcileMonitor: ChannelReconcileMonitor | null = null
   private shuttingDown = false
@@ -235,10 +252,7 @@ export class UserSessionManager {
     )
 
     const staggerMs = Math.max(0, Math.min(30_000, Number(process.env.TELEGRAM_MULTI_SESSION_STAGGER_MS ?? 600)))
-    const startTimeoutMs = Math.max(
-      15_000,
-      Math.min(180_000, Number(process.env.LISTENER_START_TIMEOUT_MS ?? 60_000)),
-    )
+    const startTimeoutMs = listenerStartTimeoutMs()
     let i = 0
     for (const session of owned) {
       if (i++ > 0 && staggerMs > 0) {
@@ -303,17 +317,28 @@ export class UserSessionManager {
           return
         }
         if (!listener.isTelegramConnected()) {
-          // Don't skip lease renewal — the lease keeps the session visible to the
-          // frontend ("Copier is active") while the reconnect is in-flight. If we
-          // return here the lease expires within seconds and every user sees
-          // "session expired" / "copier engine offline" during any transient
-          // disconnect (e.g. _updateLoop TIMEOUT → flood wait → reconnect).
+          // Dead Map entries used to skip renew forever (UI "Copier engine offline").
+          // Kick reconnect first; after several failed ticks, hard-reset so syncSessions
+          // can startListener cleanly (reconnect-only can leave No lease forever).
+          const ticks = (this.disconnectedRenewTicks.get(userId) ?? 0) + 1
+          this.disconnectedRenewTicks.set(userId, ticks)
+          const healAfter = disconnectedRenewHealTicks()
+          if (ticks >= healAfter) {
+            console.warn(
+              `[sessionManager] hard-reset disconnected listener user=${userId}`
+              + ` after ${ticks} renew ticks — syncSessions will restart`,
+            )
+            this.disconnectedRenewTicks.delete(userId)
+            await this.stopListener(userId)
+            return
+          }
           console.log(
             `[sessionManager] listener disconnected but renewing lease anyway`
             + ` user=${userId} — kicking reconnect in background`,
           )
           listener.requestReconnectIfDisconnected('lease_renew_disconnected')
         }
+        this.disconnectedRenewTicks.delete(userId)
 
         try {
           const result = await withTimeout(
@@ -604,7 +629,11 @@ export class UserSessionManager {
       const failedAt = this.recentlyFailed.get(userId)
       if (failedAt && now - failedAt < cooldownMs) continue
       try {
-        await this.startListener(userId, session.session_string)
+        await withTimeout(
+          this.startListener(userId, session.session_string),
+          listenerStartTimeoutMs(),
+          `syncSessions startListener ${userId}`,
+        )
         this.recentlyFailed.delete(userId)
       } catch (err) {
         this.recentlyFailed.set(userId, Date.now())
@@ -1132,16 +1161,31 @@ export class UserSessionManager {
         listener.setOnSignalParsed(row => listenerInProcessDispatch(this.tradeExecutor!, row))
       }
       try {
-        await listener.start()
+        await withTimeout(
+          listener.start(),
+          listenerStartTimeoutMs(),
+          `listener.start ${userId}`,
+        )
       } catch (err) {
+        try { await listener.stop() } catch { /* ignore */ }
         await releaseSessionLease(this.supabase, userId)
         if (err instanceof TelegramSessionInvalidError) {
-          await this.invalidateTelegramSession(userId)
+          // Do not call invalidateTelegramSession here — it re-enters
+          // withConnectionLock while we still hold it (deadlock).
+          await this.supabase.from('telegram_auth_pending').delete().eq('user_id', userId)
+          const { error } = await this.supabase.from('telegram_sessions').delete().eq('user_id', userId)
+          if (error) {
+            console.warn(
+              `[sessionManager] session delete after invalid start failed for ${userId}:`,
+              error.message,
+            )
+          }
         }
         throw err
       }
       this.listeners.set(userId, listener)
       this.recentlyFailed.delete(userId)
+      this.disconnectedRenewTicks.delete(userId)
       console.log(`[sessionManager] Started listener for user ${userId}`)
     })
   }
@@ -1151,6 +1195,7 @@ export class UserSessionManager {
     if (!listener) return
     await listener.stop()
     this.listeners.delete(userId)
+    this.disconnectedRenewTicks.delete(userId)
     await releaseSessionLease(this.supabase, userId)
     console.log(`[sessionManager] Stopped listener for user ${userId}`)
   }
