@@ -76,13 +76,17 @@ the final unique broker-valid layer count. Combined plan results distinguish:
 - `unfundedPrices` / `unfundedIndexes`: candidates removed because the intended
   total lot could not safely fund them.
 
-Only `fundedPrices` may be persisted as executable pending legs in Phase C.
-Reason codes are deduplicated while preserving insertion order.
+Only `fundedPrices` may become executable pending legs in a future execution
+phase. Phase C persists immutable non-executable plan records first; candidate
+prices remain diagnostic only. Reason codes are deduplicated while preserving
+insertion order.
 
 ## Phase C
 
-Phase C should persist immutable plan snapshots and wire these calculators into
-the guarded Static/Dynamic execution path. The migration from Phase A must be
-applied before enabling Static/Dynamic execution. Do not claim these modes are
-available to users until the planner, persistence, restart recovery, and
-execution integration are complete.
+Phase C persists immutable plan snapshots in `layering_plans` and keeps them in
+`prepared` state. It does not write active `range_pending_legs` rows, wire the
+calculators into the planner/executor, or enable Static/Dynamic broker execution.
+See [`layering-plan-persistence.md`](layering-plan-persistence.md).
+
+Do not claim these modes are available to users until the planner, activation,
+materialization, restart recovery, and broker execution integration are complete.

@@ -17,19 +17,29 @@ const LOCKED_AT = '2026-07-30T00:01:00.000Z'
 
 function validStaticSnapshot(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
+    schemaVersion: 1,
+    calculatorVersion: 'layering-v1',
     mode: 'static',
     planId: 'plan_static_001',
     signalId: 'sig',
     brokerAccountId: 'broker',
+    basketKey: 'sig:broker',
     symbol: 'XAUUSD',
     side: 'buy',
     originalRangeLow: 3340,
     originalRangeHigh: 3360,
     anchorPrice: 3340,
+    executableAnchorPrice: 3340,
     anchorSource: 'signal',
     configuredStaticLayerCount: 5,
+    requestedLayerCount: 5,
     plannedLayerCount: 5,
     plannedTotalLot: 0.1,
+    allocatedTotalLot: 0.1,
+    unallocatedLot: 0,
+    fundedPrices: [3360, 3355, 3350, 3345, 3340],
+    lots: [0.02, 0.02, 0.02, 0.02, 0.02],
+    reasons: [],
     createdAt: CREATED_AT,
     lockedAt: null,
     ...overrides,
@@ -38,20 +48,30 @@ function validStaticSnapshot(overrides: Record<string, unknown> = {}): Record<st
 
 function validDynamicSnapshot(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
+    schemaVersion: 1,
+    calculatorVersion: 'layering-v1',
     mode: 'dynamic',
     planId: 'plan_dynamic_001',
     signalId: 'sig',
     brokerAccountId: 'broker',
+    basketKey: 'sig:broker',
     symbol: 'XAUUSD',
     side: 'sell',
     originalRangeLow: 3340,
     originalRangeHigh: 3360,
     anchorPrice: 3350,
+    executableAnchorPrice: 3350,
     anchorSource: 'fill',
     configuredDynamicStepPips: 5,
     configuredDynamicMaxLayers: 8,
+    requestedLayerCount: 8,
     plannedLayerCount: 6,
     plannedTotalLot: 0.13,
+    allocatedTotalLot: 0.12,
+    unallocatedLot: 0.01,
+    fundedPrices: [3350, 3352, 3354, 3356, 3358, 3360],
+    lots: [0.02, 0.02, 0.02, 0.02, 0.02, 0.02],
+    reasons: ['allocation_reduced_by_lot_step'],
     createdAt: CREATED_AT,
     lockedAt: null,
     ...overrides,
@@ -162,8 +182,11 @@ test('legacy row without plan metadata deserializes as legacy', () => {
 
 test('valid legacy snapshot parses when explicitly persisted', () => {
   const plan = parseLayeringPlanSnapshot({
+    schemaVersion: 0,
+    calculatorVersion: 'legacy',
     mode: 'legacy',
     planId: 'legacy_001',
+    side: 'buy',
     anchorSource: 'unknown',
     createdAt: CREATED_AT,
     lockedAt: null,
@@ -202,8 +225,11 @@ test('snapshot round-trip preserves independent configuration values', () => {
 test('snapshot anchor sources are exact and invalid values are rejected', () => {
   assert.equal(parseLayeringPlanSnapshot(validStaticSnapshot({ anchorSource: 'account' })), null)
   const plan = parseLayeringPlanSnapshot({
+    schemaVersion: 0,
+    calculatorVersion: 'legacy',
     mode: 'legacy',
     planId: 'legacy_002',
+    side: 'buy',
     anchorSource: 'unknown',
     createdAt: CREATED_AT,
     lockedAt: null,
@@ -243,7 +269,7 @@ test('planned total lot must be a non-negative finite JSON number', () => {
   assert.equal(parseLayeringPlanSnapshot(validStaticSnapshot({ plannedTotalLot: Number.NaN })), null)
   assert.equal(parseLayeringPlanSnapshot(validStaticSnapshot({ plannedTotalLot: Number.POSITIVE_INFINITY })), null)
   assert.equal(parseLayeringPlanSnapshot(validStaticSnapshot({ plannedTotalLot: '0.1' })), null)
-  assert.ok(parseLayeringPlanSnapshot(validStaticSnapshot({ plannedTotalLot: 0 })))
+  assert.equal(parseLayeringPlanSnapshot(validStaticSnapshot({ plannedTotalLot: 0 })), null)
 })
 
 test('plan id format is bounded and path-safe', () => {
