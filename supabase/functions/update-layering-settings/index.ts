@@ -79,14 +79,13 @@ function configurationAllowed(args: {
   accountId: string
   advancedAllowed: boolean
 }) {
-  const globalEnabled = flag("LAYERING_MODES_EXECUTION_ENABLED", false)
   const killSwitch = flag("LAYERING_MODES_KILL_SWITCH", true)
   const modeEnabled = args.mode === "static"
     ? flag("LAYERING_STATIC_EXECUTION_ENABLED", false)
     : flag("LAYERING_DYNAMIC_EXECUTION_ENABLED", false)
   const allowlistSet = allowlist()
   const listed = allowlistSet.size === 0 || allowlistSet.has(args.accountId)
-  return args.advancedAllowed && globalEnabled && !killSwitch && modeEnabled && listed
+  return args.advancedAllowed && !killSwitch && modeEnabled && listed
 }
 
 function mergeLayeringSettings(existing: Record<string, unknown>, next: {
