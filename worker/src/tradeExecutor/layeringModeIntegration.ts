@@ -5,6 +5,7 @@ import {
   calculateStaticLayerPlan,
 } from '../manualPlanning/layeringModeCalculators'
 import { allocateLayerLots } from '../manualPlanning/layerLotAllocation'
+import { solveLayerSizingConstraints } from '../manualPlanning/layerSizingConstraints'
 import {
   activateLayeringPlanWithLegs,
   buildLayeringPlanSnapshot,
@@ -253,6 +254,12 @@ function calculatedDynamicFromFill(args: {
     intendedTotalLot: args.intendedTotalLot,
     allocatedTotalLot,
     unallocatedLot: Number(Math.max(0, args.intendedTotalLot - allocatedTotalLot).toFixed(8)),
+    theoreticalLayerCount: null,
+    effectiveStepPips: null,
+    requestedLayerPercent: null,
+    effectiveLayerPercent: null,
+    allocationPercentTotal: null,
+    optimizationStrategy: null,
     reasons: Object.freeze([...new Set([...args.pricePlan.reasons, ...allocationReasons])]),
   })
 }
@@ -280,6 +287,7 @@ export async function runLayeringModeRangeEntry(
   const digits = Math.max(0, Math.min(8, Number(prep.params?.digits) || 5))
   const side = sideForPrep(prep)
   const intendedTotalLot = prep.baseLot
+  const layerPercent = Number(prep.manual.multi_trade_leg_percent ?? 0) > 0 ? Number(prep.manual.multi_trade_leg_percent) : undefined
 
   if (mode === 'static') {
     const calculated = calculateStaticLayerPlan({
@@ -291,6 +299,8 @@ export async function runLayeringModeRangeEntry(
       intendedTotalLot,
       minLot,
       lotStep,
+      layerPercent,
+      optimizationStrategy: prep.manual.layering_optimization_strategy,
     })
     if (!calculated.ok) return { openedOrMerged: false, finalizeSkipReason: `layering_mode_static_${calculated.reason}` }
     const built = buildSnapshot({ prep, calculatedPlan: calculated, mode, anchorSource: 'signal' })
@@ -318,7 +328,21 @@ export async function runLayeringModeRangeEntry(
   }
 
   const maxLayers = Number(prep.manual.dynamic_max_layers ?? 5)
-  const firstAlloc = allocateLayerLots({ intendedTotalLot, layerCount: maxLayers, minLot, lotStep })
+  const fullRangeDistancePips = (range.high - range.low) / (prep.plan.pip ?? prep.params?.point ?? 0.00001)
+  const firstSizing = layerPercent == null
+    ? null
+    : solveLayerSizingConstraints({
+      rangeDistancePips: fullRangeDistancePips,
+      stepPips: Number(prep.manual.dynamic_step_pips ?? 3),
+      totalLot: intendedTotalLot,
+      minLot,
+      lotStep,
+      layerPercent,
+      optimizationStrategy: prep.manual.layering_optimization_strategy,
+      maxLayerCount: maxLayers,
+    })
+  if (firstSizing && !firstSizing.ok) return { openedOrMerged: false, finalizeSkipReason: `layering_mode_dynamic_${firstSizing.reason}` }
+  const firstAlloc = firstSizing ?? allocateLayerLots({ intendedTotalLot, layerCount: maxLayers, minLot, lotStep })
   if (!firstAlloc.ok) return { openedOrMerged: false, finalizeSkipReason: `layering_mode_dynamic_${firstAlloc.reason}` }
   const firstLot = firstAlloc.lots[0]!
   const runtime: LayeringModeRuntime = {
