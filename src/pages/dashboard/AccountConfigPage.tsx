@@ -1058,12 +1058,6 @@ export function AccountConfigPage() {
   const selectedLayeringMechanism = channelManualSettings.range_layering_type === 'pending_order'
     ? 'pending_order'
     : 'auto'
-  const selectedLayeringOptimizationStrategy =
-    channelManualSettings.layering_optimization_strategy === 'reduce_layers'
-      || channelManualSettings.layering_optimization_strategy === 'widen_step'
-      || channelManualSettings.layering_optimization_strategy === 'adjust_percent'
-      ? channelManualSettings.layering_optimization_strategy
-      : 'adjust_percent'
   const selectedModeAutoSelectable = layeringMechanismIsSelectable(layeringCapabilities, selectedLayeringMode, 'auto')
   const selectedModePendingSelectable = layeringMechanismIsSelectable(layeringCapabilities, selectedLayeringMode, 'pending_order')
 
@@ -1903,7 +1897,12 @@ export function AccountConfigPage() {
   const setManual = (patch: Partial<ManualSettings>) => {
     patchSelectedChannel(current => ({
       ...current,
-      manualSettings: { ...current.manualSettings, ...patch, layering_mode: 'legacy' },
+      manualSettings: {
+        ...current.manualSettings,
+        ...patch,
+        layering_mode: 'legacy',
+        layering_optimization_strategy: 'adjust_percent',
+      },
     }))
   }
 
@@ -2104,10 +2103,7 @@ export function AccountConfigPage() {
         static_layer_count: Number(settings.static_layer_count ?? DEFAULT_MANUAL_SETTINGS.static_layer_count ?? 5),
         dynamic_step_pips: Number(settings.dynamic_step_pips ?? DEFAULT_MANUAL_SETTINGS.dynamic_step_pips ?? 3),
         dynamic_max_layers: Number(settings.dynamic_max_layers ?? DEFAULT_MANUAL_SETTINGS.dynamic_max_layers ?? 5),
-        layering_optimization_strategy:
-          settings.layering_optimization_strategy === 'reduce_layers' || settings.layering_optimization_strategy === 'widen_step'
-            ? settings.layering_optimization_strategy
-            : 'adjust_percent',
+        layering_optimization_strategy: 'adjust_percent',
       })
       if (layeringSaveError) {
         setConfigSaving(false)
@@ -2143,10 +2139,7 @@ export function AccountConfigPage() {
         static_layer_count: Number(normalizedFallbackManual.static_layer_count ?? DEFAULT_MANUAL_SETTINGS.static_layer_count ?? 5),
         dynamic_step_pips: Number(normalizedFallbackManual.dynamic_step_pips ?? DEFAULT_MANUAL_SETTINGS.dynamic_step_pips ?? 3),
         dynamic_max_layers: Number(normalizedFallbackManual.dynamic_max_layers ?? DEFAULT_MANUAL_SETTINGS.dynamic_max_layers ?? 5),
-        layering_optimization_strategy:
-          normalizedFallbackManual.layering_optimization_strategy === 'reduce_layers' || normalizedFallbackManual.layering_optimization_strategy === 'widen_step'
-            ? normalizedFallbackManual.layering_optimization_strategy
-            : 'adjust_percent',
+        layering_optimization_strategy: 'adjust_percent',
       })
       if (layeringSaveError) {
         setConfigSaving(false)
@@ -3302,47 +3295,26 @@ export function AccountConfigPage() {
                                 </div>
                                 {channelManualSettings.range_trading && (
                                   <>
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                      <div className="flex flex-col gap-1.5">
-                                        <label className="text-sm font-medium text-neutral-700 dark:text-neutral-300">Layering Mode</label>
-                                        <select
-                                          className="w-full px-3 py-2 text-base md:text-sm rounded-lg border bg-white dark:bg-neutral-900 border-neutral-200 dark:border-neutral-700 text-neutral-900 dark:text-neutral-100"
-                                          value={selectedLayeringMechanism}
-                                          onChange={e => {
-                                            const next = e.target.value === 'pending_order' ? 'pending_order' : 'auto'
-                                            if (!layeringMechanismIsSelectable(layeringCapabilities, selectedLayeringMode, next)) {
-                                              setError(next === 'pending_order'
-                                                ? 'Broker pending orders are not enabled for this account and layering mode.'
-                                                : 'Virtual execution is not enabled for this account and layering mode.')
-                                              return
-                                            }
-                                            setError('')
-                                            setManual({ range_layering_type: next })
-                                          }}
-                                        >
-                                          <option value="auto" disabled={!selectedModeAutoSelectable}>Automatic / virtual execution</option>
-                                          <option value="pending_order" disabled={!selectedModePendingSelectable}>Broker pending orders</option>
-                                        </select>
-                                      </div>
-                                      <div className="flex flex-col gap-1.5">
-                                        <label className="text-sm font-medium text-neutral-700 dark:text-neutral-300">Sizing Strategy</label>
-                                        <select
-                                          className="w-full px-3 py-2 text-base md:text-sm rounded-lg border bg-white dark:bg-neutral-900 border-neutral-200 dark:border-neutral-700 text-neutral-900 dark:text-neutral-100"
-                                          value={selectedLayeringOptimizationStrategy}
-                                          onChange={e => {
-                                            const next = e.target.value
-                                            setManual({
-                                              layering_optimization_strategy: next === 'reduce_layers' || next === 'widen_step'
-                                                ? next
-                                                : 'adjust_percent',
-                                            })
-                                          }}
-                                        >
-                                          <option value="adjust_percent">Adjust percent per layer</option>
-                                          <option value="reduce_layers">Reduce layer count</option>
-                                          <option value="widen_step">Widen step distance</option>
-                                        </select>
-                                      </div>
+                                    <div className="flex flex-col gap-1.5 max-w-md">
+                                      <label className="text-sm font-medium text-neutral-700 dark:text-neutral-300">Layering Mode</label>
+                                      <select
+                                        className="w-full px-3 py-2 text-base md:text-sm rounded-lg border bg-white dark:bg-neutral-900 border-neutral-200 dark:border-neutral-700 text-neutral-900 dark:text-neutral-100"
+                                        value={selectedLayeringMechanism}
+                                        onChange={e => {
+                                          const next = e.target.value === 'pending_order' ? 'pending_order' : 'auto'
+                                          if (!layeringMechanismIsSelectable(layeringCapabilities, selectedLayeringMode, next)) {
+                                            setError(next === 'pending_order'
+                                              ? 'Broker pending orders are not enabled for this account and layering mode.'
+                                              : 'Virtual execution is not enabled for this account and layering mode.')
+                                            return
+                                          }
+                                          setError('')
+                                          setManual({ range_layering_type: next })
+                                        }}
+                                      >
+                                        <option value="auto" disabled={!selectedModeAutoSelectable}>Automatic / virtual execution</option>
+                                        <option value="pending_order" disabled={!selectedModePendingSelectable}>Broker pending orders</option>
+                                      </select>
                                     </div>
 
                                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
