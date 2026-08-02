@@ -2,6 +2,16 @@
 
 ## Changelog
 
+### 2026-08-02 — Merged upstream/dev (Emma's constraint-based layer sizing) into staging
+
+- **Context:** Pulled `upstream/dev` (8 commits: PRs #66/#69 — Emma's `feat/layering-modes-complete-integration` and `c6f12703` "Implemented the constraint-based layer sizing path") into a staging-based branch to promote Emma's work to `upstream/staging`. `upstream/staging` and `upstream/dev` had diverged (merge-base `99819542`): staging carried 6 commits (PR #65, layering allowlist/type fixes + changelog entries), dev carried 8 commits (Emma's layer sizing).
+- **Merge conflicts (1, content):**
+  - **`supabase/functions/update-layering-settings/index.ts`** — `configurationAllowed()`: staging had kill-switch + per-mode execution flags (`LAYERING_MODES_KILL_SWITCH`, `LAYERING_STATIC/DYNAMIC_EXECUTION_ENABLED`) gating `configurable`; dev (c6f12703) intentionally removed those flags (feature GA) and added `layering_optimization_strategy` support. **Resolution:** took dev's version (`--theirs`) — the flag removal is deliberate (verified in `c6f12703`), and the rest of the file auto-merged from dev (new `LAYERING_KEYS` entry, `normalizeOptimizationStrategy`, handler field). Env vars for the old flags are now ignored by this function (expected).
+  - Everything else auto-merged cleanly: `layering-mode-capabilities/index.ts` (kept kill-switch in `executionAvailable` only, matching dev), migration `20260731120000_layering_plans.sql` (calculator-version null handling fix), all worker layering files.
+- **Verification:** `tsc -b` clean (frontend), `vite build` clean, worker `tsc` clean, 5 frontend layering tests pass, 61 worker layering tests pass (`layerSizingConstraints`, `layeringModeCalculators`, `layeringPlanPersistence`).
+- **Deploy:** Branch `merge/dev-into-staging` pushed to `upstream/staging` (fast-forward after merge). Railway auto-deploys from `staging`. Requires the migration `20260731120000_layering_plans.sql` (already applied on staging DB per prior sessions) and edge functions re-deployed if the capability/update functions need the new `layering_optimization_strategy` field (deploy via `supabase functions deploy layering-mode-capabilities update-layering-settings --project-ref axdcledcyhyvzrnfkwat --use-api`).
+- **Follow-up:** (1) Local `fix/reconnect-fix-staging` branch contains reconnect crash fixes (`05b05961`, `c56cb7cb`) NOT yet in `upstream/staging` — candidate for a later PR. (2) `LAYERING_*` secrets still pending admin set on staging Supabase Dashboard (see 2026-07-31 entry).
+
 ### 2026-07-31 — Fixed layering-modes allowlist bug: empty allowlist now means unrestricted
 
 - **Context:** Static/dynamic layering modes remained deactivated in the AccountConfigPage UI on staging even after the `LAYERING_*` flags were enabled. The layering-modes implementation (static/dynamic modes, plan persistence, calculators, edge functions) was built by Emma — he designed the flag system with an allowlist escape hatch documented as "Leave empty = no allowlist restriction", but the enforcement was inverted.
