@@ -43,6 +43,7 @@ export const DEFAULT_MANUAL_SETTINGS: ManualSettings = {
   static_layer_count: 5,
   dynamic_step_pips: 3,
   dynamic_max_layers: 5,
+  layering_optimization_strategy: 'adjust_percent',
   range_layering_type: 'auto',
   use_signal_entry_range: false,
   close_worse_entries: false,

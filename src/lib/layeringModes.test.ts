@@ -9,6 +9,7 @@ test('frontend layering settings default to legacy', () => {
   assert.equal(normalized.static_layer_count, 5)
   assert.equal(normalized.dynamic_step_pips, 3)
   assert.equal(normalized.dynamic_max_layers, 5)
+  assert.equal(normalized.layering_optimization_strategy, 'adjust_percent')
 })
 
 test('frontend layering settings round-trip without converting legacy', () => {
@@ -18,11 +19,13 @@ test('frontend layering settings round-trip without converting legacy', () => {
     static_layer_count: 6,
     dynamic_step_pips: 4.5,
     dynamic_max_layers: 9,
+    layering_optimization_strategy: 'widen_step',
     range_layering_type: 'pending_order',
   })
   assert.equal(saved.layering_mode, 'dynamic')
   assert.equal(saved.range_layering_type, 'pending_order')
   assert.equal(saved.dynamic_step_pips, 4.5)
+  assert.equal(saved.layering_optimization_strategy, 'widen_step')
 })
 
 test('frontend layering validation clamps counts and rejects invalid step', () => {
@@ -31,10 +34,12 @@ test('frontend layering validation clamps counts and rejects invalid step', () =
     static_layer_count: 30,
     dynamic_step_pips: 0,
     dynamic_max_layers: -2,
+    layering_optimization_strategy: 'invalid',
     range_step_pips: 7,
   })
   assert.equal(normalized.layering_mode, 'legacy')
   assert.equal(normalized.static_layer_count, 20)
   assert.equal(normalized.dynamic_step_pips, 7)
   assert.equal(normalized.dynamic_max_layers, 1)
+  assert.equal(normalized.layering_optimization_strategy, 'adjust_percent')
 })
