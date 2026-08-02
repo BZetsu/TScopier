@@ -8,6 +8,11 @@ export interface EstimateMultiTradeOrderRange {
   percent: number
   stepPips: number
   distancePips: number
+  /**
+   * When true, live signal zone sets distance — preview Total Open Trades uses the
+   * full reserved pending count as the ceiling (distance unknown at config time).
+   */
+  useSignalEntryRange?: boolean
 }
 
 export interface EstimateMultiTradeOrderResult {
@@ -17,13 +22,13 @@ export interface EstimateMultiTradeOrderResult {
   fallsBackSingle: boolean
   /** Populated only when range.enabled. */
   immediate?: number
-  /** Reserved pending count from range_percent (Total Open Trades preview). */
+  /** Reserved pending count from range_percent. */
   pending?: number
-  /** Pending legs actually layered after range_distance depth cap. */
+  /** Pending legs after range_distance / step depth cap (or full reserved when signal range). */
   activePending?: number
   /**
    * Ladder span in pips: activePending × stepPips, capped by range.distancePips.
-   * Populated only when range.enabled.
+   * Populated only when range.enabled and not signal-entry-range mode.
    */
   effectiveDistancePips?: number
 }
@@ -35,14 +40,12 @@ export interface EstimateMultiTradeOrderResult {
  *
  * When `range.enabled`, returns the immediate/pending split mirroring the planner's
  * `reservedLegs = round(baseLegs * percent / 100)` logic. In range mode no remainder
- * leg is emitted, so `totalOrders = immediate + pending`.
+ * leg is emitted. **Total Open Trades** = `immediate + activePending`, where
+ * `activePending = min(reserved, floor(distance / step))` (or full reserved when
+ * `useSignalEntryRange` is set).
  *
  * Preview-only: multi-trade sizing at execution uses **Fixed Lot** from settings
  * (signal-parsed telegram lots are ignored in multi-trade mode so counts match UI).
- *
- * **Step does NOT affect the reserved pending count** (range_percent drives Total Open
- * Trades). Step sets pip spacing; range_distance caps depth via
- * `activePending = min(pending, floor(distance / step))`.
  */
 export function estimateMultiTradeOrderCount(args: {
   manualLot: number
@@ -77,20 +80,28 @@ export function estimateMultiTradeOrderCount(args: {
   const remainderUnits = manualUnits - baseLegs * targetUnits
 
   const range = args.range
+  const signalRange = range?.useSignalEntryRange === true
   const rangeValid = !!(range
     && range.enabled
     && Number.isFinite(range.percent)
-    && Number.isFinite(range.stepPips) && range.stepPips > 0
-    && Number.isFinite(range.distancePips) && range.distancePips > 0)
+    && (
+      signalRange
+      || (
+        Number.isFinite(range.stepPips) && range.stepPips > 0
+        && Number.isFinite(range.distancePips) && range.distancePips > 0
+      )
+    ))
 
   if (rangeValid && range) {
     const pct = Math.max(0, Math.min(100, Number(range.percent)))
     const pending = Math.max(0, Math.round((baseLegs * pct) / 100))
     const immediate = Math.max(0, baseLegs - pending)
-    const maxStepIdx = Math.max(0, Math.floor(range.distancePips / range.stepPips))
+    const maxStepIdx = signalRange
+      ? pending
+      : Math.max(0, Math.floor(range.distancePips / range.stepPips))
     const activePending = Math.min(pending, maxStepIdx)
-    const total = Math.min(MULTI_TRADE_ABS_MAX_LEGS, immediate + pending)
-    const rawSpan = activePending * range.stepPips
+    const total = Math.min(MULTI_TRADE_ABS_MAX_LEGS, immediate + activePending)
+    const rawSpan = activePending * (Number.isFinite(range.stepPips) && range.stepPips > 0 ? range.stepPips : 0)
     return {
       baseLegs,
       extraRemainderLeg: false,
@@ -99,7 +110,9 @@ export function estimateMultiTradeOrderCount(args: {
       immediate,
       pending,
       activePending,
-      effectiveDistancePips: Math.min(rawSpan, range.distancePips),
+      ...(signalRange
+        ? {}
+        : { effectiveDistancePips: Math.min(rawSpan, range.distancePips) }),
     }
   }
 
@@ -126,12 +139,13 @@ export function formatMultiTradeTotalOpenTradesPreview(
     return labels.fallbackSingle.replace(/\{lot\}/g, lot)
   }
   const total = String(preview.totalOrders)
-  if (preview.immediate != null && preview.pending != null) {
+  if (preview.immediate != null && (preview.activePending != null || preview.pending != null)) {
+    const layering = preview.activePending ?? preview.pending ?? 0
     return labels.lotsXTradesLayered
       .replace(/\{lot\}/g, lot)
       .replace(/\{total\}/g, total)
       .replace(/\{immediate\}/g, String(preview.immediate))
-      .replace(/\{pending\}/g, String(preview.pending))
+      .replace(/\{pending\}/g, String(layering))
   }
   return labels.lotsXTrades
     .replace(/\{lot\}/g, lot)

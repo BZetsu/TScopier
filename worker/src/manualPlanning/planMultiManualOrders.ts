@@ -139,7 +139,19 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
   const maxStepIdx = split.maxStepIdx
   const stepPriceOffset = split.stepPriceOffset
   const rangeFallbackReason = split.fallbackReason
-  const rangeLegCount = pendingOrderMode ? reservedRangeLegs : effectiveRangeLegs
+  // Always distance/step-cap layering (including pending_order). Reserved % only
+  // reserves lot share; Total Open Trades = immediate + activePending.
+  let rangeLegCount = effectiveRangeLegs
+  const basketCapRaw = Number(manual.multi_trade_max_orders)
+  const basketCap = Number.isFinite(basketCapRaw) && basketCapRaw > 0
+    ? Math.max(1, Math.min(ABS_MAX_LEGS, Math.floor(basketCapRaw)))
+    : null
+  // Treat multi_trade_max_orders as a Total Open Trades ceiling when it can fit
+  // the immediate legs; otherwise it is burst-only (legacy low caps).
+  if (basketCap != null && basketCap >= immediateLegs) {
+    rangeLegCount = Math.min(rangeLegCount, Math.max(0, basketCap - immediateLegs))
+  }
+  const basketLegCap = immediateLegs + rangeLegCount
 
   const immediateTpPrices = buildDistributedPerLegTakeProfits({
     openLegCount: immediateLegs,
@@ -147,7 +159,7 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
     tpLots: manual.tp_lots,
   })
   const rangeTpPrices = buildDistributedPerLegTakeProfits({
-    openLegCount: pendingOrderMode ? reservedRangeLegs : effectiveRangeLegs,
+    openLegCount: rangeLegCount,
     finalTps,
     tpLots: manual.tp_lots,
   })
@@ -165,7 +177,9 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
         stepPriceOffset: split.stepPriceOffset,
         maxStepIdx: split.maxStepIdx,
         reservedPendingLegs: reservedRangeLegs,
-        activePendingLegs: pendingOrderMode ? reservedRangeLegs : effectiveRangeLegs,
+        activePendingLegs: rangeLegCount,
+        basketLegCap,
+        plannedImmediateLegs: immediateLegs,
         rangeLayeringType: (pendingOrderMode ? 'pending_order' : 'auto') as 'auto' | 'pending_order',
         ...(manual.use_signal_entry_range === true
           ? {

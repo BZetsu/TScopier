@@ -173,7 +173,8 @@ export async function loadExistingRangeStepIndices(
 }
 
 /**
- * Planned basket size from execution logs: range virtual rows + immediate order_send count.
+ * Planned basket size: prefer explicit basket_leg_cap from plan metadata
+ * (Total Open Trades), else immediate OrderSends + planned/active range legs.
  */
 export async function loadBasketLegCap(
   supabase: SupabaseClient,
@@ -191,7 +192,31 @@ export async function loadBasketLegCap(
     .limit(1)
     .maybeSingle()
   const payload = (ins as { request_payload?: Record<string, unknown> } | null)?.request_payload
-  const rangeRows = Number(payload?.rows ?? 0)
+  if (!payload) return null
+
+  const explicitCap = Number(payload.basket_leg_cap)
+  if (Number.isFinite(explicitCap) && explicitCap > 0) {
+    return Math.max(1, Math.floor(explicitCap))
+  }
+
+  const rl = payload.range_layering as Record<string, unknown> | null | undefined
+  const metaCap = Number(rl?.basketLegCap)
+  if (Number.isFinite(metaCap) && metaCap > 0) {
+    return Math.max(1, Math.floor(metaCap))
+  }
+
+  const plannedImm = Number(rl?.plannedImmediateLegs ?? payload.planned_immediate_legs)
+  const plannedRange = Number(
+    rl?.activePendingLegs
+    ?? payload.planned_range_legs
+    ?? payload.rows
+    ?? 0,
+  )
+  if (Number.isFinite(plannedImm) && plannedImm >= 0 && Number.isFinite(plannedRange) && plannedRange > 0) {
+    return Math.max(1, Math.floor(plannedImm + plannedRange))
+  }
+
+  const rangeRows = Number(payload.rows ?? 0)
   if (!Number.isFinite(rangeRows) || rangeRows <= 0) return null
 
   const { count: immCount } = await supabase

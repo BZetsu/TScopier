@@ -785,14 +785,19 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
         const zoneHi = safe > 0 ? insertAnchor + (safe + 2) * (params?.point ?? 0) : null
         const zoneLo = safe > 0 ? insertAnchor - (safe + 2) * (params?.point ?? 0) : null
         const nowMs = Date.now()
-      const plannedImmediateLegs = mergePlanImmediateOrders(plan).length
+      const plannedImmediateLegs = plan.rangeLayering?.plannedImmediateLegs
+        ?? mergePlanImmediateOrders(plan).length
+      const plannedRangeLegs = plan.rangeLayering?.activePendingLegs
+        ?? virtualPendings.length
+      const basketLegCap = plan.rangeLayering?.basketLegCap
+        ?? (plannedImmediateLegs + plannedRangeLegs)
       const ladderSync = await syncRangePendingLadderOnBasketRefresh({
         supabase: ctx.supabase,
         scope: { signalId: anchorSignalId, brokerAccountId: broker.id, symbol },
         virtualPendings,
         openTradeCount: familyTrades.length,
         plannedImmediateLegs,
-        plannedRangeLegs: virtualPendings.length,
+        plannedRangeLegs: Math.max(0, basketLegCap - plannedImmediateLegs),
         channelParams: channelParamsForLadder,
         tpLots: manual.tp_lots,
         buildInsertRow: (v) => {

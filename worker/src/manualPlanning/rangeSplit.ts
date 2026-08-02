@@ -2,14 +2,12 @@ import type { PlanRangeSplitArgs, PlanRangeSplitResult } from './types'
 
 /**
  * Decide how many of the planned legs go out as immediates vs. range pendings.
- * Pure function so the split can be unit-tested and reused by the UI estimator
- * down the line.
+ * Pure function so the split can be unit-tested and reused by the UI estimator.
  *
- * **Step does NOT shrink the reserved pending count** (range_percent drives that
- * for Total Open Trades preview stability). The `step` is the pip spacing between
- * consecutive ladder rungs. `distPips` caps how deep the ladder may go:
- * `maxStepIdx = floor(distPips / effectiveStepPips)`; only stepIdx 1..maxStepIdx
- * are materialized as virtual pendings.
+ * `range_percent` reserves pending count for Total Open Trades. Step + distance
+ * then cap how many of those reserved legs are actually layered:
+ * `activePendingLegs = min(reserved, floor(distPips / effectiveStepPips))`.
+ * Total Open Trades = immediateLegs + activePendingLegs.
  */
 export function planRangeSplit(args: PlanRangeSplitArgs): PlanRangeSplitResult {
   const { totalLegs, baseIsPendingSignal, rangeOn, rangePct, stepPips, distPips, pip, minStepPriceUnits, hasSignalAnchor } = args

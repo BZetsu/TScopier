@@ -359,7 +359,7 @@ test('planMultiManualOrders: pending_order uses step/distance rungs despite brok
   assert.ok(distinct.size >= 3, `expected multiple ladder prices, got ${[...distinct].join(', ')}`)
 })
 
-test('planMultiManualOrders: pending_order round-robin stacks legs across rungs', () => {
+test('planMultiManualOrders: pending_order caps legs to activePending (no reserved overshoot)', () => {
   const manual: ManualSettings = {
     ...baseManual,
     range_trading: true,
@@ -379,11 +379,14 @@ test('planMultiManualOrders: pending_order round-robin stacks legs across rungs'
     ctx: baseCtx,
     commentPrefix: 'TScopier:abc',
   })
+  // 0.5 @ 10% → 10 legs; 70% reserved = 7; maxStepIdx = floor(6/2) = 3 → active 3
   const v = plan.virtualPendings ?? []
-  assert.ok(v.length > 3, `expected more reserved legs than rungs, got ${v.length}`)
-  const stepIdxs = v.map(l => l.stepIdx)
-  assert.ok(stepIdxs.includes(1) && stepIdxs.includes(2) && stepIdxs.includes(3))
-  assert.ok(stepIdxs.filter(s => s === 1).length >= 2, 'round-robin should repeat step 1')
+  assert.equal(plan.rangeLayering?.reservedPendingLegs, 7)
+  assert.equal(plan.rangeLayering?.activePendingLegs, 3)
+  assert.equal(v.length, 3)
+  assert.equal(plan.orders.length + v.length, plan.rangeLayering?.basketLegCap)
+  assert.ok((plan.orders.length + v.length) <= 10)
+  assert.equal(plan.orders.length, 3)
 })
 
 test('planMultiManualOrders: stale burst cap of 1 consolidates dynamic range into one order (regression)', () => {

@@ -211,7 +211,7 @@ export const configureModalEn: ConfigureModalTranslations = {
     previewLotsXTrades: '{lot} lots x {total} trades',
     previewLotsXTradesLayered: '{lot} lots x {total} trades ({immediate} instant + {pending} for layering)',
     previewFooter:
-      'How many trades the copier plans to open for one signal. Based on your configured lot size and per-leg size. Your broker may open fewer if the market did not cover the zone during layering.',
+      'How many trades the copier plans to open for one signal. Based on lot size, per-leg size, reserved layering %, step, and range distance. Layering never opens more than this total. Your broker may open fewer if price does not cover the zone.',
     previewDynamicRisk:
       ' Lot size is computed from your account balance and Dynamic (% Balance) percent.',
     previewLadderSpan:
