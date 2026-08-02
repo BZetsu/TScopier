@@ -318,6 +318,8 @@ export interface ManualSettings {
   dynamic_step_pips?: number
   /** Dynamic V1 foundation: maximum total layer count, including first fill. */
   dynamic_max_layers?: number
+  /** Constraint solver preference when range/step/lots/percent cannot all be preserved. */
+  layering_optimization_strategy?: 'adjust_percent' | 'reduce_layers' | 'widen_step'
   /** Range layering execution: virtual market fire (auto) vs broker BuyLimit/SellLimit (pending_order). Default auto. */
   range_layering_type?: 'auto' | 'pending_order'
   /** When true with multi trade, gate entry on parsed price/zone ± pip tolerance (virtual wait, no broker pending). Independent of range_trading layering. */

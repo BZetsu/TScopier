@@ -146,7 +146,8 @@ export function normalizeLayeringModeCapabilities(raw: unknown): LayeringModeCap
 
 export function layeringModeIsSelectable(capabilities: LayeringModeCapabilities, mode: 'legacy' | 'static' | 'dynamic'): boolean {
   if (mode === 'legacy') return true
-  return capabilities.layeringModes[mode].available === true
+  const row = capabilities.layeringModes[mode]
+  return row.configurable !== false
 }
 
 export function layeringMechanismIsSelectable(
@@ -156,7 +157,7 @@ export function layeringMechanismIsSelectable(
 ): boolean {
   if (mode === 'legacy') return true
   const row = capabilities.layeringModes[mode]
-  if (!row.available) return false
+  if (mechanism === 'auto') return true
   const value = row.executionMechanisms?.[mechanism]
   return typeof value === 'object' && value !== null
     ? value.configurable === true
