@@ -372,6 +372,51 @@ test('combined plans: stable reason codes and allocation remainder', () => {
   assert.ok(out.reasons.includes('allocation_reduced_by_lot_step'))
 })
 
+test('combined plans: static solver exposes recalculated percentage allocation', () => {
+  const out = calculateStaticLayerPlan({
+    ...staticBase,
+    totalLayerCount: 6,
+    intendedTotalLot: 1,
+    minLot: 0.01,
+    lotStep: 0.01,
+    layerPercent: 25,
+    optimizationStrategy: 'adjust_percent',
+  })
+  assert.equal(out.ok, true)
+  assert.equal(out.theoreticalLayerCount, 6)
+  assert.equal(out.actualLayerCount, 6)
+  assert.equal(out.requestedLayerPercent, 25)
+  assert.equal(out.effectiveLayerPercent, 16)
+  assert.equal(out.allocationPercentTotal, 96)
+  assert.deepEqual(out.lots, [0.16, 0.16, 0.16, 0.16, 0.16, 0.16])
+  assert.ok(out.reasons.includes('layer_percent_recalculated'))
+})
+
+test('combined plans: dynamic solver can widen step before geometry is generated', () => {
+  const out = calculateDynamicLayerPlan({
+    side: 'buy',
+    rangeLow: 3300,
+    rangeHigh: 3360,
+    firstFillPrice: 3360,
+    stepPips: 10,
+    maxTotalLayers: 10,
+    pipSize: 1,
+    symbolDigits: 2,
+    intendedTotalLot: 1,
+    minLot: 0.01,
+    lotStep: 0.01,
+    layerPercent: 25,
+    optimizationStrategy: 'widen_step',
+  })
+  assert.equal(out.ok, true)
+  assert.equal(out.theoreticalLayerCount, 7)
+  assert.equal(out.actualLayerCount, 4)
+  assert.equal(out.effectiveStepPips, 20)
+  assert.deepEqual(out.fundedPrices, [3360, 3340, 3320, 3300])
+  assert.equal(out.allocationPercentTotal, 100)
+  assert.ok(out.reasons.includes('step_distance_recalculated'))
+})
+
 test('combined plans: no allocation returns non-persistable failure', () => {
   const out = calculateStaticLayerPlan({ ...staticBase, intendedTotalLot: 0.005, minLot: 0.01, lotStep: 0.01 })
   assert.deepEqual(out, { ok: false, mode: 'static', reason: 'total_lot_below_minimum' })

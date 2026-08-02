@@ -15,15 +15,15 @@ test('capability endpoint is authenticated and exposes no rollout secrets', () =
   assert.doesNotMatch(source, /allowlist:\s|accountAllowlist|SUPABASE_SERVICE_ROLE_KEY[^)]*Response\.json/s)
 })
 
-test('capability endpoint keeps defaults disabled and pending support adapter-scoped', () => {
+test('capability endpoint separates configuration from execution and keeps pending support adapter-scoped', () => {
   assert.match(source, /flag\("LAYERING_MODES_EXECUTION_ENABLED", false\)/)
   assert.match(source, /flag\("LAYERING_STATIC_EXECUTION_ENABLED", false\)/)
   assert.match(source, /flag\("LAYERING_DYNAMIC_EXECUTION_ENABLED", false\)/)
   assert.match(source, /flag\("LAYERING_MODES_PREPARE_ONLY", true\)/)
   assert.match(source, /flag\("LAYERING_MODES_KILL_SWITCH", true\)/)
   assert.match(source, /platform !== "mt4" && platform !== "mt5"/)
-  assert.match(source, /const configurable = args\.advancedAllowed && !killSwitch && modeEnabled && listed/)
-  assert.match(source, /executionAvailable = configurable && globalEnabled && !prepareOnly/)
+  assert.match(source, /const configurable = args\.advancedAllowed && listed/)
+  assert.match(source, /executionAvailable = configurable && globalEnabled && !prepareOnly\s+&& !killSwitch && modeEnabled/)
   assert.match(source, /auto: \{ configurable, executable: executionAvailable \}/)
   assert.match(source, /executable: executionAvailable && args\.pendingCapability\.supported/)
 })

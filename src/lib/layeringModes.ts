@@ -9,6 +9,7 @@ export const MAX_LAYER_COUNT = 20
 export const DEFAULT_STATIC_LAYER_COUNT = 5
 export const DEFAULT_DYNAMIC_STEP_PIPS = 3
 export const DEFAULT_DYNAMIC_MAX_LAYERS = 5
+export const DEFAULT_LAYERING_OPTIMIZATION_STRATEGY = 'adjust_percent' as const
 
 function finiteNumber(value: unknown): number | null {
   if (value == null || value === '') return null
@@ -35,13 +36,17 @@ export function resolveLayeringMode(settings: Pick<ManualSettings, 'layering_mod
 
 export function normalizeLayeringModeSettings(raw: Record<string, unknown>): Pick<
   ManualSettings,
-  'layering_mode' | 'static_layer_count' | 'dynamic_step_pips' | 'dynamic_max_layers'
+  'layering_mode' | 'static_layer_count' | 'dynamic_step_pips' | 'dynamic_max_layers' | 'layering_optimization_strategy'
 > {
   const rangeStepFallback = normalizePositiveNumber(raw.range_step_pips, DEFAULT_DYNAMIC_STEP_PIPS)
+  const strategy = raw.layering_optimization_strategy
   return {
     layering_mode: resolveLayeringMode(raw),
     static_layer_count: normalizeInteger(raw.static_layer_count, DEFAULT_STATIC_LAYER_COUNT),
     dynamic_step_pips: normalizePositiveNumber(raw.dynamic_step_pips, rangeStepFallback),
     dynamic_max_layers: normalizeInteger(raw.dynamic_max_layers, DEFAULT_DYNAMIC_MAX_LAYERS),
+    layering_optimization_strategy: strategy === 'reduce_layers' || strategy === 'widen_step' || strategy === 'adjust_percent'
+      ? strategy
+      : DEFAULT_LAYERING_OPTIMIZATION_STRATEGY,
   }
 }

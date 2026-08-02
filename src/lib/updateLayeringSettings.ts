@@ -8,6 +8,7 @@ export interface UpdateLayeringSettingsInput {
   static_layer_count: number
   dynamic_step_pips: number
   dynamic_max_layers: number
+  layering_optimization_strategy: 'adjust_percent' | 'reduce_layers' | 'widen_step'
 }
 
 export async function updateLayeringSettings(input: UpdateLayeringSettingsInput): Promise<{ error: string | null }> {
