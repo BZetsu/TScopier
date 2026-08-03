@@ -12,7 +12,7 @@ import {
   selectWorseImmediateLegsForCweInstruction,
 } from './closeWorseEntries'
 
-const pip = 0.01 // XAU cent pip
+const pip = 0.1 // XAU trader pip
 
 const trade = (
   id: string,
