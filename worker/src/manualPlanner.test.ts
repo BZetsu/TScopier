@@ -648,6 +648,61 @@ test('planManualOrders: range distance caps layering when reserved exceeds floor
   assert.equal(plan.fallback_reason, 'range_trading_distance_capped')
 })
 
+test('planManualOrders: Total Open Trades hard ceiling 8 instant + 8 layering = 16 (never doubles)', () => {
+  // 1.92 @ 6.25% → 16 legs; 50% reserved → 8+8 when distance covers reserved.
+  const manual: ManualSettings = {
+    ...baseManual,
+    multi_trade_leg_percent: 6.25,
+    multi_trade_max_orders: 32, // stale/oversize basket seed must not raise the ceiling
+    range_percent: 50,
+    range_step_pips: 3,
+    range_distance_pips: 30, // floor(30/3)=10 >= reserved 8
+    range_layering_type: 'pending_order',
+  }
+  const plan = planManualOrders({
+    parsed: { ...baseParsed, entry_price: 2650, tp: [2700] },
+    resolvedSymbol: 'XAUUSD',
+    baseOperation: 'Buy',
+    manual,
+    channelKeywords: null,
+    manualLot: 1.92,
+    ctx: baseCtx,
+    commentPrefix: 'TScopier:abc',
+  })
+  const v = plan.virtualPendings ?? []
+  assert.equal(plan.orders.length, 8)
+  assert.equal(v.length, 8)
+  assert.equal(plan.rangeLayering?.plannedImmediateLegs, 8)
+  assert.equal(plan.rangeLayering?.activePendingLegs, 8)
+  assert.equal(plan.rangeLayering?.basketLegCap, 16)
+  assert.equal(plan.orders.length + v.length, 16)
+  assert.ok(plan.orders.length + v.length <= 16)
+})
+
+test('planManualOrders: Total Open Trades ceiling holds when multi_trade_max_orders is unset', () => {
+  const manual: ManualSettings = {
+    ...baseManual,
+    multi_trade_leg_percent: 6.25,
+    multi_trade_max_orders: undefined,
+    range_percent: 50,
+    range_step_pips: 3,
+    range_distance_pips: 30,
+  }
+  const plan = planManualOrders({
+    parsed: { ...baseParsed, entry_price: 2650, tp: [2700] },
+    resolvedSymbol: 'XAUUSD',
+    baseOperation: 'Buy',
+    manual,
+    channelKeywords: null,
+    manualLot: 1.92,
+    ctx: baseCtx,
+    commentPrefix: 'TScopier:abc',
+  })
+  const v = plan.virtualPendings ?? []
+  assert.equal(plan.rangeLayering?.basketLegCap, 16)
+  assert.equal(plan.orders.length + v.length, 16)
+})
+
 test('planManualOrders: auto layering keeps user step despite huge broker stops floor', () => {
   const manual: ManualSettings = {
     ...baseManual,

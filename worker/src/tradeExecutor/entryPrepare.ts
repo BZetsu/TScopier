@@ -665,13 +665,34 @@ export async function prepareEntryExecution(
   }
 
   // Hard cap: planner already respects 500; this is a final guard rail.
-  const capped = plan.orders.slice(0, 500)
+  // Total Open Trades (basketLegCap) must never be exceeded by immediates + layering.
+  const basketLegCap = plan.rangeLayering?.basketLegCap
+  const plannedImmediateLegs = plan.rangeLayering?.plannedImmediateLegs
+  const absLegCap = basketLegCap != null && basketLegCap > 0
+    ? Math.min(500, Math.floor(basketLegCap))
+    : 500
+  let capped = plan.orders.slice(0, absLegCap)
   if (capped.length < plan.orders.length) {
     console.warn(
       `[tradeExecutor] capped immediate legs ${plan.orders.length} → ${capped.length} signal=${signal.id} broker=${broker.id}`,
     )
   }
   let virtualPendings = (plan.virtualPendings ?? []).slice(0, 500)
+  if (absLegCap < 500) {
+    const immBudget = plannedImmediateLegs != null && plannedImmediateLegs >= 0
+      ? plannedImmediateLegs
+      : capped.length
+    const maxVirtualByPlan = Math.max(0, absLegCap - immBudget)
+    const maxVirtualByTickets = Math.max(0, absLegCap - capped.length)
+    const maxVirtual = Math.min(maxVirtualByPlan, maxVirtualByTickets)
+    if (virtualPendings.length > maxVirtual) {
+      console.warn(
+        `[tradeExecutor] trim virtual pendings ${virtualPendings.length}→${maxVirtual}`
+        + ` basket_cap=${absLegCap} signal=${signal.id} broker=${broker.id}`,
+      )
+      virtualPendings = virtualPendings.slice(0, maxVirtual)
+    }
+  }
   const totalPlannedLegCount = capped.length + virtualPendings.length
   if (
     virtualPendings.length > 0

@@ -31,6 +31,10 @@ async function logMultiRangePlan(
     multi_trade_leg_percent: Number(manual.multi_trade_leg_percent ?? 5),
     immediate_orders: capped.length,
     virtual_pending_rows: virtualPendings.length,
+    basket_leg_cap: plan.rangeLayering?.basketLegCap
+      ?? (capped.length + virtualPendings.length),
+    planned_immediate_legs: plan.rangeLayering?.plannedImmediateLegs ?? null,
+    planned_range_legs: plan.rangeLayering?.activePendingLegs ?? virtualPendings.length,
     range_trading: manual.range_trading === true,
     range_layering_type: manual.range_layering_type ?? 'auto',
     range_percent: manual.range_percent ?? null,

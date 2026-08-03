@@ -133,23 +133,33 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
     // spacing applies to SL/TP placement, not virtual rung spacing.
     skipMinStepExpansion: true,
   })
-  const immediateLegs = split.immediateLegs
   const reservedRangeLegs = split.pendingLegs
   const effectiveRangeLegs = split.activePendingLegs
   const maxStepIdx = split.maxStepIdx
   const stepPriceOffset = split.stepPriceOffset
   const rangeFallbackReason = split.fallbackReason
-  // Always distance/step-cap layering (including pending_order). Reserved % only
-  // reserves lot share; Total Open Trades = immediate + activePending.
-  let rangeLegCount = effectiveRangeLegs
+  // Absolute Total Open Trades ceiling from lot math + range split. Layering may
+  // reduce opens; it must never raise them past this. multi_trade_max_orders is only
+  // a basket ceiling when it can fit all immediate legs — lower values are legacy
+  // burst-consolidation caps and must not wipe layering.
+  const splitCeiling = split.immediateLegs + effectiveRangeLegs
+  let hardCap = Math.min(totalLegs, Math.max(0, splitCeiling))
   const basketCapRaw = Number(manual.multi_trade_max_orders)
   const basketCap = Number.isFinite(basketCapRaw) && basketCapRaw > 0
     ? Math.max(1, Math.min(ABS_MAX_LEGS, Math.floor(basketCapRaw)))
     : null
-  // Treat multi_trade_max_orders as a Total Open Trades ceiling when it can fit
-  // the immediate legs; otherwise it is burst-only (legacy low caps).
-  if (basketCap != null && basketCap >= immediateLegs) {
-    rangeLegCount = Math.min(rangeLegCount, Math.max(0, basketCap - immediateLegs))
+  if (basketCap != null && basketCap >= split.immediateLegs) {
+    hardCap = Math.min(hardCap, basketCap)
+  }
+  hardCap = Math.max(0, Math.min(ABS_MAX_LEGS, hardCap))
+
+  let immediateLegs = split.immediateLegs
+  let rangeLegCount = effectiveRangeLegs
+  if (immediateLegs > hardCap) {
+    immediateLegs = hardCap
+    rangeLegCount = 0
+  } else {
+    rangeLegCount = Math.min(rangeLegCount, Math.max(0, hardCap - immediateLegs))
   }
   const basketLegCap = immediateLegs + rangeLegCount
 
@@ -245,7 +255,7 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
       const projectedTp = buildEntryQualityTakeProfitMap({
         legs: projectedLegs,
         isBuy,
-        slotLegCount: immediateLegs + rangeLegCount,
+        slotLegCount: basketLegCap,
         finalTps,
         tpLots: manual.tp_lots,
       }).get(`rg${String(idx).padStart(4, '0')}`)
@@ -256,16 +266,16 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
     return finalTps[finalTps.length - 1] ?? null
   }
 
-  // Assign a TP to every granular leg first (preserves the tp_lots volume
-  // distribution exactly), then consolidate legs sharing the same TP into at
-  // most `multi_trade_max_orders` orders. The MT bridge executes OrderSends
-  // serially per account (~0.5-0.7s each), so an uncapped burst of 25 legs
-  // takes ~18s — consolidation keeps total volume and the per-TP volume split
-  // identical while bounding placement time to a few seconds.
-  const burstCapRaw = Number(manual.multi_trade_max_orders ?? ABS_MAX_LEGS)
-  const burstCap = Number.isFinite(burstCapRaw) && burstCapRaw > 0
-    ? Math.max(1, Math.min(ABS_MAX_LEGS, Math.floor(burstCapRaw)))
-    : ABS_MAX_LEGS
+  // Burst consolidation packs IMMEDIATE legs into fewer OrderSends for speed.
+  // multi_trade_max_orders also seeds the Total Open Trades basket ceiling — only
+  // use it for consolidation when it is below the immediate leg count (legacy low caps).
+  // Never emit more immediate OrderSends than immediateLegs / basket room.
+  const burstCapRaw = Number(manual.multi_trade_max_orders)
+  let burstCap = immediateLegs
+  if (Number.isFinite(burstCapRaw) && burstCapRaw > 0) {
+    const n = Math.max(1, Math.min(ABS_MAX_LEGS, Math.floor(burstCapRaw)))
+    if (n < immediateLegs) burstCap = n
+  }
   if (burstCap < immediateLegs) {
     console.log(
       `[planMulti] burst cap ${burstCap} consolidates ${immediateLegs} immediate legs`

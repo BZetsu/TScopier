@@ -87,6 +87,53 @@ describe('loadBasketLegCap', () => {
     const cap = await loadBasketLegCap(supabase as never, 'sig-1', 'broker-1')
     assert.equal(cap, 13)
   })
+
+  it('falls back to multi_range_plan basket_leg_cap when insert log is missing', async () => {
+    let calls = 0
+    const supabase = {
+      from: (table: string) => {
+        if (table !== 'trade_execution_logs') return {}
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                eq: () => ({
+                  eq: () => ({
+                    order: () => ({
+                      limit: () => ({
+                        maybeSingle: async () => {
+                          calls += 1
+                          if (calls === 1) {
+                            // virtual_pending_inserted miss (live-fast deferred path)
+                            return { data: null, error: null }
+                          }
+                          return {
+                            data: {
+                              request_payload: {
+                                basket_leg_cap: 16,
+                                planned_immediate_legs: 8,
+                                planned_range_legs: 8,
+                                immediate_orders: 8,
+                                virtual_pending_rows: 8,
+                              },
+                            },
+                            error: null,
+                          }
+                        },
+                      }),
+                    }),
+                  }),
+                }),
+              }),
+            }),
+          }),
+        }
+      },
+    }
+    const cap = await loadBasketLegCap(supabase as never, 'sig-1', 'broker-1')
+    assert.equal(cap, 16)
+    assert.ok(calls >= 2)
+  })
 })
 
 describe('loadExistingRangeStepIndices', () => {

@@ -1788,7 +1788,37 @@ export class TradeExecutor {
       console.error(
         `[tradeExecutor] deferred virtual persist failed signal=${signal.id} broker=${broker.id}: ${persist.lastError ?? 'unknown'}`,
       )
+      return
     }
+    console.log(
+      `[tradeExecutor] deferred virtual pendings inserted=${insertRows.length} signal=${signal.id} broker=${broker.id} symbol=${symbol} anchor=${anchor} (${anchorSource})`,
+    )
+    try {
+      await this.supabase.from('trade_execution_logs').insert({
+        user_id: signal.user_id,
+        signal_id: signal.id,
+        broker_account_id: broker.id,
+        action: 'virtual_pending_inserted',
+        status: 'success',
+        request_payload: {
+          rows: insertRows.length,
+          anchor,
+          anchorSource,
+          symbol,
+          stepIdxs: insertRows.map(r => r.step_idx),
+          triggers: insertRows.map(r => r.trigger_price),
+          range_layering: plan.rangeLayering ?? null,
+          basket_leg_cap: plan.rangeLayering?.basketLegCap
+            ?? (
+              (plan.rangeLayering?.plannedImmediateLegs ?? 0)
+              + (plan.rangeLayering?.activePendingLegs ?? insertRows.length)
+            ),
+          planned_immediate_legs: plan.rangeLayering?.plannedImmediateLegs ?? null,
+          planned_range_legs: plan.rangeLayering?.activePendingLegs ?? insertRows.length,
+          deferred: true,
+        } as unknown as Record<string, unknown>,
+      })
+    } catch { /* logging is best-effort */ }
   }
 
   /**
