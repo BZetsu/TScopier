@@ -34,6 +34,24 @@ function rangeRungCount(
   return Math.max(0, virtualPendingCount)
 }
 
+/** Auto step: blank / 0 stored step — space legs evenly across distance. */
+export function isAutoRangeStep(rangeLayering: PlannerRangeLayering | null | undefined): boolean {
+  if (!rangeLayering) return false
+  const configured = Number(rangeLayering.rangeStepPips)
+  return !Number.isFinite(configured) || configured <= 0
+}
+
+/**
+ * Zone curve only for Manual step with signal-range (or legacy Manual pending curve).
+ * Auto always uses linear spacing so N legs evenly cover the full distance.
+ */
+function shouldUseZoneCurve(rangeLayering: PlannerRangeLayering | null | undefined): boolean {
+  if (!rangeLayering) return false
+  if (isAutoRangeStep(rangeLayering)) return false
+  return rangeLayering.useSignalEntryRange === true
+    || rangeLayering.rangeLayeringType === 'pending_order'
+}
+
 function resolveLayerPip(
   rangeLayering: PlannerRangeLayering | null | undefined,
   pip?: number,
@@ -189,8 +207,7 @@ export function buildRangeLayerTriggerMap(args: {
     pip,
   })
 
-  const useZoneCurve = args.rangeLayering?.useSignalEntryRange === true
-    || args.rangeLayering?.rangeLayeringType === 'pending_order'
+  const useZoneCurve = shouldUseZoneCurve(args.rangeLayering)
 
   if (boundary != null && rungCount > 0 && useZoneCurve) {
     const triggers = computeRangeLayerTriggers({
@@ -261,8 +278,7 @@ export function rangeLayerTriggerForStep(args: {
     ? Math.max(1, args.rangeLayering?.maxStepIdx ?? args.legCount)
     : args.legCount
 
-  const useZoneCurve = args.rangeLayering?.useSignalEntryRange === true
-    || args.rangeLayering?.rangeLayeringType === 'pending_order'
+  const useZoneCurve = shouldUseZoneCurve(args.rangeLayering)
 
   if (boundary != null && rungCount > 0 && args.stepIdx >= 1 && args.stepIdx <= rungCount) {
     const triggers = useZoneCurve

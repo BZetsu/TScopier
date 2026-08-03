@@ -761,6 +761,50 @@ test('planManualOrders: Auto step (0) fills distance with reserved legs', () => 
   assert.equal(plan.fallback_reason, 'range_trading_step_auto')
 })
 
+test('planManualOrders: broker pending Auto spreads N unique rungs across full distance', () => {
+  const manual: ManualSettings = {
+    ...baseManual,
+    multi_trade_leg_percent: 3,
+    range_percent: 50,
+    range_step_pips: 0,
+    range_distance_pips: 100,
+    range_layering_type: 'pending_order',
+  }
+  const plan = planManualOrders({
+    parsed: { ...baseParsed, entry_price: 4000 },
+    resolvedSymbol: 'XAUUSD',
+    baseOperation: 'Buy',
+    manual,
+    channelKeywords: null,
+    manualLot: 5.0,
+    ctx: baseCtx,
+    commentPrefix: 'TScopier:abc',
+  })
+  // 5.0 @ 3% → 33 legs; 50% → 17 reserved; Auto → all 17 across 100 pips
+  const virtuals = plan.virtualPendings ?? []
+  assert.equal(plan.rangeLayering?.activePendingLegs, 17)
+  assert.equal(virtuals.length, 17)
+  assert.ok(Math.abs((plan.rangeLayering?.effectiveStepPips ?? 0) - (100 / 17)) < 1e-9)
+  assert.equal(plan.rangeLayering?.effectiveDistancePips, 100)
+  const stepIdxs = virtuals.map(v => v.stepIdx)
+  assert.deepEqual(stepIdxs, Array.from({ length: 17 }, (_, i) => i + 1))
+  assert.equal(new Set(stepIdxs).size, 17)
+
+  const triggerMap = buildRangeLayerTriggerMap({
+    virtualPendings: virtuals,
+    anchor: 4000,
+    digits: 2,
+    rangeLayering: plan.rangeLayering ?? null,
+    pip: plan.pip,
+  })
+  assert.equal(triggerMap.size, 17)
+  const prices = [...triggerMap.values()]
+  assert.equal(new Set(prices.map(p => p.toFixed(2))).size, 17)
+  const span = Math.abs(prices[0]! - prices[prices.length - 1]!)
+  // Nearly full 100-pip span (first rung is one step from anchor; last near boundary)
+  assert.ok(span > 90 * (plan.pip ?? 0.1), `span ${span} should cover most of 100 pips`)
+})
+
 test('planManualOrders: virtual Manual step distance-caps active legs', () => {
   const manual: ManualSettings = {
     ...baseManual,
@@ -1636,8 +1680,8 @@ test('planManualOrders: signal range buy virtual triggers do not go below zone l
   assert.equal(deepest, boundary)
 })
 
-test('planManualOrders: sell signal zone virtual triggers pin deepest to zone high', () => {
-  // Auto step + zone curve pins deepest rung to boundary.
+test('planManualOrders: sell signal zone virtual Auto spreads linearly toward zone high', () => {
+  // Auto + signal range uses linear spacing (not zone curve).
   const manual: ManualSettings = {
     ...baseManual,
     range_percent: 100,
@@ -1670,12 +1714,16 @@ test('planManualOrders: sell signal zone virtual triggers pin deepest to zone hi
     rangeLayering: plan.rangeLayering ?? null,
     pip: plan.pip,
   })
+  assert.ok(triggerMap.size >= 1)
   const first = triggerMap.get(1)!
-  const last = triggerMap.get(virtuals[virtuals.length - 1]!.stepIdx)!
   const stepOffset = virtuals[0]!.stepPriceOffset
-  assert.equal(first, anchor + stepOffset, 'first rung must be exactly one Auto step from fill')
-  assert.ok(first - anchor < last - anchor, 'deepest rung should be further from anchor than first')
-  assert.equal(last, boundary)
+  assert.ok(Math.abs(first - (anchor + stepOffset)) < 0.02, 'first rung ~ one Auto step from fill')
+  const prices = [...triggerMap.entries()].sort((a, b) => a[0] - b[0]).map(([, p]) => p)
+  assert.equal(new Set(prices.map(p => p.toFixed(2))).size, prices.length)
+  for (const p of prices) {
+    assert.ok(p <= boundary + 1e-9, `trigger ${p} past boundary ${boundary}`)
+    assert.ok(p > anchor, `trigger ${p} should be above sell anchor`)
+  }
 })
 
 test('planManualOrders: sell signal zone broker pending clusters toward zone high', () => {

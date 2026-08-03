@@ -31,9 +31,12 @@ export function resolveBrokerRangeLadderPricing(args: {
   if (stepPips <= 0) return null
 
   let distPips = Math.max(0, Number(rl.rangeDistancePips ?? 0))
-  if (rl.useSignalEntryRange === true) {
-    const zoneDist = Number(rl.effectiveDistancePips ?? 0)
-    if (Number.isFinite(zoneDist) && zoneDist > 0) distPips = zoneDist
+  const zoneOrEffective = Number(rl.effectiveDistancePips ?? 0)
+  if (Number.isFinite(zoneOrEffective) && zoneOrEffective > 0) {
+    // Prefer distance used by the planner split (signal zone or resolved manual).
+    distPips = zoneOrEffective
+  } else if (rl.useSignalEntryRange === true) {
+    // legacy fallback
   }
   if (distPips <= 0) return null
 

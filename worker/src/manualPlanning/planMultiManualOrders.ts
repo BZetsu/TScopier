@@ -135,7 +135,6 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
   })
   const reservedRangeLegs = split.pendingLegs
   const effectiveRangeLegs = split.activePendingLegs
-  const maxStepIdx = split.maxStepIdx
   const stepPriceOffset = split.stepPriceOffset
   const rangeFallbackReason = split.fallbackReason
   // Absolute Total Open Trades ceiling from lot math + range split. Layering may
@@ -185,19 +184,20 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
         rangeDistancePips: Math.max(0, Number(manual.range_distance_pips ?? 0)),
         effectiveStepPips: split.effectiveStepPips,
         stepPriceOffset: split.stepPriceOffset,
-        maxStepIdx: split.maxStepIdx,
+        maxStepIdx: Math.max(split.maxStepIdx, rangeLegCount),
         reservedPendingLegs: reservedRangeLegs,
         activePendingLegs: rangeLegCount,
         basketLegCap,
         plannedImmediateLegs: immediateLegs,
         rangeLayeringType: (pendingOrderMode ? 'pending_order' : 'auto') as 'auto' | 'pending_order',
+        // Always persist the distance used in the split (manual or signal zone).
+        effectiveDistancePips: rangeDistance.distPips,
         ...(manual.use_signal_entry_range === true
           ? {
               useSignalEntryRange: true,
               signalRangeBoundary: rangeDistance.boundary,
               signalZoneLo: resolvedParsedEntryZone(parsed)?.lo ?? null,
               signalZoneHi: resolvedParsedEntryZone(parsed)?.hi ?? null,
-              effectiveDistancePips: rangeDistance.distPips,
             }
           : {}),
       }
@@ -222,7 +222,7 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
       }
       const rangeTriggerMap = buildRangeLayerTriggerMap({
         virtualPendings: Array.from({ length: rangeLegCount }, (_, i) => ({
-          stepIdx: pendingOrderMode && maxStepIdx > 0 ? (i % maxStepIdx) + 1 : i + 1,
+          stepIdx: i + 1,
           stepPriceOffset,
           isBuy,
         })),
@@ -232,9 +232,7 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
         pip,
       })
       for (let i = 0; i < rangeLegCount; i++) {
-        const stepIdx = pendingOrderMode && maxStepIdx > 0
-          ? (i % maxStepIdx) + 1
-          : i + 1
+        const stepIdx = i + 1
         const entryPrice = rangeTriggerMap.get(stepIdx)
           ?? rangeLayerTriggerForStep({
             stepIdx,
@@ -336,14 +334,13 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
   }
 
   const virtualPendings: VirtualPendingLeg[] = []
-  if (rangeLegCount > 0 && (!pendingOrderMode || maxStepIdx > 0)) {
+  if (rangeLegCount > 0) {
     const pendHours = clampPendingExpiryHours(manual.pending_expiry_hours)
     const expiryHours = pendHours > 0 ? pendHours : undefined
 
+    // Unique stepIdx 1..N — never cycle/modulo (that caused duplicate broker limits).
     for (let i = 0; i < rangeLegCount; i++) {
-      const stepIdx = pendingOrderMode && maxStepIdx > 0
-        ? (i % maxStepIdx) + 1
-        : i + 1
+      const stepIdx = i + 1
       const tpPrice = tpForRangeIndex(i)
       virtualPendings.push({
         stepIdx,
