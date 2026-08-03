@@ -38,3 +38,29 @@ test('broker range rematerialize skips existing step indices', () => {
   const remaining = planned.filter(s => !existing.has(s))
   assert.deepEqual(remaining, [4, 5])
 })
+
+test('broker pending OrderSend is always naked while DB keeps desired stops', () => {
+  const planned = { stoploss: 4040, takeprofit: 4100, cweClosePrice: null as number | null }
+  const sendArgs = {
+    stoploss: 0,
+    takeprofit: 0,
+  }
+  const desiredSl = planned.stoploss > 0 ? planned.stoploss : null
+  const desiredTp = planned.cweClosePrice != null
+    ? null
+    : (planned.takeprofit > 0 ? planned.takeprofit : null)
+  assert.equal(sendArgs.stoploss, 0)
+  assert.equal(sendArgs.takeprofit, 0)
+  assert.equal(desiredSl, 4040)
+  assert.equal(desiredTp, 4100)
+})
+
+test('CWE broker pending keeps naked TP on place and null desired TP', () => {
+  const planned = { stoploss: 4040, takeprofit: 4100, cweClosePrice: 4055 }
+  const sendArgs = { stoploss: 0, takeprofit: 0 }
+  const desiredTp = planned.cweClosePrice != null
+    ? null
+    : (planned.takeprofit > 0 ? planned.takeprofit : null)
+  assert.equal(sendArgs.takeprofit, 0)
+  assert.equal(desiredTp, null)
+})

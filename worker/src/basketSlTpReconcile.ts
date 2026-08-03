@@ -40,6 +40,8 @@ export type BasketOpenLeg = {
   symbol: string
   /** Set by autoManagementMonitor when the leg was moved to breakeven. */
   auto_be_applied_at?: string | null
+  /** Close-worse-entries threshold — broker TP must stay 0 (CWE monitor closes). */
+  cwe_close_price?: number | null
 }
 
 export type LegModifyError = {
@@ -397,7 +399,9 @@ export async function runBasketLegModifies(args: {
     const legIdx = familyTrades.findIndex(t => t.id === tr.id)
     const cweIdx = legIdx >= 0 ? legIdx : i
 
-    if (skipAlreadySynced && stopsAlreadyMatch(tr, target, nImmCwe, cweIdx)) {
+  if (skipAlreadySynced && stopsAlreadyMatch(tr, target, nImmCwe, cweIdx)) {
+      // DB may already match while a naked broker fill still has SL/TP=0 — only
+      // skip when the leg is not a fresh naked CWE/open that still needs broker apply.
       return { ...noopOutcome(), modifiedId: tr.id, modified: 1 }
     }
 
@@ -477,6 +481,9 @@ export async function runBasketLegModifies(args: {
 
     let stoploss = target.stoploss
     let takeprofit = cweIdx < nImmCwe ? 0 : target.takeprofit
+    if (tr.cwe_close_price != null) {
+      takeprofit = 0
+    }
     const stripped = stripInvalidStopsForSide({
       stoploss,
       takeprofit,
@@ -633,12 +640,19 @@ export async function runBasketLegModifies(args: {
       const res = (safe.result ?? {}) as { stopLoss?: number | null; takeProfit?: number | null }
       const newSl = safe.slApplied ? (res.stopLoss ?? safe.appliedSl ?? null) : null
       const newTp = safe.tpApplied ? (res.takeProfit ?? safe.appliedTp ?? null) : null
-      const cweClose = cweIdx < nImmCwe ? args.overrideTp : null
+      const cweClose = tr.cwe_close_price != null
+        ? tr.cwe_close_price
+        : (cweIdx < nImmCwe ? args.overrideTp : null)
       const tradePatch: { sl?: number | null; tp?: number | null; cwe_close_price?: number | null } = {
         cwe_close_price: typeof cweClose === 'number' && cweClose > 0 ? cweClose : null,
       }
       if (safe.slApplied) tradePatch.sl = typeof newSl === 'number' && newSl > 0 ? newSl : null
-      if (safe.tpApplied) tradePatch.tp = typeof newTp === 'number' && newTp > 0 ? newTp : null
+      if (safe.tpApplied) {
+        // CWE legs must stay without broker/DB TP.
+        tradePatch.tp = tr.cwe_close_price != null
+          ? null
+          : (typeof newTp === 'number' && newTp > 0 ? newTp : null)
+      }
       await supabase.from('trades').update(tradePatch).eq('id', tr.id)
       await logLegModify({
         userId,

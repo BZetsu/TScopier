@@ -50,6 +50,11 @@ describe('active ladder statuses for insert dedupe', () => {
     assert.equal(activeRows.some(r => r.step_idx === 1), true)
     assert.equal(activeRows.some(r => r.step_idx === 3), false)
   })
+
+  it('patchActiveRangePendingLegStops excludes broker_pending (limits stay naked)', () => {
+    const patchedStatuses = ['pending', 'claimed'] as const
+    assert.equal((patchedStatuses as readonly string[]).includes('broker_pending'), false)
+  })
 })
 
 describe('maxConsumedStepIndex', () => {

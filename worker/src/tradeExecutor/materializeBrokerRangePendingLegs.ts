@@ -431,13 +431,15 @@ async function materializeBrokerRangePendingLegsUnlocked(
         continue
       }
 
+      // Resting BuyLimit/SellLimit must be naked — SL/TP are assigned on fill via
+      // tryApplyBasketFollowUpToNewFill + syncRangeBasketTakeProfits (tp_lots %).
       const sendArgs: OrderSendArgs = {
         symbol,
         operation: pendingOp,
         volume: vol,
         price: limitPx,
-        stoploss: v.stoploss ?? 0,
-        takeprofit: v.cweClosePrice != null ? 0 : (v.takeprofit ?? 0),
+        stoploss: 0,
+        takeprofit: 0,
         slippage: v.slippage ?? 20,
         comment: v.comment ?? '',
         expertID: v.expertID ?? 909090,
@@ -522,6 +524,13 @@ async function materializeBrokerRangePendingLegsUnlocked(
 
         exhaustedInvalidSteps.delete(pick.stepIdx)
 
+        // Persist intended SL/TP on the DB row for post-fill assignment; broker
+        // limit itself was placed naked (SL=0/TP=0).
+        const desiredSl = v.stoploss != null && Number(v.stoploss) > 0 ? Number(v.stoploss) : null
+        const desiredTp = v.cweClosePrice != null
+          ? null
+          : (v.takeprofit != null && Number(v.takeprofit) > 0 ? Number(v.takeprofit) : null)
+
         const row: Record<string, unknown> = {
           signal_id: signal.id,
           user_id: signal.user_id,
@@ -533,8 +542,8 @@ async function materializeBrokerRangePendingLegsUnlocked(
           volume: vol,
           anchor_price: anchor,
           trigger_price: limitPx,
-          stoploss: clamped.args.stoploss && clamped.args.stoploss > 0 ? clamped.args.stoploss : v.stoploss,
-          takeprofit: clamped.args.takeprofit && clamped.args.takeprofit > 0 ? clamped.args.takeprofit : v.takeprofit,
+          stoploss: desiredSl,
+          takeprofit: desiredTp,
           slippage: v.slippage ?? 20,
           comment: v.comment,
           expert_id: v.expertID ?? null,

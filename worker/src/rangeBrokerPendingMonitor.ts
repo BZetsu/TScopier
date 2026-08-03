@@ -150,10 +150,12 @@ async function markBrokerRangeLegFilled(
   const channelId = (signalRow?.channel_id ?? null) as string | null
 
   const entryPx = Number.isFinite(fillPrice) && fillPrice > 0 ? fillPrice : leg.trigger_price
-  const openSl = leg.stoploss
+  const desiredSl = leg.stoploss != null && Number(leg.stoploss) > 0 ? Number(leg.stoploss) : null
+  const isCwe = leg.cwe_close_price != null
   const rawManual = await loadManualForLeg(supabase, leg.broker_account_id, channelId)
   const manual = normalizeManualSettingsForExecution(rawManual)
-  const autoBeCols = autoManagementTradeSnapshot(manual, entryPx, openSl)
+  // Broker fill is naked (limits placed with SL=0/TP=0). Seed auto-BE from desired SL.
+  const autoBeCols = autoManagementTradeSnapshot(manual, entryPx, desiredSl)
 
   const ticketForTrade = positionTicket?.trim() && /^\d+$/.test(positionTicket.trim())
     ? positionTicket.trim()
@@ -164,6 +166,8 @@ async function markBrokerRangeLegFilled(
     await convergeLayeringPlanAfterLegTerminal(supabase, leg.layer_plan_id)
   }
 
+  // Insert trade as naked on broker so skipAlreadySynced cannot skip OrderModify
+  // when DB already held intended stops from the pending row.
   const { data: insTrade, error: insErr } = await supabase.from('trades').insert({
     user_id: leg.user_id,
     signal_id: leg.signal_id,
@@ -173,8 +177,8 @@ async function markBrokerRangeLegFilled(
     symbol: leg.symbol,
     direction: leg.is_buy ? 'buy' : 'sell',
     entry_price: entryPx,
-    sl: openSl,
-    tp: leg.cwe_close_price != null ? null : leg.takeprofit,
+    sl: null,
+    tp: null,
     lot_size: leg.volume,
     status: 'open',
     opened_at: new Date().toISOString(),
@@ -201,8 +205,10 @@ async function markBrokerRangeLegFilled(
         ticket: ticketNum,
         tradeRowId,
         entryPrice: entryPx,
-        existingSl: openSl,
-        existingTp: leg.takeprofit,
+        // Broker position is naked — force follow-up OrderModify vs existing 0/0.
+        existingSl: null,
+        existingTp: null,
+        tpLots: manual.tp_lots,
         isBuy: leg.is_buy,
       })
     } catch (hookErr) {
@@ -229,6 +235,9 @@ async function markBrokerRangeLegFilled(
         trigger_price: leg.trigger_price,
         fill_price: entryPx,
         ticket: ticketForTrade,
+        naked_fill: true,
+        desired_sl: desiredSl,
+        cwe: isCwe,
       } as unknown as Record<string, unknown>,
     })
   } catch { /* best-effort */ }

@@ -9,7 +9,7 @@ import {
 } from './fxsocketClient'
 import { apiForFxsocketAccount, loadPlatformByFxsocketId, type PlatformByFxsocketId } from './mtApiByAccount'
 import { autoManagementTradeSnapshot } from './autoManagement'
-import { tryApplyBasketFollowUpToNewFill } from './basketModFollowUp'
+import { tryApplyBasketFollowUpToNewFill, symbolsCompatibleForBasket } from './basketModFollowUp'
 import { loadOpenBasketLegs, upsertBasketReconcileJob } from './basketSlTpReconcile'
 import { resolveFreshBasketReconcileTargets } from './basketReconcileTargets'
 import { resolveEffectiveBasketStops } from './basketEffectiveStops'
@@ -278,69 +278,7 @@ export function fillWithinTriggerBand(args: {
   return ok ? { ok: true } : { ok: false, reason: 'fill_outside_trigger_band' }
 }
 
-export function evaluateTpTouch(args: {
-  direction: string
-  tps: number[]
-  bid: number
-  ask: number
-}): { touched: boolean; triggerPrice: number | null; triggerSide: 'bid' | 'ask' | null } {
-  const { direction, tps, bid, ask } = args
-  const cleanTps = tps.filter(tp => Number.isFinite(tp) && tp > 0)
-  if (!cleanTps.length) return { touched: false, triggerPrice: null, triggerSide: null }
-  if (direction === 'buy') {
-    const triggerPrice = Math.min(...cleanTps)
-    return { touched: bid >= triggerPrice, triggerPrice, triggerSide: 'bid' }
-  }
-  if (direction === 'sell') {
-    const triggerPrice = Math.max(...cleanTps)
-    return { touched: ask <= triggerPrice, triggerPrice, triggerSide: 'ask' }
-  }
-  return { touched: false, triggerPrice: null, triggerSide: null }
-}
-
-/**
- * Decide whether a basket's layering must be locked when "layer till close"
- * is OFF. Independent triggers:
- *  1. live quote touches an open trade's TP (catches the touch in real time)
- *  2. the basket is PARTIALLY closed — some trades closed while others remain
- *     open. A broker-side TP fill closes its trades within seconds, so by the
- *     time the monitor scans, the touched TP rows are no longer 'open' and
- *     trigger (1) can never fire. A partial close is sticky evidence that a
- *     TP/CWE/partial close happened and survives that race.
- *  3. the basket is FULLY flat (openCount=0, closedCount>0) — mass closes can
- *     go 17→0 in one burst and never look "partial"; without this, virtual
- *     ladder rows keep firing and re-open Gold after the basket was closed.
- */
-export function shouldLockBasketLayering(args: {
-  direction: string
-  openTps: number[]
-  openCount: number
-  closedCount: number
-  bid: number
-  ask: number
-}): {
-  lock: boolean
-  reason: 'tp_touched' | 'basket_partially_closed' | 'basket_fully_closed' | null
-  triggerPrice: number | null
-  triggerSide: 'bid' | 'ask' | null
-} {
-  const { direction, openTps, openCount, closedCount, bid, ask } = args
-  if (openCount <= 0) {
-    if (closedCount > 0) {
-      return { lock: true, reason: 'basket_fully_closed', triggerPrice: null, triggerSide: null }
-    }
-    return { lock: false, reason: null, triggerPrice: null, triggerSide: null }
-  }
-
-  const touch = evaluateTpTouch({ direction, tps: openTps, bid, ask })
-  if (touch.touched) {
-    return { lock: true, reason: 'tp_touched', triggerPrice: touch.triggerPrice, triggerSide: touch.triggerSide }
-  }
-  if (closedCount > 0) {
-    return { lock: true, reason: 'basket_partially_closed', triggerPrice: null, triggerSide: null }
-  }
-  return { lock: false, reason: null, triggerPrice: null, triggerSide: null }
-}
+export { evaluateTpTouch, shouldLockBasketLayering } from './rangeBasketLayeringLock'
 
 export class VirtualPendingMonitor {
   private loop: MonitorLoopHandle | null = null
@@ -652,12 +590,12 @@ export class VirtualPendingMonitor {
     // Scan open AND closed trades: a TP fill closes its rows at the broker
     // within seconds, so an open-only scan misses the touch (the remaining
     // open trades carry deeper TPs that were never reached).
+    // Match XAUUSD ↔ XAUUSDm in memory (do not require exact symbol equality).
     const { data, error } = await this.supabase
       .from('trades')
-      .select('signal_id,broker_account_id,user_id,direction,tp,status')
+      .select('signal_id,broker_account_id,user_id,direction,tp,status,symbol')
       .in('signal_id', signalIds)
       .in('broker_account_id', brokerIds)
-      .eq('symbol', symbol)
       .in('status', ['open', 'closed'])
 
     if (error) {
@@ -666,7 +604,8 @@ export class VirtualPendingMonitor {
     }
 
     const byBasket = new Map<string, BasketOpenTpRow[]>()
-    for (const row of (data ?? []) as BasketOpenTpRow[]) {
+    for (const row of (data ?? []) as Array<BasketOpenTpRow & { symbol?: string | null }>) {
+      if (row.symbol && !symbolsCompatibleForBasket(symbol, row.symbol)) continue
       const basketKey = `${row.signal_id}|${row.broker_account_id}`
       const arr = byBasket.get(basketKey) ?? []
       arr.push(row)
