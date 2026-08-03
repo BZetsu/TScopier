@@ -53,27 +53,27 @@ test('pipCalculator: USDJPY 2-digit → pip=0.01, 1000 JPY/std lot', () => {
 
 // ── Metals ────────────────────────────────────────────────────────────────
 
-test('pipCalculator: XAUUSD 2-digit → pip=0.01, $1/std lot', () => {
+test('pipCalculator: XAUUSD 2-digit → pip=0.1, $10/std lot', () => {
   const q = pipCalculator('XAUUSD', 0.01, 2)
-  assert.equal(q.pipPrice, 0.01)
-  assert.equal(q.pipValuePerStdLot, 1)
-  assert.equal(q.pipValuePerMiniLot, 0.1)
-  approxEq(q.pipValuePerMicroLot, 0.01)
+  assert.equal(q.pipPrice, 0.1)
+  assert.equal(q.pipValuePerStdLot, 10)
+  assert.equal(q.pipValuePerMiniLot, 1)
+  approxEq(q.pipValuePerMicroLot, 0.1)
   assert.equal(q.contractSize, 100)
   assert.equal(q.quoteCurrency, 'USD')
   assert.equal(q.class, 'metal')
 })
 
-test('pipCalculator: XAUUSD 3-digit → pip=0.01 (cent pip), $1/std lot', () => {
+test('pipCalculator: XAUUSD 3-digit → pip=0.1 (trader pip), $10/std lot', () => {
   const q = pipCalculator('XAUUSD', 0.001, 3)
-  approxEq(q.pipPrice, 0.01)
-  approxEq(q.pipValuePerStdLot, 1)
+  approxEq(q.pipPrice, 0.1)
+  approxEq(q.pipValuePerStdLot, 10)
 })
 
-test('pipCalculator: XAUUSD 5-digit → pip=0.01 (cent pip), $1/std lot', () => {
+test('pipCalculator: XAUUSD 5-digit → pip=0.1 (trader pip), $10/std lot', () => {
   const q = pipCalculator('XAUUSD', 0.00001, 5)
-  approxEq(q.pipPrice, 0.01)
-  approxEq(q.pipValuePerStdLot, 1)
+  approxEq(q.pipPrice, 0.1)
+  approxEq(q.pipValuePerStdLot, 10)
 })
 
 test('pipCalculator: XAGUSD 3-digit → pip=0.01, $50/std lot at 5000oz', () => {
@@ -85,11 +85,11 @@ test('pipCalculator: XAGUSD 3-digit → pip=0.01, $50/std lot at 5000oz', () => 
   assert.equal(q.contractSize, 5_000)
 })
 
-test('pipCalculator: exotic 10-oz XAUUSD contract → pip=0.01, $0.10/std lot', () => {
+test('pipCalculator: exotic 10-oz XAUUSD contract → pip=0.1, $1/std lot', () => {
   const q = pipCalculator('XAUUSD', 0.01, 2, 10)
-  assert.equal(q.pipPrice, 0.01)
-  approxEq(q.pipValuePerStdLot, 0.1)
-  approxEq(q.pipValuePerMiniLot, 0.01)
+  assert.equal(q.pipPrice, 0.1)
+  approxEq(q.pipValuePerStdLot, 1)
+  approxEq(q.pipValuePerMiniLot, 0.1)
   assert.equal(q.contractSize, 10)
 })
 
@@ -151,10 +151,10 @@ test('pipCalculator: bad point falls back to pipPrice=0.0001, pipValue=0', () =>
 
 test('pipValueForLots: scales linearly with lot size', () => {
   const q = pipCalculator('XAUUSD', 0.01, 2)
-  approxEq(pipValueForLots(q, 1.0), 1)
-  approxEq(pipValueForLots(q, 0.1), 0.1)
-  approxEq(pipValueForLots(q, 0.01), 0.01)
-  approxEq(pipValueForLots(q, 2.5), 2.5)
+  approxEq(pipValueForLots(q, 1.0), 10)
+  approxEq(pipValueForLots(q, 0.1), 1)
+  approxEq(pipValueForLots(q, 0.01), 0.1)
+  approxEq(pipValueForLots(q, 2.5), 25)
 })
 
 test('pipValueForLots: zero/negative/NaN lots → 0', () => {

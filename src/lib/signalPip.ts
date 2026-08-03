@@ -36,7 +36,7 @@ export const normalizeBacktestSymbol = normalizeSignalSymbol
  * For short symbols (e.g. US30), uses classifySymbol-based multipliers.
  */
 function metalPipMultiplier(base: string): number {
-  if (base === 'XAU' || base === 'XPT' || base === 'XPD') return 100
+  if (base === 'XAU' || base === 'XPT' || base === 'XPD') return 10
   if (base === 'XAG') return 10
   return 100
 }
@@ -58,7 +58,7 @@ export function getPipMultiplierForSymbol(userSymbol: string): number {
     case 'fx_major':
       return 10_000
     case 'metal':
-      return 100
+      return 10
     case 'index':
       return 1
     case 'crypto':

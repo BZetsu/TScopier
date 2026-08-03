@@ -69,6 +69,7 @@ export function normalizeManualSettingsForExecution(
       rangePercent: Number(j.range_percent),
       rangeStepPips: Number(j.range_step_pips),
       rangeDistancePips: Number(j.range_distance_pips),
+      useSignalEntryRange: j.use_signal_entry_range === true,
     })
     if (preview > 0) maxOrders = preview
   }

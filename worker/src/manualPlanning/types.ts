@@ -196,6 +196,9 @@ export interface PlannerRangeLayering {
   maxStepIdx: number
   reservedPendingLegs: number
   activePendingLegs: number
+  /** Hard open-trade ceiling for this basket: immediateLegs + activePendingLegs. */
+  basketLegCap?: number
+  plannedImmediateLegs?: number
   useSignalEntryRange?: boolean
   signalRangeBoundary?: number | null
   signalZoneLo?: number | null

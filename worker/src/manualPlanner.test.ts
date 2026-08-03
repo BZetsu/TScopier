@@ -359,7 +359,7 @@ test('planMultiManualOrders: pending_order uses step/distance rungs despite brok
   assert.ok(distinct.size >= 3, `expected multiple ladder prices, got ${[...distinct].join(', ')}`)
 })
 
-test('planMultiManualOrders: pending_order round-robin stacks legs across rungs', () => {
+test('planMultiManualOrders: pending_order caps legs to activePending (no reserved overshoot)', () => {
   const manual: ManualSettings = {
     ...baseManual,
     range_trading: true,
@@ -379,11 +379,14 @@ test('planMultiManualOrders: pending_order round-robin stacks legs across rungs'
     ctx: baseCtx,
     commentPrefix: 'TScopier:abc',
   })
+  // 0.5 @ 10% → 10 legs; 70% reserved = 7; maxStepIdx = floor(6/2) = 3 → active 3
   const v = plan.virtualPendings ?? []
-  assert.ok(v.length > 3, `expected more reserved legs than rungs, got ${v.length}`)
-  const stepIdxs = v.map(l => l.stepIdx)
-  assert.ok(stepIdxs.includes(1) && stepIdxs.includes(2) && stepIdxs.includes(3))
-  assert.ok(stepIdxs.filter(s => s === 1).length >= 2, 'round-robin should repeat step 1')
+  assert.equal(plan.rangeLayering?.reservedPendingLegs, 7)
+  assert.equal(plan.rangeLayering?.activePendingLegs, 3)
+  assert.equal(v.length, 3)
+  assert.equal(plan.orders.length + v.length, plan.rangeLayering?.basketLegCap)
+  assert.ok((plan.orders.length + v.length) <= 10)
+  assert.equal(plan.orders.length, 3)
 })
 
 test('planMultiManualOrders: stale burst cap of 1 consolidates dynamic range into one order (regression)', () => {
@@ -581,20 +584,20 @@ test('planManualOrders: XAUUSD range 30/3/50% spans 30 pips across 10 layering l
   assert.equal(rl.maxStepIdx, 10)
   assert.equal(rl.reservedPendingLegs, 10)
   assert.equal(rl.activePendingLegs, 10)
-  assert.ok(Math.abs(rl.stepPriceOffset - 0.03) < 1e-9)
+  assert.ok(Math.abs(rl.stepPriceOffset - 0.3) < 1e-9)
 
   const virtuals = plan.virtualPendings!
   assert.equal(virtuals[0]!.stepIdx, 1)
   assert.equal(virtuals[9]!.stepIdx, 10)
-  assert.ok(Math.abs(virtuals[0]!.stepPriceOffset - 0.03) < 1e-9)
+  assert.ok(Math.abs(virtuals[0]!.stepPriceOffset - 0.3) < 1e-9)
 
   const first = triggerPriceFor(virtuals[0]!, 2650, 2)
   const last = triggerPriceFor(virtuals[9]!, 2650, 2)
-  assert.equal(first, 2649.97)
-  assert.equal(last, 2649.7)
+  assert.equal(first, 2649.7)
+  assert.equal(last, 2647)
 })
 
-test('planManualOrders: XAUUSD cent pip layering at 2350.50 spans 30 pips in 3-pip steps', () => {
+test('planManualOrders: XAUUSD trader-pip layering at 2350.50 spans 30 pips in 3-pip steps', () => {
   const manual: ManualSettings = {
     ...baseManual,
     range_percent: 100,
@@ -616,8 +619,8 @@ test('planManualOrders: XAUUSD cent pip layering at 2350.50 spans 30 pips in 3-p
   assert.equal(virtuals.length, 10)
   const first = triggerPriceFor(virtuals[0]!, anchor, 2)
   const last = triggerPriceFor(virtuals[virtuals.length - 1]!, anchor, 2)
-  assert.equal(first, 2350.47)
-  assert.equal(last, 2350.2)
+  assert.equal(first, 2350.2)
+  assert.equal(last, 2347.5)
 })
 
 test('planManualOrders: range distance caps layering when reserved exceeds floor(dist/step)', () => {
@@ -1448,7 +1451,7 @@ test('planManualOrders: use_signal_entry_range uses zone width for range layerin
   assert.ok(rl)
   assert.equal(rl.useSignalEntryRange, true)
   assert.equal(rl.signalRangeBoundary, 4325)
-  assert.equal(rl.effectiveDistancePips, 1000) // 10 price units / 0.01 pip
+  assert.equal(rl.effectiveDistancePips, 100) // 10 price units / 0.1 pip
   assert.equal(rl.activePendingLegs, 5) // 50% of 10 legs reserved; zone width allows all 5
 })
 
