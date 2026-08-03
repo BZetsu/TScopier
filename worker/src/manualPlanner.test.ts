@@ -64,6 +64,16 @@ test('planRangeSplit: step 0 = Auto fills distance with reserved legs', () => {
   assert.equal(r.fallbackReason, 'range_trading_step_auto')
 })
 
+test('planRangeSplit: Auto min 1-pip floor reduces active legs', () => {
+  // 40 legs, 50% → 20 reserved; dist 10 → max 10 active at 1 pip (not 0.5)
+  const r = planRangeSplit({ ...baseSplit, totalLegs: 40, stepPips: 0, distPips: 10 })
+  assert.equal(r.pendingLegs, 20)
+  assert.equal(r.activePendingLegs, 10)
+  assert.equal(r.maxStepIdx, 10)
+  assert.equal(r.effectiveStepPips, 1)
+  assert.equal(r.fallbackReason, 'range_trading_step_auto_min_capped')
+})
+
 test('planRangeSplit: forceAutoStep ignores manual step', () => {
   const r = planRangeSplit({ ...baseSplit, stepPips: 25, forceAutoStep: true })
   assert.equal(r.activePendingLegs, 10)

@@ -90,6 +90,19 @@ test('estimateMultiTradeOrderCount: Auto step (0) fills distance with all reserv
   assert.equal(r.effectiveStepPips, 3)
 })
 
+test('estimateMultiTradeOrderCount: Auto min 1-pip floor caps dense reserved legs', () => {
+  // 1.0 @ 2% → 50 legs; 50% → 25 reserved; dist 10 → max 10 active at 1 pip
+  const r = estimateMultiTradeOrderCount({
+    manualLot: 1.0,
+    legPercent: 2,
+    range: { enabled: true, percent: 50, stepPips: 0, distancePips: 10 },
+  })
+  assert.equal(r.pending, 25)
+  assert.equal(r.activePending, 10)
+  assert.equal(r.effectiveStepPips, 1)
+  assert.equal(r.totalOrders, (r.immediate ?? 0) + 10)
+})
+
 test('estimateMultiTradeOrderCount: distance/step caps Total Open Trades', () => {
   // 1.0 @ 5% → 20 legs; 50% reserved = 10; distance 15 / step 5 → max 3 active
   const r = estimateMultiTradeOrderCount({

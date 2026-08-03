@@ -227,7 +227,7 @@ export const configureModalEn: ConfigureModalTranslations = {
     reservedLotHint: 'Share of total legs reserved as pendings.',
     stepPips: 'Step (pips per layering)',
     stepPipsFallback:
-      'Auto fills Range distance evenly with your layering trades. Manual uses a fixed pip step between each layer.',
+      'Auto spaces layering trades evenly across Range distance (minimum 1 pip between layers). Manual uses a fixed pip step between each layer.',
     stepModeAuto: 'Auto',
     stepModeManual: 'Manual',
     stepManualPips: 'Pip step',

@@ -24,6 +24,16 @@ test('adverseDistanceFromAnchor: sell uses ask - anchor', () => {
   assert.equal(adverseDistanceFromAnchor(false, 4080, 4081, 4079.9), 0)
 })
 
+test('stepPriceOffsetForBasket: prefers step 1 over denser deep rungs', () => {
+  assert.equal(
+    stepPriceOffsetForBasket([
+      { step_idx: 1, anchor_price: 4080, trigger_price: 4079.7, is_buy: true },
+      { step_idx: 10, anchor_price: 4080, trigger_price: 4079.1, is_buy: true },
+    ]),
+    0.3,
+  )
+})
+
 test('stepPriceOffsetForBasket: derives from step 1 row', () => {
   assert.equal(
     stepPriceOffsetForBasket([
