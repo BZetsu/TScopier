@@ -14,6 +14,7 @@ exports.validateListenerQueueConfig = validateListenerQueueConfig;
 const tradeSignalActions_1 = require("./tradeSignalActions");
 const signalQueueConfig_1 = require("./queue/signalQueueConfig");
 const workerConfig_1 = require("./workerConfig");
+const sentry_1 = require("./observability/sentry");
 const PUSH_MAX_ATTEMPTS = Math.max(1, Math.min(5, Number(process.env.TRADE_SIGNAL_PUSH_MAX_ATTEMPTS ?? 3)));
 const PUSH_RETRY_BASE_MS = Math.max(25, Math.min(500, Number(process.env.TRADE_SIGNAL_PUSH_RETRY_BASE_MS ?? 75)));
 const SUPABASE_URL = String(process.env.SUPABASE_URL ?? '').trim();
@@ -75,6 +76,26 @@ function isRetryablePushStatus(status) {
     return status >= 500 || status === 429 || status === 408;
 }
 function logPushFailed(row, baseUrl, action, reason, attempt) {
+    (0, sentry_1.captureWorkerWarning)('trade worker dispatch push failed after retries', {
+        subsystem: 'queue',
+        operation: 'trade_worker_push_failed',
+        errorCode: 'TRADE_WORKER_PUSH_FAILED',
+        fingerprint: ['queue', 'TRADE_WORKER_PUSH_FAILED', action],
+        context: {
+            user_id: row.user_id,
+            signal_id: row.id,
+            channel_id: row.channel_id,
+            dispatch_source: row.dispatch_source ?? 'listener_push',
+            retry_attempt: attempt,
+        },
+        extra: {
+            action,
+            attempt,
+            max_attempts: PUSH_MAX_ATTEMPTS,
+            reason,
+            target: baseUrl,
+        },
+    });
     console.warn(JSON.stringify({
         event: 'push_failed',
         user_id: row.user_id,

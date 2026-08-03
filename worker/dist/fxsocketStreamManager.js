@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.FxsocketStreamManager = void 0;
 exports.getFxsocketStreamManager = getFxsocketStreamManager;
 const fxsocketWsClient_1 = require("./fxsocketWsClient");
+const brokerExecutionMode_1 = require("./brokerExecutionMode");
 function topicKey(sub) {
     const parts = [sub.topic];
     if (sub.symbol)
@@ -170,6 +171,8 @@ class FxsocketStreamManager {
 exports.FxsocketStreamManager = FxsocketStreamManager;
 let managerSingleton;
 function getFxsocketStreamManager() {
+    if ((0, brokerExecutionMode_1.isBrokerSimulatorEnforced)())
+        return null;
     if (managerSingleton !== undefined)
         return managerSingleton;
     try {

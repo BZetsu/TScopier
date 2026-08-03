@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.SignalQueueConsumerManager = exports.SignalQueueConsumer = void 0;
 const workerConfig_1 = require("../workerConfig");
 const workerMetrics_1 = require("../workerMetrics");
+const sentry_1 = require("../observability/sentry");
 const pipelineTimestamps_1 = require("../pipelineTimestamps");
 const redisStreamsClient_1 = require("./redisStreamsClient");
 const signalQueueConfig_1 = require("./signalQueueConfig");
@@ -24,6 +25,8 @@ class SignalQueueConsumer {
         this.lastReadAt = null;
         this.lastAckAt = null;
         this.lastError = null;
+        this.readErrorStreak = 0;
+        this.reclaimErrorStreak = 0;
     }
     static lanesForWorker() {
         const lanes = [];
@@ -90,14 +93,30 @@ class SignalQueueConsumer {
             try {
                 const messages = await (0, redisStreamsClient_1.xreadgroup)(group, consumer, streamKey, cfg.readCount, blockMs);
                 this.lastReadAt = Date.now();
+                this.readErrorStreak = 0;
                 if (messages.length === 0)
                     continue;
                 await mapConcurrent(messages, cfg.consumerConcurrency, msg => this.processMessage(streamKey, group, msg));
             }
             catch (err) {
                 this.lastError = err instanceof Error ? err.message : String(err);
+                this.readErrorStreak += 1;
                 (0, workerMetrics_1.incMetric)('queue_consumer_read_errors');
                 console.warn(`[signalQueue] read error lane=${this.lane}: ${this.lastError}`);
+                if (this.readErrorStreak === 3 || this.readErrorStreak % 10 === 0) {
+                    (0, sentry_1.captureWorkerWarning)(err instanceof Error ? err : new Error(this.lastError), {
+                        subsystem: 'queue',
+                        operation: 'consumer_read_repeated_failure',
+                        errorCode: 'QUEUE_READ_FAILURE',
+                        fingerprint: ['queue', 'QUEUE_READ_FAILURE', this.lane],
+                        context: {
+                            stage: 'queue_read',
+                            dispatch_source: 'queue',
+                            retry_attempt: this.readErrorStreak,
+                            extra: { lane: this.lane, stream_key: streamKey },
+                        },
+                    });
+                }
                 await sleep(Math.min(5000, blockMs));
             }
         }
@@ -115,6 +134,7 @@ class SignalQueueConsumer {
             try {
                 const { nextStart, messages } = await (0, redisStreamsClient_1.xautoclaim)(streamKey, group, consumer, cfg.claimIdleMs, this.reclaimCursor, cfg.readCount);
                 this.reclaimCursor = nextStart;
+                this.reclaimErrorStreak = 0;
                 if (messages.length === 0)
                     continue;
                 (0, workerMetrics_1.incMetric)('queue_reclaimed', messages.length);
@@ -122,8 +142,23 @@ class SignalQueueConsumer {
             }
             catch (err) {
                 this.lastError = err instanceof Error ? err.message : String(err);
+                this.reclaimErrorStreak += 1;
                 (0, workerMetrics_1.incMetric)('queue_consumer_reclaim_errors');
                 console.warn(`[signalQueue] reclaim error lane=${this.lane}: ${this.lastError}`);
+                if (this.reclaimErrorStreak === 3 || this.reclaimErrorStreak % 10 === 0) {
+                    (0, sentry_1.captureWorkerWarning)(err instanceof Error ? err : new Error(this.lastError), {
+                        subsystem: 'queue',
+                        operation: 'consumer_reclaim_repeated_failure',
+                        errorCode: 'QUEUE_RECLAIM_FAILURE',
+                        fingerprint: ['queue', 'QUEUE_RECLAIM_FAILURE', this.lane],
+                        context: {
+                            stage: 'queue_reclaim',
+                            dispatch_source: 'queue',
+                            retry_attempt: this.reclaimErrorStreak,
+                            extra: { lane: this.lane, stream_key: streamKey },
+                        },
+                    });
+                }
             }
         }
     }
@@ -131,6 +166,17 @@ class SignalQueueConsumer {
         const job = (0, signalQueuePublisher_1.parseQueueJobFields)(msg.fields);
         if (!job) {
             (0, workerMetrics_1.incMetric)('queue_malformed');
+            (0, sentry_1.captureWorkerWarning)('Malformed signal queue payload acknowledged', {
+                subsystem: 'queue',
+                operation: 'malformed_payload',
+                errorCode: 'QUEUE_MALFORMED_PAYLOAD',
+                fingerprint: ['queue', 'QUEUE_MALFORMED_PAYLOAD', this.lane],
+                context: {
+                    stage: 'queue_parse',
+                    queue_message_id: msg.id,
+                    extra: { lane: this.lane, stream_key: streamKey },
+                },
+            });
             await (0, redisStreamsClient_1.xack)(streamKey, group, msg.id);
             return;
         }
@@ -164,6 +210,12 @@ class SignalQueueConsumer {
         });
         if (!claimed) {
             (0, workerMetrics_1.incMetric)('queue_duplicate_skip');
+            (0, sentry_1.addWorkerBreadcrumb)({
+                category: 'queue',
+                message: 'duplicate queue message skipped',
+                level: 'info',
+                data: { lane: job.lane, attempts },
+            });
             (0, pipelineTimestamps_1.emitPipelineEvent)({
                 event: 'execution_duplicate_prevented',
                 correlation,
@@ -225,6 +277,21 @@ class SignalQueueConsumer {
             (0, workerMetrics_1.incMetric)('queue_consume_failed');
             if (!(0, signalQueueRetry_1.shouldRetryAfterFailure)(attempts)) {
                 (0, workerMetrics_1.incMetric)('queue_dlq');
+                (0, sentry_1.captureWorkerWarning)(new Error(reason), {
+                    subsystem: 'queue',
+                    operation: 'dead_letter',
+                    errorCode: 'QUEUE_DEAD_LETTER',
+                    fingerprint: ['queue', 'QUEUE_DEAD_LETTER', job.lane],
+                    context: {
+                        user_id: job.user_id,
+                        signal_id: job.signal_id,
+                        queue_message_id: msg.id,
+                        dispatch_source: 'queue',
+                        stage: 'queue_dead_letter',
+                        retry_attempt: attempts,
+                        extra: { lane: job.lane, shard_id: job.shard_id },
+                    },
+                });
                 await (0, signalQueueRetry_1.persistDeadLetter)(this.supabase, {
                     stream_key: streamKey,
                     message_id: msg.id,

@@ -11,6 +11,7 @@ exports.resolveBasketMergeLinkContext = resolveBasketMergeLinkContext;
 const basketSlTpReconcile_1 = require("../../basketSlTpReconcile");
 const rangePendingFireGuard_1 = require("../../rangePendingFireGuard");
 const rangePendingLegPersist_1 = require("../../rangePendingLegPersist");
+const ensureSignalRow_1 = require("../../ensureSignalRow");
 const signalMergeLink_1 = require("../../signalMergeLink");
 const basketModFollowUp_1 = require("../../basketModFollowUp");
 const executionMode_1 = require("../../engine/executionMode");
@@ -252,6 +253,24 @@ async function persistRangePendingLegRows(ctx, rows, context) {
         onConflict: 'signal_id,broker_account_id,symbol,step_idx',
         ignoreDuplicates: true,
     });
+    if (error && (0, ensureSignalRow_1.isSignalFkViolation)(error.message) && signalId) {
+        const userId = String(first.user_id ?? '');
+        if (userId) {
+            const ensured = await (0, ensureSignalRow_1.ensureSignalRow)(ctx.supabase, {
+                id: signalId,
+                user_id: userId,
+                status: 'parsed',
+                raw_message: '',
+            });
+            if (ensured.ok) {
+                console.warn(`[tradeExecutor] range_pending_legs FK recovered via ensureSignalRow (${context}) signal=${signalId}`);
+                ({ error } = await ctx.supabase.from('range_pending_legs').upsert(rows, {
+                    onConflict: 'signal_id,broker_account_id,symbol,step_idx',
+                    ignoreDuplicates: true,
+                }));
+            }
+        }
+    }
     if (!error)
         return { ok: true };
     const msg0 = error.message ?? String(error);
@@ -266,6 +285,23 @@ async function persistRangePendingLegRows(ctx, rows, context) {
         lastError = m;
         if ((0, rangePendingLegPersist_1.isPostgresDuplicateKeyError)(e))
             continue;
+        if ((0, ensureSignalRow_1.isSignalFkViolation)(m) && signalId) {
+            const userId = String(row.user_id ?? first.user_id ?? '');
+            if (userId) {
+                const ensured = await (0, ensureSignalRow_1.ensureSignalRow)(ctx.supabase, {
+                    id: signalId,
+                    user_id: userId,
+                    status: 'parsed',
+                    raw_message: '',
+                });
+                if (ensured.ok) {
+                    const { error: retryE } = await ctx.supabase.from('range_pending_legs').insert([row]);
+                    if (!retryE || (0, rangePendingLegPersist_1.isPostgresDuplicateKeyError)(retryE))
+                        continue;
+                    lastError = retryE.message ?? String(retryE);
+                }
+            }
+        }
         anyHardFailure = true;
         console.warn(`[tradeExecutor] range_pending_legs insert failed (${context}) step=${String(row.step_idx)}: ${m}`);
     }

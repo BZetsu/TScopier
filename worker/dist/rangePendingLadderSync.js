@@ -114,6 +114,11 @@ function pendingLegStopsForBasketRefresh(args) {
     };
 }
 /** Patch SL/TP on all active pending rows for one basket (SL-only refresh, no ladder replan). */
+/**
+ * Patch SL/TP on active *virtual* pendings (pending/claimed) only.
+ * Intentionally excludes `broker_pending`: resting BuyLimit/SellLimit must stay
+ * naked on the broker; stops are assigned on fill via follow-up + basket rebalance.
+ */
 async function patchActiveRangePendingLegStops(args) {
     const { supabase, scope, stoploss, channelParams, tpLots, plannedRangeLegs = 0, } = args;
     const explicitSl = typeof stoploss === 'number' && Number.isFinite(stoploss) && stoploss > 0
@@ -181,10 +186,14 @@ async function syncRangePendingLadderOnBasketRefresh(args) {
     for (const v of virtualPendings) {
         planByStep.set(v.stepIdx, v);
     }
-    const activeRows = existing.filter(r => r.status === 'pending' || r.status === 'claimed');
+    // Include broker_pending so basket refresh cannot re-insert the same step
+    // while a live broker limit row already exists.
+    const activeRows = existing.filter(r => r.status === 'pending' || r.status === 'claimed' || r.status === 'broker_pending');
     const maxTotalLegs = Math.max(0, plannedImmediateLegs + plannedRangeLegs);
     const activePendingCount = activeRows.length;
     for (const row of activeRows) {
+        if (row.status === 'broker_pending')
+            continue;
         const planLeg = planByStep.get(row.step_idx);
         const computed = pendingLegStopsForBasketRefresh({
             row,

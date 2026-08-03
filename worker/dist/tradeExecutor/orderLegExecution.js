@@ -47,6 +47,8 @@ const fxClient_1 = require("../engine/fxClient");
 const manualPlanner_1 = require("../manualPlanner");
 const materializeBrokerRangePendingLegs_1 = require("./materializeBrokerRangePendingLegs");
 const pipelineTimestamps_1 = require("../pipelineTimestamps");
+const ensureSignalRow_1 = require("../ensureSignalRow");
+const sentry_1 = require("../observability/sentry");
 async function sendImmediateLegs(input) {
     const { ctx, signal, parsed, broker, manual, api, uuid, symbol, requestedSymbol, mapping, params, legs, liveEntryFast, pipelineT0, strictEntryPrefetch, channelDelayMs, channelDelaySkipped, deferVirtualAnchor, deferBrokerRangePendingMaterialize, brokerPendingMode, prepAnchor, prepAnchorSource, virtualPendings, plan, materializedVirtuals, strictBrokerPlaced, strictDeferred, op, channelKeywords, baseLot, syncMultiLegTps, prep, } = input;
     if (legs.length === 0) {
@@ -230,6 +232,33 @@ async function sendImmediateLegs(input) {
                     await ctx.markBrokerSessionDown(broker, uuid, lastAttemptError);
                 }
                 console.error(`[tradeExecutor] OrderSend failed signal=${signal.id} broker=${broker.id} leg=${leg.idx + 1}/${totalCount} op=${sendArgs.operation} price=${sendArgs.price ?? 0}:`, lastAttemptError);
+                if ((0, fxsocketClient_1.isOrderOpTimedOutMessage)(lastAttemptError)) {
+                    (0, sentry_1.captureWorkerError)(err instanceof Error ? err : new Error(lastAttemptError), {
+                        subsystem: 'broker',
+                        operation: 'order_send_ambiguous',
+                        errorCode: 'ORDER_SEND_TIMEOUT',
+                        fingerprint: ['broker', 'ORDER_SEND_TIMEOUT', useV2 ? 'fxsocket_v2' : 'fxsocket_v1'],
+                        context: {
+                            user_id: signal.user_id,
+                            signal_id: signal.id,
+                            channel_id: signal.channel_id,
+                            telegram_message_id: signal.telegram_message_id,
+                            broker_account_id: broker.id,
+                            execution_attempt_id: correlation.execution_attempt_id,
+                            broker_request_id: correlation.broker_request_id,
+                            dispatch_source: signal.dispatch_source,
+                            stage: 'order_send',
+                            retry_attempt: attempt + 1,
+                            extra: {
+                                path: useV2 ? 'fxsocket_v2' : 'fxsocket_v1',
+                                operation: sendArgs.operation,
+                                symbol: sendArgs.symbol,
+                                leg: leg.idx + 1,
+                                total: totalCount,
+                            },
+                        },
+                    });
+                }
                 await ctx.supabase.from('trade_execution_logs').insert({
                     user_id: signal.user_id,
                     signal_id: signal.id,
@@ -338,9 +367,50 @@ async function sendImmediateLegs(input) {
                     .insert(partialRows);
                 if (partialErr) {
                     console.error(`[tradeExecutor] partial_tp_legs INSERT failed signal=${signal.id} broker=${broker.id} trade=${tradeRowId}: ${partialErr.message}`);
+                    (0, sentry_1.captureWorkerWarning)(partialErr, {
+                        subsystem: 'persistence',
+                        operation: 'partial_tp_persist_failed',
+                        errorCode: 'PARTIAL_TP_PERSIST_FAILED',
+                        fingerprint: ['persistence', 'PARTIAL_TP_PERSIST_FAILED', 'post_fill'],
+                        context: {
+                            user_id: signal.user_id,
+                            signal_id: signal.id,
+                            broker_account_id: broker.id,
+                            stage: 'post_fill_persistence',
+                            extra: { trade_row_id: tradeRowId },
+                        },
+                    });
                 }
             }
-            await ctx.supabase.from('trade_execution_logs').insert({
+            if (prep.layeringRuntime?.onImmediateFill) {
+                try {
+                    await prep.layeringRuntime.onImmediateFill({
+                        entryPrice: entryPx,
+                        lot: result.lots ?? sendArgs.volume,
+                        tradeRowId,
+                        ticket: result.ticket ?? null,
+                    });
+                }
+                catch (err) {
+                    const message = err instanceof Error ? err.message : String(err);
+                    await ctx.supabase.from('trade_execution_logs').insert({
+                        user_id: signal.user_id,
+                        signal_id: signal.id,
+                        broker_account_id: broker.id,
+                        action: 'layering_first_fill_activation',
+                        status: 'reconciliation_required',
+                        request_payload: {
+                            broker_ticket_present: result.ticket != null,
+                            trade_row_id_present: tradeRowId != null,
+                            symbol: sendArgs.symbol,
+                            operation: sendArgs.operation,
+                        },
+                        error_message: message,
+                    });
+                    throw err;
+                }
+            }
+            const logRow = {
                 user_id: signal.user_id,
                 signal_id: signal.id,
                 broker_account_id: broker.id,
@@ -358,20 +428,118 @@ async function sendImmediateLegs(input) {
                     leg: leg.idx + 1,
                     total: totalCount,
                 },
-            });
+            };
+            const { error: logErr } = await ctx.supabase.from('trade_execution_logs').insert(logRow);
+            if (logErr) {
+                console.error(`[tradeExecutor] order_send log INSERT failed signal=${signal.id} broker=${broker.id} ticket=${result.ticket}: ${logErr.message}`);
+                if ((0, ensureSignalRow_1.isSignalFkViolation)(logErr.message)) {
+                    const ensured = await (0, ensureSignalRow_1.ensureSignalRow)(ctx.supabase, {
+                        id: signal.id,
+                        user_id: signal.user_id,
+                        channel_id: signal.channel_id,
+                        status: signal.status || 'parsed',
+                        parsed_data: (signal.parsed_data ?? null),
+                        telegram_message_id: signal.telegram_message_id ?? null,
+                        reply_to_message_id: signal.reply_to_message_id ?? null,
+                        parent_signal_id: signal.parent_signal_id,
+                        is_modification: signal.is_modification,
+                        raw_message: '',
+                    });
+                    if (ensured.ok) {
+                        const { error: retryLogErr } = await ctx.supabase.from('trade_execution_logs').insert(logRow);
+                        if (retryLogErr) {
+                            console.error(`[tradeExecutor] order_send log retry failed signal=${signal.id} ticket=${result.ticket}: ${retryLogErr.message}`);
+                        }
+                    }
+                }
+            }
         };
-        if (liveEntryFast) {
+        const insertTradeRowWithFkRetry = async () => {
+            const first = await ctx.supabase
+                .from('trades')
+                .insert(tradeRowPayload)
+                .select('id')
+                .maybeSingle();
+            if (!first.error) {
+                return first.data?.id ?? null;
+            }
+            console.error(`[tradeExecutor] trades INSERT failed signal=${signal.id} broker=${broker.id} ticket=${result.ticket}: ${first.error.message}`);
+            (0, sentry_1.captureWorkerError)(first.error, {
+                subsystem: 'persistence',
+                operation: 'broker_success_trade_persist_failed',
+                errorCode: 'BROKER_SUCCESS_DB_FAILURE',
+                fingerprint: ['persistence', 'BROKER_SUCCESS_DB_FAILURE', 'trades_insert'],
+                context: {
+                    user_id: signal.user_id,
+                    signal_id: signal.id,
+                    channel_id: signal.channel_id,
+                    telegram_message_id: signal.telegram_message_id,
+                    broker_account_id: broker.id,
+                    stage: 'post_broker_success_persistence',
+                    extra: {
+                        broker_ticket_present: result.ticket != null,
+                        leg: leg.idx + 1,
+                        total: totalCount,
+                    },
+                },
+            });
+            if (!(0, ensureSignalRow_1.isSignalFkViolation)(first.error.message))
+                return null;
+            const ensured = await (0, ensureSignalRow_1.ensureSignalRow)(ctx.supabase, {
+                id: signal.id,
+                user_id: signal.user_id,
+                channel_id: signal.channel_id,
+                status: signal.status || 'parsed',
+                parsed_data: (signal.parsed_data ?? null),
+                telegram_message_id: signal.telegram_message_id ?? null,
+                reply_to_message_id: signal.reply_to_message_id ?? null,
+                parent_signal_id: signal.parent_signal_id,
+                is_modification: signal.is_modification,
+                raw_message: '',
+            });
+            if (!ensured.ok) {
+                console.error(`[tradeExecutor] ensureSignalRow after trades FK fail signal=${signal.id}: ${ensured.error ?? 'unknown'}`);
+                return null;
+            }
+            const retry = await ctx.supabase
+                .from('trades')
+                .insert(tradeRowPayload)
+                .select('id')
+                .maybeSingle();
+            if (retry.error) {
+                console.error(`[tradeExecutor] trades INSERT retry failed signal=${signal.id} broker=${broker.id} ticket=${result.ticket}: ${retry.error.message}`);
+                (0, sentry_1.captureWorkerError)(retry.error, {
+                    subsystem: 'persistence',
+                    operation: 'broker_success_trade_persist_retry_failed',
+                    errorCode: 'BROKER_SUCCESS_DB_FAILURE',
+                    fingerprint: ['persistence', 'BROKER_SUCCESS_DB_FAILURE', 'trades_insert_retry'],
+                    context: {
+                        user_id: signal.user_id,
+                        signal_id: signal.id,
+                        channel_id: signal.channel_id,
+                        telegram_message_id: signal.telegram_message_id,
+                        broker_account_id: broker.id,
+                        stage: 'post_broker_success_persistence_retry',
+                        extra: { broker_ticket_present: result.ticket != null },
+                    },
+                });
+                return null;
+            }
+            console.warn(`[tradeExecutor] trades INSERT recovered after ensureSignalRow signal=${signal.id} ticket=${result.ticket}`);
+            return retry.data?.id ?? null;
+        };
+        if (liveEntryFast && prep.layeringRuntime?.onImmediateFill) {
+            filledLeg.tradeRowId = await insertTradeRowWithFkRetry();
+            filledLegs.push(filledLeg);
+            await persistPostFillDb(filledLeg.tradeRowId);
+            if (signal.pipeline_ts) {
+                (0, pipelineTimestamps_1.setPipelineTimestamp)(signal.pipeline_ts, 'execution_state_persisted_at', Date.now());
+            }
+        }
+        else if (liveEntryFast) {
             filledLegs.push(filledLeg);
             void (async () => {
-                const tradeInsert = await ctx.supabase
-                    .from('trades')
-                    .insert(tradeRowPayload)
-                    .select('id')
-                    .maybeSingle();
-                if (tradeInsert.error) {
-                    console.error(`[tradeExecutor] trades INSERT failed signal=${signal.id} broker=${broker.id} ticket=${result.ticket}: ${tradeInsert.error.message}`);
-                }
-                const tradeRowId = tradeInsert.data?.id ?? null;
+                const tradeRowId = await insertTradeRowWithFkRetry();
                 filledLeg.tradeRowId = tradeRowId;
                 await persistPostFillDb(tradeRowId);
                 if (signal.pipeline_ts) {
@@ -379,18 +547,23 @@ async function sendImmediateLegs(input) {
                 }
             })().catch(err => {
                 console.error(`[tradeExecutor] post-fill persist failed signal=${signal.id} broker=${broker.id} ticket=${result.ticket}:`, err instanceof Error ? err.message : String(err));
+                (0, sentry_1.captureWorkerError)(err instanceof Error ? err : new Error(String(err)), {
+                    subsystem: 'persistence',
+                    operation: 'post_fill_persist_failed',
+                    errorCode: 'BROKER_SUCCESS_DB_FAILURE',
+                    fingerprint: ['persistence', 'BROKER_SUCCESS_DB_FAILURE', 'post_fill_background'],
+                    context: {
+                        user_id: signal.user_id,
+                        signal_id: signal.id,
+                        broker_account_id: broker.id,
+                        stage: 'post_fill_background',
+                        extra: { broker_ticket_present: result.ticket != null },
+                    },
+                });
             });
         }
         else {
-            const tradeInsert = await ctx.supabase
-                .from('trades')
-                .insert(tradeRowPayload)
-                .select('id')
-                .maybeSingle();
-            if (tradeInsert.error) {
-                console.error(`[tradeExecutor] trades INSERT failed signal=${signal.id} broker=${broker.id} ticket=${result.ticket}: ${tradeInsert.error.message}`);
-            }
-            filledLeg.tradeRowId = tradeInsert.data?.id ?? null;
+            filledLeg.tradeRowId = await insertTradeRowWithFkRetry();
             filledLegs.push(filledLeg);
             await persistPostFillDb(filledLeg.tradeRowId);
             if (signal.pipeline_ts) {
@@ -488,6 +661,12 @@ async function sendImmediateLegs(input) {
         });
     }
     const anyImmediateOpened = sendResults.some(r => r.status === 'fulfilled' && r.value === true);
+    const rejectedSendReason = sendResults
+        .find((r) => r.status === 'rejected')
+        ?.reason;
+    if (rejectedSendReason != null) {
+        lastSendError = rejectedSendReason instanceof Error ? rejectedSendReason.message : String(rejectedSendReason);
+    }
     const parsedTpCount = (parsed.tp ?? []).filter((t) => typeof t === 'number' && Number.isFinite(t) && t > 0).length;
     const tpLotBuckets = (manual.tp_lots ?? []).filter(r => r?.enabled !== false && Number(r.percent) > 0).length;
     const needsPerLegTpSync = parsedTpCount >= 2 || tpLotBuckets >= 2;

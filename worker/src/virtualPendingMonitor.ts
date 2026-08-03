@@ -278,6 +278,7 @@ export function fillWithinTriggerBand(args: {
   return ok ? { ok: true } : { ok: false, reason: 'fill_outside_trigger_band' }
 }
 
+import { shouldLockBasketLayering } from './rangeBasketLayeringLock'
 export { evaluateTpTouch, shouldLockBasketLayering } from './rangeBasketLayeringLock'
 
 export class VirtualPendingMonitor {

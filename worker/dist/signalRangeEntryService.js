@@ -14,7 +14,7 @@ const manualPlanner_1 = require("./manualPlanner");
 const signalEntryRange_1 = require("./manualPlanning/signalEntryRange");
 const parsedEntry_1 = require("./manualPlanning/parsedEntry");
 const manualSettings_1 = require("./manualPlanning/manualSettings");
-const virtualPendingMonitor_1 = require("./virtualPendingMonitor");
+const rangeBasketLayeringLock_1 = require("./rangeBasketLayeringLock");
 const parsedEntry_2 = require("./manualPlanning/parsedEntry");
 function buildWaitFromParsed(args) {
     return (0, signalEntryRange_1.buildRangeEntryWait)(args);
@@ -42,7 +42,7 @@ function evaluatePreEntryStaleness(args) {
     const tps = (parsed.tp ?? []).filter((t) => typeof t === 'number' && Number.isFinite(t) && t > 0);
     if (tps.length > 0) {
         const direction = isBuy ? 'buy' : 'sell';
-        const tpTouch = (0, virtualPendingMonitor_1.evaluateTpTouch)({ direction, tps, bid, ask });
+        const tpTouch = (0, rangeBasketLayeringLock_1.evaluateTpTouch)({ direction, tps, bid, ask });
         if (tpTouch.touched)
             return { stale: true, reason: 'tp_before_entry' };
     }

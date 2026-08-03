@@ -45,6 +45,8 @@ function intentActionLabel(intent) {
         return 'breakeven';
     if (intent.kind === 'partial_close')
         return 'partial_profit';
+    if (intent.kind === 'cancel_pending')
+        return 'delete_pendings';
     return 'ignore';
 }
 function intentToParsePreview(intent, rawMessage) {

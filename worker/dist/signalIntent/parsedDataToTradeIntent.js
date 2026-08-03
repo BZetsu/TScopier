@@ -18,6 +18,8 @@ function actionToKindSide(action) {
             return { kind: 'breakeven', side: null };
         case 'partial_profit':
             return { kind: 'partial_close', side: null };
+        case 'delete_pendings':
+            return { kind: 'cancel_pending', side: null };
         default:
             return { kind: 'ignore', side: null };
     }

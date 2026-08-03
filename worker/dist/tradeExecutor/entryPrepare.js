@@ -17,6 +17,7 @@ const helpers_1 = require("./helpers");
 const signalRangeEntryHelpers_1 = require("../signalRangeEntryHelpers");
 const signalRangeEntryService_1 = require("../signalRangeEntryService");
 const signalBrokerDispatchClaim_1 = require("./signalBrokerDispatchClaim");
+const messageRevisionEntryGuard_1 = require("./messageRevisionEntryGuard");
 const pipelineTimestamps_1 = require("../pipelineTimestamps");
 /** Fill missing symbol for re-enter posts that omit instrument name. */
 async function resolveReEnterSymbolFromChannel(ctx, signal, broker, parsed) {
@@ -220,8 +221,9 @@ async function prepareEntryExecution(ctx, args) {
     // Basket SL/TP refresh — always before OrderSend (not deferred to post-fill).
     // Skip when Use signal range is on: zone+market-now+SL/TP must open via range entry wait,
     // not merge into a prior teaser that may never have opened.
-    let basketRefreshSucceeded = false;
+    const basketRefreshSucceeded = false;
     const sameSignalRefresh = sendOpts?.sameSignalRefresh === true;
+    const blockNewEntry = sendOpts?.blockNewEntry === true;
     const rangeEntryStrict = (0, manualPlanner_1.signalEntryRangeStrictEnabled)(manual);
     if (isManual && !rangeEntryStrict && ((0, multiTradeMerge_1.shouldRouteAsBasketParameterRefresh)(parsed) || sameSignalRefresh)) {
         const paramOutcome = await ctx.tryParameterFollowUpMergeModifyOnly({
@@ -247,10 +249,24 @@ async function prepareEntryExecution(ctx, args) {
             };
         }
         if (paramOutcome.handled && paramOutcome.success) {
-            basketRefreshSucceeded = true;
             return { ok: false, outcome: { openedOrMerged: true } };
         }
-        // handled + !success: anchor had no open legs — fall through to range entry / OrderSend.
+        // handled + !success: anchor had no open legs — fall through unless revision already opened.
+    }
+    // Message revision / re-dispatch must never place a second market or broker-pending basket
+    // after the first entry already logged order_send / trades / range legs (live-fast used to skip this).
+    if (sameSignalRefresh || blockNewEntry) {
+        const alreadyMaterialized = blockNewEntry
+            || await ctx.manualDispatchAlreadyMaterialized(signal.id, broker.id);
+        if ((0, messageRevisionEntryGuard_1.shouldBlockNewEntryOnRevision)({
+            sameSignalRefresh,
+            blockNewEntry,
+            alreadyMaterialized,
+        })) {
+            console.warn(`[tradeExecutor] skip new entry on message revision — already materialized`
+                + ` signal=${signal.id} broker=${broker.id} blockNewEntry=${blockNewEntry}`);
+            return { ok: false, outcome: { openedOrMerged: true } };
+        }
     }
     if (isManual && !sameSignalRefresh && !basketRefreshSucceeded && !rangeEntryStrict) {
         const teaserOutcome = await ctx.tryTeaserCompletionMerge({
@@ -328,7 +344,6 @@ async function prepareEntryExecution(ctx, args) {
     // Build the order list. In AI mode we keep the original single-order shape;
     // manual mode delegates to the planner so filters / multi-TP / pip-derived
     // SL & TP / pending expiry / reverse all apply consistently.
-    let mergedChannelParams = false;
     let entryChannelParams = null;
     let channelParamsRefreshedFromSignal = false;
     let plan;
@@ -361,7 +376,6 @@ async function prepareEntryExecution(ctx, args) {
                     signalId: signal.id,
                 });
                 plannerParsed = resolved.plannerParsed;
-                mergedChannelParams = resolved.mergedChannelParams;
                 entryChannelParams = resolved.channelParams;
                 channelParamsRefreshedFromSignal = (0, channelActiveTradeParams_1.parsedSignalHasExplicitStops)(plannerParsed);
             }
@@ -375,11 +389,16 @@ async function prepareEntryExecution(ctx, args) {
                 channelParamsRefreshedFromSignal = entryChannelParams != null;
             }
         }
+        const planningManual = isManual
+            && manual.range_trading === true
+            && (manual.layering_mode === 'static' || manual.layering_mode === 'dynamic')
+            ? { ...manual, layering_mode: 'legacy' }
+            : manual;
         plan = (0, manualPlanner_1.planManualOrders)({
             parsed: plannerParsed,
             resolvedSymbol: symbol,
             baseOperation: op,
-            manual,
+            manual: planningManual,
             channelKeywords,
             manualLot: baseLot,
             ctx: {
@@ -504,11 +523,30 @@ async function prepareEntryExecution(ctx, args) {
         }
     }
     // Hard cap: planner already respects 500; this is a final guard rail.
-    const capped = plan.orders.slice(0, 500);
+    // Total Open Trades (basketLegCap) must never be exceeded by immediates + layering.
+    const basketLegCap = plan.rangeLayering?.basketLegCap;
+    const plannedImmediateLegs = plan.rangeLayering?.plannedImmediateLegs;
+    const absLegCap = basketLegCap != null && basketLegCap > 0
+        ? Math.min(500, Math.floor(basketLegCap))
+        : 500;
+    let capped = plan.orders.slice(0, absLegCap);
     if (capped.length < plan.orders.length) {
         console.warn(`[tradeExecutor] capped immediate legs ${plan.orders.length} → ${capped.length} signal=${signal.id} broker=${broker.id}`);
     }
     let virtualPendings = (plan.virtualPendings ?? []).slice(0, 500);
+    if (absLegCap < 500) {
+        const immBudget = plannedImmediateLegs != null && plannedImmediateLegs >= 0
+            ? plannedImmediateLegs
+            : capped.length;
+        const maxVirtualByPlan = Math.max(0, absLegCap - immBudget);
+        const maxVirtualByTickets = Math.max(0, absLegCap - capped.length);
+        const maxVirtual = Math.min(maxVirtualByPlan, maxVirtualByTickets);
+        if (virtualPendings.length > maxVirtual) {
+            console.warn(`[tradeExecutor] trim virtual pendings ${virtualPendings.length}→${maxVirtual}`
+                + ` basket_cap=${absLegCap} signal=${signal.id} broker=${broker.id}`);
+            virtualPendings = virtualPendings.slice(0, maxVirtual);
+        }
+    }
     const totalPlannedLegCount = capped.length + virtualPendings.length;
     if (virtualPendings.length > 0
         && signal.channel_id

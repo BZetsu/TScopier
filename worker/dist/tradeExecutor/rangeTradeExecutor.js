@@ -6,6 +6,8 @@ const strictEntryPending_1 = require("./strictEntryPending");
 const virtualPendingMaterialize_1 = require("./virtualPendingMaterialize");
 const materializeBrokerRangePendingLegs_1 = require("./materializeBrokerRangePendingLegs");
 const entryExecution_1 = require("./entryExecution");
+const layeringModeIntegration_1 = require("./layeringModeIntegration");
+const layeringModes_1 = require("../manualPlanning/layeringModes");
 const signalRangeEntryHelpers_1 = require("../signalRangeEntryHelpers");
 const virtualPendingMonitor_1 = require("../virtualPendingMonitor");
 /** Log `multi_range_plan` diagnostics for manual multi / range ladder entries. */
@@ -20,6 +22,10 @@ async function logMultiRangePlan(ctx, prep) {
         multi_trade_leg_percent: Number(manual.multi_trade_leg_percent ?? 5),
         immediate_orders: capped.length,
         virtual_pending_rows: virtualPendings.length,
+        basket_leg_cap: plan.rangeLayering?.basketLegCap
+            ?? (capped.length + virtualPendings.length),
+        planned_immediate_legs: plan.rangeLayering?.plannedImmediateLegs ?? null,
+        planned_range_legs: plan.rangeLayering?.activePendingLegs ?? virtualPendings.length,
         range_trading: manual.range_trading === true,
         range_layering_type: manual.range_layering_type ?? 'auto',
         range_percent: manual.range_percent ?? null,
@@ -51,7 +57,7 @@ async function logMultiRangePlan(ctx, prep) {
     }
     catch { /* best-effort */ }
 }
-function useBrokerRangePendingLegs(prep) {
+function shouldUseBrokerRangePendingLegs(prep) {
     return prep.manual.range_layering_type === 'pending_order'
         || prep.plan.rangeLayering?.rangeLayeringType === 'pending_order';
 }
@@ -61,8 +67,12 @@ async function runRangeEntry(ctx, args) {
         return prepared.outcome;
     const prep = prepared.prep;
     await logMultiRangePlan(ctx, prep);
+    const layeringMode = (0, layeringModes_1.resolveLayeringMode)(prep.manual);
+    if (layeringMode === 'static' || layeringMode === 'dynamic') {
+        return (0, layeringModeIntegration_1.runLayeringModeRangeEntry)(prep);
+    }
     const strictBrokerPlaced = await (0, strictEntryPending_1.placeStrictSignalEntryPending)(ctx, prep, false);
-    const brokerPendingMode = useBrokerRangePendingLegs(prep);
+    const brokerPendingMode = shouldUseBrokerRangePendingLegs(prep);
     let materializedPendings = false;
     if (brokerPendingMode) {
         // 100% reserved (no immediates): place limits from quote/signal anchor now.
