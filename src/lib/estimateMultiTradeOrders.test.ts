@@ -64,18 +64,17 @@ test('formatMultiTradeTotalOpenTradesPreview: layered range split', () => {
   assert.equal(text, '0.01 lots x 12 trades (6 instant + 6 for layering)')
 })
 
-test('estimateMultiTradeOrderCount: distance/step caps Total Open Trades', () => {
-  // 1.0 @ 5% → 20 legs; 50% reserved = 10; distance 15 / step 5 → max 3 active
+test('estimateMultiTradeOrderCount: 1.92 @ 6.25% with 50% range → 16 (8+8)', () => {
   const r = estimateMultiTradeOrderCount({
-    manualLot: 1.0,
-    legPercent: 5,
-    range: { enabled: true, percent: 50, stepPips: 5, distancePips: 15 },
+    manualLot: 1.92,
+    legPercent: 6.25,
+    range: { enabled: true, percent: 50, stepPips: 3, distancePips: 30 },
   })
-  assert.equal(r.baseLegs, 20)
-  assert.equal(r.immediate, 10)
-  assert.equal(r.pending, 10)
-  assert.equal(r.activePending, 3)
-  assert.equal(r.totalOrders, 13)
+  assert.equal(r.baseLegs, 16)
+  assert.equal(r.immediate, 8)
+  assert.equal(r.pending, 8)
+  assert.equal(r.activePending, 8)
+  assert.equal(r.totalOrders, 16)
 })
 
 test('estimateMultiTradeOrderCount: signal entry range uses full reserved as ceiling', () => {

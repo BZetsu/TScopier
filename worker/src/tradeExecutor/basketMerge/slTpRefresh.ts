@@ -791,13 +791,19 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
         ?? virtualPendings.length
       const basketLegCap = plan.rangeLayering?.basketLegCap
         ?? (plannedImmediateLegs + plannedRangeLegs)
+      // Cap inserts by Total Open Trades. Prefer planned granular immediate count so
+      // OrderSend consolidation cannot inflate the layering budget.
+      const rangeBudget = Math.min(
+        plannedRangeLegs,
+        Math.max(0, basketLegCap - plannedImmediateLegs),
+      )
       const ladderSync = await syncRangePendingLadderOnBasketRefresh({
         supabase: ctx.supabase,
         scope: { signalId: anchorSignalId, brokerAccountId: broker.id, symbol },
         virtualPendings,
         openTradeCount: familyTrades.length,
         plannedImmediateLegs,
-        plannedRangeLegs: Math.max(0, basketLegCap - plannedImmediateLegs),
+        plannedRangeLegs: rangeBudget,
         channelParams: channelParamsForLadder,
         tpLots: manual.tp_lots,
         buildInsertRow: (v) => {

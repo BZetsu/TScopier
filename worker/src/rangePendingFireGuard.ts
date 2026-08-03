@@ -192,43 +192,69 @@ export async function loadBasketLegCap(
     .limit(1)
     .maybeSingle()
   const payload = (ins as { request_payload?: Record<string, unknown> } | null)?.request_payload
-  if (!payload) return null
+  if (payload) {
+    const explicitCap = Number(payload.basket_leg_cap)
+    if (Number.isFinite(explicitCap) && explicitCap > 0) {
+      return Math.max(1, Math.floor(explicitCap))
+    }
 
-  const explicitCap = Number(payload.basket_leg_cap)
-  if (Number.isFinite(explicitCap) && explicitCap > 0) {
-    return Math.max(1, Math.floor(explicitCap))
+    const rl = payload.range_layering as Record<string, unknown> | null | undefined
+    const metaCap = Number(rl?.basketLegCap)
+    if (Number.isFinite(metaCap) && metaCap > 0) {
+      return Math.max(1, Math.floor(metaCap))
+    }
+
+    const plannedImm = Number(rl?.plannedImmediateLegs ?? payload.planned_immediate_legs)
+    const plannedRange = Number(
+      rl?.activePendingLegs
+      ?? payload.planned_range_legs
+      ?? payload.rows
+      ?? 0,
+    )
+    if (Number.isFinite(plannedImm) && plannedImm >= 0 && Number.isFinite(plannedRange) && plannedRange > 0) {
+      return Math.max(1, Math.floor(plannedImm + plannedRange))
+    }
+
+    const rangeRows = Number(payload.rows ?? 0)
+    if (Number.isFinite(rangeRows) && rangeRows > 0) {
+      const { count: immCount } = await supabase
+        .from('trade_execution_logs')
+        .select('id', { count: 'exact', head: true })
+        .eq('signal_id', signalId)
+        .eq('broker_account_id', brokerAccountId)
+        .eq('action', 'order_send')
+        .eq('status', 'success')
+
+      const imm = immCount ?? 0
+      return Math.max(1, rangeRows + imm)
+    }
   }
 
-  const rl = payload.range_layering as Record<string, unknown> | null | undefined
-  const metaCap = Number(rl?.basketLegCap)
-  if (Number.isFinite(metaCap) && metaCap > 0) {
-    return Math.max(1, Math.floor(metaCap))
-  }
-
-  const plannedImm = Number(rl?.plannedImmediateLegs ?? payload.planned_immediate_legs)
-  const plannedRange = Number(
-    rl?.activePendingLegs
-    ?? payload.planned_range_legs
-    ?? payload.rows
-    ?? 0,
-  )
-  if (Number.isFinite(plannedImm) && plannedImm >= 0 && Number.isFinite(plannedRange) && plannedRange > 0) {
-    return Math.max(1, Math.floor(plannedImm + plannedRange))
-  }
-
-  const rangeRows = Number(payload.rows ?? 0)
-  if (!Number.isFinite(rangeRows) || rangeRows <= 0) return null
-
-  const { count: immCount } = await supabase
+  // Live-fast deferred materialize used to skip the insert log — fall back to multi_range_plan.
+  const { data: planLog } = await supabase
     .from('trade_execution_logs')
-    .select('id', { count: 'exact', head: true })
+    .select('request_payload')
     .eq('signal_id', signalId)
     .eq('broker_account_id', brokerAccountId)
-    .eq('action', 'order_send')
+    .eq('action', 'multi_range_plan')
     .eq('status', 'success')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  const planPayload = (planLog as { request_payload?: Record<string, unknown> } | null)?.request_payload
+  if (planPayload) {
+    const planCap = Number(planPayload.basket_leg_cap)
+    if (Number.isFinite(planCap) && planCap > 0) {
+      return Math.max(1, Math.floor(planCap))
+    }
+    const imm = Number(planPayload.planned_immediate_legs ?? planPayload.immediate_orders ?? 0)
+    const range = Number(planPayload.planned_range_legs ?? planPayload.virtual_pending_rows ?? 0)
+    if (Number.isFinite(imm) && imm >= 0 && Number.isFinite(range) && range >= 0 && imm + range > 0) {
+      return Math.max(1, Math.floor(imm + range))
+    }
+  }
 
-  const imm = immCount ?? 0
-  return Math.max(1, rangeRows + imm)
+  return null
 }
 
 export type OpenBasketTrade = {
