@@ -206,6 +206,10 @@ export interface ConfigureModalTranslations {
     reservedLotHint: string
     stepPips: string
     stepPipsFallback: string
+    stepModeAuto: string
+    stepModeManual: string
+    stepManualPips: string
+    stepManualPipsFallback: string
     rangeDistance: string
     rangeDistanceFallback: string
     layerTillClose: string

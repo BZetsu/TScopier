@@ -16,6 +16,8 @@ type TradeStyleCarrier = {
     | 'range_percent'
     | 'range_step_pips'
     | 'range_distance_pips'
+    | 'range_layering_type'
+    | 'use_signal_entry_range'
   > | null
 }
 

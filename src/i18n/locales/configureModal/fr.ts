@@ -227,6 +227,10 @@ export const configureModalFr: ConfigureModalTranslations = {
     reservedLotHint: 'Part des jambes totales réservées en ordres en attente.',
     stepPips: 'Pas (pips par échelon)',
     stepPipsFallback: 'Pips entre les ordres en attente.',
+    stepModeAuto: 'Auto',
+    stepModeManual: 'Manual',
+    stepManualPips: 'Pip step',
+    stepManualPipsFallback: 'Fixed pip distance between each layer.',
     rangeDistance: 'Distance de range (pips)',
     rangeDistanceFallback:
       'La distance du range fournie par votre fournisseur de signaux. Elle détermine jusqu’où la position est échelonnée.',

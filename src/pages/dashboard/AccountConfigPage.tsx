@@ -290,6 +290,8 @@ function riskNumberRules(
     case 'range_percent':
       return { min: 0, max: 100 }
     case 'range_step_pips':
+      // Manual mode only — Auto is selected via dropdown (stores 0).
+      return { min: 1, positive: true }
     case 'range_distance_pips':
       return { min: 1 }
     case 'static_layer_count':
@@ -432,7 +434,7 @@ function normalizeManualSettings(
     return Number.isFinite(v) ? v : fallback
   }
   const rangePercent = Math.max(0, Math.min(100, readNumber('range_percent', DEFAULT_MANUAL_SETTINGS.range_percent ?? 50)))
-  const rangeStepPips = Math.max(0, readNumber('range_step_pips', DEFAULT_MANUAL_SETTINGS.range_step_pips ?? 3))
+  const rangeStepPips = Math.max(0, readNumber('range_step_pips', DEFAULT_MANUAL_SETTINGS.range_step_pips ?? 0))
   const rangeDistancePips = Math.max(0, readNumber('range_distance_pips', DEFAULT_MANUAL_SETTINGS.range_distance_pips ?? 30))
   const rangeLayerTillClose = (j as Record<string, unknown>).range_layer_till_close === true
   const rangeLayeringTypeRaw = String((j as Record<string, unknown>).range_layering_type ?? 'auto').toLowerCase()
@@ -441,7 +443,8 @@ function normalizeManualSettings(
   const useSignalEntryRange = (j as Record<string, unknown>).use_signal_entry_range === true
   const layeringModeSettings = normalizeLayeringModeSettings({
     ...(j as Record<string, unknown>),
-    range_step_pips: rangeStepPips,
+    // dynamic_step fallback needs a positive value; Auto (0) maps to default dynamic step.
+    range_step_pips: rangeStepPips > 0 ? rangeStepPips : 3,
   })
   const closeWorseEntries = (j as Record<string, unknown>).close_worse_entries === true
   const closeWorseEntriesPips = Math.max(0, readNumber('close_worse_entries_pips', DEFAULT_MANUAL_SETTINGS.close_worse_entries_pips ?? 30))
@@ -1257,7 +1260,7 @@ export function AccountConfigPage() {
       ? {
           enabled: true,
           percent: Number(ms.range_percent ?? 50) || 0,
-          stepPips: Number(ms.range_step_pips ?? DEFAULT_MANUAL_SETTINGS.range_step_pips) || 0,
+          stepPips: Number(ms.range_step_pips ?? 0) || 0,
           distancePips: Number(ms.range_distance_pips ?? DEFAULT_MANUAL_SETTINGS.range_distance_pips) || 0,
           useSignalEntryRange: ms.use_signal_entry_range === true,
         }
@@ -3328,19 +3331,45 @@ export function AccountConfigPage() {
                                           50,
                                         )}
                                       />
-                                      <ConfigureInput
+                                      <ConfigureSelect
                                         label={cm.risk.stepPips}
-                                        placeholder="10"
-                                        hint={
-                                          formatPipHint(Number(channelManualSettings.range_step_pips ?? DEFAULT_MANUAL_SETTINGS.range_step_pips) || 0)
-                                          ?? cm.risk.stepPipsFallback
-                                        }
-                                        {...riskNumberFieldProps(
-                                          'range_step_pips',
-                                          channelManualSettings.range_step_pips,
-                                          DEFAULT_MANUAL_SETTINGS.range_step_pips ?? 3,
-                                        )}
+                                        hint={cm.risk.stepPipsFallback}
+                                        value={Number(channelManualSettings.range_step_pips) > 0 ? 'manual' : 'auto'}
+                                        onChange={e => {
+                                          const next = e.target.value === 'manual' ? 'manual' : 'auto'
+                                          setRiskNumberDrafts(prev => {
+                                            if (!Object.prototype.hasOwnProperty.call(prev, 'range_step_pips')) return prev
+                                            const cleared = { ...prev }
+                                            delete cleared.range_step_pips
+                                            return cleared
+                                          })
+                                          if (next === 'auto') {
+                                            setManual({ range_step_pips: 0 })
+                                            return
+                                          }
+                                          const current = Number(channelManualSettings.range_step_pips)
+                                          setManual({ range_step_pips: current > 0 ? current : 3 })
+                                        }}
+                                        options={[
+                                          { value: 'auto', label: cm.risk.stepModeAuto },
+                                          { value: 'manual', label: cm.risk.stepModeManual },
+                                        ]}
                                       />
+                                      {Number(channelManualSettings.range_step_pips) > 0 && (
+                                        <ConfigureInput
+                                          label={cm.risk.stepManualPips}
+                                          placeholder="3"
+                                          hint={
+                                            formatPipHint(Number(channelManualSettings.range_step_pips))
+                                            ?? cm.risk.stepManualPipsFallback
+                                          }
+                                          {...riskNumberFieldProps(
+                                            'range_step_pips',
+                                            channelManualSettings.range_step_pips,
+                                            3,
+                                          )}
+                                        />
+                                      )}
                                       <ConfigureInput
                                         label={cm.risk.rangeDistance}
                                         placeholder="100"
