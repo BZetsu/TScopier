@@ -70,7 +70,6 @@ export function normalizeManualSettingsForExecution(
       rangeStepPips: Number(j.range_step_pips),
       rangeDistancePips: Number(j.range_distance_pips),
       useSignalEntryRange: j.use_signal_entry_range === true,
-      forceAutoStep: j.range_layering_type !== 'pending_order',
     })
     if (preview > 0) maxOrders = preview
   }

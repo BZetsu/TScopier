@@ -722,12 +722,12 @@ test('planManualOrders: Total Open Trades ceiling holds when multi_trade_max_ord
   assert.equal(plan.orders.length + v.length, 16)
 })
 
-test('planManualOrders: virtual layering uses Auto step (fills distance with reserved legs)', () => {
+test('planManualOrders: Auto step (0) fills distance with reserved legs', () => {
   const manual: ManualSettings = {
     ...baseManual,
     multi_trade_leg_percent: 3,
     range_percent: 50,
-    range_step_pips: 3, // ignored in virtual mode
+    range_step_pips: 0,
     range_distance_pips: 50,
     range_layering_type: 'auto',
   }
@@ -749,6 +749,35 @@ test('planManualOrders: virtual layering uses Auto step (fills distance with res
   assert.equal(plan.rangeLayering?.activePendingLegs, 17)
   assert.ok(Math.abs((plan.rangeLayering?.effectiveStepPips ?? 0) - (50 / 17)) < 1e-9)
   assert.equal(plan.fallback_reason, 'range_trading_step_auto')
+})
+
+test('planManualOrders: virtual Manual step distance-caps active legs', () => {
+  const manual: ManualSettings = {
+    ...baseManual,
+    multi_trade_leg_percent: 3,
+    range_percent: 50,
+    range_step_pips: 10,
+    range_distance_pips: 50,
+    range_layering_type: 'auto',
+  }
+  const plan = planManualOrders({
+    parsed: baseParsed,
+    resolvedSymbol: 'XAUUSDm',
+    baseOperation: 'Buy',
+    manual,
+    channelKeywords: null,
+    manualLot: 5.0,
+    ctx: {
+      ...baseCtx,
+      stopsLevel: 100,
+    },
+    commentPrefix: 'TScopier:abc',
+  })
+  // 5.0 @ 3% → 33 legs; 50% → 17 reserved; floor(50/10) → 5 active
+  assert.equal(plan.rangeLayering?.reservedPendingLegs, 17)
+  assert.equal(plan.rangeLayering?.activePendingLegs, 5)
+  assert.equal(plan.rangeLayering?.effectiveStepPips, 10)
+  assert.equal(plan.fallback_reason, 'range_trading_distance_capped')
 })
 
 test('planManualOrders: multi + BuyLimit + range uses market immediates but still emits virtual pendings', () => {
@@ -1598,7 +1627,7 @@ test('planManualOrders: signal range buy virtual triggers do not go below zone l
 })
 
 test('planManualOrders: sell signal zone virtual triggers pin deepest to zone high', () => {
-  // Virtual mode always Auto-steps; zone curve still pins deepest rung to boundary.
+  // Auto step + zone curve pins deepest rung to boundary.
   const manual: ManualSettings = {
     ...baseManual,
     range_percent: 100,
