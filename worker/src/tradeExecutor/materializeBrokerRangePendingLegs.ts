@@ -4,7 +4,6 @@ import { buildRangeLayerTriggerMap } from '../manualPlanning/rangeLayerTriggers'
 import { clampOrderStops, roundLot, triggerPriceFor, virtualPendingTriggerAllowed } from './helpers'
 import type { PreparedEntry } from './entryPrepare'
 import {
-  brokerRangeStepIdxForLeg,
   resolveBrokerRangeLadderPricing,
   snapPriceToSymbolGrid,
 } from './brokerRangeLadderPricing'
@@ -91,10 +90,51 @@ export async function materializeBrokerRangePendingLegs(
   }
   const haveQuote = Number.isFinite(bid) && bid > 0 && Number.isFinite(ask) && ask > 0
 
-  const pendingLegsForMap = virtualPendings.map((v, i) => ({
-    stepIdx: brokerRangeStepIdxForLeg(i, ladder.maxStepIdx),
-    stepPriceOffset: ladder.stepPriceOffset,
-    isBuy: plan.isBuy ?? v.isBuy,
+  // Coalesce duplicate stepIdx legs (legacy cycling) into one order with summed volume.
+  type CoalescedLeg = {
+    stepIdx: number
+    volume: number
+    isBuy: boolean
+    stoploss: number | null | undefined
+    takeprofit: number | null | undefined
+    cweClosePrice: number | null | undefined
+    slippage: number | undefined
+    comment: string | undefined
+    expertID: number | null | undefined
+    expiryHours: number | undefined
+    stepPriceOffset: number
+  }
+  const coalescedByStep = new Map<number, CoalescedLeg>()
+  for (let i = 0; i < virtualPendings.length; i++) {
+    const v = virtualPendings[i]!
+    const stepIdx = Number.isFinite(v.stepIdx) && v.stepIdx > 0
+      ? Math.floor(v.stepIdx)
+      : (i + 1)
+    const existing = coalescedByStep.get(stepIdx)
+    if (existing) {
+      existing.volume = Number((existing.volume + Number(v.volume || 0)).toFixed(8))
+      continue
+    }
+    coalescedByStep.set(stepIdx, {
+      stepIdx,
+      volume: Number(v.volume || 0),
+      isBuy: plan.isBuy ?? v.isBuy,
+      stoploss: v.stoploss,
+      takeprofit: v.takeprofit,
+      cweClosePrice: v.cweClosePrice,
+      slippage: v.slippage,
+      comment: v.comment,
+      expertID: v.expertID,
+      expiryHours: v.expiryHours,
+      stepPriceOffset: ladder.stepPriceOffset || v.stepPriceOffset,
+    })
+  }
+  const coalescedLegs = [...coalescedByStep.values()].sort((a, b) => a.stepIdx - b.stepIdx)
+
+  const pendingLegsForMap = coalescedLegs.map(v => ({
+    stepIdx: v.stepIdx,
+    stepPriceOffset: v.stepPriceOffset,
+    isBuy: v.isBuy,
   }))
   const triggerMap = buildRangeLayerTriggerMap({
     virtualPendings: pendingLegsForMap,
@@ -106,17 +146,17 @@ export async function materializeBrokerRangePendingLegs(
 
   const plannedEntries: RangePendingCandidate[] = []
   const plannedStepIdxs = new Set<number>()
-  for (let i = 0; i < virtualPendings.length; i++) {
-    const v = virtualPendings[i]!
-    const stepIdx = brokerRangeStepIdxForLeg(i, ladder.maxStepIdx)
+  const seenPrices = new Set<string>()
+  for (const v of coalescedLegs) {
+    const stepIdx = v.stepIdx
     const legForPrice = {
-      ...v,
       stepIdx,
-      stepPriceOffset: ladder.stepPriceOffset,
-      isBuy,
+      stepPriceOffset: v.stepPriceOffset,
+      isBuy: v.isBuy,
     }
     const raw = triggerMap.get(stepIdx) ?? triggerPriceFor(legForPrice, anchor, ladder.digits)
     const price = snapPriceToSymbolGrid(raw, point, ladder.digits)
+    plannedStepIdxs.add(stepIdx)
     if (!virtualPendingTriggerAllowed({
       triggerPrice: price,
       signalRangeBoundary,
@@ -127,45 +167,26 @@ export async function materializeBrokerRangePendingLegs(
       signalZoneHi,
       useSignalEntryRange,
     })) {
-      plannedStepIdxs.add(stepIdx)
       continue
     }
-    plannedStepIdxs.add(stepIdx)
+    const priceKey = price.toFixed(ladder.digits)
+    if (seenPrices.has(priceKey)) continue
+    seenPrices.add(priceKey)
     plannedEntries.push({ stepIdx, price })
   }
 
   const candidates = orderRangePendingCandidates(plannedEntries, isBuy)
   const usedOrExhaustedStepIdxs = new Set<number>()
+  const usedPrices = new Set<string>()
   const exhaustedInvalidSteps = new Map<number, { price: number; reason: string }>()
   const remaps: Array<{ fromStepIdx: number; fromPrice: number; toStepIdx: number; toPrice: number; reason: string }> = []
 
   const insertRows: Record<string, unknown>[] = []
   const placedTickets: Array<{ ticket: number; row: Record<string, unknown> }> = []
 
-  for (let i = 0; i < virtualPendings.length; i++) {
-    const v = virtualPendings[i]!
-    const plannedStepIdx = brokerRangeStepIdxForLeg(i, ladder.maxStepIdx)
-    const plannedPrice = snapPriceToSymbolGrid(
-      triggerMap.get(plannedStepIdx)
-        ?? triggerPriceFor({
-          ...v,
-          stepIdx: plannedStepIdx,
-          stepPriceOffset: ladder.stepPriceOffset,
-          isBuy,
-        }, anchor, ladder.digits),
-      point,
-      ladder.digits,
-    )
-    const vol = roundLot(v.volume, params)
-
-    let placed = false
-    let attempts = 0
-    const maxAttempts = Math.max(1, candidates.length)
-
-    while (!placed && attempts < maxAttempts) {
-      attempts += 1
-
-      let pick: RangePendingCandidate | null = null
+  const pickNextCandidate = (): RangePendingCandidate | null => {
+    const tryCount = Math.max(1, candidates.length)
+    for (let n = 0; n < tryCount; n++) {
       if (haveQuote) {
         const next = nextValidRangePendingPrice({
           candidates,
@@ -183,16 +204,58 @@ export async function materializeBrokerRangePendingLegs(
             price: skipped.price,
             reason: skipped.reason,
           })
+          usedPrices.add(snapPriceToSymbolGrid(skipped.price, point, ladder.digits).toFixed(ladder.digits))
         }
-        pick = next.candidate
-      } else {
-        // No quote: fall back to first unused candidate (broker may still reject).
-        pick = candidates.find(c => !usedOrExhaustedStepIdxs.has(c.stepIdx)) ?? null
+        const c = next.candidate
+        if (!c) return null
+        const key = snapPriceToSymbolGrid(c.price, point, ladder.digits).toFixed(ladder.digits)
+        if (usedPrices.has(key)) {
+          usedOrExhaustedStepIdxs.add(c.stepIdx)
+          continue
+        }
+        return c
       }
+      const c = candidates.find(x => {
+        if (usedOrExhaustedStepIdxs.has(x.stepIdx)) return false
+        const key = snapPriceToSymbolGrid(x.price, point, ladder.digits).toFixed(ladder.digits)
+        return !usedPrices.has(key)
+      }) ?? null
+      return c
+    }
+    return null
+  }
 
+  for (const v of coalescedLegs) {
+    const plannedStepIdx = v.stepIdx
+    const plannedPrice = snapPriceToSymbolGrid(
+      triggerMap.get(plannedStepIdx)
+        ?? triggerPriceFor({
+          stepIdx: plannedStepIdx,
+          stepPriceOffset: v.stepPriceOffset,
+          isBuy: v.isBuy,
+        }, anchor, ladder.digits),
+      point,
+      ladder.digits,
+    )
+    const vol = roundLot(v.volume, params)
+
+    let placed = false
+    let attempts = 0
+    const maxAttempts = Math.max(1, candidates.length)
+
+    while (!placed && attempts < maxAttempts) {
+      attempts += 1
+
+      const pick = pickNextCandidate()
       if (!pick) break
 
       const limitPx = snapPriceToSymbolGrid(pick.price, point, ladder.digits)
+      const priceKey = limitPx.toFixed(ladder.digits)
+      if (usedPrices.has(priceKey) || usedOrExhaustedStepIdxs.has(pick.stepIdx)) {
+        usedOrExhaustedStepIdxs.add(pick.stepIdx)
+        continue
+      }
+
       const sendArgs: OrderSendArgs = {
         symbol,
         operation: pendingOp,
@@ -224,6 +287,7 @@ export async function materializeBrokerRangePendingLegs(
             result = await api.orderSend(uuid, { ...clamped.args, stoploss: 0, takeprofit: 0 })
           } else if (isBrokerPendingLimitPriceRejectMessage(msg)) {
             usedOrExhaustedStepIdxs.add(pick.stepIdx)
+            usedPrices.add(priceKey)
             exhaustedInvalidSteps.set(pick.stepIdx, { price: limitPx, reason: msg })
             console.warn(
               `[tradeExecutor] broker range pending price rejected signal=${signal.id}`
@@ -235,6 +299,7 @@ export async function materializeBrokerRangePendingLegs(
               `[tradeExecutor] broker range pending rejected signal=${signal.id} step=${pick.stepIdx} op=${pendingOp} price=${limitPx}: ${msg}`,
             )
             usedOrExhaustedStepIdxs.add(pick.stepIdx)
+            usedPrices.add(priceKey)
             break
           }
         }
@@ -245,6 +310,7 @@ export async function materializeBrokerRangePendingLegs(
             `[tradeExecutor] broker range pending missing ticket signal=${signal.id} step=${pick.stepIdx}`,
           )
           usedOrExhaustedStepIdxs.add(pick.stepIdx)
+          usedPrices.add(priceKey)
           break
         }
 
@@ -263,6 +329,7 @@ export async function materializeBrokerRangePendingLegs(
         }
 
         usedOrExhaustedStepIdxs.add(pick.stepIdx)
+        usedPrices.add(priceKey)
         exhaustedInvalidSteps.delete(pick.stepIdx)
 
         const expiresAt = v.expiryHours && v.expiryHours > 0
@@ -297,6 +364,7 @@ export async function materializeBrokerRangePendingLegs(
         const msg = err instanceof Error ? err.message : String(err)
         if (isBrokerPendingLimitPriceRejectMessage(msg)) {
           usedOrExhaustedStepIdxs.add(pick.stepIdx)
+          usedPrices.add(priceKey)
           exhaustedInvalidSteps.set(pick.stepIdx, { price: pick.price, reason: msg })
           console.warn(
             `[tradeExecutor] broker range pending price rejected signal=${signal.id}`
@@ -308,6 +376,7 @@ export async function materializeBrokerRangePendingLegs(
           `[tradeExecutor] broker range pending OrderSend failed signal=${signal.id} step=${pick.stepIdx}: ${msg}`,
         )
         usedOrExhaustedStepIdxs.add(pick.stepIdx)
+        usedPrices.add(priceKey)
         break
       }
     }

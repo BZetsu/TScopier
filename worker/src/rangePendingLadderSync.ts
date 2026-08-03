@@ -274,11 +274,16 @@ export async function syncRangePendingLadderOnBasketRefresh(args: {
     planByStep.set(v.stepIdx, v)
   }
 
-  const activeRows = existing.filter(r => r.status === 'pending' || r.status === 'claimed')
+  // Include broker_pending so basket refresh cannot re-insert the same step
+  // while a live broker limit row already exists.
+  const activeRows = existing.filter(r =>
+    r.status === 'pending' || r.status === 'claimed' || r.status === 'broker_pending',
+  )
   const maxTotalLegs = Math.max(0, plannedImmediateLegs + plannedRangeLegs)
   const activePendingCount = activeRows.length
 
   for (const row of activeRows) {
+    if (row.status === 'broker_pending') continue
     const planLeg = planByStep.get(row.step_idx)
     const computed = pendingLegStopsForBasketRefresh({
       row,

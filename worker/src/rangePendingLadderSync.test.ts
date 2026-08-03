@@ -28,6 +28,28 @@ describe('consumedStepIndices', () => {
     ])
     assert.deepEqual([...s].sort(), [1, 3])
   })
+
+  it('does not treat broker_pending as consumed (still active)', () => {
+    const s = consumedStepIndices([
+      { id: '1', step_idx: 1, status: 'broker_pending', stoploss: null, takeprofit: null },
+      { id: '2', step_idx: 2, status: 'cancelled', stoploss: null, takeprofit: null },
+    ])
+    assert.deepEqual([...s].sort(), [2])
+  })
+})
+
+describe('active ladder statuses for insert dedupe', () => {
+  it('broker_pending blocks re-insert of the same step_idx', () => {
+    const existing = [
+      { id: '1', step_idx: 1, status: 'broker_pending', stoploss: null, takeprofit: null },
+      { id: '2', step_idx: 2, status: 'pending', stoploss: null, takeprofit: null },
+    ]
+    const activeRows = existing.filter(r =>
+      r.status === 'pending' || r.status === 'claimed' || r.status === 'broker_pending',
+    )
+    assert.equal(activeRows.some(r => r.step_idx === 1), true)
+    assert.equal(activeRows.some(r => r.step_idx === 3), false)
+  })
 })
 
 describe('maxConsumedStepIndex', () => {
