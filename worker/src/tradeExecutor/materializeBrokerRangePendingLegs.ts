@@ -13,6 +13,10 @@ import {
   orderRangePendingCandidates,
   type RangePendingCandidate,
 } from './rangePendingPriceRemap'
+import { loadExistingRangeStepIndices } from '../rangePendingFireGuard'
+
+/** In-process single-flight for broker ladder OrderSends (signal+broker+symbol). */
+const brokerRangeMaterializeInflight = new Set<string>()
 
 export type MaterializeBrokerRangeOpts = {
   anchor?: number
@@ -29,6 +33,35 @@ export type MaterializeBrokerRangeOpts = {
  * cannot re-add them.
  */
 export async function materializeBrokerRangePendingLegs(
+  ctx: TradeExecutorContext,
+  prep: PreparedEntry,
+  strictBrokerPlaced: boolean,
+  opts?: MaterializeBrokerRangeOpts,
+): Promise<boolean> {
+  const {
+    signal, broker, api, uuid, symbol, virtualPendings,
+    params, plan, liveEntryFast, strictDeferred,
+  } = prep
+
+  if (!api || virtualPendings.length === 0) return false
+
+  const inflightKey = `${signal.id}:${broker.id}:${symbol}`
+  if (brokerRangeMaterializeInflight.has(inflightKey)) {
+    console.warn(
+      `[tradeExecutor] skip duplicate broker range materialize in-flight`
+      + ` signal=${signal.id} broker=${broker.id} symbol=${symbol}`,
+    )
+    return false
+  }
+  brokerRangeMaterializeInflight.add(inflightKey)
+  try {
+    return await materializeBrokerRangePendingLegsUnlocked(ctx, prep, strictBrokerPlaced, opts)
+  } finally {
+    brokerRangeMaterializeInflight.delete(inflightKey)
+  }
+}
+
+async function materializeBrokerRangePendingLegsUnlocked(
   ctx: TradeExecutorContext,
   prep: PreparedEntry,
   strictBrokerPlaced: boolean,
@@ -181,6 +214,42 @@ export async function materializeBrokerRangePendingLegs(
   const exhaustedInvalidSteps = new Map<number, { price: number; reason: string }>()
   const remaps: Array<{ fromStepIdx: number; fromPrice: number; toStepIdx: number; toPrice: number; reason: string }> = []
 
+  // Skip steps/prices already persisted (re-dispatch / deferred rematerialize).
+  const existingSteps = await loadExistingRangeStepIndices(
+    ctx.supabase,
+    signal.id,
+    broker.id,
+    symbol,
+  )
+  if (existingSteps.size > 0) {
+    for (const stepIdx of existingSteps) usedOrExhaustedStepIdxs.add(stepIdx)
+    const { data: existingRows } = await ctx.supabase
+      .from('range_pending_legs')
+      .select('step_idx, trigger_price, status')
+      .eq('signal_id', signal.id)
+      .eq('broker_account_id', broker.id)
+      .eq('symbol', symbol)
+      .limit(500)
+    for (const row of existingRows ?? []) {
+      const tp = Number((row as { trigger_price?: number }).trigger_price)
+      if (Number.isFinite(tp) && tp > 0) {
+        usedPrices.add(snapPriceToSymbolGrid(tp, point, ladder.digits).toFixed(ladder.digits))
+      }
+    }
+    const remaining = coalescedLegs.filter(l => !existingSteps.has(l.stepIdx))
+    if (remaining.length === 0) {
+      console.log(
+        `[tradeExecutor] broker range pending: all ${existingSteps.size} step(s) already exist`
+        + ` signal=${signal.id} broker=${broker.id}`,
+      )
+      return true
+    }
+    console.log(
+      `[tradeExecutor] broker range pending: skipping ${existingSteps.size} existing step(s),`
+      + ` placing ${remaining.length} remaining signal=${signal.id} broker=${broker.id}`,
+    )
+  }
+
   const insertRows: Record<string, unknown>[] = []
   const placedTickets: Array<{ ticket: number; row: Record<string, unknown> }> = []
 
@@ -225,7 +294,11 @@ export async function materializeBrokerRangePendingLegs(
     return null
   }
 
-  for (const v of coalescedLegs) {
+  const legsToPlace = existingSteps.size > 0
+    ? coalescedLegs.filter(l => !existingSteps.has(l.stepIdx))
+    : coalescedLegs
+
+  for (const v of legsToPlace) {
     const plannedStepIdx = v.stepIdx
     const plannedPrice = snapPriceToSymbolGrid(
       triggerMap.get(plannedStepIdx)

@@ -31,3 +31,10 @@ test('broker range pending: unique stepIdx — no duplicate prices from cycling'
   assert.deepEqual(triggers, [4500.02, 4500.04, 4500.06])
   assert.equal(new Set(triggers).size, triggers.length)
 })
+
+test('broker range rematerialize skips existing step indices', () => {
+  const planned = [1, 2, 3, 4, 5]
+  const existing = new Set([1, 2, 3])
+  const remaining = planned.filter(s => !existing.has(s))
+  assert.deepEqual(remaining, [4, 5])
+})
