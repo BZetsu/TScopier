@@ -195,7 +195,11 @@ export function computeCweTp(
   })
 }
 
-export function triggerPriceFor(leg: VirtualPendingLeg, anchor: number, digits: number): number {
+export function triggerPriceFor(
+  leg: Pick<VirtualPendingLeg, 'isBuy' | 'stepIdx' | 'stepPriceOffset'>,
+  anchor: number,
+  digits: number,
+): number {
   const dir = leg.isBuy ? -1 : 1
   const px = anchor + dir * leg.stepIdx * leg.stepPriceOffset
   const d = Math.max(0, Math.min(8, Math.floor(digits)))
