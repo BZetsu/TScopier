@@ -797,6 +797,18 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
         plannedRangeLegs,
         Math.max(0, basketLegCap - plannedImmediateLegs),
       )
+      const brokerPendingLayering =
+        manual.range_layering_type === 'pending_order'
+        || plan.rangeLayering?.rangeLayeringType === 'pending_order'
+      // Broker Pending mode places live limits via materializeBrokerRangePendingLegs.
+      // Never insert virtual `pending` rungs on refresh — that would race the broker
+      // ladder and fire duplicate market fills beside the same SellLimit/BuyLimit prices.
+      if (brokerPendingLayering) {
+        console.log(
+          `[tradeExecutor] basket_refresh skip virtual ladder insert (broker pending mode)`
+          + ` signal=${signal.id} anchor=${anchorSignalId} planned_range=${rangeBudget}`,
+        )
+      } else {
       const ladderSync = await syncRangePendingLadderOnBasketRefresh({
         supabase: ctx.supabase,
         scope: { signalId: anchorSignalId, brokerAccountId: broker.id, symbol },
@@ -854,6 +866,7 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
           + ` updated=${ladderSync.updated} inserted=${ladderSync.inserted}`
           + ` skip_consumed=${ladderSync.skippedConsumed} skip_cap=${ladderSync.skippedCap}`,
         )
+      }
       }
     }
 

@@ -13,6 +13,12 @@ import {
   orderRangePendingCandidates,
   type RangePendingCandidate,
 } from './rangePendingPriceRemap'
+import { loadExistingRangeStepIndices } from '../rangePendingFireGuard'
+import { isPostgresDuplicateKeyError } from '../rangePendingLegPersist'
+import { brokerLimitPriceKeysFromOpenedOrders } from './brokerPendingOpenedDedupe'
+
+/** In-process single-flight for broker ladder OrderSends (signal+broker+symbol). */
+const brokerRangeMaterializeInflight = new Set<string>()
 
 export type MaterializeBrokerRangeOpts = {
   anchor?: number
@@ -29,6 +35,35 @@ export type MaterializeBrokerRangeOpts = {
  * cannot re-add them.
  */
 export async function materializeBrokerRangePendingLegs(
+  ctx: TradeExecutorContext,
+  prep: PreparedEntry,
+  strictBrokerPlaced: boolean,
+  opts?: MaterializeBrokerRangeOpts,
+): Promise<boolean> {
+  const {
+    signal, broker, api, uuid, symbol, virtualPendings,
+    params, plan, liveEntryFast, strictDeferred,
+  } = prep
+
+  if (!api || virtualPendings.length === 0) return false
+
+  const inflightKey = `${signal.id}:${broker.id}:${symbol}`
+  if (brokerRangeMaterializeInflight.has(inflightKey)) {
+    console.warn(
+      `[tradeExecutor] skip duplicate broker range materialize in-flight`
+      + ` signal=${signal.id} broker=${broker.id} symbol=${symbol}`,
+    )
+    return false
+  }
+  brokerRangeMaterializeInflight.add(inflightKey)
+  try {
+    return await materializeBrokerRangePendingLegsUnlocked(ctx, prep, strictBrokerPlaced, opts)
+  } finally {
+    brokerRangeMaterializeInflight.delete(inflightKey)
+  }
+}
+
+async function materializeBrokerRangePendingLegsUnlocked(
   ctx: TradeExecutorContext,
   prep: PreparedEntry,
   strictBrokerPlaced: boolean,
@@ -181,8 +216,71 @@ export async function materializeBrokerRangePendingLegs(
   const exhaustedInvalidSteps = new Map<number, { price: number; reason: string }>()
   const remaps: Array<{ fromStepIdx: number; fromPrice: number; toStepIdx: number; toPrice: number; reason: string }> = []
 
+  // Skip steps/prices already persisted (re-dispatch / deferred rematerialize).
+  const existingSteps = await loadExistingRangeStepIndices(
+    ctx.supabase,
+    signal.id,
+    broker.id,
+    symbol,
+  )
+  if (existingSteps.size > 0) {
+    for (const stepIdx of existingSteps) usedOrExhaustedStepIdxs.add(stepIdx)
+    const { data: existingRows } = await ctx.supabase
+      .from('range_pending_legs')
+      .select('step_idx, trigger_price, status')
+      .eq('signal_id', signal.id)
+      .eq('broker_account_id', broker.id)
+      .eq('symbol', symbol)
+      .limit(500)
+    for (const row of existingRows ?? []) {
+      const tp = Number((row as { trigger_price?: number }).trigger_price)
+      if (Number.isFinite(tp) && tp > 0) {
+        usedPrices.add(snapPriceToSymbolGrid(tp, point, ladder.digits).toFixed(ladder.digits))
+      }
+    }
+    const remaining = coalescedLegs.filter(l => !existingSteps.has(l.stepIdx))
+    if (remaining.length === 0) {
+      console.log(
+        `[tradeExecutor] broker range pending: all ${existingSteps.size} step(s) already exist`
+        + ` signal=${signal.id} broker=${broker.id}`,
+      )
+      return true
+    }
+    console.log(
+      `[tradeExecutor] broker range pending: skipping ${existingSteps.size} existing step(s),`
+      + ` placing ${remaining.length} remaining signal=${signal.id} broker=${broker.id}`,
+    )
+  }
+
+  // Seed used prices from live broker limits so a second materialize cannot
+  // OrderSend the same SellLimit/BuyLimit price again (even if DB rows lagged).
+  const signalNeedle = signal.id.slice(0, 8)
+  try {
+    const opened = await api.openedOrders(uuid)
+    const liveKeys = brokerLimitPriceKeysFromOpenedOrders({
+      openedOrders: opened,
+      symbol,
+      side,
+      digits: ladder.digits,
+      commentNeedle: signalNeedle,
+    })
+    if (liveKeys.size > 0) {
+      for (const k of liveKeys) usedPrices.add(k)
+      console.log(
+        `[tradeExecutor] broker range pending: adopting ${liveKeys.size} existing limit price(s)`
+        + ` signal=${signal.id} broker=${broker.id}`,
+      )
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(
+      `[tradeExecutor] broker range pending OpenedOrders dedupe failed signal=${signal.id}: ${msg}`,
+    )
+  }
+
   const insertRows: Record<string, unknown>[] = []
   const placedTickets: Array<{ ticket: number; row: Record<string, unknown> }> = []
+  let reservedAndConfirmed = 0
 
   const pickNextCandidate = (): RangePendingCandidate | null => {
     const tryCount = Math.max(1, candidates.length)
@@ -225,7 +323,62 @@ export async function materializeBrokerRangePendingLegs(
     return null
   }
 
-  for (const v of coalescedLegs) {
+  type ReserveResult =
+    | { kind: 'owned'; id: string }
+    | { kind: 'taken' }
+    | { kind: 'unreserved' }
+
+  const tryReserveStep = async (args: {
+    stepIdx: number
+    price: number
+    volume: number
+    leg: CoalescedLeg
+    expiresAt: string | null
+  }): Promise<ReserveResult> => {
+    const { error, data } = await ctx.supabase
+      .from('range_pending_legs')
+      .insert({
+        signal_id: signal.id,
+        user_id: signal.user_id,
+        broker_account_id: broker.id,
+        metaapi_account_id: uuid,
+        symbol,
+        step_idx: args.stepIdx,
+        is_buy: args.leg.isBuy,
+        volume: args.volume,
+        anchor_price: anchor,
+        trigger_price: args.price,
+        stoploss: args.leg.stoploss ?? null,
+        takeprofit: args.leg.takeprofit ?? null,
+        slippage: args.leg.slippage ?? 20,
+        comment: args.leg.comment,
+        expert_id: args.leg.expertID ?? null,
+        expires_at: args.expiresAt,
+        status: 'broker_pending',
+        ticket: null,
+        error_message: 'placing',
+        cwe_close_price: args.leg.cweClosePrice ?? null,
+      })
+      .select('id')
+      .maybeSingle()
+    if (!error && data && typeof (data as { id?: string }).id === 'string') {
+      return { kind: 'owned', id: (data as { id: string }).id }
+    }
+    if (isPostgresDuplicateKeyError(error)) return { kind: 'taken' }
+    if (error) {
+      console.warn(
+        `[tradeExecutor] broker range pending reserve failed signal=${signal.id}`
+        + ` step=${args.stepIdx}: ${error.message}`,
+      )
+    }
+    return { kind: 'unreserved' }
+  }
+
+  const legsToPlace = existingSteps.size > 0
+    ? coalescedLegs.filter(l => !existingSteps.has(l.stepIdx))
+    : coalescedLegs
+
+  for (const v of legsToPlace) {
     const plannedStepIdx = v.stepIdx
     const plannedPrice = snapPriceToSymbolGrid(
       triggerMap.get(plannedStepIdx)
@@ -253,6 +406,28 @@ export async function materializeBrokerRangePendingLegs(
       const priceKey = limitPx.toFixed(ladder.digits)
       if (usedPrices.has(priceKey) || usedOrExhaustedStepIdxs.has(pick.stepIdx)) {
         usedOrExhaustedStepIdxs.add(pick.stepIdx)
+        continue
+      }
+
+      // Claim this price immediately so inner remaps / concurrent workers cannot reuse it.
+      usedPrices.add(priceKey)
+      usedOrExhaustedStepIdxs.add(pick.stepIdx)
+
+      const expiresAt = v.expiryHours && v.expiryHours > 0
+        ? new Date(nowMs + v.expiryHours * 60 * 60 * 1000).toISOString()
+        : null
+      const reserve = await tryReserveStep({
+        stepIdx: pick.stepIdx,
+        price: limitPx,
+        volume: vol,
+        leg: v,
+        expiresAt,
+      })
+      if (reserve.kind === 'taken') {
+        console.log(
+          `[tradeExecutor] broker range pending step already reserved signal=${signal.id}`
+          + ` step=${pick.stepIdx} price=${limitPx}`,
+        )
         continue
       }
 
@@ -286,9 +461,18 @@ export async function materializeBrokerRangePendingLegs(
           if (isInvalidStops && hasStops) {
             result = await api.orderSend(uuid, { ...clamped.args, stoploss: 0, takeprofit: 0 })
           } else if (isBrokerPendingLimitPriceRejectMessage(msg)) {
-            usedOrExhaustedStepIdxs.add(pick.stepIdx)
-            usedPrices.add(priceKey)
             exhaustedInvalidSteps.set(pick.stepIdx, { price: limitPx, reason: msg })
+            if (reserve.kind === 'owned') {
+              await ctx.supabase
+                .from('range_pending_legs')
+                .update({
+                  status: 'cancelled',
+                  error_message: `skipped_invalid_price:${msg}`,
+                })
+                .eq('id', reserve.id)
+            }
+            // Free step for remap onto a deeper rung; keep price marked used.
+            usedOrExhaustedStepIdxs.delete(pick.stepIdx)
             console.warn(
               `[tradeExecutor] broker range pending price rejected signal=${signal.id}`
               + ` step=${pick.stepIdx} price=${limitPx}; trying next deeper rung: ${msg}`,
@@ -298,8 +482,12 @@ export async function materializeBrokerRangePendingLegs(
             console.warn(
               `[tradeExecutor] broker range pending rejected signal=${signal.id} step=${pick.stepIdx} op=${pendingOp} price=${limitPx}: ${msg}`,
             )
-            usedOrExhaustedStepIdxs.add(pick.stepIdx)
-            usedPrices.add(priceKey)
+            if (reserve.kind === 'owned') {
+              await ctx.supabase
+                .from('range_pending_legs')
+                .update({ status: 'cancelled', error_message: msg })
+                .eq('id', reserve.id)
+            }
             break
           }
         }
@@ -309,8 +497,12 @@ export async function materializeBrokerRangePendingLegs(
           console.warn(
             `[tradeExecutor] broker range pending missing ticket signal=${signal.id} step=${pick.stepIdx}`,
           )
-          usedOrExhaustedStepIdxs.add(pick.stepIdx)
-          usedPrices.add(priceKey)
+          if (reserve.kind === 'owned') {
+            await ctx.supabase
+              .from('range_pending_legs')
+              .update({ status: 'cancelled', error_message: 'missing_ticket' })
+              .eq('id', reserve.id)
+          }
           break
         }
 
@@ -328,13 +520,7 @@ export async function materializeBrokerRangePendingLegs(
           )
         }
 
-        usedOrExhaustedStepIdxs.add(pick.stepIdx)
-        usedPrices.add(priceKey)
         exhaustedInvalidSteps.delete(pick.stepIdx)
-
-        const expiresAt = v.expiryHours && v.expiryHours > 0
-          ? new Date(nowMs + v.expiryHours * 60 * 60 * 1000).toISOString()
-          : null
 
         const row: Record<string, unknown> = {
           signal_id: signal.id,
@@ -355,17 +541,64 @@ export async function materializeBrokerRangePendingLegs(
           expires_at: expiresAt,
           status: 'broker_pending',
           ticket: String(ticket),
+          error_message: null,
           cwe_close_price: v.cweClosePrice ?? null,
         }
-        insertRows.push(row)
+
+        if (reserve.kind === 'owned') {
+          const { error: updErr } = await ctx.supabase
+            .from('range_pending_legs')
+            .update({
+              ticket: String(ticket),
+              trigger_price: limitPx,
+              stoploss: row.stoploss,
+              takeprofit: row.takeprofit,
+              error_message: null,
+            })
+            .eq('id', reserve.id)
+            .eq('status', 'broker_pending')
+          if (updErr) {
+            console.warn(
+              `[tradeExecutor] broker range pending ticket update failed signal=${signal.id}`
+              + ` step=${pick.stepIdx}: ${updErr.message}`,
+            )
+            insertRows.push(row)
+          } else {
+            reservedAndConfirmed += 1
+          }
+        } else {
+          insertRows.push(row)
+        }
         placedTickets.push({ ticket: Number(ticket), row })
         placed = true
+
+        void ctx.supabase.from('trade_execution_logs').insert({
+          user_id: signal.user_id,
+          signal_id: signal.id,
+          broker_account_id: broker.id,
+          action: 'order_send',
+          status: 'success',
+          request_payload: {
+            ...clamped.args,
+            ticket: Number(ticket),
+            layering_type: 'pending_order',
+            step_idx: pick.stepIdx,
+          } as unknown as Record<string, unknown>,
+        }).then(() => undefined, () => undefined)
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
         if (isBrokerPendingLimitPriceRejectMessage(msg)) {
-          usedOrExhaustedStepIdxs.add(pick.stepIdx)
-          usedPrices.add(priceKey)
           exhaustedInvalidSteps.set(pick.stepIdx, { price: pick.price, reason: msg })
+          if (reserve.kind === 'owned') {
+            await ctx.supabase
+              .from('range_pending_legs')
+              .update({
+                status: 'cancelled',
+                error_message: `skipped_invalid_price:${msg}`,
+              })
+              .eq('id', reserve.id)
+          }
+          usedOrExhaustedStepIdxs.delete(pick.stepIdx)
           console.warn(
             `[tradeExecutor] broker range pending price rejected signal=${signal.id}`
             + ` step=${pick.stepIdx}; trying next deeper rung: ${msg}`,
@@ -375,8 +608,12 @@ export async function materializeBrokerRangePendingLegs(
         console.warn(
           `[tradeExecutor] broker range pending OrderSend failed signal=${signal.id} step=${pick.stepIdx}: ${msg}`,
         )
-        usedOrExhaustedStepIdxs.add(pick.stepIdx)
-        usedPrices.add(priceKey)
+        if (reserve.kind === 'owned') {
+          await ctx.supabase
+            .from('range_pending_legs')
+            .update({ status: 'cancelled', error_message: msg })
+            .eq('id', reserve.id)
+        }
         break
       }
     }
@@ -384,7 +621,10 @@ export async function materializeBrokerRangePendingLegs(
 
   // Cancel remapped-away / invalid shallow steps so ladder sync cannot re-add them.
   const cancelledRows: Record<string, unknown>[] = []
-  const placedStepIdxs = new Set(insertRows.map(r => Number(r.step_idx)))
+  const placedStepIdxs = new Set([
+    ...insertRows.map(r => Number(r.step_idx)),
+    ...placedTickets.map(p => Number(p.row.step_idx)),
+  ])
   for (const [stepIdx, meta] of exhaustedInvalidSteps) {
     if (placedStepIdxs.has(stepIdx)) continue
     cancelledRows.push({
@@ -443,37 +683,44 @@ export async function materializeBrokerRangePendingLegs(
     })
   }
 
-  if (insertRows.length === 0 && cancelledRows.length === 0) return false
-
-  const allRows = [...insertRows, ...cancelledRows]
-  const persistLabel = `broker range pending signal=${signal.id} broker=${broker.id}`
-  const persist = await ctx.persistRangePendingLegRows(allRows, persistLabel)
-  if (!persist.ok) {
-    console.error(
-      `[tradeExecutor] broker range_pending_legs persist failed signal=${signal.id} broker=${broker.id}: ${persist.lastError ?? 'unknown'}`,
-    )
-    for (const { ticket } of placedTickets) {
-      try {
-        await api.orderClose(uuid, { ticket })
-      } catch { /* best-effort rollback */ }
-    }
-    if (!liveEntryFast) {
-      try {
-        await ctx.supabase.from('trade_execution_logs').insert({
-          user_id: signal.user_id,
-          signal_id: signal.id,
-          broker_account_id: broker.id,
-          action: 'range_broker_pending_failed',
-          status: 'failed',
-          request_payload: { rows: insertRows.length, anchor, anchorSource } as unknown as Record<string, unknown>,
-          error_message: persist.lastError ?? 'unknown',
-        })
-      } catch { /* best-effort */ }
-    }
+  if (insertRows.length === 0 && cancelledRows.length === 0 && reservedAndConfirmed === 0) {
+    // All prices may already exist on the broker from a prior materialize.
+    if (usedPrices.size > 0 && existingSteps.size > 0) return true
     return false
   }
 
-  if (insertRows.length === 0) {
+  const allRows = [...insertRows, ...cancelledRows]
+  if (allRows.length > 0) {
+    const persistLabel = `broker range pending signal=${signal.id} broker=${broker.id}`
+    const persist = await ctx.persistRangePendingLegRows(allRows, persistLabel)
+    if (!persist.ok) {
+      console.error(
+        `[tradeExecutor] broker range_pending_legs persist failed signal=${signal.id} broker=${broker.id}: ${persist.lastError ?? 'unknown'}`,
+      )
+      for (const { ticket } of placedTickets) {
+        try {
+          await api.orderClose(uuid, { ticket })
+        } catch { /* best-effort rollback */ }
+      }
+      if (!liveEntryFast) {
+        try {
+          await ctx.supabase.from('trade_execution_logs').insert({
+            user_id: signal.user_id,
+            signal_id: signal.id,
+            broker_account_id: broker.id,
+            action: 'range_broker_pending_failed',
+            status: 'failed',
+            request_payload: { rows: insertRows.length, reservedAndConfirmed, anchor, anchorSource } as unknown as Record<string, unknown>,
+            error_message: persist.lastError ?? 'unknown',
+          })
+        } catch { /* best-effort */ }
+      }
+      return false
+    }
+  }
+
+  const placedTotal = insertRows.length + reservedAndConfirmed
+  if (placedTotal === 0) {
     console.warn(
       `[tradeExecutor] broker range pendings: no limits placed (cancelled=${cancelledRows.length})`
       + ` signal=${signal.id} broker=${broker.id}`,
@@ -483,6 +730,7 @@ export async function materializeBrokerRangePendingLegs(
 
   console.log(
     `[tradeExecutor] broker range pendings inserted=${insertRows.length}`
+    + ` reserved_confirmed=${reservedAndConfirmed}`
     + ` cancelled_invalid=${cancelledRows.length} remapped=${remaps.length}`
     + ` signal=${signal.id} broker=${broker.id} symbol=${symbol} anchor=${anchor} (${anchorSource})`
     + ` step_pips=${ladder.stepPips} dist_pips=${ladder.distPips} max_step_idx=${ladder.maxStepIdx}`
@@ -496,15 +744,22 @@ export async function materializeBrokerRangePendingLegs(
       action: 'range_broker_pending_inserted',
       status: 'success',
       request_payload: {
-        rows: insertRows.length,
+        rows: placedTotal,
+        reserved_confirmed: reservedAndConfirmed,
         cancelled_invalid: cancelledRows.length,
         remaps,
         anchor,
         anchorSource,
         symbol,
-        stepIdxs: insertRows.map(r => r.step_idx),
-        triggers: insertRows.map(r => r.trigger_price),
-        tickets: insertRows.map(r => r.ticket),
+        stepIdxs: [
+          ...insertRows.map(r => r.step_idx),
+          ...placedTickets.filter(p => !insertRows.includes(p.row)).map(p => p.row.step_idx),
+        ],
+        triggers: [
+          ...insertRows.map(r => r.trigger_price),
+          ...placedTickets.filter(p => !insertRows.includes(p.row)).map(p => p.row.trigger_price),
+        ],
+        tickets: placedTickets.map(p => p.ticket),
         range_layering: plan.rangeLayering ?? null,
         ladder_pricing: ladder,
         basket_leg_cap: plan.rangeLayering?.basketLegCap ?? null,
