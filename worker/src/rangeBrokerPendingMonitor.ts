@@ -2,7 +2,8 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { hasFxsocketConfigured, normalizeSymbolParams, type SymbolParams } from './fxsocketClient'
 import { apiForFxsocketAccount, loadPlatformByFxsocketId, type PlatformByFxsocketId } from './mtApiByAccount'
 import { autoManagementTradeSnapshot } from './autoManagement'
-import { tryApplyBasketFollowUpToNewFill } from './basketModFollowUp'
+import { tryApplyBasketFollowUpToNewFill, symbolsCompatibleForBasket } from './basketModFollowUp'
+import { assignNakedBrokerFillStops } from './brokerPendingFillStops'
 import { normalizeManualSettingsForExecution } from './manualPlanning/normalizeManualSettings'
 import { resolveChannelTradingConfig } from './channelTradingConfig'
 import { markRangeLegFired } from './rangePendingLadderSync'
@@ -49,6 +50,51 @@ function extractOpenPrice(raw: Record<string, unknown>): number | null {
   }
   const px = num(raw.openPrice ?? raw.OpenPrice ?? raw.price ?? raw.Price ?? raw.priceOpen ?? raw.PriceOpen)
   return px != null && px > 0 ? px : null
+}
+
+function readOpenedComment(row: unknown): string {
+  if (row == null || typeof row !== 'object') return ''
+  const o = row as Record<string, unknown>
+  const c = o.comment ?? o.Comment
+  return typeof c === 'string' ? c : ''
+}
+
+/** Prefer a live market position ticket (MT5 often changes ticket on pending fill). */
+function resolveFilledPositionTicket(
+  opened: unknown[],
+  leg: RangeBrokerPendingRow,
+  preferredTicket: number | null,
+): { ticket: string | null; fillPrice: number | null } {
+  if (preferredTicket != null && preferredTicket > 0) {
+    const hit = findOpenedRowByTicket(opened, preferredTicket)
+    if (hit && isLikelyMarketPositionRow(hit)) {
+      return {
+        ticket: String(preferredTicket),
+        fillPrice: extractOpenPrice(hit),
+      }
+    }
+  }
+
+  const signalNeedle = leg.signal_id.slice(0, 8)
+  const commentNeedle = (leg.comment ?? '').trim()
+  for (const raw of opened) {
+    if (!raw || typeof raw !== 'object') continue
+    const o = raw as Record<string, unknown>
+    if (!isLikelyMarketPositionRow(o)) continue
+    const sym = String(o.symbol ?? o.Symbol ?? '')
+    if (sym && !symbolsCompatibleForBasket(leg.symbol, sym)) continue
+    const comment = readOpenedComment(raw)
+    const matchesComment = commentNeedle.length > 0 && comment.includes(commentNeedle)
+    const matchesSignal = comment.includes(signalNeedle) || comment.includes(leg.signal_id)
+    if (!matchesComment && !matchesSignal) continue
+    const ticket = rawOrderTicket(o)
+    if (!(ticket > 0)) continue
+    return { ticket: String(ticket), fillPrice: extractOpenPrice(o) }
+  }
+  return {
+    ticket: preferredTicket != null && preferredTicket > 0 ? String(preferredTicket) : null,
+    fillPrice: null,
+  }
 }
 
 async function loadManualForLeg(
@@ -195,6 +241,28 @@ async function markBrokerRangeLegFilled(
   const ticketNum = ticketForTrade != null ? Number(ticketForTrade) : NaN
   const api = apiForFxsocketAccount(platformByUuid, leg.metaapi_account_id)
   if (tradeRowId && api && Number.isFinite(ticketNum) && ticketNum > 0) {
+    // Primary path: limits were naked — assign SL + TP on the filled position
+    // immediately (same resolveFiringLegStops path as virtual pending fire).
+    let assignedSl: number | null = null
+    let assignedTp: number | null = null
+    try {
+      const assigned = await assignNakedBrokerFillStops({
+        supabase,
+        api,
+        leg,
+        tradeRowId,
+        ticket: ticketNum,
+        entryPrice: entryPx,
+        channelId,
+      })
+      if (assigned.ok) {
+        assignedSl = assigned.stoploss > 0 ? assigned.stoploss : null
+        assignedTp = assigned.takeprofit > 0 ? assigned.takeprofit : null
+      }
+    } catch (assignErr) {
+      console.warn(`[rangeBrokerPending] naked fill stops leg=${leg.id}:`, assignErr)
+    }
+
     try {
       await tryApplyBasketFollowUpToNewFill(supabase, api, {
         userId: leg.user_id,
@@ -205,9 +273,9 @@ async function markBrokerRangeLegFilled(
         ticket: ticketNum,
         tradeRowId,
         entryPrice: entryPx,
-        // Broker position is naked — force follow-up OrderModify vs existing 0/0.
-        existingSl: null,
-        existingTp: null,
+        // Prefer just-assigned stops so follow-up only overlays newer mgmt.
+        existingSl: assignedSl,
+        existingTp: assignedTp,
         tpLots: manual.tp_lots,
         isBuy: leg.is_buy,
       })
@@ -469,8 +537,17 @@ export class RangeBrokerPendingMonitor {
         const closedHit = findClosedRowForTicket(closed, ticket)
         if (closedHit) {
           this.missingStreak.delete(row.id)
-          const px = extractOpenPrice(closedHit as Record<string, unknown>) ?? row.trigger_price
-          await markBrokerRangeLegFilled(this.supabase, this.platformByUuid, row, px, String(ticket))
+          const resolved = resolveFilledPositionTicket(opened, row, ticket)
+          const px = resolved.fillPrice
+            ?? extractOpenPrice(closedHit as Record<string, unknown>)
+            ?? row.trigger_price
+          await markBrokerRangeLegFilled(
+            this.supabase,
+            this.platformByUuid,
+            row,
+            px,
+            resolved.ticket,
+          )
           continue
         }
 
