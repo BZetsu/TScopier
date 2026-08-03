@@ -279,6 +279,11 @@ export interface PlanRangeSplitArgs {
   hasSignalAnchor: boolean
   /** Pending Order: keep user step/distance; do not expand step for broker SL/TP minimums. */
   skipMinStepExpansion?: boolean
+  /**
+   * Force Auto step (distance / reserved) even when a manual step is stored.
+   * Used for virtual layering mode where the Step field is hidden.
+   */
+  forceAutoStep?: boolean
 }
 
 export interface PlanRangeSplitResult {

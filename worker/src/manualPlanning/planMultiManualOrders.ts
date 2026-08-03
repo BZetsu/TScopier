@@ -132,6 +132,8 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
     // Auto layers fire as market orders at logical triggers; broker min-stop
     // spacing applies to SL/TP placement, not virtual rung spacing.
     skipMinStepExpansion: true,
+    // Virtual mode has no Step field — always fill distance with reserved legs.
+    forceAutoStep: !pendingOrderMode,
   })
   const reservedRangeLegs = split.pendingLegs
   const effectiveRangeLegs = split.activePendingLegs

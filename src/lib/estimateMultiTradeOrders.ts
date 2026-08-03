@@ -1,4 +1,5 @@
 import { resolveMultiTradeTargetUnits } from './multiTradeLegUnits'
+import { resolveRangeLayerStepPips } from './resolveRangeLayerStepPips'
 
 /** Hard cap aligned with worker/src/manualPlanner.ts */
 export const MULTI_TRADE_ABS_MAX_LEGS = 500
@@ -6,6 +7,7 @@ export const MULTI_TRADE_ABS_MAX_LEGS = 500
 export interface EstimateMultiTradeOrderRange {
   enabled: boolean
   percent: number
+  /** 0 or blank = Auto (fill distance with reserved legs). */
   stepPips: number
   distancePips: number
   /**
@@ -13,6 +15,8 @@ export interface EstimateMultiTradeOrderRange {
    * full reserved pending count as the ceiling (distance unknown at config time).
    */
   useSignalEntryRange?: boolean
+  /** When true (virtual layering), always use Auto step. */
+  forceAutoStep?: boolean
 }
 
 export interface EstimateMultiTradeOrderResult {
@@ -24,13 +28,15 @@ export interface EstimateMultiTradeOrderResult {
   immediate?: number
   /** Reserved pending count from range_percent. */
   pending?: number
-  /** Pending legs after range_distance / step depth cap (or full reserved when signal range). */
+  /** Pending legs after range_distance / step depth cap (or full reserved when signal range / Auto). */
   activePending?: number
   /**
    * Ladder span in pips: activePending × stepPips, capped by range.distancePips.
    * Populated only when range.enabled and not signal-entry-range mode.
    */
   effectiveDistancePips?: number
+  /** Resolved step used for the preview (manual or Auto). */
+  effectiveStepPips?: number
 }
 
 /**
@@ -41,11 +47,8 @@ export interface EstimateMultiTradeOrderResult {
  * When `range.enabled`, returns the immediate/pending split mirroring the planner's
  * `reservedLegs = round(baseLegs * percent / 100)` logic. In range mode no remainder
  * leg is emitted. **Total Open Trades** = `immediate + activePending`, where
- * `activePending = min(reserved, floor(distance / step))` (or full reserved when
- * `useSignalEntryRange` is set).
- *
- * Preview-only: multi-trade sizing at execution uses **Fixed Lot** from settings
- * (signal-parsed telegram lots are ignored in multi-trade mode so counts match UI).
+ * `activePending = min(reserved, floor(distance / step))` for manual step, or full
+ * reserved when Auto step / `useSignalEntryRange` is set.
  */
 export function estimateMultiTradeOrderCount(args: {
   manualLot: number
@@ -86,22 +89,40 @@ export function estimateMultiTradeOrderCount(args: {
     && Number.isFinite(range.percent)
     && (
       signalRange
-      || (
-        Number.isFinite(range.stepPips) && range.stepPips > 0
-        && Number.isFinite(range.distancePips) && range.distancePips > 0
-      )
+      || (Number.isFinite(range.distancePips) && range.distancePips > 0)
     ))
 
   if (rangeValid && range) {
     const pct = Math.max(0, Math.min(100, Number(range.percent)))
     const pending = Math.max(0, Math.round((baseLegs * pct) / 100))
     const immediate = Math.max(0, baseLegs - pending)
-    const maxStepIdx = signalRange
-      ? pending
-      : Math.max(0, Math.floor(range.distancePips / range.stepPips))
-    const activePending = Math.min(pending, maxStepIdx)
+
+    let activePending = 0
+    let effectiveStepPips: number | undefined
+    if (signalRange) {
+      activePending = pending
+    } else {
+      const resolved = resolveRangeLayerStepPips({
+        stepPips: Number(range.stepPips),
+        distPips: range.distancePips,
+        reservedLegs: pending,
+        forceAuto: range.forceAutoStep === true,
+      })
+      if (resolved) {
+        effectiveStepPips = resolved.effectiveStepPips
+        if (resolved.auto) {
+          activePending = pending
+        } else {
+          const maxStepIdx = Math.max(0, Math.floor(range.distancePips / resolved.effectiveStepPips))
+          activePending = Math.min(pending, maxStepIdx)
+        }
+      }
+    }
+
     const total = Math.min(MULTI_TRADE_ABS_MAX_LEGS, immediate + activePending)
-    const rawSpan = activePending * (Number.isFinite(range.stepPips) && range.stepPips > 0 ? range.stepPips : 0)
+    const rawSpan = activePending > 0 && effectiveStepPips != null && effectiveStepPips > 0
+      ? activePending * effectiveStepPips
+      : 0
     return {
       baseLegs,
       extraRemainderLeg: false,
@@ -110,9 +131,10 @@ export function estimateMultiTradeOrderCount(args: {
       immediate,
       pending,
       activePending,
+      ...(effectiveStepPips != null ? { effectiveStepPips } : {}),
       ...(signalRange
         ? {}
-        : { effectiveDistancePips: Math.min(rawSpan, range.distancePips) }),
+        : { effectiveDistancePips: Math.min(rawSpan || range.distancePips, range.distancePips) }),
     }
   }
 

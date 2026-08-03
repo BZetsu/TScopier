@@ -290,6 +290,8 @@ function riskNumberRules(
     case 'range_percent':
       return { min: 0, max: 100 }
     case 'range_step_pips':
+      // Empty / 0 = Auto. Positive values are manual step.
+      return { min: 0, required: false }
     case 'range_distance_pips':
       return { min: 1 }
     case 'static_layer_count':
@@ -310,6 +312,10 @@ function riskDraftManualPatch(
     if (!Object.prototype.hasOwnProperty.call(drafts, key)) continue
     const raw = drafts[key]
     if (raw === undefined) continue
+    if (key === 'range_step_pips' && raw.trim() === '') {
+      patch.range_step_pips = 0
+      continue
+    }
     const parsed = parseDraftNumber(raw, riskNumberRules(key, minLegPercent))
     if (parsed == null) {
       hasInvalid = true
@@ -432,7 +438,7 @@ function normalizeManualSettings(
     return Number.isFinite(v) ? v : fallback
   }
   const rangePercent = Math.max(0, Math.min(100, readNumber('range_percent', DEFAULT_MANUAL_SETTINGS.range_percent ?? 50)))
-  const rangeStepPips = Math.max(0, readNumber('range_step_pips', DEFAULT_MANUAL_SETTINGS.range_step_pips ?? 3))
+  const rangeStepPips = Math.max(0, readNumber('range_step_pips', DEFAULT_MANUAL_SETTINGS.range_step_pips ?? 0))
   const rangeDistancePips = Math.max(0, readNumber('range_distance_pips', DEFAULT_MANUAL_SETTINGS.range_distance_pips ?? 30))
   const rangeLayerTillClose = (j as Record<string, unknown>).range_layer_till_close === true
   const rangeLayeringTypeRaw = String((j as Record<string, unknown>).range_layering_type ?? 'auto').toLowerCase()
@@ -441,7 +447,8 @@ function normalizeManualSettings(
   const useSignalEntryRange = (j as Record<string, unknown>).use_signal_entry_range === true
   const layeringModeSettings = normalizeLayeringModeSettings({
     ...(j as Record<string, unknown>),
-    range_step_pips: rangeStepPips,
+    // dynamic_step fallback needs a positive value; Auto (0) maps to default dynamic step.
+    range_step_pips: rangeStepPips > 0 ? rangeStepPips : 3,
   })
   const closeWorseEntries = (j as Record<string, unknown>).close_worse_entries === true
   const closeWorseEntriesPips = Math.max(0, readNumber('close_worse_entries_pips', DEFAULT_MANUAL_SETTINGS.close_worse_entries_pips ?? 30))
@@ -488,6 +495,7 @@ function normalizeManualSettings(
               stepPips: rangeStepPips,
               distancePips: rangeDistancePips,
               useSignalEntryRange: useSignalEntryRange,
+              forceAutoStep: rangeLayeringType !== 'pending_order',
             }
           : undefined,
       })
@@ -1102,7 +1110,12 @@ export function AccountConfigPage() {
     if (!Object.prototype.hasOwnProperty.call(riskNumberDrafts, key)) return
     const raw = riskNumberDrafts[key] ?? ''
     const rules = riskNumberRules(key, multiTradeMinLegPercent)
-    const parsed = parseDraftNumber(raw, rules)
+    let parsed: number | null
+    if (key === 'range_step_pips' && raw.trim() === '') {
+      parsed = 0
+    } else {
+      parsed = parseDraftNumber(raw, rules)
+    }
     if (parsed == null) return
     setConfigDraft(prev => {
       const id = prev.selectedChannelId
@@ -1257,9 +1270,10 @@ export function AccountConfigPage() {
       ? {
           enabled: true,
           percent: Number(ms.range_percent ?? 50) || 0,
-          stepPips: Number(ms.range_step_pips ?? DEFAULT_MANUAL_SETTINGS.range_step_pips) || 0,
+          stepPips: Number(ms.range_step_pips ?? 0) || 0,
           distancePips: Number(ms.range_distance_pips ?? DEFAULT_MANUAL_SETTINGS.range_distance_pips) || 0,
           useSignalEntryRange: ms.use_signal_entry_range === true,
+          forceAutoStep: ms.range_layering_type !== 'pending_order',
         }
       : undefined
     return estimateMultiTradeOrderCount({ manualLot: previewManualLot, legPercent: legPct, range })
@@ -1271,6 +1285,7 @@ export function AccountConfigPage() {
     channelManualSettings.range_step_pips,
     channelManualSettings.range_distance_pips,
     channelManualSettings.use_signal_entry_range,
+    channelManualSettings.range_layering_type,
   ])
 
   const multiTradeTotalOpenTradesLabel = useMemo(() => {
@@ -3328,19 +3343,35 @@ export function AccountConfigPage() {
                                           50,
                                         )}
                                       />
-                                      <ConfigureInput
-                                        label={cm.risk.stepPips}
-                                        placeholder="10"
-                                        hint={
-                                          formatPipHint(Number(channelManualSettings.range_step_pips ?? DEFAULT_MANUAL_SETTINGS.range_step_pips) || 0)
-                                          ?? cm.risk.stepPipsFallback
-                                        }
-                                        {...riskNumberFieldProps(
-                                          'range_step_pips',
-                                          channelManualSettings.range_step_pips,
-                                          DEFAULT_MANUAL_SETTINGS.range_step_pips ?? 3,
-                                        )}
-                                      />
+                                      {selectedLayeringMechanism === 'pending_order' && (
+                                        <ConfigureInput
+                                          label={cm.risk.stepPips}
+                                          placeholder="Auto"
+                                          hint={
+                                            (Number(channelManualSettings.range_step_pips) > 0
+                                              ? formatPipHint(Number(channelManualSettings.range_step_pips))
+                                              : null)
+                                            ?? cm.risk.stepPipsFallback
+                                          }
+                                          type="text"
+                                          inputMode="decimal"
+                                          value={
+                                            riskNumberDrafts.range_step_pips !== undefined
+                                              ? riskNumberDrafts.range_step_pips
+                                              : (Number(channelManualSettings.range_step_pips) > 0
+                                                ? String(channelManualSettings.range_step_pips)
+                                                : '')
+                                          }
+                                          error={riskNumberFieldError('range_step_pips')}
+                                          onChange={e => setRiskNumberDraft('range_step_pips', e.target.value)}
+                                          onBlur={() => commitRiskNumberField('range_step_pips')}
+                                          onKeyDown={e => {
+                                            if (e.key !== 'Enter') return
+                                            e.preventDefault()
+                                            ;(e.target as HTMLInputElement).blur()
+                                          }}
+                                        />
+                                      )}
                                       <ConfigureInput
                                         label={cm.risk.rangeDistance}
                                         placeholder="100"

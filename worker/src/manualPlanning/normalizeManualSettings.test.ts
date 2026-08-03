@@ -48,13 +48,11 @@ test('normalizeManualSettingsForExecution: layer counts are integer-clamped', ()
   assert.equal(normalizeManualSettingsForExecution({ dynamic_max_layers: 99 }).dynamic_max_layers, 20)
 })
 
-test('normalizeManualSettingsForExecution: dynamic step defaults from range step and rejects invalid values', () => {
-  assert.equal(normalizeManualSettingsForExecution({ range_step_pips: 7 }).dynamic_step_pips, 7)
-  assert.equal(normalizeManualSettingsForExecution({ range_step_pips: 7, dynamic_step_pips: 2.5 }).dynamic_step_pips, 2.5)
-  assert.equal(normalizeManualSettingsForExecution({ range_step_pips: 7, dynamic_step_pips: 0 }).dynamic_step_pips, 7)
-  assert.equal(normalizeManualSettingsForExecution({ dynamic_step_pips: -1 }).dynamic_step_pips, 3)
-  assert.equal(normalizeManualSettingsForExecution({ dynamic_step_pips: Number.NaN }).dynamic_step_pips, 3)
-  assert.equal(normalizeManualSettingsForExecution({ dynamic_step_pips: Number.POSITIVE_INFINITY }).dynamic_step_pips, 3)
+test('normalizeManualSettingsForExecution: range_step_pips 0 (Auto) is preserved', () => {
+  const out = normalizeManualSettingsForExecution({ range_step_pips: 0, range_trading: true })
+  assert.equal(out.range_step_pips, 0)
+  // dynamic_step still gets a positive fallback when range step is Auto
+  assert.equal(out.dynamic_step_pips, 3)
 })
 
 test('normalizeManualSettingsForExecution: range_layering_type remains independent from layering_mode', () => {

@@ -226,7 +226,7 @@ export const configureModalEn: ConfigureModalTranslations = {
     reservedLot: 'Reserved lot (% of total)',
     reservedLotHint: 'Share of total legs reserved as pendings.',
     stepPips: 'Step (pips per layering)',
-    stepPipsFallback: 'Pips between pendings.',
+    stepPipsFallback: 'Leave blank for Auto — fills Range distance evenly with your layering trades. Or set a fixed pip step between pending orders.',
     rangeDistance: 'Range distance (pips)',
     rangeDistanceFallback:
       'The distance of the range provided by your signal provider. This determines how far the trade is layered.',

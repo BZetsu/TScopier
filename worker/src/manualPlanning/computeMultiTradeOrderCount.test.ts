@@ -106,6 +106,7 @@ test('normalizeManualSettingsForExecution recomputes burst cap for dynamic balan
     range_percent: 50,
     range_step_pips: 3,
     range_distance_pips: 30,
+    range_layering_type: 'pending_order',
   }, { accountBalance: 31_054.79 })
   assert.equal(ms.multi_trade_max_orders, 27)
 })
