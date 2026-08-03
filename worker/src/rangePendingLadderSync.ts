@@ -163,6 +163,11 @@ export function pendingLegStopsForBasketRefresh(args: {
 }
 
 /** Patch SL/TP on all active pending rows for one basket (SL-only refresh, no ladder replan). */
+/**
+ * Patch SL/TP on active *virtual* pendings (pending/claimed) only.
+ * Intentionally excludes `broker_pending`: resting BuyLimit/SellLimit must stay
+ * naked on the broker; stops are assigned on fill via follow-up + basket rebalance.
+ */
 export async function patchActiveRangePendingLegStops(args: {
   supabase: SupabaseClient
   scope: RangeLadderScope

@@ -1,10 +1,11 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { shouldLockBasketLayering } from './virtualPendingMonitor'
+import { shouldLockBasketLayering } from './rangeBasketLayeringLock'
 import {
   loadRangeLayerTillCloseForSignal,
   stopRangeLayeringUnlessEnabled,
 } from './rangeLayerTillClose'
 import { setTpTouchedLock } from './rangePendingFireGuard'
+import { symbolsCompatibleForBasket } from './basketModFollowUp'
 
 export type RangeLayerBasketTradeRow = {
   signal_id: string
@@ -13,6 +14,7 @@ export type RangeLayerBasketTradeRow = {
   direction: string
   tp: number | null
   status: string
+  symbol?: string | null
 }
 
 export type WatchRangeLayeringBasketsArgs = {
@@ -28,6 +30,9 @@ export type WatchRangeLayeringBasketsArgs = {
 /**
  * Detect TP-touch / partial basket close and stop range layering when layer-till-close is OFF.
  * Shared by virtual and broker-pending range monitors.
+ *
+ * When layer-till-close is OFF: deletes virtual + broker pending ladder rows (and
+ * OrderCloses resting BuyLimit/SellLimit tickets) so they cannot fire after a TP hit.
  */
 export async function watchRangeLayeringBasketEvents(
   supabase: SupabaseClient,
@@ -37,12 +42,12 @@ export async function watchRangeLayeringBasketEvents(
   const { signalIds, brokerIds, symbol, bid, ask, logAction = 'range_layering_stopped' } = args
   if (!signalIds.length || !brokerIds.length || !symbol) return touched
 
+  // Do not filter by exact symbol spelling (XAUUSD vs XAUUSDm) — match in memory.
   const { data, error } = await supabase
     .from('trades')
-    .select('signal_id,broker_account_id,user_id,direction,tp,status')
+    .select('signal_id,broker_account_id,user_id,direction,tp,status,symbol')
     .in('signal_id', signalIds)
     .in('broker_account_id', brokerIds)
-    .eq('symbol', symbol)
     .in('status', ['open', 'closed'])
 
   if (error) {
@@ -52,6 +57,7 @@ export async function watchRangeLayeringBasketEvents(
 
   const byBasket = new Map<string, RangeLayerBasketTradeRow[]>()
   for (const row of (data ?? []) as RangeLayerBasketTradeRow[]) {
+    if (row.symbol && !symbolsCompatibleForBasket(symbol, row.symbol)) continue
     const basketKey = `${row.signal_id}|${row.broker_account_id}`
     const arr = byBasket.get(basketKey) ?? []
     arr.push(row)
@@ -127,6 +133,7 @@ export async function watchRangeLayeringBasketEvents(
           ask,
           deleted_rows: deleted,
           lock_reason: 'layering_stopped',
+          layer_till_close: layerTillClose,
         } as unknown as Record<string, unknown>,
       })
     } catch { /* best-effort */ }

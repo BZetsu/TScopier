@@ -274,9 +274,17 @@ test('native pending sends only after durable per-leg claim', async () => {
   const result = await activateLayeringBrokerPendingOrders({ prep, snapshot: snap, skipFirstLayer: true })
   assert.deepEqual(result, { ok: true, outcome: 'activated', placed: 4, adopted: 0 })
   assert.equal(sends.length, 4)
+  for (const args of sends) {
+    const a = args as { stoploss?: number; takeprofit?: number }
+    assert.equal(a.stoploss, 0, 'resting broker pending must be naked (no SL)')
+    assert.equal(a.takeprofit, 0, 'resting broker pending must be naked (no TP)')
+  }
   assert.deepEqual(supabase.legs.map(r => r.step_idx), [2, 3, 4, 5])
   assert.deepEqual(supabase.legs.map(r => r.trigger_price), snap.fundedPrices!.slice(1))
   assert.equal(supabase.legs.every(r => r.native_submission_status === 'confirmed'), true)
+  // Desired stops remain on the DB row for post-fill assignment.
+  assert.equal(supabase.legs.every(r => Number(r.stoploss) === 3300), true)
+  assert.equal(supabase.legs.every(r => Number(r.takeprofit) === 3400), true)
   restoreEnv()
 })
 

@@ -6,7 +6,7 @@ import type { ManualSettings, ParsedSignal, PlannerRangeEntryWait } from './manu
 import { signalEntryRangeStrictEnabled } from './manualPlanning/manualSettings'
 import type { SignalRangeEntryWaitRow } from './signalRangeEntryHelpers'
 import type { BrokerRow, SignalRow } from './tradeExecutor/types'
-import { evaluateTpTouch } from './virtualPendingMonitor'
+import { evaluateTpTouch } from './rangeBasketLayeringLock'
 import { SKIP_REASON_SIGNAL_ENTRY_RANGE_EXPIRED } from './manualPlanning/parsedEntry'
 
 export type PreEntryStaleReason =

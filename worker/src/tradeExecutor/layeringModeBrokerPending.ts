@@ -223,8 +223,9 @@ async function placeOrAdoptPending(args: {
     operation: args.operation,
     volume: row.volume,
     price: row.trigger_price,
-    stoploss: row.stoploss ?? 0,
-    takeprofit: row.takeprofit ?? 0,
+    // Resting limits are naked — SL/TP applied on fill (tp_lots redistribute).
+    stoploss: 0,
+    takeprofit: 0,
     slippage: row.slippage,
     comment: args.reference,
     expertID: row.expert_id ?? 909090,
