@@ -64,7 +64,7 @@ export function computeMultiTradeOrderCount(args: ComputeMultiTradeOrderCountArg
     })
     if (!resolved) return Math.min(MULTI_TRADE_ABS_MAX_LEGS, immediate)
     const activePending = resolved.auto
-      ? pending
+      ? resolved.fittedLegs
       : Math.min(pending, Math.max(0, Math.floor((args.rangeDistancePips ?? 0) / resolved.effectiveStepPips)))
     return Math.min(MULTI_TRADE_ABS_MAX_LEGS, immediate + activePending)
   }

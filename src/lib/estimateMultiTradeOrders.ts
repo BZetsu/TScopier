@@ -111,7 +111,7 @@ export function estimateMultiTradeOrderCount(args: {
       if (resolved) {
         effectiveStepPips = resolved.effectiveStepPips
         if (resolved.auto) {
-          activePending = pending
+          activePending = resolved.fittedLegs
         } else {
           const maxStepIdx = Math.max(0, Math.floor(range.distancePips / resolved.effectiveStepPips))
           activePending = Math.min(pending, maxStepIdx)

@@ -9,8 +9,9 @@ import { resolveRangeLayerStepPips } from './resolveRangeLayerStepPips'
  * then cap how many of those reserved legs are actually layered:
  * `activePendingLegs = min(reserved, floor(distPips / effectiveStepPips))`.
  *
- * When step is Auto (`stepPips ≤ 0` or `forceAutoStep`), all reserved legs fill
- * the distance evenly: `effectiveStepPips = dist / reserved`.
+ * When step is Auto (`stepPips ≤ 0` or `forceAutoStep`), reserved legs fill
+ * the distance evenly: `effectiveStepPips = dist / fitted`, with a minimum
+ * Auto step of 1 pip (fewer active legs when reserved would pack tighter).
  * Total Open Trades = immediateLegs + activePendingLegs.
  */
 export function planRangeSplit(args: PlanRangeSplitArgs): PlanRangeSplitResult {
@@ -60,7 +61,9 @@ export function planRangeSplit(args: PlanRangeSplitArgs): PlanRangeSplitResult {
   let effectiveStepPips = resolved.effectiveStepPips
   let fallbackReason: string | undefined
   if (resolved.auto) {
-    fallbackReason = 'range_trading_step_auto'
+    fallbackReason = resolved.fittedLegs < reservedLegs
+      ? 'range_trading_step_auto_min_capped'
+      : 'range_trading_step_auto'
   } else if (
     !args.skipMinStepExpansion
     && minStepPriceUnits > 0
@@ -73,14 +76,16 @@ export function planRangeSplit(args: PlanRangeSplitArgs): PlanRangeSplitResult {
 
   const stepPriceOffset = effectiveStepPips * pip
   const maxStepIdx = resolved.auto
-    ? reservedLegs
+    ? resolved.fittedLegs
     : Math.max(0, Math.floor(distPips / effectiveStepPips))
 
   const activePendingLegs = Math.min(reservedLegs, maxStepIdx)
   if (activePendingLegs <= 0 && reservedLegs > 0) {
     fallbackReason = fallbackReason ?? 'range_trading_distance_capped'
-  } else if (activePendingLegs < reservedLegs) {
+  } else if (activePendingLegs < reservedLegs && !resolved.auto) {
     fallbackReason = fallbackReason ?? 'range_trading_distance_capped'
+  } else if (activePendingLegs < reservedLegs && resolved.auto && !fallbackReason) {
+    fallbackReason = 'range_trading_step_auto_min_capped'
   }
 
   if (!hasSignalAnchor && immediateLegs === 0) {
