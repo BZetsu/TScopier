@@ -2,7 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.coerceTradeIntent = coerceTradeIntent;
 const KINDS = new Set([
-    'entry', 'modify', 'close', 'breakeven', 'partial_close', 'ignore', 'commentary',
+    'entry', 'modify', 'close', 'breakeven', 'partial_close', 'cancel_pending', 'ignore', 'commentary',
 ]);
 function numOrNull(v) {
     const n = typeof v === 'number' ? v : Number(v);
@@ -23,6 +23,8 @@ function sideFromRaw(v) {
 }
 function kindFromRaw(v) {
     const k = String(v ?? '').trim().toLowerCase();
+    if (k === 'delete_pendings' || k === 'cancel_pendings')
+        return 'cancel_pending';
     if (KINDS.has(k))
         return k;
     return 'ignore';

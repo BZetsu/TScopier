@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.FxClient = exports.FxHttpError = void 0;
 exports.perTerminalConcurrency = perTerminalConcurrency;
 exports.getFxClient = getFxClient;
+exports.resetFxClientForTests = resetFxClientForTests;
 exports.toMtPlatform = toMtPlatform;
 /**
  * FxClient (Phase 1) - the strict, idempotent FxSocket MT5 client.
@@ -21,6 +22,8 @@ exports.toMtPlatform = toMtPlatform;
 const undici_1 = require("undici");
 const perAccountConcurrency_1 = require("../perAccountConcurrency");
 const fxContract_1 = require("./fxContract");
+const orderCloseAudit_1 = require("../orderCloseAudit");
+const brokerExecutionMode_1 = require("../brokerExecutionMode");
 class FxHttpError extends Error {
     constructor(message, status, body, ambiguous) {
         super(message);
@@ -82,9 +85,17 @@ function perTerminalConcurrency() {
 let sharedClient = null;
 /** Process-wide FxClient (one per-terminal gate, one transport). */
 function getFxClient() {
-    if (!sharedClient)
-        sharedClient = new FxClient();
+    if (!sharedClient) {
+        sharedClient = (0, brokerExecutionMode_1.isBrokerSimulatorEnforced)()
+            ? new FxClient({ apiKey: 'simulator-no-live-key', transport: simulatorTransport })
+            : new FxClient();
+    }
     return sharedClient;
+}
+function resetFxClientForTests() {
+    sharedClient = null;
+    simOrders.clear();
+    simTicket = 990000;
 }
 /** Map a broker_accounts.platform value to the bridge segment. */
 function toMtPlatform(platform) {
@@ -287,8 +298,26 @@ class FxClient {
             const result = (0, fxContract_1.classifyOrderResponse)(raw);
             // Already closed = idempotent success.
             if (!result.ok && result.retcode === fxContract_1.MT5_RETCODE.POSITION_CLOSED) {
+                (0, orderCloseAudit_1.auditOrderClose)({
+                    source: 'fx_v2',
+                    accountId,
+                    ticket: req.ticket,
+                    volume: req.volume,
+                    slippage: req.slippage ?? 20,
+                    ok: true,
+                    message: 'already closed',
+                });
                 return { ...result, ok: true, message: 'already closed' };
             }
+            (0, orderCloseAudit_1.auditOrderClose)({
+                source: 'fx_v2',
+                accountId,
+                ticket: req.ticket,
+                volume: req.volume,
+                slippage: req.slippage ?? 20,
+                ok: result.ok,
+                message: result.message ?? result.retcodeName,
+            });
             return result;
         }
         catch (err) {
@@ -296,9 +325,27 @@ class FxClient {
                 // Verify: if the ticket is gone from OpenedOrders, the close succeeded.
                 const still = await this.openedOrders(accountId, platform).catch(() => null);
                 if (still && !still.some(o => o.ticket === req.ticket)) {
+                    (0, orderCloseAudit_1.auditOrderClose)({
+                        source: 'fx_v2',
+                        accountId,
+                        ticket: req.ticket,
+                        volume: req.volume,
+                        slippage: req.slippage ?? 20,
+                        ok: true,
+                        message: 'close confirmed via snapshot',
+                    });
                     return { ok: true, partial: false, retcode: 10009, retcodeName: 'DONE', message: 'close confirmed via snapshot', ticket: req.ticket, order: req.ticket, deal: null, volume: null, price: null, bid: null, ask: null, comment: null, raw: null };
                 }
             }
+            (0, orderCloseAudit_1.auditOrderClose)({
+                source: 'fx_v2',
+                accountId,
+                ticket: req.ticket,
+                volume: req.volume,
+                slippage: req.slippage ?? 20,
+                ok: false,
+                message: err instanceof Error ? err.message : String(err),
+            });
             return failResult(err, false);
         }
         finally {
@@ -334,3 +381,78 @@ function normSym(s) {
 function sleep(ms) {
     return new Promise(r => setTimeout(r, ms));
 }
+let simTicket = 990000;
+const simOrders = new Map();
+const simulatorTransport = async (req) => {
+    const url = new URL(req.url);
+    const parts = url.pathname.split('/').filter(Boolean);
+    const accountId = parts[1] ?? 'sim-account';
+    const endpoint = parts[2] ?? '';
+    const body = req.body ? JSON.parse(req.body) : {};
+    if (endpoint === 'OpenedOrders') {
+        return { status: 200, body: simOrders.get(accountId) ?? [] };
+    }
+    if (endpoint === 'getQuote') {
+        const symbol = url.searchParams.get('symbol') ?? 'XAUUSD';
+        return { status: 200, body: symbol.toUpperCase() === 'XAUUSD' ? { bid: 2400, ask: 2400.2 } : { bid: 1.1, ask: 1.1002 } };
+    }
+    if (endpoint === 'OrderSend') {
+        const ticket = simTicket++;
+        const symbol = String(body.symbol ?? 'XAUUSD');
+        const operation = String(body.operation ?? 'Buy');
+        const volume = Number(body.volume ?? 0.01);
+        const price = Number(body.price ?? (/sell/i.test(operation) ? 2400 : 2400.2));
+        const order = {
+            ticket,
+            symbol,
+            operation,
+            isBuy: /buy/i.test(operation),
+            volume,
+            openPrice: price,
+            stopLoss: Number(body.stopLoss ?? 0) || null,
+            takeProfit: Number(body.takeProfit ?? 0) || null,
+            comment: String(body.comment ?? 'load_test_simulated'),
+            magic: Number(body.expertId ?? fxContract_1.TSCOPIER_MAGIC),
+            isPending: /limit|stop/i.test(operation),
+        };
+        const list = simOrders.get(accountId) ?? [];
+        list.push(order);
+        simOrders.set(accountId, list);
+        return {
+            status: 200,
+            body: {
+                success: true,
+                retcode: fxContract_1.MT5_RETCODE.DONE,
+                order: ticket,
+                deal: ticket,
+                volume,
+                price,
+                comment: order.comment,
+                retcodeDescription: 'simulated load-test order',
+            },
+        };
+    }
+    if (endpoint === 'OrderModify') {
+        const ticket = Number(body.ticket);
+        const list = simOrders.get(accountId) ?? [];
+        const order = list.find(o => o.ticket === ticket);
+        if (order) {
+            order.stopLoss = Number(body.stopLoss ?? order.stopLoss ?? 0) || null;
+            order.takeProfit = Number(body.takeProfit ?? order.takeProfit ?? 0) || null;
+        }
+        return {
+            status: 200,
+            body: { success: true, retcode: fxContract_1.MT5_RETCODE.DONE, order: ticket, retcodeDescription: 'simulated modify' },
+        };
+    }
+    if (endpoint === 'OrderClose') {
+        const ticket = Number(body.ticket);
+        const list = simOrders.get(accountId) ?? [];
+        simOrders.set(accountId, list.filter(o => o.ticket !== ticket));
+        return {
+            status: 200,
+            body: { success: true, retcode: fxContract_1.MT5_RETCODE.DONE, order: ticket, retcodeDescription: 'simulated close' },
+        };
+    }
+    return { status: 404, body: { message: `simulator endpoint not implemented: ${endpoint}` } };
+};

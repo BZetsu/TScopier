@@ -28,7 +28,7 @@ function buildClient(sessionString = '') {
         ? `${sessionString.slice(0, 4)}...${sessionString.slice(-4)}`
         : 'empty';
     console.log(`[telegram-conn] event=build_client session_fingerprint=${fp} api_id=${exports.API_ID}`);
-    return new telegram_1.TelegramClient(new sessions_1.StringSession(sessionString), exports.API_ID, exports.API_HASH, {
+    const client = new telegram_1.TelegramClient(new sessions_1.StringSession(sessionString), exports.API_ID, exports.API_HASH, {
         connectionRetries: 5,
         retryDelay: 4000,
         // Manual recovery lives in UserListener.runWatchdog / forceReconnect.
@@ -44,6 +44,21 @@ function buildClient(sessionString = '') {
         // Auto-sleep on FLOOD_WAIT under this many seconds instead of throwing.
         floodSleepThreshold: 60,
     });
+    const origConnect = client.connect.bind(client);
+    client.connect = (async () => {
+        const result = await origConnect();
+        const sender = client._sender;
+        if (sender?.reconnect) {
+            const origReconnect = sender.reconnect.bind(sender);
+            sender.reconnect = () => {
+                if (!client._autoReconnect)
+                    return;
+                origReconnect();
+            };
+        }
+        return result;
+    });
+    return client;
 }
 /**
  * Wrap a raw `client.invoke(...)` call so that long FLOOD_WAIT_N errors

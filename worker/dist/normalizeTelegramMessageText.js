@@ -59,7 +59,7 @@ function expandSymbolSideUnderscore(text) {
 }
 /** Telegram format strip + casual management typo collapse for parsers. */
 function normalizeSignalMessageForParse(raw) {
-    return (0, collapseCasualSignalTypos_1.collapseCasualSignalTypos)(stripLegalTradeDisclaimer(stripSignalDecorativeEmojis(normalizeTelegramMessageText(raw))));
+    return (0, collapseCasualSignalTypos_1.collapseCasualSignalTypos)(expandSymbolSideUnderscore(stripLegalTradeDisclaimer(stripSignalDecorativeEmojis(normalizeTelegramMessageText(raw)))));
 }
 /**
  * Channels often append legal footers that contain "buy or sell" / "investment advice".

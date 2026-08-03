@@ -4,6 +4,7 @@ exports.DEFAULT_MANUAL_TP_LOTS = void 0;
 exports.sanitizeTpLots = sanitizeTpLots;
 exports.normalizeManualSettingsForExecution = normalizeManualSettingsForExecution;
 const computeMultiTradeOrderCount_1 = require("./computeMultiTradeOrderCount");
+const layeringModes_1 = require("./layeringModes");
 const resolveManualLot_1 = require("./resolveManualLot");
 /** Default Targets % rows — keep aligned with AccountConfigPage `DEFAULT_MANUAL_TP_LOTS`. */
 exports.DEFAULT_MANUAL_TP_LOTS = [
@@ -63,6 +64,7 @@ function normalizeManualSettingsForExecution(raw, opts) {
             rangePercent: Number(j.range_percent),
             rangeStepPips: Number(j.range_step_pips),
             rangeDistancePips: Number(j.range_distance_pips),
+            useSignalEntryRange: j.use_signal_entry_range === true,
         });
         if (preview > 0)
             maxOrders = preview;
@@ -92,8 +94,12 @@ function normalizeManualSettingsForExecution(raw, opts) {
         }
     }
     const rangePercent = Math.max(0, Math.min(100, readNumber('range_percent', 50)));
-    const rangeStepPips = Math.max(0, readNumber('range_step_pips', 3));
+    const rangeStepPips = Math.max(0, readNumber('range_step_pips', 0));
     const rangeDistancePips = Math.max(0, readNumber('range_distance_pips', 30));
+    const layeringModeSettings = (0, layeringModes_1.normalizeLayeringModeSettings)({
+        ...j,
+        range_step_pips: rangeStepPips > 0 ? rangeStepPips : layeringModes_1.DEFAULT_DYNAMIC_STEP_PIPS,
+    });
     const predefinedTpPips = Array.isArray(j.predefined_tp_pips)
         ? j.predefined_tp_pips.map(Number).filter(Number.isFinite)
         : [20, 40, 60];
@@ -112,6 +118,7 @@ function normalizeManualSettingsForExecution(raw, opts) {
         range_percent: rangePercent,
         range_step_pips: rangeStepPips,
         range_distance_pips: rangeDistancePips,
+        ...layeringModeSettings,
         tp_lots: tpFinal,
         single_tp_target: singleTpTarget,
         predefined_tp_pips: predefinedTpPips,

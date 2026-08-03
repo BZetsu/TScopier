@@ -14,6 +14,7 @@ const applySignalOverride_1 = require("./applySignalOverride");
 const forceCloseSignalTrades_1 = require("./forceCloseSignalTrades");
 const retryActivity_1 = require("./retryActivity");
 const retrySignal_1 = require("./retrySignal");
+const brokerExecutionMode_1 = require("./brokerExecutionMode");
 const INTERNAL_TOKEN = process.env.WORKER_INTERNAL_TOKEN ?? '';
 const PORT = parseInt(process.env.WORKER_PORT ?? '8080', 10);
 function isTelegramSessionInvalid(err) {
@@ -88,66 +89,91 @@ function startHttpServer(authService, sessionManager) {
             const body = (await readJson(req));
             if (url === '/auth/send_code') {
                 if (!body.user_id || !body.phone) {
+                    console.warn(`[httpServer] send_code missing fields user_id=${!!body.user_id} phone=${!!body.phone}`);
                     return sendJson(res, 400, { error: 'user_id and phone are required' });
                 }
                 try {
+                    console.log(`[httpServer] send_code -> authService user=${body.user_id}`);
                     const r = await authService.sendCode(body.user_id, body.phone);
+                    console.log(`[httpServer] send_code OK user=${body.user_id}`);
                     return sendJson(res, 200, r);
                 }
                 catch (err) {
+                    const msg = err instanceof Error ? err.message : String(err);
+                    console.warn(`[httpServer] send_code FAILED user=${body.user_id}: ${msg}`);
                     return sendJson(res, 400, clientErrorPayload(err, 'Failed to send code'));
                 }
             }
             if (url === '/auth/verify_code') {
                 if (!body.user_id || !body.phone || !body.code) {
+                    console.warn(`[httpServer] verify_code missing fields user_id=${!!body.user_id} phone=${!!body.phone} code=${!!body.code}`);
                     return sendJson(res, 400, { error: 'user_id, phone, and code are required' });
                 }
                 try {
+                    console.log(`[httpServer] verify_code -> authService user=${body.user_id}`);
                     const r = await authService.verifyCode(body.user_id, body.phone, body.code, body.password);
                     if ('requires_password' in r) {
+                        console.log(`[httpServer] verify_code requires_password user=${body.user_id}`);
                         return sendJson(res, 200, {
                             requires_password: true,
                         });
                     }
+                    console.log(`[httpServer] verify_code OK user=${body.user_id}`);
                     return sendJson(res, 200, r);
                 }
                 catch (err) {
+                    const msg = err instanceof Error ? err.message : String(err);
+                    console.warn(`[httpServer] verify_code FAILED user=${body.user_id}: ${msg}`);
                     return sendJson(res, 400, clientErrorPayload(err, 'Verification failed'));
                 }
             }
             if (url === '/auth/start_qr') {
                 if (!body.user_id) {
+                    console.warn('[httpServer] start_qr missing user_id');
                     return sendJson(res, 400, { error: 'user_id is required' });
                 }
                 try {
+                    console.log(`[httpServer] start_qr -> authService user=${body.user_id}`);
                     const r = await authService.startQrLogin(body.user_id);
+                    console.log(`[httpServer] start_qr OK user=${body.user_id}`);
                     return sendJson(res, 200, r);
                 }
                 catch (err) {
+                    const msg = err instanceof Error ? err.message : String(err);
+                    console.warn(`[httpServer] start_qr FAILED user=${body.user_id}: ${msg}`);
                     return sendJson(res, 400, clientErrorPayload(err, 'Failed to start QR login'));
                 }
             }
             if (url === '/auth/qr_status') {
                 if (!body.user_id) {
+                    console.warn('[httpServer] qr_status missing user_id');
                     return sendJson(res, 400, { error: 'user_id is required' });
                 }
                 try {
                     const r = await authService.getQrStatus(body.user_id);
+                    console.log(`[httpServer] qr_status OK user=${body.user_id} status=${JSON.stringify(r).slice(0, 100)}`);
                     return sendJson(res, 200, r);
                 }
                 catch (err) {
+                    const msg = err instanceof Error ? err.message : String(err);
+                    console.log(`[httpServer] qr_status FAILED user=${body.user_id}: ${msg}`);
                     return sendJson(res, 400, clientErrorPayload(err, 'QR status failed'));
                 }
             }
             if (url === '/auth/verify_qr_password') {
                 if (!body.user_id || !body.password) {
+                    console.warn('[httpServer] verify_qr_password missing fields');
                     return sendJson(res, 400, { error: 'user_id and password are required' });
                 }
                 try {
+                    console.log(`[httpServer] verify_qr_password -> authService user=${body.user_id}`);
                     const r = await authService.verifyQrPassword(body.user_id, body.password);
+                    console.log(`[httpServer] verify_qr_password OK user=${body.user_id}`);
                     return sendJson(res, 200, r);
                 }
                 catch (err) {
+                    const msg = err instanceof Error ? err.message : String(err);
+                    console.warn(`[httpServer] verify_qr_password FAILED user=${body.user_id}: ${msg}`);
                     return sendJson(res, 400, clientErrorPayload(err, 'QR password verification failed'));
                 }
             }
@@ -267,9 +293,11 @@ function startTradeHttpServer(sessionManager, tradeExecutor) {
             if (url === '/health' && (req.method === 'GET' || req.method === 'POST')) {
                 const payload = await sessionManager.getHealthPayload();
                 const queue = await (0, queueHealth_1.getQueueHealthMetrics)();
+                const brokerCapability = (0, brokerExecutionMode_1.getBrokerExecutionCapability)();
                 return sendJson(res, payload.ok ? 200 : 503, {
                     ...payload,
                     queue,
+                    ...brokerCapability,
                 });
             }
             if (url === '/internal/parse-signal' && req.method === 'POST') {

@@ -6,7 +6,7 @@
  * stable public surface so callers (e.g. `tradeExecutor`) keep importing `./manualPlanner`.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.planManualOrders = exports.strictSignalEntryQuoteAllowsImmediate = exports.computeCwOverrideTp = exports.planRangeSplit = exports.planSinglePartialTps = exports.reverseSignalGateSatisfied = exports.signalRangeEntryQuoteAllowsImmediate = exports.buildRangeEntryWait = exports.SKIP_REASON_ENTRY_NOT_OPENED = exports.SKIP_REASON_SIGNAL_ENTRY_RANGE_EXPIRED = exports.SKIP_REASON_SIGNAL_ENTRY_RANGE_REQUIRED = exports.SKIP_REASON_SIGNAL_ENTRY_REQUIRED = exports.lastPositiveParsedTpPrice = exports.parsedHasExplicitEntryAnchor = exports.resolvedParsedEntryZone = exports.resolvedParsedEntryPrice = exports.clampPendingExpiryHours = exports.signalEntryRangeStrictEnabled = exports.signalEntryPriceStrictEnabled = void 0;
+exports.planManualOrders = exports.strictSignalEntryQuoteAllowsImmediate = exports.computeCwOverrideTp = exports.changeLayeringPlanMode = exports.serializeLayeringPlanSnapshot = exports.parseLayeringPlanSnapshot = exports.assertLayeringModeExecutionSupported = exports.normalizeLayeringModeSettings = exports.layeringModesExecutionEnabled = exports.isDynamicLayeringMode = exports.isStaticLayeringMode = exports.isLegacyLayeringMode = exports.resolveLayeringMode = exports.MAX_LAYER_COUNT = exports.MIN_LAYER_COUNT = exports.DEFAULT_DYNAMIC_MAX_LAYERS = exports.DEFAULT_DYNAMIC_STEP_PIPS = exports.DEFAULT_STATIC_LAYER_COUNT = exports.DEFAULT_LAYERING_MODE = exports.planRangeSplit = exports.planSinglePartialTps = exports.reverseSignalGateSatisfied = exports.signalRangeEntryQuoteAllowsImmediate = exports.buildRangeEntryWait = exports.SKIP_REASON_ENTRY_NOT_OPENED = exports.SKIP_REASON_SIGNAL_ENTRY_RANGE_EXPIRED = exports.SKIP_REASON_SIGNAL_ENTRY_RANGE_REQUIRED = exports.SKIP_REASON_SIGNAL_ENTRY_REQUIRED = exports.lastPositiveParsedTpPrice = exports.parsedHasExplicitEntryAnchor = exports.resolvedParsedEntryZone = exports.resolvedParsedEntryPrice = exports.clampPendingExpiryHours = exports.signalEntryRangeStrictEnabled = exports.signalEntryPriceStrictEnabled = void 0;
 var manualSettings_1 = require("./manualPlanning/manualSettings");
 Object.defineProperty(exports, "signalEntryPriceStrictEnabled", { enumerable: true, get: function () { return manualSettings_1.signalEntryPriceStrictEnabled; } });
 Object.defineProperty(exports, "signalEntryRangeStrictEnabled", { enumerable: true, get: function () { return manualSettings_1.signalEntryRangeStrictEnabled; } });
@@ -29,6 +29,23 @@ var partialTpSchedule_1 = require("./manualPlanning/partialTpSchedule");
 Object.defineProperty(exports, "planSinglePartialTps", { enumerable: true, get: function () { return partialTpSchedule_1.planSinglePartialTps; } });
 var rangeSplit_1 = require("./manualPlanning/rangeSplit");
 Object.defineProperty(exports, "planRangeSplit", { enumerable: true, get: function () { return rangeSplit_1.planRangeSplit; } });
+var layeringModes_1 = require("./manualPlanning/layeringModes");
+Object.defineProperty(exports, "DEFAULT_LAYERING_MODE", { enumerable: true, get: function () { return layeringModes_1.DEFAULT_LAYERING_MODE; } });
+Object.defineProperty(exports, "DEFAULT_STATIC_LAYER_COUNT", { enumerable: true, get: function () { return layeringModes_1.DEFAULT_STATIC_LAYER_COUNT; } });
+Object.defineProperty(exports, "DEFAULT_DYNAMIC_STEP_PIPS", { enumerable: true, get: function () { return layeringModes_1.DEFAULT_DYNAMIC_STEP_PIPS; } });
+Object.defineProperty(exports, "DEFAULT_DYNAMIC_MAX_LAYERS", { enumerable: true, get: function () { return layeringModes_1.DEFAULT_DYNAMIC_MAX_LAYERS; } });
+Object.defineProperty(exports, "MIN_LAYER_COUNT", { enumerable: true, get: function () { return layeringModes_1.MIN_LAYER_COUNT; } });
+Object.defineProperty(exports, "MAX_LAYER_COUNT", { enumerable: true, get: function () { return layeringModes_1.MAX_LAYER_COUNT; } });
+Object.defineProperty(exports, "resolveLayeringMode", { enumerable: true, get: function () { return layeringModes_1.resolveLayeringMode; } });
+Object.defineProperty(exports, "isLegacyLayeringMode", { enumerable: true, get: function () { return layeringModes_1.isLegacyLayeringMode; } });
+Object.defineProperty(exports, "isStaticLayeringMode", { enumerable: true, get: function () { return layeringModes_1.isStaticLayeringMode; } });
+Object.defineProperty(exports, "isDynamicLayeringMode", { enumerable: true, get: function () { return layeringModes_1.isDynamicLayeringMode; } });
+Object.defineProperty(exports, "layeringModesExecutionEnabled", { enumerable: true, get: function () { return layeringModes_1.layeringModesExecutionEnabled; } });
+Object.defineProperty(exports, "normalizeLayeringModeSettings", { enumerable: true, get: function () { return layeringModes_1.normalizeLayeringModeSettings; } });
+Object.defineProperty(exports, "assertLayeringModeExecutionSupported", { enumerable: true, get: function () { return layeringModes_1.assertLayeringModeExecutionSupported; } });
+Object.defineProperty(exports, "parseLayeringPlanSnapshot", { enumerable: true, get: function () { return layeringModes_1.parseLayeringPlanSnapshot; } });
+Object.defineProperty(exports, "serializeLayeringPlanSnapshot", { enumerable: true, get: function () { return layeringModes_1.serializeLayeringPlanSnapshot; } });
+Object.defineProperty(exports, "changeLayeringPlanMode", { enumerable: true, get: function () { return layeringModes_1.changeLayeringPlanMode; } });
 var cwOverride_1 = require("./manualPlanning/cwOverride");
 Object.defineProperty(exports, "computeCwOverrideTp", { enumerable: true, get: function () { return cwOverride_1.computeCwOverrideTp; } });
 var executionShape_1 = require("./manualPlanning/executionShape");

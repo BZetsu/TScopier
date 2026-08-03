@@ -3,13 +3,11 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.VirtualPendingMonitor = void 0;
+exports.VirtualPendingMonitor = exports.shouldLockBasketLayering = exports.evaluateTpTouch = void 0;
 exports.layerLatencyPayload = layerLatencyPayload;
 exports.isTriggered = isTriggered;
 exports.isBlockedByShallowerStep = isBlockedByShallowerStep;
 exports.fillWithinTriggerBand = fillWithinTriggerBand;
-exports.evaluateTpTouch = evaluateTpTouch;
-exports.shouldLockBasketLayering = shouldLockBasketLayering;
 exports.registerVirtualPendingMonitor = registerVirtualPendingMonitor;
 exports.runImmediateVirtualPendingCheck = runImmediateVirtualPendingCheck;
 const node_os_1 = __importDefault(require("node:os"));
@@ -33,6 +31,10 @@ const rangePendingBasketCleanup_1 = require("./rangePendingBasketCleanup");
 const gapFillReanchor_1 = require("./gapFillReanchor");
 const layerConcurrentFire_1 = require("./layerConcurrentFire");
 const workerMetrics_1 = require("./workerMetrics");
+const sentry_1 = require("./observability/sentry");
+const layeringPlanPersistence_1 = require("./manualPlanning/layeringPlanPersistence");
+const layeringModeRollout_1 = require("./manualPlanning/layeringModeRollout");
+const layeringPlanLifecycle_1 = require("./layeringPlanLifecycle");
 const SYMBOL_TTL_MS = 10 * 60000;
 const ACTIVE_MS = (0, monitorIdleGate_1.monitorActiveIntervalMs)('VIRTUAL_PENDING_TICK_MS', 200);
 const IDLE_MS = (0, monitorIdleGate_1.monitorIdleIntervalMs)('VIRTUAL_PENDING_IDLE_MS', 15000);
@@ -113,44 +115,9 @@ function fillWithinTriggerBand(args) {
     const ok = isBuy ? fillSide <= triggerPrice + tol : fillSide >= triggerPrice - tol;
     return ok ? { ok: true } : { ok: false, reason: 'fill_outside_trigger_band' };
 }
-function evaluateTpTouch(args) {
-    const { direction, tps, bid, ask } = args;
-    const cleanTps = tps.filter(tp => Number.isFinite(tp) && tp > 0);
-    if (!cleanTps.length)
-        return { touched: false, triggerPrice: null, triggerSide: null };
-    if (direction === 'buy') {
-        const triggerPrice = Math.min(...cleanTps);
-        return { touched: bid >= triggerPrice, triggerPrice, triggerSide: 'bid' };
-    }
-    if (direction === 'sell') {
-        const triggerPrice = Math.max(...cleanTps);
-        return { touched: ask <= triggerPrice, triggerPrice, triggerSide: 'ask' };
-    }
-    return { touched: false, triggerPrice: null, triggerSide: null };
-}
-/**
- * Decide whether a basket's layering must be locked when "layer till close"
- * is OFF. Two independent triggers:
- *  1. live quote touches an open trade's TP (catches the touch in real time)
- *  2. the basket is PARTIALLY closed — some trades closed while others remain
- *     open. A broker-side TP fill closes its trades within seconds, so by the
- *     time the monitor scans, the touched TP rows are no longer 'open' and
- *     trigger (1) can never fire. A partial close is sticky evidence that a
- *     TP/CWE/partial close happened and survives that race.
- */
-function shouldLockBasketLayering(args) {
-    const { direction, openTps, openCount, closedCount, bid, ask } = args;
-    if (openCount <= 0)
-        return { lock: false, reason: null, triggerPrice: null, triggerSide: null };
-    const touch = evaluateTpTouch({ direction, tps: openTps, bid, ask });
-    if (touch.touched) {
-        return { lock: true, reason: 'tp_touched', triggerPrice: touch.triggerPrice, triggerSide: touch.triggerSide };
-    }
-    if (closedCount > 0) {
-        return { lock: true, reason: 'basket_partially_closed', triggerPrice: null, triggerSide: null };
-    }
-    return { lock: false, reason: null, triggerPrice: null, triggerSide: null };
-}
+const rangeBasketLayeringLock_1 = require("./rangeBasketLayeringLock");
+Object.defineProperty(exports, "evaluateTpTouch", { enumerable: true, get: function () { return rangeBasketLayeringLock_1.evaluateTpTouch; } });
+Object.defineProperty(exports, "shouldLockBasketLayering", { enumerable: true, get: function () { return rangeBasketLayeringLock_1.shouldLockBasketLayering; } });
 class VirtualPendingMonitor {
     constructor(supabase) {
         this.supabase = supabase;
@@ -237,9 +204,12 @@ class VirtualPendingMonitor {
             .eq('status', 'pending')
             .not('expires_at', 'is', null)
             .lt('expires_at', nowIso)
-            .select('id,signal_id,user_id,broker_account_id,metaapi_account_id,symbol,is_buy,step_idx');
+            .select('id,signal_id,user_id,broker_account_id,metaapi_account_id,symbol,is_buy,step_idx,layer_plan_id');
         if (expired && expired.length) {
             for (const r of expired) {
+                if (r.layer_plan_id) {
+                    await (0, layeringPlanLifecycle_1.convergeLayeringPlanAfterLegTerminal)(this.supabase, r.layer_plan_id);
+                }
                 if ((0, copierPause_1.isUserCopierPausedCached)(r.user_id))
                     continue;
                 try {
@@ -427,12 +397,12 @@ class VirtualPendingMonitor {
         // Scan open AND closed trades: a TP fill closes its rows at the broker
         // within seconds, so an open-only scan misses the touch (the remaining
         // open trades carry deeper TPs that were never reached).
+        // Match XAUUSD ↔ XAUUSDm in memory (do not require exact symbol equality).
         const { data, error } = await this.supabase
             .from('trades')
-            .select('signal_id,broker_account_id,user_id,direction,tp,status')
+            .select('signal_id,broker_account_id,user_id,direction,tp,status,symbol')
             .in('signal_id', signalIds)
             .in('broker_account_id', brokerIds)
-            .eq('symbol', symbol)
             .in('status', ['open', 'closed']);
         if (error) {
             console.warn(`[virtualPendingMonitor] tp-touch scan failed: ${error.message}`);
@@ -440,6 +410,8 @@ class VirtualPendingMonitor {
         }
         const byBasket = new Map();
         for (const row of (data ?? [])) {
+            if (row.symbol && !(0, basketModFollowUp_1.symbolsCompatibleForBasket)(symbol, row.symbol))
+                continue;
             const basketKey = `${row.signal_id}|${row.broker_account_id}`;
             const arr = byBasket.get(basketKey) ?? [];
             arr.push(row);
@@ -452,7 +424,7 @@ class VirtualPendingMonitor {
             const openTps = openRows
                 .map(r => Number(r.tp))
                 .filter(tp => Number.isFinite(tp) && tp > 0);
-            const decision = shouldLockBasketLayering({
+            const decision = (0, rangeBasketLayeringLock_1.shouldLockBasketLayering)({
                 direction,
                 openTps,
                 openCount: openRows.length,
@@ -469,11 +441,12 @@ class VirtualPendingMonitor {
             if (!userId)
                 continue;
             const layerTillClose = await (0, rangeLayerTillClose_1.loadRangeLayerTillCloseForSignal)(this.supabase, signalId, brokerAccountId);
-            if (layerTillClose) {
+            if (layerTillClose && decision.reason !== 'basket_fully_closed') {
                 // Layer-till-close ON: keep layering (legs must keep firing, so do NOT
                 // add to `touched`), but still record a sticky TP-touch marker so the
                 // TP-distribution freeze engages — new legs get the deepest TP and
                 // existing legs are never repainted after a TP is hit.
+                // Fully flat baskets still fall through to stop/purge below.
                 await (0, rangePendingFireGuard_1.setTpTouchedLock)(this.supabase, {
                     signalId,
                     brokerAccountId,
@@ -592,6 +565,20 @@ class VirtualPendingMonitor {
         catch (err) {
             console.warn(`[virtualPendingMonitor] enqueue reconcile failed leg=${leg.id}:`
                 + ` ${err instanceof Error ? err.message : String(err)}`);
+            (0, sentry_1.captureWorkerWarning)(err instanceof Error ? err : new Error(String(err)), {
+                subsystem: 'range',
+                operation: 'basket_reconcile_enqueue_failed',
+                errorCode: 'BASKET_RECONCILE_ENQUEUE_FAILED',
+                fingerprint: ['range', 'BASKET_RECONCILE_ENQUEUE_FAILED', 'range_fill_follow_up'],
+                context: {
+                    user_id: leg.user_id,
+                    signal_id: leg.signal_id,
+                    broker_account_id: leg.broker_account_id,
+                    pending_leg_id: leg.id,
+                    basket_id: `${leg.signal_id}:${leg.broker_account_id}`,
+                    stage: 'range_reconcile_enqueue',
+                },
+            });
         }
     }
     async markLegFiredWithRetry(legId, ticket) {
@@ -608,11 +595,54 @@ class VirtualPendingMonitor {
         }
         throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
     }
+    async validateLayeringModePendingLeg(leg) {
+        const planId = typeof leg.layer_plan_id === 'string' && leg.layer_plan_id.trim()
+            ? leg.layer_plan_id.trim()
+            : null;
+        if (!planId)
+            return { ok: true };
+        const { data, error } = await this.supabase
+            .from('layering_plans')
+            .select('status,layer_plan_metadata')
+            .eq('layer_plan_id', planId)
+            .maybeSingle();
+        if (error || !data)
+            return { ok: false, reason: 'layering_plan_not_found' };
+        const status = String(data.status ?? '');
+        if (status !== 'active')
+            return { ok: false, reason: `layering_plan_${status || 'unknown'}` };
+        const parsed = (0, layeringPlanPersistence_1.parsePersistedLayeringPlan)(data.layer_plan_metadata);
+        if (!parsed.ok)
+            return { ok: false, reason: `layering_plan_${parsed.reason}` };
+        const snapshot = parsed.snapshot;
+        if (snapshot.planId !== planId
+            || snapshot.signalId !== leg.signal_id
+            || snapshot.brokerAccountId !== leg.broker_account_id
+            || snapshot.symbol !== leg.symbol
+            || (snapshot.side === 'buy') !== leg.is_buy
+            || snapshot.fundedPrices == null
+            || snapshot.lots == null)
+            return { ok: false, reason: 'layering_plan_identity_mismatch' };
+        const idx = leg.step_idx - 1;
+        if (idx < 0 || idx >= snapshot.fundedPrices.length)
+            return { ok: false, reason: 'layering_plan_leg_index_mismatch' };
+        if (snapshot.fundedPrices[idx] !== leg.trigger_price)
+            return { ok: false, reason: 'layering_plan_price_mismatch' };
+        if (snapshot.lots[idx] !== leg.volume)
+            return { ok: false, reason: 'layering_plan_lot_mismatch' };
+        const decision = (0, layeringModeRollout_1.resolveLayeringModeRolloutDecision)({ mode: snapshot.mode, brokerAccountId: leg.broker_account_id });
+        if (!decision.executionAllowed)
+            return { ok: false, reason: `layering_execution_${decision.reason}` };
+        return { ok: true };
+    }
     async fireLeg(leg, bid, ask, opts) {
         const api = (0, mtApiByAccount_1.apiForFxsocketAccount)(this.platformByUuid, leg.metaapi_account_id);
         if (!api)
             return { outcome: 'skipped', reason: 'api_unavailable' };
         const timestamps = { ...(opts?.timestamps ?? {}) };
+        const planGuard = await this.validateLayeringModePendingLeg(leg);
+        if (!planGuard.ok)
+            return { outcome: 'skipped', reason: planGuard.reason };
         // Use the tick-level quote directly — it was fetched moments ago in this
         // same tick cycle. The monotonicity check below still prevents stale fires.
         const guardBid = bid;
@@ -625,6 +655,12 @@ class VirtualPendingMonitor {
         }
         else if (!isTriggered(leg.is_buy, leg.trigger_price, guardBid, guardAsk)) {
             return { outcome: 'skipped', reason: 'not_triggered' };
+        }
+        // Flat/stale BEFORE claim — never OrderSend (or claim) when the basket is gone.
+        const staleBeforeClaim = await this.getStaleLegReason(leg, api, leg.metaapi_account_id);
+        if (staleBeforeClaim) {
+            await (0, rangePendingBasketCleanup_1.deleteRangePendingLegsForBasket)(this.supabase, { signalId: leg.signal_id, brokerAccountId: leg.broker_account_id }, staleBeforeClaim);
+            return { outcome: 'skipped', reason: staleBeforeClaim };
         }
         timestamps.layer_claim_started_at = Date.now();
         const { data: claimed, error: claimErr } = await this.supabase
@@ -645,6 +681,11 @@ class VirtualPendingMonitor {
         }
         timestamps.layer_claim_acquired_at = Date.now();
         (0, workerMetrics_1.incMetric)('range_layer_claim_acquired');
+        const preSendPlanGuard = await this.validateLayeringModePendingLeg(leg);
+        if (!preSendPlanGuard.ok) {
+            await this.releaseClaimedLegToPending(leg.id);
+            return { outcome: 'skipped', reason: preSendPlanGuard.reason };
+        }
         const earlyParams = await this.getSymbolParams(leg.metaapi_account_id, leg.symbol);
         const earlyFireBid = guardBid;
         const earlyFireAsk = guardAsk;
@@ -760,6 +801,7 @@ class VirtualPendingMonitor {
         catch {
             // best-effort — fire with stops from pending leg row
         }
+        // Re-check after claim — basket may have flattened while we held the claim.
         const staleReason = await this.getStaleLegReason(leg, api, leg.metaapi_account_id);
         if (staleReason) {
             await (0, rangePendingBasketCleanup_1.deleteRangePendingLegsForBasket)(this.supabase, { signalId: leg.signal_id, brokerAccountId: leg.broker_account_id }, staleReason);
@@ -848,6 +890,9 @@ class VirtualPendingMonitor {
             // cannot leave the row `claimed` and get reset to `pending` (30s stale reclaim).
             await this.markLegFiredWithRetry(leg.id, result.ticket ?? null);
             timestamps.pending_leg_updated_at = Date.now();
+            if (leg.layer_plan_id) {
+                await (0, layeringPlanLifecycle_1.convergeLayeringPlanAfterLegTerminal)(this.supabase, leg.layer_plan_id);
+            }
             const latencyMs = Date.now() - t0;
             console.log(`[virtualPendingMonitor] virtual leg fired signal=${leg.signal_id} stepIdx=${leg.step_idx} trigger=${leg.trigger_price} ref=${refPrice} ticket=${result.ticket} latency=${latencyMs}ms`);
             const entryPx = result.openPrice ?? refPrice ?? null;
@@ -879,6 +924,25 @@ class VirtualPendingMonitor {
                 // Surface it as an orphan so ops/reconcile can reconcile it from the
                 // broker (reconcile-by-anchor cannot see a leg missing from `trades`).
                 console.warn(`[virtualPendingMonitor] trades insert failed leg=${leg.id}: ${insErr.message}`);
+                (0, sentry_1.captureWorkerError)(insErr, {
+                    subsystem: 'range',
+                    operation: 'range_broker_success_trade_persist_failed',
+                    errorCode: 'BROKER_SUCCESS_DB_FAILURE',
+                    fingerprint: ['range', 'BROKER_SUCCESS_DB_FAILURE', 'range_leg_trade_insert'],
+                    context: {
+                        user_id: leg.user_id,
+                        signal_id: leg.signal_id,
+                        broker_account_id: leg.broker_account_id,
+                        pending_leg_id: leg.id,
+                        basket_id: `${leg.signal_id}:${leg.broker_account_id}`,
+                        stage: 'range_post_broker_success_persistence',
+                        extra: {
+                            symbol: leg.symbol,
+                            step_idx: leg.step_idx,
+                            broker_ticket_present: result.ticket != null,
+                        },
+                    },
+                });
                 try {
                     await this.supabase.from('trade_execution_logs').insert({
                         user_id: leg.user_id,
@@ -954,7 +1018,7 @@ class VirtualPendingMonitor {
             catch {
                 /* logging is best-effort; leg is already `fired` */
             }
-            if (entryPx != null && Number.isFinite(entryPx) && entryPx > 0) {
+            if (!leg.layer_plan_id && entryPx != null && Number.isFinite(entryPx) && entryPx > 0) {
                 try {
                     const reanchor = await (0, gapFillReanchor_1.reanchorPendingLegsAfterGapFill)({
                         supabase: this.supabase,
@@ -1032,6 +1096,9 @@ class VirtualPendingMonitor {
                 .from('range_pending_legs')
                 .update({ status: 'failed', error_message: msg, fired_at: new Date().toISOString() })
                 .eq('id', leg.id);
+            if (leg.layer_plan_id) {
+                await (0, layeringPlanLifecycle_1.convergeLayeringPlanAfterLegTerminal)(this.supabase, leg.layer_plan_id);
+            }
             timestamps.pending_leg_updated_at = Date.now();
             await this.supabase.from('trade_execution_logs').insert({
                 user_id: leg.user_id,
@@ -1041,6 +1108,21 @@ class VirtualPendingMonitor {
                 status: 'failed',
                 request_payload: { leg_id: leg.id, step_idx: leg.step_idx, claimed_by: this.hostId },
                 error_message: msg,
+            });
+            (0, sentry_1.captureWorkerError)(err instanceof Error ? err : new Error(msg), {
+                subsystem: 'range',
+                operation: 'range_leg_fire_failed',
+                errorCode: 'RANGE_LEG_FIRE_FAILED',
+                fingerprint: ['range', 'RANGE_LEG_FIRE_FAILED', 'final'],
+                context: {
+                    user_id: leg.user_id,
+                    signal_id: leg.signal_id,
+                    broker_account_id: leg.broker_account_id,
+                    pending_leg_id: leg.id,
+                    basket_id: `${leg.signal_id}:${leg.broker_account_id}`,
+                    stage: 'range_leg_fire',
+                    extra: { symbol: leg.symbol, step_idx: leg.step_idx },
+                },
             });
             (0, workerMetrics_1.incMetric)('range_layer_execution_failed');
             logLayerLatency('range_layer_execution_failed', layerLatencyPayload(timestamps, {
