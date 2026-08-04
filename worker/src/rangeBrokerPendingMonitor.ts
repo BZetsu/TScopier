@@ -2,7 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { hasFxsocketConfigured, normalizeSymbolParams, type SymbolParams } from './fxsocketClient'
 import { apiForFxsocketAccount, loadPlatformByFxsocketId, type PlatformByFxsocketId } from './mtApiByAccount'
 import { autoManagementTradeSnapshot } from './autoManagement'
-import { tryApplyBasketFollowUpToNewFill, symbolsCompatibleForBasket } from './basketModFollowUp'
+import { tryApplyBasketFollowUpToNewFill } from './basketModFollowUp'
 import { assignNakedBrokerFillStops } from './brokerPendingFillStops'
 import { normalizeManualSettingsForExecution } from './manualPlanning/normalizeManualSettings'
 import { resolveChannelTradingConfig } from './channelTradingConfig'
@@ -20,12 +20,9 @@ import {
 } from './monitorIdleGate'
 import { isUserCopierPausedCached } from './copierPause'
 import {
-  findClosedRowForTicket,
-  findOpenedRowByTicket,
-  isLikelyMarketPositionRow,
-  isPendingEntryRow,
-  rawOrderTicket,
-} from './signalEntryPendingHelpers'
+  decideBrokerPendingClosedFill,
+  decideBrokerPendingOpenedState,
+} from './brokerPendingFillDetect'
 import {
   cancelBrokerRangeLegAtBroker,
   reconcileBasketEmptyCancelledLegs,
@@ -40,64 +37,6 @@ import { recoverNativeLayeringSubmissions } from './tradeExecutor/layeringModeBr
 const ACTIVE_MS = monitorActiveIntervalMs('RANGE_BROKER_PENDING_TICK_MS', 2_000)
 const IDLE_MS = monitorIdleIntervalMs('RANGE_BROKER_PENDING_IDLE_MS', 15_000)
 const MISSING_BEFORE_ASSUME_GONE = 6
-
-function extractOpenPrice(raw: Record<string, unknown>): number | null {
-  const num = (v: unknown): number | undefined => {
-    if (typeof v === 'number' && Number.isFinite(v)) return v
-    if (typeof v === 'string' && v.trim()) {
-      const n = Number(v)
-      return Number.isFinite(n) ? n : undefined
-    }
-    return undefined
-  }
-  const px = num(raw.openPrice ?? raw.OpenPrice ?? raw.price ?? raw.Price ?? raw.priceOpen ?? raw.PriceOpen)
-  return px != null && px > 0 ? px : null
-}
-
-function readOpenedComment(row: unknown): string {
-  if (row == null || typeof row !== 'object') return ''
-  const o = row as Record<string, unknown>
-  const c = o.comment ?? o.Comment
-  return typeof c === 'string' ? c : ''
-}
-
-/** Prefer a live market position ticket (MT5 often changes ticket on pending fill). */
-function resolveFilledPositionTicket(
-  opened: unknown[],
-  leg: RangeBrokerPendingRow,
-  preferredTicket: number | null,
-): { ticket: string | null; fillPrice: number | null } {
-  if (preferredTicket != null && preferredTicket > 0) {
-    const hit = findOpenedRowByTicket(opened, preferredTicket)
-    if (hit && isLikelyMarketPositionRow(hit)) {
-      return {
-        ticket: String(preferredTicket),
-        fillPrice: extractOpenPrice(hit),
-      }
-    }
-  }
-
-  const signalNeedle = leg.signal_id.slice(0, 8)
-  const commentNeedle = (leg.comment ?? '').trim()
-  for (const raw of opened) {
-    if (!raw || typeof raw !== 'object') continue
-    const o = raw as Record<string, unknown>
-    if (!isLikelyMarketPositionRow(o)) continue
-    const sym = String(o.symbol ?? o.Symbol ?? '')
-    if (sym && !symbolsCompatibleForBasket(leg.symbol, sym)) continue
-    const comment = readOpenedComment(raw)
-    const matchesComment = commentNeedle.length > 0 && comment.includes(commentNeedle)
-    const matchesSignal = comment.includes(signalNeedle) || comment.includes(leg.signal_id)
-    if (!matchesComment && !matchesSignal) continue
-    const ticket = rawOrderTicket(o)
-    if (!(ticket > 0)) continue
-    return { ticket: String(ticket), fillPrice: extractOpenPrice(o) }
-  }
-  return {
-    ticket: preferredTicket != null && preferredTicket > 0 ? String(preferredTicket) : null,
-    fillPrice: null,
-  }
-}
 
 async function loadManualForLeg(
   supabase: SupabaseClient,
@@ -564,36 +503,43 @@ export class RangeBrokerPendingMonitor {
         continue
       }
 
+      // Tickets already booked as open trades for these signals — exclude them
+      // when matching comment/signal so immediate market legs aren't mistaken
+      // for a pending fill after the limit ticket disappears.
+      const signalIds = [...new Set(group.map(r => r.signal_id))]
+      const excludeTickets = new Set<string>()
+      try {
+        const { data: openTrades } = await this.supabase
+          .from('trades')
+          .select('metaapi_order_id')
+          .in('signal_id', signalIds)
+          .eq('broker_account_id', group[0]!.broker_account_id)
+          .eq('status', 'open')
+        for (const t of openTrades ?? []) {
+          const id = (t as { metaapi_order_id?: string | null }).metaapi_order_id
+          if (id && /^\d+$/.test(id)) excludeTickets.add(id)
+        }
+      } catch { /* best-effort */ }
+
       const needClosed: RangeBrokerPendingRow[] = []
       for (const row of group) {
-        const ticket = Number(row.ticket)
-        if (!Number.isFinite(ticket) || ticket <= 0) continue
-
-        const hit = findOpenedRowByTicket(opened, ticket)
-        if (hit) {
-          if (isPendingEntryRow(hit)) {
-            this.missingStreak.delete(row.id)
-            continue
-          }
-          if (!isLikelyMarketPositionRow(hit)) {
-            this.missingStreak.delete(row.id)
-            continue
-          }
-          const px = extractOpenPrice(hit)
-          if (px != null) {
-            this.missingStreak.delete(row.id)
-            const posTicket = rawOrderTicket(hit)
-            await markBrokerRangeLegFilled(
-              this.supabase,
-              this.platformByUuid,
-              row,
-              px,
-              posTicket > 0 ? String(posTicket) : null,
-            )
-            continue
-          }
+        const decision = decideBrokerPendingOpenedState(opened, row, excludeTickets)
+        if (decision.kind === 'still_pending') {
+          this.missingStreak.delete(row.id)
+          continue
         }
-
+        if (decision.kind === 'filled') {
+          this.missingStreak.delete(row.id)
+          await markBrokerRangeLegFilled(
+            this.supabase,
+            this.platformByUuid,
+            row,
+            decision.hit.fillPrice,
+            decision.hit.positionTicket,
+          )
+          if (decision.hit.positionTicket) excludeTickets.add(decision.hit.positionTicket)
+          continue
+        }
         needClosed.push(row)
       }
 
@@ -608,22 +554,17 @@ export class RangeBrokerPendingMonitor {
       }
 
       for (const row of needClosed) {
-        const ticket = Number(row.ticket)
-        if (!Number.isFinite(ticket) || ticket <= 0) continue
-        const closedHit = findClosedRowForTicket(closed, ticket)
-        if (closedHit) {
+        const closedFill = decideBrokerPendingClosedFill(opened, closed, row, excludeTickets)
+        if (closedFill) {
           this.missingStreak.delete(row.id)
-          const resolved = resolveFilledPositionTicket(opened, row, ticket)
-          const px = resolved.fillPrice
-            ?? extractOpenPrice(closedHit as Record<string, unknown>)
-            ?? row.trigger_price
           await markBrokerRangeLegFilled(
             this.supabase,
             this.platformByUuid,
             row,
-            px,
-            resolved.ticket,
+            closedFill.fillPrice,
+            closedFill.positionTicket,
           )
+          if (closedFill.positionTicket) excludeTickets.add(closedFill.positionTicket)
           continue
         }
 
