@@ -8,6 +8,8 @@ import { normalizeManualSettingsForExecution } from './manualPlanning/normalizeM
 import { resolveChannelTradingConfig } from './channelTradingConfig'
 import { markRangeLegFired } from './rangePendingLadderSync'
 import { syncRangeBasketTakeProfits, toRangeBasketParsedSlice } from './rangeBasketTpSync'
+import { loadOpenBasketLegs, upsertBasketReconcileJob } from './basketSlTpReconcile'
+import { resolveFreshBasketReconcileTargets } from './basketReconcileTargets'
 import {
   applyShardToQuery,
   hasWorkOnShard,
@@ -181,6 +183,56 @@ async function rebalanceAfterFill(
   })
 }
 
+async function enqueueReconcileAfterBrokerFill(
+  supabase: SupabaseClient,
+  leg: RangeBrokerPendingRow,
+  channelId: string | null,
+  manual: ReturnType<typeof normalizeManualSettingsForExecution>,
+): Promise<void> {
+  const familyTrades = await loadOpenBasketLegs(
+    supabase,
+    leg.broker_account_id,
+    leg.signal_id,
+    leg.symbol,
+  )
+  if (!familyTrades.length) return
+  const direction: 'buy' | 'sell' = leg.is_buy ? 'buy' : 'sell'
+  const { perLegTargets, signalTps } = await resolveFreshBasketReconcileTargets(supabase, {
+    anchorSignalId: leg.signal_id,
+    channelId,
+    symbol: leg.symbol,
+    direction,
+    userId: leg.user_id,
+    brokerAccountId: leg.broker_account_id,
+    familyTrades,
+    storedTargets: [],
+    manual: {
+      range_trading: manual.range_trading === true,
+      tp_lots: manual.tp_lots,
+    },
+    nImmCwe: 0,
+    overrideTp: null,
+  })
+  if (!perLegTargets.length) return
+  await upsertBasketReconcileJob(supabase, {
+    userId: leg.user_id,
+    brokerAccountId: leg.broker_account_id,
+    anchorSignalId: leg.signal_id,
+    sourceSignalId: leg.signal_id,
+    channelId,
+    symbol: leg.symbol,
+    direction,
+    perLegTargets,
+    familyTrades,
+    signalTps,
+    tpLots: manual.tp_lots,
+    virtualPendingsSnapshot: null,
+    nImmCwe: 0,
+    overrideTp: null,
+    lastError: 'Broker pending naked fill; reconcile basket SL/TP',
+  })
+}
+
 async function markBrokerRangeLegFilled(
   supabase: SupabaseClient,
   platformByUuid: PlatformByFxsocketId,
@@ -287,6 +339,12 @@ async function markBrokerRangeLegFilled(
       await rebalanceAfterFill(supabase, platformByUuid, leg, channelId)
     } catch (rebalErr) {
       console.warn(`[rangeBrokerPending] TP rebalance leg=${leg.id}:`, rebalErr)
+    }
+    // Always enqueue reconcile so naked fills retry if OrderModify raced.
+    try {
+      await enqueueReconcileAfterBrokerFill(supabase, leg, channelId, manual)
+    } catch (enqErr) {
+      console.warn(`[rangeBrokerPending] reconcile enqueue leg=${leg.id}:`, enqErr)
     }
   }
 

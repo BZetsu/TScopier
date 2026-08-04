@@ -892,7 +892,7 @@ export async function syncRangeBasketTakeProfits(args: RangeBasketTpSyncArgs): P
     overrideTp: null,
     strictEntryPrefetch: sharedQuote,
     openedTickets,
-    skipAlreadySynced: true,
+    skipAlreadySynced: args.forceLayeringRebalance !== true,
     parallelLegs: true,
     internalRebalance,
     effectiveStoploss: effective.stoploss > 0 ? effective.stoploss : undefined,
