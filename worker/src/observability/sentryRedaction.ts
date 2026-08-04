@@ -4,7 +4,7 @@ const MAX_OBJECT_KEYS = 60
 const MAX_STRING_LENGTH = 1200
 
 const SENSITIVE_KEY_RE =
-  /(?:password|passwd|pwd|secret|token|bearer|cookie|set-cookie|authorization|api[_-]?key|auth[_-]?key|api[_-]?hash|service[_-]?role|session[_-]?string|phone[_-]?code[_-]?hash|phone|email|client[_-]?secret|private[_-]?key|x-api-key|access[_-]?token|refresh[_-]?token|worker[_-]?internal[_-]?token|redis[_-]?token|openai[_-]?key|fxsocket|mt4|mt5|broker[_-]?(?:password|login|credential|secret|token)|balance|equity|request[_-]?body|response[_-]?body|raw[_-]?message|telegram[_-]?text|message[_-]?text)/i
+  /(?:password|passwd|pwd|secret|token|bearer|cookie|set-cookie|authorization|api[_-]?key|auth[_-]?key|api[_-]?hash|service[_-]?role|session[_-]?string|phone[_-]?code[_-]?hash|phone|email|bvn|nin|identity[_-]?number|account[_-]?number|bank[_-]?account|client[_-]?secret|private[_-]?key|x-api-key|access[_-]?token|refresh[_-]?token|worker[_-]?internal[_-]?token|redis[_-]?token|openai[_-]?key|fxsocket|mt4|mt5|broker[_-]?(?:password|login|credential|secret|token)|balance|equity|free[_-]?margin|margin[_-]?free|request[_-]?body|response[_-]?body|raw[_-]?message|telegram[_-]?text|message[_-]?text|raw[_-]?telegram|signal[_-]?payload|broker[_-]?payload|layering[_-]?plan[_-]?snapshot)/i
 
 const SENSITIVE_QUERY_KEYS =
   /(?:token|key|secret|password|auth|authorization|cookie|session|code|hash|email|phone)/i

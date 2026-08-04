@@ -26,6 +26,7 @@ import { channelListenerPrimaryMode } from './channelListenerConfig'
 import { userMayRunCopierListener } from './subscriptionAccess'
 import { authKeyDupReconnectDelayMs, authKeyDupReconnectDelaysMs } from './authKeyDuplicatedRecovery'
 import { captureWorkerError, captureWorkerWarning } from './observability/sentry'
+import { captureBusinessIssue } from './observability/businessEvents'
 
 /**
  * Race a promise against a timeout so a single wedged network call cannot
@@ -1344,14 +1345,18 @@ export class UserSessionManager {
       `[sessionManager] AUTH_KEY_DUPLICATED recovery exhausted user=${userId}`
       + ` reason=${reason} — invalidating session so UI can re-link`,
     )
-    captureWorkerError(new Error('AUTH_KEY_DUPLICATED recovery exhausted'), {
-      subsystem: 'telegram',
-      operation: 'auth_key_duplicated_exhausted',
-      errorCode: 'AUTH_KEY_DUPLICATED',
-      fingerprint: ['telegram', 'AUTH_KEY_DUPLICATED', 'exhausted'],
+    captureBusinessIssue({
+      category: 'telegram',
+      event: 'telegram_recovery_exhausted',
+      severity: 'error',
+      reasonCode: 'AUTH_KEY_DUPLICATED',
+      message: 'Telegram AUTH_KEY_DUPLICATED recovery exhausted and session was invalidated',
+      userImpact: 'failed',
+      fingerprint: ['telegram_recovery_exhausted', 'auth_key_duplicated', 'exhausted'],
       context: {
         user_id: userId,
         stage: 'auth_key_duplicated_recovery',
+        operation: 'telegram_reconnect',
         extra: { reason },
       },
     })

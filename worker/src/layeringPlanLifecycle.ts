@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FxsocketBrokerClient } from './fxsocketClient'
+import { captureBusinessIssue } from './observability/businessEvents'
 
 export type LayeringPlanLifecycleOutcome =
   | 'completed'
@@ -188,6 +189,21 @@ export async function markLayeringPlanInvalid(
     .in('status', ['prepared', 'activating', 'active', 'cancelling', 'cancellation_pending', 'entries_complete'])
     .select('layer_plan_id')
     .maybeSingle()
+  if (!error && data) {
+    captureBusinessIssue({
+      category: 'layering',
+      event: 'layering_plan_invalid',
+      severity: 'error',
+      reasonCode: reason,
+      message: 'Layering plan was marked invalid',
+      userImpact: 'failed',
+      context: {
+        layer_plan_id: planId,
+        operation: 'mark_layering_plan_invalid',
+        extra: { reason },
+      },
+    })
+  }
   return !error && Boolean(data)
 }
 
@@ -366,6 +382,27 @@ export async function cancelLayeringPlan(
       .update({ status: pendingStatus, updated_at: now, cancellation_reason: reason })
       .eq('layer_plan_id', planId)
       .in('status', ['cancelling', 'cancellation_pending'])
+    const firstLeg = ((legs ?? []) as Array<Record<string, unknown>>)[0]
+    captureBusinessIssue({
+      category: 'layering',
+      event: manualReviewNative ? 'layering_manual_review_required' : 'layering_cancellation_pending',
+      severity: manualReviewNative ? 'error' : 'warning',
+      reasonCode: manualReviewNative ? 'LAYERING_CANCELLATION_MANUAL_REVIEW' : 'LAYERING_CANCELLATION_PENDING',
+      message: 'Layering plan cancellation could not be fully confirmed at broker',
+      userImpact: manualReviewNative ? 'manual_review_required' : 'delayed',
+      context: {
+        user_id: typeof firstLeg?.user_id === 'string' ? firstLeg.user_id : null,
+        signal_id: typeof firstLeg?.signal_id === 'string' ? firstLeg.signal_id : null,
+        broker_account_id: typeof firstLeg?.broker_account_id === 'string' ? firstLeg.broker_account_id : null,
+        layer_plan_id: planId,
+        operation: 'cancel_layering_plan',
+        extra: {
+          plan_status: pendingStatus,
+          reason,
+          ambiguous_execution: true,
+        },
+      },
+    })
     return pendingStatus
   }
   await supabase

@@ -18,11 +18,12 @@ type SentryAdapter = Pick<typeof Sentry,
 type CaptureOptions = {
   subsystem: string
   operation: string
-  level?: 'error' | 'warning'
+  level?: 'fatal' | 'error' | 'warning' | 'info'
   fingerprint?: string[]
   context?: WorkerSentryContextInput
   extra?: Record<string, unknown>
   errorCode?: string
+  tags?: Record<string, string | number | boolean | null | undefined>
 }
 
 let sentry: SentryAdapter = Sentry
@@ -37,10 +38,17 @@ const fatalErrors = new WeakSet<object>()
 const fatalSignatures = new Map<string, number>()
 
 const ALLOWED_BREADCRUMB_CATEGORIES = new Set([
+  'account',
+  'auth',
   'broker',
+  'copier',
+  'layering',
+  'management',
   'persistence',
   'queue',
   'range',
+  'reconciliation',
+  'trade',
   'telegram',
   'worker',
 ])
@@ -260,7 +268,7 @@ export function setWorkerGlobalTags(env: NodeJS.ProcessEnv = process.env): void 
 
 function applyScope(scope: unknown, opts: CaptureOptions): void {
   const s = scope as {
-    setLevel?: (level: 'error' | 'warning') => void
+    setLevel?: (level: 'fatal' | 'error' | 'warning' | 'info') => void
     setTag?: (key: string, value: string) => void
     setContext?: (key: string, value: Record<string, unknown>) => void
     setFingerprint?: (fingerprint: string[]) => void
@@ -271,6 +279,12 @@ function applyScope(scope: unknown, opts: CaptureOptions): void {
   s.setTag?.('operation', safeName(opts.operation, 'unknown'))
   const errorCode = opts.errorCode ?? 'UNKNOWN'
   s.setTag?.('error_code', safeName(errorCode, 'UNKNOWN').toUpperCase())
+  if (opts.tags) {
+    for (const [key, value] of Object.entries(opts.tags)) {
+      if (value == null) continue
+      s.setTag?.(safeName(key, 'tag'), String(safeForSentry(value)).slice(0, 160))
+    }
+  }
   s.setContext?.('pipeline', buildSafePipelineContext({
     ...(opts.context ?? {}),
     stage: opts.context?.stage ?? opts.operation,
@@ -302,6 +316,19 @@ export function captureWorkerWarning(messageOrError: unknown, opts: CaptureOptio
       applyScope(scope, { ...opts, level: 'warning', errorCode })
       if (messageOrError instanceof Error) sentry.captureException(messageOrError)
       else sentry.captureMessage(String(safeForSentry(String(messageOrError ?? 'warning'))), 'warning')
+    })
+  } catch {
+    // best-effort only
+  }
+}
+
+export function captureWorkerMessage(message: string, opts: CaptureOptions): void {
+  if (!enabled) return
+  try {
+    const errorCode = opts.errorCode ?? 'MESSAGE'
+    sentry.withScope(scope => {
+      applyScope(scope, { ...opts, errorCode })
+      sentry.captureMessage(String(safeForSentry(message)).slice(0, 240), opts.level ?? 'warning')
     })
   } catch {
     // best-effort only

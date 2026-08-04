@@ -349,6 +349,8 @@ test('context values are bounded and high-cardinality identifiers are not global
   assert.match(json, /signal-123/)
   assert.match(json, /user_hash/)
   assert.doesNotMatch(json, /user-123/)
+  assert.match(json, /broker_account_id_hash/)
+  assert.doesNotMatch(json, /broker-123/)
   assert.ok(json.length < 5000)
 })
 
@@ -482,9 +484,10 @@ test('buildSafePipelineContext preserves correlation as context only', () => {
   })
   const json = JSON.stringify(ctx)
   assert.match(json, /signal-abc/)
-  assert.match(json, /broker-abc/)
+  assert.match(json, /broker_account_id_hash/)
   assert.match(json, /user_hash/)
   assert.doesNotMatch(json, /user-abc/)
+  assert.doesNotMatch(json, /broker-abc/)
 })
 
 test('default integrations and automatic tracing are disabled', () => {

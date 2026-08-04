@@ -137,6 +137,9 @@ channel auto-disable, queue dead letters, ambiguous broker sends, broker-success
 database persistence failures, and reconciliation failures. It is intentionally
 worker-only; frontend/backoffice, Supabase Edge Functions, and the Python
 Telethon listener should be added in separate PRs with runtime-specific policies.
+Business/operational issues use structured `captureMessage` events through the
+central helper documented in
+[`docs/sentry-business-observability.md`](sentry-business-observability.md).
 
 Sentry is disabled unless both are true:
 
@@ -159,6 +162,8 @@ Recommended production setup:
 SENTRY_ENABLED=true
 SENTRY_ENVIRONMENT=production
 SENTRY_TRACES_SAMPLE_RATE=0
+SENTRY_BUSINESS_EVENTS_ENABLED=true
+SENTRY_BUSINESS_EVENT_COOLDOWN_MS=300000
 ```
 
 `SENTRY_RELEASE` may be set explicitly. If omitted, the worker uses Railway commit
@@ -188,6 +193,10 @@ instrumentation here.
 Load-test behavior: `LOAD_TEST_MODE=true` disables Sentry by default even when a
 DSN is present. Only isolated test Sentry environments should opt in with
 `SENTRY_LOAD_TEST_ENABLED=true`.
+
+Rollback for business events only: set `SENTRY_BUSINESS_EVENTS_ENABLED=false`
+and redeploy the worker. Set `SENTRY_ENABLED=false` to disable all worker Sentry
+events.
 
 **SQL drift check:** `scripts/diagnostics/listener_lease_drift.sql` — active `telegram_sessions` without a fresh lease.
 
