@@ -52,6 +52,8 @@ describe('active ladder statuses for insert dedupe', () => {
   })
 
   it('patchActiveRangePendingLegStops excludes broker_pending (limits stay naked)', () => {
+    // DB takeprofit on broker_pending IS updated by patchPendingRangeLegTakeProfits
+    // for TP% planning — but never OrderModified onto the resting limit.
     const patchedStatuses = ['pending', 'claimed'] as const
     assert.equal((patchedStatuses as readonly string[]).includes('broker_pending'), false)
   })

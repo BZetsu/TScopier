@@ -293,26 +293,50 @@ async function markBrokerRangeLegFilled(
   const ticketNum = ticketForTrade != null ? Number(ticketForTrade) : NaN
   const api = apiForFxsocketAccount(platformByUuid, leg.metaapi_account_id)
   if (tradeRowId && api && Number.isFinite(ticketNum) && ticketNum > 0) {
-    // Primary path: limits were naked — assign SL + TP on the filled position
-    // immediately (same resolveFiringLegStops path as virtual pending fire).
-    let assignedSl: number | null = null
-    let assignedTp: number | null = null
+    // Primary path (same as virtual after fire): redistribute SL + TP% across
+    // the whole open basket. Resting limits stay naked; only open positions
+    // get OrderModify'd.
+    await new Promise(r => setTimeout(r, Number(process.env.RANGE_REBALANCE_SETTLE_MS ?? 150)))
     try {
-      const assigned = await assignNakedBrokerFillStops({
-        supabase,
-        api,
-        leg,
-        tradeRowId,
-        ticket: ticketNum,
-        entryPrice: entryPx,
-        channelId,
-      })
-      if (assigned.ok) {
-        assignedSl = assigned.stoploss > 0 ? assigned.stoploss : null
-        assignedTp = assigned.takeprofit > 0 ? assigned.takeprofit : null
+      await rebalanceAfterFill(supabase, platformByUuid, leg, channelId)
+    } catch (rebalErr) {
+      console.warn(`[rangeBrokerPending] TP rebalance leg=${leg.id}:`, rebalErr)
+    }
+
+    // Read post-rebalance stops so mgmt follow-up only overlays newer adjusts.
+    let existingSl: number | null = null
+    let existingTp: number | null = null
+    try {
+      const { data: tradeStops } = await supabase
+        .from('trades')
+        .select('sl,tp')
+        .eq('id', tradeRowId)
+        .maybeSingle()
+      const sl = Number((tradeStops as { sl?: number | null } | null)?.sl)
+      const tp = Number((tradeStops as { tp?: number | null } | null)?.tp)
+      existingSl = Number.isFinite(sl) && sl > 0 ? sl : null
+      existingTp = Number.isFinite(tp) && tp > 0 ? tp : null
+    } catch { /* best-effort */ }
+
+    // Last resort: if rebalance left this leg naked, assign from effective/leg stops.
+    if (existingSl == null && existingTp == null) {
+      try {
+        const assigned = await assignNakedBrokerFillStops({
+          supabase,
+          api,
+          leg,
+          tradeRowId,
+          ticket: ticketNum,
+          entryPrice: entryPx,
+          channelId,
+        })
+        if (assigned.ok) {
+          existingSl = assigned.stoploss > 0 ? assigned.stoploss : null
+          existingTp = assigned.takeprofit > 0 ? assigned.takeprofit : null
+        }
+      } catch (assignErr) {
+        console.warn(`[rangeBrokerPending] fallback stops leg=${leg.id}:`, assignErr)
       }
-    } catch (assignErr) {
-      console.warn(`[rangeBrokerPending] naked fill stops leg=${leg.id}:`, assignErr)
     }
 
     try {
@@ -325,22 +349,16 @@ async function markBrokerRangeLegFilled(
         ticket: ticketNum,
         tradeRowId,
         entryPrice: entryPx,
-        // Prefer just-assigned stops so follow-up only overlays newer mgmt.
-        existingSl: assignedSl,
-        existingTp: assignedTp,
+        existingSl,
+        existingTp,
         tpLots: manual.tp_lots,
         isBuy: leg.is_buy,
       })
     } catch (hookErr) {
       console.warn(`[rangeBrokerPending] SL/TP follow-up leg=${leg.id}:`, hookErr)
     }
-    await new Promise(r => setTimeout(r, Number(process.env.RANGE_REBALANCE_SETTLE_MS ?? 150)))
-    try {
-      await rebalanceAfterFill(supabase, platformByUuid, leg, channelId)
-    } catch (rebalErr) {
-      console.warn(`[rangeBrokerPending] TP rebalance leg=${leg.id}:`, rebalErr)
-    }
-    // Always enqueue reconcile so naked fills retry if OrderModify raced.
+
+    // Always enqueue reconcile so failed OrderModifies retry.
     try {
       await enqueueReconcileAfterBrokerFill(supabase, leg, channelId, manual)
     } catch (enqErr) {

@@ -345,7 +345,7 @@ export async function patchPendingRangeLegTakeProfits(args: {
     .select('id, trigger_price, step_idx')
     .eq('broker_account_id', brokerAccountId)
     .eq('signal_id', signalId)
-    .in('status', ['pending', 'claimed'])
+    .in('status', ['pending', 'claimed', 'broker_pending'])
     .limit(500)
   if (!pendingRows?.length) return 0
 
@@ -623,7 +623,7 @@ export async function setActivePendingRangeLegsTakeProfit(
     .update({ takeprofit })
     .eq('broker_account_id', brokerAccountId)
     .eq('signal_id', signalId)
-    .in('status', ['pending', 'claimed'])
+    .in('status', ['pending', 'claimed', 'broker_pending'])
     .select('id')
   if (error) {
     console.warn(`[rangeBasketTpSync] freeze pending TP set failed signal=${signalId}: ${error.message}`)

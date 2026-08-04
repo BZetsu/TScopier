@@ -1,6 +1,7 @@
 /**
- * After a naked broker-pending limit fills, assign SL/TP to the open position.
- * Resting limits are placed with SL=0/TP=0; stops must be OrderModified on fill.
+ * Last-resort SL/TP assign after a naked broker-pending fill when basket
+ * TP% rebalance left the new trade still without stops.
+ * Prefer syncRangeBasketTakeProfits(forceLayeringRebalance) as the primary path.
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js'
