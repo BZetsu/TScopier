@@ -3,7 +3,6 @@ import assert from 'node:assert/strict'
 import {
   convertPipOffsetsToPrices,
   looksLikePipOffsetMagnitudes,
-  resolveSlUnit,
   resolveTpUnit,
   slClauseHasExplicitPips,
   tpClauseHasExplicitPips,

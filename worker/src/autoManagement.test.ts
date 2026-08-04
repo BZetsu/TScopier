@@ -29,6 +29,57 @@ test('breakevenStopLossForSymbol: buy XAUUSD entry + 3 pips', () => {
   )
 })
 
+test('breakevenStopLossForSymbol: offset uses signal pip size across precisions', () => {
+  const cases = [
+    {
+      name: '2-digit metal',
+      symbol: 'XAUUSD',
+      digits: 2,
+      entryPrice: 4330,
+      isBuy: true,
+      expected: 4330.05,
+    },
+    {
+      name: '3-digit JPY FX',
+      symbol: 'USDJPY',
+      digits: 3,
+      entryPrice: 145.123,
+      isBuy: false,
+      expected: 145.073,
+    },
+    {
+      name: '4-digit major FX',
+      symbol: 'EURUSD',
+      digits: 4,
+      entryPrice: 1.2345,
+      isBuy: true,
+      expected: 1.235,
+    },
+    {
+      name: '5-digit major FX',
+      symbol: 'EURUSD',
+      digits: 5,
+      entryPrice: 1.23456,
+      isBuy: false,
+      expected: 1.23406,
+    },
+  ] as const
+
+  for (const c of cases) {
+    assert.equal(
+      breakevenStopLossForSymbol({
+        isBuy: c.isBuy,
+        entryPrice: c.entryPrice,
+        manual: { breakeven_offset_pips: 5 },
+        symbol: c.symbol,
+        digits: c.digits,
+      }),
+      c.expected,
+      c.name,
+    )
+  }
+})
+
 test('isAutoManagementEnabled: off when mode is none', () => {
   assert.equal(isAutoManagementEnabled({ move_sl_to_entry_after_mode: 'none' }), false)
 })

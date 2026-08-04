@@ -27,6 +27,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- Restored XAUUSD breakeven follow-up offsets to the signal-pip convention so metal stop-loss offsets use `0.01` price units per pip after staging/dev merges.
 - Preserved existing range-layering execution as explicit `legacy` behavior so existing accounts, pending baskets, and signals are not silently converted to future Static or Dynamic semantics.
 - Tightened Phase A layer-plan snapshot parsing so impossible persisted Static/Dynamic metadata fails closed instead of being silently repaired.
 - Tightened Phase B calculator contracts so unrepresentable rounded anchors fail closed, lot allocation cannot exceed intended total, and combined plans expose funded prices separately from diagnostic candidates.
