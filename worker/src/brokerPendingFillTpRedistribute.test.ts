@@ -56,7 +56,7 @@ describe('broker pending fill TP% redistribute', () => {
     assert.equal(tpCounts.get(4055), 2, 'TP3 ~20%')
   })
 
-  it('patchPendingRangeLegTakeProfits updates broker_pending DB rows (limits stay naked on broker)', async () => {
+  it('patchPendingRangeLegTakeProfits updates broker_pending DB rows for resting limit sync', async () => {
     const updates: Array<{ id: string; takeprofit: number }> = []
     let statusFilter: string[] | null = null
     const supabase = {

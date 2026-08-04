@@ -23,6 +23,7 @@ import {
   decideBrokerPendingClosedFill,
   decideBrokerPendingOpenedState,
 } from './brokerPendingFillDetect'
+import { healNakedBrokerPendingStops } from './brokerPendingStopsSync'
 import {
   cancelBrokerRangeLegAtBroker,
   reconcileBasketEmptyCancelledLegs,
@@ -335,6 +336,8 @@ export class RangeBrokerPendingMonitor {
   private platformByUuid: PlatformByFxsocketId = new Map()
   private ticking = false
   private missingStreak = new Map<string, number>()
+  /** Baskets whose resting limits already had a stop-sync attempt this process. */
+  private stopsHealed = new Set<string>()
 
   constructor(private readonly supabase: SupabaseClient) {}
 
@@ -481,6 +484,45 @@ export class RangeBrokerPendingMonitor {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
         console.warn(`[rangeBrokerPendingMonitor] basket watch quote failed ${symbol}: ${msg}`)
+      }
+    }
+
+    // Heal naked resting limits once open basket legs already have SL/TP
+    // (common when signal had no SL/TP at place time).
+    const healKeys = new Set<string>()
+    for (const r of watchRows) {
+      const basketKey = `${r.signal_id}|${r.broker_account_id}|${r.metaapi_account_id}`
+      const missingDbStops = !(Number(r.stoploss) > 0) || !(Number(r.takeprofit) > 0)
+      if (missingDbStops || !this.stopsHealed.has(basketKey)) {
+        healKeys.add(basketKey)
+      }
+    }
+    for (const key of healKeys) {
+      const [signalId, brokerAccountId, uuid] = key.split('|')
+      if (!signalId || !brokerAccountId || !uuid) continue
+      const api = apiForFxsocketAccount(this.platformByUuid, uuid)
+      if (!api) continue
+      try {
+        const modified = await healNakedBrokerPendingStops({
+          supabase: this.supabase,
+          api,
+          signalId,
+          brokerAccountId,
+        })
+        if (modified > 0) this.stopsHealed.add(key)
+        else {
+          // No open-trade stops yet, or already synced on broker — avoid hot loop
+          // once DB rows have stops.
+          const stillMissing = watchRows.some(r =>
+            r.signal_id === signalId
+            && r.broker_account_id === brokerAccountId
+            && (!(Number(r.stoploss) > 0) || !(Number(r.takeprofit) > 0)),
+          )
+          if (!stillMissing) this.stopsHealed.add(key)
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        console.warn(`[rangeBrokerPendingMonitor] stop heal failed signal=${signalId}: ${msg}`)
       }
     }
 
