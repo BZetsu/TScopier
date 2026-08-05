@@ -11,6 +11,9 @@ export function resolveCopierSkipReasonKey(reason: string | null | undefined): s
 }
 
 export const COPIER_SKIP_REASON_LABELS: Record<string, string> = {
+  ai_classified_as_uncertain_human_review_required: 'AI was uncertain — review before trading',
+  ai_review_expired: 'Review window expired',
+  ai_review_price_passed: 'Price moved outside the review entry range',
   invalid_stops: 'Broker rejected stop levels',
   entry_not_opened: 'No position opened',
   entry_zone_far_from_market: 'Entry too far from market',

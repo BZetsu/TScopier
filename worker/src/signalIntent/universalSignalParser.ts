@@ -67,7 +67,7 @@ export type UniversalParseContext = {
 const UNIVERSAL_SYSTEM_PROMPT = `You extract trading intent from Telegram channel messages in ANY language.
 Return strict JSON only matching this schema:
 {
-  "kind": "entry" | "modify" | "close" | "breakeven" | "partial_close" | "cancel_pending" | "ignore" | "commentary",
+  "kind": "entry" | "modify" | "close" | "breakeven" | "partial_close" | "cancel_pending" | "ignore" | "commentary" | "uncertain",
   "side": "BUY" | "SELL" | null,
   "symbol": string | null,
   "entry": number[],
@@ -94,6 +94,7 @@ Rules:
 - Cancel/delete buy/sell limit or pending, or "trade invalid" / "setup invalid": kind cancel_pending (not a full market close).
 - TP-hit announcements, status updates, "TP2 reached", ATUALIZAÇÃO without new entry → kind commentary or ignore.
 - Conditional tense, retrospective discussion, macro news → kind commentary.
+- If the message could be an executable trade but the instruction, side, price, or intent is genuinely ambiguous → kind uncertain.
 - confidence 0-1.`
 
 function keywordsSummary(keywords: ChannelKeywords): Record<string, string> {
@@ -266,7 +267,7 @@ export async function parseUniversalSignal(
     }
   }
 
-  if (intent.kind === 'commentary' || intent.kind === 'ignore') {
+  if (intent.kind === 'commentary' || intent.kind === 'ignore' || intent.kind === 'uncertain') {
     return {
       intent,
       source: 'openai',
@@ -274,7 +275,9 @@ export async function parseUniversalSignal(
       parseResult: {
         parsed: tradeIntentToChannelParsedSignal(intent, args.rawMessage),
         status: 'skipped',
-        skip_reason: 'AI classified as non-actionable',
+        skip_reason: intent.kind === 'uncertain'
+          ? 'AI classified as uncertain; human review required'
+          : 'AI classified as non-actionable',
       },
     }
   }

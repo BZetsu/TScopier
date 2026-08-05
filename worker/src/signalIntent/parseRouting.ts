@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { ChannelKeywords, ChannelLexiconRow, ParseChannelMessageResult } from '../parseSignal'
-import { getUniversalParseMode } from './parseConfig'
+import { getUniversalParseMode, universalParseAiVetoEnabled } from './parseConfig'
 import { compareParseShadowDiff } from './shadowDiff'
 import {
   deterministicQualifiesForFastPath,
@@ -11,7 +11,12 @@ import {
 
 export type RoutedParseResult = {
   parseResult: ParseChannelMessageResult
-  aiMeta?: { intent: string; source: string }
+  aiMeta?: {
+    intent: string
+    source: string
+    fallbackReason?: string
+    reviewRequired?: boolean
+  }
   universalIntent?: UniversalParseResult['intent']
 }
 
@@ -80,9 +85,41 @@ export async function routeSignalParse(args: {
         universalIntent: universal.intent,
       }
     }
+
+    const aiUnavailable = universal.source === 'unavailable'
+      || universal.skip_reason === 'universal_parse_unavailable'
+    if (aiUnavailable) {
+      return {
+        parseResult: det,
+        aiMeta: {
+          intent: 'deterministic_fallback',
+          source: 'deterministic',
+          fallbackReason: universal.skip_reason ?? 'universal_parse_unavailable',
+        },
+        universalIntent: universal.intent,
+      }
+    }
+
+    // Only an explicit uncertain result enters human review. Clear commentary
+    // and ignore results are ordinary skips and must not create review spam.
+    if (universalParseAiVetoEnabled()) {
+      return {
+        parseResult: universal.parseResult,
+        aiMeta: {
+          intent: universal.intent.kind,
+          source: universal.source,
+          reviewRequired: universal.intent.kind === 'uncertain',
+        },
+        universalIntent: universal.intent,
+      }
+    }
     return {
       parseResult: det.status === 'parsed' ? det : universal.parseResult,
-      aiMeta: { intent: universal.intent.kind, source: universal.source },
+      aiMeta: {
+        intent: universal.intent.kind,
+        source: universal.source,
+        fallbackReason: 'ai_veto_disabled',
+      },
       universalIntent: universal.intent,
     }
   }

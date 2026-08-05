@@ -9,15 +9,75 @@ import { isEntryAction } from './tradeSignalActions'
 import type { TradeExecutor } from './tradeExecutor/TradeExecutor'
 import type { SignalRow } from './tradeExecutor/types'
 import { SKIP_REASON_ENTRY_NOT_OPENED } from './manualPlanner'
+import { applySymbolMapping, brokerHasLinkedSession, brokerSessionUuid } from './tradeExecutor/helpers'
+import { channelMatchesBrokerSignal } from './brokerChannelFilter'
 
 export const SIGNAL_RETRY_DISPATCH_SOURCE = 'signal_retry'
+export const AI_REVIEW_MAX_AGE_MS = 2 * 60_000
+export const AI_REVIEW_EXPIRED_REASON = 'ai_review_expired'
+export const AI_REVIEW_PRICE_PASSED_REASON = 'ai_review_price_passed'
 
 export const RETRYABLE_SIGNAL_SKIP_REASONS = new Set([
   SKIP_REASON_ENTRY_NOT_OPENED,
   ENTRY_ZONE_FAR_FROM_MARKET_REASON,
   'broker_session_not_connected',
   'entry_zone_far_from_market',
+  'ai classified as uncertain; human review required',
 ])
+
+function reviewAgeAllowed(createdAt: string, now = Date.now()): boolean {
+  const createdMs = Date.parse(createdAt)
+  return Number.isFinite(createdMs) && now - createdMs >= 0 && now - createdMs <= AI_REVIEW_MAX_AGE_MS
+}
+
+async function reviewPriceAllowed(
+  executor: TradeExecutor,
+  signal: NonNullable<Awaited<ReturnType<typeof loadSignalById>>>,
+): Promise<boolean> {
+  const parsed = signal.parsed_data
+  const action = String(parsed?.action ?? '').toLowerCase()
+  const symbol = String(parsed?.symbol ?? '').trim()
+  const entry = Number(parsed?.entry_price)
+  const zoneLow = Number(parsed?.entry_zone_low)
+  const zoneHigh = Number(parsed?.entry_zone_high)
+  if (!symbol || (action !== 'buy' && action !== 'sell')) return false
+  const hasZone = Number.isFinite(zoneLow) && Number.isFinite(zoneHigh) && zoneLow > 0 && zoneHigh > 0
+  if (!hasZone && (!Number.isFinite(entry) || entry <= 0)) return false
+
+  const brokers = (executor.brokersByUser.get(signal.user_id) ?? []).filter(b =>
+    b.is_active && brokerHasLinkedSession(b) && channelMatchesBrokerSignal(b, signal.channel_id),
+  )
+  if (brokers.length === 0) return false
+
+  for (const broker of brokers) {
+    const uuid = brokerSessionUuid(broker)
+    const api = uuid ? executor.apiFor(broker) : null
+    if (!uuid || !api) return false
+    const brokerSymbol = applySymbolMapping(symbol, broker).symbol
+    const params = await executor.getSymbolParams(uuid, brokerSymbol).catch(() => null)
+    const point = Number(params?.point ?? 0)
+    const tolerancePips = Math.max(0, Number((broker.manual_settings ?? {}).signal_entry_pip_tolerance ?? 10))
+    if (!Number.isFinite(point) || point <= 0) return false
+    const tolerance = tolerancePips * point
+    const quote = await api.quote(uuid, brokerSymbol).catch(() => null)
+    if (!quote || !Number.isFinite(quote.bid) || !Number.isFinite(quote.ask)) return false
+    const ref = action === 'buy' ? quote.ask : quote.bid
+    const within = hasZone
+      ? ref >= Math.min(zoneLow, zoneHigh) - tolerance && ref <= Math.max(zoneLow, zoneHigh) + tolerance
+      : Math.abs(ref - entry) <= tolerance
+    if (!within) return false
+  }
+  return true
+}
+
+async function expireReviewSignal(
+  supabase: SupabaseClient,
+  signal: { id: string; user_id: string },
+  reason: string,
+): Promise<void> {
+  await supabase.from('signals').update({ status: 'skipped', skip_reason: reason })
+    .eq('id', signal.id).eq('user_id', signal.user_id).eq('status', 'skipped')
+}
 
 export type RetrySignalResult = {
   ok: boolean
@@ -85,6 +145,17 @@ export async function retrySignal(
   }
   if (!isRetryableSignal(existing)) {
     return { ok: false, reason: 'signal_not_retryable' }
+  }
+
+  if (String(existing.skip_reason ?? '').trim().toLowerCase() === 'ai classified as uncertain; human review required') {
+    if (!reviewAgeAllowed(existing.created_at)) {
+      await expireReviewSignal(supabase, existing, AI_REVIEW_EXPIRED_REASON)
+      return { ok: false, reason: AI_REVIEW_EXPIRED_REASON }
+    }
+    if (!(await reviewPriceAllowed(executor, existing))) {
+      await expireReviewSignal(supabase, existing, AI_REVIEW_PRICE_PASSED_REASON)
+      return { ok: false, reason: AI_REVIEW_PRICE_PASSED_REASON }
+    }
   }
 
   if (existing.status !== 'parsed') {

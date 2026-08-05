@@ -1,6 +1,6 @@
 export type UniversalParseMode = 'off' | 'shadow' | 'fastpath' | 'primary'
 
-const FASTPATH_CONFIDENCE = 0.95
+const FASTPATH_CONFIDENCE = 0.99
 
 export function parseEnvBool(name: string, defaultValue = false): boolean {
   const raw = String(process.env[name] ?? (defaultValue ? 'true' : 'false')).trim()
@@ -24,6 +24,11 @@ export function getUniversalParseMode(): UniversalParseMode {
 export function universalParseFastPathConfidence(): number {
   const n = Number(process.env.UNIVERSAL_PARSE_FASTPATH_CONFIDENCE ?? FASTPATH_CONFIDENCE)
   return Number.isFinite(n) ? Math.min(1, Math.max(0.5, n)) : FASTPATH_CONFIDENCE
+}
+
+/** AI may veto an otherwise parsed deterministic candidate only when enabled. */
+export function universalParseAiVetoEnabled(): boolean {
+  return parseEnvBool('UNIVERSAL_PARSE_AI_VETO_ENABLED', false)
 }
 
 export function universalParseModel(): string {

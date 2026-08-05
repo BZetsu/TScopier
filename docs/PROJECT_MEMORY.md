@@ -2,6 +2,18 @@
 
 ## Changelog
 
+### 2026-08-05 — AI tri-state verification and guarded human review
+
+- **Context:** The signal parser needed to recover deterministic false negatives without sending every AI rejection to humans. The required policy is: clear AI entries execute, clear AI skips remain skipped without alerts, and only explicit AI uncertainty enters human review.
+- **Implementation:** Added an explicit `uncertain` universal intent. In fastpath mode, deterministic skips and sub-threshold parses are sent to AI. AI-confirmed entries can proceed; clear `ignore`/`commentary` results stay skipped; `uncertain` results persist a `ai_parse_review_required` listener event. AI outage/timeout continues the existing deterministic policy and records `ai_parse_fallback`.
+- **Safety:** The deterministic fastpath default is now `0.99`. Human approval is available only for AI-uncertain signals, only for two minutes after the signal, and only while every matching active broker quote remains within the signal entry price/zone plus the broker's configured pip tolerance. Expired or price-passed approvals are marked skipped. Existing Copier Logs retry UI recognizes the review reason.
+- **Commentary guard:** Results/promotional markers and both `SL suggested` and `suggested SL` are blocked in the worker and mirrored Supabase shared guard. Regression coverage includes the two production false-positive message shapes and a valid `GOLD SELL NOW @4258 SL:4273` signal.
+- **Affected files:** `worker/src/signalIntent/*`, `worker/src/signalCommentaryGuard.ts`, `supabase/functions/_shared/signalCommentaryGuard.ts`, `worker/src/userListener.ts`, `worker/src/listenerEvents.ts`, `worker/src/retrySignal.ts`, `src/lib/retrySignalDisplay.ts`, `src/lib/copierSkipReasonLabels.ts`, and focused tests.
+- **Verification:** `npx tsc -p worker/tsconfig.json --noEmit`, `npx tsc -b --noEmit`, and focused worker tests all passed: 4 test files, 0 failures.
+- **Database/deployment:** No migration or new database table was added. The existing signals, listener-events, Copier Logs, and retry/approval paths are used. Enable the existing fastpath settings and the single veto switch in staging before production.
+- **Follow-up:** Validate staging with real channel examples, especially AI `uncertain` responses and price movement during the two-minute review window, before enabling production.
+- **Detailed documentation:** `docs/ai-signal-verification-review-2026-08-05.md` records the previous and current behavior, deterministic score tables, decision model, flow, safety checks, configuration, Railway placement, files, rollout procedure, and limitations. A PDF copy is available at `docs/ai-signal-verification-review-2026-08-05.pdf`, generated with the print stylesheet `docs/ai-signal-verification-review-print.css`.
+
 ### 2026-08-05 — Prod migration audit + two handover .md files
 
 - **Context:** User shared a review comment listing 4 migrations (`trades_idempotency_guard`, `range_pending_broker_pending_unique_step`, `fix_signal_reconcile_sweep_cron_vault`, `enforce_plan_broker_channel_limits`) and asked whether they are on prod.

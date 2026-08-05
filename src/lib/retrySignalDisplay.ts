@@ -8,6 +8,7 @@ const RETRYABLE_SKIP_REASONS = new Set([
   'entry_zone_far_from_market',
   'broker_session_not_connected',
   'broker_bridge_unavailable',
+  'ai classified as uncertain; human review required',
 ])
 
 const RETRY_REASON_LABELS: Partial<Record<string, keyof CopierLogsTranslations>> = {

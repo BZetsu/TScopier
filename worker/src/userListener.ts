@@ -2026,7 +2026,12 @@ export class UserListener {
     parentSignalId: string | null
   }): Promise<{
     parseResult: Awaited<ReturnType<typeof parseChannelMessageSync>>
-    aiMeta?: { intent: string; source: string }
+    aiMeta?: {
+      intent: string
+      source: string
+      fallbackReason?: string
+      reviewRequired?: boolean
+    }
     channelKeywords: Awaited<ReturnType<typeof getChannelParseContext>>['keywords']
   }> {
     const { keywords, lexicon } = await getChannelParseContext(this.supabase, args.channelRowId)
@@ -2369,7 +2374,12 @@ export class UserListener {
     })
 
     let parseResult: Awaited<ReturnType<typeof parseChannelMessageSync>>
-    let aiMeta: { intent: string; source: string } | undefined
+    let aiMeta: {
+      intent: string
+      source: string
+      fallbackReason?: string
+      reviewRequired?: boolean
+    } | undefined
     let channelKeywords: Awaited<ReturnType<typeof getChannelParseContext>>['keywords'] | undefined
     try {
       setPipelineTimestamp(pipelineTs, 'parse_started_at', Date.now())
@@ -2474,6 +2484,38 @@ export class UserListener {
           signal_id: signalId,
           intent: aiMeta.intent,
           skip_reason: parseResult.skip_reason,
+        },
+      })
+    }
+
+    if (aiMeta?.fallbackReason) {
+      void persistListenerEvent(this.supabase, {
+        userId: this.userId,
+        eventType: 'ai_parse_fallback',
+        channelRowId: channelRow.id,
+        telegramMessageId: messageId,
+        detail: {
+          signal_id: signalId,
+          reason: aiMeta.fallbackReason,
+          deterministic_status: parseResult.status,
+          deterministic_action: parseResult.parsed.action,
+          ai_intent: aiMeta.intent,
+          ai_source: aiMeta.source,
+        },
+      })
+    }
+    if (aiMeta?.reviewRequired) {
+      void persistListenerEvent(this.supabase, {
+        userId: this.userId,
+        eventType: 'ai_parse_review_required',
+        channelRowId: channelRow.id,
+        telegramMessageId: messageId,
+        detail: {
+          signal_id: signalId,
+          ai_intent: aiMeta.intent,
+          ai_source: aiMeta.source,
+          skip_reason: parseResult.skip_reason,
+          review_required: true,
         },
       })
     }

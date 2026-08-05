@@ -19,6 +19,11 @@ function mapKindToAction(intent: TradeIntent): string {
       return 'delete_pendings'
     case 'commentary':
     case 'ignore':
+      return 'ignore'
+    case 'uncertain':
+      if (intent.side === 'BUY') return 'buy'
+      if (intent.side === 'SELL') return 'sell'
+      return 'ignore'
     default:
       return 'ignore'
   }

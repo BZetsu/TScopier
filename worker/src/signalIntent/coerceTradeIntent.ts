@@ -1,7 +1,7 @@
 import type { TradeIntent, TradeIntentKind, TradeIntentPriceUnit, TradeIntentSide } from './tradeIntent'
 
 const KINDS: ReadonlySet<string> = new Set([
-  'entry', 'modify', 'close', 'breakeven', 'partial_close', 'cancel_pending', 'ignore', 'commentary',
+  'entry', 'modify', 'close', 'breakeven', 'partial_close', 'cancel_pending', 'ignore', 'commentary', 'uncertain',
 ])
 
 function numOrNull(v: unknown): number | null {
