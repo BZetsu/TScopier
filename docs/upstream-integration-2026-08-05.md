@@ -95,7 +95,16 @@ New files: `supabase/functions/reconcile-stripe-entitlement/index.ts`,
 | `worker/src/tradeExecutor/TradeExecutor.ts` | Interim incident fix: revision reuses existing claim + `execution_claim_reused` event | Complete fix: `blockNewEntry` + SL/TP-only revision refresh + poll-for-materialization (5s) + wait for in-flight first entry (60s) | Took **staging** (more robust, upstream-approved) |
 | `worker/src/tradeExecutor/entryPrepare.ts` | `sameSignalRefresh` declared early (line 311) with hard early-return on revisions | Declares `sameSignalRefresh` + `blockNewEntry` before basket-refresh block | **Hybrid:** kept our early `sameSignalRefresh` (line 311), took staging's `blockNewEntry` declaration only (avoiding duplicate declaration) |
 
+### 4.3 main merge (commit 91afd9ba) — 3 conflicts
+
+| File | Our side (HEAD) | Upstream side (main) | Resolution |
+|---|---|---|---|
+| `worker/src/manualPlanning/planMultiManualOrders.ts` | Older burst-cap logic (`burstCap = immediateLegs` default) | Newer: teaser/no-TP handling block + burst cap refactor (defaults `ABS_MAX_LEGS`) | Took **main** (newer production code) |
+| `worker/src/tradeExecutor/signalBrokerDispatchClaim.ts` | Explicit fail-closed doc comment; no error logging | Adds `dispatch_claim_error` row to `trade_execution_logs` on claim-insert failure | **Combined:** kept our doc + their error logging |
+| `worker/src/tradeExecutor/TradeExecutor.ts` | Staging's complete incident fix (`blockNewEntry`) | Older unconditional `manualDispatchAlreadyMaterialized` probe at top of `sendOrder` | Took **ours** (staging's fix supersedes main's older probe, which predates the duplication fix) |
+
 ## 5. The incident-fix comparison (why staging's fix won)
+
 
 Both sides fixed the trade-duplication bug (signal re-executed up to 75× on revision path because the
 dispatch claim was skipped). See `docs/incident-2026-08-04-trade-duplication.md`.
@@ -133,22 +142,23 @@ but is no longer emitted by the chosen fix (harmless; kept for schema compatibil
 - [ ] Confirm no `<<<<<<<` / `>>>>>>>` markers anywhere (`git grep -n '^<<<<<<< '`).
 - [ ] After all 3 merges committed: `git diff` against each `upstream/*` to confirm nothing was dropped
       (`git diff backup/all-local-work-2026-08-05..integrate/upstream-sync` should contain only upstream additions).
+- [ ] Review merged `planMultiManualOrders.ts` teaser/no-TP path and the new burst-cap default (`ABS_MAX_LEGS`).
+- [ ] Confirm `signalBrokerDispatchClaim.ts` combines fail-closed doc + `dispatch_claim_error` logging with no duplication.
 
 ## 7. Files involved
 
 - Branches: `backup/all-local-work-2026-08-05`, `integrate/upstream-sync`, `dev`
-- Merged commits: `b64aa7c2` (dev), staging merge (pending), main merge (pending)
+- Merged commits: `b64aa7c2` (dev), `3cbfa628` (staging), `91afd9ba` (main)
 - Incident fix commit: `26e09770`
 - Key resolved files: `worker/src/tradeExecutor/TradeExecutor.ts`, `worker/src/tradeExecutor/entryPrepare.ts`,
-  `supabase/functions/update-layering-settings/index.ts`, `src/pages/dashboard/AccountConfigPage.tsx`, `docs/PROJECT_MEMORY.md`
+  `supabase/functions/update-layering-settings/index.ts`, `src/pages/dashboard/AccountConfigPage.tsx`,
+  `worker/src/manualPlanning/planMultiManualOrders.ts`, `worker/src/tradeExecutor/signalBrokerDispatchClaim.ts`, `docs/PROJECT_MEMORY.md`
 
 ## 8. What is expected to happen next
 
-1. Commit the staged staging merge.
-2. Merge `upstream/main` (Stripe/Telegram/manual-planning) into `integrate/upstream-sync`; resolve conflicts.
-3. Run the full audit checklist (§6).
-4. Update `docs/PROJECT_MEMORY.md` with this session.
-5. Push `integrate/upstream-sync` to origin; open PR against `upstream/dev` for admin review, or keep local per admin preference.
+1. Run the full audit checklist (§6).
+2. Update `docs/PROJECT_MEMORY.md` with this session.
+3. Push `integrate/upstream-sync` to origin; open PR against `upstream/dev` for admin review, or keep local per admin preference.
 
 ## 9. Security notes
 
