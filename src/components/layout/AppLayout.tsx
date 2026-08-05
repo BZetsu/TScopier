@@ -126,6 +126,12 @@ export function AppLayout() {
         ],
       },
       {
+        label: t.nav.sections.discover,
+        items: [
+          { to: '/popular-channels', label: t.nav.items.popularChannels },
+        ],
+      },
+      {
         label: t.nav.sections.tradingTools,
         items: [
           { to: '/market-news', label: t.nav.items.marketNews },

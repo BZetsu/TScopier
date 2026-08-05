@@ -1,3 +1,4 @@
+import type { SupabaseClient } from '@supabase/supabase-js'
 import { normalizeManualSettingsForExecution } from './manualPlanning/normalizeManualSettings'
 import type { ManualSettings } from './manualPlanning/types'
 import { normalizeSignalChannelIds } from './brokerChannelFilter'
@@ -286,5 +287,41 @@ export function withChannelTradingConfig<T extends BrokerChannelTradingFields>(
     copier_mode: resolved.copier_mode,
     manual_settings: resolved.manual_settings,
     ai_settings: resolved.ai_settings,
+  }
+}
+
+/**
+ * Persist healed per-channel configs to the `broker_channel_trading_configs` table.
+ * Only writes channels whose original config was missing or incomplete — after
+ * the first write, subsequent calls find the DB already populated and skip.
+ */
+export async function persistHealedChannelConfigs(
+  supabase: SupabaseClient,
+  brokerId: string,
+  originalRaw: unknown,
+  healedConfigs: Record<string, unknown>,
+): Promise<void> {
+  const originalMap = normalizeChannelTradingConfigsMap(originalRaw)
+  for (const [channelId, raw] of Object.entries(healedConfigs)) {
+    const key = normalizeChannelUuid(channelId)
+    if (!key) continue
+    const orig = originalMap[key]
+    if (orig && storedPerChannelConfigComplete({ [key]: orig }, key)) continue
+    const cfg = raw as ChannelTradingConfig
+    const { error } = await supabase
+      .from('broker_channel_trading_configs')
+      .upsert({
+        broker_account_id: brokerId,
+        channel_id: key,
+        copier_mode: cfg.copier_mode ?? 'manual',
+        manual_settings: cfg.manual_settings as Record<string, unknown> ?? {},
+        ai_settings: cfg.ai_settings as Record<string, unknown> ?? {},
+        copy_limit_state: cfg.copy_limit_state ?? null,
+      }, { onConflict: 'broker_account_id,channel_id', ignoreDuplicates: false })
+    if (error) {
+      console.warn(
+        `[channelTradingConfig] failed to persist healed config for broker=${brokerId} channel=${key}: ${error.message}`,
+      )
+    }
   }
 }

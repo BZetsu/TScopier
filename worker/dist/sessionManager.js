@@ -49,6 +49,7 @@ const channelFeedGate_1 = require("./channelFeedGate");
 const channelListenerConfig_1 = require("./channelListenerConfig");
 const subscriptionAccess_1 = require("./subscriptionAccess");
 const authKeyDuplicatedRecovery_1 = require("./authKeyDuplicatedRecovery");
+const sentry_1 = require("./observability/sentry");
 /**
  * Race a promise against a timeout so a single wedged network call cannot
  * stall a whole loop forever. Does not cancel the underlying work (the
@@ -88,11 +89,19 @@ function shouldRunGramjsForSession(session) {
 function authKeyReleaseDelayMs() {
     return Math.max(500, Math.min(120000, Number(process.env.TELEGRAM_RECONNECT_COOLDOWN_MS ?? 3500)));
 }
+function listenerStartTimeoutMs() {
+    return Math.max(15000, Math.min(180000, Number(process.env.LISTENER_START_TIMEOUT_MS ?? 60000)));
+}
+/** Consecutive renew ticks with MTProto down before hard-resetting the Map entry. */
+function disconnectedRenewHealTicks() {
+    return Math.max(2, Math.min(20, Number(process.env.LISTENER_DISCONNECT_HEAL_TICKS ?? 3)));
+}
 class UserSessionManager {
     constructor(supabase) {
         this.listeners = new Map();
         this.channelChannel = null;
         this.authPendingChannel = null;
+        this.realtimeHealthTimer = null;
         this.tradeExecutor = null;
         /** Serializes start/stop/adopt for one user — prevents AUTH_KEY_DUPLICATED races. */
         this.userConnectionLocks = new Map();
@@ -101,9 +110,13 @@ class UserSessionManager {
         this.authGuard = null;
         /** Guards renewAllLeases so slow cycles cannot stack up and exhaust sockets. */
         this.renewLeasesInFlight = false;
+        /** Renew ticks spent disconnected; cleared when connected again. */
+        this.disconnectedRenewTicks = new Map();
         this.channelListenerManager = null;
         this.channelReconcileMonitor = null;
         this.shuttingDown = false;
+        /** Tracks start failures with timestamps so syncSessions doesn't retry in a tight loop. */
+        this.recentlyFailed = new Map();
         this.supabase = supabase;
         this.channelListenerManager = new channelListenerManager_1.ChannelListenerManager(supabase);
         this.channelReconcileMonitor = new channelReconcileMonitor_1.ChannelReconcileMonitor(supabase, async (readerUserId, signalChannelId, telegramChatId) => {
@@ -134,6 +147,7 @@ class UserSessionManager {
         this.channelReconcileMonitor?.start();
     }
     stopChannelListenerServices() {
+        this.stopRealtimeHealthCheck();
         this.channelListenerManager?.stop();
         this.channelReconcileMonitor?.stop();
     }
@@ -232,7 +246,7 @@ class UserSessionManager {
         console.log(`[sessionManager] Loading ${owned.length}/${sessions?.length ?? 0} sessions`
             + ` (shard ${workerConfig_1.workerConfig.shardId}/${workerConfig_1.workerConfig.shardCount})`);
         const staggerMs = Math.max(0, Math.min(30000, Number(process.env.TELEGRAM_MULTI_SESSION_STAGGER_MS ?? 600)));
-        const startTimeoutMs = Math.max(15000, Math.min(180000, Number(process.env.LISTENER_START_TIMEOUT_MS ?? 60000)));
+        const startTimeoutMs = listenerStartTimeoutMs();
         let i = 0;
         for (const session of owned) {
             if (i++ > 0 && staggerMs > 0) {
@@ -249,6 +263,7 @@ class UserSessionManager {
         }
         this.subscribeToChannelChanges();
         this.subscribeToAuthPendingChanges();
+        this.startRealtimeHealthCheck();
     }
     async renewAllLeases() {
         if (this.shuttingDown)
@@ -280,10 +295,23 @@ class UserSessionManager {
                 }
                 if (!listener.isTelegramConnected()) {
                     // Dead Map entries used to skip renew forever (UI "Copier engine offline").
-                    // Kick reconnect so AUTH_KEY_DUPLICATED / failed reconnect can recover.
+                    // Kick reconnect first; after several failed ticks, hard-reset so syncSessions
+                    // can startListener cleanly (reconnect-only can leave No lease forever).
+                    const ticks = (this.disconnectedRenewTicks.get(userId) ?? 0) + 1;
+                    this.disconnectedRenewTicks.set(userId, ticks);
+                    const healAfter = disconnectedRenewHealTicks();
+                    if (ticks >= healAfter) {
+                        console.warn(`[sessionManager] hard-reset disconnected listener user=${userId}`
+                            + ` after ${ticks} renew ticks — syncSessions will restart`);
+                        this.disconnectedRenewTicks.delete(userId);
+                        await this.stopListener(userId);
+                        return;
+                    }
+                    console.log(`[sessionManager] listener disconnected but renewing lease anyway`
+                        + ` user=${userId} — kicking reconnect in background`);
                     listener.requestReconnectIfDisconnected('lease_renew_disconnected');
-                    return;
                 }
+                this.disconnectedRenewTicks.delete(userId);
                 try {
                     const result = await withTimeout((0, sessionLease_1.ensureSessionLeaseFresh)(this.supabase, userId), perUserTimeoutMs, `lease renew ${userId}`);
                     if (!result.ok) {
@@ -330,7 +358,9 @@ class UserSessionManager {
                 console.log('[sessionManager] Realtime telegram_channels subscription active');
             }
             else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
-                console.warn(`[sessionManager] Realtime subscription status: ${status}`);
+                console.warn(`[sessionManager] Realtime telegram_channels subscription ${status} — retrying in 5s`);
+                this.channelChannel = null;
+                setTimeout(() => this.subscribeToChannelChanges(), 5000);
             }
         });
     }
@@ -354,9 +384,30 @@ class UserSessionManager {
                 console.log('[sessionManager] Realtime telegram_auth_pending subscription active');
             }
             else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
-                console.warn(`[sessionManager] telegram_auth_pending subscription status: ${status}`);
+                console.warn(`[sessionManager] Realtime telegram_auth_pending subscription ${status} — retrying in 5s`);
+                this.authPendingChannel = null;
+                setTimeout(() => this.subscribeToAuthPendingChanges(), 5000);
             }
         });
+    }
+    startRealtimeHealthCheck() {
+        this.stopRealtimeHealthCheck();
+        this.realtimeHealthTimer = setInterval(() => {
+            if (!this.channelChannel) {
+                console.warn('[sessionManager] Health check: telegram_channels subscription missing — re-subscribing');
+                this.subscribeToChannelChanges();
+            }
+            if (!this.authPendingChannel) {
+                console.warn('[sessionManager] Health check: telegram_auth_pending subscription missing — re-subscribing');
+                this.subscribeToAuthPendingChanges();
+            }
+        }, 60000);
+    }
+    stopRealtimeHealthCheck() {
+        if (this.realtimeHealthTimer) {
+            clearInterval(this.realtimeHealthTimer);
+            this.realtimeHealthTimer = null;
+        }
     }
     /**
      * Stop the live listener and wait until the session lease is gone before opening
@@ -501,16 +552,24 @@ class UserSessionManager {
                 await this.stopListener(userId);
             }
         }
+        const cooldownMs = Math.max(30000, Math.min(3600000, Number(process.env.TELEGRAM_RETRY_COOLDOWN_MS ?? 300000)));
+        const now = Date.now();
         for (const session of activeOnShard) {
-            if (this.listeners.has(session.user_id))
+            const userId = session.user_id;
+            if (this.listeners.has(userId))
                 continue;
-            if (await this.shouldSkipListenerStart(session.user_id))
+            if (await this.shouldSkipListenerStart(userId))
+                continue;
+            const failedAt = this.recentlyFailed.get(userId);
+            if (failedAt && now - failedAt < cooldownMs)
                 continue;
             try {
-                await this.startListener(session.user_id, session.session_string);
+                await withTimeout(this.startListener(userId, session.session_string), listenerStartTimeoutMs(), `syncSessions startListener ${userId}`);
+                this.recentlyFailed.delete(userId);
             }
             catch (err) {
-                console.error(`[sessionManager] Failed to start listener for ${session.user_id}:`, err);
+                this.recentlyFailed.set(userId, Date.now());
+                console.error(`[sessionManager] Failed to start listener for ${userId}:`, err);
             }
         }
     }
@@ -930,16 +989,28 @@ class UserSessionManager {
                 listener.setOnSignalParsed(row => listenerInProcessDispatch(this.tradeExecutor, row));
             }
             try {
-                await listener.start();
+                await withTimeout(listener.start(), listenerStartTimeoutMs(), `listener.start ${userId}`);
             }
             catch (err) {
+                try {
+                    await listener.stop();
+                }
+                catch { /* ignore */ }
                 await (0, sessionLease_1.releaseSessionLease)(this.supabase, userId);
                 if (err instanceof telegramClient_1.TelegramSessionInvalidError) {
-                    await this.invalidateTelegramSession(userId);
+                    // Do not call invalidateTelegramSession here — it re-enters
+                    // withConnectionLock while we still hold it (deadlock).
+                    await this.supabase.from('telegram_auth_pending').delete().eq('user_id', userId);
+                    const { error } = await this.supabase.from('telegram_sessions').delete().eq('user_id', userId);
+                    if (error) {
+                        console.warn(`[sessionManager] session delete after invalid start failed for ${userId}:`, error.message);
+                    }
                 }
                 throw err;
             }
             this.listeners.set(userId, listener);
+            this.recentlyFailed.delete(userId);
+            this.disconnectedRenewTicks.delete(userId);
             console.log(`[sessionManager] Started listener for user ${userId}`);
         });
     }
@@ -949,6 +1020,7 @@ class UserSessionManager {
             return;
         await listener.stop();
         this.listeners.delete(userId);
+        this.disconnectedRenewTicks.delete(userId);
         await (0, sessionLease_1.releaseSessionLease)(this.supabase, userId);
         console.log(`[sessionManager] Stopped listener for user ${userId}`);
     }
@@ -1021,6 +1093,16 @@ class UserSessionManager {
                 }
                 catch (err) {
                     console.error(`[sessionManager] lease release failed during shutdown user=${userId}:`, err instanceof Error ? err.message : err);
+                    (0, sentry_1.captureWorkerWarning)(err instanceof Error ? err : new Error(String(err)), {
+                        subsystem: 'worker',
+                        operation: 'lease_release_failed',
+                        errorCode: 'LEASE_RELEASE_FAILED',
+                        fingerprint: ['worker', 'LEASE_RELEASE_FAILED', (0, workerConfig_1.leaseRoleLabel)()],
+                        context: {
+                            user_id: userId,
+                            stage: 'shutdown',
+                        },
+                    });
                 }
             }
         }));
@@ -1029,6 +1111,16 @@ class UserSessionManager {
             if (result.status === 'rejected') {
                 const userId = entries[i]?.[0] ?? 'unknown';
                 console.error(`[sessionManager] listener disconnect failed during shutdown user=${userId}:`, result.reason instanceof Error ? result.reason.message : result.reason);
+                (0, sentry_1.captureWorkerError)(result.reason instanceof Error ? result.reason : new Error(String(result.reason)), {
+                    subsystem: 'worker',
+                    operation: 'listener_disconnect_failed',
+                    errorCode: 'LISTENER_DISCONNECT_FAILED',
+                    fingerprint: ['worker', 'LISTENER_DISCONNECT_FAILED', (0, workerConfig_1.leaseRoleLabel)()],
+                    context: {
+                        user_id: userId,
+                        stage: 'shutdown',
+                    },
+                });
             }
         }
         await (0, sessionLease_1.releaseOwnedSessionLeases)(this.supabase);
@@ -1040,11 +1132,34 @@ class UserSessionManager {
         if (unresolvedLeases.length > 0) {
             console.error(`[sessionManager] unresolved owned leases after shutdown count=${unresolvedLeases.length}`
                 + ` users=${unresolvedLeases.map(l => l.user_id).join(',')}`);
+            (0, sentry_1.captureWorkerError)(new Error('Unresolved owned listener leases after shutdown'), {
+                subsystem: 'worker',
+                operation: 'unresolved_listener_leases',
+                errorCode: 'UNRESOLVED_LISTENER_LEASES',
+                fingerprint: ['worker', 'UNRESOLVED_LISTENER_LEASES', (0, workerConfig_1.leaseRoleLabel)()],
+                context: {
+                    stage: 'shutdown',
+                    extra: {
+                        unresolved_count: unresolvedLeases.length,
+                    },
+                },
+            });
         }
     }
     onAuthKeyDuplicatedRecoveryExhausted(userId, reason) {
         console.error(`[sessionManager] AUTH_KEY_DUPLICATED recovery exhausted user=${userId}`
             + ` reason=${reason} — invalidating session so UI can re-link`);
+        (0, sentry_1.captureWorkerError)(new Error('AUTH_KEY_DUPLICATED recovery exhausted'), {
+            subsystem: 'telegram',
+            operation: 'auth_key_duplicated_exhausted',
+            errorCode: 'AUTH_KEY_DUPLICATED',
+            fingerprint: ['telegram', 'AUTH_KEY_DUPLICATED', 'exhausted'],
+            context: {
+                user_id: userId,
+                stage: 'auth_key_duplicated_recovery',
+                extra: { reason },
+            },
+        });
         void this.invalidateTelegramSession(userId).catch(err => console.error(`[sessionManager] AUTH_KEY_DUPLICATED invalidation failed user=${userId}:`, err instanceof Error ? err.message : err));
     }
 }

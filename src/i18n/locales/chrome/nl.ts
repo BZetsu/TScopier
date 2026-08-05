@@ -5,6 +5,7 @@ export const chromeNl: AppChromeTranslations = {
     sections: {
       general: 'ALGEMEEN',
       signals: 'SIGNALEN',
+      discover: 'ONTDEK',
       tradingTools: 'HANDELSTOOLS',
       feedback: 'FEEDBACK',
       growth: 'GROEI & MONETISATIE',
@@ -18,6 +19,7 @@ export const chromeNl: AppChromeTranslations = {
       trades: 'Trades',
       management: 'Activiteiten',
       channels: 'Kanalen',
+      popularChannels: 'Populaire kanalen',
       backtest: 'Backtest',
       copierLogs: 'Copierlogs',
       signalHistory: 'Signalen beheren',

@@ -15,6 +15,7 @@ export const tradingJa: TradingPagesBundleTranslations = {
     emptySubtitleClosed: 'このMTセッションで最近決済された注文はありません。',
     modalTitle: '取引詳細',
     close: '閉じる',
+    manage: '管理',
     tradeSummary: '取引',
     signalChannel: 'シグナルチャンネル',
     telegramMessage: 'Telegramメッセージ',
@@ -63,5 +64,11 @@ export const tradingJa: TradingPagesBundleTranslations = {
     lotSizeOverride: 'ロットサイズの上書き',
     pipToleranceOverride: 'pip許容値の上書き',
     useBrokerDefault: 'ブローカーの既定値を使用',
+  },
+  popularChannelsPage: {
+    title: 'Popular Channels',
+    subtitle: 'Signal channels ranked by subscriber count across all TSCopier users',
+    emptyTitle: 'No channels yet',
+    emptySubtitle: 'Channels will appear here as users subscribe to them',
   },
 }

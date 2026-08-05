@@ -5,6 +5,7 @@ import {
   type FxsocketWsSubscribeFrame,
   type FxsocketWsTopic,
 } from './fxsocketWsClient'
+import { isBrokerSimulatorEnforced } from './brokerExecutionMode'
 
 export type FxsocketStreamHandler = FxsocketWsMessageHandler
 
@@ -208,6 +209,7 @@ export class FxsocketStreamManager {
 let managerSingleton: FxsocketStreamManager | null | undefined
 
 export function getFxsocketStreamManager(): FxsocketStreamManager | null {
+  if (isBrokerSimulatorEnforced()) return null
   if (managerSingleton !== undefined) return managerSingleton
   try {
     managerSingleton = new FxsocketStreamManager()

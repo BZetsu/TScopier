@@ -1,4 +1,11 @@
 import 'dotenv/config'
+import {
+  captureWorkerFatalError,
+  captureWorkerWarning,
+  flushWorkerSentry,
+  initWorkerSentry,
+  installWorkerProcessSentryHandlers,
+} from './observability/sentry'
 // Must be loaded before any TelegramClient runtime code — patches console.log
 // to suppress GramJS flood-wait INFO noise (83% of log volume).
 import './gramjsLogSuppress'
@@ -35,6 +42,10 @@ import { startTradeLogRetention } from './tradeLogRetention'
 import type { Server } from 'http'
 import { telegramShutdownDrainMs } from './workerShutdown'
 import { registerOrderCloseAuditSupabase } from './orderCloseAudit'
+import { initializeBrokerExecutionCapability } from './brokerExecutionMode'
+
+initWorkerSentry()
+installWorkerProcessSentryHandlers()
 
 if (!globalThis.WebSocket) {
   globalThis.WebSocket = WebSocket as unknown as typeof globalThis.WebSocket
@@ -129,6 +140,8 @@ function startTradeMonitors(executor: TradeExecutor | null) {
 }
 
 async function main() {
+  initializeBrokerExecutionCapability()
+
   if (workerConfig.runsListener) {
     const shardErr = validateListenerTradeShardConfig()
     if (shardErr) {
@@ -251,6 +264,26 @@ async function main() {
 
   const shutdown = async (signal: string) => {
     console.log(`[worker] ${signal} received, shutting down...`)
+    const shutdownStartedAt = Date.now()
+    const warnAfterMs = Math.max(1_000, Math.min(30_000, Number(process.env.SENTRY_SHUTDOWN_WARN_AFTER_MS ?? 20_000)))
+    const shutdownWarnTimer = setTimeout(() => {
+      captureWorkerWarning('worker shutdown exceeded warning threshold', {
+        subsystem: 'worker',
+        operation: 'shutdown_timeout',
+        errorCode: 'SHUTDOWN_TIMEOUT',
+        fingerprint: ['worker', 'SHUTDOWN_TIMEOUT', workerConfig.role],
+        context: {
+          stage: 'shutdown',
+          worker_role: workerConfig.role,
+          shard_id: workerConfig.shardId,
+          extra: {
+            signal,
+            elapsed_ms: Date.now() - shutdownStartedAt,
+          },
+        },
+      })
+    }, warnAfterMs)
+    shutdownWarnTimer.unref?.()
     httpServer?.close()
     await authService?.shutdown()
     stopWorkWake?.()
@@ -265,14 +298,42 @@ async function main() {
     const drainMs = telegramShutdownDrainMs()
     console.log(`[worker] Telegram shutdown drain ${drainMs}ms before exit`)
     await new Promise(r => setTimeout(r, drainMs))
+    clearTimeout(shutdownWarnTimer)
+    await flushWorkerSentry(1800)
     process.exit(0)
   }
 
-  process.on('SIGTERM', () => { shutdown('SIGTERM').catch(() => process.exit(1)) })
-  process.on('SIGINT', () => { shutdown('SIGINT').catch(() => process.exit(1)) })
+  process.on('SIGTERM', () => {
+    shutdown('SIGTERM').catch(err => {
+      captureWorkerFatalError(err, {
+        subsystem: 'worker',
+        operation: 'shutdown_failed',
+        errorCode: 'SHUTDOWN_FAILED',
+        fingerprint: ['worker', 'SHUTDOWN_FAILED', workerConfig.role],
+      })
+      void flushWorkerSentry(1800).finally(() => process.exit(1))
+    })
+  })
+  process.on('SIGINT', () => {
+    shutdown('SIGINT').catch(err => {
+      captureWorkerFatalError(err, {
+        subsystem: 'worker',
+        operation: 'shutdown_failed',
+        errorCode: 'SHUTDOWN_FAILED',
+        fingerprint: ['worker', 'SHUTDOWN_FAILED', workerConfig.role],
+      })
+      void flushWorkerSentry(1800).finally(() => process.exit(1))
+    })
+  })
 }
 
 main().catch(err => {
   console.error('[worker] Fatal error:', err)
-  process.exit(1)
+  captureWorkerFatalError(err, {
+    subsystem: 'worker',
+    operation: 'startup_failure',
+    errorCode: 'STARTUP_FAILURE',
+    fingerprint: ['worker', 'STARTUP_FAILURE', workerConfig.role],
+  })
+  void flushWorkerSentry(1800).finally(() => process.exit(1))
 })

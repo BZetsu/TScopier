@@ -129,6 +129,66 @@ On deploy, old and new containers may briefly share an auth key. Mitigations:
 
 Use external uptime checks on listener `/health` with `ok === true` for production paging.
 
+## Sentry worker monitoring
+
+The Node worker can emit sanitized Sentry events for final/exhausted failures:
+worker crashes, startup failures, shutdown timeouts, Telegram recovery exhaustion,
+channel auto-disable, queue dead letters, ambiguous broker sends, broker-success
+database persistence failures, and reconciliation failures. It is intentionally
+worker-only; frontend/backoffice, Supabase Edge Functions, and the Python
+Telethon listener should be added in separate PRs with runtime-specific policies.
+
+Sentry is disabled unless both are true:
+
+```env
+SENTRY_ENABLED=true
+SENTRY_DSN=<your-worker-sentry-dsn>
+```
+
+Recommended staging setup:
+
+```env
+SENTRY_ENABLED=true
+SENTRY_ENVIRONMENT=staging
+SENTRY_TRACES_SAMPLE_RATE=0
+```
+
+Recommended production setup:
+
+```env
+SENTRY_ENABLED=true
+SENTRY_ENVIRONMENT=production
+SENTRY_TRACES_SAMPLE_RATE=0
+```
+
+`SENTRY_RELEASE` may be set explicitly. If omitted, the worker uses Railway commit
+or deployment identifiers when present, falling back to `WORKER_BUILD_TAG`.
+
+Sensitive data policy: Sentry events must not contain Telegram session strings,
+Telegram auth keys, Telegram API hashes, phone numbers, full emails, broker
+credentials, FxSocket keys, Supabase service-role keys, Redis tokens, OpenAI
+keys, authorization headers, cookies, JWTs, private keys, full Telegram message
+text, full broker responses, account balances/equity, or arbitrary request
+bodies. The worker redacts nested objects, arrays, Error messages/stacks/causes,
+breadcrumbs, URL credentials, and sensitive query parameters before sending.
+
+Performance policy: the worker never flushes Sentry inside Telegram message
+handling, queue processing, `OrderSend`, `OrderModify`, virtual layer firing, or
+broker quote/price tick paths. Capture helpers are fire-and-forget and catch their
+own failures. Shutdown performs only a bounded final flush before exit.
+
+SDK safety policy: all Sentry default integrations are disabled in this worker
+PR. Events and breadcrumbs are created only through the worker's sanitized helper
+functions. Automatic HTTP/fetch instrumentation, outbound trace propagation,
+console capture, request/body capture, local-variable capture, SDK process
+handlers, and automatic tracing are disabled. `SENTRY_TRACES_SAMPLE_RATE` is
+reserved for a future reviewed tracing PR and does not enable automatic outbound
+instrumentation here.
+
+Load-test behavior: `LOAD_TEST_MODE=true` disables Sentry by default even when a
+DSN is present. Only isolated test Sentry environments should opt in with
+`SENTRY_LOAD_TEST_ENABLED=true`.
+
 **SQL drift check:** `scripts/diagnostics/listener_lease_drift.sql` — active `telegram_sessions` without a fresh lease.
 
 **Lease timing:** keep `WORKER_LEASE_RENEW_INTERVAL_MS` (default 20s) well below `WORKER_SESSION_LEASE_TTL_MS` (default 45s). Do not gate lease renewal on channel message activity (`WORKER_HEALTH_STALE_MS` is for ingest staleness only).
@@ -330,6 +390,191 @@ Look for `parse_ms` &gt; 100 (inline parse should stay &lt;30ms), `order_send_ms
 ### Range pending legs (duplicate opens)
 
 The worker monitor (`virtualPendingMonitor`, 1.5s) is the primary firer; **`range-pending-sweep`** (Supabase cron, ~60s) only picks up rows the worker missed for 45s+.
+
+### Layering modes foundation
+
+Manual settings now distinguish two independent concepts:
+
+| Setting | Meaning |
+|---------|---------|
+| `layering_mode` | Product algorithm: `legacy`, `static`, or `dynamic`. |
+| `range_layering_type` | Execution mechanism: virtual market fire (`auto`) or broker-native pending order (`pending_order`). |
+
+Phase A is foundation only. `layering_mode=legacy` preserves the current
+production behavior exactly: range percent reserves split legs, `range_step_pips`
+sets rung spacing, and `range_distance_pips` caps depth. Missing or invalid mode
+values normalize to `legacy`, so existing accounts and old pending baskets remain
+on their original behavior.
+
+Future `static` behavior will use a fixed total layer count, including the first
+entry. Future `dynamic` behavior will use the actual first broker fill as the
+anchor, a preferred pip step, and a maximum total layer count. Those calculators
+and execution writes are not implemented in Phase A.
+
+`range_pending_legs.layer_plan_id` and `range_pending_legs.layer_plan_metadata`
+are nullable plan-foundation fields for future immutable plans. Null values mean
+legacy. Future static/dynamic rows should store a complete snapshot so restart
+recovery does not depend on current account settings.
+
+Phase A deployment order: either the code or the migration can be deployed first
+because the runtime does not explicitly query or write `layer_plan_id` or
+`layer_plan_metadata` yet. The migration is additive and nullable, requires no
+backfill, and old rows continue to resolve as legacy. Rolling back Phase A code
+does not require removing the nullable columns.
+
+Phase C execution integration will require this migration to be applied before
+Static/Dynamic execution is enabled. Keep `LAYERING_MODES_EXECUTION_ENABLED=false`
+until the required schema, calculators, immutable plan writes, and execution
+guards are deployed together.
+
+This future integration flag is present for rollout planning, but Phase A still
+rejects `static`/`dynamic` execution because the calculators and immutable plan
+creation are not implemented yet:
+
+```env
+LAYERING_MODES_EXECUTION_ENABLED=false
+```
+
+Legacy range execution continues normally. Static/dynamic settings may round-trip
+through settings storage, but worker planning rejects range execution for those
+modes instead of silently falling through to legacy semantics. The warning only
+contains the normalized mode, not raw signal, account, or broker data.
+
+Phase C adds `layering_plans` for immutable, non-executable prepared Static and
+Dynamic plan snapshots. The Phase C migration is additive and may be deployed
+before or after the Phase C code because no runtime path activates those plans or
+materializes executable `range_pending_legs`. Prepared plans are inert until a
+future Phase D explicitly activates/materializes funded prices. Keep
+`LAYERING_MODES_EXECUTION_ENABLED=false`; enabling it in Phase C still does not
+make Static/Dynamic execution operational.
+
+`layering_plans` is worker/service-role only: RLS is enabled, `anon` and
+`authenticated` table privileges are revoked, and no frontend/client policy reads
+plan metadata. Persistence compares a semantic fingerprint that excludes
+lifecycle timestamps, so retry-after-timeout can return the original prepared
+plan without overwriting immutable metadata. Recovery is status-aware:
+`prepared` and read-only `active` rows can be parsed, while `completed`,
+`cancelled`, `invalid`, and unknown statuses fail closed for Phase C.
+
+### Static/Dynamic layering final rollout
+
+The final integration adds guarded Static/Dynamic preparation, CAS activation,
+and virtual pending materialization from immutable `fundedPrices`/`lots`.
+Existing accounts remain `layering_mode=legacy` unless explicitly changed.
+Legacy execution, `range_layering_type`, Telegram parsing, queues, and broker
+send paths remain unchanged for Legacy rows.
+
+Static/Dynamic are disabled by default and require all gates:
+
+```env
+LAYERING_MODES_EXECUTION_ENABLED=true
+LAYERING_STATIC_EXECUTION_ENABLED=true
+LAYERING_DYNAMIC_EXECUTION_ENABLED=true
+LAYERING_MODES_ACCOUNT_ALLOWLIST=<broker-account-id>
+LAYERING_MODES_PREPARE_ONLY=false
+LAYERING_MODES_KILL_SWITCH=false
+```
+
+Default-safe values:
+
+```env
+LAYERING_MODES_EXECUTION_ENABLED=false
+LAYERING_STATIC_EXECUTION_ENABLED=false
+LAYERING_DYNAMIC_EXECUTION_ENABLED=false
+LAYERING_MODES_ACCOUNT_ALLOWLIST=
+LAYERING_MODES_PREPARE_ONLY=true
+LAYERING_MODES_KILL_SWITCH=true
+```
+
+Empty allowlist enables no Static/Dynamic accounts. Wildcards are not supported.
+The kill switch blocks activation and pre-send execution for Static/Dynamic but
+does not change Legacy behavior.
+
+Rollout sequence:
+
+1. Apply the nullable `range_pending_legs` plan-column migration.
+2. Apply the `layering_plans`/`activate_layering_plan` migration.
+3. Deploy worker/frontend code with all Static/Dynamic gates disabled.
+4. Verify Legacy copier behavior.
+5. Enable prepare-only for one staging account; confirm prepared plans and no
+   active pending legs.
+6. Disable prepare-only only for one staging account; verify activation, restart
+   recovery, duplicate-worker races, kill switch, cancellation, and native
+   pending-order reconciliation where supported.
+7. Verify the account settings capability response and selector show
+   Static/Dynamic only for the allowlisted staging account.
+8. Expand the allowlist gradually.
+
+Rollback: set `LAYERING_MODES_KILL_SWITCH=true`, disable mode flags, or clear
+the allowlist. Preserve `layering_plans` and historical `range_pending_legs` for
+audit and reconciliation.
+
+Static/Dynamic broker-native `range_layering_type='pending_order'` is supported
+for FxSocket MT4/MT5 accounts that pass rollout, allowlist, connection,
+capability, price-distance, and lot validation. The worker places only immutable
+funded plan levels after the first/immediate layer and stores deterministic
+broker references on `range_pending_legs`. Unsupported adapters fail closed;
+Legacy broker-pending behavior remains unchanged.
+
+Native pending sends require durable pre-send state. The activation RPC creates
+one inert row per remaining funded leg. Each broker send then CAS-claims exactly
+one row to `submission_claimed`, persists the deterministic client reference and
+attempt metadata, rechecks rollout/kill switch/plan fingerprint immediately
+before `OrderSend`, and only then calls FxSocket. Ambiguous outcomes and DB
+confirmation failures move to `reconciliation_required`. Ambiguous states are
+not sendable: a matching broker reference is adopted, a conflict invalidates the
+plan, and lookup misses/outages remain reconciliation/manual-review until an
+operator performs an explicit audited recovery.
+
+Worker startup and the broker-pending monitor recover native submission states
+(`submission_claimed`, `submission_ambiguous`, `reconciliation_required`, and
+unconfirmed submitted rows) by deterministic reference only. Recovery does not
+rerun calculators, use current settings, reanchor from quotes, or fall back to
+virtual/Legacy execution. Recovery ownership is leased with
+`reconciliation_claimed_at` / `reconciliation_claimed_by`;
+`LAYERING_NATIVE_RECOVERY_LEASE_TIMEOUT_MS` defaults to 300000ms so a crashed
+recovery worker cannot permanently strand a row. Lookup outages release the
+lease for later startup passes while remaining non-sendable. Broker-authoritative
+lookup misses move to `manual_review` and require operator review rather than
+automatic resend.
+
+Cancellation moves Static/Dynamic plans to `cancelling`, blocks new virtual and
+native claims, locally cancels unsent virtual legs, and reconciles native broker
+state before any audited FxSocket cancellation call. Pending broker orders get
+one cancel request; filled orders are preserved; already-cancelled/rejected
+orders are adopted. Broker cancel timeouts remain `cancellation_pending` and
+restart recovery continues by reconciliation without duplicate cancel requests.
+Missing cancel capability or missing tickets become `cancellation_manual_review`.
+Plans reach `entries_complete` only after the first immediate execution linkage
+is confirmed and all remaining entry legs are terminal. The `completed` status is
+reserved for product-level basket/trade terminal semantics.
+
+Static/Dynamic first-fill activation is part of the immediate-fill lifecycle. The
+live-fast path must await plan persistence and activation before reporting
+success for layering entries; only unrelated non-layering follow-up work may run
+in the background.
+
+Deploy order for this integration:
+
+1. Apply the `layering_plans` migration, including the new RPC signature,
+   native submission columns, and direct-update guard triggers.
+2. Deploy `layering-mode-capabilities` and `update-layering-settings` Edge
+   Functions.
+3. Deploy frontend and worker with all Static/Dynamic flags disabled.
+4. Enable prepare-only for one allowlisted staging account, then enable virtual
+   execution, then native pending on one supported FxSocket MT4/MT5 staging
+   account.
+
+Do not advertise generic broker-native support. Any broker path without
+FxSocket MT4/MT5 placement, reference reconciliation, and cancellation support
+must return `broker_pending_unsupported`.
+
+The frontend must use the server-authoritative `layering-mode-capabilities`
+function before showing Static/Dynamic controls. With the default flags above,
+the response makes Static/Dynamic unavailable and Legacy remains selected for
+existing accounts.
+
+Staging checklist: [`docs/layering-modes-staging-runbook.md`](layering-modes-staging-runbook.md).
 
 Guards (worker + edge sweep):
 

@@ -11,6 +11,7 @@ exports.storedPerChannelConfigComplete = storedPerChannelConfigComplete;
 exports.channelConfigReadyForExecution = channelConfigReadyForExecution;
 exports.resolveChannelTradingConfig = resolveChannelTradingConfig;
 exports.withChannelTradingConfig = withChannelTradingConfig;
+exports.persistHealedChannelConfigs = persistHealedChannelConfigs;
 const normalizeManualSettings_1 = require("./manualPlanning/normalizeManualSettings");
 const brokerChannelFilter_1 = require("./brokerChannelFilter");
 const copyLimitTypes_1 = require("./copyLimitTypes");
@@ -228,4 +229,34 @@ function withChannelTradingConfig(broker, channelId) {
         manual_settings: resolved.manual_settings,
         ai_settings: resolved.ai_settings,
     };
+}
+/**
+ * Persist healed per-channel configs to the `broker_channel_trading_configs` table.
+ * Only writes channels whose original config was missing or incomplete — after
+ * the first write, subsequent calls find the DB already populated and skip.
+ */
+async function persistHealedChannelConfigs(supabase, brokerId, originalRaw, healedConfigs) {
+    const originalMap = normalizeChannelTradingConfigsMap(originalRaw);
+    for (const [channelId, raw] of Object.entries(healedConfigs)) {
+        const key = normalizeChannelUuid(channelId);
+        if (!key)
+            continue;
+        const orig = originalMap[key];
+        if (orig && storedPerChannelConfigComplete({ [key]: orig }, key))
+            continue;
+        const cfg = raw;
+        const { error } = await supabase
+            .from('broker_channel_trading_configs')
+            .upsert({
+            broker_account_id: brokerId,
+            channel_id: key,
+            copier_mode: cfg.copier_mode ?? 'manual',
+            manual_settings: cfg.manual_settings ?? {},
+            ai_settings: cfg.ai_settings ?? {},
+            copy_limit_state: cfg.copy_limit_state ?? null,
+        }, { onConflict: 'broker_account_id,channel_id', ignoreDuplicates: false });
+        if (error) {
+            console.warn(`[channelTradingConfig] failed to persist healed config for broker=${brokerId} channel=${key}: ${error.message}`);
+        }
+    }
 }

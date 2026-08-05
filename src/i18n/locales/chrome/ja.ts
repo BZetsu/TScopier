@@ -5,6 +5,7 @@ export const chromeJa: AppChromeTranslations = {
     sections: {
       general: '全般',
       signals: 'シグナル',
+      discover: '発見',
       tradingTools: '取引ツール',
       feedback: 'フィードバック',
       growth: '成長・収益化',
@@ -18,6 +19,7 @@ export const chromeJa: AppChromeTranslations = {
       trades: '取引',
       management: 'アクティビティ',
       channels: 'チャンネル',
+      popularChannels: '人気チャンネル',
       backtest: 'バックテスト',
       copierLogs: 'コピーログ',
       signalHistory: 'シグナル管理',

@@ -5,7 +5,7 @@ import {
   Plus, Trash2, Server, Activity, GitBranch, Eye, DollarSign, RefreshCw,
   SlidersHorizontal, Radio, Target, Filter, Wallet, Link2,
   ChevronLeft, ChevronRight, Search, Settings2, Bookmark, Pencil, ScrollText, AlertTriangle,
-  Infinity, Coins, X, Sparkles,
+  Infinity as InfinityIcon, Coins, X, Sparkles,
 } from 'lucide-react'
 import clsx from 'clsx'
 import { supabase } from '../../lib/supabase'
@@ -121,6 +121,14 @@ import {
   getBrokerDisplayLabel,
 } from '../../lib/brokerChannelLink'
 import { DEFAULT_MANUAL_SETTINGS, DEFAULT_MANUAL_TP_LOTS } from '../../lib/defaultManualSettings'
+import { normalizeLayeringModeSettings } from '../../lib/layeringModes'
+import {
+  fetchLayeringModeCapabilities,
+  layeringMechanismIsSelectable,
+  LEGACY_ONLY_LAYERING_CAPABILITIES,
+  type LayeringModeCapabilities,
+} from '../../lib/layeringModeCapabilities'
+import { updateLayeringSettings } from '../../lib/updateLayeringSettings'
 import { computeSingleTpLotBreakdown } from '../../lib/singleTpLotBreakdown'
 import { marketingUrl } from '../../lib/site'
 import {
@@ -245,6 +253,9 @@ type RiskNumberDraftKey =
   | 'range_percent'
   | 'range_step_pips'
   | 'range_distance_pips'
+  | 'static_layer_count'
+  | 'dynamic_step_pips'
+  | 'dynamic_max_layers'
 
 type RiskNumberDrafts = Partial<Record<RiskNumberDraftKey, string>>
 
@@ -279,8 +290,15 @@ function riskNumberRules(
     case 'range_percent':
       return { min: 0, max: 100 }
     case 'range_step_pips':
+      // Manual mode only — Auto is selected via dropdown (stores 0).
+      return { min: 1, positive: true }
     case 'range_distance_pips':
       return { min: 1 }
+    case 'static_layer_count':
+    case 'dynamic_max_layers':
+      return { min: 1, max: 20, integer: true }
+    case 'dynamic_step_pips':
+      return { positive: true }
   }
 }
 
@@ -416,13 +434,18 @@ function normalizeManualSettings(
     return Number.isFinite(v) ? v : fallback
   }
   const rangePercent = Math.max(0, Math.min(100, readNumber('range_percent', DEFAULT_MANUAL_SETTINGS.range_percent ?? 50)))
-  const rangeStepPips = Math.max(0, readNumber('range_step_pips', DEFAULT_MANUAL_SETTINGS.range_step_pips ?? 3))
+  const rangeStepPips = Math.max(0, readNumber('range_step_pips', DEFAULT_MANUAL_SETTINGS.range_step_pips ?? 0))
   const rangeDistancePips = Math.max(0, readNumber('range_distance_pips', DEFAULT_MANUAL_SETTINGS.range_distance_pips ?? 30))
   const rangeLayerTillClose = (j as Record<string, unknown>).range_layer_till_close === true
   const rangeLayeringTypeRaw = String((j as Record<string, unknown>).range_layering_type ?? 'auto').toLowerCase()
   const rangeLayeringType: ManualSettings['range_layering_type'] =
     rangeLayeringTypeRaw === 'pending_order' ? 'pending_order' : 'auto'
   const useSignalEntryRange = (j as Record<string, unknown>).use_signal_entry_range === true
+  const layeringModeSettings = normalizeLayeringModeSettings({
+    ...(j as Record<string, unknown>),
+    // dynamic_step fallback needs a positive value; Auto (0) maps to default dynamic step.
+    range_step_pips: rangeStepPips > 0 ? rangeStepPips : 3,
+  })
   const closeWorseEntries = (j as Record<string, unknown>).close_worse_entries === true
   const closeWorseEntriesPips = Math.max(0, readNumber('close_worse_entries_pips', DEFAULT_MANUAL_SETTINGS.close_worse_entries_pips ?? 30))
   const singleTpTargetRaw = String((j as Record<string, unknown>).single_tp_target ?? 'farthest').toLowerCase()
@@ -467,6 +490,7 @@ function normalizeManualSettings(
               percent: rangePercent,
               stepPips: rangeStepPips,
               distancePips: rangeDistancePips,
+              useSignalEntryRange: useSignalEntryRange,
             }
           : undefined,
       })
@@ -491,6 +515,7 @@ function normalizeManualSettings(
     range_step_pips: rangeStepPips,
     range_distance_pips: rangeDistancePips,
     range_layer_till_close: rangeLayerTillClose,
+    ...layeringModeSettings,
     range_layering_type: rangeLayeringType,
     use_signal_entry_range: useSignalEntryRange,
     close_worse_entries: closeWorseEntries,
@@ -866,9 +891,10 @@ export function AccountConfigPage() {
     userId ? (channelOptionsCache.get(userId) ?? []) : [],
   )
   const [configAccount, setConfigAccount] = useState<BrokerAccount | null>(null)
+  const [layeringCapabilities, setLayeringCapabilities] = useState<LayeringModeCapabilities>(LEGACY_ONLY_LAYERING_CAPABILITIES)
   const configAccountTotalBalance = useMemo(
     () => (configAccount ? resolveBrokerTotalBalance(configAccount) : null),
-    [configAccount?.last_balance, configAccount?.last_equity],
+    [configAccount],
   )
   const [channelCopyLimitState, setChannelCopyLimitState] = useState<Record<string, CopyLimitState>>({})
   const [configDraft, setConfigDraft] = useState<AccountConfigDraft>({
@@ -974,6 +1000,29 @@ export function AccountConfigPage() {
   }, [configAccount])
 
   useEffect(() => {
+    let cancelled = false
+    if (!configAccount?.id) {
+      void Promise.resolve().then(() => {
+        if (!cancelled) setLayeringCapabilities(LEGACY_ONLY_LAYERING_CAPABILITIES)
+      })
+      return () => {
+        cancelled = true
+      }
+    }
+    const accountId = configAccount.id
+    void fetchLayeringModeCapabilities(accountId)
+      .then(capabilities => {
+        if (!cancelled) setLayeringCapabilities(capabilities)
+      })
+      .catch(() => {
+        if (!cancelled) setLayeringCapabilities(LEGACY_ONLY_LAYERING_CAPABILITIES)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [configAccount?.id])
+
+  useEffect(() => {
     if (!brokerHealthSyncKey) return
     void syncBrokerAccountTypesFromHealth(brokers)
   }, [brokerHealthSyncKey])
@@ -1007,6 +1056,12 @@ export function AccountConfigPage() {
 
   const keywordFiltersEnabled = canUsePlanFeature('channel_keyword_filters')
   const multiTradeStyleEnabled = canUsePlanFeature('multi_trade_style')
+  // Static/dynamic layering modes stay legacy-only in the UI for now.
+  const selectedLayeringMode = 'legacy' as const
+  const selectedLayeringMechanism = channelManualSettings.range_layering_type === 'pending_order'
+    ? 'pending_order'
+    : 'auto'
+  const selectedModeAutoSelectable = layeringMechanismIsSelectable(layeringCapabilities, selectedLayeringMode, 'auto')
 
   const previewManualLot = useMemo(() => {
     const ms = channelManualSettings
@@ -1204,8 +1259,9 @@ export function AccountConfigPage() {
       ? {
           enabled: true,
           percent: Number(ms.range_percent ?? 50) || 0,
-          stepPips: Number(ms.range_step_pips ?? DEFAULT_MANUAL_SETTINGS.range_step_pips) || 0,
+          stepPips: Number(ms.range_step_pips ?? 0) || 0,
           distancePips: Number(ms.range_distance_pips ?? DEFAULT_MANUAL_SETTINGS.range_distance_pips) || 0,
+          useSignalEntryRange: ms.use_signal_entry_range === true,
         }
       : undefined
     return estimateMultiTradeOrderCount({ manualLot: previewManualLot, legPercent: legPct, range })
@@ -1216,6 +1272,7 @@ export function AccountConfigPage() {
     channelManualSettings.range_percent,
     channelManualSettings.range_step_pips,
     channelManualSettings.range_distance_pips,
+    channelManualSettings.use_signal_entry_range,
   ])
 
   const multiTradeTotalOpenTradesLabel = useMemo(() => {
@@ -1355,8 +1412,8 @@ export function AccountConfigPage() {
     // pip price floors inside `pipCalculator` so the displayed pip value
     // always matches what the planner will use on a sane 2/3/4/5-digit
     // broker.
-    let point = 0.0001
-    let digits = 5
+    let point: number
+    let digits: number
     switch (klass) {
       case 'fx_jpy':       point = 0.001;   digits = 3; break
       case 'fx_major':     point = 0.00001; digits = 5; break
@@ -1840,10 +1897,27 @@ export function AccountConfigPage() {
   }
 
   const setManual = (patch: Partial<ManualSettings>) => {
+    const nextPatch = patch.range_layering_type === 'pending_order'
+      ? { ...patch, range_layering_type: 'auto' as const }
+      : patch
     patchSelectedChannel(current => ({
       ...current,
-      manualSettings: { ...current.manualSettings, ...patch },
+      manualSettings: {
+        ...current.manualSettings,
+        ...nextPatch,
+        layering_mode: 'legacy',
+        layering_optimization_strategy: 'adjust_percent',
+      },
     }))
+  }
+
+  const validateLayeringCapabilitiesForSave = (_draft: AccountConfigDraft, channelIds: string[]): string | null => {
+    if (channelIds.length === 0) return null
+    // Broker pending orders are Coming Soon — always validate virtual/auto.
+    if (!layeringMechanismIsSelectable(layeringCapabilities, 'legacy', 'auto')) {
+      return 'Virtual execution is not enabled for this layering mode on this account.'
+    }
+    return null
   }
 
   const updateTpLotRow = (idx: number, patch: Partial<ManualTpLot>) => {
@@ -1966,6 +2040,12 @@ export function AccountConfigPage() {
       return false
     }
 
+    const layeringCapabilityError = validateLayeringCapabilitiesForSave(committedDraft, channelIds)
+    if (layeringCapabilityError) {
+      setError(layeringCapabilityError)
+      return false
+    }
+
     await refreshSubscription()
     const savePlanCtx = await resolveLatestManualSettingsPlanContext({
       userId: user.id,
@@ -2013,6 +2093,25 @@ export function AccountConfigPage() {
       }
     }
     const configsToPersist = restrictChannelTradingConfigsMap(channelTradingConfigs, channelIds)
+    for (const channelId of channelIds) {
+      const settings = configsToPersist[normalizeChannelUuid(channelId) ?? '']?.manual_settings
+      if (!settings) continue
+      const { error: layeringSaveError } = await updateLayeringSettings({
+        broker_account_id: configAccount.id,
+        channel_id: channelId,
+        layering_mode: 'legacy',
+        range_layering_type: 'auto',
+        static_layer_count: Number(settings.static_layer_count ?? DEFAULT_MANUAL_SETTINGS.static_layer_count ?? 5),
+        dynamic_step_pips: Number(settings.dynamic_step_pips ?? DEFAULT_MANUAL_SETTINGS.dynamic_step_pips ?? 3),
+        dynamic_max_layers: Number(settings.dynamic_max_layers ?? DEFAULT_MANUAL_SETTINGS.dynamic_max_layers ?? 5),
+        layering_optimization_strategy: 'adjust_percent',
+      })
+      if (layeringSaveError) {
+        setConfigSaving(false)
+        setError(layeringSaveError)
+        return false
+      }
+    }
     const selectedId = committedDraft.selectedChannelId && channelIds.includes(committedDraft.selectedChannelId)
       ? committedDraft.selectedChannelId
       : null
@@ -2032,7 +2131,23 @@ export function AccountConfigPage() {
           ) as ManualSettings,
           { accountBalance: configAccountTotalBalance },
         )
-      : (configAccount.manual_settings ?? {})
+      : normalizeManualSettings(configAccount.manual_settings ?? {}, { accountBalance: configAccountTotalBalance })
+    if (!channelIds.length && normalizedFallbackManual) {
+      const { error: layeringSaveError } = await updateLayeringSettings({
+        broker_account_id: configAccount.id,
+        layering_mode: 'legacy',
+        range_layering_type: 'auto',
+        static_layer_count: Number(normalizedFallbackManual.static_layer_count ?? DEFAULT_MANUAL_SETTINGS.static_layer_count ?? 5),
+        dynamic_step_pips: Number(normalizedFallbackManual.dynamic_step_pips ?? DEFAULT_MANUAL_SETTINGS.dynamic_step_pips ?? 3),
+        dynamic_max_layers: Number(normalizedFallbackManual.dynamic_max_layers ?? DEFAULT_MANUAL_SETTINGS.dynamic_max_layers ?? 5),
+        layering_optimization_strategy: 'adjust_percent',
+      })
+      if (layeringSaveError) {
+        setConfigSaving(false)
+        setError(layeringSaveError)
+        return false
+      }
+    }
     const { error: tableErr } = await upsertBrokerChannelTradingConfigs(
       supabase,
       user.id,
@@ -2289,7 +2404,7 @@ export function AccountConfigPage() {
             {connectedAccountCount}
             <span className="text-neutral-400 font-normal">/</span>
             {isAdmin ? (
-              <Infinity
+              <InfinityIcon
                 className="w-4 h-4 text-teal-600 dark:text-teal-400"
                 aria-label={bl.connectedAccountsUnlimited}
               />
@@ -3181,28 +3296,29 @@ export function AccountConfigPage() {
                                 </div>
                                 {channelManualSettings.range_trading && (
                                   <>
-                                    {/* Layering type hidden until pending-order path is production-ready */}
-                                    {/*
-                                    <ConfigureSelect
-                                      label={cm.risk.layeringType}
-                                      value={channelManualSettings.range_layering_type ?? 'auto'}
-                                      onChange={e => {
-                                        const v = e.target.value
-                                        setManual({
-                                          range_layering_type: v === 'pending_order' ? 'pending_order' : 'auto',
-                                        })
-                                      }}
-                                      options={[
-                                        { value: 'auto', label: cm.risk.layeringTypeAuto },
-                                        { value: 'pending_order', label: cm.risk.layeringTypePendingOrder },
-                                      ]}
-                                      hint={
-                                        (channelManualSettings.range_layering_type ?? 'auto') === 'pending_order'
-                                          ? cm.risk.layeringTypePendingOrderHint
-                                          : cm.risk.layeringTypeAutoHint
-                                      }
-                                    />
-                                    */}
+                                    <div className="flex flex-col gap-1.5 max-w-md">
+                                      <label className="text-sm font-medium text-neutral-700 dark:text-neutral-300">Layering Mode</label>
+                                      <select
+                                        className="w-full px-3 py-2 text-base md:text-sm rounded-lg border bg-white dark:bg-neutral-900 border-neutral-200 dark:border-neutral-700 text-neutral-900 dark:text-neutral-100"
+                                        value={selectedLayeringMechanism === 'pending_order' ? 'auto' : selectedLayeringMechanism}
+                                        onChange={e => {
+                                          const next = e.target.value === 'pending_order' ? 'pending_order' : 'auto'
+                                          // Broker pending orders are Coming Soon — keep option visible but not selectable.
+                                          if (next === 'pending_order') return
+                                          if (!layeringMechanismIsSelectable(layeringCapabilities, selectedLayeringMode, next)) {
+                                            setError('Virtual execution is not enabled for this account and layering mode.')
+                                            return
+                                          }
+                                          setError('')
+                                          setManual({ range_layering_type: next })
+                                        }}
+                                      >
+                                        <option value="auto" disabled={!selectedModeAutoSelectable}>Automatic / virtual execution</option>
+                                        <option value="pending_order" disabled>
+                                          Broker pending orders — {t.accountConfig.addAccount.comingSoonBadge}
+                                        </option>
+                                      </select>
+                                    </div>
 
                                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                                       <ConfigureInput
@@ -3215,19 +3331,45 @@ export function AccountConfigPage() {
                                           50,
                                         )}
                                       />
-                                      <ConfigureInput
+                                      <ConfigureSelect
                                         label={cm.risk.stepPips}
-                                        placeholder="10"
-                                        hint={
-                                          formatPipHint(Number(channelManualSettings.range_step_pips ?? DEFAULT_MANUAL_SETTINGS.range_step_pips) || 0)
-                                          ?? cm.risk.stepPipsFallback
-                                        }
-                                        {...riskNumberFieldProps(
-                                          'range_step_pips',
-                                          channelManualSettings.range_step_pips,
-                                          DEFAULT_MANUAL_SETTINGS.range_step_pips ?? 3,
-                                        )}
+                                        hint={cm.risk.stepPipsFallback}
+                                        value={Number(channelManualSettings.range_step_pips) > 0 ? 'manual' : 'auto'}
+                                        onChange={e => {
+                                          const next = e.target.value === 'manual' ? 'manual' : 'auto'
+                                          setRiskNumberDrafts(prev => {
+                                            if (!Object.prototype.hasOwnProperty.call(prev, 'range_step_pips')) return prev
+                                            const cleared = { ...prev }
+                                            delete cleared.range_step_pips
+                                            return cleared
+                                          })
+                                          if (next === 'auto') {
+                                            setManual({ range_step_pips: 0 })
+                                            return
+                                          }
+                                          const current = Number(channelManualSettings.range_step_pips)
+                                          setManual({ range_step_pips: current > 0 ? current : 3 })
+                                        }}
+                                        options={[
+                                          { value: 'auto', label: cm.risk.stepModeAuto },
+                                          { value: 'manual', label: cm.risk.stepModeManual },
+                                        ]}
                                       />
+                                      {Number(channelManualSettings.range_step_pips) > 0 && (
+                                        <ConfigureInput
+                                          label={cm.risk.stepManualPips}
+                                          placeholder="3"
+                                          hint={
+                                            formatPipHint(Number(channelManualSettings.range_step_pips))
+                                            ?? cm.risk.stepManualPipsFallback
+                                          }
+                                          {...riskNumberFieldProps(
+                                            'range_step_pips',
+                                            channelManualSettings.range_step_pips,
+                                            3,
+                                          )}
+                                        />
+                                      )}
                                       <ConfigureInput
                                         label={cm.risk.rangeDistance}
                                         placeholder="100"

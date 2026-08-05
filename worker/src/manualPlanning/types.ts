@@ -28,6 +28,11 @@ export interface ManualTpLot {
   enabled: boolean
 }
 
+export type LayeringMode = 'legacy' | 'static' | 'dynamic'
+export type LayerSizingOptimizationStrategy = 'adjust_percent' | 'reduce_layers' | 'widen_step'
+export type LayerPlanAnchorSource = 'signal' | 'quote' | 'fill' | 'unknown'
+export type LayerPlanSide = 'buy' | 'sell'
+
 export interface ManualSettings {
   symbol_mapping?: Record<string, string>
   symbol_prefix?: string
@@ -52,6 +57,21 @@ export interface ManualSettings {
   range_step_pips?: number
   range_distance_pips?: number
   range_layer_till_close?: boolean
+  /**
+   * Product layering algorithm. `legacy` preserves the existing production
+   * range-percent/step/distance behavior. Static/dynamic execution is gated
+   * until the future calculators are integrated.
+   */
+  layering_mode?: LayeringMode
+  /** Static V1 foundation: fixed total layer count, including first/immediate entry. */
+  static_layer_count?: number
+  /** Dynamic V1 foundation: preferred spacing in pips. */
+  dynamic_step_pips?: number
+  /** Dynamic V1 foundation: maximum total layer count, including first fill. */
+  dynamic_max_layers?: number
+  /** Constraint solver preference when range/step/lots/percent cannot all be preserved. */
+  layering_optimization_strategy?: LayerSizingOptimizationStrategy
+  /** Range layering execution mechanism, independent of `layering_mode`. */
   range_layering_type?: 'auto' | 'pending_order'
   /** When true with range_trading, cap layering depth from parsed entry zone instead of range_distance_pips. */
   use_signal_entry_range?: boolean
@@ -176,6 +196,9 @@ export interface PlannerRangeLayering {
   maxStepIdx: number
   reservedPendingLegs: number
   activePendingLegs: number
+  /** Hard open-trade ceiling for this basket: immediateLegs + activePendingLegs. */
+  basketLegCap?: number
+  plannedImmediateLegs?: number
   useSignalEntryRange?: boolean
   signalRangeBoundary?: number | null
   signalZoneLo?: number | null
@@ -201,6 +224,49 @@ export interface PlannerResult {
   delay_ms: number
 }
 
+export interface LayeringPlanSnapshot {
+  schemaVersion: number
+  calculatorVersion: string
+  planId: string
+  mode: LayeringMode
+  signalId: string
+  brokerAccountId: string
+  basketKey: string | null
+  symbol: string
+  side: LayerPlanSide
+  originalRangeLow: number | null
+  originalRangeHigh: number | null
+  /** Raw anchor from the signal/quote/fill before executable precision normalization. */
+  anchorPrice: number | null
+  /** Precision-normalized executable anchor, when one exists. */
+  executableAnchorPrice: number | null
+  anchorSource: LayerPlanAnchorSource
+  configuredStaticLayerCount: number | null
+  configuredDynamicStepPips: number | null
+  configuredDynamicMaxLayers: number | null
+  optimizationStrategy?: LayerSizingOptimizationStrategy | null
+  theoreticalLayerCount?: number | null
+  effectiveStepPips?: number | null
+  requestedLayerPercent?: number | null
+  effectiveLayerPercent?: number | null
+  allocationPercentTotal?: number | null
+  requestedLayerCount: number | null
+  plannedLayerCount: number | null
+  plannedTotalLot: number | null
+  allocatedTotalLot: number | null
+  unallocatedLot: number | null
+  fundedPrices: readonly number[] | null
+  lots: readonly number[] | null
+  reasons: readonly string[]
+  createdAt: string
+  lockedAt: string | null
+}
+
+export interface RangePendingLegPlanColumns {
+  layer_plan_id: string | null
+  layer_plan_metadata: unknown | null
+}
+
 export interface PlanRangeSplitArgs {
   totalLegs: number
   baseIsPendingSignal: boolean
@@ -213,6 +279,11 @@ export interface PlanRangeSplitArgs {
   hasSignalAnchor: boolean
   /** Pending Order: keep user step/distance; do not expand step for broker SL/TP minimums. */
   skipMinStepExpansion?: boolean
+  /**
+   * Force Auto step (distance / reserved) even when a manual step is stored.
+   * Used for virtual layering mode where the Step field is hidden.
+   */
+  forceAutoStep?: boolean
 }
 
 export interface PlanRangeSplitResult {

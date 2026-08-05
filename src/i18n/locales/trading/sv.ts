@@ -15,6 +15,7 @@ export const tradingSv: TradingPagesBundleTranslations = {
     emptySubtitleClosed: 'Inga nyligen stängda ordrar i den här MT-sessionen.',
     modalTitle: 'Affärsdetaljer',
     close: 'Stäng',
+    manage: 'Hantera',
     tradeSummary: 'Affär',
     signalChannel: 'Signalkanal',
     telegramMessage: 'Telegram-meddelande',
@@ -63,5 +64,11 @@ export const tradingSv: TradingPagesBundleTranslations = {
     lotSizeOverride: 'Överstyrning av lotstorlek',
     pipToleranceOverride: 'Överstyrning av pip-tolerans',
     useBrokerDefault: 'Använd mäklarens standardvärde',
+  },
+  popularChannelsPage: {
+    title: 'Popular Channels',
+    subtitle: 'Signal channels ranked by subscriber count across all TSCopier users',
+    emptyTitle: 'No channels yet',
+    emptySubtitle: 'Channels will appear here as users subscribe to them',
   },
 }

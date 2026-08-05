@@ -3,10 +3,13 @@ import { hasFxsocketConfigured, normalizeSymbolParams, type SymbolParams } from 
 import { apiForFxsocketAccount, loadPlatformByFxsocketId, type PlatformByFxsocketId } from './mtApiByAccount'
 import { autoManagementTradeSnapshot } from './autoManagement'
 import { tryApplyBasketFollowUpToNewFill } from './basketModFollowUp'
+import { assignNakedBrokerFillStops } from './brokerPendingFillStops'
 import { normalizeManualSettingsForExecution } from './manualPlanning/normalizeManualSettings'
 import { resolveChannelTradingConfig } from './channelTradingConfig'
 import { markRangeLegFired } from './rangePendingLadderSync'
 import { syncRangeBasketTakeProfits, toRangeBasketParsedSlice } from './rangeBasketTpSync'
+import { loadOpenBasketLegs, upsertBasketReconcileJob } from './basketSlTpReconcile'
+import { resolveFreshBasketReconcileTargets } from './basketReconcileTargets'
 import {
   applyShardToQuery,
   hasWorkOnShard,
@@ -17,35 +20,24 @@ import {
 } from './monitorIdleGate'
 import { isUserCopierPausedCached } from './copierPause'
 import {
-  findClosedRowForTicket,
-  findOpenedRowByTicket,
-  isLikelyMarketPositionRow,
-  isPendingEntryRow,
-  rawOrderTicket,
-} from './signalEntryPendingHelpers'
+  decideBrokerPendingClosedFill,
+  decideBrokerPendingOpenedState,
+} from './brokerPendingFillDetect'
+import { healNakedBrokerPendingStops } from './brokerPendingStopsSync'
 import {
   cancelBrokerRangeLegAtBroker,
   reconcileBasketEmptyCancelledLegs,
   type RangeBrokerPendingRow,
 } from './rangeBrokerPendingHelpers'
 import { watchRangeLayeringBasketEvents } from './rangeLayerBasketWatch'
+import { parsePersistedLayeringPlan } from './manualPlanning/layeringPlanPersistence'
+import { resolveLayeringModeRolloutDecision } from './manualPlanning/layeringModeRollout'
+import { convergeLayeringPlanAfterLegTerminal, recoverCancellingLayeringPlans } from './layeringPlanLifecycle'
+import { recoverNativeLayeringSubmissions } from './tradeExecutor/layeringModeBrokerPendingRecovery'
 
 const ACTIVE_MS = monitorActiveIntervalMs('RANGE_BROKER_PENDING_TICK_MS', 2_000)
 const IDLE_MS = monitorIdleIntervalMs('RANGE_BROKER_PENDING_IDLE_MS', 15_000)
 const MISSING_BEFORE_ASSUME_GONE = 6
-
-function extractOpenPrice(raw: Record<string, unknown>): number | null {
-  const num = (v: unknown): number | undefined => {
-    if (typeof v === 'number' && Number.isFinite(v)) return v
-    if (typeof v === 'string' && v.trim()) {
-      const n = Number(v)
-      return Number.isFinite(n) ? n : undefined
-    }
-    return undefined
-  }
-  const px = num(raw.openPrice ?? raw.OpenPrice ?? raw.price ?? raw.Price ?? raw.priceOpen ?? raw.PriceOpen)
-  return px != null && px > 0 ? px : null
-}
 
 async function loadManualForLeg(
   supabase: SupabaseClient,
@@ -131,6 +123,56 @@ async function rebalanceAfterFill(
   })
 }
 
+async function enqueueReconcileAfterBrokerFill(
+  supabase: SupabaseClient,
+  leg: RangeBrokerPendingRow,
+  channelId: string | null,
+  manual: ReturnType<typeof normalizeManualSettingsForExecution>,
+): Promise<void> {
+  const familyTrades = await loadOpenBasketLegs(
+    supabase,
+    leg.broker_account_id,
+    leg.signal_id,
+    leg.symbol,
+  )
+  if (!familyTrades.length) return
+  const direction: 'buy' | 'sell' = leg.is_buy ? 'buy' : 'sell'
+  const { perLegTargets, signalTps } = await resolveFreshBasketReconcileTargets(supabase, {
+    anchorSignalId: leg.signal_id,
+    channelId,
+    symbol: leg.symbol,
+    direction,
+    userId: leg.user_id,
+    brokerAccountId: leg.broker_account_id,
+    familyTrades,
+    storedTargets: [],
+    manual: {
+      range_trading: manual.range_trading === true,
+      tp_lots: manual.tp_lots,
+    },
+    nImmCwe: 0,
+    overrideTp: null,
+  })
+  if (!perLegTargets.length) return
+  await upsertBasketReconcileJob(supabase, {
+    userId: leg.user_id,
+    brokerAccountId: leg.broker_account_id,
+    anchorSignalId: leg.signal_id,
+    sourceSignalId: leg.signal_id,
+    channelId,
+    symbol: leg.symbol,
+    direction,
+    perLegTargets,
+    familyTrades,
+    signalTps,
+    tpLots: manual.tp_lots,
+    virtualPendingsSnapshot: null,
+    nImmCwe: 0,
+    overrideTp: null,
+    lastError: 'Broker pending naked fill; reconcile basket SL/TP',
+  })
+}
+
 async function markBrokerRangeLegFilled(
   supabase: SupabaseClient,
   platformByUuid: PlatformByFxsocketId,
@@ -146,17 +188,24 @@ async function markBrokerRangeLegFilled(
   const channelId = (signalRow?.channel_id ?? null) as string | null
 
   const entryPx = Number.isFinite(fillPrice) && fillPrice > 0 ? fillPrice : leg.trigger_price
-  const openSl = leg.stoploss
+  const desiredSl = leg.stoploss != null && Number(leg.stoploss) > 0 ? Number(leg.stoploss) : null
+  const isCwe = leg.cwe_close_price != null
   const rawManual = await loadManualForLeg(supabase, leg.broker_account_id, channelId)
   const manual = normalizeManualSettingsForExecution(rawManual)
-  const autoBeCols = autoManagementTradeSnapshot(manual, entryPx, openSl)
+  // Broker fill is naked (limits placed with SL=0/TP=0). Seed auto-BE from desired SL.
+  const autoBeCols = autoManagementTradeSnapshot(manual, entryPx, desiredSl)
 
   const ticketForTrade = positionTicket?.trim() && /^\d+$/.test(positionTicket.trim())
     ? positionTicket.trim()
     : (leg.ticket ?? null)
 
   await markRangeLegFired(supabase, leg.id, ticketForTrade)
+  if (leg.layer_plan_id) {
+    await convergeLayeringPlanAfterLegTerminal(supabase, leg.layer_plan_id)
+  }
 
+  // Insert trade as naked on broker so skipAlreadySynced cannot skip OrderModify
+  // when DB already held intended stops from the pending row.
   const { data: insTrade, error: insErr } = await supabase.from('trades').insert({
     user_id: leg.user_id,
     signal_id: leg.signal_id,
@@ -166,8 +215,8 @@ async function markBrokerRangeLegFilled(
     symbol: leg.symbol,
     direction: leg.is_buy ? 'buy' : 'sell',
     entry_price: entryPx,
-    sl: openSl,
-    tp: leg.cwe_close_price != null ? null : leg.takeprofit,
+    sl: null,
+    tp: null,
     lot_size: leg.volume,
     status: 'open',
     opened_at: new Date().toISOString(),
@@ -184,6 +233,52 @@ async function markBrokerRangeLegFilled(
   const ticketNum = ticketForTrade != null ? Number(ticketForTrade) : NaN
   const api = apiForFxsocketAccount(platformByUuid, leg.metaapi_account_id)
   if (tradeRowId && api && Number.isFinite(ticketNum) && ticketNum > 0) {
+    // Primary path (same as virtual after fire): redistribute SL + TP% across
+    // the whole open basket. Resting limits stay naked; only open positions
+    // get OrderModify'd.
+    await new Promise(r => setTimeout(r, Number(process.env.RANGE_REBALANCE_SETTLE_MS ?? 150)))
+    try {
+      await rebalanceAfterFill(supabase, platformByUuid, leg, channelId)
+    } catch (rebalErr) {
+      console.warn(`[rangeBrokerPending] TP rebalance leg=${leg.id}:`, rebalErr)
+    }
+
+    // Read post-rebalance stops so mgmt follow-up only overlays newer adjusts.
+    let existingSl: number | null = null
+    let existingTp: number | null = null
+    try {
+      const { data: tradeStops } = await supabase
+        .from('trades')
+        .select('sl,tp')
+        .eq('id', tradeRowId)
+        .maybeSingle()
+      const sl = Number((tradeStops as { sl?: number | null } | null)?.sl)
+      const tp = Number((tradeStops as { tp?: number | null } | null)?.tp)
+      existingSl = Number.isFinite(sl) && sl > 0 ? sl : null
+      existingTp = Number.isFinite(tp) && tp > 0 ? tp : null
+    } catch { /* best-effort */ }
+
+    // Last resort: if rebalance left this leg naked, assign from effective/leg stops.
+    if (existingSl == null && existingTp == null) {
+      try {
+        const assigned = await assignNakedBrokerFillStops({
+          supabase,
+          api,
+          leg,
+          tradeRowId,
+          ticket: ticketNum,
+          entryPrice: entryPx,
+          channelId,
+        })
+        if (assigned.ok) {
+          existingSl = assigned.stoploss > 0 ? assigned.stoploss : null
+          existingTp = assigned.takeprofit > 0 ? assigned.takeprofit : null
+        }
+      } catch (assignErr) {
+        console.warn(`[rangeBrokerPending] fallback stops leg=${leg.id}:`, assignErr)
+      }
+    }
+
     try {
       await tryApplyBasketFollowUpToNewFill(supabase, api, {
         userId: leg.user_id,
@@ -194,18 +289,20 @@ async function markBrokerRangeLegFilled(
         ticket: ticketNum,
         tradeRowId,
         entryPrice: entryPx,
-        existingSl: openSl,
-        existingTp: leg.takeprofit,
+        existingSl,
+        existingTp,
+        tpLots: manual.tp_lots,
         isBuy: leg.is_buy,
       })
     } catch (hookErr) {
       console.warn(`[rangeBrokerPending] SL/TP follow-up leg=${leg.id}:`, hookErr)
     }
-    await new Promise(r => setTimeout(r, Number(process.env.RANGE_REBALANCE_SETTLE_MS ?? 150)))
+
+    // Always enqueue reconcile so failed OrderModifies retry.
     try {
-      await rebalanceAfterFill(supabase, platformByUuid, leg, channelId)
-    } catch (rebalErr) {
-      console.warn(`[rangeBrokerPending] TP rebalance leg=${leg.id}:`, rebalErr)
+      await enqueueReconcileAfterBrokerFill(supabase, leg, channelId, manual)
+    } catch (enqErr) {
+      console.warn(`[rangeBrokerPending] reconcile enqueue leg=${leg.id}:`, enqErr)
     }
   }
 
@@ -222,6 +319,9 @@ async function markBrokerRangeLegFilled(
         trigger_price: leg.trigger_price,
         fill_price: entryPx,
         ticket: ticketForTrade,
+        naked_fill: true,
+        desired_sl: desiredSl,
+        cwe: isCwe,
       } as unknown as Record<string, unknown>,
     })
   } catch { /* best-effort */ }
@@ -236,6 +336,8 @@ export class RangeBrokerPendingMonitor {
   private platformByUuid: PlatformByFxsocketId = new Map()
   private ticking = false
   private missingStreak = new Map<string, number>()
+  /** Baskets whose resting limits already had a stop-sync attempt this process. */
+  private stopsHealed = new Set<string>()
 
   constructor(private readonly supabase: SupabaseClient) {}
 
@@ -253,6 +355,7 @@ export class RangeBrokerPendingMonitor {
       hasWork: sb => hasWorkOnShard(sb, 'range_pending_legs', q => q.eq('status', 'broker_pending')),
       tick: () => this.runTick(),
     })
+    void this.runTick()
     console.log(`[rangeBrokerPendingMonitor] started active=${ACTIVE_MS}ms idle=${IDLE_MS}ms`)
   }
 
@@ -283,7 +386,7 @@ export class RangeBrokerPendingMonitor {
       this.supabase
         .from('range_pending_legs')
         .select(
-          'id,signal_id,user_id,broker_account_id,metaapi_account_id,symbol,step_idx,is_buy,volume,trigger_price,stoploss,takeprofit,slippage,comment,expert_id,ticket,expires_at,cwe_close_price',
+          'id,signal_id,user_id,broker_account_id,metaapi_account_id,symbol,step_idx,is_buy,volume,trigger_price,stoploss,takeprofit,slippage,comment,expert_id,ticket,expires_at,cwe_close_price,layer_plan_id,layer_plan_metadata,broker_client_reference,broker_pending_type,native_submission_status,submitted_at,confirmed_at,last_reconciled_at,broker_pending_reason',
         )
         .eq('status', 'broker_pending')
         .limit(200),
@@ -294,8 +397,12 @@ export class RangeBrokerPendingMonitor {
       console.error('[rangeBrokerPendingMonitor] select failed:', error.message)
       return
     }
-    const rows = ((data ?? []) as RangeBrokerPendingRow[])
+    const candidateRows = ((data ?? []) as RangeBrokerPendingRow[])
       .filter(r => !isUserCopierPausedCached(r.user_id))
+    const rows: RangeBrokerPendingRow[] = []
+    for (const row of candidateRows) {
+      if (await this.layeringModeBrokerPendingAllowed(row)) rows.push(row)
+    }
 
     const { data: cancelRows } = await this.supabase
       .from('range_pending_legs')
@@ -310,6 +417,14 @@ export class RangeBrokerPendingMonitor {
       ...((cancelRows ?? []) as Array<{ metaapi_account_id: string }>).map(r => r.metaapi_account_id),
     ]
     this.platformByUuid = await loadPlatformByFxsocketId(this.supabase, accountIds)
+
+    await recoverNativeLayeringSubmissions({
+      supabase: this.supabase,
+      apiLookup: uuid => apiForFxsocketAccount(this.platformByUuid, uuid),
+    })
+    await recoverCancellingLayeringPlans(this.supabase, {
+      apiLookup: uuid => apiForFxsocketAccount(this.platformByUuid, uuid),
+    })
 
     await reconcileBasketEmptyCancelledLegs(
       this.supabase,
@@ -338,6 +453,9 @@ export class RangeBrokerPendingMonitor {
           .update({ status: 'expired', error_message: 'pending_expiry' })
           .eq('id', row.id)
           .eq('status', 'broker_pending')
+      }
+      if (row.layer_plan_id) {
+        await convergeLayeringPlanAfterLegTerminal(this.supabase, row.layer_plan_id)
       }
     }
 
@@ -369,6 +487,45 @@ export class RangeBrokerPendingMonitor {
       }
     }
 
+    // Heal naked resting limits once open basket legs already have SL/TP
+    // (common when signal had no SL/TP at place time).
+    const healKeys = new Set<string>()
+    for (const r of watchRows) {
+      const basketKey = `${r.signal_id}|${r.broker_account_id}|${r.metaapi_account_id}`
+      const missingDbStops = !(Number(r.stoploss) > 0) || !(Number(r.takeprofit) > 0)
+      if (missingDbStops || !this.stopsHealed.has(basketKey)) {
+        healKeys.add(basketKey)
+      }
+    }
+    for (const key of healKeys) {
+      const [signalId, brokerAccountId, uuid] = key.split('|')
+      if (!signalId || !brokerAccountId || !uuid) continue
+      const api = apiForFxsocketAccount(this.platformByUuid, uuid)
+      if (!api) continue
+      try {
+        const modified = await healNakedBrokerPendingStops({
+          supabase: this.supabase,
+          api,
+          signalId,
+          brokerAccountId,
+        })
+        if (modified > 0) this.stopsHealed.add(key)
+        else {
+          // No open-trade stops yet, or already synced on broker — avoid hot loop
+          // once DB rows have stops.
+          const stillMissing = watchRows.some(r =>
+            r.signal_id === signalId
+            && r.broker_account_id === brokerAccountId
+            && (!(Number(r.stoploss) > 0) || !(Number(r.takeprofit) > 0)),
+          )
+          if (!stillMissing) this.stopsHealed.add(key)
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        console.warn(`[rangeBrokerPendingMonitor] stop heal failed signal=${signalId}: ${msg}`)
+      }
+    }
+
     const byAccount = new Map<string, RangeBrokerPendingRow[]>()
     for (const r of watchRows) {
       const list = byAccount.get(r.metaapi_account_id) ?? []
@@ -379,7 +536,7 @@ export class RangeBrokerPendingMonitor {
     for (const [uuid, group] of byAccount) {
       const api = apiForFxsocketAccount(this.platformByUuid, uuid)
       if (!api) continue
-      let opened: unknown[] = []
+      let opened: unknown[]
       try {
         opened = await api.openedOrders(uuid)
       } catch (err) {
@@ -388,36 +545,43 @@ export class RangeBrokerPendingMonitor {
         continue
       }
 
+      // Tickets already booked as open trades for these signals — exclude them
+      // when matching comment/signal so immediate market legs aren't mistaken
+      // for a pending fill after the limit ticket disappears.
+      const signalIds = [...new Set(group.map(r => r.signal_id))]
+      const excludeTickets = new Set<string>()
+      try {
+        const { data: openTrades } = await this.supabase
+          .from('trades')
+          .select('metaapi_order_id')
+          .in('signal_id', signalIds)
+          .eq('broker_account_id', group[0]!.broker_account_id)
+          .eq('status', 'open')
+        for (const t of openTrades ?? []) {
+          const id = (t as { metaapi_order_id?: string | null }).metaapi_order_id
+          if (id && /^\d+$/.test(id)) excludeTickets.add(id)
+        }
+      } catch { /* best-effort */ }
+
       const needClosed: RangeBrokerPendingRow[] = []
       for (const row of group) {
-        const ticket = Number(row.ticket)
-        if (!Number.isFinite(ticket) || ticket <= 0) continue
-
-        const hit = findOpenedRowByTicket(opened, ticket)
-        if (hit) {
-          if (isPendingEntryRow(hit)) {
-            this.missingStreak.delete(row.id)
-            continue
-          }
-          if (!isLikelyMarketPositionRow(hit)) {
-            this.missingStreak.delete(row.id)
-            continue
-          }
-          const px = extractOpenPrice(hit)
-          if (px != null) {
-            this.missingStreak.delete(row.id)
-            const posTicket = rawOrderTicket(hit)
-            await markBrokerRangeLegFilled(
-              this.supabase,
-              this.platformByUuid,
-              row,
-              px,
-              posTicket > 0 ? String(posTicket) : null,
-            )
-            continue
-          }
+        const decision = decideBrokerPendingOpenedState(opened, row, excludeTickets)
+        if (decision.kind === 'still_pending') {
+          this.missingStreak.delete(row.id)
+          continue
         }
-
+        if (decision.kind === 'filled') {
+          this.missingStreak.delete(row.id)
+          await markBrokerRangeLegFilled(
+            this.supabase,
+            this.platformByUuid,
+            row,
+            decision.hit.fillPrice,
+            decision.hit.positionTicket,
+          )
+          if (decision.hit.positionTicket) excludeTickets.add(decision.hit.positionTicket)
+          continue
+        }
         needClosed.push(row)
       }
 
@@ -432,13 +596,17 @@ export class RangeBrokerPendingMonitor {
       }
 
       for (const row of needClosed) {
-        const ticket = Number(row.ticket)
-        if (!Number.isFinite(ticket) || ticket <= 0) continue
-        const closedHit = findClosedRowForTicket(closed, ticket)
-        if (closedHit) {
+        const closedFill = decideBrokerPendingClosedFill(opened, closed, row, excludeTickets)
+        if (closedFill) {
           this.missingStreak.delete(row.id)
-          const px = extractOpenPrice(closedHit as Record<string, unknown>) ?? row.trigger_price
-          await markBrokerRangeLegFilled(this.supabase, this.platformByUuid, row, px, String(ticket))
+          await markBrokerRangeLegFilled(
+            this.supabase,
+            this.platformByUuid,
+            row,
+            closedFill.fillPrice,
+            closedFill.positionTicket,
+          )
+          if (closedFill.positionTicket) excludeTickets.add(closedFill.positionTicket)
           continue
         }
 
@@ -451,8 +619,39 @@ export class RangeBrokerPendingMonitor {
             .update({ status: 'cancelled', error_message: 'broker_missing' })
             .eq('id', row.id)
             .eq('status', 'broker_pending')
+          if (row.layer_plan_id) {
+            await convergeLayeringPlanAfterLegTerminal(this.supabase, row.layer_plan_id)
+          }
         }
       }
     }
+  }
+
+  private async layeringModeBrokerPendingAllowed(row: RangeBrokerPendingRow): Promise<boolean> {
+    if (!row.layer_plan_id) return true
+    const { data, error } = await this.supabase
+      .from('layering_plans')
+      .select('status,layer_plan_metadata')
+      .eq('layer_plan_id', row.layer_plan_id)
+      .maybeSingle()
+    if (error || !data || String((data as { status?: unknown }).status ?? '') !== 'active') return false
+    const parsed = parsePersistedLayeringPlan((data as { layer_plan_metadata?: unknown }).layer_plan_metadata)
+    if (!parsed.ok) return false
+    const snapshot = parsed.snapshot
+    if (
+      snapshot.planId !== row.layer_plan_id
+      || snapshot.signalId !== row.signal_id
+      || snapshot.brokerAccountId !== row.broker_account_id
+      || snapshot.symbol !== row.symbol
+      || (snapshot.side === 'buy') !== row.is_buy
+      || snapshot.fundedPrices == null
+      || snapshot.lots == null
+    ) return false
+    const idx = row.step_idx - 1
+    if (idx < 0 || snapshot.fundedPrices[idx] !== row.trigger_price || snapshot.lots[idx] !== row.volume) return false
+    return resolveLayeringModeRolloutDecision({
+      mode: snapshot.mode,
+      brokerAccountId: row.broker_account_id,
+    }).executionAllowed
   }
 }

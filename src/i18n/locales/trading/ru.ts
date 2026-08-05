@@ -15,6 +15,7 @@ export const tradingRu: TradingPagesBundleTranslations = {
     emptySubtitleClosed: 'Нет недавно закрытых ордеров в этой MT-сессии.',
     modalTitle: 'Детали сделки',
     close: 'Закрыть',
+    manage: 'Управлять',
     tradeSummary: 'Сделка',
     signalChannel: 'Канал сигналов',
     telegramMessage: 'Сообщение Telegram',
@@ -63,5 +64,11 @@ export const tradingRu: TradingPagesBundleTranslations = {
     lotSizeOverride: 'Переопределение размера лота',
     pipToleranceOverride: 'Переопределение допуска по пипсам',
     useBrokerDefault: 'Использовать настройки брокера по умолчанию',
+  },
+  popularChannelsPage: {
+    title: 'Popular Channels',
+    subtitle: 'Signal channels ranked by subscriber count across all TSCopier users',
+    emptyTitle: 'No channels yet',
+    emptySubtitle: 'Channels will appear here as users subscribe to them',
   },
 }

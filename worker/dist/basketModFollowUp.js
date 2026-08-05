@@ -194,7 +194,7 @@ async function tryApplyBasketFollowUpToNewFill(supabase, api, args) {
         .eq('signal_id', args.basketSignalId)
         .limit(500);
     const openCount = openLegs?.length ?? 0;
-    const activePendingCount = (pendingRows ?? []).filter(r => r.status === 'pending' || r.status === 'claimed').length;
+    const activePendingCount = (pendingRows ?? []).filter(r => r.status === 'pending' || r.status === 'claimed' || r.status === 'broker_pending').length;
     const maxPendingStepIdx = Math.max(0, ...(pendingRows ?? []).map(r => Number(r.step_idx) || 0));
     const totalPlannedLegs = (0, channelActiveTradeParams_1.estimateBasketTotalPlannedLegs)({
         openLegCount: openCount,

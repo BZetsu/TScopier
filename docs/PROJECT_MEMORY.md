@@ -2,6 +2,219 @@
 
 ## Changelog
 
+### 2026-08-02 — Merged upstream/dev (Emma's constraint-based layer sizing) into staging
+
+- **Context:** Pulled `upstream/dev` (8 commits: PRs #66/#69 — Emma's `feat/layering-modes-complete-integration` and `c6f12703` "Implemented the constraint-based layer sizing path") into a staging-based branch to promote Emma's work to `upstream/staging`. `upstream/staging` and `upstream/dev` had diverged (merge-base `99819542`): staging carried 6 commits (PR #65, layering allowlist/type fixes + changelog entries), dev carried 8 commits (Emma's layer sizing).
+- **Merge conflicts (1, content):**
+  - **`supabase/functions/update-layering-settings/index.ts`** — `configurationAllowed()`: staging had kill-switch + per-mode execution flags (`LAYERING_MODES_KILL_SWITCH`, `LAYERING_STATIC/DYNAMIC_EXECUTION_ENABLED`) gating `configurable`; dev (c6f12703) intentionally removed those flags (feature GA) and added `layering_optimization_strategy` support. **Resolution:** took dev's version (`--theirs`) — the flag removal is deliberate (verified in `c6f12703`), and the rest of the file auto-merged from dev (new `LAYERING_KEYS` entry, `normalizeOptimizationStrategy`, handler field). Env vars for the old flags are now ignored by this function (expected).
+  - Everything else auto-merged cleanly: `layering-mode-capabilities/index.ts` (kept kill-switch in `executionAvailable` only, matching dev), migration `20260731120000_layering_plans.sql` (calculator-version null handling fix), all worker layering files.
+- **Verification:** `tsc -b` clean (frontend), `vite build` clean, worker `tsc` clean, 5 frontend layering tests pass, 61 worker layering tests pass (`layerSizingConstraints`, `layeringModeCalculators`, `layeringPlanPersistence`).
+- **Deploy:** Branch `merge/dev-into-staging` pushed to `upstream/staging` (fast-forward after merge). Railway auto-deploys from `staging`. Requires the migration `20260731120000_layering_plans.sql` (already applied on staging DB per prior sessions) and edge functions re-deployed if the capability/update functions need the new `layering_optimization_strategy` field (deploy via `supabase functions deploy layering-mode-capabilities update-layering-settings --project-ref axdcledcyhyvzrnfkwat --use-api`).
+- **Follow-up:** (1) Local `fix/reconnect-fix-staging` branch contains reconnect crash fixes (`05b05961`, `c56cb7cb`) NOT yet in `upstream/staging` — candidate for a later PR. (2) `LAYERING_*` secrets still pending admin set on staging Supabase Dashboard (see 2026-07-31 entry).
+
+### 2026-07-31 — Fixed layering-modes allowlist bug: empty allowlist now means unrestricted
+
+- **Context:** Static/dynamic layering modes remained deactivated in the AccountConfigPage UI on staging even after the `LAYERING_*` flags were enabled. The layering-modes implementation (static/dynamic modes, plan persistence, calculators, edge functions) was built by Emma — he designed the flag system with an allowlist escape hatch documented as "Leave empty = no allowlist restriction", but the enforcement was inverted.
+- **Root cause:** Both `supabase/functions/layering-mode-capabilities/index.ts` and `supabase/functions/update-layering-settings/index.ts` computed `listed = allowlist().has(accountId)`. With `LAYERING_MODES_ACCOUNT_ALLOWLIST` unset (empty set), `has()` returned `false` for every account, so `configurable` was always `false` → static/dynamic stayed greyed out for everyone. The documented intent (empty list = everyone allowed) required the opposite behavior.
+- **Changes:**
+  - **`supabase/functions/layering-mode-capabilities/index.ts`:** `const allowlistSet = allowlist(); const listed = allowlistSet.size === 0 || allowlistSet.has(args.accountId)`.
+  - **`supabase/functions/update-layering-settings/index.ts`:** Same fix inside `configurationAllowed()`.
+- **Verification:** Both functions type-check and deployed successfully to staging Supabase (`axdcledcyhyvzrnfkwat`).
+- **Deploy:** Commit `a5737c1c` pushed to `origin/staging`; both edge functions re-deployed to the staging project via `supabase functions deploy --project-ref axdcledcyhyvzrnfkwat --use-api`.
+- **Remaining (blocked on admin):** The `LAYERING_*` secrets could NOT be set via CLI (PAM: token lacks privileges — reads allowed, writes denied). They must be added via the staging Dashboard (Edge Functions → Secrets): `LAYERING_MODES_EXECUTION_ENABLED=true`, `LAYERING_STATIC_EXECUTION_ENABLED=true`, `LAYERING_DYNAMIC_EXECUTION_ENABLED=true`, `LAYERING_MODES_PREPARE_ONLY=false`, `LAYERING_MODES_KILL_SWITCH=false`. Also note: the gate additionally requires the user to be admin or on the Advanced plan, and the broker to have a linked + connected `fxsocket_account_id`.
+- **Follow-up:** `upstream/staging` does not yet contain this fix (nor the TS fix `7ce4baea`) — needs syncing.
+
+### 2026-07-31 — Fixed staging Netlify build: layering fallback type error in AccountConfigPage
+
+- **Context:** Staging frontend deploy (`BZetsu/TScopier:staging` → Netlify) failed with 7 TS errors in `src/pages/dashboard/AccountConfigPage.tsx` after pulling Emma's layering-modes commits (PRs #63–#65, `8be5388e`) from upstream staging. The build is `tsc -b && vite build`, so `tsc` blocked the deploy.
+- **Root cause:** The ternary `normalizedFallbackManual` had two branches: `normalizeManualSettings(...) as ManualSettings` and `(configAccount.manual_settings ?? {})`. `configAccount.manual_settings` is typed `Json | null` (`src/types/database.ts`), so the fallback branch widened the union to `ManualSettings | Json`, and `.layering_mode` / `.range_layering_type` / `.static_layer_count` / `.dynamic_step_pips` / `.dynamic_max_layers` were not accessible on the `string` member of the union.
+- **Changes:**
+  - **`src/pages/dashboard/AccountConfigPage.tsx`:** Cast the fallback branch to `ManualSettings`: `: (configAccount.manual_settings ?? {}) as ManualSettings`. Pure type-level fix — zero runtime behavior change (all accessed fields already fall back via `===` checks and `?? DEFAULT_MANUAL_SETTINGS.*`).
+- **Verification:** `npx tsc -b` clean on the staging checkout.
+- **Deploy:** Commit `7ce4baea` pushed to `origin/staging` → Netlify rebuild triggered.
+- **Follow-up:** `upstream/staging` still contains the broken commit `8be5388e` without the fix — needs the same commit (or a PR) to keep forks in sync. Also worth cherry-picking the fix to `dev`/`main` later via the normal hotfix flow.
+
+### 2026-07-31 — Added "Manage" button to trade detail modal (deep-link into Manage Signals edit modal)
+
+- **Context:** On the Trades page (`/account-trades`), clicking a trade opens `TradeDetailModal`. User wanted a "Manage" button in the modal header that jumps to the manage signals page (`/manage-signals`) and opens the exact `EditSignalOverrideModal` for that trade's linked signal.
+- **Changes:**
+  - **`src/components/trades/TradeDetailModal.tsx`:** Added "Manage" button in the sticky header, before the X close button. Uses `useNavigate`; on click closes the modal and navigates to `/manage-signals?edit=<signalId>`. Disabled until the linked signal context resolves (`context?.signal?.id`).
+  - **`src/pages/dashboard/SignalHistoryPage.tsx`:** Reads `?edit=` search param. Once data is loaded, resolves the signal (direct entry signal, or via `resolveManagementAnchorEntryId` for management signals), verifies open status, then calls `handleSelectSignal` → opens `EditSignalOverrideModal`. Only fires once per param value (`handledEditSignalIdRef`). Closing the modal strips the `edit` param (`setSearchParams({}, { replace: true })`) so refresh doesn't re-open it.
+  - **i18n:** Added `trades.manage` key to `types.ts` + all 9 locales (en/es/fr inline, ar/pl/ru/nl/ja/sv in `locales/trading/`).
+- **Design decisions:** Modal only auto-opens for OPEN signals (matches page interaction model — closed rows aren't clickable). If the signal isn't in the last 500 loaded signals, user just lands on the page. No URL params were previously used on this page, so no conflicts with existing state.
+- **Files:** `src/components/trades/TradeDetailModal.tsx`, `src/pages/dashboard/SignalHistoryPage.tsx`, `src/i18n/locales/types.ts`, `src/i18n/locales/{en,es,fr}.ts`, `src/i18n/locales/trading/{ar,pl,ru,nl,ja,sv}.ts`
+- **Verification:** `tsc -b` clean, `vite build` clean, all 265 tests pass, lint — 0 new errors (5 pre-existing errors in these files, all on untouched lines, confirmed by stash-compare).
+- **Follow-up:** None.
+
+### 2026-07-31 — Merged upstream/main (prod) into feat/remaining-weekly-plan-items
+
+- **Context:** User requested pulling the latest push from prod before continuing feature work. Current branch had diverged; merge had 2 conflicts (`worker/.env.example`, `worker/src/sessionManager.ts`).
+- **What prod brought in (commit `f04282e2` "feat: enhance session management with new listener timeout and healing logic"):**
+  - **Disconnected-listener healing:** New `disconnectedRenewTicks` Map counter in `UserSessionManager`. If a listener stays disconnected for N renew ticks (`LISTENER_DISCONNECT_HEAL_TICKS`, default 3 ≈ 60s), it hard-resets via `stopListener()` so `syncSessions` can restart cleanly. Prevents "No lease forever" / UI "Copier engine offline" from a wedged reconnect-only path.
+  - **Start timeouts:** `listener.start()`, `syncSessions startListener`, and listener startup wrapped in `withTimeout` (60s default, `LISTENER_START_TIMEOUT_MS`).
+  - **Start failure handling:** explicit `listener.stop()` + direct `telegram_sessions`/`telegram_auth_pending` deletes (avoids deadlock with `invalidateTelegramSession` under connection lock).
+  - **userListener.ts:** `warmEntityCache()` no longer awaited on start (fire-and-forget + `startEntityWarmup`), because hung `getDialogs` blocked `startListener` and left users with No lease.
+  - **`.env.example`:** 3 new knobs — `LISTENER_START_TIMEOUT_MS`, `LISTENER_DISCONNECT_HEAL_TICKS`, `TELEGRAM_RECONNECT_COOLDOWN_MS`.
+- **Conflict resolution decisions:**
+  - `.env.example`: kept BOTH Sentry config (feature branch) and listener knobs (prod).
+  - `sessionManager.ts` disconnected branch: kept prod's hard-reset healing logic + retained feature branch's `console.log` renew message.
+  - `syncSessions`: kept BOTH `recentlyFailed` cooldown (feature branch) AND prod's `withTimeout`.
+  - startListener success path: kept both `recentlyFailed.delete` and `disconnectedRenewTicks.delete`.
+- **Files:** `worker/.env.example`, `worker/src/sessionManager.ts`, `worker/src/userListener.ts`
+- **Verification:** conflict markers removed, `npx tsc -p worker/tsconfig.json --noEmit` clean (installed `@sentry/node` in worker/ to satisfy the feature branch's Sentry import).
+- **Follow-up:** stash@{0} still holds pre-merge build artifacts (dist/, worker/dist/) — left untouched. Commit `282a57a9`.
+
+### 2026-07-30 — Added DB trigger to update signal_channels.last_live_at on all signal inserts
+
+- **Context:** `signal_channels.last_live_at` was only updated by the canonical ingest pipeline (elected reader). The Python listener and legacy TS listener write directly to the per-user `signals` table, so `last_live_at` stayed null for those channels. `channel_signals` was also empty. The PopularChannelsPage showed "No activity recorded" despite active trades.
+- **Root cause:** No mechanism existed to propagate per-user signal creation back to the global `signal_channels.last_live_at`.
+- **Changes:**
+  - Added `bump_signal_channel_last_live()` trigger function
+  - Added `trg_bump_signal_channel_last_live` trigger on `signals` (AFTER INSERT)
+  - On each signal insert, joins through `telegram_channels.signal_channel_id` and updates `signal_channels.last_live_at` if the new `created_at` is more recent
+- **Files:** `supabase/migrations/20260730120000_signal_channels_last_live_trigger.sql`
+- **Verification:** Lint clean, all 265 tests pass
+- **Follow-up:** After deploying the migration, existing channels will show activity once their next signal arrives. No backfill needed.
+
+### 2026-07-30 — Fixed PopularChannelsPage search (controlled input + live filtering) and sort filter icon
+
+- **Context:** Search input used `defaultValue` (uncontrolled) so filtering only triggered on Enter/click — users expected live filtering as they typed. Sort dropdown had no visual indicator it was a filter, looked like a plain button.
+- **Changes:**
+  - Made search input controlled: `value={searchQuery}` + `onChange` for real-time filtering
+  - Removed unnecessary `inputRef` and search button click handler
+  - Added `ListFilter` icon inside the sort dropdown with left padding
+  - Added `ChevronDown` arrow on right of sort dropdown for visual affordance
+- **Files:** `src/pages/dashboard/PopularChannelsPage.tsx`
+- **Verification:** `tsc -b && vite build` clean
+- **Follow-up:** None
+
+### 2026-07-30 — Added search text highlighting in PopularChannelsPage results
+
+- **Context:** When searching channels, matched text in `display_name` and `channel_username` wasn't highlighted, making it hard to see why a result matched.
+- **Changes:**
+  - Added `highlightText()` helper that splits text by the query and wraps matches in a `<mark>` element with yellow background
+  - Applied highlighting to `display_name` and `channel_username` in both collapsed rows and expanded detail view
+- **Files:** `src/pages/dashboard/PopularChannelsPage.tsx`
+- **Verification:** Lint clean, all 265 tests pass
+- **Follow-up:** None
+
+### 2026-07-30 — Added Discover section to sidebar, moved Popular Channels into it
+
+- **Context:** Popular Channels was under SIGNALS in the sidebar. User requested a new DISCOVER section between SIGNALS and TRADING TOOLS with Popular Channels moved there.
+- **Changes:**
+  - Added `discover` to `NavTranslations.sections` type in `types.ts`
+  - Added `discover` translation in all 9 locale files (en, es, fr, chrome/ar, chrome/pl, chrome/ru, chrome/nl, chrome/ja, chrome/sv)
+  - Moved Popular Channels from SIGNALS section to new DISCOVER section in `AppLayout.tsx`
+- **Files:** `src/i18n/locales/types.ts`, `src/components/layout/AppLayout.tsx`, `src/i18n/locales/en.ts`, `src/i18n/locales/es.ts`, `src/i18n/locales/fr.ts`, `src/i18n/locales/chrome/ar.ts`, `src/i18n/locales/chrome/pl.ts`, `src/i18n/locales/chrome/ru.ts`, `src/i18n/locales/chrome/nl.ts`, `src/i18n/locales/chrome/ja.ts`, `src/i18n/locales/chrome/sv.ts`
+- **Verification:** `tsc -b && vite build` clean
+- **Follow-up:** None
+
+### 2026-07-30 — Added search button + sort dropdown to PopularChannelsPage; fixed lint issues
+
+- **Context:** Search icon was decorative (`pointer-events-none`) and didn't trigger search. Sort filters were inline buttons that didn't work well on mobile. Three pre-existing lint errors blocked clean CI.
+- **Changes:**
+  - Search icon is now a clickable button — triggers filter on click or Enter key
+  - Added clear (X) button when search is active
+  - Replaced inline sort filter buttons with a styled Select dropdown
+  - Fixed 3 pre-existing lint errors: removed dead `channelsRef`, reordered `loadChannels` before `useEffect`, changed `let` to `const`
+- **Files:** `src/pages/dashboard/PopularChannelsPage.tsx`
+- **Verification:** Lint clean, all 265 tests pass
+- **Follow-up:** None
+
+### 2026-07-30 — Fixed "No activity recorded" for channels with signals but null last_live_at
+
+- **Context:** `PopularChannelsPage` showed "No activity recorded" for channels where `signal_channels.last_live_at` was null, even though the channels had generated signals (visible in `channel_signals` table) and had executed trades. The `channelStatus()` function only checked `last_live_at` — if null, it immediately returned "No activity recorded" with no fallback.
+- **Changes:**
+  - Modified the `channel_signals` query in `loadChannels()` to also fetch `created_at` (with descending sort), computing the latest signal timestamp per channel into a new `lastSignalAt` map
+  - Updated `channelStatus()` to accept an optional `lastSignalAt` parameter — uses it as fallback when `last_live_at` is null
+  - Updated "Recently active" sort to fall back to latest signal timestamp when `last_live_at` is null
+  - Updated expanded view's "Last activity" row to show latest signal timestamp with "(by signal)" suffix when `last_live_at` is null
+- **Files:** `src/pages/dashboard/PopularChannelsPage.tsx`
+- **Verification:** Insufficient — `channel_signals` was also empty for Python listener paths; required the DB trigger below to fix globally
+- **Follow-up:** Superseded by the `bump_signal_channel_last_live` trigger migration
+
+### 2026-07-29 — Added [httpServer] debug logging for Telegram auth + pushed all commits to dev/staging
+
+- **Context:** Uncommitted debug logging for Telegram auth endpoints (`send_code`, `verify_code`, `start_qr`, `qr_status`, `verify_qr_password`) was left from the July 23-24 auth debugging sessions. Added and committed after verifying no sensitive data is logged (phone numbers redacted, no passwords or secrets).
+- **Changes:**
+  - Added `console.log`/`console.warn` with `[httpServer]` prefix before and after each auth handler call, logging user_id and action outcome
+  - Redacted phone number from `send_code` log line
+- **Files:** `worker/src/httpServer.ts`
+- **Verification:** Reviewed full diff — no secrets exposed
+- **Follow-up:** None
+
+### 2026-07-29 — Fixed channelTradingConfig healing loop: persisted healed configs to DB
+
+- **Context:** `healChannelTradingConfigsMap()` created default per-channel trading settings in memory for channels missing config, but never wrote them to the database. Every signal dispatch re-detected the missing config, re-healed, and logged the warning. For channel `daa27d5a-e17e-4025-904e-8da28a4e30f4` this repeated every ~60s forever.
+- **Root cause:** The function was a pure in-memory computation — it produced healed configs, returned them for execution, then discarded them. The `broker_accounts.channel_trading_configs` JSONB column and `broker_channel_trading_configs` table were never updated, so every call re-read stale DB data.
+- **Changes:**
+  - Added `persistHealedChannelConfigs()` in `channelTradingConfig.ts` — compares original vs healed configs, upserts newly healed channels to `broker_channel_trading_configs` table
+  - Wired into `TradeExecutor.ts:loadBrokers()` (bulk startup path) and `TradeExecutor.ts:applyBrokerCacheRow()` (all real-time paths) — captures original configs before normalization, persists after
+  - Added `SupabaseClient` import to `channelTradingConfig.ts`
+- **Files:** `worker/src/channelTradingConfig.ts`, `worker/src/tradeExecutor/TradeExecutor.ts`
+- **Verification:** `tsc` build clean, all 13 `channelTradingConfig` tests pass
+- **Follow-up:** After deploy, the "healed missing per-channel config" warning should fire once per channel and then stop permanently
+
+### 2026-07-29 — Added popularChannelsPage translations to all locale files
+
+- **Context:** `popularChannelsPage` section was added to `en.ts` and `types.ts` but missing from other locale files that define `channelsPage`.
+- **Changes:**
+  - Added `popularChannelsPage` with Spanish translations to `es.ts`
+  - Added `popularChannelsPage` with French translations to `fr.ts`
+  - Added `popularChannelsPage` (English fallback) to `trading/ar.ts`, `trading/pl.ts`, `trading/ru.ts`, `trading/nl.ts`, `trading/ja.ts`, `trading/sv.ts`
+  - Added `'popularChannelsPage'` to the `Pick` in `trading/types.ts` to resolve TS2353
+- **Files:** `src/i18n/locales/es.ts`, `src/i18n/locales/fr.ts`, `src/i18n/locales/trading/ar.ts`, `src/i18n/locales/trading/pl.ts`, `src/i18n/locales/trading/ru.ts`, `src/i18n/locales/trading/nl.ts`, `src/i18n/locales/trading/ja.ts`, `src/i18n/locales/trading/sv.ts`, `src/i18n/locales/trading/types.ts`
+- **Verification:** `npm run build` passes clean
+- **Follow-up:** None
+
+### 2026-07-29 — Added recentlyFailed cooldown to syncSessions + fixed stale tests
+
+- **Context:** User `6b0410f1` stuck in AUTH_KEY_DUPLICATED retry storm — `syncSessions` retried every 30s forever with no cooldown.
+- **Changes:**
+  - Added `recentlyFailed: Map<string, number>` field to `UserSessionManager` — tracks `userId → timestamp` of last start failure
+  - In `syncSessions()`: checks `recentlyFailed` before calling `startListener` — if user failed within cooldown window (env `TELEGRAM_RETRY_COOLDOWN_MS`, default 5min, range 30s-1h), skips them
+  - On success (in `startListener`): clears the failure entry so any successful start resets the cooldown
+  - Fixed 4 stale tests in `sessionManager.shutdown.test.ts` that expected malformed RPC results to trigger reconnect — the hotfix (Fix 3) changed this to count-only, no reconnect
+- **Files:** `worker/src/sessionManager.ts` (lines 89-90, 593-612, 1143), `worker/src/sessionManager.shutdown.test.ts` (4 updated tests)
+- **Verification:** `tsc` build clean, all 9/9 tests pass
+- **Follow-up:** Push to upstream/dev and promote to staging/production
+
+### 2026-07-29 — Popular Channels discovery page added
+
+- **Context:** New informational page under the SIGNALS section that lists all `signal_channels` ranked by `subscriber_count` descending. Purely a discovery directory — users cannot add channels from this page (they must join on Telegram first).
+- **Change:**
+  - Created `src/pages/dashboard/PopularChannelsPage.tsx` — queries `signal_channels` ordered by subscriber count, renders a Card with rank (#1, #2...), display name, @username, live/offline indicator, and subscriber count
+  - Added route `/popular-channels` in `App.tsx` with lazy loading
+  - Added nav item `Popular Channels` with `Flame` icon to SIGNALS section in `AppLayout.tsx`
+  - Added `/popular-channels` to subscription-free access set in `subscriptionNavAccess.ts`
+  - Added i18n: `popularChannels` key to `NavTranslations.items` in `types.ts` and all locales
+  - Added `Flame` import and icon mapping in `appNavIcons.ts`
+- **Updated later same day:**
+  - Click-to-expand rows showing Channel ID, first seen, subscribers, last activity date
+  - Search bar filtering by channel name or username
+  - Sort tabs: Most subscribers, Most signals, Recently active, Newest first
+  - Status display now uses 3 tiers: Live (<1h), Active Xm ago (<24h), Last active X ago
+  - Shows "X subscribers" text label instead of bare number
+  - Fixed "No recent activity" appearing when data was fresh (was only checking 1h window; now shows relative time for older entries too)
+  - Expanded details now show channel name with copy button, username with copy, Channel ID with copy, signal count from channel_signals
+  - Batch query counts signals per channel from channel_signals table for performance metric
+  - CopyButton component with checkmark feedback on each copyable field
+- **Files:** `src/pages/dashboard/PopularChannelsPage.tsx` (NEW), `src/App.tsx`, `src/components/layout/AppLayout.tsx`, `src/lib/appNavIcons.ts`, `src/lib/subscriptionNavAccess.ts`, `src/i18n/locales/types.ts`, `src/i18n/locales/en.ts`
+- **Verification:** `tsc -b --noEmit` + `vite build` pass clean
+- **Follow-up:** None
+
+### 2026-07-28 — Hotfix deployed to production (reconnect storm), 3 remaining issues identified
+
+- **Context:** Hotfix PR #53 (reconnect storm: 11 hardening fixes + realtime health check + reconnect monkeypatch + signals_pipeline_ts migration) was cherry-picked from staging into `upstream/main` via `origin/hotfix/reconnect-storm`. Merged at `e7df374c`. Production deployment confirmed working: flood-wait aggregated (`count=18 window=60s`), malformed RPC counted but NOT triggering reconnects, 9+ listeners connected with heartbeats.
+- **Production log findings:**
+  1. **"Copier engine offline" on production** — Driven by `worker_session_leases` table. `renewAllLeases` runs every 20s with per-user 8s timeout, concurrency 6, lease TTL 45s. Need to verify leases are being written properly on production.
+  2. **User `6b0410f1` stuck in AUTH_KEY_DUPLICATED retry loop** — `syncSessions` runs every 30s, sees user not in `this.listeners`, tries `startListener` → AUTH_KEY_DUPLICATED → fails. Repeats forever. No recentlyFailed cooldown. Old Telegram session still alive elsewhere.
+  3. **FxSocket terminal pod provisioning failure on production** — Broker `2c8a5239`: `Terminal pod not ready within 10 minutes`. Broker `58358b99`: `heartbeat keepSessionAlive failed`. Staging (4 brokers, 3 users) works fine with same API key. Production has 100 brokers, 42 users — likely FxSocket infrastructure issue at scale.
+  4. **Stale callback risk** in `sessionManager.ts:startRealtimeHealthCheck` — interval checks `if (!this.channelChannel)` but callback could fire after reference is already reassigned.
+- **Files:** `worker/src/index.ts` (lease + sync intervals), `worker/src/sessionManager.ts` (renewAllLeases, syncSessions), `worker/src/sessionLease.ts` (acquireSessionLease), `worker/src/fxsocketClient.ts` (checkConnect / keepSessionAlive)
+- **Verification:** Production logs confirm fix running (build=channel-scoped-listener-1). `[fxsocketClient] flood-wait_occurred count=18 window=60s`. No reconnect storms.
+- **Follow-up:** 1) Fix recentlyFailed cooldown in syncSessions. 2) Fix stale callback guard. 3) Investigate lease renewal on production (log `renewAllLeases` results). 4) FxSocket terminal pod issue — contact FxSocket support if persists.
+
 ### 2026-07-28 — GramJS _updateLoop reconnect storm causes session invalidation (NOT AUTH_KEY_UNREGISTERED) — fixed by monkeypatching _sender.reconnect
 
 - **Context:** After rollback + 11 hardening fixes, user's session kept getting invalidated. Two deaths:

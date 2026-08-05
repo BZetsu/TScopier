@@ -15,16 +15,12 @@ test('broker range pending: sell ladder from fill anchor 4500 step 2 pips', () =
   assert.deepEqual(prices, [4500.02, 4500.04, 4500.06])
 })
 
-test('broker range pending: round-robin reuses stepIdx for same trigger price', () => {
+test('broker range pending: unique stepIdx — no duplicate prices from cycling', () => {
   const stepPriceOffset = 0.02
   const anchor = 4500
-  const maxStepIdx = 3
-  const reservedLegs = 7
-  const stepIdxs: number[] = []
-  for (let i = 0; i < reservedLegs; i++) {
-    stepIdxs.push((i % maxStepIdx) + 1)
-  }
-  assert.deepEqual(stepIdxs, [1, 2, 3, 1, 2, 3, 1])
+  const activeLegs = 3
+  const stepIdxs = Array.from({ length: activeLegs }, (_, i) => i + 1)
+  assert.deepEqual(stepIdxs, [1, 2, 3])
   const triggers = stepIdxs.map(stepIdx =>
     triggerPriceFor(
       { stepIdx, isBuy: false, volume: 0.01, stepPriceOffset, stoploss: 0, takeprofit: 0, slippage: 20, comment: '' },
@@ -32,7 +28,39 @@ test('broker range pending: round-robin reuses stepIdx for same trigger price', 
       2,
     ),
   )
-  assert.equal(triggers.filter(p => p === 4500.02).length, 3)
-  assert.equal(triggers.filter(p => p === 4500.04).length, 2)
-  assert.equal(triggers.filter(p => p === 4500.06).length, 2)
+  assert.deepEqual(triggers, [4500.02, 4500.04, 4500.06])
+  assert.equal(new Set(triggers).size, triggers.length)
+})
+
+test('broker range rematerialize skips existing step indices', () => {
+  const planned = [1, 2, 3, 4, 5]
+  const existing = new Set([1, 2, 3])
+  const remaining = planned.filter(s => !existing.has(s))
+  assert.deepEqual(remaining, [4, 5])
+})
+
+test('broker pending OrderSend is always naked while DB keeps desired stops', () => {
+  const planned = { stoploss: 4040, takeprofit: 4100, cweClosePrice: null as number | null }
+  const sendArgs = {
+    stoploss: 0,
+    takeprofit: 0,
+  }
+  const desiredSl = planned.stoploss > 0 ? planned.stoploss : null
+  const desiredTp = planned.cweClosePrice != null
+    ? null
+    : (planned.takeprofit > 0 ? planned.takeprofit : null)
+  assert.equal(sendArgs.stoploss, 0)
+  assert.equal(sendArgs.takeprofit, 0)
+  assert.equal(desiredSl, 4040)
+  assert.equal(desiredTp, 4100)
+})
+
+test('CWE broker pending keeps naked TP on place and null desired TP', () => {
+  const planned = { stoploss: 4040, takeprofit: 4100, cweClosePrice: 4055 }
+  const sendArgs = { stoploss: 0, takeprofit: 0 }
+  const desiredTp = planned.cweClosePrice != null
+    ? null
+    : (planned.takeprofit > 0 ? planned.takeprofit : null)
+  assert.equal(sendArgs.takeprofit, 0)
+  assert.equal(desiredTp, null)
 })

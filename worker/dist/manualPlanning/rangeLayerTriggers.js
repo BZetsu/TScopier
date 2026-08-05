@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.RANGE_LAYER_CURVE_EXPONENT = void 0;
 exports.resolveRangeLayerBoundary = resolveRangeLayerBoundary;
+exports.isAutoRangeStep = isAutoRangeStep;
 exports.computeRangeLayerTriggers = computeRangeLayerTriggers;
 exports.computeLinearRangeLayerTriggers = computeLinearRangeLayerTriggers;
 exports.buildRangeLayerTriggerMap = buildRangeLayerTriggerMap;
@@ -29,6 +30,25 @@ function rangeRungCount(rangeLayering, virtualPendingCount) {
         return Math.max(1, rangeLayering.maxStepIdx);
     }
     return Math.max(0, virtualPendingCount);
+}
+/** Auto step: blank / 0 stored step — space legs evenly across distance. */
+function isAutoRangeStep(rangeLayering) {
+    if (!rangeLayering)
+        return false;
+    const configured = Number(rangeLayering.rangeStepPips);
+    return !Number.isFinite(configured) || configured <= 0;
+}
+/**
+ * Zone curve only for Manual step with signal-range (or legacy Manual pending curve).
+ * Auto always uses linear spacing so N legs evenly cover the full distance.
+ */
+function shouldUseZoneCurve(rangeLayering) {
+    if (!rangeLayering)
+        return false;
+    if (isAutoRangeStep(rangeLayering))
+        return false;
+    return rangeLayering.useSignalEntryRange === true
+        || rangeLayering.rangeLayeringType === 'pending_order';
 }
 function resolveLayerPip(rangeLayering, pip) {
     if (pip != null && Number.isFinite(pip) && pip > 0)
@@ -154,8 +174,7 @@ function buildRangeLayerTriggerMap(args) {
         rangeDistancePips: distPips,
         pip,
     });
-    const useZoneCurve = args.rangeLayering?.useSignalEntryRange === true
-        || args.rangeLayering?.rangeLayeringType === 'pending_order';
+    const useZoneCurve = shouldUseZoneCurve(args.rangeLayering);
     if (boundary != null && rungCount > 0 && useZoneCurve) {
         const triggers = computeRangeLayerTriggers({
             isBuy,
@@ -214,8 +233,7 @@ function rangeLayerTriggerForStep(args) {
     const rungCount = args.rangeLayering?.rangeLayeringType === 'pending_order'
         ? Math.max(1, args.rangeLayering?.maxStepIdx ?? args.legCount)
         : args.legCount;
-    const useZoneCurve = args.rangeLayering?.useSignalEntryRange === true
-        || args.rangeLayering?.rangeLayeringType === 'pending_order';
+    const useZoneCurve = shouldUseZoneCurve(args.rangeLayering);
     if (boundary != null && rungCount > 0 && args.stepIdx >= 1 && args.stepIdx <= rungCount) {
         const triggers = useZoneCurve
             ? computeRangeLayerTriggers({

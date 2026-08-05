@@ -30,7 +30,7 @@ import {
 } from '../manualPlanner'
 import { normalizeManualSettingsForExecution } from '../manualPlanning/normalizeManualSettings'
 import { resolveBrokerTotalBalance } from '../effectiveBrokerBalance'
-import { normalizeChannelTradingConfigsMap, withChannelTradingConfig, channelConfigReadyForExecution, resolveChannelTradingConfig, healChannelTradingConfigsMap } from '../channelTradingConfig'
+import { normalizeChannelTradingConfigsMap, withChannelTradingConfig, channelConfigReadyForExecution, resolveChannelTradingConfig, healChannelTradingConfigsMap, persistHealedChannelConfigs } from '../channelTradingConfig'
 import {
   applyBrokerChannelTradingConfigRow,
   fetchBrokerChannelTradingConfigRows,
@@ -455,6 +455,12 @@ export class TradeExecutor {
           }
         : row
       const normalized = this.normalizeBrokerRow(mergedRow)
+      void persistHealedChannelConfigs(
+        this.supabase,
+        row.id,
+        mergedRow.channel_trading_configs,
+        normalized.channel_trading_configs as Record<string, unknown>,
+      )
       this.brokersById.set(row.id, normalized)
       if (normalized.is_active) {
         const arr = this.brokersByUser.get(row.user_id) ?? []
@@ -524,7 +530,14 @@ export class TradeExecutor {
   }
 
   private applyBrokerCacheRow(row: BrokerRow) {
+    const preNormalizedConfigs = row.channel_trading_configs
     const normalized = this.normalizeBrokerRow(row)
+    void persistHealedChannelConfigs(
+      this.supabase,
+      row.id,
+      preNormalizedConfigs,
+      normalized.channel_trading_configs as Record<string, unknown>,
+    )
     const sessionId = brokerSessionUuid(normalized)
     if (sessionId) getFxsocketClient()?.seedPlatformCache(sessionId, mtPlatformFrom(normalized.platform))
     const previous = this.brokersById.get(row.id)
@@ -1379,7 +1392,15 @@ export class TradeExecutor {
     broker: BrokerRow,
     channelKeywords: ChannelKeywords | null,
     pipelineT0?: number,
-    sendOpts?: { liveEntryFast?: boolean; liveMgmtFast?: boolean; commentSlug?: string | null; commentPrefix?: string; sameSignalRefresh?: boolean },
+    sendOpts?: {
+      liveEntryFast?: boolean
+      liveMgmtFast?: boolean
+      commentSlug?: string | null
+      commentPrefix?: string
+      sameSignalRefresh?: boolean
+      /** When true, entry may refresh SL/TP but must not place new market/pending orders. */
+      blockNewEntry?: boolean
+    },
   ): Promise<SendOrderOutcome>  {
     const configReady = channelConfigReadyForExecution(broker, signal.channel_id)
     if (!configReady.ready) {
@@ -1406,17 +1427,11 @@ export class TradeExecutor {
     const resolved = resolveChannelTradingConfig(executionBroker, signal.channel_id)
     const entryKey = `${signal.id}:${effectiveBroker.id}`
     const liveFast = sendOpts?.liveEntryFast === true
-
-    if (await manualDispatchAlreadyMaterialized(this, signal.id, effectiveBroker.id)) {
-      console.warn(
-        `[tradeExecutor] skip already materialized signal=${signal.id} broker=${effectiveBroker.id}`
-        + ` liveFast=${liveFast}`,
-      )
-      return { openedOrMerged: true }
-    }
-
     const isRevisionRefresh = sendOpts?.sameSignalRefresh === true
     const isRangeWake = signal.dispatch_source === SIGNAL_RANGE_WAKE_DISPATCH_SOURCE
+
+    // Message revisions must wait for an in-flight first entry, then never open a
+    // second market/pending basket (live-fast previously skipped this probe).
     if (this.entryBrokerInflight.has(entryKey)) {
       if (isRevisionRefresh) {
         const deadline = Date.now() + 60_000
@@ -1447,15 +1462,59 @@ export class TradeExecutor {
         return { openedOrMerged: materialized }
       }
     }
+
+    let alreadyMaterialized = false
+    if (!liveFast || isRevisionRefresh) {
+      alreadyMaterialized = await manualDispatchAlreadyMaterialized(this, signal.id, effectiveBroker.id)
+      if (alreadyMaterialized && !isRevisionRefresh) {
+        console.warn(
+          `[tradeExecutor] skip already materialized signal=${signal.id} broker=${effectiveBroker.id}`,
+        )
+        return { openedOrMerged: true }
+      }
+    }
+
+    const blockNewEntry = sendOpts?.blockNewEntry === true
+      || (isRevisionRefresh && alreadyMaterialized)
+    const effectiveSendOpts = blockNewEntry
+      ? { ...sendOpts, sameSignalRefresh: true, blockNewEntry: true }
+      : sendOpts
+
     this.entryBrokerInflight.add(entryKey)
     try {
-      if (!isRevisionRefresh) {
+      // SL/TP-only revision path must not take/require the entry claim.
+      if (!blockNewEntry) {
         if (isRangeWake) {
           await releaseSignalBrokerDispatchClaim(this.supabase, signal.id, effectiveBroker.id)
         }
         setPipelineTimestamp(signal.pipeline_ts ?? (signal.pipeline_ts = {}), 'execution_claim_started_at', Date.now())
         const claimed = await claimSignalBrokerDispatch(this.supabase, signal.id, effectiveBroker.id)
         if (!claimed) {
+          // Another worker won entry. Revisions may still refresh SL/TP once materialized.
+          if (isRevisionRefresh) {
+            const pollDeadline = Date.now() + 5_000
+            while (Date.now() < pollDeadline) {
+              if (await manualDispatchAlreadyMaterialized(this, signal.id, effectiveBroker.id)) {
+                console.warn(
+                  `[tradeExecutor] message revision claim lost — SL/TP only signal=${signal.id} broker=${effectiveBroker.id}`,
+                )
+                const revisionOnlyOpts = { ...sendOpts, sameSignalRefresh: true, blockNewEntry: true }
+                const isManual = (effectiveBroker.copier_mode ?? 'ai') === 'manual'
+                const manual = (effectiveBroker.manual_settings ?? {}) as ManualSettings
+                if (isManual && manual.trade_style === 'multi') {
+                  return await runRangeEntry(this, {
+                    signal, parsed, op, broker: effectiveBroker, channelKeywords, pipelineT0,
+                    sendOpts: revisionOnlyOpts,
+                  })
+                }
+                return await runSingleEntry(this, {
+                  signal, parsed, op, broker: effectiveBroker, channelKeywords, pipelineT0,
+                  sendOpts: revisionOnlyOpts,
+                })
+              }
+              await new Promise(resolve => setTimeout(resolve, 100))
+            }
+          }
           const materialized = await manualDispatchAlreadyMaterialized(this, signal.id, effectiveBroker.id)
           console.warn(
             `[tradeExecutor] skip duplicate dispatch claim signal=${signal.id} broker=${effectiveBroker.id}`
@@ -1493,6 +1552,10 @@ export class TradeExecutor {
           outcome: 'claimed',
           path: liveFast ? 'live_fast' : 'queued',
         })
+      } else {
+        console.warn(
+          `[tradeExecutor] message revision block new entry signal=${signal.id} broker=${effectiveBroker.id}`,
+        )
       }
 
       const ms = resolved.manual_settings as Record<string, unknown>
@@ -1506,9 +1569,15 @@ export class TradeExecutor {
       const isManual = (effectiveBroker.copier_mode ?? 'ai') === 'manual'
       const manual = (effectiveBroker.manual_settings ?? {}) as ManualSettings
       if (isManual && manual.trade_style === 'multi') {
-        return await runRangeEntry(this, { signal, parsed, op, broker: effectiveBroker, channelKeywords, pipelineT0, sendOpts })
+        return await runRangeEntry(this, {
+          signal, parsed, op, broker: effectiveBroker, channelKeywords, pipelineT0,
+          sendOpts: effectiveSendOpts,
+        })
       }
-      return await runSingleEntry(this, { signal, parsed, op, broker: effectiveBroker, channelKeywords, pipelineT0, sendOpts })
+      return await runSingleEntry(this, {
+        signal, parsed, op, broker: effectiveBroker, channelKeywords, pipelineT0,
+        sendOpts: effectiveSendOpts,
+      })
     } finally {
       this.entryBrokerInflight.delete(entryKey)
     }
@@ -1774,7 +1843,37 @@ export class TradeExecutor {
       console.error(
         `[tradeExecutor] deferred virtual persist failed signal=${signal.id} broker=${broker.id}: ${persist.lastError ?? 'unknown'}`,
       )
+      return
     }
+    console.log(
+      `[tradeExecutor] deferred virtual pendings inserted=${insertRows.length} signal=${signal.id} broker=${broker.id} symbol=${symbol} anchor=${anchor} (${anchorSource})`,
+    )
+    try {
+      await this.supabase.from('trade_execution_logs').insert({
+        user_id: signal.user_id,
+        signal_id: signal.id,
+        broker_account_id: broker.id,
+        action: 'virtual_pending_inserted',
+        status: 'success',
+        request_payload: {
+          rows: insertRows.length,
+          anchor,
+          anchorSource,
+          symbol,
+          stepIdxs: insertRows.map(r => r.step_idx),
+          triggers: insertRows.map(r => r.trigger_price),
+          range_layering: plan.rangeLayering ?? null,
+          basket_leg_cap: plan.rangeLayering?.basketLegCap
+            ?? (
+              (plan.rangeLayering?.plannedImmediateLegs ?? 0)
+              + (plan.rangeLayering?.activePendingLegs ?? insertRows.length)
+            ),
+          planned_immediate_legs: plan.rangeLayering?.plannedImmediateLegs ?? null,
+          planned_range_legs: plan.rangeLayering?.activePendingLegs ?? insertRows.length,
+          deferred: true,
+        } as unknown as Record<string, unknown>,
+      })
+    } catch { /* logging is best-effort */ }
   }
 
   /**

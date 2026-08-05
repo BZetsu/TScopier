@@ -227,6 +227,10 @@ export const configureModalEs: ConfigureModalTranslations = {
     reservedLotHint: 'Porción de piernas totales reservadas como pendientes.',
     stepPips: 'Paso (pips por escalón)',
     stepPipsFallback: 'Pips entre pendientes.',
+    stepModeAuto: 'Auto',
+    stepModeManual: 'Manual',
+    stepManualPips: 'Pip step',
+    stepManualPipsFallback: 'Fixed pip distance between each layer.',
     rangeDistance: 'Distancia de rango (pips)',
     rangeDistanceFallback:
       'La distancia del rango indicada por su proveedor de señales. Determina hasta dónde se escalona la operación.',

@@ -163,6 +163,11 @@ export function pendingLegStopsForBasketRefresh(args: {
 }
 
 /** Patch SL/TP on all active pending rows for one basket (SL-only refresh, no ladder replan). */
+/**
+ * Patch SL/TP on active virtual + broker pending rows.
+ * For `broker_pending`, DB is updated here; callers with an API should also
+ * OrderModify via `syncBrokerPendingStopsForBasket`.
+ */
 export async function patchActiveRangePendingLegStops(args: {
   supabase: SupabaseClient
   scope: RangeLadderScope
@@ -187,7 +192,9 @@ export async function patchActiveRangePendingLegStops(args: {
   if (explicitSl == null && !hasChannelStops) return 0
 
   const existing = await loadRangeLegRows(supabase, scope)
-  const activeRows = existing.filter(r => r.status === 'pending' || r.status === 'claimed')
+  const activeRows = existing.filter(r =>
+    r.status === 'pending' || r.status === 'claimed' || r.status === 'broker_pending',
+  )
   if (!activeRows.length) return 0
 
   let updated = 0
@@ -218,7 +225,7 @@ export async function patchActiveRangePendingLegStops(args: {
       .from('range_pending_legs')
       .update(patch)
       .eq('id', row.id)
-      .in('status', ['pending', 'claimed'])
+      .in('status', ['pending', 'claimed', 'broker_pending'])
     if (!error) updated += 1
   }
   return updated
@@ -274,11 +281,16 @@ export async function syncRangePendingLadderOnBasketRefresh(args: {
     planByStep.set(v.stepIdx, v)
   }
 
-  const activeRows = existing.filter(r => r.status === 'pending' || r.status === 'claimed')
+  // Include broker_pending so basket refresh cannot re-insert the same step
+  // while a live broker limit row already exists.
+  const activeRows = existing.filter(r =>
+    r.status === 'pending' || r.status === 'claimed' || r.status === 'broker_pending',
+  )
   const maxTotalLegs = Math.max(0, plannedImmediateLegs + plannedRangeLegs)
   const activePendingCount = activeRows.length
 
   for (const row of activeRows) {
+    if (row.status === 'broker_pending') continue
     const planLeg = planByStep.get(row.step_idx)
     const computed = pendingLegStopsForBasketRefresh({
       row,

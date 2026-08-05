@@ -4,9 +4,137 @@ import {
   basketInProfitAtQuote,
   hasTpTouchedLock,
   layerTriggerBeyondExistingEntries,
+  loadBasketLegCap,
   loadExistingRangeStepIndices,
   shouldBlockVirtualLegFire,
 } from './rangePendingFireGuard'
+
+describe('loadBasketLegCap', () => {
+  it('prefers explicit basket_leg_cap from virtual_pending_inserted payload', async () => {
+    const supabase = {
+      from: (table: string) => {
+        if (table === 'trade_execution_logs') {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({
+                  eq: () => ({
+                    eq: () => ({
+                      order: () => ({
+                        limit: () => ({
+                          maybeSingle: async () => ({
+                            data: {
+                              request_payload: {
+                                rows: 50,
+                                basket_leg_cap: 13,
+                                range_layering: { activePendingLegs: 50, plannedImmediateLegs: 10 },
+                              },
+                            },
+                            error: null,
+                          }),
+                        }),
+                      }),
+                    }),
+                  }),
+                }),
+              }),
+            }),
+          }
+        }
+        return {}
+      },
+    }
+    const cap = await loadBasketLegCap(supabase as never, 'sig-1', 'broker-1')
+    assert.equal(cap, 13)
+  })
+
+  it('falls back to plannedImmediate + activePending from range_layering meta', async () => {
+    const supabase = {
+      from: (table: string) => {
+        if (table === 'trade_execution_logs') {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({
+                  eq: () => ({
+                    eq: () => ({
+                      order: () => ({
+                        limit: () => ({
+                          maybeSingle: async () => ({
+                            data: {
+                              request_payload: {
+                                rows: 10,
+                                range_layering: {
+                                  plannedImmediateLegs: 10,
+                                  activePendingLegs: 3,
+                                },
+                              },
+                            },
+                            error: null,
+                          }),
+                        }),
+                      }),
+                    }),
+                  }),
+                }),
+              }),
+            }),
+          }
+        }
+        return {}
+      },
+    }
+    const cap = await loadBasketLegCap(supabase as never, 'sig-1', 'broker-1')
+    assert.equal(cap, 13)
+  })
+
+  it('falls back to multi_range_plan basket_leg_cap when insert log is missing', async () => {
+    let calls = 0
+    const supabase = {
+      from: (table: string) => {
+        if (table !== 'trade_execution_logs') return {}
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                eq: () => ({
+                  eq: () => ({
+                    order: () => ({
+                      limit: () => ({
+                        maybeSingle: async () => {
+                          calls += 1
+                          if (calls === 1) {
+                            // virtual_pending_inserted miss (live-fast deferred path)
+                            return { data: null, error: null }
+                          }
+                          return {
+                            data: {
+                              request_payload: {
+                                basket_leg_cap: 16,
+                                planned_immediate_legs: 8,
+                                planned_range_legs: 8,
+                                immediate_orders: 8,
+                                virtual_pending_rows: 8,
+                              },
+                            },
+                            error: null,
+                          }
+                        },
+                      }),
+                    }),
+                  }),
+                }),
+              }),
+            }),
+          }),
+        }
+      },
+    }
+    const cap = await loadBasketLegCap(supabase as never, 'sig-1', 'broker-1')
+    assert.equal(cap, 16)
+    assert.ok(calls >= 2)
+  })
+})
 
 describe('loadExistingRangeStepIndices', () => {
   it('returns step indices from select rows', async () => {

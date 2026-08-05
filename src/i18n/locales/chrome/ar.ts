@@ -5,6 +5,7 @@ export const chromeAr: AppChromeTranslations = {
     sections: {
       general: 'عام',
       signals: 'الإشارات',
+      discover: 'اكتشف',
       tradingTools: 'أدوات التداول',
       feedback: 'الملاحظات',
       growth: 'النمو والتحقيق من الدخل',
@@ -18,6 +19,7 @@ export const chromeAr: AppChromeTranslations = {
       trades: 'الصفقات',
       management: 'النشاط',
       channels: 'القنوات',
+      popularChannels: 'القنوات الشائعة',
       backtest: 'الاختبار التاريخي',
       copierLogs: 'سجلات الناسخ',
       signalHistory: 'إدارة الإشارات',

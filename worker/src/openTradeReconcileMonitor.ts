@@ -10,6 +10,7 @@ import {
   type MonitorLoopHandle,
 } from './monitorIdleGate'
 import { reconcileOpenTradesForBroker, type OpenTradeReconcileRow } from './openTradeReconcile'
+import { captureWorkerWarning } from './observability/sentry'
 
 interface BrokerRow {
   id: string
@@ -136,6 +137,17 @@ export class OpenTradeReconcileMonitor {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
         console.warn(`[openTradeReconcileMonitor] reconcile failed broker=${broker.id}: ${msg}`)
+        captureWorkerWarning(err instanceof Error ? err : new Error(msg), {
+          subsystem: 'broker',
+          operation: 'open_trade_reconcile_failed',
+          errorCode: 'OPEN_TRADE_RECONCILE_FAILED',
+          fingerprint: ['broker', 'OPEN_TRADE_RECONCILE_FAILED', 'open_trade_reconcile'],
+          context: {
+            broker_account_id: broker.id,
+            stage: 'open_trade_reconcile',
+            extra: { tracked_open_trades: openForBroker.length },
+          },
+        })
       }
     }
 

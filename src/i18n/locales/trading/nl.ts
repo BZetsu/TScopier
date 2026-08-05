@@ -15,6 +15,7 @@ export const tradingNl: TradingPagesBundleTranslations = {
     emptySubtitleClosed: 'Geen recent gesloten orders in deze MT-sessie.',
     modalTitle: 'Transactiedetails',
     close: 'Sluiten',
+    manage: 'Beheren',
     tradeSummary: 'Transactie',
     signalChannel: 'Signaalkanaal',
     telegramMessage: 'Telegram-bericht',
@@ -63,5 +64,11 @@ export const tradingNl: TradingPagesBundleTranslations = {
     lotSizeOverride: 'Override voor lotgrootte',
     pipToleranceOverride: 'Override voor pip-tolerantie',
     useBrokerDefault: 'Standaard van broker gebruiken',
+  },
+  popularChannelsPage: {
+    title: 'Popular Channels',
+    subtitle: 'Signal channels ranked by subscriber count across all TSCopier users',
+    emptyTitle: 'No channels yet',
+    emptySubtitle: 'Channels will appear here as users subscribe to them',
   },
 }

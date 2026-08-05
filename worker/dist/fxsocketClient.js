@@ -20,11 +20,14 @@ exports.normalizeTerminalStatus = normalizeTerminalStatus;
 exports.isTerminalHealthy = isTerminalHealthy;
 exports.mtPlatformFrom = mtPlatformFrom;
 exports.getFxsocketClient = getFxsocketClient;
+exports.resetFxsocketClientForTests = resetFxsocketClientForTests;
 const undici_1 = require("undici");
 const brokerConnectError_1 = require("./brokerConnectError");
 const perAccountConcurrency_1 = require("./perAccountConcurrency");
 const mtTradeFields_1 = require("./mtTradeFields");
 const fxsocketMtStatus_1 = require("./fxsocketMtStatus");
+const orderCloseAudit_1 = require("./orderCloseAudit");
+const brokerExecutionMode_1 = require("./brokerExecutionMode");
 var fxsocketMtStatus_2 = require("./fxsocketMtStatus");
 Object.defineProperty(exports, "isFxsocketMtStatusHealthy", { enumerable: true, get: function () { return fxsocketMtStatus_2.isFxsocketMtStatusHealthy; } });
 Object.defineProperty(exports, "normalizeFxsocketMtStatus", { enumerable: true, get: function () { return fxsocketMtStatus_2.normalizeFxsocketMtStatus; } });
@@ -240,6 +243,9 @@ function normalizeBaseUrl(raw, fallback) {
     }
 }
 function resolveApiKey(env = process.env) {
+    if ((0, brokerExecutionMode_1.isBrokerSimulatorEnforced)()) {
+        throw new Error('FXSOCKET_API_KEY must not be resolved in broker simulator mode');
+    }
     const key = trimEnv(env.FXSOCKET_API_KEY);
     if (!key) {
         throw new Error('FXSOCKET_API_KEY is required');
@@ -247,6 +253,8 @@ function resolveApiKey(env = process.env) {
     return key;
 }
 function hasFxsocketConfigured(env = process.env) {
+    if ((0, brokerExecutionMode_1.isBrokerSimulatorEnforced)())
+        return true;
     try {
         resolveApiKey(env);
         return true;
@@ -984,7 +992,29 @@ class FxsocketBrokerClient {
                 payload.price = args.price;
             const raw = await this.post(`${await this.accountBase(id)}/OrderClose`, payload, 90000);
             assertNoApiError(raw);
-            return normalizeOrderResponse(raw);
+            const result = normalizeOrderResponse(raw);
+            (0, orderCloseAudit_1.auditOrderClose)({
+                source: 'fxsocket',
+                accountId: id,
+                ticket: args.ticket,
+                volume: args.lots,
+                slippage: args.slippage ?? 20,
+                ok: true,
+                message: result.state ?? null,
+            });
+            return result;
+        }
+        catch (err) {
+            (0, orderCloseAudit_1.auditOrderClose)({
+                source: 'fxsocket',
+                accountId: id,
+                ticket: args.ticket,
+                volume: args.lots,
+                slippage: args.slippage ?? 20,
+                ok: false,
+                message: err instanceof Error ? err.message : String(err),
+            });
+            throw err;
         }
         finally {
             release();
@@ -997,11 +1027,16 @@ function getFxsocketClient() {
     if (clientSingleton !== undefined)
         return clientSingleton;
     try {
-        clientSingleton = new FxsocketBrokerClient('MT5');
+        clientSingleton = (0, brokerExecutionMode_1.isBrokerSimulatorEnforced)()
+            ? new brokerExecutionMode_1.FxsocketNoSendSimulator()
+            : new FxsocketBrokerClient('MT5');
         return clientSingleton;
     }
     catch {
         clientSingleton = null;
         return null;
     }
+}
+function resetFxsocketClientForTests() {
+    clientSingleton = undefined;
 }

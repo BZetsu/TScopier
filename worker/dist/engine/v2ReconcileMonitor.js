@@ -10,6 +10,7 @@ const channelActiveTradeParams_1 = require("../channelActiveTradeParams");
 const basketEffectiveStops_1 = require("../basketEffectiveStops");
 const helpers_1 = require("../tradeExecutor/helpers");
 const fxsocketClient_1 = require("../fxsocketClient");
+const rangePendingLegDelete_1 = require("../rangePendingLegDelete");
 const executionMode_1 = require("./executionMode");
 const TICK_MS = Math.min(60000, Math.max(1000, Number(process.env.V2_RECONCILE_TICK_MS ?? 4000)));
 function legTicket(leg) {
@@ -305,6 +306,9 @@ class V2ReconcileMonitor {
             },
             adoptOrphan: async () => { },
         }, actions);
+        if (result.closed > 0) {
+            await (0, rangePendingLegDelete_1.purgeRangePendingLegsForBaskets)(this.supabase, [{ signalId: basket.anchorSignalId, brokerAccountId: basket.brokerAccountId }], 'basket_flat_reconcile');
+        }
         if (result.modified > 0 || result.closed > 0 || result.modifyFailed > 0 || orphanCount > 0) {
             await this.logTick(basket, session.userId, { ...result, legs: legs.length, orphanCount });
         }

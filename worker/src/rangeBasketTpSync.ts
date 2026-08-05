@@ -28,6 +28,7 @@ import {
 } from './manualPlanning/tpBucketDistribution'
 import type { PlannerResult } from './manualPlanner'
 import { mergePlanImmediateOrders } from './multiTradeMerge'
+import { syncBrokerPendingStopsForBasket } from './brokerPendingStopsSync'
 
 export type RangeBasketParsedSlice = {
   sl?: number | null
@@ -283,7 +284,7 @@ export async function loadRangePendingMeta(
     .limit(500)
   const rows = pendingRows ?? []
   const activePendingCount = rows.filter(
-    r => r.status === 'pending' || r.status === 'claimed',
+    r => r.status === 'pending' || r.status === 'claimed' || r.status === 'broker_pending',
   ).length
   const maxPendingStepIdx = Math.max(0, ...rows.map(r => Number(r.step_idx) || 0))
   return { activePendingCount, maxPendingStepIdx }
@@ -345,7 +346,7 @@ export async function patchPendingRangeLegTakeProfits(args: {
     .select('id, trigger_price, step_idx')
     .eq('broker_account_id', brokerAccountId)
     .eq('signal_id', signalId)
-    .in('status', ['pending', 'claimed'])
+    .in('status', ['pending', 'claimed', 'broker_pending'])
     .limit(500)
   if (!pendingRows?.length) return 0
 
@@ -623,7 +624,7 @@ export async function setActivePendingRangeLegsTakeProfit(
     .update({ takeprofit })
     .eq('broker_account_id', brokerAccountId)
     .eq('signal_id', signalId)
-    .in('status', ['pending', 'claimed'])
+    .in('status', ['pending', 'claimed', 'broker_pending'])
     .select('id')
   if (error) {
     console.warn(`[rangeBasketTpSync] freeze pending TP set failed signal=${signalId}: ${error.message}`)
@@ -652,7 +653,7 @@ export async function syncRangeBasketTakeProfits(args: RangeBasketTpSyncArgs): P
 
   const { data: familyRows, error } = await args.supabase
     .from('trades')
-    .select('id,signal_id,metaapi_order_id,opened_at,lot_size,sl,tp,entry_price,direction,symbol,auto_be_applied_at')
+    .select('id,signal_id,metaapi_order_id,opened_at,lot_size,sl,tp,entry_price,direction,symbol,auto_be_applied_at,cwe_close_price')
     .eq('broker_account_id', args.brokerAccountId)
     .eq('signal_id', args.signalId)
     .eq('status', 'open')
@@ -813,7 +814,7 @@ export async function syncRangeBasketTakeProfits(args: RangeBasketTpSyncArgs): P
   const deepestTp = deepestFinalTp(finalTps, isBuy)
   const frozen = tpGate.mode === 'backfill_only'
 
-  // Pending (future) range legs.
+  // Pending (future) range legs — update DB then OrderModify resting broker limits.
   if (frozen) {
     // A TP has been hit: future legs are "new" and must fire with the deepest
     // TP (never repaint existing open legs). Only relevant when Layer-till-close
@@ -847,6 +848,23 @@ export async function syncRangeBasketTakeProfits(args: RangeBasketTpSyncArgs): P
     } catch (err) {
       console.warn(
         `[rangeBasketTpSync] pending TP patch failed signal=${args.signalId}:`,
+        err instanceof Error ? err.message : String(err),
+      )
+    }
+  }
+
+  if (activePendingCount > 0) {
+    try {
+      await syncBrokerPendingStopsForBasket({
+        supabase: args.supabase,
+        api: args.api,
+        signalId: args.signalId,
+        brokerAccountId: args.brokerAccountId,
+        stoploss: effective.stoploss > 0 ? effective.stoploss : null,
+      })
+    } catch (err) {
+      console.warn(
+        `[rangeBasketTpSync] broker pending stop sync failed signal=${args.signalId}:`,
         err instanceof Error ? err.message : String(err),
       )
     }
@@ -892,7 +910,7 @@ export async function syncRangeBasketTakeProfits(args: RangeBasketTpSyncArgs): P
     overrideTp: null,
     strictEntryPrefetch: sharedQuote,
     openedTickets,
-    skipAlreadySynced: true,
+    skipAlreadySynced: args.forceLayeringRebalance !== true,
     parallelLegs: true,
     internalRebalance,
     effectiveStoploss: effective.stoploss > 0 ? effective.stoploss : undefined,

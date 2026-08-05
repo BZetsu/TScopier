@@ -6,6 +6,8 @@ import { placeStrictSignalEntryPending } from './strictEntryPending'
 import { materializeVirtualPendingLegs } from './virtualPendingMaterialize'
 import { materializeBrokerRangePendingLegs } from './materializeBrokerRangePendingLegs'
 import { finishEntrySend, type EntryArgs } from './entryExecution'
+import { runLayeringModeRangeEntry } from './layeringModeIntegration'
+import { resolveLayeringMode } from '../manualPlanning/layeringModes'
 import {
   logSignalRangeEntryFired,
   markSignalRangeEntryFired,
@@ -29,6 +31,10 @@ async function logMultiRangePlan(
     multi_trade_leg_percent: Number(manual.multi_trade_leg_percent ?? 5),
     immediate_orders: capped.length,
     virtual_pending_rows: virtualPendings.length,
+    basket_leg_cap: plan.rangeLayering?.basketLegCap
+      ?? (capped.length + virtualPendings.length),
+    planned_immediate_legs: plan.rangeLayering?.plannedImmediateLegs ?? null,
+    planned_range_legs: plan.rangeLayering?.activePendingLegs ?? virtualPendings.length,
     range_trading: manual.range_trading === true,
     range_layering_type: manual.range_layering_type ?? 'auto',
     range_percent: manual.range_percent ?? null,
@@ -64,7 +70,7 @@ async function logMultiRangePlan(
   } catch { /* best-effort */ }
 }
 
-function useBrokerRangePendingLegs(prep: PreparedEntry): boolean {
+function shouldUseBrokerRangePendingLegs(prep: PreparedEntry): boolean {
   return prep.manual.range_layering_type === 'pending_order'
     || prep.plan.rangeLayering?.rangeLayeringType === 'pending_order'
 }
@@ -79,8 +85,13 @@ export async function runRangeEntry(
 
   await logMultiRangePlan(ctx, prep)
 
+  const layeringMode = resolveLayeringMode(prep.manual)
+  if (layeringMode === 'static' || layeringMode === 'dynamic') {
+    return runLayeringModeRangeEntry(prep)
+  }
+
   const strictBrokerPlaced = await placeStrictSignalEntryPending(ctx, prep, false)
-  const brokerPendingMode = useBrokerRangePendingLegs(prep)
+  const brokerPendingMode = shouldUseBrokerRangePendingLegs(prep)
   let materializedPendings = false
 
   if (brokerPendingMode) {

@@ -4,6 +4,10 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 require("dotenv/config");
+const sentry_1 = require("./observability/sentry");
+// Must be loaded before any TelegramClient runtime code — patches console.log
+// to suppress GramJS flood-wait INFO noise (83% of log volume).
+require("./gramjsLogSuppress");
 const supabase_js_1 = require("@supabase/supabase-js");
 const ws_1 = __importDefault(require("ws"));
 const sessionManager_1 = require("./sessionManager");
@@ -34,10 +38,15 @@ const queueHealth_1 = require("./queue/queueHealth");
 const monitorWorkWake_1 = require("./monitorWorkWake");
 const tradeLogRetention_1 = require("./tradeLogRetention");
 const workerShutdown_1 = require("./workerShutdown");
+const orderCloseAudit_1 = require("./orderCloseAudit");
+const brokerExecutionMode_1 = require("./brokerExecutionMode");
+(0, sentry_1.initWorkerSentry)();
+(0, sentry_1.installWorkerProcessSentryHandlers)();
 if (!globalThis.WebSocket) {
     globalThis.WebSocket = ws_1.default;
 }
 const supabase = (0, supabase_js_1.createClient)(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+(0, orderCloseAudit_1.registerOrderCloseAuditSupabase)(supabase);
 const sessionManager = new sessionManager_1.UserSessionManager(supabase);
 let httpServer = null;
 let authService = null;
@@ -114,6 +123,7 @@ function startTradeMonitors(executor) {
     stopLogRetention = (0, tradeLogRetention_1.startTradeLogRetention)(supabase);
 }
 async function main() {
+    (0, brokerExecutionMode_1.initializeBrokerExecutionCapability)();
     if (workerConfig_1.workerConfig.runsListener) {
         const shardErr = (0, tradeSignalPush_1.validateListenerTradeShardConfig)();
         if (shardErr) {
@@ -201,10 +211,14 @@ async function main() {
         setInterval(() => {
             void sessionManager.syncSessions();
         }, 30000);
-        if (workerConfig_1.workerConfig.role === 'listener' || workerConfig_1.workerConfig.role === 'all') {
+        if (workerConfig_1.workerConfig.runsListener) {
             setInterval(() => {
                 void sessionManager.renewAllLeases();
             }, Math.max(10000, Number(process.env.WORKER_LEASE_RENEW_INTERVAL_MS ?? 20000)));
+            // Kick renewal soon after boot so a restarted listener pod refreshes leases before TTL (~45s).
+            setTimeout(() => {
+                void sessionManager.renewAllLeases();
+            }, 8000);
         }
         void sessionManager.loadAll().catch(err => console.error('[worker] loadAll failed:', err instanceof Error ? err.message : err));
         void sessionManager.startChannelListenerServices().catch(err => console.error('[worker] channel listener services failed:', err instanceof Error ? err.message : err));
@@ -214,6 +228,26 @@ async function main() {
     }
     const shutdown = async (signal) => {
         console.log(`[worker] ${signal} received, shutting down...`);
+        const shutdownStartedAt = Date.now();
+        const warnAfterMs = Math.max(1000, Math.min(30000, Number(process.env.SENTRY_SHUTDOWN_WARN_AFTER_MS ?? 20000)));
+        const shutdownWarnTimer = setTimeout(() => {
+            (0, sentry_1.captureWorkerWarning)('worker shutdown exceeded warning threshold', {
+                subsystem: 'worker',
+                operation: 'shutdown_timeout',
+                errorCode: 'SHUTDOWN_TIMEOUT',
+                fingerprint: ['worker', 'SHUTDOWN_TIMEOUT', workerConfig_1.workerConfig.role],
+                context: {
+                    stage: 'shutdown',
+                    worker_role: workerConfig_1.workerConfig.role,
+                    shard_id: workerConfig_1.workerConfig.shardId,
+                    extra: {
+                        signal,
+                        elapsed_ms: Date.now() - shutdownStartedAt,
+                    },
+                },
+            });
+        }, warnAfterMs);
+        shutdownWarnTimer.unref?.();
         httpServer?.close();
         await authService?.shutdown();
         stopWorkWake?.();
@@ -229,12 +263,40 @@ async function main() {
         const drainMs = (0, workerShutdown_1.telegramShutdownDrainMs)();
         console.log(`[worker] Telegram shutdown drain ${drainMs}ms before exit`);
         await new Promise(r => setTimeout(r, drainMs));
+        clearTimeout(shutdownWarnTimer);
+        await (0, sentry_1.flushWorkerSentry)(1800);
         process.exit(0);
     };
-    process.on('SIGTERM', () => { shutdown('SIGTERM').catch(() => process.exit(1)); });
-    process.on('SIGINT', () => { shutdown('SIGINT').catch(() => process.exit(1)); });
+    process.on('SIGTERM', () => {
+        shutdown('SIGTERM').catch(err => {
+            (0, sentry_1.captureWorkerFatalError)(err, {
+                subsystem: 'worker',
+                operation: 'shutdown_failed',
+                errorCode: 'SHUTDOWN_FAILED',
+                fingerprint: ['worker', 'SHUTDOWN_FAILED', workerConfig_1.workerConfig.role],
+            });
+            void (0, sentry_1.flushWorkerSentry)(1800).finally(() => process.exit(1));
+        });
+    });
+    process.on('SIGINT', () => {
+        shutdown('SIGINT').catch(err => {
+            (0, sentry_1.captureWorkerFatalError)(err, {
+                subsystem: 'worker',
+                operation: 'shutdown_failed',
+                errorCode: 'SHUTDOWN_FAILED',
+                fingerprint: ['worker', 'SHUTDOWN_FAILED', workerConfig_1.workerConfig.role],
+            });
+            void (0, sentry_1.flushWorkerSentry)(1800).finally(() => process.exit(1));
+        });
+    });
 }
 main().catch(err => {
     console.error('[worker] Fatal error:', err);
-    process.exit(1);
+    (0, sentry_1.captureWorkerFatalError)(err, {
+        subsystem: 'worker',
+        operation: 'startup_failure',
+        errorCode: 'STARTUP_FAILURE',
+        fingerprint: ['worker', 'STARTUP_FAILURE', workerConfig_1.workerConfig.role],
+    });
+    void (0, sentry_1.flushWorkerSentry)(1800).finally(() => process.exit(1));
 });

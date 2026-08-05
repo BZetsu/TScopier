@@ -9,6 +9,7 @@ import {
   type FxsocketMtStatus,
 } from './fxsocketMtStatus'
 import { auditOrderClose } from './orderCloseAudit'
+import { FxsocketNoSendSimulator, isBrokerSimulatorEnforced } from './brokerExecutionMode'
 
 export type { FxsocketMtStatus }
 export {
@@ -361,6 +362,9 @@ function normalizeBaseUrl(raw: string, fallback: string): string {
 }
 
 function resolveApiKey(env: NodeJS.ProcessEnv = process.env): string {
+  if (isBrokerSimulatorEnforced()) {
+    throw new Error('FXSOCKET_API_KEY must not be resolved in broker simulator mode')
+  }
   const key = trimEnv(env.FXSOCKET_API_KEY)
   if (!key) {
     throw new Error('FXSOCKET_API_KEY is required')
@@ -369,6 +373,7 @@ function resolveApiKey(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 export function hasFxsocketConfigured(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (isBrokerSimulatorEnforced()) return true
   try {
     resolveApiKey(env)
     return true
@@ -1223,10 +1228,16 @@ let clientSingleton: FxsocketBrokerClient | null | undefined
 export function getFxsocketClient(): FxsocketBrokerClient | null {
   if (clientSingleton !== undefined) return clientSingleton
   try {
-    clientSingleton = new FxsocketBrokerClient('MT5')
+    clientSingleton = isBrokerSimulatorEnforced()
+      ? new FxsocketNoSendSimulator() as unknown as FxsocketBrokerClient
+      : new FxsocketBrokerClient('MT5')
     return clientSingleton
   } catch {
     clientSingleton = null
     return null
   }
+}
+
+export function resetFxsocketClientForTests(): void {
+  clientSingleton = undefined
 }

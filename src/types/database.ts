@@ -58,6 +58,16 @@ export interface Database {
         Insert: Omit<Trade, 'id' | 'created_at'>
         Update: Partial<Omit<Trade, 'id' | 'created_at'>>
       }
+      layering_plans: {
+        Row: LayeringPlanRow
+        Insert: Omit<LayeringPlanRow, 'created_at' | 'updated_at'> & { created_at?: string; updated_at?: string }
+        Update: LayeringPlanUpdate
+      }
+      range_pending_legs: {
+        Row: RangePendingLegRow
+        Insert: Omit<RangePendingLegRow, 'id' | 'created_at' | 'updated_at'>
+        Update: Partial<Omit<RangePendingLegRow, 'id' | 'created_at'>>
+      }
       user_profiles: {
         Row: UserProfileRow
         Insert: Omit<UserProfileRow, 'created_at' | 'updated_at'> & { created_at?: string; updated_at?: string }
@@ -297,6 +307,19 @@ export interface ManualSettings {
   range_distance_pips?: number
   /** When true, virtual range pendings stay active until the whole basket is flat (not after first TP/CWE close). */
   range_layer_till_close?: boolean
+  /**
+   * Product layering algorithm. `legacy` preserves existing range-percent/step/distance behavior.
+   * Static/dynamic require server-side rollout gates and account allowlisting before execution.
+   */
+  layering_mode?: 'legacy' | 'static' | 'dynamic'
+  /** Static V1 foundation: fixed total layer count, including first/immediate entry. */
+  static_layer_count?: number
+  /** Dynamic V1 foundation: preferred step spacing in pips. */
+  dynamic_step_pips?: number
+  /** Dynamic V1 foundation: maximum total layer count, including first fill. */
+  dynamic_max_layers?: number
+  /** Constraint solver preference when range/step/lots/percent cannot all be preserved. */
+  layering_optimization_strategy?: 'adjust_percent' | 'reduce_layers' | 'widen_step'
   /** Range layering execution: virtual market fire (auto) vs broker BuyLimit/SellLimit (pending_order). Default auto. */
   range_layering_type?: 'auto' | 'pending_order'
   /** When true with multi trade, gate entry on parsed price/zone ± pip tolerance (virtual wait, no broker pending). Independent of range_trading layering. */
@@ -600,6 +623,91 @@ export interface Trade {
   closed_at: string | null
   profit: number | null
   created_at: string
+}
+
+export interface LayeringPlanRow {
+  layer_plan_id: string
+  signal_id: string
+  broker_account_id: string
+  basket_key: string
+  mode: 'static' | 'dynamic'
+  status: 'prepared' | 'activating' | 'active' | 'entries_complete' | 'completed' | 'cancelling' | 'cancellation_pending' | 'cancellation_manual_review' | 'cancelled' | 'invalid'
+  layer_plan_metadata: Json
+  semantic_fingerprint: string
+  first_execution_trade_id: string | null
+  first_execution_order_id: string | null
+  first_execution_status: string | null
+  first_execution_fill_price: number | null
+  first_execution_filled_lot: number | null
+  first_execution_confirmed_at: string | null
+  created_at: string
+  updated_at: string
+  locked_at: string
+  activated_at: string | null
+  cancelled_at: string | null
+  completed_at: string | null
+}
+
+export interface LayeringPlanUpdate {
+  status?: LayeringPlanRow['status']
+  updated_at?: string
+  activated_at?: string | null
+  cancelled_at?: string | null
+  completed_at?: string | null
+  first_execution_trade_id?: string | null
+  first_execution_order_id?: string | null
+  first_execution_status?: string | null
+  first_execution_fill_price?: number | null
+  first_execution_filled_lot?: number | null
+  first_execution_confirmed_at?: string | null
+}
+
+export interface RangePendingLegRow {
+  id: string
+  signal_id: string
+  user_id: string
+  broker_account_id: string
+  metaapi_account_id: string
+  symbol: string
+  step_idx: number
+  is_buy: boolean
+  volume: number
+  anchor_price: number
+  trigger_price: number
+  stoploss: number | null
+  takeprofit: number | null
+  slippage: number
+  comment: string | null
+  expert_id: number | null
+  expires_at: string | null
+  status: string
+  ticket: string | null
+  claimed_at: string | null
+  claimed_by: string | null
+  fired_at: string | null
+  error_message: string | null
+  cwe_close_price?: number | null
+  layer_plan_id: string | null
+  layer_plan_metadata: Json | null
+  broker_client_reference?: string | null
+  broker_pending_type?: string | null
+  native_submission_status?: string | null
+  submission_claimed_at?: string | null
+  submission_claimed_by?: string | null
+  submission_attempt?: number
+  submitted_at?: string | null
+  confirmed_at?: string | null
+  last_reconciled_at?: string | null
+  broker_pending_reason?: string | null
+  reconciliation_reason?: string | null
+  reconciliation_claimed_at?: string | null
+  reconciliation_claimed_by?: string | null
+  cancellation_status?: string | null
+  cancellation_requested_at?: string | null
+  cancellation_confirmed_at?: string | null
+  cancellation_reason?: string | null
+  created_at: string
+  updated_at: string
 }
 
 export interface MtServer {

@@ -26,6 +26,7 @@ import {
   setPipelineTimestamp,
 } from '../pipelineTimestamps'
 import { ensureSignalRow, isSignalFkViolation } from '../ensureSignalRow'
+import { captureWorkerError, captureWorkerWarning } from '../observability/sentry'
 
 /** Collapse legs that are identical clones (same op/symbol/volume/comment). */
 export function collapseIdenticalImmediateLegs(legs: Leg[]): { legs: Leg[]; collapsed: number } {
@@ -343,6 +344,33 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
           `[tradeExecutor] OrderSend failed signal=${signal.id} broker=${broker.id} leg=${leg.idx + 1}/${totalCount} op=${sendArgs.operation} price=${sendArgs.price ?? 0}:`,
           lastAttemptError,
         )
+        if (isOrderOpTimedOutMessage(lastAttemptError)) {
+          captureWorkerError(err instanceof Error ? err : new Error(lastAttemptError), {
+            subsystem: 'broker',
+            operation: 'order_send_ambiguous',
+            errorCode: 'ORDER_SEND_TIMEOUT',
+            fingerprint: ['broker', 'ORDER_SEND_TIMEOUT', useV2 ? 'fxsocket_v2' : 'fxsocket_v1'],
+            context: {
+              user_id: signal.user_id,
+              signal_id: signal.id,
+              channel_id: signal.channel_id,
+              telegram_message_id: signal.telegram_message_id,
+              broker_account_id: broker.id,
+              execution_attempt_id: correlation.execution_attempt_id,
+              broker_request_id: correlation.broker_request_id,
+              dispatch_source: signal.dispatch_source,
+              stage: 'order_send',
+              retry_attempt: attempt + 1,
+              extra: {
+                path: useV2 ? 'fxsocket_v2' : 'fxsocket_v1',
+                operation: sendArgs.operation,
+                symbol: sendArgs.symbol,
+                leg: leg.idx + 1,
+                total: totalCount,
+              },
+            },
+          })
+        }
         await ctx.supabase.from('trade_execution_logs').insert({
           user_id: signal.user_id,
           signal_id: signal.id,
@@ -461,6 +489,46 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
           console.error(
             `[tradeExecutor] partial_tp_legs INSERT failed signal=${signal.id} broker=${broker.id} trade=${tradeRowId}: ${partialErr.message}`,
           )
+          captureWorkerWarning(partialErr, {
+            subsystem: 'persistence',
+            operation: 'partial_tp_persist_failed',
+            errorCode: 'PARTIAL_TP_PERSIST_FAILED',
+            fingerprint: ['persistence', 'PARTIAL_TP_PERSIST_FAILED', 'post_fill'],
+            context: {
+              user_id: signal.user_id,
+              signal_id: signal.id,
+              broker_account_id: broker.id,
+              stage: 'post_fill_persistence',
+              extra: { trade_row_id: tradeRowId },
+            },
+          })
+        }
+      }
+      if (prep.layeringRuntime?.onImmediateFill) {
+        try {
+          await prep.layeringRuntime.onImmediateFill({
+            entryPrice: entryPx,
+            lot: result.lots ?? sendArgs.volume,
+            tradeRowId,
+            ticket: result.ticket ?? null,
+          })
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err)
+          await ctx.supabase.from('trade_execution_logs').insert({
+            user_id: signal.user_id,
+            signal_id: signal.id,
+            broker_account_id: broker.id,
+            action: 'layering_first_fill_activation',
+            status: 'reconciliation_required',
+            request_payload: {
+              broker_ticket_present: result.ticket != null,
+              trade_row_id_present: tradeRowId != null,
+              symbol: sendArgs.symbol,
+              operation: sendArgs.operation,
+            } as unknown as Record<string, unknown>,
+            error_message: message,
+          })
+          throw err
         }
       }
       const logRow = {
@@ -524,6 +592,25 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
       console.error(
         `[tradeExecutor] trades INSERT failed signal=${signal.id} broker=${broker.id} ticket=${result.ticket}: ${first.error.message}`,
       )
+      captureWorkerError(first.error, {
+        subsystem: 'persistence',
+        operation: 'broker_success_trade_persist_failed',
+        errorCode: 'BROKER_SUCCESS_DB_FAILURE',
+        fingerprint: ['persistence', 'BROKER_SUCCESS_DB_FAILURE', 'trades_insert'],
+        context: {
+          user_id: signal.user_id,
+          signal_id: signal.id,
+          channel_id: signal.channel_id,
+          telegram_message_id: signal.telegram_message_id,
+          broker_account_id: broker.id,
+          stage: 'post_broker_success_persistence',
+          extra: {
+            broker_ticket_present: result.ticket != null,
+            leg: leg.idx + 1,
+            total: totalCount,
+          },
+        },
+      })
       if (!isSignalFkViolation(first.error.message)) return null
       const ensured = await ensureSignalRow(ctx.supabase, {
         id: signal.id,
@@ -552,6 +639,21 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
         console.error(
           `[tradeExecutor] trades INSERT retry failed signal=${signal.id} broker=${broker.id} ticket=${result.ticket}: ${retry.error.message}`,
         )
+        captureWorkerError(retry.error, {
+          subsystem: 'persistence',
+          operation: 'broker_success_trade_persist_retry_failed',
+          errorCode: 'BROKER_SUCCESS_DB_FAILURE',
+          fingerprint: ['persistence', 'BROKER_SUCCESS_DB_FAILURE', 'trades_insert_retry'],
+          context: {
+            user_id: signal.user_id,
+            signal_id: signal.id,
+            channel_id: signal.channel_id,
+            telegram_message_id: signal.telegram_message_id,
+            broker_account_id: broker.id,
+            stage: 'post_broker_success_persistence_retry',
+            extra: { broker_ticket_present: result.ticket != null },
+          },
+        })
         return null
       }
       console.warn(
@@ -560,7 +662,14 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
       return (retry.data as { id?: string } | null)?.id ?? null
     }
 
-    if (liveEntryFast) {
+    if (liveEntryFast && prep.layeringRuntime?.onImmediateFill) {
+      filledLeg.tradeRowId = await insertTradeRowWithFkRetry()
+      filledLegs.push(filledLeg)
+      await persistPostFillDb(filledLeg.tradeRowId)
+      if (signal.pipeline_ts) {
+        setPipelineTimestamp(signal.pipeline_ts, 'execution_state_persisted_at', Date.now())
+      }
+    } else if (liveEntryFast) {
       filledLegs.push(filledLeg)
       void (async () => {
         const tradeRowId = await insertTradeRowWithFkRetry()
@@ -574,6 +683,19 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
           `[tradeExecutor] post-fill persist failed signal=${signal.id} broker=${broker.id} ticket=${result.ticket}:`,
           err instanceof Error ? err.message : String(err),
         )
+        captureWorkerError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: 'persistence',
+          operation: 'post_fill_persist_failed',
+          errorCode: 'BROKER_SUCCESS_DB_FAILURE',
+          fingerprint: ['persistence', 'BROKER_SUCCESS_DB_FAILURE', 'post_fill_background'],
+          context: {
+            user_id: signal.user_id,
+            signal_id: signal.id,
+            broker_account_id: broker.id,
+            stage: 'post_fill_background',
+            extra: { broker_ticket_present: result.ticket != null },
+          },
+        })
       })
     } else {
       filledLeg.tradeRowId = await insertTradeRowWithFkRetry()
@@ -698,6 +820,12 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
   const anyImmediateOpened = sendResults.some(
     r => r.status === 'fulfilled' && r.value === true,
   )
+  const rejectedSendReason = sendResults
+    .find((r): r is PromiseRejectedResult => r.status === 'rejected')
+    ?.reason
+  if (rejectedSendReason != null) {
+    lastSendError = rejectedSendReason instanceof Error ? rejectedSendReason.message : String(rejectedSendReason)
+  }
   const parsedTpCount = (parsed.tp ?? []).filter(
     (t): t is number => typeof t === 'number' && Number.isFinite(t) && t > 0,
   ).length

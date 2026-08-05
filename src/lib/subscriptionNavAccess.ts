@@ -1,5 +1,6 @@
 const EXACT_PATHS_WITHOUT_SUBSCRIPTION = new Set([
   '/channels',
+  '/popular-channels',
   '/billing',
   '/affiliate-program',
   '/contact-support',

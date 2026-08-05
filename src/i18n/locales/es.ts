@@ -24,6 +24,7 @@ export const es: Translations = {
     sections: {
       general: 'GENERAL',
       signals: 'SEÑALES',
+      discover: 'DESCUBRIR',
       tradingTools: 'HERRAMIENTAS',
       feedback: 'COMENTARIOS',
       growth: 'CRECIMIENTO',
@@ -37,6 +38,7 @@ export const es: Translations = {
       trades: 'Operaciones',
       management: 'Actividades',
       channels: 'Canales',
+      popularChannels: 'Canales populares',
       backtest: 'Backtest',
       copierLogs: 'Registros',
       signalHistory: 'Gestionar señales',
@@ -801,6 +803,7 @@ export const es: Translations = {
     emptySubtitleClosed: 'No hay órdenes cerradas recientes en esta sesión MT.',
     modalTitle: 'Detalles de la operación',
     close: 'Cerrar',
+    manage: 'Gestionar',
     tradeSummary: 'Operación',
     signalChannel: 'Canal de señales',
     telegramMessage: 'Mensaje de Telegram',
@@ -849,6 +852,12 @@ export const es: Translations = {
     lotSizeOverride: 'Lote personalizado',
     pipToleranceOverride: 'Tolerancia de pips personalizada',
     useBrokerDefault: 'Usar valor del broker',
+  },
+  popularChannelsPage: {
+    title: 'Canales populares',
+    subtitle: 'Canales de señales ordenados por número de suscriptores en TSCopier',
+    emptyTitle: 'Aún no hay canales',
+    emptySubtitle: 'Los canales aparecerán aquí a medida que los usuarios se suscriban',
   },
   copierEnginePage: {
     connectTelegram: 'Conectar Telegram',

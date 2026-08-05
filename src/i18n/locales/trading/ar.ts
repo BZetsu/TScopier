@@ -15,6 +15,7 @@ export const tradingAr: TradingPagesBundleTranslations = {
     emptySubtitleClosed: 'لا أوامر مغلقة مؤخرًا في جلسة MT هذه.',
     modalTitle: 'تفاصيل الصفقة',
     close: 'إغلاق',
+    manage: 'إدارة',
     tradeSummary: 'الصفقة',
     signalChannel: 'قناة الإشارات',
     telegramMessage: 'رسالة Telegram',
@@ -63,5 +64,11 @@ export const tradingAr: TradingPagesBundleTranslations = {
     lotSizeOverride: 'تجاوز حجم اللوت',
     pipToleranceOverride: 'تجاوز تسامح النقاط',
     useBrokerDefault: 'استخدم إعدادات الوسيط الافتراضية',
+  },
+  popularChannelsPage: {
+    title: 'Popular Channels',
+    subtitle: 'Signal channels ranked by subscriber count across all TSCopier users',
+    emptyTitle: 'No channels yet',
+    emptySubtitle: 'Channels will appear here as users subscribe to them',
   },
 }

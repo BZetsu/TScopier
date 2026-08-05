@@ -195,7 +195,7 @@ async function loadRangePendingMeta(supabase, brokerAccountId, signalId) {
         .eq('signal_id', signalId)
         .limit(500);
     const rows = pendingRows ?? [];
-    const activePendingCount = rows.filter(r => r.status === 'pending' || r.status === 'claimed').length;
+    const activePendingCount = rows.filter(r => r.status === 'pending' || r.status === 'claimed' || r.status === 'broker_pending').length;
     const maxPendingStepIdx = Math.max(0, ...rows.map(r => Number(r.step_idx) || 0));
     return { activePendingCount, maxPendingStepIdx };
 }
@@ -454,7 +454,7 @@ async function syncRangeBasketTakeProfits(args) {
         return;
     const { data: familyRows, error } = await args.supabase
         .from('trades')
-        .select('id,signal_id,metaapi_order_id,opened_at,lot_size,sl,tp,entry_price,direction,symbol,auto_be_applied_at')
+        .select('id,signal_id,metaapi_order_id,opened_at,lot_size,sl,tp,entry_price,direction,symbol,auto_be_applied_at,cwe_close_price')
         .eq('broker_account_id', args.brokerAccountId)
         .eq('signal_id', args.signalId)
         .eq('status', 'open')

@@ -5,6 +5,7 @@ export const chromePl: AppChromeTranslations = {
     sections: {
       general: 'OGÓLNE',
       signals: 'SYGNAŁY',
+      discover: 'ODKRYJ',
       tradingTools: 'NARZĘDZIA TRADINGOWE',
       feedback: 'OPINIE',
       growth: 'WZROST I MONETYZACJA',
@@ -18,6 +19,7 @@ export const chromePl: AppChromeTranslations = {
       trades: 'Transakcje',
       management: 'Aktywności',
       channels: 'Kanały',
+      popularChannels: 'Popularne kanały',
       backtest: 'Backtest',
       copierLogs: 'Dzienniki kopiowania',
       signalHistory: 'Zarządzaj sygnałami',

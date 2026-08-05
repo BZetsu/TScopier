@@ -39,7 +39,7 @@ export type MgmtTradeRow = {
 }
 
 const MAX_PLAUSIBLE_PIPS = 500
-/** Legacy gold mgmt used 500 × $0.10 = $50; keep the same price ceiling at cent pips. */
+/** Legacy gold mgmt used 500 × $0.10 = $50; keep the same price ceiling. */
 const METAL_MAX_MGMT_PRICE_DIST = 50
 
 function maxMgmtPriceDistance(symbol: string, pip: number): number {

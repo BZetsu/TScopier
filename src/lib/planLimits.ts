@@ -152,6 +152,7 @@ export function normalizeManualSettingsForPlan<T extends Record<string, unknown>
 
   next.trade_style = 'single'
   next.range_trading = false
+  next.layering_mode = 'legacy'
   next.range_layering_type = 'auto'
   next.reverse_signal = false
   next.close_worse_entries = false

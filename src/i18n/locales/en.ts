@@ -24,6 +24,7 @@ export const en: Translations = {
     sections: {
       general: 'GENERAL',
       signals: 'SIGNALS',
+      discover: 'DISCOVER',
       tradingTools: 'TRADING TOOLS',
       feedback: 'FEEDBACK',
       growth: 'GROWTH & MONETIZATION',
@@ -37,6 +38,7 @@ export const en: Translations = {
       trades: 'Trades',
       management: 'Copier Engine',
       channels: 'Channels',
+      popularChannels: 'Popular Channels',
       backtest: 'Backtest',
       copierLogs: 'Copier Logs',
       signalHistory: 'Manage Signals',
@@ -847,6 +849,7 @@ export const en: Translations = {
     emptySubtitleClosed: 'No recent closed orders in this MT session.',
     modalTitle: 'Trade details',
     close: 'Close',
+    manage: 'Manage',
     tradeSummary: 'Trade',
     signalChannel: 'Signal channel',
     telegramMessage: 'Telegram message',
@@ -895,6 +898,12 @@ export const en: Translations = {
     lotSizeOverride: 'Lot size override',
     pipToleranceOverride: 'Pip tolerance override',
     useBrokerDefault: 'Use broker default',
+  },
+  popularChannelsPage: {
+    title: 'Popular Channels',
+    subtitle: 'Signal channels ranked by subscriber count across all TSCopier users',
+    emptyTitle: 'No channels yet',
+    emptySubtitle: 'Channels will appear here as users subscribe to them',
   },
   copierEnginePage: {
     connectTelegram: 'Connect Telegram',

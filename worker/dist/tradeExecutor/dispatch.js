@@ -33,6 +33,7 @@ const manualPlanner_1 = require("../manualPlanner");
 const pipelineTimestamps_1 = require("../pipelineTimestamps");
 const signalExecutionProven_1 = require("../signalExecutionProven");
 const tradeComment_1 = require("../tradeComment");
+const ensureSignalRow_1 = require("../ensureSignalRow");
 const helpers_1 = require("./helpers");
 const types_1 = require("./types");
 const retryActivity_1 = require("../retryActivity");
@@ -379,6 +380,23 @@ async function handleSignal(ctx, row, opts) {
     const isMessageRevisionEarly = opts?.dispatchSource === signalRevision_1.MESSAGE_REVISION_DISPATCH_SOURCE;
     if (isMessageRevisionEarly) {
         await waitForSignalInflightClear(ctx, row.id, revisionInflightWaitMs(row, opts?.dispatchSource));
+    }
+    // Defense in depth: guarantee signals row exists before OrderSend / post-fill FKs.
+    const ensured = await (0, ensureSignalRow_1.ensureSignalRow)(ctx.supabase, {
+        id: row.id,
+        user_id: row.user_id,
+        channel_id: row.channel_id,
+        status: row.status || 'parsed',
+        parsed_data: (row.parsed_data ?? null),
+        telegram_message_id: row.telegram_message_id ?? null,
+        reply_to_message_id: row.reply_to_message_id ?? null,
+        parent_signal_id: row.parent_signal_id,
+        is_modification: row.is_modification,
+        pipeline_ts: row.pipeline_ts,
+        raw_message: '',
+    });
+    if (!ensured.ok) {
+        console.error(`[tradeExecutor] ensureSignalRow before handle failed signal=${row.id}: ${ensured.error ?? 'unknown'}`);
     }
     if (!ctx.claimSignalExecution(row.id)) {
         (0, pipelineTimestamps_1.emitPipelineEvent)({

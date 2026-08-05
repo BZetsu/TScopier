@@ -61,7 +61,7 @@ function pipPriceFor(symbol: string, klass: SymbolClass, point: number, digits: 
   if (klass === 'metal') {
     const core = String(symbol || '').toUpperCase().replace(/[^A-Z].*$/, '')
     const base = core.length >= 3 ? core.slice(0, 3) : core
-    if (base === 'XAU' || base === 'XPT' || base === 'XPD') return 0.01
+    if (base === 'XAU' || base === 'XPT' || base === 'XPD') return 0.1
     return Math.max(point * 10, 0.01)
   }
   if (klass === 'index') {

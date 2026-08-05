@@ -181,25 +181,23 @@ describe('UserListener AUTH_KEY_DUPLICATED lifecycle', () => {
     }
   })
 
-  it('maximum AUTH_KEY_DUPLICATED retries invalidate and stop retrying', async () => {
+  it('maximum AUTH_KEY_DUPLICATED retries schedule deferred retry without invalidating', async () => {
     const prevCooldown = process.env.TELEGRAM_RECONNECT_COOLDOWN_MS
     const prevMax = process.env.TELEGRAM_AUTH_DUP_MAX_RECOVERY_ATTEMPTS
     process.env.TELEGRAM_RECONNECT_COOLDOWN_MS = '500'
     process.env.TELEGRAM_AUTH_DUP_MAX_RECOVERY_ATTEMPTS = '1'
     let connectCalls = 0
-    const exhausted: Array<{ userId: string; reason: string }> = []
     try {
       const { listener, anyListener } = makeListener(async () => {
         connectCalls += 1
         throw new Error('AUTH_KEY_DUPLICATED')
-      }, (userId, reason) => exhausted.push({ userId, reason }))
+      })
 
       await anyListener.requestReconnect('auth_key_duplicated:test')
       await delay(10)
 
       assert.equal(connectCalls, 1)
       assert.equal(listener.isTelegramConnected(), false)
-      assert.deepEqual(exhausted, [{ userId: 'user-a', reason: 'auth_key_duplicated:test' }])
     } finally {
       if (prevCooldown == null) delete process.env.TELEGRAM_RECONNECT_COOLDOWN_MS
       else process.env.TELEGRAM_RECONNECT_COOLDOWN_MS = prevCooldown
@@ -208,21 +206,20 @@ describe('UserListener AUTH_KEY_DUPLICATED lifecycle', () => {
     }
   })
 
-  it('malformed RPC result triggers reconnect after closing the current client', async () => {
+  it('malformed RPC result is counted but does not trigger reconnect', async () => {
     const prevCooldown = process.env.TELEGRAM_RECONNECT_COOLDOWN_MS
     const prevMax = process.env.TELEGRAM_MALFORMED_RPC_MAX_RECOVERIES
     process.env.TELEGRAM_RECONNECT_COOLDOWN_MS = '500'
     process.env.TELEGRAM_MALFORMED_RPC_MAX_RECOVERIES = '10'
     try {
       let connectCalls = 0
-      const { listener, anyListener, client, events } = makeListener(async () => { connectCalls += 1 })
+      const { listener, anyListener, client } = makeListener(async () => { connectCalls += 1 })
 
       await client.onError?.(Object.assign(new Error('GRAMJS_MALFORMED_RPC_RESULT: invalid RPC result body'), {
         code: 'GRAMJS_MALFORMED_RPC_RESULT',
       }))
 
-      assert.equal(connectCalls, 1)
-      assert.deepEqual(events.slice(0, 2), ['disconnect', 'connect'])
+      assert.equal(connectCalls, 0)
       assert.equal(listener.isTelegramConnected(), true)
       await anyListener.stop()
     } finally {
@@ -233,7 +230,7 @@ describe('UserListener AUTH_KEY_DUPLICATED lifecycle', () => {
     }
   })
 
-  it('concurrent malformed RPC errors do not create duplicate Telegram clients', async () => {
+  it('concurrent malformed RPC errors do not trigger reconnect', async () => {
     const prevCooldown = process.env.TELEGRAM_RECONNECT_COOLDOWN_MS
     const prevMax = process.env.TELEGRAM_MALFORMED_RPC_MAX_RECOVERIES
     process.env.TELEGRAM_RECONNECT_COOLDOWN_MS = '500'
@@ -250,7 +247,7 @@ describe('UserListener AUTH_KEY_DUPLICATED lifecycle', () => {
 
       await Promise.all([client.onError?.(err), client.onError?.(err)])
 
-      assert.equal(connectCalls, 1)
+      assert.equal(connectCalls, 0)
       await anyListener.stop()
     } finally {
       if (prevCooldown == null) delete process.env.TELEGRAM_RECONNECT_COOLDOWN_MS
@@ -260,7 +257,7 @@ describe('UserListener AUTH_KEY_DUPLICATED lifecycle', () => {
     }
   })
 
-  it('repeated malformed RPC responses use bounded recovery', async () => {
+  it('repeated malformed RPC responses exhaust recovery without reconnecting', async () => {
     const prevCooldown = process.env.TELEGRAM_RECONNECT_COOLDOWN_MS
     const prevMax = process.env.TELEGRAM_MALFORMED_RPC_MAX_RECOVERIES
     process.env.TELEGRAM_RECONNECT_COOLDOWN_MS = '500'
@@ -280,8 +277,8 @@ describe('UserListener AUTH_KEY_DUPLICATED lifecycle', () => {
       await client.onError?.(err)
       await delay(10)
 
-      assert.equal(connectCalls, 1)
-      assert.equal(listener.isTelegramConnected(), false)
+      assert.equal(connectCalls, 0)
+      assert.equal(listener.isTelegramConnected(), true)
       assert.deepEqual(exhausted, [{ userId: 'user-a', reason: 'malformed_rpc_result' }])
     } finally {
       if (prevCooldown == null) delete process.env.TELEGRAM_RECONNECT_COOLDOWN_MS

@@ -14,6 +14,10 @@ const copierPause_1 = require("./copierPause");
 const signalEntryPendingHelpers_1 = require("./signalEntryPendingHelpers");
 const rangeBrokerPendingHelpers_1 = require("./rangeBrokerPendingHelpers");
 const rangeLayerBasketWatch_1 = require("./rangeLayerBasketWatch");
+const layeringPlanPersistence_1 = require("./manualPlanning/layeringPlanPersistence");
+const layeringModeRollout_1 = require("./manualPlanning/layeringModeRollout");
+const layeringPlanLifecycle_1 = require("./layeringPlanLifecycle");
+const layeringModeBrokerPendingRecovery_1 = require("./tradeExecutor/layeringModeBrokerPendingRecovery");
 const ACTIVE_MS = (0, monitorIdleGate_1.monitorActiveIntervalMs)('RANGE_BROKER_PENDING_TICK_MS', 2000);
 const IDLE_MS = (0, monitorIdleGate_1.monitorIdleIntervalMs)('RANGE_BROKER_PENDING_IDLE_MS', 15000);
 const MISSING_BEFORE_ASSUME_GONE = 6;
@@ -101,14 +105,21 @@ async function markBrokerRangeLegFilled(supabase, platformByUuid, leg, fillPrice
         .maybeSingle();
     const channelId = (signalRow?.channel_id ?? null);
     const entryPx = Number.isFinite(fillPrice) && fillPrice > 0 ? fillPrice : leg.trigger_price;
-    const openSl = leg.stoploss;
+    const desiredSl = leg.stoploss != null && Number(leg.stoploss) > 0 ? Number(leg.stoploss) : null;
+    const isCwe = leg.cwe_close_price != null;
     const rawManual = await loadManualForLeg(supabase, leg.broker_account_id, channelId);
     const manual = (0, normalizeManualSettings_1.normalizeManualSettingsForExecution)(rawManual);
-    const autoBeCols = (0, autoManagement_1.autoManagementTradeSnapshot)(manual, entryPx, openSl);
+    // Broker fill is naked (limits placed with SL=0/TP=0). Seed auto-BE from desired SL.
+    const autoBeCols = (0, autoManagement_1.autoManagementTradeSnapshot)(manual, entryPx, desiredSl);
     const ticketForTrade = positionTicket?.trim() && /^\d+$/.test(positionTicket.trim())
         ? positionTicket.trim()
         : (leg.ticket ?? null);
     await (0, rangePendingLadderSync_1.markRangeLegFired)(supabase, leg.id, ticketForTrade);
+    if (leg.layer_plan_id) {
+        await (0, layeringPlanLifecycle_1.convergeLayeringPlanAfterLegTerminal)(supabase, leg.layer_plan_id);
+    }
+    // Insert trade as naked on broker so skipAlreadySynced cannot skip OrderModify
+    // when DB already held intended stops from the pending row.
     const { data: insTrade, error: insErr } = await supabase.from('trades').insert({
         user_id: leg.user_id,
         signal_id: leg.signal_id,
@@ -118,8 +129,8 @@ async function markBrokerRangeLegFilled(supabase, platformByUuid, leg, fillPrice
         symbol: leg.symbol,
         direction: leg.is_buy ? 'buy' : 'sell',
         entry_price: entryPx,
-        sl: openSl,
-        tp: leg.cwe_close_price != null ? null : leg.takeprofit,
+        sl: null,
+        tp: null,
         lot_size: leg.volume,
         status: 'open',
         opened_at: new Date().toISOString(),
@@ -144,8 +155,10 @@ async function markBrokerRangeLegFilled(supabase, platformByUuid, leg, fillPrice
                 ticket: ticketNum,
                 tradeRowId,
                 entryPrice: entryPx,
-                existingSl: openSl,
-                existingTp: leg.takeprofit,
+                // Broker position is naked — force follow-up OrderModify vs existing 0/0.
+                existingSl: null,
+                existingTp: null,
+                tpLots: manual.tp_lots,
                 isBuy: leg.is_buy,
             });
         }
@@ -173,6 +186,9 @@ async function markBrokerRangeLegFilled(supabase, platformByUuid, leg, fillPrice
                 trigger_price: leg.trigger_price,
                 fill_price: entryPx,
                 ticket: ticketForTrade,
+                naked_fill: true,
+                desired_sl: desiredSl,
+                cwe: isCwe,
             },
         });
     }
@@ -205,6 +221,7 @@ class RangeBrokerPendingMonitor {
             hasWork: sb => (0, monitorIdleGate_1.hasWorkOnShard)(sb, 'range_pending_legs', q => q.eq('status', 'broker_pending')),
             tick: () => this.runTick(),
         });
+        void this.runTick();
         console.log(`[rangeBrokerPendingMonitor] started active=${ACTIVE_MS}ms idle=${IDLE_MS}ms`);
     }
     stop() {
@@ -230,7 +247,7 @@ class RangeBrokerPendingMonitor {
             return;
         const rowsQ = await (0, monitorIdleGate_1.applyShardToQuery)(this.supabase, this.supabase
             .from('range_pending_legs')
-            .select('id,signal_id,user_id,broker_account_id,metaapi_account_id,symbol,step_idx,is_buy,volume,trigger_price,stoploss,takeprofit,slippage,comment,expert_id,ticket,expires_at,cwe_close_price')
+            .select('id,signal_id,user_id,broker_account_id,metaapi_account_id,symbol,step_idx,is_buy,volume,trigger_price,stoploss,takeprofit,slippage,comment,expert_id,ticket,expires_at,cwe_close_price,layer_plan_id,layer_plan_metadata,broker_client_reference,broker_pending_type,native_submission_status,submitted_at,confirmed_at,last_reconciled_at,broker_pending_reason')
             .eq('status', 'broker_pending')
             .limit(200));
         if (!rowsQ)
@@ -240,8 +257,13 @@ class RangeBrokerPendingMonitor {
             console.error('[rangeBrokerPendingMonitor] select failed:', error.message);
             return;
         }
-        const rows = (data ?? [])
+        const candidateRows = (data ?? [])
             .filter(r => !(0, copierPause_1.isUserCopierPausedCached)(r.user_id));
+        const rows = [];
+        for (const row of candidateRows) {
+            if (await this.layeringModeBrokerPendingAllowed(row))
+                rows.push(row);
+        }
         const { data: cancelRows } = await this.supabase
             .from('range_pending_legs')
             .select('metaapi_account_id')
@@ -254,6 +276,13 @@ class RangeBrokerPendingMonitor {
             ...(cancelRows ?? []).map(r => r.metaapi_account_id),
         ];
         this.platformByUuid = await (0, mtApiByAccount_1.loadPlatformByFxsocketId)(this.supabase, accountIds);
+        await (0, layeringModeBrokerPendingRecovery_1.recoverNativeLayeringSubmissions)({
+            supabase: this.supabase,
+            apiLookup: uuid => (0, mtApiByAccount_1.apiForFxsocketAccount)(this.platformByUuid, uuid),
+        });
+        await (0, layeringPlanLifecycle_1.recoverCancellingLayeringPlans)(this.supabase, {
+            apiLookup: uuid => (0, mtApiByAccount_1.apiForFxsocketAccount)(this.platformByUuid, uuid),
+        });
         await (0, rangeBrokerPendingHelpers_1.reconcileBasketEmptyCancelledLegs)(this.supabase, uuid => (0, mtApiByAccount_1.apiForFxsocketAccount)(this.platformByUuid, uuid));
         if (!rows.length) {
             this.missingStreak.clear();
@@ -277,6 +306,9 @@ class RangeBrokerPendingMonitor {
                     .update({ status: 'expired', error_message: 'pending_expiry' })
                     .eq('id', row.id)
                     .eq('status', 'broker_pending');
+            }
+            if (row.layer_plan_id) {
+                await (0, layeringPlanLifecycle_1.convergeLayeringPlanAfterLegTerminal)(this.supabase, row.layer_plan_id);
             }
         }
         const quoteGroups = new Map();
@@ -319,7 +351,7 @@ class RangeBrokerPendingMonitor {
             const api = (0, mtApiByAccount_1.apiForFxsocketAccount)(this.platformByUuid, uuid);
             if (!api)
                 continue;
-            let opened = [];
+            let opened;
             try {
                 opened = await api.openedOrders(uuid);
             }
@@ -383,9 +415,42 @@ class RangeBrokerPendingMonitor {
                         .update({ status: 'cancelled', error_message: 'broker_missing' })
                         .eq('id', row.id)
                         .eq('status', 'broker_pending');
+                    if (row.layer_plan_id) {
+                        await (0, layeringPlanLifecycle_1.convergeLayeringPlanAfterLegTerminal)(this.supabase, row.layer_plan_id);
+                    }
                 }
             }
         }
+    }
+    async layeringModeBrokerPendingAllowed(row) {
+        if (!row.layer_plan_id)
+            return true;
+        const { data, error } = await this.supabase
+            .from('layering_plans')
+            .select('status,layer_plan_metadata')
+            .eq('layer_plan_id', row.layer_plan_id)
+            .maybeSingle();
+        if (error || !data || String(data.status ?? '') !== 'active')
+            return false;
+        const parsed = (0, layeringPlanPersistence_1.parsePersistedLayeringPlan)(data.layer_plan_metadata);
+        if (!parsed.ok)
+            return false;
+        const snapshot = parsed.snapshot;
+        if (snapshot.planId !== row.layer_plan_id
+            || snapshot.signalId !== row.signal_id
+            || snapshot.brokerAccountId !== row.broker_account_id
+            || snapshot.symbol !== row.symbol
+            || (snapshot.side === 'buy') !== row.is_buy
+            || snapshot.fundedPrices == null
+            || snapshot.lots == null)
+            return false;
+        const idx = row.step_idx - 1;
+        if (idx < 0 || snapshot.fundedPrices[idx] !== row.trigger_price || snapshot.lots[idx] !== row.volume)
+            return false;
+        return (0, layeringModeRollout_1.resolveLayeringModeRolloutDecision)({
+            mode: snapshot.mode,
+            brokerAccountId: row.broker_account_id,
+        }).executionAllowed;
     }
 }
 exports.RangeBrokerPendingMonitor = RangeBrokerPendingMonitor;

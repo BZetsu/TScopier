@@ -14,7 +14,7 @@ import {
   releaseSessionLease,
 } from './sessionLease'
 import { getMetricsSnapshot } from './workerMetrics'
-import { userBelongsToShard, workerConfig } from './workerConfig'
+import { leaseRoleLabel, userBelongsToShard, workerConfig } from './workerConfig'
 import { parallelMap } from './parallelPool'
 import type { TradeExecutor } from './tradeExecutor'
 import type { SignalRow } from './tradeExecutor/types'
@@ -25,6 +25,7 @@ import { isChannelFeedLiveForSubscriber } from './channelFeedGate'
 import { channelListenerPrimaryMode } from './channelListenerConfig'
 import { userMayRunCopierListener } from './subscriptionAccess'
 import { authKeyDupReconnectDelayMs, authKeyDupReconnectDelaysMs } from './authKeyDuplicatedRecovery'
+import { captureWorkerError, captureWorkerWarning } from './observability/sentry'
 
 /**
  * Race a promise against a timeout so a single wedged network call cannot
@@ -103,6 +104,8 @@ export class UserSessionManager {
   private channelListenerManager: ChannelListenerManager | null = null
   private channelReconcileMonitor: ChannelReconcileMonitor | null = null
   private shuttingDown = false
+  /** Tracks start failures with timestamps so syncSessions doesn't retry in a tight loop. */
+  private recentlyFailed = new Map<string, number>()
 
   constructor(supabase: SupabaseClient) {
     this.supabase = supabase
@@ -329,8 +332,11 @@ export class UserSessionManager {
             await this.stopListener(userId)
             return
           }
+          console.log(
+            `[sessionManager] listener disconnected but renewing lease anyway`
+            + ` user=${userId} — kicking reconnect in background`,
+          )
           listener.requestReconnectIfDisconnected('lease_renew_disconnected')
-          return
         }
         this.disconnectedRenewTicks.delete(userId)
 
@@ -610,17 +616,28 @@ export class UserSessionManager {
       }
     }
 
+    const cooldownMs = Math.max(
+      30_000,
+      Math.min(3_600_000, Number(process.env.TELEGRAM_RETRY_COOLDOWN_MS ?? 300_000)),
+    )
+    const now = Date.now()
+
     for (const session of activeOnShard) {
-      if (this.listeners.has(session.user_id)) continue
-      if (await this.shouldSkipListenerStart(session.user_id)) continue
+      const userId = session.user_id
+      if (this.listeners.has(userId)) continue
+      if (await this.shouldSkipListenerStart(userId)) continue
+      const failedAt = this.recentlyFailed.get(userId)
+      if (failedAt && now - failedAt < cooldownMs) continue
       try {
         await withTimeout(
-          this.startListener(session.user_id, session.session_string),
+          this.startListener(userId, session.session_string),
           listenerStartTimeoutMs(),
-          `syncSessions startListener ${session.user_id}`,
+          `syncSessions startListener ${userId}`,
         )
+        this.recentlyFailed.delete(userId)
       } catch (err) {
-        console.error(`[sessionManager] Failed to start listener for ${session.user_id}:`, err)
+        this.recentlyFailed.set(userId, Date.now())
+        console.error(`[sessionManager] Failed to start listener for ${userId}:`, err)
       }
     }
   }
@@ -1167,6 +1184,7 @@ export class UserSessionManager {
         throw err
       }
       this.listeners.set(userId, listener)
+      this.recentlyFailed.delete(userId)
       this.disconnectedRenewTicks.delete(userId)
       console.log(`[sessionManager] Started listener for user ${userId}`)
     })
@@ -1256,6 +1274,16 @@ export class UserSessionManager {
               `[sessionManager] lease release failed during shutdown user=${userId}:`,
               err instanceof Error ? err.message : err,
             )
+            captureWorkerWarning(err instanceof Error ? err : new Error(String(err)), {
+              subsystem: 'worker',
+              operation: 'lease_release_failed',
+              errorCode: 'LEASE_RELEASE_FAILED',
+              fingerprint: ['worker', 'LEASE_RELEASE_FAILED', leaseRoleLabel()],
+              context: {
+                user_id: userId,
+                stage: 'shutdown',
+              },
+            })
           }
         }
       }),
@@ -1269,6 +1297,16 @@ export class UserSessionManager {
           `[sessionManager] listener disconnect failed during shutdown user=${userId}:`,
           result.reason instanceof Error ? result.reason.message : result.reason,
         )
+        captureWorkerError(result.reason instanceof Error ? result.reason : new Error(String(result.reason)), {
+          subsystem: 'worker',
+          operation: 'listener_disconnect_failed',
+          errorCode: 'LISTENER_DISCONNECT_FAILED',
+          fingerprint: ['worker', 'LISTENER_DISCONNECT_FAILED', leaseRoleLabel()],
+          context: {
+            user_id: userId,
+            stage: 'shutdown',
+          },
+        })
       }
     }
 
@@ -1286,6 +1324,18 @@ export class UserSessionManager {
         `[sessionManager] unresolved owned leases after shutdown count=${unresolvedLeases.length}`
         + ` users=${unresolvedLeases.map(l => l.user_id).join(',')}`,
       )
+      captureWorkerError(new Error('Unresolved owned listener leases after shutdown'), {
+        subsystem: 'worker',
+        operation: 'unresolved_listener_leases',
+        errorCode: 'UNRESOLVED_LISTENER_LEASES',
+        fingerprint: ['worker', 'UNRESOLVED_LISTENER_LEASES', leaseRoleLabel()],
+        context: {
+          stage: 'shutdown',
+          extra: {
+            unresolved_count: unresolvedLeases.length,
+          },
+        },
+      })
     }
   }
 
@@ -1294,6 +1344,17 @@ export class UserSessionManager {
       `[sessionManager] AUTH_KEY_DUPLICATED recovery exhausted user=${userId}`
       + ` reason=${reason} — invalidating session so UI can re-link`,
     )
+    captureWorkerError(new Error('AUTH_KEY_DUPLICATED recovery exhausted'), {
+      subsystem: 'telegram',
+      operation: 'auth_key_duplicated_exhausted',
+      errorCode: 'AUTH_KEY_DUPLICATED',
+      fingerprint: ['telegram', 'AUTH_KEY_DUPLICATED', 'exhausted'],
+      context: {
+        user_id: userId,
+        stage: 'auth_key_duplicated_recovery',
+        extra: { reason },
+      },
+    })
     void this.invalidateTelegramSession(userId).catch(err =>
       console.error(
         `[sessionManager] AUTH_KEY_DUPLICATED invalidation failed user=${userId}:`,
