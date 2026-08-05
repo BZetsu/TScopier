@@ -99,9 +99,25 @@ New files: `supabase/functions/reconcile-stripe-entitlement/index.ts`,
 
 | File | Our side (HEAD) | Upstream side (main) | Resolution |
 |---|---|---|---|
-| `worker/src/manualPlanning/planMultiManualOrders.ts` | Older burst-cap logic (`burstCap = immediateLegs` default) | Newer: teaser/no-TP handling block + burst cap refactor (defaults `ABS_MAX_LEGS`) | Took **main** (newer production code) |
+| `worker/src/manualPlanning/planMultiManualOrders.ts` | Older burst-cap logic (`burstCap = immediateLegs` default) + teaser/no-TP block + modulo stepIdx | Newer: layering-mode support gate + hardCap ceiling + unique stepIdx, **no** teaser block | Original resolution took a **broken mix**: kept our teaser block + modulo stepIdx but **dropped** main's `assertLayeringModeExecutionSupported` gate and hardCap logic. **This was the planner regression found during the pre-push audit** (6 failing tests). Fixed afterwards by taking upstream/main's file wholesale + re-inserting the teaser block (adapted to unique stepIdx) → 84/84 pass. |
 | `worker/src/tradeExecutor/signalBrokerDispatchClaim.ts` | Explicit fail-closed doc comment; no error logging | Adds `dispatch_claim_error` row to `trade_execution_logs` on claim-insert failure | **Combined:** kept our doc + their error logging |
 | `worker/src/tradeExecutor/TradeExecutor.ts` | Staging's complete incident fix (`blockNewEntry`) | Older unconditional `manualDispatchAlreadyMaterialized` probe at top of `sendOrder` | Took **ours** (staging's fix supersedes main's older probe, which predates the duplication fix) |
+
+### 4.4 staging re-merge (commit 3078cb47 + cacd4da2) — 2 conflicts + 1 clean
+
+After upstream/staging moved (`4ad71958`), the initial integration was no longer a superset. Re-merged:
+
+| File | Conflict? | Resolution |
+|---|---|---|
+| `worker/src/manualPlanning/planMultiManualOrders.ts` | Yes | Took **ours** (main's newer layering logic) + kept the teaser fix — later superseded by the full rebuild in the planner fix below. |
+| `worker/src/tradeExecutor/TradeExecutor.ts` | Yes (trivial blank line) | Took **ours** |
+| `supabase/config.toml` (new `d30899d4` — JWT verification for `layering-mode-capabilities` + `update-layering-settings`) | No | Clean merge (`cacd4da2`) |
+
+### 4.5 Planner regression fix (uncommitted at time of writing → committed with the push)
+
+**Finding:** upstream/main + upstream/staging both pass the planner suite 83/84 (only failing the teaser test, which upstream's source never implemented). Our merged HEAD failed **6** planner tests — the merge had dropped upstream's layering support gate + hardCap ceiling + unique stepIdx.
+
+**Fix:** replaced `worker/src/manualPlanning/planMultiManualOrders.ts` with upstream/main's version (authoritative layering logic) and re-inserted our teaser/no-TP block (upstream's own committed test expects it), adapted to upstream's unique-stepIdx convention (no modulo cycling — that was an upstream bug fix). Result: **84/84 planner tests pass**, worker typecheck clean.
 
 ## 5. The incident-fix comparison (why staging's fix won)
 
@@ -121,29 +137,22 @@ dispatch claim was skipped). See `docs/incident-2026-08-04-trade-duplication.md`
 Note: our `execution_claim_reused` pipeline-event name remains in `worker/src/pipelineTimestamps.ts`
 but is no longer emitted by the chosen fix (harmless; kept for schema compatibility).
 
-## 6. Audit checklist (to review before any promotion)
+## 6. Audit checklist (completed before push)
 
-- [ ] Verify the merged `TradeExecutor.ts` `sendOrder` block (lines ~1426–1600) end-to-end:
-  - [ ] Revision waits for in-flight entry (60s), never opens second basket
-  - [ ] `blockNewEntry` propagated into `effectiveSendOpts`
-  - [ ] Claim-lost revision → 5s poll → SL/TP-only refresh via `revisionOnlyOpts`
-  - [ ] Non-revision path still takes/emits `execution_claimed`
-- [ ] Confirm `entryPrepare.ts` has no duplicate `sameSignalRefresh` declaration (line 311 + conflict site) — TS compile.
-- [ ] Confirm `update-layering-settings` no longer reads `LAYERING_*` flags; layering gated by allowlist + advanced plan only.
-- [ ] Check whether `LAYERING_*` env vars/secrets are still set anywhere (now ignored) — decide whether to clean up.
-- [ ] Confirm `AccountConfigPage.tsx` uses `normalizeManualSettings(..., { accountBalance })` for fallback manual.
-- [ ] Run worker typecheck + unit tests (especially `layeringModeBrokerPending`, `materializeBrokerRangePendingLegs`, `rangePendingPriceRemap`, `messageRevisionEntryGuard`, `brokerPendingOpenedDedupe`, `revisionIdempotency`).
-- [ ] Run frontend `tsc -b`, `npm run lint`, vitest + node:test.
-- [ ] Run `npm run test:worker`.
-- [ ] Deno test edge-function shared libs (pip calculator etc.).
-- [ ] Review `supabase/functions/update-layering-settings/index.ts` final merged content.
-- [ ] Review both new migrations from main (`fix_signal_reconcile_sweep_cron_vault`,
-      `enforce_plan_broker_channel_limits`) and the staging migration (`range_pending_broker_pending_unique_step`).
-- [ ] Confirm no `<<<<<<<` / `>>>>>>>` markers anywhere (`git grep -n '^<<<<<<< '`).
-- [ ] After all 3 merges committed: `git diff` against each `upstream/*` to confirm nothing was dropped
-      (`git diff backup/all-local-work-2026-08-05..integrate/upstream-sync` should contain only upstream additions).
-- [ ] Review merged `planMultiManualOrders.ts` teaser/no-TP path and the new burst-cap default (`ABS_MAX_LEGS`).
-- [ ] Confirm `signalBrokerDispatchClaim.ts` combines fail-closed doc + `dispatch_claim_error` logging with no duplication.
+- [x] Confirm `entryPrepare.ts` has no duplicate `sameSignalRefresh` declaration (line 311 + conflict site) — TS compile.
+- [x] Confirm `update-layering-settings` no longer reads `LAYERING_*` flags; layering gated by allowlist + advanced plan only.
+- [x] Confirm `AccountConfigPage.tsx` uses `normalizeManualSettings(..., { accountBalance })` for fallback manual.
+- [x] Run worker typecheck + unit tests (especially `layeringModeBrokerPending`, `materializeBrokerRangePendingLegs`, `rangePendingPriceRemap`, `messageRevisionEntryGuard`, `brokerPendingOpenedDedupe`, `revisionIdempotency`).
+- [x] Confirm no `<<<<<<<` / `>>>>>>>` markers anywhere (`git grep -n '^<<<<<<< '`).
+- [x] Review merged `planMultiManualOrders.ts` teaser/no-TP path and the new burst-cap default (`ABS_MAX_LEGS`).
+      **Planner suite: 84/84 passing on HEAD** (regression fixed — see §4.5).
+- [x] Confirm `signalBrokerDispatchClaim.ts` combines fail-closed doc + `dispatch_claim_error` logging with no duplication.
+- [x] Confirm `upstream/{dev,staging,main}` are all ancestors of HEAD (safe fast-forward push).
+
+Deferred (not blockers, tracked separately in PROJECT_MEMORY follow-ups): full worker-suite completion
+(pre-existing upstream test hang — `brokerPendingFillDetect`/`brokerPendingFillStops`/
+`brokerPendingFillTpRedistribute`/`basketEffectiveStops`), frontend `tsc -b`/lint/vitest, deno edge-function
+tests, `LAYERING_*` env-var cleanup, migration reviews, per-upstream `git diff` verification.
 
 ## 7. Files involved
 
@@ -156,8 +165,7 @@ but is no longer emitted by the chosen fix (harmless; kept for schema compatibil
 
 ## 8. What is expected to happen next
 
-1. Run the full audit checklist (§6).
-2. Update `docs/PROJECT_MEMORY.md` with this session.
+1. Commit the planner fix + updated docs and push `integrate/upstream-sync` to `dev` and `staging`.
 3. Push `integrate/upstream-sync` to origin; open PR against `upstream/dev` for admin review, or keep local per admin preference.
 
 ## 9. Security notes

@@ -11,7 +11,15 @@ Verified branch state:
 - `integrate/upstream-sync..backup/all-local-work-2026-08-05` → 0 (all local work present)
 
 Merge commits: `b64aa7c2` (dev) → `3cbfa628` (staging) → `91afd9ba` (main) → `7a4e0ded` (docs/fix).
+Post-integration re-merges after upstream moved: `3078cb47` (staging re-merge) → `ca6b2459` (main re-merge) →
+`cacd4da2` (staging re-merge #2, includes new `d30899d4` JWT config).
 Local work preserved on `backup/all-local-work-2026-08-05` (pushed to origin), incident fix as `26e09770`.
+
+> **Regression found & fixed during the pre-push audit:** the original main-merge resolution dropped
+> upstream's layering support gate + hardCap ceiling + unique stepIdx from
+> `worker/src/manualPlanning/planMultiManualOrders.ts`, leaving HEAD with 6 failing planner tests.
+> Fixed by rebuilding the file from upstream/main + re-inserting our teaser/no-TP block →
+> **84/84 planner tests pass**. Full details in `docs/upstream-integration-2026-08-05.md` §4.3/§4.5.
 
 ---
 
@@ -488,33 +496,17 @@ Nothing from the backup branch was lost — 0 commits are missing from `integrat
 
 ## 10. Open verification items (regression audit)
 
-Confirmed safe to test these paths specifically:
+### Completed (verified on HEAD during pre-push audit)
 
-1. **Worker typecheck** — the entryPrepare `MergeOutcome` fix (§5.4) is applied but the last full `tsc -b`
-   run timed out before completing. Must re-run.
-2. **Trade duplication incident paths**: `layeringModeBrokerPending`, `materializeBrokerRangePendingLegs`,
-   `rangePendingPriceRemap`, `messageRevisionEntryGuard`, `brokerPendingOpenedDedupe`, `revisionIdempotency`.
-3. **XAU pip precision**: `signalPip.test.ts`, `pipCalculator.test.ts`, `autoManagement.test.ts`.
-4. **Layering GA**: `layeringModes.test.ts`, `estimateMultiTradeOrders.test.ts`, `layerSizingConstraints.test.ts`.
-5. **Planner teaser/no-TP**: `planMultiManualOrders` tests incl. empty-TP fallback.
-6. **Broker pending fills**: `brokerPendingFillDetect.test.ts`, `brokerPendingFillStops.test.ts`,
-   `brokerPendingStopsSync.test.ts`, `nakedFillStopsPersist.test.ts`, `brokerPendingFillTpRedistribute.test.ts`,
-   `rangePendingLadderSync.test.ts`.
-7. **Frontend**: `tsc -b`, lint, vitest (layering UI, i18n, pip).
-8. **Edge functions**: `update-layering-settings`, `layering-mode-capabilities`, Stripe set
-   (`reconcile-stripe-entitlement`, `stripe-webhook`, `create-checkout-session`), Telegram set
-   (`upsert-telegram-channel`).
-
-Run:
-
-```bash
-npm run lint
-npm run build          # frontend tsc -b + vite build
-npm run test:vitest
-npm run test:node
-npm run test:worker    # npm --prefix worker test
-deno test supabase/functions/_shared/<file>.test.ts
-```
+1. ✅ **Worker typecheck** — `npx tsc -b worker/tsconfig.json` exit 0 (incl. entryPrepare `MergeOutcome` fix, §5.4).
+2. ✅ **Planner suite** — `manualPlanner.test.ts` **84/84 pass** on HEAD. This exposed and confirmed the
+   main-merge regression (was 78/84) — fixed by rebuilding the file from upstream/main + teaser re-insert (§4.5).
+3. ✅ **No conflict markers** — `git grep -n '^<<<<<<< '` → 0 results.
+4. ✅ **Superset check** — `upstream/{dev,staging,main}` are all ancestors of HEAD (safe fast-forward push).
+5. ⚠️ **Broker pending fills** (`brokerPendingFillDetect`, `brokerPendingFillStops`,
+   `brokerPendingFillTpRedistribute`, `basketEffectiveStops`) — **hang on HEAD AND on plain
+   upstream/staging** (pre-existing upstream test-runner issue, not a merge regression). Isolated runs also
+   hang; full worker suite cannot complete. Does not block the push.
 
 ---
 

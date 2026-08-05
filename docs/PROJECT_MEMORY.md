@@ -2,6 +2,39 @@
 
 ## Changelog
 
+### 2026-08-05 — Prod migration audit + two handover .md files
+
+- **Context:** User shared a review comment listing 4 migrations (`trades_idempotency_guard`, `range_pending_broker_pending_unique_step`, `fix_signal_reconcile_sweep_cron_vault`, `enforce_plan_broker_channel_limits`) and asked whether they are on prod.
+- **Audit findings (live queries on prod `sxkpcovbyaficvtkpsdo` + staging `axdcledcyhyvzrnfkwat` via Management API):**
+  - `trades_idempotency_guard` — NOT on prod (no index, not registered). Pre-flight duplicate check on prod: 0 post-cutoff duplicate groups → applies cleanly. Staging has it.
+  - `range_pending_broker_pending_unique_step` — applied on prod manually but NOT registered; prod index already includes `broker_pending` (identical to staging).
+  - `fix_signal_reconcile_sweep_cron_vault` — applied on prod, registered as `20260805080224`; both cron jobs active, vault secrets present.
+  - `enforce_plan_broker_channel_limits` — applied on prod, registered as `20260805082647`; both triggers exist.
+  - Prod's `supabase_migrations.schema_migrations` (119 rows) is out of sync with actual objects (spot-checks: `basket_sl_tp_targets`, `telegram_account_claims`, `signal_range_entry_waits`, `copier_paused`/`email_verified_at` exist but unregistered). Nothing auto-applies migrations: no CI step, no Railway hook — all applied via `scripts/apply-missing-migrations.sh` or manual SQL editor pastes.
+- **Deliverables:** `docs/migration-20260805000000-trades-idempotency-guard.md` (paste-ready SQL + registration + verification + live guard test) and `docs/migration-20260803120000-range-pending-unique-step.md` (register-only; DO NOT re-run the duplicate-cancel UPDATE).
+- **Affected files:** `docs/migration-20260805000000-trades-idempotency-guard.md` (new), `docs/migration-20260803120000-range-pending-unique-step.md` (new), `docs/PROJECT_MEMORY.md` (this entry).
+- **Verification:** Live read-only queries against prod + staging confirmed every status above; the idempotency guard pre-flight ran on prod and returned 0 duplicates.
+- **Blockers:** None.
+- **Follow-up:** Hand the idempotency-guard .md to the person applying prod; they must run the registration INSERT after pasting. Layering migrations (`20260730120000_layering_modes_foundation`, `20260731120000_layering_plans`) are staging-only until Emma's layering work is promoted.
+
+### 2026-08-05 — Team prompt updated: per-person memory files to avoid merge conflicts
+
+- **Context:** User reviewed git history — teammates Emma (emmydapson) maintains a shared `CHANGELOG.md` (release-notes style, updated 2026-08-04), the other teammates (mosodi007, sebchi-crtl) have no logs at all, and nobody has a problem-context memory file. User wanted each teammate's log saved in a separate file so shared logs never produce merge conflicts.
+- **Solution:** Reworked `docs/team-project-memory-prompt.md`: every teammate now gets their OWN append-only file `docs/PROJECT_MEMORY_<github-username>.md`. Rationale documented in the prompt: git only conflicts when two people edit the same lines of the same file, so per-person files make conflicts impossible. Teammates may read each other's files but never write to them. `docs/PROJECT_MEMORY.md` stays BZetsu's; Emma's `CHANGELOG.md` stays untouched (shared release notes, separate purpose).
+- **Affected files:** `docs/team-project-memory-prompt.md` (rewritten), `docs/PROJECT_MEMORY.md` (this entry).
+- **Verification:** None required (documentation only). No code touched.
+- **Blockers:** None.
+- **Follow-up:** Send the updated prompt to the team (Codex: `AGENTS.md`, Cursor: `.cursor/rules/project-memory.mdc`).
+
+### 2026-08-05 — Team prompt for per-repo Project Memory files
+
+- **Context:** User wants teammates to maintain their own Change Log / Project Memory files (problem context, solution, files edited, verifications, blockers, follow-ups) via their AI coding tools.
+- **Solution:** Wrote `docs/team-project-memory-prompt.md` — a ready-to-paste prompt that goes into each tool's rules file (Codex: `AGENTS.md`, Cursor: `.cursor/rules/*.mdc`, Claude Code: `CLAUDE.md`). The prompt mandates reading the memory file at session start, appending a dated entry to the top of the changelog after every material change, a fixed entry structure (Context / Root cause / Solution / Affected files / Verification / Blockers / Follow-up), a no-secrets rule, and a no-fabrication rule. Each repo gets its own in-repo `docs/PROJECT_MEMORY.md`.
+- **Affected files:** `docs/team-project-memory-prompt.md` (new), `docs/PROJECT_MEMORY.md` (this entry).
+- **Verification:** None required (documentation only). No code touched.
+- **Blockers:** None.
+- **Follow-up:** None.
+
 ### 2026-08-05 — Full upstream integration: main + staging + dev merged into local work
 
 - **Context:** All three upstream branches had diverged from each other and from local work. User asked to pull in all upstream code while preserving local commits, then asked for detailed regression-safe merge tracking.

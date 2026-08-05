@@ -13,6 +13,7 @@ import { appendOrderCommentSuffix } from '../tradeComment'
 import type { PlanSingleManualOrdersArgs } from './planSingleManualOrders'
 import { planRangeSplit } from './rangeSplit'
 import { buildRangeLayerTriggerMap, rangeLayerTriggerForStep } from './rangeLayerTriggers'
+import { assertLayeringModeExecutionSupported, resolveLayeringMode } from './layeringModes'
 import { buildDistributedPerLegTakeProfits, buildEntryQualityTakeProfitMap } from './tpBucketDistribution'
 import { resolveMultiTradeTargetUnits, multiTradeUnitsToLot } from './multiTradeLegUnits'
 import { resolveRangeDistancePips } from './signalEntryRange'
@@ -110,6 +111,13 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
   const baseIsPendingSignal =
     orderBase.operation.includes('Limit') || orderBase.operation.includes('Stop')
   const pendingOrderMode = manual.range_layering_type === 'pending_order'
+  if (manual.range_trading === true) {
+    const support = assertLayeringModeExecutionSupported(manual)
+    if (!support.ok) {
+      console.warn(`[manualPlanner] unsupported layering mode blocked mode=${resolveLayeringMode(manual)}`)
+      return { orders: [], skip_reason: support.reason, delay_ms }
+    }
+  }
   const rangeDistance = resolveRangeDistancePips({ manual, parsed, pip, isBuy })
   const split = planRangeSplit({
     totalLegs,
@@ -125,22 +133,42 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
     // spacing applies to SL/TP placement, not virtual rung spacing.
     skipMinStepExpansion: true,
   })
-  const immediateLegs = split.immediateLegs
   const reservedRangeLegs = split.pendingLegs
   const effectiveRangeLegs = split.activePendingLegs
-  const maxStepIdx = split.maxStepIdx
   const stepPriceOffset = split.stepPriceOffset
-  let rangeFallbackReason = split.fallbackReason
-  const rangeLegCount = pendingOrderMode ? reservedRangeLegs : effectiveRangeLegs
+  const rangeFallbackReason = split.fallbackReason
+  // Absolute Total Open Trades ceiling from lot math + range split. Layering may
+  // reduce opens; it must never raise them past this. multi_trade_max_orders is only
+  // a basket ceiling when it can fit all immediate legs — lower values are legacy
+  // burst-consolidation caps and must not wipe layering.
+  const splitCeiling = split.immediateLegs + effectiveRangeLegs
+  let hardCap = Math.min(totalLegs, Math.max(0, splitCeiling))
+  const basketCapRaw = Number(manual.multi_trade_max_orders)
+  const basketCap = Number.isFinite(basketCapRaw) && basketCapRaw > 0
+    ? Math.max(1, Math.min(ABS_MAX_LEGS, Math.floor(basketCapRaw)))
+    : null
+  if (basketCap != null && basketCap >= split.immediateLegs) {
+    hardCap = Math.min(hardCap, basketCap)
+  }
+  hardCap = Math.max(0, Math.min(ABS_MAX_LEGS, hardCap))
 
-  const totalLegsForTp = immediateLegs + (pendingOrderMode ? reservedRangeLegs : effectiveRangeLegs)
+  let immediateLegs = split.immediateLegs
+  let rangeLegCount = effectiveRangeLegs
+  if (immediateLegs > hardCap) {
+    immediateLegs = hardCap
+    rangeLegCount = 0
+  } else {
+    rangeLegCount = Math.min(rangeLegCount, Math.max(0, hardCap - immediateLegs))
+  }
+  const basketLegCap = immediateLegs + rangeLegCount
+
   const immediateTpPrices = buildDistributedPerLegTakeProfits({
     openLegCount: immediateLegs,
     finalTps,
     tpLots: manual.tp_lots,
   })
   const rangeTpPrices = buildDistributedPerLegTakeProfits({
-    openLegCount: pendingOrderMode ? reservedRangeLegs : effectiveRangeLegs,
+    openLegCount: rangeLegCount,
     finalTps,
     tpLots: manual.tp_lots,
   })
@@ -156,17 +184,20 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
         rangeDistancePips: Math.max(0, Number(manual.range_distance_pips ?? 0)),
         effectiveStepPips: split.effectiveStepPips,
         stepPriceOffset: split.stepPriceOffset,
-        maxStepIdx: split.maxStepIdx,
+        maxStepIdx: Math.max(split.maxStepIdx, rangeLegCount),
         reservedPendingLegs: reservedRangeLegs,
-        activePendingLegs: pendingOrderMode ? reservedRangeLegs : effectiveRangeLegs,
+        activePendingLegs: rangeLegCount,
+        basketLegCap,
+        plannedImmediateLegs: immediateLegs,
         rangeLayeringType: (pendingOrderMode ? 'pending_order' : 'auto') as 'auto' | 'pending_order',
+        // Always persist the distance used in the split (manual or signal zone).
+        effectiveDistancePips: rangeDistance.distPips,
         ...(manual.use_signal_entry_range === true
           ? {
               useSignalEntryRange: true,
               signalRangeBoundary: rangeDistance.boundary,
               signalZoneLo: resolvedParsedEntryZone(parsed)?.lo ?? null,
               signalZoneHi: resolvedParsedEntryZone(parsed)?.hi ?? null,
-              effectiveDistancePips: rangeDistance.distPips,
             }
           : {}),
       }
@@ -191,7 +222,7 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
       }
       const rangeTriggerMap = buildRangeLayerTriggerMap({
         virtualPendings: Array.from({ length: rangeLegCount }, (_, i) => ({
-          stepIdx: pendingOrderMode && maxStepIdx > 0 ? (i % maxStepIdx) + 1 : i + 1,
+          stepIdx: i + 1,
           stepPriceOffset,
           isBuy,
         })),
@@ -201,9 +232,7 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
         pip,
       })
       for (let i = 0; i < rangeLegCount; i++) {
-        const stepIdx = pendingOrderMode && maxStepIdx > 0
-          ? (i % maxStepIdx) + 1
-          : i + 1
+        const stepIdx = i + 1
         const entryPrice = rangeTriggerMap.get(stepIdx)
           ?? rangeLayerTriggerForStep({
             stepIdx,
@@ -224,7 +253,7 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
       const projectedTp = buildEntryQualityTakeProfitMap({
         legs: projectedLegs,
         isBuy,
-        slotLegCount: immediateLegs + rangeLegCount,
+        slotLegCount: basketLegCap,
         finalTps,
         tpLots: manual.tp_lots,
       }).get(`rg${String(idx).padStart(4, '0')}`)
@@ -239,22 +268,19 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
   // clones. One immediate market order (full lot); range virtuals may still layer.
   if (finalTps.length === 0) {
     const virtualPendings: VirtualPendingLeg[] = []
-    if (rangeLegCount > 0 && (!pendingOrderMode || maxStepIdx > 0)) {
+    if (rangeLegCount > 0) {
       const pendHours = clampPendingExpiryHours(manual.pending_expiry_hours)
       const expiryHours = pendHours > 0 ? pendHours : undefined
       for (let i = 0; i < rangeLegCount; i++) {
-        const stepIdx = pendingOrderMode && maxStepIdx > 0
-          ? (i % maxStepIdx) + 1
-          : i + 1
         virtualPendings.push({
-          stepIdx,
+          stepIdx: i + 1,
           stepPriceOffset,
           isBuy,
           volume: targetLeg,
           stoploss: finalSl,
           takeprofit: null,
           slippage: slippage ?? 20,
-          comment: appendOrderCommentSuffix(commentPrefix, `:rg${stepIdx}.tp${i + 1}`),
+          comment: appendOrderCommentSuffix(commentPrefix, `:rg${i + 1}.tp${i + 1}`),
           expertID: expertId,
           expiryHours,
         })
@@ -286,16 +312,16 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
     }
   }
 
-  // Assign a TP to every granular leg first (preserves the tp_lots volume
-  // distribution exactly), then consolidate legs sharing the same TP into at
-  // most `multi_trade_max_orders` orders. The MT bridge executes OrderSends
-  // serially per account (~0.5-0.7s each), so an uncapped burst of 25 legs
-  // takes ~18s — consolidation keeps total volume and the per-TP volume split
-  // identical while bounding placement time to a few seconds.
-  const burstCapRaw = Number(manual.multi_trade_max_orders ?? ABS_MAX_LEGS)
-  const burstCap = Number.isFinite(burstCapRaw) && burstCapRaw > 0
-    ? Math.max(1, Math.min(ABS_MAX_LEGS, Math.floor(burstCapRaw)))
-    : ABS_MAX_LEGS
+  // Burst consolidation packs IMMEDIATE legs into fewer OrderSends for speed.
+  // multi_trade_max_orders also seeds the Total Open Trades basket ceiling — only
+  // use it for consolidation when it is below the immediate leg count (legacy low caps).
+  // Never emit more immediate OrderSends than immediateLegs / basket room.
+  const burstCapRaw = Number(manual.multi_trade_max_orders)
+  let burstCap = immediateLegs
+  if (Number.isFinite(burstCapRaw) && burstCapRaw > 0) {
+    const n = Math.max(1, Math.min(ABS_MAX_LEGS, Math.floor(burstCapRaw)))
+    if (n < immediateLegs) burstCap = n
+  }
   if (burstCap < immediateLegs) {
     console.log(
       `[planMulti] burst cap ${burstCap} consolidates ${immediateLegs} immediate legs`
@@ -356,14 +382,13 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
   }
 
   const virtualPendings: VirtualPendingLeg[] = []
-  if (rangeLegCount > 0 && (!pendingOrderMode || maxStepIdx > 0)) {
+  if (rangeLegCount > 0) {
     const pendHours = clampPendingExpiryHours(manual.pending_expiry_hours)
     const expiryHours = pendHours > 0 ? pendHours : undefined
 
+    // Unique stepIdx 1..N — never cycle/modulo (that caused duplicate broker limits).
     for (let i = 0; i < rangeLegCount; i++) {
-      const stepIdx = pendingOrderMode && maxStepIdx > 0
-        ? (i % maxStepIdx) + 1
-        : i + 1
+      const stepIdx = i + 1
       const tpPrice = tpForRangeIndex(i)
       virtualPendings.push({
         stepIdx,
