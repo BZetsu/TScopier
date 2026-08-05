@@ -332,7 +332,7 @@ export async function prepareEntryExecution(
     })
     return {
       ok: false,
-      outcome: { openedOrMerged: paramOutcome.success === true },
+      outcome: { openedOrMerged: paramOutcome.handled === true && paramOutcome.success === true },
     }
   }
 
