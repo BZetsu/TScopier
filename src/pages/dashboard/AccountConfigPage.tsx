@@ -1062,7 +1062,6 @@ export function AccountConfigPage() {
     ? 'pending_order'
     : 'auto'
   const selectedModeAutoSelectable = layeringMechanismIsSelectable(layeringCapabilities, selectedLayeringMode, 'auto')
-  const selectedModePendingSelectable = layeringMechanismIsSelectable(layeringCapabilities, selectedLayeringMode, 'pending_order')
 
   const previewManualLot = useMemo(() => {
     const ms = channelManualSettings
@@ -1898,26 +1897,25 @@ export function AccountConfigPage() {
   }
 
   const setManual = (patch: Partial<ManualSettings>) => {
+    const nextPatch = patch.range_layering_type === 'pending_order'
+      ? { ...patch, range_layering_type: 'auto' as const }
+      : patch
     patchSelectedChannel(current => ({
       ...current,
       manualSettings: {
         ...current.manualSettings,
-        ...patch,
+        ...nextPatch,
         layering_mode: 'legacy',
         layering_optimization_strategy: 'adjust_percent',
       },
     }))
   }
 
-  const validateLayeringCapabilitiesForSave = (draft: AccountConfigDraft, channelIds: string[]): string | null => {
-    for (const id of channelIds) {
-      const ms = draft.channelConfigs[id]?.manualSettings
-      const mechanism = ms?.range_layering_type === 'pending_order' ? 'pending_order' : 'auto'
-      if (!layeringMechanismIsSelectable(layeringCapabilities, 'legacy', mechanism)) {
-        return mechanism === 'pending_order'
-          ? 'Broker pending orders are not enabled for this layering mode on this account.'
-          : 'Virtual execution is not enabled for this layering mode on this account.'
-      }
+  const validateLayeringCapabilitiesForSave = (_draft: AccountConfigDraft, channelIds: string[]): string | null => {
+    if (channelIds.length === 0) return null
+    // Broker pending orders are Coming Soon — always validate virtual/auto.
+    if (!layeringMechanismIsSelectable(layeringCapabilities, 'legacy', 'auto')) {
+      return 'Virtual execution is not enabled for this layering mode on this account.'
     }
     return null
   }
@@ -2102,7 +2100,7 @@ export function AccountConfigPage() {
         broker_account_id: configAccount.id,
         channel_id: channelId,
         layering_mode: 'legacy',
-        range_layering_type: settings.range_layering_type === 'pending_order' ? 'pending_order' : 'auto',
+        range_layering_type: 'auto',
         static_layer_count: Number(settings.static_layer_count ?? DEFAULT_MANUAL_SETTINGS.static_layer_count ?? 5),
         dynamic_step_pips: Number(settings.dynamic_step_pips ?? DEFAULT_MANUAL_SETTINGS.dynamic_step_pips ?? 3),
         dynamic_max_layers: Number(settings.dynamic_max_layers ?? DEFAULT_MANUAL_SETTINGS.dynamic_max_layers ?? 5),
@@ -2138,7 +2136,7 @@ export function AccountConfigPage() {
       const { error: layeringSaveError } = await updateLayeringSettings({
         broker_account_id: configAccount.id,
         layering_mode: 'legacy',
-        range_layering_type: normalizedFallbackManual.range_layering_type === 'pending_order' ? 'pending_order' : 'auto',
+        range_layering_type: 'auto',
         static_layer_count: Number(normalizedFallbackManual.static_layer_count ?? DEFAULT_MANUAL_SETTINGS.static_layer_count ?? 5),
         dynamic_step_pips: Number(normalizedFallbackManual.dynamic_step_pips ?? DEFAULT_MANUAL_SETTINGS.dynamic_step_pips ?? 3),
         dynamic_max_layers: Number(normalizedFallbackManual.dynamic_max_layers ?? DEFAULT_MANUAL_SETTINGS.dynamic_max_layers ?? 5),
@@ -3302,13 +3300,13 @@ export function AccountConfigPage() {
                                       <label className="text-sm font-medium text-neutral-700 dark:text-neutral-300">Layering Mode</label>
                                       <select
                                         className="w-full px-3 py-2 text-base md:text-sm rounded-lg border bg-white dark:bg-neutral-900 border-neutral-200 dark:border-neutral-700 text-neutral-900 dark:text-neutral-100"
-                                        value={selectedLayeringMechanism}
+                                        value={selectedLayeringMechanism === 'pending_order' ? 'auto' : selectedLayeringMechanism}
                                         onChange={e => {
                                           const next = e.target.value === 'pending_order' ? 'pending_order' : 'auto'
+                                          // Broker pending orders are Coming Soon — keep option visible but not selectable.
+                                          if (next === 'pending_order') return
                                           if (!layeringMechanismIsSelectable(layeringCapabilities, selectedLayeringMode, next)) {
-                                            setError(next === 'pending_order'
-                                              ? 'Broker pending orders are not enabled for this account and layering mode.'
-                                              : 'Virtual execution is not enabled for this account and layering mode.')
+                                            setError('Virtual execution is not enabled for this account and layering mode.')
                                             return
                                           }
                                           setError('')
@@ -3316,7 +3314,9 @@ export function AccountConfigPage() {
                                         }}
                                       >
                                         <option value="auto" disabled={!selectedModeAutoSelectable}>Automatic / virtual execution</option>
-                                        <option value="pending_order" disabled={!selectedModePendingSelectable}>Broker pending orders</option>
+                                        <option value="pending_order" disabled>
+                                          Broker pending orders — {t.accountConfig.addAccount.comingSoonBadge}
+                                        </option>
                                       </select>
                                     </div>
 
