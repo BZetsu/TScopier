@@ -2,7 +2,14 @@
 
 ## Changelog
 
-### 2026-08-05 — AI tri-state verification and guarded human review
+### 2026-08-06 — FxSocket-native broker reconnect (no deletion)
+
+- **Context:** The Reconnect button was a dead noop since commit `69a62ee6` "Overhall" deleted `metatraderapi.ts`/`useBrokerReconnect`. Restoring a real reconnect flow that re-triggers the FxSocket terminal link WITHOUT deleting the account (per explicit requirement: no DELETE `/v1/accounts/{id}`).
+- **Implementation:** New edge action `reconnect` in `supabase/functions/fxsocket-broker/index.ts` — loads the owned broker row, re-submits login/password/server to FxSocket `POST /v1/accounts` (their link endpoint, which re-provisions the terminal pod). If FxSocket returns a different account id, it verifies the old terminal via `getV1Account` and only repoints the row when the old link is confirmed gone (avoids duplicate sessions). Row is set to `pending/connecting`, error cleared. Frontend `reconnect()` added to `src/lib/fxsocketBroker.ts`. `BrokerAccountsContext.tsx` now has a real `reconnectBroker`: password queue + `BrokerReconnectPasswordModal` render, `reconnectingBrokerIds` set, then `waitUntilConnected` (11 min window for pod provisioning) and success/error handlers.
+- **Safety:** No account deletion anywhere in the reconnect path. Old terminal kept if still alive. Credentials never stored — prompted fresh each reconnect.
+- **Verification:** frontend tsc clean, 0 new lint errors (3 pre-existing baseline), 68/68 vitest pass, edge function syntax valid via `node --experimental-strip-types --check`.
+- **Affected files:** `supabase/functions/fxsocket-broker/index.ts`, `src/lib/fxsocketBroker.ts`, `src/context/BrokerAccountsContext.tsx`.
+- **Follow-up:** Deploy `fxsocket-broker` edge function to staging; test reconnect against the frozen Test Account (FxSocket pod was down — "Terminal pod not ready within 10 minutes"). Also note staging DB is missing `connection_error_kind`/`connection_error_message` columns (dropped by `20260616120000_fxsocket_unify_broker_accounts.sql` while worker still writes them) — schema-cache errors freeze status.
 
 - **Context:** The signal parser needed to recover deterministic false negatives without sending every AI rejection to humans. The required policy is: clear AI entries execute, clear AI skips remain skipped without alerts, and only explicit AI uncertainty enters human review.
 - **Implementation:** Added an explicit `uncertain` universal intent. In fastpath mode, deterministic skips and sub-threshold parses are sent to AI. AI-confirmed entries can proceed; clear `ignore`/`commentary` results stay skipped; `uncertain` results persist a `ai_parse_review_required` listener event. AI outage/timeout continues the existing deterministic policy and records `ai_parse_fallback`.
