@@ -1,11 +1,15 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '../../../context/AuthContext'
+import { useSubscription } from '../../../context/SubscriptionContext'
 import { supabase } from '../../../lib/supabase'
 import { Card } from '../../../components/ui/Card'
 import { Button } from '../../../components/ui/Button'
 import { Badge } from '../../../components/ui/Badge'
 import { Alert } from '../../../components/ui/Alert'
 import { prepareChannelSubscriptionUpsert } from '../../../lib/signalChannelRegistry'
+import { upsertTelegramChannels } from '../../../lib/telegramChannelApi'
+import { interpolate } from '../../../i18n/interpolate'
+import { useT } from '../../../context/LocaleContext'
 import { Radio, Check } from 'lucide-react'
 
 interface TgChannel {
@@ -23,12 +27,20 @@ interface Props {
 const EDGE_FN = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/telegram-auth`
 
 export function ChannelSelectStep({ onDone }: Props) {
+  const t = useT()
+  const pw = t.pricing.paywall
   const { session } = useAuth()
+  const { canAddChannel, limits, usage, refresh: refreshSubscription } = useSubscription()
   const [channels, setChannels] = useState<TgChannel[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+
+  const channelCap = limits.maxTelegramChannels
+  const remainingSlots = channelCap == null
+    ? null
+    : Math.max(0, channelCap - usage.telegramChannels)
 
   useEffect(() => {
     const fetchChannels = async () => {
@@ -61,8 +73,15 @@ export function ChannelSelectStep({ onDone }: Props) {
   const toggleChannel = (id: string) => {
     setSelected(prev => {
       const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
+      if (next.has(id)) {
+        next.delete(id)
+        return next
+      }
+      if (remainingSlots != null && next.size >= remainingSlots) {
+        setError(interpolate(pw.channelLimit, { limit: String(channelCap ?? 5) }))
+        return prev
+      }
+      next.add(id)
       return next
     })
   }
@@ -72,11 +91,25 @@ export function ChannelSelectStep({ onDone }: Props) {
       onDone()
       return
     }
+    if (remainingSlots != null && selected.size > remainingSlots) {
+      setError(interpolate(pw.channelLimit, { limit: String(channelCap ?? 5) }))
+      return
+    }
+    if (!canAddChannel() && selected.size > 0) {
+      setError(interpolate(pw.channelLimit, { limit: String(channelCap ?? 5) }))
+      return
+    }
 
     setSaving(true)
+    setError('')
     const userId = (await supabase.auth.getUser()).data.user!.id
 
-    const rows: Record<string, unknown>[] = []
+    const rows: Array<{
+      channel_id: string
+      channel_username: string
+      display_name: string
+      is_active: boolean
+    }> = []
     for (const c of channels.filter(ch => selected.has(ch.id))) {
       const prepared = await prepareChannelSubscriptionUpsert(supabase, {
         userId,
@@ -89,20 +122,24 @@ export function ChannelSelectStep({ onDone }: Props) {
         setError(prepared.error)
         return
       }
-      rows.push(prepared.row)
+      rows.push({
+        channel_id: String(prepared.row.channel_id),
+        channel_username: String(prepared.row.channel_username ?? ''),
+        display_name: String(prepared.row.display_name ?? ''),
+        is_active: true,
+      })
     }
 
-    const { error: dbErr } = await supabase
-      .from('telegram_channels')
-      .upsert(rows, { onConflict: 'user_id,channel_id' })
+    const { error: dbErr } = await upsertTelegramChannels(rows)
 
     setSaving(false)
 
     if (dbErr) {
-      setError(dbErr.message)
+      setError(dbErr)
       return
     }
 
+    void refreshSubscription()
     onDone()
   }
 

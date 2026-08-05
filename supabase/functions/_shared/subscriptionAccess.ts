@@ -86,10 +86,18 @@ export function subscriptionAccessDenied(
   });
 }
 
+export type PlanLimitCountOptions = {
+  /** How many additional active slots this action needs (default 1). */
+  slotsNeeded?: number;
+  /** Existing row ids that will be reactivated / updated and must not count twice. */
+  excludeRowIds?: string[];
+};
+
 export async function assertBrokerAccountLimit(
   supabase: SupabaseClient,
   userId: string,
   sub: UserSubscriptionRow | null,
+  options: PlanLimitCountOptions = {},
 ): Promise<Response | null> {
   if (await loadUserIsAdmin(supabase, userId)) return null;
 
@@ -101,12 +109,26 @@ export async function assertBrokerAccountLimit(
     );
   }
   const limit = maxBrokerAccounts(plan, sub?.extra_accounts ?? 0);
-  const { count } = await supabase
+  const slotsNeeded = options.slotsNeeded ?? 1;
+  if (slotsNeeded <= 0) return null;
+  const { data, error } = await supabase
     .from("broker_accounts")
-    .select("id", { count: "exact", head: true })
+    .select("id")
     .eq("user_id", userId)
     .eq("is_active", true);
-  if ((count ?? 0) >= limit) {
+  if (error || !data) {
+    console.warn(
+      `[subscriptionAccess] broker limit count failed for ${userId}: ${error?.message ?? "null data"}`,
+    );
+    return subscriptionAccessDenied(
+      "Unable to verify broker account limits. Try again.",
+      "limit_check_failed",
+      503,
+    );
+  }
+  const exclude = new Set((options.excludeRowIds ?? []).filter(Boolean));
+  const count = data.reduce((n, row) => n + (exclude.has(row.id) ? 0 : 1), 0);
+  if (count + slotsNeeded > limit) {
     return subscriptionAccessDenied(
       plan === "basic"
         ? "Basic plan allows 1 broker account. Upgrade to Advanced for more."
@@ -137,13 +159,23 @@ export async function assertBacktestMonthlyLimit(
   const monthStart = new Date();
   monthStart.setUTCDate(1);
   monthStart.setUTCHours(0, 0, 0, 0);
-  const { count } = await supabase
+  const { count, error } = await supabase
     .from("backtest_runs")
     .select("id", { count: "exact", head: true })
     .eq("user_id", userId)
     .eq("config->>runMode", BACKTEST_QUOTA_RUN_MODE)
     .gte("created_at", monthStart.toISOString());
-  if ((count ?? 0) >= limit) {
+  if (error || count == null) {
+    console.warn(
+      `[subscriptionAccess] backtest limit count failed for ${userId}: ${error?.message ?? "null count"}`,
+    );
+    return subscriptionAccessDenied(
+      "Unable to verify backtest limits. Try again.",
+      "limit_check_failed",
+      503,
+    );
+  }
+  if (count >= limit) {
     return subscriptionAccessDenied(
       `Basic plan includes ${limit} backtests per month. Upgrade to Advanced for unlimited backtests.`,
       "backtest_monthly_limit",
@@ -156,6 +188,7 @@ export async function assertTelegramChannelLimit(
   supabase: SupabaseClient,
   userId: string,
   sub: UserSubscriptionRow | null,
+  options: PlanLimitCountOptions = {},
 ): Promise<Response | null> {
   if (await loadUserIsAdmin(supabase, userId)) return null;
 
@@ -168,11 +201,26 @@ export async function assertTelegramChannelLimit(
   }
   const limit = maxTelegramChannels(plan);
   if (limit == null) return null;
-  const { count } = await supabase
+  const slotsNeeded = options.slotsNeeded ?? 1;
+  if (slotsNeeded <= 0) return null;
+  const { data, error } = await supabase
     .from("telegram_channels")
-    .select("id", { count: "exact", head: true })
-    .eq("user_id", userId);
-  if ((count ?? 0) >= limit) {
+    .select("id")
+    .eq("user_id", userId)
+    .eq("is_active", true);
+  if (error || !data) {
+    console.warn(
+      `[subscriptionAccess] channel limit count failed for ${userId}: ${error?.message ?? "null data"}`,
+    );
+    return subscriptionAccessDenied(
+      "Unable to verify Telegram channel limits. Try again.",
+      "limit_check_failed",
+      503,
+    );
+  }
+  const exclude = new Set((options.excludeRowIds ?? []).filter(Boolean));
+  const count = data.reduce((n, row) => n + (exclude.has(row.id) ? 0 : 1), 0);
+  if (count + slotsNeeded > limit) {
     return subscriptionAccessDenied(
       `Basic plan includes ${limit} Telegram channels. Upgrade to Advanced for unlimited channels.`,
       "channel_limit",

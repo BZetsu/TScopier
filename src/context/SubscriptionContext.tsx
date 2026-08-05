@@ -152,12 +152,14 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
           .from('broker_accounts')
           .select('id', { count: 'exact', head: true })
           .eq('user_id', userId)
+          .eq('is_active', true)
           .not('fxsocket_account_id', 'is', null)
           .neq('fxsocket_account_id', ''),
         supabase
           .from('telegram_channels')
           .select('id', { count: 'exact', head: true })
-          .eq('user_id', userId),
+          .eq('user_id', userId)
+          .eq('is_active', true),
         supabase
           .from('backtest_runs')
           .select('id', { count: 'exact', head: true })

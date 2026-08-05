@@ -47,3 +47,6 @@ verify_jwt = false
 
 [functions.signal-reconcile-sweep]
 verify_jwt = false
+
+[functions.upsert-telegram-channel]
+verify_jwt = true
