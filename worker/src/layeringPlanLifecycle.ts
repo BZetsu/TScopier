@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FxsocketBrokerClient } from './fxsocketClient'
+import { captureBusinessIssue } from './observability/businessEvents'
 
 export type LayeringPlanLifecycleOutcome =
   | 'completed'
@@ -102,6 +103,33 @@ function firstExecutionConfirmed(plan: Record<string, unknown>): boolean {
   )
 }
 
+function expectedRemainingStepIndexes(plan: Record<string, unknown>): Set<number> | null {
+  const metadata = plan.layer_plan_metadata
+  if (!metadata || typeof metadata !== 'object') return null
+  const snap = metadata as { fundedPrices?: unknown; lots?: unknown }
+  const prices = Array.isArray(snap.fundedPrices) ? snap.fundedPrices : []
+  const lots = Array.isArray(snap.lots) ? snap.lots : []
+  if (prices.length === 0 || prices.length !== lots.length) return null
+  return new Set(prices.slice(1).map((_, idx) => idx + 2))
+}
+
+function allIntendedRemainingLegsTerminal(
+  plan: Record<string, unknown>,
+  legs: Array<{ status?: unknown; native_submission_status?: unknown; step_idx?: unknown }>,
+): boolean {
+  const expected = expectedRemainingStepIndexes(plan)
+  if (!expected) return false
+  if (legs.length !== expected.size) return false
+  const seen = new Set<number>()
+  for (const leg of legs) {
+    const stepIdx = Number(leg.step_idx)
+    if (!Number.isInteger(stepIdx) || !expected.has(stepIdx) || seen.has(stepIdx)) return false
+    if (!terminalLeg(leg)) return false
+    seen.add(stepIdx)
+  }
+  return seen.size === expected.size
+}
+
 export async function convergeLayeringPlanAfterLegTerminal(
   supabase: SupabaseClient,
   planId: string | null | undefined,
@@ -116,30 +144,32 @@ export async function convergeLayeringPlanAfterLegTerminal(
   if (!plan) return 'not_found'
   const status = String((plan as { status?: unknown }).status ?? '')
   if (status === 'completed') return 'completed'
-  if (status === 'entries_complete') return 'entries_complete'
   if (status === 'cancelled') return 'cancelled'
   if (status === 'invalid') return 'invalid'
-  if (status !== 'active') return 'not_ready'
+  if (status !== 'active' && status !== 'entries_complete') return 'not_ready'
   if (!firstExecutionConfirmed(plan as Record<string, unknown>)) return 'not_ready'
 
   const { data: legs, error: legsError } = await supabase
     .from('range_pending_legs')
-    .select('id,status,native_submission_status')
+    .select('id,step_idx,status,native_submission_status')
     .eq('layer_plan_id', planId)
   if (legsError) return 'failed'
-  if ((legs ?? []).length > 0 && !(legs as Array<{ status?: unknown; native_submission_status?: unknown }>).every(terminalLeg)) {
+  if (!allIntendedRemainingLegsTerminal(
+    plan as Record<string, unknown>,
+    (legs ?? []) as Array<{ status?: unknown; native_submission_status?: unknown; step_idx?: unknown }>,
+  )) {
     return 'not_ready'
   }
 
   const { data: updated, error: updateError } = await supabase
     .from('layering_plans')
-    .update({ status: 'entries_complete', updated_at: new Date().toISOString() })
+    .update({ status: 'completed', completed_at: new Date().toISOString(), updated_at: new Date().toISOString() })
     .eq('layer_plan_id', planId)
-    .eq('status', 'active')
+    .in('status', ['active', 'entries_complete'])
     .select('layer_plan_id')
     .maybeSingle()
   if (updateError) return 'failed'
-  return updated ? 'entries_complete' : 'not_ready'
+  return updated ? 'completed' : 'not_ready'
 }
 
 export async function markLayeringPlanInvalid(
@@ -159,6 +189,21 @@ export async function markLayeringPlanInvalid(
     .in('status', ['prepared', 'activating', 'active', 'cancelling', 'cancellation_pending', 'entries_complete'])
     .select('layer_plan_id')
     .maybeSingle()
+  if (!error && data) {
+    captureBusinessIssue({
+      category: 'layering',
+      event: 'layering_plan_invalid',
+      severity: 'error',
+      reasonCode: reason,
+      message: 'Layering plan was marked invalid',
+      userImpact: 'failed',
+      context: {
+        layer_plan_id: planId,
+        operation: 'mark_layering_plan_invalid',
+        extra: { reason },
+      },
+    })
+  }
   return !error && Boolean(data)
 }
 
@@ -337,6 +382,27 @@ export async function cancelLayeringPlan(
       .update({ status: pendingStatus, updated_at: now, cancellation_reason: reason })
       .eq('layer_plan_id', planId)
       .in('status', ['cancelling', 'cancellation_pending'])
+    const firstLeg = ((legs ?? []) as Array<Record<string, unknown>>)[0]
+    captureBusinessIssue({
+      category: 'layering',
+      event: manualReviewNative ? 'layering_manual_review_required' : 'layering_cancellation_pending',
+      severity: manualReviewNative ? 'error' : 'warning',
+      reasonCode: manualReviewNative ? 'LAYERING_CANCELLATION_MANUAL_REVIEW' : 'LAYERING_CANCELLATION_PENDING',
+      message: 'Layering plan cancellation could not be fully confirmed at broker',
+      userImpact: manualReviewNative ? 'manual_review_required' : 'delayed',
+      context: {
+        user_id: typeof firstLeg?.user_id === 'string' ? firstLeg.user_id : null,
+        signal_id: typeof firstLeg?.signal_id === 'string' ? firstLeg.signal_id : null,
+        broker_account_id: typeof firstLeg?.broker_account_id === 'string' ? firstLeg.broker_account_id : null,
+        layer_plan_id: planId,
+        operation: 'cancel_layering_plan',
+        extra: {
+          plan_status: pendingStatus,
+          reason,
+          ambiguous_execution: true,
+        },
+      },
+    })
     return pendingStatus
   }
   await supabase

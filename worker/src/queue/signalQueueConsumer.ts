@@ -6,7 +6,8 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { TradeExecutor, SignalRow } from '../tradeExecutor'
 import { workerConfig } from '../workerConfig'
 import { incMetric } from '../workerMetrics'
-import { addWorkerBreadcrumb, captureWorkerWarning } from '../observability/sentry'
+import { addWorkerBreadcrumb } from '../observability/sentry'
+import { captureBusinessIssue } from '../observability/businessEvents'
 import {
   buildPipelineCorrelation,
   emitPipelineEvent,
@@ -153,13 +154,17 @@ export class SignalQueueConsumer {
         incMetric('queue_consumer_read_errors')
         console.warn(`[signalQueue] read error lane=${this.lane}: ${this.lastError}`)
         if (this.readErrorStreak === 3 || this.readErrorStreak % 10 === 0) {
-          captureWorkerWarning(err instanceof Error ? err : new Error(this.lastError), {
-            subsystem: 'queue',
-            operation: 'consumer_read_repeated_failure',
-            errorCode: 'QUEUE_READ_FAILURE',
-            fingerprint: ['queue', 'QUEUE_READ_FAILURE', this.lane],
+          captureBusinessIssue({
+            category: 'queue',
+            event: 'signal_dispatch_failed',
+            severity: 'warning',
+            reasonCode: 'QUEUE_READ_FAILURE',
+            message: 'Signal queue consumer read failed repeatedly',
+            userImpact: 'delayed',
+            fingerprint: ['signal_dispatch_failed', 'queue_read', 'QUEUE_READ_FAILURE', this.lane],
             context: {
               stage: 'queue_read',
+              operation: 'queue_read',
               dispatch_source: 'queue',
               retry_attempt: this.readErrorStreak,
               extra: { lane: this.lane, stream_key: streamKey },
@@ -205,13 +210,17 @@ export class SignalQueueConsumer {
         incMetric('queue_consumer_reclaim_errors')
         console.warn(`[signalQueue] reclaim error lane=${this.lane}: ${this.lastError}`)
         if (this.reclaimErrorStreak === 3 || this.reclaimErrorStreak % 10 === 0) {
-          captureWorkerWarning(err instanceof Error ? err : new Error(this.lastError), {
-            subsystem: 'queue',
-            operation: 'consumer_reclaim_repeated_failure',
-            errorCode: 'QUEUE_RECLAIM_FAILURE',
-            fingerprint: ['queue', 'QUEUE_RECLAIM_FAILURE', this.lane],
+          captureBusinessIssue({
+            category: 'queue',
+            event: 'signal_dispatch_failed',
+            severity: 'warning',
+            reasonCode: 'QUEUE_RECLAIM_FAILURE',
+            message: 'Signal queue reclaim failed repeatedly',
+            userImpact: 'delayed',
+            fingerprint: ['signal_dispatch_failed', 'queue_reclaim', 'QUEUE_RECLAIM_FAILURE', this.lane],
             context: {
               stage: 'queue_reclaim',
+              operation: 'queue_reclaim',
               dispatch_source: 'queue',
               retry_attempt: this.reclaimErrorStreak,
               extra: { lane: this.lane, stream_key: streamKey },
@@ -231,13 +240,17 @@ export class SignalQueueConsumer {
     const job = parseQueueJobFields(msg.fields)
     if (!job) {
       incMetric('queue_malformed')
-      captureWorkerWarning('Malformed signal queue payload acknowledged', {
-        subsystem: 'queue',
-        operation: 'malformed_payload',
-        errorCode: 'QUEUE_MALFORMED_PAYLOAD',
-        fingerprint: ['queue', 'QUEUE_MALFORMED_PAYLOAD', this.lane],
+      captureBusinessIssue({
+        category: 'queue',
+        event: 'signal_dispatch_failed',
+        severity: 'error',
+        reasonCode: 'QUEUE_MALFORMED_PAYLOAD',
+        message: 'Malformed signal queue payload was acknowledged without dispatch',
+        userImpact: 'failed',
+        fingerprint: ['signal_dispatch_failed', 'queue_parse', 'QUEUE_MALFORMED_PAYLOAD', this.lane],
         context: {
           stage: 'queue_parse',
+          operation: 'queue_parse',
           queue_message_id: msg.id,
           extra: { lane: this.lane, stream_key: streamKey },
         },
@@ -349,17 +362,21 @@ export class SignalQueueConsumer {
 
       if (!shouldRetryAfterFailure(attempts)) {
         incMetric('queue_dlq')
-        captureWorkerWarning(new Error(reason), {
-          subsystem: 'queue',
-          operation: 'dead_letter',
-          errorCode: 'QUEUE_DEAD_LETTER',
-          fingerprint: ['queue', 'QUEUE_DEAD_LETTER', job.lane],
+        captureBusinessIssue({
+          category: 'queue',
+          event: 'signal_queue_dead_lettered',
+          severity: 'error',
+          reasonCode: 'QUEUE_DEAD_LETTER',
+          message: 'Signal queue job dead-lettered after final retry',
+          userImpact: 'failed',
+          fingerprint: ['signal_queue_dead_lettered', job.lane, 'QUEUE_DEAD_LETTER'],
           context: {
             user_id: job.user_id,
             signal_id: job.signal_id,
             queue_message_id: msg.id,
             dispatch_source: 'queue',
             stage: 'queue_dead_letter',
+            operation: 'queue_consume',
             retry_attempt: attempts,
             extra: { lane: job.lane, shard_id: job.shard_id },
           },

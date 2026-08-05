@@ -235,6 +235,12 @@ export function parseLayeringPlanSnapshot(raw: unknown): LayeringPlanSnapshot | 
         configuredStaticLayerCount: null,
         configuredDynamicStepPips: null,
         configuredDynamicMaxLayers: null,
+        optimizationStrategy: null,
+        theoreticalLayerCount: null,
+        effectiveStepPips: null,
+        requestedLayerPercent: null,
+        effectiveLayerPercent: null,
+        allocationPercentTotal: null,
         requestedLayerCount: null,
         plannedLayerCount: null,
         plannedTotalLot: null,
@@ -292,6 +298,22 @@ export function parseLayeringPlanSnapshot(raw: unknown): LayeringPlanSnapshot | 
     if (row.configuredDynamicStepPips != null && configuredDynamicStepPips == null) return null
     const configuredDynamicMaxLayers = row.configuredDynamicMaxLayers == null ? null : strictLayerCount(row.configuredDynamicMaxLayers)
     if (row.configuredDynamicMaxLayers != null && configuredDynamicMaxLayers == null) return null
+    const optimizationStrategy = row.optimizationStrategy == null
+      ? null
+      : row.optimizationStrategy === 'adjust_percent' || row.optimizationStrategy === 'reduce_layers' || row.optimizationStrategy === 'widen_step'
+        ? row.optimizationStrategy
+        : null
+    if (row.optimizationStrategy != null && optimizationStrategy == null) return null
+    const theoreticalLayerCount = row.theoreticalLayerCount == null ? null : strictLayerCount(row.theoreticalLayerCount)
+    if (row.theoreticalLayerCount != null && theoreticalLayerCount == null) return null
+    const effectiveStepPips = row.effectiveStepPips == null ? null : strictPositiveNumber(row.effectiveStepPips)
+    if (row.effectiveStepPips != null && effectiveStepPips == null) return null
+    const requestedLayerPercent = row.requestedLayerPercent == null ? null : strictPositiveNumber(row.requestedLayerPercent)
+    if (row.requestedLayerPercent != null && (requestedLayerPercent == null || requestedLayerPercent > 100)) return null
+    const effectiveLayerPercent = row.effectiveLayerPercent == null ? null : strictPositiveNumber(row.effectiveLayerPercent)
+    if (row.effectiveLayerPercent != null && (effectiveLayerPercent == null || effectiveLayerPercent > 100)) return null
+    const allocationPercentTotal = row.allocationPercentTotal == null ? null : strictNonNegativeNumber(row.allocationPercentTotal)
+    if (row.allocationPercentTotal != null && (allocationPercentTotal == null || allocationPercentTotal > 100)) return null
     if (mode === 'static' && configuredStaticLayerCount == null) {
       return null
     }
@@ -373,6 +395,12 @@ export function parseLayeringPlanSnapshot(raw: unknown): LayeringPlanSnapshot | 
       configuredStaticLayerCount,
       configuredDynamicStepPips,
       configuredDynamicMaxLayers,
+      optimizationStrategy,
+      theoreticalLayerCount,
+      effectiveStepPips,
+      requestedLayerPercent,
+      effectiveLayerPercent,
+      allocationPercentTotal,
       requestedLayerCount,
       plannedLayerCount,
       plannedTotalLot,

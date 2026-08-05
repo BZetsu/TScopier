@@ -88,11 +88,6 @@ test('runtime clamp: buy anchor 4330 step 3 pips rejects legs past 4325', () => 
       stepIdx,
       stepPriceOffset,
       isBuy: true,
-      volume: 0.01,
-      stoploss: null,
-      takeprofit: null,
-      slippage: 20,
-      comment: 'test',
     }, anchor, digits)
     if (virtualPendingTriggerAllowed({
       triggerPrice: trigger,
@@ -110,22 +105,12 @@ test('runtime clamp: buy anchor 4330 step 3 pips rejects legs past 4325', () => 
     stepIdx: 166,
     stepPriceOffset,
     isBuy: true,
-    volume: 0.01,
-    stoploss: null,
-    takeprofit: null,
-    slippage: 20,
-    comment: 'test',
   }, anchor, digits)
   assert.ok(lastAllowed >= boundary)
   const firstRejected = triggerPriceFor({
     stepIdx: 167,
     stepPriceOffset,
     isBuy: true,
-    volume: 0.01,
-    stoploss: null,
-    takeprofit: null,
-    slippage: 20,
-    comment: 'test',
   }, anchor, digits)
   assert.ok(firstRejected < boundary)
 })

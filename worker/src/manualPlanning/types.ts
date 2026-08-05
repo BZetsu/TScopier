@@ -29,6 +29,7 @@ export interface ManualTpLot {
 }
 
 export type LayeringMode = 'legacy' | 'static' | 'dynamic'
+export type LayerSizingOptimizationStrategy = 'adjust_percent' | 'reduce_layers' | 'widen_step'
 export type LayerPlanAnchorSource = 'signal' | 'quote' | 'fill' | 'unknown'
 export type LayerPlanSide = 'buy' | 'sell'
 
@@ -68,6 +69,8 @@ export interface ManualSettings {
   dynamic_step_pips?: number
   /** Dynamic V1 foundation: maximum total layer count, including first fill. */
   dynamic_max_layers?: number
+  /** Constraint solver preference when range/step/lots/percent cannot all be preserved. */
+  layering_optimization_strategy?: LayerSizingOptimizationStrategy
   /** Range layering execution mechanism, independent of `layering_mode`. */
   range_layering_type?: 'auto' | 'pending_order'
   /** When true with range_trading, cap layering depth from parsed entry zone instead of range_distance_pips. */
@@ -238,6 +241,12 @@ export interface LayeringPlanSnapshot {
   configuredStaticLayerCount: number | null
   configuredDynamicStepPips: number | null
   configuredDynamicMaxLayers: number | null
+  optimizationStrategy?: LayerSizingOptimizationStrategy | null
+  theoreticalLayerCount?: number | null
+  effectiveStepPips?: number | null
+  requestedLayerPercent?: number | null
+  effectiveLayerPercent?: number | null
+  allocationPercentTotal?: number | null
   requestedLayerCount: number | null
   plannedLayerCount: number | null
   plannedTotalLot: number | null

@@ -69,8 +69,9 @@ function modeCapability(args: {
   if (!listed) reasons.push("account_not_allowlisted")
   if (prepareOnly) reasons.push("prepare_only")
   if (!args.pendingCapability.supported) reasons.push("broker_pending_unsupported")
-  const configurable = args.advancedAllowed && globalEnabled && !killSwitch && modeEnabled && listed
-  const executionAvailable = configurable && !prepareOnly
+  const configurable = args.advancedAllowed && listed
+  const executionAvailable = configurable && globalEnabled && !prepareOnly
+    && !killSwitch && modeEnabled
   return {
     available: configurable,
     configurable,

@@ -50,7 +50,8 @@ import {
   stepPriceOffsetForBasket,
 } from './layerConcurrentFire'
 import { incMetric } from './workerMetrics'
-import { captureWorkerError, captureWorkerWarning } from './observability/sentry'
+import { captureWorkerWarning } from './observability/sentry'
+import { captureBusinessIssue } from './observability/businessEvents'
 import { parsePersistedLayeringPlan } from './manualPlanning/layeringPlanPersistence'
 import { resolveLayeringModeRolloutDecision } from './manualPlanning/layeringModeRollout'
 import { convergeLayeringPlanAfterLegTerminal } from './layeringPlanLifecycle'
@@ -1255,21 +1256,25 @@ export class VirtualPendingMonitor {
         // Surface it as an orphan so ops/reconcile can reconcile it from the
         // broker (reconcile-by-anchor cannot see a leg missing from `trades`).
         console.warn(`[virtualPendingMonitor] trades insert failed leg=${leg.id}: ${insErr.message}`)
-        captureWorkerError(insErr, {
-          subsystem: 'range',
-          operation: 'range_broker_success_trade_persist_failed',
-          errorCode: 'BROKER_SUCCESS_DB_FAILURE',
-          fingerprint: ['range', 'BROKER_SUCCESS_DB_FAILURE', 'range_leg_trade_insert'],
+        captureBusinessIssue({
+          category: 'persistence',
+          event: 'broker_success_persistence_failed',
+          severity: 'error',
+          reasonCode: 'BROKER_SUCCESS_DB_FAILURE',
+          message: 'Range layer broker fill succeeded but trade row persistence failed',
+          userImpact: 'manual_review_required',
+          fingerprint: ['broker_success_persistence_failed', 'range_leg_trade_insert', 'BROKER_SUCCESS_DB_FAILURE'],
           context: {
             user_id: leg.user_id,
             signal_id: leg.signal_id,
             broker_account_id: leg.broker_account_id,
             pending_leg_id: leg.id,
             basket_id: `${leg.signal_id}:${leg.broker_account_id}`,
+            layer_plan_id: leg.layer_plan_id ?? null,
+            layer_step_idx: leg.step_idx,
             stage: 'range_post_broker_success_persistence',
+            symbol: leg.symbol,
             extra: {
-              symbol: leg.symbol,
-              step_idx: leg.step_idx,
               broker_ticket_present: result.ticket != null,
             },
           },
@@ -1453,19 +1458,26 @@ export class VirtualPendingMonitor {
         request_payload: { leg_id: leg.id, step_idx: leg.step_idx, claimed_by: this.hostId } as unknown as Record<string, unknown>,
         error_message: msg,
       })
-      captureWorkerError(err instanceof Error ? err : new Error(msg), {
-        subsystem: 'range',
-        operation: 'range_leg_fire_failed',
-        errorCode: 'RANGE_LEG_FIRE_FAILED',
-        fingerprint: ['range', 'RANGE_LEG_FIRE_FAILED', 'final'],
+      captureBusinessIssue({
+        category: 'layering',
+        event: 'layering_leg_execution_failed',
+        severity: 'error',
+        reasonCode: 'RANGE_LEG_FIRE_FAILED',
+        message: 'Virtual range layer leg failed after final broker attempt',
+        userImpact: 'failed',
+        fingerprint: ['layering_leg_execution_failed', 'range_leg_fire', 'RANGE_LEG_FIRE_FAILED'],
         context: {
           user_id: leg.user_id,
           signal_id: leg.signal_id,
           broker_account_id: leg.broker_account_id,
           pending_leg_id: leg.id,
           basket_id: `${leg.signal_id}:${leg.broker_account_id}`,
+          layer_plan_id: leg.layer_plan_id ?? null,
+          layer_step_idx: leg.step_idx,
           stage: 'range_leg_fire',
-          extra: { symbol: leg.symbol, step_idx: leg.step_idx },
+          symbol: leg.symbol,
+          operation: 'range_leg_fire',
+          extra: { error: msg.slice(0, 180) },
         },
       })
       incMetric('range_layer_execution_failed')

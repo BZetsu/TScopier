@@ -44,7 +44,8 @@ import {
   setPipelineTimestamp,
   type PipelineTimestamps,
 } from './pipelineTimestamps'
-import { addWorkerBreadcrumb, captureWorkerError, captureWorkerWarning } from './observability/sentry'
+import { addWorkerBreadcrumb, captureWorkerError } from './observability/sentry'
+import { captureBusinessIssue } from './observability/businessEvents'
 import { incMetric } from './workerMetrics'
 import { workerConfig } from './workerConfig'
 import { isManagementAction, parsedAction } from './tradeSignalActions'
@@ -649,15 +650,19 @@ export class UserListener {
       `[userListener] channel_auto_disabled user=${this.userId}`
       + ` channel=${row.id} count=${state.consecutiveCount} code=${errorCode}`,
     )
-    captureWorkerWarning('Telegram channel auto-disabled after repeated invalid-channel failures', {
-      subsystem: 'telegram',
-      operation: 'channel_auto_disabled',
-      errorCode: errorCode || 'CHANNEL_INVALID',
-      fingerprint: ['telegram', errorCode || 'CHANNEL_INVALID', 'channel_auto_disabled'],
+    captureBusinessIssue({
+      category: 'telegram',
+      event: 'telegram_channel_auto_disabled',
+      severity: 'warning',
+      reasonCode: errorCode || 'CHANNEL_INVALID',
+      message: 'Telegram channel auto-disabled after repeated invalid-channel failures',
+      userImpact: 'failed',
+      fingerprint: ['telegram_channel_auto_disabled', errorCode || 'CHANNEL_INVALID', 'channel_auto_disabled'],
       context: {
         user_id: this.userId,
         channel_id: row.id,
         stage: 'channel_auto_disabled',
+        operation: 'channel_monitoring',
         retry_attempt: state.consecutiveCount,
         extra: { source, threshold: CHANNEL_INVALID_DISABLE_THRESHOLD },
       },
@@ -4006,14 +4011,18 @@ export class UserListener {
         `[userListener] malformed Telegram RPC result recovery exhausted for ${this.userId}`
         + ` (${this.malformedRpcRecoveryCount}/${malformedRpcResultMaxRecoveries()}) — invalidating session`,
       )
-      captureWorkerError(err instanceof Error ? err : new Error(String(err ?? 'malformed rpc result')), {
-        subsystem: 'telegram',
-        operation: 'malformed_rpc_recovery_exhausted',
-        errorCode: 'GRAMJS_MALFORMED_RPC_RESULT',
-        fingerprint: ['telegram', 'GRAMJS_MALFORMED_RPC_RESULT', 'exhausted'],
+      captureBusinessIssue({
+        category: 'telegram',
+        event: 'telegram_recovery_exhausted',
+        severity: 'error',
+        reasonCode: 'GRAMJS_MALFORMED_RPC_RESULT',
+        message: 'Malformed Telegram RPC result recovery exhausted',
+        userImpact: 'failed',
+        fingerprint: ['telegram_recovery_exhausted', 'malformed_rpc_result', 'exhausted'],
         context: {
           user_id: this.userId,
           stage: 'malformed_rpc_recovery',
+          operation: 'telegram_rpc_recovery',
           retry_attempt: this.malformedRpcRecoveryCount,
           extra: { max_recoveries: malformedRpcResultMaxRecoveries() },
         },
@@ -4103,14 +4112,18 @@ export class UserListener {
         `[userListener] reconnect failed for ${this.userId} cycle=${cycleId}:`,
         redactTelegramConnectionLog(lastErr ?? 'unknown'),
       )
-      captureWorkerWarning(lastErr instanceof Error ? lastErr : new Error(String(lastErr ?? 'reconnect failed')), {
-        subsystem: 'telegram',
-        operation: 'reconnect_exhausted_deferred',
-        errorCode: 'TELEGRAM_RECONNECT_EXHAUSTED',
-        fingerprint: ['telegram', 'TELEGRAM_RECONNECT_EXHAUSTED', reason],
+      captureBusinessIssue({
+        category: 'telegram',
+        event: 'telegram_listener_failed',
+        severity: 'error',
+        reasonCode: 'TELEGRAM_RECONNECT_EXHAUSTED',
+        message: 'Telegram reconnect attempts exhausted and listener deferred retry',
+        userImpact: 'delayed',
+        fingerprint: ['telegram_listener_failed', 'reconnect', 'TELEGRAM_RECONNECT_EXHAUSTED', reason],
         context: {
           user_id: this.userId,
           stage: 'reconnect',
+          operation: 'telegram_reconnect',
           extra: { reason, cycle_id: cycleId, attempts: delays.length },
         },
       })

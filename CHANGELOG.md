@@ -19,6 +19,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - Added final native layering safety hardening: ambiguous native states never auto-resend after reference lookup misses, startup recovery reconciles native submission states, native cancellation calls/reconciles broker cancellation, and plan entry convergence requires persisted first-execution linkage.
 - Added fail-closed load-harness safety guards, deterministic synthetic signal generation, worker safety preflight, emergency stop support, cleanup helpers, and JSON run reporting.
 - Added disabled-by-default, worker-only Sentry monitoring with all SDK default integrations disabled, defensive redaction, role/shard tags, bounded shutdown flushing, and targeted sanitized-helper capture for final Telegram, queue, broker, persistence, range-layer, reconciliation, and lifecycle failures.
+- Added centralized worker Sentry business-event observability for user-impacting trade copy, broker account, Telegram/copier, management, layering, queue, persistence, and reconciliation failures with stable event names, hashed identifiers, grouping, cooldown suppression, and a support investigation runbook.
 - Added production-safe correlation and structured observability events across Telegram receipt, parsing, queue handoff, execution claiming, broker dispatch, and completion.
 - Added cumulative histogram-compatible worker metrics for pipeline stage durations and event throughput.
 - Added safe duration and redaction helpers for execution-pipeline observability.
@@ -26,6 +27,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- Restored XAUUSD breakeven follow-up offsets to the signal-pip convention so metal stop-loss offsets use `0.01` price units per pip after staging/dev merges.
 - Preserved existing range-layering execution as explicit `legacy` behavior so existing accounts, pending baskets, and signals are not silently converted to future Static or Dynamic semantics.
 - Tightened Phase A layer-plan snapshot parsing so impossible persisted Static/Dynamic metadata fails closed instead of being silently repaired.
 - Tightened Phase B calculator contracts so unrepresentable rounded anchors fail closed, lot allocation cannot exceed intended total, and combined plans expose funded prices separately from diagnostic candidates.
@@ -36,6 +38,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - Fixed native-pending recovery ownership so crashed workers cannot permanently strand `reconciliation_claimed_by`; recovery leases expire, lookup outages release ownership for later startup passes, authoritative lookup misses move to `manual_review`, and later broker-reference matches can still be adopted after retryable outages without resending.
 - Fixed native broker-pending cancellation convergence so cancellation reconciles broker state before `OrderClose`, preserves already-filled orders, adopts already-cancelled/rejected states, treats timeout as `cancellation_pending`, and avoids duplicate cancel requests during retries/restarts.
 - Fixed Static/Dynamic first-fill activation durability by awaiting layering post-fill plan persistence/activation in the live-fast path instead of running it as lossy background work.
+- Fixed layering capability/configuration gating so `LAYERING_MODES_EXECUTION_ENABLED=false` disables execution without hiding or blocking Static/Dynamic configuration when the account is otherwise allowlisted and mode-enabled.
 - Removed hardcoded load/scale-test credentials from scripts and environment examples. The previously committed staging Supabase service-role key must still be rotated because Git history retains it.
 - Enforced load-test broker simulator mode with a no-send broker adapter, stricter worker health capability preflight, normalized production URL rejection, confined load-test artifacts, dry-run cleanup by default, exact-run cleanup markers, and aggregate-only Section 6 synthetic setup.
 - Increased Railway Telegram shutdown drain behavior to wait about 30 seconds, await all listener/auth disconnects, release owned session leases, and prevent reconnects from starting during shutdown.

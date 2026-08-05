@@ -1,5 +1,11 @@
 import { MAX_LAYER_COUNT, MIN_LAYER_COUNT } from './layeringModes'
 import { allocateLayerLots, type LayerLotAllocationReason } from './layerLotAllocation'
+import {
+  solveLayerSizingConstraints,
+  type LayerSizingConstraintReason,
+  type LayerSizingConstraintsSuccess,
+  type LayerSizingOptimizationStrategy,
+} from './layerSizingConstraints'
 
 export type LayerPlanMode = 'static' | 'dynamic'
 export type LayerPlanSide = 'buy' | 'sell'
@@ -18,6 +24,7 @@ export type LayerPlanReason =
   | 'duplicate_price_after_rounding'
   | 'layer_count_reduced_by_precision'
   | 'no_valid_layers'
+  | LayerSizingConstraintReason
   | LayerLotAllocationReason
 
 export interface SkippedLayer {
@@ -100,10 +107,21 @@ export interface CalculatedLayerPlanInput {
   readonly intendedTotalLot: number
   readonly minLot: number
   readonly lotStep: number
+  readonly sizingPlan?: LayerSizingConstraintsSuccess
+  readonly layerPercent?: number
+  readonly optimizationStrategy?: LayerSizingOptimizationStrategy
+  readonly rangeDistancePips?: number
+  readonly stepPips?: number
 }
 
 export interface CalculatedLayerPlanSuccess extends LayerPricePlanSuccess {
   readonly ok: true
+  readonly theoreticalLayerCount: number | null
+  readonly effectiveStepPips: number | null
+  readonly requestedLayerPercent: number | null
+  readonly effectiveLayerPercent: number | null
+  readonly allocationPercentTotal: number | null
+  readonly optimizationStrategy: LayerSizingOptimizationStrategy | null
   readonly fundedPrices: readonly number[]
   readonly unfundedPrices: readonly number[]
   readonly unfundedIndexes: readonly number[]
@@ -318,6 +336,50 @@ export function calculateDynamicLayerPrices(input: DynamicLayerPricePlanInput): 
 }
 
 export function buildCalculatedLayerPlan(input: CalculatedLayerPlanInput): CalculatedLayerPlanResult {
+  if (input.sizingPlan) {
+    const fundedPrices = input.pricePlan.normalizedCandidatePrices.slice(0, input.sizingPlan.effectiveLayerCount)
+    const unfundedPrices = input.pricePlan.normalizedCandidatePrices.slice(input.sizingPlan.effectiveLayerCount)
+    const unfundedIndexes = unfundedPrices.map((_, idx) => input.sizingPlan!.effectiveLayerCount + idx)
+
+    return freezeSuccess({
+      ...input.pricePlan,
+      actualLayerCount: input.sizingPlan.effectiveLayerCount,
+      fundedPrices: Object.freeze(fundedPrices),
+      unfundedPrices: Object.freeze(unfundedPrices),
+      unfundedIndexes: Object.freeze(unfundedIndexes),
+      lots: input.sizingPlan.lots,
+      intendedTotalLot: input.sizingPlan.intendedTotalLot,
+      allocatedTotalLot: input.sizingPlan.allocatedTotalLot,
+      unallocatedLot: input.sizingPlan.unallocatedLot,
+      theoreticalLayerCount: input.sizingPlan.theoreticalLayerCount,
+      effectiveStepPips: input.sizingPlan.effectiveStepPips,
+      requestedLayerPercent: input.sizingPlan.requestedLayerPercent,
+      effectiveLayerPercent: input.sizingPlan.effectiveLayerPercent,
+      allocationPercentTotal: input.sizingPlan.allocationPercentTotal,
+      optimizationStrategy: input.sizingPlan.optimizationStrategy,
+      reasons: uniqueReasons([...input.pricePlan.reasons, ...input.sizingPlan.warnings]),
+    })
+  }
+
+  if (
+    input.layerPercent != null
+    && input.rangeDistancePips != null
+    && input.stepPips != null
+  ) {
+    const sizingPlan = solveLayerSizingConstraints({
+      rangeDistancePips: input.rangeDistancePips,
+      stepPips: input.stepPips,
+      totalLot: input.intendedTotalLot,
+      minLot: input.minLot,
+      lotStep: input.lotStep,
+      layerPercent: input.layerPercent,
+      optimizationStrategy: input.optimizationStrategy,
+      maxLayerCount: input.pricePlan.normalizedCandidatePrices.length,
+    })
+    if (!sizingPlan.ok) return { ok: false, mode: input.pricePlan.mode, reason: sizingPlan.reason }
+    return buildCalculatedLayerPlan({ ...input, sizingPlan })
+  }
+
   const allocation = allocateLayerLots({
     intendedTotalLot: input.intendedTotalLot,
     layerCount: input.pricePlan.normalizedCandidatePrices.length,
@@ -340,22 +402,51 @@ export function buildCalculatedLayerPlan(input: CalculatedLayerPlanInput): Calcu
     intendedTotalLot: allocation.intendedTotalLot,
     allocatedTotalLot: allocation.allocatedTotalLot,
     unallocatedLot: allocation.unallocatedLot,
+    theoreticalLayerCount: null,
+    effectiveStepPips: null,
+    requestedLayerPercent: null,
+    effectiveLayerPercent: null,
+    allocationPercentTotal: null,
+    optimizationStrategy: null,
     reasons: uniqueReasons([...input.pricePlan.reasons, ...allocation.reasons]),
   })
 }
 
 export function calculateStaticLayerPlan(
-  input: StaticLayerPricePlanInput & Pick<CalculatedLayerPlanInput, 'intendedTotalLot' | 'minLot' | 'lotStep'>,
+  input: StaticLayerPricePlanInput & Pick<CalculatedLayerPlanInput, 'intendedTotalLot' | 'minLot' | 'lotStep' | 'layerPercent' | 'optimizationStrategy'>,
 ): CalculatedLayerPlanResult {
   const pricePlan = calculateStaticLayerPrices(input)
   if (!pricePlan.ok) return pricePlan
-  return buildCalculatedLayerPlan({ pricePlan, ...input })
+  const rangeDistance = input.rangeHigh - input.rangeLow
+  const step = input.totalLayerCount > 1 ? rangeDistance / (input.totalLayerCount - 1) : rangeDistance || 1
+  return buildCalculatedLayerPlan({ pricePlan, rangeDistancePips: rangeDistance || 1, stepPips: step || 1, ...input })
 }
 
 export function calculateDynamicLayerPlan(
-  input: DynamicLayerPricePlanInput & Pick<CalculatedLayerPlanInput, 'intendedTotalLot' | 'minLot' | 'lotStep'>,
+  input: DynamicLayerPricePlanInput & Pick<CalculatedLayerPlanInput, 'intendedTotalLot' | 'minLot' | 'lotStep' | 'layerPercent' | 'optimizationStrategy'>,
 ): CalculatedLayerPlanResult {
-  const pricePlan = calculateDynamicLayerPrices(input)
+  const farBoundary = input.side === 'buy' ? input.rangeLow : input.rangeHigh
+  const remainingDistancePips = input.side === 'buy'
+    ? (input.firstFillPrice - farBoundary) / input.pipSize
+    : (farBoundary - input.firstFillPrice) / input.pipSize
+  const sizingPlan = input.layerPercent == null
+    ? null
+    : solveLayerSizingConstraints({
+      rangeDistancePips: remainingDistancePips,
+      stepPips: input.stepPips,
+      totalLot: input.intendedTotalLot,
+      minLot: input.minLot,
+      lotStep: input.lotStep,
+      layerPercent: input.layerPercent,
+      optimizationStrategy: input.optimizationStrategy,
+      maxLayerCount: input.maxTotalLayers,
+    })
+  if (sizingPlan && !sizingPlan.ok) return { ok: false, mode: 'dynamic', reason: sizingPlan.reason }
+  const pricePlan = calculateDynamicLayerPrices({
+    ...input,
+    stepPips: sizingPlan?.effectiveStepPips ?? input.stepPips,
+    maxTotalLayers: sizingPlan?.effectiveLayerCount ?? input.maxTotalLayers,
+  })
   if (!pricePlan.ok) return pricePlan
-  return buildCalculatedLayerPlan({ pricePlan, ...input })
+  return buildCalculatedLayerPlan({ pricePlan, sizingPlan: sizingPlan ?? undefined, ...input })
 }

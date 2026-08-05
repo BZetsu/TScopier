@@ -27,6 +27,11 @@ import {
 } from '../pipelineTimestamps'
 import { ensureSignalRow, isSignalFkViolation } from '../ensureSignalRow'
 import { captureWorkerError, captureWorkerWarning } from '../observability/sentry'
+import {
+  addBusinessBreadcrumb,
+  captureBusinessIssue,
+  classifyBrokerFailureReason,
+} from '../observability/businessEvents'
 
 /** Normalized broker fill shape shared by the v1 client and the v2 fxClient. */
 type NormalizedFill = {
@@ -224,6 +229,24 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
               attempt: attemptNo,
             },
           }, { deferLog: true })
+          addBusinessBreadcrumb({
+            category: 'broker',
+            event: 'broker_request_started',
+            context: {
+              user_id: signal.user_id,
+              signal_id: signal.id,
+              channel_id: signal.channel_id,
+              telegram_message_id: signal.telegram_message_id,
+              broker_account_id: broker.id,
+              execution_attempt_id: correlation.execution_attempt_id,
+              broker_request_id: correlation.broker_request_id,
+              symbol: sendArgs.symbol,
+              operation: sendArgs.operation,
+              execution_mechanism: useV2 ? 'fxsocket_v2' : 'fxsocket_v1',
+              retry_attempt: attemptNo,
+              user_impact: 'none',
+            },
+          })
           const r = await sendPromise
           if (!r.ok || !r.ticket) throw new Error(r.message || `v2 order_send rejected (${r.retcodeName})`)
           result = {
@@ -249,6 +272,24 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
               attempt: attemptNo,
             },
           }, { deferLog: true })
+          addBusinessBreadcrumb({
+            category: 'broker',
+            event: 'broker_request_started',
+            context: {
+              user_id: signal.user_id,
+              signal_id: signal.id,
+              channel_id: signal.channel_id,
+              telegram_message_id: signal.telegram_message_id,
+              broker_account_id: broker.id,
+              execution_attempt_id: correlation.execution_attempt_id,
+              broker_request_id: correlation.broker_request_id,
+              symbol: sendArgs.symbol,
+              operation: sendArgs.operation,
+              execution_mechanism: useV2 ? 'fxsocket_v2' : 'fxsocket_v1',
+              retry_attempt: attemptNo,
+              user_impact: 'none',
+            },
+          })
           const raw = await sendPromise
           result = {
             ticket: raw.ticket,
@@ -281,11 +322,14 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
           lastAttemptError,
         )
         if (isOrderOpTimedOutMessage(lastAttemptError)) {
-          captureWorkerError(err instanceof Error ? err : new Error(lastAttemptError), {
-            subsystem: 'broker',
-            operation: 'order_send_ambiguous',
-            errorCode: 'ORDER_SEND_TIMEOUT',
-            fingerprint: ['broker', 'ORDER_SEND_TIMEOUT', useV2 ? 'fxsocket_v2' : 'fxsocket_v1'],
+          captureBusinessIssue({
+            category: 'broker',
+            event: 'broker_order_ambiguous',
+            severity: 'error',
+            reasonCode: 'BROKER_TIMEOUT',
+            message: 'Broker OrderSend timed out; outcome requires reconciliation',
+            userImpact: 'manual_review_required',
+            fingerprint: ['broker_order_ambiguous', 'order_send', 'BROKER_TIMEOUT', useV2 ? 'fxsocket_v2' : 'fxsocket_v1'],
             context: {
               user_id: signal.user_id,
               signal_id: signal.id,
@@ -297,12 +341,49 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
               dispatch_source: signal.dispatch_source,
               stage: 'order_send',
               retry_attempt: attempt + 1,
+              symbol: sendArgs.symbol,
+              operation: sendArgs.operation,
+              execution_mechanism: useV2 ? 'fxsocket_v2' : 'fxsocket_v1',
               extra: {
                 path: useV2 ? 'fxsocket_v2' : 'fxsocket_v1',
                 operation: sendArgs.operation,
                 symbol: sendArgs.symbol,
                 leg: leg.idx + 1,
                 total: totalCount,
+              },
+            },
+          })
+        } else {
+          const reasonCode = classifyBrokerFailureReason(lastAttemptError)
+          captureBusinessIssue({
+            category: 'trade',
+            event: reasonCode === 'INSUFFICIENT_MARGIN'
+              ? 'trade_copy_failed'
+              : reasonCode === 'SYMBOL_UNSUPPORTED'
+                ? 'trade_copy_blocked'
+                : 'broker_order_rejected',
+            severity: reasonCode === 'BROKER_RATE_LIMITED' ? 'warning' : 'error',
+            reasonCode,
+            message: 'Broker rejected trade copy order',
+            userImpact: 'failed',
+            context: {
+              user_id: signal.user_id,
+              signal_id: signal.id,
+              channel_id: signal.channel_id,
+              telegram_message_id: signal.telegram_message_id,
+              broker_account_id: broker.id,
+              execution_attempt_id: correlation.execution_attempt_id,
+              broker_request_id: correlation.broker_request_id,
+              dispatch_source: signal.dispatch_source,
+              stage: 'order_send',
+              retry_attempt: attempt + 1,
+              symbol: sendArgs.symbol,
+              operation: sendArgs.operation,
+              execution_mechanism: useV2 ? 'fxsocket_v2' : 'fxsocket_v1',
+              extra: {
+                leg: leg.idx + 1,
+                total: totalCount,
+                stable_broker_reason: reasonCode,
               },
             },
           })
@@ -464,6 +545,28 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
             } as unknown as Record<string, unknown>,
             error_message: message,
           })
+          captureBusinessIssue({
+            category: 'layering',
+            event: 'layering_plan_activation_failed',
+            severity: 'error',
+            reasonCode: 'LAYERING_FIRST_FILL_ACTIVATION_FAILED',
+            message: 'Broker accepted entry but first-fill layer activation failed',
+            userImpact: 'manual_review_required',
+            context: {
+              user_id: signal.user_id,
+              signal_id: signal.id,
+              channel_id: signal.channel_id,
+              broker_account_id: broker.id,
+              trade_id: tradeRowId,
+              symbol: sendArgs.symbol,
+              operation: sendArgs.operation,
+              layering_mode: prep.layeringRuntime.mode,
+              extra: {
+                broker_ticket_present: result.ticket != null,
+                trade_row_id_present: tradeRowId != null,
+              },
+            },
+          })
           throw err
         }
       }
@@ -528,11 +631,14 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
       console.error(
         `[tradeExecutor] trades INSERT failed signal=${signal.id} broker=${broker.id} ticket=${result.ticket}: ${first.error.message}`,
       )
-      captureWorkerError(first.error, {
-        subsystem: 'persistence',
-        operation: 'broker_success_trade_persist_failed',
-        errorCode: 'BROKER_SUCCESS_DB_FAILURE',
-        fingerprint: ['persistence', 'BROKER_SUCCESS_DB_FAILURE', 'trades_insert'],
+      captureBusinessIssue({
+        category: 'persistence',
+        event: 'broker_success_persistence_failed',
+        severity: 'error',
+        reasonCode: 'BROKER_SUCCESS_DB_FAILURE',
+        message: 'Broker accepted order but trade row persistence failed',
+        userImpact: 'manual_review_required',
+        fingerprint: ['broker_success_persistence_failed', 'trades_insert', 'BROKER_SUCCESS_DB_FAILURE'],
         context: {
           user_id: signal.user_id,
           signal_id: signal.id,
@@ -544,6 +650,7 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
             broker_ticket_present: result.ticket != null,
             leg: leg.idx + 1,
             total: totalCount,
+            symbol: sendArgs.symbol,
           },
         },
       })
@@ -575,11 +682,14 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
         console.error(
           `[tradeExecutor] trades INSERT retry failed signal=${signal.id} broker=${broker.id} ticket=${result.ticket}: ${retry.error.message}`,
         )
-        captureWorkerError(retry.error, {
-          subsystem: 'persistence',
-          operation: 'broker_success_trade_persist_retry_failed',
-          errorCode: 'BROKER_SUCCESS_DB_FAILURE',
-          fingerprint: ['persistence', 'BROKER_SUCCESS_DB_FAILURE', 'trades_insert_retry'],
+        captureBusinessIssue({
+          category: 'persistence',
+          event: 'broker_success_persistence_failed',
+          severity: 'error',
+          reasonCode: 'BROKER_SUCCESS_DB_FAILURE',
+          message: 'Broker accepted order but trade row persistence retry failed',
+          userImpact: 'manual_review_required',
+          fingerprint: ['broker_success_persistence_failed', 'trades_insert_retry', 'BROKER_SUCCESS_DB_FAILURE'],
           context: {
             user_id: signal.user_id,
             signal_id: signal.id,
@@ -587,6 +697,7 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
             telegram_message_id: signal.telegram_message_id,
             broker_account_id: broker.id,
             stage: 'post_broker_success_persistence_retry',
+            symbol: sendArgs.symbol,
             extra: { broker_ticket_present: result.ticket != null },
           },
         })

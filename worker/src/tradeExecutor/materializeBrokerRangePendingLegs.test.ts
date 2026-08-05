@@ -27,7 +27,7 @@ test('broker range pending: round-robin reuses stepIdx for same trigger price', 
   assert.deepEqual(stepIdxs, [1, 2, 3, 1, 2, 3, 1])
   const triggers = stepIdxs.map(stepIdx =>
     triggerPriceFor(
-      { stepIdx, isBuy: false, volume: 0.01, stepPriceOffset, stoploss: 0, takeprofit: 0, slippage: 20, comment: '' },
+      { stepIdx, isBuy: false, stepPriceOffset },
       anchor,
       2,
     ),

@@ -18,10 +18,12 @@ const LAYERING_KEYS = [
   "static_layer_count",
   "dynamic_step_pips",
   "dynamic_max_layers",
+  "layering_optimization_strategy",
 ] as const
 
 type LayeringMode = "legacy" | "static" | "dynamic"
 type LayeringMechanism = "auto" | "pending_order"
+type LayeringOptimizationStrategy = "adjust_percent" | "reduce_layers" | "widen_step"
 
 function bad(status: number, message: string) {
   return Response.json({ error: message }, { status, headers: corsHeaders })
@@ -64,6 +66,10 @@ function normalizeMechanism(value: unknown): LayeringMechanism | null {
   return value === "auto" || value === "pending_order" ? value : null
 }
 
+function normalizeOptimizationStrategy(value: unknown): LayeringOptimizationStrategy {
+  return value === "reduce_layers" || value === "widen_step" || value === "adjust_percent" ? value : "adjust_percent"
+}
+
 function integerInRange(value: unknown, min: number, max: number): number | null {
   const n = Number(value)
   return Number.isInteger(n) && n >= min && n <= max ? n : null
@@ -95,6 +101,7 @@ function mergeLayeringSettings(existing: Record<string, unknown>, next: {
   static_layer_count: number
   dynamic_step_pips: number
   dynamic_max_layers: number
+  layering_optimization_strategy: LayeringOptimizationStrategy
 }) {
   const merged = { ...existing }
   for (const key of LAYERING_KEYS) delete merged[key]
@@ -146,6 +153,7 @@ Deno.serve(async (req: Request) => {
     const staticLayerCount = integerInRange(body.static_layer_count, 1, 20)
     const dynamicStepPips = positiveFinite(body.dynamic_step_pips)
     const dynamicMaxLayers = integerInRange(body.dynamic_max_layers, 1, 20)
+    const optimizationStrategy = normalizeOptimizationStrategy(body.layering_optimization_strategy)
     if (!mode || !mechanism) return bad(400, "Invalid layering mode or execution mechanism")
     if (staticLayerCount == null) return bad(400, "Static layer count must be an integer from 1 to 20")
     if (dynamicStepPips == null) return bad(400, "Dynamic step pips must be greater than zero")
@@ -181,6 +189,7 @@ Deno.serve(async (req: Request) => {
       static_layer_count: staticLayerCount,
       dynamic_step_pips: dynamicStepPips,
       dynamic_max_layers: dynamicMaxLayers,
+      layering_optimization_strategy: optimizationStrategy,
     }
 
     if (channelId) {

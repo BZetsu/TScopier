@@ -33,6 +33,7 @@ import { parsePersistedLayeringPlan } from './manualPlanning/layeringPlanPersist
 import { resolveLayeringModeRolloutDecision } from './manualPlanning/layeringModeRollout'
 import { convergeLayeringPlanAfterLegTerminal, recoverCancellingLayeringPlans } from './layeringPlanLifecycle'
 import { recoverNativeLayeringSubmissions } from './tradeExecutor/layeringModeBrokerPendingRecovery'
+import { captureBusinessIssue } from './observability/businessEvents'
 
 const ACTIVE_MS = monitorActiveIntervalMs('RANGE_BROKER_PENDING_TICK_MS', 2_000)
 const IDLE_MS = monitorIdleIntervalMs('RANGE_BROKER_PENDING_IDLE_MS', 15_000)
@@ -474,6 +475,29 @@ export class RangeBrokerPendingMonitor {
             .update({ status: 'cancelled', error_message: 'broker_missing' })
             .eq('id', row.id)
             .eq('status', 'broker_pending')
+          captureBusinessIssue({
+            category: 'layering',
+            event: 'layering_native_reconciliation_required',
+            severity: 'error',
+            reasonCode: 'BROKER_PENDING_MISSING',
+            message: 'Broker-native range pending leg was missing after reconciliation threshold',
+            userImpact: 'manual_review_required',
+            context: {
+              user_id: row.user_id,
+              signal_id: row.signal_id,
+              broker_account_id: row.broker_account_id,
+              pending_leg_id: row.id,
+              layer_plan_id: row.layer_plan_id ?? null,
+              layer_step_idx: row.step_idx,
+              symbol: row.symbol,
+              execution_mechanism: 'broker_pending_order',
+              operation: 'native_pending_reconcile',
+              extra: {
+                missing_streak_threshold: MISSING_BEFORE_ASSUME_GONE,
+                ambiguous_execution: true,
+              },
+            },
+          })
           if (row.layer_plan_id) {
             await convergeLayeringPlanAfterLegTerminal(this.supabase, row.layer_plan_id)
           }

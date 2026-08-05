@@ -227,10 +227,10 @@ begin
   end if;
 
   v_schema_version := nullif(v_plan.layer_plan_metadata->>'schemaVersion', '')::int;
-  v_calculator_version := v_plan.layer_plan_metadata->>'calculatorVersion';
+  v_calculator_version := nullif(trim(v_plan.layer_plan_metadata->>'calculatorVersion'), '');
   v_mode := v_plan.layer_plan_metadata->>'mode';
   if v_schema_version <> 1
-     or v_calculator_version is null
+     or v_calculator_version is distinct from 'layering-v1'
      or v_mode not in ('static', 'dynamic')
      or v_mode <> v_plan.mode then
     return 'activation_failed';
