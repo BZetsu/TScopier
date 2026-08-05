@@ -433,24 +433,24 @@ export async function prepareEntryExecution(
     }
   }
 
+  if (isManual && manual.add_new_trades_to_existing === false && !parsedSignalHasExplicitStops(parsed)) {
+    await ctx.logSendSkipped(signal, broker, 'explicit_stops_required_when_add_to_existing_off', { symbol })
+    return { ok: false, outcome: { finalizeSkipReason: 'explicit_stops_required_when_add_to_existing_off' } }
+  }
+
+  if (!liveEntryFast && isManual && manual.close_on_opposite_signal === true) {
+    await ctx.closeOppositeDirectionTrades(signal, parsed, broker, symbol)
+  }
+
+  if (isManual && manual.add_new_trades_to_existing === false) {
+    const already = await ctx.hasOpenTradeForSymbol(broker.id, symbol)
+    if (already) {
+      await ctx.logSendSkipped(signal, broker, 'add_new_trades_to_existing=false', { symbol })
+      return { ok: false, outcome: { finalizeSkipReason: 'add_new_trades_to_existing=false' } }
+    }
+  }
+
   if (!liveEntryFast) {
-    if (isManual && manual.add_new_trades_to_existing === false && !parsedSignalHasExplicitStops(parsed)) {
-      await ctx.logSendSkipped(signal, broker, 'explicit_stops_required_when_add_to_existing_off', { symbol })
-      return { ok: false, outcome: { finalizeSkipReason: 'explicit_stops_required_when_add_to_existing_off' } }
-    }
-
-    if (isManual && manual.close_on_opposite_signal === true) {
-      await ctx.closeOppositeDirectionTrades(signal, parsed, broker, symbol)
-    }
-
-    if (isManual && manual.add_new_trades_to_existing === false) {
-      const already = await ctx.hasOpenTradeForSymbol(broker.id, symbol)
-      if (already) {
-        await ctx.logSendSkipped(signal, broker, 'add_new_trades_to_existing=false', { symbol })
-        return { ok: false, outcome: { finalizeSkipReason: 'add_new_trades_to_existing=false' } }
-      }
-    }
-
     const newsPreFill = String(process.env.EXECUTOR_NEWS_BLACKOUT_PRE_FILL ?? 'false').toLowerCase()
     if (
       (newsPreFill === '1' || newsPreFill === 'true' || newsPreFill === 'yes')
@@ -690,16 +690,15 @@ export async function prepareEntryExecution(
     )
   }
 
-  // sendOrder already claims + dedupes on the live fast path — skip the extra
-  // four-table materialized probe here so we don't pay a second DB round-trip.
-  if (!liveEntryFast) {
-    const already = await ctx.manualDispatchAlreadyMaterialized(signal.id, broker.id)
-    if (already) {
-      console.warn(
-        `[tradeExecutor] skip duplicate entry dispatch signal=${signal.id} broker=${broker.id}`,
-      )
-      return { ok: false, outcome: { openedOrMerged: true } }
-    }
+  // Always re-check materialization (including live-fast): claim is first line of
+  // defense; this catches races where another worker already OrderSent.
+  const already = await ctx.manualDispatchAlreadyMaterialized(signal.id, broker.id)
+  if (already) {
+    console.warn(
+      `[tradeExecutor] skip duplicate entry dispatch signal=${signal.id} broker=${broker.id}`
+      + ` liveFast=${liveEntryFast}`,
+    )
+    return { ok: false, outcome: { openedOrMerged: true } }
   }
 
   // ── Strict signal entry (post-delay live quote) ───────────────────────
@@ -870,11 +869,32 @@ export async function prepareEntryExecution(
   }))
 
   // Single trade style: one broker order only (partials ride on partial_tp_legs).
+  // If the planner somehow emitted multiple immediates, hard-block rather than
+  // silently sending the first leg (that masked config/planner bugs).
   if (isManual && manual.trade_style !== 'multi' && legs.length > 1) {
-    console.warn(
-      `[tradeExecutor] single trade_style capping legs ${legs.length}→1 signal=${signal.id} broker=${broker.id}`,
+    console.error(
+      `[tradeExecutor] single trade_style multi_leg_blocked ${legs.length} legs`
+      + ` signal=${signal.id} broker=${broker.id}`,
     )
-    legs = legs.slice(0, 1)
+    try {
+      await ctx.supabase.from('trade_execution_logs').insert({
+        user_id: signal.user_id,
+        signal_id: signal.id,
+        broker_account_id: broker.id,
+        action: 'single_style_multi_leg_blocked',
+        status: 'failed',
+        request_payload: { leg_count: legs.length } as unknown as Record<string, unknown>,
+        error_message: `single trade_style refused ${legs.length} immediate legs`,
+      })
+    } catch { /* best-effort */ }
+    return {
+      ok: false,
+      outcome: {
+        channelDelayMs,
+        channelDelaySkipped,
+        failureReason: 'single_style_multi_leg_blocked',
+      },
+    }
   }
 
   // ── Anchor resolution ────────────────────────────────────────────────

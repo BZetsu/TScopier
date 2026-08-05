@@ -1407,13 +1407,12 @@ export class TradeExecutor {
     const entryKey = `${signal.id}:${effectiveBroker.id}`
     const liveFast = sendOpts?.liveEntryFast === true
 
-    if (!liveFast) {
-      if (await manualDispatchAlreadyMaterialized(this, signal.id, effectiveBroker.id)) {
-        console.warn(
-          `[tradeExecutor] skip already materialized signal=${signal.id} broker=${effectiveBroker.id}`,
-        )
-        return { openedOrMerged: true }
-      }
+    if (await manualDispatchAlreadyMaterialized(this, signal.id, effectiveBroker.id)) {
+      console.warn(
+        `[tradeExecutor] skip already materialized signal=${signal.id} broker=${effectiveBroker.id}`
+        + ` liveFast=${liveFast}`,
+      )
+      return { openedOrMerged: true }
     }
 
     const isRevisionRefresh = sendOpts?.sameSignalRefresh === true
