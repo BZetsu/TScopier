@@ -2,6 +2,15 @@
 
 ## Changelog
 
+### 2026-08-05 — Full upstream integration: main + staging + dev merged into local work
+
+- **Context:** All three upstream branches had diverged from each other and from local work. User asked to pull in all upstream code while preserving local commits, then asked for detailed regression-safe merge tracking.
+- **Process:** Created `backup/all-local-work-2026-08-05` (48 local commits incl. incident fix `26e09770`) and pushed to origin. Stashed dirty `dist/`/`worker/dist/` artifacts. Created `integrate/upstream-sync` from the backup, then merged dev → staging → main (commits `b64aa7c2`, `3cbfa628`, `91afd9ba`). All upstream commits now contained (0 missing each); 0 local commits lost.
+- **Conflicts resolved (10 total):** layering GA (took upstream, flags removed — `configurationAllowed = advancedAllowed && listed`); trade-duplication fix (took staging's `blockNewEntry` over our interim claim-reuse); `entryPrepare.ts` hybrid (our `sameSignalRefresh` line 311 + staging's `blockNewEntry`); planner teaser/no-TP (took main); `signalBrokerDispatchClaim` combined (our fail-closed + their `dispatch_claim_error` log); `AccountConfigPage` took dev's `normalizeManualSettings`; `PROJECT_MEMORY.md` took ours.
+- **Post-merge fix:** `entryPrepare.ts` failed tsc — `MergeOutcome` is a discriminated union; our early-return accessed `.success` without narrowing `handled`. Fixed to `openedOrMerged: paramOutcome.handled === true && paramOutcome.success === true`.
+- **Docs:** `docs/upstream-integration-2026-08-05.md` (audit) and `docs/merge-tracking-2026-08-05.md` (full per-commit context: problem/why/who/files/conflict outcome for every commit from all three branches).
+- **Pending:** worker `tsc -b` timed out twice — typecheck + unit tests not yet run. `worker/dist/` still dirty/uncommitted. Local `main`/`staging` refs not fast-forwarded.
+
 ### 2026-08-05 — User trade list now shows execution-type tags
 
 - **Context:** User needed the trade list to identify whether each row was a single trade, range trade, layered trade, or another multi-trade result. Broker-page configuration was reviewed, including `trade_style`, `range_trading`, `layering_mode`, `range_layering_type`, and TP/layer settings.
