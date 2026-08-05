@@ -627,62 +627,81 @@ async function applyBasketSlTpRefresh(ctx, args) {
         const zoneHi = safe > 0 ? insertAnchor + (safe + 2) * (params?.point ?? 0) : null;
         const zoneLo = safe > 0 ? insertAnchor - (safe + 2) * (params?.point ?? 0) : null;
         const nowMs = Date.now();
-        const plannedImmediateLegs = (0, multiTradeMerge_1.mergePlanImmediateOrders)(plan).length;
-        const ladderSync = await (0, rangePendingLadderSync_1.syncRangePendingLadderOnBasketRefresh)({
-            supabase: ctx.supabase,
-            scope: { signalId: anchorSignalId, brokerAccountId: broker.id, symbol },
-            virtualPendings,
-            openTradeCount: familyTrades.length,
-            plannedImmediateLegs,
-            plannedRangeLegs: virtualPendings.length,
-            channelParams: channelParamsForLadder,
-            tpLots: manual.tp_lots,
-            buildInsertRow: (v) => {
-                const triggerPrice = (0, helpers_1.triggerPriceFor)(v, insertAnchor, digits);
-                if (!(0, helpers_1.virtualPendingTriggerAllowed)({
-                    triggerPrice,
-                    signalRangeBoundary: plan.rangeLayering?.signalRangeBoundary ?? null,
-                    isBuy: v.isBuy,
-                    stopsZoneLo: zoneLo,
-                    stopsZoneHi: zoneHi,
-                    signalZoneLo: plan.rangeLayering?.signalZoneLo ?? null,
-                    signalZoneHi: plan.rangeLayering?.signalZoneHi ?? null,
-                    useSignalEntryRange: plan.rangeLayering?.useSignalEntryRange === true,
-                })) {
-                    return null;
-                }
-                const expiresAt = v.expiryHours && v.expiryHours > 0
-                    ? new Date(nowMs + v.expiryHours * 60 * 60 * 1000).toISOString()
-                    : null;
-                return {
-                    signal_id: anchorSignalId,
-                    user_id: signal.user_id,
-                    broker_account_id: broker.id,
-                    metaapi_account_id: uuid,
-                    symbol,
-                    step_idx: v.stepIdx,
-                    is_buy: v.isBuy,
-                    volume: (0, helpers_1.roundLot)(v.volume, params),
-                    anchor_price: insertAnchor,
-                    trigger_price: triggerPrice,
-                    stoploss: v.stoploss,
-                    takeprofit: v.takeprofit,
-                    slippage: v.slippage,
-                    comment: v.comment,
-                    expert_id: v.expertID ?? null,
-                    expires_at: expiresAt,
-                    status: 'pending',
-                    cwe_close_price: v.cweClosePrice ?? null,
-                };
-            },
-            persistRows: (rows, persistCtx) => (0, helpers_2.persistRangePendingLegRows)(ctx, rows, persistCtx),
-            context: `basket_refresh signal=${signal.id} anchor=${anchorSignalId}`,
-            layerTillClose: (0, rangeLayerTillClose_1.isRangeLayerTillCloseEnabled)(manual),
-        });
-        if (ladderSync.skippedConsumed > 0 || ladderSync.skippedCap > 0) {
-            console.log(`[tradeExecutor] basket_refresh ladder sync signal=${signal.id} anchor=${anchorSignalId}`
-                + ` updated=${ladderSync.updated} inserted=${ladderSync.inserted}`
-                + ` skip_consumed=${ladderSync.skippedConsumed} skip_cap=${ladderSync.skippedCap}`);
+        const plannedImmediateLegs = plan.rangeLayering?.plannedImmediateLegs
+            ?? (0, multiTradeMerge_1.mergePlanImmediateOrders)(plan).length;
+        const plannedRangeLegs = plan.rangeLayering?.activePendingLegs
+            ?? virtualPendings.length;
+        const basketLegCap = plan.rangeLayering?.basketLegCap
+            ?? (plannedImmediateLegs + plannedRangeLegs);
+        // Cap inserts by Total Open Trades. Prefer planned granular immediate count so
+        // OrderSend consolidation cannot inflate the layering budget.
+        const rangeBudget = Math.min(plannedRangeLegs, Math.max(0, basketLegCap - plannedImmediateLegs));
+        const brokerPendingLayering = manual.range_layering_type === 'pending_order'
+            || plan.rangeLayering?.rangeLayeringType === 'pending_order';
+        // Broker Pending mode places live limits via materializeBrokerRangePendingLegs.
+        // Never insert virtual `pending` rungs on refresh — that would race the broker
+        // ladder and fire duplicate market fills beside the same SellLimit/BuyLimit prices.
+        if (brokerPendingLayering) {
+            console.log(`[tradeExecutor] basket_refresh skip virtual ladder insert (broker pending mode)`
+                + ` signal=${signal.id} anchor=${anchorSignalId} planned_range=${rangeBudget}`);
+        }
+        else {
+            const ladderSync = await (0, rangePendingLadderSync_1.syncRangePendingLadderOnBasketRefresh)({
+                supabase: ctx.supabase,
+                scope: { signalId: anchorSignalId, brokerAccountId: broker.id, symbol },
+                virtualPendings,
+                openTradeCount: familyTrades.length,
+                plannedImmediateLegs,
+                plannedRangeLegs: rangeBudget,
+                channelParams: channelParamsForLadder,
+                tpLots: manual.tp_lots,
+                buildInsertRow: (v) => {
+                    const triggerPrice = (0, helpers_1.triggerPriceFor)(v, insertAnchor, digits);
+                    if (!(0, helpers_1.virtualPendingTriggerAllowed)({
+                        triggerPrice,
+                        signalRangeBoundary: plan.rangeLayering?.signalRangeBoundary ?? null,
+                        isBuy: v.isBuy,
+                        stopsZoneLo: zoneLo,
+                        stopsZoneHi: zoneHi,
+                        signalZoneLo: plan.rangeLayering?.signalZoneLo ?? null,
+                        signalZoneHi: plan.rangeLayering?.signalZoneHi ?? null,
+                        useSignalEntryRange: plan.rangeLayering?.useSignalEntryRange === true,
+                    })) {
+                        return null;
+                    }
+                    const expiresAt = v.expiryHours && v.expiryHours > 0
+                        ? new Date(nowMs + v.expiryHours * 60 * 60 * 1000).toISOString()
+                        : null;
+                    return {
+                        signal_id: anchorSignalId,
+                        user_id: signal.user_id,
+                        broker_account_id: broker.id,
+                        metaapi_account_id: uuid,
+                        symbol,
+                        step_idx: v.stepIdx,
+                        is_buy: v.isBuy,
+                        volume: (0, helpers_1.roundLot)(v.volume, params),
+                        anchor_price: insertAnchor,
+                        trigger_price: triggerPrice,
+                        stoploss: v.stoploss,
+                        takeprofit: v.takeprofit,
+                        slippage: v.slippage,
+                        comment: v.comment,
+                        expert_id: v.expertID ?? null,
+                        expires_at: expiresAt,
+                        status: 'pending',
+                        cwe_close_price: v.cweClosePrice ?? null,
+                    };
+                },
+                persistRows: (rows, persistCtx) => (0, helpers_2.persistRangePendingLegRows)(ctx, rows, persistCtx),
+                context: `basket_refresh signal=${signal.id} anchor=${anchorSignalId}`,
+                layerTillClose: (0, rangeLayerTillClose_1.isRangeLayerTillCloseEnabled)(manual),
+            });
+            if (ladderSync.skippedConsumed > 0 || ladderSync.skippedCap > 0) {
+                console.log(`[tradeExecutor] basket_refresh ladder sync signal=${signal.id} anchor=${anchorSignalId}`
+                    + ` updated=${ladderSync.updated} inserted=${ladderSync.inserted}`
+                    + ` skip_consumed=${ladderSync.skippedConsumed} skip_cap=${ladderSync.skippedCap}`);
+            }
         }
     }
     const refreshedSl = typeof effectiveParsed.sl === 'number' && effectiveParsed.sl > 0

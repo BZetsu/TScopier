@@ -36,7 +36,7 @@ export const DEFAULT_MANUAL_SETTINGS: ManualSettings = {
   trade_style: 'single',
   range_trading: false,
   range_percent: 50,
-  range_step_pips: 3,
+  range_step_pips: 0,
   range_distance_pips: 30,
   range_layer_till_close: false,
   layering_mode: 'legacy',

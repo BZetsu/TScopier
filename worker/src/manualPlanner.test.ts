@@ -48,10 +48,37 @@ test('planRangeSplit: pending signal disables range', () => {
   assert.equal(r.fallbackReason, 'range_trading_skip_pending_signal')
 })
 
-test('planRangeSplit: invalid step/distance → fallback', () => {
-  const r = planRangeSplit({ ...baseSplit, stepPips: 0 })
+test('planRangeSplit: invalid distance → fallback', () => {
+  const r = planRangeSplit({ ...baseSplit, distPips: 0 })
   assert.equal(r.fallbackReason, 'range_trading_invalid')
   assert.equal(r.pendingLegs, 0)
+})
+
+test('planRangeSplit: step 0 = Auto fills distance with reserved legs', () => {
+  // 20 legs, 50% → 10 reserved; Auto step = 100/10 = 10; all 10 active
+  const r = planRangeSplit({ ...baseSplit, stepPips: 0 })
+  assert.equal(r.pendingLegs, 10)
+  assert.equal(r.activePendingLegs, 10)
+  assert.equal(r.maxStepIdx, 10)
+  assert.equal(r.effectiveStepPips, 10)
+  assert.equal(r.fallbackReason, 'range_trading_step_auto')
+})
+
+test('planRangeSplit: Auto min 1-pip floor reduces active legs', () => {
+  // 40 legs, 50% → 20 reserved; dist 10 → max 10 active at 1 pip (not 0.5)
+  const r = planRangeSplit({ ...baseSplit, totalLegs: 40, stepPips: 0, distPips: 10 })
+  assert.equal(r.pendingLegs, 20)
+  assert.equal(r.activePendingLegs, 10)
+  assert.equal(r.maxStepIdx, 10)
+  assert.equal(r.effectiveStepPips, 1)
+  assert.equal(r.fallbackReason, 'range_trading_step_auto_min_capped')
+})
+
+test('planRangeSplit: forceAutoStep ignores manual step', () => {
+  const r = planRangeSplit({ ...baseSplit, stepPips: 25, forceAutoStep: true })
+  assert.equal(r.activePendingLegs, 10)
+  assert.equal(r.effectiveStepPips, 10)
+  assert.equal(r.fallbackReason, 'range_trading_step_auto')
 })
 
 test('planRangeSplit: 50% × 20 legs → 10 pendings @ 10 pip step', () => {
@@ -267,6 +294,7 @@ test('planMultiManualOrders: dynamic range trading opens multiple immediates whe
     range_percent: 50,
     range_step_pips: 3,
     range_distance_pips: 30,
+    range_layering_type: 'pending_order',
     tp_lots: [{ label: 'TP1', lot: 0, percent: 100, enabled: true }],
   }
   const plan = planManualOrders({
@@ -359,7 +387,7 @@ test('planMultiManualOrders: pending_order uses step/distance rungs despite brok
   assert.ok(distinct.size >= 3, `expected multiple ladder prices, got ${[...distinct].join(', ')}`)
 })
 
-test('planMultiManualOrders: pending_order round-robin stacks legs across rungs', () => {
+test('planMultiManualOrders: pending_order caps legs to activePending (no reserved overshoot)', () => {
   const manual: ManualSettings = {
     ...baseManual,
     range_trading: true,
@@ -379,11 +407,14 @@ test('planMultiManualOrders: pending_order round-robin stacks legs across rungs'
     ctx: baseCtx,
     commentPrefix: 'TScopier:abc',
   })
+  // 0.5 @ 10% → 10 legs; 70% reserved = 7; maxStepIdx = floor(6/2) = 3 → active 3
   const v = plan.virtualPendings ?? []
-  assert.ok(v.length > 3, `expected more reserved legs than rungs, got ${v.length}`)
-  const stepIdxs = v.map(l => l.stepIdx)
-  assert.ok(stepIdxs.includes(1) && stepIdxs.includes(2) && stepIdxs.includes(3))
-  assert.ok(stepIdxs.filter(s => s === 1).length >= 2, 'round-robin should repeat step 1')
+  assert.equal(plan.rangeLayering?.reservedPendingLegs, 7)
+  assert.equal(plan.rangeLayering?.activePendingLegs, 3)
+  assert.equal(v.length, 3)
+  assert.equal(plan.orders.length + v.length, plan.rangeLayering?.basketLegCap)
+  assert.ok((plan.orders.length + v.length) <= 10)
+  assert.equal(plan.orders.length, 3)
 })
 
 test('planMultiManualOrders: stale burst cap of 1 consolidates dynamic range into one order (regression)', () => {
@@ -581,20 +612,20 @@ test('planManualOrders: XAUUSD range 30/3/50% spans 30 pips across 10 layering l
   assert.equal(rl.maxStepIdx, 10)
   assert.equal(rl.reservedPendingLegs, 10)
   assert.equal(rl.activePendingLegs, 10)
-  assert.ok(Math.abs(rl.stepPriceOffset - 0.03) < 1e-9)
+  assert.ok(Math.abs(rl.stepPriceOffset - 0.3) < 1e-9)
 
   const virtuals = plan.virtualPendings!
   assert.equal(virtuals[0]!.stepIdx, 1)
   assert.equal(virtuals[9]!.stepIdx, 10)
-  assert.ok(Math.abs(virtuals[0]!.stepPriceOffset - 0.03) < 1e-9)
+  assert.ok(Math.abs(virtuals[0]!.stepPriceOffset - 0.3) < 1e-9)
 
   const first = triggerPriceFor(virtuals[0]!, 2650, 2)
   const last = triggerPriceFor(virtuals[9]!, 2650, 2)
-  assert.equal(first, 2649.97)
-  assert.equal(last, 2649.7)
+  assert.equal(first, 2649.7)
+  assert.equal(last, 2647)
 })
 
-test('planManualOrders: XAUUSD cent pip layering at 2350.50 spans 30 pips in 3-pip steps', () => {
+test('planManualOrders: XAUUSD trader-pip layering at 2350.50 spans 30 pips in 3-pip steps', () => {
   const manual: ManualSettings = {
     ...baseManual,
     range_percent: 100,
@@ -616,8 +647,8 @@ test('planManualOrders: XAUUSD cent pip layering at 2350.50 spans 30 pips in 3-p
   assert.equal(virtuals.length, 10)
   const first = triggerPriceFor(virtuals[0]!, anchor, 2)
   const last = triggerPriceFor(virtuals[virtuals.length - 1]!, anchor, 2)
-  assert.equal(first, 2350.47)
-  assert.equal(last, 2350.2)
+  assert.equal(first, 2350.2)
+  assert.equal(last, 2347.5)
 })
 
 test('planManualOrders: range distance caps layering when reserved exceeds floor(dist/step)', () => {
@@ -627,6 +658,7 @@ test('planManualOrders: range distance caps layering when reserved exceeds floor
     range_percent: 50,
     range_step_pips: 3,
     range_distance_pips: 30,
+    range_layering_type: 'pending_order',
   }
   const plan = planManualOrders({
     parsed: { ...baseParsed, entry_price: 2650 },
@@ -645,13 +677,69 @@ test('planManualOrders: range distance caps layering when reserved exceeds floor
   assert.equal(plan.fallback_reason, 'range_trading_distance_capped')
 })
 
-test('planManualOrders: auto layering keeps user step despite huge broker stops floor', () => {
+test('planManualOrders: Total Open Trades hard ceiling 8 instant + 8 layering = 16 (never doubles)', () => {
+  // 1.92 @ 6.25% → 16 legs; 50% reserved → 8+8 when distance covers reserved.
+  const manual: ManualSettings = {
+    ...baseManual,
+    multi_trade_leg_percent: 6.25,
+    multi_trade_max_orders: 32, // stale/oversize basket seed must not raise the ceiling
+    range_percent: 50,
+    range_step_pips: 3,
+    range_distance_pips: 30, // floor(30/3)=10 >= reserved 8
+    range_layering_type: 'pending_order',
+  }
+  const plan = planManualOrders({
+    parsed: { ...baseParsed, entry_price: 2650, tp: [2700] },
+    resolvedSymbol: 'XAUUSD',
+    baseOperation: 'Buy',
+    manual,
+    channelKeywords: null,
+    manualLot: 1.92,
+    ctx: baseCtx,
+    commentPrefix: 'TScopier:abc',
+  })
+  const v = plan.virtualPendings ?? []
+  assert.equal(plan.orders.length, 8)
+  assert.equal(v.length, 8)
+  assert.equal(plan.rangeLayering?.plannedImmediateLegs, 8)
+  assert.equal(plan.rangeLayering?.activePendingLegs, 8)
+  assert.equal(plan.rangeLayering?.basketLegCap, 16)
+  assert.equal(plan.orders.length + v.length, 16)
+  assert.ok(plan.orders.length + v.length <= 16)
+})
+
+test('planManualOrders: Total Open Trades ceiling holds when multi_trade_max_orders is unset', () => {
+  const manual: ManualSettings = {
+    ...baseManual,
+    multi_trade_leg_percent: 6.25,
+    multi_trade_max_orders: undefined,
+    range_percent: 50,
+    range_step_pips: 3,
+    range_distance_pips: 30,
+  }
+  const plan = planManualOrders({
+    parsed: { ...baseParsed, entry_price: 2650, tp: [2700] },
+    resolvedSymbol: 'XAUUSD',
+    baseOperation: 'Buy',
+    manual,
+    channelKeywords: null,
+    manualLot: 1.92,
+    ctx: baseCtx,
+    commentPrefix: 'TScopier:abc',
+  })
+  const v = plan.virtualPendings ?? []
+  assert.equal(plan.rangeLayering?.basketLegCap, 16)
+  assert.equal(plan.orders.length + v.length, 16)
+})
+
+test('planManualOrders: Auto step (0) fills distance with reserved legs', () => {
   const manual: ManualSettings = {
     ...baseManual,
     multi_trade_leg_percent: 3,
     range_percent: 50,
-    range_step_pips: 3,
+    range_step_pips: 0,
     range_distance_pips: 50,
+    range_layering_type: 'auto',
   }
   const plan = planManualOrders({
     parsed: baseParsed,
@@ -666,8 +754,84 @@ test('planManualOrders: auto layering keeps user step despite huge broker stops 
     },
     commentPrefix: 'TScopier:abc',
   })
+  // 5.0 @ 3% → 33 legs; 50% → 17 reserved; Auto step = 50/17
   assert.ok((plan.virtualPendings?.length ?? 0) > 0)
-  assert.equal(plan.rangeLayering?.effectiveStepPips, 3)
+  assert.equal(plan.rangeLayering?.activePendingLegs, 17)
+  assert.ok(Math.abs((plan.rangeLayering?.effectiveStepPips ?? 0) - (50 / 17)) < 1e-9)
+  assert.equal(plan.fallback_reason, 'range_trading_step_auto')
+})
+
+test('planManualOrders: broker pending Auto spreads N unique rungs across full distance', () => {
+  const manual: ManualSettings = {
+    ...baseManual,
+    multi_trade_leg_percent: 3,
+    range_percent: 50,
+    range_step_pips: 0,
+    range_distance_pips: 100,
+    range_layering_type: 'pending_order',
+  }
+  const plan = planManualOrders({
+    parsed: { ...baseParsed, entry_price: 4000 },
+    resolvedSymbol: 'XAUUSD',
+    baseOperation: 'Buy',
+    manual,
+    channelKeywords: null,
+    manualLot: 5.0,
+    ctx: baseCtx,
+    commentPrefix: 'TScopier:abc',
+  })
+  // 5.0 @ 3% → 33 legs; 50% → 17 reserved; Auto → all 17 across 100 pips
+  const virtuals = plan.virtualPendings ?? []
+  assert.equal(plan.rangeLayering?.activePendingLegs, 17)
+  assert.equal(virtuals.length, 17)
+  assert.ok(Math.abs((plan.rangeLayering?.effectiveStepPips ?? 0) - (100 / 17)) < 1e-9)
+  assert.equal(plan.rangeLayering?.effectiveDistancePips, 100)
+  const stepIdxs = virtuals.map(v => v.stepIdx)
+  assert.deepEqual(stepIdxs, Array.from({ length: 17 }, (_, i) => i + 1))
+  assert.equal(new Set(stepIdxs).size, 17)
+
+  const triggerMap = buildRangeLayerTriggerMap({
+    virtualPendings: virtuals,
+    anchor: 4000,
+    digits: 2,
+    rangeLayering: plan.rangeLayering ?? null,
+    pip: plan.pip,
+  })
+  assert.equal(triggerMap.size, 17)
+  const prices = [...triggerMap.values()]
+  assert.equal(new Set(prices.map(p => p.toFixed(2))).size, 17)
+  const span = Math.abs(prices[0]! - prices[prices.length - 1]!)
+  // Nearly full 100-pip span (first rung is one step from anchor; last near boundary)
+  assert.ok(span > 90 * (plan.pip ?? 0.1), `span ${span} should cover most of 100 pips`)
+})
+
+test('planManualOrders: virtual Manual step distance-caps active legs', () => {
+  const manual: ManualSettings = {
+    ...baseManual,
+    multi_trade_leg_percent: 3,
+    range_percent: 50,
+    range_step_pips: 10,
+    range_distance_pips: 50,
+    range_layering_type: 'auto',
+  }
+  const plan = planManualOrders({
+    parsed: baseParsed,
+    resolvedSymbol: 'XAUUSDm',
+    baseOperation: 'Buy',
+    manual,
+    channelKeywords: null,
+    manualLot: 5.0,
+    ctx: {
+      ...baseCtx,
+      stopsLevel: 100,
+    },
+    commentPrefix: 'TScopier:abc',
+  })
+  // 5.0 @ 3% → 33 legs; 50% → 17 reserved; floor(50/10) → 5 active
+  assert.equal(plan.rangeLayering?.reservedPendingLegs, 17)
+  assert.equal(plan.rangeLayering?.activePendingLegs, 5)
+  assert.equal(plan.rangeLayering?.effectiveStepPips, 10)
+  assert.equal(plan.fallback_reason, 'range_trading_distance_capped')
 })
 
 test('planManualOrders: multi + BuyLimit + range uses market immediates but still emits virtual pendings', () => {
@@ -1448,7 +1612,7 @@ test('planManualOrders: use_signal_entry_range uses zone width for range layerin
   assert.ok(rl)
   assert.equal(rl.useSignalEntryRange, true)
   assert.equal(rl.signalRangeBoundary, 4325)
-  assert.equal(rl.effectiveDistancePips, 1000) // 10 price units / 0.01 pip
+  assert.equal(rl.effectiveDistancePips, 100) // 10 price units / 0.1 pip
   assert.equal(rl.activePendingLegs, 5) // 50% of 10 legs reserved; zone width allows all 5
 })
 
@@ -1516,11 +1680,12 @@ test('planManualOrders: signal range buy virtual triggers do not go below zone l
   assert.equal(deepest, boundary)
 })
 
-test('planManualOrders: sell signal zone virtual triggers cluster toward zone high', () => {
+test('planManualOrders: sell signal zone virtual Auto spreads linearly toward zone high', () => {
+  // Auto + signal range uses linear spacing (not zone curve).
   const manual: ManualSettings = {
     ...baseManual,
     range_percent: 100,
-    range_step_pips: 3,
+    range_step_pips: 0,
     range_distance_pips: 30,
     use_signal_entry_range: true,
   }
@@ -1549,16 +1714,57 @@ test('planManualOrders: sell signal zone virtual triggers cluster toward zone hi
     rangeLayering: plan.rangeLayering ?? null,
     pip: plan.pip,
   })
+  assert.ok(triggerMap.size >= 1)
   const first = triggerMap.get(1)!
-  const last = triggerMap.get(virtuals[virtuals.length - 1]!.stepIdx)!
+  const stepOffset = virtuals[0]!.stepPriceOffset
+  assert.ok(Math.abs(first - (anchor + stepOffset)) < 0.02, 'first rung ~ one Auto step from fill')
+  const prices = [...triggerMap.entries()].sort((a, b) => a[0] - b[0]).map(([, p]) => p)
+  assert.equal(new Set(prices.map(p => p.toFixed(2))).size, prices.length)
+  for (const p of prices) {
+    assert.ok(p <= boundary + 1e-9, `trigger ${p} past boundary ${boundary}`)
+    assert.ok(p > anchor, `trigger ${p} should be above sell anchor`)
+  }
+})
+
+test('planManualOrders: sell signal zone broker pending clusters toward zone high', () => {
+  const manual: ManualSettings = {
+    ...baseManual,
+    range_percent: 100,
+    range_step_pips: 3,
+    range_distance_pips: 30,
+    use_signal_entry_range: true,
+    range_layering_type: 'pending_order',
+  }
+  const plan = planManualOrders({
+    parsed: {
+      ...baseParsed,
+      entry_zone_low: 4325,
+      entry_zone_high: 4335,
+    },
+    resolvedSymbol: 'XAUUSD',
+    baseOperation: 'Sell',
+    manual,
+    channelKeywords: null,
+    manualLot: 1.0,
+    ctx: baseCtx,
+    commentPrefix: 'TScopier:abc',
+  })
+  const anchor = 4327
+  const boundary = 4335
+  const virtuals = plan.virtualPendings ?? []
+  assert.ok(virtuals.length >= 2)
+  const triggerMap = buildRangeLayerTriggerMap({
+    virtualPendings: virtuals,
+    anchor,
+    digits: 2,
+    rangeLayering: plan.rangeLayering ?? null,
+    pip: plan.pip,
+  })
+  const first = triggerMap.get(1)!
+  const maxIdx = plan.rangeLayering?.maxStepIdx ?? virtuals[virtuals.length - 1]!.stepIdx
+  const last = triggerMap.get(maxIdx)!
   const stepOffset = virtuals[0]!.stepPriceOffset
   assert.equal(first, anchor + stepOffset, 'first rung must be exactly one configured step from fill')
   assert.ok(first - anchor < last - anchor, 'deepest rung should be further from anchor than first')
   assert.equal(last, boundary)
-  if (virtuals.length >= 3) {
-    const earlyGap = (triggerMap.get(2) ?? 0) - first
-    const prevStep = virtuals[virtuals.length - 2]!.stepIdx
-    const lateGap = last - (triggerMap.get(prevStep) ?? 0)
-    assert.ok(lateGap >= earlyGap, 'late rung spacing should be at least as wide as early spacing')
-  }
 })

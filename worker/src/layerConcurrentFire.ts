@@ -23,14 +23,18 @@ export function adverseDistanceFromAnchor(
   return Math.max(0, ask - anchor)
 }
 
-/** Derive one-step price offset from materialized pending rows in a basket. */
+/** Derive one-step price offset from materialized pending rows in a basket.
+ * Prefer step 1 (exactly one configured step from the fill anchor) so zone-curve
+ * compression on deep rungs cannot shrink the fire budget and over-fire.
+ */
 export function stepPriceOffsetForBasket(
   legs: Array<Pick<LayerBurstLeg, 'step_idx' | 'anchor_price' | 'trigger_price' | 'is_buy'>>,
 ): number | null {
   if (!legs.length) return null
 
   const isBuy = legs[0]!.is_buy
-  let best: number | null = null
+  let fromStep1: number | null = null
+  let fallback: number | null = null
 
   for (const leg of legs) {
     const anchor = Number(leg.anchor_price)
@@ -45,10 +49,14 @@ export function stepPriceOffsetForBasket(
     const offset = span / stepIdx
     if (!Number.isFinite(offset) || offset <= 0) continue
     const rounded = Number(offset.toFixed(8))
-    if (best == null || rounded < best) best = rounded
+    if (stepIdx === 1) {
+      fromStep1 = rounded
+      break
+    }
+    if (fallback == null || rounded > fallback) fallback = rounded
   }
 
-  return best
+  return fromStep1 ?? fallback
 }
 
 /** Floor distance/step with tolerance for broker price rounding. */

@@ -9,7 +9,7 @@ import {
 } from './fxsocketClient'
 import { apiForFxsocketAccount, loadPlatformByFxsocketId, type PlatformByFxsocketId } from './mtApiByAccount'
 import { autoManagementTradeSnapshot } from './autoManagement'
-import { tryApplyBasketFollowUpToNewFill } from './basketModFollowUp'
+import { tryApplyBasketFollowUpToNewFill, symbolsCompatibleForBasket } from './basketModFollowUp'
 import { loadOpenBasketLegs, upsertBasketReconcileJob } from './basketSlTpReconcile'
 import { resolveFreshBasketReconcileTargets } from './basketReconcileTargets'
 import { resolveEffectiveBasketStops } from './basketEffectiveStops'
@@ -36,6 +36,7 @@ import {
   shouldBlockVirtualLegFire,
 } from './rangePendingFireGuard'
 import { isMtBridgeGlitchMessage } from './brokerConnectError'
+import { modifyLegSlTpWithFallback } from './orderModifySafe'
 import {
   deleteRangePendingLegsForBasket,
   reconcileBasketFlatFromBroker,
@@ -279,69 +280,8 @@ export function fillWithinTriggerBand(args: {
   return ok ? { ok: true } : { ok: false, reason: 'fill_outside_trigger_band' }
 }
 
-export function evaluateTpTouch(args: {
-  direction: string
-  tps: number[]
-  bid: number
-  ask: number
-}): { touched: boolean; triggerPrice: number | null; triggerSide: 'bid' | 'ask' | null } {
-  const { direction, tps, bid, ask } = args
-  const cleanTps = tps.filter(tp => Number.isFinite(tp) && tp > 0)
-  if (!cleanTps.length) return { touched: false, triggerPrice: null, triggerSide: null }
-  if (direction === 'buy') {
-    const triggerPrice = Math.min(...cleanTps)
-    return { touched: bid >= triggerPrice, triggerPrice, triggerSide: 'bid' }
-  }
-  if (direction === 'sell') {
-    const triggerPrice = Math.max(...cleanTps)
-    return { touched: ask <= triggerPrice, triggerPrice, triggerSide: 'ask' }
-  }
-  return { touched: false, triggerPrice: null, triggerSide: null }
-}
-
-/**
- * Decide whether a basket's layering must be locked when "layer till close"
- * is OFF. Independent triggers:
- *  1. live quote touches an open trade's TP (catches the touch in real time)
- *  2. the basket is PARTIALLY closed — some trades closed while others remain
- *     open. A broker-side TP fill closes its trades within seconds, so by the
- *     time the monitor scans, the touched TP rows are no longer 'open' and
- *     trigger (1) can never fire. A partial close is sticky evidence that a
- *     TP/CWE/partial close happened and survives that race.
- *  3. the basket is FULLY flat (openCount=0, closedCount>0) — mass closes can
- *     go 17→0 in one burst and never look "partial"; without this, virtual
- *     ladder rows keep firing and re-open Gold after the basket was closed.
- */
-export function shouldLockBasketLayering(args: {
-  direction: string
-  openTps: number[]
-  openCount: number
-  closedCount: number
-  bid: number
-  ask: number
-}): {
-  lock: boolean
-  reason: 'tp_touched' | 'basket_partially_closed' | 'basket_fully_closed' | null
-  triggerPrice: number | null
-  triggerSide: 'bid' | 'ask' | null
-} {
-  const { direction, openTps, openCount, closedCount, bid, ask } = args
-  if (openCount <= 0) {
-    if (closedCount > 0) {
-      return { lock: true, reason: 'basket_fully_closed', triggerPrice: null, triggerSide: null }
-    }
-    return { lock: false, reason: null, triggerPrice: null, triggerSide: null }
-  }
-
-  const touch = evaluateTpTouch({ direction, tps: openTps, bid, ask })
-  if (touch.touched) {
-    return { lock: true, reason: 'tp_touched', triggerPrice: touch.triggerPrice, triggerSide: touch.triggerSide }
-  }
-  if (closedCount > 0) {
-    return { lock: true, reason: 'basket_partially_closed', triggerPrice: null, triggerSide: null }
-  }
-  return { lock: false, reason: null, triggerPrice: null, triggerSide: null }
-}
+import { shouldLockBasketLayering } from './rangeBasketLayeringLock'
+export { evaluateTpTouch, shouldLockBasketLayering } from './rangeBasketLayeringLock'
 
 export class VirtualPendingMonitor {
   private loop: MonitorLoopHandle | null = null
@@ -653,12 +593,12 @@ export class VirtualPendingMonitor {
     // Scan open AND closed trades: a TP fill closes its rows at the broker
     // within seconds, so an open-only scan misses the touch (the remaining
     // open trades carry deeper TPs that were never reached).
+    // Match XAUUSD ↔ XAUUSDm in memory (do not require exact symbol equality).
     const { data, error } = await this.supabase
       .from('trades')
-      .select('signal_id,broker_account_id,user_id,direction,tp,status')
+      .select('signal_id,broker_account_id,user_id,direction,tp,status,symbol')
       .in('signal_id', signalIds)
       .in('broker_account_id', brokerIds)
-      .eq('symbol', symbol)
       .in('status', ['open', 'closed'])
 
     if (error) {
@@ -667,7 +607,8 @@ export class VirtualPendingMonitor {
     }
 
     const byBasket = new Map<string, BasketOpenTpRow[]>()
-    for (const row of (data ?? []) as BasketOpenTpRow[]) {
+    for (const row of (data ?? []) as Array<BasketOpenTpRow & { symbol?: string | null }>) {
+      if (row.symbol && !symbolsCompatibleForBasket(symbol, row.symbol)) continue
       const basketKey = `${row.signal_id}|${row.broker_account_id}`
       const arr = byBasket.get(basketKey) ?? []
       arr.push(row)
@@ -1225,12 +1166,21 @@ export class VirtualPendingMonitor {
       }
       const latencyMs = Date.now() - t0
       console.log(
-        `[virtualPendingMonitor] virtual leg fired signal=${leg.signal_id} stepIdx=${leg.step_idx} trigger=${leg.trigger_price} ref=${refPrice} ticket=${result.ticket} latency=${latencyMs}ms`,
+        `[virtualPendingMonitor] virtual leg fired signal=${leg.signal_id} stepIdx=${leg.step_idx} trigger=${leg.trigger_price} ref=${refPrice} ticket=${result.ticket} latency=${latencyMs}ms`
+        + (result.openedNaked ? ' naked=1' : ''),
       )
       const entryPx = result.openPrice ?? refPrice ?? null
-      const openSl = result.stopLoss ?? args.stoploss ?? null
+      const desiredSl = Number(args.stoploss) > 0 ? Number(args.stoploss) : null
+      const desiredTp = Number(args.takeprofit) > 0 ? Number(args.takeprofit) : null
+      const brokerSl = Number(result.stopLoss) > 0 ? Number(result.stopLoss) : null
+      const brokerTp = Number(result.takeProfit) > 0 ? Number(result.takeProfit) : null
+      // Persist only what the broker actually has. Intended stops on a naked
+      // open must not be written yet — that made skipAlreadySynced / follow-up
+      // think the leg was done while MT still had SL=0/TP=0.
+      const persistSl = result.openedNaked ? null : (brokerSl ?? desiredSl)
+      const persistTp = result.openedNaked ? null : (brokerTp ?? desiredTp)
       const manual = await this.loadManualSettingsForLeg(leg.broker_account_id, channelIdForTrade)
-      const autoBeCols = autoManagementTradeSnapshot(manual, entryPx, openSl)
+      const autoBeCols = autoManagementTradeSnapshot(manual, entryPx, desiredSl ?? persistSl)
       const { data: insTrade, error: insErr } = await this.supabase.from('trades').insert({
         user_id: leg.user_id,
         signal_id: leg.signal_id,
@@ -1240,8 +1190,8 @@ export class VirtualPendingMonitor {
         symbol: leg.symbol,
         direction: leg.is_buy ? 'buy' : 'sell',
         entry_price: entryPx,
-        sl: openSl,
-        tp: result.takeProfit ?? args.takeprofit ?? null,
+        sl: persistSl,
+        tp: persistTp,
         lot_size: result.lots ?? args.volume,
         status: 'open',
         opened_at: new Date().toISOString(),
@@ -1304,6 +1254,41 @@ export class VirtualPendingMonitor {
         && ticketNum > 0
         && hasFxsocketConfigured()
       ) {
+        // Naked open (invalid-stops fallback or broker ignored stops): assign now.
+        if (result.openedNaked && (desiredSl || desiredTp)) {
+          try {
+            const outcome = await modifyLegSlTpWithFallback(
+              api,
+              leg.metaapi_account_id,
+              ticketNum,
+              desiredSl ?? 0,
+              desiredTp ?? 0,
+              desiredTp ? { deepestTp: desiredTp } : undefined,
+            )
+            if (outcome.ok) {
+              const dbPatch: Record<string, number | null> = {}
+              if (outcome.slApplied && outcome.appliedSl > 0) dbPatch.sl = outcome.appliedSl
+              if (outcome.tpApplied && outcome.appliedTp > 0) dbPatch.tp = outcome.appliedTp
+              if (Object.keys(dbPatch).length > 0) {
+                await this.supabase.from('trades').update(dbPatch).eq('id', tradeRowId)
+              }
+              console.log(
+                `[virtualPendingMonitor] post-naked stops assigned leg=${leg.id} ticket=${ticketNum}`
+                + ` sl=${outcome.appliedSl || 0} tp=${outcome.appliedTp || 0} mode=${outcome.mode}`,
+              )
+            } else {
+              console.warn(
+                `[virtualPendingMonitor] post-naked stops failed leg=${leg.id} ticket=${ticketNum}:`
+                + ` ${outcome.error ?? 'unknown'}`,
+              )
+              await this.enqueueReconcileForLegBasket(leg, channelIdForTrade)
+            }
+          } catch (assignErr) {
+            console.warn(`[virtualPendingMonitor] post-naked stops error leg=${leg.id}:`, assignErr)
+            await this.enqueueReconcileForLegBasket(leg, channelIdForTrade)
+          }
+        }
+
         try {
           await tryApplyBasketFollowUpToNewFill(this.supabase, api, {
             userId: leg.user_id,
@@ -1314,8 +1299,9 @@ export class VirtualPendingMonitor {
             ticket: ticketNum,
             tradeRowId,
             entryPrice: entryPx,
-            existingSl: result.stopLoss ?? args.stoploss ?? null,
-            existingTp: result.takeProfit ?? args.takeprofit ?? null,
+            // Force follow-up OrderModify when the broker open was naked.
+            existingSl: result.openedNaked ? null : (brokerSl ?? desiredSl),
+            existingTp: result.openedNaked ? null : (brokerTp ?? desiredTp),
             isBuy: leg.is_buy,
           })
         } catch (hookErr) {
@@ -1336,6 +1322,11 @@ export class VirtualPendingMonitor {
           )
           await this.enqueueReconcileForLegBasket(leg, channelIdForTrade)
         }
+        // Always enqueue reconcile after a naked open so the monitor retries
+        // if OrderModify raced the fill.
+        if (result.openedNaked) {
+          await this.enqueueReconcileForLegBasket(leg, channelIdForTrade)
+        }
       } else if (tradeRowId && Number.isFinite(ticketNum) && ticketNum > 0) {
         console.warn(
           `[virtualPendingMonitor] skip TP rebalance leg=${leg.id} signal=${leg.signal_id}: fxsocket not configured`,
@@ -1354,6 +1345,9 @@ export class VirtualPendingMonitor {
             trigger_price: leg.trigger_price,
             ref_price: refPrice,
             fill_price: entryPx,
+            opened_naked: result.openedNaked === true,
+            desired_sl: desiredSl,
+            desired_tp: desiredTp,
           } as unknown as Record<string, unknown>,
           response_payload: { ticket: result.ticket, latency_ms: latencyMs, claimed_by: this.hostId },
         })
@@ -1787,29 +1781,42 @@ export class VirtualPendingMonitor {
   /**
    * Send a market order; if the broker rejects with "Invalid stops" despite our
    * clamp/sanitize passes, retry once with SL=0 and TP=0 so the leg actually
-   * opens. The user has explicitly opted into averaging-down by enabling range
-   * trading — opening the leg without stops is strictly preferable to silently
-   * dropping it. Subsequent SL/TP management can be done by the signal-modify
-   * flow once the position is on the books.
+   * opens. Caller must then OrderModify the intended stops — do not trust DB
+   * alone, which previously recorded intended SL/TP while the broker stayed naked.
    */
   private async sendWithStopsFallback(
     leg: PendingRow,
     args: OrderSendArgs,
-  ): Promise<{ ticket?: number; openPrice?: number; lots?: number; stopLoss?: number; takeProfit?: number }> {
+  ): Promise<{
+    ticket?: number
+    openPrice?: number
+    lots?: number
+    stopLoss?: number
+    takeProfit?: number
+    openedNaked: boolean
+  }> {
     const api = apiForFxsocketAccount(this.platformByUuid, leg.metaapi_account_id)
     if (!api) throw new Error('api unavailable')
+    const requestedSl = Number(args.stoploss) || 0
+    const requestedTp = Number(args.takeprofit) || 0
+    const requestedStops = requestedSl > 0 || requestedTp > 0
     try {
-      return await api.orderSend(leg.metaapi_account_id, args)
+      const result = await api.orderSend(leg.metaapi_account_id, args)
+      const brokerSl = Number(result.stopLoss) || 0
+      const brokerTp = Number(result.takeProfit) || 0
+      const openedNaked = requestedStops && !(brokerSl > 0) && !(brokerTp > 0)
+      return { ...result, openedNaked }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       const isInvalidStops = /invalid\s+stops/i.test(msg)
-      const hasStops = (Number(args.stoploss) || 0) > 0 || (Number(args.takeprofit) || 0) > 0
+      const hasStops = requestedStops
       if (isInvalidStops && hasStops) {
         console.warn(
           `[virtualPendingMonitor] retry without stops leg=${leg.id} signal=${leg.signal_id} stepIdx=${leg.step_idx} reason="${msg}" (sl=${args.stoploss} tp=${args.takeprofit})`,
         )
         const fallback: OrderSendArgs = { ...args, stoploss: 0, takeprofit: 0 }
-        return await api.orderSend(leg.metaapi_account_id, fallback)
+        const result = await api.orderSend(leg.metaapi_account_id, fallback)
+        return { ...result, openedNaked: true }
       }
       throw err
     }

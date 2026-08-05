@@ -196,6 +196,9 @@ export interface PlannerRangeLayering {
   maxStepIdx: number
   reservedPendingLegs: number
   activePendingLegs: number
+  /** Hard open-trade ceiling for this basket: immediateLegs + activePendingLegs. */
+  basketLegCap?: number
+  plannedImmediateLegs?: number
   useSignalEntryRange?: boolean
   signalRangeBoundary?: number | null
   signalZoneLo?: number | null
@@ -276,6 +279,11 @@ export interface PlanRangeSplitArgs {
   hasSignalAnchor: boolean
   /** Pending Order: keep user step/distance; do not expand step for broker SL/TP minimums. */
   skipMinStepExpansion?: boolean
+  /**
+   * Force Auto step (distance / reserved) even when a manual step is stored.
+   * Used for virtual layering mode where the Step field is hidden.
+   */
+  forceAutoStep?: boolean
 }
 
 export interface PlanRangeSplitResult {

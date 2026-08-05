@@ -22,13 +22,21 @@ export function resolveBrokerRangeLadderPricing(args: {
   const rl = args.rangeLayering
   if (!rl) return null
 
-  const stepPips = Math.max(0, Number(rl.rangeStepPips ?? 0))
+  // Prefer explicit user step when set; fall back to planner effectiveStepPips (Auto).
+  const configuredStep = Math.max(0, Number(rl.rangeStepPips ?? 0))
+  const effectiveMeta = Number(rl.effectiveStepPips)
+  const stepPips = configuredStep > 0
+    ? configuredStep
+    : (Number.isFinite(effectiveMeta) && effectiveMeta > 0 ? effectiveMeta : 0)
   if (stepPips <= 0) return null
 
   let distPips = Math.max(0, Number(rl.rangeDistancePips ?? 0))
-  if (rl.useSignalEntryRange === true) {
-    const zoneDist = Number(rl.effectiveDistancePips ?? 0)
-    if (Number.isFinite(zoneDist) && zoneDist > 0) distPips = zoneDist
+  const zoneOrEffective = Number(rl.effectiveDistancePips ?? 0)
+  if (Number.isFinite(zoneOrEffective) && zoneOrEffective > 0) {
+    // Prefer distance used by the planner split (signal zone or resolved manual).
+    distPips = zoneOrEffective
+  } else if (rl.useSignalEntryRange === true) {
+    // legacy fallback
   }
   if (distPips <= 0) return null
 
@@ -43,8 +51,14 @@ export function resolveBrokerRangeLadderPricing(args: {
   const pip = resolvePipSize({ symbol: args.symbol, brokerPipPrice: pipQuote.pipPrice })
   if (!Number.isFinite(pip) || pip <= 0) return null
 
-  const stepPriceOffset = stepPips * pip
-  const maxStepIdx = Math.max(1, Math.floor(distPips / stepPips))
+  const metaOffset = Number(rl.stepPriceOffset)
+  const stepPriceOffset = configuredStep <= 0 && Number.isFinite(metaOffset) && metaOffset > 0
+    ? metaOffset
+    : stepPips * pip
+  const metaMax = Number(rl.maxStepIdx)
+  const maxStepIdx = configuredStep <= 0 && Number.isFinite(metaMax) && metaMax > 0
+    ? Math.floor(metaMax)
+    : Math.max(1, Math.floor(distPips / stepPips))
 
   return { stepPips, distPips, pip, stepPriceOffset, maxStepIdx, digits, point }
 }

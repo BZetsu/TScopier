@@ -4,6 +4,7 @@ exports.looksLikeStructuredEntrySignal = looksLikeStructuredEntrySignal;
 exports.trainedManagementAliases = trainedManagementAliases;
 exports.channelHasTrainedManagement = channelHasTrainedManagement;
 exports.looksLikeExplicitFullCloseCommand = looksLikeExplicitFullCloseCommand;
+exports.looksLikeDeletePendingsCommand = looksLikeDeletePendingsCommand;
 exports.looksLikeConditionalCloseSuggestion = looksLikeConditionalCloseSuggestion;
 exports.looksLikeChannelManagementUpdate = looksLikeChannelManagementUpdate;
 exports.partialCloseFractionFromMessage = partialCloseFractionFromMessage;
@@ -89,6 +90,27 @@ function looksLikeExplicitFullCloseCommand(message, ctx) {
         || /\b(?:flatten|kill\s+zones?)\b/i.test(t)
         || /\bexit\s+(?:trade|trades|position|positions|long|short|now)\b/i.test(t));
 }
+/**
+ * Cancel/delete pending limit cues (reply-scoped at execute time).
+ * Includes channel `update.delete` / `delete_all` keywords.
+ */
+function looksLikeDeletePendingsCommand(message, ctx) {
+    const t = String(message ?? '').replace(/\s+/g, ' ').trim();
+    if (!t)
+        return false;
+    if (/\b(?:delete|cancel|remove)\s+(?:(?:buy|sell)\s+)?(?:limit|pending|order)s?\b/i.test(t)
+        || /\b(?:cancel|delete)\s+(?:limit|pending)\b/i.test(t)
+        || /\b(?:trade|setup)\s+invalid\b/i.test(t)
+        || /\binvalid\s+(?:trade|setup)\b/i.test(t)) {
+        return true;
+    }
+    const delim = ctx?.channelKeywords?.additional?.delimiters ?? '';
+    const deleteAliases = Array.from(new Set([
+        ...splitKeywordAliases(ctx?.channelKeywords?.update?.delete ?? '', delim),
+        ...splitKeywordAliases(ctx?.channelKeywords?.additional?.delete_all ?? '', delim),
+    ].filter(Boolean)));
+    return deleteAliases.length > 0 && hasAnyKeyword(t, deleteAliases);
+}
 /** Optional/advisory close language; should not auto-execute a full close. */
 function looksLikeConditionalCloseSuggestion(message) {
     const t = String(message ?? '')
@@ -148,6 +170,8 @@ function managementAliasesFromKeywords(keywords) {
         ...splitKeywordAliases(keywords.update.set_tp, delim),
         ...splitKeywordAliases(keywords.update.adjust_tp, delim),
         ...splitKeywordAliases(keywords.additional.close_all, delim),
+        ...splitKeywordAliases(keywords.update.delete, delim),
+        ...splitKeywordAliases(keywords.additional.delete_all, delim),
     ].map(a => a.trim()).filter(Boolean)));
 }
 /** True when text looks like a trade-management instruction (not a fresh entry). */
@@ -164,6 +188,8 @@ function looksLikeChannelManagementUpdate(text, channelKeywords, lexicon) {
     // safe — recognize them even when the channel has trained management config,
     // otherwise "SL to Entry" is misrouted to the AI entry parser.
     if (multilingualManagementTerms_1.COMMON_BREAKEVEN_PHRASES.some(p => (0, multilingualSignalTerms_1.messageContainsKeyword)(t, p)))
+        return true;
+    if (looksLikeDeletePendingsCommand(t, { channelKeywords }))
         return true;
     if (!channelHasTrainedManagement(channelKeywords, lexicon)) {
         if ((0, multilingualManagementTerms_1.textLooksLikeMultilingualManagement)(t))

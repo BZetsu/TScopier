@@ -290,6 +290,8 @@ function riskNumberRules(
     case 'range_percent':
       return { min: 0, max: 100 }
     case 'range_step_pips':
+      // Manual mode only — Auto is selected via dropdown (stores 0).
+      return { min: 1, positive: true }
     case 'range_distance_pips':
       return { min: 1 }
     case 'static_layer_count':
@@ -432,7 +434,7 @@ function normalizeManualSettings(
     return Number.isFinite(v) ? v : fallback
   }
   const rangePercent = Math.max(0, Math.min(100, readNumber('range_percent', DEFAULT_MANUAL_SETTINGS.range_percent ?? 50)))
-  const rangeStepPips = Math.max(0, readNumber('range_step_pips', DEFAULT_MANUAL_SETTINGS.range_step_pips ?? 3))
+  const rangeStepPips = Math.max(0, readNumber('range_step_pips', DEFAULT_MANUAL_SETTINGS.range_step_pips ?? 0))
   const rangeDistancePips = Math.max(0, readNumber('range_distance_pips', DEFAULT_MANUAL_SETTINGS.range_distance_pips ?? 30))
   const rangeLayerTillClose = (j as Record<string, unknown>).range_layer_till_close === true
   const rangeLayeringTypeRaw = String((j as Record<string, unknown>).range_layering_type ?? 'auto').toLowerCase()
@@ -441,7 +443,8 @@ function normalizeManualSettings(
   const useSignalEntryRange = (j as Record<string, unknown>).use_signal_entry_range === true
   const layeringModeSettings = normalizeLayeringModeSettings({
     ...(j as Record<string, unknown>),
-    range_step_pips: rangeStepPips,
+    // dynamic_step fallback needs a positive value; Auto (0) maps to default dynamic step.
+    range_step_pips: rangeStepPips > 0 ? rangeStepPips : 3,
   })
   const closeWorseEntries = (j as Record<string, unknown>).close_worse_entries === true
   const closeWorseEntriesPips = Math.max(0, readNumber('close_worse_entries_pips', DEFAULT_MANUAL_SETTINGS.close_worse_entries_pips ?? 30))
@@ -487,6 +490,7 @@ function normalizeManualSettings(
               percent: rangePercent,
               stepPips: rangeStepPips,
               distancePips: rangeDistancePips,
+              useSignalEntryRange: useSignalEntryRange,
             }
           : undefined,
       })
@@ -888,7 +892,6 @@ export function AccountConfigPage() {
   )
   const [configAccount, setConfigAccount] = useState<BrokerAccount | null>(null)
   const [layeringCapabilities, setLayeringCapabilities] = useState<LayeringModeCapabilities>(LEGACY_ONLY_LAYERING_CAPABILITIES)
-  const [layeringCapabilitiesLoading, setLayeringCapabilitiesLoading] = useState(false)
   const configAccountTotalBalance = useMemo(
     () => (configAccount ? resolveBrokerTotalBalance(configAccount) : null),
     [configAccount],
@@ -1000,29 +1003,19 @@ export function AccountConfigPage() {
     let cancelled = false
     if (!configAccount?.id) {
       void Promise.resolve().then(() => {
-        if (!cancelled) {
-          setLayeringCapabilities(LEGACY_ONLY_LAYERING_CAPABILITIES)
-          setLayeringCapabilitiesLoading(false)
-        }
+        if (!cancelled) setLayeringCapabilities(LEGACY_ONLY_LAYERING_CAPABILITIES)
       })
       return () => {
         cancelled = true
       }
     }
     const accountId = configAccount.id
-    void Promise.resolve()
-      .then(() => {
-        if (!cancelled) setLayeringCapabilitiesLoading(true)
-        return fetchLayeringModeCapabilities(accountId)
-      })
+    void fetchLayeringModeCapabilities(accountId)
       .then(capabilities => {
         if (!cancelled) setLayeringCapabilities(capabilities)
       })
       .catch(() => {
         if (!cancelled) setLayeringCapabilities(LEGACY_ONLY_LAYERING_CAPABILITIES)
-      })
-      .finally(() => {
-        if (!cancelled) setLayeringCapabilitiesLoading(false)
       })
     return () => {
       cancelled = true
@@ -1063,27 +1056,13 @@ export function AccountConfigPage() {
 
   const keywordFiltersEnabled = canUsePlanFeature('channel_keyword_filters')
   const multiTradeStyleEnabled = canUsePlanFeature('multi_trade_style')
-  const selectedLayeringMode = channelManualSettings.layering_mode === 'static' || channelManualSettings.layering_mode === 'dynamic'
-    ? channelManualSettings.layering_mode
-    : 'legacy'
+  // Static/dynamic layering modes stay legacy-only in the UI for now.
+  const selectedLayeringMode = 'legacy' as const
   const selectedLayeringMechanism = channelManualSettings.range_layering_type === 'pending_order'
     ? 'pending_order'
     : 'auto'
-  const selectedLayeringOptimizationStrategy =
-    channelManualSettings.layering_optimization_strategy === 'reduce_layers'
-      || channelManualSettings.layering_optimization_strategy === 'widen_step'
-      || channelManualSettings.layering_optimization_strategy === 'adjust_percent'
-      ? channelManualSettings.layering_optimization_strategy
-      : 'adjust_percent'
   const selectedModeAutoSelectable = layeringMechanismIsSelectable(layeringCapabilities, selectedLayeringMode, 'auto')
   const selectedModePendingSelectable = layeringMechanismIsSelectable(layeringCapabilities, selectedLayeringMode, 'pending_order')
-  const selectedModeCapabilityHint = selectedLayeringMode === 'legacy'
-    ? 'Uses the existing TS Copier range-layering behavior.'
-    : layeringCapabilities.layeringModes[selectedLayeringMode].reasons.length > 0
-      ? layeringCapabilities.layeringModes[selectedLayeringMode].reasons.join(', ')
-      : selectedLayeringMode === 'static'
-        ? 'Splits the original signal range into a fixed total number of layers.'
-        : 'Uses the first confirmed broker fill as the anchor and places additional layers at a fixed pip distance.'
 
   const previewManualLot = useMemo(() => {
     const ms = channelManualSettings
@@ -1281,8 +1260,9 @@ export function AccountConfigPage() {
       ? {
           enabled: true,
           percent: Number(ms.range_percent ?? 50) || 0,
-          stepPips: Number(ms.range_step_pips ?? DEFAULT_MANUAL_SETTINGS.range_step_pips) || 0,
+          stepPips: Number(ms.range_step_pips ?? 0) || 0,
           distancePips: Number(ms.range_distance_pips ?? DEFAULT_MANUAL_SETTINGS.range_distance_pips) || 0,
+          useSignalEntryRange: ms.use_signal_entry_range === true,
         }
       : undefined
     return estimateMultiTradeOrderCount({ manualLot: previewManualLot, legPercent: legPct, range })
@@ -1293,6 +1273,7 @@ export function AccountConfigPage() {
     channelManualSettings.range_percent,
     channelManualSettings.range_step_pips,
     channelManualSettings.range_distance_pips,
+    channelManualSettings.use_signal_entry_range,
   ])
 
   const multiTradeTotalOpenTradesLabel = useMemo(() => {
@@ -1919,34 +1900,23 @@ export function AccountConfigPage() {
   const setManual = (patch: Partial<ManualSettings>) => {
     patchSelectedChannel(current => ({
       ...current,
-      manualSettings: { ...current.manualSettings, ...patch },
+      manualSettings: {
+        ...current.manualSettings,
+        ...patch,
+        layering_mode: 'legacy',
+        layering_optimization_strategy: 'adjust_percent',
+      },
     }))
   }
 
   const validateLayeringCapabilitiesForSave = (draft: AccountConfigDraft, channelIds: string[]): string | null => {
     for (const id of channelIds) {
       const ms = draft.channelConfigs[id]?.manualSettings
-      const mode = ms?.layering_mode === 'static' || ms?.layering_mode === 'dynamic'
-        ? ms.layering_mode
-        : 'legacy'
-      if (mode === 'legacy') continue
       const mechanism = ms?.range_layering_type === 'pending_order' ? 'pending_order' : 'auto'
-      if (!layeringMechanismIsSelectable(layeringCapabilities, mode, mechanism)) {
+      if (!layeringMechanismIsSelectable(layeringCapabilities, 'legacy', mechanism)) {
         return mechanism === 'pending_order'
           ? 'Broker pending orders are not enabled for this layering mode on this account.'
           : 'Virtual execution is not enabled for this layering mode on this account.'
-      }
-      const staticCount = Number(ms?.static_layer_count)
-      if (mode === 'static' && (!Number.isInteger(staticCount) || staticCount < 1 || staticCount > 20)) {
-        return 'Static total layer count must be an integer from 1 to 20.'
-      }
-      const dynamicStep = Number(ms?.dynamic_step_pips)
-      const dynamicMax = Number(ms?.dynamic_max_layers)
-      if (mode === 'dynamic' && (!Number.isFinite(dynamicStep) || dynamicStep <= 0)) {
-        return 'Dynamic step size must be greater than zero.'
-      }
-      if (mode === 'dynamic' && (!Number.isInteger(dynamicMax) || dynamicMax < 1 || dynamicMax > 20)) {
-        return 'Dynamic maximum total layers must be an integer from 1 to 20.'
       }
     }
     return null
@@ -2131,15 +2101,12 @@ export function AccountConfigPage() {
       const { error: layeringSaveError } = await updateLayeringSettings({
         broker_account_id: configAccount.id,
         channel_id: channelId,
-        layering_mode: settings.layering_mode === 'static' || settings.layering_mode === 'dynamic' ? settings.layering_mode : 'legacy',
+        layering_mode: 'legacy',
         range_layering_type: settings.range_layering_type === 'pending_order' ? 'pending_order' : 'auto',
         static_layer_count: Number(settings.static_layer_count ?? DEFAULT_MANUAL_SETTINGS.static_layer_count ?? 5),
         dynamic_step_pips: Number(settings.dynamic_step_pips ?? DEFAULT_MANUAL_SETTINGS.dynamic_step_pips ?? 3),
         dynamic_max_layers: Number(settings.dynamic_max_layers ?? DEFAULT_MANUAL_SETTINGS.dynamic_max_layers ?? 5),
-        layering_optimization_strategy:
-          settings.layering_optimization_strategy === 'reduce_layers' || settings.layering_optimization_strategy === 'widen_step'
-            ? settings.layering_optimization_strategy
-            : 'adjust_percent',
+        layering_optimization_strategy: 'adjust_percent',
       })
       if (layeringSaveError) {
         setConfigSaving(false)
@@ -2170,17 +2137,12 @@ export function AccountConfigPage() {
     if (!channelIds.length && normalizedFallbackManual) {
       const { error: layeringSaveError } = await updateLayeringSettings({
         broker_account_id: configAccount.id,
-        layering_mode: normalizedFallbackManual.layering_mode === 'static' || normalizedFallbackManual.layering_mode === 'dynamic'
-          ? normalizedFallbackManual.layering_mode
-          : 'legacy',
+        layering_mode: 'legacy',
         range_layering_type: normalizedFallbackManual.range_layering_type === 'pending_order' ? 'pending_order' : 'auto',
         static_layer_count: Number(normalizedFallbackManual.static_layer_count ?? DEFAULT_MANUAL_SETTINGS.static_layer_count ?? 5),
         dynamic_step_pips: Number(normalizedFallbackManual.dynamic_step_pips ?? DEFAULT_MANUAL_SETTINGS.dynamic_step_pips ?? 3),
         dynamic_max_layers: Number(normalizedFallbackManual.dynamic_max_layers ?? DEFAULT_MANUAL_SETTINGS.dynamic_max_layers ?? 5),
-        layering_optimization_strategy:
-          normalizedFallbackManual.layering_optimization_strategy === 'reduce_layers' || normalizedFallbackManual.layering_optimization_strategy === 'widen_step'
-            ? normalizedFallbackManual.layering_optimization_strategy
-            : 'adjust_percent',
+        layering_optimization_strategy: 'adjust_percent',
       })
       if (layeringSaveError) {
         setConfigSaving(false)
@@ -3336,112 +3298,27 @@ export function AccountConfigPage() {
                                 </div>
                                 {channelManualSettings.range_trading && (
                                   <>
-                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                                      <div className="flex flex-col gap-1.5">
-                                        <label className="text-sm font-medium text-neutral-700 dark:text-neutral-300">Layering Mode</label>
-                                        <select
-                                          className="w-full px-3 py-2 text-base md:text-sm rounded-lg border bg-white dark:bg-neutral-900 border-neutral-200 dark:border-neutral-700 text-neutral-900 dark:text-neutral-100"
-                                          value={selectedLayeringMode}
-                                          onChange={e => {
-                                            const next = e.target.value as 'legacy' | 'static' | 'dynamic'
-                                            setError('')
-                                            setManual({ layering_mode: next })
-                                          }}
-                                        >
-                                          <option value="legacy">Legacy</option>
-                                          <option value="static">Static</option>
-                                          <option value="dynamic">Dynamic</option>
-                                        </select>
-                                        <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                                          {layeringCapabilitiesLoading ? 'Checking account capability...' : selectedModeCapabilityHint}
-                                        </p>
-                                      </div>
-                                      <div className="flex flex-col gap-1.5">
-                                        <label className="text-sm font-medium text-neutral-700 dark:text-neutral-300">Execution Mechanism</label>
-                                        <select
-                                          className="w-full px-3 py-2 text-base md:text-sm rounded-lg border bg-white dark:bg-neutral-900 border-neutral-200 dark:border-neutral-700 text-neutral-900 dark:text-neutral-100"
-                                          value={selectedLayeringMechanism}
-                                          onChange={e => {
-                                            const next = e.target.value === 'pending_order' ? 'pending_order' : 'auto'
-                                            if (!layeringMechanismIsSelectable(layeringCapabilities, selectedLayeringMode, next)) {
-                                              setError(next === 'pending_order'
-                                                ? 'Broker pending orders are not enabled for this account and layering mode.'
-                                                : 'Virtual execution is not enabled for this account and layering mode.')
-                                              return
-                                            }
-                                            setError('')
-                                            setManual({ range_layering_type: next })
-                                          }}
-                                        >
-                                          <option value="auto" disabled={!selectedModeAutoSelectable}>Automatic / virtual execution</option>
-                                          <option value="pending_order" disabled={!selectedModePendingSelectable}>Broker pending orders</option>
-                                        </select>
-                                        <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                                          Layering mode and execution mechanism are independent settings.
-                                        </p>
-                                      </div>
-                                      <div className="flex flex-col gap-1.5">
-                                        <label className="text-sm font-medium text-neutral-700 dark:text-neutral-300">Sizing Strategy</label>
-                                        <select
-                                          className="w-full px-3 py-2 text-base md:text-sm rounded-lg border bg-white dark:bg-neutral-900 border-neutral-200 dark:border-neutral-700 text-neutral-900 dark:text-neutral-100"
-                                          value={selectedLayeringOptimizationStrategy}
-                                          onChange={e => {
-                                            const next = e.target.value
-                                            setManual({
-                                              layering_optimization_strategy: next === 'reduce_layers' || next === 'widen_step'
-                                                ? next
-                                                : 'adjust_percent',
-                                            })
-                                          }}
-                                        >
-                                          <option value="adjust_percent">Adjust percent per layer</option>
-                                          <option value="reduce_layers">Reduce layer count</option>
-                                          <option value="widen_step">Widen step distance</option>
-                                        </select>
-                                        <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                                          Used when range, step, lot size, and per-leg percent conflict.
-                                        </p>
-                                      </div>
+                                    <div className="flex flex-col gap-1.5 max-w-md">
+                                      <label className="text-sm font-medium text-neutral-700 dark:text-neutral-300">Layering Mode</label>
+                                      <select
+                                        className="w-full px-3 py-2 text-base md:text-sm rounded-lg border bg-white dark:bg-neutral-900 border-neutral-200 dark:border-neutral-700 text-neutral-900 dark:text-neutral-100"
+                                        value={selectedLayeringMechanism}
+                                        onChange={e => {
+                                          const next = e.target.value === 'pending_order' ? 'pending_order' : 'auto'
+                                          if (!layeringMechanismIsSelectable(layeringCapabilities, selectedLayeringMode, next)) {
+                                            setError(next === 'pending_order'
+                                              ? 'Broker pending orders are not enabled for this account and layering mode.'
+                                              : 'Virtual execution is not enabled for this account and layering mode.')
+                                            return
+                                          }
+                                          setError('')
+                                          setManual({ range_layering_type: next })
+                                        }}
+                                      >
+                                        <option value="auto" disabled={!selectedModeAutoSelectable}>Automatic / virtual execution</option>
+                                        <option value="pending_order" disabled={!selectedModePendingSelectable}>Broker pending orders</option>
+                                      </select>
                                     </div>
-
-                                    {selectedLayeringMode === 'static' ? (
-                                      <ConfigureInput
-                                        label="Total layer count"
-                                        hint="Integer from 1 to 20. Count includes the first entry."
-                                        {...riskNumberFieldProps(
-                                          'static_layer_count',
-                                          channelManualSettings.static_layer_count,
-                                          DEFAULT_MANUAL_SETTINGS.static_layer_count ?? 5,
-                                        )}
-                                      />
-                                    ) : null}
-
-                                    {selectedLayeringMode === 'dynamic' ? (
-                                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                        <ConfigureInput
-                                          label="Step size in pips"
-                                          hint="Must be greater than zero. The first confirmed broker fill anchors the plan."
-                                          {...riskNumberFieldProps(
-                                            'dynamic_step_pips',
-                                            channelManualSettings.dynamic_step_pips,
-                                            DEFAULT_MANUAL_SETTINGS.dynamic_step_pips ?? 3,
-                                          )}
-                                        />
-                                        <ConfigureInput
-                                          label="Maximum total layers"
-                                          hint="Integer from 1 to 20. Maximum includes the first filled entry."
-                                          {...riskNumberFieldProps(
-                                            'dynamic_max_layers',
-                                            channelManualSettings.dynamic_max_layers,
-                                            DEFAULT_MANUAL_SETTINGS.dynamic_max_layers ?? 5,
-                                          )}
-                                        />
-                                      </div>
-                                    ) : null}
-
-                                    <p className="rounded-md border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/50 px-3 py-2 text-xs text-neutral-600 dark:text-neutral-400">
-                                      Changes apply to new signals. Existing active layering plans keep their original prices and lot allocation.
-                                    </p>
 
                                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                                       <ConfigureInput
@@ -3454,19 +3331,45 @@ export function AccountConfigPage() {
                                           50,
                                         )}
                                       />
-                                      <ConfigureInput
+                                      <ConfigureSelect
                                         label={cm.risk.stepPips}
-                                        placeholder="10"
-                                        hint={
-                                          formatPipHint(Number(channelManualSettings.range_step_pips ?? DEFAULT_MANUAL_SETTINGS.range_step_pips) || 0)
-                                          ?? cm.risk.stepPipsFallback
-                                        }
-                                        {...riskNumberFieldProps(
-                                          'range_step_pips',
-                                          channelManualSettings.range_step_pips,
-                                          DEFAULT_MANUAL_SETTINGS.range_step_pips ?? 3,
-                                        )}
+                                        hint={cm.risk.stepPipsFallback}
+                                        value={Number(channelManualSettings.range_step_pips) > 0 ? 'manual' : 'auto'}
+                                        onChange={e => {
+                                          const next = e.target.value === 'manual' ? 'manual' : 'auto'
+                                          setRiskNumberDrafts(prev => {
+                                            if (!Object.prototype.hasOwnProperty.call(prev, 'range_step_pips')) return prev
+                                            const cleared = { ...prev }
+                                            delete cleared.range_step_pips
+                                            return cleared
+                                          })
+                                          if (next === 'auto') {
+                                            setManual({ range_step_pips: 0 })
+                                            return
+                                          }
+                                          const current = Number(channelManualSettings.range_step_pips)
+                                          setManual({ range_step_pips: current > 0 ? current : 3 })
+                                        }}
+                                        options={[
+                                          { value: 'auto', label: cm.risk.stepModeAuto },
+                                          { value: 'manual', label: cm.risk.stepModeManual },
+                                        ]}
                                       />
+                                      {Number(channelManualSettings.range_step_pips) > 0 && (
+                                        <ConfigureInput
+                                          label={cm.risk.stepManualPips}
+                                          placeholder="3"
+                                          hint={
+                                            formatPipHint(Number(channelManualSettings.range_step_pips))
+                                            ?? cm.risk.stepManualPipsFallback
+                                          }
+                                          {...riskNumberFieldProps(
+                                            'range_step_pips',
+                                            channelManualSettings.range_step_pips,
+                                            3,
+                                          )}
+                                        />
+                                      )}
                                       <ConfigureInput
                                         label={cm.risk.rangeDistance}
                                         placeholder="100"

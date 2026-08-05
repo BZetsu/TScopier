@@ -20,7 +20,8 @@ function isManagementAction(action) {
         || a === 'breakeven'
         || a === 'partial_profit'
         || a === 'partial_breakeven'
-        || a === 'modify';
+        || a === 'modify'
+        || a === 'delete_pendings';
 }
 function isEntryAction(action) {
     const a = action.toLowerCase();

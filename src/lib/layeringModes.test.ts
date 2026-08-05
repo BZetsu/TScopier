@@ -12,6 +12,13 @@ test('frontend layering settings default to legacy', () => {
   assert.equal(normalized.layering_optimization_strategy, 'adjust_percent')
 })
 
+test('frontend layering settings always normalize sizing strategy to adjust_percent', () => {
+  const normalized = normalizeLayeringModeSettings({
+    layering_optimization_strategy: 'widen_step',
+  })
+  assert.equal(normalized.layering_optimization_strategy, 'adjust_percent')
+})
+
 test('frontend layering settings round-trip without converting legacy', () => {
   const saved = ensurePersistedManualSettings({
     ...DEFAULT_MANUAL_SETTINGS,

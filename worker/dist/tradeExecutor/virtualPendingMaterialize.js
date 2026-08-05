@@ -117,6 +117,11 @@ async function materializeVirtualPendingLegs(ctx, prep, strictBrokerPlaced) {
                 stepIdxs: insertRows.map(r => r.step_idx),
                 triggers: insertRows.map(r => r.trigger_price),
                 range_layering: plan.rangeLayering ?? null,
+                basket_leg_cap: plan.rangeLayering?.basketLegCap
+                    ?? ((plan.rangeLayering?.plannedImmediateLegs ?? 0)
+                        + (plan.rangeLayering?.activePendingLegs ?? insertRows.length)),
+                planned_immediate_legs: plan.rangeLayering?.plannedImmediateLegs ?? null,
+                planned_range_legs: plan.rangeLayering?.activePendingLegs ?? insertRows.length,
                 strict_deferred: strictDeferred,
                 strict_broker_pending: strictBrokerPlaced,
             },

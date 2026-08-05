@@ -785,14 +785,37 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
         const zoneHi = safe > 0 ? insertAnchor + (safe + 2) * (params?.point ?? 0) : null
         const zoneLo = safe > 0 ? insertAnchor - (safe + 2) * (params?.point ?? 0) : null
         const nowMs = Date.now()
-      const plannedImmediateLegs = mergePlanImmediateOrders(plan).length
+      const plannedImmediateLegs = plan.rangeLayering?.plannedImmediateLegs
+        ?? mergePlanImmediateOrders(plan).length
+      const plannedRangeLegs = plan.rangeLayering?.activePendingLegs
+        ?? virtualPendings.length
+      const basketLegCap = plan.rangeLayering?.basketLegCap
+        ?? (plannedImmediateLegs + plannedRangeLegs)
+      // Cap inserts by Total Open Trades. Prefer planned granular immediate count so
+      // OrderSend consolidation cannot inflate the layering budget.
+      const rangeBudget = Math.min(
+        plannedRangeLegs,
+        Math.max(0, basketLegCap - plannedImmediateLegs),
+      )
+      const brokerPendingLayering =
+        manual.range_layering_type === 'pending_order'
+        || plan.rangeLayering?.rangeLayeringType === 'pending_order'
+      // Broker Pending mode places live limits via materializeBrokerRangePendingLegs.
+      // Never insert virtual `pending` rungs on refresh — that would race the broker
+      // ladder and fire duplicate market fills beside the same SellLimit/BuyLimit prices.
+      if (brokerPendingLayering) {
+        console.log(
+          `[tradeExecutor] basket_refresh skip virtual ladder insert (broker pending mode)`
+          + ` signal=${signal.id} anchor=${anchorSignalId} planned_range=${rangeBudget}`,
+        )
+      } else {
       const ladderSync = await syncRangePendingLadderOnBasketRefresh({
         supabase: ctx.supabase,
         scope: { signalId: anchorSignalId, brokerAccountId: broker.id, symbol },
         virtualPendings,
         openTradeCount: familyTrades.length,
         plannedImmediateLegs,
-        plannedRangeLegs: virtualPendings.length,
+        plannedRangeLegs: rangeBudget,
         channelParams: channelParamsForLadder,
         tpLots: manual.tp_lots,
         buildInsertRow: (v) => {
@@ -843,6 +866,7 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
           + ` updated=${ladderSync.updated} inserted=${ladderSync.inserted}`
           + ` skip_consumed=${ladderSync.skippedConsumed} skip_cap=${ladderSync.skippedCap}`,
         )
+      }
       }
     }
 

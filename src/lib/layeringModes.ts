@@ -39,14 +39,12 @@ export function normalizeLayeringModeSettings(raw: Record<string, unknown>): Pic
   'layering_mode' | 'static_layer_count' | 'dynamic_step_pips' | 'dynamic_max_layers' | 'layering_optimization_strategy'
 > {
   const rangeStepFallback = normalizePositiveNumber(raw.range_step_pips, DEFAULT_DYNAMIC_STEP_PIPS)
-  const strategy = raw.layering_optimization_strategy
   return {
     layering_mode: resolveLayeringMode(raw),
     static_layer_count: normalizeInteger(raw.static_layer_count, DEFAULT_STATIC_LAYER_COUNT),
     dynamic_step_pips: normalizePositiveNumber(raw.dynamic_step_pips, rangeStepFallback),
     dynamic_max_layers: normalizeInteger(raw.dynamic_max_layers, DEFAULT_DYNAMIC_MAX_LAYERS),
-    layering_optimization_strategy: strategy === 'reduce_layers' || strategy === 'widen_step' || strategy === 'adjust_percent'
-      ? strategy
-      : DEFAULT_LAYERING_OPTIMIZATION_STRATEGY,
+    // UI no longer exposes sizing strategy — always adjust percent per layer.
+    layering_optimization_strategy: DEFAULT_LAYERING_OPTIMIZATION_STRATEGY,
   }
 }

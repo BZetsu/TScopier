@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { isBenignOrderModifyError } from './orderModifyBenign'
+import { isBenignOrderModifyError, stopsAlreadyMatchDb } from './orderModifyBenign'
 
 describe('isBenignOrderModifyError', () => {
   it('matches MT5 already-have-parameters message', () => {
@@ -17,5 +17,31 @@ describe('isBenignOrderModifyError', () => {
   it('does not match unrelated errors', () => {
     assert.equal(isBenignOrderModifyError('Symbol not found: BTCUSD'), false)
     assert.equal(isBenignOrderModifyError('Not enough money'), false)
+  })
+})
+
+describe('stopsAlreadyMatchDb for naked broker-pending fills', () => {
+  it('does not treat null SL/TP as already synced when targets exist', () => {
+    assert.equal(
+      stopsAlreadyMatchDb(
+        { sl: null, tp: null },
+        { stoploss: 4040, takeprofit: 4100 },
+        0,
+        0,
+      ),
+      false,
+    )
+  })
+
+  it('matches when DB already has the distributed targets', () => {
+    assert.equal(
+      stopsAlreadyMatchDb(
+        { sl: 4040, tp: 4100 },
+        { stoploss: 4040, takeprofit: 4100 },
+        0,
+        0,
+      ),
+      true,
+    )
   })
 })

@@ -45,6 +45,36 @@ test('computeMultiTradeOrderCount: range distance caps pending legs', () => {
   )
 })
 
+test('computeMultiTradeOrderCount: shallow distance reduces Total Open Trades', () => {
+  // 1.0 @ 5% → 20; 50% reserved = 10; floor(9/3)=3 active → 10+3=13
+  assert.equal(
+    computeMultiTradeOrderCount({
+      manualLot: 1,
+      legPercent: 5,
+      rangeTrading: true,
+      rangePercent: 50,
+      rangeStepPips: 3,
+      rangeDistancePips: 9,
+    }),
+    13,
+  )
+})
+
+test('computeMultiTradeOrderCount: signal entry range uses full reserved ceiling', () => {
+  assert.equal(
+    computeMultiTradeOrderCount({
+      manualLot: 1,
+      legPercent: 5,
+      rangeTrading: true,
+      rangePercent: 50,
+      rangeStepPips: 3,
+      rangeDistancePips: 9,
+      useSignalEntryRange: true,
+    }),
+    20,
+  )
+})
+
 test('normalizeManualSettingsForExecution seeds multi_trade_max_orders from leg%', () => {
   const ms = normalizeManualSettingsForExecution({
     trade_style: 'multi',
@@ -76,6 +106,7 @@ test('normalizeManualSettingsForExecution recomputes burst cap for dynamic balan
     range_percent: 50,
     range_step_pips: 3,
     range_distance_pips: 30,
+    range_layering_type: 'pending_order',
   }, { accountBalance: 31_054.79 })
   assert.equal(ms.multi_trade_max_orders, 27)
 })

@@ -49,10 +49,11 @@ test('formatMultiTradeTotalOpenTradesPreview: layered range split', () => {
     {
       baseLegs: 20,
       extraRemainderLeg: false,
-      totalOrders: 20,
+      totalOrders: 12,
       fallsBackSingle: false,
       immediate: 6,
       pending: 14,
+      activePending: 6,
     },
     {
       fallbackSingle: '{lot} lots x 1 trade (fallback)',
@@ -60,7 +61,78 @@ test('formatMultiTradeTotalOpenTradesPreview: layered range split', () => {
       lotsXTradesLayered: '{lot} lots x {total} trades ({immediate} instant + {pending} for layering)',
     },
   )
-  assert.equal(text, '0.01 lots x 20 trades (6 instant + 14 for layering)')
+  assert.equal(text, '0.01 lots x 12 trades (6 instant + 6 for layering)')
+})
+
+test('estimateMultiTradeOrderCount: 1.92 @ 6.25% with 50% range → 16 (8+8)', () => {
+  const r = estimateMultiTradeOrderCount({
+    manualLot: 1.92,
+    legPercent: 6.25,
+    range: { enabled: true, percent: 50, stepPips: 3, distancePips: 30 },
+  })
+  assert.equal(r.baseLegs, 16)
+  assert.equal(r.immediate, 8)
+  assert.equal(r.pending, 8)
+  assert.equal(r.activePending, 8)
+  assert.equal(r.totalOrders, 16)
+})
+
+test('estimateMultiTradeOrderCount: Auto step (0) fills distance with all reserved legs', () => {
+  const r = estimateMultiTradeOrderCount({
+    manualLot: 1.0,
+    legPercent: 5,
+    range: { enabled: true, percent: 50, stepPips: 0, distancePips: 30 },
+  })
+  assert.equal(r.immediate, 10)
+  assert.equal(r.pending, 10)
+  assert.equal(r.activePending, 10)
+  assert.equal(r.totalOrders, 20)
+  assert.equal(r.effectiveStepPips, 3)
+})
+
+test('estimateMultiTradeOrderCount: Auto min 1-pip floor caps dense reserved legs', () => {
+  // 1.0 @ 2% → 50 legs; 50% → 25 reserved; dist 10 → max 10 active at 1 pip
+  const r = estimateMultiTradeOrderCount({
+    manualLot: 1.0,
+    legPercent: 2,
+    range: { enabled: true, percent: 50, stepPips: 0, distancePips: 10 },
+  })
+  assert.equal(r.pending, 25)
+  assert.equal(r.activePending, 10)
+  assert.equal(r.effectiveStepPips, 1)
+  assert.equal(r.totalOrders, (r.immediate ?? 0) + 10)
+})
+
+test('estimateMultiTradeOrderCount: distance/step caps Total Open Trades', () => {
+  // 1.0 @ 5% → 20 legs; 50% reserved = 10; distance 15 / step 5 → max 3 active
+  const r = estimateMultiTradeOrderCount({
+    manualLot: 1.0,
+    legPercent: 5,
+    range: { enabled: true, percent: 50, stepPips: 5, distancePips: 15 },
+  })
+  assert.equal(r.baseLegs, 20)
+  assert.equal(r.immediate, 10)
+  assert.equal(r.pending, 10)
+  assert.equal(r.activePending, 3)
+  assert.equal(r.totalOrders, 13)
+})
+
+test('estimateMultiTradeOrderCount: signal entry range uses full reserved as ceiling', () => {
+  const r = estimateMultiTradeOrderCount({
+    manualLot: 1.0,
+    legPercent: 5,
+    range: {
+      enabled: true,
+      percent: 50,
+      stepPips: 5,
+      distancePips: 15,
+      useSignalEntryRange: true,
+    },
+  })
+  assert.equal(r.immediate, 10)
+  assert.equal(r.pending, 10)
+  assert.equal(r.activePending, 10)
+  assert.equal(r.totalOrders, 20)
 })
 
 test('formatMultiTradeTotalOpenTradesPreview: plain multi split', () => {

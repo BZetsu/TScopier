@@ -211,7 +211,7 @@ export const configureModalEn: ConfigureModalTranslations = {
     previewLotsXTrades: '{lot} lots x {total} trades',
     previewLotsXTradesLayered: '{lot} lots x {total} trades ({immediate} instant + {pending} for layering)',
     previewFooter:
-      'How many trades the copier plans to open for one signal. Based on your configured lot size and per-leg size. Your broker may open fewer if the market did not cover the zone during layering.',
+      'How many trades the copier plans to open for one signal. Based on lot size, per-leg size, reserved layering %, step, and range distance. Layering never opens more than this total. Your broker may open fewer if price does not cover the zone.',
     previewDynamicRisk:
       ' Lot size is computed from your account balance and Dynamic (% Balance) percent.',
     previewLadderSpan:
@@ -226,7 +226,12 @@ export const configureModalEn: ConfigureModalTranslations = {
     reservedLot: 'Reserved lot (% of total)',
     reservedLotHint: 'Share of total legs reserved as pendings.',
     stepPips: 'Step (pips per layering)',
-    stepPipsFallback: 'Pips between pendings.',
+    stepPipsFallback:
+      'Auto spaces layering trades evenly across Range distance (minimum 1 pip between layers). Manual uses a fixed pip step between each layer.',
+    stepModeAuto: 'Auto',
+    stepModeManual: 'Manual',
+    stepManualPips: 'Pip step',
+    stepManualPipsFallback: 'Fixed pip distance between each layer.',
     rangeDistance: 'Range distance (pips)',
     rangeDistanceFallback:
       'The distance of the range provided by your signal provider. This determines how far the trade is layered.',

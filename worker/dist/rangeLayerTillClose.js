@@ -52,15 +52,21 @@ async function freezeRangeLayeringForBasket(supabase, scope, reason = 'layering_
     });
 }
 /**
- * When layer till close is OFF: delete pending legs and freeze further layering.
- * When ON: no-op.
+ * Stop range layering for a basket:
+ *  - Flat basket (no open/pending trades): always purge remaining ladder rows
+ *    (layering is finished whether layer-till-close is ON or OFF).
+ *  - Layer till close OFF + still open: delete pending legs and freeze.
+ *  - Layer till close ON + still open: no-op (keep layering).
  */
 async function stopRangeLayeringUnlessEnabled(supabase, scope, reason) {
+    const openCount = await (0, rangePendingFireGuard_1.countOpenTradesForBasket)(supabase, scope.signalId, scope.brokerAccountId);
+    if (openCount <= 0) {
+        const deleted = await (0, rangePendingLegDelete_1.purgeRangePendingLegsIfBasketFlat)(supabase, { signalId: scope.signalId, brokerAccountId: scope.brokerAccountId }, reason);
+        await freezeRangeLayeringForBasket(supabase, scope, reason);
+        return { stopped: true, deleted };
+    }
     const layerTillClose = await loadRangeLayerTillCloseForSignal(supabase, scope.signalId, scope.brokerAccountId);
     if (layerTillClose)
-        return { stopped: false, deleted: 0 };
-    const openCount = await (0, rangePendingFireGuard_1.countOpenTradesForBasket)(supabase, scope.signalId, scope.brokerAccountId);
-    if (openCount <= 0)
         return { stopped: false, deleted: 0 };
     const deleted = await (0, rangePendingLegDelete_1.deleteRangePendingLegsForBasket)(supabase, { signalId: scope.signalId, brokerAccountId: scope.brokerAccountId }, reason);
     await freezeRangeLayeringForBasket(supabase, scope, reason);

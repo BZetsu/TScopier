@@ -77,6 +77,8 @@ function mapActionToIntent(action) {
         return 'breakeven';
     if (a === 'partial_profit')
         return 'partial_profit';
+    if (a === 'delete_pendings')
+        return 'delete_pendings';
     if (a === 'buy' || a === 'sell')
         return 'parameter_refresh';
     if (a === 'ignore')
@@ -143,8 +145,8 @@ async function loadRecentChannelSignals(supabase, args) {
 const AI_SYSTEM_PROMPT = `You interpret Telegram trading-channel modification/management messages for a trade copier.
 Return strict JSON only with keys:
 {
-  "intent": "modify" | "close" | "breakeven" | "partial_profit" | "parameter_refresh" | "ignore" | "commentary",
-  "action": "buy" | "sell" | "modify" | "close" | "close_worse_entries" | "breakeven" | "partial_profit" | "partial_breakeven" | "ignore",
+  "intent": "modify" | "close" | "breakeven" | "partial_profit" | "parameter_refresh" | "delete_pendings" | "ignore" | "commentary",
+  "action": "buy" | "sell" | "modify" | "close" | "close_worse_entries" | "breakeven" | "partial_profit" | "partial_breakeven" | "delete_pendings" | "ignore",
   "symbol": string | null,
   "entry_price": number | null,
   "entry_zone_low": number | null,
@@ -162,6 +164,7 @@ Rules:
 - Use parent_signal and recent_signals to infer symbol/direction when the reply omits them.
 - Correct obvious typos in labels/prices (mov sl, 265O) but never invent prices not implied by the message.
 - parameter_refresh: same trade SL/TP update — use buy/sell matching parent direction with sl/tp only (no new entry).
+- delete_pendings: cancel/delete a buy/sell limit or pending order, or "trade invalid" / "setup invalid" — reply-scoped cancel only (not a full close of open market positions).
 - commentary/TP-hit announcements without actionable instruction → action ignore, intent commentary.
 - Conditional/advisory closes (e.g. "if you are happy, close now") are commentary, not executable close.
 - re_enter true only when message clearly opens a new trade.
@@ -223,12 +226,12 @@ function buildAiResult(raw, rawMessage) {
         re_enter: raw.re_enter,
         confidence: raw.confidence,
         raw_instruction: corrected,
-    }, corrected), ['modify', 'close', 'breakeven', 'partial_profit', 'parameter_refresh', 'ignore', 'commentary']
+    }, corrected), ['modify', 'close', 'breakeven', 'partial_profit', 'parameter_refresh', 'delete_pendings', 'ignore', 'commentary']
         .includes(intentHint)
         ? intentHint
         : mapActionToIntent(String(raw.action ?? '')));
     const intentRaw = String(raw.intent ?? mapActionToIntent(parsed.action));
-    const intent = ['modify', 'close', 'breakeven', 'partial_profit', 'parameter_refresh', 'ignore', 'commentary'].includes(intentRaw)
+    const intent = ['modify', 'close', 'breakeven', 'partial_profit', 'parameter_refresh', 'delete_pendings', 'ignore', 'commentary'].includes(intentRaw)
         ? intentRaw
         : mapActionToIntent(parsed.action);
     const confidence = typeof raw.confidence === 'number' && Number.isFinite(raw.confidence)

@@ -56,7 +56,7 @@ describe('signalStopUnits detection', () => {
 
   it('converts sell pip offsets on XAU', () => {
     const pip = signalPipPrice('XAUUSD')
-    assert.equal(pip, 0.01)
+    assert.equal(pip, 0.1)
     const prices = convertPipOffsetsToPrices({
       offsets: [30, 50, 100],
       entryAnchor: 4109,
@@ -65,7 +65,7 @@ describe('signalStopUnits detection', () => {
     })
     assert.deepEqual(
       prices.map(p => Number(p.toFixed(2))),
-      [4108.7, 4108.5, 4108],
+      [4106, 4104, 4099],
     )
   })
 })
@@ -161,11 +161,11 @@ describe('deriveManualStopsWithClamp pip TP conversion', () => {
       entryAnchor: entry,
       isBuy: false,
     })
-    assert.equal(pip, 0.01)
+    assert.equal(pip, 0.1)
     assert.equal(finalSl, 4120)
     assert.deepEqual(
       finalTps.map(t => Number(t.toFixed(2))),
-      [4108.7, 4108.5, 4108],
+      [4106, 4104, 4099],
     )
   })
 })

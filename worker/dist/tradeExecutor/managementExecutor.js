@@ -325,6 +325,90 @@ async function applyManagement(ctx, signal, parsed, brokers, mgmtOpts) {
         return emptyMgmtResult(legConcurrency);
     }
     const actionPre = String(parsed.action ?? '').toLowerCase();
+    if (actionPre === 'delete_pendings') {
+        if (!replyScoped) {
+            await skipMgmtSignalWithLog(ctx, signal, 'delete_pendings_requires_reply', {
+                action: 'delete_pendings',
+            });
+            return emptyMgmtResult(legConcurrency);
+        }
+        const parentId = String(signal.parent_signal_id ?? '').trim();
+        if (!parentId) {
+            await skipMgmtSignalWithLog(ctx, signal, 'delete_pendings_no_parent', {
+                action: 'delete_pendings',
+                reply_scoped: true,
+            });
+            return emptyMgmtResult(legConcurrency);
+        }
+        const eligibleBrokers = brokers.filter(b => !(0, channelMessageFilters_1.isChannelManagementBlocked)((0, channelMessageFilters_1.normalizeChannelMessageFiltersMap)(b.channel_message_filters), signal.channel_id, 'delete_pendings'));
+        if (!eligibleBrokers.length) {
+            await skipMgmtSignalWithLog(ctx, signal, 'channel_filter_ignored', {
+                action: 'delete_pendings',
+                reply_scoped: true,
+                parent_signal_id: parentId,
+            });
+            return emptyMgmtResult(legConcurrency);
+        }
+        const eligibleIds = eligibleBrokers.map(b => b.id);
+        const [{ data: seRows }, { data: rangeRows }] = await Promise.all([
+            ctx.supabase
+                .from('signal_entry_pending_orders')
+                .select('id')
+                .eq('signal_id', parentId)
+                .in('broker_account_id', eligibleIds)
+                .eq('status', 'broker_pending')
+                .limit(1),
+            ctx.supabase
+                .from('range_pending_legs')
+                .select('id')
+                .eq('signal_id', parentId)
+                .in('broker_account_id', eligibleIds)
+                .in('status', ['pending', 'claimed', 'broker_pending'])
+                .limit(1),
+        ]);
+        if (!(seRows?.length) && !(rangeRows?.length)) {
+            await skipMgmtSignalWithLog(ctx, signal, 'delete_pendings_none', {
+                action: 'delete_pendings',
+                reply_scoped: true,
+                parent_signal_id: parentId,
+                mgmt_scope: 'reply_basket',
+            });
+            return emptyMgmtResult(legConcurrency);
+        }
+        const scopes = eligibleIds.map(brokerAccountId => ({
+            signalId: parentId,
+            brokerAccountId,
+            symbol: '',
+        }));
+        await ctx.cancelRangePendingLegsForScopes(signal.user_id, signal.id, scopes, 'delete_pendings');
+        try {
+            await ctx.supabase.from('trade_execution_logs').insert({
+                user_id: signal.user_id,
+                signal_id: signal.id,
+                broker_account_id: null,
+                action: 'delete_pendings',
+                status: 'success',
+                request_payload: {
+                    parent_signal_id: parentId,
+                    mgmt_scope: 'reply_basket',
+                    brokers: eligibleIds.length,
+                    had_entry_pending: Boolean(seRows?.length),
+                    had_range_pending: Boolean(rangeRows?.length),
+                },
+            });
+        }
+        catch { /* best-effort */ }
+        try {
+            await ctx.supabase
+                .from('signals')
+                .update({ status: 'executed' })
+                .eq('id', signal.id)
+                .eq('status', 'parsed');
+        }
+        catch { /* best-effort */ }
+        console.log(`[tradeExecutor] delete_pendings cancelled reply-scoped pendings signal=${signal.id} parent=${parentId}`);
+        return emptyMgmtResult(legConcurrency);
+    }
     let scopeSymbolFilter = symbolFromText;
     if (!scopeSymbolFilter && signal.parent_signal_id) {
         const { data: ps } = await ctx.supabase

@@ -218,23 +218,39 @@ async function placeOrAdoptPending(args: {
     return { ok: false, reason: 'broker_pending_invalid_lot' }
   }
 
+  const plannedSl = row.stoploss != null && Number(row.stoploss) > 0 ? Number(row.stoploss) : 0
+  const plannedTp = row.takeprofit != null && Number(row.takeprofit) > 0 ? Number(row.takeprofit) : 0
   const sendArgs: OrderSendArgs = {
     symbol: prep.symbol,
     operation: args.operation,
     volume: row.volume,
     price: row.trigger_price,
-    stoploss: row.stoploss ?? 0,
-    takeprofit: row.takeprofit ?? 0,
+    stoploss: plannedSl,
+    takeprofit: plannedTp,
     slippage: row.slippage,
     comment: args.reference,
     expertID: row.expert_id ?? 909090,
   }
   const clamped = clampOrderStops(sendArgs, prep.params)
-  let result: OrderResult
+  let result: OrderResult | null = null
+  let sendErrMsg: string | null = null
   try {
     result = await prep.api.orderSend(prep.uuid, clamped.args)
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
+    sendErrMsg = err instanceof Error ? err.message : String(err)
+    const hasStops = (Number(clamped.args.stoploss) || 0) > 0
+      || (Number(clamped.args.takeprofit) || 0) > 0
+    if (/invalid\s+stops/i.test(sendErrMsg) && hasStops) {
+      try {
+        result = await prep.api.orderSend(prep.uuid, { ...clamped.args, stoploss: 0, takeprofit: 0 })
+        sendErrMsg = null
+      } catch (nakedErr) {
+        sendErrMsg = nakedErr instanceof Error ? nakedErr.message : String(nakedErr)
+      }
+    }
+  }
+  if (!result) {
+    const msg = sendErrMsg ?? 'broker_pending_send_failed'
     if (isOrderOpTimedOutMessage(msg)) {
       const reconciled = await reconcileByReference(prep, args.reference).catch(() => null)
       if (reconciled && brokerOrderMatchesLayer({

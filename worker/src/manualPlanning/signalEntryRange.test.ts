@@ -22,8 +22,8 @@ const zoneParsed: ParsedSignal = {
   lot_size: null,
 }
 
-test('signalZoneWidthPips: XAUUSD zone 4335/4325 → 1000 pips at pip 0.01', () => {
-  assert.equal(signalZoneWidthPips(zoneParsed, 0.01), 1000)
+test('signalZoneWidthPips: XAUUSD zone 4335/4325 → 100 pips at pip 0.1', () => {
+  assert.equal(signalZoneWidthPips(zoneParsed, 0.1), 100)
 })
 
 test('signalRangeBoundary: buy → low, sell → high', () => {
@@ -36,9 +36,9 @@ test('resolveRangeDistancePips: toggle on + zone uses signal width and boundary'
     range_distance_pips: 30,
     use_signal_entry_range: true,
   }
-  const r = resolveRangeDistancePips({ manual, parsed: zoneParsed, pip: 0.01, isBuy: true })
+  const r = resolveRangeDistancePips({ manual, parsed: zoneParsed, pip: 0.1, isBuy: true })
   assert.equal(r.source, 'signal_zone')
-  assert.equal(r.distPips, 1000)
+  assert.equal(r.distPips, 100)
   assert.equal(r.boundary, 4325)
 })
 

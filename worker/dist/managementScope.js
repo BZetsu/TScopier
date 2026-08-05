@@ -26,7 +26,7 @@ const signalPip_1 = require("./signalPip");
 const tradableSymbol_1 = require("./tradableSymbol");
 const forexBroSignalPatterns_1 = require("./forexBroSignalPatterns");
 const MAX_PLAUSIBLE_PIPS = 500;
-/** Legacy gold mgmt used 500 × $0.10 = $50; keep the same price ceiling at cent pips. */
+/** Legacy gold mgmt used 500 × $0.10 = $50; keep the same price ceiling. */
 const METAL_MAX_MGMT_PRICE_DIST = 50;
 function maxMgmtPriceDistance(symbol, pip) {
     if ((0, pipMath_1.classifySymbol)(symbol) === 'metal')

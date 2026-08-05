@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.looksLikeExplicitFullCloseCommand = exports.looksLikeChannelManagementUpdate = exports.DEFAULT_CHANNEL_KEYWORDS = void 0;
+exports.looksLikeExplicitFullCloseCommand = exports.looksLikeDeletePendingsCommand = exports.looksLikeChannelManagementUpdate = exports.DEFAULT_CHANNEL_KEYWORDS = void 0;
 exports.normalizeChannelKeywords = normalizeChannelKeywords;
 exports.loadChannelLexicon = loadChannelLexicon;
 exports.loadChannelKeywords = loadChannelKeywords;
@@ -457,6 +457,7 @@ function isManagementAction(action) {
         "partial_profit",
         "partial_breakeven",
         "modify",
+        "delete_pendings",
     ]).has(String(action ?? "").toLowerCase());
 }
 function normalizeParsedFromModel(raw, fallbackText) {
@@ -466,8 +467,11 @@ function normalizeParsedFromModel(raw, fallbackText) {
         action = "buy";
     if (action === "short")
         action = "sell";
+    if (action === "cancel_pending" || action === "cancel_pendings")
+        action = "delete_pendings";
     const allowed = new Set([
-        "buy", "sell", "close", "close_worse_entries", "breakeven", "partial_profit", "partial_breakeven", "modify", "ignore",
+        "buy", "sell", "close", "close_worse_entries", "breakeven", "partial_profit", "partial_breakeven",
+        "modify", "delete_pendings", "ignore",
     ]);
     if (!allowed.has(action))
         action = "ignore";
@@ -646,8 +650,6 @@ function parseDeterministicManagement(message, lexicon, channelKeywords) {
         ...splitKeywordAliases(channelKeywords.update.set_tp4, delim),
         ...splitKeywordAliases(channelKeywords.update.set_tp5, delim),
         ...splitKeywordAliases(channelKeywords.additional.remove_sl, delim),
-        ...splitKeywordAliases(channelKeywords.update.delete, delim),
-        ...splitKeywordAliases(channelKeywords.additional.delete_all, delim),
     ];
     const hitCloseHalfKw = hasAnyKeyword(t, kwCloseHalf);
     const hitClosePartialKw = hasAnyKeyword(t, kwClosePartialOnly);
@@ -687,7 +689,11 @@ function parseDeterministicManagement(message, lexicon, channelKeywords) {
         }
         return (0, signalManagementIntent_1.partialCloseFractionFromMessage)(t);
     };
-    if (wantsCloseWorseEntries) {
+    if ((0, signalManagementIntent_1.looksLikeDeletePendingsCommand)(t, { channelKeywords })) {
+        action = "delete_pendings";
+        confidence = 0.95;
+    }
+    else if (wantsCloseWorseEntries) {
         action = "close_worse_entries";
         confidence = 0.95;
     }
@@ -1246,6 +1252,7 @@ async function loadChannelKeywords(supabase, channelId) {
 }
 var signalManagementIntent_2 = require("./signalManagementIntent");
 Object.defineProperty(exports, "looksLikeChannelManagementUpdate", { enumerable: true, get: function () { return signalManagementIntent_2.looksLikeChannelManagementUpdate; } });
+Object.defineProperty(exports, "looksLikeDeletePendingsCommand", { enumerable: true, get: function () { return signalManagementIntent_2.looksLikeDeletePendingsCommand; } });
 Object.defineProperty(exports, "looksLikeExplicitFullCloseCommand", { enumerable: true, get: function () { return signalManagementIntent_2.looksLikeExplicitFullCloseCommand; } });
 function applyStopUnits(parsed, rawMessage, channelKeywords) {
     const action = String(parsed.action ?? '').toLowerCase();

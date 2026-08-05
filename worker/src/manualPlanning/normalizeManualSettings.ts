@@ -1,5 +1,5 @@
 import { computeMultiTradeOrderCount } from './computeMultiTradeOrderCount'
-import { normalizeLayeringModeSettings } from './layeringModes'
+import { DEFAULT_DYNAMIC_STEP_PIPS, normalizeLayeringModeSettings } from './layeringModes'
 import { resolveManualLotForSettings } from './resolveManualLot'
 import type { ManualSettings, ManualTpLot } from './types'
 
@@ -69,6 +69,7 @@ export function normalizeManualSettingsForExecution(
       rangePercent: Number(j.range_percent),
       rangeStepPips: Number(j.range_step_pips),
       rangeDistancePips: Number(j.range_distance_pips),
+      useSignalEntryRange: j.use_signal_entry_range === true,
     })
     if (preview > 0) maxOrders = preview
   }
@@ -101,11 +102,11 @@ export function normalizeManualSettingsForExecution(
   }
 
   const rangePercent = Math.max(0, Math.min(100, readNumber('range_percent', 50)))
-  const rangeStepPips = Math.max(0, readNumber('range_step_pips', 3))
+  const rangeStepPips = Math.max(0, readNumber('range_step_pips', 0))
   const rangeDistancePips = Math.max(0, readNumber('range_distance_pips', 30))
   const layeringModeSettings = normalizeLayeringModeSettings({
     ...j,
-    range_step_pips: rangeStepPips,
+    range_step_pips: rangeStepPips > 0 ? rangeStepPips : DEFAULT_DYNAMIC_STEP_PIPS,
   })
 
   const predefinedTpPips = Array.isArray(j.predefined_tp_pips)

@@ -8,6 +8,7 @@ exports.shouldEmitAuthKeyDupEvent = shouldEmitAuthKeyDupEvent;
 exports.authKeyDupReconnectDelaysMs = authKeyDupReconnectDelaysMs;
 exports.authKeyDupReconnectDelayMs = authKeyDupReconnectDelayMs;
 exports.authKeyDupMaxRecoveryAttempts = authKeyDupMaxRecoveryAttempts;
+exports.authKeyDupDeferredRetryMs = authKeyDupDeferredRetryMs;
 exports.redactTelegramConnectionLog = redactTelegramConnectionLog;
 /** True when enough time has passed since the last persisted/logged dup event. */
 function shouldEmitAuthKeyDupEvent(lastEmittedAtMs, nowMs = Date.now(), minIntervalMs = 60000) {
@@ -16,14 +17,19 @@ function shouldEmitAuthKeyDupEvent(lastEmittedAtMs, nowMs = Date.now(), minInter
 }
 /**
  * Backoff delays (ms) before each connect attempt during AUTH_KEY_DUPLICATED recovery.
- * First delay is the normal reconnect cooldown; later delays give Telegram time to
- * release the prior connection after deploy overlap / double connect.
+ * First delay is the normal reconnect cooldown; later delays escalate so Telegram gets
+ * time to release the prior connection. Default: [cooldown, retry, 15s, 30s, 30s, 30s, ...]
  */
 function authKeyDupReconnectDelaysMs(initialCooldownMs, authDupDelayMs = authKeyDupReconnectDelayMs(), maxAttempts = authKeyDupMaxRecoveryAttempts()) {
     const first = Math.max(500, Math.min(120000, initialCooldownMs));
     const retry = Math.max(2000, Math.min(120000, authDupDelayMs));
     const attempts = Math.max(1, Math.min(100, Math.floor(maxAttempts)));
-    return Array.from({ length: attempts }, (_, i) => (i === 0 ? first : retry));
+    const slots = [retry, 15000, 30000];
+    return Array.from({ length: attempts }, (_, i) => {
+        if (i === 0)
+            return first;
+        return slots[i - 1] ?? 30000;
+    });
 }
 /** Delay between AUTH_KEY_DUPLICATED recovery connect attempts. */
 function authKeyDupReconnectDelayMs() {
@@ -31,7 +37,11 @@ function authKeyDupReconnectDelayMs() {
 }
 /** Maximum connect cycles before requiring the user to re-link Telegram. */
 function authKeyDupMaxRecoveryAttempts() {
-    return Math.max(1, Math.min(100, Math.floor(Number(process.env.TELEGRAM_AUTH_DUP_MAX_RECOVERY_ATTEMPTS ?? 10))));
+    return Math.max(1, Math.min(100, Math.floor(Number(process.env.TELEGRAM_AUTH_DUP_MAX_RECOVERY_ATTEMPTS ?? 4))));
+}
+/** Schedule another reconnect attempt after forceReconnect exhausts retries. */
+function authKeyDupDeferredRetryMs() {
+    return Math.max(15000, Math.min(300000, Number(process.env.TELEGRAM_AUTH_DUP_DEFERRED_RETRY_MS ?? 60000)));
 }
 function redactTelegramConnectionLog(value) {
     const raw = value instanceof Error ? value.message : String(value ?? '');

@@ -16,6 +16,8 @@ type TradeStyleCarrier = {
     | 'range_percent'
     | 'range_step_pips'
     | 'range_distance_pips'
+    | 'range_layering_type'
+    | 'use_signal_entry_range'
   > | null
 }
 
@@ -51,6 +53,7 @@ export function isMultiTradeSplitBlocked(
         percent: Number(manualSettings.range_percent ?? 50) || 0,
         stepPips: Number(manualSettings.range_step_pips ?? DEFAULT_MANUAL_SETTINGS.range_step_pips) || 0,
         distancePips: Number(manualSettings.range_distance_pips ?? DEFAULT_MANUAL_SETTINGS.range_distance_pips) || 0,
+        useSignalEntryRange: manualSettings.use_signal_entry_range === true,
       }
     : undefined
   return estimateMultiTradeOrderCount({ manualLot, legPercent: legPct, range }).fallsBackSingle

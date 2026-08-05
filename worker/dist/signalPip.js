@@ -31,7 +31,7 @@ function normalizeSignalSymbol(userSymbol) {
 }
 function metalPipMultiplier(base) {
     if (base === 'XAU' || base === 'XPT' || base === 'XPD')
-        return 100;
+        return 10;
     if (base === 'XAG')
         return 10;
     return 100;
@@ -54,7 +54,7 @@ function getPipMultiplierForSymbol(userSymbol) {
         case 'fx_major':
             return 10000;
         case 'metal':
-            return 100;
+            return 10;
         case 'index':
         case 'synthetic':
             return 1;

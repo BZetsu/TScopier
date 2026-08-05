@@ -68,6 +68,7 @@ import {
   expireWait,
 } from '../signalRangeEntryService'
 import { releaseSignalBrokerDispatchClaim } from './signalBrokerDispatchClaim'
+import { shouldBlockNewEntryOnRevision } from './messageRevisionEntryGuard'
 import { setPipelineTimestamp } from '../pipelineTimestamps'
 import type { LayeringModeRuntime } from './layeringModeIntegration'
 
@@ -78,7 +79,14 @@ export type EntryArgs = {
   broker: BrokerRow
   channelKeywords: ChannelKeywords | null
   pipelineT0?: number
-  sendOpts?: { liveEntryFast?: boolean; liveMgmtFast?: boolean; commentSlug?: string | null; commentPrefix?: string; sameSignalRefresh?: boolean }
+  sendOpts?: {
+    liveEntryFast?: boolean
+    liveMgmtFast?: boolean
+    commentSlug?: string | null
+    commentPrefix?: string
+    sameSignalRefresh?: boolean
+    blockNewEntry?: boolean
+  }
 }
 
 export type PreparedEntry = {
@@ -382,6 +390,7 @@ export async function prepareEntryExecution(
   // Skip when Use signal range is on: zone+market-now+SL/TP must open via range entry wait,
   // not merge into a prior teaser that may never have opened.
   const basketRefreshSucceeded = false
+  const blockNewEntry = sendOpts?.blockNewEntry === true
   const rangeEntryStrict = signalEntryRangeStrictEnabled(manual)
   if (isManual && !rangeEntryStrict && (shouldRouteAsBasketParameterRefresh(parsed) || sameSignalRefresh)) {
     const paramOutcome = await ctx.tryParameterFollowUpMergeModifyOnly({
@@ -409,7 +418,25 @@ export async function prepareEntryExecution(
     if (paramOutcome.handled && paramOutcome.success) {
       return { ok: false, outcome: { openedOrMerged: true } }
     }
-    // handled + !success: anchor had no open legs — fall through to range entry / OrderSend.
+    // handled + !success: anchor had no open legs — fall through unless revision already opened.
+  }
+
+  // Message revision / re-dispatch must never place a second market or broker-pending basket
+  // after the first entry already logged order_send / trades / range legs (live-fast used to skip this).
+  if (sameSignalRefresh || blockNewEntry) {
+    const alreadyMaterialized = blockNewEntry
+      || await ctx.manualDispatchAlreadyMaterialized(signal.id, broker.id)
+    if (shouldBlockNewEntryOnRevision({
+      sameSignalRefresh,
+      blockNewEntry,
+      alreadyMaterialized,
+    })) {
+      console.warn(
+        `[tradeExecutor] skip new entry on message revision — already materialized`
+        + ` signal=${signal.id} broker=${broker.id} blockNewEntry=${blockNewEntry}`,
+      )
+      return { ok: false, outcome: { openedOrMerged: true } }
+    }
   }
 
   if (isManual && !sameSignalRefresh && !basketRefreshSucceeded && !rangeEntryStrict) {
@@ -691,13 +718,34 @@ export async function prepareEntryExecution(
   }
 
   // Hard cap: planner already respects 500; this is a final guard rail.
-  const capped = plan.orders.slice(0, 500)
+  // Total Open Trades (basketLegCap) must never be exceeded by immediates + layering.
+  const basketLegCap = plan.rangeLayering?.basketLegCap
+  const plannedImmediateLegs = plan.rangeLayering?.plannedImmediateLegs
+  const absLegCap = basketLegCap != null && basketLegCap > 0
+    ? Math.min(500, Math.floor(basketLegCap))
+    : 500
+  let capped = plan.orders.slice(0, absLegCap)
   if (capped.length < plan.orders.length) {
     console.warn(
       `[tradeExecutor] capped immediate legs ${plan.orders.length} → ${capped.length} signal=${signal.id} broker=${broker.id}`,
     )
   }
   let virtualPendings = (plan.virtualPendings ?? []).slice(0, 500)
+  if (absLegCap < 500) {
+    const immBudget = plannedImmediateLegs != null && plannedImmediateLegs >= 0
+      ? plannedImmediateLegs
+      : capped.length
+    const maxVirtualByPlan = Math.max(0, absLegCap - immBudget)
+    const maxVirtualByTickets = Math.max(0, absLegCap - capped.length)
+    const maxVirtual = Math.min(maxVirtualByPlan, maxVirtualByTickets)
+    if (virtualPendings.length > maxVirtual) {
+      console.warn(
+        `[tradeExecutor] trim virtual pendings ${virtualPendings.length}→${maxVirtual}`
+        + ` basket_cap=${absLegCap} signal=${signal.id} broker=${broker.id}`,
+      )
+      virtualPendings = virtualPendings.slice(0, maxVirtual)
+    }
+  }
   const totalPlannedLegCount = capped.length + virtualPendings.length
   if (
     virtualPendings.length > 0
