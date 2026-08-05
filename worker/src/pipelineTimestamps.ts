@@ -80,6 +80,7 @@ export type PipelineEventName =
   | 'execution_input_received'
   | 'execution_planned'
   | 'execution_claimed'
+  | 'execution_claim_reused'
   | 'execution_claim_lost'
   | 'broker_request_started'
   | 'broker_request_succeeded'

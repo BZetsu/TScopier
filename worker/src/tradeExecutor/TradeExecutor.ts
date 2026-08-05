@@ -1419,8 +1419,9 @@ export class TradeExecutor {
     const resolved = resolveChannelTradingConfig(executionBroker, signal.channel_id)
     const entryKey = `${signal.id}:${effectiveBroker.id}`
     const liveFast = sendOpts?.liveEntryFast === true
+    const isRevisionRefresh = sendOpts?.sameSignalRefresh === true
 
-    if (!liveFast) {
+    if (!liveFast && !isRevisionRefresh) {
       if (await manualDispatchAlreadyMaterialized(this, signal.id, effectiveBroker.id)) {
         console.warn(
           `[tradeExecutor] skip already materialized signal=${signal.id} broker=${effectiveBroker.id}`,
@@ -1429,7 +1430,6 @@ export class TradeExecutor {
       }
     }
 
-    const isRevisionRefresh = sendOpts?.sameSignalRefresh === true
     const isRangeWake = signal.dispatch_source === SIGNAL_RANGE_WAKE_DISPATCH_SOURCE
     if (this.entryBrokerInflight.has(entryKey)) {
       if (isRevisionRefresh) {
@@ -1463,38 +1463,19 @@ export class TradeExecutor {
     }
     this.entryBrokerInflight.add(entryKey)
     try {
-      if (!isRevisionRefresh) {
-        if (isRangeWake) {
-          await releaseSignalBrokerDispatchClaim(this.supabase, signal.id, effectiveBroker.id)
-        }
-        setPipelineTimestamp(signal.pipeline_ts ?? (signal.pipeline_ts = {}), 'execution_claim_started_at', Date.now())
-        const claimed = await claimSignalBrokerDispatch(this.supabase, signal.id, effectiveBroker.id)
-        if (!claimed) {
-          const materialized = await manualDispatchAlreadyMaterialized(this, signal.id, effectiveBroker.id)
-          console.warn(
-            `[tradeExecutor] skip duplicate dispatch claim signal=${signal.id} broker=${effectiveBroker.id}`
-            + ` materialized=${materialized}`,
-          )
-          emitPipelineEvent({
-            event: 'execution_claim_lost',
-            correlation: buildPipelineCorrelation({
-              userId: signal.user_id,
-              signalId: signal.id,
-              channelId: signal.channel_id,
-              telegramMessageId: signal.telegram_message_id,
-              brokerAccountId: effectiveBroker.id,
-              dispatchSource: signal.dispatch_source,
-            }),
-            timestamps: signal.pipeline_ts,
-            outcome: 'lost',
-            path: liveFast ? 'live_fast' : 'queued',
-            extra: { materialized },
-          })
-          return { openedOrMerged: materialized }
-        }
-        setPipelineTimestamp(signal.pipeline_ts, 'execution_claim_acquired_at', Date.now())
+      if (isRangeWake && !isRevisionRefresh) {
+        await releaseSignalBrokerDispatchClaim(this.supabase, signal.id, effectiveBroker.id)
+      }
+      setPipelineTimestamp(signal.pipeline_ts ?? (signal.pipeline_ts = {}), 'execution_claim_started_at', Date.now())
+      const claimed = await claimSignalBrokerDispatch(this.supabase, signal.id, effectiveBroker.id)
+      if (!claimed && !isRevisionRefresh) {
+        const materialized = await manualDispatchAlreadyMaterialized(this, signal.id, effectiveBroker.id)
+        console.warn(
+          `[tradeExecutor] skip duplicate dispatch claim signal=${signal.id} broker=${effectiveBroker.id}`
+          + ` materialized=${materialized}`,
+        )
         emitPipelineEvent({
-          event: 'execution_claimed',
+          event: 'execution_claim_lost',
           correlation: buildPipelineCorrelation({
             userId: signal.user_id,
             signalId: signal.id,
@@ -1504,10 +1485,34 @@ export class TradeExecutor {
             dispatchSource: signal.dispatch_source,
           }),
           timestamps: signal.pipeline_ts,
-          outcome: 'claimed',
+          outcome: 'lost',
           path: liveFast ? 'live_fast' : 'queued',
+          extra: { materialized },
         })
+        return { openedOrMerged: materialized }
       }
+      if (!claimed && isRevisionRefresh) {
+        console.log(
+          `[tradeExecutor] revision reused existing dispatch claim signal=${signal.id} broker=${effectiveBroker.id}`,
+        )
+      }
+      if (claimed) {
+        setPipelineTimestamp(signal.pipeline_ts, 'execution_claim_acquired_at', Date.now())
+      }
+      emitPipelineEvent({
+        event: isRevisionRefresh && !claimed ? 'execution_claim_reused' : 'execution_claimed',
+        correlation: buildPipelineCorrelation({
+          userId: signal.user_id,
+          signalId: signal.id,
+          channelId: signal.channel_id,
+          telegramMessageId: signal.telegram_message_id,
+          brokerAccountId: effectiveBroker.id,
+          dispatchSource: signal.dispatch_source,
+        }),
+        timestamps: signal.pipeline_ts,
+        outcome: isRevisionRefresh && !claimed ? 'reused' : 'claimed',
+        path: liveFast ? 'live_fast' : 'queued',
+      })
 
       const ms = resolved.manual_settings as Record<string, unknown>
       console.log(

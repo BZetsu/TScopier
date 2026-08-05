@@ -9,7 +9,9 @@ function isDuplicateKeyError(error: { code?: string; message?: string } | null):
 
 /**
  * Claim exclusive entry dispatch for signal+broker before OrderSend.
- * Returns false when another worker already claimed or materialized the dispatch.
+ * Returns false when another worker already claimed the dispatch or when the
+ * database cannot confirm that this worker owns the claim. An uncertain claim
+ * must never be treated as permission to place a broker order.
  */
 export async function claimSignalBrokerDispatch(
   supabase: SupabaseClient,
@@ -25,7 +27,7 @@ export async function claimSignalBrokerDispatch(
   console.warn(
     `[tradeExecutor] signal_broker_dispatch_claim insert failed signal=${signalId} broker=${brokerAccountId}: ${error.message}`,
   )
-  return true
+  return false
 }
 
 /** Release a prior claim so range-wake or retry can dispatch orders. */

@@ -300,6 +300,33 @@ export async function prepareEntryExecution(
     )
   }
   const baseLot = roundLot(computeLot(broker, parsed), params)
+  const sameSignalRefresh = sendOpts?.sameSignalRefresh === true
+
+  // A Telegram revision is never a new entry. Route it through the
+  // modify-only path before any entry-zone, teaser, range, or OrderSend logic.
+  // The merge router returns handled=true for every revision outcome, including
+  // an unavailable broker/API or a missing open basket, so revisions cannot
+  // fall through into a fresh entry.
+  if (sameSignalRefresh) {
+    const paramOutcome = await ctx.tryParameterFollowUpMergeModifyOnly({
+      signal,
+      parsed,
+      broker,
+      channelKeywords,
+      baseLot,
+      params,
+      symbol,
+      uuid,
+      strictEntryPrefetch: null,
+      commentPrefix,
+      sameSignalRefresh: true,
+      liveMgmtFast: sendOpts?.liveMgmtFast === true,
+    })
+    return {
+      ok: false,
+      outcome: { openedOrMerged: paramOutcome.success === true },
+    }
+  }
 
   let strictEntryPrefetch: { bid: number; ask: number } | null = null
   if (needsQuotePrefetch) {
@@ -355,7 +382,6 @@ export async function prepareEntryExecution(
   // Skip when Use signal range is on: zone+market-now+SL/TP must open via range entry wait,
   // not merge into a prior teaser that may never have opened.
   const basketRefreshSucceeded = false
-  const sameSignalRefresh = sendOpts?.sameSignalRefresh === true
   const rangeEntryStrict = signalEntryRangeStrictEnabled(manual)
   if (isManual && !rangeEntryStrict && (shouldRouteAsBasketParameterRefresh(parsed) || sameSignalRefresh)) {
     const paramOutcome = await ctx.tryParameterFollowUpMergeModifyOnly({
