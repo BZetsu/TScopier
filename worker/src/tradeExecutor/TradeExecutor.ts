@@ -1427,6 +1427,7 @@ export class TradeExecutor {
     const resolved = resolveChannelTradingConfig(executionBroker, signal.channel_id)
     const entryKey = `${signal.id}:${effectiveBroker.id}`
     const liveFast = sendOpts?.liveEntryFast === true
+
     const isRevisionRefresh = sendOpts?.sameSignalRefresh === true
 
     const isRangeWake = signal.dispatch_source === SIGNAL_RANGE_WAKE_DISPATCH_SOURCE

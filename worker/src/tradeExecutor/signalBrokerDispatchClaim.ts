@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 
-function isDuplicateKeyError(error: { code?: string; message?: string } | null): boolean {
+export function isDuplicateKeyError(error: { code?: string; message?: string } | null): boolean {
   if (!error) return false
   if (error.code === '23505') return true
   const msg = (error.message ?? '').toLowerCase()
@@ -27,6 +27,20 @@ export async function claimSignalBrokerDispatch(
   console.warn(
     `[tradeExecutor] signal_broker_dispatch_claim insert failed signal=${signalId} broker=${brokerAccountId}: ${error.message}`,
   )
+  try {
+    await supabase.from('trade_execution_logs').insert({
+      signal_id: signalId,
+      broker_account_id: brokerAccountId,
+      action: 'dispatch_claim_error',
+      status: 'failed',
+      error_message: error.message,
+      request_payload: {
+        signal_id: signalId,
+        broker_account_id: brokerAccountId,
+        fail_closed: true,
+      } as unknown as Record<string, unknown>,
+    })
+  } catch { /* best-effort */ }
   return false
 }
 

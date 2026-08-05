@@ -476,6 +476,36 @@ test('planMultiManualOrders: explicit cap consolidates legs, volume + TP split p
   assert.equal(byTp.size, 2)
   assert.ok(Math.abs((byTp.get(1900) ?? 0) - 0.5) < 1e-9)
   assert.ok(Math.abs((byTp.get(1910) ?? 0) - 0.5) < 1e-9)
+  // Normal multi still tags comments with :tpN (not naked prefix clones).
+  assert.ok(plan.orders.every(o => /:tp\d+/.test(String(o.comment ?? ''))))
+})
+
+test('planMultiManualOrders: empty finalTps falls back to one full-lot immediate (teaser)', () => {
+  const manual: ManualSettings = {
+    ...baseManual,
+    multi_trade_leg_percent: 10,
+    multi_trade_max_orders: 10,
+    range_trading: true,
+    range_percent: 30,
+    range_step_pips: 5,
+    range_distance_pips: 15,
+    tp_lots: [{ label: 'TP', lot: 0, percent: 100, enabled: true }],
+  }
+  const plan = planManualOrders({
+    parsed: { ...baseParsed, tp: [], sl: null },
+    resolvedSymbol: 'XAUUSD',
+    baseOperation: 'Buy',
+    manual,
+    channelKeywords: null,
+    manualLot: 0.4,
+    ctx: baseCtx,
+    commentPrefix: 'TScopier:44sClub:979b6ac0',
+  })
+  assert.equal(plan.orders.length, 1)
+  assert.ok(Math.abs(Number(plan.orders[0]?.volume) - 0.4) < 1e-9)
+  assert.equal(plan.fallback_reason, 'multi_trade_fallback_empty_tps')
+  // Comment stays the single-order prefix (no :tp1/:tp2 clones).
+  assert.equal(plan.orders[0]?.comment, 'TScopier:44sClub:979b6ac0')
 })
 
 test('planMultiManualOrders: cap of 2 emits one consolidated order per TP', () => {

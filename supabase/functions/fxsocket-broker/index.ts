@@ -268,7 +268,12 @@ Deno.serve(async (req: Request) => {
         if (!linkingExisting) {
           try { await fx.deleteAccount(accountId) } catch { /* swallow */ }
         }
-        return bad(500, insErr.message)
+        const msg = insErr.message
+        if (/broker_account_limit|subscription_required/i.test(msg)) {
+          const cleaned = msg.includes(": ") ? msg.slice(msg.indexOf(": ") + 2) : msg
+          return bad(403, cleaned)
+        }
+        return bad(500, msg)
       }
 
       // Return immediately — MT5 terminal spin-up can take minutes. Client polls refresh_summary.
