@@ -19,6 +19,7 @@ import {
 import { triggerBackgroundChannelAiTraining } from '../../lib/channelAiTrainingBackground'
 import { defaultChannelFiltersForPlan } from '../../lib/channelMessageFilters'
 import { prepareChannelSubscriptionUpsert } from '../../lib/signalChannelRegistry'
+import { upsertTelegramChannel, planLimitErrorMessage } from '../../lib/telegramChannelApi'
 import {
   hasValidTelegramChannelIdentity,
   isNumericTelegramChatId,
@@ -452,12 +453,19 @@ export function CopierEnginePage() {
 
   const toggleChannel = async (id: string, is_active: boolean) => {
     setChannels(prev => prev.map(c => c.id === id ? { ...c, is_active } : c))
-    await supabase.from('telegram_channels').update({ is_active }).eq('id', id)
+    const { error: upErr } = await supabase.from('telegram_channels').update({ is_active }).eq('id', id)
+    if (upErr) {
+      setChannels(prev => prev.map(c => c.id === id ? { ...c, is_active: !is_active } : c))
+      setError(planLimitErrorMessage(upErr.message))
+      return
+    }
+    void refreshSubscription()
   }
 
   const deleteChannel = async (id: string) => {
     setChannels(prev => prev.filter(c => c.id !== id))
     await supabase.from('telegram_channels').delete().eq('id', id)
+    void refreshSubscription()
   }
 
   const handleConnectChannelToBroker = async (channelId: string, brokerId: string) => {
@@ -558,33 +566,32 @@ export function CopierEnginePage() {
       setError(prepared.error)
       return
     }
-    const { data, error: dbErr } = await supabase
-      .from('telegram_channels')
-      .upsert(prepared.row, { onConflict: 'user_id,channel_id' })
-      .select('*')
-      .single()
-    if (dbErr) {
-      setError(dbErr.message)
+    const { channel: data, error: dbErr } = await upsertTelegramChannel({
+      channel_id: String(prepared.row.channel_id),
+      channel_username: String(prepared.row.channel_username ?? ''),
+      display_name: String(prepared.row.display_name ?? ''),
+      is_active: true,
+    })
+    if (dbErr || !data) {
+      setError(dbErr ?? 'Failed to add channel')
       return
     }
-    if (!dbErr && data) {
-      const upserted = data as TelegramChannel
-      setChannels(prev => {
-        const titleKey = ch.title.trim().toLowerCase()
-        const withoutStale = prev.filter(row =>
-          row.channel_id === ch.id
-          || row.display_name.trim().toLowerCase() !== titleKey
-          || hasValidTelegramChannelIdentity(row),
-        )
-        const prevExists = withoutStale.find(c => c.channel_id === ch.id)
-        return prevExists
-          ? withoutStale.map(c => (c.channel_id === ch.id ? upserted : c))
-          : [upserted, ...withoutStale]
-      })
-      setConnectMenuChannelId(upserted.id)
-      void refreshSubscription()
-      void triggerBackgroundChannelAiTraining(upserted.id, { userId: user!.id })
-    }
+    const upserted = data
+    setChannels(prev => {
+      const titleKey = ch.title.trim().toLowerCase()
+      const withoutStale = prev.filter(row =>
+        row.channel_id === ch.id
+        || row.display_name.trim().toLowerCase() !== titleKey
+        || hasValidTelegramChannelIdentity(row),
+      )
+      const prevExists = withoutStale.find(c => c.channel_id === ch.id)
+      return prevExists
+        ? withoutStale.map(c => (c.channel_id === ch.id ? upserted : c))
+        : [upserted, ...withoutStale]
+    })
+    setConnectMenuChannelId(upserted.id)
+    void refreshSubscription()
+    void triggerBackgroundChannelAiTraining(upserted.id, { userId: user!.id })
   }
 
   const handleTelegramLinked = async (data: { channels?: TgChannelListItem[] }) => {

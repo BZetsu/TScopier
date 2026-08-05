@@ -70,7 +70,7 @@ Deno.serve(async (req: Request) => {
     // Find or create Stripe customer
     const { data: existingSub } = await supabase
       .from("subscriptions")
-      .select("stripe_customer_id, trial_ends_at")
+      .select("stripe_customer_id, trial_ends_at, plan, status, stripe_subscription_id")
       .eq("user_id", user.id)
       .maybeSingle();
 
@@ -82,6 +82,39 @@ Deno.serve(async (req: Request) => {
         metadata: { supabase_user_id: user.id },
       });
       customerId = customer.id;
+    }
+
+    // Prevent stacking Basic on top of an already-active Advanced entitlement.
+    // Users should manage upgrades/downgrades via Customer Portal / Billing.
+    const existingPlan = existingSub?.plan;
+    const existingStatus = existingSub?.status;
+    const hasActiveAdvanced =
+      existingPlan === "advanced" &&
+      (existingStatus === "active" || existingStatus === "trialing" || existingStatus === "past_due");
+    if (hasActiveAdvanced && plan === "basic") {
+      return new Response(
+        JSON.stringify({
+          error:
+            "You already have an active Advanced subscription. Manage billing from the customer portal instead of starting Basic.",
+          code: "advanced_already_active",
+        }),
+        { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+    if (
+      existingPlan === "basic" &&
+      (existingStatus === "active" || existingStatus === "trialing" || existingStatus === "past_due") &&
+      plan === "basic" &&
+      existingSub?.stripe_subscription_id
+    ) {
+      return new Response(
+        JSON.stringify({
+          error:
+            "You already have an active Basic subscription. Manage billing from the customer portal.",
+          code: "basic_already_active",
+        }),
+        { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
     }
 
     // Build line items based on plan and interval

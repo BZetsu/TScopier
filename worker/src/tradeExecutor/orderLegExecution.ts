@@ -28,6 +28,29 @@ import {
 import { ensureSignalRow, isSignalFkViolation } from '../ensureSignalRow'
 import { captureWorkerError, captureWorkerWarning } from '../observability/sentry'
 
+/** Collapse legs that are identical clones (same op/symbol/volume/comment). */
+export function collapseIdenticalImmediateLegs(legs: Leg[]): { legs: Leg[]; collapsed: number } {
+  const seen = new Set<string>()
+  const out: Leg[] = []
+  let collapsed = 0
+  for (const leg of legs) {
+    const a = leg.args
+    const key = [
+      String(a.operation ?? ''),
+      String(a.symbol ?? ''),
+      String(Number(a.volume) || 0),
+      String(a.comment ?? ''),
+    ].join('|')
+    if (seen.has(key)) {
+      collapsed += 1
+      continue
+    }
+    seen.add(key)
+    out.push(leg)
+  }
+  return { legs: out, collapsed }
+}
+
 /** Normalized broker fill shape shared by the v1 client and the v2 fxClient. */
 type NormalizedFill = {
   ticket: number
@@ -92,12 +115,53 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
       }
   }
 
-  if (manual.trade_style !== 'multi' && legs.length > 1) {
-    console.error(
-      `[tradeExecutor] single trade_style aborting ${legs.length} legs signal=${signal.id} broker=${broker.id}`,
+  // Drop identical full-lot clones (Luis teaser pattern: N× same Buy/volume/comment).
+  const collapsed = collapseIdenticalImmediateLegs(legs)
+  let workingLegs = collapsed.legs
+  if (collapsed.collapsed > 0) {
+    console.warn(
+      `[tradeExecutor] duplicate_leg_collapsed removed=${collapsed.collapsed}`
+      + ` kept=${workingLegs.length} signal=${signal.id} broker=${broker.id}`,
     )
+    try {
+      await ctx.supabase.from('trade_execution_logs').insert({
+        user_id: signal.user_id,
+        signal_id: signal.id,
+        broker_account_id: broker.id,
+        action: 'duplicate_leg_collapsed',
+        status: 'info',
+        request_payload: {
+          removed: collapsed.collapsed,
+          kept: workingLegs.length,
+        } as unknown as Record<string, unknown>,
+      })
+    } catch { /* best-effort */ }
   }
-  const sendLegs = manual.trade_style !== 'multi' && legs.length > 1 ? legs.slice(0, 1) : legs
+
+  if (manual.trade_style !== 'multi' && workingLegs.length > 1) {
+    console.error(
+      `[tradeExecutor] single_style_multi_leg_blocked ${workingLegs.length} legs`
+      + ` signal=${signal.id} broker=${broker.id}`,
+    )
+    try {
+      await ctx.supabase.from('trade_execution_logs').insert({
+        user_id: signal.user_id,
+        signal_id: signal.id,
+        broker_account_id: broker.id,
+        action: 'single_style_multi_leg_blocked',
+        status: 'failed',
+        request_payload: { leg_count: workingLegs.length } as unknown as Record<string, unknown>,
+        error_message: `single trade_style refused ${workingLegs.length} immediate legs`,
+      })
+    } catch { /* best-effort */ }
+    return {
+      channelDelayMs,
+      channelDelaySkipped,
+      failureReason: 'single_style_multi_leg_blocked',
+    }
+  }
+
+  const sendLegs = workingLegs
 
   const totalCount = sendLegs.length
   const orderLogContext: Record<string, unknown> = {

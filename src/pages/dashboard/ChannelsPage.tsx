@@ -12,12 +12,17 @@ import { Button } from '../../components/ui/Button'
 import { Alert } from '../../components/ui/Alert'
 import { Input } from '../../components/ui/Input'
 import { prepareChannelSubscriptionUpsert } from '../../lib/signalChannelRegistry'
+import { upsertTelegramChannel, planLimitErrorMessage } from '../../lib/telegramChannelApi'
+import { useSubscription } from '../../context/SubscriptionContext'
+import { interpolate } from '../../i18n/interpolate'
 import type { TelegramChannel } from '../../types/database'
 
 export function ChannelsPage() {
   const t = useT()
   const ch = t.channelsPage
+  const pw = t.pricing.paywall
   const { user } = useAuth()
+  const { canAddChannel, limits, refresh: refreshSubscription } = useSubscription()
   const [channels, setChannels] = useState<TelegramChannel[]>([])
   const [loading, setLoading] = useState(true)
   const [showAdd, setShowAdd] = useState(false)
@@ -43,12 +48,19 @@ export function ChannelsPage() {
 
   const toggleChannel = async (id: string, is_active: boolean) => {
     setChannels(prev => prev.map(c => c.id === id ? { ...c, is_active } : c))
-    await supabase.from('telegram_channels').update({ is_active }).eq('id', id)
+    const { error: upErr } = await supabase.from('telegram_channels').update({ is_active }).eq('id', id)
+    if (upErr) {
+      setChannels(prev => prev.map(c => c.id === id ? { ...c, is_active: !is_active } : c))
+      setError(planLimitErrorMessage(upErr.message))
+      return
+    }
+    void refreshSubscription()
   }
 
   const deleteChannel = async (id: string) => {
     setChannels(prev => prev.filter(c => c.id !== id))
     await supabase.from('telegram_channels').delete().eq('id', id)
+    void refreshSubscription()
   }
 
   const addChannel = async (e: React.FormEvent) => {
@@ -58,9 +70,17 @@ export function ChannelsPage() {
       setError(ch.nameRequired)
       return
     }
+    const channelId = newChannel.channel_id.trim() || newChannel.channel_username.trim()
+    const alreadyLinked = channels.some(c => c.channel_id === channelId || (
+      newChannel.channel_username.trim()
+      && c.channel_username.toLowerCase() === newChannel.channel_username.trim().replace(/^@/, '').toLowerCase()
+    ))
+    if (!alreadyLinked && !canAddChannel()) {
+      setError(interpolate(pw.channelLimit, { limit: String(limits.maxTelegramChannels ?? 5) }))
+      return
+    }
 
     setSaving(true)
-    const channelId = newChannel.channel_id.trim() || newChannel.channel_username.trim()
     const prepared = await prepareChannelSubscriptionUpsert(supabase, {
       userId: user!.id,
       telegramChatId: channelId,
@@ -72,22 +92,27 @@ export function ChannelsPage() {
       setError(prepared.error)
       return
     }
-    const { data, error: dbErr } = await supabase
-      .from('telegram_channels')
-      .insert(prepared.row)
-      .select('*')
-      .single()
+    const { channel: data, error: dbErr } = await upsertTelegramChannel({
+      channel_id: String(prepared.row.channel_id),
+      channel_username: String(prepared.row.channel_username ?? ''),
+      display_name: String(prepared.row.display_name ?? ''),
+      is_active: true,
+    })
 
     setSaving(false)
 
-    if (dbErr) {
-      setError(dbErr.message)
+    if (dbErr || !data) {
+      setError(dbErr ?? 'Failed to add channel')
       return
     }
 
-    setChannels(prev => [data, ...prev])
+    setChannels(prev => {
+      const without = prev.filter(c => c.channel_id !== data.channel_id)
+      return [data, ...without]
+    })
     setNewChannel({ channel_id: '', channel_username: '', display_name: '' })
     setShowAdd(false)
+    void refreshSubscription()
   }
 
   const updateSettings = async (id: string, updates: Partial<TelegramChannel>) => {

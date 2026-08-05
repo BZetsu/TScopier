@@ -3,9 +3,40 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import Stripe from "npm:stripe@17";
 import {
   stripePriceIdsFromEnv,
-  subscriptionRowFromStripe,
   mapStripeSubscriptionStatus,
+  entitlementRowFromStripeCustomer,
 } from "../_shared/stripeSubscriptionSync.ts";
+
+/** Sync local one-row entitlement from *all* Stripe subscriptions on the customer. */
+async function upsertEntitlementFromCustomer(
+  stripe: Stripe,
+  supabase: ReturnType<typeof createClient>,
+  userId: string,
+  customerId: string,
+  priceIds: ReturnType<typeof stripePriceIdsFromEnv>,
+): Promise<{ plan: string; status: string; extra_accounts: number; trial_ends_at: string | null } | null> {
+  const row = await entitlementRowFromStripeCustomer(stripe, userId, customerId, priceIds);
+  if (!row) {
+    await supabase
+      .from("subscriptions")
+      .update({
+        status: "canceled",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("user_id", userId);
+    await revokeCopierAccessOnSubscriptionEnd(supabase, userId);
+    return null;
+  }
+  await supabase
+    .from("subscriptions")
+    .upsert(row, { onConflict: "user_id", ignoreDuplicates: false });
+  if (isSubscriptionActive(row.status, row.trial_ends_at)) {
+    await restoreCopierAccessOnSubscriptionActive(supabase, userId);
+  } else {
+    await revokeCopierAccessOnSubscriptionEnd(supabase, userId);
+  }
+  return row;
+}
 import {
   isSubscriptionActive,
   revokeCopierAccessOnSubscriptionEnd,
@@ -264,20 +295,16 @@ Deno.serve(async (req: Request) => {
             if (pmId) subUpdate.default_payment_method = pmId;
           }
           await stripe.subscriptions.update(subscription.id, subUpdate);
-          const subscriptionForDb = await stripe.subscriptions.retrieve(
-            subscription.id,
-            { expand: ["items.data.price"] },
-          );
 
-          const row = subscriptionRowFromStripe(subscriptionForDb, userId, customerId, priceIds);
-          await supabase
-            .from("subscriptions")
-            .upsert(row, { onConflict: "user_id", ignoreDuplicates: false });
-          if (isSubscriptionActive(row.status, row.trial_ends_at)) {
-            await restoreCopierAccessOnSubscriptionActive(supabase, userId);
-          } else {
-            await revokeCopierAccessOnSubscriptionEnd(supabase, userId);
-          }
+          // Reconcile across ALL customer subscriptions so a new Basic checkout
+          // cannot overwrite an existing active Advanced entitlement.
+          await upsertEntitlementFromCustomer(
+            stripe,
+            supabase,
+            userId,
+            customerId,
+            priceIds,
+          );
         }
         break;
       }
@@ -291,35 +318,42 @@ Deno.serve(async (req: Request) => {
             : subscription.customer?.id ?? null;
 
         if (userId && customerId) {
-          const row = subscriptionRowFromStripe(subscription, userId, customerId, priceIds);
-          await supabase
-            .from("subscriptions")
-            .upsert(row, { onConflict: "user_id", ignoreDuplicates: false });
-          if (!isSubscriptionActive(row.status, row.trial_ends_at)) {
-            await revokeCopierAccessOnSubscriptionEnd(supabase, userId);
-          } else {
-            await restoreCopierAccessOnSubscriptionActive(supabase, userId);
-          }
+          await upsertEntitlementFromCustomer(
+            stripe,
+            supabase,
+            userId,
+            customerId,
+            priceIds,
+          );
         } else if (userId) {
+          // Fallback when customer id missing: only update this subscription id's mapped fields
+          // if it is the one currently stored for the user.
           const mappedStatus = mapStripeSubscriptionStatus(subscription.status);
           const trialEndsAt = subscription.trial_end
             ? new Date(subscription.trial_end * 1000).toISOString()
             : null;
-          await supabase
+          const { data: current } = await supabase
             .from("subscriptions")
-            .update({
-              status: mappedStatus,
-              current_period_end: new Date(
-                subscription.current_period_end * 1000,
-              ).toISOString(),
-              trial_ends_at: trialEndsAt,
-              updated_at: new Date().toISOString(),
-            })
-            .eq("user_id", userId);
-          if (!isSubscriptionActive(mappedStatus, trialEndsAt)) {
-            await revokeCopierAccessOnSubscriptionEnd(supabase, userId);
-          } else {
-            await restoreCopierAccessOnSubscriptionActive(supabase, userId);
+            .select("stripe_subscription_id")
+            .eq("user_id", userId)
+            .maybeSingle();
+          if (current?.stripe_subscription_id === subscription.id) {
+            await supabase
+              .from("subscriptions")
+              .update({
+                status: mappedStatus,
+                current_period_end: new Date(
+                  subscription.current_period_end * 1000,
+                ).toISOString(),
+                trial_ends_at: trialEndsAt,
+                updated_at: new Date().toISOString(),
+              })
+              .eq("user_id", userId);
+            if (!isSubscriptionActive(mappedStatus, trialEndsAt)) {
+              await revokeCopierAccessOnSubscriptionEnd(supabase, userId);
+            } else {
+              await restoreCopierAccessOnSubscriptionActive(supabase, userId);
+            }
           }
         }
         break;
@@ -328,16 +362,37 @@ Deno.serve(async (req: Request) => {
       case "customer.subscription.deleted": {
         const subscription = event.data.object as Stripe.Subscription;
         const userId = await resolveUserIdFromSubscription(stripe, subscription, supabase);
+        const customerId =
+          typeof subscription.customer === "string"
+            ? subscription.customer
+            : subscription.customer?.id ?? null;
 
-        if (userId) {
-          await supabase
+        if (userId && customerId) {
+          // Do not cancel local entitlement just because one of several Stripe
+          // subscriptions ended — recompute from whatever is still active.
+          await upsertEntitlementFromCustomer(
+            stripe,
+            supabase,
+            userId,
+            customerId,
+            priceIds,
+          );
+        } else if (userId) {
+          const { data: current } = await supabase
             .from("subscriptions")
-            .update({
-              status: "canceled",
-              updated_at: new Date().toISOString(),
-            })
-            .eq("user_id", userId);
-          await revokeCopierAccessOnSubscriptionEnd(supabase, userId);
+            .select("stripe_subscription_id")
+            .eq("user_id", userId)
+            .maybeSingle();
+          if (!current?.stripe_subscription_id || current.stripe_subscription_id === subscription.id) {
+            await supabase
+              .from("subscriptions")
+              .update({
+                status: "canceled",
+                updated_at: new Date().toISOString(),
+              })
+              .eq("user_id", userId);
+            await revokeCopierAccessOnSubscriptionEnd(supabase, userId);
+          }
         }
         break;
       }
@@ -379,13 +434,13 @@ Deno.serve(async (req: Request) => {
               ? subscription.customer
               : subscription.customer?.id ?? null;
           if (userId && customerId) {
-            const row = subscriptionRowFromStripe(subscription, userId, customerId, priceIds);
-            await supabase
-              .from("subscriptions")
-              .upsert(row, { onConflict: "user_id", ignoreDuplicates: false });
-            if (isSubscriptionActive(row.status, row.trial_ends_at)) {
-              await restoreCopierAccessOnSubscriptionActive(supabase, userId);
-            }
+            await upsertEntitlementFromCustomer(
+              stripe,
+              supabase,
+              userId,
+              customerId,
+              priceIds,
+            );
           } else {
             await supabase
               .from("subscriptions")

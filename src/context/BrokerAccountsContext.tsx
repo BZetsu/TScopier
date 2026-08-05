@@ -18,6 +18,7 @@ import {
   BROKER_ACCOUNT_CLIENT_SELECT,
   sortBrokerAccountsNewestFirst,
 } from '../lib/brokerAccountSelect'
+import { planLimitErrorMessage } from '../lib/telegramChannelApi'
 
 interface BrokerAccountsContextValue {
   brokers: BrokerAccount[]
@@ -126,7 +127,7 @@ export function BrokerAccountsProvider({
       .eq('user_id', user.id)
     if (error) {
       setBrokers(prev => prev.map(b => (b.id === id ? { ...b, is_active: !is_active } : b)))
-      return { error: error.message }
+      return { error: planLimitErrorMessage(error.message) }
     }
     return { error: null }
   }, [user])

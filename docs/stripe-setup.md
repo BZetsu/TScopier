@@ -44,6 +44,13 @@ Table `subscriptions` (one row per user via `UNIQUE (user_id)`):
 - `extra_accounts`: Advanced add-on quantity
 - `stripe_customer_id`, `stripe_subscription_id`, period/trial dates
 
+Webhook sync **reconciles all Stripe subscriptions on the customer** and stores the best
+entitlement (Advanced beats Basic; higher `extra_accounts` wins). This prevents a second
+Basic checkout from overwriting an active Advanced row.
+
+Ops: `POST /functions/v1/reconcile-stripe-entitlement` with
+`{ "user_id": "..." }` (service role / admin / `WORKER_INTERNAL_TOKEN`) to force a resync.
+
 Idempotency table: `stripe_events`.
 
 Apply migrations including `20260527120000_subscriptions_user_id_unique.sql` before relying on webhook upserts.
