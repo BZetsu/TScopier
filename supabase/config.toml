@@ -50,3 +50,6 @@ verify_jwt = false
 
 [functions.upsert-telegram-channel]
 verify_jwt = true
+
+[functions.reconcile-stripe-entitlement]
+verify_jwt = false
