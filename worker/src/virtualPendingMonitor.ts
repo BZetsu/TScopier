@@ -51,7 +51,6 @@ import {
   stepPriceOffsetForBasket,
 } from './layerConcurrentFire'
 import { incMetric } from './workerMetrics'
-import { captureWorkerWarning } from './observability/sentry'
 import { captureBusinessIssue } from './observability/businessEvents'
 import { parsePersistedLayeringPlan } from './manualPlanning/layeringPlanPersistence'
 import { resolveLayeringModeRolloutDecision } from './manualPlanning/layeringModeRollout'
@@ -785,18 +784,24 @@ export class VirtualPendingMonitor {
         `[virtualPendingMonitor] enqueue reconcile failed leg=${leg.id}:`
         + ` ${err instanceof Error ? err.message : String(err)}`,
       )
-      captureWorkerWarning(err instanceof Error ? err : new Error(String(err)), {
-        subsystem: 'range',
-        operation: 'basket_reconcile_enqueue_failed',
-        errorCode: 'BASKET_RECONCILE_ENQUEUE_FAILED',
-        fingerprint: ['range', 'BASKET_RECONCILE_ENQUEUE_FAILED', 'range_fill_follow_up'],
+      captureBusinessIssue({
+        category: 'reconciliation',
+        event: 'deferred_trade_follow_up_failed',
+        severity: 'warning',
+        reasonCode: 'BASKET_RECONCILE_ENQUEUE_FAILED',
+        message: 'Range fill reconcile enqueue failed after follow-up failure',
+        userImpact: 'delayed',
         context: {
           user_id: leg.user_id,
           signal_id: leg.signal_id,
           broker_account_id: leg.broker_account_id,
           pending_leg_id: leg.id,
           basket_id: `${leg.signal_id}:${leg.broker_account_id}`,
-          stage: 'range_reconcile_enqueue',
+          layer_plan_id: leg.layer_plan_id ?? null,
+          layer_step_idx: leg.step_idx,
+          symbol: leg.symbol,
+          side: leg.is_buy ? 'buy' : 'sell',
+          operation: 'range_fill_reconcile_enqueue',
         },
       })
     }
@@ -1281,10 +1286,53 @@ export class VirtualPendingMonitor {
                 `[virtualPendingMonitor] post-naked stops failed leg=${leg.id} ticket=${ticketNum}:`
                 + ` ${outcome.error ?? 'unknown'}`,
               )
+              captureBusinessIssue({
+                category: 'management',
+                event: 'deferred_trade_follow_up_failed',
+                severity: 'error',
+                reasonCode: 'RANGE_LEG_POST_NAKED_STOPS_FAILED',
+                message: 'Range layer opened naked and follow-up SL/TP assignment failed',
+                userImpact: 'partial',
+                context: {
+                  user_id: leg.user_id,
+                  signal_id: leg.signal_id,
+                  broker_account_id: leg.broker_account_id,
+                  pending_leg_id: leg.id,
+                  trade_id: tradeRowId,
+                  basket_id: `${leg.signal_id}:${leg.broker_account_id}`,
+                  layer_plan_id: leg.layer_plan_id ?? null,
+                  layer_step_idx: leg.step_idx,
+                  symbol: leg.symbol,
+                  side: leg.is_buy ? 'buy' : 'sell',
+                  operation: 'range_leg_post_naked_stops',
+                  extra: { broker_database_state_may_disagree: true },
+                },
+              })
               await this.enqueueReconcileForLegBasket(leg, channelIdForTrade)
             }
           } catch (assignErr) {
             console.warn(`[virtualPendingMonitor] post-naked stops error leg=${leg.id}:`, assignErr)
+            captureBusinessIssue({
+              category: 'management',
+              event: 'deferred_trade_follow_up_failed',
+              severity: 'error',
+              reasonCode: 'RANGE_LEG_POST_NAKED_STOPS_FAILED',
+              message: 'Range layer opened naked and follow-up SL/TP assignment failed',
+              userImpact: 'partial',
+              context: {
+                user_id: leg.user_id,
+                signal_id: leg.signal_id,
+                broker_account_id: leg.broker_account_id,
+                pending_leg_id: leg.id,
+                trade_id: tradeRowId,
+                basket_id: `${leg.signal_id}:${leg.broker_account_id}`,
+                layer_plan_id: leg.layer_plan_id ?? null,
+                layer_step_idx: leg.step_idx,
+                symbol: leg.symbol,
+                side: leg.is_buy ? 'buy' : 'sell',
+                operation: 'range_leg_post_naked_stops',
+              },
+            })
             await this.enqueueReconcileForLegBasket(leg, channelIdForTrade)
           }
         }
@@ -1309,6 +1357,27 @@ export class VirtualPendingMonitor {
             `[virtualPendingMonitor] SL/TP follow-up for range leg=${leg.id} signal=${leg.signal_id}:`,
             hookErr,
           )
+          captureBusinessIssue({
+            category: 'management',
+            event: 'deferred_trade_follow_up_failed',
+            severity: 'error',
+            reasonCode: 'RANGE_LEG_SL_TP_FOLLOW_UP_FAILED',
+            message: 'Range layer SL/TP follow-up failed after layer execution',
+            userImpact: 'partial',
+            context: {
+              user_id: leg.user_id,
+              signal_id: leg.signal_id,
+              broker_account_id: leg.broker_account_id,
+              pending_leg_id: leg.id,
+              trade_id: tradeRowId,
+              basket_id: `${leg.signal_id}:${leg.broker_account_id}`,
+              layer_plan_id: leg.layer_plan_id ?? null,
+              layer_step_idx: leg.step_idx,
+              symbol: leg.symbol,
+              side: leg.is_buy ? 'buy' : 'sell',
+              operation: 'range_leg_sl_tp_follow_up',
+            },
+          })
           await this.enqueueReconcileForLegBasket(leg, channelIdForTrade)
         }
         // Brief pause so the new trade row is visible before the basket-wide rebalance query.
@@ -1320,6 +1389,27 @@ export class VirtualPendingMonitor {
             `[virtualPendingMonitor] TP rebalance after range fill leg=${leg.id} signal=${leg.signal_id}:`,
             rebalErr,
           )
+          captureBusinessIssue({
+            category: 'management',
+            event: 'basket_tp_sync_failed',
+            severity: 'warning',
+            reasonCode: 'RANGE_LEG_TP_REBALANCE_FAILED',
+            message: 'Range layer basket TP rebalance failed after layer execution',
+            userImpact: 'delayed',
+            context: {
+              user_id: leg.user_id,
+              signal_id: leg.signal_id,
+              broker_account_id: leg.broker_account_id,
+              pending_leg_id: leg.id,
+              trade_id: tradeRowId,
+              basket_id: `${leg.signal_id}:${leg.broker_account_id}`,
+              layer_plan_id: leg.layer_plan_id ?? null,
+              layer_step_idx: leg.step_idx,
+              symbol: leg.symbol,
+              side: leg.is_buy ? 'buy' : 'sell',
+              operation: 'range_leg_tp_rebalance',
+            },
+          })
           await this.enqueueReconcileForLegBasket(leg, channelIdForTrade)
         }
         // Always enqueue reconcile after a naked open so the monitor retries
@@ -1400,6 +1490,27 @@ export class VirtualPendingMonitor {
             `[virtualPendingMonitor] gap-fill reanchor failed leg=${leg.id} signal=${leg.signal_id}:`,
             reanchorErr,
           )
+          captureBusinessIssue({
+            category: 'layering',
+            event: 'deferred_trade_follow_up_failed',
+            severity: 'warning',
+            reasonCode: 'RANGE_LEG_REANCHOR_FAILED',
+            message: 'Range layer gap-fill reanchor failed after layer execution',
+            userImpact: 'delayed',
+            context: {
+              user_id: leg.user_id,
+              signal_id: leg.signal_id,
+              broker_account_id: leg.broker_account_id,
+              pending_leg_id: leg.id,
+              basket_id: `${leg.signal_id}:${leg.broker_account_id}`,
+              layer_plan_id: leg.layer_plan_id ?? null,
+              layer_step_idx: leg.step_idx,
+              symbol: leg.symbol,
+              side: leg.is_buy ? 'buy' : 'sell',
+              operation: 'range_leg_reanchor',
+              extra: { broker_database_state_may_disagree: true },
+            },
+          })
         }
       }
       timestamps.layer_reconciled_at = Date.now()

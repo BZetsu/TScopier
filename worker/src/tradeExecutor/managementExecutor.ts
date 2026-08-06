@@ -67,6 +67,7 @@ import {
   type SignalRow
 } from './types'
 import { captureBusinessIssue } from '../observability/businessEvents'
+import { captureDeferredBusinessFailure } from '../observability/deferredBusinessEvents'
 
 function mgmtCloseOpts(liveMgmtFast: boolean) {
   return { maxAttempts: 2, slippageEscalation: 50, liveFast: liveMgmtFast }
@@ -198,6 +199,27 @@ function deferMgmtCloseCleanup(args: {
         `[tradeExecutor] mgmt deferred close cleanup failed signal=${signal.id}:`,
         err instanceof Error ? err.message : err,
       )
+      captureDeferredBusinessFailure({
+        category: 'management',
+        event: 'trade_management_cleanup_failed',
+        severity: 'warning',
+        reasonCode: 'MGMT_CLOSE_CLEANUP_FAILED',
+        message: 'Deferred management close cleanup failed after main close handling',
+        userImpact: 'partial',
+        operation: 'management_close_cleanup',
+        err,
+        context: {
+          user_id: signal.user_id,
+          signal_id: signal.id,
+          channel_id: signal.channel_id,
+          telegram_message_id: signal.telegram_message_id,
+          extra: {
+            targeted_count: brokerAccountIds.length,
+            pending_scope_count: cancelledPendingScopes.size,
+            live_fast: liveMgmtFast,
+          },
+        },
+      })
     }
   })()
 }
