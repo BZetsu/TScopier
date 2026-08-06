@@ -32,11 +32,10 @@ export type EnsureSignalRowResult = {
 }
 
 function buildSignalRowPatch(args: EnsureSignalRowArgs): Record<string, unknown> {
-  return {
+  const patch: Record<string, unknown> = {
     id: args.id,
     user_id: args.user_id,
     channel_id: args.channel_id ?? null,
-    raw_message: args.raw_message ?? '',
     raw_image_url: null,
     status: args.status ?? 'parsed',
     parsed_data: args.parsed_data ?? null,
@@ -45,8 +44,18 @@ function buildSignalRowPatch(args: EnsureSignalRowArgs): Record<string, unknown>
     is_modification: args.is_modification === true,
     parent_signal_id: args.parent_signal_id ?? null,
     reply_to_message_id: args.reply_to_message_id ?? null,
-    ...(args.pipeline_ts ? { pipeline_ts: args.pipeline_ts } : {}),
   }
+  // Only write raw_message when a non-empty value is provided. Dispatch-only
+  // payloads (listener push carries no raw_message) upsert by id and must not
+  // clobber the raw_message the listener already persisted for the signal —
+  // otherwise the frontend Copier Logs show an empty Telegram message.
+  if (typeof args.raw_message === 'string' && args.raw_message.trim().length > 0) {
+    patch.raw_message = args.raw_message
+  }
+  if (args.pipeline_ts) {
+    patch.pipeline_ts = args.pipeline_ts
+  }
+  return patch
 }
 
 /**

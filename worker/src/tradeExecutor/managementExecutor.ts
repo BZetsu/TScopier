@@ -11,6 +11,7 @@ import {
   isSlAtOrBeyondBreakeven,
 } from '../autoManagement'
 import { signalPipPrice } from '../signalPip'
+import { convertPipOffsetToPrice, convertPipOffsetsToPrices } from '../signalStopUnits'
 import { isChannelManagementBlocked, isPendingCancelBlocked, normalizeChannelMessageFiltersMap } from '../channelMessageFilters'
 import {
   cweInstructionGroupKey,
@@ -74,6 +75,37 @@ function mgmtCloseOpts(liveMgmtFast: boolean) {
 
 function normBasketSymbolKey(sym: string): string {
   return String(sym ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+}
+
+/** Reference (entry + direction + symbol) for converting pip offsets on a modify.
+ *  Anchored to the most recently opened leg of the target symbol bucket so
+ *  "add 30 pips take profit" converts against the live basket, not a stale level. */
+function referenceEntryForMgmtRows(
+  rows: MgmtTradeRow[],
+  symbolHint: string | null,
+): { entry: number; isBuy: boolean; symbol: string } | null {
+  const hint = String(symbolHint ?? '').trim().toUpperCase()
+  const candidate = hint
+    ? rows.filter(r => symbolsCompatibleForBasket(hint, r.symbol))
+    : rows
+  if (!candidate.length) return null
+  let best: MgmtTradeRow | null = null
+  for (const r of candidate) {
+    if (!(typeof r.entry_price === 'number' && Number.isFinite(r.entry_price) && r.entry_price > 0)) continue
+    if (!best) {
+      best = r
+      continue
+    }
+    const ta = r.opened_at ? new Date(r.opened_at).getTime() : 0
+    const tb = best.opened_at ? new Date(best.opened_at).getTime() : 0
+    if (ta >= tb) best = r
+  }
+  if (!best || !(typeof best.entry_price === 'number') || !(best.entry_price > 0)) return null
+  return {
+    entry: best.entry_price,
+    isBuy: String(best.direction).toLowerCase() === 'buy',
+    symbol: best.symbol,
+  }
 }
 
 function mgmtRowToBasketLegForReconcile(row: MgmtTradeRow): BasketOpenLeg {
@@ -696,6 +728,46 @@ export async function applyManagement(
       (t): t is number => typeof t === 'number' && Number.isFinite(t) && t > 0,
     )
     const hasNewTp = parsedTpLevels.length > 0
+
+    // Pip-offset modify instructions ("Add 30 pips take profit", "SL 20 pips") must
+    // be converted to absolute broker prices anchored to the open basket's entry.
+    // Entry execution does this (entryPrepare); modify/apply paths never did, so a
+    // 30-pip instruction was applied as the absolute price 30.
+    const slInPips = parsed.sl_unit === 'pips'
+    const tpInPips = parsed.tp_unit === 'pips'
+    let effectiveSl: number | null = hasNewSl ? (parsed.sl as number) : null
+    let effectiveTpLevels: number[] = parsedTpLevels
+    if ((slInPips || tpInPips) && rows.length) {
+      const anchor = referenceEntryForMgmtRows(rows, mgmtSymbolHint)
+      if (anchor) {
+        const pipSize = signalPipPrice(anchor.symbol)
+        if (Number.isFinite(pipSize) && pipSize > 0) {
+          if (slInPips && effectiveSl != null) {
+            effectiveSl = convertPipOffsetToPrice({
+              offset: effectiveSl,
+              entryAnchor: anchor.entry,
+              isBuy: anchor.isBuy,
+              pipSize,
+            }) ?? effectiveSl
+          }
+          if (tpInPips && effectiveTpLevels.length) {
+            effectiveTpLevels = convertPipOffsetsToPrices({
+              offsets: effectiveTpLevels,
+              entryAnchor: anchor.entry,
+              isBuy: anchor.isBuy,
+              pipSize,
+            })
+          }
+        }
+      }
+    }
+    const parsedForApply: ParsedSignal = {
+      ...parsed,
+      sl: effectiveSl,
+      tp: effectiveTpLevels,
+      sl_unit: 'price',
+      tp_unit: 'price',
+    }
 
     const mgmtCtx = { hasNewSl, hasNewTp }
 
@@ -1456,8 +1528,8 @@ export async function applyManagement(
             rowsByBrokerSignal: rowsByBrokerSignalStop,
             hasNewSl,
             hasNewTp,
-            parsedSl: hasNewSl ? (parsed.sl as number) : null,
-            parsedTpLevels,
+            parsedSl: effectiveSl,
+            parsedTpLevels: effectiveTpLevels,
             // Inline broker re-read/verify is off by default — the v2 reconciler
             // (or v1 basket reconcile monitor) re-verifies broker drift, so this
             // synchronous per-leg snapshot check is redundant and previously caused
@@ -1481,12 +1553,12 @@ export async function applyManagement(
               user_id: signal.user_id,
               channel_id: signal.channel_id,
             },
-            parsed,
+            parsed: parsedForApply,
             rowsByBrokerSignal: mgmtRowsForApply,
             brokersById: byBroker,
             hasNewSl,
             hasNewTp,
-            parsedTpLevels,
+            parsedTpLevels: effectiveTpLevels,
             liveMgmtFast,
           })
         }
@@ -1509,7 +1581,7 @@ export async function applyManagement(
       )
       const pendingUpdated = await updateRangePendingLegsForManagement({
         supabase: ctx.supabase,
-        parsed,
+        parsed: parsedForApply,
         pendingLegs,
         openTrades: rows,
         tpLotsByBroker,
@@ -1517,7 +1589,7 @@ export async function applyManagement(
         action,
         hasNewSl,
         hasNewTp,
-        parsedTpLevels,
+        parsedTpLevels: effectiveTpLevels,
       })
       if (pendingUpdated > 0) {
         console.log(
@@ -1540,8 +1612,8 @@ export async function applyManagement(
         userId: signal.user_id,
         channelId: signal.channel_id,
         symbols,
-        stoploss: hasNewSl ? (parsed.sl as number) : null,
-        tpLevels: hasNewTp ? parsedTpLevels : undefined,
+        stoploss: effectiveSl,
+        tpLevels: effectiveTpLevels.length ? effectiveTpLevels : undefined,
         replace: true,
       })
       // Record the latest adjustment as the authoritative per-basket target so
@@ -1555,8 +1627,8 @@ export async function applyManagement(
           anchorSignalId,
           channelId: signal.channel_id,
           symbol: brokerRows[0]?.symbol ?? symbols[0] ?? 'UNKNOWN',
-          stoploss: hasNewSl ? (parsed.sl as number) : null,
-          tpLevels: hasNewTp ? parsedTpLevels : null,
+          stoploss: effectiveSl,
+          tpLevels: effectiveTpLevels.length ? effectiveTpLevels : null,
           source: 'adjust',
           instructionAt: signal.created_at,
         })
@@ -1567,8 +1639,8 @@ export async function applyManagement(
         )
         const mgmtChannelParams: ChannelActiveTradeParams = {
           symbol: symbols[0] ?? symbolFromText ?? pendingLegs[0]!.symbol,
-          stoploss: hasNewSl ? (parsed.sl as number) : null,
-          tpLevels: hasNewTp ? parsedTpLevels : [],
+          stoploss: effectiveSl,
+          tpLevels: effectiveTpLevels.length ? effectiveTpLevels : [],
         }
         const scopes = new Map<string, { signalId: string; brokerAccountId: string; symbol: string }>()
         for (const leg of pendingLegs) {
@@ -1583,7 +1655,7 @@ export async function applyManagement(
           pendingPatched += await patchActiveRangePendingLegStops({
             supabase: ctx.supabase,
             scope,
-            stoploss: hasNewSl ? (parsed.sl as number) : null,
+            stoploss: effectiveSl,
             channelParams: mgmtChannelParams,
             tpLots: tpLotsByBroker.get(scope.brokerAccountId),
             plannedRangeLegs: pendingLegs.filter(

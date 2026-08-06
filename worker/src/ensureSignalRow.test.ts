@@ -83,3 +83,56 @@ test('ensureSignalRow falls back to stub without telegram_message_id on unique c
   assert.equal(payloads[1]?.telegram_message_id, null)
   assert.equal(payloads[1]?.id, '68b4b9a4-aaaa-bbbb-cccc-dddddddddddd')
 })
+
+test('ensureSignalRow preserves existing raw_message when dispatch payload omits it', async () => {
+  const calls: Array<{ payload: Record<string, unknown> }> = []
+  const supabase = {
+    from(_table: string) {
+      return {
+        upsert(payload: Record<string, unknown>) {
+          calls.push({ payload })
+          return Promise.resolve({ error: null })
+        },
+      }
+    },
+  }
+
+  const result = await ensureSignalRow(supabase as never, {
+    id: '68b4b9a4-1111-2222-3333-444444444444',
+    user_id: 'user-1',
+    channel_id: 'ch-1',
+    status: 'parsed',
+    parsed_data: { action: 'modify', symbol: 'XAUUSD' },
+    telegram_message_id: '6062',
+  })
+
+  assert.equal(result.ok, true)
+  const payload = calls[0]?.payload ?? {}
+  assert.equal('raw_message' in payload, false, 'raw_message must not be written when omitted')
+})
+
+test('ensureSignalRow preserves existing raw_message when raw_message is empty string', async () => {
+  const calls: Array<{ payload: Record<string, unknown> }> = []
+  const supabase = {
+    from(_table: string) {
+      return {
+        upsert(payload: Record<string, unknown>) {
+          calls.push({ payload })
+          return Promise.resolve({ error: null })
+        },
+      }
+    },
+  }
+
+  const result = await ensureSignalRow(supabase as never, {
+    id: '68b4b9a4-1111-2222-3333-444444444444',
+    user_id: 'user-1',
+    channel_id: 'ch-1',
+    raw_message: '',
+    status: 'parsed',
+  })
+
+  assert.equal(result.ok, true)
+  const payload = calls[0]?.payload ?? {}
+  assert.equal('raw_message' in payload, false, 'raw_message must not be written when empty')
+})
