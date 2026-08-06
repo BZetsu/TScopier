@@ -2024,6 +2024,7 @@ export class UserListener {
     signalId: string
     isReply: boolean
     parentSignalId: string | null
+    pipelineTs?: Record<string, unknown>
   }): Promise<{
     parseResult: Awaited<ReturnType<typeof parseChannelMessageSync>>
     aiMeta?: {
@@ -2054,6 +2055,7 @@ export class UserListener {
         isModificationClass,
         keywords,
         lexicon,
+        pipelineTs: args.pipelineTs,
       })
       if (
         routed.parseResult.status === 'parsed'
@@ -2066,8 +2068,17 @@ export class UserListener {
           + ` symbol=${routed.parseResult.parsed.symbol ?? 'null'}`,
         )
       }
+      const parseResult = routed.verification
+        ? {
+            ...routed.parseResult,
+            parsed: {
+              ...routed.parseResult.parsed,
+              _verification: routed.verification,
+            },
+          }
+        : routed.parseResult
       return {
-        parseResult: routed.parseResult,
+        parseResult,
         aiMeta: routed.aiMeta,
         channelKeywords: keywords,
       }
@@ -2393,6 +2404,7 @@ export class UserListener {
         signalId,
         isReply,
         parentSignalId,
+        pipelineTs,
       })
       parseResult = parsed.parseResult
       aiMeta = parsed.aiMeta

@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { ChannelKeywords, ChannelLexiconRow, ParseChannelMessageResult } from '../parseSignal'
+import { setPipelineTimestamp } from '../pipelineTimestamps'
 import { getUniversalParseMode, universalParseAiVetoEnabled, universalParseReconcileEnabled } from './parseConfig'
 import { compareParseShadowDiff } from './shadowDiff'
 import { tradeIntentToChannelParsedSignal } from './tradeIntentAdapter'
@@ -29,6 +30,94 @@ export type RoutedParseResult = {
     reviewRequired?: boolean
   }
   universalIntent?: UniversalParseResult['intent']
+  /** Per-stage decision chain: deterministic → OSS → GPT-4o → final outcome. */
+  verification?: VerificationChain
+}
+
+export type VerificationStage = {
+  source: string
+  kind: string | null
+  side?: string | null
+  symbol?: string | null
+  confidence?: number | null
+  status?: string | null
+  skip_reason?: string | null
+  /** Wall-clock time this stage took (ms). */
+  duration_ms?: number | null
+}
+
+export type VerificationChain = {
+  deterministic: VerificationStage | null
+  stage2: VerificationStage | null
+  stage3: VerificationStage | null
+  final: {
+    path: string
+    source: string
+    kind: string
+    skip_reason?: string | null
+  }
+}
+
+export type StageTimings = {
+  deterministic_ms: number | null
+  stage2_ms: number | null
+  stage3_ms: number | null
+}
+
+function detStage(det: ParseChannelMessageResult): VerificationStage {
+  return {
+    source: 'deterministic',
+    kind: String(det.parsed.action ?? '').toLowerCase(),
+    symbol: det.parsed.symbol ?? null,
+    confidence: typeof det.parsed.confidence === 'number' ? det.parsed.confidence : null,
+    status: det.status,
+    skip_reason: det.skip_reason ?? null,
+  }
+}
+
+function stageFromResult(r: UniversalParseResult | null | undefined, source: string): VerificationStage | null {
+  if (!r) return null
+  return {
+    source,
+    kind: r.intent.kind,
+    side: r.intent.side ?? null,
+    symbol: r.intent.symbol ?? null,
+    confidence: r.intent.confidence ?? null,
+    status: r.parseResult.status,
+    skip_reason: r.skip_reason ?? null,
+  }
+}
+
+/** Build the full decision chain for a routed outcome. */
+export function buildVerificationChain(args: {
+  det: ParseChannelMessageResult
+  universal: UniversalParseResult | null
+  reconciled: UniversalParseResult | null
+  path: string
+  finalSource: string
+  finalKind: string
+  finalSkipReason?: string | null
+  timings?: StageTimings
+}): VerificationChain {
+  const t = args.timings
+  const s2 = args.universal && args.universal.source !== 'unavailable'
+    ? stageFromResult(args.universal, args.universal.source)
+    : null
+  const s3 = args.reconciled ? stageFromResult(args.reconciled, 'gpt4o') : null
+  return {
+    deterministic: {
+      ...detStage(args.det),
+      duration_ms: t?.deterministic_ms ?? null,
+    },
+    stage2: s2 ? { ...s2, duration_ms: t?.stage2_ms ?? null } : null,
+    stage3: s3 ? { ...s3, duration_ms: t?.stage3_ms ?? null } : null,
+    final: {
+      path: args.path,
+      source: args.finalSource,
+      kind: args.finalKind,
+      skip_reason: args.finalSkipReason ?? null,
+    },
+  }
 }
 
 const EXECUTABLE_KINDS: ReadonlySet<TradeIntentKind> = new Set([
@@ -240,30 +329,43 @@ export function shouldReconcileSignal(
 function routeStageThreeResult(
   reconciled: UniversalParseResult,
   det: ParseChannelMessageResult,
+  chain: { universal: UniversalParseResult | null; path: string; timings?: StageTimings },
 ): RoutedParseResult {
+  const finalSource = reconciled.source
+  const base: RoutedParseResult = {
+    parseResult: reconciled.parseResult,
+    universalIntent: reconciled.intent,
+    verification: buildVerificationChain({
+      det,
+      timings: chain.timings,
+      universal: chain.universal,
+      reconciled,
+      path: chain.path,
+      finalSource,
+      finalKind: reconciled.intent.kind,
+      finalSkipReason: reconciled.parseResult.skip_reason ?? null,
+    }),
+  }
   if (reconciled.parseResult.status === 'parsed') {
     return {
-      parseResult: reconciled.parseResult,
+      ...base,
       aiMeta: { intent: reconciled.intent.kind, source: reconciled.source },
-      universalIntent: reconciled.intent,
     }
   }
   if (reconciled.intent.kind === 'uncertain') {
     return {
-      parseResult: reconciled.parseResult,
+      ...base,
       aiMeta: {
         intent: 'uncertain',
         source: reconciled.source,
         reviewRequired: true,
       },
-      universalIntent: reconciled.intent,
     }
   }
   if (universalParseAiVetoEnabled()) {
     return {
-      parseResult: reconciled.parseResult,
+      ...base,
       aiMeta: { intent: reconciled.intent.kind, source: reconciled.source },
-      universalIntent: reconciled.intent,
     }
   }
   return {
@@ -274,6 +376,16 @@ function routeStageThreeResult(
       fallbackReason: 'ai_veto_disabled',
     },
     universalIntent: reconciled.intent,
+    verification: buildVerificationChain({
+      det,
+      timings: chain.timings,
+      universal: chain.universal,
+      reconciled,
+      path: 'veto_disabled',
+      finalSource: 'deterministic',
+      finalKind: String(det.parsed.action ?? 'ignore').toLowerCase(),
+      finalSkipReason: null,
+    }),
   }
 }
 
@@ -292,9 +404,15 @@ async function runStageThree(args: {
   }
   det: ParseChannelMessageResult
   universal: UniversalParseResult
+  pipelineTs?: Record<string, unknown>
+  timings?: StageTimings
 }): Promise<UniversalParseResult | null> {
   if (!universalParseReconcileEnabled()) return null
   if (!shouldReconcileSignal(args.det, args.universal)) return null
+  const stamp = (key: keyof import('../pipelineTimestamps').PipelineTimestamps): void => {
+    if (args.pipelineTs) setPipelineTimestamp(args.pipelineTs, key, Date.now())
+  }
+  stamp('t_stage3_started_at')
   const reconciled = await reconcileUniversalSignal(args.supabase, {
     userId: args.userId,
     channelRowId: args.channelRowId,
@@ -308,6 +426,12 @@ async function runStageThree(args: {
     stage2: args.universal,
     reason: args.universal.skip_reason ?? null,
   })
+  stamp('t_stage3_done_at')
+  const s3Start = args.pipelineTs?.t_stage3_started_at
+  const s3Done = args.pipelineTs?.t_stage3_done_at
+  if (args.timings && typeof s3Start === 'number' && typeof s3Done === 'number') {
+    args.timings.stage3_ms = Math.max(0, s3Done - s3Start)
+  }
   return reconciled.source === 'gpt4o' ? reconciled : null
 }
 
@@ -326,27 +450,68 @@ export async function routeSignalParse(args: {
     prior_raw_message: string
     prior_parsed_data: Record<string, unknown> | null
   }
+  pipelineTs?: Record<string, unknown>
 }): Promise<RoutedParseResult> {
   const mode = getUniversalParseMode()
+  const timings: StageTimings = {
+    deterministic_ms: null,
+    stage2_ms: null,
+    stage3_ms: null,
+  }
+
+  const stamp = (key: keyof import('../pipelineTimestamps').PipelineTimestamps): void => {
+    if (args.pipelineTs) setPipelineTimestamp(args.pipelineTs, key, Date.now())
+  }
+
+  stamp('t_stage1_started_at')
   const det = parseDeterministicForUniversal(
     args.rawMessage,
     args.keywords,
     args.lexicon,
     args.isModificationClass,
   )
+  stamp('t_stage1_done_at')
+  timings.deterministic_ms = null // exact duration filled below from stamps
+  const stage1Start = args.pipelineTs?.t_stage1_started_at
+  const stage1Done = args.pipelineTs?.t_stage1_done_at
+  if (typeof stage1Start === 'number' && typeof stage1Done === 'number') {
+    timings.deterministic_ms = Math.max(0, stage1Done - stage1Start)
+  }
 
-  const runUniversal = () => parseUniversalSignal(args.supabase, {
-    userId: args.userId,
-    channelRowId: args.channelRowId,
-    rawMessage: args.rawMessage,
-    isReply: args.isReply,
-    parentSignalId: args.parentSignalId,
-    revision: args.revision,
-    isModificationClass: args.isModificationClass,
-  })
+  const runUniversal = async () => {
+    stamp('t_stage2_started_at')
+    const r = await parseUniversalSignal(args.supabase, {
+      userId: args.userId,
+      channelRowId: args.channelRowId,
+      rawMessage: args.rawMessage,
+      isReply: args.isReply,
+      parentSignalId: args.parentSignalId,
+      revision: args.revision,
+      isModificationClass: args.isModificationClass,
+    })
+    stamp('t_stage2_done_at')
+    const s2Start = args.pipelineTs?.t_stage2_started_at
+    const s2Done = args.pipelineTs?.t_stage2_done_at
+    if (typeof s2Start === 'number' && typeof s2Done === 'number') {
+      timings.stage2_ms = Math.max(0, s2Done - s2Start)
+    }
+    return r
+  }
 
   if (mode === 'off') {
-    return { parseResult: det }
+    return {
+      parseResult: det,
+      verification: buildVerificationChain({
+        det,
+        timings,
+        universal: null,
+        reconciled: null,
+        path: 'no_ai',
+        finalSource: 'deterministic',
+        finalKind: String(det.parsed.action ?? 'ignore').toLowerCase(),
+        finalSkipReason: det.skip_reason ?? null,
+      }),
+    }
   }
 
   if (mode === 'shadow') {
@@ -359,13 +524,38 @@ export async function routeSignalParse(args: {
         universal,
       }))
       .catch(() => undefined)
-    return { parseResult: det }
+    return {
+      parseResult: det,
+      verification: buildVerificationChain({
+        det,
+        timings,
+        universal: null,
+        reconciled: null,
+        path: 'shadow',
+        finalSource: 'deterministic',
+        finalKind: String(det.parsed.action ?? 'ignore').toLowerCase(),
+        finalSkipReason: det.skip_reason ?? null,
+      }),
+    }
   }
 
   const fastPathOk = deterministicQualifiesForFastPath(det, args.rawMessage, args.keywords)
 
   if (mode === 'fastpath' && fastPathOk) {
-    return { parseResult: det, aiMeta: { intent: String(det.parsed.action), source: 'deterministic' } }
+    return {
+      parseResult: det,
+      aiMeta: { intent: String(det.parsed.action), source: 'deterministic' },
+      verification: buildVerificationChain({
+        det,
+        timings,
+        universal: null,
+        reconciled: null,
+        path: 'fast_lane',
+        finalSource: 'deterministic',
+        finalKind: String(det.parsed.action ?? 'ignore').toLowerCase(),
+        finalSkipReason: null,
+      }),
+    }
   }
 
   if (mode === 'fastpath' && !fastPathOk) {
@@ -392,7 +582,7 @@ export async function routeSignalParse(args: {
         universal,
       })
       if (grounded) {
-        if (grounded.source === 'gpt4o') return routeStageThreeResult(grounded, det)
+        if (grounded.source === 'gpt4o') return routeStageThreeResult(grounded, det, { universal, path: 'stage3', timings })
         return {
           parseResult: grounded.parseResult,
           aiMeta: {
@@ -401,6 +591,16 @@ export async function routeSignalParse(args: {
             fallbackReason: grounded.skip_reason ?? undefined,
           },
           universalIntent: grounded.intent,
+          verification: buildVerificationChain({
+            det,
+            timings,
+            universal,
+            reconciled: null,
+            path: 'grounding_skip',
+            finalSource: grounded.source,
+            finalKind: 'ignore',
+            finalSkipReason: grounded.skip_reason ?? null,
+          }),
         }
       }
     }
@@ -421,9 +621,11 @@ export async function routeSignalParse(args: {
         revision: args.revision,
         det,
         universal,
+        pipelineTs: args.pipelineTs,
+        timings,
       })
       if (reconciled) {
-        return routeStageThreeResult(reconciled, det)
+        return routeStageThreeResult(reconciled, det, { universal, path: 'stage3', timings })
       }
     }
 
@@ -432,6 +634,16 @@ export async function routeSignalParse(args: {
         parseResult: universal.parseResult,
         aiMeta: { intent: universal.intent.kind, source: universal.source },
         universalIntent: universal.intent,
+        verification: buildVerificationChain({
+          det,
+          timings,
+          universal,
+          reconciled: null,
+          path: 'stage2',
+          finalSource: universal.source,
+          finalKind: universal.intent.kind,
+          finalSkipReason: null,
+        }),
       }
     }
 
@@ -444,6 +656,16 @@ export async function routeSignalParse(args: {
           fallbackReason: universal.skip_reason ?? 'universal_parse_unavailable',
         },
         universalIntent: universal.intent,
+        verification: buildVerificationChain({
+          det,
+          timings,
+          universal: null,
+          reconciled: null,
+          path: 'deterministic_fallback',
+          finalSource: 'deterministic',
+          finalKind: String(det.parsed.action ?? 'ignore').toLowerCase(),
+          finalSkipReason: universal.skip_reason ?? null,
+        }),
       }
     }
 
@@ -458,6 +680,16 @@ export async function routeSignalParse(args: {
           reviewRequired: universal.intent.kind === 'uncertain',
         },
         universalIntent: universal.intent,
+        verification: buildVerificationChain({
+          det,
+          timings,
+          universal,
+          reconciled: null,
+          path: universal.intent.kind === 'uncertain' ? 'review' : 'stage2_veto',
+          finalSource: universal.source,
+          finalKind: universal.intent.kind,
+          finalSkipReason: universal.parseResult.skip_reason ?? null,
+        }),
       }
     }
     return {
@@ -468,6 +700,18 @@ export async function routeSignalParse(args: {
         fallbackReason: 'ai_veto_disabled',
       },
       universalIntent: universal.intent,
+      verification: buildVerificationChain({
+        det,
+        timings,
+        universal,
+        reconciled: null,
+        path: 'veto_disabled',
+        finalSource: det.status === 'parsed' ? 'deterministic' : universal.source,
+        finalKind: det.status === 'parsed'
+          ? String(det.parsed.action ?? 'ignore').toLowerCase()
+          : universal.intent.kind,
+        finalSkipReason: universal.parseResult.skip_reason ?? null,
+      }),
     }
   }
 
@@ -489,7 +733,7 @@ export async function routeSignalParse(args: {
       universal,
     })
     if (grounded) {
-      if (grounded.source === 'gpt4o') return routeStageThreeResult(grounded, det)
+      if (grounded.source === 'gpt4o') return routeStageThreeResult(grounded, det, { universal, path: 'stage3', timings })
       return {
         parseResult: grounded.parseResult,
         aiMeta: {
@@ -498,6 +742,16 @@ export async function routeSignalParse(args: {
           fallbackReason: grounded.skip_reason ?? undefined,
         },
         universalIntent: grounded.intent,
+        verification: buildVerificationChain({
+          det,
+          timings,
+          universal,
+          reconciled: null,
+          path: 'grounding_skip',
+          finalSource: grounded.source,
+          finalKind: 'ignore',
+          finalSkipReason: grounded.skip_reason ?? null,
+        }),
       }
     }
     const reconciled = await runStageThree({
@@ -512,26 +766,58 @@ export async function routeSignalParse(args: {
       revision: args.revision,
       det,
       universal,
+      pipelineTs: args.pipelineTs,
+      timings,
     })
-    if (reconciled) return routeStageThreeResult(reconciled, det)
+    if (reconciled) return routeStageThreeResult(reconciled, det, { universal, path: 'stage3', timings })
   }
   if (universal.parseResult.status === 'parsed') {
     return {
       parseResult: universal.parseResult,
       aiMeta: { intent: universal.intent.kind, source: universal.source },
       universalIntent: universal.intent,
+      verification: buildVerificationChain({
+        det,
+        timings,
+        universal,
+        reconciled: null,
+        path: 'stage2',
+        finalSource: universal.source,
+        finalKind: universal.intent.kind,
+        finalSkipReason: null,
+      }),
     }
   }
   if (aiUnavailable) {
     return {
       parseResult: det,
       aiMeta: { intent: 'deterministic_fallback', source: 'deterministic' },
+      verification: buildVerificationChain({
+        det,
+        timings,
+        universal: null,
+        reconciled: null,
+        path: 'deterministic_fallback',
+        finalSource: 'deterministic',
+        finalKind: String(det.parsed.action ?? 'ignore').toLowerCase(),
+        finalSkipReason: universal.skip_reason ?? null,
+      }),
     }
   }
   return {
     parseResult: universal.parseResult,
     aiMeta: { intent: universal.intent.kind, source: universal.source },
     universalIntent: universal.intent,
+    verification: buildVerificationChain({
+      det,
+      timings,
+      universal,
+      reconciled: null,
+      path: universal.intent.kind === 'uncertain' ? 'review' : 'stage2_veto',
+      finalSource: universal.source,
+      finalKind: universal.intent.kind,
+      finalSkipReason: universal.parseResult.skip_reason ?? null,
+    }),
   }
 }
 
