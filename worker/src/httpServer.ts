@@ -11,6 +11,8 @@ import { UserSessionManager } from './sessionManager'
 import { userBelongsToShard } from './workerConfig'
 import { getQueueHealthMetrics } from './queue/queueHealth'
 import { parseRawChannelMessage } from './parseSignal'
+import { getChannelParseContext } from './channelKeywordsCache'
+import { getUniversalParseMode, routeSignalParse } from './signalIntent/parseRouting'
 import { aiParseModification, aiResultToParseResult } from './aiParseModification'
 import { applySignalOverride } from './applySignalOverride'
 import { forceCloseSignalTrades } from './forceCloseSignalTrades'
@@ -367,6 +369,65 @@ export function startTradeHttpServer(
           queue,
           ...brokerCapability,
         })
+      }
+
+      if (url === '/internal/parse-ai-debug' && req.method === 'POST') {
+        if (!INTERNAL_TOKEN) {
+          return sendJson(res, 503, { error: 'WORKER_INTERNAL_TOKEN not configured' })
+        }
+        const token = req.headers['x-internal-token']
+        if (token !== INTERNAL_TOKEN) {
+          return sendJson(res, 401, { error: 'Unauthorized' })
+        }
+        const body = (await readJson(req)) as {
+          channel_row_id?: string
+          raw_message?: string
+          user_id?: string
+          is_reply?: boolean
+          parent_signal_id?: string | null
+          is_modification_class?: boolean
+        }
+        if (!body.channel_row_id || typeof body.raw_message !== 'string') {
+          return sendJson(res, 400, { error: 'channel_row_id and raw_message required' })
+        }
+        try {
+          const supabase = sessionManager.getSupabase()
+          const { keywords, lexicon } = await getChannelParseContext(supabase, body.channel_row_id)
+          const pipelineTs: Record<string, unknown> = {}
+          const started = Date.now()
+          const routed = await routeSignalParse({
+            supabase,
+            userId: body.user_id ?? 'debug-user',
+            channelRowId: body.channel_row_id,
+            signalId: `debug-${Date.now()}`,
+            rawMessage: body.raw_message,
+            isReply: body.is_reply === true,
+            parentSignalId: body.parent_signal_id ?? null,
+            isModificationClass: body.is_modification_class === true,
+            keywords,
+            lexicon,
+            pipelineTs,
+          })
+          return sendJson(res, 200, {
+            mode: getUniversalParseMode(),
+            aiMeta: routed.aiMeta ?? null,
+            verification: routed.verification ?? null,
+            pipeline_ts: pipelineTs,
+            parse_result: {
+              action: routed.parseResult.parsed.action,
+              symbol: routed.parseResult.parsed.symbol ?? null,
+              confidence: typeof routed.parseResult.parsed.confidence === 'number'
+                ? routed.parseResult.parsed.confidence
+                : null,
+              status: routed.parseResult.status,
+              skip_reason: routed.parseResult.skip_reason ?? null,
+            },
+            elapsed_ms: Date.now() - started,
+          })
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : 'parse failed'
+          return sendJson(res, 500, { error: msg })
+        }
       }
 
       if (url === '/internal/parse-signal' && req.method === 'POST') {

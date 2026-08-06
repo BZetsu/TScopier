@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { ChannelKeywords, ChannelLexiconRow, ParseChannelMessageResult } from '../parseSignal'
 import { setPipelineTimestamp } from '../pipelineTimestamps'
 import { getUniversalParseMode, universalParseAiVetoEnabled, universalParseReconcileEnabled } from './parseConfig'
+export { getUniversalParseMode }
 import { compareParseShadowDiff } from './shadowDiff'
 import { tradeIntentToChannelParsedSignal } from './tradeIntentAdapter'
 import type { TradeIntent, TradeIntentKind } from './tradeIntent'
