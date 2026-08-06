@@ -1,37 +1,22 @@
-import { useState } from 'react'
 import { X } from 'lucide-react'
 import { useHumanReview } from '../../context/HumanReviewContext'
-import { HUMAN_REVIEW_WINDOW_MS } from '../../lib/humanReview'
-
-function formatRemaining(ms: number): string {
-  if (ms <= 0) return 'expired'
-  const totalSec = Math.ceil(ms / 1000)
-  const sec = totalSec % 60
-  const min = Math.floor(totalSec / 60)
-  return min > 0 ? `${min}m ${sec}s left` : `${sec}s left`
-}
+import { useReviewActions } from '../../hooks/useReviewActions'
+import {
+  formatReviewRemaining,
+  HUMAN_REVIEW_WINDOW_MS,
+} from '../../lib/humanReview'
 
 export function HumanReviewModal() {
-  const { pending, isOpen, closeModal, approve, dismiss } = useHumanReview()
-  const [approvingId, setApprovingId] = useState<string | null>(null)
-  const [errorBySignal, setErrorBySignal] = useState<Record<string, string>>({})
+  const { pending, isOpen, closeModal } = useHumanReview()
+  const { approvingId, errorBySignal, approve, dismiss } = useReviewActions()
 
   if (!isOpen) return null
 
-  const handleApprove = async (signalId: string) => {
-    setApprovingId(signalId)
-    setErrorBySignal(prev => ({ ...prev, [signalId]: '' }))
-    const error = await approve(signalId)
-    setApprovingId(null)
-    if (error) setErrorBySignal(prev => ({ ...prev, [signalId]: error }))
+  const handleApprove = (signalId: string) => {
+    void approve(signalId)
   }
 
   const handleDismiss = (signalId: string) => {
-    setErrorBySignal(prev => {
-      const next = { ...prev }
-      delete next[signalId]
-      return next
-    })
     dismiss(signalId)
   }
 
@@ -103,7 +88,7 @@ export function HumanReviewModal() {
                           ) : null}
                         </div>
                         <p className={`mt-2 text-xs ${expired ? 'text-amber-600 dark:text-amber-400' : 'text-neutral-400 dark:text-neutral-500'}`}>
-                          {expired ? 'expired — approval window passed' : formatRemaining(item.remainingMs)}
+                          {expired ? 'expired — approval window passed' : formatReviewRemaining(item.remainingMs)}
                         </p>
                         {error ? (
                           <p className="mt-2 break-words text-xs text-red-600 dark:text-red-400">
@@ -115,7 +100,7 @@ export function HumanReviewModal() {
                         <button
                           type="button"
                           disabled={approvingId === signal.id || expired}
-                          onClick={() => { void handleApprove(signal.id) }}
+                          onClick={() => handleApprove(signal.id)}
                           className="rounded-lg bg-teal-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-40"
                         >
                           {approvingId === signal.id ? 'Approving…' : 'Approve'}

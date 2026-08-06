@@ -10,6 +10,7 @@ export type TradeNotificationHeadline =
   | 'modification_completed'
   | 'layering_completed'
   | 'trades_closed'
+  | 'review_required'
 
 export type TradeExecutionLogRow = ChannelWorkerLogRow & {
   id: string
@@ -470,6 +471,12 @@ export function formatHolisticNotification(
         body = interpolate(t.bodies.tradesClosedSingle, { broker, channel })
       }
       break
+    case 'review_required':
+      // Review items are built directly via reviewNotificationFromSignal; this
+      // branch exists only so the log-driven formatter stays exhaustive.
+      title = t.headlines.reviewRequired
+      body = interpolate(t.bodies.reviewRequired, { channel })
+      break
   }
 
   return {
@@ -500,6 +507,45 @@ export function tradeNotificationsFromLogs(
     formatHolisticNotification(event, t, ctx),
   )
 }
+
+/** Minimal shape of a signals row used to build a review-required notification. */
+export type ReviewRequiredSignal = {
+  id: string
+  created_at: string
+  channel_id?: string | null
+  parsed_data?: Record<string, unknown> | null
+  status?: string | null
+  skip_reason?: string | null
+}
+
+/** Builds a bell notification for a signal that the AI escalated to the user. */
+export function reviewNotificationFromSignal(
+  signal: ReviewRequiredSignal,
+  t: TradeNotificationsTranslations,
+  ctx: TradeNotificationContext,
+): TradeNotification {
+  const parsed = (signal.parsed_data ?? {}) as Record<string, unknown>
+  const symbol = String(parsed.symbol ?? '').trim() || null
+  return {
+    id: `review_required:${signal.id}`,
+    headline: 'review_required',
+    title: t.headlines.reviewRequired,
+    body: interpolate(t.bodies.reviewRequired, {
+      channel: resolveChannelLabel(signal.channel_id ?? null, ctx, t),
+    }),
+    symbol,
+    createdAt: signal.created_at,
+  }
+}
+
+export const REVIEW_REQUIRED_SIGNAL_SELECT = `
+  id,
+  created_at,
+  channel_id,
+  parsed_data,
+  status,
+  skip_reason
+`
 
 const LAST_READ_KEY_PREFIX = 'tsc_notifications_last_read_at:'
 

@@ -10,6 +10,7 @@ import { Card } from '../../components/ui/Card'
 import { Badge } from '../../components/ui/Badge'
 import { Alert } from '../../components/ui/Alert'
 import { TradeDetailModal } from '../../components/trades/TradeDetailModal'
+import { AwaitingApprovalSection } from '../../components/trades/AwaitingApprovalSection'
 import { lossTextClass } from '../../lib/pnlDisplay'
 import type { MtTrade } from '../../lib/fxsocketBroker'
 import {
@@ -116,6 +117,8 @@ export function TradesPage() {
       />
 
       {error && !showInitialSkeleton && <Alert className="mb-4 px-4 py-2.5">{error}</Alert>}
+
+      <AwaitingApprovalSection />
 
       <Card padding="none">
         {showInitialSkeleton ? (

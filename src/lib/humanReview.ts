@@ -6,7 +6,7 @@ export const HUMAN_REVIEW_SKIP_REASON = 'ai classified as uncertain; human revie
 export const HUMAN_REVIEW_WINDOW_MS = 2 * 60_000
 
 export function isHumanReviewSignal(signal: {
-  status?: string
+  status?: string | null
   skip_reason?: string | null
 }): boolean {
   if (String(signal.status ?? '').toLowerCase() !== 'skipped') return false
@@ -19,6 +19,15 @@ export function reviewRemainingMs(createdAt: string | undefined, now = Date.now(
   const createdMs = Date.parse(createdAt)
   if (!Number.isFinite(createdMs)) return 0
   return Math.max(0, createdMs + HUMAN_REVIEW_WINDOW_MS - now)
+}
+
+/** Compact countdown label shared by the review modal and the trades queue. */
+export function formatReviewRemaining(ms: number): string {
+  if (ms <= 0) return 'expired'
+  const totalSec = Math.ceil(ms / 1000)
+  const sec = totalSec % 60
+  const min = Math.floor(totalSec / 60)
+  return min > 0 ? `${min}m ${sec}s left` : `${sec}s left`
 }
 
 export type ReviewParsedLevels = {

@@ -6,6 +6,7 @@ export const tradeNotificationsEs: TradeNotificationsTranslations = {
     modificationCompleted: 'MODIFICACIÓN DE TRADE COMPLETADA',
     layeringCompleted: 'LAYERING COMPLETADO',
     tradesClosed: 'TRADES CERRADOS',
+    reviewRequired: 'SEÑAL ESPERANDO APROBACIÓN',
   },
   bodies: {
     executionBatch: 'Se abrieron {count} trades {side} en {broker} desde {channel}.',
@@ -24,6 +25,7 @@ export const tradeNotificationsEs: TradeNotificationsTranslations = {
     tradesClosedTp: 'Se cerraron {count} trades en {broker} por {reason} desde {channel}.',
     tradesClosedGeneric: 'Se cerraron {count} trades en {broker} desde {channel}.',
     tradesClosedSingle: 'Se cerró un trade en {broker} desde {channel}.',
+    reviewRequired: 'Una señal de {channel} está esperando tu aprobación.',
   },
   sides: {
     buy: 'compra',

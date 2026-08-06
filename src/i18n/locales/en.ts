@@ -1420,6 +1420,8 @@ export const en: Translations = {
       confirmPassword: 'Confirm password',
       notificationSound: 'Trade notification sound',
       notificationSoundDescription: 'Play a sound when a trade is executed, modified, or closed.',
+      notificationEmail: 'Email notifications',
+      notificationEmailDescription: 'Send an email when a signal needs your review.',
     },
     placeholders: {
       address: 'Street, building, postal code…',

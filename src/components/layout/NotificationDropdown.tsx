@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import clsx from 'clsx'
-import { ArrowUpRight, Check, CircleCheck, Layers, Loader2, Pencil, X } from 'lucide-react'
+import { ArrowUpRight, Check, CircleCheck, Layers, Loader2, Pencil, TriangleAlert, X } from 'lucide-react'
 import { useNotifications } from '../../context/NotificationsContext'
+import { useHumanReview } from '../../context/HumanReviewContext'
 import { useLocale, useT } from '../../context/LocaleContext'
 import { formatRelative } from '../../lib/formatRelative'
 import { groupNotificationsByDay } from '../../lib/notificationDayGroups'
@@ -14,6 +15,7 @@ interface NotificationDropdownProps {
 }
 
 const HEADLINE_ICON_CLASS = 'text-neutral-700 bg-neutral-100 dark:text-neutral-300 dark:bg-neutral-800'
+const REVIEW_ICON_CLASS = 'text-amber-600 bg-amber-100 dark:text-amber-400 dark:bg-amber-950/60'
 
 function headlineMeta(headline: TradeNotificationHeadline): {
   icon: typeof CircleCheck
@@ -28,6 +30,8 @@ function headlineMeta(headline: TradeNotificationHeadline): {
       return { icon: Layers, className: HEADLINE_ICON_CLASS }
     case 'trades_closed':
       return { icon: Check, className: HEADLINE_ICON_CLASS }
+    case 'review_required':
+      return { icon: TriangleAlert, className: REVIEW_ICON_CLASS }
   }
 }
 
@@ -42,6 +46,7 @@ export function NotificationDropdown({ open, onClose }: NotificationDropdownProp
   const { locale } = useLocale()
   const nn = t.nav.notifications
   const { items, loading, markAllRead } = useNotifications()
+  const { openModal: openReviewModal } = useHumanReview()
   const panelRef = useRef<HTMLDivElement>(null)
 
   const dayGroups = useMemo(
@@ -111,39 +116,58 @@ export function NotificationDropdown({ open, onClose }: NotificationDropdownProp
                   {group.items.map(item => {
                     const meta = headlineMeta(item.headline)
                     const Icon = meta.icon
+                    const isReview = item.headline === 'review_required'
+                    const handleReviewClick = () => {
+                      onClose()
+                      openReviewModal()
+                    }
+                    const inner = (
+                      <div className="flex gap-3 px-4 py-3">
+                        <span
+                          className={clsx(
+                            'mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
+                            meta.className,
+                          )}
+                        >
+                          <Icon className="h-4 w-4" aria-hidden />
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-start justify-between gap-2">
+                            <p className="text-xs font-semibold uppercase tracking-wide text-neutral-700 dark:text-neutral-200">
+                              {item.title}
+                              {item.symbol ? (
+                                <span className="ms-1.5 font-mono normal-case tracking-normal text-neutral-500 dark:text-neutral-400">
+                                  {item.symbol}
+                                </span>
+                              ) : null}
+                            </p>
+                            <time
+                              className="shrink-0 text-[11px] tabular-nums text-neutral-400 dark:text-neutral-500"
+                              dateTime={item.createdAt}
+                            >
+                              {formatRelative(Date.parse(item.createdAt))}
+                            </time>
+                          </div>
+                          <p className="mt-1 text-sm leading-snug text-neutral-600 dark:text-neutral-300">
+                            {item.body}
+                          </p>
+                        </div>
+                      </div>
+                    )
                     return (
                       <li key={item.id} role="none">
-                        <div role="menuitem" className="flex gap-3 px-4 py-3">
-                          <span
-                            className={clsx(
-                              'mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
-                              meta.className,
-                            )}
+                        {isReview ? (
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={handleReviewClick}
+                            className="w-full text-left transition-colors hover:bg-amber-50 dark:hover:bg-amber-950/30"
                           >
-                            <Icon className="h-4 w-4" aria-hidden />
-                          </span>
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-start justify-between gap-2">
-                              <p className="text-xs font-semibold uppercase tracking-wide text-neutral-700 dark:text-neutral-200">
-                                {item.title}
-                                {item.symbol ? (
-                                  <span className="ms-1.5 font-mono normal-case tracking-normal text-neutral-500 dark:text-neutral-400">
-                                    {item.symbol}
-                                  </span>
-                                ) : null}
-                              </p>
-                              <time
-                                className="shrink-0 text-[11px] tabular-nums text-neutral-400 dark:text-neutral-500"
-                                dateTime={item.createdAt}
-                              >
-                                {formatRelative(Date.parse(item.createdAt))}
-                              </time>
-                            </div>
-                            <p className="mt-1 text-sm leading-snug text-neutral-600 dark:text-neutral-300">
-                              {item.body}
-                            </p>
-                          </div>
-                        </div>
+                            {inner}
+                          </button>
+                        ) : (
+                          <div role="menuitem">{inner}</div>
+                        )}
                       </li>
                     )
                   })}

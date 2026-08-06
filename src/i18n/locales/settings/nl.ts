@@ -46,6 +46,8 @@ export const settingsNl: SettingsBundleTranslations = {
       confirmPassword: 'Bevestig wachtwoord',
       notificationSound: 'Geluid voor handelsmeldingen',
       notificationSoundDescription: 'Speel een geluid af wanneer een trade wordt uitgevoerd, gewijzigd of gesloten.',
+      notificationEmail: 'E-mailmeldingen',
+      notificationEmailDescription: 'Stuur een e-mail wanneer een signaal uw beoordeling nodig heeft.',
     },
     placeholders: {
       address: 'Straat, huisnummer, postcode…',

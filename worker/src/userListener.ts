@@ -107,6 +107,22 @@ const PARSE_SIGNAL_AUTH_KEY = isJwt(RAW_PARSE_SIGNAL_KEY)
   : SUPABASE_SERVICE_ROLE_KEY
 const PARSE_SIGNAL_API_KEY = SUPABASE_SERVICE_ROLE_KEY
 
+/** Fire-and-forget call to the signal-review-email edge function (best-effort). */
+function notifyHumanReviewEmail(signalId: string): void {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return
+  const url = `${SUPABASE_URL.replace(/\/$/, '')}/functions/v1/signal-review-email`
+  fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    },
+    body: JSON.stringify({ signal_id: signalId }),
+  }).catch((err: unknown) => {
+    console.warn(`[userListener] signal-review-email notification failed id=${signalId}: ${err instanceof Error ? err.message : String(err)}`)
+  })
+}
+
 function listenerInlineParseEnabled(): boolean {
   const v = String(process.env.LISTENER_INLINE_PARSE ?? 'true').toLowerCase()
   return v !== '0' && v !== 'false' && v !== 'no'
@@ -2521,6 +2537,7 @@ export class UserListener {
       })
     }
     if (aiMeta?.reviewRequired) {
+      notifyHumanReviewEmail(signalId)
       void persistListenerEvent(this.supabase, {
         userId: this.userId,
         eventType: 'ai_parse_review_required',

@@ -20,6 +20,7 @@ export interface UserProfile {
   email_verified_at?: string | null
   referred_by_user_id?: string | null
   notification_sound_enabled?: boolean
+  notification_email_enabled?: boolean
   copier_paused?: boolean
   created_at?: string
   updated_at?: string
@@ -39,6 +40,7 @@ export const EMPTY_USER_PROFILE: Omit<UserProfile, 'user_id'> = {
     ? Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
     : 'UTC',
   notification_sound_enabled: true,
+  notification_email_enabled: true,
   copier_paused: false,
 }
 

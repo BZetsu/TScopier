@@ -5,7 +5,9 @@ import {
   aggregateTradeNotificationEvents,
   countUnreadNotifications,
   formatHolisticNotification,
+  reviewNotificationFromSignal,
   tradeNotificationsFromLogs,
+  type ReviewRequiredSignal,
   type TradeExecutionLogRow,
   type TradeNotification,
 } from './tradeNotifications'
@@ -274,5 +276,42 @@ describe('countUnreadNotifications', () => {
 
   it('counts only items after last read timestamp', () => {
     assert.equal(countUnreadNotifications(items, '2026-06-05T12:30:00.000Z'), 1)
+  })
+})
+
+describe('reviewNotificationFromSignal', () => {
+  it('builds a review_required notification with the channel label and symbol', () => {
+    const signal: ReviewRequiredSignal = {
+      id: 'rev-1',
+      created_at: '2026-06-05T12:34:00.000Z',
+      channel_id: CHANNEL_ID,
+      parsed_data: { action: 'sell', symbol: 'XAUUSD', tp: [30] },
+      status: 'skipped',
+      skip_reason: 'ai classified as uncertain; human review required',
+    }
+    const item = reviewNotificationFromSignal(signal, tradeNotificationsEn, ctx)
+    assert.equal(item.id, 'review_required:rev-1')
+    assert.equal(item.headline, 'review_required')
+    assert.equal(item.title, 'SIGNAL AWAITING APPROVAL')
+    assert.equal(item.body, 'A signal from Mo channel is waiting for your approval.')
+    assert.equal(item.symbol, 'XAUUSD')
+    assert.equal(item.createdAt, '2026-06-05T12:34:00.000Z')
+  })
+
+  it('falls back to channel placeholder and no symbol when unknown', () => {
+    const item = reviewNotificationFromSignal(
+      {
+        id: 'rev-2',
+        created_at: '2026-06-05T12:34:00.000Z',
+        channel_id: null,
+        parsed_data: null,
+        status: 'skipped',
+        skip_reason: null,
+      },
+      tradeNotificationsEn,
+      ctx,
+    )
+    assert.equal(item.body, 'A signal from your channel is waiting for your approval.')
+    assert.equal(item.symbol, null)
   })
 })

@@ -6,6 +6,7 @@ export const tradeNotificationsPl: TradeNotificationsTranslations = {
     modificationCompleted: 'MODYFIKACJA TRANSAKCJI ZAKOŃCZONA',
     layeringCompleted: 'LAYERING ZAKOŃCZONY',
     tradesClosed: 'CZĘŚĆ TRANSAKCJI ZAMKNIĘTA',
+    reviewRequired: 'SYGNAŁ OCZEKUJĄCY NA ZATWIERDZENIE',
   },
   bodies: {
     executionBatch: 'Otwarto {count} transakcji {side} na {broker} z {channel}.',
@@ -24,6 +25,7 @@ export const tradeNotificationsPl: TradeNotificationsTranslations = {
     tradesClosedTp: 'Zamknięto {count} transakcji na {broker} z powodu {reason} z {channel}.',
     tradesClosedGeneric: 'Zamknięto {count} transakcji na {broker} z {channel}.',
     tradesClosedSingle: 'Zamknięto transakcję na {broker} z {channel}.',
+    reviewRequired: 'Sygnał z {channel} oczekuje na Twoją akceptację.',
   },
   sides: {
     buy: 'kupna',

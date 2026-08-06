@@ -1374,6 +1374,8 @@ export const fr: Translations = {
       confirmPassword: 'Confirmer le mot de passe',
       notificationSound: 'Son des notifications de trade',
       notificationSoundDescription: 'Jouer un son lorsqu\'un trade est exécuté, modifié ou clôturé.',
+      notificationEmail: 'Notifications par email',
+      notificationEmailDescription: 'Envoyer un email lorsqu\'un signal nécessite votre révision.',
     },
     placeholders: {
       address: 'Rue, bâtiment, code postal…',

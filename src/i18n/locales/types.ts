@@ -919,6 +919,8 @@ export interface SettingsTranslations {
     confirmPassword: string
     notificationSound: string
     notificationSoundDescription: string
+    notificationEmail: string
+    notificationEmailDescription: string
   }
   placeholders: {
     address: string

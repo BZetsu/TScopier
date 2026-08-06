@@ -46,6 +46,8 @@ export const settingsJa: SettingsBundleTranslations = {
       confirmPassword: 'パスワードを確認',
       notificationSound: '取引通知音',
       notificationSoundDescription: '取引が実行・変更・決済されたときに音を再生します。',
+      notificationEmail: 'メール通知',
+      notificationEmailDescription: 'レビューが必要なシグナルがある場合にメールを送信します。',
     },
     placeholders: {
       address: '番地・建物名・郵便番号…',
