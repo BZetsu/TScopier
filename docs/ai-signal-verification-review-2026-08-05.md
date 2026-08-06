@@ -4,6 +4,105 @@
 
 2026-08-05
 
+## Three-stage verification pipeline (2026-08-06 update)
+
+The single-AI verification lane was split into three stages:
+
+1. **Fast Regex Keyword Engine** — the existing deterministic parser (`parseChannelMessageSync` / `parseModificationDeterministic`). The `0.99` fast lane still dispatches immediately without any LLM.
+2. **GPT OSS on Cerebras** — context interpretation via Cerebras Inference (`https://api.cerebras.ai/v1`, OpenAI-compatible). Default model `gpt-oss-120b` (`CEREBRAS_PARSE_MODEL`). Falls back to OpenAI automatically when `CEREBRAS_API_KEY` is unset or the Cerebras call fails, so a misconfigured key never degrades the previous behavior.
+3. **GPT-4o reconciliation** — the final model (`UNIVERSAL_PARSE_RECONCILE_MODEL`, default `gpt-4o`). Runs only when the pipeline needs adjudication, and escalates to a human when it cannot decide.
+
+### When stage 3 runs (Option 1)
+
+`shouldReconcileSignal` returns true only when any of:
+
+- Stage 2 returns `uncertain`.
+- The hallucination guard rejects stage 2 (`intent_validation_failed:*` — e.g. `invented_sl` — or `entry_missing_side`). This covers fabricated-price modifications such as `You can add a Take Profit of 30 pips` being rejected because the model invented an absolute SL.
+- Stage 1 parsed a trade (entry or management action) but stage 2 says ignore/commentary — stage 2 is blocking an execution, so the final model confirms the block.
+
+OSS-confirmed and OSS-recovered results are trusted without the final model, including:
+
+- Stage 2 recovering a trade (entry or modification) from a deterministic skip.
+- Stage 2 and stage 1 disagreeing on SL/TP/symbol values — stage 2's interpretation wins (the hallucination guard still rejects fabricated prices).
+
+Stage 3 receives the raw message, the full channel context, the deterministic result, the stage-2 intent, and the rejection reason. Its output passes through the same `validateTradeIntent` hallucination guard and execution-eligibility checks before anything can dispatch:
+
+- Clear executable kind → GPT-4o result dispatches (`source: gpt4o`).
+- `uncertain` → the existing human-review escalation path (`reviewRequired: true`).
+- Clear skip/commentary → skipped (veto switch still controls whether a clear AI skip overrides a deterministic parse).
+- GPT-4o unavailable/timeout → the stage-2 result applies under the previous policy; nothing changes for that message.
+
+### Configuration
+
+```env
+CEREBRAS_API_KEY=          # required for stage 2 on Cerebras; unset = OpenAI stage 2
+CEREBRAS_PARSE_ENABLED=true
+CEREBRAS_PARSE_MODEL=gpt-oss-120b
+UNIVERSAL_PARSE_RECONCILE_ENABLED=false   # default off for safe rollout
+UNIVERSAL_PARSE_RECONCILE_MODEL=gpt-4o
+UNIVERSAL_PARSE_RECONCILE_TIMEOUT_MS=8000
+```
+
+All variables belong on the **listener service** together with the existing fastpath settings. Stage 2 shares the existing `UNIVERSAL_PARSE_TIMEOUT_MS`; stage 3 has its own timeout.
+
+### The motivating failure
+
+Signal `bb4909ea` (`🥇 #XAUUSD | 4276.00 To 4256.00 💸 That's 2000$ Per Lot`) was skipped as `intent_validation_failed:invented_sl`: the single LLM invented SL `4281` and TPs `[4271, 4266, 4155]` that do not exist in the message. The guard prevented execution but could not reclassify the message. Under the three-stage pipeline the invented-SL rejection is itself a stage-3 trigger, so GPT-4o reclassifies the target/analysis post as commentary (silent skip) or `uncertain` (human review) instead of leaving a rejected-but-unresolved parse.
+
+### Modifications (SL/TP changes)
+
+SL/TP modification messages flow through the same three stages:
+
+1. **Deterministic:** modification-class messages (replies or management-looking text) use the deterministic modification parser. A clean parse at ≥0.99 still uses the management fast lane with no AI.
+2. **OSS:** below the threshold or skipped, the message goes to stage 2 with the parent/recent trade context so the model can fill the symbol and side that the message omits.
+3. **GPT-4o:** runs only when stage 2 is `uncertain`, when the hallucination guard rejected stage 2 (a modification whose model output invented a price — e.g. `You can add a Take Profit of 30 pips` producing `sl: 1.08` — goes to GPT-4o, which re-reads the message and returns the correct pip-based modification), or when stage 2 blocks a modification the deterministic parser found.
+
+### Modification grounding (open-trade check, 2026-08-06)
+
+Modification messages usually omit the symbol (`Move the Stop loss to 4280`, `You can add a Take Profit of 30 pips`), so the model infers it from context. When it infers wrong, it can target a closed or unrelated trade. Example: a `Take Profit of 30 pips` message intended for the open XAU trade was parsed with `symbol: EURUSD` — a trade closed 8 hours earlier.
+
+The pipeline now grounds modifications to the user's **open trades for the channel**:
+
+- The model prompt receives `open_trades` (symbol + direction of every open trade whose signal came from this channel) whenever the message is modification-class, with an explicit rule: a modification's symbol MUST match an open trade.
+- After stage 2 (and again after stage 3), a mechanical check runs for parsed `modify`/`close`/`breakeven`/`partial_close` results:
+  - **No open trades at all** → stale modification → skipped `modification_no_open_trade` (nothing to modify).
+  - **Symbol matches an open trade** → dispatch as normal.
+  - **Symbol matches nothing** → forced GPT-4o reconciliation with the open-trade list; GPT-4o's result must also hit an open trade or the modification is skipped.
+- The open-trade query is fail-open: a Supabase failure returns unknown and the normal flow continues (the trade worker merge still only modifies open baskets, so a wrong symbol fails safely downstream).
+- `cancel_pending` is not grounded (it targets broker pendings, not open trades).
+
+### Reply-based parent-symbol enforcement (2026-08-06)
+
+When the message is a Telegram reply whose parent signal has a parsed symbol, the parent's symbol is ground truth — the channel told the system which trade it means:
+
+- Model omitted the symbol → **filled directly with the parent's symbol** (zero AI calls).
+- Model symbol matches the parent → normal flow.
+- Model symbol **contradicts** the parent → forced GPT-4o reconciliation with the parent context and open-trade list; GPT-4o must return the parent's symbol or the modification is skipped as `modification_parent_symbol_conflict`.
+- This closes the gap where the model picks a different *open* trade than the one the channel replied to (the open-trade check alone cannot catch that).
+
+### Few-shot examples in the prompts (2026-08-06)
+
+`worker/src/signalIntent/fewShotExamples.ts` embeds 10 stage-2 examples (OSS context interpretation) and 6 stage-3 examples (GPT-4o reconciliation) directly in the system prompts. They teach the production failure modes: never invent SL/TP for target posts (`4276 To 4256`), pips stay pips (no conversion to absolute prices), symbol from parent reply, results recaps and suggested-SL analysis are commentary, ambiguous multi-trade targets are `uncertain`, invented prices are reclassified, parent symbol wins conflicts, and real trades wrongly blocked by stage 2 are confirmed.
+
+Protections specific to modifications:
+
+- The hallucination guard accepts pip-unit values (`tp: [30]`, `tp_unit: pips`) as long as the numbers appear in the message text; it rejects invented absolute prices.
+- A modification for a symbol/side with no open basket fails safely in the merge executor — nothing is modified when no matching open trade exists.
+- The adverse-price entry guard does **not** apply to modifications: they do not enter at a price, they move SL/TP on an existing position. Blocking an SL move because the market moved would be wrong.
+
+### Adverse-price entry guard (2026-08-06)
+
+GPT-4o deciding "enter" is not enough: the market may have moved against the signal by the time the AI lane dispatches. A mechanical guard on the trade worker therefore rejects AI-lane entries when the live quote has moved adversarially past the signal entry beyond the broker's `signal_entry_pip_tolerance` (default 10 pips):
+
+- The listener tags AI dispatches with `dispatch_source` = `ai_parsed` (stage 2, Cerebras/OpenAI) or `ai_reconciled` (stage 3, GPT-4o). The fast deterministic lane is never tagged and is never subject to this guard.
+- In `entryPrepare`, for tagged buy/sell entries with an explicit entry price or zone, the executor fetches a fresh quote before OrderSend:
+  - Buy: blocked when `ask > entry (or zone high) + tolerance`.
+  - Sell: blocked when `bid < entry (or zone low) - tolerance`.
+  - A price that moved in the trade's favor is never blocked.
+- Blocked entries are skipped with reason `entry_price_moved_adverse` and a log row containing the quote, entry, and tolerance used. Strict-entry and range-strict brokers are excluded because their existing machinery already defers adverse prices to broker pendings at the signal entry.
+- The guard is intentionally fail-open on missing quotes (quote failure proceeds, matching the sibling far-from-market guard), so a broker outage cannot silently block all AI entries.
+- `dispatch_source` now also travels inside the HTTP push body (`tradeSignalPush`) — the Redis queue path already embedded it — so the trade worker sees the tag on both routes.
+
 ## Purpose
 
 This document records the implementation that adds AI verification to the Telegram signal parser without slowing down clean, high-confidence trades and without sending every AI rejection to a human.

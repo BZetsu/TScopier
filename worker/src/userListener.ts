@@ -2055,7 +2055,11 @@ export class UserListener {
         keywords,
         lexicon,
       })
-      if (routed.parseResult.status === 'parsed' && routed.aiMeta?.source === 'openai') {
+      if (
+        routed.parseResult.status === 'parsed'
+        && routed.aiMeta?.source
+        && ['openai', 'cerebras', 'gpt4o'].includes(routed.aiMeta.source)
+      ) {
         console.log(
           `[userListener] universal parse user=${this.userId} channelRow=${args.channelRowId}`
           + ` intent=${routed.aiMeta.intent} action=${routed.parseResult.parsed.action}`
@@ -2646,6 +2650,13 @@ export class UserListener {
       reply_to_message_id: replyToMessageId,
       created_at: new Date().toISOString(),
       pipeline_ts: pipelineTs,
+    }
+    // AI-lane dispatches carry their source so the trade worker can apply the
+    // adverse-price entry guard only to AI-parsed / GPT-4o-reconciled entries.
+    if (aiMeta?.source === 'cerebras' || aiMeta?.source === 'openai') {
+      dispatchRow.dispatch_source = 'ai_parsed'
+    } else if (aiMeta?.source === 'gpt4o') {
+      dispatchRow.dispatch_source = 'ai_reconciled'
     }
     console.log(
       `[userListener] dispatch signal user=${this.userId} signalId=${signalId} channelRow=${channelRow.id} messageId=${messageId}`,
