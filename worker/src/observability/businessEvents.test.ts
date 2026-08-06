@@ -9,6 +9,7 @@ import {
   captureBusinessIssue,
   resetBusinessEventsForTests,
 } from './businessEvents'
+import { captureDeferredBusinessFailure } from './deferredBusinessEvents'
 
 class MockScope {
   level: string | null = null
@@ -173,6 +174,38 @@ test('manual-review events are not suppressed by cooldown', () => {
     userImpact: 'manual_review_required',
   })
   assert.equal(mock.capturedMessages.length, 2)
+})
+
+test('deferred business failure helper emits one redacted fire-and-forget issue', () => {
+  const mock = setup()
+  captureDeferredBusinessFailure({
+    category: 'layering',
+    event: 'layering_materialization_failed',
+    severity: 'error',
+    reasonCode: 'VIRTUAL_MATERIALIZATION_FAILED',
+    message: 'deferred virtual materialization failed',
+    userImpact: 'partial',
+    operation: 'deferred_virtual_pending_materialize',
+    err: new Error('session_string=secret account_number=12345678'),
+    context: {
+      user_id: 'user-a',
+      broker_account_id: 'broker-a',
+      signal_id: 'signal-a',
+      symbol: 'XAUUSD',
+      extra: {
+        targeted_count: 3,
+        successful_count: 0,
+        failed_count: 3,
+        request_body: { secret: true },
+      },
+    },
+  })
+  assert.equal(mock.capturedMessages.length, 1)
+  assert.equal(mock.flushCalls.length, 0)
+  const json = JSON.stringify(mock.scopes)
+  assert.match(json, /broker_database_state_may_disagree/)
+  assert.doesNotMatch(json, /secret/)
+  assert.doesNotMatch(json, /12345678/)
 })
 
 test('business event names and reason codes are stable and redact nested secrets', () => {

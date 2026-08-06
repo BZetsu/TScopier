@@ -227,6 +227,32 @@ async function markBrokerRangeLegFilled(
 
   if (insErr) {
     console.warn(`[rangeBrokerPending] trades insert failed leg=${leg.id}: ${insErr.message}`)
+    captureBusinessIssue({
+      category: 'persistence',
+      event: 'broker_success_persistence_failed',
+      severity: 'error',
+      reasonCode: 'BROKER_PENDING_FILL_DB_FAILURE',
+      message: 'Broker-pending order filled but trade row persistence failed',
+      userImpact: 'manual_review_required',
+      fingerprint: ['broker_success_persistence_failed', 'broker_pending_fill', 'BROKER_PENDING_FILL_DB_FAILURE'],
+      context: {
+        user_id: leg.user_id,
+        signal_id: leg.signal_id,
+        broker_account_id: leg.broker_account_id,
+        pending_leg_id: leg.id,
+        basket_id: `${leg.signal_id}:${leg.broker_account_id}`,
+        layer_plan_id: leg.layer_plan_id ?? null,
+        layer_step_idx: leg.step_idx,
+        symbol: leg.symbol,
+        side: leg.is_buy ? 'buy' : 'sell',
+        execution_mechanism: 'broker_pending_order',
+        operation: 'broker_pending_fill_persist',
+        extra: {
+          broker_ticket_present: ticketForTrade != null,
+          broker_database_state_may_disagree: true,
+        },
+      },
+    })
     return
   }
 
@@ -242,6 +268,28 @@ async function markBrokerRangeLegFilled(
       await rebalanceAfterFill(supabase, platformByUuid, leg, channelId)
     } catch (rebalErr) {
       console.warn(`[rangeBrokerPending] TP rebalance leg=${leg.id}:`, rebalErr)
+      captureBusinessIssue({
+        category: 'management',
+        event: 'basket_tp_sync_failed',
+        severity: 'warning',
+        reasonCode: 'BROKER_PENDING_FILL_TP_REBALANCE_FAILED',
+        message: 'Broker-pending fill TP rebalance failed; reconcile will retry',
+        userImpact: 'delayed',
+        context: {
+          user_id: leg.user_id,
+          signal_id: leg.signal_id,
+          broker_account_id: leg.broker_account_id,
+          pending_leg_id: leg.id,
+          trade_id: tradeRowId,
+          basket_id: `${leg.signal_id}:${leg.broker_account_id}`,
+          layer_plan_id: leg.layer_plan_id ?? null,
+          layer_step_idx: leg.step_idx,
+          symbol: leg.symbol,
+          side: leg.is_buy ? 'buy' : 'sell',
+          execution_mechanism: 'broker_pending_order',
+          operation: 'broker_pending_fill_tp_rebalance',
+        },
+      })
     }
 
     // Read post-rebalance stops so mgmt follow-up only overlays newer adjusts.
@@ -275,9 +323,32 @@ async function markBrokerRangeLegFilled(
           existingSl = assigned.stoploss > 0 ? assigned.stoploss : null
           existingTp = assigned.takeprofit > 0 ? assigned.takeprofit : null
         }
-      } catch (assignErr) {
-        console.warn(`[rangeBrokerPending] fallback stops leg=${leg.id}:`, assignErr)
-      }
+    } catch (assignErr) {
+      console.warn(`[rangeBrokerPending] fallback stops leg=${leg.id}:`, assignErr)
+      captureBusinessIssue({
+        category: 'management',
+        event: 'deferred_trade_follow_up_failed',
+        severity: 'error',
+        reasonCode: 'BROKER_PENDING_FILL_STOPS_ASSIGN_FAILED',
+        message: 'Broker-pending fill fallback SL/TP assignment failed',
+        userImpact: 'partial',
+        context: {
+          user_id: leg.user_id,
+          signal_id: leg.signal_id,
+          broker_account_id: leg.broker_account_id,
+          pending_leg_id: leg.id,
+          trade_id: tradeRowId,
+          basket_id: `${leg.signal_id}:${leg.broker_account_id}`,
+          layer_plan_id: leg.layer_plan_id ?? null,
+          layer_step_idx: leg.step_idx,
+          symbol: leg.symbol,
+          side: leg.is_buy ? 'buy' : 'sell',
+          execution_mechanism: 'broker_pending_order',
+          operation: 'broker_pending_fill_stops_assign',
+          extra: { broker_database_state_may_disagree: true },
+        },
+      })
+    }
     }
 
     try {
@@ -297,6 +368,28 @@ async function markBrokerRangeLegFilled(
       })
     } catch (hookErr) {
       console.warn(`[rangeBrokerPending] SL/TP follow-up leg=${leg.id}:`, hookErr)
+      captureBusinessIssue({
+        category: 'management',
+        event: 'deferred_trade_follow_up_failed',
+        severity: 'error',
+        reasonCode: 'BROKER_PENDING_FILL_FOLLOW_UP_FAILED',
+        message: 'Broker-pending fill SL/TP follow-up failed',
+        userImpact: 'partial',
+        context: {
+          user_id: leg.user_id,
+          signal_id: leg.signal_id,
+          broker_account_id: leg.broker_account_id,
+          pending_leg_id: leg.id,
+          trade_id: tradeRowId,
+          basket_id: `${leg.signal_id}:${leg.broker_account_id}`,
+          layer_plan_id: leg.layer_plan_id ?? null,
+          layer_step_idx: leg.step_idx,
+          symbol: leg.symbol,
+          side: leg.is_buy ? 'buy' : 'sell',
+          execution_mechanism: 'broker_pending_order',
+          operation: 'broker_pending_fill_follow_up',
+        },
+      })
     }
 
     // Always enqueue reconcile so failed OrderModifies retry.
@@ -304,6 +397,26 @@ async function markBrokerRangeLegFilled(
       await enqueueReconcileAfterBrokerFill(supabase, leg, channelId, manual)
     } catch (enqErr) {
       console.warn(`[rangeBrokerPending] reconcile enqueue leg=${leg.id}:`, enqErr)
+      captureBusinessIssue({
+        category: 'reconciliation',
+        event: 'deferred_trade_follow_up_failed',
+        severity: 'warning',
+        reasonCode: 'BROKER_PENDING_FILL_RECONCILE_ENQUEUE_FAILED',
+        message: 'Broker-pending fill reconcile enqueue failed',
+        userImpact: 'delayed',
+        context: {
+          user_id: leg.user_id,
+          signal_id: leg.signal_id,
+          broker_account_id: leg.broker_account_id,
+          pending_leg_id: leg.id,
+          trade_id: tradeRowId,
+          basket_id: `${leg.signal_id}:${leg.broker_account_id}`,
+          layer_plan_id: leg.layer_plan_id ?? null,
+          layer_step_idx: leg.step_idx,
+          symbol: leg.symbol,
+          operation: 'broker_pending_fill_reconcile_enqueue',
+        },
+      })
     }
   }
 

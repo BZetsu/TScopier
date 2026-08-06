@@ -51,6 +51,13 @@ import { workerConfig } from './workerConfig'
 import { isManagementAction, parsedAction } from './tradeSignalActions'
 import { applyCopierPauseProfileUpdate, loadCachedUserCopierPaused } from './copierPause'
 import {
+  copierHealthFreshnessThresholdMs,
+  maybeCaptureCopierOffline,
+  persistCopierHealth,
+  resolveCopierEngineState,
+  type SignalListenerState,
+} from './copierHealth'
+import {
   MESSAGE_REVISION_DISPATCH_SOURCE,
   buildRevisionDispatchRow,
   entryDispatchLooksSettleable,
@@ -236,6 +243,7 @@ export interface ChannelInfo {
 export interface ListenerStatus {
   user_id: string
   connected: boolean
+  listener_status: SignalListenerState
   last_event_at: number
   last_successful_poll_at: number
   last_reconnect_at: number
@@ -428,6 +436,68 @@ export class UserListener {
   private revisionAiCooldowns = new Map<string, number>()
   /** signal_channel_ids where canonical feed is live — skip poll/reconcile in primary mode. */
   private passiveSignalChannelIds = new Set<string>()
+  private readonly healthLeaseAcquiredAt = new Date().toISOString()
+  private readonly healthOwnershipEpoch = this.healthLeaseAcquiredAt
+
+  private persistHealth(patch: Parameters<typeof persistCopierHealth>[2], opts?: { force?: boolean }): void {
+    void persistCopierHealth(this.supabase, this.userId, patch, {
+      ...opts,
+      ownershipEpoch: this.healthOwnershipEpoch,
+      leaseAcquiredAt: this.healthLeaseAcquiredAt,
+    })
+  }
+
+  private currentListenerStatus(): SignalListenerState {
+    if (this.isConnected) return 'connected'
+    if (this.reconnectInFlight || this.deferredRetryTimer) return 'reconnecting'
+    if (this.stopping) return 'disconnected'
+    return 'unknown'
+  }
+
+  private updateHealth(reason: string, opts?: { force?: boolean; recoveryExhausted?: boolean }): void {
+    const listenerStatus: SignalListenerState = opts?.recoveryExhausted
+      ? 'failed'
+      : reason === 'watchdog_probe_failed'
+        ? 'reconnecting'
+        : this.currentListenerStatus()
+    const lastSuccessful = this.lastSuccessfulPollAt || null
+    const combined = resolveCopierEngineState({
+      linked: true,
+      listenerStatus,
+      owned: true,
+      mtprotoConnected: this.isConnected,
+      lastSuccessfulProbeAt: lastSuccessful,
+      recoveryExhausted: opts?.recoveryExhausted,
+      shutdownInProgress: this.stopping,
+      freshnessThresholdMs: copierHealthFreshnessThresholdMs(),
+    })
+    const nowIso = new Date().toISOString()
+    this.persistHealth({
+      ...combined,
+      listenerStatus,
+      mtprotoConnected: this.isConnected,
+      lastConnectedAt: this.isConnected ? nowIso : undefined,
+      lastDisconnectedAt: !this.isConnected ? nowIso : undefined,
+      lastProbeAt: nowIso,
+      lastSuccessfulProbeAt: lastSuccessful ? new Date(lastSuccessful).toISOString() : null,
+      consecutiveProbeFailures: this.consecutiveProbeFailures,
+      reconnectStartedAt: this.reconnectInFlight ? nowIso : null,
+      recoveryExhausted: opts?.recoveryExhausted === true,
+      shutdownInProgress: this.stopping,
+      healthReason: reason || combined.healthReason,
+      ownershipEpoch: this.healthOwnershipEpoch,
+      leaseAcquiredAt: this.healthLeaseAcquiredAt,
+      freshnessThresholdMs: copierHealthFreshnessThresholdMs(),
+    }, opts)
+  }
+
+  getHealthOwnershipEpoch(): string {
+    return this.healthOwnershipEpoch
+  }
+
+  getHealthLeaseAcquiredAt(): string {
+    return this.healthLeaseAcquiredAt
+  }
 
   constructor(
     userId: string,
@@ -717,6 +787,8 @@ export class UserListener {
     this.isConnected = true
     this.startedAt = Date.now()
     this.lastEventAt = Date.now()
+    this.lastSuccessfulPollAt = Date.now()
+    this.updateHealth('listener_started', { force: true })
 
     // Do not await getDialogs warmup here — flood-wait / hung dialogs blocked
     // startListener, held the connection lock, and left users with No lease.
@@ -775,6 +847,7 @@ export class UserListener {
     } finally {
       this.isConnected = false
       this.clearDialogsCache()
+      this.updateHealth('listener_stopped', { force: true })
     }
   }
 
@@ -821,6 +894,7 @@ export class UserListener {
     return {
       user_id: this.userId,
       connected: this.isConnected,
+      listener_status: this.currentListenerStatus(),
       last_event_at: this.lastEventAt,
       last_successful_poll_at: this.lastSuccessfulPollAt,
       last_reconnect_at: this.lastReconnectAt,
@@ -3913,12 +3987,15 @@ export class UserListener {
       await tgInvoke(this.client, new Api.updates.GetState())
       this.consecutiveProbeFailures = 0
       this.lastEventAt = this.lastEventAt || Date.now()
+      this.lastSuccessfulPollAt = Date.now()
+      this.updateHealth('watchdog_probe_ok')
     } catch (err) {
       if (isAuthKeyDuplicated(err)) {
         this.noteAuthKeyDuplicated('watchdog_probe')
         return
       }
       this.consecutiveProbeFailures++
+      this.updateHealth('watchdog_probe_failed')
       console.warn(
         `[watchdog] probe failed (${this.consecutiveProbeFailures}/${WATCHDOG_FAILURE_THRESHOLD}) for ${this.userId}:`,
         err instanceof Error ? err.message : String(err),
@@ -3973,6 +4050,7 @@ export class UserListener {
     const delay = elapsed < cooldown ? cooldown - elapsed : 0
 
     this.reconnectInFlight = (async () => {
+      this.updateHealth(reason, { force: true })
       if (delay > 0) {
         console.log(`[userListener] reconnect cooldown ${delay}ms for ${this.userId} cycle=${cycleId}`)
         await new Promise(r => setTimeout(r, delay))
@@ -4031,6 +4109,14 @@ export class UserListener {
         source: 'malformed_rpc_result',
         attempts: this.malformedRpcRecoveryCount,
       })
+      this.updateHealth('malformed_rpc_recovery_exhausted', { force: true, recoveryExhausted: true })
+      maybeCaptureCopierOffline({
+        userId: this.userId,
+        listenerStatus: 'failed',
+        reasonCode: 'GRAMJS_MALFORMED_RPC_RESULT',
+        reason: 'malformed_rpc_recovery_exhausted',
+        manualReview: true,
+      })
       setImmediate(() => this.onAuthKeyDuplicatedRecoveryExhausted?.(this.userId, 'malformed_rpc_result'))
       return
     }
@@ -4062,6 +4148,7 @@ export class UserListener {
     this.lastReconnectAt = Date.now()
     this.consecutiveProbeFailures = 0
     this.isConnected = false
+    this.updateHealth(reason, { force: true })
     this.connectionTrace('disconnect_start', { source: reason, cycleId })
     try { await this.client.disconnect() } catch { /* ignore */ }
     this.connectionTrace('disconnect_complete', { source: reason, cycleId })
@@ -4081,6 +4168,8 @@ export class UserListener {
         this.connectionTrace('connect_start', { source: reason, cycleId, attempt: attempt + 1 })
         await this.client.connect()
         this.isConnected = true
+        this.lastSuccessfulPollAt = Date.now()
+        this.updateHealth('reconnect_success', { force: true })
         lastErr = undefined
         this.connectionTrace('recovery_complete', { source: reason, cycleId, attempt: attempt + 1 })
         break
@@ -4128,6 +4217,14 @@ export class UserListener {
         },
       })
       this.connectionTrace('recovery_invalidated', { source: reason, cycleId, attempts: delays.length })
+      this.updateHealth('reconnect_exhausted', { force: true })
+      maybeCaptureCopierOffline({
+        userId: this.userId,
+        listenerStatus: 'failed',
+        reasonCode: 'TELEGRAM_RECONNECT_EXHAUSTED',
+        reason,
+        sinceMs: this.lastReconnectAt || null,
+      })
       this.scheduleDeferredRetry(cycleId)
       return
     }

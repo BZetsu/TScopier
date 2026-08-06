@@ -18,6 +18,12 @@ import {
   selectLegsForLayerTick,
   selectPendingLegsForDistanceBurst,
 } from './layerConcurrentFire'
+import {
+  initWorkerSentry,
+  resetWorkerSentryForTests,
+  setSentryAdapterForTests,
+} from './observability/sentry'
+import { resetBusinessEventsForTests } from './observability/businessEvents'
 
 type TestLeg = {
   id: string
@@ -58,6 +64,51 @@ type FireLegHarness = {
 type FakeSupabaseOptions = {
   operations: string[]
   claimedRow?: { id: string } | null
+}
+
+class MockScope {
+  level: string | null = null
+  tags: Record<string, string> = {}
+  contexts: Record<string, unknown> = {}
+  extras: Record<string, unknown> = {}
+  fingerprint: string[] | null = null
+  setLevel(level: string): void { this.level = level }
+  setTag(key: string, value: string): void { this.tags[key] = value }
+  setContext(key: string, value: unknown): void { this.contexts[key] = value }
+  setExtra(key: string, value: unknown): void { this.extras[key] = value }
+  setFingerprint(value: string[]): void { this.fingerprint = value }
+}
+
+function setupSentry() {
+  resetWorkerSentryForTests()
+  resetBusinessEventsForTests()
+  delete process.env.SENTRY_BUSINESS_EVENT_COOLDOWN_MS
+  const mock = {
+    capturedMessages: [] as unknown[],
+    breadcrumbs: [] as unknown[],
+    scopes: [] as MockScope[],
+    captureMessage(msg: string, level?: string) {
+      mock.capturedMessages.push({ msg, level })
+      return 'event-id'
+    },
+    init() {},
+    captureException() { return 'event-id' },
+    addBreadcrumb(crumb: unknown) { mock.breadcrumbs.push(crumb) },
+    setTag() {},
+    setContext() {},
+    withScope(fn: (scope: MockScope) => void) {
+      const scope = new MockScope()
+      mock.scopes.push(scope)
+      fn(scope)
+    },
+    async flush() { return true },
+  }
+  setSentryAdapterForTests(mock as never)
+  initWorkerSentry({
+    SENTRY_ENABLED: 'true',
+    SENTRY_DSN: 'https://public@example.invalid/1',
+  } as NodeJS.ProcessEnv)
+  return mock
 }
 
 class FakeSupabase {
@@ -476,6 +527,28 @@ test('VirtualPendingMonitor.fireLeg: stale basket cleanup is skipped, not fired'
   assert.equal(h.brokerSends, 0)
   assert.deepEqual([...active.get('signal-1|broker-1') ?? []], [1])
   assert.equal(fired.has('signal-1|broker-1'), false)
+})
+
+test('VirtualPendingMonitor.enqueueReconcileForLegBasket emits exactly one issue on enqueue failure', async () => {
+  const mock = setupSentry()
+  const monitor = new VirtualPendingMonitor({
+    from(table: string) {
+      if (table === 'trades') {
+        return {
+          select() { throw new Error('enqueue failed token=secret') },
+        }
+      }
+      throw new Error(`unexpected table ${table}`)
+    },
+  } as never)
+
+  await (monitor as unknown as {
+    enqueueReconcileForLegBasket: (leg: TestLeg, channelId: string | null) => Promise<void>
+  }).enqueueReconcileForLegBasket(makeTestLeg(), null)
+
+  assert.equal(mock.capturedMessages.length, 1)
+  assert.equal(mock.scopes[0]?.tags.event_name, 'deferred_trade_follow_up_failed')
+  assert.equal(mock.scopes[0]?.tags.reason_code, 'BASKET_RECONCILE_ENQUEUE_FAILED')
 })
 
 test('evaluateTpTouch: buy basket locks at nearest TP touch', () => {
