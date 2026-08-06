@@ -311,6 +311,8 @@ Deno.serve(async (req: Request) => {
             fxsocket_status: "connecting",
             connection_status: "pending",
             connection_error: null,
+            connection_error_kind: null,
+            connection_error_message: null,
           })
           .eq("id", accountRowId)
           .eq("user_id", userId)
@@ -355,6 +357,8 @@ Deno.serve(async (req: Request) => {
               fxsocket_status: "connected",
               connection_status: "connected",
               connection_error: null,
+              connection_error_kind: null,
+              connection_error_message: null,
               ...summaryToRowPatch(readiness.summary),
               ...baselinePatch,
               ...terminalPatch,

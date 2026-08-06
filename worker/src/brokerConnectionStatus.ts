@@ -24,19 +24,30 @@ export async function writeBrokerConnectionStatus(
   opts?: {
     rawError?: string | null
     errorKind?: BrokerConnectErrorKind | null
+    /** Bypass debounce (e.g. clear sticky error fields after heartbeat recovery). */
+    force?: boolean
   },
 ): Promise<void> {
   const now = Date.now()
   const prev = lastWritten.get(brokerId)
-  if (prev?.status === status && now - prev.at < MIN_WRITE_INTERVAL_MS && !opts?.rawError) return
+  if (
+    !opts?.force
+    && prev?.status === status
+    && now - prev.at < MIN_WRITE_INTERVAL_MS
+    && !opts?.rawError
+  ) {
+    return
+  }
 
   const patch: Record<string, unknown> = { connection_status: status }
   if (status === 'connected') {
     patch.connection_error_kind = null
     patch.connection_error_message = null
+    patch.connection_error = null
   } else if (status === 'recovering') {
     patch.connection_error_kind = null
     patch.connection_error_message = null
+    patch.connection_error = null
   } else if (opts?.rawError) {
     const raw = String(opts.rawError).trim() || 'Broker session is not connected'
     patch.connection_error_kind = opts.errorKind ?? classifyBrokerConnectError(raw)

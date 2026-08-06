@@ -267,9 +267,10 @@ export async function markBrokerSessionDown(ctx: TradeExecutorContext, broker: B
  * once the session recovers. Called from every heartbeat success path.
  */
 export async function markBrokerSessionRecovered(ctx: TradeExecutorContext, broker: BrokerRow): Promise<void> {
-    if (broker.connection_status === 'connected') return
+    // Always write connected (force) so sticky connection_error_kind left by
+    // edge refresh_summary / partial patches cannot survive a healthy heartbeat.
     broker.connection_status = 'connected'
-    await writeBrokerConnectionStatus(ctx.supabase, broker.id, 'connected')
+    await writeBrokerConnectionStatus(ctx.supabase, broker.id, 'connected', { force: true })
   }
 
 export async function ensureBrokerSession(ctx: TradeExecutorContext,

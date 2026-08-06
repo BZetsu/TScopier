@@ -7,6 +7,8 @@ export type ListenerLeaseSnapshot = {
   expiresAt: string | null
 }
 
+const LEASE_UI_GRACE_MS = 60_000
+
 function isListenerLeaseRole(role: string | null | undefined): boolean {
   const r = String(role ?? '')
   return r === 'listener' || r === 'all' || r === 'channel_listener'
@@ -20,7 +22,9 @@ export function listenerLeaseStatusFromRow(
     return { status: 'missing', expiresAt: null }
   }
   const expiresAt = row.expires_at
-  if (new Date(expiresAt).getTime() > nowMs) {
+  const expiresMs = new Date(expiresAt).getTime()
+  // Brief renew lag (TTL ~45s, renew every ~20s) must not flash the engine Offline.
+  if (expiresMs + LEASE_UI_GRACE_MS > nowMs) {
     return { status: 'live', expiresAt }
   }
   return { status: 'expired', expiresAt }
