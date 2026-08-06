@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ShieldAlert } from 'lucide-react'
+import { ChevronRight, ShieldAlert } from 'lucide-react'
 import { useHumanReview } from '../../context/HumanReviewContext'
 import { useReviewActions } from '../../hooks/useReviewActions'
 import {
@@ -7,10 +7,15 @@ import {
   reviewRemainingMs,
 } from '../../lib/humanReview'
 import { Card } from '../ui/Card'
+import type { Signal } from '../../types/database'
 
 /** AI-escalated signals shown in the Trades section as trades awaiting approval. */
-export function AwaitingApprovalSection() {
-  const { pending, openModal } = useHumanReview()
+export function AwaitingApprovalSection({
+  onOpenSignal,
+}: {
+  onOpenSignal: (signal: Signal) => void
+}) {
+  const { pending } = useHumanReview()
   const { approvingId, errorBySignal, approve, dismiss } = useReviewActions()
   const [now, setNow] = useState(() => Date.now())
 
@@ -24,7 +29,7 @@ export function AwaitingApprovalSection() {
 
   return (
     <Card padding="none" className="overflow-hidden border-amber-300 dark:border-amber-800/60">
-      <div className="flex items-center justify-between gap-3 border-b border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-900/50 dark:bg-amber-950/40">
+      <div className="flex items-center gap-3 border-b border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-900/50 dark:bg-amber-950/40">
         <p className="flex items-center gap-2 text-sm font-semibold text-amber-800 dark:text-amber-300">
           <ShieldAlert className="h-4 w-4" />
           Awaiting your approval
@@ -32,13 +37,6 @@ export function AwaitingApprovalSection() {
             {visible.length}
           </span>
         </p>
-        <button
-          type="button"
-          onClick={openModal}
-          className="rounded-lg border border-amber-300 px-3 py-1.5 text-xs font-medium text-amber-800 transition-colors hover:bg-amber-100 dark:border-amber-700 dark:text-amber-300 dark:hover:bg-amber-900/40"
-        >
-          Open review
-        </button>
       </div>
 
       <ul className="divide-y divide-neutral-100 dark:divide-neutral-800">
@@ -59,7 +57,11 @@ export function AwaitingApprovalSection() {
           return (
             <li key={signal.id} className="px-4 py-4">
               <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0 flex-1">
+                <button
+                  type="button"
+                  onClick={() => onOpenSignal(signal)}
+                  className="min-w-0 flex-1 text-left group"
+                >
                   <p className="line-clamp-2 whitespace-pre-wrap break-words text-sm text-neutral-900 dark:text-neutral-50">
                     {messageText}
                   </p>
@@ -90,13 +92,14 @@ export function AwaitingApprovalSection() {
                       </span>
                     ) : null}
                   </div>
-                  <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
+                  <p className="mt-2 flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400">
                     {formatReviewRemaining(remainingMs)}
+                    <ChevronRight className="h-3 w-3 opacity-0 transition-opacity group-hover:opacity-100" />
                   </p>
                   {error ? (
                     <p className="mt-1 break-words text-xs text-red-600 dark:text-red-400">{error}</p>
                   ) : null}
-                </div>
+                </button>
                 <div className="flex shrink-0 items-center gap-2">
                   <button
                     type="button"

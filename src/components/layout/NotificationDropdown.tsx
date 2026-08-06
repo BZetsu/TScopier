@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useRef } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
 import { ArrowUpRight, Check, CircleCheck, Layers, Loader2, Pencil, TriangleAlert, X } from 'lucide-react'
 import { useNotifications } from '../../context/NotificationsContext'
-import { useHumanReview } from '../../context/HumanReviewContext'
 import { useLocale, useT } from '../../context/LocaleContext'
 import { formatRelative } from '../../lib/formatRelative'
 import { groupNotificationsByDay } from '../../lib/notificationDayGroups'
@@ -44,9 +43,9 @@ const LOCALE_BCP: Record<string, string> = {
 export function NotificationDropdown({ open, onClose }: NotificationDropdownProps) {
   const t = useT()
   const { locale } = useLocale()
+  const navigate = useNavigate()
   const nn = t.nav.notifications
   const { items, loading, markAllRead } = useNotifications()
-  const { openModal: openReviewModal } = useHumanReview()
   const panelRef = useRef<HTMLDivElement>(null)
 
   const dayGroups = useMemo(
@@ -119,7 +118,7 @@ export function NotificationDropdown({ open, onClose }: NotificationDropdownProp
                     const isReview = item.headline === 'review_required'
                     const handleReviewClick = () => {
                       onClose()
-                      openReviewModal()
+                      navigate('/account-trades')
                     }
                     const inner = (
                       <div className="flex gap-3 px-4 py-3">

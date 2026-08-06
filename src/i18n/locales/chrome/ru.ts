@@ -69,6 +69,7 @@ export const chromeRu: AppChromeTranslations = {
       kindClosed: 'Сделка закрыта',
       markAllRead: 'Отметить все как прочитанное',
       viewTrades: 'Открыть сделки',
+      reviewPending: 'Сигнал ожидает вашего подтверждения',
       dayToday: 'Сегодня',
       dayYesterday: 'Вчера',
     },

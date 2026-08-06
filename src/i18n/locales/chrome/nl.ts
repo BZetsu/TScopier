@@ -68,6 +68,7 @@ export const chromeNl: AppChromeTranslations = {
       kindClosed: 'Trade gesloten',
       markAllRead: 'Alles als gelezen markeren',
       viewTrades: 'Trades bekijken',
+      reviewPending: 'Signaal wacht op uw goedkeuring',
       dayToday: 'Vandaag',
       dayYesterday: 'Gisteren',
     },

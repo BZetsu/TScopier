@@ -83,6 +83,7 @@ export interface NavTranslations {
     kindClosed: string
     markAllRead: string
     viewTrades: string
+    reviewPending: string
     dayToday: string
     dayYesterday: string
   }

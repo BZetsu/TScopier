@@ -87,6 +87,7 @@ export const es: Translations = {
       kindClosed: 'Trade cerrado',
       markAllRead: 'Marcar todo como leído',
       viewTrades: 'Ver trades',
+      reviewPending: 'Señal esperando tu aprobación',
       dayToday: 'Hoy',
       dayYesterday: 'Ayer',
     },

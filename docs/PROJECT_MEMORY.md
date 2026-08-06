@@ -2,6 +2,22 @@
 
 ## Changelog
 
+### 2026-08-06 — App UX: review modal + floating button removed; reviews live inline on the Trades page; bell gets a yellow review dot
+
+- **Context (user directive):** The "Signal review required" flow currently auto-opens a modal (`HumanReviewModal`), has a floating "Review" button (`HumanReviewIndicator`), and review notifications in the bell open the modal. User wants: no review modal and no floating button; reviews should live inline on the live trades page (`/account-trades`, already the case via `AwaitingApprovalSection`), styled like that page's brand but visually distinct (amber); the notification bell should indicate pending reviews the way it shows trade notifications — a yellow dot instead of the blue/teal indicator.
+- **Changes (main app `src/`):**
+  - Deleted `src/components/dashboard/HumanReviewModal.tsx` and `src/components/dashboard/HumanReviewIndicator.tsx` (explicitly requested).
+  - `src/context/HumanReviewContext.tsx` — removed `isOpen` / `openModal` / `closeModal` from the context value; realtime listener no longer auto-opens a modal (still plays the notification sound); context now exposes `pending`, `approve`, `dismiss` only.
+  - `src/components/layout/AppShell.tsx` — removed the `<HumanReviewModal />` and `<HumanReviewIndicator />` mounts.
+  - `src/components/trades/AwaitingApprovalSection.tsx` — dropped the "Open review" button (it opened the modal) and the `openModal` dependency; the amber inline card on `/account-trades` is now the single review surface.
+  - `src/components/layout/NotificationBell.tsx` — renders a solid amber dot (`bg-amber-400`, top-start) whenever `pendingReviews.length > 0`; the teal unread-count badge is unchanged, so both indicators coexist. `aria-label`/`title` uses new i18n key `nav.notifications.reviewPending`.
+  - `src/components/layout/NotificationDropdown.tsx` — clicking a `review_required` notification now navigates to `/account-trades` (instead of `openReviewModal`); no longer imports `useHumanReview`.
+  - i18n: added `reviewPending` to `src/i18n/locales/types.ts` and to `nav.notifications` in `{en,es,fr}.ts` + `chrome/{ar,pl,ru,nl,ja,sv}.ts` (all 9 locales).
+  - `src/context/NotificationsContext.tsx` — updated the stale comment referencing the removed modal.
+- **Verification:** `npx tsc -b` clean; vitest 81/81; node:test 288 pass / 1 fail — the single failure (`layeringModeCapabilities.test.ts` "fail closed for Static and Dynamic") is PRE-EXISTING (reproduced with the changes stashed).
+- **Affected files:** `src/context/HumanReviewContext.tsx`, `src/components/layout/AppShell.tsx`, `src/components/layout/NotificationBell.tsx`, `src/components/layout/NotificationDropdown.tsx`, `src/components/trades/AwaitingApprovalSection.tsx`, `src/context/NotificationsContext.tsx`, `src/i18n/locales/types.ts`, `src/i18n/locales/{en,es,fr}.ts`, `src/i18n/locales/chrome/{ar,pl,ru,nl,ja,sv}.ts`, `docs/PROJECT_MEMORY.md`. Deleted: `src/components/dashboard/HumanReviewModal.tsx`, `src/components/dashboard/HumanReviewIndicator.tsx`.
+- **Follow-up (deploy steps):** (1) commit + push to `upstream/staging` (do NOT push to prod until testing complete); (2) rebuild/deploy staging frontend; (3) test: send the ambiguous `Buy or Sell` signal → it must appear in the amber inline card on `/account-trades`, the bell shows a yellow dot, no modal and no floating button; clicking the review notification goes to `/account-trades`; approve/dismiss still work (window 2 min).
+
 ### 2026-08-06 — Root-cause fix: Cerebras silently falling back to OpenAI (429 rate-limit + 500-token reasoning truncation) + admin model-chain transparency
 
 - **Context (staging live bug):** Signal `0e42bbf6-617f-4d6c-a581-2aa0616b63ed` (tm 33319, channel `3b491a96`, user `f1d54bc2`) — ambiguous `GOLD XAUUSD 2650 🎯 Buy or Sell, take profit 2670 or 2630 — one of them will hit` — was NOT escalated to human review. Stage 2 fell back from Cerebras to OpenAI (`ai_source: openai` in `ai_entry_parsed` listener event) and the weaker `gpt-4o-mini` fallback confidently misclassified it as `entry BUY 0.9` → dispatched → only saved by the `entry_price_moved_adverse` guard at execution. NO `ai_parse_fallback` listener event and NO `_verification` were stored, so the admin had no explanation.

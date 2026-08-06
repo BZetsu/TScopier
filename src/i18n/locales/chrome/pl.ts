@@ -69,6 +69,7 @@ export const chromePl: AppChromeTranslations = {
       kindClosed: 'Transakcja zamknięta',
       markAllRead: 'Oznacz wszystko jako przeczytane',
       viewTrades: 'Zobacz transakcje',
+      reviewPending: 'Sygnał czeka na Twoją akceptację',
       dayToday: 'Dzisiaj',
       dayYesterday: 'Wczoraj',
     },

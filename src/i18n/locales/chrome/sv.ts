@@ -68,6 +68,7 @@ export const chromeSv: AppChromeTranslations = {
       kindClosed: 'Affär stängd',
       markAllRead: 'Markera alla som lästa',
       viewTrades: 'Visa affärer',
+      reviewPending: 'Signal väntar på ditt godkännande',
       dayToday: 'Idag',
       dayYesterday: 'Igår',
     },

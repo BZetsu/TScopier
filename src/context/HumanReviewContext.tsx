@@ -34,9 +34,6 @@ export type HumanReviewItem = {
 
 interface HumanReviewContextValue {
   pending: HumanReviewItem[]
-  isOpen: boolean
-  openModal: () => void
-  closeModal: () => void
   approve: (signalId: string) => Promise<string | null>
   dismiss: (signalId: string) => void
 }
@@ -61,7 +58,6 @@ export function HumanReviewProvider({
   const { user } = useAuth()
   const { profile } = useUserProfile()
   const [pending, setPending] = useState<HumanReviewItem[]>([])
-  const [isOpen, setIsOpen] = useState(false)
   const knownIdsRef = useRef(new Set<string>())
   const soundEnabled = profile.notification_sound_enabled !== false
 
@@ -131,7 +127,6 @@ export function HumanReviewProvider({
             knownIdsRef.current.add(row.id)
             upsert(row)
             if (soundEnabled) playNotificationSound()
-            setIsOpen(true)
           },
         )
         .subscribe(status => {
@@ -167,13 +162,10 @@ export function HumanReviewProvider({
   const value = useMemo(
     (): HumanReviewContextValue => ({
       pending,
-      isOpen,
-      openModal: () => setIsOpen(true),
-      closeModal: () => setIsOpen(false),
       approve,
       dismiss,
     }),
-    [pending, isOpen, approve, dismiss],
+    [pending, approve, dismiss],
   )
 
   return <HumanReviewContext.Provider value={value}>{children}</HumanReviewContext.Provider>

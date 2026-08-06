@@ -68,6 +68,7 @@ export const chromeAr: AppChromeTranslations = {
       kindClosed: 'تم إغلاق صفقة',
       markAllRead: 'تعليم الكل كمقروء',
       viewTrades: 'عرض الصفقات',
+      reviewPending: 'إشارة بانتظار موافقتك',
       dayToday: 'اليوم',
       dayYesterday: 'أمس',
     },

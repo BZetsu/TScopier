@@ -68,6 +68,7 @@ export const chromeJa: AppChromeTranslations = {
       kindClosed: '取引を決済',
       markAllRead: 'すべて既読にする',
       viewTrades: '取引を見る',
+      reviewPending: '承認待ちのシグナル',
       dayToday: '今日',
       dayYesterday: '昨日',
     },
