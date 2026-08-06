@@ -25,14 +25,16 @@ export const SUBSCRIPTION_CAMPAIGN_SUBJECTS: Record<
 };
 
 export function getEmailUnsubscribeUrl(
-  supabaseUrl: string,
+  appUrl: string,
   serviceRoleKey: string,
   userId: string,
 ): string {
   const hmac = createHmac("sha256", serviceRoleKey);
   hmac.update(userId);
   const token = hmac.digest("hex");
-  return `${supabaseUrl}/functions/v1/email-unsubscribe?uid=${userId}&token=${token}`;
+  // Static HTML on the app host — Supabase Edge/Storage rewrite text/html → text/plain.
+  const base = `${appUrl.replace(/\/$/, "")}/unsubscribe.html`;
+  return `${base}?uid=${encodeURIComponent(userId)}&token=${encodeURIComponent(token)}`;
 }
 
 export function buildNoSubscriptionEmail(
