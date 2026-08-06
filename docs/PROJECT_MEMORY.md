@@ -2,6 +2,18 @@
 
 ## Changelog
 
+### 2026-08-06 — Review flow refinement: informational auto-popup modal returns (countdown + "go to Live Trades") — approve/dismiss still lives on the trades page
+
+- **Context (user follow-up):** After removing the review modal/floating button and moving reviews inline to `/account-trades`, the user asked to bring back a modal — but only as an informational popup that auto-appears when an AI signal is escalated, showing a countdown timer, and telling the user to approve on the Live Trades page. No approve/dismiss inside the modal (that stays on the trades page, in the amber card and the click-to-open `SignalReviewDetailModal`).
+- **Changes:**
+  - `src/context/HumanReviewContext.tsx` — restored `isOpen` / `openModal` / `closeModal` to the context value; realtime listener sets `isOpen=true` again when a new review signal arrives (still plays the sound).
+  - `src/components/dashboard/HumanReviewModal.tsx` — NEW (recreated): auto-opens on `isOpen`, shows the latest pending signal with a live countdown (`formatReviewRemaining` / `reviewRemainingMs`, 1s tick), explains the signal was escalated and must be reviewed before the window closes, and offers two actions: "Go to Live Trades" (navigates to `/account-trades`) and "Not now" (close). Auto-closes when the pending queue empties. Amber-branded, distinct from the teal trade modal.
+  - `src/components/layout/AppShell.tsx` — re-mounted `<HumanReviewModal />` (still gated on `!deferAppBootstrap`). No floating button re-added.
+  - `src/context/NotificationsContext.tsx` — comment updated (HumanReviewContext opens the modal again; sound + amber dot still apply).
+- **Verification:** `npx tsc -b` clean.
+- **Affected files:** `src/context/HumanReviewContext.tsx`, `src/components/dashboard/HumanReviewModal.tsx` (recreated), `src/components/layout/AppShell.tsx`, `src/context/NotificationsContext.tsx`, `docs/PROJECT_MEMORY.md`.
+- **Follow-up (deploy):** commit + push to `upstream/staging` (and BZetsu `origin/main` per user request); rebuild staging frontend; test — when an ambiguous signal is escalated, the modal pops up with the countdown, "Go to Live Trades" navigates to `/account-trades` where the amber card + detail modal handle approve/dismiss.
+
 ### 2026-08-06 — App UX: review modal + floating button removed; reviews live inline on the Trades page; bell gets a yellow review dot
 
 - **Context (user directive):** The "Signal review required" flow currently auto-opens a modal (`HumanReviewModal`), has a floating "Review" button (`HumanReviewIndicator`), and review notifications in the bell open the modal. User wants: no review modal and no floating button; reviews should live inline on the live trades page (`/account-trades`, already the case via `AwaitingApprovalSection`), styled like that page's brand but visually distinct (amber); the notification bell should indicate pending reviews the way it shows trade notifications — a yellow dot instead of the blue/teal indicator.

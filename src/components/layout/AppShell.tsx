@@ -9,6 +9,7 @@ import { BrokerTerminalHealthSync } from '../broker/BrokerTerminalHealthSync'
 import { AppLayout } from './AppLayout'
 import { useNeedsWelcome } from '../../hooks/useNeedsWelcome'
 import { LiveChatProvider } from '../../context/LiveChatContext'
+import { HumanReviewModal } from '../dashboard/HumanReviewModal'
 
 const WelcomeModal = lazy(() =>
   import('../onboarding/WelcomeModal').then(m => ({ default: m.WelcomeModal })),
@@ -37,6 +38,7 @@ export function AppShell() {
           <AddTradingAccountProvider>
             <LiveChatProvider>
               <AppLayout />
+              {!deferAppBootstrap ? <HumanReviewModal /> : null}
               {needsWelcome ? (
                 <Suspense fallback={null}>
                   <WelcomeModal />

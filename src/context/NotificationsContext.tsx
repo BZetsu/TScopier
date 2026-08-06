@@ -262,9 +262,10 @@ export function NotificationsProvider({
             knownSignalIdsRef.current.add(row.id)
             const item = reviewItemsFromRows([row])[0]
             if (!item) return
-            // Silent by design: HumanReviewContext already plays the sound for
-            // review-required signals; the notification lands in the dropdown
-            // and the bell shows the amber review dot.
+            // Silent by design: HumanReviewContext already plays the sound and
+            // opens the review modal for review-required signals; the
+            // notification lands in the dropdown and the bell shows the amber
+            // review dot.
             setItems(prev => mergeItems([item, ...prev]))
           },
         )
