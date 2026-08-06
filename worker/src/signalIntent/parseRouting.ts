@@ -633,7 +633,11 @@ export async function routeSignalParse(args: {
     if (universal.parseResult.status === 'parsed') {
       return {
         parseResult: universal.parseResult,
-        aiMeta: { intent: universal.intent.kind, source: universal.source },
+        aiMeta: {
+          intent: universal.intent.kind,
+          source: universal.source,
+          fallbackReason: universal.fallback_reason ?? undefined,
+        },
         universalIntent: universal.intent,
         verification: buildVerificationChain({
           det,
@@ -678,6 +682,7 @@ export async function routeSignalParse(args: {
         aiMeta: {
           intent: universal.intent.kind,
           source: universal.source,
+          fallbackReason: universal.fallback_reason ?? undefined,
           reviewRequired: universal.intent.kind === 'uncertain',
         },
         universalIntent: universal.intent,
@@ -775,7 +780,11 @@ export async function routeSignalParse(args: {
   if (universal.parseResult.status === 'parsed') {
     return {
       parseResult: universal.parseResult,
-      aiMeta: { intent: universal.intent.kind, source: universal.source },
+      aiMeta: {
+        intent: universal.intent.kind,
+        source: universal.source,
+        fallbackReason: universal.fallback_reason ?? undefined,
+      },
       universalIntent: universal.intent,
       verification: buildVerificationChain({
         det,
@@ -807,7 +816,11 @@ export async function routeSignalParse(args: {
   }
   return {
     parseResult: universal.parseResult,
-    aiMeta: { intent: universal.intent.kind, source: universal.source },
+    aiMeta: {
+      intent: universal.intent.kind,
+      source: universal.source,
+      fallbackReason: universal.fallback_reason ?? undefined,
+    },
     universalIntent: universal.intent,
     verification: buildVerificationChain({
       det,

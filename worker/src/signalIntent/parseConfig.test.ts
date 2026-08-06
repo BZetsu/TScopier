@@ -1,7 +1,9 @@
 import { describe, it, after } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  cerebrasParseMaxTokens,
   cerebrasParseModel,
+  cerebrasParseRetries,
   getUniversalParseMode,
   isUniversalParseEnabled,
   universalParseReconcileModel,
@@ -14,6 +16,8 @@ describe('parseConfig', () => {
   const prevCerebrasModel = process.env.CEREBRAS_PARSE_MODEL
   const prevReconcileModel = process.env.UNIVERSAL_PARSE_RECONCILE_MODEL
   const prevReconcileTimeout = process.env.UNIVERSAL_PARSE_RECONCILE_TIMEOUT_MS
+  const prevCerebrasMaxTokens = process.env.CEREBRAS_PARSE_MAX_TOKENS
+  const prevCerebrasRetries = process.env.CEREBRAS_PARSE_RETRIES
 
   after(() => {
     if (prevMode != null) process.env.UNIVERSAL_PARSE_MODE = prevMode
@@ -28,6 +32,16 @@ describe('parseConfig', () => {
       process.env.UNIVERSAL_PARSE_RECONCILE_TIMEOUT_MS = prevReconcileTimeout
     } else {
       delete process.env.UNIVERSAL_PARSE_RECONCILE_TIMEOUT_MS
+    }
+    if (prevCerebrasMaxTokens != null) {
+      process.env.CEREBRAS_PARSE_MAX_TOKENS = prevCerebrasMaxTokens
+    } else {
+      delete process.env.CEREBRAS_PARSE_MAX_TOKENS
+    }
+    if (prevCerebrasRetries != null) {
+      process.env.CEREBRAS_PARSE_RETRIES = prevCerebrasRetries
+    } else {
+      delete process.env.CEREBRAS_PARSE_RETRIES
     }
   })
 
@@ -69,5 +83,23 @@ describe('parseConfig', () => {
     assert.equal(universalParseReconcileTimeoutMs(), 1000)
     process.env.UNIVERSAL_PARSE_RECONCILE_TIMEOUT_MS = '99999'
     assert.equal(universalParseReconcileTimeoutMs(), 30000)
+  })
+
+  it('defaults Cerebras max tokens to 2000 so the reasoning model finishes', () => {
+    delete process.env.CEREBRAS_PARSE_MAX_TOKENS
+    assert.equal(cerebrasParseMaxTokens(), 2000)
+    process.env.CEREBRAS_PARSE_MAX_TOKENS = '5000'
+    assert.equal(cerebrasParseMaxTokens(), 5000)
+    process.env.CEREBRAS_PARSE_MAX_TOKENS = 'not-a-number'
+    assert.equal(cerebrasParseMaxTokens(), 2000)
+  })
+
+  it('defaults Cerebras retries to 2 and bounds them', () => {
+    delete process.env.CEREBRAS_PARSE_RETRIES
+    assert.equal(cerebrasParseRetries(), 2)
+    process.env.CEREBRAS_PARSE_RETRIES = '9'
+    assert.equal(cerebrasParseRetries(), 5)
+    process.env.CEREBRAS_PARSE_RETRIES = '0'
+    assert.equal(cerebrasParseRetries(), 0)
   })
 })

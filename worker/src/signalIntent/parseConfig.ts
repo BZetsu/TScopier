@@ -56,6 +56,23 @@ export function cerebrasParseModel(): string {
   return String(process.env.CEREBRAS_PARSE_MODEL ?? CEREBRAS_MODEL).trim() || CEREBRAS_MODEL
 }
 
+/** gpt-oss-120b is a reasoning model — it emits reasoning tokens before content.
+ *  A 500-token cap leaves too little room for the JSON answer, causing empty or
+ *  truncated content that silently triggers the OpenAI fallback. Default to a
+ *  generous budget that comfortably fits reasoning + the JSON payload. */
+export function cerebrasParseMaxTokens(): number {
+  const n = Number(process.env.CEREBRAS_PARSE_MAX_TOKENS ?? 2000)
+  return Number.isFinite(n) ? Math.max(500, Math.min(8000, Math.round(n))) : 2000
+}
+
+/** How many attempts to make against Cerebras before falling back to OpenAI.
+ *  Cerebras aggressively rate-limits (429) under bursts, so a short retry with
+ *  backoff recovers transient limits instead of silently degrading. */
+export function cerebrasParseRetries(): number {
+  const n = Number(process.env.CEREBRAS_PARSE_RETRIES ?? 2)
+  return Number.isFinite(n) ? Math.max(0, Math.min(5, Math.round(n))) : 2
+}
+
 /** Stage 3: GPT-4o reconciliation between deterministic and stage-2 results. */
 export function universalParseReconcileEnabled(): boolean {
   return parseEnvBool('UNIVERSAL_PARSE_RECONCILE_ENABLED', false)
