@@ -36,6 +36,10 @@ interface Body {
   run_id?: string
   phone_code_hash?: string
   session_string?: string
+  raw_message?: string
+  is_reply?: boolean
+  parent_signal_id?: string | null
+  is_modification_class?: boolean
 }
 
 function isTelegramSessionInvalid(err: unknown): err is TelegramSessionInvalidError {
@@ -334,59 +338,7 @@ export function startHttpServer(
         return sendJson(res, 200, { ok: true, ...result })
       }
 
-      return sendJson(res, 404, { error: 'Unknown route' })
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Internal error'
-      console.error('[httpServer] error:', msg)
-      return sendJson(res, 500, clientErrorPayload(err, 'Internal error'))
-    }
-  })
-
-  server.listen(PORT, () => {
-    console.log(`[httpServer] listening on :${PORT}`)
-  })
-
-  return server
-}
-
-/**
- * Trade workers: `/health` + optional `/internal/dispatch-signal` (listener push).
- */
-export function startTradeHttpServer(
-  sessionManager: UserSessionManager,
-  tradeExecutor: TradeExecutor | null,
-): Server {
-  const server = createServer(async (req, res) => {
-    try {
-      const url = (req.url ?? '').split('?')[0] ?? ''
-
-      if (url === '/health' && (req.method === 'GET' || req.method === 'POST')) {
-        const payload = await sessionManager.getHealthPayload()
-        const queue = await getQueueHealthMetrics()
-        const brokerCapability = getBrokerExecutionCapability()
-        return sendJson(res, payload.ok ? 200 : 503, {
-          ...payload,
-          queue,
-          ...brokerCapability,
-        })
-      }
-
-      if (url === '/internal/parse-ai-debug' && req.method === 'POST') {
-        if (!INTERNAL_TOKEN) {
-          return sendJson(res, 503, { error: 'WORKER_INTERNAL_TOKEN not configured' })
-        }
-        const token = req.headers['x-internal-token']
-        if (token !== INTERNAL_TOKEN) {
-          return sendJson(res, 401, { error: 'Unauthorized' })
-        }
-        const body = (await readJson(req)) as {
-          channel_row_id?: string
-          raw_message?: string
-          user_id?: string
-          is_reply?: boolean
-          parent_signal_id?: string | null
-          is_modification_class?: boolean
-        }
+      if (url === '/internal/parse-ai-debug') {
         if (!body.channel_row_id || typeof body.raw_message !== 'string') {
           return sendJson(res, 400, { error: 'channel_row_id and raw_message required' })
         }
@@ -428,6 +380,43 @@ export function startTradeHttpServer(
           const msg = err instanceof Error ? err.message : 'parse failed'
           return sendJson(res, 500, { error: msg })
         }
+      }
+
+      return sendJson(res, 404, { error: 'Unknown route' })
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Internal error'
+      console.error('[httpServer] error:', msg)
+      return sendJson(res, 500, clientErrorPayload(err, 'Internal error'))
+    }
+  })
+
+  server.listen(PORT, () => {
+    console.log(`[httpServer] listening on :${PORT}`)
+  })
+
+  return server
+}
+
+/**
+ * Trade workers: `/health` + optional `/internal/dispatch-signal` (listener push).
+ */
+export function startTradeHttpServer(
+  sessionManager: UserSessionManager,
+  tradeExecutor: TradeExecutor | null,
+): Server {
+  const server = createServer(async (req, res) => {
+    try {
+      const url = (req.url ?? '').split('?')[0] ?? ''
+
+      if (url === '/health' && (req.method === 'GET' || req.method === 'POST')) {
+        const payload = await sessionManager.getHealthPayload()
+        const queue = await getQueueHealthMetrics()
+        const brokerCapability = getBrokerExecutionCapability()
+        return sendJson(res, payload.ok ? 200 : 503, {
+          ...payload,
+          queue,
+          ...brokerCapability,
+        })
       }
 
       if (url === '/internal/parse-signal' && req.method === 'POST') {
