@@ -40,6 +40,18 @@ describe('modificationTargetsOpenTrade', () => {
   it('rejects when no open trades exist at all', () => {
     assert.equal(modificationTargetsOpenTrade({ symbol: 'XAUUSD' }, []), false)
   })
+
+  it('accepts a canonical symbol against a broker-suffixed open trade', () => {
+    assert.equal(modificationTargetsOpenTrade({ symbol: 'XAUUSD' }, [
+      { symbol: 'XAUUSDm', direction: 'SELL' },
+    ]), true)
+  })
+
+  it('accepts a broker-suffixed symbol against a canonical open trade', () => {
+    assert.equal(modificationTargetsOpenTrade({ symbol: 'XAUUSDm' }, [
+      { symbol: 'XAUUSD', direction: 'SELL' },
+    ]), true)
+  })
 })
 
 describe('resolveModificationParentSymbol', () => {
@@ -53,6 +65,14 @@ describe('resolveModificationParentSymbol', () => {
 
   it('parent known + model matches → ok', () => {
     assert.deepEqual(resolveModificationParentSymbol({ parentSymbol: 'XAUUSD', modelSymbol: 'xauusd' }), { kind: 'ok' })
+  })
+
+  it('parent known + broker-suffixed model symbol → ok', () => {
+    assert.deepEqual(resolveModificationParentSymbol({ parentSymbol: 'XAUUSD', modelSymbol: 'XAUUSDm' }), { kind: 'ok' })
+  })
+
+  it('parent known + broker-suffixed parent symbol → ok', () => {
+    assert.deepEqual(resolveModificationParentSymbol({ parentSymbol: 'XAUUSDm', modelSymbol: 'XAUUSD' }), { kind: 'ok' })
   })
 
   it('parent known + model contradicts → conflict', () => {

@@ -7,6 +7,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { symbolsCompatibleForBasket } from './basketModFollowUp'
 import type { TradeIntent } from './signalIntent/tradeIntent'
 
 export const MODIFICATION_NO_OPEN_TRADE_REASON = 'modification_no_open_trade'
@@ -66,7 +67,7 @@ export function resolveModificationParentSymbol(args: {
   const model = String(args.modelSymbol ?? '').trim().toUpperCase()
   if (!parent) return { kind: 'no_parent' }
   if (!model) return { kind: 'fill', symbol: parent }
-  if (model === parent) return { kind: 'ok' }
+  if (symbolsCompatibleForBasket(parent, model)) return { kind: 'ok' }
   return { kind: 'conflict', modelSymbol: model, parentSymbol: parent }
 }
 
@@ -112,12 +113,14 @@ export async function loadOpenTradesForChannel(
   }
 }
 
-/** True when the modification intent's symbol matches an open trade in the channel. */
+/** True when the modification intent's symbol matches an open trade in the channel.
+ *  Uses the same broker-suffix-tolerant comparison as the rest of the system
+ *  (XAUUSD ↔ XAUUSDm) — the trades table stores the broker symbol. */
 export function modificationTargetsOpenTrade(
   intent: Pick<TradeIntent, 'symbol'>,
   openTrades: OpenTradeRef[],
 ): boolean {
   const sym = String(intent.symbol ?? '').trim().toUpperCase()
   if (!sym) return false
-  return openTrades.some(t => t.symbol === sym)
+  return openTrades.some(t => symbolsCompatibleForBasket(sym, t.symbol))
 }
