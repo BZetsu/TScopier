@@ -27,29 +27,9 @@ import {
 } from '../pipelineTimestamps'
 import { ensureSignalRow, isSignalFkViolation } from '../ensureSignalRow'
 import { captureWorkerError, captureWorkerWarning } from '../observability/sentry'
+import { collapseIdenticalImmediateLegs } from './collapseIdenticalImmediateLegs'
 
-/** Collapse legs that are identical clones (same op/symbol/volume/comment). */
-export function collapseIdenticalImmediateLegs(legs: Leg[]): { legs: Leg[]; collapsed: number } {
-  const seen = new Set<string>()
-  const out: Leg[] = []
-  let collapsed = 0
-  for (const leg of legs) {
-    const a = leg.args
-    const key = [
-      String(a.operation ?? ''),
-      String(a.symbol ?? ''),
-      String(Number(a.volume) || 0),
-      String(a.comment ?? ''),
-    ].join('|')
-    if (seen.has(key)) {
-      collapsed += 1
-      continue
-    }
-    seen.add(key)
-    out.push(leg)
-  }
-  return { legs: out, collapsed }
-}
+export { collapseIdenticalImmediateLegs }
 
 /** Normalized broker fill shape shared by the v1 client and the v2 fxClient. */
 type NormalizedFill = {
@@ -115,8 +95,8 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
       }
   }
 
-  // Drop identical full-lot clones (Luis teaser pattern: N× same Buy/volume/comment).
-  const collapsed = collapseIdenticalImmediateLegs(legs)
+  // Drop identical full-lot clones only (not granular multi/range legs).
+  const collapsed = collapseIdenticalImmediateLegs(legs, { baseLot })
   let workingLegs = collapsed.legs
   if (collapsed.collapsed > 0) {
     console.warn(

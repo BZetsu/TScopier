@@ -192,6 +192,7 @@ describe('sendImmediateLegs single-style hard block', () => {
         prep: {} as never,
       } as never)
 
+      // Full-lot clones (Luis teaser) collapse to one; granular multi/range legs do not.
       assert.equal(sent.length, 1)
       assert.equal(result.openedOrMerged, true)
       assert.equal(
