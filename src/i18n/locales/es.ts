@@ -1074,6 +1074,7 @@ export const es: Translations = {
     resultsTitle: 'Resultados del backtest',
     resultsSubtitle: '{symbol} · {channel} · toca una señal para ver detalles',
     newRun: 'Nueva ejecución',
+    exportCsv: 'Exportar CSV',
     totalPips: 'Pips totales',
     winRate: 'Tasa de acierto',
     winLoss: 'G / P',

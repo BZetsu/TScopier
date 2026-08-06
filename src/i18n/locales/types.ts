@@ -1189,6 +1189,7 @@ export interface BacktestTranslations {
   resultsTitle: string
   resultsSubtitle: string
   newRun: string
+  exportCsv: string
   totalPips: string
   winRate: string
   winLoss: string
