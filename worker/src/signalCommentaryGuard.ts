@@ -140,7 +140,7 @@ export function looksLikeResultsOrSuggestedCommentary(message: string): boolean 
   if (resultMarkers.test(text) || arabicResultMarkers.test(text)) return true
 
   const advisoryStop =
-    /(?:\b(?:suggested|suggestion|suggest|recommended|potential|possible|could|may)\b.{0,40}\b(?:sl|stop\s*loss|tp|take\s*profit|target)\b|\b(?:sl|stop\s*loss|tp|take\s*profit|target)\b.{0,40}\b(?:suggested|suggestion|suggest|recommended)\b)/i
+    /(?:\b(?:suggested|suggestion|suggest|recommended|potential|possible|could|may)\b.{0,40}\b(?:sl|stop\s*loss|tp|take\s*profit|target)\b|\b(?:sl|stop\s*loss|tp|take\s*profit|target)\b(?!\s*[:=]\s*\d).{0,40}\b(?:suggested|suggestion|suggest|recommended)\b)/i
   const arabicAdvisoryStop =
     /(?:مقترح(?:ة)?|اقتراح|محتمل|قد)\s*.{0,40}(?:وقف\s*الخسارة|وقف|الهدف|tp)/iu
   return advisoryStop.test(text) || arabicAdvisoryStop.test(text)
