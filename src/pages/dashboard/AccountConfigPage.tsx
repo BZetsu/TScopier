@@ -870,17 +870,17 @@ export function AccountConfigPage() {
     brokerBalanceRefreshStartedRef.current = true
     let cancelled = false
     void (async () => {
-      await Promise.all(
-        stale.map(async b => {
-          if (cancelled) return
-          try {
-            const { account } = await fxsocketBroker.refreshSummary(b.id)
-            if (!cancelled) replaceBroker(account)
-          } catch {
-            /* best-effort */
-          }
-        }),
-      )
+      for (const b of stale) {
+        if (cancelled) return
+        try {
+          const { account } = await fxsocketBroker.refreshSummary(b.id)
+          if (!cancelled) replaceBroker(account)
+        } catch {
+          /* best-effort — throttle must not mark the account disconnected */
+        }
+        // Space multi-account refreshes to reduce FxSocket throttle storms.
+        await new Promise(r => setTimeout(r, 1_200))
+      }
     })()
     return () => {
       cancelled = true

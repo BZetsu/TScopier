@@ -34,6 +34,17 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
 }
 
+function isApiThrottleMessage(message: string | null | undefined): boolean {
+  return /throttl|rate limit|too many requests|expected available in/i.test(String(message ?? ""))
+}
+
+function parseThrottleBackoffMs(message: string | null | undefined): number {
+  const m = String(message ?? "").match(/expected available in\s+(\d+)\s*seconds?/i)
+  const sec = m ? Number(m[1]) : NaN
+  if (Number.isFinite(sec) && sec > 0) return Math.min(120_000, Math.max(2_000, sec * 1000 + 500))
+  return 8_000
+}
+
 function bad(status: number, msg: string) {
   return Response.json({ error: msg }, { status, headers: corsHeaders })
 }
@@ -457,6 +468,17 @@ Deno.serve(async (req: Request) => {
         }
 
         const rawMsg = readiness.error || "FxSocket terminal connection failed"
+        if (isApiThrottleMessage(rawMsg) || classifyBrokerConnectError(rawMsg) === "rate_limited") {
+          return Response.json(
+            {
+              ok: true,
+              account: row,
+              throttled: true,
+              retry_after_ms: parseThrottleBackoffMs(rawMsg),
+            },
+            { headers: corsHeaders },
+          )
+        }
         const readinessKind = classifyBrokerConnectError(rawMsg, { credentialConnect: establishing })
         if (establishing && !isDefinitiveCredentialError(readinessKind)) {
           return await respondPending()
@@ -474,6 +496,17 @@ Deno.serve(async (req: Request) => {
         return bad(502, msg)
       } catch (e) {
         const rawMsg = e instanceof Error ? e.message : "Refresh failed"
+        if (isApiThrottleMessage(rawMsg) || classifyBrokerConnectError(rawMsg) === "rate_limited") {
+          return Response.json(
+            {
+              ok: true,
+              account: row,
+              throttled: true,
+              retry_after_ms: parseThrottleBackoffMs(rawMsg),
+            },
+            { headers: corsHeaders },
+          )
+        }
         const errorKind = classifyBrokerConnectError(rawMsg, { credentialConnect: establishing })
         if (establishing && !isDefinitiveCredentialError(errorKind)) {
           return await respondPending()
@@ -505,6 +538,18 @@ Deno.serve(async (req: Request) => {
         )
       } catch (e) {
         const msg = e instanceof FxsocketApiError ? e.message : e instanceof Error ? e.message : "Status check failed"
+        if (isApiThrottleMessage(msg)) {
+          return Response.json(
+            {
+              ok: true,
+              healthy: row.terminal_connected === true && row.trade_allowed !== false,
+              account: row,
+              throttled: true,
+              retry_after_ms: parseThrottleBackoffMs(msg),
+            },
+            { headers: corsHeaders },
+          )
+        }
         await supabase
           .from("broker_accounts")
           .update({ terminal_connected: false, trade_allowed: false })
