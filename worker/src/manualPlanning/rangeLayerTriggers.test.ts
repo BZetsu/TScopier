@@ -10,15 +10,15 @@ import {
 
 test('resolveRangeLayerBoundary: sell uses zone high when provided', () => {
   assert.equal(
-    resolveRangeLayerBoundary({ isBuy: false, anchor: 4327, boundary: 4335, rangeDistancePips: 30, pip: 0.01 }),
+    resolveRangeLayerBoundary({ isBuy: false, anchor: 4327, boundary: 4335, rangeDistancePips: 30, pip: 0.1 }),
     4335,
   )
 })
 
 test('resolveRangeLayerBoundary: manual distance when no boundary', () => {
   assert.equal(
-    resolveRangeLayerBoundary({ isBuy: false, anchor: 4327, boundary: null, rangeDistancePips: 30, pip: 0.01 }),
-    4327.3,
+    resolveRangeLayerBoundary({ isBuy: false, anchor: 4327, boundary: null, rangeDistancePips: 30, pip: 0.1 }),
+    4330,
   )
 })
 
@@ -174,43 +174,43 @@ test('buildRangeLayerTriggerMap: auto mode uses linear step not zone curve', () 
   const map = buildRangeLayerTriggerMap({
     virtualPendings: Array.from({ length: 5 }, (_, i) => ({
       stepIdx: i + 1,
-      stepPriceOffset: 0.02,
+      stepPriceOffset: 0.2,
       isBuy: true,
     })),
     anchor: 4077.35,
     digits: 2,
-    pip: 0.01,
+    pip: 0.1,
     rangeLayering: {
       rangeStepPips: 2,
       rangeDistancePips: 30,
       effectiveStepPips: 2,
-      stepPriceOffset: 0.02,
+      stepPriceOffset: 0.2,
       maxStepIdx: 15,
       reservedPendingLegs: 15,
       activePendingLegs: 15,
       rangeLayeringType: 'auto',
     },
   })
-  assert.equal(map.get(1), 4077.33)
-  assert.equal(map.get(2), 4077.31)
-  assert.equal(map.get(3), 4077.29)
+  assert.equal(map.get(1), 4077.15)
+  assert.equal(map.get(2), 4076.95)
+  assert.equal(map.get(3), 4076.75)
 })
 
 test('buildRangeLayerTriggerMap: pending_order Manual with signal range still curves', () => {
   const map = buildRangeLayerTriggerMap({
     virtualPendings: [
-      { stepIdx: 1, stepPriceOffset: 0.03, isBuy: false },
-      { stepIdx: 2, stepPriceOffset: 0.03, isBuy: false },
-      { stepIdx: 1, stepPriceOffset: 0.03, isBuy: false },
+      { stepIdx: 1, stepPriceOffset: 0.3, isBuy: false },
+      { stepIdx: 2, stepPriceOffset: 0.3, isBuy: false },
+      { stepIdx: 1, stepPriceOffset: 0.3, isBuy: false },
     ],
     anchor: 4327,
     digits: 2,
-    pip: 0.01,
+    pip: 0.1,
     rangeLayering: {
       rangeStepPips: 3,
       rangeDistancePips: 30,
       effectiveStepPips: 3,
-      stepPriceOffset: 0.03,
+      stepPriceOffset: 0.3,
       maxStepIdx: 2,
       reservedPendingLegs: 3,
       activePendingLegs: 3,
