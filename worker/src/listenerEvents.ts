@@ -12,6 +12,8 @@ export type ListenerEventType =
   | 'ai_modification_failed'
   | 'ai_entry_parsed'
   | 'ai_entry_skipped'
+  | 'ai_parse_fallback'
+  | 'ai_parse_review_required'
   | 'message_revision_applied'
   | 'message_revision_stale_skipped'
   | 'message_revision_dispatch_deduped'

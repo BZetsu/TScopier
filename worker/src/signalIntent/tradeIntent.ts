@@ -8,6 +8,7 @@ export type TradeIntentKind =
   | 'cancel_pending'
   | 'ignore'
   | 'commentary'
+  | 'uncertain'
 
 export type TradeIntentSide = 'BUY' | 'SELL'
 

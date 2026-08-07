@@ -299,6 +299,83 @@ Deno.serve(async (req: Request) => {
       return Response.json({ ok: true }, { headers: corsHeaders })
     }
 
+    if (action === "reconnect") {
+      // Trigger a terminal reconnect WITHOUT deleting the FxSocket account.
+      // Re-submitting the same login/password/server to POST /v1/accounts makes
+      // FxSocket re-provision/re-attach the existing terminal pod. The old
+      // account id is kept unless FxSocket confirms it is gone.
+      const accountRowId = String(body.account_id ?? "")
+      if (!accountRowId) return bad(400, "account_id required")
+      const password = String(body.password ?? "")
+      if (!password) return bad(400, "password required to reconnect the terminal")
+      const row = await loadOwnedBrokerRow(supabase, userId, accountRowId)
+      const login = String(row.account_login ?? "").trim()
+      const server = String(row.broker_server ?? "").trim()
+      if (!login || !server) return bad(400, "Account has no login/server stored — delete and re-add it")
+      const oldAccountId = String(row.fxsocket_account_id ?? "").trim()
+
+      let newAccountId: string
+      try {
+        const connected = await fx.connectAccount({
+          login,
+          password,
+          server,
+          label: row.label || `${row.platform ?? "MT5"} • ${login}`,
+          platform: row.platform,
+        })
+        newAccountId = connected.accountId
+      } catch (e) {
+        const msg = e instanceof FxsocketApiError ? e.message : e instanceof Error ? e.message : "Reconnect failed"
+        const { error: updateErr } = await supabase
+          .from("broker_accounts")
+          .update({
+            fxsocket_status: "error",
+            connection_status: "error",
+            connection_error: msg,
+          })
+          .eq("id", accountRowId)
+          .eq("user_id", userId)
+        if (updateErr) return bad(500, updateErr.message)
+        return bad(e instanceof FxsocketApiError ? e.status : 502, msg)
+      }
+
+      // FxSocket returned a different account id. Never abandon the old
+      // terminal while it still exists — that would risk a duplicate session.
+      let effectiveId = newAccountId
+      if (newAccountId !== oldAccountId) {
+        try {
+          await fx.getV1Account(oldAccountId)
+          // Old terminal still alive: keep the existing id and credentials,
+          // do not switch. Report so the user can retry once the pod cycles.
+          return bad(
+            409,
+            "The broker returned a new terminal link while the old terminal is still active. Wait a minute and try Reconnect again.",
+          )
+        } catch {
+          // Old terminal is gone — point the row at the fresh link.
+          effectiveId = newAccountId
+        }
+      }
+
+      const { data: updated, error } = await supabase
+        .from("broker_accounts")
+        .update({
+          fxsocket_account_id: effectiveId,
+          fxsocket_status: "connecting",
+          connection_status: "pending",
+          connection_error: null,
+        })
+        .eq("id", accountRowId)
+        .eq("user_id", userId)
+        .select("*")
+        .single()
+      if (error) return bad(500, error.message)
+      return Response.json(
+        { ok: true, account: updated ?? row, pending: true },
+        { headers: corsHeaders },
+      )
+    }
+
     if (action === "refresh_summary") {
       const accountRowId = String(body.account_id ?? "")
       if (!accountRowId) return bad(400, "account_id required")

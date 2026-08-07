@@ -257,6 +257,7 @@ async function pushParsedSignalToTradeWorkerInner(
     reply_to_message_id: row.reply_to_message_id ?? null,
     created_at: row.created_at,
     pipeline_ts: row.pipeline_ts,
+    dispatch_source: row.dispatch_source ?? null,
     revision_prior_action: row.revision_prior_action ?? null,
   }
 

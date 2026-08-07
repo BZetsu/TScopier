@@ -354,6 +354,27 @@ export const fxsocketBroker = {
     return isWaitingForConnect(accountId)
   },
 
+  /** Trigger a terminal reconnect for an existing account (no deletion). */
+  reconnect(args: {
+    accountId: string
+    password: string
+  }): Promise<{ account: BrokerAccount; pending?: boolean }> {
+    return call({
+      body: {
+        action: 'reconnect',
+        account_id: args.accountId,
+        password: args.password,
+      },
+      timeoutMs: FXSOCKET_CONNECT_TIMEOUT_MS,
+      expect: (b) => {
+        const row = b as { account?: BrokerAccount; pending?: boolean }
+        const account = row.account
+        if (!account) throw new Error('Reconnect did not return an account')
+        return { account, pending: row.pending === true }
+      },
+    })
+  },
+
   delete(accountId: string): Promise<void> {
     return call({
       body: { action: 'delete', account_id: accountId },

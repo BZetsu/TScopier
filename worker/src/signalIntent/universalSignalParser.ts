@@ -24,23 +24,30 @@ import {
   loadChannelSignalExamples,
 } from './loadChannelExamples'
 import {
+  cerebrasParseEnabled,
+  cerebrasParseModel,
   getUniversalParseMode,
   isUniversalParseEnabled,
   universalParseFastPathConfidence,
   universalParseModel,
+  universalParseReconcileModel,
+  universalParseReconcileTimeoutMs,
   universalParseStoreIntent,
   universalParseTimeoutMs,
 } from './parseConfig'
 import { tradeIntentToChannelParsedSignal, withStoredIntent } from './tradeIntentAdapter'
 import type { TradeIntent } from './tradeIntent'
 import { validateTradeIntent } from './validateTradeIntent'
+import { loadOpenTradesForChannel } from '../signalModificationGrounding'
+import { formatFewShots, STAGE_TWO_FEW_SHOTS, STAGE_THREE_FEW_SHOTS } from './fewShotExamples'
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY ?? ''
+const CEREBRAS_API_KEY = process.env.CEREBRAS_API_KEY ?? ''
 
 export type UniversalParseResult = {
   parseResult: ParseChannelMessageResult
   intent: TradeIntent
-  source: 'openai' | 'unavailable'
+  source: 'cerebras' | 'openai' | 'gpt4o' | 'unavailable'
   skip_reason?: string | null
 }
 
@@ -60,6 +67,8 @@ export type UniversalParseContext = {
     parsed_data: Record<string, unknown> | null
     created_at: string
   }>
+  /** The user's OPEN trades for this channel — ground truth for modifications. */
+  open_trades?: Array<{ symbol: string; direction: string }>
   channel_keywords_summary?: Record<string, string>
   channel_examples?: unknown[]
 }
@@ -67,7 +76,7 @@ export type UniversalParseContext = {
 const UNIVERSAL_SYSTEM_PROMPT = `You extract trading intent from Telegram channel messages in ANY language.
 Return strict JSON only matching this schema:
 {
-  "kind": "entry" | "modify" | "close" | "breakeven" | "partial_close" | "cancel_pending" | "ignore" | "commentary",
+  "kind": "entry" | "modify" | "close" | "breakeven" | "partial_close" | "cancel_pending" | "ignore" | "commentary" | "uncertain",
   "side": "BUY" | "SELL" | null,
   "symbol": string | null,
   "entry": number[],
@@ -90,11 +99,49 @@ Rules:
 - Never invent prices not present in the message.
 - New trade entries: kind entry, side BUY or SELL, entry as [price] or zone [low, high].
 - SL/TP updates on open trades: kind modify (keep side from parent/recent context when omitted).
+- For modification messages (modify/close/breakeven/partial_close), the target symbol MUST match an entry in open_trades when open_trades is present. Never pick a symbol that has no open trade.
 - Full close: kind close. Move SL to entry: kind breakeven. Partial close: kind partial_close.
 - Cancel/delete buy/sell limit or pending, or "trade invalid" / "setup invalid": kind cancel_pending (not a full market close).
 - TP-hit announcements, status updates, "TP2 reached", ATUALIZAÇÃO without new entry → kind commentary or ignore.
 - Conditional tense, retrospective discussion, macro news → kind commentary.
-- confidence 0-1.`
+- If the message could be an executable trade but the instruction, side, price, or intent is genuinely ambiguous → kind uncertain.
+- confidence 0-1.
+
+${formatFewShots(STAGE_TWO_FEW_SHOTS)}`
+
+const RECONCILE_SYSTEM_PROMPT = `You are the final arbiter in a two-stage signal verification pipeline for Telegram trading signals.
+A deterministic keyword engine (stage 1) and a previous LLM (stage 2) disagreed about the message, or stage 2 was uncertain, or stage 2 invented values.
+Return strict JSON only matching this schema:
+{
+  "kind": "entry" | "modify" | "close" | "breakeven" | "partial_close" | "cancel_pending" | "ignore" | "commentary" | "uncertain",
+  "side": "BUY" | "SELL" | null,
+  "symbol": string | null,
+  "entry": number[],
+  "sl": number | null,
+  "tp": number[],
+  "sl_unit": "price" | "pips",
+  "tp_unit": "price" | "pips",
+  "flags": {
+    "market_now": boolean,
+    "re_enter": boolean,
+    "open_tp": boolean,
+    "partial_close_fraction": number | null
+  },
+  "confidence": number,
+  "detected_language": string | null
+}
+Rules:
+- Resolve the disagreement using the RAW message as the only source of truth.
+- Never invent prices, sides, or stop-losses that are not present in the message. Invented values from stage 2 must be rejected.
+- Extract TRADING INTENT, never translate the message literally.
+- Map instrument aliases: GOLD, OR, XAU-USD, XAU/USD → XAUUSD; SILVER → XAGUSD.
+- TP-hit announcements, status updates, results, recaps, and "target reached" posts without a new entry → kind commentary or ignore.
+- A price-range post such as "XAUUSD 4276 To 4256" with no side, no SL, and no entry instruction is a target/analysis post → kind commentary.
+- For modification messages, the target symbol MUST match an entry in open_trades when open_trades is present. Never target a symbol with no open trade.
+- If the message could be an executable trade but the instruction, side, price, or intent is genuinely ambiguous after reconciliation → kind uncertain (a human will review).
+- confidence 0-1.
+
+${formatFewShots(STAGE_THREE_FEW_SHOTS)}`
 
 function keywordsSummary(keywords: ChannelKeywords): Record<string, string> {
   return {
@@ -109,51 +156,97 @@ function keywordsSummary(keywords: ChannelKeywords): Record<string, string> {
   }
 }
 
-async function callOpenAiUniversal(context: UniversalParseContext): Promise<{
-  raw: Record<string, unknown> | null
-  error: string | null
-}> {
-  if (!OPENAI_API_KEY) {
-    return { raw: null, error: 'OPENAI_API_KEY not set on listener worker' }
+async function callChatCompletions(args: {
+  baseUrl: string
+  apiKey: string
+  model: string
+  systemPrompt: string
+  userContent: string
+  timeoutMs: number
+  label: string
+}): Promise<{ raw: Record<string, unknown> | null; error: string | null }> {
+  if (!args.apiKey) {
+    return { raw: null, error: `${args.label} API key not set on listener worker` }
   }
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), universalParseTimeoutMs())
+  const timer = setTimeout(() => controller.abort(), args.timeoutMs)
   try {
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    const res = await fetch(`${args.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        Authorization: `Bearer ${args.apiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: universalParseModel(),
+        model: args.model,
         temperature: 0,
         max_tokens: 500,
         response_format: { type: 'json_object' },
         messages: [
-          { role: 'system', content: UNIVERSAL_SYSTEM_PROMPT },
-          { role: 'user', content: JSON.stringify(context) },
+          { role: 'system', content: args.systemPrompt },
+          { role: 'user', content: args.userContent },
         ],
       }),
       signal: controller.signal,
     })
     if (!res.ok) {
       const body = await res.text().catch(() => '')
-      return { raw: null, error: `OpenAI HTTP ${res.status}: ${body.slice(0, 200)}` }
+      return { raw: null, error: `${args.label} HTTP ${res.status}: ${body.slice(0, 200)}` }
     }
     const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> }
     const content = data?.choices?.[0]?.message?.content ?? ''
-    if (!content) return { raw: null, error: 'empty OpenAI response' }
+    if (!content) return { raw: null, error: `empty ${args.label} response` }
     return { raw: JSON.parse(content) as Record<string, unknown>, error: null }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     return {
       raw: null,
-      error: msg.includes('abort') ? `OpenAI timeout after ${universalParseTimeoutMs()}ms` : msg,
+      error: msg.includes('abort') ? `${args.label} timeout after ${args.timeoutMs}ms` : msg,
     }
   } finally {
     clearTimeout(timer)
   }
+}
+
+function callOpenAiUniversal(context: UniversalParseContext): ReturnType<typeof callChatCompletions> {
+  return callChatCompletions({
+    baseUrl: 'https://api.openai.com/v1',
+    apiKey: OPENAI_API_KEY,
+    model: universalParseModel(),
+    systemPrompt: UNIVERSAL_SYSTEM_PROMPT,
+    userContent: JSON.stringify(context),
+    timeoutMs: universalParseTimeoutMs(),
+    label: 'OpenAI',
+  })
+}
+
+function callCerebrasUniversal(context: UniversalParseContext): ReturnType<typeof callChatCompletions> {
+  return callChatCompletions({
+    baseUrl: 'https://api.cerebras.ai/v1',
+    apiKey: CEREBRAS_API_KEY,
+    model: cerebrasParseModel(),
+    systemPrompt: UNIVERSAL_SYSTEM_PROMPT,
+    userContent: JSON.stringify(context),
+    timeoutMs: universalParseTimeoutMs(),
+    label: 'Cerebras',
+  })
+}
+
+/** Stage 2 provider: Cerebras OSS when configured, otherwise OpenAI. */
+async function callStageTwo(context: UniversalParseContext): Promise<{
+  raw: Record<string, unknown> | null
+  error: string | null
+  provider: 'cerebras' | 'openai' | null
+}> {
+  if (cerebrasParseEnabled() && CEREBRAS_API_KEY) {
+    const cerebras = await callCerebrasUniversal(context)
+    if (cerebras.raw) return { ...cerebras, provider: 'cerebras' }
+    const openai = await callOpenAiUniversal(context)
+    if (openai.raw) return { ...openai, provider: 'openai' }
+    return { raw: null, error: `${cerebras.error} | ${openai.error}`, provider: null }
+  }
+  const openai = await callOpenAiUniversal(context)
+  return { ...openai, provider: openai.raw ? 'openai' : null }
 }
 
 function intentToLegacyParsed(
@@ -196,95 +289,51 @@ function buildSkipResult(rawMessage: string, skipReason: string): UniversalParse
   }
 }
 
-export async function buildUniversalParseContext(
-  supabase: SupabaseClient,
-  args: {
-    userId: string
-    channelRowId: string
-    rawMessage: string
-    isReply?: boolean
-    parentSignalId?: string | null
-    revision?: UniversalParseContext['revision']
-  },
-): Promise<UniversalParseContext> {
-  const { keywords } = await getChannelParseContext(supabase, args.channelRowId)
-  const [base, examples] = await Promise.all([
-    buildAiModificationContext(supabase, {
-      userId: args.userId,
-      channelRowId: args.channelRowId,
-      rawMessage: args.rawMessage,
-      isReply: args.isReply,
-      parentSignalId: args.parentSignalId,
-      revision: args.revision,
-    }),
-    loadChannelSignalExamples(supabase, args.channelRowId),
-  ])
-  return {
-    ...base,
-    channel_keywords_summary: keywordsSummary(keywords),
-    channel_examples: formatExamplesForPrompt(examples),
-  }
-}
-
-export async function parseUniversalSignal(
-  supabase: SupabaseClient,
-  args: {
-    userId: string
-    channelRowId: string
-    rawMessage: string
-    isReply?: boolean
-    parentSignalId?: string | null
-    revision?: UniversalParseContext['revision']
-  },
-): Promise<UniversalParseResult> {
-  if (!isUniversalParseEnabled() || getUniversalParseMode() === 'off') {
-    return buildSkipResult(args.rawMessage, 'universal_parse_disabled')
-  }
-
-  const { keywords, lexicon } = await getChannelParseContext(supabase, args.channelRowId)
-  const context = await buildUniversalParseContext(supabase, args)
-  const { raw, error } = await callOpenAiUniversal(context)
-
-  if (!raw) {
-    return buildSkipResult(args.rawMessage, error ?? 'universal_parse_unavailable')
-  }
-
+/** Shared post-processing for stage 2 (Cerebras/OpenAI) and stage 3 (GPT-4o) raw JSON. */
+function finalizeIntent(
+  raw: Record<string, unknown>,
+  rawMessage: string,
+  keywords: ChannelKeywords,
+  source: UniversalParseResult['source'],
+): UniversalParseResult {
   let intent = coerceTradeIntent(raw)
-  const validation = validateTradeIntent(intent, args.rawMessage)
+  const validation = validateTradeIntent(intent, rawMessage)
   intent = validation.intent
 
   if (!validation.ok) {
     return {
       intent,
-      source: 'openai',
+      source,
       skip_reason: validation.reason,
       parseResult: {
-        parsed: tradeIntentToChannelParsedSignal(intent, args.rawMessage),
+        parsed: tradeIntentToChannelParsedSignal(intent, rawMessage),
         status: 'skipped',
         skip_reason: validation.reason,
       },
     }
   }
 
-  if (intent.kind === 'commentary' || intent.kind === 'ignore') {
+  if (intent.kind === 'commentary' || intent.kind === 'ignore' || intent.kind === 'uncertain') {
     return {
       intent,
-      source: 'openai',
+      source,
       skip_reason: 'AI classified as non-actionable',
       parseResult: {
-        parsed: tradeIntentToChannelParsedSignal(intent, args.rawMessage),
+        parsed: tradeIntentToChannelParsedSignal(intent, rawMessage),
         status: 'skipped',
-        skip_reason: 'AI classified as non-actionable',
+        skip_reason: intent.kind === 'uncertain'
+          ? 'AI classified as uncertain; human review required'
+          : 'AI classified as non-actionable',
       },
     }
   }
 
-  let parsed = intentToLegacyParsed(intent, args.rawMessage, keywords)
-  const eligibility = evaluateParsedSignalExecutionEligibility(parsed, args.rawMessage, keywords)
+  let parsed = intentToLegacyParsed(intent, rawMessage, keywords)
+  const eligibility = evaluateParsedSignalExecutionEligibility(parsed, rawMessage, keywords)
   if ((parsed.action === 'buy' || parsed.action === 'sell') && !eligibility.eligible) {
     return {
       intent,
-      source: 'openai',
+      source,
       skip_reason: eligibility.skipReason ?? 'entry_not_execution_eligible',
       parseResult: {
         parsed,
@@ -300,7 +349,7 @@ export async function parseUniversalSignal(
 
   return {
     intent,
-    source: 'openai',
+    source,
     skip_reason: null,
     parseResult: {
       parsed,
@@ -308,6 +357,119 @@ export async function parseUniversalSignal(
       skip_reason: parsed.action === 'ignore' ? 'AI classified as non-actionable' : null,
     },
   }
+}
+
+export async function buildUniversalParseContext(
+  supabase: SupabaseClient,
+  args: {
+    userId: string
+    channelRowId: string
+    rawMessage: string
+    isReply?: boolean
+    parentSignalId?: string | null
+    revision?: UniversalParseContext['revision']
+    isModificationClass?: boolean
+  },
+): Promise<UniversalParseContext> {
+  const { keywords } = await getChannelParseContext(supabase, args.channelRowId)
+  const [base, examples, openTrades] = await Promise.all([
+    buildAiModificationContext(supabase, {
+      userId: args.userId,
+      channelRowId: args.channelRowId,
+      rawMessage: args.rawMessage,
+      isReply: args.isReply,
+      parentSignalId: args.parentSignalId,
+      revision: args.revision,
+    }),
+    loadChannelSignalExamples(supabase, args.channelRowId),
+    args.isModificationClass === true
+      ? loadOpenTradesForChannel(supabase, { userId: args.userId, channelRowId: args.channelRowId })
+      : Promise.resolve([]),
+  ])
+  return {
+    ...base,
+    ...(openTrades && openTrades.length > 0 ? { open_trades: openTrades } : {}),
+    channel_keywords_summary: keywordsSummary(keywords),
+    channel_examples: formatExamplesForPrompt(examples),
+  }
+}
+
+export async function parseUniversalSignal(
+  supabase: SupabaseClient,
+  args: {
+    userId: string
+    channelRowId: string
+    rawMessage: string
+    isReply?: boolean
+    parentSignalId?: string | null
+    revision?: UniversalParseContext['revision']
+    isModificationClass?: boolean
+  },
+): Promise<UniversalParseResult> {
+  if (!isUniversalParseEnabled() || getUniversalParseMode() === 'off') {
+    return buildSkipResult(args.rawMessage, 'universal_parse_disabled')
+  }
+
+  const { keywords, lexicon } = await getChannelParseContext(supabase, args.channelRowId)
+  const context = await buildUniversalParseContext(supabase, args)
+  const { raw, error, provider } = await callStageTwo(context)
+
+  if (!raw || !provider) {
+    return buildSkipResult(args.rawMessage, error ?? 'universal_parse_unavailable')
+  }
+
+  return finalizeIntent(raw, args.rawMessage, keywords, provider)
+}
+
+/** Stage 3: GPT-4o reconciliation when stage 1 and stage 2 disagree or validation trips. */
+export async function reconcileUniversalSignal(
+  supabase: SupabaseClient,
+  args: {
+    userId: string
+    channelRowId: string
+    rawMessage: string
+    isReply?: boolean
+    parentSignalId?: string | null
+    revision?: UniversalParseContext['revision']
+    isModificationClass?: boolean
+  },
+  stageInput: {
+    deterministic: ParseChannelMessageResult
+    stage2: UniversalParseResult
+    reason: string | null
+    openTrades?: Array<{ symbol: string; direction: string }>
+  },
+): Promise<UniversalParseResult> {
+  if (!OPENAI_API_KEY) {
+    return buildSkipResult(args.rawMessage, 'reconcile_unavailable')
+  }
+  const { keywords } = await getChannelParseContext(supabase, args.channelRowId)
+  const context = await buildUniversalParseContext(supabase, args)
+  const openTrades = stageInput.openTrades ?? context.open_trades ?? []
+  const userContent = JSON.stringify({
+    ...context,
+    ...(openTrades.length > 0 ? { open_trades: openTrades } : {}),
+    verification: {
+      stage1_deterministic: stageInput.deterministic.status === 'parsed'
+        ? stageInput.deterministic.parsed
+        : null,
+      stage2_llm_intent: stageInput.stage2.intent,
+      stage2_reason: stageInput.reason ?? null,
+    },
+  })
+  const { raw, error } = await callChatCompletions({
+    baseUrl: 'https://api.openai.com/v1',
+    apiKey: OPENAI_API_KEY,
+    model: universalParseReconcileModel(),
+    systemPrompt: RECONCILE_SYSTEM_PROMPT,
+    userContent,
+    timeoutMs: universalParseReconcileTimeoutMs(),
+    label: 'OpenAI reconcile',
+  })
+  if (!raw) {
+    return buildSkipResult(args.rawMessage, error ?? 'reconcile_unavailable')
+  }
+  return finalizeIntent(raw, args.rawMessage, keywords, 'gpt4o')
 }
 
 export function parseDeterministicForUniversal(

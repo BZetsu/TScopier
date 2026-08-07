@@ -47,6 +47,8 @@ export function looksLikeCasualNonTradeMessage(message: string): boolean {
   const text = String(message ?? '').replace(/\s+/g, ' ').trim()
   if (!text) return false
 
+  if (looksLikeResultsOrSuggestedCommentary(text)) return true
+
   if (looksLikeMarketNewsOrCommentary(text)) return true
 
   if (/\bgold\s+(watches|watch|jewelry|jewellery|chain|ring|bar|coin|necklace|bracelet)\b/i.test(text)) {
@@ -70,6 +72,24 @@ export function looksLikeCasualNonTradeMessage(message: string): boolean {
   if (looksLikePositionStatusCommentary(text)) return true
 
   return false
+}
+
+/** Result, promotion, or advisory language that must not open a trade. */
+export function looksLikeResultsOrSuggestedCommentary(message: string): boolean {
+  const text = String(message ?? '').replace(/\s+/g, ' ').trim()
+  if (!text) return false
+
+  const resultMarkers =
+    /\b(?:results?|recap|performance|total\s+pips?|pips?\s+total|join\s+(?:our\s+)?vip|vip\s+(?:results?|performance)|hits?\s+tp\s*\d*|tp\s*\d*\s*(?:hit|reached)|tp\s*\d*\s*[+=]\s*\d+(?:\.\d+)?\s*pips?)\b/i
+  const arabicResultMarkers =
+    /(?:نتائج|حصيلة|أداء|اجمالي\s*(?:النقاط|البيب|البيبات)|إجمالي\s*(?:النقاط|البيب|البيبات)|انضم(?:ام)?|ضرب(?:ت)?\s*(?:الهدف|tp)|الهدف\s*(?:تحقق|ضرب))/iu
+  if (resultMarkers.test(text) || arabicResultMarkers.test(text)) return true
+
+  const advisoryStop =
+    /(?:\b(?:suggested|suggestion|suggest|recommended|potential|possible|could|may)\b.{0,40}\b(?:sl|stop\s*loss|tp|take\s*profit|target)\b|\b(?:sl|stop\s*loss|tp|take\s*profit|target)\b.{0,40}\b(?:suggested|suggestion|suggest|recommended)\b)/i
+  const arabicAdvisoryStop =
+    /(?:مقترح(?:ة)?|اقتراح|محتمل|قد)\s*.{0,40}(?:وقف\s*الخسارة|وقف|الهدف|tp)/iu
+  return advisoryStop.test(text) || arabicAdvisoryStop.test(text)
 }
 
 /**

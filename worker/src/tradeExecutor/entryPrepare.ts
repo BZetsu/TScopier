@@ -30,6 +30,10 @@ import {
   ENTRY_ZONE_FAR_FROM_MARKET_REASON,
   entryZoneFarFromQuote,
 } from '../signalEntryZoneSanity'
+import {
+  ENTRY_PRICE_MOVED_ADVERSE_REASON,
+  entryPriceMovedAdverse,
+} from '../signalEntryPriceGuard'
 import { pipCalculator } from '../pipCalculator'
 import {
   convertPipOffsetToPrice,
@@ -379,6 +383,56 @@ export async function prepareEntryExecution(
         return {
           ok: false,
           outcome: { finalizeSkipReason: ENTRY_ZONE_FAR_FROM_MARKET_REASON },
+        }
+      }
+    } catch {
+      // Best-effort guard — proceed when quote is unavailable.
+    }
+  }
+
+  // ── AI-lane adverse-price guard ─────────────────────────────────────────
+  // AI-parsed/reconciled entries (dispatch_source ai_parsed / ai_reconciled)
+  // must not execute when the live market has moved against the signal entry
+  // beyond the broker's signal_entry_pip_tolerance — that would open at a
+  // worse price than the signal published and risk an immediate loss.
+  // Strict-entry and range-strict brokers are excluded: they already handle
+  // adverse prices by deferring to broker pendings at the signal entry.
+  if (
+    (signal.dispatch_source === 'ai_parsed' || signal.dispatch_source === 'ai_reconciled')
+    && (entryDirection === 'buy' || entryDirection === 'sell')
+    && !signalEntryPriceStrictEnabled(manual)
+    && !signalEntryRangeStrictEnabled(manual)
+    && sendOpts?.sameSignalRefresh !== true
+    && api
+  ) {
+    try {
+      const q = strictEntryPrefetch ?? await api.quote(uuid, symbol)
+      strictEntryPrefetch = q
+      const tolerancePips = Math.max(0, Number(manual.signal_entry_pip_tolerance ?? 10))
+      const moved = entryPriceMovedAdverse({
+        action: entryDirection as 'buy' | 'sell',
+        entryPrice: typeof parsed.entry_price === 'number' ? parsed.entry_price : null,
+        zoneLow: typeof parsed.entry_zone_low === 'number' ? parsed.entry_zone_low : null,
+        zoneHigh: typeof parsed.entry_zone_high === 'number' ? parsed.entry_zone_high : null,
+        bid: q.bid,
+        ask: q.ask,
+        tolerancePips,
+        pipSize: params?.point ?? 0.00001,
+      })
+      if (moved) {
+        await ctx.logSendSkipped(signal, broker, ENTRY_PRICE_MOVED_ADVERSE_REASON, {
+          symbol,
+          quote_bid: q.bid,
+          quote_ask: q.ask,
+          entry_price: parsed.entry_price ?? null,
+          entry_zone_low: parsed.entry_zone_low ?? null,
+          entry_zone_high: parsed.entry_zone_high ?? null,
+          tolerance_pips: tolerancePips,
+          dispatch_source: signal.dispatch_source,
+        })
+        return {
+          ok: false,
+          outcome: { finalizeSkipReason: ENTRY_PRICE_MOVED_ADVERSE_REASON },
         }
       }
     } catch {

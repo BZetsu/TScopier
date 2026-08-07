@@ -484,6 +484,8 @@ export async function handleSignal(ctx: TradeExecutorContext,
       )
     }
     // Defense in depth: guarantee signals row exists before OrderSend / post-fill FKs.
+    // raw_message is preserved from any existing row (ensureSignalRow ignores empty
+    // values) so listener-persisted Telegram text survives dispatch upserts.
     const ensured = await ensureSignalRow(ctx.supabase, {
       id: row.id,
       user_id: row.user_id,
@@ -495,7 +497,6 @@ export async function handleSignal(ctx: TradeExecutorContext,
       parent_signal_id: row.parent_signal_id,
       is_modification: row.is_modification,
       pipeline_ts: row.pipeline_ts as Record<string, unknown> | undefined,
-      raw_message: '',
     })
     if (!ensured.ok) {
       console.error(

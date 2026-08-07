@@ -2,12 +2,15 @@ import { lazy, Suspense, useEffect } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { BrokerAccountsProvider } from '../../context/BrokerAccountsContext'
 import { NotificationsProvider } from '../../context/NotificationsContext'
+import { HumanReviewProvider } from '../../context/HumanReviewContext'
 import { AddTradingAccountProvider } from '../../context/AddTradingAccountContext'
 import { PendingBrokerConnectionSync } from '../broker/PendingBrokerConnectionSync'
 import { BrokerTerminalHealthSync } from '../broker/BrokerTerminalHealthSync'
 import { AppLayout } from './AppLayout'
 import { useNeedsWelcome } from '../../hooks/useNeedsWelcome'
 import { LiveChatProvider } from '../../context/LiveChatContext'
+import { HumanReviewModal } from '../dashboard/HumanReviewModal'
+import { HumanReviewIndicator } from '../dashboard/HumanReviewIndicator'
 
 const WelcomeModal = lazy(() =>
   import('../onboarding/WelcomeModal').then(m => ({ default: m.WelcomeModal })),
@@ -32,16 +35,20 @@ export function AppShell() {
       {!deferAppBootstrap ? <PendingBrokerConnectionSync /> : null}
       {!deferAppBootstrap ? <BrokerTerminalHealthSync /> : null}
       <NotificationsProvider enabled={!deferAppBootstrap}>
-        <AddTradingAccountProvider>
-          <LiveChatProvider>
-            <AppLayout />
-            {needsWelcome ? (
-              <Suspense fallback={null}>
-                <WelcomeModal />
-              </Suspense>
-            ) : null}
-          </LiveChatProvider>
-        </AddTradingAccountProvider>
+        <HumanReviewProvider enabled={!deferAppBootstrap}>
+          <AddTradingAccountProvider>
+            <LiveChatProvider>
+              <AppLayout />
+              {!deferAppBootstrap ? <HumanReviewIndicator /> : null}
+              {!deferAppBootstrap ? <HumanReviewModal /> : null}
+              {needsWelcome ? (
+                <Suspense fallback={null}>
+                  <WelcomeModal />
+                </Suspense>
+              ) : null}
+            </LiveChatProvider>
+          </AddTradingAccountProvider>
+        </HumanReviewProvider>
       </NotificationsProvider>
     </BrokerAccountsProvider>
   )

@@ -8,6 +8,7 @@ import {
   looksLikePastTradeCelebrationCommentary,
   looksLikeRetrospectiveTradeDiscussion,
   looksLikeTradeRecapCommentary,
+  looksLikeResultsOrSuggestedCommentary,
 } from './signalCommentaryGuard'
 import { messageHasImperativeEntryPhrase } from './signalImperativeEntry'
 import {
@@ -53,6 +54,29 @@ describe('looksLikeMarketNewsOrCommentary', () => {
 
   it('does not flag Gold buy now', () => {
     assert.equal(looksLikeMarketNewsOrCommentary('Gold buy now'), false)
+  })
+})
+
+describe('looksLikeResultsOrSuggestedCommentary', () => {
+  it('blocks TP1+20PIPS results recap text', () => {
+    const recap = 'TODAY FOREX VIP RESULTS: NZDJPY SELL HITS TP1+20PIPS - TOTAL PIPS=110PIPS - JOIN VIP'
+    assert.equal(looksLikeResultsOrSuggestedCommentary(recap), true)
+    assert.equal(looksLikeCasualNonTradeMessage(recap), true)
+  })
+
+  it('blocks advisory suggested SL analysis', () => {
+    assert.equal(
+      looksLikeResultsOrSuggestedCommentary('XAU/USD strong support. Price 4237.32. SL suggested: 4223.86'),
+      true,
+    )
+  })
+
+  it('does not block a direct executable signal', () => {
+    assert.equal(
+      looksLikeResultsOrSuggestedCommentary('GOLD SELL NOW @4258 SL:4273'),
+      false,
+    )
+    assert.equal(looksLikeCasualNonTradeMessage('GOLD SELL NOW @4258 SL:4273'), false)
   })
 })
 

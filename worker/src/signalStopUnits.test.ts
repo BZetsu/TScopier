@@ -68,6 +68,31 @@ describe('signalStopUnits detection', () => {
       [4106, 4104, 4099],
     )
   })
+
+  it('converts a 30-pip gold modify to an absolute price off the open entry', () => {
+    // "Add 30 pips take profit to gold" on an open XAUUSD sell at 4268.647.
+    const pip = signalPipPrice('XAUUSDm')
+    assert.equal(pip, 0.1)
+    const prices = convertPipOffsetsToPrices({
+      offsets: [30],
+      entryAnchor: 4268.647,
+      isBuy: false,
+      pipSize: pip,
+    })
+    assert.equal(prices.length, 1)
+    assert.equal(Number(prices[0]!.toFixed(3)), 4265.647)
+  })
+
+  it('converts a 30-pip gold modify for a buy basket above entry', () => {
+    const pip = signalPipPrice('XAUUSD')
+    const prices = convertPipOffsetsToPrices({
+      offsets: [30],
+      entryAnchor: 4266.854,
+      isBuy: true,
+      pipSize: pip,
+    })
+    assert.equal(Number(prices[0]!.toFixed(3)), 4269.854)
+  })
 })
 
 describe('parseChannelMessageSync pip vs price TPs', () => {
