@@ -24,10 +24,13 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - Added cumulative histogram-compatible worker metrics for pipeline stage durations and event throughput.
 - Added safe duration and redaction helpers for execution-pipeline observability.
 - Added bounded, redacted Telegram connection tracing and AUTH_KEY_DUPLICATED recovery invalidation so users are prompted to reconnect after repeated duplicate-auth failures.
+- Added deferred business-event capture for final user-impacting background trade failures, including layer materialization, post-fill SL/TP follow-up, basket TP sync, management cleanup, and broker-success/database-disagreement cases.
+- Added server-authoritative copier health state with separate Telegram account, signal listener, worker ownership, and copier engine statuses plus a safe user-readable health table.
+- Added ownership-aware copier-health persistence using a service-role RPC so stale workers cannot overwrite a newer listener owner's health row.
 
 ### Fixed
 
-- Restored XAUUSD breakeven follow-up offsets to the signal-pip convention so metal stop-loss offsets use `0.01` price units per pip after staging/dev merges.
+- Aligned remaining XAUUSD pip expectations in tests and documentation with the production convention: `0.1` price units per pip, so 5 pips equals `0.5`.
 - Preserved existing range-layering execution as explicit `legacy` behavior so existing accounts, pending baskets, and signals are not silently converted to future Static or Dynamic semantics.
 - Tightened Phase A layer-plan snapshot parsing so impossible persisted Static/Dynamic metadata fails closed instead of being silently repaired.
 - Tightened Phase B calculator contracts so unrepresentable rounded anchors fail closed, lot allocation cannot exceed intended total, and combined plans expose funded prices separately from diagnostic candidates.
@@ -44,9 +47,14 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - Increased Railway Telegram shutdown drain behavior to wait about 30 seconds, await all listener/auth disconnects, release owned session leases, and prevent reconnects from starting during shutdown.
 - Patched GramJS RPC result handling to reject malformed or empty Telegram response bodies before BinaryReader decoding and trigger bounded listener reconnect recovery.
 - Auto-disables Telegram channel subscriptions after repeated confirmed `CHANNEL_INVALID`/stale-username failures, records a safe reconnect-required event, and keeps healthy channel polling moving.
+- Fixed dashboard copier health so a fresh worker lease or Telegram session row alone no longer shows the copier as live/online when the listener is reconnecting, disconnected, failed, unowned, or missing.
+- Fixed copier-health freshness so Operational requires a fresh listener row and recent successful probe; stale or malformed timestamps fail closed instead of showing the copier ready indefinitely.
+- Removed duplicate Sentry issue capture from the virtual pending reconcile-enqueue failure path while preserving one structured business issue.
 
 ### Performance
 
+- Added a disabled-by-default staging light configuration cache for the trade dispatch path, caching only stable per-channel broker configuration for 5 seconds with exact realtime invalidation, stale in-flight fill protection, bounded memory, DB fallback, singleflight, metrics, and safety-critical claims/idempotency/broker state left live.
+- Hardened the light configuration cache production-readiness contract with config-only rollout/rollback guidance, multi-worker behavior documentation, operational metrics thresholds, failure-mode runbook, and direct env/multi-instance tests while keeping the cache disabled by default.
 - Added latency measurements for Telegram receipt, parsing, signal persistence, queue wait, execution planning, durable claims, broker readiness, broker requests, broker confirmation, and reconciliation-compatible summaries.
 - Reduced virtual range-layer execution latency by removing duplicated stale-basket reconciliation from the pre-claim execution path.
 - Moved the durable pending-leg claim earlier so only the winning worker performs safety checks and broker dispatch.
