@@ -14,11 +14,14 @@ import { useAuth } from './AuthContext'
 import { supabase } from '../lib/supabase'
 import type { BrokerAccount } from '../types/database'
 import { useBrokerAccountsRealtime } from '../hooks/useBrokerAccountsRealtime'
+import { useBrokerReconnect } from '../hooks/useBrokerReconnect'
 import {
   BROKER_ACCOUNT_CLIENT_SELECT,
   sortBrokerAccountsNewestFirst,
 } from '../lib/brokerAccountSelect'
 import { planLimitErrorMessage } from '../lib/telegramChannelApi'
+import { useT } from './LocaleContext'
+import { BrokerReconnectPasswordModal } from '../components/broker/BrokerReconnectPasswordModal'
 
 interface BrokerAccountsContextValue {
   brokers: BrokerAccount[]
@@ -54,12 +57,25 @@ export function BrokerAccountsProvider({
   enabled?: boolean
 }) {
   const { user } = useAuth()
+  const t = useT()
+  const bl = t.accountConfig.brokerList
 
   const [brokers, setBrokers] = useState<BrokerAccount[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const initialLoadDoneRef = useRef(false)
   const [healthPollingPaused, setHealthPollingPaused] = useState(false)
+
+  const reconnectErrorHandlerRef = useRef<((message: string) => void) | null>(null)
+  const reconnectSuccessHandlerRef = useRef<((brokerId: string) => void) | null>(null)
+
+  const setReconnectErrorHandler = useCallback((handler: ((message: string) => void) | null) => {
+    reconnectErrorHandlerRef.current = handler
+  }, [])
+
+  const setReconnectSuccessHandler = useCallback((handler: ((brokerId: string) => void) | null) => {
+    reconnectSuccessHandlerRef.current = handler
+  }, [])
 
   const refreshBrokers = useCallback(async (options?: { silent?: boolean }) => {
     if (!user?.id) {
@@ -134,9 +150,37 @@ export function BrokerAccountsProvider({
 
   useBrokerAccountsRealtime(enabled ? user?.id : undefined, setBrokers)
 
-  const emptySet = useMemo(() => new Set<string>(), [])
-  const noopAsync = useCallback(async () => {}, [])
+  const {
+    reconnectBroker,
+    reconnectingBrokerIds,
+    brokersNeedingReconnect,
+    isReconnecting,
+    passwordPromptBroker,
+    submitPasswordPrompt,
+    cancelPasswordPrompt,
+  } = useBrokerReconnect({
+    brokers,
+    upsertBroker,
+    reconnectFailedLabel: bl.reconnectFailed,
+    onError: (message) => reconnectErrorHandlerRef.current?.(message),
+    onSuccess: (brokerId) => reconnectSuccessHandlerRef.current?.(brokerId),
+  })
+
   const noopClear = useCallback(async () => ({ error: null as string | null }), [])
+
+  const passwordModalCopy = useMemo(() => ({
+    title: bl.reconnectPasswordTitle,
+    body: bl.reconnectPasswordBody,
+    passwordLabel: bl.reconnectPasswordLabel,
+    passwordHint: bl.reconnectPasswordHint,
+    passwordPlaceholder: bl.reconnectPasswordPlaceholder,
+    rememberPasswordLabel: bl.rememberPasswordLabel,
+    rememberPasswordHint: bl.rememberPasswordHint,
+    detailLogin: bl.detailLogin,
+    detailServer: bl.detailServer,
+    reconnect: bl.reconnect,
+    cancel: t.common.cancel,
+  }), [bl, t.common.cancel])
 
   const value = useMemo(
     (): BrokerAccountsContextValue => ({
@@ -150,15 +194,15 @@ export function BrokerAccountsProvider({
       removeBroker,
       patchBroker,
       toggleBrokerActive,
-      reconnectBroker: noopAsync,
-      reconnectingBrokerIds: emptySet,
-      brokersNeedingReconnect: [],
-      isReconnecting: () => false,
+      reconnectBroker,
+      reconnectingBrokerIds,
+      brokersNeedingReconnect,
+      isReconnecting,
       setHealthPollingPaused,
       healthPollingPaused,
       setBackgroundConnectivityPaused: () => {},
-      setReconnectErrorHandler: () => {},
-      setReconnectSuccessHandler: () => {},
+      setReconnectErrorHandler,
+      setReconnectSuccessHandler,
       clearStoredCredentials: noopClear,
     }),
     [
@@ -171,16 +215,27 @@ export function BrokerAccountsProvider({
       removeBroker,
       patchBroker,
       toggleBrokerActive,
-      emptySet,
-      noopAsync,
-      noopClear,
+      reconnectBroker,
+      reconnectingBrokerIds,
+      brokersNeedingReconnect,
+      isReconnecting,
       healthPollingPaused,
+      setReconnectErrorHandler,
+      setReconnectSuccessHandler,
+      noopClear,
     ],
   )
 
   return (
     <BrokerAccountsContext.Provider value={value}>
       {children}
+      <BrokerReconnectPasswordModal
+        open={passwordPromptBroker != null}
+        broker={passwordPromptBroker}
+        copy={passwordModalCopy}
+        onSubmit={submitPasswordPrompt}
+        onCancel={cancelPasswordPrompt}
+      />
     </BrokerAccountsContext.Provider>
   )
 }

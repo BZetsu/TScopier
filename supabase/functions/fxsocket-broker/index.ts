@@ -299,6 +299,84 @@ Deno.serve(async (req: Request) => {
       return Response.json({ ok: true }, { headers: corsHeaders })
     }
 
+    // Password re-link on the same broker_accounts row (preserves trading config).
+    if (action === "reconnect") {
+      const accountRowId = String(body.account_id ?? body.broker_id ?? "")
+      if (!accountRowId) return bad(400, "account_id required")
+      const password = String(body.password ?? "")
+      if (!password) return bad(400, "password required")
+
+      const row = await loadOwnedBrokerRow(supabase, userId, accountRowId)
+      const login = String(row.account_login ?? "").trim()
+      const server = String(body.server ?? row.broker_server ?? "").trim()
+      if (!login) return bad(400, "Broker login is missing — delete and connect again.")
+      if (!server) return bad(400, "Broker server is missing — delete and connect again.")
+
+      const platform = brokerApiPlatform(row)
+      const oldUuid = String(row.fxsocket_account_id ?? "").trim()
+      const displayLabel = String(row.label ?? "").trim() || `${platform} • ${login}`
+
+      let newAccountId = ""
+      try {
+        const connected = await fx.connectAccount({
+          login,
+          password,
+          server,
+          label: displayLabel,
+          platform,
+        })
+        newAccountId = connected.accountId
+      } catch (e) {
+        const rawMsg = e instanceof FxsocketApiError ? e.message : e instanceof Error ? e.message : "Reconnect failed"
+        const kind = classifyBrokerConnectError(rawMsg, { credentialConnect: true })
+        const msg = friendlyBrokerConnectError(rawMsg, { credentialConnect: true })
+        await supabase
+          .from("broker_accounts")
+          .update({
+            fxsocket_status: "error",
+            connection_status: "error",
+            connection_error: msg,
+            connection_error_kind: kind,
+            connection_error_message: rawMsg,
+          })
+          .eq("id", accountRowId)
+          .eq("user_id", userId)
+        return bad(e instanceof FxsocketApiError ? e.status : 502, msg)
+      }
+
+      if (oldUuid && oldUuid !== newAccountId) {
+        try { await fx.deleteAccount(oldUuid) } catch { /* swallow */ }
+      }
+
+      const { data: updated, error: updErr } = await supabase
+        .from("broker_accounts")
+        .update({
+          fxsocket_account_id: newAccountId,
+          broker_server: server,
+          fxsocket_status: "connecting",
+          connection_status: "pending",
+          connection_error: null,
+          connection_error_kind: null,
+          connection_error_message: null,
+          terminal_connected: false,
+          trade_allowed: false,
+        })
+        .eq("id", accountRowId)
+        .eq("user_id", userId)
+        .select("*")
+        .single()
+
+      if (updErr) {
+        try { await fx.deleteAccount(newAccountId) } catch { /* swallow */ }
+        return bad(500, updErr.message)
+      }
+
+      return Response.json(
+        { ok: true, account: updated, pending: true },
+        { headers: corsHeaders },
+      )
+    }
+
     if (action === "refresh_summary") {
       const accountRowId = String(body.account_id ?? "")
       if (!accountRowId) return bad(400, "account_id required")

@@ -361,6 +361,30 @@ export const fxsocketBroker = {
     })
   },
 
+  /** Re-link FxSocket on an existing broker row (password required; config preserved). */
+  reconnect(args: {
+    accountId: string
+    password: string
+    server?: string
+    timeoutMs?: number
+  }): Promise<{ account: BrokerAccount; pending?: boolean }> {
+    return call({
+      body: {
+        action: 'reconnect',
+        account_id: args.accountId,
+        password: args.password,
+        server: args.server,
+      },
+      timeoutMs: args.timeoutMs ?? FXSOCKET_CONNECT_TIMEOUT_MS,
+      expect: (b) => {
+        const row = b as { account?: BrokerAccount; pending?: boolean }
+        const account = row.account
+        if (!account) throw new Error('Reconnect did not return an account')
+        return { account, pending: row.pending === true }
+      },
+    })
+  },
+
   refreshSummary(accountId: string): Promise<{
     account: BrokerAccount
     summary?: AccountSummary
