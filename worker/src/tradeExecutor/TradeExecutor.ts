@@ -21,10 +21,13 @@ import { withChannelTradingConfig, channelConfigReadyForExecution, resolveChanne
 import {
   applyBrokerChannelTradingConfigRow,
   fetchBrokerChannelTradingConfigRows,
-  fetchFreshBrokerForChannel,
   mergeChannelTradingConfigsFromTable,
   type BrokerChannelTradingConfigRow,
 } from '../brokerChannelTradingConfigs'
+import {
+  fetchBrokerForChannelWithLightConfigCache,
+  LightConfigCache,
+} from '../lightConfigCache'
 import { manualDispatchAlreadyMaterialized } from './basketMerge/helpers'
 import { claimSignalBrokerDispatch, releaseSignalBrokerDispatchClaim } from './signalBrokerDispatchClaim'
 import { hasActiveSignalRangeEntryWait, SIGNAL_RANGE_WAKE_DISPATCH_SOURCE } from '../signalRangeEntryHelpers'
@@ -136,6 +139,7 @@ export class TradeExecutor {
     commentSlug: string | null
     loadedAt: number
   }>()
+  readonly lightConfigCache = new LightConfigCache()
   sessionPingAt = new Map<string, number>()
   /** Coalesce concurrent session checks per MT uuid (burst fan-out). */
   sessionCheckInflight = new Map<string, Promise<boolean>>()
@@ -593,6 +597,21 @@ export class TradeExecutor {
 
   private subscribeChannelTradingConfigs() {
     if (this.channelTradingConfigsChannel) return
+    const invalidateConfigRow = (raw: Record<string, unknown> | undefined) => {
+      const brokerId = String(raw?.broker_account_id ?? '')
+      const channelId = String(raw?.channel_id ?? '')
+      if (!brokerId || !channelId) return
+      const cachedBroker = this.brokersById.get(brokerId)
+      if (cachedBroker?.user_id) {
+        this.lightConfigCache.invalidateExact({
+          userId: cachedBroker.user_id,
+          brokerAccountId: brokerId,
+          channelId,
+        })
+        return
+      }
+      this.lightConfigCache.invalidateByBrokerChannel(brokerId, channelId)
+    }
     this.channelTradingConfigsChannel = this.supabase
       .channel('trade_executor_broker_channel_configs')
       .on(
@@ -607,6 +626,7 @@ export class TradeExecutor {
           if (evt === 'DELETE') {
             const brokerId = String(payload.old?.broker_account_id ?? '')
             if (!brokerId) return
+            invalidateConfigRow(payload.old)
             const cached = this.brokersById.get(brokerId)
             if (!cached) return
             void this.mergeBrokerRowWithTableConfigs(cached)
@@ -616,8 +636,12 @@ export class TradeExecutor {
               })
             return
           }
+          if (evt === 'UPDATE') {
+            invalidateConfigRow(payload.old)
+          }
           const row = payload.new as BrokerChannelTradingConfigRow | undefined
           if (!row?.broker_account_id) return
+          invalidateConfigRow(payload.new)
           const cached = this.brokersById.get(row.broker_account_id)
           if (!cached) return
           this.applyBrokerCacheRow(applyBrokerChannelTradingConfigRow(cached, row))
@@ -1303,7 +1327,16 @@ export class TradeExecutor {
 
     let executionBroker = broker
     if (signal.channel_id) {
-      const fresh = await fetchFreshBrokerForChannel(this.supabase, broker, signal.channel_id)
+      // Production safety boundary: this light cache may wrap only the stable
+      // broker_channel_trading_configs refresh. Claims, idempotency,
+      // broker readiness, prices, order state, and kill switches stay live
+      // below this point and must not be added to the cache.
+      const fresh = await fetchBrokerForChannelWithLightConfigCache(
+        this.lightConfigCache,
+        this.supabase,
+        broker,
+        signal.channel_id,
+      )
       if (fresh.channel_trading_configs !== broker.channel_trading_configs) {
         this.applyBrokerCacheRow(fresh)
         executionBroker = this.brokersById.get(broker.id) ?? fresh

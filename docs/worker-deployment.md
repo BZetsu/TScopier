@@ -90,6 +90,49 @@ FXSOCKET_API_KEY=fxs_live_...
 - Same as running `trade_entry` + `trade_mgmt` in one process (all monitors, all actions).
 - Use when you do not want a separate management fleet yet.
 
+### Light config cache (staging only)
+
+Trade workers include a disabled-by-default in-memory cache for stable
+`broker_channel_trading_configs` reads in the pre-broker dispatch path. The same
+code artifact may be deployed to staging and production, but production must keep
+the cache off until staging evidence is reviewed.
+
+```env
+LIGHT_CONFIG_CACHE_ENABLED=false
+LIGHT_CONFIG_CACHE_TTL_MS=5000
+LIGHT_CONFIG_CACHE_MAX_ENTRIES=1000
+```
+
+Staging enablement requires both:
+
+```env
+LIGHT_CONFIG_CACHE_ENABLED=true
+LIGHT_CONFIG_CACHE_TTL_MS=5000
+LIGHT_CONFIG_CACHE_MAX_ENTRIES=1000
+```
+
+Rollback is immediate and code-free: set `LIGHT_CONFIG_CACHE_ENABLED=false`.
+No migration rollback, DB cleanup, cache cleanup job, or claim cleanup is needed.
+Restart/redeploy only if Railway requires it to apply env changes.
+
+The cache does not store or replace durable claims, idempotency, broker order
+state, broker connectivity, prices, open orders, balance/equity/margin, kill
+switches, cancellation state, listener health ownership, or any proof that a
+trade was already sent. Realtime changes on `broker_channel_trading_configs`
+invalidate the affected broker+channel entry; the 5s TTL bounds staleness if
+realtime delivery is unavailable. Cache entries are capped per worker and stale
+in-flight fills are discarded after invalidation so old settings cannot
+repopulate the cache with a fresh TTL. See
+[`docs/light-config-cache.md`](light-config-cache.md) for the invariants,
+metrics, success criteria, and staging checklist.
+
+Production rollout for this cache:
+
+1. Deploy with `LIGHT_CONFIG_CACHE_ENABLED=false` and verify legacy dispatch health.
+2. After staging approval, enable by env only with the reviewed TTL/max-entry values.
+3. Watch hit rate, fallback, error, invalidation, stale-fill discard, pre-broker latency, duplicate trade count, and support incidents.
+4. Disable immediately with `LIGHT_CONFIG_CACHE_ENABLED=false` at any cache-attributed anomaly.
+
 ### 5. Backtest (`WORKER_ROLE=backtest`)
 
 ```env
