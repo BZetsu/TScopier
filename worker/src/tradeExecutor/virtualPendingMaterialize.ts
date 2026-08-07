@@ -2,6 +2,7 @@ import type { TradeExecutorContext } from './context'
 import { buildRangeLayerTriggerMap } from '../manualPlanning/rangeLayerTriggers'
 import { roundLot, triggerPriceFor, virtualPendingTriggerAllowed } from './helpers'
 import type { PreparedEntry } from './entryPrepare'
+import { captureDeferredBusinessFailure } from '../observability/deferredBusinessEvents'
 
 /**
  * Persist virtual pending ladder rows to `range_pending_legs` for the worker monitor.
@@ -113,6 +114,31 @@ export async function materializeVirtualPendingLegs(
         })
       } catch { /* logging is best-effort */ }
     }
+    captureDeferredBusinessFailure({
+      category: 'layering',
+      event: 'layering_materialization_failed',
+      severity: 'error',
+      reasonCode: 'VIRTUAL_MATERIALIZATION_PERSIST_FAILED',
+      message: 'Virtual pending layer rows could not be persisted',
+      userImpact: 'partial',
+      operation: 'virtual_pending_materialize',
+      err: persist.lastError ?? 'unknown',
+      context: {
+        user_id: signal.user_id,
+        signal_id: signal.id,
+        broker_account_id: broker.id,
+        symbol,
+        side: plan.isBuy === false ? 'sell' : 'buy',
+        execution_mechanism: 'virtual_pending_monitor',
+        layering_mode: plan.rangeLayering?.rangeLayeringType ?? 'virtual_pending',
+        extra: {
+          targeted_count: insertRows.length,
+          successful_count: 0,
+          failed_count: insertRows.length,
+          anchor_source: anchorSource,
+        },
+      },
+    })
     return false
   }
 

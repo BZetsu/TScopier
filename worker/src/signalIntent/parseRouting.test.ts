@@ -31,9 +31,9 @@ function detResult(overrides: Partial<ChannelParsedSignal> = {}): ParseChannelMe
 function stageTwo(
   kind: TradeIntent['kind'],
   overrides: Partial<TradeIntent> = {},
-  extra: { source?: UniversalParseResult['source']; skipReason?: string | null } = {},
+  extra: { source?: UniversalParseResult['source']; skipReason?: string | null; rawMessage?: string } = {},
 ): UniversalParseResult {
-  const rawMessage = overrides.raw_instruction ?? 'XAUUSD SELL 4276 TP 4256'
+  const rawMessage = extra.rawMessage ?? 'XAUUSD SELL 4276 TP 4256'
   const intent: TradeIntent = {
     kind,
     side: kind === 'entry' ? 'SELL' : null,

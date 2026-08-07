@@ -13,10 +13,11 @@ export interface BrokerChannelTradingConfigRow {
   manual_settings: Record<string, unknown>
   ai_settings: Record<string, unknown>
   copy_limit_state?: Record<string, unknown>
+  updated_at?: string | null
 }
 
 const BROKER_CHANNEL_TRADING_CONFIG_SELECT =
-  'broker_account_id,channel_id,copier_mode,manual_settings,ai_settings,copy_limit_state'
+  'broker_account_id,channel_id,copier_mode,manual_settings,ai_settings,copy_limit_state,updated_at'
 
 function ensurePersistedManualSettings(settings: Record<string, unknown>): Record<string, unknown> {
   const schemaVersion = Number(settings.schema_version ?? 1)

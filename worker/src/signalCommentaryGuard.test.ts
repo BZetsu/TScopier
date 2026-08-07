@@ -10,7 +10,6 @@ import {
   looksLikeTradeRecapCommentary,
   looksLikeResultsOrSuggestedCommentary,
 } from './signalCommentaryGuard'
-import { messageHasImperativeEntryPhrase } from './signalImperativeEntry'
 import {
   entryMissingSlTpRequiresNow,
   messageHasExplicitSlTpLabels,
@@ -77,6 +76,18 @@ describe('looksLikeResultsOrSuggestedCommentary', () => {
       false,
     )
     assert.equal(looksLikeCasualNonTradeMessage('GOLD SELL NOW @4258 SL:4273'), false)
+  })
+
+  it('does not block structured signal metadata with suggested risk', () => {
+    const signal = `#GOLD SHORT FROM RESISTANCE
+Trade Direction: short
+Entry Level: 4,572.25
+Target Level: 4,535.53
+Stop Loss: 4,590.01
+Risk level: medium
+Suggested risk: 1%`
+    assert.equal(looksLikeResultsOrSuggestedCommentary(signal), false)
+    assert.equal(looksLikeCasualNonTradeMessage(signal), false)
   })
 })
 

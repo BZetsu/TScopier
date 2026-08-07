@@ -114,15 +114,14 @@ Dev is the integration branch for feature work (PRs #66/#69 land here via admin 
 
 ### 2b82ee78 — fix(management): restore XAU signal pip precision
 - **Who:** emmydapson (2026-08-04)
-- **Problem:** Staging's `99aaaf42` changed metals pip from 0.01 → 0.1 price units. That was correct for
-  the *broker/pip calculator* convention but broke *signal-pip* consumers: breakeven stop-loss offsets in
-  auto-management started moving SL by 10× too much on XAUUSD.
-- **Why:** Restore `signalPipPrice` semantics so metal SL offsets use 0.01 price units per pip; removes the
-  `roundSignalPips` rounding helper that masked precision issues; tightens tests to pin exact offsets.
+- **Problem:** This commit attempted to restore XAU signal-management offsets to the old smaller pip size,
+  which has since been superseded by the production convention: XAUUSD uses 0.1 price units per pip.
+- **Why:** Historical conflict-resolution note only. Current production code and tests must keep XAUUSD
+  at 0.1 price units per pip, so 5 pips equals 0.5.
 - **Files:** `worker/src/signalPip.ts`, `worker/src/autoManagement.test.ts`, `signalEntryRange.test.ts`,
   `signalStopUnits.test.ts`, `brokerRangeLadderPricing.test.ts`, `materializeBrokerRangePendingLegs.test.ts`, `CHANGELOG.md`.
-- **Outcome:** This is the **canonical resolution** of the pip conflict between staging (0.1) and the
-  management code. Because dev merged last, it correctly overrides staging's pip change for signal management.
+- **Outcome:** Superseded. The canonical production resolution is XAUUSD pip size = 0.1 across signal
+  management, calculators, tests, and docs.
 
 ---
 
@@ -154,9 +153,8 @@ and the **trade-duplication incident fix**.
 - **Who:** Osodi (08-03)
 - **Problem:** XAUUSD pip was computed as 0.01 price units (myfxbook convention) but retail traders treat
   1 pip = 0.1 on gold. SL/TP distances and step pips shown to users were off by 10× from their expectation.
-- **Why:** Align pip math with trader convention. **This is the change dev `2b82ee78` later reverted in the
-  signal-management path** — the convention change stayed in pip *calculators* but not in *signal-pip*
-  consumers.
+- **Why:** Align pip math with trader convention. This convention now applies to signal-pip consumers as
+  well: XAUUSD pip size is 0.1.
 - **Files:** `src/lib/pipCalculator.ts`, `src/lib/pipMath.ts`, `src/lib/signalPip.ts`,
   `supabase/functions/_shared/signalPip.ts`, `worker/src/pipCalculator.ts`, `worker/src/pipMath.ts`,
   `worker/src/signalPip.ts`, `worker/src/managementScope.ts`, 6 test files.

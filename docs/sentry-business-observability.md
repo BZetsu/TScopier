@@ -27,7 +27,8 @@ Event names are stable and machine-searchable. Current worker events include:
 - Trade/account: `trade_copy_blocked`, `trade_copy_failed`, `trade_copy_partial`, `broker_order_rejected`, `broker_order_ambiguous`, `broker_success_persistence_failed`, `broker_account_unavailable`.
 - Telegram/copier: `telegram_listener_failed`, `telegram_recovery_exhausted`, `telegram_channel_auto_disabled`.
 - Management: `trade_management_failed`, `trade_management_partial`, `stop_loss_update_failed`, `take_profit_update_failed`.
-- Layering/reconciliation: `layering_plan_invalid`, `layering_plan_activation_failed`, `layering_leg_execution_failed`, `layering_native_reconciliation_required`, `layering_manual_review_required`, `layering_cancellation_pending`.
+- Deferred trade follow-up: `post_fill_follow_up_failed`, `basket_tp_sync_failed`, `trade_management_cleanup_failed`, `deferred_trade_follow_up_failed`, `broker_success_persistence_failed`.
+- Layering/reconciliation: `layering_plan_invalid`, `layering_plan_activation_failed`, `layering_leg_execution_failed`, `layering_materialization_failed`, `layering_native_reconciliation_required`, `layering_manual_review_required`, `layering_cancellation_pending`.
 - Queue/persistence: `signal_queue_dead_lettered`, `signal_dispatch_failed`, `reconciliation_failed`.
 
 Dynamic identifiers such as user IDs, signal IDs, broker account IDs, trade IDs, and layer plan IDs are never part of event names.
@@ -105,6 +106,36 @@ Keep out of Sentry event volume:
 - normal reconnect heartbeats
 - transient retries that later succeed
 - expected duplicate prevention
+
+## Deferred Failure Capture Points
+
+Deferred captures are emitted only after a background or follow-up operation has finally failed and the main trade outcome must remain unchanged. Current capture points include:
+
+- `worker/src/tradeExecutor/orderLegExecution.ts`: live-fast trade row persistence, deferred broker-pending materialization, deferred virtual materialization, post-fill SL/TP follow-up, and multi-leg basket TP sync.
+- `worker/src/tradeExecutor/virtualPendingMaterialize.ts`: final virtual pending row persistence failure.
+- `worker/src/tradeExecutor/materializeBrokerRangePendingLegs.ts`: broker-pending row persistence failure after broker orders were placed.
+- `worker/src/tradeExecutor/TradeExecutor.ts`: deferred virtual materialization persistence failure.
+- `worker/src/tradeExecutor/managementExecutor.ts`: deferred close/pending cleanup failure and partial management outcomes.
+- `worker/src/virtualPendingMonitor.ts` and `worker/src/rangeBrokerPendingMonitor.ts`: layer execution final failure, broker-success/DB-failure, post-naked SL/TP failure, range fill follow-up failure, TP rebalance failure, and reconcile enqueue failure.
+- `worker/src/rangeBasketTpSync.ts`: basket SL/TP sync failures after retry.
+
+Reason codes are stable, for example `VIRTUAL_MATERIALIZATION_FAILED`, `BROKER_PENDING_MATERIALIZATION_FAILED`, `POST_FILL_SL_UPDATE_FAILED`, `POST_FILL_TP_UPDATE_FAILED`, `BASKET_TP_SYNC_FINAL_FAILURE`, `MGMT_CLOSE_CLEANUP_FAILED`, `BROKER_SUCCESS_DB_FAILURE`, `BROKER_PENDING_FILL_DB_FAILURE`, and `RANGE_LEG_FIRE_FAILED`.
+
+Partial outcomes use `user_impact=partial` or `manual_review_required` and include bounded counts such as `targeted_count`, `successful_count`, `failed_count`, `skipped_already_compliant_count`, and `broker_database_state_may_disagree`. Successful follow-ups and already-compliant SL/TP updates do not emit issues.
+
+Each final deferred failure path should emit one Sentry issue through the business-event helper. If a generic worker warning is useful for stage context, use a log line or breadcrumb; do not pair a generic Sentry issue with a business issue for the same failed follow-up. The virtual pending reconcile-enqueue path follows this rule by keeping `deferred_trade_follow_up_failed` and removing the overlapping generic worker issue.
+
+## Copier Health Events
+
+Copier-health business events are emitted only for meaningful user impact:
+
+- `copier_engine_offline`
+- `telegram_listener_failed`
+- `telegram_recovery_exhausted`
+- `listener_ownership_lost`
+- `listener_health_stale`
+
+Temporary reconnects, watchdog probes, lease renewals, and reconnects that succeed within the grace window are not issue events. Offline health alerts are cooldown-limited by stable reason/category, not by user-specific identifiers.
 
 Use breadcrumbs for stage context such as signal receipt, parsing, queue consumption, durable claim acquisition, broker request start/response, retry scheduling, reconnect requests, and reconciliation start.
 

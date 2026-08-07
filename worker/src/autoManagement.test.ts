@@ -37,7 +37,7 @@ test('breakevenStopLossForSymbol: offset uses signal pip size across precisions'
       digits: 2,
       entryPrice: 4330,
       isBuy: true,
-      expected: 4330.05,
+      expected: 4330.5,
     },
     {
       name: '3-digit JPY FX',

@@ -27,6 +27,7 @@ import { userMayRunCopierListener } from './subscriptionAccess'
 import { authKeyDupReconnectDelayMs, authKeyDupReconnectDelaysMs } from './authKeyDuplicatedRecovery'
 import { captureWorkerError, captureWorkerWarning } from './observability/sentry'
 import { captureBusinessIssue } from './observability/businessEvents'
+import { maybeCaptureCopierOffline, persistCopierHealth } from './copierHealth'
 
 /**
  * Race a promise against a timeout so a single wedged network call cannot
@@ -828,6 +829,15 @@ export class UserSessionManager {
     if (error) {
       console.warn(`[sessionManager] invalidateTelegramSession session delete failed for ${userId}:`, error.message)
     }
+    void persistCopierHealth(this.supabase, userId, {
+      telegramAccountStatus: 'reconnect_required',
+      listenerStatus: 'failed',
+      copierEngineStatus: 'stopped',
+      workerOwnershipStatus: 'unowned',
+      mtprotoConnected: false,
+      recoveryExhausted: true,
+      healthReason: 'telegram_session_invalidated',
+    }, { force: true, allowWithoutLease: true })
   }
 
   async listChannels(userId: string, opts?: { skipColdDelay?: boolean }): Promise<ChannelInfo[]> {
@@ -943,6 +953,14 @@ export class UserSessionManager {
     if (error) {
       console.warn(`[sessionManager] disconnectTelegramSession delete failed for ${userId}:`, error.message)
     }
+    void persistCopierHealth(this.supabase, userId, {
+      telegramAccountStatus: 'not_linked',
+      listenerStatus: 'disconnected',
+      copierEngineStatus: 'stopped',
+      workerOwnershipStatus: 'unowned',
+      mtprotoConnected: false,
+      healthReason: 'user_disconnected_telegram',
+    }, { force: true, allowWithoutLease: true })
     return { ok: true }
   }
 
@@ -1170,6 +1188,29 @@ export class UserSessionManager {
       } catch (err) {
         try { await listener.stop() } catch { /* ignore */ }
         await releaseSessionLease(this.supabase, userId)
+        void persistCopierHealth(this.supabase, userId, {
+          telegramAccountStatus: err instanceof TelegramSessionInvalidError ? 'reconnect_required' : 'linked',
+          listenerStatus: err instanceof TelegramSessionInvalidError ? 'failed' : 'disconnected',
+          copierEngineStatus: err instanceof TelegramSessionInvalidError ? 'stopped' : 'offline',
+          workerOwnershipStatus: 'unowned',
+          mtprotoConnected: false,
+          recoveryExhausted: err instanceof TelegramSessionInvalidError,
+          healthReason: err instanceof TelegramSessionInvalidError ? 'telegram_session_invalid' : 'listener_start_failed',
+        }, {
+          force: true,
+          ownershipEpoch: listener.getHealthOwnershipEpoch(),
+          leaseAcquiredAt: listener.getHealthLeaseAcquiredAt(),
+          allowWithoutLease: true,
+        })
+        if (!(err instanceof TelegramSessionInvalidError)) {
+          maybeCaptureCopierOffline({
+            userId,
+            listenerStatus: 'failed',
+            reasonCode: 'LISTENER_START_FAILED',
+            reason: 'listener_start_failed',
+            sinceMs: Date.now() - 2 * 60_000,
+          })
+        }
         if (err instanceof TelegramSessionInvalidError) {
           // Do not call invalidateTelegramSession here — it re-enters
           // withConnectionLock while we still hold it (deadlock).
@@ -1194,10 +1235,37 @@ export class UserSessionManager {
   private async disconnectListener(userId: string): Promise<void> {
     const listener = this.listeners.get(userId)
     if (!listener) return
+    void persistCopierHealth(this.supabase, userId, {
+      telegramAccountStatus: 'linked',
+      listenerStatus: 'disconnected',
+      copierEngineStatus: 'stopped',
+      workerOwnershipStatus: 'owned',
+      mtprotoConnected: false,
+      shutdownInProgress: true,
+      healthReason: 'listener_stop_requested',
+    }, {
+      force: true,
+      ownershipEpoch: listener.getHealthOwnershipEpoch(),
+      leaseAcquiredAt: listener.getHealthLeaseAcquiredAt(),
+    })
     await listener.stop()
     this.listeners.delete(userId)
     this.disconnectedRenewTicks.delete(userId)
     await releaseSessionLease(this.supabase, userId)
+    void persistCopierHealth(this.supabase, userId, {
+      telegramAccountStatus: 'linked',
+      listenerStatus: 'disconnected',
+      copierEngineStatus: 'stopped',
+      workerOwnershipStatus: 'unowned',
+      mtprotoConnected: false,
+      shutdownInProgress: false,
+      healthReason: 'listener_stopped',
+    }, {
+      force: true,
+      ownershipEpoch: listener.getHealthOwnershipEpoch(),
+      leaseAcquiredAt: listener.getHealthLeaseAcquiredAt(),
+      allowWithoutLease: true,
+    })
     console.log(`[sessionManager] Stopped listener for user ${userId}`)
   }
 
