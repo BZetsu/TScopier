@@ -53,6 +53,8 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Performance
 
+- Added a disabled-by-default staging light configuration cache for the trade dispatch path, caching only stable per-channel broker configuration for 5 seconds with exact realtime invalidation, stale in-flight fill protection, bounded memory, DB fallback, singleflight, metrics, and safety-critical claims/idempotency/broker state left live.
+- Hardened the light configuration cache production-readiness contract with config-only rollout/rollback guidance, multi-worker behavior documentation, operational metrics thresholds, failure-mode runbook, and direct env/multi-instance tests while keeping the cache disabled by default.
 - Added latency measurements for Telegram receipt, parsing, signal persistence, queue wait, execution planning, durable claims, broker readiness, broker requests, broker confirmation, and reconciliation-compatible summaries.
 - Reduced virtual range-layer execution latency by removing duplicated stale-basket reconciliation from the pre-claim execution path.
 - Moved the durable pending-leg claim earlier so only the winning worker performs safety checks and broker dispatch.

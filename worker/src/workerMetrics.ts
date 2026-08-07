@@ -23,3 +23,7 @@ export function observeMetric(name: string, value: number, buckets = DEFAULT_BUC
 export function getMetricsSnapshot(): Record<string, number> {
   return Object.fromEntries(counters.entries())
 }
+
+export function resetMetricsForTest(): void {
+  counters.clear()
+}
