@@ -1,5 +1,5 @@
 import clsx from 'clsx'
-import { Activity, ChevronDown } from 'lucide-react'
+import { Activity, ChevronDown, RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../../context/AuthContext'
 import { useSubscription } from '../../context/SubscriptionContext'
@@ -7,9 +7,12 @@ import { useT } from '../../context/LocaleContext'
 import { isBrokerSessionHealthy } from '../../lib/brokerReconnect'
 import { isFxsocketLinkedBroker } from '../../lib/brokerLink'
 import {
-  fetchListenerLeaseStatus,
-  type ListenerLeaseSnapshot,
-} from '../../lib/listenerLeaseStatus'
+  fetchCopierHealthStatus,
+  type CopierHealthSnapshot,
+  type CopierEngineStatus,
+  type SignalListenerStatus,
+  type TelegramAccountStatus,
+} from '../../lib/copierHealthStatus'
 import { supabase } from '../../lib/supabase'
 import { getCachedTgSession, setCachedTgSession } from '../../lib/telegramSessionCache'
 import type { BrokerAccount } from '../../types/database'
@@ -76,18 +79,24 @@ export function CopierStatusCard({
 }) {
   const { user } = useAuth()
   const { hasActiveSubscription } = useSubscription()
+  const userId = user?.id ?? null
   const t = useT()
   const cs = t.dashboard.copierStatus
   const ce = t.copierEnginePage
 
   const [expanded, setExpanded] = useState(() => readExpandedPreference(defaultExpanded))
   const [hasTgSession, setHasTgSession] = useState(() => {
-    if (!user?.id) return false
-    return Boolean(getCachedTgSession(user.id))
+    if (!userId) return false
+    return Boolean(getCachedTgSession(userId))
   })
-  const [listenerLease, setListenerLease] = useState<ListenerLeaseSnapshot>({
-    status: 'unknown',
-    expiresAt: null,
+  const [copierHealth, setCopierHealth] = useState<CopierHealthSnapshot>({
+    telegramAccountStatus: 'unknown',
+    signalListenerStatus: 'unknown',
+    copierEngineStatus: 'unknown',
+    workerOwnershipStatus: 'unknown',
+    lastSuccessfulHealthAt: null,
+    updatedAt: null,
+    reason: null,
   })
 
   const toggleExpanded = useCallback(() => {
@@ -102,40 +111,58 @@ export function CopierStatusCard({
     })
   }, [])
 
-  const refreshListenerLease = useCallback(async () => {
-    if (!user?.id) return
-    const snap = await fetchListenerLeaseStatus(supabase, user.id)
-    setListenerLease(snap)
-  }, [user?.id])
-
-  const refreshTelegramSession = useCallback(async () => {
-    if (!user?.id) {
-      setHasTgSession(false)
-      return
-    }
-    const { data } = await supabase
-      .from('telegram_sessions')
-      .select('id')
-      .eq('user_id', user.id)
-      .maybeSingle()
-    const hasSession = Boolean(data)
-    setHasTgSession(hasSession)
-    setCachedTgSession(user.id, hasSession)
-  }, [user?.id])
+  const refreshCopierHealth = useCallback(async () => {
+    if (!userId) return
+    const snap = await fetchCopierHealthStatus(supabase, userId)
+    setCopierHealth(snap)
+  }, [userId])
 
   useEffect(() => {
-    void refreshTelegramSession()
-  }, [refreshTelegramSession])
+    let cancelled = false
+    void (async () => {
+      if (!userId) {
+        if (!cancelled) setHasTgSession(false)
+        return
+      }
+      const { data } = await supabase
+        .from('telegram_sessions')
+        .select('id')
+        .eq('user_id', userId)
+        .maybeSingle()
+      if (cancelled) return
+      const hasSession = Boolean(data)
+      setHasTgSession(hasSession)
+      setCachedTgSession(userId, hasSession)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [userId])
 
   useEffect(() => {
-    if (!user?.id) {
-      setListenerLease({ status: 'unknown', expiresAt: null })
-      return
+    let cancelled = false
+    void (async () => {
+      const snap = userId
+        ? await fetchCopierHealthStatus(supabase, userId)
+        : {
+            telegramAccountStatus: 'unknown' as const,
+            signalListenerStatus: 'unknown' as const,
+            copierEngineStatus: 'unknown' as const,
+            workerOwnershipStatus: 'unknown' as const,
+            lastSuccessfulHealthAt: null,
+            updatedAt: null,
+            reason: null,
+          }
+      if (!cancelled) setCopierHealth(snap)
+    })()
+    if (!userId) {
+      return () => {
+        cancelled = true
+      }
     }
-    void refreshListenerLease()
-    const interval = setInterval(() => void refreshListenerLease(), 30_000)
+    const interval = setInterval(() => void refreshCopierHealth(), 30_000)
     return () => clearInterval(interval)
-  }, [user?.id, refreshListenerLease])
+  }, [userId, refreshCopierHealth])
 
   const { brokerConnectionsLabel, brokerConnectionsTone, brokerErrorCount } = useMemo(() => {
     const linked = accounts.filter(isFxsocketLinkedBroker)
@@ -163,28 +190,59 @@ export function CopierStatusCard({
     }
   }, [accounts, cs.healthy, cs.issues, cs.none])
 
-  const engine = !hasActiveSubscription
-    ? { label: t.pricing.billing.noActiveSubscription, tone: 'muted' as Tone }
-    : listenerLease.status === 'live'
-      ? { label: cs.live, tone: 'ok' as Tone }
-      : listenerLease.status === 'unknown'
-        ? { label: cs.checking, tone: 'muted' as Tone }
-        : { label: cs.offline, tone: 'bad' as Tone }
+  const accountLabel = (status: TelegramAccountStatus): { label: string; tone: Tone } => {
+    if (!hasTgSession || status === 'not_linked') return { label: 'Not linked', tone: 'bad' }
+    if (status === 'reconnect_required' || status === 'invalid') return { label: 'Reconnect required', tone: 'bad' }
+    if (status === 'linked') return { label: 'Linked', tone: 'ok' }
+    return { label: 'Linked', tone: 'ok' }
+  }
+  const listenerLabel = (status: SignalListenerStatus): { label: string; tone: Tone } => {
+    if (status === 'connected') return { label: 'Connected', tone: 'ok' }
+    if (status === 'reconnecting') return { label: 'Reconnecting', tone: 'warn' }
+    if (status === 'disconnected' || status === 'failed') return { label: 'Offline', tone: 'bad' }
+    return { label: cs.checking, tone: 'muted' }
+  }
+  const engineLabel = (status: CopierEngineStatus): { label: string; tone: Tone } => {
+    if (!hasActiveSubscription) return { label: t.pricing.billing.noActiveSubscription, tone: 'muted' }
+    if (status === 'operational') return { label: 'Operational', tone: 'ok' }
+    if (status === 'degraded') return { label: 'Degraded', tone: 'warn' }
+    if (status === 'stopped') return { label: 'Stopped', tone: 'muted' }
+    if (status === 'offline') return { label: 'Offline', tone: 'bad' }
+    return { label: cs.checking, tone: 'muted' }
+  }
 
-  const telegram = hasTgSession
-    ? { label: cs.online, tone: 'ok' as Tone }
-    : { label: cs.offline, tone: 'bad' as Tone }
+  const engine = engineLabel(copierHealth.copierEngineStatus)
+  const telegramAccount = accountLabel(copierHealth.telegramAccountStatus)
+  const listener = listenerLabel(copierHealth.signalListenerStatus)
+
+  const statusMessage =
+    copierHealth.telegramAccountStatus === 'reconnect_required' || copierHealth.telegramAccountStatus === 'invalid'
+      ? 'Telegram connection expired. Reconnect Telegram to resume copying.'
+      : copierHealth.copierEngineStatus === 'operational'
+        ? 'Copier is ready and listening for signals.'
+        : copierHealth.signalListenerStatus === 'reconnecting' || copierHealth.copierEngineStatus === 'degraded'
+          ? 'Telegram is reconnecting. New signals may be delayed.'
+          : copierHealth.copierEngineStatus === 'stopped'
+            ? 'Copying is stopped for this account.'
+            : copierHealth.copierEngineStatus === 'offline'
+              ? 'Signal listener is offline. Trades may not copy until it reconnects.'
+              : 'Checking copier status.'
+
+  const lastHealthy = copierHealth.lastSuccessfulHealthAt
+    ? new Date(copierHealth.lastSuccessfulHealthAt).toLocaleString()
+    : 'Not available'
 
   const hasIssues =
     hasActiveSubscription &&
     (brokerConnectionsTone === 'bad' ||
       engine.tone === 'bad' ||
-      telegram.tone === 'bad' ||
+      telegramAccount.tone === 'bad' ||
+      listener.tone === 'bad' ||
       brokerErrorCount > 0)
   const isChecking =
     hasActiveSubscription &&
     !hasIssues &&
-    (engine.tone === 'muted' || listenerLease.status === 'unknown')
+    (engine.tone === 'muted' || copierHealth.copierEngineStatus === 'unknown')
   const collapsedSummaryTone: Tone = !hasActiveSubscription
     ? 'muted'
     : hasIssues
@@ -246,19 +304,36 @@ export function CopierStatusCard({
       </button>
 
       {expanded ? (
-        <div className="px-4 sm:px-5 py-3 divide-y divide-neutral-100 dark:divide-neutral-800 sm:grid sm:grid-cols-2 sm:gap-x-10 sm:divide-y-0">
+        <div className="px-4 sm:px-5 py-3 divide-y divide-neutral-100 dark:divide-neutral-800">
+          <div className="pb-3 text-sm text-neutral-700 dark:text-neutral-300">
+            <div>{statusMessage}</div>
+            <div className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+              Last healthy: {lastHealthy}
+            </div>
+          </div>
+          <div className="grid sm:grid-cols-2 sm:gap-x-10 sm:divide-y-0">
           <StatusRow
             label={cs.allBrokerConnections}
             value={brokerConnectionsLabel}
             tone={brokerConnectionsTone}
           />
           <StatusRow label={cs.copierEngine} value={engine.label} tone={engine.tone} />
-          <StatusRow label={cs.telegramListener} value={telegram.label} tone={telegram.tone} />
+          <StatusRow label="Telegram account" value={telegramAccount.label} tone={telegramAccount.tone} />
+          <StatusRow label="Signal listener" value={listener.label} tone={listener.tone} />
           <StatusRow
             label={cs.brokerErrors}
             value={String(brokerErrorCount)}
             tone={brokerErrorCount > 0 ? 'bad' : 'ok'}
           />
+          </div>
+          <button
+            type="button"
+            onClick={() => void refreshCopierHealth()}
+            className="mt-3 inline-flex items-center gap-2 text-sm font-medium text-teal-700 hover:text-teal-800 dark:text-teal-300 dark:hover:text-teal-200"
+          >
+            <RefreshCw className="h-4 w-4" aria-hidden />
+            Refresh status
+          </button>
         </div>
       ) : null}
     </div>

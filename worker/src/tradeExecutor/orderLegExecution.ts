@@ -26,12 +26,13 @@ import {
   setPipelineTimestamp,
 } from '../pipelineTimestamps'
 import { ensureSignalRow, isSignalFkViolation } from '../ensureSignalRow'
-import { captureWorkerError, captureWorkerWarning } from '../observability/sentry'
+import { captureWorkerWarning } from '../observability/sentry'
 import {
   addBusinessBreadcrumb,
   captureBusinessIssue,
   classifyBrokerFailureReason,
 } from '../observability/businessEvents'
+import { captureDeferredBusinessFailure } from '../observability/deferredBusinessEvents'
 
 /** Collapse legs that are identical clones (same op/symbol/volume/comment). */
 export function collapseIdenticalImmediateLegs(legs: Leg[]): { legs: Leg[]; collapsed: number } {
@@ -122,7 +123,7 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
 
   // Drop identical full-lot clones (Luis teaser pattern: N× same Buy/volume/comment).
   const collapsed = collapseIdenticalImmediateLegs(legs)
-  let workingLegs = collapsed.legs
+  const workingLegs = collapsed.legs
   if (collapsed.collapsed > 0) {
     console.warn(
       `[tradeExecutor] duplicate_leg_collapsed removed=${collapsed.collapsed}`
@@ -794,17 +795,32 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
           `[tradeExecutor] post-fill persist failed signal=${signal.id} broker=${broker.id} ticket=${result.ticket}:`,
           err instanceof Error ? err.message : String(err),
         )
-        captureWorkerError(err instanceof Error ? err : new Error(String(err)), {
-          subsystem: 'persistence',
-          operation: 'post_fill_persist_failed',
-          errorCode: 'BROKER_SUCCESS_DB_FAILURE',
-          fingerprint: ['persistence', 'BROKER_SUCCESS_DB_FAILURE', 'post_fill_background'],
+        captureDeferredBusinessFailure({
+          category: 'persistence',
+          event: 'broker_success_persistence_failed',
+          severity: 'error',
+          reasonCode: 'BROKER_SUCCESS_DB_FAILURE',
+          message: 'Broker accepted order but deferred trade persistence failed',
+          userImpact: 'manual_review_required',
+          operation: 'post_fill_background_persistence',
+          err,
+          fingerprint: ['broker_success_persistence_failed', 'post_fill_background', 'BROKER_SUCCESS_DB_FAILURE'],
           context: {
             user_id: signal.user_id,
             signal_id: signal.id,
+            channel_id: signal.channel_id,
+            telegram_message_id: signal.telegram_message_id,
             broker_account_id: broker.id,
-            stage: 'post_fill_background',
-            extra: { broker_ticket_present: result.ticket != null },
+            broker_request_id: `${signal.id}:${broker.id}:${leg.idx}`,
+            trade_id: filledLeg.tradeRowId,
+            symbol: sendArgs.symbol,
+            side: isBuy ? 'buy' : 'sell',
+            execution_mechanism: useV2 ? 'fxsocket_v2' : 'fxsocket_v1',
+            extra: {
+              broker_ticket_present: result.ticket != null,
+              leg: leg.idx + 1,
+              total: totalCount,
+            },
           },
         })
       })
@@ -858,6 +874,33 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
           `[tradeExecutor] deferred broker range pending failed signal=${signal.id} broker=${broker.id}:`,
           err,
         )
+        captureDeferredBusinessFailure({
+          category: 'layering',
+          event: 'layering_materialization_failed',
+          severity: 'error',
+          reasonCode: 'BROKER_PENDING_MATERIALIZATION_FAILED',
+          message: 'Deferred broker-pending layer materialization failed after entry success',
+          userImpact: 'partial',
+          operation: 'deferred_broker_pending_materialize',
+          err,
+          context: {
+            user_id: signal.user_id,
+            signal_id: signal.id,
+            channel_id: signal.channel_id,
+            telegram_message_id: signal.telegram_message_id,
+            broker_account_id: broker.id,
+            symbol,
+            side: plan.isBuy === false ? 'sell' : 'buy',
+            execution_mechanism: 'broker_pending_order',
+            layering_mode: plan.rangeLayering?.rangeLayeringType ?? 'pending_order',
+            extra: {
+              targeted_count: virtualPendings.length,
+              successful_count: 0,
+              failed_count: virtualPendings.length,
+              anchor_source: anchorSource,
+            },
+          },
+        })
       })
       materializedBrokerPendings = true
     } else {
@@ -887,6 +930,32 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
         `[tradeExecutor] deferred virtual pending failed signal=${signal.id} broker=${broker.id}:`,
         err,
       )
+      captureDeferredBusinessFailure({
+        category: 'layering',
+        event: 'layering_materialization_failed',
+        severity: 'error',
+        reasonCode: 'VIRTUAL_MATERIALIZATION_FAILED',
+        message: 'Deferred virtual layer materialization failed after entry success',
+        userImpact: 'partial',
+        operation: 'deferred_virtual_pending_materialize',
+        err,
+        context: {
+          user_id: signal.user_id,
+          signal_id: signal.id,
+          channel_id: signal.channel_id,
+          telegram_message_id: signal.telegram_message_id,
+          broker_account_id: broker.id,
+          symbol,
+          side: plan.isBuy === false ? 'sell' : 'buy',
+          execution_mechanism: 'virtual_pending_monitor',
+          layering_mode: plan.rangeLayering?.rangeLayeringType ?? 'virtual_pending',
+          extra: {
+            targeted_count: virtualPendings.length,
+            successful_count: 0,
+            failed_count: virtualPendings.length,
+          },
+        },
+      })
     })
   }
   if (liveEntryFast && filledLegs.length > 0) {
@@ -926,6 +995,30 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
       },
     }).catch(err => {
       console.error(`[tradeExecutor] postFillFollowUp failed signal=${signal.id}:`, err)
+      captureDeferredBusinessFailure({
+        category: 'trade',
+        event: 'post_fill_follow_up_failed',
+        severity: 'error',
+        reasonCode: 'POST_FILL_FOLLOW_UP_FAILED',
+        message: 'Deferred post-fill SL/TP follow-up failed after entry success',
+        userImpact: 'partial',
+        operation: 'post_fill_follow_up',
+        err,
+        context: {
+          user_id: signal.user_id,
+          signal_id: signal.id,
+          channel_id: signal.channel_id,
+          telegram_message_id: signal.telegram_message_id,
+          broker_account_id: broker.id,
+          symbol,
+          side: op.toLowerCase().includes('sell') ? 'sell' : 'buy',
+          execution_mechanism: useV2 ? 'fxsocket_v2' : 'fxsocket_v1',
+          extra: {
+            targeted_count: filledLegs.length,
+            broker_database_state_may_disagree: true,
+          },
+        },
+      })
     })
   }
   const anyImmediateOpened = sendResults.some(
@@ -963,6 +1056,30 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
     if (liveEntryFast) {
       void ctx.syncMultiBasketLegTakeProfits(syncArgs).catch(err => {
         console.error(`[tradeExecutor] syncMultiBasketLegTakeProfits failed signal=${signal.id}:`, err)
+        captureDeferredBusinessFailure({
+          category: 'management',
+          event: 'basket_tp_sync_failed',
+          severity: 'error',
+          reasonCode: 'BASKET_TP_SYNC_FAILED',
+          message: 'Deferred multi-leg take-profit synchronization failed after entry success',
+          userImpact: 'partial',
+          operation: 'sync_multi_basket_leg_take_profits',
+          err,
+          context: {
+            user_id: signal.user_id,
+            signal_id: signal.id,
+            channel_id: signal.channel_id,
+            telegram_message_id: signal.telegram_message_id,
+            broker_account_id: broker.id,
+            symbol,
+            side: op.toLowerCase().includes('sell') ? 'sell' : 'buy',
+            extra: {
+              targeted_count: sendLegs.length,
+              successful_count: null,
+              failed_count: null,
+            },
+          },
+        })
       })
     } else {
       await ctx.syncMultiBasketLegTakeProfits(syncArgs)

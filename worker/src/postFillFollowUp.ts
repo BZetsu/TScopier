@@ -21,6 +21,7 @@ import { lastPositiveParsedTpPrice } from './manualPlanning/parsedEntry'
 import type { ChannelKeywords, ManualSettings, ParsedSignal } from './manualPlanning/types'
 import type { SignalRow } from './tradeExecutor'
 import { isBenignOrderModifyError } from './orderModifyBenign'
+import { captureDeferredBusinessFailure } from './observability/deferredBusinessEvents'
 
 /** Minimal broker fields for post-fill (avoids circular import from tradeExecutor). */
 export type PostFillBrokerRow = {
@@ -200,13 +201,38 @@ async function applyPipAndChannelStops(args: ApplyPostFillFollowUpArgs): Promise
       console.warn(
         `[postFillFollowUp] OrderModify stops failed signal=${signal.id} ticket=${leg.ticket}: ${msg}`,
       )
+      captureDeferredBusinessFailure({
+        category: 'management',
+        event: slChanged && !tpChanged ? 'stop_loss_update_failed' : tpChanged && !slChanged ? 'take_profit_update_failed' : 'deferred_trade_follow_up_failed',
+        severity: 'error',
+        reasonCode: slChanged && !tpChanged ? 'POST_FILL_SL_UPDATE_FAILED' : tpChanged && !slChanged ? 'POST_FILL_TP_UPDATE_FAILED' : 'POST_FILL_STOPS_UPDATE_FAILED',
+        message: 'Post-fill stop update failed after broker entry success',
+        userImpact: 'partial',
+        operation: 'post_fill_stop_update',
+        err,
+        context: {
+          user_id: signal.user_id,
+          signal_id: signal.id,
+          channel_id: signal.channel_id,
+          broker_account_id: broker.id,
+          trade_id: leg.tradeRowId,
+          symbol,
+          side: isBuy ? 'buy' : 'sell',
+          extra: {
+            broker_ticket_present: true,
+            stop_loss_targeted: slChanged,
+            take_profit_targeted: tpChanged,
+            failed_count: 1,
+          },
+        },
+      })
     }
   }
 }
 
 /** Run deferred management after live market fill. */
 export async function applyPostFillFollowUp(args: ApplyPostFillFollowUpArgs): Promise<void> {
-  const { hooks, signal, parsed, broker, symbol, baseLot, params, op, uuid } = args
+  const { hooks, signal, parsed, broker, symbol } = args
   const manual = (broker.manual_settings ?? {}) as ManualSettings
 
   await applyPipAndChannelStops(args)

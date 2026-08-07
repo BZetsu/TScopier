@@ -16,6 +16,7 @@ import {
 import { loadExistingRangeStepIndices } from '../rangePendingFireGuard'
 import { isPostgresDuplicateKeyError } from '../rangePendingLegPersist'
 import { brokerLimitPriceKeysFromOpenedOrders } from './brokerPendingOpenedDedupe'
+import { captureDeferredBusinessFailure } from '../observability/deferredBusinessEvents'
 
 /** In-process single-flight for broker ladder OrderSends (signal+broker+symbol). */
 const brokerRangeMaterializeInflight = new Set<string>()
@@ -41,8 +42,7 @@ export async function materializeBrokerRangePendingLegs(
   opts?: MaterializeBrokerRangeOpts,
 ): Promise<boolean> {
   const {
-    signal, broker, api, uuid, symbol, virtualPendings,
-    params, plan, liveEntryFast, strictDeferred,
+    signal, broker, api, symbol, virtualPendings,
   } = prep
 
   if (!api || virtualPendings.length === 0) return false
@@ -86,7 +86,6 @@ async function materializeBrokerRangePendingLegsUnlocked(
     return false
   }
 
-  const digits = Math.max(0, Math.min(8, Number(params?.digits) || 5))
   const ladder = resolveBrokerRangeLadderPricing({
     symbol,
     rangeLayering: plan.rangeLayering,
@@ -730,6 +729,33 @@ async function materializeBrokerRangePendingLegsUnlocked(
           })
         } catch { /* best-effort */ }
       }
+      captureDeferredBusinessFailure({
+        category: 'layering',
+        event: 'layering_materialization_failed',
+        severity: 'error',
+        reasonCode: 'BROKER_PENDING_MATERIALIZATION_PERSIST_FAILED',
+        message: 'Broker-pending layer rows could not be persisted after broker orders were placed',
+        userImpact: 'manual_review_required',
+        operation: 'broker_pending_materialize',
+        err: persist.lastError ?? 'unknown',
+        context: {
+          user_id: signal.user_id,
+          signal_id: signal.id,
+          broker_account_id: broker.id,
+          symbol,
+          side,
+          execution_mechanism: 'broker_pending_order',
+          layering_mode: plan.rangeLayering?.rangeLayeringType ?? 'pending_order',
+          extra: {
+            targeted_count: coalescedLegs.length,
+            successful_count: placedTickets.length,
+            failed_count: Math.max(0, coalescedLegs.length - placedTickets.length),
+            skipped_already_compliant_count: existingSteps.size,
+            rollback_attempted_count: placedTickets.length,
+            anchor_source: anchorSource,
+          },
+        },
+      })
       return false
     }
   }

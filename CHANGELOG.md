@@ -24,6 +24,9 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - Added cumulative histogram-compatible worker metrics for pipeline stage durations and event throughput.
 - Added safe duration and redaction helpers for execution-pipeline observability.
 - Added bounded, redacted Telegram connection tracing and AUTH_KEY_DUPLICATED recovery invalidation so users are prompted to reconnect after repeated duplicate-auth failures.
+- Added deferred business-event capture for final user-impacting background trade failures, including layer materialization, post-fill SL/TP follow-up, basket TP sync, management cleanup, and broker-success/database-disagreement cases.
+- Added server-authoritative copier health state with separate Telegram account, signal listener, worker ownership, and copier engine statuses plus a safe user-readable health table.
+- Added ownership-aware copier-health persistence using a service-role RPC so stale workers cannot overwrite a newer listener owner's health row.
 
 ### Fixed
 
@@ -44,6 +47,9 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - Increased Railway Telegram shutdown drain behavior to wait about 30 seconds, await all listener/auth disconnects, release owned session leases, and prevent reconnects from starting during shutdown.
 - Patched GramJS RPC result handling to reject malformed or empty Telegram response bodies before BinaryReader decoding and trigger bounded listener reconnect recovery.
 - Auto-disables Telegram channel subscriptions after repeated confirmed `CHANNEL_INVALID`/stale-username failures, records a safe reconnect-required event, and keeps healthy channel polling moving.
+- Fixed dashboard copier health so a fresh worker lease or Telegram session row alone no longer shows the copier as live/online when the listener is reconnecting, disconnected, failed, unowned, or missing.
+- Fixed copier-health freshness so Operational requires a fresh listener row and recent successful probe; stale or malformed timestamps fail closed instead of showing the copier ready indefinitely.
+- Removed duplicate Sentry issue capture from the virtual pending reconcile-enqueue failure path while preserving one structured business issue.
 
 ### Performance
 
