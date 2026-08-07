@@ -8,6 +8,8 @@ export interface BacktestBrokerContext {
   brokerAccountId: string
   brokerLabel: string
   fxsocketAccountId: string
+  /** MT4 / MT5 — required so FxSocket hits /mt4/{id} vs /mt5/{id}. */
+  platform: string | null
   brokerSymbols: string[]
 }
 
@@ -15,6 +17,7 @@ export interface BrokerCandidate {
   id: string
   label: string
   fxsocket_account_id: string
+  platform: string | null
   fxsocket_status: string | null
   connection_status: string | null
   is_active: boolean
@@ -56,7 +59,7 @@ export async function loadBrokerCandidates(
 ): Promise<BrokerCandidate[]> {
   const { data, error } = await supabase
     .from("broker_accounts")
-    .select("id,label,fxsocket_account_id,fxsocket_status,connection_status,is_active")
+    .select("id,label,platform,fxsocket_account_id,fxsocket_status,connection_status,is_active")
     .eq("user_id", userId)
     .eq("is_active", true)
     .neq("fxsocket_account_id", "")
@@ -68,6 +71,7 @@ export async function loadBrokerCandidates(
     .map((row) => ({
       id: String(row.id),
       label: String(row.label ?? ""),
+      platform: row.platform != null ? String(row.platform) : null,
       fxsocket_account_id: String(row.fxsocket_account_id ?? "").trim(),
       fxsocket_status: row.fxsocket_status != null ? String(row.fxsocket_status) : null,
       connection_status: row.connection_status != null ? String(row.connection_status) : null,
@@ -91,22 +95,25 @@ export async function resolveBacktestBroker(
   const candidates = await loadBrokerCandidates(supabase, userId)
   if (candidates.length === 0) {
     throw new BacktestBrokerNotFoundError(
-      "Connect an MT5 broker in Brokers to run backtests.",
+      "Connect an MT4/MT5 broker in Brokers to run backtests.",
     )
   }
 
   const normalized = normalizeBacktestSymbol(symbol)
   let fallback: BacktestBrokerContext | null = null
   let symbolsFetchFailures = 0
+  let lastSymbolsError: string | null = null
 
   for (const broker of candidates) {
-    let brokerSymbols = symbolsCache?.get(broker.fxsocket_account_id)
+    const cacheKey = `${broker.fxsocket_account_id}:${broker.platform ?? ""}`
+    let brokerSymbols = symbolsCache?.get(cacheKey)
     if (!brokerSymbols) {
       try {
-        brokerSymbols = await fx.symbols(broker.fxsocket_account_id)
-        symbolsCache?.set(broker.fxsocket_account_id, brokerSymbols)
-      } catch {
+        brokerSymbols = await fx.symbols(broker.fxsocket_account_id, broker.platform)
+        symbolsCache?.set(cacheKey, brokerSymbols)
+      } catch (err) {
         symbolsFetchFailures += 1
+        lastSymbolsError = err instanceof Error ? err.message : String(err)
         continue
       }
     }
@@ -118,6 +125,7 @@ export async function resolveBacktestBroker(
       brokerAccountId: broker.id,
       brokerLabel: broker.label || "Broker",
       fxsocketAccountId: broker.fxsocket_account_id,
+      platform: broker.platform,
       brokerSymbols,
     }
 
@@ -128,8 +136,11 @@ export async function resolveBacktestBroker(
   if (fallback) return fallback
 
   if (symbolsFetchFailures >= candidates.length) {
+    const detail = lastSymbolsError?.trim()
     throw new BacktestBrokerNotFoundError(
-      "Could not load Market Watch symbols from your linked broker. Reconnect the account and try again.",
+      detail
+        ? `Could not load Market Watch symbols from your linked broker (${detail}). Reconnect the account and try again.`
+        : "Could not load Market Watch symbols from your linked broker. Reconnect the account and try again.",
     )
   }
 
