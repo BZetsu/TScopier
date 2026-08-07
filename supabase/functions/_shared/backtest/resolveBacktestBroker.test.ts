@@ -102,3 +102,75 @@ Deno.test("resolveBacktestBroker throws when symbol missing on all brokers", asy
     BacktestSymbolNotFoundError,
   )
 })
+
+Deno.test("resolveBacktestBroker maps XAUUSD to GOLD on broker watchlist", async () => {
+  const brokerRow = {
+    id: "broker-uuid",
+    label: "HFM Demo",
+    fxsocket_account_id: "11111111-2222-3333-4444-555555555555",
+    fxsocket_status: "connected",
+    connection_status: "connected",
+    is_active: true,
+  }
+
+  const supabase = {
+    from: () => ({
+      select: () => ({
+        eq: () => ({
+          eq: () => ({
+            neq: () => ({
+              order: async () => ({ data: [brokerRow], error: null }),
+            }),
+          }),
+        }),
+      }),
+    }),
+  }
+
+  const fx = {
+    symbols: async () => ["GOLD", "EURUSD"],
+  } as unknown as FxsocketClient
+
+  const ctx = await resolveBacktestBroker(supabase as never, fx, "user-1", "XAUUSD")
+  assertEquals(ctx.brokerAccountId, "broker-uuid")
+  assertEquals(resolveBrokerSymbol("XAUUSD", ctx.brokerSymbols), "GOLD")
+})
+
+Deno.test("resolveBacktestBroker surfaces symbols API failure distinctly", async () => {
+  const brokerRow = {
+    id: "broker-uuid",
+    label: "Demo",
+    fxsocket_account_id: "11111111-2222-3333-4444-555555555555",
+    fxsocket_status: "connected",
+    connection_status: "connected",
+    is_active: true,
+  }
+
+  const supabase = {
+    from: () => ({
+      select: () => ({
+        eq: () => ({
+          eq: () => ({
+            neq: () => ({
+              order: async () => ({ data: [brokerRow], error: null }),
+            }),
+          }),
+        }),
+      }),
+    }),
+  }
+
+  const fx = {
+    symbols: async () => {
+      throw new Error("session down")
+    },
+  } as unknown as FxsocketClient
+
+  await assertRejects(
+    async () => {
+      await resolveBacktestBroker(supabase as never, fx, "user-1", "XAUUSD")
+    },
+    BacktestBrokerNotFoundError,
+    "Could not load Market Watch symbols",
+  )
+})

@@ -97,6 +97,7 @@ export async function resolveBacktestBroker(
 
   const normalized = normalizeBacktestSymbol(symbol)
   let fallback: BacktestBrokerContext | null = null
+  let symbolsFetchFailures = 0
 
   for (const broker of candidates) {
     let brokerSymbols = symbolsCache?.get(broker.fxsocket_account_id)
@@ -105,6 +106,7 @@ export async function resolveBacktestBroker(
         brokerSymbols = await fx.symbols(broker.fxsocket_account_id)
         symbolsCache?.set(broker.fxsocket_account_id, brokerSymbols)
       } catch {
+        symbolsFetchFailures += 1
         continue
       }
     }
@@ -124,6 +126,12 @@ export async function resolveBacktestBroker(
   }
 
   if (fallback) return fallback
+
+  if (symbolsFetchFailures >= candidates.length) {
+    throw new BacktestBrokerNotFoundError(
+      "Could not load Market Watch symbols from your linked broker. Reconnect the account and try again.",
+    )
+  }
 
   throw new BacktestSymbolNotFoundError(symbol)
 }

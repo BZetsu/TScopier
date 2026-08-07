@@ -134,24 +134,78 @@ export function normalizeBacktestSymbol(raw: string): string {
   return raw.trim().toUpperCase().replace(/[^A-Z0-9]/g, "")
 }
 
-/** Match a normalized symbol to an exact broker Market Watch name (handles suffixes). */
-export function resolveBrokerSymbol(normalized: string, brokerSymbols: string[]): string | null {
-  const target = normalizeBacktestSymbol(normalized)
-  if (!target) return null
+/**
+ * Canonical instrument id so broker Market Watch names like GOLD / XAU match signal XAUUSD.
+ * Keys and values are already normalizeBacktestSymbol'd.
+ */
+const BACKTEST_SYMBOL_CANONICAL: Record<string, string> = {
+  GOLD: "XAUUSD",
+  XAU: "XAUUSD",
+  SILVER: "XAGUSD",
+  XAG: "XAGUSD",
+  BITCOIN: "BTCUSD",
+  BTC: "BTCUSD",
+  ETHEREUM: "ETHUSD",
+  ETH: "ETHUSD",
+}
+
+/** Map GOLD ↔ XAUUSD (and similar) for broker symbol matching. */
+export function canonicalBacktestSymbol(raw: string): string {
+  const n = normalizeBacktestSymbol(raw)
+  return BACKTEST_SYMBOL_CANONICAL[n] ?? n
+}
+
+function matchBrokerSymbolCandidates(
+  targets: string[],
+  brokerSymbols: string[],
+): string | null {
+  const targetSet = new Set(targets.filter(Boolean))
+  if (targetSet.size === 0) return null
 
   for (const sym of brokerSymbols) {
-    if (normalizeBacktestSymbol(sym) === target) return sym
+    if (targetSet.has(normalizeBacktestSymbol(sym))) return sym
   }
 
   // Prefer shortest exact-prefix match (XAUUSD before XAUUSD.pro)
   const prefixMatches = brokerSymbols
-    .filter((sym) => normalizeBacktestSymbol(sym).startsWith(target))
+    .filter((sym) => {
+      const norm = normalizeBacktestSymbol(sym)
+      for (const t of targetSet) {
+        if (norm.startsWith(t)) return true
+      }
+      return false
+    })
     .sort((a, b) => a.length - b.length)
   if (prefixMatches.length > 0) return prefixMatches[0]!
 
   for (const sym of brokerSymbols) {
     const norm = normalizeBacktestSymbol(sym)
-    if (target.startsWith(norm) || norm.startsWith(target)) return sym
+    for (const t of targetSet) {
+      if (t.startsWith(norm) || norm.startsWith(t)) return sym
+    }
+  }
+
+  return null
+}
+
+/** Match a normalized symbol to an exact broker Market Watch name (handles suffixes + GOLD/XAU aliases). */
+export function resolveBrokerSymbol(normalized: string, brokerSymbols: string[]): string | null {
+  const target = normalizeBacktestSymbol(normalized)
+  if (!target) return null
+
+  const canon = canonicalBacktestSymbol(target)
+  const targets = new Set<string>([target, canon])
+  for (const [alias, canonical] of Object.entries(BACKTEST_SYMBOL_CANONICAL)) {
+    if (canonical === canon) targets.add(alias)
+  }
+
+  // Direct / prefix / alias match on the raw names first.
+  const direct = matchBrokerSymbolCandidates([...targets], brokerSymbols)
+  if (direct) return direct
+
+  // Broker lists GOLD while signal is XAUUSD — match on canonical equality.
+  for (const sym of brokerSymbols) {
+    if (canonicalBacktestSymbol(sym) === canon) return sym
   }
 
   return null
