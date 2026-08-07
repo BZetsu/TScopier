@@ -457,6 +457,7 @@ export class TradeExecutor {
       const normalized = this.normalizeBrokerRow(mergedRow)
       void persistHealedChannelConfigs(
         this.supabase,
+        row.user_id,
         row.id,
         mergedRow.channel_trading_configs,
         normalized.channel_trading_configs as Record<string, unknown>,
@@ -534,6 +535,7 @@ export class TradeExecutor {
     const normalized = this.normalizeBrokerRow(row)
     void persistHealedChannelConfigs(
       this.supabase,
+      row.user_id,
       row.id,
       preNormalizedConfigs,
       normalized.channel_trading_configs as Record<string, unknown>,
@@ -1488,7 +1490,12 @@ export class TradeExecutor {
           await releaseSignalBrokerDispatchClaim(this.supabase, signal.id, effectiveBroker.id)
         }
         setPipelineTimestamp(signal.pipeline_ts ?? (signal.pipeline_ts = {}), 'execution_claim_started_at', Date.now())
-        const claimed = await claimSignalBrokerDispatch(this.supabase, signal.id, effectiveBroker.id)
+        const claimed = await claimSignalBrokerDispatch(
+          this.supabase,
+          signal.id,
+          effectiveBroker.id,
+          signal.user_id,
+        )
         if (!claimed) {
           // Another worker won entry. Revisions may still refresh SL/TP once materialized.
           if (isRevisionRefresh) {
