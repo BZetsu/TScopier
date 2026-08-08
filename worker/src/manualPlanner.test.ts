@@ -506,7 +506,7 @@ test('planMultiManualOrders: empty finalTps without range uses one full-lot imme
   assert.equal(plan.orders[0]?.comment, 'TScopier:44sClub:979b6ac0')
 })
 
-test('planMultiManualOrders: empty finalTps with range sizes immediate to non-reserved share', () => {
+test('planMultiManualOrders: empty finalTps with range emits one order per instant leg', () => {
   const manual: ManualSettings = {
     ...baseManual,
     multi_trade_leg_percent: 10,
@@ -527,16 +527,18 @@ test('planMultiManualOrders: empty finalTps with range sizes immediate to non-re
     ctx: baseCtx,
     commentPrefix: 'TScopier:44sClub:979b6ac0',
   })
-  // 10 legs @ 0.04; 30% reserved → 3 range + 7 immediate → 0.28 immediate
-  assert.equal(plan.orders.length, 1)
-  assert.ok(Math.abs(Number(plan.orders[0]?.volume) - 0.28) < 1e-9)
+  // 10 legs @ 0.04; 30% reserved → 3 range + 7 immediate → 7×0.04 (not 1×0.28)
+  assert.equal(plan.orders.length, 7)
+  assert.ok(plan.orders.every(o => Math.abs(Number(o.volume) - 0.04) < 1e-9))
+  const immVol = plan.orders.reduce((s, o) => s + Number(o.volume), 0)
+  assert.ok(Math.abs(immVol - 0.28) < 1e-9)
   assert.equal((plan.virtualPendings ?? []).length, 3)
   assert.ok((plan.virtualPendings ?? []).every(v => Math.abs(Number(v.volume) - 0.04) < 1e-9))
   assert.equal(plan.fallback_reason, 'multi_trade_fallback_empty_tps')
-  assert.equal(plan.orders[0]?.comment, 'TScopier:44sClub:979b6ac0')
+  assert.ok(plan.orders.every(o => /:tp\d+/.test(String(o.comment ?? ''))))
 })
 
-test('planMultiManualOrders: empty finalTps staging-like range does not send full fixed_lot', () => {
+test('planMultiManualOrders: empty finalTps staging-like range fires 6×leg not 1×bundle', () => {
   const manual: ManualSettings = {
     ...baseManual,
     multi_trade_leg_percent: 6,
@@ -558,11 +560,15 @@ test('planMultiManualOrders: empty finalTps staging-like range does not send ful
     ctx: { ...baseCtx, digits: 2 },
     commentPrefix: 'TScopier:SIGNALSTESTE:73a33d33',
   })
-  // 16 legs @ 0.12; 60% reserved → 10 range + 6 immediate → 0.72 immediate
-  assert.equal(plan.orders.length, 1)
-  assert.ok(Math.abs(Number(plan.orders[0]?.volume) - 0.72) < 1e-9)
+  // 16 legs @ 0.12; 60% reserved → 10 range + 6 immediate → 6×0.12 (not 1×0.72)
+  assert.equal(plan.orders.length, 6)
+  assert.ok(plan.orders.every(o => Math.abs(Number(o.volume) - 0.12) < 1e-9))
+  const immVol = plan.orders.reduce((s, o) => s + Number(o.volume), 0)
+  assert.ok(Math.abs(immVol - 0.72) < 1e-9)
   assert.equal((plan.virtualPendings ?? []).length, 10)
   assert.ok((plan.virtualPendings ?? []).every(v => Math.abs(Number(v.volume) - 0.12) < 1e-9))
+  assert.equal(plan.rangeLayering?.plannedImmediateLegs, 6)
+  assert.equal(plan.rangeLayering?.activePendingLegs, 10)
 })
 
 test('planMultiManualOrders: cap of 2 emits one consolidated order per TP', () => {
