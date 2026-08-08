@@ -1,6 +1,7 @@
 import 'dotenv/config'
 import {
   captureWorkerFatalError,
+  captureWorkerLog,
   captureWorkerWarning,
   flushWorkerSentry,
   initWorkerSentry,
@@ -46,6 +47,17 @@ import { initializeBrokerExecutionCapability } from './brokerExecutionMode'
 
 initWorkerSentry()
 installWorkerProcessSentryHandlers()
+captureWorkerLog('info', 'worker startup', {
+  subsystem: 'worker',
+  operation: 'startup',
+  errorCode: 'STARTUP',
+  attributes: {
+    build_tag: WORKER_BUILD_TAG,
+    role: workerConfig.role,
+    shard_id: workerConfig.shardId,
+    shard_count: workerConfig.shardCount,
+  },
+})
 
 if (!globalThis.WebSocket) {
   globalThis.WebSocket = WebSocket as unknown as typeof globalThis.WebSocket

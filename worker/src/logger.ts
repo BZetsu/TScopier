@@ -1,7 +1,13 @@
+import { captureWorkerLog, isWorkerSentryEnabled } from './observability/sentry'
+
 type Level = 'info' | 'warn' | 'error'
 
 const LOG_LEVELS: Record<Level, number> = { error: 0, warn: 1, info: 2 }
 const CURRENT_LEVEL: Level = (process.env.LOGGER_LEVEL as Level) || 'info'
+
+const SENTRY_MIN_LEVEL: Level = LOG_LEVELS[process.env.SENTRY_LOGS_MIN_LEVEL as Level] !== undefined
+  ? (process.env.SENTRY_LOGS_MIN_LEVEL as Level)
+  : 'info'
 
 const hasSpace = (v: string) => /[\s"]/.test(v)
 const quote = (v: unknown): string => {
@@ -24,6 +30,9 @@ function log(level: Level, tag: string, event: string, data?: Record<string, unk
   if (level === 'error') console.error(line)
   else if (level === 'warn') console.warn(line)
   else console.log(line)
+  if (isWorkerSentryEnabled() && LOG_LEVELS[level] <= LOG_LEVELS[SENTRY_MIN_LEVEL]) {
+    captureWorkerLog(level, event, { subsystem: tag, operation: event, attributes: data })
+  }
 }
 
 export const logger = {

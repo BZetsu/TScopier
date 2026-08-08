@@ -228,6 +228,16 @@ SENTRY_BUSINESS_EVENT_COOLDOWN_MS=300000
 `SENTRY_RELEASE` may be set explicitly. If omitted, the worker uses Railway commit
 or deployment identifiers when present, falling back to `WORKER_BUILD_TAG`.
 
+Sentry Logs: the SDK logs pipeline is enabled (`enableLogs`). Structured logs are
+sent only through the sanitized `captureWorkerLog` helper (or the structured
+`logger` in `worker/src/logger.ts`, which forwards through it). Logs carry
+`subsystem`, `operation`, `error_code`, and the worker-role/shard attributes, so
+they can be queried, filtered, grouped, and used in alerts/dashboards. Volume is
+controlled with `SENTRY_LOGS_MIN_LEVEL=info|warn|error` (default `info`); set
+`warn` to lower cost and noise. The startup log (`operation=startup`) is emitted
+by every worker process, so an enabled worker proves connectivity within ~5s of
+boot.
+
 Sensitive data policy: Sentry events must not contain Telegram session strings,
 Telegram auth keys, Telegram API hashes, phone numbers, full emails, broker
 credentials, FxSocket keys, Supabase service-role keys, Redis tokens, OpenAI
@@ -242,12 +252,15 @@ broker quote/price tick paths. Capture helpers are fire-and-forget and catch the
 own failures. Shutdown performs only a bounded final flush before exit.
 
 SDK safety policy: all Sentry default integrations are disabled in this worker
-PR. Events and breadcrumbs are created only through the worker's sanitized helper
-functions. Automatic HTTP/fetch instrumentation, outbound trace propagation,
-console capture, request/body capture, local-variable capture, SDK process
-handlers, and automatic tracing are disabled. `SENTRY_TRACES_SAMPLE_RATE` is
-reserved for a future reviewed tracing PR and does not enable automatic outbound
-instrumentation here.
+PR. Events, breadcrumbs, and logs are created only through the worker's sanitized
+helper functions. Automatic HTTP/fetch instrumentation, outbound trace
+propagation, console capture, request/body capture, local-variable capture, SDK
+process handlers, and automatic tracing are disabled. `SENTRY_TRACES_SAMPLE_RATE`
+is reserved for a future reviewed tracing PR and does not enable automatic
+outbound instrumentation here. Sentry logs use the SDK Logger API (not the
+`consoleIntegration`), so raw console output is never forwarded; every log passes
+through `safeForSentry` at capture time and again through `beforeSendLog` before
+leaving the process.
 
 Load-test behavior: `LOAD_TEST_MODE=true` disables Sentry by default even when a
 DSN is present. Only isolated test Sentry environments should opt in with
