@@ -85,6 +85,7 @@ export async function executeAssistantAction(params: {
     pending_client_actions: data.pending_client_actions ?? [],
     pending_confirmations: data.pending_confirmations ?? [],
     tool_results: data.tool_results,
+    error: data.error,
   }
 }
 

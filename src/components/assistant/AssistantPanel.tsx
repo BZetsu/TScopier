@@ -405,10 +405,18 @@ export function AssistantPanel() {
     try {
       const res = await executeAssistantAction({ tool: item.tool, args: item.args })
       setPendingConfirmations(prev => prev.filter(p => p !== item))
-      persistMessages(prev => [
-        ...prev,
-        { role: 'assistant', content: res.assistant_message || a.actionDone },
-      ])
+      if (res.error) {
+        setError(res.error)
+        persistMessages(prev => [
+          ...prev,
+          { role: 'assistant', content: res.error || a.errorFallback },
+        ])
+      } else {
+        persistMessages(prev => [
+          ...prev,
+          { role: 'assistant', content: res.assistant_message || a.actionDone },
+        ])
+      }
       if (item.tool === 'set_copier_paused') {
         await refreshProfile()
       }

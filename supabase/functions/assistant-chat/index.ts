@@ -114,7 +114,7 @@ const TOOL_DEFS = [
     function: {
       name: "set_broker_active",
       description:
-        "Enable or disable copying on ONE broker account (sets broker_accounts.is_active). Use when the user wants to stop/start a specific account (e.g. Exness Demo) without pausing the whole copier. Resolve by broker_account_id, account_login, or label. Call without confirmed first.",
+        "Enable or disable copying on ONE broker (broker_accounts.is_active). Use for stop/resume a specific account (e.g. Exness Demo). is_active=true resumes copying; is_active=false stops it. Never pause other brokers automatically. If plan limit blocks activation, return an error telling the user to pause another active broker or upgrade. Never use set_copier_paused for a single broker.",
       parameters: {
         type: "object",
         properties: {
@@ -710,10 +710,15 @@ async function toolSetBrokerActive(
   userId: string,
   args: Record<string, unknown>,
 ): Promise<ToolResult> {
-  if (typeof args.is_active !== "boolean") {
-    return { content: JSON.stringify({ error: "is_active boolean required" }) };
+  const rawActive = args.is_active ?? args.active ?? args.enabled ?? args.copying;
+  let isActive: boolean | null = null;
+  if (typeof rawActive === "boolean") isActive = rawActive;
+  else if (rawActive === "true" || rawActive === 1 || rawActive === "1") isActive = true;
+  else if (rawActive === "false" || rawActive === 0 || rawActive === "0") isActive = false;
+  if (isActive == null) {
+    return { content: JSON.stringify({ error: "is_active boolean required (true to resume copying, false to stop)" }) };
   }
-  const isActive = args.is_active === true;
+
   const brokerRes = await resolveBroker(supabase, userId, args);
   if ("error" in brokerRes) return { content: JSON.stringify({ error: brokerRes.error }) };
   const broker = brokerRes.broker;
@@ -744,7 +749,30 @@ async function toolSetBrokerActive(
     .update({ is_active: isActive, updated_at: new Date().toISOString() })
     .eq("id", broker.id)
     .eq("user_id", userId);
-  if (error) return { content: JSON.stringify({ error: error.message }) };
+  if (error) {
+    const friendly = planLimitFriendly(error.message);
+    // Helpful guidance when Basic (1 active) blocks reactivation — never auto-pause others.
+    if (/broker account/i.test(friendly) || /broker_account_limit/i.test(error.message)) {
+      const { data: active } = await supabase
+        .from("broker_accounts")
+        .select("label,account_login")
+        .eq("user_id", userId)
+        .eq("is_active", true)
+        .neq("id", broker.id);
+      const names = (active ?? [])
+        .map((b) => b.label || b.account_login)
+        .filter(Boolean)
+        .join(", ");
+      return {
+        content: JSON.stringify({
+          error: names
+            ? `${friendly} Currently active: ${names}. Pause that account first, or upgrade to Advanced for multiple active brokers.`
+            : `${friendly} Pause another active broker first, or upgrade to Advanced.`,
+        }),
+      };
+    }
+    return { content: JSON.stringify({ error: friendly }) };
+  }
   return {
     content: JSON.stringify({
       ok: true,
@@ -754,6 +782,11 @@ async function toolSetBrokerActive(
       is_active: isActive,
     }),
   };
+}
+
+function planLimitFriendly(raw: string): string {
+  const m = /^(channel_limit|broker_account_limit|subscription_required):\s*(.+)$/i.exec(raw.trim());
+  return m?.[2]?.trim() || raw;
 }
 
 async function toolGetChannelConfig(
@@ -1379,8 +1412,14 @@ Deno.serve(async (req: Request) => {
     }
     const args = { ...(execute.args ?? {}), confirmed: true };
     const result = await executeTool(supabase, userId, tool, args);
-    const ok = result.content.includes('"ok":true') || result.content.includes('"ok": true');
-    let assistant_message = ok ? "Done." : "Action finished.";
+    let parsed: { ok?: boolean; error?: string } = {};
+    try {
+      parsed = JSON.parse(result.content) as { ok?: boolean; error?: string };
+    } catch {
+      parsed = {};
+    }
+    const ok = parsed.ok === true || result.content.includes('"ok":true') || result.content.includes('"ok": true');
+    let assistant_message = ok ? "Done." : (parsed.error || "Action finished.");
     if (ok && tool === "update_channel_config") {
       assistant_message =
         "Configuration saved. Want me to save this as a named preset?";
@@ -1389,7 +1428,9 @@ Deno.serve(async (req: Request) => {
     } else if (ok && tool === "apply_preset") {
       assistant_message = "Preset applied.";
     } else if (ok && tool === "set_broker_active") {
-      assistant_message = "Broker copy setting updated.";
+      assistant_message = args.is_active === false || args.is_active === "false"
+        ? "Stopped copying on that broker."
+        : "That broker is copying again.";
     } else if (ok && tool === "set_copier_paused") {
       assistant_message = "Copier pause setting updated.";
     }
@@ -1399,6 +1440,7 @@ Deno.serve(async (req: Request) => {
         tool_results: [{ tool, result: result.content }],
         pending_client_actions: [],
         pending_confirmations: [],
+        ...(parsed.error ? { error: parsed.error } : {}),
       },
       { headers: corsHeaders },
     );
