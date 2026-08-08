@@ -33,7 +33,7 @@ export interface Subscription {
   stripe_customer_id: string
   stripe_subscription_id: string | null
   plan: SubscriptionPlan
-  status: 'active' | 'trialing' | 'canceled' | 'past_due' | 'incomplete'
+  status: 'active' | 'trialing' | 'canceled' | 'past_due' | 'incomplete' | 'incomplete_expired'
   extra_accounts: number
   trial_ends_at: string | null
   current_period_end: string | null
