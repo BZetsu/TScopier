@@ -46,9 +46,9 @@ export function AppLayout() {
   const userMenuRef = useRef<HTMLDivElement>(null)
   const userMenuCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const { profile } = useUserProfile()
-  const { planName, hasActiveSubscription, effectivePlan, openUpgrade, isPastDue, hasTrialExpired, loading: subscriptionGateLoading } =
+  const { planName, hasActiveSubscription, checkoutSyncPending, effectivePlan, openUpgrade, isPastDue, hasTrialExpired, loading: subscriptionGateLoading } =
     useSubscription()
-  const navLocked = !subscriptionGateLoading && !hasActiveSubscription
+  const navLocked = !subscriptionGateLoading && !hasActiveSubscription && !checkoutSyncPending
   const subscribeCta = getSubscribeCtaLabel(t, {
     isPastDue,
     effectivePlan,
@@ -157,8 +157,15 @@ export function AppLayout() {
   useEffect(() => {
     if (!navLocked) return
     if (isRouteAllowedWithoutSubscription(location.pathname)) return
-    navigate('/dashboard', { replace: true })
+    navigate('/pricing', { replace: true })
   }, [navLocked, location.pathname, navigate])
+
+  // After Stripe success, paywall may have raced to /pricing before webhook sync — send back.
+  useEffect(() => {
+    if (!checkoutSyncPending) return
+    if (location.pathname !== '/pricing') return
+    navigate('/dashboard', { replace: true })
+  }, [checkoutSyncPending, location.pathname, navigate])
 
   useEffect(() => {
     document.documentElement.classList.add('app-viewport-lock')

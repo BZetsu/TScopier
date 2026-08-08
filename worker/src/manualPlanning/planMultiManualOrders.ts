@@ -265,7 +265,10 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
   }
 
   // Teaser / no-TP signals: do not burst-split null-TP groups into N full-lot
-  // clones. One immediate market order (full lot); range virtuals may still layer.
+  // clones. One immediate market order; range virtuals may still layer.
+  // When range reserves legs, the immediate must use only the immediate share
+  // (immediateLegs × leg size) — never the full manualLot, or total exposure
+  // overshoots once layered legs fire.
   if (finalTps.length === 0) {
     const virtualPendings: VirtualPendingLeg[] = []
     if (rangeLegCount > 0) {
@@ -286,11 +289,30 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
         })
       }
     }
+    const rangeLayeringFields =
+      manual.range_trading === true && reservedRangeLegs > 0
+        ? { rangeLayering: rangeLayeringMeta! }
+        : {}
+    const immediateUnits = rangeLegCount > 0
+      ? immediateLegs * targetUnits
+      : null
+    if (immediateUnits != null && immediateUnits < minUnits) {
+      return {
+        orders: [],
+        delay_ms,
+        fallback_reason: rangeFallbackReason ?? 'multi_trade_fallback_empty_tps',
+        ...(virtualPendings.length ? { virtualPendings } : {}),
+        ...rangeLayeringFields,
+      }
+    }
+    const emptyTpImmediateLot = immediateUnits != null
+      ? multiTradeUnitsToLot(immediateUnits, lotStep)
+      : manualLot
     const single = buildSingleOrder({
       orderBase,
       expirationFields,
       strictEntry,
-      manualLot,
+      manualLot: emptyTpImmediateLot,
       finalSl,
       finalTps,
       manual,
@@ -306,9 +328,7 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
     return {
       ...single,
       ...(virtualPendings.length ? { virtualPendings } : {}),
-      ...(manual.range_trading === true && reservedRangeLegs > 0
-        ? { rangeLayering: rangeLayeringMeta! }
-        : {}),
+      ...rangeLayeringFields,
     }
   }
 

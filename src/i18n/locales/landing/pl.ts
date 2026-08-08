@@ -9,7 +9,7 @@ export const landingPl: LandingTranslations = {
     faq: 'FAQ',
     docs: 'Dokumenty',
     signIn: 'Zaloguj się',
-    getStarted: 'Zacznij',
+    getStarted: 'Wybierz plan',
     dashboard: 'Panel kontrolny',
     menuOpen: 'Otwórz menu',
     menuClose: 'Zamknij menu',
@@ -18,7 +18,7 @@ export const landingPl: LandingTranslations = {
     headline: 'Jedna inteligentna platforma AI do kopiowania sygnałów Telegram',
     subheadline:
       'TScopier to kompleksowa platforma do kopiowania sygnałów z Telegrama, która łączy Telegram i kopiuje sygnały handlowe bezpośrednio na MT4/MT5 — bez skomplikowanych konfiguracji, bez EA i bez VPS.',
-    primaryCta: 'Zacznij za darmo',
+    primaryCta: 'Wybierz plan',
     secondaryCta: 'Zaloguj się',
     imageAlt:
       'TScopier panel kontrolny z saldem, dziennym zyskiem, wynikami handlu i wykresami wzrostu konta',
@@ -614,7 +614,7 @@ export const landingPl: LandingTranslations = {
     subtitle: 'Typowe kopiarki Telegram a platforma chmurowa zbudowana pod kątem szybkości, przejrzystości i skali.',
     otherLabel: 'Inne kopiarki',
     tscopierLabel: 'TScopier',
-    cta: 'Zacznij bezpłatnie',
+    cta: 'Wybierz plan',
     rows: [
       {
         aspect: 'Konfiguracja',
@@ -776,7 +776,7 @@ export const landingPl: LandingTranslations = {
       {
         question: 'Czy istnieje bezpłatny okres próbny?',
         answer:
-          'Advanced obejmuje 10-dniowy bezpłatny okres próbny w przypadku subskrypcji. Opłata za wersję podstawową jest naliczana od pierwszego dnia w wysokości 9,99 USD/miesiąc (lub 95,90 USD/rok przy rozliczeniu rocznym). Możesz przeglądać pulpit nawigacyjny przed subskrypcją, ale kopiowanie na żywo wymaga aktywnego planu.',
+          'Nie oferujemy bezpłatnego okresu próbnego. Wybierz Basic lub Advanced, zapłać w checkout, a następnie przejdź onboarding. Każdy plan ma 30-dniową gwarancję zwrotu.',
       },
       {
         question: 'Jaka jest różnica między rozliczeniami miesięcznymi i rocznymi?',
@@ -818,14 +818,14 @@ export const landingPl: LandingTranslations = {
   },
   pricingSnippet: {
     basic: 'Podstawowy – 9,99 USD/miesiąc',
-    advanced: 'Advanced – 10 dni bezpłatnie, następnie 39,99 USD/miesiąc',
+    advanced: 'Advanced — 39,99 USD/mies.',
   },
   footer: {
     cta: {
       title: 'Gotowy do kopiowania sygnałów bez pracy ręcznej?',
       subtitle:
         'Link Telegram, podłącz MT4 lub MT5 i rozpocznij kopiowanie w ciągu kilku minut — bez VPS, bez instalacji.',
-      primary: 'Rozpocznij 10-dniowy bezpłatny okres próbny',
+      primary: 'Wybierz plan',
       secondary: 'Zaloguj się',
     },
     tagline: 'Ultraszybka kopiarka sygnału Telegram dla kont MetaTrader.',

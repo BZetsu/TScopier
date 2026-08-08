@@ -1,5 +1,3 @@
-import { lazy, Suspense, useEffect } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
 import { BrokerAccountsProvider } from '../../context/BrokerAccountsContext'
 import { NotificationsProvider } from '../../context/NotificationsContext'
 import { HumanReviewProvider } from '../../context/HumanReviewContext'
@@ -7,27 +5,16 @@ import { AddTradingAccountProvider } from '../../context/AddTradingAccountContex
 import { PendingBrokerConnectionSync } from '../broker/PendingBrokerConnectionSync'
 import { BrokerTerminalHealthSync } from '../broker/BrokerTerminalHealthSync'
 import { AppLayout } from './AppLayout'
-import { useNeedsWelcome } from '../../hooks/useNeedsWelcome'
 import { LiveChatProvider } from '../../context/LiveChatContext'
 import { HumanReviewModal } from '../dashboard/HumanReviewModal'
-
-const WelcomeModal = lazy(() =>
-  import('../onboarding/WelcomeModal').then(m => ({ default: m.WelcomeModal })),
-)
+import { useAuth } from '../../context/AuthContext'
+import { useUserProfile } from '../../context/UserProfileContext'
 
 /** Authenticated app shell: shared broker state + dashboard layout. */
 export function AppShell() {
-  const navigate = useNavigate()
-  const location = useLocation()
-  const { needsWelcome, deferAppBootstrap } = useNeedsWelcome()
-  const onDashboardRoute = location.pathname === '/dashboard'
-    || location.pathname.startsWith('/dashboard/broker/')
-
-  useEffect(() => {
-    if (needsWelcome && !onDashboardRoute) {
-      navigate('/dashboard', { replace: true })
-    }
-  }, [needsWelcome, onDashboardRoute, navigate])
+  const { loading: authLoading } = useAuth()
+  const { loading: profileLoading } = useUserProfile()
+  const deferAppBootstrap = authLoading || profileLoading
 
   return (
     <BrokerAccountsProvider enabled={!deferAppBootstrap}>
@@ -39,11 +26,6 @@ export function AppShell() {
             <LiveChatProvider>
               <AppLayout />
               {!deferAppBootstrap ? <HumanReviewModal /> : null}
-              {needsWelcome ? (
-                <Suspense fallback={null}>
-                  <WelcomeModal />
-                </Suspense>
-              ) : null}
             </LiveChatProvider>
           </AddTradingAccountProvider>
         </HumanReviewProvider>

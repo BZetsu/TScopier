@@ -15,8 +15,9 @@ export const pricingJa: PricingBundleTranslations = {
     extraAccountUnit: '$10/口座/月',
     extraAccountUnitAnnual: '$96/口座/年',
     subscribe: '購読する',
-    startTrial: '10日間の無料トライアルを開始',
-    trialDays: '10日間無料トライアル',
+    startTrial: '登録する',
+    trialDays: '30日間返金保証',
+    moneyBackGuarantee: '30日間返金保証',
     features: '機能',
     popular: '一番人気',
     basicFeatures: [
