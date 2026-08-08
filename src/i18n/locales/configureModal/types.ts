@@ -39,6 +39,9 @@ export interface ConfigureModalTranslations {
   exportPresetsNameLabel: string
   exportPresetsNamePlaceholder: string
   exportPresetsAction: string
+  exportPresetsSelectHint: string
+  exportPresetsSelectAll: string
+  exportPresetsSelectNone: string
   presetsExported: string
   presetsImported: string
   presetsImportFailed: string

@@ -959,6 +959,7 @@ export function AccountConfigPage() {
   const [showManagePresetsModal, setShowManagePresetsModal] = useState(false)
   const [showExportPresetsModal, setShowExportPresetsModal] = useState(false)
   const [exportNameDraft, setExportNameDraft] = useState('')
+  const [exportSelectedIds, setExportSelectedIds] = useState<string[]>([])
   const [presetNameDraft, setPresetNameDraft] = useState('')
   const [pendingApplyPreset, setPendingApplyPreset] = useState<ChannelTradingPreset | null>(null)
   const [editingPreset, setEditingPreset] = useState<ChannelTradingPreset | null>(null)
@@ -1872,6 +1873,7 @@ export function AccountConfigPage() {
     setShowExportPresetsModal(false)
     setPresetNameDraft('')
     setExportNameDraft('')
+    setExportSelectedIds([])
     setPendingApplyPreset(null)
     setEditingPreset(null)
     setPendingDeletePreset(null)
@@ -2069,16 +2071,42 @@ export function AccountConfigPage() {
   const openExportPresetsModal = () => {
     if (tradingPresets.length === 0) return
     setError('')
-    const defaultName = tradingPresets.length === 1
-      ? tradingPresets[0]!.name
-      : 'tscopier-presets'
-    setExportNameDraft(defaultName)
+    const ids = tradingPresets.map(p => p.id)
+    setExportSelectedIds(ids)
+    setExportNameDraft(
+      tradingPresets.length === 1 ? tradingPresets[0]!.name : 'tscopier-presets',
+    )
     setShowExportPresetsModal(true)
   }
 
+  const setExportSelection = (nextIds: string[]) => {
+    setExportSelectedIds(nextIds)
+    if (nextIds.length === 1) {
+      const hit = tradingPresets.find(p => p.id === nextIds[0])
+      if (hit) setExportNameDraft(hit.name)
+      return
+    }
+    if (nextIds.length > 1) {
+      setExportNameDraft(prev => {
+        const singleNames = new Set(tradingPresets.map(p => p.name))
+        if (!prev.trim() || singleNames.has(prev.trim())) return 'tscopier-presets'
+        return prev
+      })
+    }
+  }
+
+  const toggleExportPreset = (presetId: string) => {
+    setExportSelection(
+      exportSelectedIds.includes(presetId)
+        ? exportSelectedIds.filter(id => id !== presetId)
+        : [...exportSelectedIds, presetId],
+    )
+  }
+
   const confirmExportPresets = () => {
-    if (tradingPresets.length === 0) return
-    const raw = exportNameDraft.trim() || 'tscopier-presets'
+    const selected = tradingPresets.filter(p => exportSelectedIds.includes(p.id))
+    if (selected.length === 0) return
+    const raw = exportNameDraft.trim() || (selected.length === 1 ? selected[0]!.name : 'tscopier-presets')
     const safe = raw
       .replace(/\.tscp$/i, '')
       .replace(/[<>:"/\\|?*\u0000-\u001f]+/g, '-')
@@ -2088,9 +2116,10 @@ export function AccountConfigPage() {
       .slice(0, 80)
       || 'tscopier-presets'
     try {
-      downloadTradingPresetsFile(tradingPresets, `${safe}${TSCOPIER_PRESETS_EXTENSION}`)
+      downloadTradingPresetsFile(selected, `${safe}${TSCOPIER_PRESETS_EXTENSION}`)
       setShowExportPresetsModal(false)
       setExportNameDraft('')
+      setExportSelectedIds([])
       setPresetStatusMessage(cm.presetsExported)
     } catch (err) {
       setError(err instanceof Error ? err.message : cm.presetsImportFailed)
@@ -4729,39 +4758,84 @@ export function AccountConfigPage() {
                   role="dialog"
                   aria-modal="true"
                   aria-labelledby="export-presets-title"
-                  className="w-full max-w-md rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 shadow-xl p-5 space-y-4"
+                  className="w-full max-w-md rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 shadow-xl overflow-hidden"
                 >
-                  <h4 id="export-presets-title" className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
-                    {cm.exportPresetsTitle}
-                  </h4>
-                  <ConfigureInput
-                    label={cm.exportPresetsNameLabel}
-                    value={exportNameDraft}
-                    placeholder={cm.exportPresetsNamePlaceholder}
-                    onChange={e => setExportNameDraft(e.target.value)}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter') confirmExportPresets()
-                    }}
-                  />
-                  <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
-                    <Button
-                      variant="ghost"
-                      className="w-full sm:w-auto"
-                      onClick={() => {
-                        setShowExportPresetsModal(false)
-                        setExportNameDraft('')
+                  <div className="px-5 pt-5 pb-3 space-y-3">
+                    <h4 id="export-presets-title" className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
+                      {cm.exportPresetsTitle}
+                    </h4>
+                    <p className="text-sm text-neutral-600 dark:text-neutral-400">
+                      {cm.exportPresetsSelectHint}
+                    </p>
+                    <div className="flex items-center gap-2 text-xs">
+                      <button
+                        type="button"
+                        className="text-primary-700 hover:underline dark:text-primary-400"
+                        onClick={() => setExportSelection(tradingPresets.map(p => p.id))}
+                      >
+                        {cm.exportPresetsSelectAll}
+                      </button>
+                      <span className="text-neutral-300 dark:text-neutral-600" aria-hidden>·</span>
+                      <button
+                        type="button"
+                        className="text-primary-700 hover:underline dark:text-primary-400"
+                        onClick={() => setExportSelection([])}
+                      >
+                        {cm.exportPresetsSelectNone}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="max-h-[min(40vh,16rem)] overflow-y-auto border-y border-neutral-100 dark:border-neutral-800">
+                    <ul className="divide-y divide-neutral-100 dark:divide-neutral-800">
+                      {tradingPresets.map(preset => {
+                        const checked = exportSelectedIds.includes(preset.id)
+                        return (
+                          <li key={preset.id}>
+                            <label className="flex items-center gap-3 px-5 py-3 text-sm text-neutral-900 dark:text-neutral-50 hover:bg-neutral-50 dark:hover:bg-neutral-800/60 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                className="rounded border-neutral-300 text-primary-600 focus:ring-primary-500"
+                                checked={checked}
+                                onChange={() => toggleExportPreset(preset.id)}
+                              />
+                              <span className="truncate">{preset.name}</span>
+                            </label>
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  </div>
+                  <div className="px-5 py-4 space-y-4">
+                    <ConfigureInput
+                      label={cm.exportPresetsNameLabel}
+                      value={exportNameDraft}
+                      placeholder={cm.exportPresetsNamePlaceholder}
+                      onChange={e => setExportNameDraft(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') confirmExportPresets()
                       }}
-                    >
-                      {cm.cancel}
-                    </Button>
-                    <Button
-                      className="w-full sm:w-auto"
-                      disabled={!exportNameDraft.trim()}
-                      onClick={confirmExportPresets}
-                    >
-                      <FileUp className="w-4 h-4 me-1.5" />
-                      {cm.exportPresetsAction}
-                    </Button>
+                    />
+                    <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+                      <Button
+                        variant="ghost"
+                        className="w-full sm:w-auto"
+                        onClick={() => {
+                          setShowExportPresetsModal(false)
+                          setExportNameDraft('')
+                          setExportSelectedIds([])
+                        }}
+                      >
+                        {cm.cancel}
+                      </Button>
+                      <Button
+                        className="w-full sm:w-auto"
+                        disabled={exportSelectedIds.length === 0 || !exportNameDraft.trim()}
+                        onClick={confirmExportPresets}
+                      >
+                        <FileUp className="w-4 h-4 me-1.5" />
+                        {cm.exportPresetsAction}
+                      </Button>
+                    </div>
                   </div>
                 </div>
               </div>
