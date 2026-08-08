@@ -13,6 +13,7 @@ type SentryAdapter = Pick<typeof Sentry,
   | 'setContext'
   | 'withScope'
   | 'flush'
+  | 'logger'
 >
 
 type CaptureOptions = {
@@ -202,6 +203,22 @@ function beforeBreadcrumb(breadcrumb: unknown): unknown {
   return { category: 'worker', message: '[REDACTED_BREADCRUMB]', level: 'info' }
 }
 
+function beforeSendLog(log: unknown): unknown {
+  const safe = safeForSentry(log)
+  if (!safe || typeof safe !== 'object' || Array.isArray(safe)) return null
+  const src = safe as Record<string, unknown>
+  const message = src.message
+  if (typeof message !== 'string') return null
+  const attributes = src.attributes
+  return {
+    level: src.level ?? 'info',
+    message: String(message).slice(0, 512),
+    attributes: attributes && typeof attributes === 'object' && !Array.isArray(attributes)
+      ? safeForSentry(attributes) as Record<string, unknown>
+      : undefined,
+  }
+}
+
 export function initWorkerSentry(env: NodeJS.ProcessEnv = process.env): void {
   if (initialized) return
   initialized = true
@@ -227,8 +244,10 @@ export function initWorkerSentry(env: NodeJS.ProcessEnv = process.env): void {
       tracePropagationTargets: [],
       sendDefaultPii: false,
       maxBreadcrumbs: 50,
+      enableLogs: true,
       beforeSend: beforeSend as never,
       beforeBreadcrumb: beforeBreadcrumb as never,
+      beforeSendLog: beforeSendLog as never,
     })
     enabled = true
     setWorkerGlobalTags(env)
@@ -330,6 +349,38 @@ export function captureWorkerMessage(message: string, opts: CaptureOptions): voi
       applyScope(scope, { ...opts, errorCode })
       sentry.captureMessage(String(safeForSentry(message)).slice(0, 240), opts.level ?? 'warning')
     })
+  } catch {
+    // best-effort only
+  }
+}
+
+export type WorkerLogLevel = 'info' | 'warn' | 'error'
+
+export function captureWorkerLog(
+  level: WorkerLogLevel,
+  message: string,
+  opts: CaptureOptions & { attributes?: Record<string, unknown> },
+): void {
+  if (!enabled) return
+  try {
+    const attributes: Record<string, unknown> = {
+      subsystem: safeName(opts.subsystem, 'unknown'),
+      operation: safeName(opts.operation, 'unknown'),
+    }
+    if (opts.errorCode) attributes.error_code = safeName(opts.errorCode, 'UNKNOWN').toUpperCase()
+    const tags = sanitizeTags(opts.tags)
+    if (tags) Object.assign(attributes, tags)
+    if (opts.attributes && typeof opts.attributes === 'object' && !Array.isArray(opts.attributes)) {
+      const safeAttributes = safeForSentry(opts.attributes)
+      if (safeAttributes && typeof safeAttributes === 'object' && !Array.isArray(safeAttributes)) {
+        Object.assign(attributes, safeAttributes as Record<string, unknown>)
+      }
+    }
+    const safeMessage = String(safeForSentry(message)).slice(0, 512)
+    const log = sentry.logger
+    if (level === 'info') log.info(safeMessage, attributes)
+    else if (level === 'warn') log.warn(safeMessage, attributes)
+    else log.error(safeMessage, attributes)
   } catch {
     // best-effort only
   }
