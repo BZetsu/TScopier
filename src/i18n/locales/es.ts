@@ -127,6 +127,12 @@ export const es: Translations = {
       emptyReply: '¿En qué más puedo ayudarte?',
       actionDone: 'Listo.',
       errorFallback: 'Algo salió mal. Inténtalo de nuevo.',
+      attachImage: 'Adjuntar imagen',
+      removeImage: 'Quitar imagen',
+      imageOnlyCaption: 'Por favor mira esta imagen.',
+      imageTooLarge: 'La imagen es demasiado grande. Prueba con una captura más pequeña.',
+      imageTypeUnsupported: 'Usa una imagen JPEG, PNG, WebP o GIF.',
+      imageLimitReached: 'Puedes adjuntar hasta 3 imágenes por mensaje.',
     },
   },
   globalSearch: {

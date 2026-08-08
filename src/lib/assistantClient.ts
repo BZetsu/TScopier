@@ -1,8 +1,11 @@
 import { ensureFreshAuthSession } from './fxsocketBroker'
+import { isAssistantImageDataUrl } from './assistantImages'
 
 export type AssistantChatMessage = {
   role: 'user' | 'assistant'
   content: string
+  /** Optional data-URL images (user turns only). Sent as OpenAI vision parts. */
+  images?: string[]
 }
 
 export type PendingClientAction = {
@@ -86,15 +89,41 @@ export async function executeAssistantAction(params: {
 
 const HISTORY_PREFIX = 'tscopier.assistant.history.'
 
+function normalizeStoredMessage(m: AssistantChatMessage): AssistantChatMessage | null {
+  if (!m || (m.role !== 'user' && m.role !== 'assistant') || typeof m.content !== 'string') {
+    return null
+  }
+  const images =
+    m.role === 'user' && Array.isArray(m.images)
+      ? m.images.filter(isAssistantImageDataUrl).slice(0, 3)
+      : undefined
+  return images?.length ? { role: m.role, content: m.content, images } : { role: m.role, content: m.content }
+}
+
+/** Keep images only on the newest user turn to stay under sessionStorage quotas. */
+function compactHistoryForStorage(messages: AssistantChatMessage[]): AssistantChatMessage[] {
+  const sliced = messages.slice(-20)
+  let keptImages = false
+  const out: AssistantChatMessage[] = []
+  for (let i = sliced.length - 1; i >= 0; i--) {
+    const m = sliced[i]
+    if (m.role === 'user' && m.images?.length && !keptImages) {
+      out.push(m)
+      keptImages = true
+    } else {
+      out.push({ role: m.role, content: m.content })
+    }
+  }
+  return out.reverse()
+}
+
 export function loadAssistantHistory(userId: string): AssistantChatMessage[] {
   try {
     const raw = sessionStorage.getItem(HISTORY_PREFIX + userId)
     if (!raw) return []
     const parsed = JSON.parse(raw) as AssistantChatMessage[]
     if (!Array.isArray(parsed)) return []
-    return parsed
-      .filter(m => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
-      .slice(-20)
+    return parsed.map(normalizeStoredMessage).filter((m): m is AssistantChatMessage => m != null).slice(-20)
   } catch {
     return []
   }
@@ -102,8 +131,11 @@ export function loadAssistantHistory(userId: string): AssistantChatMessage[] {
 
 export function saveAssistantHistory(userId: string, messages: AssistantChatMessage[]): void {
   try {
-    sessionStorage.setItem(HISTORY_PREFIX + userId, JSON.stringify(messages.slice(-20)))
+    sessionStorage.setItem(
+      HISTORY_PREFIX + userId,
+      JSON.stringify(compactHistoryForStorage(messages)),
+    )
   } catch {
-    // ignore
+    // ignore quota / private mode
   }
 }

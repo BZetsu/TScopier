@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
-import { Loader2, Send, Sparkles, X } from 'lucide-react'
+import { ImagePlus, Loader2, Send, Sparkles, X } from 'lucide-react'
 import { useAssistant } from '../../context/AssistantContext'
 import { useAddTradingAccount } from '../../context/AddTradingAccountContext'
 import { useLiveChat } from '../../context/LiveChatContext'
@@ -12,7 +12,13 @@ import {
   postAssistantChat,
   type PendingConfirmation,
 } from '../../lib/assistantClient'
+import {
+  ASSISTANT_MAX_IMAGES,
+  fileToAssistantImageDataUrl,
+  isAssistantImageType,
+} from '../../lib/assistantImages'
 import { runPendingClientActions } from '../../lib/assistantActions'
+import { AssistantChatBubble, AssistantTypingIndicator } from './AssistantChatBubble'
 import { Button } from '../ui/Button'
 import clsx from 'clsx'
 
@@ -34,11 +40,14 @@ export function AssistantPanel() {
   } = useAssistant()
 
   const [draft, setDraft] = useState('')
+  const [draftImages, setDraftImages] = useState<string[]>([])
   const [sending, setSending] = useState(false)
+  const [attaching, setAttaching] = useState(false)
   const [error, setError] = useState('')
   const [confirmBusy, setConfirmBusy] = useState<string | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const a = t.nav.assistant
 
@@ -56,7 +65,7 @@ export function AssistantPanel() {
   useEffect(() => {
     if (!open) return
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' })
-  }, [open, messages, pendingConfirmations, sending])
+  }, [open, messages, pendingConfirmations, sending, draftImages])
 
   if (!open) return null
 
@@ -76,12 +85,50 @@ export function AssistantPanel() {
     }
   }
 
+  const addImageFiles = async (files: FileList | File[]) => {
+    const list = Array.from(files).filter(f => isAssistantImageType(f.type))
+    if (!list.length) {
+      setError(a.imageTypeUnsupported)
+      return
+    }
+    const room = ASSISTANT_MAX_IMAGES - draftImages.length
+    if (room <= 0) {
+      setError(a.imageLimitReached)
+      return
+    }
+    setError('')
+    setAttaching(true)
+    try {
+      const next: string[] = []
+      for (const file of list.slice(0, room)) {
+        try {
+          next.push(await fileToAssistantImageDataUrl(file))
+        } catch (e) {
+          const code = e instanceof Error ? e.message : ''
+          setError(code === 'too_large' ? a.imageTooLarge : a.imageTypeUnsupported)
+        }
+      }
+      if (next.length) setDraftImages(prev => [...prev, ...next].slice(0, ASSISTANT_MAX_IMAGES))
+    } finally {
+      setAttaching(false)
+    }
+  }
+
   const send = async () => {
     const text = draft.trim()
-    if (!text || sending) return
+    if ((!text && draftImages.length === 0) || sending || attaching) return
     setError('')
     setDraft('')
-    const nextMessages = [...messages, { role: 'user' as const, content: text }]
+    const images = draftImages
+    setDraftImages([])
+    const nextMessages = [
+      ...messages,
+      {
+        role: 'user' as const,
+        content: text || a.imageOnlyCaption,
+        ...(images.length ? { images } : {}),
+      },
+    ]
     persistMessages(nextMessages)
     setSending(true)
     try {
@@ -91,9 +138,6 @@ export function AssistantPanel() {
         { role: 'assistant', content: res.assistant_message || a.emptyReply },
       ])
       await applySideEffects(res.pending_client_actions, res.pending_confirmations)
-      if (res.pending_confirmations.length === 0) {
-        // Mutation tools may have run only as proposals; profile refresh if needed later.
-      }
     } catch (e) {
       setError(e instanceof Error ? e.message : a.errorFallback)
     } finally {
@@ -134,6 +178,23 @@ export function AssistantPanel() {
     }
   }
 
+  const onPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = e.clipboardData?.items
+    if (!items) return
+    const files: File[] = []
+    for (const item of Array.from(items)) {
+      if (item.kind === 'file' && item.type.startsWith('image/')) {
+        const file = item.getAsFile()
+        if (file) files.push(file)
+      }
+    }
+    if (!files.length) return
+    e.preventDefault()
+    void addImageFiles(files)
+  }
+
+  const canSend = (draft.trim().length > 0 || draftImages.length > 0) && !sending && !attaching
+
   return createPortal(
     <div className="fixed inset-0 z-[80] flex justify-end" role="dialog" aria-modal="true" aria-label={a.title}>
       <button
@@ -166,38 +227,44 @@ export function AssistantPanel() {
           </button>
         </header>
 
-        <div ref={listRef} className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
+        <div
+          ref={listRef}
+          className={clsx(
+            'flex-1 space-y-4 overflow-y-auto px-4 py-5',
+            'bg-[radial-gradient(ellipse_at_top,_rgba(13,148,136,0.06),_transparent_55%),linear-gradient(to_bottom,_#f8fafc,_#ffffff)]',
+            'dark:bg-[radial-gradient(ellipse_at_top,_rgba(13,148,136,0.12),_transparent_50%),linear-gradient(to_bottom,_#020617,_#0f172a)]',
+          )}
+        >
           {messages.length === 0 && (
-            <div className="rounded-xl border border-dashed border-neutral-200 bg-neutral-50 p-4 text-sm text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900/50 dark:text-neutral-300">
-              <p className="font-medium text-neutral-800 dark:text-neutral-100">{a.welcomeTitle}</p>
-              <ul className="mt-2 list-disc space-y-1 ps-4 text-xs">
+            <div className="animate-assistant-msg-in mx-auto max-w-sm pt-6 text-center">
+              <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-teal-500 to-teal-700 text-white shadow-lg shadow-teal-600/25">
+                <Sparkles className="h-5 w-5" />
+              </div>
+              <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">{a.welcomeTitle}</p>
+              <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">{a.subtitle}</p>
+              <div className="mt-4 flex flex-wrap justify-center gap-2">
                 {a.suggestions.map(s => (
-                  <li key={s}>
-                    <button
-                      type="button"
-                      className="text-start text-teal-700 underline-offset-2 hover:underline dark:text-teal-300"
-                      onClick={() => setDraft(s)}
-                    >
-                      {s}
-                    </button>
-                  </li>
+                  <button
+                    key={s}
+                    type="button"
+                    className="rounded-full border border-neutral-200/90 bg-white/90 px-3 py-1.5 text-start text-xs text-neutral-700 shadow-sm transition hover:border-teal-300 hover:text-teal-800 dark:border-neutral-700 dark:bg-neutral-900/80 dark:text-neutral-200 dark:hover:border-teal-700 dark:hover:text-teal-200"
+                    onClick={() => setDraft(s)}
+                  >
+                    {s}
+                  </button>
                 ))}
-              </ul>
+              </div>
             </div>
           )}
 
           {messages.map((m, i) => (
-            <div
+            <AssistantChatBubble
               key={`${m.role}-${i}`}
-              className={clsx(
-                'max-w-[92%] rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap',
-                m.role === 'user'
-                  ? 'ms-auto bg-teal-600 text-white'
-                  : 'me-auto bg-neutral-100 text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100',
-              )}
-            >
-              {m.content}
-            </div>
+              message={m}
+              hidePlainCaption={
+                Boolean(m.images?.length) && m.content.trim() === a.imageOnlyCaption
+              }
+            />
           ))}
 
           {pendingConfirmations.map((item, idx) => {
@@ -206,10 +273,12 @@ export function AssistantPanel() {
             return (
               <div
                 key={`${item.tool}-${idx}`}
-                className="rounded-xl border border-amber-200 bg-amber-50 p-3 dark:border-amber-900/60 dark:bg-amber-950/30"
+                className="animate-assistant-msg-in ms-[2.375rem] rounded-2xl border border-amber-200/90 bg-amber-50/95 p-3.5 shadow-sm dark:border-amber-900/50 dark:bg-amber-950/40"
               >
-                <p className="text-sm font-medium text-amber-950 dark:text-amber-100">{item.summary}</p>
-                <div className="mt-2 flex gap-2">
+                <p className="text-[13.5px] font-medium leading-relaxed text-amber-950 dark:text-amber-50">
+                  {item.summary}
+                </p>
+                <div className="mt-3 flex gap-2">
                   <Button
                     type="button"
                     size="sm"
@@ -233,12 +302,7 @@ export function AssistantPanel() {
             )
           })}
 
-          {sending && (
-            <div className="me-auto flex items-center gap-2 rounded-2xl bg-neutral-100 px-3 py-2 text-xs text-neutral-500 dark:bg-neutral-900">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              {a.thinking}
-            </div>
-          )}
+          {sending ? <AssistantTypingIndicator label={a.thinking} /> : null}
         </div>
 
         {error ? (
@@ -246,12 +310,60 @@ export function AssistantPanel() {
         ) : null}
 
         <footer className="border-t border-neutral-200 p-3 dark:border-neutral-800">
+          {draftImages.length > 0 ? (
+            <div className="mb-2 flex flex-wrap gap-2">
+              {draftImages.map((src, idx) => (
+                <div key={`${idx}-${src.slice(-12)}`} className="relative h-16 w-16 shrink-0">
+                  <img
+                    src={src}
+                    alt=""
+                    className="h-16 w-16 rounded-lg object-cover ring-1 ring-neutral-200 dark:ring-neutral-700"
+                  />
+                  <button
+                    type="button"
+                    className="absolute -end-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-neutral-900 text-white shadow dark:bg-neutral-100 dark:text-neutral-900"
+                    aria-label={a.removeImage}
+                    onClick={() => setDraftImages(prev => prev.filter((_, i) => i !== idx))}
+                    disabled={sending}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : null}
           <div className="flex items-end gap-2">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif"
+              multiple
+              className="hidden"
+              onChange={e => {
+                const files = e.target.files
+                if (files?.length) void addImageFiles(files)
+                e.target.value = ''
+              }}
+            />
+            <button
+              type="button"
+              className="mb-0.5 rounded-lg p-2 text-neutral-500 hover:bg-neutral-100 disabled:opacity-50 dark:hover:bg-neutral-800"
+              aria-label={a.attachImage}
+              disabled={sending || attaching || draftImages.length >= ASSISTANT_MAX_IMAGES}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              {attaching ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <ImagePlus className="h-4 w-4" />
+              )}
+            </button>
             <textarea
               ref={inputRef}
               value={draft}
               onChange={e => setDraft(e.target.value)}
               onKeyDown={onKeyDown}
+              onPaste={onPaste}
               rows={2}
               placeholder={a.placeholder}
               className="min-h-[44px] flex-1 resize-none rounded-xl border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-900 outline-none focus:border-teal-500 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"
@@ -261,7 +373,7 @@ export function AssistantPanel() {
               type="button"
               size="sm"
               className="shrink-0"
-              disabled={sending || !draft.trim()}
+              disabled={!canSend}
               onClick={() => void send()}
               aria-label={a.send}
             >

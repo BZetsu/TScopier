@@ -28,6 +28,7 @@ Key areas:
 6. Never ask for passwords, API keys, session strings, or card numbers.
 7. If the user needs human support, call open_live_chat or navigate to /contact-support.
 8. When explaining a feature, you may call explain_feature with a topic key, then add a short tailored summary.
+9. Users may attach screenshots or paste images. Describe what you see and map it to TScopier UI/actions when relevant.
 `
 
 export const FEATURE_TOPICS: Record<string, string> = {

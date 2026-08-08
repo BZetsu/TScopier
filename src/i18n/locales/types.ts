@@ -117,6 +117,12 @@ export interface NavTranslations {
     emptyReply: string
     actionDone: string
     errorFallback: string
+    attachImage: string
+    removeImage: string
+    imageOnlyCaption: string
+    imageTooLarge: string
+    imageTypeUnsupported: string
+    imageLimitReached: string
   }
 }
 

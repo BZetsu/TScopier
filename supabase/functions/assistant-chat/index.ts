@@ -2,7 +2,7 @@
  * assistant-chat — JWT-authenticated OpenAI tool-calling assistant for in-app help + actions.
  *
  * POST body:
- *   { messages: [{ role, content }], locale?: string }
+ *   { messages: [{ role, content, images?: dataUrl[] }], locale?: string }
  *   OR { execute: { tool: string, args: Record<string, unknown> } }  // confirmed mutations
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
@@ -22,10 +22,16 @@ const corsHeaders = {
 const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY") ?? "";
 const MODEL = Deno.env.get("ASSISTANT_OPENAI_MODEL")?.trim() || "gpt-4o-mini";
 const MAX_TOOL_ROUNDS = 4;
+const MAX_IMAGES_PER_MESSAGE = 3;
+const MAX_IMAGE_DATA_URL_CHARS = 1_400_000;
+
+type ContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
 
 type ChatMessage = {
   role: string
-  content: string | null
+  content: string | null | ContentPart[]
   tool_calls?: ToolCall[]
   tool_call_id?: string
 }
@@ -658,6 +664,25 @@ async function executeTool(
 
 const EXECUTABLE_MUTATIONS = new Set(["set_copier_paused", "apply_preset", "save_preset"]);
 
+function isImageDataUrl(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.startsWith("data:image/") &&
+    value.includes(";base64,") &&
+    value.length <= MAX_IMAGE_DATA_URL_CHARS
+  );
+}
+
+function toOpenAiUserContent(text: string, images: string[]): string | ContentPart[] {
+  const clipped = text.slice(0, 8000);
+  const valid = images.filter(isImageDataUrl).slice(0, MAX_IMAGES_PER_MESSAGE);
+  if (!valid.length) return clipped;
+  return [
+    { type: "text", text: clipped || "Please look at the attached image(s)." },
+    ...valid.map((url) => ({ type: "image_url" as const, image_url: { url } })),
+  ];
+}
+
 async function openaiChat(messages: ChatMessage[]) {
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -737,10 +762,15 @@ Deno.serve(async (req: Request) => {
         m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string"
       )
       .slice(-20)
-      .map((m: { role: string; content: string }) => ({
-        role: m.role,
-        content: m.content.slice(0, 8000),
-      })),
+      .map((m: { role: string; content: string; images?: unknown }) => {
+        const images = Array.isArray(m.images)
+          ? m.images.filter(isImageDataUrl).slice(0, MAX_IMAGES_PER_MESSAGE)
+          : [];
+        if (m.role === "user" && images.length) {
+          return { role: m.role, content: toOpenAiUserContent(m.content, images) };
+        }
+        return { role: m.role, content: m.content.slice(0, 8000) };
+      }),
   ];
 
   if (messages.length < 2) return bad(400, "messages required");
