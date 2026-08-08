@@ -2,6 +2,15 @@
 
 ## Changelog
 
+### 2026-08-08 — Worker Sentry Logs: enable console capture via consoleIntegration (one-switch fix)
+
+- **Context (user request):** Sentry Logs showed only 3 `worker startup` logs (3 worker restarts). Root cause verified in code, not guessed: the worker emits all real logging through `console.*` — 770 calls across 113 files — but `initWorkerSentry` was initialized with `defaultIntegrations: false, integrations: []`, which excluded the SDK's `ConsoleLogs` integration that pipes console output into Sentry Logs. The only `Sentry.logger` call site was the startup log in `worker/src/index.ts:50`. `enableLogs: true` (internal option `ln`) was already set — proven working because the 3 startup logs arrived.
+- **Changes:**
+  - `worker/src/observability/sentry.ts` — `integrations: []` → `integrations: [Sentry.consoleIntegration()]` (one line). This installs the `ConsoleLogs` integration (`@sentry/node@10.69.0`), which captures `console.debug/info/warn/error/log/trace/assert` as logs. Security is preserved: every captured log flows through `_INTERNAL_captureLog` → our existing `beforeSendLog` (`safeForSentry` on the whole log object — JWT/Bearer/API-key/email/phone redaction + 512-char message cap + sanitized attributes).
+  - `worker/src/observability/sentry.test.ts` — updated the "default integrations disabled" test: `integrations` is now length 1 and its `name` is `'Console'` (verified against the installed SDK; the sourcemap doc name `ConsoleLogs` is not what the object reports).
+- **Verification:** worker `tsc --noEmit` clean; `npm run build` clean; `sentry.test.ts` 35/35 pass.
+- **Follow-up (deploy):** push to `upstream/staging`, redeploy worker on staging Railway (listener + trade worker); expect console.log traffic in Sentry Logs immediately. Optionally set `SENTRY_LOGS_MIN_LEVEL=warn` to cut volume. Note: `consoleIntegration` captures at all levels, so gramjs/Telegram library console noise may also appear — revisit with `levels` filter if too chatty.
+
 ### 2026-08-08 — Worker Sentry Logs pipeline (staging onboarding follow-up)
 
 - **Context (user request):** Sentry onboarding for `tscopier-worker-staging` showed "Waiting for this project's first log". The worker already had a hardened Sentry integration for **issues** (`captureWorkerError/Warning/Message`, breadcrumbs, business events) gated on `SENTRY_ENABLED` + `SENTRY_DSN`, but the SDK logs pipeline was never enabled — `@sentry/node@10.69.0` (installed, ≥9.41) was configured without `enableLogs`, so no logs reached the Sentry Logs tab. The staging Railway listener + trade worker already had `SENTRY_ENABLED=true` + a DSN set.

@@ -583,7 +583,9 @@ test('default integrations and automatic tracing are disabled', () => {
   const mock = enabledMock()
   const opts = initOptions(mock)
   assert.equal(opts.defaultIntegrations, false)
-  assert.deepEqual(opts.integrations, [])
+  const integrations = opts.integrations as { name?: string }[]
+  assert.equal(integrations.length, 1)
+  assert.equal(integrations[0].name, 'Console')
   assert.equal(opts.sendDefaultPii, false)
   assert.equal(opts.tracesSampleRate, 0)
   assert.equal(opts.profilesSampleRate, 0)
