@@ -6,6 +6,8 @@ import { PendingBrokerConnectionSync } from '../broker/PendingBrokerConnectionSy
 import { BrokerTerminalHealthSync } from '../broker/BrokerTerminalHealthSync'
 import { AppLayout } from './AppLayout'
 import { LiveChatProvider } from '../../context/LiveChatContext'
+import { AssistantProvider } from '../../context/AssistantContext'
+import { AssistantPanel } from '../assistant/AssistantPanel'
 import { HumanReviewModal } from '../dashboard/HumanReviewModal'
 import { useAuth } from '../../context/AuthContext'
 import { useUserProfile } from '../../context/UserProfileContext'
@@ -24,8 +26,11 @@ export function AppShell() {
         <HumanReviewProvider enabled={!deferAppBootstrap}>
           <AddTradingAccountProvider>
             <LiveChatProvider>
-              <AppLayout />
-              {!deferAppBootstrap ? <HumanReviewModal /> : null}
+              <AssistantProvider>
+                <AppLayout />
+                <AssistantPanel />
+                {!deferAppBootstrap ? <HumanReviewModal /> : null}
+              </AssistantProvider>
             </LiveChatProvider>
           </AddTradingAccountProvider>
         </HumanReviewProvider>
