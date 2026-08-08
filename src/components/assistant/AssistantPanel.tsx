@@ -412,7 +412,12 @@ export function AssistantPanel() {
       if (item.tool === 'set_copier_paused') {
         await refreshProfile()
       }
-      if (item.tool === 'update_channel_config' || item.tool === 'apply_preset' || item.tool === 'save_preset') {
+      if (
+        item.tool === 'set_broker_active' ||
+        item.tool === 'update_channel_config' ||
+        item.tool === 'apply_preset' ||
+        item.tool === 'save_preset'
+      ) {
         await refreshBrokers({ silent: true }).catch(() => {})
       }
       await applySideEffects(res.pending_client_actions, res.pending_confirmations)

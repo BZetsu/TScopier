@@ -83,6 +83,26 @@ export async function saveUserProfile(
   if (error) throw new Error(error.message)
 }
 
+/** Patch only the provided columns (avoids full-row upsert schema mismatches). */
+export async function updateUserProfileFields(
+  userId: string,
+  patch: Partial<Omit<UserProfile, 'user_id' | 'created_at' | 'updated_at'>>,
+): Promise<void> {
+  const {
+    is_admin: _isAdmin,
+    admin_until: _adminUntil,
+    subscription_status: _subscriptionStatus,
+    referred_by_user_id: _referredByUserId,
+    email_verified_at: _emailVerifiedAt,
+    ...safePatch
+  } = patch
+  const { error } = await supabase
+    .from('user_profiles')
+    .update({ ...safePatch, updated_at: new Date().toISOString() })
+    .eq('user_id', userId)
+  if (error) throw new Error(error.message)
+}
+
 export async function updatePassword(newPassword: string): Promise<void> {
   const { error } = await supabase.auth.updateUser({ password: newPassword })
   if (error) throw new Error(error.message)

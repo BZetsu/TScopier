@@ -7,6 +7,7 @@ const NAV_ALLOWLIST = new Set([
   '/copier-engine',
   '/account-config',
   '/channels',
+  '/backtest',
   '/billing',
   '/contact-support',
   '/pricing',

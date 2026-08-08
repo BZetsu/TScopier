@@ -9,6 +9,7 @@ describe('assistantActions navigate allowlist', () => {
       '/copier-engine',
       '/account-config',
       '/channels',
+      '/backtest',
       '/billing',
       '/contact-support',
       '/pricing',

@@ -77,6 +77,7 @@ const NAV_ALLOWLIST = new Set([
   "/copier-engine",
   "/account-config",
   "/channels",
+  "/backtest",
   "/billing",
   "/contact-support",
   "/pricing",
@@ -96,7 +97,7 @@ const TOOL_DEFS = [
     function: {
       name: "set_copier_paused",
       description:
-        "Pause or resume the copier. Call first without confirmed; UI will confirm, then client re-executes with confirmed=true.",
+        "Pause or resume the ENTIRE copier for the user (all brokers). Do NOT use this to stop a single broker — use set_broker_active instead. Call first without confirmed; UI will confirm, then client re-executes with confirmed=true.",
       parameters: {
         type: "object",
         properties: {
@@ -104,6 +105,29 @@ const TOOL_DEFS = [
           confirmed: { type: "boolean" },
         },
         required: ["paused"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "set_broker_active",
+      description:
+        "Enable or disable copying on ONE broker account (sets broker_accounts.is_active). Use when the user wants to stop/start a specific account (e.g. Exness Demo) without pausing the whole copier. Resolve by broker_account_id, account_login, or label. Call without confirmed first.",
+      parameters: {
+        type: "object",
+        properties: {
+          broker_account_id: { type: "string" },
+          account_login: { type: "string" },
+          label: { type: "string", description: "Broker display label, e.g. Exness Demo" },
+          is_active: {
+            type: "boolean",
+            description: "true = copy to this broker; false = stop copying to this broker only",
+          },
+          confirmed: { type: "boolean" },
+        },
+        required: ["is_active"],
         additionalProperties: false,
       },
     },
@@ -306,12 +330,36 @@ const TOOL_DEFS = [
         properties: {
           path: {
             type: "string",
-            description: "One of: /dashboard /copier-engine /account-config /channels /billing /contact-support /pricing",
+            description: "One of: /dashboard /copier-engine /account-config /channels /backtest /billing /contact-support /pricing",
           },
         },
         required: ["path"],
         additionalProperties: false,
       },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_backtests",
+      description:
+        "List the user's recent signal backtest runs (status, dates, total pips / summary). Use when they ask about past backtests or results.",
+      parameters: {
+        type: "object",
+        properties: {
+          limit: { type: "number", description: "Max runs to return (default 10, max 20)" },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "open_backtest",
+      description:
+        "Open the Backtest page (/backtest) so the user can pull channel signals and run a backtest. Prefer this when they ask to run a backtest or open the backtest page.",
+      parameters: { type: "object", properties: {}, additionalProperties: false },
     },
   },
   {
@@ -398,6 +446,7 @@ async function toolListBrokers(supabase: SupabaseClient, userId: string): Promis
         account_login: b.account_login ?? null,
         platform: b.platform,
         is_active: b.is_active,
+        copying: b.is_active === true,
         connected: Boolean(b.fxsocket_account_id),
         broker_server: b.broker_server ?? null,
       })),
@@ -415,6 +464,7 @@ async function resolveBroker(
 ): Promise<{ broker: ResolvedBroker } | { error: string }> {
   const id = String(args.broker_account_id ?? "").trim();
   const login = String(args.account_login ?? args.broker_login ?? "").trim();
+  const labelQuery = String(args.label ?? args.broker_label ?? "").trim().toLowerCase();
 
   if (id) {
     const { data, error } = await supabase
@@ -471,7 +521,35 @@ async function resolveBroker(
     return { error: `No broker found with account login ${login}` };
   }
 
-  return { error: "Provide broker_account_id or account_login" };
+  if (labelQuery) {
+    const { data: all, error } = await supabase
+      .from("broker_accounts")
+      .select("id,account_login,label")
+      .eq("user_id", userId);
+    if (error) return { error: error.message };
+    const matches = (all ?? []).filter((b) => {
+      const label = String(b.label ?? "").trim().toLowerCase();
+      return label === labelQuery || label.includes(labelQuery);
+    });
+    if (matches.length === 1) {
+      const hit = matches[0];
+      return {
+        broker: {
+          id: hit.id,
+          account_login: hit.account_login ?? null,
+          label: hit.label ?? null,
+        },
+      };
+    }
+    if (matches.length > 1) {
+      return {
+        error: `Multiple brokers match "${labelQuery}". Specify account_login.`,
+      };
+    }
+    return { error: `No broker found matching label "${labelQuery}"` };
+  }
+
+  return { error: "Provide broker_account_id, account_login, or label" };
 }
 
 async function resolveChannel(
@@ -545,6 +623,61 @@ async function toolListPresets(supabase: SupabaseClient, userId: string): Promis
   return { content: JSON.stringify({ presets: data ?? [] }) };
 }
 
+async function toolListBacktests(
+  supabase: SupabaseClient,
+  userId: string,
+  args: Record<string, unknown>,
+): Promise<ToolResult> {
+  const limitRaw = Number(args.limit ?? 10);
+  const limit = Number.isFinite(limitRaw) ? Math.min(20, Math.max(1, Math.floor(limitRaw))) : 10;
+  const { data, error } = await supabase
+    .from("backtest_runs")
+    .select("id, name, status, summary, config, created_at, completed_at, error_message")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false })
+    .limit(40);
+  if (error) return { content: JSON.stringify({ error: error.message }) };
+
+  const runs = (data ?? [])
+    .filter((row) => {
+      const cfg = row.config && typeof row.config === "object"
+        ? (row.config as Record<string, unknown>)
+        : {};
+      return cfg.syncOnly !== true;
+    })
+    .slice(0, limit)
+    .map((row) => {
+      const summary = row.summary && typeof row.summary === "object"
+        ? (row.summary as Record<string, unknown>)
+        : null;
+      const cfg = row.config && typeof row.config === "object"
+        ? (row.config as Record<string, unknown>)
+        : {};
+      return {
+        id: row.id,
+        name: row.name,
+        status: row.status,
+        created_at: row.created_at,
+        completed_at: row.completed_at,
+        error_message: row.error_message,
+        date_from: cfg.dateFrom ?? null,
+        date_to: cfg.dateTo ?? null,
+        symbols: Array.isArray(cfg.symbols) ? cfg.symbols : null,
+        total_pips: summary?.totalPips ?? null,
+        win_rate: summary?.winRate ?? null,
+        net_pnl: summary?.netPnl ?? null,
+        traded_signals: summary?.tradedSignals ?? null,
+      };
+    });
+
+  return {
+    content: JSON.stringify({
+      runs,
+      hint: "To run a new backtest, call open_backtest and guide: pick channel → date range → Pull signals → pick symbol → Run.",
+    }),
+  };
+}
+
 async function toolSetCopierPaused(
   supabase: SupabaseClient,
   userId: string,
@@ -558,7 +691,9 @@ async function toolSetCopierPaused(
       pendingConfirmation: {
         tool: "set_copier_paused",
         args: { paused },
-        summary: paused ? "Pause the copier?" : "Resume the copier?",
+        summary: paused
+          ? "Pause the entire copier for all brokers?"
+          : "Resume the entire copier for all brokers?",
       },
     };
   }
@@ -568,6 +703,57 @@ async function toolSetCopierPaused(
     .eq("user_id", userId);
   if (error) return { content: JSON.stringify({ error: error.message }) };
   return { content: JSON.stringify({ ok: true, copier_paused: paused }) };
+}
+
+async function toolSetBrokerActive(
+  supabase: SupabaseClient,
+  userId: string,
+  args: Record<string, unknown>,
+): Promise<ToolResult> {
+  if (typeof args.is_active !== "boolean") {
+    return { content: JSON.stringify({ error: "is_active boolean required" }) };
+  }
+  const isActive = args.is_active === true;
+  const brokerRes = await resolveBroker(supabase, userId, args);
+  if ("error" in brokerRes) return { content: JSON.stringify({ error: brokerRes.error }) };
+  const broker = brokerRes.broker;
+  const name = broker.label || broker.account_login || broker.id;
+
+  const resolvedArgs = {
+    broker_account_id: broker.id,
+    account_login: broker.account_login ?? undefined,
+    label: broker.label ?? undefined,
+    is_active: isActive,
+  };
+
+  if (args.confirmed !== true) {
+    return {
+      content: JSON.stringify({ needs_confirmation: true, ...resolvedArgs }),
+      pendingConfirmation: {
+        tool: "set_broker_active",
+        args: resolvedArgs,
+        summary: isActive
+          ? `Start copying on "${name}"?`
+          : `Stop copying on "${name}" only (other brokers keep running)?`,
+      },
+    };
+  }
+
+  const { error } = await supabase
+    .from("broker_accounts")
+    .update({ is_active: isActive, updated_at: new Date().toISOString() })
+    .eq("id", broker.id)
+    .eq("user_id", userId);
+  if (error) return { content: JSON.stringify({ error: error.message }) };
+  return {
+    content: JSON.stringify({
+      ok: true,
+      broker_account_id: broker.id,
+      label: broker.label,
+      account_login: broker.account_login,
+      is_active: isActive,
+    }),
+  };
 }
 
 async function toolGetChannelConfig(
@@ -1028,6 +1214,15 @@ function runClientActionTool(name: string, args: Record<string, unknown>): ToolR
           summary: "Open live chat with support",
         },
       };
+    case "open_backtest":
+      return {
+        content: JSON.stringify({ queued: true, path: "/backtest" }),
+        pendingClientAction: {
+          type: "navigate",
+          summary: "Open Backtest",
+          args: { path: "/backtest" },
+        },
+      };
     case "propose_config_change":
       return {
         content: JSON.stringify({ queued: true }),
@@ -1058,6 +1253,8 @@ async function executeTool(
       return toolGetSetupStatus(supabase, userId);
     case "set_copier_paused":
       return toolSetCopierPaused(supabase, userId, args);
+    case "set_broker_active":
+      return toolSetBrokerActive(supabase, userId, args);
     case "list_brokers":
       return toolListBrokers(supabase, userId);
     case "list_channels":
@@ -1068,6 +1265,8 @@ async function executeTool(
       return toolUpdateChannelConfig(supabase, userId, args);
     case "list_presets":
       return toolListPresets(supabase, userId);
+    case "list_backtests":
+      return toolListBacktests(supabase, userId, args);
     case "apply_preset":
       return toolApplyPreset(supabase, userId, args);
     case "save_preset":
@@ -1085,6 +1284,7 @@ async function executeTool(
     case "start_broker_connect":
     case "open_telegram_link":
     case "start_telegram_link":
+    case "open_backtest":
     case "navigate":
     case "open_live_chat":
     case "propose_config_change":
@@ -1096,6 +1296,7 @@ async function executeTool(
 
 const EXECUTABLE_MUTATIONS = new Set([
   "set_copier_paused",
+  "set_broker_active",
   "apply_preset",
   "save_preset",
   "update_channel_config",
@@ -1187,6 +1388,10 @@ Deno.serve(async (req: Request) => {
       assistant_message = "Preset saved.";
     } else if (ok && tool === "apply_preset") {
       assistant_message = "Preset applied.";
+    } else if (ok && tool === "set_broker_active") {
+      assistant_message = "Broker copy setting updated.";
+    } else if (ok && tool === "set_copier_paused") {
+      assistant_message = "Copier pause setting updated.";
     }
     return Response.json(
       {
