@@ -56,6 +56,8 @@ VITE_DEV_SITE=marketing npm run dev
 # or open http://localhost:5173/?site=marketing
 ```
 
+On localhost, `appUrl()` / `marketingUrl()` stay on the same Vite origin and set `site=app` / `site=marketing` so Subscribe does **not** jump to `https://app.tscopier.ai`.
+
 Dependencies are the same as the main app (`tailwindcss`, `postcss`, `autoprefixer` are already in `package.json`). Run `npm install` only if `node_modules` is missing. After changing `tailwind.config.js` or marketing CSS, **restart the dev server** (Ctrl+C, then run the command again) so PostCSS rebuilds styles.
 
 Dark mode toggles `class="dark"` on `<html>` (see `ThemeContext`). If the page background stays light, hard-refresh the browser.
@@ -85,14 +87,16 @@ usually means the browser opened **`app.tscopier.ai` (or was redirected there) a
 
 1. **`https://tscopier.ai`** — marketing landing (`isAppHost` is false).
 2. **`https://app.tscopier.ai`** — product app; must be added in Netlify **Domain management** (do not hand-add a conflicting CNAME; let Netlify create the record).
-3. **Sign in / Get started** — full navigation to `app.tscopier.ai`; if app DNS is down, those links fail even when the marketing site works.
+3. **Sign in / Choose a plan** — plan CTAs go to marketing `/pricing`; sign-in still navigates to `app.tscopier.ai`; if app DNS is down, those links fail even when the marketing site works.
 4. **Netlify `*.netlify.app` preview URL** — shows the marketing site (not the dashboard).
 5. Redeploy after changing any `VITE_*` variable.
 
 ## Smoke test checklist
 
 - [ ] `https://tscopier.ai` — landing, glass cards, dark mode, language switch
-- [ ] “Get started” → `https://app.tscopier.ai/signup`
-- [ ] `https://app.tscopier.ai` — login, dashboard, existing flows unchanged
+- [ ] “Choose a plan” → marketing `/pricing`
+- [ ] Plan Subscribe → `app…/signup?plan=…` then Stripe after auth (no free trial)
+- [ ] Unpaid app login → redirected to `/pricing` (no dashboard explore)
+- [ ] `https://app.tscopier.ai` — login, paid dashboard, existing flows
 - [ ] Email verification redirect lands on app subdomain
 - [ ] Google OAuth redirect lands on app subdomain

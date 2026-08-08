@@ -9,7 +9,7 @@ export const landingAr: LandingTranslations = {
     faq: 'الأسئلة الشائعة',
     docs: 'التوثيق',
     signIn: 'تسجيل الدخول',
-    getStarted: 'ابدأ الآن',
+    getStarted: 'اختر خطة',
     dashboard: 'لوحة التحكم',
     menuOpen: 'فتح القائمة',
     menuClose: 'إغلاق القائمة',
@@ -18,7 +18,7 @@ export const landingAr: LandingTranslations = {
     headline: 'منصة ذكية واحدة بالذكاء الاصطناعي لنسخ إشارات Telegram',
     subheadline:
       'TScopier منصة شاملة لنسخ إشارات Telegram تربط Telegram وتنسخ إشارات التداول مباشرة إلى MT4/MT5 — بلا إعدادات معقدة، بلا EA، وبلا VPS.',
-    primaryCta: 'ابدأ مجانًا',
+    primaryCta: 'اختر خطة',
     secondaryCta: 'تسجيل الدخول',
     imageAlt:
       'لوحة تحكم TScopier تعرض الرصيد والربح اليومي ونتائج التداول ومخططات نمو الحساب',
@@ -614,7 +614,7 @@ export const landingAr: LandingTranslations = {
     subtitle: 'نساخ Telegram التقليديون مقابل منصة سحابية مبنية للسرعة والشفافية والتوسع.',
     otherLabel: 'نساخ آخرون',
     tscopierLabel: 'TScopier',
-    cta: 'ابدأ مجانًا',
+    cta: 'اختر خطة',
     rows: [
       {
         aspect: 'الإعداد',
@@ -776,7 +776,7 @@ export const landingAr: LandingTranslations = {
       {
         question: 'هل توجد تجربة مجانية؟',
         answer:
-          'يتضمن المتقدم تجربة مجانية 10 أيام عند الاشتراك. تُفوتر الخطة الأساسية من اليوم الأول بـ 9.99 USD/شهر (أو 95.90 USD/سنة عند الفوترة السنوية). يمكنك استعراض لوحة التحكم قبل الاشتراك، لكن النسخ الحي يتطلب خطة نشطة.',
+          'لا نقدم تجربة مجانية. اختر Basic أو Advanced وادفع عند الدفع ثم ابدأ الإعداد. كل خطة تشمل ضمان استرداد خلال 30 يومًا.',
       },
       {
         question: 'ما الفرق بين الفوترة الشهرية والسنوية؟',
@@ -818,14 +818,14 @@ export const landingAr: LandingTranslations = {
   },
   pricingSnippet: {
     basic: 'أساسي — 9.99 USD/شهر',
-    advanced: 'متقدم — 10 أيام مجانًا، ثم 39.99 USD/شهر',
+    advanced: 'Advanced — 39.99$/شهر',
   },
   footer: {
     cta: {
       title: 'مستعد لنسخ الإشارات دون عمل يدوي؟',
       subtitle:
         'اربط Telegram، وصِل MT4 أو MT5، وابدأ النسخ خلال دقائق — بلا VPS، بلا تثبيت.',
-      primary: 'ابدأ تجربة مجانية 10 أيام',
+      primary: 'اختر خطة',
       secondary: 'تسجيل الدخول',
     },
     tagline: 'ناسخ إشارات Telegram فائق السرعة لحسابات MetaTrader.',

@@ -15,8 +15,9 @@ export const pricingAr: PricingBundleTranslations = {
     extraAccountUnit: '$10/حساب/شهر',
     extraAccountUnitAnnual: '$96/حساب/سنة',
     subscribe: 'اشترك',
-    startTrial: 'ابدأ تجربة مجانية 10 أيام',
-    trialDays: 'تجربة مجانية 10 أيام',
+    startTrial: 'اشترك',
+    trialDays: 'ضمان استرداد الأموال خلال 30 يومًا',
+    moneyBackGuarantee: 'ضمان استرداد الأموال خلال 30 يومًا',
     features: 'الميزات',
     popular: 'الأكثر شيوعًا',
     basicFeatures: [

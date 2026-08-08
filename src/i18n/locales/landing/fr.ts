@@ -9,7 +9,7 @@ export const landingFr: LandingTranslations = {
     faq: 'FAQ',
     docs: 'Docs',
     signIn: 'Se connecter',
-    getStarted: 'Commencer',
+    getStarted: 'Choisir un plan',
     dashboard: 'Tableau de bord',
     menuOpen: 'Ouvrir le menu',
     menuClose: 'Fermer le menu',
@@ -18,7 +18,7 @@ export const landingFr: LandingTranslations = {
     headline: 'Une plateforme IA intelligente pour copier les signaux Telegram',
     subheadline:
       'TScopier est une plateforme tout-en-un de copie de signaux Telegram qui connecte votre Telegram et copie les signaux de trading directement sur MT4/MT5 — sans configuration complexe, sans EA ni VPS.',
-    primaryCta: 'Commencer gratuitement',
+    primaryCta: 'Choisir un plan',
     secondaryCta: 'Se connecter',
     imageAlt:
       'Tableau de bord TScopier avec solde, profit du jour, résultats des trades et graphiques de croissance',
@@ -615,7 +615,7 @@ export const landingFr: LandingTranslations = {
       'Copieurs Telegram classiques vs une plateforme cloud conçue pour la vitesse, la clarté et l’échelle.',
     otherLabel: 'Autres copieurs',
     tscopierLabel: 'TScopier',
-    cta: 'Commencer gratuitement',
+    cta: 'Choisir un plan',
     rows: [
       {
         aspect: 'Mise en route',
@@ -778,7 +778,7 @@ export const landingFr: LandingTranslations = {
       {
         question: 'Y a-t-il un essai gratuit ?',
         answer:
-          'Advanced inclut un essai gratuit de 10 jours à l\'abonnement. Basic est facturé dès le premier jour à 9,99 $/mois (ou 95,90 $/an en facturation annuelle). Vous pouvez explorer le tableau de bord avant de vous abonner, mais la copie live nécessite un plan actif.',
+          'Nous n\'offrons pas d\'essai gratuit. Choisissez Basic ou Advanced, payez au checkout, puis démarrez l\'onboarding. Chaque forfait inclut une garantie de 30 jours.'abonnement. Basic est facturé dès le premier jour à 9,99 $/mois (ou 95,90 $/an en facturation annuelle). Vous pouvez explorer le tableau de bord avant de vous abonner, mais la copie live nécessite un plan actif.',
       },
       {
         question: 'Quelle est la différence entre facturation mensuelle et annuelle ?',
@@ -820,14 +820,14 @@ export const landingFr: LandingTranslations = {
   },
   pricingSnippet: {
     basic: 'Basic — 9,99 $/mois',
-    advanced: 'Advanced — 10 jours gratuits, puis 39,99 $/mois',
+    advanced: 'Advanced — 39,99 $/mois',
   },
   footer: {
     cta: {
       title: 'Prêt à copier des signaux sans le travail manuel ?',
       subtitle:
         'Reliez Telegram, connectez MT4 ou MT5 et commencez à copier en quelques minutes — sans VPS ni installation.',
-      primary: 'Commencez votre essai gratuit de 10 jours',
+      primary: 'Choisir un plan',
       secondary: 'Se connecter',
     },
     tagline: 'Copieur de signaux Telegram ultra-rapide pour comptes MetaTrader.',

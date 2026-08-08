@@ -1284,8 +1284,11 @@ export interface PricingTranslations {
   extraAccountUnit: string
   extraAccountUnitAnnual: string
   subscribe: string
+  /** @deprecated Prefer subscribe; kept for locale compatibility */
   startTrial: string
+  /** @deprecated Prefer moneyBackGuarantee */
   trialDays: string
+  moneyBackGuarantee: string
   features: string
   popular: string
   basicFeatures: string[]

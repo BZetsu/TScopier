@@ -45,7 +45,7 @@ export const contactSupportEn: ContactSupportPageTranslations = {
       {
         question: 'Do I need a paid subscription to copy trades?',
         answer:
-          'An active paid plan is required for live Telegram copier execution. You can still explore the dashboard and configuration on a free trial where available; check Billing for your current plan and renewal status.',
+          'An active paid plan is required for live Telegram copier execution. Choose a plan on Pricing to unlock the app. Check Billing for your current plan and renewal status.',
       },
       {
         question: 'Why must I verify my email before using the platform?',

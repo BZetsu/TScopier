@@ -13,14 +13,14 @@ const BrokerStatsOverlay = lazy(() =>
 /** Keep Dashboard mounted after first visit so stats/charts do not reset on navigation. */
 export function DashboardKeepAlive() {
   const location = useLocation()
-  const { deferAppBootstrap, needsWelcome } = useNeedsWelcome()
+  const { deferAppBootstrap } = useNeedsWelcome()
   const onDashboard = location.pathname === '/dashboard'
     || location.pathname.startsWith('/dashboard/broker/')
-  const [mounted, setMounted] = useState(onDashboard || needsWelcome)
+  const [mounted, setMounted] = useState(onDashboard)
 
   useEffect(() => {
-    if (onDashboard || needsWelcome) setMounted(true)
-  }, [onDashboard, needsWelcome])
+    if (onDashboard) setMounted(true)
+  }, [onDashboard])
 
   if (deferAppBootstrap || !mounted) return null
 

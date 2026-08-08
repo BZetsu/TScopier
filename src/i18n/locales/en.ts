@@ -129,8 +129,9 @@ export const en: Translations = {
     extraAccountUnit: '$10/account/month',
     extraAccountUnitAnnual: '$96/account/year',
     subscribe: 'Subscribe',
-    startTrial: 'Start your 10-day free trial',
-    trialDays: '10-day free trial',
+    startTrial: 'Subscribe',
+    trialDays: '30-day money-back guarantee',
+    moneyBackGuarantee: '30-day money-back guarantee',
     features: 'Features',
     popular: 'Most Popular',
     basicFeatures: [
