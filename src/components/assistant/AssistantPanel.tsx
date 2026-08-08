@@ -6,6 +6,8 @@ import { useAssistant } from '../../context/AssistantContext'
 import { useAddTradingAccount } from '../../context/AddTradingAccountContext'
 import { useLiveChat } from '../../context/LiveChatContext'
 import { useUserProfile } from '../../context/UserProfileContext'
+import { useBrokerAccounts } from '../../context/BrokerAccountsContext'
+import { useAuth } from '../../context/AuthContext'
 import { useLocale, useT } from '../../context/LocaleContext'
 import {
   executeAssistantAction,
@@ -18,17 +20,38 @@ import {
   isAssistantImageType,
 } from '../../lib/assistantImages'
 import { runPendingClientActions } from '../../lib/assistantActions'
+import { callTelegramAuth } from '../../lib/telegramAuthApi'
+import {
+  isNoPendingPhoneAuthError,
+  resolveTelegramAuthError,
+} from '../../lib/telegramAuthError'
+import {
+  extractTelegramPhoneFromText,
+  looksLikeTelegramOtp,
+  normalizeTelegramPhoneInput,
+  redactTelegramPhones,
+} from '../../lib/telegramPhone'
+import { fxsocketBroker } from '../../lib/fxsocketBroker'
+import {
+  brokerConnectErrorLabelsFromI18n,
+  userFacingBrokerConnectError,
+} from '../../lib/brokerConnectError'
 import { AssistantChatBubble, AssistantTypingIndicator } from './AssistantChatBubble'
+import { AssistantTelegramLinkCard } from './AssistantTelegramLinkCard'
+import { AssistantBrokerConnectCard } from './AssistantBrokerConnectCard'
 import { Button } from '../ui/Button'
 import clsx from 'clsx'
+import { ensureFreshAuthSession } from '../../lib/fxsocketBroker'
 
 export function AssistantPanel() {
   const t = useT()
   const { locale } = useLocale()
   const navigate = useNavigate()
+  const { session } = useAuth()
   const { openAddTradingAccount } = useAddTradingAccount()
   const { openLiveChat } = useLiveChat()
   const { refreshProfile } = useUserProfile()
+  const { upsertBroker, refreshBrokers } = useBrokerAccounts()
   const {
     open,
     closeAssistant,
@@ -37,6 +60,14 @@ export function AssistantPanel() {
     pendingConfirmations,
     setPendingConfirmations,
     setPendingClientActions,
+    telegramLink,
+    setTelegramLink,
+    startTelegramLinkFlow,
+    resetTelegramLinkFlow,
+    brokerConnect,
+    setBrokerConnect,
+    startBrokerConnectFlow,
+    resetBrokerConnectFlow,
   } = useAssistant()
 
   const [draft, setDraft] = useState('')
@@ -48,8 +79,16 @@ export function AssistantPanel() {
   const listRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const pendingCodeRef = useRef('')
 
   const a = t.nav.assistant
+  const ce = t.pages.copierEngine
+  const EDGE_FN = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/telegram-auth`
+
+  const tgErrorMessages = {
+    telegramAlreadyLinked: ce.telegramAlreadyLinked,
+    noPendingPhoneAuth: a.telegram.sessionExpired,
+  }
 
   useEffect(() => {
     if (!open) return
@@ -65,9 +104,21 @@ export function AssistantPanel() {
   useEffect(() => {
     if (!open) return
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' })
-  }, [open, messages, pendingConfirmations, sending, draftImages])
+  }, [open, messages, pendingConfirmations, sending, draftImages, telegramLink.stage, telegramLink.error, brokerConnect.active, brokerConnect.error])
 
   if (!open) return null
+
+  const appendAssistantLocal = (content: string) => {
+    persistMessages(prev => [...prev, { role: 'assistant', content }])
+  }
+
+  const appendUserAndAssistant = (userContent: string, assistantContent: string) => {
+    persistMessages(prev => [
+      ...prev,
+      { role: 'user', content: redactTelegramPhones(userContent) },
+      { role: 'assistant', content: assistantContent },
+    ])
+  }
 
   const applySideEffects = async (
     clientActions: Parameters<typeof runPendingClientActions>[0],
@@ -81,7 +132,184 @@ export function AssistantPanel() {
         openAddTradingAccount,
         openLiveChat,
         refreshProfile,
+        startTelegramLinkFlow,
+        startBrokerConnectFlow,
       })
+    }
+  }
+
+  const resolveAuthToken = async () => {
+    try {
+      return await ensureFreshAuthSession()
+    } catch {
+      return session?.access_token
+    }
+  }
+
+  const handleSendCode = async (phoneRaw: string, opts?: { fromChat?: boolean; chatText?: string }) => {
+    const phone = normalizeTelegramPhoneInput(phoneRaw)
+    setTelegramLink(prev => ({ ...prev, busy: true, error: '', phone }))
+    try {
+      const token = await resolveAuthToken()
+      const { ok, data } = await callTelegramAuth<{ error?: string }>(EDGE_FN, token, 'send_code', {
+        phone,
+      })
+      if (!ok || data.error) {
+        const msg = resolveTelegramAuthError(data.error, ce.failedSendCode, tgErrorMessages)
+        setTelegramLink(prev => ({ ...prev, busy: false, error: msg, stage: 'phone', phone }))
+        return
+      }
+      pendingCodeRef.current = ''
+      setTelegramLink({
+        stage: 'code',
+        phone,
+        code: '',
+        error: '',
+        busy: false,
+      })
+      if (opts?.fromChat) {
+        appendUserAndAssistant(opts.chatText || phone, a.telegram.codeSent)
+      } else {
+        appendAssistantLocal(a.telegram.codeSent)
+      }
+    } catch {
+      setTelegramLink(prev => ({
+        ...prev,
+        busy: false,
+        error: ce.networkError,
+        stage: 'phone',
+      }))
+    }
+  }
+
+  const finishLinked = async () => {
+    pendingCodeRef.current = ''
+    setTelegramLink({
+      stage: 'done',
+      phone: '',
+      code: '',
+      error: '',
+      busy: false,
+    })
+    persistMessages(prev => [...prev, { role: 'assistant', content: a.telegram.linkedSuccess }])
+    await refreshProfile()
+    window.setTimeout(() => {
+      setTelegramLink(prev => (prev.stage === 'done' ? { ...prev, stage: 'idle' } : prev))
+    }, 400)
+  }
+
+  const handleVerifyCode = async (code: string) => {
+    const phone = telegramLink.phone
+    setTelegramLink(prev => ({ ...prev, busy: true, error: '', code }))
+    pendingCodeRef.current = code
+    try {
+      const token = await resolveAuthToken()
+      const { ok, data } = await callTelegramAuth<{
+        error?: string
+        requires_password?: boolean
+      }>(EDGE_FN, token, 'verify_code', { phone, code })
+      if (data.requires_password) {
+        setTelegramLink({
+          stage: 'twoFa',
+          phone,
+          code,
+          error: '',
+          busy: false,
+        })
+        appendAssistantLocal(a.telegram.twoFaNeeded)
+        return
+      }
+      if (!ok || data.error) {
+        const msg = resolveTelegramAuthError(data.error, ce.verificationFailed, tgErrorMessages)
+        if (isNoPendingPhoneAuthError(data.error)) {
+          pendingCodeRef.current = ''
+          setTelegramLink({
+            stage: 'phone',
+            phone: '',
+            code: '',
+            error: msg,
+            busy: false,
+          })
+        } else {
+          setTelegramLink(prev => ({ ...prev, busy: false, error: msg, stage: 'code' }))
+        }
+        return
+      }
+      await finishLinked()
+    } catch {
+      setTelegramLink(prev => ({ ...prev, busy: false, error: ce.networkError }))
+    }
+  }
+
+  const handleSubmitPassword = async (password: string) => {
+    const phone = telegramLink.phone
+    const code = telegramLink.code || pendingCodeRef.current
+    setTelegramLink(prev => ({ ...prev, busy: true, error: '' }))
+    try {
+      const token = await resolveAuthToken()
+      const { ok, data } = await callTelegramAuth<{ error?: string }>(EDGE_FN, token, 'verify_code', {
+        phone,
+        code,
+        password,
+      })
+      if (!ok || data.error) {
+        const msg = resolveTelegramAuthError(data.error, ce.verificationFailed, tgErrorMessages)
+        if (isNoPendingPhoneAuthError(data.error)) {
+          pendingCodeRef.current = ''
+          setTelegramLink({
+            stage: 'phone',
+            phone: '',
+            code: '',
+            error: msg,
+            busy: false,
+          })
+        } else {
+          setTelegramLink(prev => ({ ...prev, busy: false, error: msg, stage: 'twoFa' }))
+        }
+        return
+      }
+      await finishLinked()
+    } catch {
+      setTelegramLink(prev => ({ ...prev, busy: false, error: ce.networkError }))
+    }
+  }
+
+  const handleBrokerConnect = async (values: {
+    platform: 'MT4' | 'MT5'
+    account_login: string
+    broker_server: string
+    label: string
+    password: string
+  }) => {
+    setBrokerConnect(prev => ({
+      ...prev,
+      busy: true,
+      error: '',
+      platform: values.platform,
+      account_login: values.account_login,
+      broker_server: values.broker_server,
+      label: values.label,
+    }))
+    try {
+      const { account } = await fxsocketBroker.connect({
+        platform: values.platform,
+        login: values.account_login,
+        password: values.password,
+        server: values.broker_server,
+        label: values.label || undefined,
+      })
+      upsertBroker(account)
+      await refreshBrokers({ silent: true }).catch(() => {})
+      resetBrokerConnectFlow()
+      persistMessages(prev => [...prev, { role: 'assistant', content: a.broker.connectedSuccess }])
+      await refreshProfile()
+    } catch (e) {
+      const labels = brokerConnectErrorLabelsFromI18n(t.accountConfig.brokerList)
+      setBrokerConnect(prev => ({
+        ...prev,
+        busy: false,
+        error: userFacingBrokerConnectError(e, labels),
+      }))
     }
   }
 
@@ -116,16 +344,41 @@ export function AssistantPanel() {
 
   const send = async () => {
     const text = draft.trim()
-    if ((!text && draftImages.length === 0) || sending || attaching) return
+    if ((!text && draftImages.length === 0) || sending || attaching || telegramLink.busy || brokerConnect.busy) return
+
+    // Never send OTP/password free-text to OpenAI while linking.
+    if (
+      (telegramLink.stage === 'code' || telegramLink.stage === 'twoFa') &&
+      text &&
+      looksLikeTelegramOtp(text) &&
+      draftImages.length === 0
+    ) {
+      setDraft('')
+      setError(a.telegram.useSecureCodeField)
+      return
+    }
+
+    // Phone typed in chat during phone stage → send_code locally (no LLM).
+    if (telegramLink.stage === 'phone' && text && draftImages.length === 0) {
+      const phone = extractTelegramPhoneFromText(text)
+      if (phone) {
+        setDraft('')
+        setError('')
+        await handleSendCode(phone, { fromChat: true, chatText: text })
+        return
+      }
+    }
+
     setError('')
     setDraft('')
     const images = draftImages
     setDraftImages([])
+    const userContent = text ? redactTelegramPhones(text) : a.imageOnlyCaption
     const nextMessages = [
       ...messages,
       {
         role: 'user' as const,
-        content: text || a.imageOnlyCaption,
+        content: userContent,
         ...(images.length ? { images } : {}),
       },
     ]
@@ -152,12 +405,15 @@ export function AssistantPanel() {
     try {
       const res = await executeAssistantAction({ tool: item.tool, args: item.args })
       setPendingConfirmations(prev => prev.filter(p => p !== item))
-      persistMessages([
-        ...messages,
+      persistMessages(prev => [
+        ...prev,
         { role: 'assistant', content: res.assistant_message || a.actionDone },
       ])
       if (item.tool === 'set_copier_paused') {
         await refreshProfile()
+      }
+      if (item.tool === 'update_channel_config' || item.tool === 'apply_preset' || item.tool === 'save_preset') {
+        await refreshBrokers({ silent: true }).catch(() => {})
       }
       await applySideEffects(res.pending_client_actions, res.pending_confirmations)
     } catch (e) {
@@ -193,7 +449,19 @@ export function AssistantPanel() {
     void addImageFiles(files)
   }
 
-  const canSend = (draft.trim().length > 0 || draftImages.length > 0) && !sending && !attaching
+  const canSend =
+    (draft.trim().length > 0 || draftImages.length > 0) &&
+    !sending &&
+    !attaching &&
+    !telegramLink.busy &&
+    !brokerConnect.busy
+
+  const showTelegramCard =
+    telegramLink.stage === 'phone' ||
+    telegramLink.stage === 'code' ||
+    telegramLink.stage === 'twoFa'
+
+  const showBrokerCard = brokerConnect.active
 
   return createPortal(
     <div className="fixed inset-0 z-[80] flex justify-end" role="dialog" aria-modal="true" aria-label={a.title}>
@@ -235,7 +503,7 @@ export function AssistantPanel() {
             'dark:bg-[radial-gradient(ellipse_at_top,_rgba(13,148,136,0.12),_transparent_50%),linear-gradient(to_bottom,_#020617,_#0f172a)]',
           )}
         >
-          {messages.length === 0 && (
+          {messages.length === 0 && !showTelegramCard && !showBrokerCard && (
             <div className="animate-assistant-msg-in mx-auto max-w-sm pt-6 text-center">
               <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-teal-500 to-teal-700 text-white shadow-lg shadow-teal-600/25">
                 <Sparkles className="h-5 w-5" />
@@ -266,6 +534,75 @@ export function AssistantPanel() {
               }
             />
           ))}
+
+          {showBrokerCard ? (
+            <AssistantBrokerConnectCard
+              key={`broker:${brokerConnect.account_login}:${brokerConnect.broker_server}`}
+              platform={brokerConnect.platform}
+              accountLogin={brokerConnect.account_login}
+              brokerServer={brokerConnect.broker_server}
+              label={brokerConnect.label}
+              error={brokerConnect.error}
+              busy={brokerConnect.busy}
+              copy={{
+                title: a.broker.title,
+                hint: a.broker.hint,
+                platformLabel: a.broker.platformLabel,
+                loginLabel: a.broker.loginLabel,
+                serverLabel: a.broker.serverLabel,
+                labelLabel: a.broker.labelLabel,
+                passwordLabel: a.broker.passwordLabel,
+                passwordPlaceholder: a.broker.passwordPlaceholder,
+                connect: a.broker.connect,
+                cancel: a.cancel,
+                openFullForm: a.broker.openFullForm,
+                missingFields: a.broker.missingFields,
+              }}
+              onConnect={values => void handleBrokerConnect(values)}
+              onCancel={resetBrokerConnectFlow}
+              onOpenFullForm={() => {
+                resetBrokerConnectFlow()
+                openAddTradingAccount()
+              }}
+            />
+          ) : null}
+
+          {showTelegramCard ? (
+            <AssistantTelegramLinkCard
+              key={`${telegramLink.stage}:${telegramLink.phone}`}
+              stage={telegramLink.stage}
+              phone={telegramLink.phone}
+              error={telegramLink.error}
+              busy={telegramLink.busy}
+              copy={{
+                phoneTitle: a.telegram.phoneTitle,
+                phoneHint: a.telegram.phoneHint,
+                phonePlaceholder: a.telegram.phonePlaceholder,
+                sendCode: a.telegram.sendCode,
+                codeTitle: a.telegram.codeTitle,
+                codeHint: a.telegram.codeHint,
+                codePlaceholder: a.telegram.codePlaceholder,
+                verifyCode: a.telegram.verifyCode,
+                twoFaTitle: a.telegram.twoFaTitle,
+                twoFaHint: a.telegram.twoFaHint,
+                twoFaPlaceholder: a.telegram.twoFaPlaceholder,
+                submitPassword: a.telegram.submitPassword,
+                cancel: a.cancel,
+                restart: a.telegram.restart,
+                openQrInstead: a.telegram.openQrInstead,
+                invalidPhone: a.telegram.invalidPhone,
+              }}
+              onSendCode={phone => void handleSendCode(phone)}
+              onVerifyCode={code => void handleVerifyCode(code)}
+              onSubmitPassword={password => void handleSubmitPassword(password)}
+              onCancel={resetTelegramLinkFlow}
+              onRestart={startTelegramLinkFlow}
+              onOpenQr={() => {
+                resetTelegramLinkFlow()
+                navigate('/copier-engine')
+              }}
+            />
+          ) : null}
 
           {pendingConfirmations.map((item, idx) => {
             const key = `${item.tool}:${JSON.stringify(item.args)}`
@@ -365,9 +702,15 @@ export function AssistantPanel() {
               onKeyDown={onKeyDown}
               onPaste={onPaste}
               rows={2}
-              placeholder={a.placeholder}
+              placeholder={
+                telegramLink.stage === 'code'
+                  ? a.telegram.composerCodeHint
+                  : telegramLink.stage === 'phone'
+                    ? a.telegram.composerPhoneHint
+                    : a.placeholder
+              }
               className="min-h-[44px] flex-1 resize-none rounded-xl border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-900 outline-none focus:border-teal-500 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"
-              disabled={sending}
+              disabled={sending || telegramLink.busy || brokerConnect.busy}
             />
             <Button
               type="button"

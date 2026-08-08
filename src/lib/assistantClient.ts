@@ -1,5 +1,6 @@
 import { ensureFreshAuthSession } from './fxsocketBroker'
 import { isAssistantImageDataUrl } from './assistantImages'
+import { redactTelegramPhones } from './telegramPhone'
 
 export type AssistantChatMessage = {
   role: 'user' | 'assistant'
@@ -42,7 +43,7 @@ export async function postAssistantChat(params: {
       apikey: import.meta.env.VITE_SUPABASE_ANON_KEY as string,
     },
     body: JSON.stringify({
-      messages: params.messages,
+      messages: messagesForAssistantApi(params.messages),
       locale: params.locale,
     }),
   })
@@ -89,15 +90,20 @@ export async function executeAssistantAction(params: {
 
 const HISTORY_PREFIX = 'tscopier.assistant.history.'
 
+function sanitizeMessageContent(content: string): string {
+  return redactTelegramPhones(content)
+}
+
 function normalizeStoredMessage(m: AssistantChatMessage): AssistantChatMessage | null {
   if (!m || (m.role !== 'user' && m.role !== 'assistant') || typeof m.content !== 'string') {
     return null
   }
+  const content = sanitizeMessageContent(m.content)
   const images =
     m.role === 'user' && Array.isArray(m.images)
       ? m.images.filter(isAssistantImageDataUrl).slice(0, 3)
       : undefined
-  return images?.length ? { role: m.role, content: m.content, images } : { role: m.role, content: m.content }
+  return images?.length ? { role: m.role, content, images } : { role: m.role, content }
 }
 
 /** Keep images only on the newest user turn to stay under sessionStorage quotas. */
@@ -107,14 +113,23 @@ function compactHistoryForStorage(messages: AssistantChatMessage[]): AssistantCh
   const out: AssistantChatMessage[] = []
   for (let i = sliced.length - 1; i >= 0; i--) {
     const m = sliced[i]
+    const content = sanitizeMessageContent(m.content)
     if (m.role === 'user' && m.images?.length && !keptImages) {
-      out.push(m)
+      out.push({ role: m.role, content, images: m.images })
       keptImages = true
     } else {
-      out.push({ role: m.role, content: m.content })
+      out.push({ role: m.role, content })
     }
   }
   return out.reverse()
+}
+
+/** Strip phones from messages before sending to the LLM. */
+export function messagesForAssistantApi(messages: AssistantChatMessage[]): AssistantChatMessage[] {
+  return messages.map(m => {
+    const content = sanitizeMessageContent(m.content)
+    return m.images?.length ? { ...m, content } : { role: m.role, content }
+  })
 }
 
 export function loadAssistantHistory(userId: string): AssistantChatMessage[] {

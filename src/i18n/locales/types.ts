@@ -123,6 +123,44 @@ export interface NavTranslations {
     imageTooLarge: string
     imageTypeUnsupported: string
     imageLimitReached: string
+    telegram: {
+      phoneTitle: string
+      phoneHint: string
+      phonePlaceholder: string
+      sendCode: string
+      codeTitle: string
+      codeHint: string
+      codePlaceholder: string
+      verifyCode: string
+      twoFaTitle: string
+      twoFaHint: string
+      twoFaPlaceholder: string
+      submitPassword: string
+      restart: string
+      openQrInstead: string
+      invalidPhone: string
+      codeSent: string
+      twoFaNeeded: string
+      linkedSuccess: string
+      useSecureCodeField: string
+      sessionExpired: string
+      composerPhoneHint: string
+      composerCodeHint: string
+    }
+    broker: {
+      title: string
+      hint: string
+      platformLabel: string
+      loginLabel: string
+      serverLabel: string
+      labelLabel: string
+      passwordLabel: string
+      passwordPlaceholder: string
+      connect: string
+      openFullForm: string
+      missingFields: string
+      connectedSuccess: string
+    }
   }
 }
 

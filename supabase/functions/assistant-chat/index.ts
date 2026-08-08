@@ -11,6 +11,12 @@ import {
   ASSISTANT_SYSTEM_PROMPT,
   FEATURE_TOPICS,
 } from "../_shared/assistantKnowledge.ts";
+import {
+  mergeManualSettings,
+  normalizeChannelUsername,
+  sanitizeManualPatch,
+  summarizeManualPatch,
+} from "../_shared/assistantConfigTools.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -106,7 +112,8 @@ const TOOL_DEFS = [
     type: "function",
     function: {
       name: "list_brokers",
-      description: "List the user's broker accounts.",
+      description:
+        "List the user's broker accounts (id, label, account_login / MT login, platform, server, connected).",
       parameters: { type: "object", properties: {}, additionalProperties: false },
     },
   },
@@ -114,8 +121,57 @@ const TOOL_DEFS = [
     type: "function",
     function: {
       name: "list_channels",
-      description: "List active Telegram channels for the user.",
+      description: "List active Telegram channels for the user (id, display_name, channel_username).",
       parameters: { type: "object", properties: {}, additionalProperties: false },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_channel_config",
+      description:
+        "Read current trading config for a broker+channel. Resolve broker by broker_account_id OR account_login (MT login like 928883). Resolve channel by channel_id OR channel_username.",
+      parameters: {
+        type: "object",
+        properties: {
+          broker_account_id: { type: "string" },
+          account_login: { type: "string", description: "MT4/MT5 account number / login" },
+          channel_id: { type: "string" },
+          channel_username: { type: "string" },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_channel_config",
+      description:
+        "Create or update trading settings for a channel on a broker (lot size, multi-trade, range, etc.). Call WITHOUT confirmed first so the UI can Confirm; then client re-executes with confirmed=true. Resolve broker by id or account_login; channel by id or username. After success, offer save_preset if the user wants a named preset.",
+      parameters: {
+        type: "object",
+        properties: {
+          broker_account_id: { type: "string" },
+          account_login: { type: "string" },
+          channel_id: { type: "string" },
+          channel_username: { type: "string" },
+          copier_mode: { type: "string", enum: ["manual", "ai"] },
+          settings: {
+            type: "object",
+            description:
+              "Partial manual_settings patch. Common keys: fixed_lot, risk_mode, dynamic_balance_percent, trade_style (single|multi), multi_trade_leg_percent, range_trading, range_percent, range_step_pips, range_distance_pips, range_layering_type, reverse_signal, symbol_prefix, symbol_suffix.",
+            additionalProperties: true,
+          },
+          summary: {
+            type: "string",
+            description: "Short human summary of the change for the Confirm card",
+          },
+          confirmed: { type: "boolean" },
+        },
+        required: ["settings"],
+        additionalProperties: false,
+      },
     },
   },
   {
@@ -131,17 +187,18 @@ const TOOL_DEFS = [
     function: {
       name: "apply_preset",
       description:
-        "Apply a preset to a channel on a broker. Requires broker_account_id, channel_id, and preset_id or preset_name. Use confirmed only after UI confirm.",
+        "Apply a preset to a channel on a broker. Resolve broker by broker_account_id or account_login; channel by channel_id or channel_username. Use confirmed only after UI confirm.",
       parameters: {
         type: "object",
         properties: {
           broker_account_id: { type: "string" },
+          account_login: { type: "string" },
           channel_id: { type: "string" },
+          channel_username: { type: "string" },
           preset_id: { type: "string" },
           preset_name: { type: "string" },
           confirmed: { type: "boolean" },
         },
-        required: ["broker_account_id", "channel_id"],
         additionalProperties: false,
       },
     },
@@ -151,16 +208,18 @@ const TOOL_DEFS = [
     function: {
       name: "save_preset",
       description:
-        "Save current channel config on a broker as a named preset. Use confirmed after UI confirm.",
+        "Save current channel config on a broker as a named preset. Resolve broker/channel like apply_preset. Use confirmed after UI confirm. Offer this after update_channel_config when the user wants to reuse settings.",
       parameters: {
         type: "object",
         properties: {
           broker_account_id: { type: "string" },
+          account_login: { type: "string" },
           channel_id: { type: "string" },
+          channel_username: { type: "string" },
           name: { type: "string" },
           confirmed: { type: "boolean" },
         },
-        required: ["broker_account_id", "channel_id", "name"],
+        required: ["name"],
         additionalProperties: false,
       },
     },
@@ -186,8 +245,45 @@ const TOOL_DEFS = [
   {
     type: "function",
     function: {
+      name: "start_broker_connect",
+      description:
+        "Start in-chat MT4/MT5 broker connection. Pass optional non-secret fields (platform, account_login, broker_server, label). Password is collected only in a secure UI card — never ask for it in chat.",
+      parameters: {
+        type: "object",
+        properties: {
+          platform: { type: "string", enum: ["MT4", "MT5"] },
+          account_login: { type: "string" },
+          broker_server: { type: "string" },
+          label: { type: "string" },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "open_connect_broker",
-      description: "Open the connect MT4/MT5 broker modal in the app UI.",
+      description:
+        "Alias for start_broker_connect (in-chat secure password card). Prefer start_broker_connect when the user wants to connect a broker.",
+      parameters: {
+        type: "object",
+        properties: {
+          platform: { type: "string", enum: ["MT4", "MT5"] },
+          account_login: { type: "string" },
+          broker_server: { type: "string" },
+          label: { type: "string" },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "start_telegram_link",
+      description:
+        "Start in-chat Telegram phone linking. Shows a secure phone/OTP card in the assistant panel. Prefer this when the user wants to link Telegram.",
       parameters: { type: "object", properties: {}, additionalProperties: false },
     },
   },
@@ -195,7 +291,8 @@ const TOOL_DEFS = [
     type: "function",
     function: {
       name: "open_telegram_link",
-      description: "Open Copier Engine so the user can link Telegram.",
+      description:
+        "Alias for start_telegram_link (in-chat phone OTP). For QR login, use navigate to /copier-engine instead.",
       parameters: { type: "object", properties: {}, additionalProperties: false },
     },
   },
@@ -230,7 +327,7 @@ const TOOL_DEFS = [
     function: {
       name: "propose_config_change",
       description:
-        "Propose a configuration change for the user to review in the UI (does not save by itself).",
+        "Deprecated for writing settings — prefer update_channel_config. Navigates to Configuration UI as a fallback.",
       parameters: {
         type: "object",
         properties: {
@@ -259,7 +356,7 @@ async function toolGetSetupStatus(supabase: SupabaseClient, userId: string): Pro
       supabase.from("user_profiles").select("copier_paused,display_name").eq("user_id", userId).maybeSingle(),
       supabase
         .from("broker_accounts")
-        .select("id,name,broker_name,platform,is_active,fxsocket_account_id")
+        .select("id,label,account_login,platform,is_active,fxsocket_account_id")
         .eq("user_id", userId),
       supabase
         .from("telegram_channels")
@@ -289,7 +386,7 @@ async function toolGetSetupStatus(supabase: SupabaseClient, userId: string): Pro
 async function toolListBrokers(supabase: SupabaseClient, userId: string): Promise<ToolResult> {
   const { data, error } = await supabase
     .from("broker_accounts")
-    .select("id,name,broker_name,platform,is_active,fxsocket_account_id,server")
+    .select("id,label,account_login,platform,is_active,fxsocket_account_id,broker_server,broker_name")
     .eq("user_id", userId)
     .order("created_at", { ascending: true });
   if (error) return { content: JSON.stringify({ error: error.message }) };
@@ -297,14 +394,134 @@ async function toolListBrokers(supabase: SupabaseClient, userId: string): Promis
     content: JSON.stringify({
       brokers: (data ?? []).map((b) => ({
         id: b.id,
-        name: b.name || b.broker_name,
+        label: b.label || b.broker_name || b.account_login || b.id,
+        account_login: b.account_login ?? null,
         platform: b.platform,
         is_active: b.is_active,
         connected: Boolean(b.fxsocket_account_id),
-        server: b.server,
+        broker_server: b.broker_server ?? null,
       })),
     }),
   };
+}
+
+type ResolvedBroker = { id: string; account_login: string | null; label: string | null };
+type ResolvedChannel = { id: string; display_name: string | null; channel_username: string | null };
+
+async function resolveBroker(
+  supabase: SupabaseClient,
+  userId: string,
+  args: Record<string, unknown>,
+): Promise<{ broker: ResolvedBroker } | { error: string }> {
+  const id = String(args.broker_account_id ?? "").trim();
+  const login = String(args.account_login ?? args.broker_login ?? "").trim();
+
+  if (id) {
+    const { data, error } = await supabase
+      .from("broker_accounts")
+      .select("id,account_login,label")
+      .eq("id", id)
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (error) return { error: error.message };
+    if (!data) return { error: "Broker not found" };
+    return {
+      broker: {
+        id: data.id,
+        account_login: data.account_login ?? null,
+        label: data.label ?? null,
+      },
+    };
+  }
+
+  if (login) {
+    const { data, error } = await supabase
+      .from("broker_accounts")
+      .select("id,account_login,label")
+      .eq("user_id", userId)
+      .eq("account_login", login)
+      .maybeSingle();
+    if (error) return { error: error.message };
+    if (data) {
+      return {
+        broker: {
+          id: data.id,
+          account_login: data.account_login ?? null,
+          label: data.label ?? null,
+        },
+      };
+    }
+    // Fallback: scan (logins sometimes stored with whitespace)
+    const { data: all } = await supabase
+      .from("broker_accounts")
+      .select("id,account_login,label")
+      .eq("user_id", userId);
+    const hit = (all ?? []).find(
+      (b) => String(b.account_login ?? "").trim() === login,
+    );
+    if (hit) {
+      return {
+        broker: {
+          id: hit.id,
+          account_login: hit.account_login ?? null,
+          label: hit.label ?? null,
+        },
+      };
+    }
+    return { error: `No broker found with account login ${login}` };
+  }
+
+  return { error: "Provide broker_account_id or account_login" };
+}
+
+async function resolveChannel(
+  supabase: SupabaseClient,
+  userId: string,
+  args: Record<string, unknown>,
+): Promise<{ channel: ResolvedChannel } | { error: string }> {
+  const id = String(args.channel_id ?? "").trim();
+  const username = normalizeChannelUsername(String(args.channel_username ?? ""));
+
+  if (id) {
+    const { data, error } = await supabase
+      .from("telegram_channels")
+      .select("id,display_name,channel_username")
+      .eq("id", id)
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (error) return { error: error.message };
+    if (!data) return { error: "Channel not found" };
+    return {
+      channel: {
+        id: data.id,
+        display_name: data.display_name ?? null,
+        channel_username: data.channel_username ?? null,
+      },
+    };
+  }
+
+  if (username) {
+    const { data: rows, error } = await supabase
+      .from("telegram_channels")
+      .select("id,display_name,channel_username")
+      .eq("user_id", userId)
+      .eq("is_active", true);
+    if (error) return { error: error.message };
+    const hit = (rows ?? []).find(
+      (c) => normalizeChannelUsername(String(c.channel_username ?? "")) === username
+        || normalizeChannelUsername(String(c.display_name ?? "")) === username,
+    );
+    if (!hit) return { error: `No active channel matching @${username}` };
+    return {
+      channel: {
+        id: hit.id,
+        display_name: hit.display_name ?? null,
+        channel_username: hit.channel_username ?? null,
+      },
+    };
+  }
+
+  return { error: "Provide channel_id or channel_username" };
 }
 
 async function toolListChannels(supabase: SupabaseClient, userId: string): Promise<ToolResult> {
@@ -353,6 +570,193 @@ async function toolSetCopierPaused(
   return { content: JSON.stringify({ ok: true, copier_paused: paused }) };
 }
 
+async function toolGetChannelConfig(
+  supabase: SupabaseClient,
+  userId: string,
+  args: Record<string, unknown>,
+): Promise<ToolResult> {
+  const brokerRes = await resolveBroker(supabase, userId, args);
+  if ("error" in brokerRes) return { content: JSON.stringify({ error: brokerRes.error }) };
+  const channelRes = await resolveChannel(supabase, userId, args);
+  if ("error" in channelRes) return { content: JSON.stringify({ error: channelRes.error }) };
+  const brokerId = brokerRes.broker.id;
+  const channelId = channelRes.channel.id;
+
+  const { data: row } = await supabase
+    .from("broker_channel_trading_configs")
+    .select("copier_mode,manual_settings,updated_at")
+    .eq("broker_account_id", brokerId)
+    .eq("channel_id", channelId)
+    .maybeSingle();
+
+  const { data: broker } = await supabase
+    .from("broker_accounts")
+    .select("signal_channel_ids,channel_trading_configs")
+    .eq("id", brokerId)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  let mode = row?.copier_mode === "ai" ? "ai" : "manual";
+  let manual = (row?.manual_settings && typeof row.manual_settings === "object"
+    ? row.manual_settings
+    : null) as Record<string, unknown> | null;
+
+  if (!manual) {
+    const map =
+      broker?.channel_trading_configs && typeof broker.channel_trading_configs === "object"
+        ? (broker.channel_trading_configs as Record<string, unknown>)
+        : {};
+    const entry = map[channelId] as Record<string, unknown> | undefined;
+    if (entry?.manual_settings && typeof entry.manual_settings === "object") {
+      manual = entry.manual_settings as Record<string, unknown>;
+      mode = entry.copier_mode === "ai" ? "ai" : "manual";
+    }
+  }
+
+  const assigned = Array.isArray(broker?.signal_channel_ids)
+    && broker!.signal_channel_ids.map(String).includes(channelId);
+
+  return {
+    content: JSON.stringify({
+      broker: brokerRes.broker,
+      channel: channelRes.channel,
+      assigned_to_broker: assigned,
+      configured: Boolean(manual),
+      copier_mode: mode,
+      manual_settings: manual ?? {},
+      updated_at: row?.updated_at ?? null,
+    }),
+  };
+}
+
+async function toolUpdateChannelConfig(
+  supabase: SupabaseClient,
+  userId: string,
+  args: Record<string, unknown>,
+): Promise<ToolResult> {
+  const brokerRes = await resolveBroker(supabase, userId, args);
+  if ("error" in brokerRes) return { content: JSON.stringify({ error: brokerRes.error }) };
+  const channelRes = await resolveChannel(supabase, userId, args);
+  if ("error" in channelRes) return { content: JSON.stringify({ error: channelRes.error }) };
+
+  const patch = sanitizeManualPatch(args.settings);
+  if (!Object.keys(patch).length) {
+    return { content: JSON.stringify({ error: "settings patch is empty or has no allowed keys" }) };
+  }
+
+  const brokerId = brokerRes.broker.id;
+  const channelId = channelRes.channel.id;
+  const mode = args.copier_mode === "ai" ? "ai" : "manual";
+  const patchSummary = String(args.summary ?? "").trim() || summarizeManualPatch(patch);
+  const brokerLabel = brokerRes.broker.account_login || brokerRes.broker.label || brokerId;
+  const channelLabel =
+    channelRes.channel.channel_username || channelRes.channel.display_name || channelId;
+
+  const resolvedArgs = {
+    broker_account_id: brokerId,
+    channel_id: channelId,
+    account_login: brokerRes.broker.account_login ?? undefined,
+    channel_username: channelRes.channel.channel_username ?? undefined,
+    copier_mode: mode,
+    settings: patch,
+    summary: patchSummary,
+  };
+
+  if (args.confirmed !== true) {
+    return {
+      content: JSON.stringify({ needs_confirmation: true, ...resolvedArgs }),
+      pendingConfirmation: {
+        tool: "update_channel_config",
+        args: resolvedArgs,
+        summary: `Apply config on broker ${brokerLabel} / ${channelLabel}: ${patchSummary}?`,
+      },
+    };
+  }
+
+  const { data: existing } = await supabase
+    .from("broker_channel_trading_configs")
+    .select("manual_settings")
+    .eq("broker_account_id", brokerId)
+    .eq("channel_id", channelId)
+    .maybeSingle();
+
+  const { data: broker, error: brokerErr } = await supabase
+    .from("broker_accounts")
+    .select("id,channel_trading_configs,signal_channel_ids")
+    .eq("id", brokerId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (brokerErr || !broker) {
+    return { content: JSON.stringify({ error: brokerErr?.message ?? "Broker not found" }) };
+  }
+
+  let current: Record<string, unknown> = {};
+  if (existing?.manual_settings && typeof existing.manual_settings === "object") {
+    current = existing.manual_settings as Record<string, unknown>;
+  } else {
+    const map =
+      broker.channel_trading_configs && typeof broker.channel_trading_configs === "object"
+        ? (broker.channel_trading_configs as Record<string, unknown>)
+        : {};
+    const entry = map[channelId] as Record<string, unknown> | undefined;
+    if (entry?.manual_settings && typeof entry.manual_settings === "object") {
+      current = entry.manual_settings as Record<string, unknown>;
+    }
+  }
+
+  const manual = mergeManualSettings(current, patch);
+
+  const { error: upsertErr } = await supabase.from("broker_channel_trading_configs").upsert(
+    {
+      user_id: userId,
+      broker_account_id: brokerId,
+      channel_id: channelId,
+      copier_mode: mode,
+      manual_settings: manual,
+      ai_settings: {},
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "broker_account_id,channel_id" },
+  );
+  if (upsertErr) return { content: JSON.stringify({ error: upsertErr.message }) };
+
+  const configs =
+    broker.channel_trading_configs && typeof broker.channel_trading_configs === "object"
+      ? { ...(broker.channel_trading_configs as Record<string, unknown>) }
+      : {};
+  configs[channelId] = {
+    copier_mode: mode,
+    manual_settings: manual,
+    ai_settings: {},
+  };
+  const signalIds = Array.isArray(broker.signal_channel_ids)
+    ? [...broker.signal_channel_ids.map(String)]
+    : [];
+  if (!signalIds.includes(channelId)) signalIds.push(channelId);
+
+  const { error: upErr } = await supabase
+    .from("broker_accounts")
+    .update({
+      channel_trading_configs: configs,
+      signal_channel_ids: signalIds,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", brokerId)
+    .eq("user_id", userId);
+  if (upErr) return { content: JSON.stringify({ error: upErr.message }) };
+
+  return {
+    content: JSON.stringify({
+      ok: true,
+      broker_account_id: brokerId,
+      channel_id: channelId,
+      account_login: brokerRes.broker.account_login,
+      applied: patch,
+      hint: "Offer to save_preset if the user wants to reuse these settings.",
+    }),
+  };
+}
+
 async function loadPreset(
   supabase: SupabaseClient,
   userId: string,
@@ -378,11 +782,13 @@ async function toolApplyPreset(
   userId: string,
   args: Record<string, unknown>,
 ): Promise<ToolResult> {
-  const brokerId = String(args.broker_account_id ?? "").trim();
-  const channelId = String(args.channel_id ?? "").trim();
-  if (!brokerId || !channelId) {
-    return { content: JSON.stringify({ error: "broker_account_id and channel_id required" }) };
-  }
+  const brokerRes = await resolveBroker(supabase, userId, args);
+  if ("error" in brokerRes) return { content: JSON.stringify({ error: brokerRes.error }) };
+  const channelRes = await resolveChannel(supabase, userId, args);
+  if ("error" in channelRes) return { content: JSON.stringify({ error: channelRes.error }) };
+  const brokerId = brokerRes.broker.id;
+  const channelId = channelRes.channel.id;
+
   const loaded = await loadPreset(supabase, userId, args);
   if ("error" in loaded && loaded.error) {
     return { content: JSON.stringify({ error: loaded.error }) };
@@ -482,12 +888,17 @@ async function toolSavePreset(
   userId: string,
   args: Record<string, unknown>,
 ): Promise<ToolResult> {
-  const brokerId = String(args.broker_account_id ?? "").trim();
-  const channelId = String(args.channel_id ?? "").trim();
   const name = String(args.name ?? "").trim();
-  if (!brokerId || !channelId || !name) {
-    return { content: JSON.stringify({ error: "broker_account_id, channel_id, and name required" }) };
+  if (!name) {
+    return { content: JSON.stringify({ error: "name required" }) };
   }
+  const brokerRes = await resolveBroker(supabase, userId, args);
+  if ("error" in brokerRes) return { content: JSON.stringify({ error: brokerRes.error }) };
+  const channelRes = await resolveChannel(supabase, userId, args);
+  if ("error" in channelRes) return { content: JSON.stringify({ error: channelRes.error }) };
+  const brokerId = brokerRes.broker.id;
+  const channelId = channelRes.channel.id;
+
   if (args.confirmed !== true) {
     return {
       content: JSON.stringify({ needs_confirmation: true, name }),
@@ -564,11 +975,18 @@ async function toolSavePreset(
 function runClientActionTool(name: string, args: Record<string, unknown>): ToolResult {
   switch (name) {
     case "open_connect_broker":
+    case "start_broker_connect":
       return {
         content: JSON.stringify({ queued: true }),
         pendingClientAction: {
-          type: "open_connect_broker",
-          summary: "Open the connect broker modal",
+          type: "start_broker_connect",
+          summary: "Start in-chat broker connect",
+          args: {
+            platform: args.platform,
+            account_login: args.account_login,
+            broker_server: args.broker_server,
+            label: args.label,
+          },
         },
       };
     case "open_telegram_link":
@@ -576,8 +994,16 @@ function runClientActionTool(name: string, args: Record<string, unknown>): ToolR
         content: JSON.stringify({ queued: true }),
         pendingClientAction: {
           type: "open_telegram_link",
-          summary: "Open Copier Engine to link Telegram",
+          summary: "Start in-chat Telegram link",
           args: { path: "/copier-engine" },
+        },
+      };
+    case "start_telegram_link":
+      return {
+        content: JSON.stringify({ queued: true }),
+        pendingClientAction: {
+          type: "start_telegram_link",
+          summary: "Start in-chat Telegram phone link",
         },
       };
     case "navigate": {
@@ -636,6 +1062,10 @@ async function executeTool(
       return toolListBrokers(supabase, userId);
     case "list_channels":
       return toolListChannels(supabase, userId);
+    case "get_channel_config":
+      return toolGetChannelConfig(supabase, userId, args);
+    case "update_channel_config":
+      return toolUpdateChannelConfig(supabase, userId, args);
     case "list_presets":
       return toolListPresets(supabase, userId);
     case "apply_preset":
@@ -652,7 +1082,9 @@ async function executeTool(
       };
     }
     case "open_connect_broker":
+    case "start_broker_connect":
     case "open_telegram_link":
+    case "start_telegram_link":
     case "navigate":
     case "open_live_chat":
     case "propose_config_change":
@@ -662,7 +1094,12 @@ async function executeTool(
   }
 }
 
-const EXECUTABLE_MUTATIONS = new Set(["set_copier_paused", "apply_preset", "save_preset"]);
+const EXECUTABLE_MUTATIONS = new Set([
+  "set_copier_paused",
+  "apply_preset",
+  "save_preset",
+  "update_channel_config",
+]);
 
 function isImageDataUrl(value: unknown): value is string {
   return (
@@ -741,11 +1178,19 @@ Deno.serve(async (req: Request) => {
     }
     const args = { ...(execute.args ?? {}), confirmed: true };
     const result = await executeTool(supabase, userId, tool, args);
+    const ok = result.content.includes('"ok":true') || result.content.includes('"ok": true');
+    let assistant_message = ok ? "Done." : "Action finished.";
+    if (ok && tool === "update_channel_config") {
+      assistant_message =
+        "Configuration saved. Want me to save this as a named preset?";
+    } else if (ok && tool === "save_preset") {
+      assistant_message = "Preset saved.";
+    } else if (ok && tool === "apply_preset") {
+      assistant_message = "Preset applied.";
+    }
     return Response.json(
       {
-        assistant_message: result.content.includes('"ok":true') || result.content.includes('"ok": true')
-          ? "Done."
-          : "Action finished.",
+        assistant_message,
         tool_results: [{ tool, result: result.content }],
         pending_client_actions: [],
         pending_confirmations: [],

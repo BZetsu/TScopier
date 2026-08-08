@@ -20,15 +20,16 @@ Ensure `OPENAI_API_KEY` is set in the project’s Edge Function secrets.
 ## Client
 
 - Header sparkles button opens [`AssistantPanel`](../src/components/assistant/AssistantPanel.tsx)
-- Chat history is kept in `sessionStorage` (last 20 turns per user)
-- Users can attach or paste up to 3 images per message (JPEG/PNG/WebP/GIF); the panel compresses them client-side and the edge function sends them as OpenAI vision parts
-- Mutations (pause/resume, apply/save preset) show a Confirm card, then call `{ execute: { tool, args } }`
-- Sensitive flows (Telegram link, broker connect) open existing app UI — credentials are never collected in chat
+- Chat history is kept in `sessionStorage` (last 20 turns per user); phone numbers are redacted
+- **Telegram link (phone + OTP)** and **broker connect** run in-chat via secure cards — passwords/OTP never go through OpenAI
+- **Configuration**: the assistant can resolve brokers by MT login (e.g. `928883`), write lot/multi/range settings via `update_channel_config` (Confirm card), then offer `save_preset`
+- Mutations (pause/resume, config, apply/save preset) show a Confirm card, then call `{ execute: { tool, args } }`
 
 ## Manual checks
 
 1. Open assistant from the header; ask “Is my Telegram linked?”
-2. Ask to pause the copier → Confirm → header pause state updates
-3. Ask to connect MT5 → connect modal opens
-4. Ask to apply a named preset → Confirm → config updates on that broker/channel
-5. Attach or paste a screenshot and ask what it shows
+2. Ask to link Telegram → phone card → OTP → linked
+3. Ask to connect MT5 with a login → secure password card → connected
+4. Ask “configure broker 928883 on channel X with lot 0.02 multi 5%” → Confirm → settings saved → offer save preset
+5. Ask to pause the copier → Confirm → header pause state updates
+6. Attach or paste a screenshot and ask what it shows
