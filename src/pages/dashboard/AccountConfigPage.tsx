@@ -5,7 +5,7 @@ import {
   Plus, Trash2, Server, Activity, GitBranch, Eye, DollarSign, RefreshCw,
   SlidersHorizontal, Radio, Target, Filter, Wallet, Link2,
   ChevronLeft, ChevronRight, Search, Settings2, Bookmark, Pencil, ScrollText, AlertTriangle,
-  Infinity as InfinityIcon, Coins, X, Sparkles, FileUp, FileDown,
+  Infinity as InfinityIcon, Coins, X, MessageSquareText, FileUp, FileDown,
 } from 'lucide-react'
 import clsx from 'clsx'
 import { supabase } from '../../lib/supabase'
@@ -785,7 +785,7 @@ export function AccountConfigPage() {
 
   const manualSubTabs = useMemo<ManualSubTabDef[]>(
     () => [
-      { id: 'signal_examples', label: cm.manualSubTabs.aiTraining, icon: Sparkles },
+      { id: 'signal_examples', label: cm.manualSubTabs.aiTraining, icon: MessageSquareText },
       { id: 'symbols', label: cm.manualSubTabs.symbols, icon: Coins },
       { id: 'channel_instructions', label: cm.manualSubTabs.channelInstructions, icon: ScrollText },
       { id: 'risk', label: cm.manualSubTabs.risk, icon: Wallet },

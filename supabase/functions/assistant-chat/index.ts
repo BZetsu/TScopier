@@ -179,7 +179,7 @@ const TOOL_DEFS = [
     function: {
       name: "update_channel_config",
       description:
-        "Create or update trading settings for a channel on a broker (lot size, multi-trade, range, etc.). Call WITHOUT confirmed first so the UI can Confirm; then client re-executes with confirmed=true. Resolve broker by id or account_login; channel by id or username. After success, offer save_preset if the user wants a named preset.",
+        "Create or update trading settings for a channel on a broker (lot size, multi-trade, range, etc.). Call WITHOUT confirmed first so the UI can Confirm; then client re-executes with confirmed=true. Resolve broker by id or account_login; channel by id or username. Only after a confirmed write returns ok may you say settings were updated; then offer save_preset if the user wants a named preset. Opening the config UI is open_broker_config, not this tool.",
       parameters: {
         type: "object",
         properties: {
@@ -375,7 +375,7 @@ const TOOL_DEFS = [
     function: {
       name: "open_broker_config",
       description:
-        "Open the Brokers page (/brokers) and the configuration modal for a broker. Prefer this when the user asks to open broker configuration / account config. If they have multiple brokers and did not specify which, call without identifiers — the tool returns the list so you can ask which one. After they name a broker (label or login), call again with account_login or label.",
+        "Open the Brokers page (/brokers) and the configuration modal for a broker. This only opens the UI — it does NOT change trading settings. Prefer this when the user asks to open broker configuration / account config. If they have multiple brokers and did not specify which, call without identifiers — the tool returns the list so you can ask which one. After they name a broker (label or login), call again with account_login or label.",
       parameters: {
         type: "object",
         properties: {
@@ -1268,7 +1268,13 @@ async function toolOpenBrokerConfig(
     }
     const name = resolved.broker.label || resolved.broker.account_login || resolved.broker.id;
     return {
-      content: JSON.stringify({ queued: true, broker: resolved.broker }),
+      content: JSON.stringify({
+        queued: true,
+        settings_changed: false,
+        message:
+          "Configuration UI opened only. No trading settings were updated. Tell the user the config modal is open — do not claim settings were saved or updated.",
+        broker: resolved.broker,
+      }),
       pendingClientAction: {
         type: "open_broker_config",
         summary: `Open configuration for ${name}`,
@@ -1283,6 +1289,9 @@ async function toolOpenBrokerConfig(
     return {
       content: JSON.stringify({
         queued: true,
+        settings_changed: false,
+        message:
+          "Configuration UI opened only. No trading settings were updated. Tell the user the config modal is open — do not claim settings were saved or updated.",
         broker: { id: b.id, account_login: b.account_login ?? null, label: b.label ?? null },
       }),
       pendingClientAction: {

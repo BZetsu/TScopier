@@ -22,7 +22,7 @@ Ensure `OPENAI_API_KEY` is set in the project’s Edge Function secrets.
 - Header sparkles button opens [`AssistantPanel`](../src/components/assistant/AssistantPanel.tsx)
 - Chat history is kept in `sessionStorage` (last 20 turns per user); phone numbers are redacted
 - **Telegram link (phone + OTP)** and **broker connect** run in-chat via secure cards — passwords/OTP never go through OpenAI
-- **Configuration**: the assistant can resolve brokers by MT login (e.g. `928883`), write lot/multi/range settings via `update_channel_config` (Confirm card), then offer `save_preset`. **`open_broker_config`** opens `/brokers` and the configure modal (asks which broker when there are several).
+- **Configuration**: the assistant can resolve brokers by MT login (e.g. `928883`), write lot/multi/range settings via `update_channel_config` (Confirm card), then offer `save_preset`. **`open_broker_config`** opens `/brokers` and the configure modal (asks which broker when there are several) — UI only; it must not claim settings changed.
 - **Backtest**: `open_backtest` navigates to `/backtest`; `list_backtests` summarizes recent runs. Runs still complete in the Backtest UI (channel → pull signals → symbol → Run)
 - Mutations (pause/resume, config, apply/save preset) show a Confirm card, then call `{ execute: { tool, args } }`
 
