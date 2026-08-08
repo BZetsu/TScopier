@@ -6,12 +6,14 @@ import { PageShell } from '../../components/layout/PageShell'
 
 export function AppPricingPage() {
   return (
-    <PageShell maxWidth="xl" spacing="none">
-      <PricingSocialProof variant="app">
-        <PricingPlansSection variant="app" />
-        <PlanComparisonSection variant="app" />
-        <PricingFaqSection variant="app" />
-      </PricingSocialProof>
-    </PageShell>
+    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-y-contain bg-neutral-50 dark:bg-neutral-950">
+      <PageShell maxWidth="xl" spacing="none" className="pb-16">
+        <PricingSocialProof variant="app">
+          <PricingPlansSection variant="app" />
+          <PlanComparisonSection variant="app" />
+          <PricingFaqSection variant="app" />
+        </PricingSocialProof>
+      </PageShell>
+    </div>
   )
 }
