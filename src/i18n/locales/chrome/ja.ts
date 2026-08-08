@@ -117,7 +117,7 @@ export const chromeJa: AppChromeTranslations = {
       telegram: {
         phoneTitle: 'Link Telegram',
         phoneHint: 'Enter your Telegram phone number in international format.',
-        phonePlaceholder: '+234…',
+        phonePlaceholder: '+1…',
         sendCode: 'Send code',
         codeTitle: 'Enter verification code',
         codeHint: 'Telegram sent a login code to your app or SMS. Enter it here — not in the chat box.',
@@ -129,7 +129,7 @@ export const chromeJa: AppChromeTranslations = {
         submitPassword: 'Continue',
         restart: 'Start over',
         openQrInstead: 'Prefer QR code? Open Copier Engine',
-        invalidPhone: 'Enter a valid phone number with country code (e.g. +234…).',
+        invalidPhone: 'Enter a valid phone number with country code (e.g. +1…).',
         codeSent: 'Great — a code has been sent to Telegram. Enter it in the secure field below to continue.',
         twoFaNeeded: 'Telegram needs your two-step verification password. Enter it in the secure field below.',
         linkedSuccess: 'Telegram is linked. You can add channels next on Copier Engine.',

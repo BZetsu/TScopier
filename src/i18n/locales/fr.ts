@@ -136,7 +136,7 @@ export const fr: Translations = {
       telegram: {
         phoneTitle: 'Lier Telegram',
         phoneHint: 'Entrez votre numéro Telegram au format international.',
-        phonePlaceholder: '+33…',
+        phonePlaceholder: '+1…',
         sendCode: 'Envoyer le code',
         codeTitle: 'Entrez le code de vérification',
         codeHint: 'Telegram a envoyé un code via l’app ou SMS. Saisissez-le ici — pas dans le chat.',
@@ -148,7 +148,7 @@ export const fr: Translations = {
         submitPassword: 'Continuer',
         restart: 'Recommencer',
         openQrInstead: 'Préférez le QR ? Ouvrir Copier Engine',
-        invalidPhone: 'Entrez un numéro valide avec indicatif (ex. +33…).',
+        invalidPhone: 'Entrez un numéro valide avec indicatif (ex. +1…).',
         codeSent: 'Parfait — un code a été envoyé sur Telegram. Saisissez-le dans le champ sécurisé ci-dessous.',
         twoFaNeeded: 'Telegram demande votre mot de passe de vérification en deux étapes. Saisissez-le dans le champ sécurisé.',
         linkedSuccess: 'Telegram est lié. Vous pouvez ajouter des canaux dans Copier Engine.',

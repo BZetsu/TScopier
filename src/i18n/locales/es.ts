@@ -136,7 +136,7 @@ export const es: Translations = {
       telegram: {
         phoneTitle: 'Vincular Telegram',
         phoneHint: 'Introduce tu número de Telegram en formato internacional.',
-        phonePlaceholder: '+34…',
+        phonePlaceholder: '+1…',
         sendCode: 'Enviar código',
         codeTitle: 'Introduce el código de verificación',
         codeHint: 'Telegram envió un código a tu app o SMS. Introdúcelo aquí — no en el chat.',
@@ -148,7 +148,7 @@ export const es: Translations = {
         submitPassword: 'Continuar',
         restart: 'Empezar de nuevo',
         openQrInstead: '¿Prefieres QR? Abrir Copier Engine',
-        invalidPhone: 'Introduce un número válido con código de país (p. ej. +34…).',
+        invalidPhone: 'Introduce un número válido con código de país (p. ej. +1…).',
         codeSent: 'Genial — se ha enviado un código a Telegram. Introdúcelo en el campo seguro de abajo.',
         twoFaNeeded: 'Telegram necesita tu contraseña de verificación en dos pasos. Introdúcela en el campo seguro.',
         linkedSuccess: 'Telegram está vinculado. Puedes añadir canales en Copier Engine.',
