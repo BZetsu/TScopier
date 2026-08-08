@@ -15,6 +15,82 @@ const FXSOCKET_WAIT_CONNECTED_INTERVAL_MS = 2_000
 
 /** In-memory auth cache — avoids refreshSession on every edge poll during connect. */
 let cachedAuth: { token: string; expiresAt: number } | null = null
+/** Single-flight refresh so parallel fxsocket 401s don't hammer Auth and trip 429. */
+let refreshInFlight: Promise<string | null> | null = null
+let lastRefreshAttemptAt = 0
+const REFRESH_COOLDOWN_MS = 15_000
+
+function isAuthThrottleMessage(message: string | null | undefined): boolean {
+  return /throttl|rate.?limit|too many requests|429/i.test(String(message ?? ''))
+}
+
+/**
+ * At most one refreshSession at a time; cooldown after each attempt so a burst of
+ * edge 401/503s cannot flood `/auth/v1/token?grant_type=refresh_token`.
+ */
+async function refreshAuthTokenSingleFlight(): Promise<string | null> {
+  if (refreshInFlight) return refreshInFlight
+
+  const now = Date.now()
+  if (now - lastRefreshAttemptAt < REFRESH_COOLDOWN_MS) {
+    return cachedAuth?.token ?? null
+  }
+  lastRefreshAttemptAt = now
+
+  refreshInFlight = (async () => {
+    try {
+      const { data: refreshed, error: refreshErr } = await supabase.auth.refreshSession()
+      if (refreshErr) {
+        if (isAuthThrottleMessage(refreshErr.message) && cachedAuth?.token) {
+          // Keep serving the existing JWT; do not clear session on Auth 429.
+          cachedAuth = {
+            token: cachedAuth.token,
+            expiresAt: Math.max(cachedAuth.expiresAt, Math.floor(Date.now() / 1000) + 60),
+          }
+          return cachedAuth.token
+        }
+        return cachedAuth?.token ?? null
+      }
+      const nextToken = refreshed.session?.access_token
+      const nextExpires = refreshed.session?.expires_at ?? 0
+      if (!nextToken) return cachedAuth?.token ?? null
+      cachedAuth = { token: nextToken, expiresAt: nextExpires }
+      return nextToken
+    } catch {
+      return cachedAuth?.token ?? null
+    } finally {
+      refreshInFlight = null
+    }
+  })()
+
+  return refreshInFlight
+}
+
+/** Validate / refresh the Supabase JWT before edge calls (avoids stale-session 401s). */
+export async function ensureFreshAuthSession(): Promise<string> {
+  const nowSec = Math.floor(Date.now() / 1000)
+  if (cachedAuth && cachedAuth.expiresAt - nowSec > 120) {
+    return cachedAuth.token
+  }
+
+  // Prefer local session — getUser() hits Auth on every call and amplifies rate limits.
+  const { data: sessionData } = await supabase.auth.getSession()
+  const session = sessionData.session
+  const token = session?.access_token
+  if (!token) throw new Error('Not signed in')
+
+  const expiresAt = session.expires_at ?? 0
+  if (expiresAt - nowSec > 120) {
+    cachedAuth = { token, expiresAt }
+    return token
+  }
+
+  const refreshed = await refreshAuthTokenSingleFlight()
+  if (refreshed) return refreshed
+
+  cachedAuth = { token, expiresAt: Math.max(expiresAt, nowSec + 60) }
+  return token
+}
 
 /** Accounts actively polled by waitUntilConnected — skip duplicate background sync. */
 const waitConnectedAccountIds = new Set<string>()
@@ -63,46 +139,6 @@ function fxsocketFetchError(e: unknown, fallback: string): Error {
   return e instanceof Error ? e : new Error(fallback)
 }
 
-/** Validate / refresh the Supabase JWT before edge calls (avoids stale-session 401s). */
-export async function ensureFreshAuthSession(): Promise<string> {
-  const nowSec = Math.floor(Date.now() / 1000)
-  if (cachedAuth && cachedAuth.expiresAt - nowSec > 120) {
-    return cachedAuth.token
-  }
-
-  const { data: userData, error: userErr } = await supabase.auth.getUser()
-  if (userErr || !userData.user) throw new Error('Not signed in')
-
-  const { data: sessionData } = await supabase.auth.getSession()
-  const session = sessionData.session
-  const token = session?.access_token
-  if (!token) throw new Error('Not signed in')
-
-  const expiresAt = session.expires_at ?? 0
-  if (expiresAt - nowSec > 120) {
-    cachedAuth = { token, expiresAt }
-    return token
-  }
-
-  const { data: refreshed, error: refreshErr } = await supabase.auth.refreshSession()
-  if (refreshErr) {
-    if (/throttl/i.test(refreshErr.message) && token) {
-      cachedAuth = { token, expiresAt: Math.max(expiresAt, nowSec + 60) }
-      return token
-    }
-    cachedAuth = { token, expiresAt }
-    return token
-  }
-  const nextToken = refreshed.session?.access_token
-  const nextExpires = refreshed.session?.expires_at ?? expiresAt
-  if (!nextToken) {
-    cachedAuth = { token, expiresAt }
-    return token
-  }
-  cachedAuth = { token: nextToken, expiresAt: nextExpires }
-  return nextToken
-}
-
 async function call<T = unknown>(opts: CallOpts<T>): Promise<T> {
   const url = (import.meta.env.VITE_SUPABASE_URL as string) + '/functions/v1/fxsocket-broker'
   const timeoutMs = opts.timeoutMs ?? FXSOCKET_EDGE_TIMEOUT_MS
@@ -128,12 +164,11 @@ async function call<T = unknown>(opts: CallOpts<T>): Promise<T> {
   let res = await doFetch(token)
 
   if (res.status === 401) {
-    const { data: refreshed, error: refreshErr } = await supabase.auth.refreshSession()
-    const retryToken = refreshed.session?.access_token
-    if (!refreshErr && retryToken) {
+    // Edge 401 is often gateway/config (or CORS-masked 503), not an expired JWT.
+    // Refresh at most once via single-flight; skip if we already refreshed for this token.
+    const retryToken = await refreshAuthTokenSingleFlight()
+    if (retryToken && retryToken !== token) {
       token = retryToken
-      res = await doFetch(token)
-    } else if (refreshErr && /throttled/i.test(refreshErr.message)) {
       res = await doFetch(token)
     }
   }
