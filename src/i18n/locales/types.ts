@@ -102,6 +102,22 @@ export interface NavTranslations {
     rateUs: string
     signOut: string
   }
+  assistant: {
+    title: string
+    subtitle: string
+    ariaLabel: string
+    close: string
+    placeholder: string
+    send: string
+    thinking: string
+    confirm: string
+    cancel: string
+    welcomeTitle: string
+    suggestions: string[]
+    emptyReply: string
+    actionDone: string
+    errorFallback: string
+  }
 }
 
 export interface CommonTranslations {

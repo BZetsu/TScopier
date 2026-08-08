@@ -33,6 +33,9 @@ verify_jwt = true
 [functions.confirm-checkout]
 verify_jwt = true
 
+[functions.assistant-chat]
+verify_jwt = true
+
 [functions.customer-portal]
 verify_jwt = true
 

@@ -106,6 +106,28 @@ export const es: Translations = {
       status: 'Estado del servicio',
       statusOperational: 'Todos los sistemas operativos',
     },
+
+    assistant: {
+      title: 'Asistente TScopier',
+      subtitle: 'Pregunta o pide ayuda para actuar',
+      ariaLabel: 'Abrir asistente de IA',
+      close: 'Cerrar asistente',
+      placeholder: 'Pregunta lo que quieras sobre TScopier…',
+      send: 'Enviar',
+      thinking: 'Pensando…',
+      confirm: 'Confirmar',
+      cancel: 'Cancelar',
+      welcomeTitle: 'Puedo ayudarte a configurar y usar TScopier.',
+      suggestions: [
+        '¿Está vinculado mi Telegram?',
+        'Pausar el copier',
+        'Conectar una cuenta MT5',
+        '¿Qué son los presets?',
+      ],
+      emptyReply: '¿En qué más puedo ayudarte?',
+      actionDone: 'Listo.',
+      errorFallback: 'Algo salió mal. Inténtalo de nuevo.',
+    },
   },
   globalSearch: {
     placeholder: 'Buscar páginas, cuentas, canales…',

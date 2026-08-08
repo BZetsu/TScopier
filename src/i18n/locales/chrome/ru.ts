@@ -88,6 +88,28 @@ export const chromeRu: AppChromeTranslations = {
       status: 'Статус',
       statusOperational: 'Все системы работают нормально',
     },
+
+    assistant: {
+      title: 'TScopier Assistant',
+      subtitle: 'Ask questions or get help taking action',
+      ariaLabel: 'Open AI assistant',
+      close: 'Close assistant',
+      placeholder: 'Ask anything about TScopier…',
+      send: 'Send',
+      thinking: 'Thinking…',
+      confirm: 'Confirm',
+      cancel: 'Cancel',
+      welcomeTitle: 'I can help you set up and run TScopier.',
+      suggestions: [
+        'Is my Telegram linked?',
+        'Pause the copier',
+        'Connect an MT5 account',
+        'What are trading presets?',
+      ],
+      emptyReply: 'How else can I help?',
+      actionDone: 'Done.',
+      errorFallback: 'Something went wrong. Please try again.',
+    },
   },
   globalSearch: {
     placeholder: 'Ищите страницы, счета, каналы…',

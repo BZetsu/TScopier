@@ -1,0 +1,109 @@
+import { ensureFreshAuthSession } from './fxsocketBroker'
+
+export type AssistantChatMessage = {
+  role: 'user' | 'assistant'
+  content: string
+}
+
+export type PendingClientAction = {
+  type: string
+  summary: string
+  args?: Record<string, unknown>
+}
+
+export type PendingConfirmation = {
+  tool: string
+  args: Record<string, unknown>
+  summary: string
+}
+
+export type AssistantChatResponse = {
+  assistant_message: string
+  pending_client_actions: PendingClientAction[]
+  pending_confirmations: PendingConfirmation[]
+  tool_results?: Array<{ tool: string; result: string }>
+  error?: string
+}
+
+export async function postAssistantChat(params: {
+  messages: AssistantChatMessage[]
+  locale?: string
+}): Promise<AssistantChatResponse> {
+  const token = await ensureFreshAuthSession()
+  const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/assistant-chat`
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+      apikey: import.meta.env.VITE_SUPABASE_ANON_KEY as string,
+    },
+    body: JSON.stringify({
+      messages: params.messages,
+      locale: params.locale,
+    }),
+  })
+  const data = (await res.json().catch(() => ({}))) as AssistantChatResponse
+  if (!res.ok) {
+    throw new Error(data.error || `Assistant request failed (${res.status})`)
+  }
+  return {
+    assistant_message: data.assistant_message ?? '',
+    pending_client_actions: data.pending_client_actions ?? [],
+    pending_confirmations: data.pending_confirmations ?? [],
+    tool_results: data.tool_results,
+  }
+}
+
+export async function executeAssistantAction(params: {
+  tool: string
+  args: Record<string, unknown>
+}): Promise<AssistantChatResponse> {
+  const token = await ensureFreshAuthSession()
+  const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/assistant-chat`
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+      apikey: import.meta.env.VITE_SUPABASE_ANON_KEY as string,
+    },
+    body: JSON.stringify({
+      execute: { tool: params.tool, args: params.args },
+    }),
+  })
+  const data = (await res.json().catch(() => ({}))) as AssistantChatResponse
+  if (!res.ok) {
+    throw new Error(data.error || `Action failed (${res.status})`)
+  }
+  return {
+    assistant_message: data.assistant_message ?? 'Done.',
+    pending_client_actions: data.pending_client_actions ?? [],
+    pending_confirmations: data.pending_confirmations ?? [],
+    tool_results: data.tool_results,
+  }
+}
+
+const HISTORY_PREFIX = 'tscopier.assistant.history.'
+
+export function loadAssistantHistory(userId: string): AssistantChatMessage[] {
+  try {
+    const raw = sessionStorage.getItem(HISTORY_PREFIX + userId)
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as AssistantChatMessage[]
+    if (!Array.isArray(parsed)) return []
+    return parsed
+      .filter(m => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
+      .slice(-20)
+  } catch {
+    return []
+  }
+}
+
+export function saveAssistantHistory(userId: string, messages: AssistantChatMessage[]): void {
+  try {
+    sessionStorage.setItem(HISTORY_PREFIX + userId, JSON.stringify(messages.slice(-20)))
+  } catch {
+    // ignore
+  }
+}
