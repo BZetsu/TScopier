@@ -585,7 +585,7 @@ test('default integrations and automatic tracing are disabled', () => {
   assert.equal(opts.defaultIntegrations, false)
   const integrations = opts.integrations as { name?: string }[]
   assert.equal(integrations.length, 1)
-  assert.equal(integrations[0].name, 'Console')
+  assert.equal(integrations[0].name, 'ConsoleLogs')
   assert.equal(opts.sendDefaultPii, false)
   assert.equal(opts.tracesSampleRate, 0)
   assert.equal(opts.profilesSampleRate, 0)
