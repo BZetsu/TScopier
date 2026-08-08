@@ -100,19 +100,6 @@ export const authEn: AuthTranslations = {
     confirmPending: 'Verification is still processing. Check your email for the latest link.',
     confirmLinkExpired: 'This confirmation link expired or was already used. Sign in or request a new email.',
   },
-  welcome: {
-    title: 'Welcome to TScopier',
-    subtitle: 'Your account is ready. Choose a plan to copy Telegram signals to your broker.',
-    steps: [
-      'Connect Telegram and choose signal channels',
-      'Link your MT4/MT5 broker account',
-      'Copy trades automatically with your risk settings',
-    ],
-    exploreDashboard: 'Choose a plan',
-    seePricing: 'See Pricing',
-    errorFallback: 'Could not continue. Please try again.',
-    checkoutFailed: 'Could not start checkout. Please try again.',
-  },
   marketing: {
     headline: 'One Seamless Copier for every Telegram Signal',
     trustpilotLabel: 'Trustpilot',

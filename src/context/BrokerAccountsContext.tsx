@@ -52,7 +52,7 @@ export function BrokerAccountsProvider({
   enabled = true,
 }: {
   children: ReactNode
-  /** When false, skip broker fetch/realtime (e.g. welcome modal showing). */
+  /** When false, skip broker fetch/realtime (e.g. while auth/profile still resolving). */
   enabled?: boolean
 }) {
   const { user } = useAuth()
