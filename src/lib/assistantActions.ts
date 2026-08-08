@@ -5,13 +5,20 @@ import type { AssistantBrokerConnectPrefill } from './assistantBrokerConnect'
 const NAV_ALLOWLIST = new Set([
   '/dashboard',
   '/copier-engine',
-  '/account-config',
+  '/brokers',
+  '/account-configuration',
   '/channels',
   '/backtest',
   '/billing',
   '/contact-support',
   '/pricing',
 ])
+
+/** Legacy assistant paths → real routes (avoid /:referralCode catch-all → signup). */
+function normalizeNavPath(path: string): string {
+  if (path === '/account-config' || path === '/account-configuration') return '/brokers'
+  return path
+}
 
 export type AssistantActionHandlers = {
   navigate: NavigateFunction
@@ -20,6 +27,7 @@ export type AssistantActionHandlers = {
   refreshProfile: () => Promise<void> | void
   startTelegramLinkFlow?: () => void
   startBrokerConnectFlow?: (prefill?: AssistantBrokerConnectPrefill | null) => void
+  requestConfigureBroker?: (brokerId: string) => void
 }
 
 function prefillFromAction(action: PendingClientAction): AssistantBrokerConnectPrefill {
@@ -68,8 +76,9 @@ export function runPendingClientActions(
         break
       }
       case 'navigate': {
-        const path = String(action.args?.path ?? '')
-        if (NAV_ALLOWLIST.has(path)) {
+        const raw = String(action.args?.path ?? '')
+        const path = normalizeNavPath(raw)
+        if (NAV_ALLOWLIST.has(path) || NAV_ALLOWLIST.has(raw)) {
           handlers.navigate(path)
           notes.push(`Navigated to ${path}`)
         }
@@ -79,10 +88,16 @@ export function runPendingClientActions(
         handlers.openLiveChat()
         notes.push('Opened live chat')
         break
+      case 'open_broker_config':
       case 'propose_config_change': {
-        const path = '/account-config'
-        handlers.navigate(path)
-        notes.push(action.summary || 'Opened Configuration to review changes')
+        const brokerId = String(action.args?.broker_account_id ?? '').trim()
+        if (brokerId && handlers.requestConfigureBroker) {
+          handlers.requestConfigureBroker(brokerId)
+          notes.push(action.summary || 'Opened broker configuration')
+        } else {
+          handlers.navigate('/brokers')
+          notes.push(action.summary || 'Opened Brokers configuration')
+        }
         break
       }
       default:
@@ -93,5 +108,6 @@ export function runPendingClientActions(
 }
 
 export function isNavigatePathAllowed(path: string): boolean {
-  return NAV_ALLOWLIST.has(path)
+  const normalized = normalizeNavPath(path)
+  return NAV_ALLOWLIST.has(normalized) || NAV_ALLOWLIST.has(path)
 }

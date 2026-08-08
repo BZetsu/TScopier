@@ -48,7 +48,7 @@ export function AssistantPanel() {
   const { locale } = useLocale()
   const navigate = useNavigate()
   const { session } = useAuth()
-  const { openAddTradingAccount } = useAddTradingAccount()
+  const { openAddTradingAccount, requestConfigureBroker } = useAddTradingAccount()
   const { openLiveChat } = useLiveChat()
   const { refreshProfile } = useUserProfile()
   const { upsertBroker, refreshBrokers } = useBrokerAccounts()
@@ -134,6 +134,7 @@ export function AssistantPanel() {
         refreshProfile,
         startTelegramLinkFlow,
         startBrokerConnectFlow,
+        requestConfigureBroker,
       })
     }
   }

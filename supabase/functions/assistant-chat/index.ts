@@ -75,13 +75,20 @@ function parseArgs(raw: string): Record<string, unknown> {
 const NAV_ALLOWLIST = new Set([
   "/dashboard",
   "/copier-engine",
-  "/account-config",
+  "/brokers",
+  "/account-configuration",
   "/channels",
   "/backtest",
   "/billing",
   "/contact-support",
   "/pricing",
 ]);
+
+/** Map legacy assistant paths to real routes (never /account-config — that hits /:referralCode → signup). */
+function normalizeNavPath(path: string): string {
+  if (path === "/account-config" || path === "/account-configuration") return "/brokers";
+  return path;
+}
 
 const TOOL_DEFS = [
   {
@@ -330,7 +337,8 @@ const TOOL_DEFS = [
         properties: {
           path: {
             type: "string",
-            description: "One of: /dashboard /copier-engine /account-config /channels /backtest /billing /contact-support /pricing",
+            description:
+              "One of: /dashboard /copier-engine /brokers /channels /backtest /billing /contact-support /pricing",
           },
         },
         required: ["path"],
@@ -365,6 +373,23 @@ const TOOL_DEFS = [
   {
     type: "function",
     function: {
+      name: "open_broker_config",
+      description:
+        "Open the Brokers page (/brokers) and the configuration modal for a broker. Prefer this when the user asks to open broker configuration / account config. If they have multiple brokers and did not specify which, call without identifiers — the tool returns the list so you can ask which one. After they name a broker (label or login), call again with account_login or label.",
+      parameters: {
+        type: "object",
+        properties: {
+          broker_account_id: { type: "string" },
+          account_login: { type: "string", description: "MT account login, e.g. 928883" },
+          label: { type: "string", description: "Broker display label, e.g. Exness Demo" },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "open_live_chat",
       description: "Open human live chat support.",
       parameters: { type: "object", properties: {}, additionalProperties: false },
@@ -375,12 +400,14 @@ const TOOL_DEFS = [
     function: {
       name: "propose_config_change",
       description:
-        "Deprecated for writing settings — prefer update_channel_config. Navigates to Configuration UI as a fallback.",
+        "Deprecated for writing settings — prefer update_channel_config. Opens broker configuration UI (same as open_broker_config) as a fallback.",
       parameters: {
         type: "object",
         properties: {
           summary: { type: "string" },
           broker_account_id: { type: "string" },
+          account_login: { type: "string" },
+          label: { type: "string" },
           channel_id: { type: "string" },
           hint: { type: "string", description: "What to change in plain language" },
         },
@@ -1191,6 +1218,91 @@ async function toolSavePreset(
   return { content: JSON.stringify({ ok: true, preset: saved }) };
 }
 
+function brokerChoiceSummary(
+  brokers: Array<{ id: string; account_login: string | null; label: string | null; platform?: string | null }>,
+) {
+  return brokers.map((b) => ({
+    id: b.id,
+    account_login: b.account_login ?? null,
+    label: b.label ?? null,
+    platform: b.platform ?? null,
+  }));
+}
+
+async function toolOpenBrokerConfig(
+  supabase: SupabaseClient,
+  userId: string,
+  args: Record<string, unknown>,
+): Promise<ToolResult> {
+  const { data: brokers, error } = await supabase
+    .from("broker_accounts")
+    .select("id,account_login,label,platform")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: true });
+  if (error) return { content: JSON.stringify({ error: error.message }) };
+  const list = brokers ?? [];
+  if (list.length === 0) {
+    return {
+      content: JSON.stringify({
+        error: "No brokers connected. Use start_broker_connect first, then open configuration.",
+      }),
+    };
+  }
+
+  const hasSpecifier = Boolean(
+    String(args.broker_account_id ?? "").trim() ||
+      String(args.account_login ?? args.broker_login ?? "").trim() ||
+      String(args.label ?? args.broker_label ?? "").trim(),
+  );
+
+  if (hasSpecifier) {
+    const resolved = await resolveBroker(supabase, userId, args);
+    if ("error" in resolved) {
+      return {
+        content: JSON.stringify({
+          error: resolved.error,
+          brokers: brokerChoiceSummary(list),
+          hint: "Ask which broker to open, then call open_broker_config with account_login or label.",
+        }),
+      };
+    }
+    const name = resolved.broker.label || resolved.broker.account_login || resolved.broker.id;
+    return {
+      content: JSON.stringify({ queued: true, broker: resolved.broker }),
+      pendingClientAction: {
+        type: "open_broker_config",
+        summary: `Open configuration for ${name}`,
+        args: { broker_account_id: resolved.broker.id },
+      },
+    };
+  }
+
+  if (list.length === 1) {
+    const b = list[0];
+    const name = b.label || b.account_login || b.id;
+    return {
+      content: JSON.stringify({
+        queued: true,
+        broker: { id: b.id, account_login: b.account_login ?? null, label: b.label ?? null },
+      }),
+      pendingClientAction: {
+        type: "open_broker_config",
+        summary: `Open configuration for ${name}`,
+        args: { broker_account_id: b.id },
+      },
+    };
+  }
+
+  return {
+    content: JSON.stringify({
+      needs_broker_choice: true,
+      message:
+        "Multiple brokers found. Ask the user which broker configuration to open (by label or account login), then call open_broker_config again with account_login or label.",
+      brokers: brokerChoiceSummary(list),
+    }),
+  };
+}
+
 function runClientActionTool(name: string, args: Record<string, unknown>): ToolResult {
   switch (name) {
     case "open_connect_broker":
@@ -1226,9 +1338,10 @@ function runClientActionTool(name: string, args: Record<string, unknown>): ToolR
         },
       };
     case "navigate": {
-      const path = String(args.path ?? "").trim();
-      if (!NAV_ALLOWLIST.has(path)) {
-        return { content: JSON.stringify({ error: `Path not allowed: ${path}` }) };
+      const raw = String(args.path ?? "").trim();
+      const path = normalizeNavPath(raw);
+      if (!NAV_ALLOWLIST.has(path) && !NAV_ALLOWLIST.has(raw)) {
+        return { content: JSON.stringify({ error: `Path not allowed: ${raw}` }) };
       }
       return {
         content: JSON.stringify({ queued: true, path }),
@@ -1257,19 +1370,8 @@ function runClientActionTool(name: string, args: Record<string, unknown>): ToolR
         },
       };
     case "propose_config_change":
-      return {
-        content: JSON.stringify({ queued: true }),
-        pendingClientAction: {
-          type: "propose_config_change",
-          summary: String(args.summary ?? "Review configuration change"),
-          args: {
-            broker_account_id: args.broker_account_id,
-            channel_id: args.channel_id,
-            hint: args.hint,
-            summary: args.summary,
-          },
-        },
-      };
+      // Handled in executeTool via toolOpenBrokerConfig (needs broker resolution).
+      return { content: JSON.stringify({ error: "Use open_broker_config" }) };
     default:
       return { content: JSON.stringify({ error: `Unknown client action: ${name}` }) };
   }
@@ -1313,6 +1415,9 @@ async function executeTool(
           : JSON.stringify({ error: `Unknown topic: ${topic}` }),
       };
     }
+    case "open_broker_config":
+    case "propose_config_change":
+      return toolOpenBrokerConfig(supabase, userId, args);
     case "open_connect_broker":
     case "start_broker_connect":
     case "open_telegram_link":
@@ -1320,7 +1425,6 @@ async function executeTool(
     case "open_backtest":
     case "navigate":
     case "open_live_chat":
-    case "propose_config_change":
       return runClientActionTool(name, args);
     default:
       return { content: JSON.stringify({ error: `Unknown tool: ${name}` }) };
