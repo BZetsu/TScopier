@@ -7,6 +7,14 @@ This worker emits two kinds of Sentry signal:
 
 Sentry complements worker logs and database audit rows. It does not replace `trade_execution_logs`, broker state, reconciliation jobs, or support runbooks.
 
+## Structured Logs
+
+Issues (above) are for final failures. In addition, the worker streams **structured logs** to the Sentry Logs pipeline through the sanitized `captureWorkerLog` helper (`worker/src/observability/sentry.ts`) and the structured `logger` (`worker/src/logger.ts`, which forwards through it). Logs are fire-and-forget, pass `safeForSentry` at capture and `beforeSendLog` before leaving the process, and are queryable by their attributes: `subsystem`, `operation`, `error_code`, and the worker-role/shard fields.
+
+- Log level gates: `SENTRY_LOGS_MIN_LEVEL=info|warn|error` (default `info`). Set `warn` to cut volume.
+- Every worker process emits one `worker startup` log (`subsystem=worker`, `operation=startup`), proving Sentry connectivity within ~5s of boot.
+- Keep out of log volume just like issues: price ticks, normal queue polling, successful trades/management, normal reconnect heartbeats, and transient retries that later succeed. Prefer a `warn`/`error` log for operator-relevant stage context and reserve issues for final failures.
+
 ## Categories
 
 Business issue categories are bounded: `trade`, `broker`, `telegram`, `copier`, `account`, `queue`, `persistence`, `layering`, `management`, `reconciliation`, `auth`, and `worker`.

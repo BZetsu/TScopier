@@ -7,6 +7,7 @@ import {
   buildSafePipelineContext,
   captureWorkerError,
   captureWorkerFatalError,
+  captureWorkerLog,
   captureWorkerWarning,
   flushWorkerSentry,
   handleWorkerUncaughtException,
@@ -26,6 +27,7 @@ type MockSentry = {
   initCalls: unknown[]
   capturedExceptions: unknown[]
   capturedMessages: unknown[]
+  capturedLogs: Array<{ level: string; message: string; attributes?: unknown }>
   breadcrumbs: unknown[]
   tags: Record<string, string>
   contexts: Record<string, unknown>
@@ -41,6 +43,11 @@ type MockSentry = {
   setContext: (key: string, value: unknown) => void
   withScope: (fn: (scope: MockScope) => void) => void
   flush: (timeout?: number) => Promise<boolean>
+  logger: {
+    info: (message: string, attributes?: unknown) => void
+    warn: (message: string, attributes?: unknown) => void
+    error: (message: string, attributes?: unknown) => void
+  }
 }
 
 class MockScope {
@@ -61,6 +68,7 @@ function mockSentry(): MockSentry {
     initCalls: [],
     capturedExceptions: [],
     capturedMessages: [],
+    capturedLogs: [],
     breadcrumbs: [],
     tags: {},
     contexts: {},
@@ -79,6 +87,20 @@ function mockSentry(): MockSentry {
       if (mock.throwCapture) throw new Error('capture failed')
       mock.capturedMessages.push({ msg, level })
       return 'event-id'
+    },
+    logger: {
+      info(message: string, attributes?: unknown) {
+        if (mock.throwCapture) throw new Error('capture failed')
+        mock.capturedLogs.push({ level: 'info', message, attributes })
+      },
+      warn(message: string, attributes?: unknown) {
+        if (mock.throwCapture) throw new Error('capture failed')
+        mock.capturedLogs.push({ level: 'warn', message, attributes })
+      },
+      error(message: string, attributes?: unknown) {
+        if (mock.throwCapture) throw new Error('capture failed')
+        mock.capturedLogs.push({ level: 'error', message, attributes })
+      },
     },
     addBreadcrumb(crumb: unknown) { mock.breadcrumbs.push(crumb) },
     setTag(key: string, value: string) { mock.tags[key] = value },
@@ -281,6 +303,71 @@ test('beforeBreadcrumb redacts console messages and data', () => {
   assert.doesNotMatch(json, /eyJaaaaaaaa/)
   assert.doesNotMatch(json, /user:pass/)
   assert.doesNotMatch(json, /token=abc/)
+})
+
+test('init enables the logs pipeline with a redacting beforeSendLog', () => {
+  const mock = enabledMock()
+  const opts = initOptions(mock) as { enableLogs?: boolean; beforeSendLog?: (log: unknown) => unknown }
+  assert.equal(opts.enableLogs, true)
+  assert.equal(typeof opts.beforeSendLog, 'function')
+  const log = opts.beforeSendLog!({
+    level: 'info',
+    message: 'order failed Bearer eyJaaaaaaaaaaaaaaaa.eyJbbbbbbbbbbbbbbbb.cccccccccccccccccc fxs_abcdefghijklmnopqrstuvwxyz123',
+    attributes: { apiKey: 'secret-value', safe: 'ok', nested: { password: 'pw' } },
+  }) as Record<string, unknown>
+  const json = JSON.stringify(log)
+  assert.doesNotMatch(json, /eyJaaaaaaaa/)
+  assert.doesNotMatch(json, /fxs_abcdefghijklmnopqrstuvwxyz123/)
+  assert.doesNotMatch(json, /secret-value/)
+  assert.doesNotMatch(json, /pw/)
+  assert.equal(typeof log.message, 'string')
+})
+
+test('captureWorkerLog maps levels, applies bounded fields, and redacts attributes', () => {
+  const mock = enabledMock()
+  captureWorkerLog('info', 'worker startup', {
+    subsystem: 'worker',
+    operation: 'startup',
+    errorCode: 'STARTUP',
+    attributes: {
+      build_tag: 'build-1',
+      shard_id: 0,
+      broker_password: 'supersecret',
+      user_email: 'user@example.com',
+    },
+  })
+  captureWorkerLog('warn', 'retry backing off', { subsystem: 'queue', operation: 'retry' })
+  captureWorkerLog('error', 'order rejected', { subsystem: 'broker', operation: 'order_send', tags: { reason: 'margin' } })
+  assert.equal(mock.capturedLogs.length, 3)
+  const [startup, retry, rejected] = mock.capturedLogs
+  assert.equal(startup.level, 'info')
+  assert.equal(startup.message, 'worker startup')
+  assert.deepEqual(startup.attributes, {
+    subsystem: 'worker',
+    operation: 'startup',
+    error_code: 'STARTUP',
+    build_tag: 'build-1',
+    shard_id: 0,
+    broker_password: '[REDACTED]',
+    user_email: '[REDACTED]',
+  })
+  assert.equal(retry.level, 'warn')
+  assert.deepEqual(retry.attributes, { subsystem: 'queue', operation: 'retry' })
+  assert.equal(rejected.level, 'error')
+  assert.deepEqual(rejected.attributes, { subsystem: 'broker', operation: 'order_send', reason: 'margin' })
+})
+
+test('captureWorkerLog no-ops when Sentry is disabled', () => {
+  const mock = setupMock({ SENTRY_ENABLED: 'true' } as NodeJS.ProcessEnv)
+  captureWorkerLog('info', 'should not appear', { subsystem: 'worker', operation: 'startup' })
+  assert.equal(mock.capturedLogs.length, 0)
+})
+
+test('captureWorkerLog never throws when the adapter fails', () => {
+  const mock = enabledMock()
+  mock.throwCapture = true
+  assert.doesNotThrow(() => captureWorkerLog('info', 'boom', { subsystem: 'worker', operation: 'startup' }))
+  assert.equal(mock.capturedLogs.length, 0)
 })
 
 test('safeForSentry redacts nested arrays, Error, cause, circular, phone and email', () => {
