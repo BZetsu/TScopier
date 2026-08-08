@@ -778,7 +778,7 @@ export const landingFr: LandingTranslations = {
       {
         question: 'Y a-t-il un essai gratuit ?',
         answer:
-          'Nous n\'offrons pas d\'essai gratuit. Choisissez Basic ou Advanced, payez au checkout, puis démarrez l\'onboarding. Chaque forfait inclut une garantie de 30 jours.'abonnement. Basic est facturé dès le premier jour à 9,99 $/mois (ou 95,90 $/an en facturation annuelle). Vous pouvez explorer le tableau de bord avant de vous abonner, mais la copie live nécessite un plan actif.',
+          'Nous n\'offrons pas d\'essai gratuit. Choisissez Basic ou Advanced, payez au checkout, puis démarrez l\'onboarding. Chaque forfait inclut une garantie de remboursement de 30 jours. Basic est facturé dès le premier jour à 9,99 $/mois (ou 95,90 $/an en facturation annuelle). Vous pouvez explorer le tableau de bord avant de vous abonner, mais la copie live nécessite un plan actif.',
       },
       {
         question: 'Quelle est la différence entre facturation mensuelle et annuelle ?',
