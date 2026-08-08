@@ -16,7 +16,7 @@ const primaryBtnClass =
   'inline-flex shrink-0 items-center justify-center rounded-lg border border-teal-600 bg-teal-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:border-teal-700 hover:bg-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2 dark:focus:ring-offset-neutral-950'
 
 const heroCtaClass =
-  'group inline-flex w-full items-center justify-center gap-2 rounded-xl border border-teal-600 bg-teal-600 px-7 py-3.5 text-base font-semibold text-white shadow-lg shadow-teal-600/25 transition-all duration-300 hover:border-teal-500 hover:bg-teal-500 hover:shadow-[0_0_28px_rgba(45,212,191,0.55),0_0_56px_rgba(13,148,136,0.22)] sm:w-auto'
+  'group inline-flex w-full items-center justify-center gap-2 rounded-xl border border-teal-600 bg-teal-600 px-9 py-4 text-lg font-semibold text-white shadow-lg shadow-teal-600/25 transition-all duration-300 hover:border-teal-500 hover:bg-teal-500 hover:shadow-[0_0_28px_rgba(45,212,191,0.55),0_0_56px_rgba(13,148,136,0.22)] sm:w-auto sm:px-11 sm:py-5 sm:text-xl'
 
 export function MarketingAuthCta({ variant, onNavigate }: MarketingAuthCtaProps) {
   const { isSignedIn, loading } = useMarketingAuthState()
