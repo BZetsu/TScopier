@@ -111,8 +111,10 @@ import {
 } from '../../lib/brokerChannelTradingConfigs'
 import { parseSymbolToTradeList } from '../../lib/channelSymbolDetection'
 import {
+  deleteTradingPreset,
   listTradingPresets,
   presetToChannelConfigDraft,
+  renameTradingPreset,
   upsertTradingPreset,
   type ChannelTradingPreset,
 } from '../../lib/tradingPresets'
@@ -913,10 +915,13 @@ export function AccountConfigPage() {
   const [tradingPresets, setTradingPresets] = useState<ChannelTradingPreset[]>([])
   const [presetsLoading, setPresetsLoading] = useState(false)
   const [presetSaving, setPresetSaving] = useState(false)
-  const [presetSavedAt, setPresetSavedAt] = useState<number | null>(null)
+  const [presetStatusMessage, setPresetStatusMessage] = useState<string | null>(null)
   const [showPresetNameModal, setShowPresetNameModal] = useState(false)
+  const [showManagePresetsModal, setShowManagePresetsModal] = useState(false)
   const [presetNameDraft, setPresetNameDraft] = useState('')
   const [pendingApplyPreset, setPendingApplyPreset] = useState<ChannelTradingPreset | null>(null)
+  const [editingPreset, setEditingPreset] = useState<ChannelTradingPreset | null>(null)
+  const [pendingDeletePreset, setPendingDeletePreset] = useState<ChannelTradingPreset | null>(null)
   const [channelLinkEditMode, setChannelLinkEditMode] = useState(false)
   const [error, setError] = useState('')
   const [channelsLoading, setChannelsLoading] = useState(() =>
@@ -1508,10 +1513,10 @@ export function AccountConfigPage() {
   }, [configSavedAt])
 
   useEffect(() => {
-    if (presetSavedAt == null) return
-    const t = setTimeout(() => setPresetSavedAt(null), 2500)
+    if (presetStatusMessage == null) return
+    const t = setTimeout(() => setPresetStatusMessage(null), 2500)
     return () => clearTimeout(t)
-  }, [presetSavedAt])
+  }, [presetStatusMessage])
 
   const startBackgroundAiTraining = useCallback((channelId: string, opts?: { force?: boolean }) => {
     if (!userId) {
@@ -1755,8 +1760,11 @@ export function AccountConfigPage() {
     setConfigAccount(null)
     setConfigSavedSignature('')
     setShowPresetNameModal(false)
+    setShowManagePresetsModal(false)
     setPresetNameDraft('')
     setPendingApplyPreset(null)
+    setEditingPreset(null)
+    setPendingDeletePreset(null)
     setChannelLinkEditMode(false)
     setError('')
   }
@@ -1888,9 +1896,61 @@ export function AccountConfigPage() {
       })
       setShowPresetNameModal(false)
       setPresetNameDraft('')
-      setPresetSavedAt(Date.now())
+      setPresetStatusMessage(cm.presetSaved)
     } catch (err) {
       setError(err instanceof Error ? err.message : cm.saveAsPreset)
+    } finally {
+      setPresetSaving(false)
+    }
+  }
+
+  const openEditPresetModal = (preset: ChannelTradingPreset) => {
+    setError('')
+    setEditingPreset(preset)
+    setPresetNameDraft(preset.name)
+  }
+
+  const confirmEditPreset = async () => {
+    if (!user?.id || !editingPreset) return
+    const name = presetNameDraft.trim()
+    if (!name) return
+
+    setPresetSaving(true)
+    setError('')
+    try {
+      const saved = await renameTradingPreset(user.id, editingPreset.id, name)
+      setTradingPresets(prev =>
+        prev
+          .map(p => (p.id === saved.id ? saved : p))
+          .sort((a, b) => a.name.localeCompare(b.name)),
+      )
+      setEditingPreset(null)
+      setPresetNameDraft('')
+      setPresetStatusMessage(cm.presetSaved)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : cm.editPresetTitle)
+    } finally {
+      setPresetSaving(false)
+    }
+  }
+
+  const confirmDeletePreset = async () => {
+    if (!user?.id || !pendingDeletePreset) return
+
+    setPresetSaving(true)
+    setError('')
+    try {
+      await deleteTradingPreset(user.id, pendingDeletePreset.id)
+      setTradingPresets(prev => prev.filter(p => p.id !== pendingDeletePreset.id))
+      if (pendingApplyPreset?.id === pendingDeletePreset.id) setPendingApplyPreset(null)
+      if (editingPreset?.id === pendingDeletePreset.id) {
+        setEditingPreset(null)
+        setPresetNameDraft('')
+      }
+      setPendingDeletePreset(null)
+      setPresetStatusMessage(cm.presetDeleted)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : cm.deletePresetTitle)
     } finally {
       setPresetSaving(false)
     }
@@ -4098,39 +4158,23 @@ export function AccountConfigPage() {
                 {configSavedAt != null && (
                   <span className="text-xs text-success-600 transition-opacity">{cm.saved}</span>
                 )}
-                {presetSavedAt != null && (
-                  <span className="text-xs text-success-600 transition-opacity">{cm.presetSaved}</span>
+                {presetStatusMessage != null && (
+                  <span className="text-xs text-success-600 transition-opacity">{presetStatusMessage}</span>
                 )}
                         </div>
               <Button variant="ghost" className="w-full sm:w-auto min-h-[44px]" onClick={() => closeConfigureModal()} disabled={configSaving || presetSaving}>{cm.cancel}</Button>
-              {selectedChannelLinked ? (
-                <label className="w-full sm:w-auto min-h-[44px] inline-flex items-stretch rounded-lg border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 shadow-sm overflow-hidden has-[:disabled]:opacity-50">
-                  <span className="inline-flex items-center px-3 text-sm font-medium text-neutral-700 dark:text-neutral-200 border-e border-neutral-200 dark:border-neutral-700 whitespace-nowrap">
-                    {cm.applyPreset}
-                  </span>
-                  <select
-                    className="flex-1 min-w-0 sm:min-w-[8rem] text-sm bg-transparent text-neutral-700 dark:text-neutral-200 px-2 py-2.5 focus:outline-none focus:ring-2 focus:ring-primary-500 disabled:cursor-not-allowed"
-                    defaultValue=""
-                    disabled={configSaving || presetSaving || presetsLoading || tradingPresets.length === 0}
-                    onChange={e => {
-                      const v = e.target.value
-                      e.target.value = ''
-                      const preset = tradingPresets.find(p => p.id === v)
-                      if (preset) setPendingApplyPreset(preset)
-                    }}
-                  >
-                    <option value="" disabled>
-                      {presetsLoading
-                        ? '…'
-                        : tradingPresets.length === 0
-                          ? cm.noPresetsYet
-                          : cm.applyPresetPlaceholder}
-                    </option>
-                    {tradingPresets.map(preset => (
-                      <option key={preset.id} value={preset.id}>{preset.name}</option>
-                    ))}
-                  </select>
-                </label>
+              {selectedChannelLinked && tradingPresets.length > 0 ? (
+                <Button
+                  variant="secondary"
+                  className="w-full sm:w-auto min-h-[44px]"
+                  disabled={configSaving || presetSaving || presetsLoading}
+                  onClick={() => {
+                    setError('')
+                    setShowManagePresetsModal(true)
+                  }}
+                >
+                  {presetsLoading ? '…' : cm.applyPreset}
+                </Button>
               ) : null}
               {selectedChannelLinked && selectedChannelEditedFromDefault ? (
                 <Button
@@ -4228,6 +4272,177 @@ export function AccountConfigPage() {
                       onClick={() => void confirmApplyPreset()}
                     >
                       {cm.applyPresetAction}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {showManagePresetsModal ? (
+              <div className="absolute inset-0 z-20 flex items-center justify-center bg-neutral-950/55 p-4">
+                <div
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="manage-presets-title"
+                  className="w-full max-w-md rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 shadow-xl overflow-hidden"
+                >
+                  <div className="px-5 pt-5 pb-3">
+                    <h4 id="manage-presets-title" className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
+                      {cm.applyPreset}
+                    </h4>
+                    <p className="mt-1.5 text-sm text-neutral-600 dark:text-neutral-400">
+                      {tradingPresets.length === 0 ? cm.noPresetsYet : cm.managePresetsHint}
+                    </p>
+                    {tradingPresets.length > 0 ? (
+                      <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                        {cm.managePresetsApplyHint}
+                      </p>
+                    ) : null}
+                  </div>
+                  <div className="max-h-[min(50vh,22rem)] overflow-y-auto border-y border-neutral-100 dark:border-neutral-800">
+                    {presetsLoading ? (
+                      <p className="px-5 py-8 text-sm text-center text-neutral-500">…</p>
+                    ) : tradingPresets.length === 0 ? (
+                      <p className="px-5 py-8 text-sm text-center text-neutral-500 dark:text-neutral-400">
+                        {cm.noPresetsYet}
+                      </p>
+                    ) : (
+                      <ul className="divide-y divide-neutral-100 dark:divide-neutral-800">
+                        {tradingPresets.map(preset => (
+                          <li key={preset.id} className="flex items-stretch gap-1 px-2 py-1.5">
+                            <button
+                              type="button"
+                              className="min-w-0 flex-1 rounded-lg px-3 py-2.5 text-start text-sm font-medium text-neutral-900 dark:text-neutral-50 hover:bg-neutral-50 dark:hover:bg-neutral-800/80 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+                              disabled={configSaving || presetSaving}
+                              onClick={() => {
+                                setShowManagePresetsModal(false)
+                                setPendingApplyPreset(preset)
+                              }}
+                            >
+                              <span className="block truncate">{preset.name}</span>
+                            </button>
+                            <button
+                              type="button"
+                              className="shrink-0 inline-flex items-center justify-center rounded-lg p-2.5 text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800 dark:hover:bg-neutral-800 dark:hover:text-neutral-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 disabled:opacity-50"
+                              aria-label={cm.managePresetsEdit}
+                              title={cm.managePresetsEdit}
+                              disabled={configSaving || presetSaving}
+                              onClick={() => openEditPresetModal(preset)}
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </button>
+                            <button
+                              type="button"
+                              className="shrink-0 inline-flex items-center justify-center rounded-lg p-2.5 text-neutral-500 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40 dark:hover:text-red-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 disabled:opacity-50"
+                              aria-label={cm.managePresetsDelete}
+                              title={cm.managePresetsDelete}
+                              disabled={configSaving || presetSaving}
+                              onClick={() => setPendingDeletePreset(preset)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                  <div className="px-5 py-4 flex justify-end">
+                    <Button
+                      variant="ghost"
+                      className="w-full sm:w-auto"
+                      onClick={() => setShowManagePresetsModal(false)}
+                    >
+                      {cm.close}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {editingPreset ? (
+              <div className="absolute inset-0 z-30 flex items-center justify-center bg-neutral-950/55 p-4">
+                <div
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="edit-preset-title"
+                  className="w-full max-w-md rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 shadow-xl p-5 space-y-4"
+                >
+                  <h4 id="edit-preset-title" className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
+                    {cm.editPresetTitle}
+                  </h4>
+                  <ConfigureInput
+                    label={cm.saveAsPresetNameLabel}
+                    value={presetNameDraft}
+                    placeholder={cm.saveAsPresetNamePlaceholder}
+                    onChange={e => setPresetNameDraft(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') void confirmEditPreset()
+                    }}
+                  />
+                  <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+                    <Button
+                      variant="ghost"
+                      className="w-full sm:w-auto"
+                      disabled={presetSaving}
+                      onClick={() => {
+                        setEditingPreset(null)
+                        setPresetNameDraft('')
+                      }}
+                    >
+                      {cm.cancel}
+                    </Button>
+                    <Button
+                      className="w-full sm:w-auto"
+                      loading={presetSaving}
+                      disabled={!presetNameDraft.trim()}
+                      onClick={() => void confirmEditPreset()}
+                    >
+                      {cm.editPresetAction}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {pendingDeletePreset ? (
+              <div className="absolute inset-0 z-30 flex items-center justify-center bg-neutral-950/55 p-4">
+                <div
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="delete-preset-title"
+                  className="w-full max-w-md rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 shadow-xl overflow-hidden"
+                >
+                  <div className="px-5 pt-5 pb-4">
+                    <div className="flex gap-3">
+                      <div className="shrink-0 flex h-10 w-10 items-center justify-center rounded-full bg-red-100 dark:bg-red-950/50">
+                        <Trash2 className="h-5 w-5 text-red-600 dark:text-red-400" aria-hidden="true" />
+                      </div>
+                      <div className="min-w-0">
+                        <h4 id="delete-preset-title" className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
+                          {cm.deletePresetTitle}
+                        </h4>
+                        <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
+                          {interpolate(cm.deletePresetConfirm, { name: pendingDeletePreset.name })}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="px-5 py-4 border-t border-neutral-100 dark:border-neutral-800 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+                    <Button
+                      variant="ghost"
+                      className="w-full sm:w-auto"
+                      disabled={presetSaving}
+                      onClick={() => setPendingDeletePreset(null)}
+                    >
+                      {cm.cancel}
+                    </Button>
+                    <Button
+                      variant="danger"
+                      className="w-full sm:w-auto"
+                      loading={presetSaving}
+                      onClick={() => void confirmDeletePreset()}
+                    >
+                      {cm.deletePresetAction}
                     </Button>
                   </div>
                 </div>

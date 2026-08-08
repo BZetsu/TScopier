@@ -80,6 +80,36 @@ export async function upsertTradingPreset(
   return normalizePresetRow(data as Record<string, unknown>)
 }
 
+export async function renameTradingPreset(
+  userId: string,
+  presetId: string,
+  name: string,
+): Promise<ChannelTradingPreset> {
+  const trimmed = name.trim()
+  if (!trimmed) throw new Error('Preset name is required')
+
+  const { data, error } = await supabase
+    .from('channel_trading_presets')
+    .update({ name: trimmed })
+    .eq('id', presetId)
+    .eq('user_id', userId)
+    .select(PRESET_SELECT)
+    .single()
+
+  if (error) throw error
+  return normalizePresetRow(data as Record<string, unknown>)
+}
+
+export async function deleteTradingPreset(userId: string, presetId: string): Promise<void> {
+  const { error } = await supabase
+    .from('channel_trading_presets')
+    .delete()
+    .eq('id', presetId)
+    .eq('user_id', userId)
+
+  if (error) throw error
+}
+
 export function presetToChannelConfigDraft(preset: ChannelTradingPreset): ChannelConfigPresetPayload {
   return {
     mode: preset.copier_mode,
