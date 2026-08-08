@@ -6,7 +6,7 @@
 
 ---
 
-## Tech Stack (must match main app)
+## Techi Stack (must match main app)
 
 - **Vite** 8.x + React 19 + TypeScript 6
 - **Tailwind CSS** 3.4 (class-based dark mode, Inter font)
