@@ -237,7 +237,7 @@ export function initWorkerSentry(env: NodeJS.ProcessEnv = process.env): void {
       environment: environmentFromEnv(env),
       release: releaseFromEnv(env),
       defaultIntegrations: false,
-      integrations: [Sentry.consoleIntegration()],
+      integrations: [Sentry.consoleLoggingIntegration()],
       tracesSampleRate: 0,
       profilesSampleRate: 0,
       skipOpenTelemetrySetup: true,
